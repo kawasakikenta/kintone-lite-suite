@@ -25,6 +25,7 @@
     { key: 'fieldAcl', label: 'フィールドACL', endpoint: '/field/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
     { key: 'recordPermissions', label: 'レコード権限', endpoint: '/record/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
     { key: 'notifications', label: '通知設定', endpoint: '/app/notifications/general.json', put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+    { key: 'perRecordNotifications', label: 'レコード条件通知', endpoint: '/app/notifications/perRecord.json', put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
     { key: 'reminderNotifications', label: 'リマインダー通知', endpoint: '/app/notifications/reminder.json', put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
     { key: 'categories', label: 'カテゴリ設定', endpoint: '/app/categories.json', put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
   ];
@@ -166,6 +167,19 @@
     return kintone.api(`${prefix}${path}`, 'DELETE', body);
   }
 
+  async function apiCallWithRetry(prefix, path, method, body, retries = 2) {
+    let err;
+    for (let i = 0; i <= retries; i++) {
+      try {
+        return await kintone.api(`${prefix}${path}`, method, body);
+      } catch (e) {
+        err = e;
+        if (i < retries) await new Promise((r) => setTimeout(r, 700 * (i + 1)));
+      }
+    }
+    throw err;
+  }
+
   function ensureBundleShape(bundle) {
     if (!bundle || typeof bundle !== 'object') throw new Error('バンドル形式が不正です');
     if (!bundle.sections || typeof bundle.sections !== 'object') throw new Error('sections がありません');
@@ -230,10 +244,247 @@
     return fetchBundle({ ...params, sections, onProgress });
   }
 
+  const ARRAY_DIFF_LIMIT = 1000;
+  const ARRAY_LCS_MAX_CELLS = 60000;
+  const ARRAY_KEY_CANDIDATES = [
+    'code',
+    'id',
+    'name',
+    'entity',
+    'field',
+    'status',
+    'state',
+    'app',
+    'from',
+    'to',
+    'key'
+  ];
+
+  function isPlainObject(v) {
+    return !!v && typeof v === 'object' && !Array.isArray(v);
+  }
+
+  function getPathLeafKey(path) {
+    const m = String(path || '').match(/([^[.\]]+)(?:\[\d+\])?$/);
+    return m ? m[1] : '';
+  }
+
+  function normalizeForCompare(v, ignoreSet) {
+    if (Array.isArray(v)) return v.map((x) => normalizeForCompare(x, ignoreSet));
+    if (v && typeof v === 'object') {
+      const o = {};
+      Object.keys(v).sort().forEach((k) => {
+        if (META_KEYS.has(k) || ignoreSet.has(k)) return;
+        o[k] = normalizeForCompare(v[k], ignoreSet);
+      });
+      return o;
+    }
+    return v;
+  }
+
+  function makeArrayItemSignature(v, ignoreSet) {
+    return JSON.stringify(normalizeForCompare(v, ignoreSet));
+  }
+
+  function hasUniquePrimitiveKey(arr, key) {
+    const seen = new Set();
+    for (const obj of arr) {
+      if (!isPlainObject(obj) || !Object.prototype.hasOwnProperty.call(obj, key)) return false;
+      const val = obj[key];
+      if (val == null || typeof val === 'object') return false;
+      const sig = `${typeof val}:${String(val)}`;
+      if (seen.has(sig)) return false;
+      seen.add(sig);
+    }
+    return true;
+  }
+
+  function detectArrayObjectKey(a, b, ignoreSet) {
+    if (!a.length || !b.length) return null;
+    if (!a.every(isPlainObject) || !b.every(isPlainObject)) return null;
+    const firstA = a.find(isPlainObject) || {};
+    const firstB = b.find(isPlainObject) || {};
+    const fallback = Object.keys(firstA).filter((k) => Object.prototype.hasOwnProperty.call(firstB, k));
+    const candidates = [...ARRAY_KEY_CANDIDATES, ...fallback.filter((k) => !ARRAY_KEY_CANDIDATES.includes(k))];
+    for (const key of candidates) {
+      if (ignoreSet.has(key)) continue;
+      if (hasUniquePrimitiveKey(a, key) && hasUniquePrimitiveKey(b, key)) return key;
+    }
+    return null;
+  }
+
+  function buildArrayKeyMap(arr, key) {
+    const map = new Map();
+    for (let i = 0; i < arr.length; i++) {
+      const item = arr[i];
+      const val = item?.[key];
+      const sig = `${typeof val}:${String(val)}`;
+      map.set(sig, { idx: i, item });
+    }
+    return map;
+  }
+
+  function collectArrayDiffsByObjectKey(a, b, path, out, ignoreSet) {
+    const key = detectArrayObjectKey(a, b, ignoreSet);
+    if (!key) return false;
+
+    const mapA = buildArrayKeyMap(a, key);
+    const mapB = buildArrayKeyMap(b, key);
+    const ordered = [];
+    const seen = new Set();
+    for (const item of a) {
+      const sig = `${typeof item[key]}:${String(item[key])}`;
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      ordered.push(sig);
+    }
+    for (const item of b) {
+      const sig = `${typeof item[key]}:${String(item[key])}`;
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      ordered.push(sig);
+    }
+
+    for (const sig of ordered) {
+      if (out.length >= ARRAY_DIFF_LIMIT) return true;
+      const left = mapA.get(sig);
+      const right = mapB.get(sig);
+      if (!left && right) {
+        out.push({
+          type: 'added',
+          path: `${path}[${right.idx}]`,
+          left: undefined,
+          right: right.item,
+          arrayKey: key,
+          arrayKeyValue: right.item?.[key]
+        });
+        continue;
+      }
+      if (left && !right) {
+        out.push({
+          type: 'removed',
+          path: `${path}[${left.idx}]`,
+          left: left.item,
+          right: undefined,
+          arrayKey: key,
+          arrayKeyValue: left.item?.[key]
+        });
+        continue;
+      }
+      if (!left || !right) continue;
+
+      const leftSig = makeArrayItemSignature(left.item, ignoreSet);
+      const rightSig = makeArrayItemSignature(right.item, ignoreSet);
+      if (leftSig === rightSig) {
+        if (left.idx !== right.idx) {
+          out.push({
+            type: 'changed',
+            path: `${path}[${right.idx}]`,
+            left: left.item,
+            right: right.item,
+            moved: true,
+            movedFrom: left.idx,
+            movedTo: right.idx,
+            arrayKey: key,
+            arrayKeyValue: right.item?.[key]
+          });
+        }
+        continue;
+      }
+      const start = out.length;
+      collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreSet);
+      const keyVal = right.item?.[key] != null ? right.item[key] : left.item?.[key];
+      for (let oi = start; oi < out.length; oi++) {
+        if (!out[oi].arrayKey) out[oi].arrayKey = key;
+        if (out[oi].arrayKeyValue === undefined) out[oi].arrayKeyValue = keyVal;
+      }
+      if (out.length >= ARRAY_DIFF_LIMIT) return true;
+    }
+    return true;
+  }
+
+  function collectArrayDiffsByLcs(a, b, path, out, ignoreSet) {
+    const n = a.length;
+    const m = b.length;
+    if (!n && !m) return true;
+    if (!n) {
+      for (let j = 0; j < m; j++) {
+        if (out.length >= ARRAY_DIFF_LIMIT) return true;
+        out.push({ type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] });
+      }
+      return true;
+    }
+    if (!m) {
+      for (let i = 0; i < n; i++) {
+        if (out.length >= ARRAY_DIFF_LIMIT) return true;
+        out.push({ type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined });
+      }
+      return true;
+    }
+
+    if (n * m > ARRAY_LCS_MAX_CELLS) return false;
+    const sigA = a.map((x) => makeArrayItemSignature(x, ignoreSet));
+    const sigB = b.map((x) => makeArrayItemSignature(x, ignoreSet));
+
+    const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = sigA[i] === sigB[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+
+    let i = 0;
+    let j = 0;
+    while (i < n || j < m) {
+      if (out.length >= ARRAY_DIFF_LIMIT) return true;
+      if (i < n && j < m && sigA[i] === sigB[j]) {
+        i += 1;
+        j += 1;
+        continue;
+      }
+      if (i < n && j < m) {
+        const sameType = Object.prototype.toString.call(a[i]) === Object.prototype.toString.call(b[j]);
+        if (sameType && dp[i + 1][j + 1] >= dp[i + 1][j] && dp[i + 1][j + 1] >= dp[i][j + 1]) {
+          collectDeepDiffs(a[i], b[j], `${path}[${j}]`, out, ignoreSet);
+          i += 1;
+          j += 1;
+          continue;
+        }
+      }
+      const down = i < n ? dp[i + 1][j] : -1;
+      const right = j < m ? dp[i][j + 1] : -1;
+      if (j < m && (i >= n || right >= down)) {
+        out.push({ type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] });
+        j += 1;
+      } else if (i < n) {
+        out.push({ type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined });
+        i += 1;
+      } else {
+        break;
+      }
+    }
+    return true;
+  }
+
+  function collectArrayDiffs(a, b, path, out, ignoreSet) {
+    if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreSet)) return;
+    if (collectArrayDiffsByLcs(a, b, path, out, ignoreSet)) return;
+    const max = Math.max(a.length, b.length);
+    for (let i = 0; i < max; i++) {
+      if (out.length >= ARRAY_DIFF_LIMIT) return;
+      const p = `${path}[${i}]`;
+      if (i >= a.length) out.push({ type: 'added', path: p, left: undefined, right: b[i] });
+      else if (i >= b.length) out.push({ type: 'removed', path: p, left: a[i], right: undefined });
+      else collectDeepDiffs(a[i], b[i], p, out, ignoreSet);
+    }
+  }
+
   function collectDeepDiffs(a, b, path, out, ignoreSet) {
-    if (out.length >= 1000) return;
-    const leaf = path.split('.').pop();
-    if (ignoreSet.has(leaf)) return;
+    if (out.length >= ARRAY_DIFF_LIMIT) return;
+    const leaf = getPathLeafKey(path);
+    if (leaf && ignoreSet.has(leaf)) return;
 
     if (a === b) return;
     const ta = Object.prototype.toString.call(a);
@@ -249,26 +500,19 @@
     }
 
     if (Array.isArray(a)) {
-      const max = Math.max(a.length, b.length);
-      for (let i = 0; i < max; i++) {
-        const p = `${path}[${i}]`;
-        if (i >= a.length) out.push({ type: 'added', path: p, left: undefined, right: b[i] });
-        else if (i >= b.length) out.push({ type: 'removed', path: p, left: a[i], right: undefined });
-        else collectDeepDiffs(a[i], b[i], p, out, ignoreSet);
-        if (out.length >= 1000) return;
-      }
+      collectArrayDiffs(a, b, path, out, ignoreSet);
       return;
     }
 
     if (typeof a === 'object') {
-      const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+      const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
       for (const k of keys) {
         if (ignoreSet.has(k)) continue;
         const p = path ? `${path}.${k}` : k;
         if (!Object.prototype.hasOwnProperty.call(b, k)) out.push({ type: 'removed', path: p, left: a[k], right: undefined });
         else if (!Object.prototype.hasOwnProperty.call(a, k)) out.push({ type: 'added', path: p, left: undefined, right: b[k] });
         else collectDeepDiffs(a[k], b[k], p, out, ignoreSet);
-        if (out.length >= 1000) return;
+        if (out.length >= ARRAY_DIFF_LIMIT) return;
       }
       return;
     }
@@ -310,11 +554,14 @@
   }
 
   function summarizeRows(rows) {
-    const s = { total: rows.length, added: 0, removed: 0, changed: 0 };
+    const s = { total: rows.length, added: 0, removed: 0, changed: 0, moved: 0 };
     for (const r of rows) {
       if (r.type === 'added') s.added += 1;
       else if (r.type === 'removed') s.removed += 1;
-      else s.changed += 1;
+      else {
+        s.changed += 1;
+        if (r.moved) s.moved += 1;
+      }
     }
     return s;
   }
@@ -390,7 +637,7 @@
     const bodyRows = rows.slice(0, 1200).map((r) => `
       <tr>
         <td>${esc(r.section || '-')}</td>
-        <td>${esc(r.type || '-')}</td>
+        <td>${esc(r.moved ? `${r.type}(moved)` : (r.type || '-'))}</td>
         <td><code>${esc(r.path || '-')}</code></td>
         <td><pre>${esc(JSON.stringify(r.left, null, 2))}</pre></td>
         <td><pre>${esc(JSON.stringify(r.right, null, 2))}</pre></td>
@@ -428,6 +675,7 @@
     <span class="pill">Added: ${summary.added}</span>
     <span class="pill">Removed: ${summary.removed}</span>
     <span class="pill">Changed: ${summary.changed}</span>
+    <span class="pill">Moved: ${summary.moved}</span>
   </div>
   <table>
     <thead><tr><th>Section</th><th>Type</th><th>Path</th><th>Source</th><th>Target</th></tr></thead>
@@ -446,7 +694,12 @@
         type: r.type,
         path: r.path,
         sourceValue: r.left,
-        targetValue: r.right
+        targetValue: r.right,
+        moved: !!r.moved,
+        movedFrom: r.movedFrom,
+        movedTo: r.movedTo,
+        arrayKey: r.arrayKey,
+        arrayKeyValue: r.arrayKeyValue
       });
     }
     return {
@@ -915,9 +1168,10 @@
       ui.result.innerHTML = '<div style="padding:10px;font-size:12px;color:#15803d">差分はありません。</div>';
       return;
     }
-    const top = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">件数: Total ${summary.total} / Added ${summary.added} / Removed ${summary.removed} / Changed ${summary.changed}</div>`;
+    const top = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">件数: Total ${summary.total} / Added ${summary.added} / Removed ${summary.removed} / Changed ${summary.changed} / Moved ${summary.moved}</div>`;
     const html = rows.slice(0, 700).map((r) => {
       const cls = r.type === 'added' ? 'added' : (r.type === 'removed' ? 'removed' : 'changed');
+      const typeLabel = r.moved ? `${r.type}(moved)` : r.type;
       const srcJson = esc(JSON.stringify(r.left, null, 2));
       const tgtJson = esc(JSON.stringify(r.right, null, 2));
       const btnRawSrc = r.left !== undefined ? `<button class="btn sub" style="padding:2px 4px;font-size:10px;margin-bottom:4px" data-copy-val="${esc(JSON.stringify(r.left))}">コピー</button>` : '';
@@ -925,7 +1179,7 @@
 
       return `<tr>
         <td>${esc(r.section || '-')}</td>
-        <td class="${cls}">${esc(r.type)}</td>
+        <td class="${cls}">${esc(typeLabel)}</td>
         <td title="${esc(r.path || '-')}">${esc(r.path || '-')}</td>
         <td style="vertical-align:top">${btnRawSrc}<pre style="margin:0;white-space:pre-wrap">${srcJson}</pre></td>
         <td style="vertical-align:top">${btnRawTgt}<pre style="margin:0;white-space:pre-wrap">${tgtJson}</pre></td>
@@ -1135,7 +1389,7 @@
       }
     }
     const s = summarizeRows(rows);
-    setStatus(`差分比較完了: ${s.total}件 (A:${s.added} R:${s.removed} C:${s.changed})`);
+    setStatus(`差分比較完了: ${s.total}件 (A:${s.added} R:${s.removed} C:${s.changed} M:${s.moved})`);
   }
 
   async function exportBundleJson() {
@@ -1373,11 +1627,12 @@
       const cls = r.type === 'added' ? '#166534' : (r.type === 'removed' ? '#b91c1c' : '#92400e');
       const checked = selected.has(r._id) ? 'checked' : '';
       const mode = reflectRowModeById(r._id);
+      const typeLabel = r.moved ? `${r.type}(moved)` : (r.type || '-');
       return `<tr>
         <td><input type="checkbox" data-node-id="${esc(r._id)}" ${checked}></td>
         <td><button type="button" data-node-mode="${esc(r._id)}" style="border:1px solid #cbd5e1;border-radius:6px;padding:2px 6px;font-size:10px;background:${mode === 'src' ? '#dbeafe' : '#dcfce7'};color:${mode === 'src' ? '#1d4ed8' : '#166534'};font-weight:700;cursor:pointer">${mode === 'src' ? 'Src' : 'Tgt'}</button></td>
         <td>${esc(r.section || '-')}</td>
-        <td style="color:${cls};font-weight:700">${esc(r.type || '-')}</td>
+        <td style="color:${cls};font-weight:700">${esc(typeLabel)}</td>
         <td title="${esc(r.path || '-')}">${esc(r.path || '-')}</td>
       </tr>`;
     }).join('');
@@ -1412,6 +1667,87 @@
       else out.push(Number(m[2]));
     }
     return out;
+  }
+
+  function getByTokens(root, tokens) {
+    let cur = root;
+    for (const tk of tokens) {
+      if (typeof tk === 'number') {
+        if (!Array.isArray(cur) || tk < 0 || tk >= cur.length) return undefined;
+        cur = cur[tk];
+      } else {
+        if (!cur || typeof cur !== 'object' || !Object.prototype.hasOwnProperty.call(cur, tk)) return undefined;
+        cur = cur[tk];
+      }
+    }
+    return cur;
+  }
+
+  function itemKeySignature(v) {
+    return `${typeof v}:${String(v)}`;
+  }
+
+  function resolveArrayKeyValue(row, desired) {
+    const key = row.arrayKey;
+    if (!key) return { key: null, value: undefined };
+    if (row.arrayKeyValue !== undefined) return { key, value: row.arrayKeyValue };
+    const candidates = [desired, row.left, row.right];
+    for (const obj of candidates) {
+      if (obj && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, key)) {
+        return { key, value: obj[key] };
+      }
+    }
+    return { key, value: undefined };
+  }
+
+  function findArrayIndexByKey(arr, key, value) {
+    if (!Array.isArray(arr) || !key) return -1;
+    const sig = itemKeySignature(value);
+    for (let i = 0; i < arr.length; i++) {
+      const obj = arr[i];
+      if (!obj || typeof obj !== 'object') continue;
+      if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+      if (itemKeySignature(obj[key]) === sig) return i;
+    }
+    return -1;
+  }
+
+  function applyArrayRowByKey(sectionObj, row, tokens, desired) {
+    if (!row.arrayKey) return null;
+    if (!tokens.length) return null;
+    const last = tokens[tokens.length - 1];
+    if (typeof last !== 'number') return null;
+    const arr = getByTokens(sectionObj, tokens.slice(0, -1));
+    if (!Array.isArray(arr)) return null;
+
+    const mode = reflectRowModeById(row._id);
+    const { key, value } = resolveArrayKeyValue(row, desired);
+    if (!key || value === undefined) return null;
+    const curIndex = findArrayIndexByKey(arr, key, value);
+
+    if (desired === undefined) {
+      if (curIndex < 0) return { section: sectionObj, applied: false, op: 'delete', reason: 'array item not found' };
+      arr.splice(curIndex, 1);
+      return { section: sectionObj, applied: true, op: 'delete' };
+    }
+
+    const preferredIndex = row.moved
+      ? (mode === 'src' && Number.isInteger(row.movedFrom)
+        ? row.movedFrom
+        : (Number.isInteger(row.movedTo) ? row.movedTo : last))
+      : last;
+    const bounded = (n, max) => Math.max(0, Math.min(max, Number.isInteger(n) ? n : max));
+    const insertItem = deepClone(desired);
+
+    if (curIndex >= 0) {
+      arr.splice(curIndex, 1);
+      const ins = bounded(preferredIndex, arr.length);
+      arr.splice(ins, 0, insertItem);
+    } else {
+      const ins = bounded(preferredIndex, arr.length);
+      arr.splice(ins, 0, insertItem);
+    }
+    return { section: sectionObj, applied: true, op: row.moved ? 'move' : 'set' };
   }
 
   function setByTokens(root, tokens, value) {
@@ -1471,6 +1807,8 @@
     if (desired === undefined) {
       if (!rel) return { section: sectionObj, applied: false, op: 'skip', reason: 'root delete unsupported' };
       const tokens = tokenizePath(rel);
+      const keyDel = applyArrayRowByKey(sectionObj, row, tokens, desired);
+      if (keyDel) return keyDel;
       const out = deleteByTokens(sectionObj, tokens);
       return { section: out.root, applied: out.deleted, op: 'delete', reason: out.deleted ? '' : 'target path not found' };
     }
@@ -1478,6 +1816,8 @@
       return { section: deepClone(desired), applied: true, op: 'set' };
     }
     const tokens = tokenizePath(rel);
+    const keySet = applyArrayRowByKey(sectionObj, row, tokens, desired);
+    if (keySet) return keySet;
     return { section: setByTokens(sectionObj, tokens, desired), applied: true, op: 'set' };
   }
 
@@ -1522,40 +1862,126 @@
     return tokens[1];
   }
 
-  async function applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes) {
+  function planFieldSectionDiffRequests(app, beforeProps, afterProps, lookupMap, sourceModeCodes) {
+    const beforeMap = filterWritableFieldProps(beforeProps, true);
+    const afterMap = filterWritableFieldProps(afterProps, true);
     const add = {};
     const update = {};
     const del = [];
     let lookupChanged = 0;
 
-    for (const [code, def] of Object.entries(afterProps || {})) {
+    for (const [code, def] of Object.entries(afterMap || {})) {
       const shouldConvert = !sourceModeCodes || sourceModeCodes.has(code);
       const converted = shouldConvert ? convertLookupAppIds(def, lookupMap) : { def: deepClone(def), changed: false };
       if (converted.changed) lookupChanged += 1;
       const outDef = converted.def;
-      if (!beforeProps || !beforeProps[code]) {
+      if (!beforeMap || !beforeMap[code]) {
         add[code] = outDef;
-      } else if (stableStringify(beforeProps[code]) !== stableStringify(outDef)) {
+      } else if (stableStringify(beforeMap[code]) !== stableStringify(outDef)) {
         update[code] = outDef;
       }
     }
-    for (const code of Object.keys(beforeProps || {})) {
-      if (!Object.prototype.hasOwnProperty.call(afterProps || {}, code)) del.push(code);
+    for (const code of Object.keys(beforeMap || {})) {
+      if (!Object.prototype.hasOwnProperty.call(afterMap || {}, code)) del.push(code);
     }
 
-    if (Object.keys(add).length) {
-      await apiPost(prefix, '/app/form/fields.json', { app, properties: add });
-      logs.push(`  - fields add: ${Object.keys(add).length}`);
+    const requests = [];
+    if (Object.keys(add).length) requests.push({ method: 'POST', path: '/app/form/fields.json', body: { app, properties: add }, note: `fields add:${Object.keys(add).length}` });
+    if (Object.keys(update).length) requests.push({ method: 'PUT', path: '/app/form/fields.json', body: { app, properties: update }, note: `fields update:${Object.keys(update).length}` });
+    if (del.length) requests.push({ method: 'DELETE', path: '/app/form/fields.json', body: { app, fields: del }, note: `fields delete:${del.length}` });
+    return { requests, addCount: Object.keys(add).length, updateCount: Object.keys(update).length, deleteCount: del.length, lookupChanged };
+  }
+
+  function splitMapSectionDiff(beforeMap, afterMap) {
+    const before = (beforeMap && typeof beforeMap === 'object' && !Array.isArray(beforeMap)) ? beforeMap : {};
+    const after = (afterMap && typeof afterMap === 'object' && !Array.isArray(afterMap)) ? afterMap : {};
+    const add = {};
+    const update = {};
+    const del = [];
+    for (const [k, v] of Object.entries(after)) {
+      if (!Object.prototype.hasOwnProperty.call(before, k)) {
+        add[k] = deepClone(v);
+      } else if (stableStringify(before[k]) !== stableStringify(v)) {
+        update[k] = deepClone(v);
+      }
     }
-    if (Object.keys(update).length) {
-      await apiPut(prefix, '/app/form/fields.json', { app, properties: update });
-      logs.push(`  - fields update: ${Object.keys(update).length}`);
+    for (const k of Object.keys(before)) {
+      if (!Object.prototype.hasOwnProperty.call(after, k)) del.push(k);
     }
-    if (del.length) {
-      await apiDelete(prefix, '/app/form/fields.json', { app, fields: del });
-      logs.push(`  - fields delete: ${del.length}`);
+    return { add, update, del };
+  }
+
+  function planViewsSectionDiffRequests(app, beforeViews, afterViews) {
+    const split = splitMapSectionDiff(beforeViews, afterViews);
+    const up = { ...split.add, ...split.update };
+    const requests = [];
+    if (Object.keys(up).length) requests.push({ method: 'PUT', path: '/app/views.json', body: { app, views: up }, note: `views upsert:${Object.keys(up).length}` });
+    return { requests, upsertCount: Object.keys(up).length, deleteSkipCount: split.del.length };
+  }
+
+  function planReportsSectionDiffRequests(app, beforeReports, afterReports) {
+    const split = splitMapSectionDiff(beforeReports, afterReports);
+    const up = { ...split.add, ...split.update };
+    const requests = [];
+    if (Object.keys(up).length) requests.push({ method: 'PUT', path: '/app/reports.json', body: { app, reports: up }, note: `reports upsert:${Object.keys(up).length}` });
+    if (split.del.length) requests.push({ method: 'DELETE', path: '/app/reports.json', body: { app, reports: split.del }, note: `reports delete:${split.del.length}` });
+    return { requests, upsertCount: Object.keys(up).length, deleteCount: split.del.length };
+  }
+
+  function planActionsSectionDiffRequests(app, beforeActions, afterActions) {
+    const split = splitMapSectionDiff(beforeActions, afterActions);
+    const up = { ...split.add, ...split.update };
+    const requests = [];
+    if (Object.keys(up).length) requests.push({ method: 'PUT', path: '/app/actions.json', body: { app, actions: up }, note: `actions upsert:${Object.keys(up).length}` });
+    return { requests, upsertCount: Object.keys(up).length, deleteSkipCount: split.del.length };
+  }
+
+  function appendRequestPlanLogs(logs, plan) {
+    const reqs = plan?.requests || [];
+    for (const req of reqs) {
+      logs.push(`  - PLAN ${req.method} ${req.path}${req.note ? ` (${req.note})` : ''}`);
     }
-    if (lookupChanged) logs.push(`  - lookup appId 変換: ${lookupChanged}`);
+  }
+
+  async function executeRequestPlan(prefix, requests, logs, stopOnError) {
+    const list = Array.isArray(requests) ? requests : [];
+    for (let i = 0; i < list.length; i++) {
+      const req = list[i];
+      try {
+        await apiCallWithRetry(prefix, req.path, req.method, req.body, 2);
+        if (logs) logs.push(`  - OK ${req.method} ${req.path}${req.note ? ` (${req.note})` : ''}`);
+      } catch (e) {
+        if (logs) logs.push(`  - NG ${req.method} ${req.path}: ${e.message || String(e)}`);
+        if (stopOnError) throw e;
+      }
+    }
+  }
+
+  async function applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError) {
+    const plan = planFieldSectionDiffRequests(app, beforeProps, afterProps, lookupMap, sourceModeCodes);
+    appendRequestPlanLogs(logs, plan);
+    await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
+    if (plan.lookupChanged) logs.push(`  - lookup appId 変換: ${plan.lookupChanged}`);
+  }
+
+  async function applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError) {
+    const plan = planViewsSectionDiffRequests(app, beforeViews, afterViews);
+    appendRequestPlanLogs(logs, plan);
+    await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
+    if (plan.deleteSkipCount) logs.push(`  - views delete(skip): ${plan.deleteSkipCount} (互換モード: 削除は行いません)`);
+  }
+
+  async function applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError) {
+    const plan = planReportsSectionDiffRequests(app, beforeReports, afterReports);
+    appendRequestPlanLogs(logs, plan);
+    await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
+  }
+
+  async function applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError) {
+    const plan = planActionsSectionDiffRequests(app, beforeActions, afterActions);
+    appendRequestPlanLogs(logs, plan);
+    await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
+    if (plan.deleteSkipCount) logs.push(`  - actions delete(skip): ${plan.deleteSkipCount} (互換モード: 削除は行いません)`);
   }
 
   async function runPreviewApplyPlanNodes() {
@@ -1564,6 +1990,9 @@
     if (!state.reflectRows.length) loadReflectRowsFromLastDiff();
     const rows = getSelectedReflectRows();
     if (!rows.length) throw new Error('反映ノードを選択してください');
+    const lookupMap = parseLookupMapInput(ui.lookupMap.value);
+    const prefix = buildApiPrefix(c.target.guestId, true);
+    const app = c.target.appId;
 
     const sectionMap = {};
     let srcCount = 0;
@@ -1591,6 +2020,60 @@
       lines.push(`${label}: ${stat.total}件 (A:${stat.added} R:${stat.removed} C:${stat.changed})`);
     }
     lines.push('');
+
+    const bySection = {};
+    for (const row of rows) {
+      if (!row.sectionKey) continue;
+      if (!bySection[row.sectionKey]) bySection[row.sectionKey] = [];
+      bySection[row.sectionKey].push(row);
+    }
+
+    let totalReq = 0;
+    const sectionKeys = Object.keys(bySection);
+    for (let i = 0; i < sectionKeys.length; i++) {
+      const secKey = sectionKeys[i];
+      const def = SECTION_DEFS.find((d) => d.key === secKey);
+      if (!def || !def.put) continue;
+      try {
+        setStatus(`ノード反映プラン計算中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
+        const current = normalize(await apiGet(prefix, def.endpoint, { app }));
+        const before = deepClone(current);
+        let patched = deepClone(current);
+        const rowsInSection = sortRowsForPatch(bySection[secKey], secKey);
+        for (const row of rowsInSection) {
+          const r = applyDiffRowToSection(patched, row, secKey);
+          patched = r.section;
+        }
+
+        let plan;
+        if (secKey === 'fieldSettings') {
+          const sourceModeCodes = new Set(
+            rowsInSection
+              .filter((row) => reflectRowModeById(row._id) === 'src')
+              .map(extractFieldCodeFromRowPath)
+              .filter(Boolean)
+          );
+          plan = planFieldSectionDiffRequests(app, before.properties || before || {}, patched.properties || patched || {}, lookupMap, sourceModeCodes);
+        } else if (secKey === 'viewSettings') {
+          plan = planViewsSectionDiffRequests(app, before.views || before || {}, patched.views || patched || {});
+        } else if (secKey === 'reportSettings') {
+          plan = planReportsSectionDiffRequests(app, before.reports || before || {}, patched.reports || patched || {});
+        } else if (secKey === 'actionSettings') {
+          plan = planActionsSectionDiffRequests(app, before.actions || before || {}, patched.actions || patched || {});
+        } else {
+          plan = { requests: [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(patched) }, note: `${def.label} put` }] };
+        }
+
+        totalReq += (plan.requests || []).length;
+        lines.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
+        appendRequestPlanLogs(lines, plan);
+      } catch (e) {
+        lines.push(`PLAN NG ${def?.label || secKey}: ${e.message || String(e)}`);
+      }
+    }
+
+    lines.push('');
+    lines.push(`合計予定リクエスト数: ${totalReq}`);
     lines.push('※ ノードモードは差分パスをもとにTargetプレビューへ反映します。');
 
     ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(lines.join('\n'))}</pre>`;
@@ -1755,11 +2238,27 @@
               .map(extractFieldCodeFromRowPath)
               .filter(Boolean)
           );
-          await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes);
+          await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
+          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
+        } else if (secKey === 'viewSettings') {
+          const beforeViews = before.views || before || {};
+          const afterViews = patched.views || patched || {};
+          await applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError);
+          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
+        } else if (secKey === 'reportSettings') {
+          const beforeReports = before.reports || before || {};
+          const afterReports = patched.reports || patched || {};
+          await applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError);
+          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
+        } else if (secKey === 'actionSettings') {
+          const beforeActions = before.actions || before || {};
+          const afterActions = patched.actions || patched || {};
+          await applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError);
           logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
         } else {
-          const body = { app, ...def.putBuilder(patched) };
-          await apiPut(prefix, def.endpoint, body);
+          const reqs = [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(patched) }, note: `${def.label} put` }];
+          appendRequestPlanLogs(logs, { requests: reqs });
+          await executeRequestPlan(prefix, reqs, logs, stopOnError);
           logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
         }
       } catch (e) {
@@ -1872,6 +2371,7 @@
     logs.push(`Target App: ${app}`);
     logs.push(`Scopes: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
     logs.push('');
+    let totalReq = 0;
 
     for (let i = 0; i < scopes.length; i++) {
       const secKey = scopes[i];
@@ -1887,25 +2387,47 @@
       }
 
       if (secKey === 'fieldSettings') {
-        const incoming = filterWritableFieldProps(sourceSec.properties || sourceSec, true);
-        const mapped = {};
-        let mappedCount = 0;
-        for (const [code, defv] of Object.entries(incoming)) {
-          const cv = convertLookupAppIds(defv, lookupMap);
-          mapped[code] = cv.def;
-          if (cv.changed) mappedCount += 1;
-        }
         const current = await apiGet(prefix, '/app/form/fields.json', { app });
-        const split = splitUpsertMap(current.properties || {}, mapped, {
-          overwrite: true,
-          renameOnConflict: false,
-          codeField: 'code'
-        });
-        logs.push(`PLAN ${def.label}: ADD ${Object.keys(split.add).length} / UPDATE ${Object.keys(split.update).length}${mappedCount ? ` / LOOKUP変換 ${mappedCount}` : ''}`);
+        const plan = planFieldSectionDiffRequests(app, current.properties || {}, sourceSec.properties || sourceSec || {}, lookupMap);
+        logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
+        appendRequestPlanLogs(logs, plan);
+        if (plan.lookupChanged) logs.push(`  - lookup appId 変換: ${plan.lookupChanged}`);
+        totalReq += plan.requests.length;
         continue;
       }
-      logs.push(`PLAN ${def.label}: PUT ${def.endpoint}`);
+      if (secKey === 'viewSettings') {
+        const current = await apiGet(prefix, '/app/views.json', { app });
+        const plan = planViewsSectionDiffRequests(app, current.views || {}, sourceSec.views || sourceSec || {});
+        logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
+        appendRequestPlanLogs(logs, plan);
+        if (plan.deleteSkipCount) logs.push(`  - views delete(skip): ${plan.deleteSkipCount} (互換モード: 削除は行いません)`);
+        totalReq += plan.requests.length;
+        continue;
+      }
+      if (secKey === 'reportSettings') {
+        const current = await apiGet(prefix, '/app/reports.json', { app });
+        const plan = planReportsSectionDiffRequests(app, current.reports || {}, sourceSec.reports || sourceSec || {});
+        logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
+        appendRequestPlanLogs(logs, plan);
+        totalReq += plan.requests.length;
+        continue;
+      }
+      if (secKey === 'actionSettings') {
+        const current = await apiGet(prefix, '/app/actions.json', { app });
+        const plan = planActionsSectionDiffRequests(app, current.actions || {}, sourceSec.actions || sourceSec || {});
+        logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
+        appendRequestPlanLogs(logs, plan);
+        if (plan.deleteSkipCount) logs.push(`  - actions delete(skip): ${plan.deleteSkipCount} (互換モード: 削除は行いません)`);
+        totalReq += plan.requests.length;
+        continue;
+      }
+      const plan = { requests: [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(sourceSec) }, note: `${def.label} put` }] };
+      logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
+      appendRequestPlanLogs(logs, plan);
+      totalReq += plan.requests.length;
     }
+    logs.push('');
+    logs.push(`合計予定リクエスト数: ${totalReq}`);
     ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
     setStatus('反映プラン確認完了');
   }
@@ -1966,18 +2488,34 @@
       setStatus(`反映中 ${i + 1}/${scopes.length}: ${def.label}`);
       try {
         if (secKey === 'fieldSettings') {
-          const fieldLogs = await upsertFields(prefix, app, sourceSec.properties || sourceSec, {
-            overwrite: true,
-            renameOnConflict: false,
-            skipSystem: true,
-            lookupMap
-          });
+          const current = await apiGet(prefix, '/app/form/fields.json', { app });
+          const beforeProps = current.properties || {};
+          const afterProps = filterWritableFieldProps(sourceSec.properties || sourceSec, true);
+          await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, null, stopOnError);
           logs.push(`OK ${def.label}`);
-          fieldLogs.forEach((l) => logs.push(`  - ${l}`));
           continue;
         }
-        const body = { app, ...def.putBuilder(sourceSec) };
-        await apiPut(prefix, def.endpoint, body);
+        if (secKey === 'viewSettings') {
+          const current = await apiGet(prefix, '/app/views.json', { app });
+          await applyViewsSectionDiff(prefix, app, current.views || {}, sourceSec.views || sourceSec || {}, logs, stopOnError);
+          logs.push(`OK ${def.label}`);
+          continue;
+        }
+        if (secKey === 'reportSettings') {
+          const current = await apiGet(prefix, '/app/reports.json', { app });
+          await applyReportsSectionDiff(prefix, app, current.reports || {}, sourceSec.reports || sourceSec || {}, logs, stopOnError);
+          logs.push(`OK ${def.label}`);
+          continue;
+        }
+        if (secKey === 'actionSettings') {
+          const current = await apiGet(prefix, '/app/actions.json', { app });
+          await applyActionsSectionDiff(prefix, app, current.actions || {}, sourceSec.actions || sourceSec || {}, logs, stopOnError);
+          logs.push(`OK ${def.label}`);
+          continue;
+        }
+        const reqs = [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(sourceSec) }, note: `${def.label} put` }];
+        appendRequestPlanLogs(logs, { requests: reqs });
+        await executeRequestPlan(prefix, reqs, logs, stopOnError);
         logs.push(`OK ${def.label}`);
       } catch (e) {
         hadError = true;
