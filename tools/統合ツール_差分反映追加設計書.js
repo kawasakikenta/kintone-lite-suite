@@ -21,14 +21,15 @@
     { key: 'pluginSettings', label: 'プラグイン設定', endpoint: '/app/plugins.json', put: false },
     { key: 'customizeSettings', label: 'JS/CSS設定', endpoint: '/app/customize.json', put: true, putBuilder: (d) => ({ desktop: d.desktop || {}, mobile: d.mobile || {} }) },
     { key: 'actionSettings', label: 'アクション設定', endpoint: '/app/actions.json', put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
-    { key: 'appAcl', label: 'アプリACL', endpoint: '/app/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-    { key: 'fieldAcl', label: 'フィールドACL', endpoint: '/field/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
+    { key: 'appAcl', label: 'アプリ権限', endpoint: '/app/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
+    { key: 'fieldAcl', label: 'フィールド権限', endpoint: '/field/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
     { key: 'recordPermissions', label: 'レコード権限', endpoint: '/record/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
     { key: 'notifications', label: '通知設定', endpoint: '/app/notifications/general.json', put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
     { key: 'perRecordNotifications', label: 'レコード条件通知', endpoint: '/app/notifications/perRecord.json', put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
     { key: 'reminderNotifications', label: 'リマインダー通知', endpoint: '/app/notifications/reminder.json', put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
     { key: 'categories', label: 'カテゴリ設定', endpoint: '/app/categories.json', put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
   ];
+  const SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS.filter((s) => s.key !== 'customizeSettings');
 
   const META_KEYS = new Set(['revision', 'creator', 'createdAt', 'modifier', 'modifiedAt']);
   const SYSTEM_FIELD_TYPES = new Set([
@@ -48,6 +49,8 @@
     lastTargetBundle: null,
     lastDiffRows: [],
     lastDiffAt: null,
+    diffViewTheme: 'light',
+    diffCollapsedSections: new Set(),
     reflectRows: [],
     reflectSelectedIds: new Set(),
     reflectNodeModes: {},
@@ -69,6 +72,13 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  function safeJsonForScript(v) {
+    return JSON.stringify(v)
+      .replace(/</g, '\\u003c')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
   }
 
   function deepClone(v) {
@@ -100,6 +110,14 @@
 
   function downloadText(filename, text, type) {
     const blob = new Blob([text], { type: type || 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function downloadBlob(filename, blob) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = filename;
@@ -246,6 +264,8 @@
 
   const ARRAY_DIFF_LIMIT = 1000;
   const ARRAY_LCS_MAX_CELLS = 60000;
+  const LINE_DIFF_MAX_CELLS = 90000;
+  const CHAR_DIFF_MAX_CELLS = 20000;
   const ARRAY_KEY_CANDIDATES = [
     'code',
     'id',
@@ -259,6 +279,15 @@
     'to',
     'key'
   ];
+  const DEFAULT_IGNORE_KEYS = new Set([
+    'id',
+    'appid',
+    'revision',
+    'createdat',
+    'creator',
+    'modifiedat',
+    'modifier'
+  ]);
 
   function isPlainObject(v) {
     return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -269,21 +298,62 @@
     return m ? m[1] : '';
   }
 
-  function normalizeForCompare(v, ignoreSet) {
-    if (Array.isArray(v)) return v.map((x) => normalizeForCompare(x, ignoreSet));
+  function normalizeIgnoreToken(token) {
+    return String(token || '')
+      .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
+      .replace(/^[\s\u3000]+|[\s\u3000]+$/g, '')
+      .toLowerCase();
+  }
+
+  function parseIgnoreRules(text) {
+    const keySet = new Set(DEFAULT_IGNORE_KEYS);
+    const pathSet = new Set();
+    String(text || '')
+      .split(/[\n\r,、，;；\s\u3000]+/)
+      .map(normalizeIgnoreToken)
+      .filter(Boolean)
+      .forEach((token) => {
+        if (token.includes('.') || token.includes('[')) pathSet.add(token.replace(/\s+/g, ''));
+        else keySet.add(token);
+      });
+    return { keySet, pathSet };
+  }
+
+  function isIgnoredKey(ignoreRules, key) {
+    const normalized = normalizeIgnoreToken(key);
+    return !!normalized && ignoreRules.keySet.has(normalized);
+  }
+
+  function isIgnoredPath(ignoreRules, path) {
+    const normalizedPath = normalizeIgnoreToken(path).replace(/\s+/g, '');
+    if (!normalizedPath) return false;
+    if (ignoreRules.pathSet.has(normalizedPath)) return true;
+    const leaf = getPathLeafKey(normalizedPath);
+    return !!leaf && ignoreRules.keySet.has(leaf);
+  }
+
+  function pushDiffRow(out, row, ignoreRules) {
+    if (!row || out.length >= ARRAY_DIFF_LIMIT) return false;
+    if (isIgnoredPath(ignoreRules, row.path)) return false;
+    out.push(row);
+    return true;
+  }
+
+  function normalizeForCompare(v, ignoreRules) {
+    if (Array.isArray(v)) return v.map((x) => normalizeForCompare(x, ignoreRules));
     if (v && typeof v === 'object') {
       const o = {};
       Object.keys(v).sort().forEach((k) => {
-        if (META_KEYS.has(k) || ignoreSet.has(k)) return;
-        o[k] = normalizeForCompare(v[k], ignoreSet);
+        if (META_KEYS.has(k) || isIgnoredKey(ignoreRules, k)) return;
+        o[k] = normalizeForCompare(v[k], ignoreRules);
       });
       return o;
     }
     return v;
   }
 
-  function makeArrayItemSignature(v, ignoreSet) {
-    return JSON.stringify(normalizeForCompare(v, ignoreSet));
+  function makeArrayItemSignature(v, ignoreRules) {
+    return JSON.stringify(normalizeForCompare(v, ignoreRules));
   }
 
   function hasUniquePrimitiveKey(arr, key) {
@@ -299,7 +369,7 @@
     return true;
   }
 
-  function detectArrayObjectKey(a, b, ignoreSet) {
+  function detectArrayObjectKey(a, b, ignoreRules) {
     if (!a.length || !b.length) return null;
     if (!a.every(isPlainObject) || !b.every(isPlainObject)) return null;
     const firstA = a.find(isPlainObject) || {};
@@ -307,7 +377,7 @@
     const fallback = Object.keys(firstA).filter((k) => Object.prototype.hasOwnProperty.call(firstB, k));
     const candidates = [...ARRAY_KEY_CANDIDATES, ...fallback.filter((k) => !ARRAY_KEY_CANDIDATES.includes(k))];
     for (const key of candidates) {
-      if (ignoreSet.has(key)) continue;
+      if (isIgnoredKey(ignoreRules, key)) continue;
       if (hasUniquePrimitiveKey(a, key) && hasUniquePrimitiveKey(b, key)) return key;
     }
     return null;
@@ -324,8 +394,8 @@
     return map;
   }
 
-  function collectArrayDiffsByObjectKey(a, b, path, out, ignoreSet) {
-    const key = detectArrayObjectKey(a, b, ignoreSet);
+  function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
+    const key = detectArrayObjectKey(a, b, ignoreRules);
     if (!key) return false;
 
     const mapA = buildArrayKeyMap(a, key);
@@ -350,34 +420,34 @@
       const left = mapA.get(sig);
       const right = mapB.get(sig);
       if (!left && right) {
-        out.push({
+        pushDiffRow(out, {
           type: 'added',
           path: `${path}[${right.idx}]`,
           left: undefined,
           right: right.item,
           arrayKey: key,
           arrayKeyValue: right.item?.[key]
-        });
+        }, ignoreRules);
         continue;
       }
       if (left && !right) {
-        out.push({
+        pushDiffRow(out, {
           type: 'removed',
           path: `${path}[${left.idx}]`,
           left: left.item,
           right: undefined,
           arrayKey: key,
           arrayKeyValue: left.item?.[key]
-        });
+        }, ignoreRules);
         continue;
       }
       if (!left || !right) continue;
 
-      const leftSig = makeArrayItemSignature(left.item, ignoreSet);
-      const rightSig = makeArrayItemSignature(right.item, ignoreSet);
+      const leftSig = makeArrayItemSignature(left.item, ignoreRules);
+      const rightSig = makeArrayItemSignature(right.item, ignoreRules);
       if (leftSig === rightSig) {
         if (left.idx !== right.idx) {
-          out.push({
+          pushDiffRow(out, {
             type: 'changed',
             path: `${path}[${right.idx}]`,
             left: left.item,
@@ -387,12 +457,12 @@
             movedTo: right.idx,
             arrayKey: key,
             arrayKeyValue: right.item?.[key]
-          });
+          }, ignoreRules);
         }
         continue;
       }
       const start = out.length;
-      collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreSet);
+      collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules);
       const keyVal = right.item?.[key] != null ? right.item[key] : left.item?.[key];
       for (let oi = start; oi < out.length; oi++) {
         if (!out[oi].arrayKey) out[oi].arrayKey = key;
@@ -403,28 +473,28 @@
     return true;
   }
 
-  function collectArrayDiffsByLcs(a, b, path, out, ignoreSet) {
+  function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
     const n = a.length;
     const m = b.length;
     if (!n && !m) return true;
     if (!n) {
       for (let j = 0; j < m; j++) {
         if (out.length >= ARRAY_DIFF_LIMIT) return true;
-        out.push({ type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] });
+        pushDiffRow(out, { type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] }, ignoreRules);
       }
       return true;
     }
     if (!m) {
       for (let i = 0; i < n; i++) {
         if (out.length >= ARRAY_DIFF_LIMIT) return true;
-        out.push({ type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined });
+        pushDiffRow(out, { type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined }, ignoreRules);
       }
       return true;
     }
 
     if (n * m > ARRAY_LCS_MAX_CELLS) return false;
-    const sigA = a.map((x) => makeArrayItemSignature(x, ignoreSet));
-    const sigB = b.map((x) => makeArrayItemSignature(x, ignoreSet));
+    const sigA = a.map((x) => makeArrayItemSignature(x, ignoreRules));
+    const sigB = b.map((x) => makeArrayItemSignature(x, ignoreRules));
 
     const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
     for (let i = n - 1; i >= 0; i--) {
@@ -447,7 +517,7 @@
       if (i < n && j < m) {
         const sameType = Object.prototype.toString.call(a[i]) === Object.prototype.toString.call(b[j]);
         if (sameType && dp[i + 1][j + 1] >= dp[i + 1][j] && dp[i + 1][j + 1] >= dp[i][j + 1]) {
-          collectDeepDiffs(a[i], b[j], `${path}[${j}]`, out, ignoreSet);
+          collectDeepDiffs(a[i], b[j], `${path}[${j}]`, out, ignoreRules);
           i += 1;
           j += 1;
           continue;
@@ -456,10 +526,10 @@
       const down = i < n ? dp[i + 1][j] : -1;
       const right = j < m ? dp[i][j + 1] : -1;
       if (j < m && (i >= n || right >= down)) {
-        out.push({ type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] });
+        pushDiffRow(out, { type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] }, ignoreRules);
         j += 1;
       } else if (i < n) {
-        out.push({ type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined });
+        pushDiffRow(out, { type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined }, ignoreRules);
         i += 1;
       } else {
         break;
@@ -468,65 +538,59 @@
     return true;
   }
 
-  function collectArrayDiffs(a, b, path, out, ignoreSet) {
-    if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreSet)) return;
-    if (collectArrayDiffsByLcs(a, b, path, out, ignoreSet)) return;
+  function collectArrayDiffs(a, b, path, out, ignoreRules) {
+    if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) return;
+    if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules)) return;
     const max = Math.max(a.length, b.length);
     for (let i = 0; i < max; i++) {
       if (out.length >= ARRAY_DIFF_LIMIT) return;
       const p = `${path}[${i}]`;
-      if (i >= a.length) out.push({ type: 'added', path: p, left: undefined, right: b[i] });
-      else if (i >= b.length) out.push({ type: 'removed', path: p, left: a[i], right: undefined });
-      else collectDeepDiffs(a[i], b[i], p, out, ignoreSet);
+      if (i >= a.length) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[i] }, ignoreRules);
+      else if (i >= b.length) pushDiffRow(out, { type: 'removed', path: p, left: a[i], right: undefined }, ignoreRules);
+      else collectDeepDiffs(a[i], b[i], p, out, ignoreRules);
     }
   }
 
-  function collectDeepDiffs(a, b, path, out, ignoreSet) {
+  function collectDeepDiffs(a, b, path, out, ignoreRules) {
     if (out.length >= ARRAY_DIFF_LIMIT) return;
-    const leaf = getPathLeafKey(path);
-    if (leaf && ignoreSet.has(leaf)) return;
+    if (isIgnoredPath(ignoreRules, path)) return;
 
     if (a === b) return;
     const ta = Object.prototype.toString.call(a);
     const tb = Object.prototype.toString.call(b);
     if (ta !== tb) {
-      out.push({ type: 'changed', path, left: a, right: b });
+      pushDiffRow(out, { type: 'changed', path, left: a, right: b }, ignoreRules);
       return;
     }
 
     if (a == null || b == null) {
-      out.push({ type: 'changed', path, left: a, right: b });
+      pushDiffRow(out, { type: 'changed', path, left: a, right: b }, ignoreRules);
       return;
     }
 
     if (Array.isArray(a)) {
-      collectArrayDiffs(a, b, path, out, ignoreSet);
+      collectArrayDiffs(a, b, path, out, ignoreRules);
       return;
     }
 
     if (typeof a === 'object') {
       const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
       for (const k of keys) {
-        if (ignoreSet.has(k)) continue;
+        if (META_KEYS.has(k) || isIgnoredKey(ignoreRules, k)) continue;
         const p = path ? `${path}.${k}` : k;
-        if (!Object.prototype.hasOwnProperty.call(b, k)) out.push({ type: 'removed', path: p, left: a[k], right: undefined });
-        else if (!Object.prototype.hasOwnProperty.call(a, k)) out.push({ type: 'added', path: p, left: undefined, right: b[k] });
-        else collectDeepDiffs(a[k], b[k], p, out, ignoreSet);
+        if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: 'removed', path: p, left: a[k], right: undefined }, ignoreRules);
+        else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[k] }, ignoreRules);
+        else collectDeepDiffs(a[k], b[k], p, out, ignoreRules);
         if (out.length >= ARRAY_DIFF_LIMIT) return;
       }
       return;
     }
 
-    out.push({ type: 'changed', path, left: a, right: b });
+    pushDiffRow(out, { type: 'changed', path, left: a, right: b }, ignoreRules);
   }
 
   function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeysText) {
-    const ignoreSet = new Set(
-      String(ignoreKeysText || '')
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-    );
+    const ignoreRules = parseIgnoreRules(ignoreKeysText);
     const rows = [];
     for (const sec of sections) {
       const label = (SECTION_DEFS.find((x) => x.key === sec) || {}).label || sec;
@@ -534,21 +598,22 @@
       const t = targetBundle.sections[sec];
 
       if (!s && t) {
-        rows.push({ sectionKey: sec, section: label, type: 'added', path: sec, left: undefined, right: t });
+        pushDiffRow(rows, { sectionKey: sec, section: label, type: 'added', path: sec, left: undefined, right: t }, ignoreRules);
         continue;
       }
       if (s && !t) {
-        rows.push({ sectionKey: sec, section: label, type: 'removed', path: sec, left: s, right: undefined });
+        pushDiffRow(rows, { sectionKey: sec, section: label, type: 'removed', path: sec, left: s, right: undefined }, ignoreRules);
         continue;
       }
       if (!s && !t) continue;
 
       if (stableStringify(s) === stableStringify(t)) continue;
-      collectDeepDiffs(s, t, sec, rows, ignoreSet);
-      rows.forEach((r) => {
-        if (!r.section) r.section = label;
-        if (!r.sectionKey) r.sectionKey = sec;
-      });
+      const start = rows.length;
+      collectDeepDiffs(s, t, sec, rows, ignoreRules);
+      for (let i = start; i < rows.length; i++) {
+        if (!rows[i].section) rows[i].section = label;
+        if (!rows[i].sectionKey) rows[i].sectionKey = sec;
+      }
     }
     return rows;
   }
@@ -613,10 +678,10 @@
     const lines = [];
     lines.push('# kintone 設計書');
     lines.push('');
-    lines.push(`- App ID: ${bundle.appId}`);
-    lines.push(`- Guest ID: ${bundle.guestId || '(通常空間)'}`);
-    lines.push(`- Preview: ${bundle.preview ? 'Yes' : 'No'}`);
-    lines.push(`- Exported At: ${bundle.fetchedAt}`);
+    lines.push(`- アプリID: ${bundle.appId}`);
+    lines.push(`- ゲストスペースID: ${bundle.guestId || '(通常空間)'}`);
+    lines.push(`- プレビュー取得: ${bundle.preview ? 'はい' : 'いいえ'}`);
+    lines.push(`- 取得日時: ${bundle.fetchedAt}`);
     lines.push('');
     for (const def of SECTION_DEFS) {
       const sec = bundle.sections[def.key];
@@ -632,17 +697,427 @@
   }
 
   function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKeys) {
-    const summary = summarizeRows(rows);
-    const sectionText = scopes.map((k) => (SECTION_DEFS.find((d) => d.key === k)?.label || k)).join(', ');
-    const bodyRows = rows.slice(0, 1200).map((r) => `
-      <tr>
-        <td>${esc(r.section || '-')}</td>
-        <td>${esc(r.moved ? `${r.type}(moved)` : (r.type || '-'))}</td>
-        <td><code>${esc(r.path || '-')}</code></td>
-        <td><pre>${esc(JSON.stringify(r.left, null, 2))}</pre></td>
-        <td><pre>${esc(JSON.stringify(r.right, null, 2))}</pre></td>
-      </tr>
-    `).join('');
+    const summary = summarizeRows(rows || []);
+    const sectionText = (scopes || []).map((k) => (SECTION_DEFS.find((d) => d.key === k)?.label || k)).join(', ');
+    const sectionLabelMap = Object.fromEntries(SECTION_DEFS.map((d) => [d.key, d.label]));
+    const MAX_EXPORT_ROWS = 2000;
+    const exportRows = (rows || []).slice(0, MAX_EXPORT_ROWS);
+    const reportMeta = {
+      generatedAt: new Date().toISOString(),
+      ignoreKeys: String(ignoreKeys || ''),
+      scopes: scopes || [],
+      sectionText,
+      source: {
+        appId: sourceBundle?.appId || '',
+        guestId: sourceBundle?.guestId || '',
+        preview: !!sourceBundle?.preview
+      },
+      target: {
+        appId: targetBundle?.appId || '',
+        guestId: targetBundle?.guestId || '',
+        preview: !!targetBundle?.preview
+      },
+      summary,
+      totalRows: (rows || []).length,
+      renderedRows: exportRows.length,
+      truncated: (rows || []).length > exportRows.length
+    };
+
+    const logicScript = `
+(() => {
+  const REPORT_ROWS = ${safeJsonForScript(exportRows)};
+  const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
+  const REPORT_META = ${safeJsonForScript(reportMeta)};
+  const THEME_KEY = '${TOOL_ID}:diffReportTheme';
+  const LINE_DIFF_MAX_CELLS = ${LINE_DIFF_MAX_CELLS};
+  const CHAR_DIFF_MAX_CELLS = ${CHAR_DIFF_MAX_CELLS};
+  const collapsed = new Set();
+
+  function escHtml(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function safeText(v) {
+    if (v === undefined) return 'undefined';
+    const out = JSON.stringify(v, null, 2);
+    return out == null ? String(v) : out;
+  }
+
+  function rowMatches(row, keyword) {
+    if (!keyword) return true;
+    const text = [
+      row.section || '',
+      row.sectionKey || '',
+      row.path || '',
+      safeText(row.left),
+      safeText(row.right)
+    ].join('\\n').toLowerCase();
+    return text.includes(keyword);
+  }
+
+  function buildLineDiffOps(leftLines, rightLines) {
+    const n = leftLines.length;
+    const m = rightLines.length;
+    if (n * m > LINE_DIFF_MAX_CELLS) return null;
+    const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = leftLines[i] === rightLines[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const ops = [];
+    let i = 0;
+    let j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && leftLines[i] === rightLines[j]) {
+        ops.push({ type: 'same', left: leftLines[i], right: rightLines[j] });
+        i += 1;
+        j += 1;
+        continue;
+      }
+      const down = i < n ? dp[i + 1][j] : -1;
+      const right = j < m ? dp[i][j + 1] : -1;
+      const diag = (i < n && j < m) ? dp[i + 1][j + 1] : -1;
+      if (i < n && j < m && diag >= down && diag >= right) {
+        ops.push({ type: 'replace', left: leftLines[i], right: rightLines[j] });
+        i += 1;
+        j += 1;
+        continue;
+      }
+      if (j < m && (i >= n || right >= down)) {
+        ops.push({ type: 'add', right: rightLines[j] });
+        j += 1;
+      } else if (i < n) {
+        ops.push({ type: 'del', left: leftLines[i] });
+        i += 1;
+      } else {
+        break;
+      }
+    }
+    return ops;
+  }
+
+  function buildCharDiff(leftText, rightText) {
+    const a = [...String(leftText || '')];
+    const b = [...String(rightText || '')];
+    if (!a.length || !b.length) return null;
+    if (a.length * b.length > CHAR_DIFF_MAX_CELLS) return null;
+    const dp = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+    const ops = [];
+    let i = a.length;
+    let j = b.length;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+        ops.push({ t: 'same', c: a[i - 1] });
+        i -= 1;
+        j -= 1;
+      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        ops.push({ t: 'add', c: b[j - 1] });
+        j -= 1;
+      } else if (i > 0) {
+        ops.push({ t: 'del', c: a[i - 1] });
+        i -= 1;
+      } else {
+        break;
+      }
+    }
+    ops.reverse();
+    let left = '';
+    let right = '';
+    for (const op of ops) {
+      if (op.t === 'same') {
+        const c = escHtml(op.c);
+        left += c;
+        right += c;
+      } else if (op.t === 'del') {
+        left += '<mark class="cdel">' + escHtml(op.c) + '</mark>';
+      } else {
+        right += '<mark class="cadd">' + escHtml(op.c) + '</mark>';
+      }
+    }
+    return { left, right };
+  }
+
+  function renderChangedCells(row, useCharDiff) {
+    const leftText = safeText(row.left);
+    const rightText = safeText(row.right);
+    const leftLines = leftText.split('\\n');
+    const rightLines = rightText.split('\\n');
+    const ops = buildLineDiffOps(leftLines, rightLines);
+    if (!ops) {
+      return {
+        left: '<pre class="blk del">' + escHtml(leftText) + '</pre>',
+        right: '<pre class="blk add">' + escHtml(rightText) + '</pre>'
+      };
+    }
+
+    let leftHtml = '';
+    let rightHtml = '';
+    let leftNo = 0;
+    let rightNo = 0;
+    for (const op of ops) {
+      if (op.type === 'same') {
+        leftNo += 1;
+        rightNo += 1;
+        leftHtml += '<div class="line"><span class="ln">' + leftNo + '</span>' + escHtml(op.left || '') + '</div>';
+        rightHtml += '<div class="line"><span class="ln">' + rightNo + '</span>' + escHtml(op.right || '') + '</div>';
+      } else if (op.type === 'replace') {
+        leftNo += 1;
+        rightNo += 1;
+        const cd = useCharDiff ? buildCharDiff(op.left, op.right) : null;
+        leftHtml += '<div class="line del"><span class="ln">' + leftNo + '</span>' + (cd ? cd.left : escHtml(op.left || '')) + '</div>';
+        rightHtml += '<div class="line add"><span class="ln">' + rightNo + '</span>' + (cd ? cd.right : escHtml(op.right || '')) + '</div>';
+      } else if (op.type === 'del') {
+        leftNo += 1;
+        leftHtml += '<div class="line del"><span class="ln">' + leftNo + '</span>' + escHtml(op.left || '') + '</div>';
+        rightHtml += '<div class="line pad"><span class="ln"></span></div>';
+      } else {
+        rightNo += 1;
+        leftHtml += '<div class="line pad"><span class="ln"></span></div>';
+        rightHtml += '<div class="line add"><span class="ln">' + rightNo + '</span>' + escHtml(op.right || '') + '</div>';
+      }
+    }
+    return {
+      left: '<div class="scroll">' + leftHtml + '</div>',
+      right: '<div class="scroll">' + rightHtml + '</div>'
+    };
+  }
+
+  function renderRowCells(row, useCharDiff) {
+    if (row.type === 'added') {
+      return {
+        left: '<pre class="blk empty">（なし）</pre>',
+        right: '<pre class="blk add">' + escHtml(safeText(row.right)) + '</pre>'
+      };
+    }
+    if (row.type === 'removed') {
+      return {
+        left: '<pre class="blk del">' + escHtml(safeText(row.left)) + '</pre>',
+        right: '<pre class="blk empty">（なし）</pre>'
+      };
+    }
+    return renderChangedCells(row, useCharDiff);
+  }
+
+  function groupBySection(rows) {
+    const order = {};
+    const defs = ${safeJsonForScript(SECTION_DEFS.map((d, i) => ({ key: d.key, label: d.label, order: i })))};
+    defs.forEach((d) => { order[d.key] = d.order; });
+    const map = new Map();
+    for (const row of rows) {
+      const key = row.sectionKey || row.section || 'Unknown';
+      const label = SECTION_LABEL_MAP[key] || row.section || key;
+      if (!map.has(key)) map.set(key, { key, label, rows: [] });
+      map.get(key).rows.push(row);
+    }
+    return [...map.values()].sort((a, b) => {
+      const oa = Object.prototype.hasOwnProperty.call(order, a.key) ? order[a.key] : 9999;
+      const ob = Object.prototype.hasOwnProperty.call(order, b.key) ? order[b.key] : 9999;
+      if (oa !== ob) return oa - ob;
+      return String(a.label).localeCompare(String(b.label));
+    });
+  }
+
+  function updateStats(rows) {
+    let added = 0;
+    let removed = 0;
+    let changed = 0;
+    let moved = 0;
+    for (const row of rows) {
+      if (row.type === 'added') added += 1;
+      else if (row.type === 'removed') removed += 1;
+      else {
+        changed += 1;
+        if (row.moved) moved += 1;
+      }
+    }
+    document.getElementById('stat-total').textContent = String(rows.length);
+    document.getElementById('stat-added').textContent = String(added);
+    document.getElementById('stat-removed').textContent = String(removed);
+    document.getElementById('stat-changed').textContent = String(changed);
+    document.getElementById('stat-moved').textContent = String(moved);
+  }
+
+  function render() {
+    const hideSame = !!document.getElementById('hideSame').checked;
+    const useCharDiff = !!document.getElementById('charDiff').checked;
+    const keyword = String(document.getElementById('search').value || '').trim().toLowerCase();
+    const nav = document.getElementById('nav');
+    const main = document.getElementById('main');
+    nav.innerHTML = '';
+    main.innerHTML = '';
+
+    const filtered = REPORT_ROWS.filter((row) => {
+      if (hideSame && row.type === 'same') return false;
+      return rowMatches(row, keyword);
+    });
+    updateStats(filtered);
+
+    if (!filtered.length) {
+      main.innerHTML = '<div class="no-diff">表示対象の差分がありません。</div>';
+      return;
+    }
+
+    const groups = groupBySection(filtered);
+    groups.forEach((g, idx) => {
+      const secId = 'sec_' + idx;
+      const collapsedNow = collapsed.has(g.key);
+      const navItem = document.createElement('div');
+      navItem.className = 'nav-item';
+      navItem.innerHTML = '<span>' + escHtml(g.label) + '</span><span class="badge">' + g.rows.length + '</span>';
+      navItem.onclick = () => {
+        collapsed.delete(g.key);
+        render();
+        setTimeout(() => {
+          const el = document.getElementById(secId);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 20);
+      };
+      nav.appendChild(navItem);
+
+      const sec = document.createElement('section');
+      sec.id = secId;
+      sec.className = 'sec';
+      const head = document.createElement('div');
+      head.className = 'sec-head';
+      head.innerHTML = '<span>' + (collapsedNow ? '▶' : '▼') + ' ' + escHtml(g.label) + '</span><span class="sec-meta">' + g.rows.length + ' 件</span>';
+      head.onclick = () => {
+        if (collapsed.has(g.key)) collapsed.delete(g.key);
+        else collapsed.add(g.key);
+        render();
+      };
+      sec.appendChild(head);
+
+      if (!collapsedNow) {
+        const table = document.createElement('table');
+        table.className = 'diff-table';
+        table.innerHTML = '<thead><tr><th style="width:110px">Type</th><th style="width:260px">Path</th><th>Source</th><th>Target</th></tr></thead>';
+        const tbody = document.createElement('tbody');
+        g.rows.forEach((row) => {
+          const tr = document.createElement('tr');
+          const typeLabel = row.moved ? (row.type + '(moved)') : (row.type || '-');
+          const cells = renderRowCells(row, useCharDiff);
+          const typeClass = row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed');
+          tr.innerHTML =
+            '<td class="type ' + typeClass + '">' + escHtml(typeLabel) + '</td>' +
+            '<td class="path" title="' + escHtml(row.path || '-') + '">' + escHtml(row.path || '-') + '</td>' +
+            '<td class="cell">' + cells.left + '</td>' +
+            '<td class="cell">' + cells.right + '</td>';
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        sec.appendChild(table);
+      }
+      main.appendChild(sec);
+    });
+  }
+
+  function toggleTheme() {
+    document.body.classList.toggle('dark');
+    localStorage.setItem(THEME_KEY, document.body.classList.contains('dark') ? 'dark' : 'light');
+  }
+
+  function collapseAll() {
+    for (const row of REPORT_ROWS) collapsed.add(row.sectionKey || row.section || 'Unknown');
+    render();
+  }
+
+  function expandAll() {
+    collapsed.clear();
+    render();
+  }
+
+  function copyDiffs() {
+    const lines = [];
+    lines.push('kintone差分レポート');
+    lines.push('Source App: ' + REPORT_META.source.appId + ' / Target App: ' + REPORT_META.target.appId);
+    lines.push('Generated: ' + REPORT_META.generatedAt);
+    lines.push('');
+    const groups = groupBySection(REPORT_ROWS);
+    groups.forEach((g) => {
+      lines.push('[' + g.label + ']');
+      g.rows.forEach((row) => {
+        const typeLabel = row.moved ? (row.type + '(moved)') : row.type;
+        lines.push(' - ' + typeLabel + ' : ' + (row.path || '-'));
+      });
+      lines.push('');
+    });
+    navigator.clipboard.writeText(lines.join('\\n'))
+      .then(() => alert('差分をクリップボードへコピーしました'))
+      .catch((e) => alert('コピーに失敗しました: ' + (e.message || e)));
+  }
+
+  function exportPatch() {
+    const grouped = {};
+    REPORT_ROWS.forEach((row) => {
+      const key = row.sectionKey || row.section || 'Unknown';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push({
+        type: row.type,
+        path: row.path,
+        sourceValue: row.left,
+        targetValue: row.right,
+        moved: !!row.moved,
+        movedFrom: row.movedFrom,
+        movedTo: row.movedTo,
+        arrayKey: row.arrayKey,
+        arrayKeyValue: row.arrayKeyValue
+      });
+    });
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      source: REPORT_META.source,
+      target: REPORT_META.target,
+      sections: grouped
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'patch_' + REPORT_META.source.appId + '_vs_' + REPORT_META.target.appId + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, copyDiffs, exportPatch };
+
+  document.getElementById('hideSame').onchange = render;
+  document.getElementById('charDiff').onchange = render;
+  document.getElementById('search').oninput = render;
+  document.getElementById('themeBtn').onclick = toggleTheme;
+  document.getElementById('collapseBtn').onclick = collapseAll;
+  document.getElementById('expandBtn').onclick = expandAll;
+  document.getElementById('copyBtn').onclick = copyDiffs;
+  document.getElementById('patchBtn').onclick = exportPatch;
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      e.preventDefault();
+      document.getElementById('search').focus();
+    }
+    if (e.key === 'Escape') {
+      document.getElementById('search').value = '';
+      render();
+    }
+  });
+
+  if (localStorage.getItem(THEME_KEY) === 'dark') document.body.classList.add('dark');
+  render();
+})();
+`;
+
     return `<!doctype html>
 <html lang="ja">
 <head>
@@ -650,37 +1125,135 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>kintone差分レポート</title>
   <style>
-    body{font-family:"Noto Sans JP",Meiryo,sans-serif;margin:24px;color:#1f2937}
-    h1{margin:0 0 10px}
-    .meta{font-size:12px;color:#475569;margin-bottom:14px}
-    .sum{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
-    .pill{border:1px solid #cbd5e1;border-radius:999px;padding:4px 10px;font-size:12px}
-    table{width:100%;border-collapse:collapse;font-size:12px}
-    th,td{border:1px solid #e2e8f0;padding:6px;vertical-align:top;text-align:left}
-    th{background:#f8fafc;position:sticky;top:0}
-    pre{margin:0;white-space:pre-wrap;word-break:break-word;font-size:11px;max-height:220px;overflow:auto}
-    @media print {.meta{color:#000}}
+    :root{
+      --bg:#f4f7fb;--fg:#0f172a;--card:#fff;--border:#d7dfeb;--sidebar:#1f2937;--sidebar-fg:#e2e8f0;
+      --add:#e8f5e9;--add-fg:#166534;--del:#fee2e2;--del-fg:#991b1b;--pad:#f1f5f9;
+      --mark-add:#bbf7d0;--mark-del:#fecaca;
+    }
+    body.dark{
+      --bg:#0f172a;--fg:#e2e8f0;--card:#111827;--border:#334155;--sidebar:#020617;--sidebar-fg:#cbd5e1;
+      --add:#083344;--add-fg:#5eead4;--del:#450a0a;--del-fg:#fca5a5;--pad:#1e293b;
+      --mark-add:#134e4a;--mark-del:#7f1d1d;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;background:var(--bg);color:var(--fg);display:flex;height:100vh}
+    aside{width:300px;background:var(--sidebar);color:var(--sidebar-fg);display:flex;flex-direction:column;border-right:1px solid var(--border)}
+    main{flex:1;overflow:auto;padding:18px}
+    .sb-head{padding:14px 16px;border-bottom:1px solid #334155;font-weight:700}
+    .sb-meta{font-size:11px;opacity:.8;margin-top:4px;line-height:1.6}
+    .sb-stats{padding:10px 14px;border-bottom:1px solid #334155;font-size:12px;line-height:1.8}
+    .sb-stats b{font-weight:700}
+    .sb-ctrl{padding:10px 14px;border-bottom:1px solid #334155}
+    .sb-ctrl label{display:block;font-size:12px;margin-bottom:6px}
+    .sb-ctrl input[type="text"]{width:100%;padding:6px 8px;border:1px solid #475569;border-radius:6px;background:#0f172a;color:#e2e8f0}
+    .sb-btns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px}
+    .btn{border:1px solid #475569;background:#334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:11px;cursor:pointer}
+    .btn:hover{opacity:.9}
+    #nav{flex:1;overflow:auto;padding:8px 0}
+    .nav-item{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;font-size:12px;cursor:pointer}
+    .nav-item:hover{background:#334155}
+    .badge{display:inline-block;min-width:24px;text-align:center;padding:2px 6px;border-radius:999px;background:#475569;font-size:10px}
+    .header{background:linear-gradient(135deg,#0f4c81,#2563eb);color:#fff;border-radius:10px;padding:14px 16px;display:flex;justify-content:space-between;gap:16px;align-items:center}
+    .header .app{font-size:13px;line-height:1.6}
+    .header .title{font-size:17px;font-weight:700}
+    .meta{margin:10px 0 14px;font-size:12px;color:#64748b}
+    body.dark .meta{color:#94a3b8}
+    .summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+    .pill{border:1px solid var(--border);border-radius:999px;padding:4px 9px;font-size:11px;background:var(--card)}
+    .warn{font-size:11px;color:#b45309}
+    .sec{border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--card);margin-bottom:12px}
+    .sec-head{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;background:var(--pad);font-size:12px;font-weight:700;cursor:pointer}
+    .sec-meta{font-size:10px;color:#64748b}
+    body.dark .sec-meta{color:#94a3b8}
+    .diff-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px}
+    .diff-table th,.diff-table td{border-bottom:1px solid var(--border);padding:6px 8px;vertical-align:top;text-align:left}
+    .diff-table th{position:sticky;top:0;background:var(--card);z-index:1}
+    .type{font-weight:700}
+    .type.added{color:#166534}
+    .type.removed{color:#b91c1c}
+    .type.changed{color:#92400e}
+    .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:#64748b}
+    body.dark .path{color:#94a3b8}
+    .cell{padding:0;overflow:hidden}
+    .scroll{max-height:330px;overflow:auto}
+    .line{display:flex;min-height:1.5em;line-height:1.5;padding:0 6px;white-space:pre-wrap;word-break:break-word}
+    .line.add{background:var(--add);color:var(--add-fg)}
+    .line.del{background:var(--del);color:var(--del-fg)}
+    .line.pad{background:var(--pad);opacity:.72}
+    .ln{min-width:34px;display:inline-block;text-align:right;margin-right:8px;padding-right:4px;border-right:1px solid var(--border);font-size:10px;color:#64748b;user-select:none;flex-shrink:0}
+    body.dark .ln{color:#94a3b8}
+    .blk{margin:0;padding:8px;white-space:pre-wrap;word-break:break-word;font-size:11px}
+    .blk.add{background:var(--add);color:var(--add-fg)}
+    .blk.del{background:var(--del);color:var(--del-fg)}
+    .blk.empty{font-style:italic;color:#64748b}
+    body.dark .blk.empty{color:#94a3b8}
+    mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:2px;padding:0 1px}
+    mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:2px;padding:0 1px}
+    .no-diff{text-align:center;font-size:14px;padding:30px;color:#15803d;background:var(--card);border:1px solid var(--border);border-radius:10px}
+    @media print{
+      aside{display:none!important}
+      body{display:block}
+      main{padding:8px}
+      .btn{display:none!important}
+    }
   </style>
 </head>
 <body>
-  <h1>kintone差分レポート</h1>
-  <div class="meta">
-    <div>Generated At: ${esc(new Date().toISOString())}</div>
-    <div>Source: App ${esc(sourceBundle.appId)} / Target: App ${esc(targetBundle.appId)}</div>
-    <div>Scopes: ${esc(sectionText || '-')}</div>
-    <div>Ignore Keys: ${esc(ignoreKeys || '-')}</div>
-  </div>
-  <div class="sum">
-    <span class="pill">Total: ${summary.total}</span>
-    <span class="pill">Added: ${summary.added}</span>
-    <span class="pill">Removed: ${summary.removed}</span>
-    <span class="pill">Changed: ${summary.changed}</span>
-    <span class="pill">Moved: ${summary.moved}</span>
-  </div>
-  <table>
-    <thead><tr><th>Section</th><th>Type</th><th>Path</th><th>Source</th><th>Target</th></tr></thead>
-    <tbody>${bodyRows || '<tr><td colspan="5">差分なし</td></tr>'}</tbody>
-  </table>
+  <aside>
+    <div class="sb-head">
+      差分レポート
+      <div class="sb-meta">
+        Generated: ${esc(reportMeta.generatedAt)}<br>
+        Scopes: ${esc(sectionText || '-')}
+      </div>
+    </div>
+    <div class="sb-stats">
+      <div>Total: <b id="stat-total">${summary.total}</b></div>
+      <div>Added: <b id="stat-added">${summary.added}</b></div>
+      <div>Removed: <b id="stat-removed">${summary.removed}</b></div>
+      <div>Changed: <b id="stat-changed">${summary.changed}</b></div>
+      <div>Moved: <b id="stat-moved">${summary.moved}</b></div>
+    </div>
+    <div class="sb-ctrl">
+      <label><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
+      <label><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
+      <input type="text" id="search" placeholder="Path / 値を検索">
+      <div class="sb-btns">
+        <button class="btn" id="collapseBtn">全折畳</button>
+        <button class="btn" id="expandBtn">全展開</button>
+        <button class="btn" id="themeBtn">テーマ切替</button>
+        <button class="btn" id="copyBtn">差分コピー</button>
+        <button class="btn" id="patchBtn" style="grid-column:span 2">パッチJSON出力</button>
+      </div>
+    </div>
+    <div id="nav"></div>
+  </aside>
+  <main>
+    <div class="header">
+      <div class="app">
+        <div class="title">Source App ${esc(reportMeta.source.appId || '-')}</div>
+        Guest: ${esc(reportMeta.source.guestId || '(通常空間)')} / Preview: ${reportMeta.source.preview ? 'Yes' : 'No'}
+      </div>
+      <div style="font-size:28px;opacity:.85">⇄</div>
+      <div class="app" style="text-align:right">
+        <div class="title">Target App ${esc(reportMeta.target.appId || '-')}</div>
+        Guest: ${esc(reportMeta.target.guestId || '(通常空間)')} / Preview: ${reportMeta.target.preview ? 'Yes' : 'No'}
+      </div>
+    </div>
+    <div class="meta">
+      Ignore Keys: ${esc(reportMeta.ignoreKeys || '-')}
+    </div>
+    <div class="summary">
+      <span class="pill">Total ${summary.total}</span>
+      <span class="pill">Added ${summary.added}</span>
+      <span class="pill">Removed ${summary.removed}</span>
+      <span class="pill">Changed ${summary.changed}</span>
+      <span class="pill">Moved ${summary.moved}</span>
+    </div>
+    ${reportMeta.truncated ? `<div class="warn">※ 出力負荷を抑えるため、先頭 ${reportMeta.renderedRows} 件のみをレポートに含めています（元件数 ${reportMeta.totalRows} 件）。</div>` : ''}
+    <div id="main"></div>
+  </main>
+  <script>${logicScript}</script>
 </body>
 </html>`;
   }
@@ -750,18 +1323,52 @@
         #${TOOL_ID} .chips{display:flex;gap:6px;flex-wrap:wrap}
         #${TOOL_ID} .chip{display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border:1px solid #d6dee8;border-radius:999px;font-size:11px;background:#fff}
         #${TOOL_ID} .status{font-size:12px;padding:8px 10px;border-radius:8px;background:#e2e8f0;color:#0f172a}
-        #${TOOL_ID} .result{max-height:300px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff}
+        #${TOOL_ID} .result{max-height:420px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff}
         #${TOOL_ID} table{width:100%;border-collapse:collapse;font-size:11px}
         #${TOOL_ID} th,#${TOOL_ID} td{border-bottom:1px solid #e5eaf0;padding:6px 8px;vertical-align:top;text-align:left}
         #${TOOL_ID} th{position:sticky;top:0;background:#f8fafc;z-index:1}
         #${TOOL_ID} .added{color:#166534}
         #${TOOL_ID} .removed{color:#b91c1c}
         #${TOOL_ID} .changed{color:#92400e}
+        #${TOOL_ID} .diff-view{--dv-bg:#f8fafc;--dv-card:#fff;--dv-border:#dbe3ed;--dv-text:#0f172a;--dv-sub:#64748b;--dv-add:#e8f5e9;--dv-add-txt:#166534;--dv-del:#fee2e2;--dv-del-txt:#991b1b;--dv-pad:#f1f5f9;--dv-mark-add:#bbf7d0;--dv-mark-del:#fecaca;background:var(--dv-bg);color:var(--dv-text)}
+        #${TOOL_ID} .diff-view.dark{--dv-bg:#0f172a;--dv-card:#111827;--dv-border:#334155;--dv-text:#e2e8f0;--dv-sub:#94a3b8;--dv-add:#083344;--dv-add-txt:#5eead4;--dv-del:#450a0a;--dv-del-txt:#fca5a5;--dv-pad:#1e293b;--dv-mark-add:#134e4a;--dv-mark-del:#7f1d1d}
+        #${TOOL_ID} .diff-view .diff-summary{padding:8px 10px;border-bottom:1px solid var(--dv-border);font-size:11px;background:var(--dv-card);display:flex;gap:8px;flex-wrap:wrap}
+        #${TOOL_ID} .diff-view .diff-pill{border:1px solid var(--dv-border);border-radius:999px;padding:3px 8px}
+        #${TOOL_ID} .diff-view .diff-info{color:var(--dv-sub)}
+        #${TOOL_ID} .diff-view .diff-empty{padding:12px;font-size:12px;color:var(--dv-sub)}
+        #${TOOL_ID} .diff-view .diff-sec{border-bottom:1px solid var(--dv-border);background:var(--dv-card)}
+        #${TOOL_ID} .diff-view .diff-sec-head{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 10px;font-size:12px;font-weight:700;cursor:pointer;background:var(--dv-pad)}
+        #${TOOL_ID} .diff-view .diff-sec-head:hover{opacity:.92}
+        #${TOOL_ID} .diff-view .diff-sec-meta{font-size:10px;color:var(--dv-sub);font-weight:600}
+        #${TOOL_ID} .diff-view .diff-table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+        #${TOOL_ID} .diff-view .diff-table th,#${TOOL_ID} .diff-view .diff-table td{border-bottom:1px solid var(--dv-border);padding:6px 8px;vertical-align:top;text-align:left}
+        #${TOOL_ID} .diff-view .diff-table th{position:sticky;top:0;background:var(--dv-card);z-index:1}
+        #${TOOL_ID} .diff-view .diff-type{font-weight:700}
+        #${TOOL_ID} .diff-view .diff-path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--dv-sub)}
+        #${TOOL_ID} .diff-view .diff-cell{padding:0;overflow:hidden}
+        #${TOOL_ID} .diff-view .diff-scroll{max-height:300px;overflow:auto}
+        #${TOOL_ID} .diff-view .diff-line{display:flex;min-height:1.5em;line-height:1.5;padding:0 6px;white-space:pre-wrap;word-break:break-word}
+        #${TOOL_ID} .diff-view .diff-line.add{background:var(--dv-add);color:var(--dv-add-txt)}
+        #${TOOL_ID} .diff-view .diff-line.del{background:var(--dv-del);color:var(--dv-del-txt)}
+        #${TOOL_ID} .diff-view .diff-line.pad{background:var(--dv-pad);opacity:.7}
+        #${TOOL_ID} .diff-view .diff-ln{min-width:34px;display:inline-block;text-align:right;margin-right:8px;padding-right:4px;border-right:1px solid var(--dv-border);font-size:10px;color:var(--dv-sub);user-select:none;flex-shrink:0}
+        #${TOOL_ID} .diff-view .diff-pre{margin:0;padding:8px;white-space:pre-wrap;word-break:break-word;font-size:11px}
+        #${TOOL_ID} .diff-view .diff-pre.add{background:var(--dv-add);color:var(--dv-add-txt)}
+        #${TOOL_ID} .diff-view .diff-pre.del{background:var(--dv-del);color:var(--dv-del-txt)}
+        #${TOOL_ID} .diff-view .diff-pre.empty{color:var(--dv-sub);font-style:italic}
+        #${TOOL_ID} .diff-view mark.diff-char-add{background:var(--dv-mark-add);color:var(--dv-add-txt);padding:0 1px;border-radius:2px}
+        #${TOOL_ID} .diff-view mark.diff-char-del{background:var(--dv-mark-del);color:var(--dv-del-txt);padding:0 1px;border-radius:2px}
+        #${TOOL_ID}.busy .btn,#${TOOL_ID}.busy .tab,#${TOOL_ID}.busy .x{pointer-events:none;opacity:.62}
+        #${TOOL_ID} .busy-overlay{position:absolute;inset:0;z-index:40;background:rgba(15,23,42,.2);display:none;align-items:center;justify-content:center}
+        #${TOOL_ID}.busy .busy-overlay{display:flex}
+        #${TOOL_ID} .busy-chip{display:flex;align-items:center;gap:10px;background:#0f172a;color:#fff;border-radius:999px;padding:10px 14px;font-size:12px;font-weight:700;box-shadow:0 8px 22px rgba(15,23,42,.32)}
+        #${TOOL_ID} .busy-spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:999px;animation:${TOOL_ID}-spin .8s linear infinite}
+        @keyframes ${TOOL_ID}-spin{to{transform:rotate(360deg)}}
       </style>
       <div class="h">
         <div>
           <div class="ht">kintone 統合変更ツール</div>
-          <div class="hs">差分比較 / プレビュー反映 / フィールド追加 / 設計書出力 / 設定取得JS / レコード管理 / プロセス図解 / ER図解</div>
+          <div class="hs">差分比較 / プレビュー反映 / フィールド追加 / JS/CSS設定 / 設計書 / 設定一括取得 / レコード管理 / プロセス図 / ER図 / SQL実行</div>
         </div>
         <button class="x" data-act="close">閉じる</button>
       </div>
@@ -789,9 +1396,19 @@
             <label class="chip"><input type="checkbox" id="u_sourcePreview"> Sourceはプレビュー</label>
             <label class="chip"><input type="checkbox" id="u_targetPreview" checked> Targetはプレビュー</label>
           </div>
+          <div class="btns" style="margin-top:8px">
+            <button class="btn sub" data-act="setSourceCurrent">Source=現在アプリ</button>
+            <button class="btn sub" data-act="copySourceToTarget">Target←Source</button>
+            <button class="btn sub" data-act="swapSourceTarget">Source/Target入替</button>
+          </div>
           <div style="margin-top:8px">
-            <label>Lookup AppID変換（任意 / JSON）</label>
-            <input type="text" id="u_lookupMap" placeholder='{"77":"177","85":"185"}'>
+            <label>Lookup参照先AppID変換（任意）</label>
+            <div class="muted" style="margin-bottom:4px">Lookupフィールドを反映する際、参照先アプリIDを自動変換します。開発→本番など環境間でAppIDが異なる場合に設定してください。</div>
+            <div id="u_lookupMapRows"></div>
+            <div class="btns" style="margin-top:4px">
+              <button class="btn sub" data-act="addLookupMapRow">+ 変換ルールを追加</button>
+            </div>
+            <input type="hidden" id="u_lookupMap">
           </div>
           <div class="muted" style="margin-top:6px">共通設定は全タブで使います。必要な順番: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
         </div>
@@ -799,24 +1416,25 @@
         <div class="card">
           <div class="tabs">
             <div class="tab-group">
-              <div class="tab-group-lbl">設計・反映</div>
+              <div class="tab-group-lbl">変更・反映</div>
               <button class="tab active" data-tab="diff">差分比較</button>
               <button class="tab" data-tab="reflect">プレビュー反映</button>
               <button class="tab" data-tab="field">フィールド追加</button>
-              <button class="tab" data-tab="jsconfig">設定取得JS</button>
+              <button class="tab" data-tab="jsconfig">JS/CSS設定</button>
             </div>
             
             <div class="tab-group">
-              <div class="tab-group-lbl">分析・可視化</div>
-              <button class="tab" data-tab="er">ER図解</button>
-              <button class="tab" data-tab="processFlow">プロセス図解</button>
-              <button class="tab" data-tab="design">設計書出力</button>
+              <div class="tab-group-lbl">可視化・出力</div>
+              <button class="tab" data-tab="er">ER図</button>
+              <button class="tab" data-tab="processFlow">プロセス図</button>
+              <button class="tab" data-tab="design">設計書</button>
+              <button class="tab" data-tab="settingsExport">設定一括取得</button>
             </div>
             
             <div class="tab-group">
               <div class="tab-group-lbl">データ運用</div>
               <button class="tab" data-tab="recordMgr">レコード管理</button>
-              <button class="tab" data-tab="sql">SQLランナー</button>
+              <button class="tab" data-tab="sql">SQL実行</button>
             </div>
           </div>
 
@@ -831,23 +1449,42 @@
               <div class="chips" id="u_diffScopes"></div>
             </div>
             <div style="margin-top:8px">
-              <label>無視キー（カンマ区切り）</label>
-              <input type="text" id="u_ignoreKeys" placeholder="id, revision, createdAt, modifiedAt">
-            </div>
-            <div class="grid2" style="margin-top:8px">
-              <div>
-                <label>無視プロファイル</label>
-                <select id="u_ignoreProfileSelect"></select>
+              <label>無視キー（比較時にスキップしたい項目）</label>
+              <div style="font-size:11px;color:#64748b;margin-top:2px">比較時に値が違っても無視するJSONキー名を指定します。以下のキーは常に自動で除外されます。</div>
+              <div class="chips" style="min-height:28px;padding:4px 6px;margin-top:4px">
+                <span style="font-size:11px;color:#94a3b8;margin-right:4px;line-height:22px">常時除外:</span>
+                <span class="chip" style="background:#f1f5f9;color:#64748b;user-select:none">id</span>
+                <span class="chip" style="background:#f1f5f9;color:#64748b;user-select:none">appid</span>
+                <span class="chip" style="background:#f1f5f9;color:#64748b;user-select:none">revision</span>
+                <span class="chip" style="background:#f1f5f9;color:#64748b;user-select:none">createdat</span>
+                <span class="chip" style="background:#f1f5f9;color:#64748b;user-select:none">creator</span>
+                <span class="chip" style="background:#f1f5f9;color:#64748b;user-select:none">modifiedat</span>
+                <span class="chip" style="background:#f1f5f9;color:#64748b;user-select:none">modifier</span>
               </div>
-              <div>
-                <label>保存名</label>
-                <input type="text" id="u_ignoreProfileName" placeholder="例: 標準無視キー">
+              <div style="font-size:11px;color:#64748b;margin-top:6px">追加で無視したいキー名（よく使うプリセット）:</div>
+              <div class="btns" style="margin-top:2px;flex-wrap:wrap">
+                <button class="btn sub" data-act="addPresetKey" data-key="code" style="font-size:11px;padding:2px 8px">＋code</button>
+                <button class="btn sub" data-act="addPresetKey" data-key="index" style="font-size:11px;padding:2px 8px">＋index</button>
+                <button class="btn sub" data-act="addPresetKey" data-key="enabled" style="font-size:11px;padding:2px 8px">＋enabled</button>
+                <button class="btn sub" data-act="addPresetKey" data-key="name" style="font-size:11px;padding:2px 8px">＋name</button>
+                <button class="btn sub" data-act="addPresetKey" data-key="label" style="font-size:11px;padding:2px 8px">＋label</button>
+              </div>
+              <div style="font-size:11px;color:#64748b;margin-top:6px">追加した無視キー（×で削除）:</div>
+              <input type="hidden" id="u_ignoreKeys">
+              <div id="u_ignoreKeysTags" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:4px 6px;background:#fff;margin-top:4px;align-items:center"></div>
+              <div class="btns" style="margin-top:4px">
+                <input type="text" id="u_ignoreKeyInput" placeholder="キー名を入力してEnterまたは追加" style="flex:1;min-width:0">
+                <button class="btn sub" data-act="addIgnoreKey">追加</button>
               </div>
             </div>
-            <div class="btns">
-              <button class="btn sub" data-act="loadIgnoreProfile">プロファイル読込</button>
-              <button class="btn sub" data-act="saveIgnoreProfile">プロファイル保存</button>
-              <button class="btn sub" data-act="deleteIgnoreProfile">プロファイル削除</button>
+            <div style="margin-top:8px">
+              <label>プロファイル（無視キーのセットを保存・読込）</label>
+              <div class="btns" style="margin-top:4px">
+                <select id="u_ignoreProfileSelect" style="flex:1;min-width:0"></select>
+                <input type="text" id="u_ignoreProfileName" placeholder="保存名" style="flex:1;min-width:0">
+                <button class="btn sub" data-act="saveIgnoreProfile">保存</button>
+                <button class="btn sub" data-act="deleteIgnoreProfile">削除</button>
+              </div>
             </div>
             <div class="kv" id="u_bundleState">Source: API取得 / Target: API取得</div>
             <div class="btns">
@@ -861,6 +1498,21 @@
               <button class="btn sub" data-act="exportDiffJson">差分JSON保存</button>
               <button class="btn sub" data-act="exportDiffHtml">差分HTML保存</button>
               <button class="btn sub" data-act="exportPatchJson">パッチJSON保存</button>
+            </div>
+            <div class="grid2" style="margin-top:8px">
+              <div>
+                <label>比較ビュー検索（Path / 値）</label>
+                <input type="text" id="u_diffSearch" placeholder="例: fieldSettings.properties.customer_code">
+              </div>
+              <div>
+                <label>比較ビュー表示</label>
+                <div class="btns" style="margin-top:0">
+                  <label class="chip"><input type="checkbox" id="u_charDiff" checked> 文字単位ハイライト</label>
+                  <button class="btn sub" data-act="toggleDiffTheme" id="u_diffThemeBtn">比較テーマ: Light</button>
+                  <button class="btn sub" data-act="collapseDiffSections">全折畳</button>
+                  <button class="btn sub" data-act="expandDiffSections">全展開</button>
+                </div>
+              </div>
             </div>
             <input type="file" id="u_sourceBundleFile" accept=".json" style="display:none">
             <input type="file" id="u_targetBundleFile" accept=".json" style="display:none">
@@ -958,7 +1610,7 @@
           </div>
 
           <div class="pane" data-pane="jsconfig">
-            <div class="step">JS/CSSカスタマイズ設定の取得・表示・反映</div>
+            <div class="step">JS/CSS設定の取得・表示・反映</div>
             <div style="margin-top:10px" class="muted">Source App IDのJS/CSSカスタマイズ設定（<code>/app/customize.json</code>）を取得・表示します。編集後にTarget(Preview)へ反映も可能です。</div>
             <div class="grid2" style="margin-top:8px">
               <label class="chip"><input type="checkbox" id="u_jsconfigPreview"> プレビュー版を取得</label>
@@ -978,10 +1630,10 @@
             <input type="file" id="u_jsconfigFile" accept=".json" style="display:none">
 
             <hr style="margin:20px 0;border:none;border-top:1px dashed #ccc"/>
-            <div class="step">全アプリのカスタマイズJS一括DL (Target Space)</div>
+            <div class="step">全アプリのJS/CSS一括ダウンロード（Target）</div>
             <div style="margin-top:10px" class="muted">現在アクセスしているスペース（またはゲストスペース）内の全アプリをスキャンし、JS/CSSファイルの添付を一括でZIP化します。</div>
             <div class="btns" style="margin-top:10px">
-              <button class="btn ok" data-act="runBatchJsConfigDownload">全アプリのJSを一括DL (ZIP)</button>
+              <button class="btn ok" data-act="runBatchJsConfigDownload">全アプリのJS/CSSを一括ダウンロード（ZIP）</button>
             </div>
           </div>
 
@@ -1066,15 +1718,15 @@
 
           
           <div class="pane" data-pane="sql">
-            <div class="step">Kintone SQL ランナー (Source App ベース)</div>
+            <div class="step">Kintone SQL 実行 (Source App ベース)</div>
             <div style="margin-top:10px" class="muted">Alasqlを用いて、Kintone上でSQLライクにデータアクセス・集計を行います。</div>
             <div class="btns" style="margin-top:10px">
-              <button class="btn ok" data-act="launchKintoneSql">SQLランナーエディタを開く</button>
+              <button class="btn ok" data-act="launchKintoneSql">SQLエディタを開く</button>
             </div>
           </div>
 
           <div class="pane" data-pane="processFlow">
-            <div class="step">プロセス管理の図解可視化（Source App）</div>
+            <div class="step">プロセス管理の可視化（Source App）</div>
             <div style="margin-top:10px" class="muted">Source Appのプロセス管理設定からフロー図（Mermaid）を生成し表示します。</div>
             <div class="btns">
               <button class="btn" data-act="renderProcessFlow">フロー図を取得・描画</button>
@@ -1085,10 +1737,49 @@
                 <textarea id="u_mermaidText" style="min-height:200px" readonly></textarea>
               </div>
               <div>
-                <label>フロー図解プレビュー</label>
+                <label>フロー図プレビュー</label>
                 <div id="u_mermaidView" style="min-height:200px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;padding:10px;overflow:auto"></div>
               </div>
             </div>
+          </div>
+
+          <div class="pane" data-pane="settingsExport">
+            <div class="step">設定の一括取得（複数アプリ）</div>
+            <div style="margin-top:10px" class="muted">複数アプリの設定をまとめて取得し、JSONまたはZIPで出力します（JS/CSS設定は「JS/CSS設定」タブで取得）。</div>
+            <div class="grid2" style="margin-top:8px">
+              <div>
+                <label>対象App ID（カンマ/改行区切り）</label>
+                <textarea id="u_settingsExportAppIds" style="min-height:88px" placeholder="74, 120, 305"></textarea>
+                <div class="inline" style="margin-top:8px">
+                  <input type="text" id="u_settingsExportSearchKeyword" placeholder="アプリ名で検索" style="flex:1">
+                  <button class="btn sub" data-act="settingsExportSearchApps">検索</button>
+                </div>
+                <div class="result" id="u_settingsExportSearchResult" style="max-height:140px;margin-top:6px"></div>
+              </div>
+              <div>
+                <label>Guest ID（任意 / 全App共通）</label>
+                <input type="text" id="u_settingsExportGuest" placeholder="空で通常空間">
+                <label class="chip" style="margin-top:8px"><input type="checkbox" id="u_settingsExportPreview"> プレビュー設定を取得</label>
+                <div class="btns" style="margin-top:8px">
+                  <button class="btn sub" data-act="settingsExportUseCurrent">現在Appを追加</button>
+                  <button class="btn sub" data-act="settingsExportUseSource">Sourceを追加</button>
+                  <button class="btn sub" data-act="settingsExportUseTarget">Targetを追加</button>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:10px">
+              <label>取得対象セクション</label>
+              <div class="btns" style="margin-top:4px">
+                <button class="btn sub" data-act="settingsExportScopeAll">全選択</button>
+                <button class="btn sub" data-act="settingsExportScopeNone">全解除</button>
+              </div>
+              <div class="chips" id="u_settingsExportScopes"></div>
+            </div>
+            <div class="btns">
+              <button class="btn" data-act="runSettingsExportJson">JSON出力</button>
+              <button class="btn dark" data-act="runSettingsExportZip">ZIP出力</button>
+            </div>
+            <div class="result" id="u_settingsExportResult" style="max-height:220px;margin-top:8px"></div>
           </div>
         </div>
 
@@ -1097,6 +1788,12 @@
         <div class="card">
           <div style="font-size:12px;font-weight:700;margin-bottom:6px">結果</div>
           <div class="result" id="u_result"></div>
+        </div>
+      </div>
+      <div class="busy-overlay" id="u_busyOverlay">
+        <div class="busy-chip">
+          <span class="busy-spinner"></span>
+          <span id="u_busyText">処理中...</span>
         </div>
       </div>
     `;
@@ -1122,6 +1819,9 @@
     ignoreKeys: $('#u_ignoreKeys'),
     ignoreProfileSelect: $('#u_ignoreProfileSelect'),
     ignoreProfileName: $('#u_ignoreProfileName'),
+    diffSearch: $('#u_diffSearch'),
+    charDiff: $('#u_charDiff'),
+    diffThemeBtn: $('#u_diffThemeBtn'),
     bundleState: $('#u_bundleState'),
     sourceBundleFile: $('#u_sourceBundleFile'),
     targetBundleFile: $('#u_targetBundleFile'),
@@ -1150,10 +1850,19 @@
     jsconfigResult: $('#u_jsconfigResult'),
     jsconfigPreview: $('#u_jsconfigPreview'),
     jsconfigDeployAfter: $('#u_jsconfigDeployAfter'),
+    settingsExportAppIds: $('#u_settingsExportAppIds'),
+    settingsExportSearchKeyword: $('#u_settingsExportSearchKeyword'),
+    settingsExportSearchResult: $('#u_settingsExportSearchResult'),
+    settingsExportGuest: $('#u_settingsExportGuest'),
+    settingsExportPreview: $('#u_settingsExportPreview'),
+    settingsExportScopes: $('#u_settingsExportScopes'),
+    settingsExportResult: $('#u_settingsExportResult'),
     genCount: $('#u_genCount'),
     recordMgrResult: $('#u_recordMgrResult'),
     mermaidText: $('#u_mermaidText'),
-    mermaidView: $('#u_mermaidView')
+    mermaidView: $('#u_mermaidView'),
+    busyOverlay: $('#u_busyOverlay'),
+    busyText: $('#u_busyText')
   };
 
   function setStatus(msg, isError) {
@@ -1162,33 +1871,302 @@
     ui.status.style.color = isError ? '#7f1d1d' : '#0f172a';
   }
 
+  function setBusy(isBusy, message) {
+    if (message) ui.busyText.textContent = message;
+    root.classList.toggle('busy', !!isBusy);
+  }
+
+  function syncDiffThemeButton() {
+    if (!ui.diffThemeBtn) return;
+    ui.diffThemeBtn.textContent = `比較テーマ: ${state.diffViewTheme === 'dark' ? 'Dark' : 'Light'}`;
+  }
+
+  function stringifyForDiff(value) {
+    if (value === undefined) return 'undefined';
+    const out = JSON.stringify(value, null, 2);
+    return out == null ? String(value) : out;
+  }
+
+  function diffRowMatchesKeyword(row, keyword) {
+    if (!keyword) return true;
+    const safe = (v) => {
+      try { return v === undefined ? 'undefined' : JSON.stringify(v); }
+      catch { return String(v); }
+    };
+    const text = [
+      row.section || '',
+      row.sectionKey || '',
+      row.path || '',
+      safe(row.left),
+      safe(row.right)
+    ].join('\n').toLowerCase();
+    return text.includes(keyword);
+  }
+
+  function buildLineDiffOps(leftLines, rightLines) {
+    const n = leftLines.length;
+    const m = rightLines.length;
+    if (n * m > LINE_DIFF_MAX_CELLS) return null;
+
+    const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = leftLines[i] === rightLines[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+
+    const ops = [];
+    let i = 0;
+    let j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && leftLines[i] === rightLines[j]) {
+        ops.push({ type: 'same', left: leftLines[i], right: rightLines[j] });
+        i += 1;
+        j += 1;
+        continue;
+      }
+
+      const down = i < n ? dp[i + 1][j] : -1;
+      const right = j < m ? dp[i][j + 1] : -1;
+      const diag = (i < n && j < m) ? dp[i + 1][j + 1] : -1;
+      if (i < n && j < m && diag >= down && diag >= right) {
+        ops.push({ type: 'replace', left: leftLines[i], right: rightLines[j] });
+        i += 1;
+        j += 1;
+        continue;
+      }
+
+      if (j < m && (i >= n || right >= down)) {
+        ops.push({ type: 'add', right: rightLines[j] });
+        j += 1;
+      } else if (i < n) {
+        ops.push({ type: 'del', left: leftLines[i] });
+        i += 1;
+      } else {
+        break;
+      }
+    }
+    return ops;
+  }
+
+  function buildCharDiffHtml(leftText, rightText) {
+    const a = [...String(leftText || '')];
+    const b = [...String(rightText || '')];
+    if (!a.length || !b.length) return null;
+    if (a.length * b.length > CHAR_DIFF_MAX_CELLS) return null;
+
+    const dp = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+
+    const ops = [];
+    let i = a.length;
+    let j = b.length;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+        ops.push({ type: 'same', ch: a[i - 1] });
+        i -= 1;
+        j -= 1;
+      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        ops.push({ type: 'add', ch: b[j - 1] });
+        j -= 1;
+      } else if (i > 0) {
+        ops.push({ type: 'del', ch: a[i - 1] });
+        i -= 1;
+      } else {
+        break;
+      }
+    }
+    ops.reverse();
+
+    let left = '';
+    let right = '';
+    for (const op of ops) {
+      if (op.type === 'same') {
+        const ch = esc(op.ch);
+        left += ch;
+        right += ch;
+      } else if (op.type === 'del') {
+        left += `<mark class="diff-char-del">${esc(op.ch)}</mark>`;
+      } else {
+        right += `<mark class="diff-char-add">${esc(op.ch)}</mark>`;
+      }
+    }
+    return { left, right };
+  }
+
+  function renderChangedColumns(row, useCharDiff) {
+    const leftText = stringifyForDiff(row.left);
+    const rightText = stringifyForDiff(row.right);
+    const leftLines = leftText.split('\n');
+    const rightLines = rightText.split('\n');
+    const ops = buildLineDiffOps(leftLines, rightLines);
+    if (!ops) {
+      return {
+        left: `<pre class="diff-pre del">${esc(leftText)}</pre>`,
+        right: `<pre class="diff-pre add">${esc(rightText)}</pre>`
+      };
+    }
+
+    let leftHtml = '';
+    let rightHtml = '';
+    let leftNo = 0;
+    let rightNo = 0;
+    for (const op of ops) {
+      if (op.type === 'same') {
+        leftNo += 1;
+        rightNo += 1;
+        leftHtml += `<div class="diff-line"><span class="diff-ln">${leftNo}</span>${esc(op.left || '')}</div>`;
+        rightHtml += `<div class="diff-line"><span class="diff-ln">${rightNo}</span>${esc(op.right || '')}</div>`;
+        continue;
+      }
+      if (op.type === 'replace') {
+        leftNo += 1;
+        rightNo += 1;
+        const charDiff = useCharDiff ? buildCharDiffHtml(op.left, op.right) : null;
+        leftHtml += `<div class="diff-line del"><span class="diff-ln">${leftNo}</span>${charDiff ? charDiff.left : esc(op.left || '')}</div>`;
+        rightHtml += `<div class="diff-line add"><span class="diff-ln">${rightNo}</span>${charDiff ? charDiff.right : esc(op.right || '')}</div>`;
+        continue;
+      }
+      if (op.type === 'del') {
+        leftNo += 1;
+        leftHtml += `<div class="diff-line del"><span class="diff-ln">${leftNo}</span>${esc(op.left || '')}</div>`;
+        rightHtml += '<div class="diff-line pad"><span class="diff-ln"></span></div>';
+        continue;
+      }
+      rightNo += 1;
+      leftHtml += '<div class="diff-line pad"><span class="diff-ln"></span></div>';
+      rightHtml += `<div class="diff-line add"><span class="diff-ln">${rightNo}</span>${esc(op.right || '')}</div>`;
+    }
+
+    return {
+      left: `<div class="diff-scroll">${leftHtml}</div>`,
+      right: `<div class="diff-scroll">${rightHtml}</div>`
+    };
+  }
+
+  function renderRowColumns(row, useCharDiff) {
+    if (row.type === 'added') {
+      return {
+        left: '<pre class="diff-pre empty">（なし）</pre>',
+        right: `<pre class="diff-pre add">${esc(stringifyForDiff(row.right))}</pre>`
+      };
+    }
+    if (row.type === 'removed') {
+      return {
+        left: `<pre class="diff-pre del">${esc(stringifyForDiff(row.left))}</pre>`,
+        right: '<pre class="diff-pre empty">（なし）</pre>'
+      };
+    }
+    return renderChangedColumns(row, useCharDiff);
+  }
+
+  function groupDiffRowsBySection(rows) {
+    const labelByKey = new Map(SECTION_DEFS.map((d) => [d.key, d.label]));
+    const orderByKey = new Map(SECTION_DEFS.map((d, i) => [d.key, i]));
+    const grouped = new Map();
+
+    for (const row of rows) {
+      const key = row.sectionKey || row.section || 'Unknown';
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          key,
+          label: labelByKey.get(key) || row.section || key,
+          rows: []
+        });
+      }
+      grouped.get(key).rows.push(row);
+    }
+
+    return [...grouped.values()].sort((a, b) => {
+      const oa = orderByKey.has(a.key) ? orderByKey.get(a.key) : 9999;
+      const ob = orderByKey.has(b.key) ? orderByKey.get(b.key) : 9999;
+      if (oa !== ob) return oa - ob;
+      return String(a.label).localeCompare(String(b.label));
+    });
+  }
+
   function renderResultRows(rows) {
     const summary = summarizeRows(rows);
+    syncDiffThemeButton();
+
+    const rawKeyword = String(ui.diffSearch?.value || '').trim();
+    const keyword = rawKeyword.toLowerCase();
+    const useCharDiff = !!ui.charDiff?.checked;
+    const filteredRows = keyword ? rows.filter((r) => diffRowMatchesKeyword(r, keyword)) : rows;
+    const MAX_RENDER_ROWS = 500;
+    const renderRows = filteredRows.slice(0, MAX_RENDER_ROWS);
+    const grouped = groupDiffRowsBySection(renderRows);
+    const omitted = filteredRows.length - renderRows.length;
+
+    const summaryHtml = `
+      <div class="diff-summary">
+        <span class="diff-pill">Total ${summary.total}</span>
+        <span class="diff-pill">Added ${summary.added}</span>
+        <span class="diff-pill">Removed ${summary.removed}</span>
+        <span class="diff-pill">Changed ${summary.changed}</span>
+        <span class="diff-pill">Moved ${summary.moved}</span>
+        <span class="diff-info">表示 ${filteredRows.length}/${rows.length}${omitted > 0 ? ` (先頭${MAX_RENDER_ROWS}件のみ)` : ''}</span>
+        ${rawKeyword ? `<span class="diff-info">Filter: ${esc(rawKeyword)}</span>` : ''}
+      </div>
+    `;
+
     if (!rows.length) {
-      ui.result.innerHTML = '<div style="padding:10px;font-size:12px;color:#15803d">差分はありません。</div>';
+      ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''}">
+        ${summaryHtml}
+        <div class="diff-empty">差分はありません。</div>
+      </div>`;
       return;
     }
-    const top = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">件数: Total ${summary.total} / Added ${summary.added} / Removed ${summary.removed} / Changed ${summary.changed} / Moved ${summary.moved}</div>`;
-    const html = rows.slice(0, 700).map((r) => {
-      const cls = r.type === 'added' ? 'added' : (r.type === 'removed' ? 'removed' : 'changed');
-      const typeLabel = r.moved ? `${r.type}(moved)` : r.type;
-      const srcJson = esc(JSON.stringify(r.left, null, 2));
-      const tgtJson = esc(JSON.stringify(r.right, null, 2));
-      const btnRawSrc = r.left !== undefined ? `<button class="btn sub" style="padding:2px 4px;font-size:10px;margin-bottom:4px" data-copy-val="${esc(JSON.stringify(r.left))}">コピー</button>` : '';
-      const btnRawTgt = r.right !== undefined ? `<button class="btn sub" style="padding:2px 4px;font-size:10px;margin-bottom:4px" data-copy-val="${esc(JSON.stringify(r.right))}">コピー</button>` : '';
 
-      return `<tr>
-        <td>${esc(r.section || '-')}</td>
-        <td class="${cls}">${esc(typeLabel)}</td>
-        <td title="${esc(r.path || '-')}">${esc(r.path || '-')}</td>
-        <td style="vertical-align:top">${btnRawSrc}<pre style="margin:0;white-space:pre-wrap">${srcJson}</pre></td>
-        <td style="vertical-align:top">${btnRawTgt}<pre style="margin:0;white-space:pre-wrap">${tgtJson}</pre></td>
-      </tr>`;
+    if (!filteredRows.length) {
+      ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''}">
+        ${summaryHtml}
+        <div class="diff-empty">検索条件に一致する差分はありません。</div>
+      </div>`;
+      return;
+    }
+
+    const sectionHtml = grouped.map((g) => {
+      const collapsed = state.diffCollapsedSections.has(g.key);
+      const head = `<div class="diff-sec-head" data-diff-sec-toggle="${esc(g.key)}">
+        <span>${collapsed ? '▶' : '▼'} ${esc(g.label)}</span>
+        <span class="diff-sec-meta">${g.rows.length} 件</span>
+      </div>`;
+      if (collapsed) return `<section class="diff-sec">${head}</section>`;
+
+      const rowsHtml = g.rows.map((r) => {
+        const typeLabel = r.moved ? `${r.type}(moved)` : r.type;
+        const typeClass = r.type === 'added' ? 'added' : (r.type === 'removed' ? 'removed' : 'changed');
+        const cols = renderRowColumns(r, useCharDiff);
+        return `<tr>
+          <td class="diff-type ${typeClass}">${esc(typeLabel || '-')}</td>
+          <td class="diff-path" title="${esc(r.path || '-')}">${esc(r.path || '-')}</td>
+          <td class="diff-cell">${cols.left}</td>
+          <td class="diff-cell">${cols.right}</td>
+        </tr>`;
+      }).join('');
+
+      return `<section class="diff-sec">
+        ${head}
+        <table class="diff-table">
+          <thead><tr><th style="width:120px">Type</th><th style="width:260px">Path</th><th>Source</th><th>Target</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </section>`;
     }).join('');
-    ui.result.innerHTML = `${top}<table>
-      <thead><tr><th>Section</th><th>Type</th><th>Path</th><th>Source</th><th>Target</th></tr></thead>
-      <tbody>${html}</tbody>
-    </table>`;
+
+    ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''}">
+      ${summaryHtml}
+      ${sectionHtml}
+    </div>`;
   }
 
   function selectedScopeKeys(container) {
@@ -1238,13 +2216,89 @@
   function renderScopeChips() {
     ui.diffScopes.innerHTML = SECTION_DEFS.map((s) => `<label class="chip"><input type="checkbox" value="${s.key}" checked>${s.label}</label>`).join('');
     ui.applyScopes.innerHTML = SECTION_DEFS.filter((s) => s.put).map((s) => `<label class="chip"><input type="checkbox" value="${s.key}" checked>${s.label}</label>`).join('');
+    ui.settingsExportScopes.innerHTML = SETTINGS_EXPORT_SCOPE_DEFS.map((s) => `<label class="chip"><input type="checkbox" value="${s.key}" checked>${s.label}</label>`).join('');
   }
 
-  function renderIgnoreProfileOptions() {
+  function setSettingsExportScopeSelection(checked) {
+    [...ui.settingsExportScopes.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
+      c.checked = !!checked;
+    });
+    saveCurrentDialogState();
+  }
+
+  function renderIgnoreProfileOptions(selectedName) {
     const profiles = loadIgnoreProfiles();
-    const opts = ['<option value="">-- プロファイル選択 --</option>']
+    const keep = selectedName != null ? String(selectedName) : String(ui.ignoreProfileSelect?.value || '');
+    const opts = ['<option value="">-- プロファイルを選択 --</option>']
       .concat(Object.keys(profiles).sort().map((n) => `<option value="${esc(n)}">${esc(n)}</option>`));
     ui.ignoreProfileSelect.innerHTML = opts.join('');
+    if (keep && Object.prototype.hasOwnProperty.call(profiles, keep)) ui.ignoreProfileSelect.value = keep;
+    else ui.ignoreProfileSelect.value = '';
+  }
+
+  function renderIgnoreKeyChips() {
+    const tags = document.getElementById('u_ignoreKeysTags');
+    if (!tags) return;
+    const val = ui.ignoreKeys.value || '';
+    const keys = val.split(',').map((k) => k.trim()).filter(Boolean);
+    if (keys.length === 0) {
+      tags.innerHTML = '<span style="color:#94a3b8;font-size:11px;padding:2px 0">追加の無視キーなし（上のデフォルトキーは常に除外）</span>';
+      return;
+    }
+    tags.innerHTML = keys.map((k) =>
+      `<span class="chip" style="user-select:none">${esc(k)}<button type="button" style="border:none;background:none;cursor:pointer;padding:0 0 0 4px;font-size:12px;color:#64748b;line-height:1" data-act="removeIgnoreKey" data-key="${esc(k)}">×</button></span>`
+    ).join('');
+  }
+
+  function addIgnoreKeyFromInput() {
+    const input = document.getElementById('u_ignoreKeyInput');
+    if (!input) return;
+    const key = input.value.trim();
+    if (!key) return;
+    const current = (ui.ignoreKeys.value || '').split(',').map((k) => k.trim()).filter(Boolean);
+    if (!current.includes(key)) {
+      current.push(key);
+      ui.ignoreKeys.value = current.join(', ');
+      renderIgnoreKeyChips();
+      saveCurrentDialogState();
+    }
+    input.value = '';
+    input.focus();
+  }
+
+  function renderLookupMapRows() {
+    const container = document.getElementById('u_lookupMapRows');
+    if (!container) return;
+    let map = {};
+    try { map = parseLookupMapInput(ui.lookupMap.value); } catch { map = {}; }
+    const entries = Object.entries(map);
+    if (entries.length === 0) {
+      container.innerHTML = '<div class="muted" style="padding:2px 0">変換ルールなし</div>';
+      return;
+    }
+    container.innerHTML = entries.map(([from, to], i) =>
+      `<div class="btns" style="margin-top:4px" data-lookup-row="${i}">` +
+      `<span style="align-self:center;font-size:11px;color:#64748b;white-space:nowrap">変換元</span>` +
+      `<input type="text" class="lookup-from" value="${esc(from)}" placeholder="変換元 AppID" style="flex:1;min-width:0">` +
+      `<span style="align-self:center;padding:0 4px;color:#64748b">→</span>` +
+      `<span style="align-self:center;font-size:11px;color:#64748b;white-space:nowrap">変換先</span>` +
+      `<input type="text" class="lookup-to" value="${esc(to)}" placeholder="変換先 AppID" style="flex:1;min-width:0">` +
+      `<button type="button" class="btn sub" data-act="removeLookupMapRow" data-row="${i}" style="padding:4px 8px">×</button>` +
+      `</div>`
+    ).join('');
+  }
+
+  function syncLookupMapFromRows() {
+    const container = document.getElementById('u_lookupMapRows');
+    if (!container) return;
+    const rows = container.querySelectorAll('[data-lookup-row]');
+    const map = {};
+    rows.forEach((row) => {
+      const from = (row.querySelector('.lookup-from')?.value || '').trim();
+      const to = (row.querySelector('.lookup-to')?.value || '').trim();
+      if (from && to) map[from] = to;
+    });
+    ui.lookupMap.value = Object.keys(map).length ? JSON.stringify(map) : '';
   }
 
   function renderBundleState() {
@@ -1289,6 +2343,7 @@
 
   function saveCurrentDialogState() {
     saveDialogState({
+      activeTab: state.activeTab,
       sourceAppId: ui.sourceApp.value.trim(),
       sourceGuestId: ui.sourceGuest.value.trim(),
       sourcePreview: ui.sourcePreview.checked,
@@ -1297,6 +2352,9 @@
       targetPreview: ui.targetPreview.checked,
       lookupMap: ui.lookupMap.value.trim(),
       ignoreKeys: ui.ignoreKeys.value.trim(),
+      diffSearch: ui.diffSearch.value.trim(),
+      charDiff: ui.charDiff.checked,
+      diffTheme: state.diffViewTheme,
       diffScopes: selectedScopeKeys(ui.diffScopes),
       applyScopes: selectedScopeKeys(ui.applyScopes),
       applyDiffOnly: ui.applyDiffOnly.checked,
@@ -1304,7 +2362,12 @@
       nodeMode: ui.nodeMode.checked,
       doDeploy: ui.doDeploy.checked,
       overwriteField: ui.overwriteField.checked,
-      deployField: ui.deployField.checked
+      deployField: ui.deployField.checked,
+      settingsExportAppIds: ui.settingsExportAppIds.value.trim(),
+      settingsExportSearchKeyword: ui.settingsExportSearchKeyword.value.trim(),
+      settingsExportGuest: ui.settingsExportGuest.value.trim(),
+      settingsExportPreview: ui.settingsExportPreview.checked,
+      settingsExportScopes: selectedScopeKeys(ui.settingsExportScopes)
     });
   }
 
@@ -1319,15 +2382,22 @@
     if (saved.targetPreview != null) ui.targetPreview.checked = !!saved.targetPreview;
     if (saved.lookupMap != null) ui.lookupMap.value = String(saved.lookupMap);
     if (saved.ignoreKeys != null) ui.ignoreKeys.value = String(saved.ignoreKeys);
+    if (saved.diffSearch != null) ui.diffSearch.value = String(saved.diffSearch);
+    if (saved.charDiff != null) ui.charDiff.checked = !!saved.charDiff;
+    if (saved.diffTheme === 'dark' || saved.diffTheme === 'light') state.diffViewTheme = saved.diffTheme;
     if (saved.applyDiffOnly != null) ui.applyDiffOnly.checked = !!saved.applyDiffOnly;
     if (saved.stopOnError != null) ui.stopOnError.checked = !!saved.stopOnError;
     if (saved.nodeMode != null) ui.nodeMode.checked = !!saved.nodeMode;
     if (saved.doDeploy != null) ui.doDeploy.checked = !!saved.doDeploy;
     if (saved.overwriteField != null) ui.overwriteField.checked = !!saved.overwriteField;
     if (saved.deployField != null) ui.deployField.checked = !!saved.deployField;
+    if (saved.settingsExportAppIds != null) ui.settingsExportAppIds.value = String(saved.settingsExportAppIds);
+    if (saved.settingsExportSearchKeyword != null) ui.settingsExportSearchKeyword.value = String(saved.settingsExportSearchKeyword);
+    if (saved.settingsExportGuest != null) ui.settingsExportGuest.value = String(saved.settingsExportGuest);
+    if (saved.settingsExportPreview != null) ui.settingsExportPreview.checked = !!saved.settingsExportPreview;
 
     const markChecks = (container, selected) => {
-      if (!Array.isArray(selected) || !selected.length) return;
+      if (!Array.isArray(selected)) return;
       const set = new Set(selected);
       [...container.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
         c.checked = set.has(c.value);
@@ -1335,6 +2405,12 @@
     };
     markChecks(ui.diffScopes, saved.diffScopes);
     markChecks(ui.applyScopes, saved.applyScopes);
+    markChecks(ui.settingsExportScopes, saved.settingsExportScopes);
+    if (saved.activeTab && ui.tabs.some((t) => t.dataset.tab === saved.activeTab)) {
+      switchTab(saved.activeTab, { persist: false });
+    }
+    renderIgnoreKeyChips();
+    renderLookupMapRows();
   }
 
   function parseBundleLikeObject(raw, side) {
@@ -1417,9 +2493,9 @@
   }
 
   async function exportDiffHtml() {
-    if (!state.lastDiffRows.length) throw new Error('先に差分比較を実行してください');
+    if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error('先に差分比較を実行してください');
     const scopes = selectedScopeKeys(ui.diffScopes);
-    const html = buildDiffHtml(state.lastSourceBundle, state.lastTargetBundle, state.lastDiffRows, scopes, ui.ignoreKeys.value);
+    const html = buildDiffHtml(state.lastSourceBundle, state.lastTargetBundle, state.lastDiffRows || [], scopes, ui.ignoreKeys.value);
     downloadText(`diff_${nowStamp()}.html`, html, 'text/html');
     setStatus('差分HTMLを保存しました');
   }
@@ -1453,6 +2529,152 @@
       map[from] = to;
     }
     return map;
+  }
+
+  function parseAppIdList(text) {
+    const tokens = String(text || '')
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const out = [];
+    const seen = new Set();
+    for (const tk of tokens) {
+      if (!/^\d+$/.test(tk)) continue;
+      if (seen.has(tk)) continue;
+      seen.add(tk);
+      out.push(tk);
+    }
+    return out;
+  }
+
+  function addAppIdToSettingsExport(appId, appName) {
+    if (!/^\d+$/.test(String(appId || '').trim())) return;
+    const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+    set.add(String(appId).trim());
+    ui.settingsExportAppIds.value = [...set].join(', ');
+    saveCurrentDialogState();
+    setStatus(`App ${appId}${appName ? ` (${appName})` : ''} を追加しました`);
+  }
+
+  function renderSettingsExportSearchResults(apps) {
+    const list = Array.isArray(apps) ? apps : [];
+    if (!list.length) {
+      ui.settingsExportSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
+      return;
+    }
+    const rows = list.map((app) => `<tr>
+      <td>${esc(String(app.appId || ''))}</td>
+      <td title="${esc(String(app.name || ''))}">${esc(String(app.name || ''))}</td>
+      <td style="text-align:right"><button class="btn sub" style="padding:4px 8px;font-size:10px" data-add-settings-app="${esc(String(app.appId || ''))}" data-add-settings-name="${esc(String(app.name || ''))}">追加</button></td>
+    </tr>`).join('');
+    ui.settingsExportSearchResult.innerHTML = `<table>
+      <thead><tr><th style="width:90px">App ID</th><th>アプリ名</th><th style="width:70px"></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  async function runSettingsExportSearchApps() {
+    const keyword = ui.settingsExportSearchKeyword.value.trim();
+    const guestId = ui.settingsExportGuest.value.trim();
+    const prefix = buildApiPrefix(guestId, false);
+    const params = { limit: 100 };
+    if (keyword) params.name = keyword;
+    setStatus('アプリ検索中...');
+    const res = await apiGet(prefix, '/apps.json', params);
+    const apps = (res.apps || [])
+      .map((a) => ({ appId: String(a.appId || ''), name: String(a.name || '') }))
+      .filter((a) => /^\d+$/.test(a.appId))
+      .sort((a, b) => Number(a.appId) - Number(b.appId));
+    renderSettingsExportSearchResults(apps);
+    setStatus(`アプリ検索完了: ${apps.length}件`);
+  }
+
+  function renderSettingsExportSummary(rows, scopes) {
+    const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(', ');
+    const body = rows.map((r) => `<tr>
+      <td>${esc(r.appId)}</td>
+      <td>${esc(String(r.okCount))}</td>
+      <td>${esc(String(r.ngCount))}</td>
+      <td>${esc(r.note || '-')}</td>
+    </tr>`).join('');
+    return `
+      <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">Scopes: ${esc(labels || '-')}</div>
+      <table>
+        <thead><tr><th>App ID</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
+        <tbody>${body || '<tr><td colspan="4">結果なし</td></tr>'}</tbody>
+      </table>
+    `;
+  }
+
+  async function runSettingsExport(mode) {
+    const appIds = parseAppIdList(ui.settingsExportAppIds.value);
+    if (!appIds.length) throw new Error('対象App IDを1件以上入力してください');
+    const scopes = selectedScopeKeys(ui.settingsExportScopes);
+    if (!scopes.length) throw new Error('取得対象セクションを選択してください');
+
+    const guestId = ui.settingsExportGuest.value.trim();
+    const preview = !!ui.settingsExportPreview.checked;
+    saveCurrentDialogState();
+
+    const bundles = [];
+    const rows = [];
+    for (let i = 0; i < appIds.length; i++) {
+      const appId = appIds[i];
+      setStatus(`設定取得中 ${i + 1}/${appIds.length}: App ${appId}`);
+      const bundle = await fetchBundle({
+        appId,
+        guestId,
+        preview,
+        sections: scopes,
+        onProgress: (p, l) => setStatus(`設定取得中 ${i + 1}/${appIds.length}: App ${appId} ${Math.round(p * 100)}% (${l})`)
+      });
+      bundles.push(bundle);
+
+      let okCount = 0;
+      let ngCount = 0;
+      for (const key of scopes) {
+        const sec = bundle.sections[key];
+        if (sec && sec._fetchError) ngCount += 1;
+        else okCount += 1;
+      }
+      rows.push({ appId, okCount, ngCount, note: ngCount ? '一部セクション取得失敗あり' : 'OK' });
+    }
+
+    ui.settingsExportResult.innerHTML = renderSettingsExportSummary(rows, scopes);
+
+    const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      guestId: guestId || '',
+      preview,
+      scopes,
+      scopeLabels,
+      apps: bundles
+    };
+
+    if (mode === 'zip') {
+      await loadJSZip();
+      const zip = new JSZip();
+      zip.file('manifest.json', JSON.stringify({
+        generatedAt: payload.generatedAt,
+        guestId: payload.guestId,
+        preview: payload.preview,
+        scopes: payload.scopes,
+        appCount: bundles.length
+      }, null, 2));
+      for (const bundle of bundles) {
+        const suffix = `${guestId ? `_guest_${guestId}` : ''}${preview ? '_preview' : '_live'}`;
+        const name = `app_${bundle.appId}${suffix}.json`;
+        zip.file(name, JSON.stringify(bundle, null, 2));
+      }
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(`settings_export_${bundles.length}apps_${nowStamp()}.zip`, zipBlob);
+      setStatus(`設定一括取得ZIPを保存しました（${bundles.length} apps）`);
+      return;
+    }
+
+    downloadText(`settings_export_${bundles.length}apps_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+    setStatus(`設定一括取得JSONを保存しました（${bundles.length} apps）`);
   }
 
   function convertLookupAppIds(fieldDef, map) {
@@ -2615,50 +3837,1462 @@
   async function runDesignExportXlsx() {
     const c = commonParams();
     if (!c.source.appId) throw new Error('Source App ID を入力してください');
-    const scopes = SECTION_DEFS.map((s) => s.key);
-    setStatus('設計情報を取得中...');
-    const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
-    state.lastSourceBundle = bundle;
-    setStatus('Excelライブラリ読み込み中...');
-    const XLSX = await ensureXlsx();
-    setStatus('Excel生成中...');
-
-    const wb = XLSX.utils.book_new();
-    const names = new Set();
-    const summaryRows = [
-      ['kintone 設計書'],
-      ['App ID', bundle.appId],
-      ['Guest ID', bundle.guestId || '(通常空間)'],
-      ['Preview', bundle.preview ? 'Yes' : 'No'],
-      ['Exported At', bundle.fetchedAt],
-      ['Sections', Object.keys(bundle.sections).length]
-    ];
-    const summaryWs = XLSX.utils.aoa_to_sheet(summaryRows);
-    summaryWs['!cols'] = [{ wch: 22 }, { wch: 80 }];
-    const summaryName = safeSheetName('サマリー', names);
-    names.add(summaryName);
-    XLSX.utils.book_append_sheet(wb, summaryWs, summaryName);
-
-    for (const def of SECTION_DEFS) {
-      const sec = bundle.sections[def.key];
-      if (!sec) continue;
-      const rows = [['Path', 'Value']];
-      flattenToRows(sec, '', rows);
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols'] = [{ wch: 45 }, { wch: 110 }];
-      const name = safeSheetName(def.label, names);
-      names.add(name);
-      XLSX.utils.book_append_sheet(wb, ws, name);
+    const done = await runAdvancedDesignExporter({
+      appId: c.source.appId,
+      guestId: c.source.guestId
+    });
+    if (done === false) {
+      setStatus('設計書Excel出力をキャンセルしました');
+      return;
     }
-
-    const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
-    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `design_${bundle.appId}_${nowStamp()}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(a.href);
     setStatus('設計書Excel出力完了');
+  }
+
+  async function runAdvancedDesignExporter(params = {}) {
+    const sourceAppId = Number(params.appId);
+    if (!sourceAppId) throw new Error('有効なSource App IDが指定されませんでした。');
+    const sourceGuestId = String(params.guestId || '').trim();
+
+      /**
+       * @file kintone アプリ設計書エクスポーター v2.0
+       * 
+       * === v2.0 改善・追加点 ===
+       * [改善] UIプログレスバー（視覚的な進捗表示）
+       * [改善] API同時実行制御（セマフォによる並列数制限）
+       * [改善] エクスポートオプションダイアログ（出力シート選択UI）
+       * [改善] 項目定義の大幅強化（ルックアップ/関連レコード/計算式の詳細）
+       * [改善] ビュー詳細の強化（フィールドコード→ラベル名解決）
+       * [改善] プロセス管理の遷移マトリクス（状態遷移を表形式で可視化）
+       * [改善] エラーレポート（失敗API一覧をサマリーに表示）
+       * [改善] バグ修正（未使用関数削除、重複権限シート統合、番号採番修正）
+       * [改善] 条件付きハイライト強化（必須フィールド・警告のセル色分け）
+       * [追加] フィールド依存関係マップシート
+       * [追加] レコード件数のサマリー表示
+       * [追加] Webhook設定シート
+       * [追加] アプリグラフ設定の詳細出力
+       * [追加] シート名の安全性チェック強化
+       */
+    
+      // ═══════════════════ 設定 ═══════════════════
+      const CONFIG = {
+        SHEETLIB_PRIMARY_URL: 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js',
+        SHEETLIB_FALLBACK_URL: 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+        MAX_RETRIES: 3,
+        RETRY_DELAY: 1000,
+        API_CONCURRENCY: 4,       // 同時APIリクエスト数上限
+        FONT_NAME: 'Meiryo',
+        STYLES: {
+          ENABLE_BORDER: true,
+          ENABLE_HEADER_FILL: true,
+          ENABLE_ZEBRA: true,
+          ENABLE_AUTOFILTER: true,
+          FREEZE_HEADER: true,
+          ENABLE_TITLE_STYLING: true,
+          ENABLE_CONDITIONAL_FORMAT: true,
+          ENABLE_OUTLINE: true
+        },
+        DEFAULT_COL_WIDTH: 12,
+        MAX_COL_WIDTH: 80,
+        MIN_COL_WIDTH: 8,
+        COLORS: {
+          HEADER_BG: 'FF4A90E2',
+          HEADER_TEXT: 'FFFFFFFF',
+          TITLE_BG: 'FF2E5C8A',
+          TITLE_TEXT: 'FFFFFFFF',
+          ZEBRA_EVEN: 'FFF8F9FA',
+          ZEBRA_ODD: 'FFFFFFFF',
+          BORDER: 'FF666666',
+          SECTION_BG: 'FFECF0F1',
+          REQUIRED_BG: 'FFFFF2CC',
+          WARNING_BG: 'FFFFC000',
+          SUCCESS_BG: 'FFC6EFCE',
+          DANGER_BG: 'FFF8CBAD',
+          INFO_BG: 'FFD9E1F2',
+          SUBTABLE_BG: 'FFE8EAF6',
+          DEPENDENCY_BG: 'FFFCE4EC'
+        },
+        SANITIZE_LABEL_HTML_IN_LAYOUT: true
+      };
+    
+      const FIELD_TYPE = {
+        'LABEL': 'ラベル', 'HR': '罫線', 'SPACER': 'スペース', 'GROUP': 'グループ',
+        'FILE': '添付ファイル', 'LINK': 'リンク', 'REFERENCE_TABLE': '関連レコード一覧',
+        'SINGLE_LINE_TEXT': '文字列(1行)', 'MULTI_LINE_TEXT': '文字列(複数行)', 'RICH_TEXT': 'リッチエディター',
+        'NUMBER': '数値', 'CALC': '計算', 'RADIO_BUTTON': 'ラジオボタン', 'CHECK_BOX': 'チェックボックス',
+        'DROP_DOWN': 'ドロップダウン', 'MULTI_SELECT': '複数選択', 'DATE': '日付', 'DATETIME': '日時', 'TIME': '時刻',
+        'USER_SELECT': 'ユーザー選択', 'ORGANIZATION_SELECT': '組織選択', 'GROUP_SELECT': 'グループ選択',
+        'LOOKUP': 'ルックアップ', 'SUBTABLE': 'テーブル',
+        'RECORD_NUMBER': 'レコード番号', 'CREATOR': '作成者', 'CREATED_TIME': '作成日時',
+        'MODIFIER': '更新者', 'UPDATED_TIME': '更新日時', 'STATUS': 'ステータス', 'CATEGORY': 'カテゴリー',
+        'STATUS_ASSIGNEE': '作業者'
+      };
+    
+      const SYSTEM_FIELDS = new Set(['$id', '$revision', 'status', 'category', 'assignee']);
+    
+      // ═══════════════════ セマフォ（API同時実行制御） ═══════════════════
+      class Semaphore {
+        constructor(max) {
+          this.max = max;
+          this.current = 0;
+          this.queue = [];
+        }
+        acquire() {
+          return new Promise(resolve => {
+            if (this.current < this.max) { this.current++; resolve(); }
+            else this.queue.push(resolve);
+          });
+        }
+        release() {
+          this.current--;
+          if (this.queue.length > 0) { this.current++; this.queue.shift()(); }
+        }
+        async run(fn) {
+          await this.acquire();
+          try { return await fn(); } finally { this.release(); }
+        }
+      }
+    
+      const apiSemaphore = new Semaphore(CONFIG.API_CONCURRENCY);
+
+      function getExporterOverlayZIndex() {
+        const main = document.getElementById(TOOL_ID);
+        const raw = main ? Number(window.getComputedStyle(main).zIndex) : NaN;
+        const base = Number.isFinite(raw) ? raw : 2147483646;
+        return String(Math.min(2147483647, Math.max(2000000000, base + 1)));
+      }
+    
+      // ═══════════════════ UI（プログレスバー付きオーバーレイ） ═══════════════════
+      const UI = {
+        id: 'kintone-exporter-overlay',
+        totalSteps: 0,
+        currentStep: 0,
+        failedAPIs: [],
+    
+        show(msg, totalSteps = 10) {
+          UI.totalSteps = totalSteps;
+          UI.currentStep = 0;
+          UI.failedAPIs = [];
+          let el = document.getElementById(UI.id);
+          if (!el) {
+            el = document.createElement('div');
+            el.id = UI.id;
+            Object.assign(el.style, {
+              position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
+              backgroundColor: 'rgba(0,0,0,0.7)', zIndex: getExporterOverlayZIndex(),
+              display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+              color: '#fff', fontSize: '16px', fontFamily: '"Meiryo", sans-serif'
+            });
+            document.body.appendChild(el);
+          }
+          el.style.zIndex = getExporterOverlayZIndex();
+          el.innerHTML = `
+            <div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:400px;">
+              <div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.0</div>
+              <div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div>
+              <div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;">
+                <div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div>
+              </div>
+              <div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div>
+              <div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div>
+            </div>`;
+        },
+    
+        update(msg, step) {
+          if (step !== undefined) UI.currentStep = step;
+          else UI.currentStep++;
+          const pct = Math.min(100, Math.round((UI.currentStep / UI.totalSteps) * 100));
+          const statusEl = document.getElementById('kex-status');
+          const barEl = document.getElementById('kex-progress-bar');
+          const pctEl = document.getElementById('kex-percent');
+          if (statusEl) statusEl.textContent = msg;
+          if (barEl) barEl.style.width = `${pct}%`;
+          if (pctEl) pctEl.textContent = `${pct}%`;
+        },
+    
+        logError(apiName, error) {
+          UI.failedAPIs.push({ name: apiName, error: error?.message || String(error) });
+          const errEl = document.getElementById('kex-errors');
+          if (errEl) errEl.textContent = `⚠ ${UI.failedAPIs.length}件のAPI取得に失敗`;
+        },
+    
+        hide() {
+          const el = document.getElementById(UI.id);
+          if (el) document.body.removeChild(el);
+        }
+      };
+    
+      // ═══════════════════ ユーティリティ ═══════════════════
+      const Utils = {
+        pad: n => n.toString().padStart(2, '0'),
+        dt: (d = new Date()) => {
+          const p = Utils.pad;
+          return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+        },
+        toJST: (isoString) => {
+          if (!isoString) return '-';
+          try { return new Date(isoString).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }); }
+          catch { return isoString; }
+        },
+        safeGet: (obj, path, def = '') => {
+          try {
+            if (!obj || typeof obj !== 'object') return def;
+            const v = path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : undefined), obj);
+            return v === undefined ? def : v;
+          } catch { return def; }
+        },
+        ensureArray: v => Array.isArray(v) ? v : [],
+        safeJoin: (arr, sep = '、') => Array.isArray(arr) ? arr.filter(v => v !== '' && v != null).join(sep) : '',
+        sleep: ms => new Promise(r => setTimeout(r, ms)),
+        
+        calculateCellWidth: text => {
+          if (!text) return CONFIG.MIN_COL_WIDTH;
+          const str = String(text);
+          let width = 0;
+          for (const line of str.split('\n')) {
+            let lw = 0;
+            for (const ch of line) lw += /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF00-\uFFEF]/.test(ch) ? 2 : 1;
+            if (lw > width) width = lw;
+          }
+          return Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, width + 2));
+        },
+    
+        colToA1: (n) => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - 1) / 26 | 0; } return s; },
+        a1: (r, c) => `${Utils.colToA1(c)}${r}`,
+        escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        stripHtml: (html) => String(html || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'),
+        formatBoolean: (val) => (val ? '○' : '-'),
+    
+        formatEntity: (entity) => {
+          if (!entity) return '-';
+          if (Array.isArray(entity)) return entity.map(e => Utils.formatEntity(e)).join('\n');
+          const e = entity.entity || entity;
+          const t = (e.type || '').toString().toUpperCase();
+          const typeMap = {
+            USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織',
+            FIELD_ENTITY: 'フィールド値', CREATOR: '作成者', MODIFIER: '更新者',
+            LOGIN_USER: 'ログインユーザー', ALL: '全員'
+          };
+          const typeJP = typeMap[t] || e.type || '不明';
+          if (e.name) return `${typeJP}:${e.name}`;
+          if (e.code) return `${typeJP}:${e.code}`;
+          return typeJP;
+        },
+    
+        formatEntityDetailed: (entity) => {
+          if (!entity) return '-';
+          if (Array.isArray(entity)) return entity.map(e => Utils.formatEntityDetailed(e)).join('\n');
+          const e = entity.entity || entity;
+          const t = (e.type || '').toString().toUpperCase();
+          const typeMap = {
+            USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織',
+            FIELD_ENTITY: 'フィールド値', CREATOR: '作成者', MODIFIER: '更新者',
+            LOGIN_USER: 'ログインユーザー', ALL: '全員'
+          };
+          const typeJP = typeMap[t] || e.type || '不明';
+          const parts = [typeJP];
+          if (e.name) parts.push(e.name);
+          else if (e.code) parts.push(`コード:${e.code}`);
+          if (entity.includeSubs) parts.push('(サブ組織含)');
+          return parts.join(': ');
+        },
+    
+        formatSort: (sortStr) => {
+          if (!sortStr) return '-';
+          return String(sortStr).replace(/\basc\b/gi, '昇順').replace(/\bdesc\b/gi, '降順');
+        },
+    
+        formatFilterCond: (condStr) => {
+          if (!condStr) return '-';
+          let r = String(condStr);
+          r = r.replace(/\s*,\s*/g, ', ');
+          const funcMap = {
+            'TODAY()': '今日', 'TOMORROW()': '明日', 'YESTERDAY()': '昨日',
+            'THIS_WEEK()': '今週', 'LAST_WEEK()': '先週', 'NEXT_WEEK()': '来週',
+            'THIS_MONTH()': '今月', 'LAST_MONTH()': '先月', 'NEXT_MONTH()': '来月',
+            'THIS_YEAR()': '今年', 'LAST_YEAR()': '昨年', 'NEXT_YEAR()': '来年'
+          };
+          for (const [eng, jpn] of Object.entries(funcMap)) {
+            r = r.replace(new RegExp(Utils.escapeRegExp(eng), 'g'), jpn);
+          }
+          r = r.replace(
+            /\bFROM_TODAY\(\s*([-+]?\d+)\s*,\s*(DAYS|WEEKS|MONTHS|YEARS)\s*\)/g,
+            (_, numStr, unit) => {
+              const n = parseInt(numStr, 10);
+              const unitMap = { DAYS: '日', WEEKS: '週間', MONTHS: 'か月', YEARS: '年' };
+              const u = unitMap[unit] || unit;
+              if (n === 0) return '今日';
+              return `今日から${Math.abs(n)}${u}${n > 0 ? '後' : '前'}`;
+            }
+          );
+          r = r
+            .replace(/\bNOT\s+LIKE\b/gi, '不一致')
+            .replace(/\bNOT\s+IN\b/gi, 'に含まない')
+            .replace(/\bLIKE\b/gi, '部分一致')
+            .replace(/\bIN\b/gi, 'に含む')
+            .replace(/\bAND\b/gi, 'かつ')
+            .replace(/\bOR\b/gi, 'または')
+            .replace(/!=/g, '≠').replace(/>=/g, '≥').replace(/<=/g, '≤').replace(/=/g, '＝');
+          return r;
+        },
+    
+        formatFieldFormat: (f) => {
+          if (!f || typeof f !== 'object') return '';
+          const labelMap = {
+            NUMBER: '数値', NUMBER_DIGIT: '数値（桁区切り）', PERCENT: 'パーセント',
+            CURRENCY: '通貨', DATE: '日付', TIME: '時刻', DATETIME: '日時',
+            HOUR_MINUTE: '時:分', HOUR_MINUTE_SECOND: '時:分:秒'
+          };
+          const parts = [];
+          if (f.format && labelMap[f.format]) parts.push(labelMap[f.format]);
+          if (f.digit !== undefined) parts.push(`桁区切り: ${f.digit ? 'あり' : 'なし'}`);
+          if (f.displayScale !== undefined) parts.push(`小数点: ${f.displayScale}桁`);
+          if (f.unit) {
+            const pos = f.unitPosition === 'BEFORE' ? '前置' : (f.unitPosition === 'AFTER' ? '後置' : '');
+            parts.push(`単位: ${f.unit}${pos ? `(${pos})` : ''}`);
+          }
+          return parts.join('、');
+        },
+    
+        formatDefaultValue: (dv) => {
+          if (dv == null) return '';
+          if (Array.isArray(dv)) {
+            if (dv.length > 0 && typeof dv[0] === 'object') return dv.map(i => i.name || i.code || JSON.stringify(i)).join('、');
+            return dv.join('、');
+          }
+          if (typeof dv === 'object') {
+            if (dv.type === 'NUMBER') return String(dv.value || '');
+            return dv.name || dv.code || JSON.stringify(dv);
+          }
+          return String(dv);
+        },
+    
+        safeJSONStringify: (obj) => { try { return JSON.stringify(obj, null, 2); } catch { return String(obj); } }
+      };
+    
+      // ═══════════════════ ローダー & ネットワーク ═══════════════════
+      async function loadSheetLib() {
+        if (typeof window.XLSX !== 'undefined') return { styled: true };
+    
+        const loadScript = (src, timeout = 15000) => new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = src; s.async = true;
+          let done = false;
+          const timer = setTimeout(() => { if (!done) { done = true; reject(new Error(`Timeout: ${src}`)); } }, timeout);
+          s.onload = () => { if (!done) { done = true; clearTimeout(timer); resolve(true); } };
+          s.onerror = () => { if (!done) { done = true; clearTimeout(timer); reject(new Error(`Failed: ${src}`)); } };
+          document.head.appendChild(s);
+        });
+    
+        try { await loadScript(CONFIG.SHEETLIB_PRIMARY_URL); return { styled: true }; }
+        catch { await loadScript(CONFIG.SHEETLIB_FALLBACK_URL); return { styled: false }; }
+      }
+    
+      async function retry(fn, max = CONFIG.MAX_RETRIES) {
+        for (let i = 0; i < max; i++) {
+          try { return await fn(); }
+          catch (e) { if (i === max - 1) throw e; await Utils.sleep(CONFIG.RETRY_DELAY * (i + 1)); }
+        }
+      }
+    
+      async function fetchJob(name, promiseFn) {
+        try {
+          return await apiSemaphore.run(() => retry(promiseFn));
+        } catch (e) {
+          console.warn(`[${name}] Failed:`, e);
+          UI.logError(name, e);
+          return null;
+        }
+      }
+    
+      // ═══════════════════ エクスポートオプションダイアログ ═══════════════════
+      function showExportOptionsDialog() {
+        return new Promise((resolve) => {
+          const overlay = document.createElement('div');
+          Object.assign(overlay.style, {
+            position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
+            backgroundColor: 'rgba(0,0,0,0.6)', zIndex: getExporterOverlayZIndex(),
+            display: 'flex', justifyContent: 'center', alignItems: 'center',
+            fontFamily: '"Meiryo", sans-serif'
+          });
+    
+          const sheets = [
+            { key: 'summary', label: 'サマリー', default: true, required: true },
+            { key: 'fields', label: '項目定義', default: true },
+            { key: 'layout', label: 'フォームレイアウト', default: true },
+            { key: 'views', label: '一覧', default: true },
+            { key: 'reports', label: 'レポート', default: true },
+            { key: 'status', label: 'プロセス管理', default: true },
+            { key: 'statusMatrix', label: '遷移マトリクス', default: true },
+            { key: 'appAcl', label: 'アプリ権限', default: true },
+            { key: 'recordAcl', label: 'レコード権限', default: true },
+            { key: 'fieldAcl', label: 'フィールド権限', default: true },
+            { key: 'customize', label: 'JS/CSSカスタマイズ', default: true },
+            { key: 'actions', label: 'アクション', default: true },
+            { key: 'plugins', label: 'プラグイン', default: true },
+            { key: 'genNotif', label: '通知（一般）', default: true },
+            { key: 'recNotif', label: '通知（レコード）', default: true },
+            { key: 'remNotif', label: '通知（リマインダー）', default: true },
+            { key: 'webhook', label: 'Webhook', default: true },
+            { key: 'adminNotes', label: '管理者メモ', default: true },
+            { key: 'dependencies', label: 'フィールド依存関係', default: true }
+          ];
+    
+          const checkboxes = sheets.map(s =>
+            `<label style="display:block;margin:3px 0;font-size:13px;cursor:${s.required ? 'default' : 'pointer'};">
+              <input type="checkbox" value="${s.key}" ${s.default ? 'checked' : ''} ${s.required ? 'disabled' : ''} 
+                style="margin-right:6px;">
+              ${s.label}${s.required ? ' (必須)' : ''}
+            </label>`
+          ).join('');
+    
+          overlay.innerHTML = `
+            <div style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:460px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.3);">
+              <div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:16px;">📊 エクスポート設定</div>
+              <div style="font-size:12px;color:#666;margin-bottom:12px;">出力するシートを選択してください</div>
+              <div style="display:flex;gap:8px;margin-bottom:12px;">
+                <button id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button>
+                <button id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button>
+              </div>
+              <div id="kex-sheet-options" style="max-height:340px;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">
+                ${checkboxes}
+              </div>
+              <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+                <button id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button>
+                <button id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button>
+              </div>
+            </div>`;
+    
+          document.body.appendChild(overlay);
+    
+          overlay.querySelector('#kex-select-all').onclick = () => {
+            overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]').forEach(cb => cb.checked = true);
+          };
+          overlay.querySelector('#kex-select-none').onclick = () => {
+            overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])').forEach(cb => cb.checked = false);
+          };
+          overlay.querySelector('#kex-cancel').onclick = () => {
+            document.body.removeChild(overlay);
+            resolve(null);
+          };
+          overlay.querySelector('#kex-export').onclick = () => {
+            const selected = new Set();
+            overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:checked').forEach(cb => selected.add(cb.value));
+            document.body.removeChild(overlay);
+            resolve(selected);
+          };
+        });
+      }
+    
+      // ═══════════════════ レイアウト走査 ═══════════════════
+      function traverseRows(rows, visitor, depth = 0) {
+        const safeRows = Array.isArray(rows) ? rows : [];
+        for (const row of safeRows) {
+          const items = Array.isArray(row?.fields) ? row.fields : [];
+          if (row?.type === 'GROUP') {
+            visitor({ kind: 'GROUP', item: row, depth });
+            if (Array.isArray(row.layout)) traverseRows(row.layout, visitor, depth + 1);
+            continue;
+          }
+          if (row?.type === 'SUBTABLE') {
+            visitor({ kind: 'SUBTABLE_ROW', row, depth });
+            continue;
+          }
+          for (const item of items) {
+            if (!item) continue;
+            if (item.type === 'GROUP') {
+              visitor({ kind: 'GROUP', item, depth });
+              if (Array.isArray(item.layout)) traverseRows(item.layout, visitor, depth + 1);
+              continue;
+            }
+            if (item.type === 'SUBTABLE') { visitor({ kind: 'SUBTABLE', item, depth }); continue; }
+            if (item.type === 'LABEL') { visitor({ kind: 'LABEL', item, depth }); continue; }
+            if (item.type === 'HR') { visitor({ kind: 'HR', item, depth }); continue; }
+            if (item.type === 'SPACER') { visitor({ kind: 'SPACER', item, depth }); continue; }
+            visitor({ kind: 'FIELD', item, depth });
+          }
+        }
+      }
+    
+      // ═══════════════════ スタイル ═══════════════════
+      const Sty = {
+        baseFont: (opts = {}) => ({ name: CONFIG.FONT_NAME, sz: 10, ...opts }),
+        borderThin: () => {
+          const b = { style: 'thin', color: { rgb: CONFIG.COLORS.BORDER } };
+          return { border: { top: b, bottom: b, left: b, right: b } };
+        },
+        title: () => ({
+          font: { ...Sty.baseFont({ bold: true, sz: 12 }), color: { rgb: CONFIG.COLORS.TITLE_TEXT } },
+          alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
+          fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.TITLE_BG } },
+          ...Sty.borderThin()
+        }),
+        header: () => ({
+          font: { ...Sty.baseFont({ bold: true }), color: { rgb: CONFIG.COLORS.HEADER_TEXT } },
+          alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+          fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.HEADER_BG } },
+          ...Sty.borderThin()
+        }),
+        cell: (align = 'left') => ({
+          alignment: { vertical: 'center', horizontal: align, wrapText: true },
+          font: { ...Sty.baseFont() },
+          ...Sty.borderThin()
+        }),
+        sectionCell: (align = 'left') => ({
+          alignment: { vertical: 'center', horizontal: align, wrapText: true },
+          font: { ...Sty.baseFont({ bold: true }) },
+          fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.SECTION_BG } },
+          ...Sty.borderThin()
+        }),
+        zebraEven: () => ({ fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.ZEBRA_EVEN } } }),
+        zebraOdd: () => ({ fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.ZEBRA_ODD } } })
+      };
+    
+      function autosizeCols(ws, aoa) {
+        const widths = [];
+        for (const row of aoa) (row || []).forEach((v, i) => {
+          const w = Utils.calculateCellWidth(v);
+          widths[i] = Math.max(widths[i] || CONFIG.MIN_COL_WIDTH, w);
+        });
+        ws['!cols'] = widths.map(w => ({ wch: w || CONFIG.DEFAULT_COL_WIDTH }));
+      }
+    
+      function applyStyles(ws, aoa, styled, options = {}) {
+        if (!styled) return;
+        const {
+          headerRowIndex = null, titleRows = [], sectionRows = [],
+          headerInfoRows = [], emptyRows = [], specialCells = {},
+          freezeRows = 1, freezeCols = 0, centerCols = []
+        } = options;
+    
+        const rows = aoa.length;
+        let maxCols = 0;
+        for (const r of aoa) maxCols = Math.max(maxCols, (Array.isArray(r) ? r.length : 0));
+        if (!rows || !maxCols) return;
+    
+        const dataStart = (headerRowIndex != null) ? headerRowIndex + 1 : null;
+    
+        for (let r = 0; r < rows; r++) {
+          const isTitle = titleRows.includes(r);
+          const isHeader = (headerRowIndex != null && r === headerRowIndex);
+          const isSection = sectionRows.includes(r);
+          const isHeaderInfo = headerInfoRows.includes(r);
+          const isEmpty = emptyRows.includes(r);
+          const isDataRow = dataStart != null && r >= dataStart && !isSection && !isEmpty;
+          const zebraIndex = isDataRow ? (r - dataStart) : null;
+    
+          for (let c = 0; c < maxCols; c++) {
+            const addr = Utils.a1(r + 1, c + 1);
+            const cellVal = aoa[r] && aoa[r][c] != null ? String(aoa[r][c]) : '';
+            const cell = ws[addr] || (ws[addr] = { t: 's', v: cellVal });
+            cell.s = cell.s || {};
+    
+            if (specialCells[`${r},${c}`]) {
+              Object.assign(cell.s, specialCells[`${r},${c}`]);
+              continue;
+            }
+            const align = (c === 0) ? 'center' : 'left';
+    
+            if (isTitle) Object.assign(cell.s, Sty.title());
+            else if (isHeader || isHeaderInfo) Object.assign(cell.s, Sty.header());
+            else if (isSection) Object.assign(cell.s, Sty.sectionCell(align));
+            else if (isEmpty) Object.assign(cell.s, { font: Sty.baseFont() });
+            else {
+              Object.assign(cell.s, Sty.cell(align));
+              if (isDataRow && Array.isArray(centerCols) && centerCols.includes(c)) {
+                cell.s.alignment = { ...cell.s.alignment, horizontal: 'center' };
+              }
+              if (CONFIG.STYLES.ENABLE_ZEBRA && zebraIndex != null) {
+                Object.assign(cell.s, zebraIndex % 2 === 0 ? Sty.zebraEven() : Sty.zebraOdd());
+              }
+            }
+          }
+        }
+        if (CONFIG.STYLES.FREEZE_HEADER && (freezeRows > 0 || freezeCols > 0)) {
+          ws['!freeze'] = { xSplit: freezeCols, ySplit: freezeRows };
+        }
+      }
+    
+      function setSheetFeatures(ws, aoa, options = {}) {
+        const { headerRowIndex = null, enableAutoFilter = true } = options;
+        const rows = aoa.length;
+        let maxCols = 0;
+        for (const r of aoa) maxCols = Math.max(maxCols, (Array.isArray(r) ? r.length : 0));
+        if (!rows || !maxCols) return;
+        if (CONFIG.STYLES.ENABLE_AUTOFILTER && enableAutoFilter && headerRowIndex != null) {
+          ws['!autofilter'] = { ref: `${Utils.a1(headerRowIndex + 1, 1)}:${Utils.a1(rows, maxCols)}` };
+        }
+        ws['!margins'] = { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 };
+      }
+    
+      function applyCellMerges(ws, mergeRanges) {
+        if (!mergeRanges?.length) return;
+        ws['!merges'] = ws['!merges'] || [];
+        for (const range of mergeRanges) {
+          ws['!merges'].push({ s: { r: range.startRow, c: range.col }, e: { r: range.endRow, c: range.col } });
+          const firstCellAddr = Utils.a1(range.startRow + 1, range.col + 1);
+          const firstCell = ws[firstCellAddr];
+          if (firstCell?.s) firstCell.s.alignment = { ...firstCell.s.alignment, vertical: 'center' };
+        }
+      }
+    
+      // ═══════════════════ データ構築ヘルパー ═══════════════════
+    
+      function filterUserFields(fields) {
+        const filtered = {};
+        for (const [code, field] of Object.entries(fields)) {
+          if (SYSTEM_FIELDS.has(code) || SYSTEM_FIELDS.has(field.code)) continue;
+          if (['STATUS', 'CATEGORY', 'STATUS_ASSIGNEE'].includes(field.type)) continue;
+          filtered[code] = field;
+        }
+        return filtered;
+      }
+    
+      function collectLayoutInfo(layout) {
+        const fieldOrder = [];
+        const subtableFieldOrder = new Map();
+        const addedFields = new Set();
+        const addedGroups = new Set();
+    
+        traverseRows(Array.isArray(layout?.layout) ? layout.layout : [], ({ kind, item, row }) => {
+          if (kind === 'GROUP') {
+            if (item.code && !addedGroups.has(item.code)) {
+              fieldOrder.push({ code: item.code, isGroup: true, groupInfo: item });
+              addedGroups.add(item.code);
+            }
+          } else if (kind === 'SUBTABLE' || kind === 'SUBTABLE_ROW') {
+            const target = kind === 'SUBTABLE' ? item : row;
+            if (target?.code && !addedFields.has(target.code)) {
+              fieldOrder.push({ code: target.code, isGroup: false });
+              addedFields.add(target.code);
+            }
+            const codes = Utils.ensureArray(target?.fields).map(f => f?.code).filter(Boolean);
+            if (target?.code) subtableFieldOrder.set(target.code, [...(subtableFieldOrder.get(target.code) || []), ...codes]);
+          } else if (kind === 'FIELD' && item.code && !addedFields.has(item.code)) {
+            fieldOrder.push({ code: item.code, isGroup: false });
+            addedFields.add(item.code);
+          }
+        });
+        return { fieldOrder, subtableFieldOrder };
+      }
+    
+      /** フィールドコード→ラベル名マップ生成 */
+      function buildFieldLabelMap(fields) {
+        const map = {};
+        for (const [code, f] of Object.entries(fields)) {
+          map[code] = f.label || code;
+          if (f.type === 'SUBTABLE' && f.fields) {
+            for (const [sc, sf] of Object.entries(f.fields)) {
+              map[sc] = sf.label || sc;
+            }
+          }
+        }
+        return map;
+      }
+    
+      // ═══════════════════ AOA ビルダー群 ═══════════════════
+    
+      function buildSummaryAOA(appSettings, generalSettings, fields, views, reports, status, actions, APP_ID, recordCount, failedAPIs) {
+        const aoa = [];
+        const sectionRows = [];
+        const headerInfoRows = [];
+    
+        aoa.push(['kintone アプリ設計書']); // 0
+        aoa.push([]); // 1
+    
+        // 基本情報
+        aoa.push(['基本情報']); sectionRows.push(aoa.length - 1);
+        aoa.push(['項目', '値']); headerInfoRows.push(aoa.length - 1);
+        aoa.push(['アプリID', APP_ID]);
+        aoa.push(['アプリ名', appSettings?.name || '']);
+        aoa.push(['説明', Utils.stripHtml(appSettings?.description || '-')]);
+        aoa.push(['作成者', appSettings?.creator?.name || '-']);
+        aoa.push(['作成日時', Utils.toJST(appSettings?.createdAt)]);
+        aoa.push(['更新者', appSettings?.modifier?.name || '-']);
+        aoa.push(['更新日時', Utils.toJST(appSettings?.modifiedAt)]);
+        if (generalSettings) {
+          aoa.push(['テーマ', generalSettings.theme || '-']);
+          aoa.push(['アイコン種類', generalSettings.icon?.type || '-']);
+          aoa.push(['リビジョン', generalSettings.revision || '-']);
+        }
+        aoa.push([]);
+    
+        // 設定統計
+        aoa.push(['設定統計']); sectionRows.push(aoa.length - 1);
+        aoa.push(['項目', '件数']); headerInfoRows.push(aoa.length - 1);
+        aoa.push(['総レコード数', recordCount ?? '(取得不可)']);
+        aoa.push(['フィールド数', Object.keys(fields || {}).length]);
+        aoa.push(['ビュー数', Object.keys(views?.views || {}).length]);
+        aoa.push(['レポート数', Object.keys(reports?.reports || {}).length]);
+        aoa.push(['プロセス管理', (status?.enable ? '有効' : '無効')]);
+        aoa.push(['ステータス数', Object.keys(status?.states || {}).length]);
+        aoa.push(['アクション数', Object.keys(actions || {}).length]);
+        aoa.push([]);
+    
+        // 出力情報
+        aoa.push(['出力情報']); sectionRows.push(aoa.length - 1);
+        aoa.push(['項目', '値']); headerInfoRows.push(aoa.length - 1);
+        aoa.push(['出力日時', Utils.dt()]);
+        aoa.push(['出力者', kintone.getLoginUser()?.name || '-']);
+        aoa.push(['エクスポーターVer', 'v2.0']);
+    
+        // エラーレポート
+        if (failedAPIs && failedAPIs.length > 0) {
+          aoa.push([]);
+          aoa.push(['⚠ API取得失敗レポート']); sectionRows.push(aoa.length - 1);
+          aoa.push(['API名', 'エラー内容']); headerInfoRows.push(aoa.length - 1);
+          for (const { name, error } of failedAPIs) {
+            aoa.push([name, error]);
+          }
+        }
+    
+        return {
+          aoa,
+          options: {
+            headerRowIndex: headerInfoRows[0] ?? 3,
+            titleRows: [0],
+            sectionRows,
+            headerInfoRows,
+            freezeRows: 1
+          }
+        };
+      }
+    
+      function buildFieldDefinitionAOA(fields, layout, appNames) {
+        const headers = [
+          '番号', 'フィールド名', 'フィールドコード', 'フィールドタイプ',
+          '必須', '重複禁止', '初期値', '最小値', '最大値',
+          '選択肢', '入力制約', 'ラベル非表示', '書式設定',
+          'ルックアップ設定', '関連レコード設定', '計算式', '依存/参照'
+        ];
+        const aoa = [['項目定義'], headers];
+        const specialCells = {};
+        const { fieldOrder, subtableFieldOrder } = collectLayoutInfo(layout);
+    
+        // レイアウト順ソート
+        const sortedEntries = [];
+        const added = new Set();
+        for (const item of fieldOrder) {
+          if (item.isGroup) { added.add(item.code); continue; }
+          if (fields[item.code]) { sortedEntries.push([item.code, fields[item.code]]); added.add(item.code); }
+        }
+        Object.entries(fields).forEach(([c, f]) => { if (!added.has(c) && f.type !== 'GROUP') sortedEntries.push([c, f]); });
+    
+        let no = 1;
+        const pushRow = (label, code, f, parentLabel, isSubtableField) => {
+          const typeJ = f?.lookup ? `ルックアップ(${FIELD_TYPE[f?.type] || f?.type})` : (FIELD_TYPE[f?.type] || f?.type);
+    
+          // 選択肢（順序保持）
+          let optionsStr = '-';
+          if (f.options) {
+            const optEntries = Object.entries(f.options);
+            optEntries.sort((a, b) => (a[1].index ?? 999) - (b[1].index ?? 999));
+            optionsStr = optEntries.map(([k]) => k).join('\n') || '-';
+          }
+    
+          // 入力制約
+          const constraints = [];
+          if (f.minLength) constraints.push(`最小文字数: ${f.minLength}`);
+          if (f.maxLength) constraints.push(`最大文字数: ${f.maxLength}`);
+          if (f.regex) constraints.push(`正規表現: ${f.regex}`);
+          if (f.protocol) constraints.push(`プロトコル: ${f.protocol}`);
+    
+          // ルックアップ設定詳細
+          let lookupStr = '-';
+          if (f.lookup) {
+            const lu = f.lookup;
+            const refAppName = appNames[lu.relatedApp?.app] || `(ID:${lu.relatedApp?.app})`;
+            const parts = [`参照アプリ: ${refAppName}`, `キーフィールド: ${lu.relatedKeyField || '-'}`];
+            if (lu.fieldMappings?.length) {
+              parts.push('コピー先:');
+              lu.fieldMappings.forEach(m => parts.push(`  ${m.field} ← ${m.relatedField}`));
+            }
+            if (lu.lookupPickerFields?.length) parts.push(`絞り込み表示: ${lu.lookupPickerFields.join(', ')}`);
+            if (lu.filterCond) parts.push(`絞り込み条件: ${Utils.formatFilterCond(lu.filterCond)}`);
+            if (lu.sort) parts.push(`ソート: ${Utils.formatSort(lu.sort)}`);
+            lookupStr = parts.join('\n');
+          }
+    
+          // 関連レコード設定詳細
+          let refTableStr = '-';
+          if (f.referenceTable) {
+            const rt = f.referenceTable;
+            const refAppName = appNames[rt.relatedApp?.app] || `(ID:${rt.relatedApp?.app})`;
+            const parts = [`参照アプリ: ${refAppName}`];
+            if (rt.condition) parts.push(`条件: ${Utils.formatFilterCond(rt.condition?.field + ' = ' + rt.condition?.relatedField)}`);
+            if (rt.displayFields?.length) parts.push(`表示フィールド: ${rt.displayFields.join(', ')}`);
+            if (rt.filterCond) parts.push(`絞り込み: ${Utils.formatFilterCond(rt.filterCond)}`);
+            if (rt.sort) parts.push(`ソート: ${Utils.formatSort(rt.sort)}`);
+            if (rt.size != null) parts.push(`表示件数: ${rt.size}`);
+            refTableStr = parts.join('\n');
+          }
+    
+          // 計算式
+          const calcStr = f.expression || '-';
+    
+          // その他依存
+          const deps = [];
+          if (f.type === 'SUBTABLE') deps.push('[テーブル]');
+          if (f.fields) deps.push(`サブフィールド数: ${Object.keys(f.fields).length}`);
+    
+          const rowData = [
+            no++,
+            parentLabel ? `  ${parentLabel} > ${label}` : label,
+            code,
+            typeJ,
+            Utils.formatBoolean(f.required),
+            Utils.formatBoolean(f.unique),
+            Utils.formatDefaultValue(f.defaultValue),
+            Utils.safeGet(f, 'minValue', Utils.safeGet(f, 'min', '')),
+            Utils.safeGet(f, 'maxValue', Utils.safeGet(f, 'max', '')),
+            optionsStr,
+            constraints.join('\n') || '-',
+            f.noLabel ? 'はい' : '-',
+            Utils.formatFieldFormat(f),
+            lookupStr,
+            refTableStr,
+            calcStr,
+            deps.join('\n') || '-'
+          ];
+          const rowIdx = aoa.length;
+          aoa.push(rowData);
+    
+          // 必須フィールドのハイライト
+          if (f.required) {
+            specialCells[`${rowIdx},4`] = {
+              ...Sty.cell('center'),
+              fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.REQUIRED_BG } }
+            };
+          }
+          // テーブル行のハイライト
+          if (isSubtableField) {
+            for (let c = 1; c <= 3; c++) {
+              specialCells[`${rowIdx},${c}`] = {
+                ...Sty.cell('left'),
+                fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.SUBTABLE_BG } }
+              };
+            }
+          }
+        };
+    
+        for (const [code, f] of sortedEntries) {
+          if (f.type === 'GROUP') continue;
+          pushRow(f.label || '', code, f, null, false);
+          if (f.type === 'SUBTABLE' && f.fields) {
+            const subCodes = subtableFieldOrder.get(code) || Object.keys(f.fields);
+            for (const sc of subCodes) {
+              if (f.fields[sc]) pushRow(f.fields[sc].label || '', sc, f.fields[sc], f.label || code, true);
+            }
+          }
+        }
+    
+        return {
+          aoa,
+          options: {
+            headerRowIndex: 1, titleRows: [0], freezeRows: 2, freezeCols: 2,
+            centerCols: [0, 4, 5, 11], specialCells
+          }
+        };
+      }
+    
+      function buildLayoutAOA(layout, fields) {
+        const aoa = [['フォームレイアウト'], ['番号', '区分', '階層', '表示', 'フィールドコード', 'タイプ', '必須', '備考']];
+        let no = 1;
+    
+        traverseRows(Array.isArray(layout?.layout) ? layout.layout : [], ({ kind, item, row, depth }) => {
+          const indent = '  '.repeat(depth);
+          if (kind === 'GROUP') {
+            const label = CONFIG.SANITIZE_LABEL_HTML_IN_LAYOUT ? Utils.stripHtml(item.label) : (item.label || '');
+            aoa.push([no++, 'グループ', depth, `${indent}${label || '-'}`, item.code || '-', 'GROUP', '-', item.open === false ? '初期非表示' : '-']);
+          } else if (kind === 'SUBTABLE') {
+            aoa.push([no++, 'テーブル', depth, `${indent}${item.code || '-'}`, item.code || '-', 'テーブル', '-', '-']);
+            for (const c of Utils.ensureArray(item.fields)) {
+              const cf = fields?.[item.code]?.fields?.[c.code] || fields?.[c.code];
+              const label = CONFIG.SANITIZE_LABEL_HTML_IN_LAYOUT ? Utils.stripHtml(c.label) : (c.label || '');
+              aoa.push([no++, 'テーブル列', depth + 1, `${indent}  ${label || '-'}`, c.code || '-', FIELD_TYPE[c.type] || c.type || '-', Utils.formatBoolean(!!cf?.required), `親:${item.code}`]);
+            }
+          } else if (kind === 'SUBTABLE_ROW') {
+            aoa.push([no++, 'テーブル行', depth, `${indent}-`, row?.code || '-', 'SUBTABLE_ROW', '-', '-']);
+          } else if (kind === 'LABEL') {
+            const label = CONFIG.SANITIZE_LABEL_HTML_IN_LAYOUT ? Utils.stripHtml(item.label) : (item.label || '');
+            aoa.push([no++, 'ラベル', depth, `${indent}${label || '-'}`, '-', 'LABEL', '-', '-']);
+          } else if (kind === 'HR') {
+            aoa.push([no++, '罫線', depth, `${indent}───`, '-', 'HR', '-', '-']);
+          } else if (kind === 'SPACER') {
+            aoa.push([no++, 'スペース', depth, `${indent}(空白)`, item.elementId || '-', 'SPACER', '-', '-']);
+          } else if (kind === 'FIELD') {
+            const f = fields?.[item.code];
+            const label = f?.label || item.label || item.code || '-';
+            const type = FIELD_TYPE[f?.type] || FIELD_TYPE[item.type] || f?.type || item.type || '-';
+            aoa.push([no++, 'フィールド', depth, `${indent}${label}`, item.code || '-', type, Utils.formatBoolean(!!f?.required), '-']);
+          }
+        });
+    
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 2, 6] } };
+      }
+    
+      function buildViewsAOA(viewsResp, fields) {
+        const aoa = [['一覧'], ['番号', '一覧名', 'タイプ', '表示フィールド', '表示フィールド（ラベル）', '抽出条件', 'ソート', '表示順', 'ページ件数']];
+        const fieldLabelMap = buildFieldLabelMap(fields);
+        const views = viewsResp?.views || {};
+        const entries = Object.entries(views).sort((a, b) => (a[1].index ?? 999999) - (b[1].index ?? 999999));
+    
+        const typeMap = { 'LIST': '一覧', 'CALENDAR': 'カレンダー', 'CUSTOM': 'カスタマイズ' };
+        let no = 1;
+        for (const [name, v] of entries) {
+          const fieldCodes = Utils.ensureArray(v.fields);
+          const fieldLabels = fieldCodes.map(c => fieldLabelMap[c] || c);
+          aoa.push([
+            no++, name,
+            typeMap[v.type] || v.type || '-',
+            fieldCodes.join('\n') || '-',
+            fieldLabels.join('\n') || '-',
+            Utils.formatFilterCond(v.filterCond),
+            Utils.formatSort(v.sort),
+            v.index ?? '',
+            v.pagination !== false ? (v.paginationLimit || '既定') : '無効'
+          ]);
+        }
+        if (!entries.length) aoa.push(['', '一覧なし', '-', '-', '-', '-', '-', '', '-']);
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 7] } };
+      }
+    
+      function buildReportsAOA(reportsResp) {
+        const typeMap = { 'BAR': '棒グラフ', 'LINE': '折れ線グラフ', 'PIE': '円グラフ', 'TABLE': 'テーブル', 'PIVOT_TABLE': 'クロス集計表' };
+        const aggMap = { 'COUNT': '件数', 'SUM': '合計', 'AVERAGE': '平均', 'MAX': '最大値', 'MIN': '最小値' };
+        const aoa = [['レポート'], ['番号', 'レポート名', 'グラフ種別', 'グループ対象', '集計関数', '集計対象フィールド', '抽出条件', '表示順']];
+    
+        const reports = reportsResp?.reports || {};
+        const entries = Object.entries(reports).sort((a, b) => (a[1].index ?? 999999) - (b[1].index ?? 999999));
+    
+        let no = 1;
+        for (const [name, r] of entries) {
+          const groups = Utils.ensureArray(r.groups).map(g => g.code || JSON.stringify(g)).join('\n') || '-';
+          const aggFunc = aggMap[r.aggregationType] || r.aggregationType || '-';
+          const aggField = r.aggregationField || '-';
+          aoa.push([
+            no++, name,
+            typeMap[r.chartType] || r.chartType || typeMap[r.type] || r.type || '-',
+            groups, aggFunc, aggField,
+            Utils.formatFilterCond(r.filterCond),
+            r.index ?? ''
+          ]);
+        }
+        if (!entries.length) aoa.push(['', 'レポートなし', '-', '-', '-', '-', '-', '']);
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 7] } };
+      }
+    
+      function buildStatusAOA(statusResp) {
+        const aoa = [];
+        const sectionRows = [];
+        const headerInfoRows = [];
+    
+        aoa.push(['プロセス管理']);
+        aoa.push(['有効', statusResp?.enable ? 'はい' : 'いいえ']);
+        aoa.push([]);
+    
+        // ステータス
+        aoa.push(['ステータス一覧']); sectionRows.push(aoa.length - 1);
+        aoa.push(['番号', 'ステータス名', '表示順', '担当者']); headerInfoRows.push(aoa.length - 1);
+    
+        const states = statusResp?.states || {};
+        const stateEntries = Object.entries(states).sort((a, b) => (a[1].index ?? 999) - (b[1].index ?? 999));
+    
+        if (!stateEntries.length || !statusResp?.enable) {
+          aoa.push(['', '-', '-', '-']);
+        } else {
+          let no = 1;
+          for (const [, s] of stateEntries) {
+            const assignees = Utils.ensureArray(s?.assignee?.entities).map(a => Utils.formatEntityDetailed(a)).join('\n') || '-';
+            aoa.push([no++, s?.name || '-', s?.index ?? '-', assignees]);
+          }
+        }
+        aoa.push([]);
+    
+        // アクション（遷移）
+        aoa.push(['遷移アクション']); sectionRows.push(aoa.length - 1);
+        aoa.push(['番号', 'アクション名', '遷移元', '遷移先', '実行者']); headerInfoRows.push(aoa.length - 1);
+    
+        const actions = Utils.ensureArray(statusResp?.actions);
+        if (!actions.length) {
+          aoa.push(['', '-', '-', '-', '-']);
+        } else {
+          let no = 1;
+          for (const a of actions) {
+            const filterCond = a.filterCond ? `\n条件: ${Utils.formatFilterCond(a.filterCond)}` : '';
+            aoa.push([no++, a?.name || '-', a?.from || '-', a?.to || '-',
+              (Utils.ensureArray(a?.filterCond ? undefined : undefined).length ? '' : '-') + filterCond || '-']);
+          }
+        }
+    
+        return {
+          aoa,
+          options: { headerRowIndex: 4, titleRows: [0], sectionRows, headerInfoRows, freezeRows: 1, centerCols: [0] }
+        };
+      }
+    
+      /** 遷移マトリクス：状態×アクション→次状態 */
+      function buildStatusMatrixAOA(statusResp) {
+        if (!statusResp?.enable) return null;
+    
+        const states = statusResp?.states || {};
+        const stateNames = Object.entries(states)
+          .sort((a, b) => (a[1].index ?? 999) - (b[1].index ?? 999))
+          .map(([, s]) => s.name);
+    
+        if (stateNames.length === 0) return null;
+    
+        const aoa = [['遷移マトリクス'], ['遷移元 \\ 遷移先', ...stateNames]];
+        const actions = Utils.ensureArray(statusResp?.actions);
+    
+        for (const fromState of stateNames) {
+          const row = [fromState];
+          for (const toState of stateNames) {
+            const matching = actions.filter(a => a.from === fromState && a.to === toState);
+            row.push(matching.length > 0 ? matching.map(a => a.name).join('\n') : '');
+          }
+          aoa.push(row);
+        }
+    
+        const specialCells = {};
+        // 対角線のハイライト
+        for (let i = 0; i < stateNames.length; i++) {
+          specialCells[`${i + 2},${i + 1}`] = {
+            ...Sty.cell('center'),
+            fill: { patternType: 'solid', fgColor: { rgb: 'FFD5D5D5' } }
+          };
+        }
+        // 遷移ありのセルをハイライト
+        for (let r = 2; r < aoa.length; r++) {
+          for (let c = 1; c < aoa[r].length; c++) {
+            if (aoa[r][c] && !specialCells[`${r},${c}`]) {
+              specialCells[`${r},${c}`] = {
+                ...Sty.cell('center'),
+                fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.SUCCESS_BG } }
+              };
+            }
+          }
+        }
+    
+        return {
+          aoa,
+          options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, freezeCols: 1, specialCells, centerCols: [] }
+        };
+      }
+    
+      function buildAppAclAOA(aclResp) {
+        const aoa = [['アプリ権限'], ['番号', '対象種別', '対象名', 'レコード閲覧', 'レコード追加', 'レコード編集', 'レコード削除', 'ファイル読み込み', 'アプリ管理']];
+        const rights = Utils.ensureArray(aclResp?.rights);
+        if (!rights.length) {
+          aoa.push(['', '-', '-', '-', '-', '-', '-', '-', '-']);
+        } else {
+          let no = 1;
+          for (const r of rights) {
+            const e = r?.entity || {};
+            const typeMap = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', CREATOR: '作成者' };
+            const entityType = typeMap[(e.type || '').toUpperCase()] || e.type || '-';
+            const entityName = e.name || e.code || '(全員)';
+            aoa.push([
+              no++, entityType, entityName,
+              Utils.formatBoolean(r.record?.viewable ?? r.viewable),
+              Utils.formatBoolean(r.record?.addable ?? r.addable),
+              Utils.formatBoolean(r.record?.editable ?? r.editable),
+              Utils.formatBoolean(r.record?.deletable ?? r.deletable),
+              Utils.formatBoolean(r.record?.importable ?? r.importable),
+              Utils.formatBoolean(r.appEditable ?? r.manageable)
+            ]);
+          }
+        }
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 3, 4, 5, 6, 7, 8] } };
+      }
+    
+      function buildRecordAclAOA(aclResp) {
+        const aoa = [['レコード権限'], ['番号', '対象', '条件', '閲覧', '編集', '削除']];
+        const rights = Utils.ensureArray(aclResp?.rights);
+        if (!rights.length) {
+          aoa.push(['', '-', '-', '-', '-', '-']);
+        } else {
+          let no = 1;
+          for (const r of rights) {
+            const entities = Utils.ensureArray(r.entities).map(e => Utils.formatEntityDetailed(e)).join('\n') || '-';
+            aoa.push([
+              no++, entities,
+              Utils.formatFilterCond(r.filterCond),
+              Utils.formatBoolean(r.viewable),
+              Utils.formatBoolean(r.editable),
+              Utils.formatBoolean(r.deletable)
+            ]);
+          }
+        }
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 3, 4, 5] } };
+      }
+    
+      function buildFieldAclAOA(aclResp) {
+        const aoa = [['フィールド権限'], ['番号', '対象', 'フィールドコード', '閲覧', '編集']];
+        const rights = Utils.ensureArray(aclResp?.rights);
+        const mergeRanges = [];
+        let no = 1;
+    
+        if (!rights.length) {
+          aoa.push(['', '設定なし', '-', '-', '-']);
+        } else {
+          for (const r of rights) {
+            const entities = Utils.ensureArray(r.entities).map(e => Utils.formatEntityDetailed(e)).join('\n') || Utils.formatEntityDetailed(r.entity);
+            const perms = Utils.ensureArray(r.fields || r.permissions || r.fieldPermissions);
+            if (!perms.length) {
+              aoa.push([no++, entities, '-', '-', '-']);
+            } else {
+              const startRow = aoa.length;
+              for (const p of perms) {
+                aoa.push([no++, entities, p.code || p.field || '-', Utils.formatBoolean(!!p.viewable), Utils.formatBoolean(!!p.editable)]);
+              }
+              if (perms.length > 1) mergeRanges.push({ startRow, endRow: aoa.length - 1, col: 1 });
+            }
+          }
+        }
+        return { aoa, mergeRanges, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 3, 4] } };
+      }
+    
+      function buildCustomizeAOA(resp) {
+        const aoa = [['JS/CSSカスタマイズ'], ['番号', '対象', '種別', 'タイプ', 'URL/ファイル名']];
+        let no = 1;
+        const add = (target, kind, list) => {
+          for (const item of Utils.ensureArray(list)) {
+            const type = item.type || (item.url ? 'URL' : 'FILE');
+            aoa.push([no++, target, kind, type, item.url || item.file?.name || '-']);
+          }
+        };
+        add('デスクトップ', 'JS', resp?.desktop?.js);
+        add('デスクトップ', 'CSS', resp?.desktop?.css);
+        add('モバイル', 'JS', resp?.mobile?.js);
+        add('モバイル', 'CSS', resp?.mobile?.css);
+        if (aoa.length === 2) aoa.push(['', '設定なし', '-', '-', '-']);
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0] } };
+      }
+    
+      function buildActionsAOA(actions, appNames) {
+        const aoa = [['アクション'], ['番号', 'アクション名', '遷移先アプリ', '遷移先アプリ名', 'フィールドマッピング', '実行条件']];
+        const entries = Object.entries(actions || {});
+        let no = 1;
+        for (const [name, a] of entries) {
+          const destAppId = a?.destApp?.app || '-';
+          const destAppName = destAppId !== '-' ? (appNames[destAppId] || `(ID:${destAppId})`) : '-';
+          const mappings = Utils.ensureArray(a?.mappings).map(m => `${m.srcField} → ${m.destField}`).join('\n') || '-';
+          const cond = Utils.formatFilterCond(a?.filterCond) || '-';
+          aoa.push([no++, name, destAppId, destAppName, mappings, cond]);
+        }
+        if (!entries.length) aoa.push(['', '設定なし', '-', '-', '-', '-']);
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0] } };
+      }
+    
+      function buildPluginsAOA(resp) {
+        const aoa = [['プラグイン'], ['番号', 'プラグインID', '名称', '有効']];
+        const plugins = Utils.ensureArray(resp?.plugins);
+        if (!plugins.length) {
+          aoa.push(['', '設定なし', '-', '-']);
+        } else {
+          let no = 1;
+          for (const p of plugins) aoa.push([no++, p.id || '-', p.name || '-', Utils.formatBoolean(p.enabled !== false)]);
+        }
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 3] } };
+      }
+    
+      function buildNotificationsAOA(title, resp, extraCol) {
+        const hasExtra = !!extraCol;
+        const headers = hasExtra
+          ? ['番号', extraCol.label, '宛先', '条件', '件名/タイトル']
+          : ['番号', '宛先', '条件', '件名/タイトル'];
+        const aoa = [[title], headers];
+        const notifs = Utils.ensureArray(resp?.notifications);
+        if (!notifs.length) {
+          aoa.push(hasExtra ? ['', '-', '-', '-', '-'] : ['', '-', '-', '-']);
+        } else {
+          let no = 1;
+          for (const n of notifs) {
+            const targets = Utils.ensureArray(n?.targets || n?.entities || n?.recipients).map(e => Utils.formatEntityDetailed(e)).join('\n') || '-';
+            const cond = Utils.formatFilterCond(n?.filterCond || n?.condition);
+            const subj = n?.title || n?.subject || '-';
+            if (hasExtra) {
+              const extraVal = extraCol.getter(n);
+              aoa.push([no++, extraVal, targets, cond, subj]);
+            } else {
+              aoa.push([no++, targets, cond, subj]);
+            }
+          }
+        }
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0] } };
+      }
+    
+      function buildWebhookAOA(resp) {
+        const aoa = [['Webhook設定'], ['番号', 'URL', 'イベント', '有効']];
+        const hooks = Utils.ensureArray(resp?.webhooks);
+        if (!hooks.length) {
+          aoa.push(['', '設定なし', '-', '-']);
+        } else {
+          let no = 1;
+          for (const h of hooks) {
+            const events = Utils.ensureArray(h.events).join('\n') || '-';
+            aoa.push([no++, h.url || '-', events, Utils.formatBoolean(h.enabled !== false)]);
+          }
+        }
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 3] } };
+      }
+    
+      function buildAdminNotesAOA(resp) {
+        const aoa = [['管理者メモ'], ['項目', '値']];
+        aoa.push(['メモ', resp?.notes || '-']);
+        aoa.push(['リビジョン', resp?.revision ?? '-']);
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2 } };
+      }
+    
+      /** フィールド依存関係マップ */
+      function buildDependencyMapAOA(fields, appNames) {
+        const aoa = [['フィールド依存関係マップ'], ['番号', 'フィールド名', 'フィールドコード', '依存種別', '参照先', '詳細']];
+        let no = 1;
+        const specialCells = {};
+    
+        const addDep = (label, code, depType, target, detail, color) => {
+          const rowIdx = aoa.length;
+          aoa.push([no++, label, code, depType, target, detail]);
+          if (color) {
+            specialCells[`${rowIdx},3`] = {
+              ...Sty.cell('left'),
+              fill: { patternType: 'solid', fgColor: { rgb: color } }
+            };
+          }
+        };
+    
+        const processField = (code, f, parent) => {
+          const label = parent ? `${parent} > ${f.label || code}` : (f.label || code);
+    
+          if (f.lookup) {
+            const appId = f.lookup.relatedApp?.app;
+            const appName = appNames[appId] || `(ID:${appId})`;
+            addDep(label, code, 'ルックアップ', appName, `キー: ${f.lookup.relatedKeyField}`, CONFIG.COLORS.INFO_BG);
+            for (const m of Utils.ensureArray(f.lookup.fieldMappings)) {
+              addDep(label, code, 'ルックアップコピー', `${m.field} ← ${m.relatedField}`, `コピー元アプリ: ${appName}`, CONFIG.COLORS.INFO_BG);
+            }
+          }
+          if (f.referenceTable) {
+            const appId = f.referenceTable.relatedApp?.app;
+            const appName = appNames[appId] || `(ID:${appId})`;
+            addDep(label, code, '関連レコード', appName, `表示: ${Utils.ensureArray(f.referenceTable.displayFields).join(',')}`, CONFIG.COLORS.DEPENDENCY_BG);
+          }
+          if (f.expression) {
+            // 計算式から参照フィールドを抽出
+            const refs = [];
+            const re = /[A-Za-z_]\w*/g;
+            let m;
+            while ((m = re.exec(f.expression)) !== null) {
+              if (fields[m[0]] || Object.values(fields).some(ff => ff.fields?.[m[0]])) {
+                refs.push(m[0]);
+              }
+            }
+            const uniqueRefs = [...new Set(refs)];
+            if (uniqueRefs.length) {
+              addDep(label, code, '計算参照', uniqueRefs.join(', '), `式: ${f.expression}`, CONFIG.COLORS.WARNING_BG);
+            }
+          }
+        };
+    
+        for (const [code, f] of Object.entries(fields)) {
+          if (f.type === 'GROUP') continue;
+          processField(code, f, null);
+          if (f.type === 'SUBTABLE' && f.fields) {
+            for (const [sc, sf] of Object.entries(f.fields)) {
+              processField(sc, sf, f.label || code);
+            }
+          }
+        }
+    
+        if (aoa.length === 2) aoa.push(['', '依存関係なし', '-', '-', '-', '-']);
+    
+        return { aoa, options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0], specialCells } };
+      }
+    
+      // ═══════════════════ Excel出力 ═══════════════════
+    
+      function makeSafeSheetName(raw, existingNames) {
+        let name = String(raw ?? '').trim() || 'Sheet';
+        name = name.replace(/[:\\/\?\*\[\]]/g, '_').replace(/[\u0000-\u001F]/g, '').replace(/^'+|'+$/g, '');
+        if (!name) name = 'Sheet';
+        if (name.length > 31) name = name.slice(0, 31);
+        const existing = existingNames || new Set();
+        if (!existing.has(name)) return name;
+        let i = 2;
+        while (true) {
+          const suffix = `(${i})`;
+          const base = name.length > 31 - suffix.length ? name.slice(0, 31 - suffix.length) : name;
+          const candidate = base + suffix;
+          if (!existing.has(candidate)) return candidate;
+          i++;
+        }
+      }
+    
+      function downloadExcel(wb, filename) {
+        const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+        const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const a = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(url);
+      }
+    
+      // ═══════════════════ メイン実行部 ═══════════════════
+      try {
+        // アプリID（統合ツールのSource設定を使用）
+        const APP_ID = Number(sourceAppId);
+        if (!APP_ID) throw new Error('有効なSource App IDが指定されませんでした。');
+    
+        // エクスポートオプション選択
+        const selectedSheets = await showExportOptionsDialog();
+        if (!selectedSheets) return false; // キャンセル
+    
+        UI.show('ライブラリ読み込み中...', 12);
+        const { styled } = await loadSheetLib();
+    
+        const api = kintone.api;
+        const apiUrl = (path) => {
+          let p = String(path || '');
+          if (sourceGuestId) {
+            p = p
+              .replace('/k/v1/preview/', `/k/guest/${sourceGuestId}/v1/preview/`)
+              .replace('/k/v1/', `/k/guest/${sourceGuestId}/v1/`);
+          }
+          return kintone.api.url(p, true);
+        };
+    
+        // ステップ1: 基本情報
+        UI.update('基本情報を取得中...');
+        const appSettings = await fetchJob('App', () => api(apiUrl('/k/v1/app.json'), 'GET', { id: APP_ID }));
+        const generalSettings = await fetchJob('Settings', () => api(apiUrl('/k/v1/app/settings.json'), 'GET', { app: APP_ID }));
+    
+        // ステップ2: フィールド・レイアウト
+        UI.update('フィールド・レイアウトを取得中...');
+        let fieldResp = await fetchJob('FieldsPrev', () => api(apiUrl('/k/v1/preview/app/form/fields.json'), 'GET', { app: APP_ID }));
+        if (!fieldResp) fieldResp = await fetchJob('FieldsProd', () => api(apiUrl('/k/v1/app/form/fields.json'), 'GET', { app: APP_ID }));
+        let layout = await fetchJob('LayoutPrev', () => api(apiUrl('/k/v1/preview/app/form/layout.json'), 'GET', { app: APP_ID }));
+        if (!layout) layout = await fetchJob('LayoutProd', () => api(apiUrl('/k/v1/app/form/layout.json'), 'GET', { app: APP_ID }));
+        const fields = filterUserFields(fieldResp?.properties || {});
+    
+        // ステップ3: レコード件数
+        UI.update('レコード件数を取得中...');
+        let recordCount = null;
+        try {
+          const countResp = await fetchJob('RecordCount', () => api(apiUrl('/k/v1/records.json'), 'GET', { app: APP_ID, query: 'limit 1', totalCount: true }));
+          recordCount = countResp?.totalCount ?? null;
+        } catch { /* ignore */ }
+    
+        // ステップ4: 各種設定を並列取得
+        UI.update('一覧・権限・通知設定を取得中...');
+        const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif] = await Promise.all([
+          fetchJob('Views', () => api(apiUrl('/k/v1/app/views.json'), 'GET', { app: APP_ID })),
+          fetchJob('Reports', () => api(apiUrl('/k/v1/app/reports.json'), 'GET', { app: APP_ID })),
+          fetchJob('Status', () => api(apiUrl('/k/v1/app/status.json'), 'GET', { app: APP_ID })),
+          fetchJob('アプリ権限', () => api(apiUrl('/k/v1/app/acl.json'), 'GET', { app: APP_ID })),
+          fetchJob('レコード権限', () => api(apiUrl('/k/v1/record/acl.json'), 'GET', { app: APP_ID })),
+          fetchJob('フィールド権限', () => api(apiUrl('/k/v1/field/acl.json'), 'GET', { app: APP_ID })),
+          fetchJob('Customize', () => api(apiUrl('/k/v1/app/customize.json'), 'GET', { app: APP_ID })),
+          fetchJob('Actions', () => api(apiUrl('/k/v1/preview/app/actions.json'), 'GET', { app: APP_ID })),
+          fetchJob('Plugins', () => api(apiUrl('/k/v1/app/plugins.json'), 'GET', { app: APP_ID })),
+          fetchJob('AdminNotes', () => api(apiUrl('/k/v1/app/adminNotes.json'), 'GET', { app: APP_ID })),
+          fetchJob('Webhooks', () => api(apiUrl('/k/v1/app/webhook.json'), 'GET', { app: APP_ID })),
+          fetchJob('GenNotif', () => api(apiUrl('/k/v1/app/notifications/general.json'), 'GET', { app: APP_ID })),
+          fetchJob('RecNotif', () => api(apiUrl('/k/v1/app/notifications/perRecord.json'), 'GET', { app: APP_ID })),
+          fetchJob('RemNotif', () => api(apiUrl('/k/v1/app/notifications/reminder.json'), 'GET', { app: APP_ID }))
+        ]);
+    
+        const actions = Utils.safeGet(actionsResp, 'actions', {});
+    
+        // ステップ5: 参照アプリ名の解決
+        UI.update('関連アプリ名を解決中...');
+        const referencedAppIds = new Set();
+        const scanField = (f) => {
+          if (f.lookup?.relatedApp?.app) referencedAppIds.add(f.lookup.relatedApp.app);
+          if (f.referenceTable?.relatedApp?.app) referencedAppIds.add(f.referenceTable.relatedApp.app);
+        };
+        Object.values(fields).forEach(f => {
+          scanField(f);
+          if (f.type === 'SUBTABLE' && f.fields) Object.values(f.fields).forEach(scanField);
+        });
+        Object.values(actions).forEach(a => { if (a.destApp?.app) referencedAppIds.add(a.destApp.app); });
+    
+        const appNames = {};
+        const refPromises = [...referencedAppIds].map(id =>
+          fetchJob(`RefApp_${id}`, () => api(apiUrl('/k/v1/app.json'), 'GET', { id })).then(info => { appNames[id] = info?.name || `(ID:${id})`; })
+        );
+        await Promise.all(refPromises);
+    
+        // ステップ6: Excel生成
+        UI.update('Excelファイルを生成中...', 10);
+        const wb = XLSX.utils.book_new();
+    
+        const appendSheet = (name, data) => {
+          if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return;
+          const ws = XLSX.utils.aoa_to_sheet(data.aoa);
+          autosizeCols(ws, data.aoa);
+          applyStyles(ws, data.aoa, styled, data.options);
+          setSheetFeatures(ws, data.aoa, data.options);
+          if (data.mergeRanges) applyCellMerges(ws, data.mergeRanges);
+          const safeName = makeSafeSheetName(name, new Set(wb.SheetNames));
+          XLSX.utils.book_append_sheet(wb, ws, safeName);
+        };
+    
+        // 各シートの生成とアペンド（選択されたもののみ）
+        const sheetBuilders = {
+          summary: () => ({ name: 'サマリー', data: buildSummaryAOA(appSettings, generalSettings, fields, views || {}, reports || {}, status || {}, actions, APP_ID, recordCount, UI.failedAPIs) }),
+          fields: () => ({ name: '項目定義', data: buildFieldDefinitionAOA(fields, layout || {}, appNames) }),
+          layout: () => ({ name: 'フォームレイアウト', data: buildLayoutAOA(layout, fields) }),
+          views: () => ({ name: '一覧', data: buildViewsAOA(views || {}, fields) }),
+          reports: () => ({ name: 'レポート', data: buildReportsAOA(reports || {}) }),
+          status: () => ({ name: 'プロセス管理', data: buildStatusAOA(status || {}) }),
+          statusMatrix: () => ({ name: '遷移マトリクス', data: buildStatusMatrixAOA(status || {}) }),
+          appAcl: () => ({ name: 'アプリ権限', data: buildAppAclAOA(appAcl || {}) }),
+          recordAcl: () => ({ name: 'レコード権限', data: buildRecordAclAOA(recordAcl || {}) }),
+          fieldAcl: () => ({ name: 'フィールド権限', data: buildFieldAclAOA(fieldAcl || {}) }),
+          customize: () => ({ name: 'JS/CSSカスタマイズ', data: buildCustomizeAOA(customize || {}) }),
+          actions: () => ({ name: 'アクション', data: buildActionsAOA(actions, appNames) }),
+          plugins: () => ({ name: 'プラグイン', data: buildPluginsAOA(pluginsResp || {}) }),
+          genNotif: () => ({ name: '通知（一般）', data: buildNotificationsAOA('通知（一般）', genNotif || {}) }),
+          recNotif: () => ({ name: '通知（レコード）', data: buildNotificationsAOA('通知（レコード）', recNotif || {}, { label: 'イベント', getter: n => n?.event || n?.timing || '-' }) }),
+          remNotif: () => ({ name: '通知（リマインダー）', data: buildNotificationsAOA('通知（リマインダー）', remNotif || {}, { label: 'タイミング', getter: n => n?.timing ? Utils.safeJSONStringify(n.timing) : '-' }) }),
+          webhook: () => ({ name: 'Webhook設定', data: buildWebhookAOA(webhooksResp || {}) }),
+          adminNotes: () => ({ name: '管理者メモ', data: buildAdminNotesAOA(adminNotes || {}) }),
+          dependencies: () => ({ name: 'フィールド依存関係', data: buildDependencyMapAOA(fields, appNames) })
+        };
+    
+        // 定義順に追加（選択されたもののみ）
+        const orderedKeys = [
+          'summary', 'fields', 'layout', 'views', 'reports', 'status', 'statusMatrix',
+          'appAcl', 'recordAcl', 'fieldAcl', 'customize', 'actions', 'plugins',
+          'genNotif', 'recNotif', 'remNotif', 'webhook', 'adminNotes', 'dependencies'
+        ];
+    
+        for (const key of orderedKeys) {
+          if (selectedSheets.has(key) && sheetBuilders[key]) {
+            const { name, data } = sheetBuilders[key]();
+            if (data) appendSheet(name, data);
+          }
+        }
+    
+        UI.update('ダウンロード中...', 12);
+        const safeAppName = String(appSettings?.name || `App${APP_ID}`).replace(/[\\/:*?"<>|]/g, '_');
+        downloadExcel(wb, `${safeAppName}_設計書_v2.xlsx`);
+    
+        UI.hide();
+    
+        // 完了通知
+        const errorMsg = UI.failedAPIs.length > 0 ? `\n⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました（サマリーシートで確認できます）` : '';
+        alert(`✅ エクスポート完了${errorMsg}`);
+        console.log('kintone設計書エクスポート完了（v2.0）', { failedAPIs: UI.failedAPIs });
+        return true;
+    
+      } catch (e) {
+        UI.hide();
+        console.error('kintone設計書エクスポートエラー:', e);
+        alert(`❌ エラーが発生しました: ${e.message}\n\n詳細はブラウザのコンソールを確認してください。`);
+        throw e;
+      }
   }
 
   function renderCustomizeResult(data) {
@@ -2928,47 +5562,61 @@
     }
   }
 
-  function switchTab(tabKey) {
-    state.activeTab = tabKey;
-    ui.tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === tabKey));
-    ui.panes.forEach((p) => p.classList.toggle('active', p.dataset.pane === tabKey));
+  function switchTab(tabKey, options) {
+    const key = ui.tabs.some((t) => t.dataset.tab === tabKey) ? tabKey : 'diff';
+    state.activeTab = key;
+    ui.tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === key));
+    ui.panes.forEach((p) => p.classList.toggle('active', p.dataset.pane === key));
+    if (!options || options.persist !== false) saveCurrentDialogState();
   }
 
   function applyIgnoreProfile() {
     const name = ui.ignoreProfileSelect.value;
     const profiles = loadIgnoreProfiles();
-    if (!name || !profiles[name]) throw new Error('読込するプロファイルを選択してください');
-    ui.ignoreKeys.value = profiles[name];
+    if (!name || !Object.prototype.hasOwnProperty.call(profiles, name)) return;
+    ui.ignoreKeys.value = String(profiles[name] ?? '');
     ui.ignoreProfileName.value = name;
+    renderIgnoreKeyChips();
     saveCurrentDialogState();
     setStatus(`無視プロファイルを読込: ${name}`);
   }
 
   function saveIgnoreProfileFromInput() {
     const name = ui.ignoreProfileName.value.trim();
-    if (!name) throw new Error('保存名を入力してください');
+    if (!name) {
+      window.alert('保存名を入力してください');
+      return;
+    }
     const profiles = loadIgnoreProfiles();
-    profiles[name] = ui.ignoreKeys.value.trim();
+    profiles[name] = String(ui.ignoreKeys.value ?? '');
     saveIgnoreProfiles(profiles);
-    renderIgnoreProfileOptions();
-    ui.ignoreProfileSelect.value = name;
+    renderIgnoreProfileOptions(name);
+    saveCurrentDialogState();
     setStatus(`無視プロファイルを保存: ${name}`);
   }
 
   function deleteIgnoreProfileFromSelect() {
     const name = ui.ignoreProfileSelect.value;
-    if (!name) throw new Error('削除するプロファイルを選択してください');
+    if (!name) return;
     const profiles = loadIgnoreProfiles();
+    if (!Object.prototype.hasOwnProperty.call(profiles, name)) return;
     delete profiles[name];
     saveIgnoreProfiles(profiles);
-    renderIgnoreProfileOptions();
+    renderIgnoreProfileOptions('');
+    ui.ignoreKeys.value = '';
     ui.ignoreProfileName.value = '';
+    renderIgnoreKeyChips();
+    saveCurrentDialogState();
     setStatus(`無視プロファイルを削除: ${name}`);
   }
 
-  async function withGuard(fn) {
-    if (state.running) return;
+  async function withGuard(fn, busyText) {
+    if (state.running) {
+      setStatus('別の処理を実行中です。完了までお待ちください。');
+      return;
+    }
     state.running = true;
+    setBusy(true, busyText || '処理中...');
     try {
       await fn();
     } catch (e) {
@@ -2976,14 +5624,21 @@
       setStatus(`エラー: ${e.message || String(e)}`, true);
     } finally {
       state.running = false;
+      setBusy(false);
     }
   }
 
   renderScopeChips();
   restoreDialogState();
+  syncDiffThemeButton();
   renderIgnoreProfileOptions();
+  renderIgnoreKeyChips();
+  renderLookupMapRows();
   renderBundleState();
   renderReflectNodeList();
+  if (!ui.settingsExportSearchResult.innerHTML) {
+    ui.settingsExportSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
+  }
 
   ui.applyDiffOnly.addEventListener('change', () => {
     saveCurrentDialogState();
@@ -2996,24 +5651,78 @@
     renderBundleState();
     renderReflectNodeList();
   });
-  ui.doDeploy.addEventListener('change', saveCurrentDialogState);
-  ui.lookupMap.addEventListener('change', () => {
-    try {
-      parseLookupMapInput(ui.lookupMap.value);
+  [
+    ui.sourceApp,
+    ui.sourceGuest,
+    ui.sourcePreview,
+    ui.targetApp,
+    ui.targetGuest,
+    ui.targetPreview,
+    ui.ignoreKeys,
+    ui.ignoreProfileName,
+    ui.overwriteField,
+    ui.deployField,
+    ui.jsconfigPreview,
+    ui.jsconfigDeployAfter,
+    ui.settingsExportAppIds,
+    ui.settingsExportSearchKeyword,
+    ui.settingsExportGuest,
+    ui.settingsExportPreview
+  ].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('change', saveCurrentDialogState);
+  });
+  if (ui.charDiff) {
+    ui.charDiff.addEventListener('change', () => {
       saveCurrentDialogState();
-      if (ui.lookupMap.value.trim()) setStatus('Lookup AppID変換を更新しました');
-    } catch (e) {
-      setStatus(`Lookup AppID変換エラー: ${e.message || String(e)}`, true);
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+    });
+  }
+  if (ui.diffSearch) {
+    ui.diffSearch.addEventListener('input', () => {
+      saveCurrentDialogState();
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+    });
+  }
+  ui.doDeploy.addEventListener('change', saveCurrentDialogState);
+  ui.ignoreProfileSelect.addEventListener('change', () => {
+    applyIgnoreProfile();
+  });
+
+  root.addEventListener('keydown', (e) => {
+    if (e.target.id === 'u_ignoreKeyInput' && e.key === 'Enter') {
+      e.preventDefault();
+      addIgnoreKeyFromInput();
     }
+  });
+
+  root.addEventListener('input', (e) => {
+    if (e.target.closest('#u_lookupMapRows')) {
+      syncLookupMapFromRows();
+      saveCurrentDialogState();
+    }
+  });
+
+  ui.settingsExportSearchKeyword.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    withGuard(runSettingsExportSearchApps);
   });
 
   root.addEventListener('change', (e) => {
     const id = e.target?.dataset?.nodeId;
-    if (!id) return;
-    pushReflectUndo();
-    if (e.target.checked) state.reflectSelectedIds.add(id);
-    else state.reflectSelectedIds.delete(id);
-    renderReflectNodeList();
+    if (id) {
+      pushReflectUndo();
+      if (e.target.checked) state.reflectSelectedIds.add(id);
+      else state.reflectSelectedIds.delete(id);
+      renderReflectNodeList();
+      return;
+    }
+
+    if (e.target?.closest('#u_diffScopes') || e.target?.closest('#u_applyScopes') || e.target?.closest('#u_settingsExportScopes')) {
+      saveCurrentDialogState();
+      renderBundleState();
+    }
   });
 
   ui.sourceBundleFile.addEventListener('change', () => {
@@ -3062,6 +5771,17 @@
   });
 
   root.addEventListener('click', (e) => {
+    const secToggle = e.target.closest('[data-diff-sec-toggle]');
+    if (secToggle) {
+      const secKey = secToggle.dataset.diffSecToggle || '';
+      if (secKey) {
+        if (state.diffCollapsedSections.has(secKey)) state.diffCollapsedSections.delete(secKey);
+        else state.diffCollapsedSections.add(secKey);
+        if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      }
+      return;
+    }
+
     const modeBtn = e.target.closest('[data-node-mode]');
     if (modeBtn) {
       const nodeId = modeBtn.dataset.nodeMode;
@@ -3088,6 +5808,14 @@
       return;
     }
 
+    const addSettingsAppBtn = e.target.closest('[data-add-settings-app]');
+    if (addSettingsAppBtn) {
+      const appId = addSettingsAppBtn.dataset.addSettingsApp || '';
+      const appName = addSettingsAppBtn.dataset.addSettingsName || '';
+      addAppIdToSettingsExport(appId, appName);
+      return;
+    }
+
     if (e.target.id === 'u_sourceFieldCheckAll') {
       const checked = e.target.checked;
       [...ui.sourceFieldTbody.querySelectorAll('.src-field-sel')].forEach(c => c.checked = checked);
@@ -3107,11 +5835,121 @@
       return;
     }
 
+    if (act === 'setSourceCurrent') {
+      ui.sourceApp.value = DEFAULT_APP_ID;
+      saveCurrentDialogState();
+      setStatus(`Source App IDを現在アプリ(${DEFAULT_APP_ID})に設定しました`);
+      return;
+    }
+    if (act === 'copySourceToTarget') {
+      ui.targetApp.value = ui.sourceApp.value.trim();
+      ui.targetGuest.value = ui.sourceGuest.value.trim();
+      ui.targetPreview.checked = !!ui.sourcePreview.checked;
+      saveCurrentDialogState();
+      renderBundleState();
+      setStatus('Source設定をTargetへコピーしました');
+      return;
+    }
+    if (act === 'swapSourceTarget') {
+      const src = {
+        app: ui.sourceApp.value,
+        guest: ui.sourceGuest.value,
+        preview: ui.sourcePreview.checked
+      };
+      ui.sourceApp.value = ui.targetApp.value;
+      ui.sourceGuest.value = ui.targetGuest.value;
+      ui.sourcePreview.checked = ui.targetPreview.checked;
+      ui.targetApp.value = src.app;
+      ui.targetGuest.value = src.guest;
+      ui.targetPreview.checked = src.preview;
+      saveCurrentDialogState();
+      renderBundleState();
+      setStatus('Source/Target設定を入れ替えました');
+      return;
+    }
+    if (act === 'settingsExportUseCurrent') {
+      const cur = String(kintone.app.getId() || '').trim();
+      if (!cur) {
+        setStatus('現在App IDを取得できませんでした', true);
+        return;
+      }
+      const curList = ui.settingsExportAppIds.value.trim();
+      const set = new Set(parseAppIdList(curList));
+      set.add(cur);
+      ui.settingsExportAppIds.value = [...set].join(', ');
+      saveCurrentDialogState();
+      setStatus(`現在App(${cur})を追加しました`);
+      return;
+    }
+    if (act === 'settingsExportUseSource') {
+      const srcId = ui.sourceApp.value.trim();
+      if (!srcId) {
+        setStatus('Source App IDが空です', true);
+        return;
+      }
+      const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+      set.add(srcId);
+      ui.settingsExportAppIds.value = [...set].join(', ');
+      ui.settingsExportGuest.value = ui.sourceGuest.value.trim();
+      ui.settingsExportPreview.checked = !!ui.sourcePreview.checked;
+      saveCurrentDialogState();
+      setStatus(`Source App(${srcId})を追加しました`);
+      return;
+    }
+    if (act === 'settingsExportUseTarget') {
+      const tgtId = ui.targetApp.value.trim();
+      if (!tgtId) {
+        setStatus('Target App IDが空です', true);
+        return;
+      }
+      const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+      set.add(tgtId);
+      ui.settingsExportAppIds.value = [...set].join(', ');
+      ui.settingsExportGuest.value = ui.targetGuest.value.trim();
+      ui.settingsExportPreview.checked = !!ui.targetPreview.checked;
+      saveCurrentDialogState();
+      setStatus(`Target App(${tgtId})を追加しました`);
+      return;
+    }
+    if (act === 'settingsExportScopeAll') {
+      setSettingsExportScopeSelection(true);
+      setStatus('設定取得セクションを全選択しました');
+      return;
+    }
+    if (act === 'settingsExportScopeNone') {
+      setSettingsExportScopeSelection(false);
+      setStatus('設定取得セクションを全解除しました');
+      return;
+    }
+    if (act === 'runSettingsExportJson') return withGuard(async () => runSettingsExport('json'));
+    if (act === 'runSettingsExportZip') return withGuard(async () => runSettingsExport('zip'));
+    if (act === 'settingsExportSearchApps') return withGuard(runSettingsExportSearchApps);
+
     if (act === 'runDiff') return withGuard(runDiff);
     if (act === 'exportDiffJson') return withGuard(exportDiffJson);
     if (act === 'exportDiffHtml') return withGuard(exportDiffHtml);
     if (act === 'exportPatchJson') return withGuard(exportPatchJson);
     if (act === 'exportBundleJson') return withGuard(exportBundleJson);
+    if (act === 'toggleDiffTheme') {
+      state.diffViewTheme = state.diffViewTheme === 'dark' ? 'light' : 'dark';
+      syncDiffThemeButton();
+      saveCurrentDialogState();
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      setStatus(`比較ビューを${state.diffViewTheme === 'dark' ? 'Dark' : 'Light'}テーマに切り替えました`);
+      return;
+    }
+    if (act === 'collapseDiffSections') {
+      state.diffCollapsedSections = new Set((state.lastDiffRows || []).map((r) => r.sectionKey || r.section || 'Unknown'));
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      setStatus('比較ビューのセクションを全て折り畳みました');
+      return;
+    }
+    if (act === 'expandDiffSections') {
+      state.diffCollapsedSections = new Set();
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      setStatus('比較ビューのセクションを全て展開しました');
+      return;
+    }
     if (act === 'diffScopeAll') {
       setScopeSelection(ui.diffScopes, true);
       setStatus('比較セクションを全選択しました');
@@ -3138,6 +5976,60 @@
     if (act === 'loadIgnoreProfile') return withGuard(async () => applyIgnoreProfile());
     if (act === 'saveIgnoreProfile') return withGuard(async () => saveIgnoreProfileFromInput());
     if (act === 'deleteIgnoreProfile') return withGuard(async () => deleteIgnoreProfileFromSelect());
+
+    if (act === 'addPresetKey') {
+      const key = e.target.dataset.key;
+      if (!key) return;
+      const current = (ui.ignoreKeys.value || '').split(',').map((k) => k.trim()).filter(Boolean);
+      if (!current.includes(key)) {
+        current.push(key);
+        ui.ignoreKeys.value = current.join(', ');
+        renderIgnoreKeyChips();
+        saveCurrentDialogState();
+      }
+      return;
+    }
+    if (act === 'addIgnoreKey') { addIgnoreKeyFromInput(); return; }
+    if (act === 'removeIgnoreKey') {
+      const key = e.target.dataset.key;
+      if (!key) return;
+      const current = (ui.ignoreKeys.value || '').split(',').map((k) => k.trim()).filter(Boolean).filter((k) => k !== key);
+      ui.ignoreKeys.value = current.join(', ');
+      renderIgnoreKeyChips();
+      saveCurrentDialogState();
+      return;
+    }
+
+    if (act === 'addLookupMapRow') {
+      const container = document.getElementById('u_lookupMapRows');
+      if (!container) return;
+      if (container.querySelector('.muted')) container.innerHTML = '';
+      const i = container.querySelectorAll('[data-lookup-row]').length;
+      const row = document.createElement('div');
+      row.className = 'btns';
+      row.style.marginTop = '4px';
+      row.dataset.lookupRow = String(i);
+      row.innerHTML =
+        `<span style="align-self:center;font-size:11px;color:#64748b;white-space:nowrap">変換元</span>` +
+        `<input type="text" class="lookup-from" value="" placeholder="AppID" style="flex:1;min-width:0">` +
+        `<span style="align-self:center;padding:0 4px;color:#64748b">→</span>` +
+        `<span style="align-self:center;font-size:11px;color:#64748b;white-space:nowrap">変換先</span>` +
+        `<input type="text" class="lookup-to" value="" placeholder="AppID" style="flex:1;min-width:0">` +
+        `<button type="button" class="btn sub" data-act="removeLookupMapRow" data-row="${i}" style="padding:4px 8px">×</button>`;
+      container.appendChild(row);
+      row.querySelector('.lookup-from').focus();
+      return;
+    }
+    if (act === 'removeLookupMapRow') {
+      const row = e.target.closest('[data-lookup-row]');
+      if (row) {
+        row.remove();
+        syncLookupMapFromRows();
+        renderLookupMapRows();
+        saveCurrentDialogState();
+      }
+      return;
+    }
 
     if (act === 'applyScopeAll') {
       setScopeSelection(ui.applyScopes, true);
@@ -3241,8 +6133,8 @@
     if (act === 'runBatchProcess') return withGuard(runBatchProcess);
     if (act === 'runBatchFileDownload') return withGuard(runBatchFileDownload);
     if (act === 'runBatchJsConfigDownload') return withGuard(runBatchJsConfigDownload);
-    if (act === 'loadViewsForBatchProc') return withGuard(async () => loadViewsForSelect('u_batchProcView', 'u_batchProcAction'));
-    if (act === 'loadViewsForBatchDl') return withGuard(async () => loadViewsForSelect('u_batchDlView', 'u_batchDlFileCode'));
+    if (act === 'loadViewsForProc') return withGuard(async () => loadViewsForSelect('u_batchProcViewSelect', 'u_batchProcView'));
+    if (act === 'loadViewsForDl') return withGuard(async () => loadViewsForSelect('u_batchDlViewSelect', 'u_batchDlView'));
 
   });
   // ==========================================
@@ -3472,9 +6364,11 @@
         const limit = 500;
         let records = [];
         let offset = 0;
+        const src = commonParams().source;
+        const prefix = buildApiPrefix(src.guestId, false);
         while (true) {
           const body = { app: appId, query: `limit ${limit} offset ${offset}` };
-          const resp = await apiGet(buildApiPrefix(true) + '/records.json', body, getEnvConfig(true));
+          const resp = await apiGet(prefix, '/records.json', body);
           records = records.concat(resp.records);
           if (onProgress) onProgress(records.length);
           if (resp.records.length < limit) break;
@@ -3485,7 +6379,9 @@
 
       async fetchFields(appId) {
         try {
-          const resp = await apiGet(buildApiPrefix(true) + '/app/form/fields.json', { app: appId }, getEnvConfig(true));
+          const src = commonParams().source;
+          const prefix = buildApiPrefix(src.guestId, false);
+          const resp = await apiGet(prefix, '/app/form/fields.json', { app: appId });
           return resp.properties || {};
         } catch {
           return {};
@@ -4853,12 +7749,17 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 
   })();
 
+  function getSideApiPrefix(isSource, preview) {
+    const c = commonParams();
+    const side = isSource ? c.source : c.target;
+    return buildApiPrefix(side.guestId, !!preview);
+  }
+
   async function loadViewsForSelect(selectId, inputId) {
     const tApp = document.getElementById('u_targetApp').value.trim();
     if (!tApp) throw new Error('Target App IDを設定してください。');
-    const uConfig = getEnvConfig(false);
-    const url = buildApiPrefix(false) + '/app/views.json';
-    const resp = await apiGet(url, { app: tApp }, uConfig);
+    const prefix = getSideApiPrefix(false, false);
+    const resp = await apiGet(prefix, '/app/views.json', { app: tApp });
     const views = Object.entries(resp.views)
       .map(([name, v]) => ({ name, ...v }))
       .filter(v => v.type === 'LIST')
@@ -4885,15 +7786,13 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   }
 
   async function getRecordIdsByQuery(app, query, isSource) {
-    const uConfig = getEnvConfig(isSource);
-    const prefix = buildApiPrefix(isSource);
+    const prefix = getSideApiPrefix(isSource, false);
     const ids = [];
     let offset = 0;
     while (true) {
       let q = query ? `${query} ` : '';
       q += `order by $id asc limit 500 offset ${offset}`;
-      const url = prefix + '/records.json';
-      const resp = await apiGet(url, { app, query: q, fields: ['$id'] }, uConfig);
+      const resp = await apiGet(prefix, '/records.json', { app, query: q, fields: ['$id'] });
       const records = resp.records || [];
       if (records.length === 0) break;
       records.forEach(r => ids.push(Number(r.$id.value)));
@@ -4904,15 +7803,13 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   }
 
   async function getFullRecordsByQuery(app, query, isSource) {
-    const uConfig = getEnvConfig(isSource);
-    const prefix = buildApiPrefix(isSource);
+    const prefix = getSideApiPrefix(isSource, false);
     let allRecords = [];
     let offset = 0;
     while (true) {
       let q = query ? `${query} ` : '';
       q += `limit 500 offset ${offset}`;
-      const url = prefix + '/records.json';
-      const resp = await apiGet(url, { app, query: q }, uConfig);
+      const resp = await apiGet(prefix, '/records.json', { app, query: q });
       const records = resp.records || [];
       if (records.length === 0) break;
       allRecords = allRecords.concat(records);
@@ -4943,8 +7840,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     if (!confirm(`${ids.length}件のレコードにアクション「${action}」を実行します。よろしいですか？`)) return;
 
     setStatus('ステータス一括更新を開始...');
-    const uConfig = getEnvConfig(false);
-    const url = buildApiPrefix(false) + '/records/status.json';
+    const prefix = getSideApiPrefix(false, false);
     const batches = chunkArray(ids, 100);
 
     let okCount = 0;
@@ -4958,7 +7854,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
           return r;
         })
       };
-      await apiPut(url, body, uConfig);
+      await apiPut(prefix, '/records/status.json', body);
       okCount += batchIds.length;
       setStatus(`進捗: ${okCount}/${ids.length}件 完了...`);
       await new Promise(r => setTimeout(r, 150));
@@ -4980,11 +7876,9 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   }
 
   async function downloadTargetFile(fileKey) {
-    const uConfig = getEnvConfig(false);
-    const prefix = buildApiPrefix(false);
-    const url = prefix + '/file.json?fileKey=' + fileKey;
-    let headers = { 'X-Requested-With': 'XMLHttpRequest' };
-    if (uConfig.headers) headers = { ...headers, ...uConfig.headers };
+    const prefix = getSideApiPrefix(false, false);
+    const url = prefix + '/file.json?fileKey=' + encodeURIComponent(fileKey);
+    const headers = { 'X-Requested-With': 'XMLHttpRequest' };
 
     const resp = await fetch(url, { method: 'GET', headers });
     if (resp.status === 403) return null;
@@ -5044,17 +7938,15 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(u); }, 100);
-    setStatus(`添付ファイル一括DL完了 (${fileCount}ファイル)`, true);
+    setStatus(`添付ファイル一括DL完了 (${fileCount}ファイル)`);
   }
 
   async function getAllAppsInSpace(isSource) {
-    const uConfig = getEnvConfig(isSource);
-    const prefix = buildApiPrefix(isSource);
+    const prefix = getSideApiPrefix(isSource, false);
     let allApps = [];
     let offset = 0;
     while (true) {
-      const url = prefix + '/apps.json';
-      const resp = await apiGet(url, { limit: 100, offset }, uConfig);
+      const resp = await apiGet(prefix, '/apps.json', { limit: 100, offset });
       const apps = resp.apps || [];
       allApps = allApps.concat(apps);
       if (apps.length < 100) break;
@@ -5065,14 +7957,12 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   }
 
   async function downloadBlobWithRetry(fileKey, isSource, guestSpaceId) {
-    let prefix = buildApiPrefix(isSource);
+    let prefix = getSideApiPrefix(isSource, false);
     if (guestSpaceId) {
       prefix = `/k/guest/${guestSpaceId}/v1`;
     }
-    const url = prefix + '/file.json?fileKey=' + fileKey;
-    const uConfig = getEnvConfig(isSource);
-    let headers = { 'X-Requested-With': 'XMLHttpRequest' };
-    if (uConfig.headers) headers = { ...headers, ...uConfig.headers };
+    const url = prefix + '/file.json?fileKey=' + encodeURIComponent(fileKey);
+    const headers = { 'X-Requested-With': 'XMLHttpRequest' };
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -5107,8 +7997,6 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     let hasFiles = false;
     let failedCount = 0;
 
-    const uConfig = getEnvConfig(false);
-
     for (let i = 0; i < uniqueApps.length; i++) {
       const app = uniqueApps[i];
       const { appId, name, spaceId } = app;
@@ -5119,13 +8007,11 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 
       let customize = null;
       try {
-        let prefix = buildApiPrefix(false);
-        if (guestSpaceId && uConfig.domain && uConfig.domain.includes('/k/guest/')) {
-        } else if (guestSpaceId) {
+        let prefix = getSideApiPrefix(false, false);
+        if (guestSpaceId) {
           prefix = `/k/guest/${guestSpaceId}/v1`;
         }
-        const url = prefix + '/app/customize.json';
-        customize = await apiGet(url, { app: appId }, uConfig);
+        customize = await apiGet(prefix, '/app/customize.json', { app: appId });
       } catch (e) {
         console.warn(`アプリ ${appId} (${name}) のカスタマイズ取得失敗`);
         failedCount++;
@@ -5165,7 +8051,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(u); }, 100);
 
-    setStatus(`カスタマイズJS一括DL完了 (403スキップ: ${failedCount}件)`, true);
+    setStatus(`JS/CSS一括DL完了 (403スキップ: ${failedCount}件)`);
   }
 
   setStatus('起動完了');
