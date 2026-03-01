@@ -49,13 +49,17 @@
     lastTargetBundle: null,
     lastDiffRows: [],
     lastDiffAt: null,
+    lastDiffSignature: '',
+    lastApplyPlan: null,
     diffViewTheme: 'light',
     diffCollapsedSections: new Set(),
+    diffSectionVisibleCounts: {},
     reflectRows: [],
     reflectSelectedIds: new Set(),
     reflectNodeModes: {},
     reflectUndoStack: [],
     reflectRedoStack: [],
+    reflectActiveSidebarSection: null,
     importedSourceBundle: null,
     importedTargetBundle: null,
     importedSourceName: '',
@@ -100,6 +104,37 @@
 
   function stableStringify(v) {
     return JSON.stringify(normalize(v));
+  }
+
+  function compactForLog(value, max = 220) {
+    try {
+      const raw = typeof value === 'string' ? value : JSON.stringify(value);
+      if (!raw) return '';
+      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
+    } catch {
+      const raw = String(value ?? '');
+      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
+    }
+  }
+
+  function apiErrorWithContext(err, meta) {
+    if (err && err.__apiDiag) return err;
+    const method = meta?.method || 'GET';
+    const prefix = meta?.prefix || '';
+    const path = meta?.path || '';
+    const bodyOrParams = meta?.payload;
+    const app = bodyOrParams?.app ?? bodyOrParams?.id ?? bodyOrParams?.apps?.[0] ?? '';
+    const bodySummary = compactForLog(bodyOrParams);
+    const endpoint = `${prefix}${path}`;
+    const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ''}${bodySummary ? ` payload=${bodySummary}` : ''}`;
+    const baseMessage = err?.message || String(err);
+    const wrapped = new Error(`${baseMessage}\n${contextLine}`);
+    wrapped.__apiDiag = true;
+    wrapped.original = err;
+    if (err?.code) wrapped.code = err.code;
+    if (err?.id) wrapped.id = err.id;
+    if (err?.stack) wrapped.stack = err.stack;
+    return wrapped;
   }
 
   function nowStamp() {
@@ -170,19 +205,31 @@
         if (i < retries - 1) await new Promise((r) => setTimeout(r, (i + 1) * 700));
       }
     }
-    throw err;
+    throw apiErrorWithContext(err, { method: 'GET', prefix, path, payload: params });
   }
 
   async function apiPut(prefix, path, body) {
-    return kintone.api(`${prefix}${path}`, 'PUT', body);
+    try {
+      return await kintone.api(`${prefix}${path}`, 'PUT', body);
+    } catch (e) {
+      throw apiErrorWithContext(e, { method: 'PUT', prefix, path, payload: body });
+    }
   }
 
   async function apiPost(prefix, path, body) {
-    return kintone.api(`${prefix}${path}`, 'POST', body);
+    try {
+      return await kintone.api(`${prefix}${path}`, 'POST', body);
+    } catch (e) {
+      throw apiErrorWithContext(e, { method: 'POST', prefix, path, payload: body });
+    }
   }
 
   async function apiDelete(prefix, path, body) {
-    return kintone.api(`${prefix}${path}`, 'DELETE', body);
+    try {
+      return await kintone.api(`${prefix}${path}`, 'DELETE', body);
+    } catch (e) {
+      throw apiErrorWithContext(e, { method: 'DELETE', prefix, path, payload: body });
+    }
   }
 
   async function apiCallWithRetry(prefix, path, method, body, retries = 2) {
@@ -195,8 +242,54 @@
         if (i < retries) await new Promise((r) => setTimeout(r, 700 * (i + 1)));
       }
     }
-    throw err;
+    throw apiErrorWithContext(err, { method, prefix, path, payload: body });
   }
+
+  const HIGH_IMPACT_SECTIONS = new Set([
+    'fieldSettings',
+    'processSettings',
+    'actionSettings',
+    'appAcl',
+    'fieldAcl',
+    'recordPermissions'
+  ]);
+  const MEDIUM_IMPACT_SECTIONS = new Set([
+    'layoutSettings',
+    'viewSettings',
+    'reportSettings',
+    'customizeSettings',
+    'notifications',
+    'perRecordNotifications',
+    'reminderNotifications',
+    'categories'
+  ]);
+
+  function detectRowSeverity(row) {
+    const sec = row?.sectionKey || '';
+    const path = String(row?.path || '').toLowerCase();
+    if (row?.type === 'removed') return 'high';
+    if (HIGH_IMPACT_SECTIONS.has(sec)) return 'high';
+    if (path.includes('lookup') || path.includes('relatedapp') || path.includes('condition')) return 'high';
+    if (MEDIUM_IMPACT_SECTIONS.has(sec)) return 'medium';
+    return 'low';
+  }
+
+  function summarizeSeverity(rows) {
+    const out = { high: 0, medium: 0, low: 0 };
+    (rows || []).forEach((r) => {
+      const sev = r?.severity || 'low';
+      if (sev === 'high') out.high += 1;
+      else if (sev === 'medium') out.medium += 1;
+      else out.low += 1;
+    });
+    return out;
+  }
+
+  const IGNORE_PRESET_KEYS = {
+    fieldOrder: ['index', 'no', 'order'],
+    meta: ['revision', 'createdAt', 'creator', 'modifiedAt', 'modifier', 'updatedAt', 'updatedBy'],
+    labelName: ['name', 'label']
+  };
 
   function ensureBundleShape(bundle) {
     if (!bundle || typeof bundle !== 'object') throw new Error('バンドル形式が不正です');
@@ -256,9 +349,28 @@
     return bundle;
   }
 
+  function bundleMatchesParams(bundle, params) {
+    if (!bundle || !params) return false;
+    return (
+      String(bundle.appId || '') === String(params.appId || '').trim()
+      && String(bundle.guestId || '') === String(params.guestId || '').trim()
+      && !!bundle.preview === !!params.preview
+    );
+  }
+
+  function bundleHasSections(bundle, sections) {
+    if (!bundle || !bundle.sections) return false;
+    return (sections || []).every((sec) => Object.prototype.hasOwnProperty.call(bundle.sections, sec));
+  }
+
   async function resolveBundle(side, params, sections, onProgress) {
     if (side === 'source' && state.importedSourceBundle) return pickBundleSections(state.importedSourceBundle, sections);
     if (side === 'target' && state.importedTargetBundle) return pickBundleSections(state.importedTargetBundle, sections);
+    const cached = side === 'source' ? state.lastSourceBundle : state.lastTargetBundle;
+    if (bundleMatchesParams(cached, params) && bundleHasSections(cached, sections)) {
+      if (onProgress) onProgress(1, 'cache');
+      return pickBundleSections(cached, sections);
+    }
     return fetchBundle({ ...params, sections, onProgress });
   }
 
@@ -613,7 +725,11 @@
       for (let i = start; i < rows.length; i++) {
         if (!rows[i].section) rows[i].section = label;
         if (!rows[i].sectionKey) rows[i].sectionKey = sec;
+        if (!rows[i].severity) rows[i].severity = detectRowSeverity(rows[i]);
       }
+    }
+    for (const row of rows) {
+      if (!row.severity) row.severity = detectRowSeverity(row);
     }
     return rows;
   }
@@ -1316,6 +1432,10 @@
         #${TOOL_ID} .btn.ok{background:#15803d}
         #${TOOL_ID} .btn.pink{background:#be185d}
         #${TOOL_ID} .btn.dark{background:#1e293b}
+        #${TOOL_ID} .plan-confirm-panel{border:2px solid #3b82f6;border-radius:8px;background:#eff6ff;padding:12px;margin-top:8px}
+        #${TOOL_ID} .plan-confirm-panel .plan-summary{max-height:300px;overflow:auto;background:#fff;border:1px solid #bfdbfe;border-radius:6px;padding:10px;font-size:12px;white-space:pre-wrap;font-family:monospace}
+        #${TOOL_ID} .plan-confirm-panel .plan-actions{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid #bfdbfe}
+        #${TOOL_ID} .plan-confirm-panel .plan-meta{font-size:11px;color:#3b82f6;flex:1}
         #${TOOL_ID} .muted{font-size:11px;color:#64748b}
         #${TOOL_ID} .step{font-size:11px;font-weight:700;color:#1e293b;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:6px 8px;margin-top:8px}
         #${TOOL_ID} .kv{font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.7}
@@ -1344,9 +1464,15 @@
         #${TOOL_ID} .diff-view .diff-table th,#${TOOL_ID} .diff-view .diff-table td{border-bottom:1px solid var(--dv-border);padding:6px 8px;vertical-align:top;text-align:left}
         #${TOOL_ID} .diff-view .diff-table th{position:sticky;top:0;background:var(--dv-card);z-index:1}
         #${TOOL_ID} .diff-view .diff-type{font-weight:700}
+        #${TOOL_ID} .diff-view .sev-badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.02em}
+        #${TOOL_ID} .diff-view .sev-high{background:#fee2e2;color:#991b1b}
+        #${TOOL_ID} .diff-view .sev-medium{background:#fef3c7;color:#92400e}
+        #${TOOL_ID} .diff-view .sev-low{background:#dbeafe;color:#1d4ed8}
         #${TOOL_ID} .diff-view .diff-path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--dv-sub)}
         #${TOOL_ID} .diff-view .diff-cell{padding:0;overflow:hidden}
         #${TOOL_ID} .diff-view .diff-scroll{max-height:300px;overflow:auto}
+        #${TOOL_ID} .diff-view .diff-more{padding:8px 10px;text-align:center;border-top:1px dashed var(--dv-border)}
+        #${TOOL_ID} .diff-view .diff-more .btn{padding:5px 10px;font-size:11px}
         #${TOOL_ID} .diff-view .diff-line{display:flex;min-height:1.5em;line-height:1.5;padding:0 6px;white-space:pre-wrap;word-break:break-word}
         #${TOOL_ID} .diff-view .diff-line.add{background:var(--dv-add);color:var(--dv-add-txt)}
         #${TOOL_ID} .diff-view .diff-line.del{background:var(--dv-del);color:var(--dv-del-txt)}
@@ -1364,6 +1490,45 @@
         #${TOOL_ID} .busy-chip{display:flex;align-items:center;gap:10px;background:#0f172a;color:#fff;border-radius:999px;padding:10px 14px;font-size:12px;font-weight:700;box-shadow:0 8px 22px rgba(15,23,42,.32)}
         #${TOOL_ID} .busy-spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:999px;animation:${TOOL_ID}-spin .8s linear infinite}
         @keyframes ${TOOL_ID}-spin{to{transform:rotate(360deg)}}
+        #${TOOL_ID} .reflect-layout{display:flex;gap:0;height:520px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-top:10px;background:#fff;resize:vertical;min-height:320px}
+        #${TOOL_ID} .reflect-sidebar{width:220px;min-width:220px;background:#f8fafc;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;overflow:hidden}
+        #${TOOL_ID} .reflect-sidebar .sidebar-head{padding:10px 12px;border-bottom:1px solid #e2e8f0;font-size:12px;font-weight:700;background:#eef2ff;color:#1e293b;display:flex;justify-content:space-between;align-items:center}
+        #${TOOL_ID} .reflect-sidebar .sidebar-sections{flex:1;overflow:auto;padding:4px 0}
+        #${TOOL_ID} .reflect-sidebar .sidebar-item{display:flex;align-items:center;gap:6px;padding:7px 12px;font-size:11px;cursor:pointer;border-left:3px solid transparent;transition:background .15s,border-color .15s}
+        #${TOOL_ID} .reflect-sidebar .sidebar-item:hover{background:#eef2ff}
+        #${TOOL_ID} .reflect-sidebar .sidebar-item.active{background:#dbeafe;border-left-color:#2563eb;font-weight:700}
+        #${TOOL_ID} .reflect-sidebar .sidebar-item.disabled{opacity:.5;cursor:default}
+        #${TOOL_ID} .reflect-sidebar .sidebar-item .sec-check{margin:0;flex-shrink:0}
+        #${TOOL_ID} .reflect-sidebar .sidebar-item .sec-label{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        #${TOOL_ID} .reflect-sidebar .sidebar-item .sec-badge{font-size:9px;padding:2px 6px;border-radius:999px;background:#e2e8f0;color:#475569;flex-shrink:0}
+        #${TOOL_ID} .reflect-sidebar .sidebar-item .sec-badge.has-diff{background:#fef3c7;color:#92400e}
+        #${TOOL_ID} .reflect-sidebar .sidebar-item .sec-badge.no-put{background:#f1f5f9;color:#94a3b8}
+        #${TOOL_ID} .reflect-sidebar .sidebar-footer{padding:8px 10px;border-top:1px solid #e2e8f0;display:flex;gap:4px;flex-wrap:wrap}
+        #${TOOL_ID} .reflect-sidebar .sidebar-footer .btn{padding:4px 8px;font-size:10px}
+        #${TOOL_ID} .reflect-main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+        #${TOOL_ID} .reflect-main .main-header{padding:10px 14px;border-bottom:1px solid #e2e8f0;background:#fff}
+        #${TOOL_ID} .reflect-main .main-header .main-title{font-size:13px;font-weight:700;color:#0f172a}
+        #${TOOL_ID} .reflect-main .main-header .main-meta{font-size:11px;color:#64748b;margin-top:4px}
+        #${TOOL_ID} .reflect-main .main-body{flex:1;overflow:auto;padding:14px}
+        #${TOOL_ID} .reflect-main .main-footer{padding:10px 14px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+        #${TOOL_ID} .reflect-main .main-footer .btn{padding:7px 12px}
+        #${TOOL_ID} .opt-card{border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#fff}
+        #${TOOL_ID} .opt-card .opt-title{font-size:11px;font-weight:700;color:#334155;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+        #${TOOL_ID} .opt-card .opt-title .opt-icon{font-size:14px}
+        #${TOOL_ID} .sec-preview{border:1px solid #dbeafe;border-radius:8px;background:#eff6ff;padding:12px;margin-bottom:10px}
+        #${TOOL_ID} .sec-preview .sec-preview-title{font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px}
+        #${TOOL_ID} .sec-preview .sec-diff-summary{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+        #${TOOL_ID} .sec-preview .sec-diff-pill{font-size:10px;padding:2px 8px;border-radius:999px;border:1px solid #bfdbfe;background:#fff}
+        #${TOOL_ID} .sec-overview-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:12px}
+        #${TOOL_ID} .sec-overview-card{border:1px solid #e2e8f0;border-radius:8px;padding:10px;background:#fff;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+        #${TOOL_ID} .sec-overview-card:hover{border-color:#93c5fd;box-shadow:0 2px 8px rgba(59,130,246,.1)}
+        #${TOOL_ID} .sec-overview-card .soc-label{font-size:11px;font-weight:700;color:#1e293b;margin-bottom:4px}
+        #${TOOL_ID} .sec-overview-card .soc-stats{font-size:10px;color:#64748b}
+        #${TOOL_ID} .sec-overview-card .soc-bar{height:3px;background:#e2e8f0;border-radius:2px;margin-top:6px;overflow:hidden}
+        #${TOOL_ID} .sec-overview-card .soc-bar .fill{height:100%;border-radius:2px}
+        #${TOOL_ID} .sec-overview-card .soc-bar .fill.added{background:#22c55e}
+        #${TOOL_ID} .sec-overview-card .soc-bar .fill.removed{background:#ef4444}
+        #${TOOL_ID} .sec-overview-card .soc-bar .fill.changed{background:#f59e0b}
       </style>
       <div class="h">
         <div>
@@ -1410,7 +1575,14 @@
             </div>
             <input type="hidden" id="u_lookupMap">
           </div>
-          <div class="muted" style="margin-top:6px">共通設定は全タブで使います。必要な順番: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
+          <div class="step" style="margin-top:8px">共通データ取得 / クイック実行（全タブ共通）</div>
+          <div class="muted" style="margin-top:6px">Source/Target設定を元に共通データを先読みできます。差分→プランの順番もワンクリック実行できます。</div>
+          <div class="btns" style="margin-top:6px">
+            <button class="btn sub" data-act="prefetchCommonData">共通データ取得（Source+Target）</button>
+            <button class="btn" data-act="runDiffAndPlan">差分比較 → 反映プラン確認</button>
+          </div>
+          <div class="kv" id="u_commonDataState">共通データ未取得</div>
+          <div class="muted" style="margin-top:6px">共通設定は全タブで使います。推奨順番: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
         </div>
 
         <div class="card">
@@ -1469,6 +1641,12 @@
                 <button class="btn sub" data-act="addPresetKey" data-key="name" style="font-size:11px;padding:2px 8px">＋name</button>
                 <button class="btn sub" data-act="addPresetKey" data-key="label" style="font-size:11px;padding:2px 8px">＋label</button>
               </div>
+              <div style="font-size:11px;color:#64748b;margin-top:6px">よく使う無視プリセット:</div>
+              <div class="chips" style="margin-top:4px">
+                <label class="chip"><input type="checkbox" id="u_ignorePresetFieldOrder"> フィールド順序(index/no)無視</label>
+                <label class="chip"><input type="checkbox" id="u_ignorePresetMeta"> 日時/更新者/revision無視</label>
+                <label class="chip"><input type="checkbox" id="u_ignorePresetLabelName"> name/label差分を無視</label>
+              </div>
               <div style="font-size:11px;color:#64748b;margin-top:6px">追加した無視キー（×で削除）:</div>
               <input type="hidden" id="u_ignoreKeys">
               <div id="u_ignoreKeysTags" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:4px 6px;background:#fff;margin-top:4px;align-items:center"></div>
@@ -1519,38 +1697,81 @@
           </div>
 
           <div class="pane" data-pane="reflect">
-            <div class="step">Step 2: 反映範囲を確認してプレビューへ反映</div>
-            <div id="u_applyScopeBlock" style="margin-top:10px">
-              <label>反映対象セクション（PUT対応のみ）</label>
-              <div class="btns" style="margin-top:4px">
-                <button class="btn sub" data-act="applyScopeAll">反映セクション全選択</button>
-                <button class="btn sub" data-act="applyScopeNone">反映セクション全解除</button>
+            <input type="checkbox" id="u_nodeMode" style="display:none">
+            <div class="muted" style="margin-top:4px">差分比較が未実行または条件変更時は、反映前に自動で差分比較を実行します。</div>
+            <div id="u_applyScopeBlock" style="display:none"><div class="chips" id="u_applyScopes"></div></div>
+            <div class="reflect-layout">
+              <div class="reflect-sidebar">
+                <div class="sidebar-head">
+                  <span>反映セクション</span>
+                  <span style="font-size:10px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
+                </div>
+                <div class="sidebar-sections" id="u_reflectSidebarSections"></div>
+                <div class="sidebar-footer">
+                  <button class="btn sub" data-act="applyScopeAll">全選択</button>
+                  <button class="btn sub" data-act="applyScopeNone">全解除</button>
+                  <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn">差分のみ</button>
+                </div>
               </div>
-              <div class="chips" id="u_applyScopes"></div>
-            </div>
-            <div class="kv" id="u_reflectMode">Source: API / Target: Preview API</div>
-            <div class="kv" id="u_reflectHint" style="margin-top:8px"></div>
-            <div class="grid2" id="u_sectionOptionsBlock" style="margin-top:8px">
-              <label class="chip"><input type="checkbox" id="u_applyDiffOnly"> 前回差分のあるセクションのみ反映</label>
-              <label class="chip"><input type="checkbox" id="u_stopOnError" checked> エラー時に中断</label>
-            </div>
-            <label class="chip" style="margin-top:8px"><input type="checkbox" id="u_nodeMode"> 選択ノードのみ反映（上級）</label>
-            <label class="chip" style="margin-top:8px"><input type="checkbox" id="u_doDeploy"> 反映後にデプロイ実行（状態確認あり）</label>
-            <div class="warnbox" id="u_nodeWarn">注: ノードモードは「前回差分」から選択して反映します。まず差分比較を実行してください。</div>
-            <div class="btns" id="u_nodeControls">
-              <button class="btn sub" data-act="loadReflectNodes">差分ノード読込</button>
-              <button class="btn sub" data-act="selectReflectNodesAll">ノード全選択</button>
-              <button class="btn sub" data-act="clearReflectNodes">ノード全解除</button>
-              <button class="btn ok" data-act="reflectModeAllSrc" style="margin-left:8px;padding:4px 8px;font-size:10px">一括 Src</button>
-              <button class="btn ok" data-act="reflectModeAllTgt" style="margin-left:4px;padding:4px 8px;font-size:10px">一括 Tgt</button>
-              <button class="btn sub" data-act="reflectUndo" style="margin-left:8px">Undo</button>
-              <button class="btn sub" data-act="reflectRedo">Redo</button>
-            </div>
-            <div class="result" id="u_reflectNodeList" style="max-height:230px;margin-top:8px;display:none"></div>
-            <div class="btns">
-              <button class="btn sub" data-act="previewApplyPlan">反映プラン確認（ドライラン）</button>
-              <button class="btn ok" data-act="applyPreview">Source → Target(Preview) 反映</button>
-              <button class="btn dark" data-act="deployOnly">デプロイのみ実行</button>
+              <div class="reflect-main">
+                <div class="main-header">
+                  <div>
+                    <div class="main-title" id="u_reflectMainTitle">反映概要</div>
+                    <div class="main-meta" id="u_reflectMode">Source: API / Target: Preview API</div>
+                  </div>
+                  <div style="display:flex;gap:4px">
+                    <button class="btn ok" id="u_modeSectionBtn" data-act="reflectModeSection" style="padding:5px 10px;font-size:11px">セクション</button>
+                    <button class="btn sub" id="u_modeNodeBtn" data-act="reflectModeNode" style="padding:5px 10px;font-size:11px">ノード選択</button>
+                  </div>
+                </div>
+                <div class="main-body" id="u_reflectMainBody">
+                  <div id="u_reflectOverview"></div>
+                  <div id="u_reflectHint" class="kv" style="display:none"></div>
+                  <div id="u_sectionOptionsBlock" style="display:none">
+                    <label class="chip"><input type="checkbox" id="u_applyDiffOnly"> 前回差分のあるセクションのみ反映</label>
+                  </div>
+                  <div class="warnbox" id="u_nodeWarn" style="display:none">注: ノードモードは「前回差分」から選択して反映します。まず差分比較を実行してください。</div>
+                  <div id="u_nodeControls" style="display:none">
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                      <button class="btn sub" data-act="loadReflectNodes" style="padding:4px 8px;font-size:10px">差分ノード読込</button>
+                      <button class="btn sub" data-act="selectReflectNodesAll" style="padding:4px 8px;font-size:10px">全選択</button>
+                      <button class="btn sub" data-act="clearReflectNodes" style="padding:4px 8px;font-size:10px">全解除</button>
+                      <button class="btn ok" data-act="reflectModeAllSrc" style="padding:4px 8px;font-size:10px">一括Src</button>
+                      <button class="btn ok" data-act="reflectModeAllTgt" style="padding:4px 8px;font-size:10px">一括Tgt</button>
+                      <button class="btn sub" data-act="reflectUndo" style="padding:4px 8px;font-size:10px">Undo</button>
+                      <button class="btn sub" data-act="reflectRedo" style="padding:4px 8px;font-size:10px">Redo</button>
+                    </div>
+                  </div>
+                  <div id="u_nodeFilterBlock" style="display:none;margin-bottom:8px">
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                      <input type="text" id="u_nodeSearch" placeholder="パス / セクション で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                      <select id="u_nodeFilterSection" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px"><option value="">全セクション</option></select>
+                      <select id="u_nodeFilterType" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                        <option value="">全タイプ</option><option value="added">added</option><option value="removed">removed</option><option value="changed">changed</option>
+                      </select>
+                      <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                        <option value="">全Severity</option><option value="HIGH">HIGH</option><option value="MEDIUM">MEDIUM</option><option value="LOW">LOW</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="result" id="u_reflectNodeList" style="max-height:none;display:none;border:1px solid #dbe3ed;border-radius:8px;overflow:auto;flex:1"></div>
+                  <div class="opt-card" id="u_reflectOptionsCard">
+                    <div class="opt-title">反映オプション</div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                      <label class="chip"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存</label>
+                      <label class="chip"><input type="checkbox" id="u_stopOnError" checked> エラー時中断</label>
+                      <label class="chip"><input type="checkbox" id="u_doDeploy"> 反映後デプロイ</label>
+                    </div>
+                    <div id="u_backupStatus" style="display:none;margin-top:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46"></div>
+                  </div>
+                </div>
+                <div class="main-footer">
+                  <button class="btn sub" data-act="previewApplyPlan">反映プラン確認</button>
+                  <button class="btn sub" data-act="backupTargetPreview">バックアップ</button>
+                  <button class="btn ok" data-act="applyPreview">Source → Target(Preview) 反映</button>
+                  <button class="btn dark" data-act="deployOnly">デプロイのみ</button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1817,9 +2038,13 @@
     targetPreview: $('#u_targetPreview'),
     lookupMap: $('#u_lookupMap'),
     ignoreKeys: $('#u_ignoreKeys'),
+    ignorePresetFieldOrder: $('#u_ignorePresetFieldOrder'),
+    ignorePresetMeta: $('#u_ignorePresetMeta'),
+    ignorePresetLabelName: $('#u_ignorePresetLabelName'),
     ignoreProfileSelect: $('#u_ignoreProfileSelect'),
     ignoreProfileName: $('#u_ignoreProfileName'),
     diffSearch: $('#u_diffSearch'),
+    commonDataState: $('#u_commonDataState'),
     charDiff: $('#u_charDiff'),
     diffThemeBtn: $('#u_diffThemeBtn'),
     bundleState: $('#u_bundleState'),
@@ -1832,11 +2057,23 @@
     reflectMode: $('#u_reflectMode'),
     reflectHint: $('#u_reflectHint'),
     applyDiffOnly: $('#u_applyDiffOnly'),
+    autoBackupPreview: $('#u_autoBackupPreview'),
+    backupStatus: $('#u_backupStatus'),
     stopOnError: $('#u_stopOnError'),
     nodeMode: $('#u_nodeMode'),
+    modeSectionBtn: $('#u_modeSectionBtn'),
+    modeNodeBtn: $('#u_modeNodeBtn'),
+    nodeFilterBlock: $('#u_nodeFilterBlock'),
+    nodeSearch: $('#u_nodeSearch'),
+    nodeFilterSection: $('#u_nodeFilterSection'),
+    nodeFilterType: $('#u_nodeFilterType'),
+    nodeFilterSeverity: $('#u_nodeFilterSeverity'),
     nodeWarn: $('#u_nodeWarn'),
     nodeControls: $('#u_nodeControls'),
     reflectNodeList: $('#u_reflectNodeList'),
+    reflectOverview: $('#u_reflectOverview'),
+    reflectMainTitle: $('#u_reflectMainTitle'),
+    reflectOptionsCard: $('#u_reflectOptionsCard'),
     doDeploy: $('#u_doDeploy'),
     fieldJson: $('#u_fieldJson'),
     overwriteField: $('#u_overwriteField'),
@@ -1896,6 +2133,7 @@
     const text = [
       row.section || '',
       row.sectionKey || '',
+      row.severity || '',
       row.path || '',
       safe(row.left),
       safe(row.right)
@@ -2095,16 +2333,15 @@
 
   function renderResultRows(rows) {
     const summary = summarizeRows(rows);
+    const severitySummary = summarizeSeverity(rows);
     syncDiffThemeButton();
 
     const rawKeyword = String(ui.diffSearch?.value || '').trim();
     const keyword = rawKeyword.toLowerCase();
     const useCharDiff = !!ui.charDiff?.checked;
     const filteredRows = keyword ? rows.filter((r) => diffRowMatchesKeyword(r, keyword)) : rows;
-    const MAX_RENDER_ROWS = 500;
-    const renderRows = filteredRows.slice(0, MAX_RENDER_ROWS);
-    const grouped = groupDiffRowsBySection(renderRows);
-    const omitted = filteredRows.length - renderRows.length;
+    const grouped = groupDiffRowsBySection(filteredRows);
+    const filteredSeverity = summarizeSeverity(filteredRows);
 
     const summaryHtml = `
       <div class="diff-summary">
@@ -2113,7 +2350,11 @@
         <span class="diff-pill">Removed ${summary.removed}</span>
         <span class="diff-pill">Changed ${summary.changed}</span>
         <span class="diff-pill">Moved ${summary.moved}</span>
-        <span class="diff-info">表示 ${filteredRows.length}/${rows.length}${omitted > 0 ? ` (先頭${MAX_RENDER_ROWS}件のみ)` : ''}</span>
+        <span class="diff-pill">High ${severitySummary.high}</span>
+        <span class="diff-pill">Medium ${severitySummary.medium}</span>
+        <span class="diff-pill">Low ${severitySummary.low}</span>
+        <span class="diff-info">表示 ${filteredRows.length}/${rows.length}</span>
+        ${filteredRows.length !== rows.length ? `<span class="diff-info">Filter Severity H:${filteredSeverity.high} / M:${filteredSeverity.medium} / L:${filteredSeverity.low}</span>` : ''}
         ${rawKeyword ? `<span class="diff-info">Filter: ${esc(rawKeyword)}</span>` : ''}
       </div>
     `;
@@ -2142,24 +2383,34 @@
       </div>`;
       if (collapsed) return `<section class="diff-sec">${head}</section>`;
 
-      const rowsHtml = g.rows.map((r) => {
+      const visible = Math.max(40, state.diffSectionVisibleCounts[g.key] || 80);
+      const renderRows = g.rows.slice(0, visible);
+      const rowsHtml = renderRows.map((r) => {
         const typeLabel = r.moved ? `${r.type}(moved)` : r.type;
         const typeClass = r.type === 'added' ? 'added' : (r.type === 'removed' ? 'removed' : 'changed');
+        const sev = r.severity || 'low';
+        const sevClass = sev === 'high' ? 'sev-high' : (sev === 'medium' ? 'sev-medium' : 'sev-low');
         const cols = renderRowColumns(r, useCharDiff);
         return `<tr>
+          <td><span class="sev-badge ${sevClass}">${esc(sev.toUpperCase())}</span></td>
           <td class="diff-type ${typeClass}">${esc(typeLabel || '-')}</td>
           <td class="diff-path" title="${esc(r.path || '-')}">${esc(r.path || '-')}</td>
           <td class="diff-cell">${cols.left}</td>
           <td class="diff-cell">${cols.right}</td>
         </tr>`;
       }).join('');
+      const remain = g.rows.length - renderRows.length;
+      const moreHtml = remain > 0
+        ? `<div class="diff-more"><button class="btn sub" data-act="moreDiffRows" data-sec="${esc(g.key)}">さらに表示 (${remain}件)</button></div>`
+        : '';
 
       return `<section class="diff-sec">
         ${head}
         <table class="diff-table">
-          <thead><tr><th style="width:120px">Type</th><th style="width:260px">Path</th><th>Source</th><th>Target</th></tr></thead>
+          <thead><tr><th style="width:90px">Severity</th><th style="width:120px">Type</th><th style="width:260px">Path</th><th>Source</th><th>Target</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
+        ${moreHtml}
       </section>`;
     }).join('');
 
@@ -2250,6 +2501,29 @@
     ).join('');
   }
 
+  function getIgnorePresetState() {
+    return {
+      fieldOrder: !!ui.ignorePresetFieldOrder?.checked,
+      meta: !!ui.ignorePresetMeta?.checked,
+      labelName: !!ui.ignorePresetLabelName?.checked
+    };
+  }
+
+  function applyIgnorePresetKeysToInput(options = {}) {
+    const current = new Set((ui.ignoreKeys.value || '').split(',').map((k) => k.trim()).filter(Boolean));
+    const preset = getIgnorePresetState();
+    const removeDisabled = !!options.removeDisabled;
+    Object.entries(IGNORE_PRESET_KEYS).forEach(([name, keys]) => {
+      const enabled = !!preset[name];
+      keys.forEach((key) => {
+        if (enabled) current.add(key);
+        else if (removeDisabled) current.delete(key);
+      });
+    });
+    ui.ignoreKeys.value = [...current].join(', ');
+    renderIgnoreKeyChips();
+  }
+
   function addIgnoreKeyFromInput() {
     const input = document.getElementById('u_ignoreKeyInput');
     if (!input) return;
@@ -2302,28 +2576,185 @@
   }
 
   function renderBundleState() {
-    const sourceText = state.importedSourceBundle ? `Source: 読込済み(${state.importedSourceName || state.importedSourceBundle.appId || '-'})` : 'Source: API取得';
-    const targetText = state.importedTargetBundle ? `Target: 読込済み(${state.importedTargetName || state.importedTargetBundle.appId || '-'})` : 'Target: API取得';
+    const fmtFetchTime = (v) => {
+      if (!v) return '-';
+      try { return new Date(v).toLocaleString(); } catch { return String(v); }
+    };
+    const sourceText = state.importedSourceBundle
+      ? `Source: 読込済み(${state.importedSourceName || state.importedSourceBundle.appId || '-'})`
+      : (state.lastSourceBundle ? `Source: API取得済み(App ${state.lastSourceBundle.appId || '-'} / ${fmtFetchTime(state.lastSourceBundle.fetchedAt)})` : 'Source: API取得');
+    const targetText = state.importedTargetBundle
+      ? `Target: 読込済み(${state.importedTargetName || state.importedTargetBundle.appId || '-'})`
+      : (state.lastTargetBundle ? `Target: API取得済み(App ${state.lastTargetBundle.appId || '-'} / ${fmtFetchTime(state.lastTargetBundle.fetchedAt)})` : 'Target: API取得');
     ui.bundleState.textContent = `${sourceText} / ${targetText}`;
     const rangeMode = ui.nodeMode?.checked
       ? `選択ノード(${state.reflectSelectedIds.size})`
       : (ui.applyDiffOnly?.checked ? '前回差分セクションのみ' : '選択セクション');
     ui.reflectMode.textContent = `${sourceText} / Target: Preview API / 反映範囲: ${rangeMode}`;
+    if (ui.commonDataState) {
+      const diffInfo = state.lastDiffAt ? `差分: ${fmtFetchTime(state.lastDiffAt)} (${state.lastDiffRows.length}件)` : '差分: 未実行';
+      ui.commonDataState.textContent = `${sourceText} / ${targetText} / ${diffInfo}`;
+    }
   }
 
   function renderReflectModeUi() {
     const node = !!ui.nodeMode.checked;
     const scopeChecks = [...ui.applyScopes.querySelectorAll('input[type="checkbox"]')];
     scopeChecks.forEach((c) => { c.disabled = node; });
-    ui.applyDiffOnly.disabled = node;
-    ui.applyScopeBlock.style.opacity = node ? '0.55' : '1';
-    ui.sectionOptionsBlock.style.opacity = node ? '0.55' : '1';
+    if (ui.applyDiffOnly) ui.applyDiffOnly.disabled = node;
     ui.nodeWarn.style.display = node ? 'block' : 'none';
-    ui.nodeControls.style.display = node ? 'flex' : 'none';
+    ui.nodeControls.style.display = node ? 'block' : 'none';
     ui.reflectNodeList.style.display = node ? 'block' : 'none';
-    ui.reflectHint.textContent = node
-      ? `ノード反映モード: 差分ノードを選択して部分反映します（選択: ${state.reflectSelectedIds.size}件 / Undo: ${state.reflectUndoStack.length}）`
-      : 'セクション反映モード: 選択したセクション単位でSourceをTarget(Preview)へ反映します';
+    if (ui.nodeFilterBlock) ui.nodeFilterBlock.style.display = node ? 'block' : 'none';
+    if (ui.sectionOptionsBlock) ui.sectionOptionsBlock.style.display = node ? 'none' : 'none';
+    if (ui.reflectHint) {
+      ui.reflectHint.style.display = node ? 'block' : 'none';
+      ui.reflectHint.textContent = node
+        ? `ノード反映モード: 差分ノードを選択して部分反映します（選択: ${state.reflectSelectedIds.size}件 / Undo: ${state.reflectUndoStack.length}）`
+        : '';
+    }
+    if (ui.modeSectionBtn && ui.modeNodeBtn) {
+      ui.modeSectionBtn.className = node ? 'btn sub' : 'btn ok';
+      ui.modeSectionBtn.style.cssText = 'padding:5px 10px;font-size:11px';
+      ui.modeNodeBtn.className = node ? 'btn ok' : 'btn sub';
+      ui.modeNodeBtn.style.cssText = 'padding:5px 10px;font-size:11px';
+    }
+    if (ui.reflectOverview) ui.reflectOverview.style.display = node ? 'none' : 'block';
+    if (ui.reflectOptionsCard) ui.reflectOptionsCard.style.display = node ? 'none' : 'block';
+    renderReflectSidebar();
+  }
+
+  function getDiffCountsBySection() {
+    const counts = {};
+    for (const row of (state.lastDiffRows || [])) {
+      const key = row.sectionKey || '';
+      if (!key) continue;
+      if (!counts[key]) counts[key] = { total: 0, added: 0, removed: 0, changed: 0 };
+      counts[key].total++;
+      if (row.type === 'added') counts[key].added++;
+      else if (row.type === 'removed') counts[key].removed++;
+      else if (row.type === 'changed') counts[key].changed++;
+    }
+    return counts;
+  }
+
+  function renderReflectSidebar() {
+    const container = document.getElementById('u_reflectSidebarSections');
+    if (!container) return;
+    const diffCounts = getDiffCountsBySection();
+    const selectedScopes = new Set(selectedScopeKeys(ui.applyScopes));
+    const isNode = !!ui.nodeMode?.checked;
+    const activeSec = state.reflectActiveSidebarSection;
+    let checkedCount = 0;
+    const putSections = SECTION_DEFS.filter((d) => d.put);
+
+    const items = putSections.map((def) => {
+      const count = diffCounts[def.key] || null;
+      const checked = selectedScopes.has(def.key);
+      if (checked) checkedCount++;
+      const isActive = activeSec === def.key;
+      const badgeText = count ? `${count.total}` : '-';
+      const badgeCls = count && count.total > 0 ? 'sec-badge has-diff' : 'sec-badge';
+      const disabledAttr = isNode ? 'disabled' : '';
+      return `<div class="sidebar-item${isActive ? ' active' : ''}" data-sidebar-sec="${def.key}">
+        <input type="checkbox" class="sec-check" value="${def.key}" ${checked ? 'checked' : ''} ${disabledAttr} data-apply-scope>
+        <span class="sec-label">${esc(def.label)}</span>
+        <span class="${badgeCls}">${badgeText}</span>
+      </div>`;
+    }).join('');
+
+    container.innerHTML = items;
+    const sidebarCount = document.getElementById('u_sidebarCount');
+    if (sidebarCount) sidebarCount.textContent = `${checkedCount} / ${putSections.length}`;
+
+    syncApplyScopesFromSidebar();
+  }
+
+  function syncApplyScopesFromSidebar() {
+    const sidebarChecks = document.querySelectorAll('#u_reflectSidebarSections [data-apply-scope]');
+    const selected = new Set();
+    sidebarChecks.forEach((c) => { if (c.checked) selected.add(c.value); });
+    const scopeChecks = [...ui.applyScopes.querySelectorAll('input[type="checkbox"]')];
+    scopeChecks.forEach((c) => { c.checked = selected.has(c.value); });
+  }
+
+  function syncSidebarFromApplyScopes() {
+    const selectedScopes = new Set(selectedScopeKeys(ui.applyScopes));
+    const sidebarChecks = document.querySelectorAll('#u_reflectSidebarSections [data-apply-scope]');
+    sidebarChecks.forEach((c) => { c.checked = selectedScopes.has(c.value); });
+    const putSections = SECTION_DEFS.filter((d) => d.put);
+    const sidebarCount = document.getElementById('u_sidebarCount');
+    if (sidebarCount) sidebarCount.textContent = `${selectedScopes.size} / ${putSections.length}`;
+  }
+
+  function renderReflectMainPanel() {
+    const overview = document.getElementById('u_reflectOverview');
+    if (!overview) return;
+    const isNode = !!ui.nodeMode?.checked;
+    if (isNode) {
+      overview.style.display = 'none';
+      return;
+    }
+    overview.style.display = 'block';
+    const activeSec = state.reflectActiveSidebarSection;
+    const diffCounts = getDiffCountsBySection();
+    const selectedScopes = new Set(selectedScopeKeys(ui.applyScopes));
+
+    if (activeSec) {
+      const def = SECTION_DEFS.find((d) => d.key === activeSec);
+      if (!def) { overview.innerHTML = ''; return; }
+      const count = diffCounts[activeSec] || { total: 0, added: 0, removed: 0, changed: 0 };
+      const rows = (state.lastDiffRows || []).filter((r) => r.sectionKey === activeSec);
+      const topPaths = rows.slice(0, 12).map((r) => {
+        const cls = r.type === 'added' ? '#166534' : (r.type === 'removed' ? '#b91c1c' : '#92400e');
+        const typeLabel = r.moved ? `${r.type}(moved)` : (r.type || '-');
+        return `<tr><td style="color:${cls};font-weight:700;width:80px">${esc(typeLabel)}</td><td style="font-family:monospace;font-size:10px;color:#64748b;word-break:break-all">${esc(r.path || '-')}</td></tr>`;
+      }).join('');
+      const moreCount = rows.length > 12 ? rows.length - 12 : 0;
+
+      overview.innerHTML = `
+        <div class="sec-preview">
+          <div class="sec-preview-title">${esc(def.label)}</div>
+          <div class="sec-diff-summary">
+            <span class="sec-diff-pill">差分 ${count.total}件</span>
+            <span class="sec-diff-pill" style="color:#166534">追加 ${count.added}</span>
+            <span class="sec-diff-pill" style="color:#b91c1c">削除 ${count.removed}</span>
+            <span class="sec-diff-pill" style="color:#92400e">変更 ${count.changed}</span>
+          </div>
+          ${count.total > 0 ? `<div style="margin-top:10px;max-height:200px;overflow:auto">
+            <table><thead><tr><th style="width:80px">Type</th><th>Path</th></tr></thead><tbody>${topPaths}</tbody></table>
+            ${moreCount > 0 ? `<div class="muted" style="padding:6px 8px;text-align:center">他 ${moreCount}件...</div>` : ''}
+          </div>` : '<div class="muted" style="margin-top:8px">差分なし（または差分比較未実行）</div>'}
+        </div>`;
+      if (ui.reflectMainTitle) ui.reflectMainTitle.textContent = def.label;
+    } else {
+      const putSections = SECTION_DEFS.filter((d) => d.put);
+      const cards = putSections.filter((def) => selectedScopes.has(def.key)).map((def) => {
+        const count = diffCounts[def.key] || { total: 0, added: 0, removed: 0, changed: 0 };
+        const barTotal = Math.max(count.total, 1);
+        return `<div class="sec-overview-card" data-sidebar-nav="${def.key}">
+          <div class="soc-label">${esc(def.label)}</div>
+          <div class="soc-stats">${count.total > 0 ? `差分 ${count.total}件 (A:${count.added} R:${count.removed} C:${count.changed})` : '差分なし'}</div>
+          ${count.total > 0 ? `<div class="soc-bar">
+            ${count.added > 0 ? `<div class="fill added" style="width:${(count.added / barTotal) * 100}%;display:inline-block"></div>` : ''}
+            ${count.removed > 0 ? `<div class="fill removed" style="width:${(count.removed / barTotal) * 100}%;display:inline-block"></div>` : ''}
+            ${count.changed > 0 ? `<div class="fill changed" style="width:${(count.changed / barTotal) * 100}%;display:inline-block"></div>` : ''}
+          </div>` : ''}
+        </div>`;
+      }).join('');
+
+      const totalDiff = Object.values(diffCounts).reduce((s, c) => s + c.total, 0);
+      overview.innerHTML = `
+        <div class="sec-preview" style="border-color:#c7d2fe;background:#eef2ff">
+          <div class="sec-preview-title" style="color:#4338ca">反映概要</div>
+          <div class="sec-diff-summary">
+            <span class="sec-diff-pill" style="border-color:#c7d2fe">選択セクション ${selectedScopes.size}件</span>
+            <span class="sec-diff-pill" style="border-color:#c7d2fe">総差分 ${totalDiff}件</span>
+          </div>
+        </div>
+        ${selectedScopes.size > 0 ? `<div class="sec-overview-grid">${cards}</div>` : '<div class="muted" style="text-align:center;padding:20px">反映セクションを左のサイドバーから選択してください</div>'}`;
+      if (ui.reflectMainTitle) ui.reflectMainTitle.textContent = '反映概要';
+    }
   }
 
   function commonParams() {
@@ -2341,6 +2772,113 @@
     };
   }
 
+  function makeApplyPlanSignature(mode, payload) {
+    return stableStringify({
+      mode,
+      targetApp: payload?.targetApp || '',
+      targetGuest: payload?.targetGuest || '',
+      sourceApp: payload?.sourceApp || '',
+      sourceGuest: payload?.sourceGuest || '',
+      scopes: payload?.scopes || [],
+      nodes: payload?.nodes || [],
+      lookupMap: payload?.lookupMap || ''
+    });
+  }
+
+  function markApplyPlan(signature, mode, totalReq, lines) {
+    state.lastApplyPlan = {
+      signature,
+      mode,
+      totalReq: Number(totalReq || 0),
+      createdAt: Date.now(),
+      summary: (lines || []).slice(0, 16).join('\n'),
+      logs: lines || []
+    };
+  }
+
+  async function ensureApplyPlanApproved(signature, mode, planRunner) {
+    const plan = state.lastApplyPlan;
+    const valid = !!plan && plan.signature === signature && plan.mode === mode;
+    if (!valid) {
+      await planRunner();
+    }
+    const currentPlan = state.lastApplyPlan;
+    if (!currentPlan) return false;
+    return showInlineConfirmation(currentPlan);
+  }
+
+  function showInlineConfirmation(plan) {
+    return new Promise((resolve) => {
+      const stamp = new Date(plan.createdAt).toLocaleString();
+      const planText = (plan.logs || []).join('\n') || '(プラン詳細なし)';
+      ui.result.innerHTML = `<div class="plan-confirm-panel">
+        <div style="font-weight:700;font-size:13px;margin-bottom:8px">反映プラン確認</div>
+        <div class="plan-summary">${esc(planText)}</div>
+        <div class="plan-actions">
+          <span class="plan-meta">予定リクエスト: ${plan.totalReq || 0}件 | 作成: ${esc(stamp)}</span>
+          <button class="btn sub" id="u_planCancel">キャンセル</button>
+          <button class="btn ok" id="u_planExecute">このまま実行</button>
+        </div>
+      </div>`;
+      ui.result.scrollTop = 0;
+      const cleanup = () => {
+        const execBtn = document.getElementById('u_planExecute');
+        const cancelBtn = document.getElementById('u_planCancel');
+        if (execBtn) execBtn.removeEventListener('click', onExec);
+        if (cancelBtn) cancelBtn.removeEventListener('click', onCancel);
+      };
+      const onExec = () => { cleanup(); resolve(true); };
+      const onCancel = () => { cleanup(); ui.result.innerHTML = ''; resolve(false); };
+      document.getElementById('u_planExecute')?.addEventListener('click', onExec);
+      document.getElementById('u_planCancel')?.addEventListener('click', onCancel);
+    });
+  }
+
+  function resolveBackupScopes(c) {
+    if (ui.nodeMode.checked) {
+      if (!state.reflectRows.length) loadReflectRowsFromLastDiff();
+      const rows = getSelectedReflectRows();
+      if (!rows.length) throw new Error('バックアップ対象ノードが未選択です');
+      const scopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
+      if (!scopes.length) throw new Error('バックアップ対象セクションを判定できません');
+      return scopes;
+    }
+    const baseScopes = selectedScopeKeys(ui.applyScopes);
+    if (!baseScopes.length) throw new Error('反映セクションを選択してください');
+    return resolveApplyScopes(baseScopes);
+  }
+
+  async function backupTargetPreviewSettings(c, scopes, options = {}) {
+    if (!c.target.appId) throw new Error('Target App ID を入力してください');
+    const actualScopes = Array.isArray(scopes) && scopes.length ? scopes : resolveBackupScopes(c);
+    const target = { ...c.target, preview: true };
+    setStatus(`バックアップ取得中... (${actualScopes.length}セクション)`);
+    const bundle = await fetchBundle({
+      ...target,
+      sections: actualScopes,
+      onProgress: (p, l) => setStatus(`バックアップ取得中 ${Math.round(p * 100)}% (${l})`)
+    });
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      mode: 'target-preview-backup',
+      scopes: actualScopes,
+      target: {
+        appId: target.appId,
+        guestId: target.guestId || '',
+        preview: true
+      },
+      bundle
+    };
+    const filename = `target_preview_backup_app${target.appId}_${nowStamp()}.json`;
+    downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
+    if (!options?.silentStatus) setStatus(`Target(Preview)バックアップ保存: ${filename}`);
+    if (ui.backupStatus) {
+      ui.backupStatus.textContent = `\u2705 バックアップ保存済: ${filename} (${actualScopes.length}セクション, ${new Date().toLocaleTimeString()})`;
+      ui.backupStatus.style.display = 'block';
+    }
+    return { filename, payload };
+  }
+
   function saveCurrentDialogState() {
     saveDialogState({
       activeTab: state.activeTab,
@@ -2352,12 +2890,16 @@
       targetPreview: ui.targetPreview.checked,
       lookupMap: ui.lookupMap.value.trim(),
       ignoreKeys: ui.ignoreKeys.value.trim(),
+      ignorePresetFieldOrder: !!ui.ignorePresetFieldOrder?.checked,
+      ignorePresetMeta: !!ui.ignorePresetMeta?.checked,
+      ignorePresetLabelName: !!ui.ignorePresetLabelName?.checked,
       diffSearch: ui.diffSearch.value.trim(),
       charDiff: ui.charDiff.checked,
       diffTheme: state.diffViewTheme,
       diffScopes: selectedScopeKeys(ui.diffScopes),
       applyScopes: selectedScopeKeys(ui.applyScopes),
       applyDiffOnly: ui.applyDiffOnly.checked,
+      autoBackupPreview: ui.autoBackupPreview.checked,
       stopOnError: ui.stopOnError.checked,
       nodeMode: ui.nodeMode.checked,
       doDeploy: ui.doDeploy.checked,
@@ -2382,10 +2924,14 @@
     if (saved.targetPreview != null) ui.targetPreview.checked = !!saved.targetPreview;
     if (saved.lookupMap != null) ui.lookupMap.value = String(saved.lookupMap);
     if (saved.ignoreKeys != null) ui.ignoreKeys.value = String(saved.ignoreKeys);
+    if (saved.ignorePresetFieldOrder != null && ui.ignorePresetFieldOrder) ui.ignorePresetFieldOrder.checked = !!saved.ignorePresetFieldOrder;
+    if (saved.ignorePresetMeta != null && ui.ignorePresetMeta) ui.ignorePresetMeta.checked = !!saved.ignorePresetMeta;
+    if (saved.ignorePresetLabelName != null && ui.ignorePresetLabelName) ui.ignorePresetLabelName.checked = !!saved.ignorePresetLabelName;
     if (saved.diffSearch != null) ui.diffSearch.value = String(saved.diffSearch);
     if (saved.charDiff != null) ui.charDiff.checked = !!saved.charDiff;
     if (saved.diffTheme === 'dark' || saved.diffTheme === 'light') state.diffViewTheme = saved.diffTheme;
     if (saved.applyDiffOnly != null) ui.applyDiffOnly.checked = !!saved.applyDiffOnly;
+    if (saved.autoBackupPreview != null) ui.autoBackupPreview.checked = !!saved.autoBackupPreview;
     if (saved.stopOnError != null) ui.stopOnError.checked = !!saved.stopOnError;
     if (saved.nodeMode != null) ui.nodeMode.checked = !!saved.nodeMode;
     if (saved.doDeploy != null) ui.doDeploy.checked = !!saved.doDeploy;
@@ -2409,6 +2955,7 @@
     if (saved.activeTab && ui.tabs.some((t) => t.dataset.tab === saved.activeTab)) {
       switchTab(saved.activeTab, { persist: false });
     }
+    applyIgnorePresetKeysToInput();
     renderIgnoreKeyChips();
     renderLookupMapRows();
   }
@@ -2419,6 +2966,25 @@
       obj = side === 'source' ? obj.source : obj.target;
     }
     return ensureBundleShape(obj);
+  }
+
+  function currentDiffSignature() {
+    const c = commonParams();
+    return stableStringify({
+      source: c.source,
+      target: c.target,
+      scopes: selectedScopeKeys(ui.diffScopes),
+      ignoreKeys: ui.ignoreKeys.value.trim(),
+      importedSource: !!state.importedSourceBundle,
+      importedTarget: !!state.importedTargetBundle
+    });
+  }
+
+  async function ensureDiffPreparedForReflect() {
+    const sig = currentDiffSignature();
+    if (state.lastDiffAt && state.lastDiffSignature === sig) return;
+    setStatus('差分が未作成または条件変更のため、自動で差分比較を実行します...');
+    await runDiff();
   }
 
   async function importBundleFromFile(side, file) {
@@ -2434,7 +3000,20 @@
       state.importedTargetName = file.name || '';
       state.lastTargetBundle = bundle;
     }
+    state.lastDiffAt = null;
+    state.lastDiffRows = [];
+    state.lastDiffSignature = '';
+    state.lastApplyPlan = null;
+    state.reflectRows = [];
+    state.reflectSelectedIds = new Set();
+    state.reflectNodeModes = {};
+    state.reflectUndoStack = [];
+    state.reflectRedoStack = [];
+    renderResultRows([]);
+    renderReflectNodeList();
     renderBundleState();
+    renderReflectSidebar();
+    renderReflectMainPanel();
   }
 
   async function runDiff() {
@@ -2456,6 +3035,9 @@
     state.lastTargetBundle = target;
     state.lastDiffRows = rows;
     state.lastDiffAt = new Date().toISOString();
+    state.lastDiffSignature = currentDiffSignature();
+    state.lastApplyPlan = null;
+    state.diffSectionVisibleCounts = {};
     renderResultRows(rows);
     if (ui.nodeMode.checked || state.reflectRows.length) {
       try {
@@ -2465,7 +3047,58 @@
       }
     }
     const s = summarizeRows(rows);
-    setStatus(`差分比較完了: ${s.total}件 (A:${s.added} R:${s.removed} C:${s.changed} M:${s.moved})`);
+    const sev = summarizeSeverity(rows);
+    renderReflectSidebar();
+    renderReflectMainPanel();
+    setStatus(`差分比較完了: ${s.total}件 (A:${s.added} R:${s.removed} C:${s.changed} Mv:${s.moved} / H:${sev.high} Med:${sev.medium} L:${sev.low})`);
+  }
+
+  async function runPrefetchCommonData() {
+    const c = commonParams();
+    if (!c.source.appId) throw new Error('Source App ID を入力してください');
+    if (!c.target.appId) throw new Error('Target App ID を入力してください');
+    const sections = SECTION_DEFS.map((d) => d.key);
+
+    setStatus('共通データ取得: Source...');
+    const source = await fetchBundle({
+      ...c.source,
+      sections,
+      onProgress: (p, l) => setStatus(`共通データ取得 Source ${Math.round(p * 100)}% (${l})`)
+    });
+    setStatus('共通データ取得: Target...');
+    const target = await fetchBundle({
+      ...c.target,
+      sections,
+      onProgress: (p, l) => setStatus(`共通データ取得 Target ${Math.round(p * 100)}% (${l})`)
+    });
+
+    state.lastSourceBundle = source;
+    state.lastTargetBundle = target;
+    state.lastDiffAt = null;
+    state.lastDiffRows = [];
+    state.lastDiffSignature = '';
+    state.lastApplyPlan = null;
+    state.reflectRows = [];
+    state.reflectSelectedIds = new Set();
+    state.reflectNodeModes = {};
+    state.reflectUndoStack = [];
+    state.reflectRedoStack = [];
+    renderResultRows([]);
+    renderReflectNodeList();
+    renderBundleState();
+    renderReflectSidebar();
+    renderReflectMainPanel();
+
+    const sourceErr = Object.values(source.sections || {}).filter((x) => x && x._fetchError).length;
+    const targetErr = Object.values(target.sections || {}).filter((x) => x && x._fetchError).length;
+    setStatus(`共通データ取得完了: Source ${sections.length - sourceErr}/${sections.length}, Target ${sections.length - targetErr}/${sections.length}`);
+  }
+
+  async function runDiffAndPreviewPlan() {
+    await runDiff();
+    switchTab('reflect');
+    await runPreviewApplyPlan();
+    setStatus('差分比較→反映プラン確認 完了');
   }
 
   async function exportBundleJson() {
@@ -2827,6 +3460,14 @@
     rows.forEach((r) => { state.reflectNodeModes[r._id] = 'src'; });
     state.reflectUndoStack = [];
     state.reflectRedoStack = [];
+    if (ui.nodeFilterSection) {
+      const sections = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
+      ui.nodeFilterSection.innerHTML = '<option value="">全セクション</option>' +
+        sections.map((k) => {
+          const label = SECTION_DEFS.find((d) => d.key === k)?.label || k;
+          return `<option value="${esc(k)}">${esc(label)}</option>`;
+        }).join('');
+    }
     renderReflectNodeList();
     setStatus(`差分ノードを読込: ${rows.length}件`);
   }
@@ -2839,27 +3480,45 @@
       renderReflectModeUi();
       return;
     }
+    const keyword = (ui.nodeSearch?.value || '').toLowerCase();
+    const filterSec = ui.nodeFilterSection?.value || '';
+    const filterType = ui.nodeFilterType?.value || '';
+    const filterSev = ui.nodeFilterSeverity?.value || '';
+    const filtered = rows.filter((r) => {
+      if (keyword && !(r.path || '').toLowerCase().includes(keyword)
+          && !(r.section || '').toLowerCase().includes(keyword)
+          && !(r.sectionKey || '').toLowerCase().includes(keyword)) return false;
+      if (filterSec && r.sectionKey !== filterSec) return false;
+      if (filterType && r.type !== filterType) return false;
+      if (filterSev && (r.severity || 'low').toUpperCase() !== filterSev) return false;
+      return true;
+    });
     const selected = state.reflectSelectedIds || new Set();
     const selectedCount = rows.filter((r) => selected.has(r._id)).length;
     const selectedRows = rows.filter((r) => selected.has(r._id));
     const srcCount = selectedRows.filter((r) => reflectRowModeById(r._id) === 'src').length;
     const tgtCount = selectedRows.length - srcCount;
-    const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">候補 ${rows.length}件 / 選択 ${selectedCount}件 / Src ${srcCount} / Tgt ${tgtCount}</div>`;
-    const body = rows.slice(0, 1200).map((r) => {
+    const sev = summarizeSeverity(selectedRows);
+    const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">候補 ${rows.length}件 / 表示 ${filtered.length}件 / 選択 ${selectedCount}件 / Src ${srcCount} / Tgt ${tgtCount} / H:${sev.high} M:${sev.medium} L:${sev.low}</div>`;
+    const body = filtered.slice(0, 1200).map((r) => {
       const cls = r.type === 'added' ? '#166534' : (r.type === 'removed' ? '#b91c1c' : '#92400e');
       const checked = selected.has(r._id) ? 'checked' : '';
       const mode = reflectRowModeById(r._id);
       const typeLabel = r.moved ? `${r.type}(moved)` : (r.type || '-');
+      const severity = String(r.severity || 'low').toUpperCase();
+      const sevBg = severity === 'HIGH' ? '#fee2e2' : (severity === 'MEDIUM' ? '#fef3c7' : '#dbeafe');
+      const sevColor = severity === 'HIGH' ? '#991b1b' : (severity === 'MEDIUM' ? '#92400e' : '#1d4ed8');
       return `<tr>
         <td><input type="checkbox" data-node-id="${esc(r._id)}" ${checked}></td>
         <td><button type="button" data-node-mode="${esc(r._id)}" style="border:1px solid #cbd5e1;border-radius:6px;padding:2px 6px;font-size:10px;background:${mode === 'src' ? '#dbeafe' : '#dcfce7'};color:${mode === 'src' ? '#1d4ed8' : '#166534'};font-weight:700;cursor:pointer">${mode === 'src' ? 'Src' : 'Tgt'}</button></td>
+        <td><span style="display:inline-block;padding:1px 6px;border-radius:999px;background:${sevBg};color:${sevColor};font-size:10px;font-weight:700">${severity}</span></td>
         <td>${esc(r.section || '-')}</td>
         <td style="color:${cls};font-weight:700">${esc(typeLabel)}</td>
         <td title="${esc(r.path || '-')}">${esc(r.path || '-')}</td>
       </tr>`;
     }).join('');
     ui.reflectNodeList.innerHTML = `${header}<table>
-      <thead><tr><th style="width:52px">Use</th><th style="width:66px">Mode</th><th>Section</th><th>Type</th><th>Path</th></tr></thead>
+      <thead><tr><th style="width:52px">Use</th><th style="width:66px">Mode</th><th style="width:82px">Severity</th><th>Section</th><th>Type</th><th>Path</th></tr></thead>
       <tbody>${body}</tbody>
     </table>`;
     renderBundleState();
@@ -3207,6 +3866,7 @@
   }
 
   async function runPreviewApplyPlanNodes() {
+    await ensureDiffPreparedForReflect();
     const c = commonParams();
     if (!c.target.appId) throw new Error('Target App ID を入力してください');
     if (!state.reflectRows.length) loadReflectRowsFromLastDiff();
@@ -3215,6 +3875,17 @@
     const lookupMap = parseLookupMapInput(ui.lookupMap.value);
     const prefix = buildApiPrefix(c.target.guestId, true);
     const app = c.target.appId;
+    const nodeSigRows = rows
+      .map((r) => ({ id: r._id, sectionKey: r.sectionKey, mode: reflectRowModeById(r._id), type: r.type, path: r.path }))
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const planSignature = makeApplyPlanSignature('nodes', {
+      targetApp: c.target.appId,
+      targetGuest: c.target.guestId,
+      sourceApp: c.source.appId,
+      sourceGuest: c.source.guestId,
+      nodes: nodeSigRows,
+      lookupMap: ui.lookupMap.value.trim()
+    });
 
     const sectionMap = {};
     let srcCount = 0;
@@ -3297,6 +3968,7 @@
     lines.push('');
     lines.push(`合計予定リクエスト数: ${totalReq}`);
     lines.push('※ ノードモードは差分パスをもとにTargetプレビューへ反映します。');
+    markApplyPlan(planSignature, 'nodes', totalReq, lines);
 
     ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(lines.join('\n'))}</pre>`;
     setStatus('ノード反映プラン確認完了');
@@ -3396,6 +4068,7 @@
   }
 
   async function runApplyPreviewByNodes() {
+    await ensureDiffPreparedForReflect();
     const c = commonParams();
     if (!c.target.appId) throw new Error('Target App ID を入力してください');
     if (!state.reflectRows.length) loadReflectRowsFromLastDiff();
@@ -3404,8 +4077,20 @@
     const lookupMap = parseLookupMapInput(ui.lookupMap.value);
     const stopOnError = !!ui.stopOnError.checked;
     saveCurrentDialogState();
-    if (!window.confirm(`ノード反映を実行しますか？\nTarget App: ${c.target.appId}\n選択ノード: ${rows.length}件`)) {
-      setStatus('ノード反映をキャンセルしました');
+    const nodeSigRows = rows
+      .map((r) => ({ id: r._id, sectionKey: r.sectionKey, mode: reflectRowModeById(r._id), type: r.type, path: r.path }))
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const planSignature = makeApplyPlanSignature('nodes', {
+      targetApp: c.target.appId,
+      targetGuest: c.target.guestId,
+      sourceApp: c.source.appId,
+      sourceGuest: c.source.guestId,
+      nodes: nodeSigRows,
+      lookupMap: ui.lookupMap.value.trim()
+    });
+    const approved = await ensureApplyPlanApproved(planSignature, 'nodes', runPreviewApplyPlanNodes);
+    if (!approved) {
+      setStatus('反映をキャンセルしました');
       return;
     }
 
@@ -3419,6 +4104,11 @@
     logs.push(`ノードモード選択数: ${rows.length}`);
     logs.push(`モード内訳: Src ${srcModeCount} / Tgt ${tgtModeCount}`);
     logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+    if (ui.autoBackupPreview?.checked) {
+      const backupScopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
+      const backup = await backupTargetPreviewSettings(c, backupScopes, { silentStatus: true });
+      logs.push(`バックアップ保存: ${backup.filename}`);
+    }
     logs.push('');
 
     const bySection = {};
@@ -3434,10 +4124,12 @@
       const def = SECTION_DEFS.find((d) => d.key === secKey);
       if (!def || !def.put) {
         logs.push(`SKIP ${def?.label || secKey}: PUT非対応`);
+        renderProgressLog(logs, { phase: 'ノード反映実行中', current: i, total: sectionKeys.length });
         continue;
       }
 
       setStatus(`ノード反映中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
+      renderProgressLog(logs, { phase: 'ノード反映実行中', current: i, total: sectionKeys.length });
       try {
         const current = normalize(await apiGet(prefix, def.endpoint, { app }));
         const before = deepClone(current);
@@ -3507,7 +4199,8 @@
       }
     }
 
-    ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: 'ノード反映完了' });
     setStatus('ノード反映処理完了');
   }
 
@@ -3533,7 +4226,7 @@
     let scopes = [...baseScopes];
     if (!ui.applyDiffOnly.checked) return scopes;
     const diffSet = diffSectionKeySet();
-    if (!diffSet.size) throw new Error('「差分のあるセクションのみ反映」を使うには先に差分比較が必要です');
+    if (!diffSet.size) throw new Error('「前回差分のあるセクションのみ反映」がONのため先に差分比較が必要です。差分なしで反映する場合はこのチェックをOFFにしてください');
     scopes = scopes.filter((k) => diffSet.has(k));
     if (!scopes.length) throw new Error('選択中の反映セクションに差分がありません');
     return scopes;
@@ -3554,6 +4247,34 @@
       sourceBundle = pickBundleSections(sourceBundle, scopes);
     }
     return sourceBundle;
+  }
+
+  function renderProgressLog(logs, options = {}) {
+    const { phase, current, total } = options;
+    const progressBar = (typeof current === 'number' && total > 0)
+      ? `<div style="height:6px;background:#e2e8f0;border-radius:3px;margin:8px 10px 0"><div style="width:${Math.round(((current + 1) / total) * 100)}%;height:100%;background:#3b82f6;border-radius:3px;transition:width .3s"></div></div>`
+      : '';
+    const phaseLabel = phase
+      ? `<div style="font-weight:700;padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:13px">${esc(phase)}</div>`
+      : '';
+    const colored = logs.map((line) => {
+      if (line.startsWith('OK ')) return `<span style="color:#166534">${esc(line)}</span>`;
+      if (line.startsWith('NG ')) return `<span style="color:#b91c1c">${esc(line)}</span>`;
+      if (line.startsWith('SKIP ')) return `<span style="color:#92400e">${esc(line)}</span>`;
+      if (line.startsWith('START ')) return `<span style="color:#1d4ed8">${esc(line)}</span>`;
+      if (line.startsWith('PLAN ')) return `<span style="color:#1d4ed8">${esc(line)}</span>`;
+      return esc(line);
+    }).join('\n');
+    ui.result.innerHTML = `${phaseLabel}${progressBar}<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${colored}</pre>`;
+    ui.result.scrollTop = ui.result.scrollHeight;
+  }
+
+  function appendProgressSummary(logs) {
+    const ok = logs.filter((l) => l.startsWith('OK ')).length;
+    const ng = logs.filter((l) => l.startsWith('NG ')).length;
+    const skip = logs.filter((l) => l.startsWith('SKIP ')).length;
+    logs.push('');
+    logs.push(`=== 完了: OK ${ok} / NG ${ng} / SKIP ${skip} ===`);
   }
 
   async function deployAndPoll(prefix, app, logs) {
@@ -3577,6 +4298,7 @@
 
   async function runPreviewApplyPlan() {
     if (ui.nodeMode.checked) return runPreviewApplyPlanNodes();
+    await ensureDiffPreparedForReflect();
     const c = commonParams();
     if (!c.target.appId) throw new Error('Target App ID を入力してください');
     const lookupMap = parseLookupMapInput(ui.lookupMap.value);
@@ -3584,6 +4306,14 @@
     if (!baseScopes.length) throw new Error('反映セクションを選択してください');
     const scopes = resolveApplyScopes(baseScopes);
     saveCurrentDialogState();
+    const planSignature = makeApplyPlanSignature('section', {
+      targetApp: c.target.appId,
+      targetGuest: c.target.guestId,
+      sourceApp: c.source.appId,
+      sourceGuest: c.source.guestId,
+      scopes,
+      lookupMap: ui.lookupMap.value.trim()
+    });
 
     const sourceBundle = await getSourceBundleForApply(c, scopes);
     const prefix = buildApiPrefix(c.target.guestId, true);
@@ -3650,8 +4380,15 @@
     }
     logs.push('');
     logs.push(`合計予定リクエスト数: ${totalReq}`);
+    markApplyPlan(planSignature, 'section', totalReq, logs);
     ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
     setStatus('反映プラン確認完了');
+  }
+
+  async function runBackupTargetPreview() {
+    const c = commonParams();
+    const scopes = resolveBackupScopes(c);
+    await backupTargetPreviewSettings(c, scopes);
   }
 
   async function runDeployOnly() {
@@ -3674,14 +4411,24 @@
 
   async function runApplyPreview() {
     if (ui.nodeMode.checked) return runApplyPreviewByNodes();
+    await ensureDiffPreparedForReflect();
     const c = commonParams();
     if (!c.target.appId) throw new Error('Target App ID を入力してください');
     const lookupMap = parseLookupMapInput(ui.lookupMap.value);
     const baseScopes = selectedScopeKeys(ui.applyScopes);
     if (!baseScopes.length) throw new Error('反映セクションを選択してください');
     const scopes = resolveApplyScopes(baseScopes);
-    if (!window.confirm(`プレビュー反映を実行しますか？\nTarget App: ${c.target.appId}\n反映セクション: ${scopes.length}件`)) {
-      setStatus('プレビュー反映をキャンセルしました');
+    const planSignature = makeApplyPlanSignature('section', {
+      targetApp: c.target.appId,
+      targetGuest: c.target.guestId,
+      sourceApp: c.source.appId,
+      sourceGuest: c.source.guestId,
+      scopes,
+      lookupMap: ui.lookupMap.value.trim()
+    });
+    const approved = await ensureApplyPlanApproved(planSignature, 'section', runPreviewApplyPlan);
+    if (!approved) {
+      setStatus('反映をキャンセルしました');
       return;
     }
     saveCurrentDialogState();
@@ -3695,6 +4442,10 @@
     logs.push(`Target App: ${app}`);
     logs.push(`適用セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
     logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+    if (ui.autoBackupPreview?.checked) {
+      const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
+      logs.push(`バックアップ保存: ${backup.filename}`);
+    }
     logs.push('');
 
     for (let i = 0; i < scopes.length; i++) {
@@ -3704,10 +4455,12 @@
       const sourceSec = deepClone(sourceBundle.sections[secKey]);
       if (!sourceSec || sourceSec._fetchError) {
         logs.push(`SKIP ${def.label}: source未取得`);
+        renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total: scopes.length });
         continue;
       }
 
       setStatus(`反映中 ${i + 1}/${scopes.length}: ${def.label}`);
+      renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total: scopes.length });
       try {
         if (secKey === 'fieldSettings') {
           const current = await apiGet(prefix, '/app/form/fields.json', { app });
@@ -3763,7 +4516,8 @@
       }
     }
 
-    ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: 'プレビュー反映完了' });
     setStatus('プレビュー反映処理完了');
   }
 
@@ -5576,6 +6330,7 @@
     if (!name || !Object.prototype.hasOwnProperty.call(profiles, name)) return;
     ui.ignoreKeys.value = String(profiles[name] ?? '');
     ui.ignoreProfileName.value = name;
+    applyIgnorePresetKeysToInput();
     renderIgnoreKeyChips();
     saveCurrentDialogState();
     setStatus(`無視プロファイルを読込: ${name}`);
@@ -5635,6 +6390,8 @@
   renderIgnoreKeyChips();
   renderLookupMapRows();
   renderBundleState();
+  renderReflectSidebar();
+  renderReflectMainPanel();
   renderReflectNodeList();
   if (!ui.settingsExportSearchResult.innerHTML) {
     ui.settingsExportSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
@@ -5645,12 +6402,29 @@
     renderBundleState();
     renderReflectModeUi();
   });
+  [ui.ignorePresetFieldOrder, ui.ignorePresetMeta, ui.ignorePresetLabelName].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('change', () => {
+      applyIgnorePresetKeysToInput({ removeDisabled: true });
+      saveCurrentDialogState();
+    });
+  });
   ui.stopOnError.addEventListener('change', saveCurrentDialogState);
   ui.nodeMode.addEventListener('change', () => {
     saveCurrentDialogState();
     renderBundleState();
     renderReflectNodeList();
   });
+  let nodeSearchTimer = null;
+  if (ui.nodeSearch) {
+    ui.nodeSearch.addEventListener('input', () => {
+      clearTimeout(nodeSearchTimer);
+      nodeSearchTimer = setTimeout(() => renderReflectNodeList(), 200);
+    });
+  }
+  if (ui.nodeFilterSection) ui.nodeFilterSection.addEventListener('change', () => renderReflectNodeList());
+  if (ui.nodeFilterType) ui.nodeFilterType.addEventListener('change', () => renderReflectNodeList());
+  if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.addEventListener('change', () => renderReflectNodeList());
   [
     ui.sourceApp,
     ui.sourceGuest,
@@ -5660,6 +6434,7 @@
     ui.targetPreview,
     ui.ignoreKeys,
     ui.ignoreProfileName,
+    ui.autoBackupPreview,
     ui.overwriteField,
     ui.deployField,
     ui.jsconfigPreview,
@@ -5723,6 +6498,16 @@
       saveCurrentDialogState();
       renderBundleState();
     }
+    if (e.target?.closest('[data-apply-scope]')) {
+      syncApplyScopesFromSidebar();
+      saveCurrentDialogState();
+      renderBundleState();
+      renderReflectMainPanel();
+      const putSections = SECTION_DEFS.filter((d) => d.put);
+      const sidebarCount = document.getElementById('u_sidebarCount');
+      const checkedCount = [...document.querySelectorAll('#u_reflectSidebarSections [data-apply-scope]:checked')].length;
+      if (sidebarCount) sidebarCount.textContent = `${checkedCount} / ${putSections.length}`;
+    }
   });
 
   ui.sourceBundleFile.addEventListener('change', () => {
@@ -5771,6 +6556,26 @@
   });
 
   root.addEventListener('click', (e) => {
+    const sidebarItem = e.target.closest('[data-sidebar-sec]');
+    if (sidebarItem && !e.target.closest('.sec-check')) {
+      const secKey = sidebarItem.dataset.sidebarSec || '';
+      state.reflectActiveSidebarSection = (state.reflectActiveSidebarSection === secKey) ? null : secKey;
+      renderReflectSidebar();
+      renderReflectMainPanel();
+      return;
+    }
+
+    const overviewNav = e.target.closest('[data-sidebar-nav]');
+    if (overviewNav) {
+      const secKey = overviewNav.dataset.sidebarNav || '';
+      if (secKey) {
+        state.reflectActiveSidebarSection = secKey;
+        renderReflectSidebar();
+        renderReflectMainPanel();
+      }
+      return;
+    }
+
     const secToggle = e.target.closest('[data-diff-sec-toggle]');
     if (secToggle) {
       const secKey = secToggle.dataset.diffSecToggle || '';
@@ -5779,6 +6584,16 @@
         else state.diffCollapsedSections.add(secKey);
         if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
       }
+      return;
+    }
+
+    const moreRowsBtn = e.target.closest('[data-act="moreDiffRows"]');
+    if (moreRowsBtn) {
+      const secKey = moreRowsBtn.dataset.sec || '';
+      if (!secKey) return;
+      const current = Number(state.diffSectionVisibleCounts[secKey] || 80);
+      state.diffSectionVisibleCounts[secKey] = current + 80;
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
       return;
     }
 
@@ -5924,6 +6739,8 @@
     if (act === 'runSettingsExportJson') return withGuard(async () => runSettingsExport('json'));
     if (act === 'runSettingsExportZip') return withGuard(async () => runSettingsExport('zip'));
     if (act === 'settingsExportSearchApps') return withGuard(runSettingsExportSearchApps);
+    if (act === 'prefetchCommonData') return withGuard(runPrefetchCommonData);
+    if (act === 'runDiffAndPlan') return withGuard(runDiffAndPreviewPlan);
 
     if (act === 'runDiff') return withGuard(runDiff);
     if (act === 'exportDiffJson') return withGuard(exportDiffJson);
@@ -5968,6 +6785,17 @@
       state.importedTargetBundle = null;
       state.importedSourceName = '';
       state.importedTargetName = '';
+      state.lastDiffAt = null;
+      state.lastDiffRows = [];
+      state.lastDiffSignature = '';
+      state.lastApplyPlan = null;
+      state.reflectRows = [];
+      state.reflectSelectedIds = new Set();
+      state.reflectNodeModes = {};
+      state.reflectUndoStack = [];
+      state.reflectRedoStack = [];
+      renderResultRows([]);
+      renderReflectNodeList();
       renderBundleState();
       setStatus('バンドル読込を解除しました');
       return;
@@ -6033,12 +6861,47 @@
 
     if (act === 'applyScopeAll') {
       setScopeSelection(ui.applyScopes, true);
+      renderReflectSidebar();
+      renderReflectMainPanel();
       setStatus('反映セクションを全選択しました');
       return;
     }
     if (act === 'applyScopeNone') {
       setScopeSelection(ui.applyScopes, false);
+      renderReflectSidebar();
+      renderReflectMainPanel();
       setStatus('反映セクションを全解除しました');
+      return;
+    }
+    if (act === 'applyScopeDiffOnly') {
+      const diffCounts = getDiffCountsBySection();
+      const putSections = SECTION_DEFS.filter((d) => d.put);
+      [...ui.applyScopes.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
+        const dc = diffCounts[c.value];
+        c.checked = !!(dc && dc.total > 0);
+      });
+      saveCurrentDialogState();
+      renderReflectSidebar();
+      renderReflectMainPanel();
+      setStatus('差分のあるセクションのみ選択しました');
+      return;
+    }
+    if (act === 'reflectModeSection') {
+      ui.nodeMode.checked = false;
+      state.reflectActiveSidebarSection = null;
+      renderReflectModeUi();
+      renderReflectMainPanel();
+      setStatus('セクション反映モードに切り替えました');
+      return;
+    }
+    if (act === 'reflectModeNode') {
+      ui.nodeMode.checked = true;
+      state.reflectActiveSidebarSection = null;
+      renderReflectModeUi();
+      if (state.lastDiffRows && state.lastDiffRows.length > 0 && !state.reflectRows.length) {
+        loadReflectRowsFromLastDiff();
+      }
+      setStatus('ノード反映モードに切り替えました');
       return;
     }
     if (act === 'loadReflectNodes') {
@@ -6082,6 +6945,7 @@
     if (act === 'reflectModeAllTgt') return runReflectModeAll('tgt');
 
     if (act === 'previewApplyPlan') return withGuard(runPreviewApplyPlan);
+    if (act === 'backupTargetPreview') return withGuard(runBackupTargetPreview);
     if (act === 'applyPreview') return withGuard(runApplyPreview);
     if (act === 'deployOnly') return withGuard(runDeployOnly);
     if (act === 'applyField') return withGuard(runFieldApply);
@@ -6316,13 +7180,44 @@
         return true;
       },
 
+      hashSql: (sql) => {
+        const str = String(sql || '');
+        let h = 0x811c9dc5;
+        for (let i = 0; i < str.length; i++) {
+          h ^= str.charCodeAt(i);
+          h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+        }
+        return `sql_${(h >>> 0).toString(16).padStart(8, '0')}`;
+      },
+
+      analyzeSqlSafety: (sql) => {
+        const raw = String(sql || '');
+        const withoutBlockComments = raw.replace(/\/\*[\s\S]*?\*\//g, ' ');
+        const clean = withoutBlockComments.replace(/--.*$/gm, ' ').replace(/\s+/g, ' ').trim();
+        const up = clean.toUpperCase();
+        const issues = [];
+        const upd = up.match(/\bUPDATE\b[\s\S]*?(?=;|$)/g) || [];
+        upd.forEach((stmt) => {
+          if (!/\bWHERE\b/.test(stmt)) issues.push('UPDATEにWHERE句がありません');
+        });
+        const del = up.match(/\bDELETE\s+FROM\b[\s\S]*?(?=;|$)/g) || [];
+        del.forEach((stmt) => {
+          if (!/\bWHERE\b/.test(stmt)) issues.push('DELETEにWHERE句がありません');
+        });
+        return {
+          cleaned: clean,
+          issues,
+          hash: Utils.hashSql(clean)
+        };
+      },
+
       // History management
       getHistory: () => {
         try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
       },
-      addHistory: (sql) => {
+      addHistory: (sql, meta = {}) => {
         const h = Utils.getHistory().filter(item => item.sql !== sql);
-        h.unshift({ sql, time: Date.now() });
+        h.unshift({ sql, time: Date.now(), hash: meta.hash || '', safety: meta.safety || '' });
         if (h.length > 50) h.length = 50;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(h));
       },
@@ -6632,6 +7527,24 @@
       const execute = async () => {
         const sql = editorEl.value.trim();
         if (!sql) return;
+        const safety = Utils.analyzeSqlSafety(sql);
+        if (safety.issues.length) {
+          const ok1 = window.confirm(
+            `⚠ 危険な更新系SQLの可能性があります。\n` +
+            `${safety.issues.map((x, i) => `${i + 1}. ${x}`).join('\n')}\n\n` +
+            `SQL Hash: ${safety.hash}\n` +
+            `続行する場合は次の確認に進みます。`
+          );
+          if (!ok1) {
+            setStatus(`Canceled by safety guard (${safety.hash})`);
+            return;
+          }
+          const typed = window.prompt(`安全確認: SQL Hash を入力してください\n${safety.hash}`, '');
+          if ((typed || '').trim() !== safety.hash) {
+            setStatus('Safety hash mismatch. Query canceled.');
+            return;
+          }
+        }
 
         const t0 = performance.now();
         try {
@@ -6662,13 +7575,14 @@
           sortCol = null;
           sortAsc = true;
           renderTable();
-          setStatus(`${lastResult.length} rows — ${elapsed}s`);
+          setStatus(`${lastResult.length} rows — ${elapsed}s [${safety.hash}]`);
 
           // Update sidebar with fields
           renderFields(primary.fields, primary.flat);
 
           // Save to history
-          Utils.addHistory(sql);
+          Utils.addHistory(sql, { hash: safety.hash, safety: safety.issues.length ? 'double-confirm' : 'normal' });
+          console.info(`[KintoneSQL] hash=${safety.hash} safety=${safety.issues.length ? 'double-confirm' : 'normal'}`);
         } catch (e) {
           handleError(e);
         }
@@ -6692,7 +7606,7 @@
             }
           }, [
             Utils.el('span', { textContent: item.sql.replace(/\n/g, ' ').slice(0, 80), style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1' } }),
-            Utils.el('span', { className: 'history-time', textContent: Utils.formatTime(item.time) })
+            Utils.el('span', { className: 'history-time', textContent: `${Utils.formatTime(item.time)}${item.hash ? ` • ${item.hash}` : ''}` })
           ]);
           historyDropdown.appendChild(row);
         });
@@ -7004,12 +7918,16 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   position:fixed;top:0;left:0;right:0;z-index:100;
   display:flex;align-items:center;gap:6px;padding:8px 14px;
   background:linear-gradient(180deg,var(--bg) 70%,transparent);
+  overflow-x:auto;white-space:nowrap;scrollbar-width:none;
 }
+#topbar::-webkit-scrollbar{display:none;}
 #topbar h1{font-size:14px;font-weight:700;margin-right:6px;white-space:nowrap;
   background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
 .tb{padding:5px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:11px;cursor:pointer;transition:.15s;font-family:inherit;white-space:nowrap;}
 .tb:hover{border-color:var(--accent);color:var(--accent);}
 .tb.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
+#topbar select.tb-select{padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;outline:none;}
+#topbar select.tb-select:focus{border-color:var(--accent);}
 .sep{width:1px;height:20px;background:var(--border);margin:0 4px;}
 #search-box{padding:5px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;width:180px;font-family:inherit;outline:none;}
 #search-box:focus{border-color:var(--accent);}
@@ -7078,6 +7996,9 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 }
 #legend span{display:flex;align-items:center;gap:4px;}
 #legend i{display:inline-block;width:9px;height:9px;border-radius:2px;}
+#legend .legend-toggle{cursor:pointer;padding:2px 6px;border:1px solid transparent;border-radius:8px;transition:.12s;}
+#legend .legend-toggle:hover{background:var(--surface2);border-color:var(--border);}
+#legend .legend-toggle.off{opacity:0.35;text-decoration:line-through;}
 
 /* ── Minimap ── */
 #minimap{
@@ -7133,6 +8054,22 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   <button class="tb" onclick="setLayout('concentric')">Concentric</button>
   <div class="sep"></div>
   <input id="search-box" placeholder="🔎 アプリ・フィールド検索 (Ctrl+F)" oninput="searchGraph(this.value)">
+  <button class="tb active" id="focus-toggle-btn" onclick="toggleFocusMode()">🎯 関連強調 ON</button>
+  <select id="focus-depth" class="tb-select" onchange="updateFocusOptions()">
+    <option value="1">深さ1</option>
+    <option value="2">深さ2</option>
+    <option value="3">深さ3</option>
+  </select>
+  <select id="focus-direction" class="tb-select" onchange="updateFocusOptions()">
+    <option value="both">双方向</option>
+    <option value="out">出方向</option>
+    <option value="in">入方向</option>
+  </select>
+  <button class="tb" onclick="clearFocus()">強調解除</button>
+  <button class="tb active" id="rel-lookup-btn" onclick="toggleRelationKind('LOOKUP')">Lookup線</button>
+  <button class="tb active" id="rel-ref-btn" onclick="toggleRelationKind('REF')">Related線</button>
+  <button class="tb" id="pin-btn" onclick="togglePinFromSelection()">📌 Pin</button>
+  <button class="tb" onclick="clearPins()">📍 Unpin</button>
   <div class="spacer"></div>
   <button class="tb" onclick="toggleMinimap()">🗺</button>
   <button class="tb" id="theme-btn" onclick="toggleTheme()">🌙</button>
@@ -7187,8 +8124,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   <span><i style="background:var(--lookup)"></i>Lookup</span>
   <span><i style="background:var(--ref)"></i>Related</span>
   <span><i style="background:var(--req)"></i>Required</span>
-  <span><i style="border:2px solid var(--lookup)"></i>Lookup線</span>
-  <span><i style="border:2px dashed var(--ref)"></i>関連線</span>
+  <span class="legend-toggle" id="legend-lookup-edge" onclick="toggleRelationKind('LOOKUP')"><i style="border:2px solid var(--lookup)"></i>Lookup線</span>
+  <span class="legend-toggle" id="legend-ref-edge" onclick="toggleRelationKind('REF')"><i style="border:2px dashed var(--ref)"></i>関連線</span>
 </div>
 
 <!-- Minimap -->
@@ -7215,13 +8152,19 @@ const appMap = new Map(APPS.map(a=>[a.id,a]));
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2000);}
 
 // ─── Theme ───
-let isDark=true;
-function toggleTheme(){
-  isDark=!isDark;
+const THEME_KEY = "kintone-erd-theme";
+let isDark = localStorage.getItem(THEME_KEY) !== "light";
+function applyTheme(){
   document.documentElement.setAttribute("data-theme",isDark?"":"light");
   document.getElementById("theme-btn").textContent=isDark?"🌙":"☀️";
+}
+function toggleTheme(){
+  isDark=!isDark;
+  applyTheme();
+  localStorage.setItem(THEME_KEY, isDark ? "dark" : "light");
   toast(isDark?"ダークモード":"ライトモード");
 }
+applyTheme();
 
 // ─── Cytoscape Init ───
 const elements=[];
@@ -7258,6 +8201,11 @@ const cy=cytoscape({
     {selector:"node:selected",style:{"border-color":"var(--accent, #5eead4)","border-width":3}},
     {selector:"node.highlighted",style:{"border-color":"#fbbf24","border-width":3,"background-color":"#1a1805"}},
     {selector:"node.path-node",style:{"border-color":"#f472b6","border-width":4,"background-color":"#1a0a12"}},
+    {selector:"node.focus-root",style:{"border-color":"#5eead4","border-width":4,"background-color":"#042525","z-index":999}},
+    {selector:"node.focus-neighbor",style:{"border-color":"#67e8f9","border-width":3,"background-color":"#061d2a"}},
+    {selector:"node.pinned-node",style:{"border-color":"#fbbf24","border-width":4,"background-color":"#2a1f05"}},
+    {selector:"node.isolated-by-filter",style:{"opacity":0.35}},
+    {selector:"node.focus-dim",style:{"opacity":0.09}},
     {selector:"node.dimmed",style:{"opacity":0.15}},
     {selector:'edge[kind="LOOKUP"]',style:{
       "width":2.5,"line-color":"#60a5fa","target-arrow-color":"#60a5fa","target-arrow-shape":"triangle",
@@ -7274,6 +8222,9 @@ const cy=cytoscape({
       "text-background-color":"#08090d","text-background-opacity":0.7,"text-background-padding":"3px",
     }},
     {selector:"edge.path-edge",style:{"width":4,"line-color":"#f472b6","target-arrow-color":"#f472b6","source-arrow-color":"#f472b6","z-index":999}},
+    {selector:"edge.focus-edge",style:{"width":4,"line-color":"#5eead4","target-arrow-color":"#5eead4","source-arrow-color":"#5eead4","z-index":998}},
+    {selector:"edge.rel-hidden",style:{"display":"none"}},
+    {selector:"edge.focus-dim",style:{"opacity":0.04}},
     {selector:"edge.dimmed",style:{"opacity":0.08}},
   ],
   layout:{name:"cose",animate:true,animationDuration:600,nodeRepulsion:800000,idealEdgeLength:260,gravity:0.25,numIter:1200,padding:80},
@@ -7295,6 +8246,160 @@ function setLayout(name){
   toast("レイアウト: "+name);
 }
 
+const relationKindState = { LOOKUP: true, REF: true };
+let focusMode = true;
+let focusDepth = 1;
+let focusDirection = "both";
+let currentFocusNodeId = "";
+let lastTappedNodeId = "";
+const pinnedNodeIds = new Set();
+
+function syncLegendState(){
+  const lookup = document.getElementById("legend-lookup-edge");
+  const ref = document.getElementById("legend-ref-edge");
+  if(lookup) lookup.classList.toggle("off", !relationKindState.LOOKUP);
+  if(ref) ref.classList.toggle("off", !relationKindState.REF);
+}
+
+function applyRelationFilter(){
+  const partialFilter = !relationKindState.LOOKUP || !relationKindState.REF;
+  cy.edges().forEach(e=>{
+    const visible = !!relationKindState[e.data("kind")];
+    e.toggleClass("rel-hidden", !visible);
+  });
+  cy.nodes().forEach(n=>{
+    const visibleEdgeCount = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden")).length;
+    n.toggleClass("isolated-by-filter", partialFilter && visibleEdgeCount === 0);
+  });
+  syncLegendState();
+}
+
+function collectFocusSet(rootNode, depth, direction){
+  let nodes = cy.collection(rootNode);
+  let edges = cy.collection();
+  let frontier = cy.collection(rootNode);
+  const visited = new Set([rootNode.id()]);
+
+  for(let i=0;i<depth;i++){
+    let next = cy.collection();
+    frontier.forEach(n=>{
+      let candidateEdges = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden"));
+      if(direction==="out") candidateEdges = candidateEdges.filter(e=>e.source().id()===n.id());
+      if(direction==="in") candidateEdges = candidateEdges.filter(e=>e.target().id()===n.id());
+
+      candidateEdges.forEach(e=>{
+        edges = edges.union(e);
+        let linked = cy.collection();
+        if(direction==="out") linked = linked.union(e.target());
+        else if(direction==="in") linked = linked.union(e.source());
+        else linked = linked.union(e.connectedNodes().difference(n));
+
+        linked.forEach(nn=>{
+          if(visited.has(nn.id())) return;
+          visited.add(nn.id());
+          nodes = nodes.union(nn);
+          next = next.union(nn);
+        });
+      });
+    });
+    frontier = next;
+    if(frontier.length===0) break;
+  }
+
+  return { nodes, edges };
+}
+
+function applyFocusToNode(node, silent){
+  cy.elements().removeClass("focus-root focus-neighbor focus-edge focus-dim");
+  if(!focusMode || !node || !node.length) return;
+
+  const depth = Math.max(1, Number(focusDepth) || 1);
+  const result = collectFocusSet(node, depth, focusDirection);
+  cy.elements().addClass("focus-dim");
+  result.nodes.removeClass("focus-dim").addClass("focus-neighbor");
+  result.edges.removeClass("focus-dim").addClass("focus-edge");
+  node.removeClass("focus-neighbor").addClass("focus-root");
+  currentFocusNodeId = node.id();
+
+  if(!silent){
+    const relatedCount = Math.max(0, result.nodes.length - 1);
+    toast("関連強調: "+relatedCount+"アプリ");
+  }
+}
+
+function clearFocus(silent){
+  currentFocusNodeId = "";
+  cy.elements().removeClass("focus-root focus-neighbor focus-edge focus-dim");
+  if(!silent) toast("関連強調を解除");
+}
+
+function toggleFocusMode(){
+  focusMode = !focusMode;
+  const btn = document.getElementById("focus-toggle-btn");
+  if(btn){
+    btn.classList.toggle("active", focusMode);
+    btn.textContent = focusMode ? "🎯 関連強調 ON" : "🎯 関連強調 OFF";
+  }
+  if(!focusMode) clearFocus(true);
+  else if(currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+  toast(focusMode ? "関連強調 ON" : "関連強調 OFF");
+}
+
+function updateFocusOptions(){
+  focusDepth = Number(document.getElementById("focus-depth")?.value || 1);
+  focusDirection = document.getElementById("focus-direction")?.value || "both";
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+}
+
+function toggleRelationKind(kind){
+  relationKindState[kind] = !relationKindState[kind];
+  const btn = document.getElementById(kind==="LOOKUP" ? "rel-lookup-btn" : "rel-ref-btn");
+  if(btn) btn.classList.toggle("active", !!relationKindState[kind]);
+  applyRelationFilter();
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+  toast(kind + " 線: " + (relationKindState[kind] ? "表示" : "非表示"));
+}
+
+function pinNode(node,silent){
+  if(!node || !node.length) return;
+  node.lock();
+  node.addClass("pinned-node");
+  pinnedNodeIds.add(node.id());
+  if(!silent) toast("Pin: "+(appMap.get(node.data("appId"))?.name || node.id()));
+}
+
+function unpinNode(node,silent){
+  if(!node || !node.length) return;
+  node.unlock();
+  node.removeClass("pinned-node");
+  pinnedNodeIds.delete(node.id());
+  if(!silent) toast("Unpin: "+(appMap.get(node.data("appId"))?.name || node.id()));
+}
+
+function togglePinFromSelection(){
+  let nodes = cy.nodes(":selected");
+  if(!nodes.length && lastTappedNodeId){
+    const n = cy.getElementById(lastTappedNodeId);
+    if(n.length) nodes = nodes.union(n);
+  }
+  if(!nodes.length){toast("Pin対象ノードを選択してください");return;}
+  const allPinned = nodes.every(n=>pinnedNodeIds.has(n.id()));
+  nodes.forEach(n=>{if(allPinned) unpinNode(n,true); else pinNode(n,true);});
+  toast(allPinned ? "選択ノードをUnpin" : "選択ノードをPin");
+}
+
+function clearPins(){
+  [...pinnedNodeIds].forEach(id=>{
+    const n = cy.getElementById(id);
+    if(n.length) n.unlock().removeClass("pinned-node");
+  });
+  pinnedNodeIds.clear();
+  toast("Pinを全解除");
+}
+
+applyRelationFilter();
+updateFocusOptions();
+
 // ─── Search & Highlight ───
 function searchGraph(q){
   cy.elements().removeClass("highlighted dimmed");
@@ -7308,12 +8413,14 @@ function searchGraph(q){
   });
   if(matched.length){
     matched.addClass("highlighted");
-    cy.elements().not(matched).not(matched.connectedEdges()).addClass("dimmed");
+    const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden"));
+    cy.elements().not(matched).not(visibleEdges).addClass("dimmed");
   }
 }
 
 // ─── Click Detail ───
 cy.on("tap","node",e=>{
+  lastTappedNodeId = e.target.id();
   const app=appMap.get(e.target.data("appId"));
   if(!app) return;
   const p=document.getElementById("detail");
@@ -7370,14 +8477,24 @@ cy.on("tap","node",e=>{
   document.getElementById("detail-fields").innerHTML=fHtml;
 
   p.classList.add("open");
+  if(focusMode) applyFocusToNode(e.target);
 });
-cy.on("tap",e=>{if(e.target===cy){closeDetail();cy.elements().removeClass("highlighted dimmed path-node path-edge");}});
+cy.on("cxttap","node",e=>{
+  const n = e.target;
+  if(pinnedNodeIds.has(n.id())) unpinNode(n);
+  else pinNode(n);
+});
+cy.on("tap",e=>{if(e.target===cy){closeDetail();cy.elements().removeClass("highlighted dimmed path-node path-edge");clearFocus(true);}});
 
 function closeDetail(){document.getElementById("detail").classList.remove("open");}
 
 function focusApp(id){
   const n=cy.getElementById("a"+id);
-  if(n.length){cy.animate({center:{eles:n},zoom:1.5},{ duration:400 });n.select();}
+  if(n.length){
+    cy.animate({center:{eles:n},zoom:1.5},{ duration:400 });
+    n.select();
+    if(focusMode) applyFocusToNode(n, true);
+  }
 }
 
 // ─── Sidebar ───
@@ -7425,7 +8542,8 @@ function filterByType(el,type){
     return app&&app.fields.some(f=>active.includes(f.type));
   });
   matched.addClass("highlighted");
-  cy.elements().not(matched).not(matched.connectedEdges()).addClass("dimmed");
+  const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden"));
+  cy.elements().not(matched).not(visibleEdges).addClass("dimmed");
 }
 
 // ─── Path Finder ───
@@ -7444,7 +8562,7 @@ function findPath(){
   const from=document.getElementById("pf-from").value;
   const to=document.getElementById("pf-to").value;
   if(from===to){toast("同じアプリです");return;}
-  const dijkstra=cy.elements().dijkstra({root:"#"+from,directed:false});
+  const dijkstra=cy.elements().not(".rel-hidden").dijkstra({root:"#"+from,directed:false});
   const path=dijkstra.pathTo(cy.getElementById(to));
   if(!path||path.length===0){document.getElementById("path-result").textContent="経路なし";return;}
   path.addClass("path-node path-edge");
@@ -7477,7 +8595,7 @@ function startMinimap(){
     if(bb.w===0) return;
     const sx=170/bb.w,sy=120/bb.h,s=Math.min(sx,sy);
     const ox=(180-bb.w*s)/2,oy=(130-bb.h*s)/2;
-    cy.edges().forEach(e=>{
+    cy.edges().filter(e=>!e.hasClass("rel-hidden")).forEach(e=>{
       const sp=e.sourceEndpoint(),tp=e.targetEndpoint();
       ctx.strokeStyle=e.data("kind")==="LOOKUP"?"#60a5fa":"#34d399";
       ctx.lineWidth=0.5;ctx.beginPath();
@@ -7487,8 +8605,13 @@ function startMinimap(){
     });
     cy.nodes().forEach(n=>{
       const p=n.position();
-      ctx.fillStyle=n.hasClass("path-node")?"#f472b6":n.hasClass("highlighted")?"#fbbf24":"#5eead4";
-      ctx.globalAlpha=n.hasClass("dimmed")?0.15:0.8;
+      if(n.hasClass("pinned-node")) ctx.fillStyle="#fbbf24";
+      else if(n.hasClass("focus-root")) ctx.fillStyle="#5eead4";
+      else if(n.hasClass("focus-neighbor")) ctx.fillStyle="#67e8f9";
+      else if(n.hasClass("path-node")) ctx.fillStyle="#f472b6";
+      else if(n.hasClass("highlighted")) ctx.fillStyle="#fbbf24";
+      else ctx.fillStyle="#5eead4";
+      ctx.globalAlpha=(n.hasClass("dimmed")||n.hasClass("focus-dim"))?0.12:0.8;
       ctx.fillRect((p.x-bb.x1)*s+ox-2,(p.y-bb.y1)*s+oy-2,4,4);
       ctx.globalAlpha=1;
     });
@@ -7512,6 +8635,12 @@ const commands=[
   {label:"Concentric レイアウト",icon:"◎",action:()=>setLayout("concentric")},
   {label:"統計パネル",icon:"📊",action:toggleSidebar,keys:"Ctrl+B"},
   {label:"経路探索",icon:"🔍",action:togglePathFinder},
+  {label:"関連強調 ON/OFF",icon:"🎯",action:toggleFocusMode,keys:"Shift+F"},
+  {label:"関連強調解除",icon:"🧹",action:()=>clearFocus()},
+  {label:"Lookup線 ON/OFF",icon:"🔗",action:()=>toggleRelationKind("LOOKUP")},
+  {label:"Related線 ON/OFF",icon:"📋",action:()=>toggleRelationKind("REF")},
+  {label:"選択ノード Pin/Unpin",icon:"📌",action:togglePinFromSelection,keys:"Shift+P"},
+  {label:"Pin 全解除",icon:"📍",action:clearPins},
   {label:"ミニマップ",icon:"🗺",action:toggleMinimap},
   {label:"テーマ切替",icon:"🌓",action:toggleTheme},
   {label:"PNG エクスポート",icon:"🖼",action:exportPNG},
@@ -7521,7 +8650,7 @@ const commands=[
   {label:"SQL DDL エクスポート",icon:"🗄",action:showSQL},
   {label:"PlantUML エクスポート",icon:"🌱",action:showPlantUML},
   {label:"JSON Schema エクスポート",icon:"{}",action:showJSON},
-  {label:"ハイライト解除",icon:"✨",action:()=>{cy.elements().removeClass("highlighted dimmed path-node path-edge");document.getElementById("search-box").value="";}},
+  {label:"ハイライト解除",icon:"✨",action:()=>{cy.elements().removeClass("highlighted dimmed path-node path-edge");document.getElementById("search-box").value="";clearFocus(true);}},
 ];
 
 // Add app-focus commands
@@ -7552,8 +8681,10 @@ document.addEventListener("keydown",e=>{
   if(e.key==="k"&&(e.ctrlKey||e.metaKey)){e.preventDefault();openCmd();}
   if(e.key==="b"&&(e.ctrlKey||e.metaKey)){e.preventDefault();toggleSidebar();}
   if(e.key==="f"&&(e.ctrlKey||e.metaKey)){e.preventDefault();document.getElementById("search-box").focus();}
+  if(e.key==="F"&&e.shiftKey){e.preventDefault();toggleFocusMode();}
+  if(e.key==="P"&&e.shiftKey){e.preventDefault();togglePinFromSelection();}
   if(e.key==="0"&&(e.ctrlKey||e.metaKey)){e.preventDefault();fit();}
-  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();}
+  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();clearFocus(true);}
   // cmd palette navigation
   if(document.getElementById("cmd-overlay").classList.contains("open")){
     const items=[...document.querySelectorAll(".cmd-item")];
