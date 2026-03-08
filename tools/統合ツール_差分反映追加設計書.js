@@ -10,7 +10,10 @@
   const DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
   const IGNORE_PROFILE_STATE_KEY = `${TOOL_ID}:ignoreProfiles`;
   const DIFF_SNAPSHOT_STATE_KEY = `${TOOL_ID}:diffSnapshots`;
+  const ENV_PROFILE_STATE_KEY = `${TOOL_ID}:envProfiles`;
+  const OPERATION_LOG_STATE_KEY = `${TOOL_ID}:operationLogs`;
   const MAX_DIFF_SNAPSHOTS = 12;
+  const MAX_OPERATION_LOGS = 200;
   const DIALOG_MARGIN = 16;
   const DIALOG_MIN_WIDTH = 760;
   const DIALOG_MIN_HEIGHT = 520;
@@ -27,7 +30,7 @@
     { key: 'viewSettings', label: 'ビュー設定', endpoint: '/app/views.json', put: true, putBuilder: (d) => ({ views: d.views || d }) },
     { key: 'reportSettings', label: 'レポート設定', endpoint: '/app/reports.json', put: true, putBuilder: (d) => ({ reports: d.reports || d }) },
     { key: 'processSettings', label: 'プロセス管理', endpoint: '/app/status.json', put: true, putBuilder: (d) => ({ enable: !!d.enable, states: d.states || {}, actions: d.actions || [] }) },
-    { key: 'pluginSettings', label: 'プラグイン設定', endpoint: '/app/plugins.json', put: false },
+    { key: 'pluginSettings', label: 'プラグイン(※)', endpoint: '/app/plugins.json', put: true, putBuilder: (d) => ({ pluginIds: (d.plugins || []).map(p => p.id) }) },
     { key: 'customizeSettings', label: 'JS/CSS設定', endpoint: '/app/customize.json', put: true, putBuilder: (d) => ({ desktop: d.desktop || {}, mobile: d.mobile || {} }) },
     { key: 'actionSettings', label: 'アクション設定', endpoint: '/app/actions.json', put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
     { key: 'appAcl', label: 'アプリ権限', endpoint: '/app/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
@@ -2706,6 +2709,19 @@
             <button class="btn sub" data-act="swapSourceTarget">比較元/比較先入替</button>
           </div>
           <div style="margin-top:8px">
+            <label>環境プロファイル（比較元/比較先をセットで保存・切替）</label>
+            <div class="muted" style="margin-bottom:4px">開発・ステージング・本番などの環境設定を名前を付けて保存し、ワンクリックで切り替えられます。</div>
+            <div class="btns" style="margin-top:4px">
+              <select id="u_envProfileSelect" style="flex:1;min-width:0"><option value="">-- プロファイル選択 --</option></select>
+              <button class="btn ok" data-act="applyEnvProfile">適用</button>
+              <button class="btn sub" data-act="deleteEnvProfile">削除</button>
+            </div>
+            <div class="btns" style="margin-top:4px">
+              <input type="text" id="u_envProfileName" placeholder="保存名（例: 本番環境）" style="flex:1;min-width:0">
+              <button class="btn sub" data-act="saveEnvProfile">現在の設定を保存</button>
+            </div>
+          </div>
+          <div style="margin-top:8px">
             <label>ルックアップ参照先アプリID変換（任意）</label>
             <div class="muted" style="margin-bottom:4px">ルックアップフィールドを反映する際、参照先アプリIDを自動変換します。開発→本番など環境間でアプリIDが異なる場合に設定してください。</div>
             <div id="u_lookupMapRows"></div>
@@ -2713,6 +2729,11 @@
               <button class="btn sub" data-act="addLookupMapRow">+ 変換ルールを追加</button>
             </div>
             <input type="hidden" id="u_lookupMap">
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;align-items:center;background:#f8fafc;padding:6px;border-radius:6px;border:1px solid #e2e8f0">
+            <label style="margin:0;font-size:12px;color:#475569">操作ログ:</label>
+            <button class="btn sm dark" data-act="exportOperationLogs">ログをCSV出力</button>
+            <button class="btn sm" data-act="clearOperationLogs">ログをクリア</button>
           </div>
           <div class="step" style="margin-top:8px">共通データ取得 / クイック実行（全タブ共通）</div>
           <div class="muted" style="margin-top:6px">比較元/比較先設定を元に共通データを先読みできます。差分→プランの順番もワンクリック実行できます。</div>
@@ -2743,10 +2764,15 @@
             </div>
             
             <div class="tab-group">
-              <div class="tab-group-lbl">データ運用</div>
+              <div class="tab-group-lbl">データ・保守</div>
               <button class="tab" data-tab="recordMgr">レコード管理</button>
               <button class="tab" data-tab="sql">SQL実行</button>
+              <button class="tab" data-tab="apiTester">APIテスター</button>
             </div>
+          </div>
+
+          <div class="pane" data-pane="apiTester">
+            <!-- API Tester Pane Content Goes Here -->
           </div>
 
           <div class="pane active" data-pane="diff">
@@ -2820,7 +2846,27 @@
               <button class="btn sub" data-act="copyDiffSummary">差分コピー</button>
               <button class="btn sub" data-act="exportDiffJson">差分JSON保存</button>
               <button class="btn sub" data-act="exportDiffHtml">差分HTML保存</button>
+              <button class="btn dark" data-act="exportDiffXlsx">差分Excel保存</button>
               <button class="btn sub" data-act="exportPatchJson">パッチJSON保存</button>
+            </div>
+            <div style="margin-top:8px;padding:8px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px">
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px">
+                <div>
+                  <div class="step" style="font-size:12px;margin:0">定期差分監視（バックグラウンド監視）</div>
+                  <div class="muted" style="margin-top:2px;font-size:11px">指定間隔で比較元と先の差分をチェックし、変更があればデスクトップに通知します。</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <select id="u_diffMonitorInterval" style="padding:4px">
+                    <option value="1">1分ごと</option>
+                    <option value="5" selected>5分ごと</option>
+                    <option value="15">15分ごと</option>
+                    <option value="30">30分ごと</option>
+                    <option value="60">1時間ごと</option>
+                  </select>
+                  <button class="btn" id="u_diffMonitorToggle" data-act="toggleDiffMonitoring" style="background:#10b981">監視セット</button>
+                </div>
+              </div>
+              <div id="u_diffMonitorStatus" style="display:none;font-size:11px;color:#15803d;margin-top:6px;font-weight:bold"></div>
             </div>
             <div class="grid2" style="margin-top:8px">
               <div>
@@ -3036,6 +3082,24 @@
               </div>
             </div>
 
+            <hr style="margin:20px 0;border:none;border-top:1px dashed #ccc"/>
+            <div class="step" style="font-size:12px;margin-bottom:6px">フィールド一括操作（比較先アプリ）</div>
+            <div class="muted" style="margin-bottom:8px">比較先アプリの現在のフィールドを元に一括操作し、上の「追加フィールドJSON」に結果を出力します。</div>
+            <div class="grid2" style="margin-bottom:6px">
+              <div>
+                <label>プレフィックス（コード先頭に追加）</label>
+                <input type="text" id="u_fieldPrefix" placeholder="例: bk_">
+              </div>
+              <div style="display:flex;align-items:flex-end">
+                <label class="chip"><input type="checkbox" id="u_fieldPrefixRemove"> プレフィックスを削除する</label>
+              </div>
+            </div>
+            <div class="btns">
+              <button class="btn ok" data-act="runBulkFieldRename">プレフィックス追加/削除を実行</button>
+              <button class="btn sub" data-act="runDetectUnusedFields">影響のない（未使用）フィールドを検出</button>
+            </div>
+            <div id="u_bulkFieldResult" class="result" style="max-height:150px;margin-top:8px;display:none;padding:8px;font-size:11px"></div>
+
             <input type="file" id="u_fieldJsonFile" accept=".json" style="display:none">
           </div>
 
@@ -3046,6 +3110,13 @@
               <button class="btn sub" data-act="exportDesignMd">設計書Markdown出力</button>
               <button class="btn sub" data-act="copyDesignMd" style="margin-left:4px">Markdownコピー</button>
               <button class="btn dark" data-act="exportDesignXlsx" style="margin-left:8px">設計書Excel出力</button>
+            </div>
+
+            <hr style="margin:20px 0;border:none;border-top:1px dashed #ccc"/>
+            <div class="step">設計書差分レポート出力（比較元 vs 比較先）</div>
+            <div style="margin-top:10px" class="muted">比較元と比較先の設計書内容を比較し、変更があった箇所を抽出したMarkdownレポートを生成・ダウンロードします。<br>※「差分比較」タブの結果とは異なり、Markdown文面レベルの差分を提示します。</div>
+            <div class="btns" style="margin-top:10px">
+              <button class="btn ok" data-act="exportDesignDiffMd">設計書差分レポート(MD)出力</button>
             </div>
           </div>
 
@@ -3145,6 +3216,54 @@
             <div class="btns" style="margin-top:10px">
               <button class="btn ok" data-act="runBatchFileDownload">一括ダウンロードを実行</button>
             </div>
+
+            <hr style="margin:20px 0;border:none;border-top:1px dashed #ccc"/>
+            <div class="step">レコードCSVエクスポート（比較先アプリ）</div>
+            <div style="margin-top:10px" class="muted">一覧条件に合致する全レコードをCSV形式（UTF-8, BOM付き）でエクスポートします。</div>
+            <div class="grid2" style="margin-top:8px">
+              <div>
+                <label>対象一覧（一覧ID / クエリ）</label>
+                <div style="display:flex;gap:4px">
+                  <input type="text" id="u_csvExportView" placeholder="一覧を選択 (APIから取得)" style="flex:1">
+                  <button class="btn sm" data-act="loadViewsForCsv">一覧取得</button>
+                </div>
+                <select id="u_csvExportViewSelect" style="display:none;margin-top:4px"></select>
+              </div>
+              <div>
+                <label>CSVファイル名</label>
+                <input type="text" id="u_csvExportName" value="records.csv">
+              </div>
+            </div>
+            <div class="btns" style="margin-top:10px">
+              <button class="btn ok" data-act="runCsvExport">CSVエクスポートを実行</button>
+            </div>
+
+            <hr style="margin:20px 0;border:none;border-top:1px dashed #ccc"/>
+            <div class="step">レコードCSVインポート（比較先アプリ）</div>
+            <div style="margin-top:10px" class="muted">CSVファイルからレコードを一括登録します。1行目がフィールドコードのヘッダ行である必要があります。</div>
+            <div class="grid2" style="margin-top:8px">
+              <div style="display:flex;align-items:center">
+                <input type="file" id="u_csvImportFile" accept=".csv" style="display:none" onchange="document.getElementById('u_csvImportFileName').textContent=this.files[0]?this.files[0].name:'未選択'">
+                <button class="btn sm" onclick="document.getElementById('u_csvImportFile').click()">CSVファイルを選択</button>
+                <span id="u_csvImportFileName" class="muted" style="margin-left:8px;font-size:12px">未選択</span>
+              </div>
+            </div>
+            <div class="btns" style="margin-top:10px">
+              <button class="btn warn" data-act="runCsvImport">CSVから一括登録を実行</button>
+            </div>
+
+            <hr style="margin:20px 0;border:none;border-top:1px dashed #ccc"/>
+            <div class="step">アプリ間レコード一括コピー（比較元 → 比較先）</div>
+            <div style="margin-top:10px" class="muted">比較元アプリのレコードを取得し、比較先アプリへそのままコピーします。※フィールドコードや型が一致する項目のみ正常に転送されます。<br>ルックアップ項目やプロセス管理、添付ファイル等は正しくコピーできない場合があります。</div>
+            <div class="grid2" style="margin-top:8px">
+              <div>
+                <label>コピー対象（比較元）のクエリ</label>
+                <input type="text" id="u_recordCopyQuery" placeholder="例: order by $id asc" value="order by $id asc">
+              </div>
+            </div>
+            <div class="btns" style="margin-top:10px">
+              <button class="btn warn" data-act="runRecordCopy">比較先へレコードをコピー</button>
+            </div>
           </div>
 
           
@@ -3186,6 +3305,13 @@
               <button class="btn" data-act="generateERDiagram">ER図を生成 (別タブ表示)</button>
               <button class="btn sub" data-act="exportERDiagramHtml">ER図HTML保存</button>
             </div>
+
+            <hr style="margin:20px 0;border:none;border-top:1px dashed #ccc"/>
+            <div class="step">フィールド依存関係マップ（比較元アプリ）</div>
+            <div style="margin-top:10px" class="muted">計算式や条件付書式、プロセス管理など、フィールド間の参照・依存関係をネットワーク図として可視化します。</div>
+            <div class="btns" style="margin-top:10px">
+              <button class="btn" data-act="generateFieldDepMap">依存関係マップを生成 (別タブ表示)</button>
+            </div>
           </div>
 
           
@@ -3195,6 +3321,34 @@
             <div class="btns" style="margin-top:10px">
               <button class="btn ok" data-act="launchKintoneSql">SQLエディタを開く</button>
             </div>
+          </div>
+
+          <div class="pane" data-pane="apiTester">
+            <div class="step">kintone API テスター</div>
+            <div style="margin-top:10px" class="muted">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。</div>
+            <div class="grid2" style="margin-top:8px">
+              <div>
+                <label>メソッド</label>
+                <select id="u_apiTesterMethod">
+                  <option value="GET" selected>GET</option>
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="DELETE">DELETE</option>
+                </select>
+              </div>
+              <div>
+                <label>エンドポイント（パス または URL）</label>
+                <input type="text" id="u_apiTesterPath" placeholder="例: /k/v1/record.json または /app/settings">
+              </div>
+            </div>
+            <div style="margin-top:8px">
+              <label>リクエストBody (JSONフォーマット)</label>
+              <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace" placeholder='{"app": 1, "id": 100}'></textarea>
+            </div>
+            <div class="btns" style="margin-top:10px">
+              <button class="btn warn" data-act="runApiTester">APIを実行</button>
+            </div>
+            <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>
           </div>
 
           <div class="pane" data-pane="processFlow">
@@ -3211,6 +3365,26 @@
               <div>
                 <label>フロー図プレビュー</label>
                 <div id="u_mermaidView" style="min-height:200px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;padding:10px;overflow:auto"></div>
+              </div>
+            </div>
+
+            <div id="u_simContainer" style="display:none;margin-top:20px">
+              <hr style="border:none;border-top:1px dashed #ccc;margin-bottom:16px"/>
+              <div class="step">フローシミュレーション（動作テスト）</div>
+              <div style="margin-top:10px" class="muted">現在のプロセス管理の設定をもとに、擬似的にステータスを進行させてテストします。（上図にハイライト表示されます）</div>
+              <div class="grid2" style="margin-top:8px; align-items:flex-end;">
+                <div>
+                  <label>現在ステータス</label>
+                  <div id="u_simCurrentStatus" style="padding:5px 12px;background:#e2e8f0;border-radius:4px;font-weight:bold;text-align:center;color:#0f172a;min-height:30px;box-sizing:border-box">未開始</div>
+                </div>
+                <div>
+                  <label>アクション実行</label>
+                  <div style="display:flex;gap:4px">
+                    <select id="u_simActionSelect" style="flex:1" disabled><option value="">-- 開始してください --</option></select>
+                    <button class="btn ok" data-act="simExecuteAction">実行</button>
+                    <button class="btn sub" data-act="simStart">最初から</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -3252,6 +3426,27 @@
               <button class="btn dark" data-act="runSettingsExportZip">ZIP出力</button>
             </div>
             <div class="result" id="u_settingsExportResult" style="max-height:220px;margin-top:8px"></div>
+
+            <hr style="margin:20px 0;border:none;border-top:1px dashed #ccc"/>
+            <div class="step" style="font-size:12px;margin-bottom:6px">設定テンプレート管理（保存・再利用）</div>
+            <div class="muted" style="margin-bottom:8px">現在の比較元アプリの全設定を「テンプレート」としてブラウザに保存します。後で呼び出して「設定ファイル読込」として再利用できます。<br>標準アプリ構成を保存する際に便利です。</div>
+            <div class="grid2" style="margin-bottom:6px">
+              <div>
+                <label>テンプレート一覧</label>
+                <div style="display:flex;gap:4px">
+                  <select id="u_templateSelect" style="flex:1"><option value="">-- 保存済なし --</option></select>
+                  <button class="btn ok" data-act="loadTemplate">読込</button>
+                  <button class="btn sub" data-act="deleteTemplate">削除</button>
+                </div>
+              </div>
+              <div>
+                <label>新規保存名</label>
+                <div style="display:flex;gap:4px">
+                  <input type="text" id="u_templateSaveName" placeholder="例: 顧客管理_標準v1" style="flex:1">
+                  <button class="btn sub" data-act="saveTemplate">比較元を保存</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -3924,8 +4119,8 @@
   }
 
   function renderScopeChips() {
-    ui.diffScopes.innerHTML = SECTION_DEFS.map((s) => `<label class="chip"><input type="checkbox" value="${s.key}" checked>${s.label}</label>`).join('');
-    ui.applyScopes.innerHTML = SECTION_DEFS.filter((s) => s.put).map((s) => `<label class="chip"><input type="checkbox" value="${s.key}" checked>${s.label}</label>`).join('');
+    ui.diffScopes.innerHTML = SECTION_DEFS.map((s) => `<label class="chip" ${s.key === 'pluginSettings' ? 'title="試験的機能。適用先環境にプラグインが未インストールの場合は反映時にエラーになります"' : ''}><input type="checkbox" value="${s.key}" ${s.key === 'pluginSettings' ? '' : 'checked'}>${s.label}</label>`).join('');
+    ui.applyScopes.innerHTML = SECTION_DEFS.filter((s) => s.put).map((s) => `<label class="chip" ${s.key === 'pluginSettings' ? 'title="試験的機能。適用先環境にプラグインが未インストールの場合は反映時にエラーになります"' : ''}><input type="checkbox" value="${s.key}" ${s.key === 'pluginSettings' ? '' : 'checked'}>${s.label}</label>`).join('');
     ui.settingsExportScopes.innerHTML = SETTINGS_EXPORT_SCOPE_DEFS.map((s) => `<label class="chip"><input type="checkbox" value="${s.key}" checked>${s.label}</label>`).join('');
   }
 
@@ -4043,6 +4238,9 @@
       ui.diffSnapshotList.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">比較履歴なし</div>';
       return;
     }
+
+    const maxDiff = Math.max(1, ...snapshots.map(s => s.summary?.total || 0));
+
     ui.diffSnapshotList.innerHTML = snapshots.map((snap) => {
       const createdAt = (() => {
         try { return new Date(snap.createdAt).toLocaleString(); } catch { return String(snap.createdAt || '-'); }
@@ -4052,14 +4250,23 @@
       const warnBadge = snap.summary?.warningExceeded
         ? '<span style="font-size:10px;padding:2px 6px;border-radius:999px;background:#fee2e2;color:#991b1b">警告</span>'
         : '';
+
+      const diffCount = snap.summary?.total || 0;
+      const barWidth = Math.max(1, Math.min(100, Math.round((diffCount / maxDiff) * 100)));
+      const thresh = Number(snap.summary?.warningThreshold || 100);
+      const barColor = diffCount === 0 ? '#cbd5e1' : (diffCount >= thresh ? '#f87171' : '#38bdf8');
+
       return `<div style="padding:10px;border-bottom:1px solid #e2e8f0;font-size:11px">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
-          <div>
+          <div style="flex:1;min-width:0">
             <div style="font-weight:700;color:#0f172a">${esc(snap.source?.appId || '-')} → ${esc(snap.target?.appId || '-')} ${warnBadge}</div>
-            <div style="color:#64748b;margin-top:2px">${esc(createdAt)} / 差分 ${snap.summary?.total || 0} / 取得失敗 ${snap.summary?.fetchIssues || 0}</div>
-            <div style="color:#64748b;margin-top:2px">対象: ${esc(scopes || '-')}</div>
-            <div style="color:#64748b;margin-top:2px">無視キー: ${esc(snap.ignoreKeys || '-')}</div>
-            <div style="color:#64748b;margin-top:2px">正規化: ${esc(normalizationLabels.join(', ') || '-')}</div>
+            <div style="color:#64748b;margin-top:2px">${esc(createdAt)} / 差分 ${diffCount} / 取得失敗 ${snap.summary?.fetchIssues || 0}</div>
+            <div style="color:#64748b;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">対象: ${esc(scopes || '-')}</div>
+            
+            <!-- バージョンタイムライン（差分量バーグラフ） -->
+            <div style="margin-top:6px;width:100%;max-width:300px;background:#f1f5f9;height:6px;border-radius:3px;overflow:hidden;display:flex" title="差分相対ボリューム">
+              <div style="width:${barWidth}%;background:${barColor};height:100%;transition:width 0.3s"></div>
+            </div>
           </div>
           <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
             <button class="btn sub" data-act="restoreDiffSnapshot" data-snapshot-id="${esc(snap.id)}" style="padding:4px 8px;font-size:10px">条件復元</button>
@@ -6424,6 +6631,68 @@
     }
   }
 
+  function simpleLineDiff(oStr, nStr) {
+    const oLines = oStr.split('\n');
+    const nLines = nStr.split('\n');
+    const result = [];
+    let i = 0, j = 0;
+    while (i < oLines.length || j < nLines.length) {
+      if (i < oLines.length && j < nLines.length && oLines[i] === nLines[j]) {
+        result.push('  ' + oLines[i]);
+        i++; j++;
+      } else {
+        let rsI = -1, rsJ = -1;
+        for (let k = 1; k < 60; k++) {
+          if (i + k < oLines.length && oLines[i + k] === nLines[j]) { rsI = i + k; rsJ = j; break; }
+          if (j + k < nLines.length && oLines[i] === nLines[j + k]) { rsI = i; rsJ = j + k; break; }
+        }
+        if (rsI !== -1) {
+          if (rsI > i) {
+            for (let scan = i; scan < rsI; scan++) result.push('- ' + oLines[scan]);
+            i = rsI;
+          } else {
+            for (let scan = j; scan < rsJ; scan++) result.push('+ ' + nLines[scan]);
+            j = rsJ;
+          }
+        } else {
+          if (i < oLines.length) result.push('- ' + oLines[i++]);
+          if (j < nLines.length) result.push('+ ' + nLines[j++]);
+        }
+      }
+    }
+    return result.join('\n');
+  }
+
+  async function runDesignDiffMd() {
+    const c = commonParams();
+    if (!c.source.appId || !c.target.appId) throw new Error('比較元と比較先の両方のアプリIDを指定してください。');
+    const scopes = SECTION_DEFS.map((s) => s.key);
+
+    setStatus('比較元の設計情報を取得中...');
+    const srcBundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`) });
+
+    setStatus('比較先の設計情報を取得中...');
+    const tgtBundle = await fetchBundle({ ...c.target, sections: scopes, onProgress: (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`) });
+
+    setStatus('差分レポート生成中...');
+    const srcMd = bundleToMarkdown(srcBundle);
+    const tgtMd = bundleToMarkdown(tgtBundle);
+
+    const diffMd = simpleLineDiff(tgtMd, srcMd);
+
+    const finalMd = `# 設計書差分レポート
+- 生成日時: ${nowStamp()}
+- 比較元App: ${c.source.appId} (追加/更新後)
+- 比較先App: ${c.target.appId} (現在の設定)
+
+\`\`\`diff
+${diffMd}
+\`\`\`
+`;
+    downloadText(`design_diff_report_${nowStamp()}.md`, finalMd, 'text/markdown');
+    setStatus('設計書差分レポートを出力しました');
+  }
+
   function loadScript(url) {
     return new Promise((resolve, reject) => {
       const s = document.createElement('script');
@@ -8124,6 +8393,109 @@
     throw new Error('Mermaid.js の読み込みに失敗しました');
   }
 
+  let pfSimStates = null;
+  let pfSimActions = null;
+  let pfSimCurrent = null;
+
+  async function redrawProcessFlow(highlightState) {
+    if (!pfSimStates) return;
+
+    let md = 'stateDiagram-v2\n';
+    const safeStateName = (n) => n.replace(/[*_~\[\]()]/g, '');
+
+    const startStates = new Set(Object.keys(pfSimStates));
+    for (const a of pfSimActions) {
+      if (a.to) startStates.delete(a.to);
+    }
+
+    for (const st of startStates) {
+      if (st && pfSimStates[st]) md += `    [*] --> ${safeStateName(st)}\n`;
+    }
+
+    for (const a of pfSimActions) {
+      const from = safeStateName(a.from);
+      const to = safeStateName(a.to);
+      const actionName = a.name.replace(/[*_~\[\]()"]/g, '');
+      md += `    ${from} --> ${to} : ${actionName}\n`;
+    }
+
+    if (highlightState) {
+      md += `\n    classDef current fill:#bbf7d0,stroke:#16a34a,stroke-width:2px,color:#0f172a;\n`;
+      md += `    class ${safeStateName(highlightState)} current;\n`;
+    }
+
+    ui.mermaidText.value = md;
+
+    try {
+      const mermaidObj = await ensureMermaid();
+      const { svg } = await mermaidObj.render('mermaid-svg-generated', md);
+      ui.mermaidView.innerHTML = svg;
+    } catch (e) {
+      ui.mermaidView.innerHTML = `<div style="color:#b91c1c">エラー: ${esc(e.message || String(e))}</div>`;
+      throw e;
+    }
+  }
+
+  function updateProcessSimulationUI() {
+    const elCurr = document.getElementById('u_simCurrentStatus');
+    const elSel = document.getElementById('u_simActionSelect');
+    const container = document.getElementById('u_simContainer');
+
+    if (!pfSimStates || Object.keys(pfSimStates).length === 0) {
+      if (container) container.style.display = 'none';
+      return;
+    }
+    if (container) container.style.display = 'block';
+
+    if (!pfSimCurrent) {
+      elCurr.textContent = '未開始';
+      elCurr.style.background = '#e2e8f0';
+      elSel.innerHTML = '<option value="">-- 最初から開始してください --</option>';
+      elSel.disabled = true;
+      return;
+    }
+
+    elCurr.textContent = pfSimCurrent;
+    elCurr.style.background = '#bbf7d0';
+    elSel.disabled = false;
+
+    const available = pfSimActions.filter(a => a.from === pfSimCurrent);
+    if (available.length === 0) {
+      elSel.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
+      elSel.disabled = true;
+    } else {
+      elSel.innerHTML = available.map(a => `<option value="${esc(a.name)}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join('');
+    }
+  }
+
+  async function runSimStart() {
+    if (!pfSimStates) return;
+    const startStates = new Set(Object.keys(pfSimStates));
+    for (const a of pfSimActions) if (a.to) startStates.delete(a.to);
+    const startSt = [...startStates][0] || Object.keys(pfSimStates)[0];
+    if (!startSt) return;
+
+    pfSimCurrent = startSt;
+    updateProcessSimulationUI();
+    setStatus('シミュレーション開始: ' + startSt);
+    await redrawProcessFlow(startSt);
+  }
+
+  async function runSimExecuteAction() {
+    const sel = document.getElementById('u_simActionSelect');
+    if (sel.disabled) return;
+    const actionName = sel.value;
+    if (!actionName) return;
+
+    const action = pfSimActions.find(a => a.from === pfSimCurrent && a.name === actionName);
+    if (!action) return;
+
+    pfSimCurrent = action.to;
+    updateProcessSimulationUI();
+    setStatus(`アクション「${actionName}」実行 → 「${action.to}」`);
+    await redrawProcessFlow(action.to);
+  }
+
   async function runRenderProcessFlow() {
     const c = commonParams();
     const app = c.source.appId;
@@ -8138,42 +8510,20 @@
         ui.mermaidText.value = 'プロセス管理は無効です。';
         ui.mermaidView.innerHTML = '<div style="color:#64748b">プロセス管理は無効です</div>';
         setStatus('プロセス管理は無効です');
+        pfSimStates = null;
+        pfSimActions = null;
+        pfSimCurrent = null;
+        updateProcessSimulationUI();
         return;
       }
 
-      const mermaidObj = await ensureMermaid();
+      pfSimStates = res.states || {};
+      pfSimActions = res.actions || [];
+      pfSimCurrent = null;
+
       setStatus('フロー図 生成中...');
-
-      const states = res.states || {};
-      const actions = res.actions || [];
-
-      let md = 'stateDiagram-v2\n';
-
-      const safeStateName = (n) => n.replace(/[*_~\[\]()]/g, '');
-
-      const startStates = new Set(Object.keys(states));
-      for (const a of actions) {
-        if (a.to) startStates.delete(a.to);
-      }
-
-      for (const st of startStates) {
-        if (st && states[st]) {
-          md += `    [*] --> ${safeStateName(st)}\n`;
-        }
-      }
-
-      for (const a of actions) {
-        const from = safeStateName(a.from);
-        const to = safeStateName(a.to);
-        const actionName = a.name.replace(/[*_~\[\]()"]/g, '');
-        md += `    ${from} --> ${to} : ${actionName}\n`;
-      }
-
-      ui.mermaidText.value = md;
-
-      const { svg } = await mermaidObj.render('mermaid-svg-generated', md);
-      ui.mermaidView.innerHTML = svg;
-
+      await redrawProcessFlow(null);
+      updateProcessSimulationUI();
       setStatus('フロー図 生成完了');
     } catch (e) {
       ui.mermaidView.innerHTML = `<div style="color:#b91c1c">エラー: ${esc(e.message || String(e))}</div>`;
@@ -8239,9 +8589,28 @@
     setBusy(true, busyText || '処理中...');
     try {
       await fn();
+      const act = window._lastActionForLog;
+      const logable = {
+        'applyPreview': '比較先へ反映',
+        'deployOnly': 'デプロイのみ実行',
+        'applyField': '比較先へフィールド適用',
+        'applyJsConfig': '比較先へJS/CSS設定反映',
+        'deleteAllRecords': '全レコード削除',
+        'runBatchProcess': '一括プロセス更新',
+        'runCsvImport': 'CSV一括インポート',
+        'runBulkFieldRename': 'フィールド一括変換',
+        'runRecordCopy': 'アプリ間レコードコピー'
+      };
+      if (act && logable[act] && typeof logOperation === 'function') {
+        logOperation(logable[act], `[${act}] 正常終了`);
+      }
     } catch (e) {
       console.error(e);
       setStatus(`エラー: ${e.message || String(e)}`, true);
+      const act = window._lastActionForLog;
+      if (act && typeof logOperation === 'function') {
+        logOperation(act, `エラー: ${e.message || String(e)}`);
+      }
     } finally {
       state.running = false;
       setBusy(false);
@@ -8262,6 +8631,7 @@
   renderDiffSnapshotHistory();
   renderMultiTargetResults();
   renderLookupMapRows();
+  renderTemplateOptions();
   renderBundleState();
   renderReflectSidebar();
   renderReflectMainPanel();
@@ -8641,6 +9011,7 @@
     }
     const act = e.target.dataset.act;
     if (!act) return;
+    window._lastActionForLog = act;
 
     if (act === 'close') {
       teardownDialogResizeHandling();
@@ -9071,11 +9442,15 @@
       ui.sourceFieldListContainer.style.display = 'none';
       return;
     }
+    if (act === 'runBulkFieldRename') return withGuard(runBulkFieldRename);
+    if (act === 'runDetectUnusedFields') return withGuard(runDetectUnusedFields);
 
     if (act === 'exportDesignJson') return withGuard(() => runDesignExport('json'));
     if (act === 'exportDesignMd') return withGuard(() => runDesignExport('md'));
     if (act === 'copyDesignMd') return withGuard(runDesignCopyMd);
     if (act === 'exportDesignXlsx') return withGuard(runDesignExportXlsx);
+    if (act === 'exportDesignDiffMd') return withGuard(runDesignDiffMd);
+    if (act === 'generateFieldDepMap') return withGuard(runFieldDependencyMap);
 
     if (act === 'fetchJsConfig') return withGuard(runFetchJsConfig);
     if (act === 'exportJsConfigJson') return withGuard(runExportJsConfig);
@@ -9093,11 +9468,151 @@
     if (act === 'runBatchJsConfigDownload') return withGuard(runBatchJsConfigDownload);
     if (act === 'loadViewsForProc') return withGuard(async () => loadViewsForSelect('u_batchProcViewSelect', 'u_batchProcView'));
     if (act === 'loadViewsForDl') return withGuard(async () => loadViewsForSelect('u_batchDlViewSelect', 'u_batchDlView'));
+    if (act === 'loadViewsForCsv') return withGuard(async () => loadViewsForSelect('u_csvExportViewSelect', 'u_csvExportView'));
+    if (act === 'runCsvExport') return withGuard(runCsvExport);
+    if (act === 'runCsvImport') return withGuard(runCsvImport);
+
+    if (act === 'exportDiffXlsx') return withGuard(exportDiffXlsx);
+    if (act === 'saveEnvProfile') return withGuard(saveEnvProfileFromInput);
+    if (act === 'applyEnvProfile') return withGuard(applyEnvProfileFromSelect);
+    if (act === 'deleteEnvProfile') return withGuard(deleteEnvProfileFromSelect);
+    if (act === 'exportOperationLogs') return exportOperationLogs();
+    if (act === 'clearOperationLogs') return clearOperationLogs();
+    if (act === 'toggleDiffMonitoring') return toggleDiffMonitoring();
+    if (act === 'runRecordCopy') return withGuard(runRecordCopy);
+
+    if (act === 'saveTemplate') return withGuard(saveTemplate);
+    if (act === 'loadTemplate') return loadTemplate();
+    if (act === 'deleteTemplate') return deleteTemplate();
+
+    if (act === 'simStart') return withGuard(runSimStart);
+    if (act === 'simExecuteAction') return withGuard(runSimExecuteAction);
+
+    if (act === 'runApiTester') return runApiTester();
 
   });
   // ==========================================
   // Injected Logic
   // ==========================================
+
+  // ── 操作ログ管理（Feature 7） ──
+  function logOperation(action, details) {
+    try {
+      const logs = JSON.parse(localStorage.getItem(OPERATION_LOG_STATE_KEY) || '[]');
+      const srcApp = document.getElementById('u_sourceApp')?.value || '';
+      const tgtApp = document.getElementById('u_targetApp')?.value || '';
+      logs.push({
+        time: nowStamp(),
+        action: action,
+        details: details || '',
+        user: kintone.getLoginUser()?.name || 'Unknown',
+        srcApp,
+        tgtApp
+      });
+      if (logs.length > 1000) logs.shift(); // keep last 1000
+      localStorage.setItem(OPERATION_LOG_STATE_KEY, JSON.stringify(logs));
+    } catch (e) { console.error('logOperation error', e); }
+  }
+
+  function exportOperationLogs() {
+    try {
+      const logs = JSON.parse(localStorage.getItem(OPERATION_LOG_STATE_KEY) || '[]');
+      if (!logs.length) {
+        alert('出力するログがありません');
+        return;
+      }
+      const escapeCsv = (val) => {
+        const s = String(val == null ? '' : val);
+        if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+        return s;
+      };
+      const header = ['日時', 'アクション', '詳細', '操作ユーザー', '比較元App', '比較先App'];
+      const rows = [header.map(escapeCsv).join(',')];
+      for (const log of logs) {
+        rows.push([log.time, log.action, log.details, log.user, log.srcApp, log.tgtApp].map(escapeCsv).join(','));
+      }
+      const csvStr = '\uFEFF' + rows.join('\n');
+      const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `operation_logs_${nowStamp()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    } catch (e) { alert('ログ出力エラー: ' + e.message); }
+  }
+
+  function clearOperationLogs() {
+    if (confirm('操作ログを全てクリアしますか？')) {
+      localStorage.removeItem(OPERATION_LOG_STATE_KEY);
+      setStatus('操作ログをクリアしました');
+    }
+  }
+
+  // ── 環境プロファイル管理 ──
+  function loadEnvProfiles() {
+    try { return JSON.parse(localStorage.getItem(ENV_PROFILE_STATE_KEY) || '{}') || {}; }
+    catch { return {}; }
+  }
+  function saveEnvProfiles(profiles) {
+    try { localStorage.setItem(ENV_PROFILE_STATE_KEY, JSON.stringify(profiles || {})); }
+    catch { /* noop */ }
+  }
+  function renderEnvProfileOptions(selectedName) {
+    const sel = document.getElementById('u_envProfileSelect');
+    if (!sel) return;
+    const profiles = loadEnvProfiles();
+    const names = Object.keys(profiles).sort();
+    sel.innerHTML = '<option value="">-- プロファイル選択 --</option>' + names.map(n => `<option value="${esc(n)}"${n === selectedName ? ' selected' : ''}>${esc(n)}</option>`).join('');
+  }
+  function saveEnvProfileFromInput() {
+    const nameInput = document.getElementById('u_envProfileName');
+    const name = (nameInput?.value || '').trim();
+    if (!name) { setStatus('プロファイル名を入力してください', true); return; }
+    const profiles = loadEnvProfiles();
+    profiles[name] = {
+      sourceApp: ui.sourceApp.value.trim(),
+      sourceGuest: ui.sourceGuest.value.trim(),
+      sourcePreview: !!ui.sourcePreview.checked,
+      targetApp: ui.targetApp.value.trim(),
+      targetGuest: ui.targetGuest.value.trim(),
+      targetPreview: !!ui.targetPreview.checked,
+      savedAt: new Date().toISOString()
+    };
+    saveEnvProfiles(profiles);
+    renderEnvProfileOptions(name);
+    nameInput.value = '';
+    setStatus(`環境プロファイル「${name}」を保存しました`);
+  }
+  function applyEnvProfileFromSelect() {
+    const sel = document.getElementById('u_envProfileSelect');
+    const name = sel?.value || '';
+    if (!name) { setStatus('適用するプロファイルを選択してください', true); return; }
+    const profiles = loadEnvProfiles();
+    const p = profiles[name];
+    if (!p) { setStatus('プロファイルが見つかりません', true); return; }
+    ui.sourceApp.value = p.sourceApp || '';
+    ui.sourceGuest.value = p.sourceGuest || '';
+    ui.sourcePreview.checked = !!p.sourcePreview;
+    ui.targetApp.value = p.targetApp || '';
+    ui.targetGuest.value = p.targetGuest || '';
+    ui.targetPreview.checked = !!p.targetPreview;
+    saveCurrentDialogState();
+    setStatus(`環境プロファイル「${name}」を適用しました`);
+  }
+  function deleteEnvProfileFromSelect() {
+    const sel = document.getElementById('u_envProfileSelect');
+    const name = sel?.value || '';
+    if (!name) { setStatus('削除するプロファイルを選択してください', true); return; }
+    if (!confirm(`環境プロファイル「${name}」を削除しますか？`)) return;
+    const profiles = loadEnvProfiles();
+    delete profiles[name];
+    saveEnvProfiles(profiles);
+    renderEnvProfileOptions('');
+    setStatus(`環境プロファイル「${name}」を削除しました`);
+  }
+  renderEnvProfileOptions('');
 
   async function launchKintoneSql() {
     const sApp = document.getElementById('u_sourceApp').value.trim();
@@ -11510,6 +12025,833 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(u); }, 100);
 
     setStatus(`JS/CSS一括DL完了 (403スキップ: ${failedCount}件)`);
+    // ── SheetJSローダー（共通） ──
+    async function ensureSheetJs() {
+      if (typeof window.XLSX !== 'undefined') return;
+      const urls = [
+        'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js',
+        'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
+      ];
+      for (const url of urls) {
+        try {
+          await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = url; s.async = true;
+            let done = false;
+            const timer = setTimeout(() => { if (!done) { done = true; reject(new Error('Timeout')); } }, 15000);
+            s.onload = () => { if (!done) { done = true; clearTimeout(timer); resolve(); } };
+            s.onerror = () => { if (!done) { done = true; clearTimeout(timer); reject(new Error('Failed')); } };
+            document.head.appendChild(s);
+          });
+          if (typeof window.XLSX !== 'undefined') return;
+        } catch { /* try next */ }
+      }
+      throw new Error('SheetJSの読み込みに失敗しました');
+    }
+
+    // ── 差分Excel出力 ──
+    async function exportDiffXlsx() {
+      const exportInfo = resolveDiffExportRows();
+      const rows = exportInfo.rows;
+      if (!rows.length) throw new Error('出力する差分がありません');
+      setBusy(true, 'Excel生成中...');
+      try {
+        await ensureSheetJs();
+        const wb = XLSX.utils.book_new();
+        const grouped = groupDiffRowsBySection(rows);
+        const styled = typeof XLSX.utils.aoa_to_sheet === 'function';
+
+        // サマリーシート
+        const summaryData = [
+          ['差分比較サマリー'],
+          ['比較元', `App ${state.lastSourceBundle?.appId || '-'}`, state.lastSourceBundle?.preview ? 'プレビュー' : '本番'],
+          ['比較先', `App ${state.lastTargetBundle?.appId || '-'}`, state.lastTargetBundle?.preview ? 'プレビュー' : '本番'],
+          ['比較日時', state.lastDiffAt || '-'],
+          ['出力モード', exportInfo.label],
+          [],
+          ['セクション', '追加', '削除', '変更', '移動', '合計']
+        ];
+        for (const g of grouped) {
+          const s = summarizeRows(g.rows);
+          summaryData.push([g.label, s.added, s.removed, s.changed, s.moved, g.rows.length]);
+        }
+        const totalS = summarizeRows(rows);
+        summaryData.push(['合計', totalS.added, totalS.removed, totalS.changed, totalS.moved, rows.length]);
+        const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
+        summaryWs['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }];
+        XLSX.utils.book_append_sheet(wb, summaryWs, 'サマリー');
+
+        // 差分一覧シート
+        const allData = [['セクション', 'パス', '種別', '重要度', '理由', '比較元値', '比較先値']];
+        for (const r of rows) {
+          allData.push([
+            r.section || r.sectionKey || '',
+            r.path || '',
+            getDiffTypeDisplayLabel(r.type, { moved: r.moved }),
+            getSeverityDisplayLabel(r.severity),
+            r.reasonSummary || '',
+            r.left != null ? (typeof r.left === 'object' ? JSON.stringify(r.left) : String(r.left)) : '',
+            r.right != null ? (typeof r.right === 'object' ? JSON.stringify(r.right) : String(r.right)) : ''
+          ]);
+        }
+        const allWs = XLSX.utils.aoa_to_sheet(allData);
+        allWs['!cols'] = [{ wch: 16 }, { wch: 40 }, { wch: 8 }, { wch: 8 }, { wch: 20 }, { wch: 40 }, { wch: 40 }];
+
+        // 行の背景色を設定（xlsx-js-styleが使える場合）
+        if (styled && allWs) {
+          for (let i = 1; i < allData.length; i++) {
+            const type = allData[i][2];
+            let fill = null;
+            if (type === '追加') fill = { fgColor: { rgb: 'E8F5E9' } };
+            else if (type === '削除') fill = { fgColor: { rgb: 'FFEBEE' } };
+            else if (type === '変更' || type === '移動') fill = { fgColor: { rgb: 'FFF8E1' } };
+            if (fill) {
+              for (let c = 0; c < allData[0].length; c++) {
+                const addr = XLSX.utils.encode_cell({ r: i, c });
+                if (!allWs[addr]) allWs[addr] = { v: '', t: 's' };
+                if (!allWs[addr].s) allWs[addr].s = {};
+                allWs[addr].s.fill = { patternType: 'solid', ...fill };
+              }
+            }
+          }
+        }
+        XLSX.utils.book_append_sheet(wb, allWs, '差分一覧');
+
+        // セクション別シート
+        const existingNames = new Set(['サマリー', '差分一覧']);
+        for (const g of grouped) {
+          let sheetName = (g.label || g.key || 'Sheet').replace(/[\\/?*[\]]/g, '_').slice(0, 28);
+          while (existingNames.has(sheetName)) sheetName = sheetName.slice(0, 25) + '_' + (existingNames.size);
+          existingNames.add(sheetName);
+          const secData = [['パス', '種別', '重要度', '理由', '比較元値', '比較先値']];
+          for (const r of g.rows) {
+            secData.push([
+              r.path || '',
+              getDiffTypeDisplayLabel(r.type, { moved: r.moved }),
+              getSeverityDisplayLabel(r.severity),
+              r.reasonSummary || '',
+              r.left != null ? (typeof r.left === 'object' ? JSON.stringify(r.left) : String(r.left)) : '',
+              r.right != null ? (typeof r.right === 'object' ? JSON.stringify(r.right) : String(r.right)) : ''
+            ]);
+          }
+          const secWs = XLSX.utils.aoa_to_sheet(secData);
+          secWs['!cols'] = [{ wch: 40 }, { wch: 8 }, { wch: 8 }, { wch: 20 }, { wch: 40 }, { wch: 40 }];
+          XLSX.utils.book_append_sheet(wb, secWs, sheetName);
+        }
+
+        const filename = `diff_${state.lastSourceBundle?.appId || 'src'}_${state.lastTargetBundle?.appId || 'tgt'}_${nowStamp()}.xlsx`;
+        XLSX.writeFile(wb, filename);
+        setStatus(`差分Excelを保存しました: ${filename}`);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    // ── CSVエクスポート ──
+    async function runCsvExport() {
+      const tgtAppId = document.getElementById('u_targetApp')?.value?.trim();
+      if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
+      const tgtGuestId = document.getElementById('u_targetGuest')?.value?.trim();
+      const guestPrefix = tgtGuestId ? `/k/guest/${tgtGuestId}/v1` : '/k/v1';
+
+      let condition = document.getElementById('u_csvExportViewSelect')?.value || '';
+      if (!condition) condition = document.getElementById('u_csvExportView')?.value || '';
+      const filename = document.getElementById('u_csvExportName')?.value?.trim() || 'records.csv';
+
+      setBusy(true, 'フィールド情報取得中...');
+      let fields = null;
+      try {
+        fields = await apiGet(guestPrefix, '/app/form/fields.json', { app: tgtAppId });
+      } catch (e) {
+        throw new Error('フィールド情報の取得に失敗: ' + e.message);
+      }
+      const propKeys = Object.keys(fields.properties);
+      if (!propKeys.length) throw new Error('出力できるフィールドがありません');
+
+      setBusy(true, 'レコード取得中...');
+      let allRecords = [];
+      let lastRecordId = '0';
+      const limit = 500;
+
+      // Convert condition to check if it has "order by" so we can append appropriately
+      let baseQuery = condition;
+      let queryHasOrder = baseQuery.toLowerCase().includes('order by');
+      let queryHasLimit = baseQuery.toLowerCase().includes('limit');
+
+      if (queryHasLimit) {
+        // Basic fallback if user provided complex query with limit
+        const resp = await apiGet(guestPrefix, '/records.json', { app: tgtAppId, query: baseQuery });
+        allRecords = resp.records || [];
+      } else {
+        while (true) {
+          setBusy(true, `レコード取得中... (${allRecords.length}件取得済)`);
+          let loopQuery = '';
+          if (baseQuery) {
+            loopQuery = `${baseQuery} ${queryHasOrder ? '' : 'order by $id asc'} limit ${limit} offset ${allRecords.length}`;
+          } else {
+            loopQuery = `$id > ${lastRecordId} order by $id asc limit ${limit}`;
+          }
+
+          const resp = await apiGet(guestPrefix, '/records.json', { app: tgtAppId, query: loopQuery });
+          const batch = resp.records || [];
+          allRecords = allRecords.concat(batch);
+
+          if (batch.length < limit) break;
+          lastRecordId = batch[batch.length - 1].$id.value;
+        }
+      }
+
+      if (!allRecords.length) throw new Error('出力するレコードがありません');
+
+      setStatus(`CSV生成中... (${allRecords.length}件)`);
+
+      const escapeCsv = (val) => {
+        const s = String(val == null ? '' : val);
+        if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+          return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+      };
+
+      const extractValue = (rec, code) => {
+        const field = rec[code];
+        if (!field) return '';
+        if (field.type === 'USER_SELECT' || field.type === 'ORGANIZATION_SELECT' || field.type === 'GROUP_SELECT') {
+          return (field.value || []).map(v => v.code || v.name).join(',');
+        }
+        if (field.type === 'CHECK_BOX' || field.type === 'MULTI_SELECT') {
+          return (field.value || []).join(',');
+        }
+        if (field.type === 'FILE') {
+          return (field.value || []).map(file => file.name).join(',');
+        }
+        if (field.type === 'SUBTABLE') {
+          return (field.value || []).length + '行'; // subtable is ignored or just count
+        }
+        if (typeof field.value === 'object' && field.value !== null) {
+          return JSON.stringify(field.value);
+        }
+        return field.value;
+      };
+
+      const lines = [];
+      // Header
+      lines.push(propKeys.map(escapeCsv).join(','));
+
+      // Data
+      for (const rec of allRecords) {
+        lines.push(propKeys.map(key => escapeCsv(extractValue(rec, key))).join(','));
+      }
+
+      const csvStr = '\uFEFF' + lines.join('\n'); // Add BOM
+      const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+
+      setBusy(false);
+      setStatus(`CSVを出力しました (${allRecords.length}件)`);
+    }
+
+    setStatus('起動完了');
+  }
+
+  // ── フィールド一括操作（Feature 4） ──
+  async function runBulkFieldRename() {
+    const tgtAppId = document.getElementById('u_targetApp')?.value?.trim();
+    if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
+    const guestPrefix = document.getElementById('u_targetGuest')?.value?.trim() ? `/k/guest/${document.getElementById('u_targetGuest').value.trim()}/v1` : '/k/v1';
+
+    const prefixStr = document.getElementById('u_fieldPrefix')?.value?.trim();
+    if (!prefixStr) throw new Error('プレフィックスを入力してください');
+    const isRemove = document.getElementById('u_fieldPrefixRemove')?.checked;
+
+    setBusy(true, '比較先のフィールド情報を取得中...');
+    const fieldsResp = await apiGet(guestPrefix, '/app/form/fields.json', { app: tgtAppId });
+    const props = fieldsResp.properties;
+
+    let modifiedCount = 0;
+    const newProps = {};
+    for (const [code, field] of Object.entries(props)) {
+      if (['RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME', 'STATUS', 'STATUS_ASSIGNEE', 'CATEGORY'].includes(field.type)) continue;
+
+      let newCode = code;
+      if (isRemove && code.startsWith(prefixStr)) {
+        newCode = code.slice(prefixStr.length);
+      } else if (!isRemove && !code.startsWith(prefixStr)) {
+        newCode = prefixStr + code;
+      }
+
+      if (newCode !== code) {
+        const cloned = deepClone(field);
+        cloned.code = newCode;
+        newProps[newCode] = cloned;
+        modifiedCount++;
+      }
+    }
+
+    ui.fieldJson.value = JSON.stringify(newProps, null, 2);
+    const resEl = document.getElementById('u_bulkFieldResult');
+    resEl.style.display = 'block';
+    resEl.innerHTML = `<strong>完了:</strong> ${modifiedCount} 個のフィールドコードを変更し、上のテキストエリアにセットしました。`;
+    setBusy(false);
+  }
+
+  async function runDetectUnusedFields() {
+    const tgtAppId = document.getElementById('u_targetApp')?.value?.trim();
+    if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
+    const guestPrefix = document.getElementById('u_targetGuest')?.value?.trim() ? `/k/guest/${document.getElementById('u_targetGuest').value.trim()}/v1` : '/k/v1';
+
+    setBusy(true, '比較先アプリの全設定を取得中...');
+    const bundle = await fetchBundle(tgtAppId, guestPrefix.includes('/guest/'), document.getElementById('u_targetGuest')?.value?.trim() || null, true);
+    ensureBundleShape(bundle);
+
+    // Impact Index構築
+    const index = buildCombinedFieldImpactIndex(bundle);
+    const usedCodes = new Set(Object.keys(index.refs || {}));
+
+    const fieldsResp = bundle.sections.fieldSettings;
+    const props = fieldsResp ? fieldsResp.properties : {};
+
+    const unused = [];
+    for (const [code, field] of Object.entries(props)) {
+      if (['RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME', 'STATUS', 'STATUS_ASSIGNEE', 'CATEGORY'].includes(field.type)) continue;
+      if (!usedCodes.has(code)) {
+        unused.push(code);
+      }
+    }
+
+    const resEl = document.getElementById('u_bulkFieldResult');
+    resEl.style.display = 'block';
+    if (unused.length === 0) {
+      resEl.innerHTML = '<span style="color:#15803d">全てのフィールドがビューや計算式、プロセスなどで使用されています（または影響判定範囲外です）。</span>';
+    } else {
+      resEl.innerHTML = `
+        <strong style="color:#b45309">影響のない（未使用の可能性が高い）フィールド ${unused.length}件:</strong>
+        <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
+          ${unused.map(c => `<span class="chip" style="font-family:monospace">${esc(c)}</span>`).join('')}
+        </div>
+        <div class="muted" style="margin-top:6px">※JavaScriptカスタマイズや外部API連携での使用は検知できません。</div>
+      `;
+    }
+    setBusy(false);
+  }
+
+  // ── フィールド依存関係マップ（Feature 5） ──
+  async function runFieldDependencyMap() {
+    const srcAppId = document.getElementById('u_sourceApp')?.value?.trim();
+    if (!srcAppId) throw new Error('比較元アプリIDが指定されていません');
+    const guestPrefix = document.getElementById('u_sourceGuest')?.value?.trim() ? `/k/guest/${document.getElementById('u_sourceGuest').value.trim()}/v1` : '/k/v1';
+
+    setBusy(true, '比較元アプリの全設定を取得中...');
+    const bundle = await fetchBundle(srcAppId, guestPrefix.includes('/guest/'), document.getElementById('u_sourceGuest')?.value?.trim() || null, true);
+    ensureBundleShape(bundle);
+
+    setBusy(true, '依存関係を解析中...');
+    // Impact Index構築
+    const index = buildCombinedFieldImpactIndex(bundle);
+    const refs = index.refs || {};
+
+    // elements for Cytoscape (nodes = fields, edges = references)
+    const elements = [];
+    const nodeSet = new Set();
+
+    const addNode = (id, label) => {
+      if (!nodeSet.has(id)) {
+        elements.push({ data: { id, label } });
+        nodeSet.add(id);
+      }
+    };
+
+    let edgeCount = 0;
+    for (const [targetCode, usages] of Object.entries(refs)) {
+      addNode(targetCode, targetCode);
+      for (const usage of usages) {
+        const srcCode = usage.sourceCode || usage.sourceSection;
+        const reason = usage.reason || usage.sourceSection;
+        addNode(srcCode, srcCode);
+
+        // Edge: targetCode is used by srcCode, so dependency flows srcCode -> targetCode
+        elements.push({
+          data: {
+            id: `edge_${edgeCount++}`,
+            source: srcCode,
+            target: targetCode,
+            label: reason
+          }
+        });
+      }
+    }
+
+    if (elements.length === 0) {
+      alert('フィールド間の依存関係（計算式等）は見つかりませんでした。');
+      setBusy(false);
+      return;
+    }
+
+    setStatus(`マップ生成準備完了 (ノード=${nodeSet.size}, エッジ=${edgeCount})`);
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>フィールド依存関係マップ - App ${srcAppId}</title>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"><\/script>
+  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"><\/script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"><\/script>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background: #f8fafc; }
+    #header { padding: 12px 20px; background: #fff; border-bottom: 1px solid #cbd5e1; display: flex; align-items: center; justify-content: space-between; }
+    h1 { margin: 0; font-size: 16px; color: #1e293b; }
+    #cy { flex: 1; position: relative; }
+    .btn { padding: 6px 12px; font-size: 13px; background: #0ea5e9; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    .btn:hover { background: #0284c7; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <h1>フィールド依存関係マップ (App: ${srcAppId})</h1>
+    <button class="btn" onclick="cy.layout({name:'dagre', rankDir:'LR'}).run()">再レイアウト</button>
+  </div>
+  <div id="cy"></div>
+  <script>
+    const elements = ${JSON.stringify(elements)};
+    const cy = cytoscape({
+      container: document.getElementById('cy'),
+      elements: elements,
+      style: [
+        {
+          selector: 'node',
+          style: {
+            'label': 'data(label)',
+            'font-size': '12px',
+            'text-valign': 'center',
+            'text-halign': 'center',
+            'background-color': '#e2e8f0',
+            'border-width': 1,
+            'border-color': '#94a3b8',
+            'color': '#0f172a',
+            'padding': '10px',
+            'shape': 'round-rectangle',
+            'width': 'label',
+            'height': 'label'
+          }
+        },
+        {
+          selector: 'edge',
+          style: {
+            'width': 2,
+            'line-color': '#94a3b8',
+            'target-arrow-color': '#94a3b8',
+            'target-arrow-shape': 'triangle',
+            'curve-style': 'bezier',
+            'label': 'data(label)',
+            'font-size': '10px',
+            'color': '#64748b',
+            'text-background-opacity': 1,
+            'text-background-color': '#f8fafc',
+            'text-background-padding': '2px',
+            // 'edge-text-rotation': 'autorotate'
+          }
+        }
+      ],
+      layout: {
+        name: 'dagre',
+        rankDir: 'LR',
+        nodeSep: 60,
+        rankSep: 100
+      }
+    });
+  <\/script>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setBusy(false);
+  }
+
+  // ── CSVインポート（Feature 6） ──
+  async function runCsvImport() {
+    const tgtAppId = document.getElementById('u_targetApp')?.value?.trim();
+    if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
+    const guestPrefix = document.getElementById('u_targetGuest')?.value?.trim() ? `/k/guest/${document.getElementById('u_targetGuest').value.trim()}/v1` : '/k/v1';
+
+    const fileInput = document.getElementById('u_csvImportFile');
+    if (!fileInput.files || !fileInput.files.length) {
+      throw new Error('CSVファイルを選択してください');
+    }
+
+    const file = fileInput.files[0];
+    setBusy(true, 'CSVファイルを読み込み中...');
+
+    const text = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => resolve(e.target.result);
+      reader.onerror = e => reject(new Error('ファイルの読み得りに失敗しました'));
+      reader.readAsText(file); // assuming UTF-8
+    });
+
+    if (!text) throw new Error('ファイルが空です');
+
+    setBusy(true, 'CSVをパース中...');
+
+    // 簡易CSVパーサー
+    const parseCsv = (csvText) => {
+      const rows = [];
+      let current = [];
+      let cell = '';
+      let inQuotes = false;
+      for (let i = 0; i < csvText.length; i++) {
+        const char = csvText[i];
+        const nextChar = csvText[i + 1];
+        if (inQuotes) {
+          if (char === '"') {
+            if (nextChar === '"') { cell += '"'; i++; } // エスケープされた引用符
+            else { inQuotes = false; }
+          } else {
+            cell += char;
+          }
+        } else {
+          if (char === '"') { inQuotes = true; }
+          else if (char === ',') { current.push(cell); cell = ''; }
+          else if (char === '\n' || char === '\r') {
+            if (char === '\r' && nextChar === '\n') i++; // CRLFスキップ
+            current.push(cell);
+            rows.push(current);
+            current = [];
+            cell = '';
+          } else {
+            cell += char;
+          }
+        }
+      }
+      if (cell !== '' || current.length > 0) {
+        current.push(cell);
+        rows.push(current);
+      }
+      return rows;
+    };
+
+    const rows = parseCsv(text.replace(/^\uFEFF/, '')); // Remove BOM if present
+    if (rows.length < 2) throw new Error('ヘッダ行とデータ行が必要です');
+
+    const header = rows[0].map(h => h.trim());
+    if (header.includes('$id')) throw new Error('CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。');
+
+    const records = [];
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i].length === 1 && rows[i][0] === '') continue; // skip empty line
+      const rec = {};
+      for (let j = 0; j < header.length; j++) {
+        if (!header[j]) continue;
+        const val = rows[i][j] !== undefined ? rows[i][j] : '';
+        // Note: this assumes simple string fields. Subtables, User selects, files might need precise format or not supported natively without complex parsing
+        rec[header[j]] = { value: val };
+      }
+      records.push(rec);
+    }
+
+    if (!records.length) throw new Error('登録するデータが見つかりませんでした');
+    if (!confirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) {
+      setBusy(false);
+      return;
+    }
+
+    setBusy(true, `インポート開始... (対象 ${records.length}件)`);
+
+    const batchSize = 100;
+    let successCount = 0;
+    for (let i = 0; i < records.length; i += batchSize) {
+      const batch = records.slice(i, i + batchSize);
+      setBusy(true, `インポート実行中... (${i + 1} ～ ${i + batch.length} / ${records.length} 件目)`);
+      try {
+        await apiPost(guestPrefix, '/records.json', { app: tgtAppId, records: batch });
+        successCount += batch.length;
+      } catch (e) {
+        throw new Error(`レコード登録エラー（${i + 1}件目付近）: ${e.message}`);
+      }
+    }
+
+    setBusy(false);
+    alert(`完了: ${successCount}件のレコードを登録しました。`);
+    fileInput.value = '';
+    document.getElementById('u_csvImportFileName').textContent = '未選択';
+  }
+
+  // ── 定期差分監視（Feature 8） ──
+  let diffMonitorTimer = null;
+  let diffMonitorLastSignature = '';
+
+  async function silentDiffCheck() {
+    try {
+      const srcApp = document.getElementById('u_sourceApp')?.value?.trim();
+      const tgtApp = document.getElementById('u_targetApp')?.value?.trim();
+      if (!srcApp || !tgtApp) return;
+
+      const srcGuestStr = document.getElementById('u_sourceGuest')?.value?.trim() || null;
+      const tgtGuestStr = document.getElementById('u_targetGuest')?.value?.trim() || null;
+      const srcPrev = !!document.getElementById('u_sourcePreview')?.checked;
+      const tgtPrev = !!document.getElementById('u_targetPreview')?.checked;
+
+      const srcB = await fetchBundle(srcApp, !!srcGuestStr, srcGuestStr, srcPrev);
+      const tgtB = await fetchBundle(tgtApp, !!tgtGuestStr, tgtGuestStr, tgtPrev);
+
+      const rows = compareBundle(srcB, tgtB);
+      const currentSig = rows.map(r => r._id).sort().join(',');
+
+      if (diffMonitorLastSignature && diffMonitorLastSignature !== currentSig) {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          new Notification('Kintone 差分監視', { body: 'アプリ間で新しい設定差分が検出されました！' });
+        }
+      }
+      diffMonitorLastSignature = currentSig;
+
+      const st = document.getElementById('u_diffMonitorStatus');
+      if (st) {
+        st.textContent = `[監視中] 最新チェック: ${nowStamp()} (差分 ${rows.length}件)`;
+      }
+    } catch (e) {
+      console.warn('監視エラー:', e);
+      const st = document.getElementById('u_diffMonitorStatus');
+      if (st) st.textContent = `[監視中] 最新チェック失敗: ${e.message}`;
+    }
+  }
+
+  function toggleDiffMonitoring() {
+    const btn = document.getElementById('u_diffMonitorToggle');
+    const stEl = document.getElementById('u_diffMonitorStatus');
+    if (diffMonitorTimer) {
+      clearInterval(diffMonitorTimer);
+      diffMonitorTimer = null;
+      btn.textContent = '監視セット';
+      btn.style.background = '#10b981';
+      stEl.style.display = 'none';
+      setStatus('差分監視を停止しました');
+    } else {
+      if (typeof Notification !== 'undefined' && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+        Notification.requestPermission();
+      }
+      const intervalMin = parseInt(document.getElementById('u_diffMonitorInterval').value, 10) || 5;
+      diffMonitorLastSignature = ''; // reset signature
+      diffMonitorTimer = setInterval(silentDiffCheck, intervalMin * 60 * 1000);
+      btn.textContent = '監視停止';
+      btn.style.background = '#ef4444';
+      stEl.style.display = 'block';
+      stEl.textContent = `[監視中] ${intervalMin}分ごとにバックグラウンドチェック...`;
+      setStatus(`差分監視を開始しました（${intervalMin}分間隔）`);
+      // Run first check immediately
+      silentDiffCheck();
+    }
+  }
+
+  // ── アプリ間レコードコピー（Feature 9） ──
+  async function runRecordCopy() {
+    const srcApp = document.getElementById('u_sourceApp')?.value?.trim();
+    const tgtApp = document.getElementById('u_targetApp')?.value?.trim();
+    if (!srcApp || !tgtApp) throw new Error('比較元と比較先の両方のアプリIDを指定してください');
+
+    const srcGuestStr = document.getElementById('u_sourceGuest')?.value?.trim() || null;
+    const tgtGuestStr = document.getElementById('u_targetGuest')?.value?.trim() || null;
+    const srcGuest = srcGuestStr ? `/k/guest/${srcGuestStr}/v1` : '/k/v1';
+    const tgtGuest = tgtGuestStr ? `/k/guest/${tgtGuestStr}/v1` : '/k/v1';
+    const query = document.getElementById('u_recordCopyQuery')?.value || '';
+
+    if (!confirm(`比較元(${srcApp}) から 比較先(${tgtApp}) へレコードをコピーします。よろしいですか？`)) return;
+
+    setBusy(true, '比較元のレコードを取得中...');
+    let totalFetched = 0;
+    const records = [];
+    while (true) {
+      const q = `${query} limit 500 offset ${totalFetched}`;
+      const res = await apiGet(srcGuest, '/records.json', { app: srcApp, query: q });
+      if (!res.records || res.records.length === 0) break;
+      records.push(...res.records);
+      totalFetched += res.records.length;
+      if (res.records.length < 500) break;
+      setStatus(`取得中... (${totalFetched}件)`);
+    }
+
+    if (!records.length) {
+      alert('コピー対象のレコードが見つかりませんでした');
+      setBusy(false);
+      return;
+    }
+
+    // 登録用にシステムフィールドを除外
+    const systemFields = ['$id', '$revision', '作成者', '作成日時', '更新者', '更新日時', 'レコード番号', 'ステータス', '作業者'];
+    const systemTypes = ['RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME', 'STATUS', 'STATUS_ASSIGNEE', 'CALC'];
+    const cleanRecords = records.map(rec => {
+      const clean = {};
+      for (const [k, v] of Object.entries(rec)) {
+        if (!systemFields.includes(k) && !systemTypes.includes(v.type)) {
+          // CATEGORY and SUBTABLE and FILE are trickier and frequently fail, but we'll try to push simple value objects 
+          // For subtables, we'd need to clean internal IDs. For now, pass basic values.
+          if (v.type === 'SUBTABLE') {
+            const cleanSub = v.value.map(sRow => {
+              const cleanSRow = {};
+              for (const [sk, sv] of Object.entries(sRow.value)) {
+                cleanSRow[sk] = { value: sv.value };
+              }
+              return { value: cleanSRow }; // omits id to create new rows
+            });
+            clean[k] = { value: cleanSub };
+          } else {
+            clean[k] = { value: v.value };
+          }
+        }
+      }
+      return clean;
+    });
+
+    if (!confirm(`${records.length}件のレコードを比較先(AppID: ${tgtApp})へ登録します。実行しますか？`)) {
+      setBusy(false);
+      return;
+    }
+
+    setBusy(true, `インポート開始... (対象 ${records.length}件)`);
+    const batchSize = 100;
+    let successCount = 0;
+    for (let i = 0; i < cleanRecords.length; i += batchSize) {
+      const batch = cleanRecords.slice(i, i + batchSize);
+      setBusy(true, `登録実行中... (${i + 1} ～ ${i + batch.length} / ${cleanRecords.length} 件目)`);
+      try {
+        await apiPost(tgtGuest, '/records.json', { app: tgtApp, records: batch });
+        successCount += batch.length;
+      } catch (e) {
+        throw new Error(`レコード登録エラー（${i + 1}件目付近）: ${e.message}`);
+      }
+    }
+
+    setBusy(false);
+    alert(`完了: ${successCount}件のレコードを比較先へコピーしました。`);
+  }
+
+  // ── テンプレート管理（Feature 12） ──
+  const TEMPLATE_STATE_KEY = 'kintoneSuperApp_Templates';
+
+  function getTemplates() {
+    try { return JSON.parse(localStorage.getItem(TEMPLATE_STATE_KEY) || '{}'); }
+    catch { return {}; }
+  }
+
+  function renderTemplateOptions() {
+    const sel = document.getElementById('u_templateSelect');
+    if (!sel) return;
+    const tpls = getTemplates();
+    const current = sel.value;
+    const keys = Object.keys(tpls).sort((a, b) => tpls[b].savedAt - tpls[a].savedAt);
+    if (!keys.length) {
+      sel.innerHTML = '<option value="">-- 保存済なし --</option>';
+      return;
+    }
+    sel.innerHTML = keys.map(k => `<option value="${esc(k)}">${esc(k)} (${new Date(tpls[k].savedAt).toLocaleDateString()})</option>`).join('');
+    if (tpls[current]) sel.value = current;
+  }
+
+  async function saveTemplate() {
+    const name = document.getElementById('u_templateSaveName')?.value?.trim();
+    if (!name) throw new Error('保存するテンプレート名を入力してください');
+
+    const c = commonParams();
+    if (!c.source.appId) throw new Error('テンプレートとして保存する比較元のアプリIDを指定してください');
+
+    const scopes = Object.keys(MAPPERS);
+    const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
+
+    const tpls = getTemplates();
+    tpls[name] = { savedAt: Date.now(), bundle: bundle };
+    try {
+      localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
+    } catch (e) {
+      throw new Error('保存に失敗しました。LocalStorageの容量制限(5MB等)に達した可能性があります。不要な履歴を削除してください。');
+    }
+
+    renderTemplateOptions();
+    document.getElementById('u_templateSaveName').value = '';
+    alert(`テンプレート「${name}」を保存しました。`);
+  }
+
+  function loadTemplate() {
+    const name = document.getElementById('u_templateSelect')?.value;
+    if (!name) return;
+    const tpls = getTemplates();
+    const tpl = tpls[name];
+    if (!tpl || !tpl.bundle) {
+      alert('指定されたテンプレートが存在しません');
+      return;
+    }
+
+    state.importedSourceBundle = tpl.bundle;
+    state.importedSourceName = `[テンプレート] ${name}`;
+    renderBundleState();
+
+    alert(`テンプレート「${name}」を比較元（ファイル読込扱い）としてセットしました。\n必要に応じて差分比較を実行してください。`);
+  }
+
+  function deleteTemplate() {
+    const name = document.getElementById('u_templateSelect')?.value;
+    if (!name) return;
+    if (!confirm(`テンプレート「${name}」を削除しますか？`)) return;
+    const tpls = getTemplates();
+    delete tpls[name];
+    localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
+    renderTemplateOptions();
+    setStatus(`テンプレート「${name}」を削除しました`);
+  }
+
+  // ── APIテスター（Feature 15） ──
+  async function runApiTester() {
+    const method = document.getElementById('u_apiTesterMethod')?.value || 'GET';
+    const path = document.getElementById('u_apiTesterPath')?.value?.trim();
+    const bodyStr = document.getElementById('u_apiTesterBody')?.value?.trim() || '{}';
+    const resEl = document.getElementById('u_apiTesterResult');
+
+    if (!path) {
+      alert('エンドポイントを指定してください');
+      return;
+    }
+
+    let payload = {};
+    if (bodyStr) {
+      try {
+        payload = JSON.parse(bodyStr);
+      } catch (e) {
+        alert('リクエストBodyのJSON形式が不正です:\n' + e.message);
+        return;
+      }
+    }
+
+    setBusy(true, `API実行中 (${method}) ...`);
+    resEl.innerHTML = '<div style="color:#64748b">実行中...</div>';
+
+    try {
+      let finalPath = path;
+      if (!path.startsWith('http') && !path.startsWith('/k/v1/') && !path.startsWith('/k/guest/')) {
+        const g = document.getElementById('u_sourceGuest')?.value?.trim();
+        const prefix = g ? `/k/guest/${g}/v1` : '/k/v1';
+        finalPath = prefix + (path.startsWith('/') ? path : `/${path}`);
+      }
+
+      const res = await kintone.api(finalPath, method, payload);
+      resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(JSON.stringify(res, null, 2))}</pre>`;
+      setStatus(`API実行成功: ${method} ${finalPath}`);
+    } catch (e) {
+      let errMsg = String(e.message || e);
+      if (typeof e === 'object' && e !== null) {
+        try { errMsg = JSON.stringify(e, null, 2); } catch (_) { }
+      }
+      resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">${esc(errMsg)}</pre>`;
+      setStatus(`API実行エラー: ${method} ${path}`, true);
+    } finally {
+      setBusy(false);
+    }
   }
 
   setStatus('起動完了');
