@@ -138,7 +138,7 @@
       const raw = typeof value === 'string' ? value : JSON.stringify(value);
       if (!raw) return '';
       return raw.length > max ? `${raw.slice(0, max)}...` : raw;
-    } catch {
+    } catch (e) {
       const raw = String(value ?? '');
       return raw.length > max ? `${raw.slice(0, max)}...` : raw;
     }
@@ -264,7 +264,7 @@
     try {
       const rows = JSON.parse(localStorage.getItem(DIFF_SNAPSHOT_STATE_KEY) || '[]');
       return Array.isArray(rows) ? rows : [];
-    } catch {
+    } catch (e) {
       return [];
     }
   }
@@ -272,7 +272,7 @@
   function saveDiffSnapshots(rows) {
     try {
       localStorage.setItem(DIFF_SNAPSHOT_STATE_KEY, JSON.stringify(Array.isArray(rows) ? rows.slice(0, MAX_DIFF_SNAPSHOTS) : []));
-    } catch {
+    } catch (e) {
       /* noop */
     }
   }
@@ -2771,8 +2771,6 @@
             </div>
           </div>
 
-          <div class="pane" data-pane="apiTester">
-            <!-- API Tester Pane Content Goes Here -->
           </div>
 
           <div class="pane active" data-pane="diff">
@@ -4243,7 +4241,7 @@
 
     ui.diffSnapshotList.innerHTML = snapshots.map((snap) => {
       const createdAt = (() => {
-        try { return new Date(snap.createdAt).toLocaleString(); } catch { return String(snap.createdAt || '-'); }
+        try { return new Date(snap.createdAt).toLocaleString(); } catch (e) { return String(snap.createdAt || '-'); }
       })();
       const scopes = (snap.scopes || []).map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key).join(', ');
       const normalizationLabels = getActiveDiffNormalizationLabels(snap.normalization || {});
@@ -4379,7 +4377,7 @@
     const container = document.getElementById('u_lookupMapRows');
     if (!container) return;
     let map = {};
-    try { map = parseLookupMapInput(ui.lookupMap.value); } catch { map = {}; }
+    try { map = parseLookupMapInput(ui.lookupMap.value); } catch (e) { map = {}; }
     const entries = Object.entries(map);
     if (entries.length === 0) {
       container.innerHTML = '<div class="muted" style="padding:2px 0">変換ルールなし</div>';
@@ -4423,7 +4421,7 @@
   function renderBundleState() {
     const fmtFetchTime = (v) => {
       if (!v) return '-';
-      try { return new Date(v).toLocaleString(); } catch { return String(v); }
+      try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
     };
     const describeBundle = (label, bundle, importedName, imported) => {
       if (!bundle) return `${label}: API取得`;
@@ -6926,7 +6924,7 @@ ${diffMd}
           if (!obj || typeof obj !== 'object') return def;
           const v = path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : undefined), obj);
           return v === undefined ? def : v;
-        } catch { return def; }
+        } catch (e) { return def; }
       },
       ensureArray: v => Array.isArray(v) ? v : [],
       safeJoin: (arr, sep = '、') => Array.isArray(arr) ? arr.filter(v => v !== '' && v != null).join(sep) : '',
@@ -7054,7 +7052,7 @@ ${diffMd}
         return String(dv);
       },
 
-      safeJSONStringify: (obj) => { try { return JSON.stringify(obj, null, 2); } catch { return String(obj); } }
+      safeJSONStringify: (obj) => { try { return JSON.stringify(obj, null, 2); } catch (e) { return String(obj); } }
     };
 
     // ═══════════════════ ローダー & ネットワーク ═══════════════════
@@ -7708,7 +7706,7 @@ ${diffMd}
         for (const a of actions) {
           const filterCond = a.filterCond ? `\n条件: ${Utils.formatFilterCond(a.filterCond)}` : '';
           aoa.push([no++, a?.name || '-', a?.from || '-', a?.to || '-',
-          (Utils.ensureArray(a?.filterCond ? undefined : undefined).length ? '' : '-') + filterCond || '-']);
+          (a?.filterCond ? filterCond : '-')]);
         }
       }
 
@@ -8069,7 +8067,7 @@ ${diffMd}
       try {
         const countResp = await fetchJob('RecordCount', () => api(apiUrl('/k/v1/records.json'), 'GET', { app: APP_ID, query: 'limit 1', totalCount: true }));
         recordCount = countResp?.totalCount ?? null;
-      } catch { /* ignore */ }
+      } catch (e) { /* ignore */ }
 
       // ステップ4: 各種設定を並列取得
       UI.update('一覧・権限・通知設定を取得中...');
@@ -9822,7 +9820,7 @@ ${diffMd}
 
       // History management
       getHistory: () => {
-        try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch (e) { return []; }
       },
       addHistory: (sql, meta = {}) => {
         const h = Utils.getHistory().filter(item => item.sql !== sql);
@@ -9887,7 +9885,7 @@ ${diffMd}
           const prefix = buildApiPrefix(src.guestId, false);
           const resp = await apiGet(prefix, '/app/form/fields.json', { app: appId });
           return resp.properties || {};
-        } catch {
+        } catch (e) {
           return {};
         }
       },
@@ -11688,7 +11686,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         setStatus(`ER図の生成完了: ${apps.length}アプリを別タブ表示しました`);
         setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
       } catch (e) {
-        try { popup.close(); } catch { /* noop */ }
+        try { popup.close(); } catch (e) { /* noop */ }
         progressUi.error(e.message || String(e));
         throw e;
       }
@@ -12025,7 +12023,9 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(u); }, 100);
 
     setStatus(`JS/CSS一括DL完了 (403スキップ: ${failedCount}件)`);
-    // ── SheetJSローダー（共通） ──
+  }
+
+  // ── SheetJSローダー（共通） ──
     async function ensureSheetJs() {
       if (typeof window.XLSX !== 'undefined') return;
       const urls = [
@@ -12044,7 +12044,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
             document.head.appendChild(s);
           });
           if (typeof window.XLSX !== 'undefined') return;
-        } catch { /* try next */ }
+        } catch (e) { /* try next */ }
       }
       throw new Error('SheetJSの読み込みに失敗しました');
     }
@@ -12257,9 +12257,6 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       setStatus(`CSVを出力しました (${allRecords.length}件)`);
     }
 
-    setStatus('起動完了');
-  }
-
   // ── フィールド一括操作（Feature 4） ──
   async function runBulkFieldRename() {
     const tgtAppId = document.getElementById('u_targetApp')?.value?.trim();
@@ -12345,10 +12342,11 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   async function runFieldDependencyMap() {
     const srcAppId = document.getElementById('u_sourceApp')?.value?.trim();
     if (!srcAppId) throw new Error('比較元アプリIDが指定されていません');
-    const guestPrefix = document.getElementById('u_sourceGuest')?.value?.trim() ? `/k/guest/${document.getElementById('u_sourceGuest').value.trim()}/v1` : '/k/v1';
+    const guestId = document.getElementById('u_sourceGuest')?.value?.trim() || null;
 
     setBusy(true, '比較元アプリの全設定を取得中...');
-    const bundle = await fetchBundle(srcAppId, guestPrefix.includes('/guest/'), document.getElementById('u_sourceGuest')?.value?.trim() || null, true);
+    const sections = Object.keys(MAPPERS);
+    const bundle = await fetchBundle({ appId: srcAppId, guestId, preview: true, sections, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
     ensureBundleShape(bundle);
 
     setBusy(true, '依存関係を解析中...');
@@ -12494,7 +12492,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     const text = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = e => resolve(e.target.result);
-      reader.onerror = e => reject(new Error('ファイルの読み得りに失敗しました'));
+      reader.onerror = e => reject(new Error('ファイルの読み取りに失敗しました'));
       reader.readAsText(file); // assuming UTF-8
     });
 
@@ -12600,10 +12598,12 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       const srcPrev = !!document.getElementById('u_sourcePreview')?.checked;
       const tgtPrev = !!document.getElementById('u_targetPreview')?.checked;
 
-      const srcB = await fetchBundle(srcApp, !!srcGuestStr, srcGuestStr, srcPrev);
-      const tgtB = await fetchBundle(tgtApp, !!tgtGuestStr, tgtGuestStr, tgtPrev);
+      const sectionKeys = SECTION_DEFS.map(s => s.key);
+      const srcB = await fetchBundle({ appId: srcApp, guestId: srcGuestStr, preview: srcPrev, sections: sectionKeys });
+      const tgtB = await fetchBundle({ appId: tgtApp, guestId: tgtGuestStr, preview: tgtPrev, sections: sectionKeys });
 
-      const rows = compareBundle(srcB, tgtB);
+      const diffResult = computeDiffRows(srcB, tgtB, sectionKeys, '');
+      const rows = diffResult.rows || [];
       const currentSig = rows.map(r => r._id).sort().join(',');
 
       if (diffMonitorLastSignature && diffMonitorLastSignature !== currentSig) {
