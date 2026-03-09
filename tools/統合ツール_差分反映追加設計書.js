@@ -6816,6 +6816,9 @@
       return;
     }
     el.style.display = 'block';
+    el.style.background = '#eff6ff';
+    el.style.borderColor = '#bfdbfe';
+    el.style.color = '#1e40af';
     el.innerHTML = `セクション: ${parsed.sectionCount}件 / 差分: ${parsed.totalRows}件 ` +
       `(追加: ${parsed.typeCounts.added} / 削除: ${parsed.typeCounts.removed} / 変更: ${parsed.typeCounts.changed})` +
       (parsed.source.appId ? ` / 元アプリ: ${esc(parsed.source.appId)}` : '') +
@@ -9032,7 +9035,8 @@ ${diffMd}
         'runBatchProcess': '一括プロセス更新',
         'runCsvImport': 'CSV一括インポート',
         'runBulkFieldRename': 'フィールド一括変換',
-        'runRecordCopy': 'アプリ間レコードコピー'
+        'runRecordCopy': 'アプリ間レコードコピー',
+        'applyPatchJson': 'パッチJSON反映'
       };
       if (act && logable[act] && typeof logOperation === 'function') {
         logOperation(logable[act], `[${act}] 正常終了`);
