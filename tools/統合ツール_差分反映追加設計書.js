@@ -89,6 +89,8 @@
     importedTargetBundle: null,
     importedSourceName: '',
     importedTargetName: '',
+    patchJsonPanelOpen: false,
+    importedPatchPayload: null,
     running: false
   };
 
@@ -386,6 +388,7 @@
   function summarizeSeverity(rows) {
     const out = { high: 0, medium: 0, low: 0 };
     (rows || []).forEach((r) => {
+      if (!r || r.type === 'same') return;
       const sev = r?.severity || 'low';
       if (sev === 'high') out.high += 1;
       else if (sev === 'medium') out.medium += 1;
@@ -527,6 +530,7 @@
   }
 
   const ARRAY_DIFF_LIMIT = 1000;
+  const SAME_ROW_LIMIT = 3000;
   const ARRAY_LCS_MAX_CELLS = 60000;
   const LINE_DIFF_MAX_CELLS = 90000;
   const CHAR_DIFF_MAX_CELLS = 20000;
@@ -597,10 +601,35 @@
   }
 
   function pushDiffRow(out, row, ignoreRules) {
-    if (!row || out.length >= ARRAY_DIFF_LIMIT) return false;
+    if (!row) return false;
     if (isIgnoredPath(ignoreRules, row.path)) return false;
+    if (row.type === 'same') {
+      const sameCount = Number(out?.__sameCount || 0);
+      if (sameCount >= SAME_ROW_LIMIT) return false;
+      if (out) out.__sameCount = sameCount + 1;
+      out.push(row);
+      return true;
+    }
+    const diffCount = Number(out?.__diffCount || 0);
+    if (diffCount >= ARRAY_DIFF_LIMIT) return false;
+    if (out) out.__diffCount = diffCount + 1;
     out.push(row);
     return true;
+  }
+
+  function getCollectedDiffCount(rows) {
+    if (!Array.isArray(rows)) return 0;
+    const count = Number(rows.__diffCount);
+    if (Number.isFinite(count)) return count;
+    return rows.filter((row) => row?.type !== 'same').length;
+  }
+
+  function canCollectSameRows(rows) {
+    if (!Array.isArray(rows)) return false;
+    if (!rows.__includeSame) return false;
+    const count = Number(rows.__sameCount);
+    if (Number.isFinite(count)) return count < SAME_ROW_LIMIT;
+    return rows.filter((row) => row?.type === 'same').length < SAME_ROW_LIMIT;
   }
 
   function normalizeForCompare(v, ignoreRules) {
@@ -680,7 +709,7 @@
     }
 
     for (const sig of ordered) {
-      if (out.length >= ARRAY_DIFF_LIMIT) return true;
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
       const left = mapA.get(sig);
       const right = mapB.get(sig);
       if (!left && right) {
@@ -722,6 +751,16 @@
             arrayKey: key,
             arrayKeyValue: right.item?.[key]
           }, ignoreRules);
+        } else if (canCollectSameRows(out)) {
+          pushDiffRow(out, {
+            type: 'same',
+            path: `${path}[${right.idx}]`,
+            left: left.item,
+            right: right.item,
+            severity: 'low',
+            arrayKey: key,
+            arrayKeyValue: right.item?.[key]
+          }, ignoreRules);
         }
         continue;
       }
@@ -732,7 +771,7 @@
         if (!out[oi].arrayKey) out[oi].arrayKey = key;
         if (out[oi].arrayKeyValue === undefined) out[oi].arrayKeyValue = keyVal;
       }
-      if (out.length >= ARRAY_DIFF_LIMIT) return true;
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
     }
     return true;
   }
@@ -743,14 +782,14 @@
     if (!n && !m) return true;
     if (!n) {
       for (let j = 0; j < m; j++) {
-        if (out.length >= ARRAY_DIFF_LIMIT) return true;
+        if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
         pushDiffRow(out, { type: 'added', path: `${path}[${j}]`, left: undefined, right: b[j] }, ignoreRules);
       }
       return true;
     }
     if (!m) {
       for (let i = 0; i < n; i++) {
-        if (out.length >= ARRAY_DIFF_LIMIT) return true;
+        if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
         pushDiffRow(out, { type: 'removed', path: `${path}[${i}]`, left: a[i], right: undefined }, ignoreRules);
       }
       return true;
@@ -772,8 +811,17 @@
     let i = 0;
     let j = 0;
     while (i < n || j < m) {
-      if (out.length >= ARRAY_DIFF_LIMIT) return true;
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
       if (i < n && j < m && sigA[i] === sigB[j]) {
+        if (canCollectSameRows(out)) {
+          pushDiffRow(out, {
+            type: 'same',
+            path: `${path}[${j}]`,
+            left: a[i],
+            right: b[j],
+            severity: 'low'
+          }, ignoreRules);
+        }
         i += 1;
         j += 1;
         continue;
@@ -807,7 +855,7 @@
     if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules)) return;
     const max = Math.max(a.length, b.length);
     for (let i = 0; i < max; i++) {
-      if (out.length >= ARRAY_DIFF_LIMIT) return;
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
       const p = `${path}[${i}]`;
       if (i >= a.length) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[i] }, ignoreRules);
       else if (i >= b.length) pushDiffRow(out, { type: 'removed', path: p, left: a[i], right: undefined }, ignoreRules);
@@ -816,10 +864,15 @@
   }
 
   function collectDeepDiffs(a, b, path, out, ignoreRules) {
-    if (out.length >= ARRAY_DIFF_LIMIT) return;
+    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
     if (isIgnoredPath(ignoreRules, path)) return;
 
-    if (a === b) return;
+    if (a === b) {
+      if (canCollectSameRows(out)) {
+        pushDiffRow(out, { type: 'same', path, left: a, right: b, severity: 'low' }, ignoreRules);
+      }
+      return;
+    }
     const ta = Object.prototype.toString.call(a);
     const tb = Object.prototype.toString.call(b);
     if (ta !== tb) {
@@ -833,11 +886,23 @@
     }
 
     if (Array.isArray(a)) {
+      if (makeArrayItemSignature(a, ignoreRules) === makeArrayItemSignature(b, ignoreRules)) {
+        if (canCollectSameRows(out)) {
+          pushDiffRow(out, { type: 'same', path, left: a, right: b, severity: 'low' }, ignoreRules);
+        }
+        return;
+      }
       collectArrayDiffs(a, b, path, out, ignoreRules);
       return;
     }
 
     if (typeof a === 'object') {
+      if (makeArrayItemSignature(a, ignoreRules) === makeArrayItemSignature(b, ignoreRules)) {
+        if (canCollectSameRows(out)) {
+          pushDiffRow(out, { type: 'same', path, left: a, right: b, severity: 'low' }, ignoreRules);
+        }
+        return;
+      }
       const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
       for (const k of keys) {
         if (META_KEYS.has(k) || isIgnoredKey(ignoreRules, k)) continue;
@@ -845,7 +910,7 @@
         if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: 'removed', path: p, left: a[k], right: undefined }, ignoreRules);
         else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[k] }, ignoreRules);
         else collectDeepDiffs(a[k], b[k], p, out, ignoreRules);
-        if (out.length >= ARRAY_DIFF_LIMIT) return;
+        if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
       }
       return;
     }
@@ -858,6 +923,9 @@
     const presetState = options.normalizationPresetState || {};
     const includeSame = !!options.includeSame;
     const rows = [];
+    rows.__diffCount = 0;
+    rows.__sameCount = 0;
+    rows.__includeSame = includeSame;
     const fetchIssues = [];
     for (const sec of sections) {
       const label = (SECTION_DEFS.find((x) => x.key === sec) || {}).label || sec;
@@ -894,7 +962,7 @@
       const targetForDiff = normalizeSectionForCompare(sec, t, presetState);
       if (stableStringify(sourceForDiff) === stableStringify(targetForDiff)) {
         if (includeSame) {
-          rows.push({ sectionKey: sec, section: label, type: 'same', path: sec, left: sourceForDiff, right: targetForDiff, severity: 'low' });
+          pushDiffRow(rows, { sectionKey: sec, section: label, type: 'same', path: sec, left: sourceForDiff, right: targetForDiff, severity: 'low' }, ignoreRules);
         }
         continue;
       }
@@ -927,6 +995,14 @@
       }
     }
     return s;
+  }
+
+  function getActualDiffRows(rows) {
+    return (rows || []).filter((row) => row && row.type !== 'same');
+  }
+
+  function countActualDiffRows(rows) {
+    return getActualDiffRows(rows).length;
   }
 
   function summarizeFetchIssues(issues) {
@@ -1077,7 +1153,7 @@
   function buildIgnoreKeySuggestions(rows, ignoreKeysText) {
     const ignoreRules = parseIgnoreRules(ignoreKeysText);
     const counts = new Map();
-    for (const row of rows || []) {
+    for (const row of getActualDiffRows(rows)) {
       if (row.severity !== 'low') continue;
       const leaf = normalizeIgnoreToken(getPathLeafKey(row.path));
       if (!leaf || leaf.length < 2) continue;
@@ -1641,7 +1717,7 @@
 
   function buildDiffWarningInfo(rows, issues) {
     const threshold = parseDiffWarnThreshold();
-    const diffCount = (rows || state.lastDiffRows || []).length;
+    const diffCount = countActualDiffRows(rows || state.lastDiffRows || []);
     const issueCount = (issues || state.lastFetchIssues || []).length;
     const total = diffCount + issueCount;
     const exceeded = threshold > 0 && total >= threshold;
@@ -2043,6 +2119,14 @@
   }
 
   function renderRowCells(row, useCharDiff) {
+    if (row.type === 'same') {
+      const text = safeText(row.left);
+      const preview = text.length > 200 ? text.slice(0, 200) + '...' : text;
+      return {
+        left: '<pre class="blk same">' + escHtml(preview) + '</pre>',
+        right: '<pre class="blk same-note">（同一）</pre>'
+      };
+    }
     if (row.type === 'added') {
       return {
         left: '<pre class="blk empty">（なし）</pre>',
@@ -2104,8 +2188,10 @@
     let removed = 0;
     let changed = 0;
     let moved = 0;
+    let same = 0;
     for (const row of rows) {
-      if (row.type === 'added') added += 1;
+      if (row.type === 'same') same += 1;
+      else if (row.type === 'added') added += 1;
       else if (row.type === 'removed') removed += 1;
       else {
         changed += 1;
@@ -2117,6 +2203,7 @@
     document.getElementById('stat-removed').textContent = String(removed);
     document.getElementById('stat-changed').textContent = String(changed);
     document.getElementById('stat-moved').textContent = String(moved);
+    document.getElementById('stat-same').textContent = String(same);
   }
 
   function render() {
@@ -2178,7 +2265,7 @@
           const tr = document.createElement('tr');
           const typeLabel = diffTypeLabel(row.type, row.moved);
           const cells = renderRowCells(row, useCharDiff);
-          const typeClass = row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed');
+          const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
           tr.innerHTML =
             '<td class="type ' + typeClass + '">' + escHtml(typeLabel) + '</td>' +
             '<td class="path" title="' + escHtml(row.path || '-') + '">' + escHtml(row.path || '-') + renderRowMeta(row) + '</td>' +
@@ -2234,8 +2321,13 @@
   }
 
   function exportPatch() {
+    const patchRows = REPORT_ROWS.filter((row) => row.type !== 'same');
+    if (!patchRows.length) {
+      alert('出力できる差分がありません');
+      return;
+    }
     const grouped = {};
-    REPORT_ROWS.forEach((row) => {
+    patchRows.forEach((row) => {
       const key = row.sectionKey || row.section || '未分類';
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push({
@@ -2354,6 +2446,7 @@
     .type.added{color:#166534}
     .type.removed{color:#b91c1c}
     .type.changed{color:#92400e}
+    .type.same{color:#15803d}
     .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:#64748b}
     body.dark .path{color:#94a3b8}
     .meta-wrap{margin-top:6px;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
@@ -2376,6 +2469,8 @@
     .blk{margin:0;padding:8px;white-space:pre-wrap;word-break:break-word;font-size:11px}
     .blk.add{background:var(--add);color:var(--add-fg)}
     .blk.del{background:var(--del);color:var(--del-fg)}
+    .blk.same{color:#64748b;font-style:italic}
+    .blk.same-note{color:#15803d;font-style:italic}
     .blk.empty{font-style:italic;color:#64748b}
     body.dark .blk.empty{color:#94a3b8}
     mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:2px;padding:0 1px}
@@ -2421,6 +2516,7 @@
       <div>削除: <b id="stat-removed">${summary.removed}</b></div>
       <div>変更: <b id="stat-changed">${summary.changed}</b></div>
       <div>移動: <b id="stat-moved">${summary.moved}</b></div>
+      <div>同一: <b id="stat-same">${summary.same}</b></div>
       <div>取得失敗: <b>${fetchIssues.length}</b></div>
     </div>
     <div class="sb-ctrl">
@@ -2458,6 +2554,7 @@
       <span class="pill">削除 ${summary.removed}</span>
       <span class="pill">変更 ${summary.changed}</span>
       <span class="pill">移動 ${summary.moved}</span>
+      <span class="pill">同一 ${summary.same}</span>
       <span class="pill">取得失敗 ${fetchIssues.length}</span>
     </div>
     ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? ' (超過)' : ''}</div>` : ''}
@@ -2479,7 +2576,7 @@
 
   function buildPatchPayload(rows, sourceBundle, targetBundle) {
     const grouped = {};
-    for (const r of rows) {
+    for (const r of getActualDiffRows(rows)) {
       const section = r.section || '未分類';
       if (!grouped[section]) grouped[section] = [];
       grouped[section].push({
@@ -3027,11 +3124,28 @@
                     </div>
                     <div id="u_backupStatus" style="display:none;margin-top:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46"></div>
                   </div>
+                  <div id="u_patchJsonPanel" style="display:none">
+                    <div class="opt-card" style="margin-top:8px">
+                      <div class="opt-title">JSON差分反映</div>
+                      <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、直接編集して比較先プレビューに反映します。</div>
+                      <div class="btns" style="margin-bottom:6px">
+                        <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
+                        <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
+                        <button class="btn sub" data-act="patchJsonClear">クリア</button>
+                      </div>
+                      <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
+                      <textarea id="u_patchJsonEditor" placeholder='パッチJSONをここに貼り付け、またはファイルから読み込み...' style="width:100%;min-height:160px;max-height:320px;font-family:monospace;font-size:11px;resize:vertical;border:1px solid #d1d5db;border-radius:6px;padding:8px;box-sizing:border-box"></textarea>
+                      <div class="btns" style="margin-top:6px">
+                        <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <div class="main-footer">
                   <button class="btn sub" data-act="previewApplyPlan">反映プラン確認</button>
                   <button class="btn sub" data-act="backupTargetPreview">バックアップ</button>
                   <button class="btn ok" data-act="applyPreview">比較元 → 比較先(プレビュー) 反映</button>
+                  <button class="btn sub" data-act="togglePatchJsonPanel">JSON差分反映</button>
                   <button class="btn dark" data-act="deployOnly">デプロイのみ</button>
                 </div>
               </div>
@@ -3901,7 +4015,7 @@
           <td>${esc(item.appId || '-')}</td>
           <td>${esc(getPreviewStateLabel(!!item.preview))} / ${esc(item.guestId ? `ゲスト ${item.guestId}` : '通常')}</td>
           <td>${esc(item.revision || '-')}</td>
-          <td>${item.summary?.total || 0}</td>
+          <td>${item.diffTotal ?? 0}</td>
           <td>${item.summary?.added || 0}/${item.summary?.removed || 0}/${item.summary?.changed || 0}</td>
           <td>高:${item.severity?.high || 0} 中:${item.severity?.medium || 0} 低:${item.severity?.low || 0}</td>
           <td>${item.fetchSummary?.total || 0}</td>
@@ -4441,7 +4555,10 @@
       : (ui.applyDiffOnly?.checked ? '前回差分セクションのみ' : '選択セクション');
     ui.reflectMode.textContent = `${sourceText} / 反映先: 比較先プレビューAPI / 反映範囲: ${rangeMode}`;
     if (ui.commonDataState) {
-      const diffInfo = state.lastDiffAt ? `差分: ${fmtFetchTime(state.lastDiffAt)} (${state.lastDiffRows.length}件 / 取得失敗 ${state.lastFetchIssues.length}件)` : '差分: 未実行';
+      const diffSummary = summarizeRows(state.lastDiffRows || []);
+      const diffInfo = state.lastDiffAt
+        ? `差分: ${fmtFetchTime(state.lastDiffAt)} (差分 ${countActualDiffRows(state.lastDiffRows)}件 / 同一 ${diffSummary.same}件 / 取得失敗 ${state.lastFetchIssues.length}件)`
+        : '差分: 未実行';
       ui.commonDataState.textContent = `${sourceText} / ${targetText} / ${diffInfo}`;
     }
     renderDiffSelectionState();
@@ -4476,7 +4593,7 @@
 
   function getDiffCountsBySection() {
     const counts = {};
-    for (const row of (state.lastDiffRows || [])) {
+    for (const row of getActualDiffRows(state.lastDiffRows || [])) {
       const key = row.sectionKey || '';
       if (!key) continue;
       if (!counts[key]) counts[key] = { total: 0, added: 0, removed: 0, changed: 0 };
@@ -4554,7 +4671,7 @@
       const def = SECTION_DEFS.find((d) => d.key === activeSec);
       if (!def) { overview.innerHTML = ''; return; }
       const count = diffCounts[activeSec] || { total: 0, added: 0, removed: 0, changed: 0 };
-      const rows = (state.lastDiffRows || []).filter((r) => r.sectionKey === activeSec);
+      const rows = getActualDiffRows(state.lastDiffRows || []).filter((r) => r.sectionKey === activeSec);
       const topPaths = rows.slice(0, 12).map((r) => {
         const cls = r.type === 'added' ? '#166534' : (r.type === 'removed' ? '#b91c1c' : '#92400e');
         const typeLabel = r.moved ? `${r.type}(moved)` : (r.type || '-');
@@ -4646,7 +4763,7 @@
     };
   }
 
-  async function ensureApplyPlanApproved(signature, mode, planRunner) {
+  async function ensureApplyPlanApproved(signature, mode, planRunner, options) {
     const plan = state.lastApplyPlan;
     const valid = !!plan && plan.signature === signature && plan.mode === mode;
     if (!valid) {
@@ -4654,15 +4771,18 @@
     }
     const currentPlan = state.lastApplyPlan;
     if (!currentPlan) return false;
-    return showInlineConfirmation(currentPlan);
+    return showInlineConfirmation(currentPlan, options);
   }
 
-  function showInlineConfirmation(plan) {
+  function showInlineConfirmation(plan, options) {
+    const appIdRefs = (options && options.appIdRefs) || [];
     return new Promise((resolve) => {
       const stamp = new Date(plan.createdAt).toLocaleString();
       const planText = (plan.logs || []).join('\n') || '(プラン詳細なし)';
+      const appIdSection = renderAppIdConfirmSection(appIdRefs);
       ui.result.innerHTML = `<div class="plan-confirm-panel">
         <div style="font-weight:700;font-size:13px;margin-bottom:8px">反映プラン確認</div>
+        ${appIdSection}
         <div class="plan-summary">${esc(planText)}</div>
         <div class="plan-actions">
           <span class="plan-meta">予定リクエスト: ${plan.totalReq || 0}件 | 作成: ${esc(stamp)}</span>
@@ -4868,6 +4988,7 @@
       target: c.target,
       scopes: selectedScopeKeys(ui.diffScopes),
       ignoreKeys: ui.ignoreKeys.value.trim(),
+      includeSame: !!ui.diffIncludeSame?.checked,
       normalization: getDiffNormalizationPresetState(),
       importedSource: !!state.importedSourceBundle,
       importedTarget: !!state.importedTargetBundle
@@ -4962,7 +5083,7 @@
     renderBundleState();
     renderReflectSidebar();
     renderReflectMainPanel();
-    setStatus(`差分比較完了: ${s.total}件 / 取得失敗 ${state.lastFetchIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`);
+    setStatus(`差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${state.lastFetchIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`);
   }
 
   function buildTopReasonSummary(rows) {
@@ -5023,6 +5144,7 @@
         revision: resolveBundleRevision(target) || '',
         sourceAppId: source?.appId || '',
         scopeLabels,
+        diffTotal: countActualDiffRows(rows),
         summary: summarizeRows(rows),
         severity: summarizeSeverity(rows),
         fetchSummary: summarizeFetchIssues(diffResult.fetchIssues || []),
@@ -5205,6 +5327,7 @@
   async function exportPatchJson() {
     if (!state.lastDiffRows.length) throw new Error('先に差分比較を実行してください');
     const exportInfo = resolveDiffExportRows();
+    if (!countActualDiffRows(exportInfo.rows)) throw new Error('出力できる差分がありません');
     const payload = buildPatchPayload(exportInfo.rows, state.lastSourceBundle, state.lastTargetBundle);
     downloadText(`patch_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
     setStatus(`パッチJSONを保存しました (${exportInfo.label})`);
@@ -5404,6 +5527,69 @@
     return { def, changed };
   }
 
+  function extractReferencedAppIds(sourceBundle, scopes, lookupMap) {
+    const refs = [];
+    const map = lookupMap || {};
+    const scopeSet = new Set(scopes || []);
+    const fields = sourceBundle?.sections?.fieldSettings?.properties || {};
+    if (scopeSet.has('fieldSettings') || scopeSet.size === 0) {
+      const walkFields = (fieldMap, parent) => {
+        for (const [code, f] of Object.entries(fieldMap || {})) {
+          if (f.lookup && f.lookup.relatedApp && f.lookup.relatedApp.app != null) {
+            const appId = String(f.lookup.relatedApp.app);
+            const converted = map[appId] ? String(map[appId]) : null;
+            refs.push({ fieldCode: parent ? `${parent} > ${code}` : code, refAppId: appId, convertedAppId: converted, section: 'フィールド設定', type: 'ルックアップ' });
+          }
+          if (f.referenceTable && f.referenceTable.relatedApp && f.referenceTable.relatedApp.app != null) {
+            const appId = String(f.referenceTable.relatedApp.app);
+            const converted = map[appId] ? String(map[appId]) : null;
+            refs.push({ fieldCode: parent ? `${parent} > ${code}` : code, refAppId: appId, convertedAppId: converted, section: 'フィールド設定', type: '関連レコード一覧' });
+          }
+          if (f.type === 'SUBTABLE' && f.fields && typeof f.fields === 'object') {
+            walkFields(f.fields, code);
+          }
+        }
+      };
+      walkFields(fields, null);
+    }
+    const actions = sourceBundle?.sections?.actionSettings?.actions || {};
+    if (scopeSet.has('actionSettings') || scopeSet.size === 0) {
+      for (const [name, a] of Object.entries(actions)) {
+        if (a.destApp && a.destApp.app) {
+          const appId = String(a.destApp.app);
+          refs.push({ fieldCode: name, refAppId: appId, convertedAppId: null, section: 'アクション設定', type: 'アクション' });
+        }
+      }
+    }
+    return refs;
+  }
+
+  function renderAppIdConfirmSection(appIdRefs) {
+    if (!appIdRefs || !appIdRefs.length) return '<div style="color:#64748b;font-size:12px;margin-bottom:8px">関連アプリIDなし</div>';
+    const rows = appIdRefs.map((r) =>
+      `<tr><td style="padding:3px 8px;font-size:11px">${esc(r.fieldCode)}</td>` +
+      `<td style="padding:3px 8px;font-size:11px">${esc(r.type)}</td>` +
+      `<td style="padding:3px 8px;font-size:11px;font-weight:700">${esc(r.refAppId)}</td>` +
+      `<td style="padding:3px 8px;font-size:11px;color:${r.convertedAppId ? '#2563eb' : '#94a3b8'}">${r.convertedAppId ? `→ ${esc(r.convertedAppId)}` : '-'}</td>` +
+      `<td style="padding:3px 8px;font-size:11px">${esc(r.section)}</td></tr>`
+    ).join('');
+    return `<div style="margin-bottom:10px">
+      <div style="font-weight:600;font-size:12px;margin-bottom:4px;color:#dc2626">関連アプリID一覧 (${appIdRefs.length}件)</div>
+      <div style="max-height:160px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="background:#f1f5f9">
+            <th style="padding:4px 8px;text-align:left">フィールド</th>
+            <th style="padding:4px 8px;text-align:left">種別</th>
+            <th style="padding:4px 8px;text-align:left">参照先アプリID</th>
+            <th style="padding:4px 8px;text-align:left">変換後</th>
+            <th style="padding:4px 8px;text-align:left">セクション</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }
+
   function splitUpsertMap(currentMap, incomingMap, options) {
     const overwrite = !!(options && options.overwrite);
     const renameOnConflict = !!(options && options.renameOnConflict);
@@ -5521,7 +5707,7 @@
   function loadReflectRowsFromLastDiff() {
     if (!state.lastDiffRows.length) throw new Error('先に差分比較を実行してください');
     const putKeys = new Set(SECTION_DEFS.filter((d) => d.put).map((d) => d.key));
-    const rows = state.lastDiffRows
+    const rows = getActualDiffRows(state.lastDiffRows)
       .filter((r) => putKeys.has(r.sectionKey))
       .map((r, idx) => ({ ...r, _id: `n${idx}` }));
     state.reflectRows = rows;
@@ -5545,7 +5731,10 @@
   function renderReflectNodeList() {
     const rows = state.reflectRows || [];
     if (!rows.length) {
-      ui.reflectNodeList.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">差分ノード未読込（差分比較後に「差分ノード読込」）</div>';
+      const emptyText = state.lastDiffAt
+        ? '反映対象の差分ノードはありません。'
+        : '差分ノード未読込（差分比較後に「差分ノード読込」）';
+      ui.reflectNodeList.innerHTML = `<div style="padding:10px;font-size:12px;color:#64748b">${emptyText}</div>`;
       renderBundleState();
       renderReflectModeUi();
       return;
@@ -6158,7 +6347,9 @@
       nodes: nodeSigRows,
       lookupMap: ui.lookupMap.value.trim()
     });
-    const approved = await ensureApplyPlanApproved(planSignature, 'nodes', runPreviewApplyPlanNodes);
+    const nodeScopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
+    const appIdRefs = state.lastSourceBundle ? extractReferencedAppIds(state.lastSourceBundle, nodeScopes, lookupMap) : [];
+    const approved = await ensureApplyPlanApproved(planSignature, 'nodes', runPreviewApplyPlanNodes, { appIdRefs });
     if (!approved) {
       setStatus('反映をキャンセルしました');
       return;
@@ -6281,7 +6472,7 @@
 
   function diffSectionKeySet() {
     const set = new Set();
-    for (const row of state.lastDiffRows || []) {
+    for (const row of getActualDiffRows(state.lastDiffRows || [])) {
       let key = row.sectionKey;
       if (!key && row.section) {
         const def = SECTION_DEFS.find((d) => d.label === row.section || d.key === row.section);
@@ -6496,7 +6687,8 @@
       scopes,
       lookupMap: ui.lookupMap.value.trim()
     });
-    const approved = await ensureApplyPlanApproved(planSignature, 'section', runPreviewApplyPlan);
+    const appIdRefs = state.lastSourceBundle ? extractReferencedAppIds(state.lastSourceBundle, scopes, lookupMap) : [];
+    const approved = await ensureApplyPlanApproved(planSignature, 'section', runPreviewApplyPlan, { appIdRefs });
     if (!approved) {
       setStatus('反映をキャンセルしました');
       return;
@@ -6589,6 +6781,249 @@
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: 'プレビュー反映完了' });
     setStatus('プレビュー反映処理完了');
+  }
+
+  function parsePatchJsonPayload(text) {
+    if (!text || !text.trim()) throw new Error('パッチJSONが空です');
+    const raw = JSON.parse(text);
+    if (!raw || typeof raw !== 'object') throw new Error('パッチJSONはオブジェクト形式で入力してください');
+    if (!raw.sections || typeof raw.sections !== 'object') throw new Error('パッチJSONに sections が含まれていません');
+    const sectionCount = Object.keys(raw.sections).length;
+    let totalRows = 0;
+    const typeCounts = { added: 0, removed: 0, changed: 0 };
+    for (const [, rows] of Object.entries(raw.sections)) {
+      if (!Array.isArray(rows)) continue;
+      totalRows += rows.length;
+      for (const r of rows) {
+        if (typeCounts[r.type] != null) typeCounts[r.type]++;
+      }
+    }
+    return {
+      payload: raw,
+      sectionCount,
+      totalRows,
+      typeCounts,
+      source: raw.source || {},
+      target: raw.target || {}
+    };
+  }
+
+  function renderPatchJsonSummary(parsed) {
+    const el = document.getElementById('u_patchJsonSummary');
+    if (!el) return;
+    if (!parsed) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = 'block';
+    el.innerHTML = `セクション: ${parsed.sectionCount}件 / 差分: ${parsed.totalRows}件 ` +
+      `(追加: ${parsed.typeCounts.added} / 削除: ${parsed.typeCounts.removed} / 変更: ${parsed.typeCounts.changed})` +
+      (parsed.source.appId ? ` / 元アプリ: ${esc(parsed.source.appId)}` : '') +
+      (parsed.target.appId ? ` / 先アプリ: ${esc(parsed.target.appId)}` : '');
+  }
+
+  async function importPatchJsonFromFile(file) {
+    const text = await readTextFile(file);
+    const parsed = parsePatchJsonPayload(text);
+    state.importedPatchPayload = parsed;
+    const editor = document.getElementById('u_patchJsonEditor');
+    if (editor) editor.value = JSON.stringify(parsed.payload, null, 2);
+    renderPatchJsonSummary(parsed);
+    setStatus(`パッチJSON読込完了: ${parsed.totalRows}件の差分 (${file.name})`);
+  }
+
+  function buildSourceBundleFromPatch(patchPayload, targetBundle) {
+    const sections = {};
+    const sectionLabelToKey = {};
+    for (const def of SECTION_DEFS) {
+      sectionLabelToKey[def.label] = def.key;
+    }
+    for (const [sectionLabel, rows] of Object.entries(patchPayload.sections || {})) {
+      if (!Array.isArray(rows) || !rows.length) continue;
+      const secKey = sectionLabelToKey[sectionLabel] || '';
+      if (!secKey) continue;
+      const def = SECTION_DEFS.find((d) => d.key === secKey);
+      if (!def || !def.put) continue;
+      const targetSec = deepClone(targetBundle?.sections?.[secKey] || {});
+      for (const row of rows) {
+        if (!row.path) continue;
+        const pathParts = row.path.replace(/^[^.]+\./, '').split('.');
+        if (row.type === 'added' || row.type === 'changed') {
+          setNestedValue(targetSec, pathParts, deepClone(row.sourceValue));
+        } else if (row.type === 'removed') {
+          deleteNestedValue(targetSec, pathParts);
+        }
+      }
+      sections[secKey] = targetSec;
+    }
+    return {
+      appId: patchPayload.source?.appId || '',
+      guestId: patchPayload.source?.guestId || '',
+      preview: !!patchPayload.source?.preview,
+      sections,
+      fetchedAt: new Date().toISOString(),
+      meta: {}
+    };
+  }
+
+  function setNestedValue(obj, pathParts, value) {
+    if (!pathParts.length) return;
+    let current = obj;
+    for (let i = 0; i < pathParts.length - 1; i++) {
+      const key = pathParts[i];
+      const nextKey = pathParts[i + 1];
+      if (current[key] == null) {
+        current[key] = /^\d+$/.test(nextKey) ? [] : {};
+      }
+      current = current[key];
+    }
+    current[pathParts[pathParts.length - 1]] = value;
+  }
+
+  function deleteNestedValue(obj, pathParts) {
+    if (!pathParts.length) return;
+    let current = obj;
+    for (let i = 0; i < pathParts.length - 1; i++) {
+      const key = pathParts[i];
+      if (current[key] == null) return;
+      current = current[key];
+    }
+    const lastKey = pathParts[pathParts.length - 1];
+    if (Array.isArray(current) && /^\d+$/.test(lastKey)) {
+      current.splice(Number(lastKey), 1);
+    } else {
+      delete current[lastKey];
+    }
+  }
+
+  async function runApplyPatchJson() {
+    const editorText = document.getElementById('u_patchJsonEditor')?.value || '';
+    const parsed = parsePatchJsonPayload(editorText);
+    const c = commonParams();
+    if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
+    const lookupMap = parseLookupMapInput(ui.lookupMap.value);
+    const stopOnError = !!ui.stopOnError.checked;
+
+    const sectionLabelToKey = {};
+    for (const def of SECTION_DEFS) sectionLabelToKey[def.label] = def.key;
+    const patchScopeKeys = [];
+    for (const sectionLabel of Object.keys(parsed.payload.sections || {})) {
+      const key = sectionLabelToKey[sectionLabel];
+      if (key) patchScopeKeys.push(key);
+    }
+    if (!patchScopeKeys.length) throw new Error('パッチJSONに反映可能なセクションがありません');
+
+    const prefix = buildApiPrefix(c.target.guestId, true);
+    const app = c.target.appId;
+
+    setStatus('パッチJSON反映: 比較先プレビュー設定を取得中...');
+    const targetBundle = await fetchBundle({
+      appId: c.target.appId,
+      guestId: c.target.guestId,
+      preview: true,
+      sections: patchScopeKeys,
+      onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
+    });
+
+    const sourceBundle = buildSourceBundleFromPatch(parsed.payload, targetBundle);
+    const appIdRefs = extractReferencedAppIds(sourceBundle, patchScopeKeys, lookupMap);
+
+    const confirmMsg = `パッチJSON反映を実行しますか？\n` +
+      `比較先アプリ: ${app}\n` +
+      `セクション: ${patchScopeKeys.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}\n` +
+      `差分件数: ${parsed.totalRows}件` +
+      (appIdRefs.length ? `\n関連アプリID: ${appIdRefs.length}件（確認してください）` : '');
+    if (!window.confirm(confirmMsg)) {
+      setStatus('パッチJSON反映をキャンセルしました');
+      return;
+    }
+
+    const logs = [];
+    let hadError = false;
+    logs.push(`比較先アプリ: ${app}`);
+    logs.push(`パッチJSON反映モード`);
+    logs.push(`適用セクション: ${patchScopeKeys.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
+    logs.push(`差分件数: ${parsed.totalRows}件`);
+    logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+    if (appIdRefs.length) {
+      logs.push(`関連アプリID: ${appIdRefs.map((r) => `${r.fieldCode}→${r.refAppId}${r.convertedAppId ? `(→${r.convertedAppId})` : ''}`).join(', ')}`);
+    }
+    logs.push('');
+
+    if (ui.autoBackupPreview?.checked) {
+      const backup = await backupTargetPreviewSettings(c, patchScopeKeys, { silentStatus: true });
+      logs.push(`バックアップ保存: ${backup.filename}`);
+    }
+
+    for (let i = 0; i < patchScopeKeys.length; i++) {
+      const secKey = patchScopeKeys[i];
+      const def = SECTION_DEFS.find((x) => x.key === secKey);
+      if (!def || !def.put) continue;
+      const sourceSec = deepClone(sourceBundle.sections[secKey]);
+      if (!sourceSec) {
+        logs.push(`SKIP ${def.label}: パッチデータなし`);
+        continue;
+      }
+
+      setStatus(`パッチ反映中 ${i + 1}/${patchScopeKeys.length}: ${def.label}`);
+      try {
+        if (secKey === 'fieldSettings') {
+          const current = await apiGet(prefix, '/app/form/fields.json', { app });
+          const beforeProps = current.properties || {};
+          const afterProps = filterWritableFieldProps(sourceSec.properties || sourceSec, true);
+          await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, null, stopOnError);
+          logs.push(`OK ${def.label}`);
+          continue;
+        }
+        if (secKey === 'viewSettings') {
+          const current = await apiGet(prefix, '/app/views.json', { app });
+          await applyViewsSectionDiff(prefix, app, current.views || {}, sourceSec.views || sourceSec || {}, logs, stopOnError);
+          logs.push(`OK ${def.label}`);
+          continue;
+        }
+        if (secKey === 'reportSettings') {
+          const current = await apiGet(prefix, '/app/reports.json', { app });
+          await applyReportsSectionDiff(prefix, app, current.reports || {}, sourceSec.reports || sourceSec || {}, logs, stopOnError);
+          logs.push(`OK ${def.label}`);
+          continue;
+        }
+        if (secKey === 'actionSettings') {
+          const current = await apiGet(prefix, '/app/actions.json', { app });
+          await applyActionsSectionDiff(prefix, app, current.actions || {}, sourceSec.actions || sourceSec || {}, logs, stopOnError);
+          logs.push(`OK ${def.label}`);
+          continue;
+        }
+        const reqs = [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(sourceSec) }, note: `${def.label} put` }];
+        appendRequestPlanLogs(logs, { requests: reqs });
+        await executeRequestPlan(prefix, reqs, logs, stopOnError);
+        logs.push(`OK ${def.label}`);
+      } catch (e) {
+        hadError = true;
+        logs.push(`NG ${def.label}: ${e.message || String(e)}`);
+        if (stopOnError) {
+          logs.push('中断: エラーが発生したため処理を停止しました');
+          break;
+        }
+      }
+    }
+
+    if (ui.doDeploy.checked) {
+      if (hadError) {
+        logs.push('SKIP デプロイ: 反映エラーがあるため実行しません');
+      } else {
+        setStatus('デプロイ実行中...');
+        try {
+          const st = await deployAndPoll(prefix, app, logs);
+          logs.push(st === 'SUCCESS' ? 'OK デプロイ完了' : `NG デプロイ終了ステータス: ${st}`);
+        } catch (e) {
+          logs.push(`NG デプロイ: ${e.message || String(e)}`);
+        }
+      }
+    }
+
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: 'パッチJSON反映完了' });
+    setStatus('パッチJSON反映処理完了');
   }
 
   async function runDesignExport(kind) {
@@ -8717,6 +9152,11 @@ ${diffMd}
     ui.diffIncludeSame.addEventListener('change', () => {
       state.diffIncludeSame = !!ui.diffIncludeSame.checked;
       saveCurrentDialogState();
+      if (state.lastDiffAt && state.lastSourceBundle && state.lastTargetBundle) {
+        withGuard(async () => runDiff(), '差分比較を更新中...');
+        return;
+      }
+      setStatus(`差分なし表示を${state.diffIncludeSame ? 'ON' : 'OFF'}にしました。次回の差分比較から反映されます`);
     });
   }
   if (ui.diffSearch) {
@@ -8892,6 +9332,44 @@ ${diffMd}
       setStatus(`JS/CSS設定JSON読込完了: ${f.name}`);
     });
   });
+
+  const patchJsonFileInput = document.getElementById('u_patchJsonFileInput');
+  if (patchJsonFileInput) {
+    patchJsonFileInput.addEventListener('change', () => {
+      const f = patchJsonFileInput.files && patchJsonFileInput.files[0];
+      patchJsonFileInput.value = '';
+      if (!f) return;
+      withGuard(async () => {
+        await importPatchJsonFromFile(f);
+      });
+    });
+  }
+
+  const patchJsonEditor = document.getElementById('u_patchJsonEditor');
+  if (patchJsonEditor) {
+    let patchParseTimer = 0;
+    patchJsonEditor.addEventListener('input', () => {
+      clearTimeout(patchParseTimer);
+      patchParseTimer = setTimeout(() => {
+        try {
+          const text = patchJsonEditor.value.trim();
+          if (!text) { renderPatchJsonSummary(null); return; }
+          const parsed = parsePatchJsonPayload(text);
+          state.importedPatchPayload = parsed;
+          renderPatchJsonSummary(parsed);
+        } catch (e) {
+          const el = document.getElementById('u_patchJsonSummary');
+          if (el) {
+            el.style.display = 'block';
+            el.style.background = '#fef2f2';
+            el.style.borderColor = '#fca5a5';
+            el.style.color = '#991b1b';
+            el.textContent = `JSON解析エラー: ${e.message}`;
+          }
+        }
+      }, 400);
+    });
+  }
 
   root.addEventListener('click', (e) => {
     const favBtn = e.target.closest('[data-diff-fav-path]');
@@ -9410,6 +9888,26 @@ ${diffMd}
     if (act === 'backupTargetPreview') return withGuard(runBackupTargetPreview);
     if (act === 'applyPreview') return withGuard(runApplyPreview);
     if (act === 'deployOnly') return withGuard(runDeployOnly);
+    if (act === 'togglePatchJsonPanel') {
+      state.patchJsonPanelOpen = !state.patchJsonPanelOpen;
+      const panel = document.getElementById('u_patchJsonPanel');
+      if (panel) panel.style.display = state.patchJsonPanelOpen ? 'block' : 'none';
+      return;
+    }
+    if (act === 'patchJsonLoadFile') {
+      const input = document.getElementById('u_patchJsonFileInput');
+      if (input) { input.value = ''; input.click(); }
+      return;
+    }
+    if (act === 'patchJsonClear') {
+      state.importedPatchPayload = null;
+      const editor = document.getElementById('u_patchJsonEditor');
+      if (editor) editor.value = '';
+      renderPatchJsonSummary(null);
+      setStatus('パッチJSONをクリアしました');
+      return;
+    }
+    if (act === 'applyPatchJson') return withGuard(runApplyPatchJson);
     if (act === 'applyField') return withGuard(runFieldApply);
     if (act === 'loadTargetFields') return withGuard(runLoadTargetFields);
     if (act === 'formatFieldJson') {
@@ -12069,16 +12567,16 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
           ['比較日時', state.lastDiffAt || '-'],
           ['出力モード', exportInfo.label],
           [],
-          ['セクション', '追加', '削除', '変更', '移動', '合計']
+          ['セクション', '追加', '削除', '変更', '移動', '同一', '合計']
         ];
         for (const g of grouped) {
           const s = summarizeRows(g.rows);
-          summaryData.push([g.label, s.added, s.removed, s.changed, s.moved, g.rows.length]);
+          summaryData.push([g.label, s.added, s.removed, s.changed, s.moved, s.same, g.rows.length]);
         }
         const totalS = summarizeRows(rows);
-        summaryData.push(['合計', totalS.added, totalS.removed, totalS.changed, totalS.moved, rows.length]);
+        summaryData.push(['合計', totalS.added, totalS.removed, totalS.changed, totalS.moved, totalS.same, rows.length]);
         const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
-        summaryWs['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }];
+        summaryWs['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 8 }];
         XLSX.utils.book_append_sheet(wb, summaryWs, 'サマリー');
 
         // 差分一覧シート
@@ -12105,6 +12603,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
             if (type === '追加') fill = { fgColor: { rgb: 'E8F5E9' } };
             else if (type === '削除') fill = { fgColor: { rgb: 'FFEBEE' } };
             else if (type === '変更' || type === '移動') fill = { fgColor: { rgb: 'FFF8E1' } };
+            else if (type === '同一') fill = { fgColor: { rgb: 'F0FDF4' } };
             if (fill) {
               for (let c = 0; c < allData[0].length; c++) {
                 const addr = XLSX.utils.encode_cell({ r: i, c });
