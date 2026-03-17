@@ -3535,6 +3535,10 @@
                 <input type="text" id="u_erMaxDepth" value="0" placeholder="0で無制限">
               </div>
               <div>
+                <label>追加の起点アプリID（任意）</label>
+                <input type="text" id="u_erExtraApps" value="" placeholder="例: 123, 456, 789">
+              </div>
+              <div>
                 <label>追加オプション</label>
                 <div class="chips" style="margin-top:4px">
                   <label class="chip"><input type="checkbox" id="u_erIncludeSubtable" checked> サブテーブル項目を含める</label>
@@ -3842,6 +3846,7 @@
     erLayout: $('#u_erLayout'),
     erFieldDensity: $('#u_erFieldDensity'),
     erMaxDepth: $('#u_erMaxDepth'),
+    erExtraApps: $('#u_erExtraApps'),
     erIncludeSubtable: $('#u_erIncludeSubtable'),
     busyOverlay: $('#u_busyOverlay'),
     busyText: $('#u_busyText'),
@@ -5636,6 +5641,7 @@
       erLayout: ui.erLayout?.value || 'dagre',
       erFieldDensity: ui.erFieldDensity?.value || 'standard',
       erMaxDepth: ui.erMaxDepth?.value?.trim?.() || '0',
+      erExtraApps: ui.erExtraApps?.value?.trim?.() || '',
       erIncludeSubtable: !!ui.erIncludeSubtable?.checked,
       settingsExportAppIds: ui.settingsExportAppIds.value.trim(),
       settingsExportSearchKeyword: ui.settingsExportSearchKeyword.value.trim(),
@@ -5706,6 +5712,7 @@
     if (saved.erLayout != null && ui.erLayout) ui.erLayout.value = String(saved.erLayout || 'dagre');
     if (saved.erFieldDensity != null && ui.erFieldDensity) ui.erFieldDensity.value = String(saved.erFieldDensity || 'standard');
     if (saved.erMaxDepth != null && ui.erMaxDepth) ui.erMaxDepth.value = String(saved.erMaxDepth || '0');
+    if (saved.erExtraApps != null && ui.erExtraApps) ui.erExtraApps.value = String(saved.erExtraApps || '');
     if (saved.erIncludeSubtable != null && ui.erIncludeSubtable) ui.erIncludeSubtable.checked = !!saved.erIncludeSubtable;
     if (saved.settingsExportAppIds != null) ui.settingsExportAppIds.value = String(saved.settingsExportAppIds);
     if (saved.settingsExportSearchKeyword != null) ui.settingsExportSearchKeyword.value = String(saved.settingsExportSearchKeyword);
@@ -9818,6 +9825,7 @@ ${diffMd}
     ui.erLayout,
     ui.erFieldDensity,
     ui.erMaxDepth,
+    ui.erExtraApps,
     ui.erIncludeSubtable,
     ui.diffMultiTargets,
     ui.settingsExportAppIds,
@@ -11582,8 +11590,14 @@ if (act === 'runRecordCopy') return withGuard(runRecordCopy);
       const fieldDensity = String(ui.erFieldDensity?.value || ER_DEFAULTS.fieldDensity).trim() || ER_DEFAULTS.fieldDensity;
       const maxDepthRaw = String(ui.erMaxDepth?.value || '').trim();
       const maxDepthNum = Number(maxDepthRaw);
+      const extraAppIds = String(ui.erExtraApps?.value || '')
+        .split(/[\s,，]+/)
+        .map((v) => v.trim())
+        .filter((v) => /^\d+$/.test(v));
+      const startAppIds = [startAppId, ...extraAppIds].filter((v, i, arr) => /^\d+$/.test(v) && arr.indexOf(v) === i);
       return {
         startAppId,
+        startAppIds,
         layoutName,
         fieldDensity: ['compact', 'standard', 'full'].includes(fieldDensity) ? fieldDensity : ER_DEFAULTS.fieldDensity,
         maxDepth: Number.isFinite(maxDepthNum) && maxDepthNum >= 0 ? Math.floor(maxDepthNum) : ER_DEFAULTS.maxDepth,
@@ -11706,10 +11720,12 @@ if (act === 'runRecordCopy') return withGuard(runRecordCopy);
       } catch (e) { console.error(`App ${appId}:`, e); const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], relations: [], ok: false }; cache.set(appId, r); return r; }
     };
 
-    const crawl = async (startId, options) => {
+    const crawl = async (startIds, options) => {
       const cache = new Map();
       const visited = new Set();
-      const q = [{ id: startId, depth: 0 }], apps = [];
+      const seeds = (Array.isArray(startIds) ? startIds : [startIds]).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
+      const q = seeds.map((id) => ({ id, depth: 0 }));
+      const apps = [];
       while (q.length) {
         const current = q.shift();
         const id = current?.id;
@@ -11738,6 +11754,7 @@ if (act === 'runRecordCopy') return withGuard(runRecordCopy);
       const data = safeJsonForScript(apps);
       const diagramOptions = safeJsonForScript({
         startAppId: options.startAppId || '',
+        startAppIds: Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ''],
         layoutName: options.layoutName || ER_DEFAULTS.layoutName,
         fieldDensity: options.fieldDensity || ER_DEFAULTS.fieldDensity,
         maxDepth: options.maxDepth || 0,
@@ -11923,7 +11940,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 <!-- Top Bar -->
 <div id="topbar">
   <h1>⬡ kintone ER図</h1>
-  <span class="meta-pill"><b>開始</b> ${esc(String(options.startAppId || ''))}</span>
+  <span class="meta-pill"><b>開始</b> ${esc((Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", "))}</span>
   <span class="meta-pill" id="layout-pill"><b>レイアウト</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
   <span class="meta-pill"><b>表示密度</b> ${esc(String(options.fieldDensity || ER_DEFAULTS.fieldDensity))}</span>
   <span class="meta-pill"><b>探索深さ</b> ${esc(String(options.maxDepth || 0))}</span>
@@ -11956,6 +11973,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   <button class="tb active" id="rel-action-btn" onclick="toggleRelationKind('ACTION')">アクション線</button>
   <button class="tb" onclick="removeSelectedRelations()">🗑 関連削除</button>
   <button class="tb" onclick="restoreRemovedRelations()">↺ 削除復元</button>
+  <button class="tb" onclick="removeSelectedApps()">🗑 アプリ削除</button>
+  <button class="tb" onclick="restoreRemovedApps()">↺ アプリ復元</button>
   <button class="tb" id="pin-btn" onclick="togglePinFromSelection()">📌 固定</button>
   <button class="tb" onclick="clearPins()">📍 固定解除</button>
   <div class="spacer"></div>
@@ -12149,6 +12168,7 @@ function buildCyStyle(palette){
     {selector:"node.isolated-by-filter",style:{"opacity":0.35}},
     {selector:"node.focus-dim",style:{"opacity":0.08}},
     {selector:"node.dimmed",style:{"opacity":0.14}},
+    {selector:"node.app-manual-hidden",style:{"display":"none"}},
     {selector:'edge[kind="LOOKUP"]',style:{
       "width":2.5,"line-color":palette.lookup,"target-arrow-color":palette.lookup,"target-arrow-shape":"triangle",
       "source-arrow-shape":"circle","source-arrow-color":palette.lookup,"curve-style":"bezier",
@@ -12353,6 +12373,8 @@ function updateFocusOptions(){
 
 
 const manuallyRemovedEdgeIds = new Set();
+const manuallyRemovedNodeIds = new Set();
+const nodeHiddenEdgeIds = new Set();
 
 function removeSelectedRelations(){
   const edges = cy.edges(":selected");
@@ -12373,6 +12395,54 @@ function restoreRemovedRelations(){
   if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
   applyRelationFilter();
   toast(restored ? ("手動削除した関連線を復元: "+restored+"件") : "復元対象がありません");
+}
+
+function removeSelectedApps(){
+  let nodes = cy.nodes(":selected").not(".app-manual-hidden");
+  if(!nodes.length && lastTappedNodeId){
+    const n = cy.getElementById(lastTappedNodeId);
+    if(n.length && !n.hasClass("app-manual-hidden")) nodes = nodes.union(n);
+  }
+  if(!nodes.length){toast("削除対象のアプリを選択してください");return;}
+  let edgeCount = 0;
+  nodes.forEach((node)=>{
+    manuallyRemovedNodeIds.add(node.id());
+    node.addClass("app-manual-hidden");
+    node.connectedEdges().forEach((edge)=>{
+      nodeHiddenEdgeIds.add(edge.id());
+      if(!edge.hasClass("rel-manual-hidden")) edgeCount += 1;
+      edge.addClass("rel-manual-hidden");
+    });
+  });
+  applyRelationFilter();
+  refreshAppList();
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+  toast("アプリを手動削除: "+nodes.length+"件 / 関連線 "+edgeCount+"件");
+}
+
+function restoreRemovedApps(){
+  let restoredNodes = 0;
+  manuallyRemovedNodeIds.forEach((id)=>{
+    const node = cy.getElementById(id);
+    if(node.length){
+      node.removeClass("app-manual-hidden");
+      restoredNodes += 1;
+    }
+  });
+  let restoredEdges = 0;
+  nodeHiddenEdgeIds.forEach((id)=>{
+    const edge = cy.getElementById(id);
+    if(!edge.length) return;
+    if(manuallyRemovedEdgeIds.has(id)) return;
+    edge.removeClass("rel-manual-hidden");
+    restoredEdges += 1;
+  });
+  manuallyRemovedNodeIds.clear();
+  nodeHiddenEdgeIds.clear();
+  applyRelationFilter();
+  refreshAppList();
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+  toast(restoredNodes ? ("手動削除したアプリを復元: "+restoredNodes+"件 / 関連線 "+restoredEdges+"件") : "復元対象のアプリがありません");
 }
 function toggleRelationKind(kind){
   relationKindState[kind] = !relationKindState[kind];
@@ -12429,7 +12499,7 @@ function searchGraph(q){
   cy.elements().removeClass("highlighted dimmed");
   if(!q.trim()) return;
   const low=q.toLowerCase();
-  const matched=cy.nodes().filter(n=>{
+  const matched=cy.nodes().not(".app-manual-hidden").filter(n=>{
     const app=appMap.get(n.data("appId"));
     if(!app) return false;
     if(app.name.toLowerCase().includes(low)) return true;
@@ -12503,6 +12573,17 @@ cy.on("tap","node",e=>{
 });
 cy.on("cxttap","node",e=>{
   const n = e.target;
+  const oe = e.originalEvent || {};
+  if(oe.altKey || oe.metaKey){
+    manuallyRemovedNodeIds.add(n.id());
+    n.addClass("app-manual-hidden");
+    n.connectedEdges().forEach((edge)=>{ nodeHiddenEdgeIds.add(edge.id()); edge.addClass("rel-manual-hidden"); });
+    applyRelationFilter();
+    refreshAppList();
+    if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+    toast("アプリを手動削除");
+    return;
+  }
   if(pinnedNodeIds.has(n.id())) unpinNode(n);
   else pinNode(n);
 });
@@ -12520,7 +12601,7 @@ function closeDetail(){document.getElementById("detail").classList.remove("open"
 
 function focusApp(id){
   const n=cy.getElementById("a"+id);
-  if(n.length){
+  if(n.length && !n.hasClass("app-manual-hidden")){
     cy.animate({center:{eles:n},zoom:1.5},{ duration:400 });
     n.select();
     if(focusMode) applyFocusToNode(n, true);
@@ -12556,21 +12637,28 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
   });
   document.getElementById("type-filters").innerHTML=fHtml;
 
-  // app list
+  refreshAppList();
+})();
+
+function refreshAppList(){
   let aHtml="";
   APPS.forEach(a=>{
     const visibleCount = visibleFieldsForNode(a).length;
-    aHtml+='<div class="app-list-item" onclick="focusApp('+a.id+')">'+a.name+' <span style="color:var(--dim);font-size:10px">('+visibleCount+' 項目 / '+a.relations.length+' 関連)</span></div>';
+    const node = cy.getElementById('a'+a.id);
+    const hidden = node.length && node.hasClass('app-manual-hidden');
+    const hiddenCls = hidden ? ' highlighted' : '';
+    const hiddenMeta = hidden ? ' / 非表示' : '';
+    aHtml+='<div class="app-list-item'+hiddenCls+'" onclick="focusApp('+a.id+')">'+a.name+' <span style="color:var(--dim);font-size:10px">('+visibleCount+' 項目 / '+a.relations.length+' 関連'+hiddenMeta+')</span></div>';
   });
   document.getElementById("app-list").innerHTML=aHtml;
-})();
+}
 
 function filterByType(el,type){
   el.classList.toggle("active");
   const active=[...document.querySelectorAll(".filter-chip.active")].map(e=>e.dataset.type);
   cy.elements().removeClass("highlighted dimmed");
   if(!active.length) return;
-  const matched=cy.nodes().filter(n=>{
+  const matched=cy.nodes().not(".app-manual-hidden").filter(n=>{
     const app=appMap.get(n.data("appId"));
     return app&&visibleFieldsForNode(app).some(f=>active.includes(f.type));
   });
@@ -12584,7 +12672,7 @@ function togglePathFinder(){
   const pf=document.getElementById("pathfinder");
   pf.classList.toggle("open");
   if(pf.classList.contains("open")){
-    const opts=APPS.map(a=>'<option value="a'+a.id+'">'+a.name+"</option>").join("");
+    const opts=APPS.filter(a=>{ const n = cy.getElementById("a"+a.id); return n.length && !n.hasClass("app-manual-hidden"); }).map(a=>'<option value="a'+a.id+'">'+a.name+"</option>").join("");
     document.getElementById("pf-from").innerHTML=opts;
     document.getElementById("pf-to").innerHTML=opts;
   }
@@ -12595,7 +12683,7 @@ function findPath(){
   const from=document.getElementById("pf-from").value;
   const to=document.getElementById("pf-to").value;
   if(from===to){toast("同じアプリです");return;}
-  const dijkstra=cy.elements().not(".rel-hidden").not(".rel-manual-hidden").dijkstra({root:"#"+from,directed:false});
+  const dijkstra=cy.elements().not(".rel-hidden").not(".rel-manual-hidden").not(".app-manual-hidden").dijkstra({root:"#"+from,directed:false});
   const path=dijkstra.pathTo(cy.getElementById(to));
   if(!path||path.length===0){document.getElementById("path-result").textContent="経路なし";return;}
   path.addClass("path-node path-edge");
@@ -12676,6 +12764,8 @@ const commands=[
   {label:"アクション線 ON/OFF",icon:"⚡",action:()=>toggleRelationKind("ACTION")},
   {label:"選択関連を削除",icon:"🗑",action:removeSelectedRelations},
   {label:"削除関連を復元",icon:"↺",action:restoreRemovedRelations},
+  {label:"選択アプリを削除",icon:"🗑📱",action:removeSelectedApps},
+  {label:"削除アプリを復元",icon:"↺📱",action:restoreRemovedApps},
   {label:"選択ノード 固定/解除",icon:"📌",action:togglePinFromSelection,keys:"Shift+P"},
   {label:"固定を全解除",icon:"📍",action:clearPins},
   {label:"ミニマップ",icon:"🗺",action:toggleMinimap},
@@ -12905,16 +12995,16 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 
     runGenerateERDiagram = async function () {
       const options = readErDiagramOptions();
-      if (!/^\d+$/.test(options.startAppId)) throw new Error('比較元アプリIDを入力してください');
+      if (!options.startAppIds?.length) throw new Error('比較元アプリID（および追加起点ID）を入力してください');
       const popup = window.open('', '_blank');
       if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
       popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
-      setStatus(`ER図の解析を開始します... アプリ ${options.startAppId} / ${formatErLayoutLabel(options.layoutName)} / ${options.fieldDensity}`);
+      setStatus(`ER図の解析を開始します... 起点 ${options.startAppIds.join(",")} / ${formatErLayoutLabel(options.layoutName)} / ${options.fieldDensity}`);
       progressUi.init();
-      progressUi.update(4, `開始: アプリ ${options.startAppId}`);
+      progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
 
       try {
-        const apps = await crawl(Number(options.startAppId), options);
+        const apps = await crawl(options.startAppIds, options);
         progressUi.update(94, 'HTML生成中...');
         const html = buildHTML(apps, options);
         const blob = new Blob([html], { type: 'text/html' });
@@ -12932,13 +13022,13 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 
     runExportERDiagramHtml = async function () {
       const options = readErDiagramOptions();
-      if (!/^\d+$/.test(options.startAppId)) throw new Error('比較元アプリIDを入力してください');
-      setStatus(`ER図HTMLを生成します... アプリ ${options.startAppId}`);
+      if (!options.startAppIds?.length) throw new Error('比較元アプリID（および追加起点ID）を入力してください');
+      setStatus(`ER図HTMLを生成します... 起点 ${options.startAppIds.join(",")}`);
       progressUi.init();
-      progressUi.update(4, `開始: アプリ ${options.startAppId}`);
+      progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
 
       try {
-        const apps = await crawl(Number(options.startAppId), options);
+        const apps = await crawl(options.startAppIds, options);
         progressUi.update(94, 'HTML保存データ生成中...');
         const html = buildHTML(apps, options);
         const guestSuffix = options.source?.guestId ? `_guest${options.source.guestId}` : '';
