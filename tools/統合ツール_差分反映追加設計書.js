@@ -11641,9 +11641,10 @@ if (act === 'runRecordCopy') return withGuard(runRecordCopy);
       if (cache.has(appId)) return cache.get(appId);
       try {
         const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
-        const [fR, aR] = await Promise.all([
+        const [fR, aR, actionResp] = await Promise.all([
           apiGet(prefix, '/app/form/fields.json', { app: appId }),
           apiGet(prefix, '/app.json', { id: appId }),
+          apiGet(prefix, '/app/actions.json', { app: appId }).catch(() => ({ actions: {} })),
         ]);
         const fields = [], relations = [];
         const walk = (props, sub) => {
@@ -11656,13 +11657,36 @@ if (act === 'runRecordCopy') return withGuard(runRecordCopy);
             }
             const isL = f.type === "LOOKUP", isR = f.type === "REFERENCE_TABLE";
             const isPK = /^(\$id|record_number|レコード番号)$/i.test(c);
-            fields.push({ code: c, label: f.label || c, type: f.type, required: !!f.required, isPK, isLookup: isL, isRef: isR, inSubtable: !!sub });
+            fields.push({ code: c, label: f.label || c, type: f.type, required: !!f.required, unique: !!f.unique, isPK, isLookup: isL, isRef: isR, inSubtable: !!sub });
             if (isL && f.lookup?.relatedApp?.app) relations.push({ from: c, fromLabel: f.label, toApp: Number(f.lookup.relatedApp.app), toField: f.lookup.relatedKeyField, kind: "LOOKUP" });
             if (isR && f.referenceTable?.relatedApp?.app) relations.push({ from: c, fromLabel: f.label, toApp: Number(f.referenceTable.relatedApp.app), toField: f.referenceTable.condition?.field, kind: "REF" });
           }
         };
         walk(fR.properties, null);
-        const visibleFields = fields.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
+        Object.values(actionResp?.actions || {}).forEach((action, index) => {
+          const toApp = Number(action?.destApp?.app || 0);
+          if (!toApp) return;
+          relations.push({
+            from: `__ACTION__${index}`,
+            fromLabel: action?.name || `アクション${index + 1}`,
+            toApp,
+            toField: '',
+            kind: 'ACTION'
+          });
+        });
+        const linkedFieldCodes = new Set(
+          relations
+            .filter((rel) => rel.kind === 'LOOKUP' || rel.kind === 'REF')
+            .map((rel) => String(rel.from || '').trim())
+            .filter(Boolean)
+        );
+        const essentialFields = fields.filter((field) => {
+          if (field.type === 'SUBTABLE') return false;
+          if (field.isPK || field.unique) return true;
+          return linkedFieldCodes.has(String(field.code || '').trim());
+        });
+        const visibleFieldsSource = essentialFields.length ? essentialFields : fields.filter((field) => field.type !== 'SUBTABLE').slice(0, 6);
+        const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
         const r = {
           id: appId,
           name: aR.name,
@@ -11929,6 +11953,9 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   <button class="tb" onclick="clearFocus()">強調解除</button>
   <button class="tb active" id="rel-lookup-btn" onclick="toggleRelationKind('LOOKUP')">ルックアップ線</button>
   <button class="tb active" id="rel-ref-btn" onclick="toggleRelationKind('REF')">関連線</button>
+  <button class="tb active" id="rel-action-btn" onclick="toggleRelationKind('ACTION')">アクション線</button>
+  <button class="tb" onclick="removeSelectedRelations()">🗑 関連削除</button>
+  <button class="tb" onclick="restoreRemovedRelations()">↺ 削除復元</button>
   <button class="tb" id="pin-btn" onclick="togglePinFromSelection()">📌 固定</button>
   <button class="tb" onclick="clearPins()">📍 固定解除</button>
   <div class="spacer"></div>
@@ -11992,8 +12019,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   <span><i style="background:var(--lookup)"></i>ルックアップ</span>
   <span><i style="background:var(--ref)"></i>関連</span>
   <span><i style="background:var(--req)"></i>必須</span>
+  <span><i style="background:#f59e0b"></i>アクション</span>
   <span class="legend-toggle" id="legend-lookup-edge" onclick="toggleRelationKind('LOOKUP')"><i style="border:2px solid var(--lookup)"></i>ルックアップ線</span>
   <span class="legend-toggle" id="legend-ref-edge" onclick="toggleRelationKind('REF')"><i style="border:2px dashed var(--ref)"></i>関連線</span>
+  <span class="legend-toggle" id="legend-action-edge" onclick="toggleRelationKind('ACTION')"><i style="border:2px dotted #f59e0b"></i>アクション線</span>
 </div>
 
 <!-- Minimap -->
@@ -12046,6 +12075,7 @@ function fieldIconForLabel(f){
   if(f.isPK) return "🔑";
   if(f.isLookup) return "🔗";
   if(f.isRef) return "📋";
+  if(f.unique) return "🔒";
   if(f.type==="SUBTABLE") return "📦";
   if(f.inSubtable) return "↳";
   if(f.required) return "•";
@@ -12133,9 +12163,17 @@ function buildCyStyle(palette){
       "text-outline-color":palette.bg,"text-outline-width":"2px",
       "text-background-color":palette.bg,"text-background-opacity":0.78,"text-background-padding":"3px"
     }},
+    {selector:'edge[kind="ACTION"]',style:{
+      "width":2.2,"line-color":"#f59e0b","line-style":"dotted","target-arrow-color":"#f59e0b",
+      "target-arrow-shape":"triangle","source-arrow-shape":"none","curve-style":"bezier",
+      "label":"data(label)","font-size":"9px","color":"#f59e0b",
+      "text-outline-color":palette.bg,"text-outline-width":"2px",
+      "text-background-color":palette.bg,"text-background-opacity":0.78,"text-background-padding":"3px"
+    }},
     {selector:"edge.path-edge",style:{"width":4,"line-color":"#f472b6","target-arrow-color":"#f472b6","source-arrow-color":"#f472b6","z-index":999}},
     {selector:"edge.focus-edge",style:{"width":4,"line-color":palette.accent,"target-arrow-color":palette.accent,"source-arrow-color":palette.accent,"z-index":998}},
     {selector:"edge.rel-hidden",style:{"display":"none"}},
+    {selector:"edge.rel-manual-hidden",style:{"display":"none"}},
     {selector:"edge.focus-dim",style:{"opacity":0.04}},
     {selector:"edge.dimmed",style:{"opacity":0.08}}
   ];
@@ -12170,7 +12208,7 @@ let ei=0;
 APPS.forEach(app=>{
   app.relations.forEach(r=>{
     if(appMap.has(r.toApp)){
-      elements.push({data:{id:"e"+(ei++),source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label:r.kind==="LOOKUP"?"ルックアップ":"関連",fromLabel:r.fromLabel}});
+      elements.push({data:{id:"e"+(ei++),source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label:r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連":"アクション"),fromLabel:r.fromLabel}});
     }
   });
 });
@@ -12206,7 +12244,7 @@ function setLayout(name){
   toast("レイアウト: "+name);
 }
 
-const relationKindState = { LOOKUP: true, REF: true };
+const relationKindState = { LOOKUP: true, REF: true, ACTION: true };
 let focusMode = true;
 let focusDepth = 1;
 let focusDirection = "both";
@@ -12217,18 +12255,20 @@ const pinnedNodeIds = new Set();
 function syncLegendState(){
   const lookup = document.getElementById("legend-lookup-edge");
   const ref = document.getElementById("legend-ref-edge");
+  const action = document.getElementById("legend-action-edge");
   if(lookup) lookup.classList.toggle("off", !relationKindState.LOOKUP);
   if(ref) ref.classList.toggle("off", !relationKindState.REF);
+  if(action) action.classList.toggle("off", !relationKindState.ACTION);
 }
 
 function applyRelationFilter(){
-  const partialFilter = !relationKindState.LOOKUP || !relationKindState.REF;
+  const partialFilter = !relationKindState.LOOKUP || !relationKindState.REF || !relationKindState.ACTION;
   cy.edges().forEach(e=>{
     const visible = !!relationKindState[e.data("kind")];
     e.toggleClass("rel-hidden", !visible);
   });
   cy.nodes().forEach(n=>{
-    const visibleEdgeCount = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden")).length;
+    const visibleEdgeCount = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden")).length;
     n.toggleClass("isolated-by-filter", partialFilter && visibleEdgeCount === 0);
   });
   syncLegendState();
@@ -12243,7 +12283,7 @@ function collectFocusSet(rootNode, depth, direction){
   for(let i=0;i<depth;i++){
     let next = cy.collection();
     frontier.forEach(n=>{
-      let candidateEdges = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden"));
+      let candidateEdges = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
       if(direction==="out") candidateEdges = candidateEdges.filter(e=>e.source().id()===n.id());
       if(direction==="in") candidateEdges = candidateEdges.filter(e=>e.target().id()===n.id());
 
@@ -12311,13 +12351,37 @@ function updateFocusOptions(){
   if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
 }
 
+
+const manuallyRemovedEdgeIds = new Set();
+
+function removeSelectedRelations(){
+  const edges = cy.edges(":selected");
+  if(!edges.length){toast("削除対象の関連線を選択してください");return;}
+  edges.forEach((e)=>{ manuallyRemovedEdgeIds.add(e.id()); e.addClass("rel-manual-hidden"); });
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+  applyRelationFilter();
+  toast("関連線を手動削除: "+edges.length+"件");
+}
+
+function restoreRemovedRelations(){
+  let restored = 0;
+  manuallyRemovedEdgeIds.forEach((id)=>{
+    const edge = cy.getElementById(id);
+    if(edge.length){ edge.removeClass("rel-manual-hidden"); restored += 1; }
+  });
+  manuallyRemovedEdgeIds.clear();
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+  applyRelationFilter();
+  toast(restored ? ("手動削除した関連線を復元: "+restored+"件") : "復元対象がありません");
+}
 function toggleRelationKind(kind){
   relationKindState[kind] = !relationKindState[kind];
-  const btn = document.getElementById(kind==="LOOKUP" ? "rel-lookup-btn" : "rel-ref-btn");
+  const btn = document.getElementById(kind==="LOOKUP" ? "rel-lookup-btn" : (kind==="REF" ? "rel-ref-btn" : "rel-action-btn"));
   if(btn) btn.classList.toggle("active", !!relationKindState[kind]);
   applyRelationFilter();
   if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  toast((kind === "LOOKUP" ? "ルックアップ" : "関連") + "線: " + (relationKindState[kind] ? "表示" : "非表示"));
+  const label = kind === "LOOKUP" ? "ルックアップ" : (kind === "REF" ? "関連" : "アクション");
+  toast(label + "線: " + (relationKindState[kind] ? "表示" : "非表示"));
 }
 
 function pinNode(node,silent){
@@ -12373,7 +12437,7 @@ function searchGraph(q){
   });
   if(matched.length){
     matched.addClass("highlighted");
-    const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden"));
+    const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
     cy.elements().not(matched).not(visibleEdges).addClass("dimmed");
   }
 }
@@ -12398,8 +12462,8 @@ cy.on("tap","node",e=>{
     app.relations.forEach(r=>{
       const tgt=appMap.get(r.toApp);
       const tName=tgt?tgt.name:"アプリ "+r.toApp;
-      const icon=r.kind==="LOOKUP"?"🔗":"📋";
-      relHtml+='<div class="field-row" style="cursor:pointer" onclick="focusApp('+r.toApp+')"><span class="field-icon">'+icon+'</span><span class="field-name">'+r.fromLabel+' → '+tName+'</span><span class="field-type">'+r.kind+'</span></div>';
+      const icon=r.kind==="LOOKUP"?"🔗":(r.kind==="REF"?"📋":"⚡");
+      relHtml+='<div class="field-row" style="cursor:pointer" onclick="focusApp('+r.toApp+')"><span class="field-icon">'+icon+'</span><span class="field-name">'+r.fromLabel+' → '+tName+'</span><span class="field-type">'+(r.kind==="ACTION"?"ACTION(アクション)":r.kind)+'</span></div>';
     });
   }
   document.getElementById("detail-relations").innerHTML=relHtml;
@@ -12422,6 +12486,7 @@ cy.on("tap","node",e=>{
       if(tagLabel) tags='<span class="tag '+tagClass+'">'+tagLabel+"</span>";
       if(f.required&&tagLabel!=="必須") tags+='<span class="tag tag-req">必須</span>';
       if(f.inSubtable) tags+='<span class="tag tag-sub">表</span>';
+      if(f.unique) tags+='<span class="tag tag-pk">重複不可</span>';
       fHtml+='<div class="field-row"><span class="field-icon">'+icon+'</span><span class="field-name">'+(f.label||f.code)+tags+'</span><span class="field-type">'+f.type+"</span></div>";
     });
   };
@@ -12440,6 +12505,14 @@ cy.on("cxttap","node",e=>{
   const n = e.target;
   if(pinnedNodeIds.has(n.id())) unpinNode(n);
   else pinNode(n);
+});
+cy.on("cxttap","edge",e=>{
+  const edge = e.target;
+  manuallyRemovedEdgeIds.add(edge.id());
+  edge.addClass("rel-manual-hidden");
+  applyRelationFilter();
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+  toast("関連線を手動削除");
 });
 cy.on("tap",e=>{if(e.target===cy){closeDetail();cy.elements().removeClass("highlighted dimmed path-node path-edge");clearFocus(true);}});
 
@@ -12462,7 +12535,8 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
   const totalFields=APPS.reduce((s,a)=>s+visibleFieldsForNode(a).length,0);
   const totalRels=APPS.reduce((s,a)=>s+a.relations.length,0);
   const lookups=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="LOOKUP").length,0);
-  const refs=totalRels-lookups;
+  const actions=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="ACTION").length,0);
+  const refs=totalRels-lookups-actions;
   const typeCount={};
   APPS.forEach(a=>visibleFieldsForNode(a).forEach(f=>{typeCount[f.type]=(typeCount[f.type]||0)+1;}));
 
@@ -12470,6 +12544,7 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
   html+='<div class="stat-row"><span>総フィールド数</span><span class="stat-val">'+totalFields+'</span></div>';
   html+='<div class="stat-row"><span>ルックアップ数</span><span class="stat-val">'+lookups+'</span></div>';
   html+='<div class="stat-row"><span>関連レコード数</span><span class="stat-val">'+refs+'</span></div>';
+  html+='<div class="stat-row"><span>アクション線数</span><span class="stat-val">'+actions+'</span></div>';
   html+='<div class="stat-row"><span>総リレーション</span><span class="stat-val">'+totalRels+'</span></div>';
   html+='<div class="stat-row"><span>エラーアプリ</span><span class="stat-val">'+APPS.filter(a=>!a.ok).length+'</span></div>';
   document.getElementById("stats-summary").innerHTML=html;
@@ -12500,7 +12575,7 @@ function filterByType(el,type){
     return app&&visibleFieldsForNode(app).some(f=>active.includes(f.type));
   });
   matched.addClass("highlighted");
-  const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden"));
+  const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
   cy.elements().not(matched).not(visibleEdges).addClass("dimmed");
 }
 
@@ -12520,7 +12595,7 @@ function findPath(){
   const from=document.getElementById("pf-from").value;
   const to=document.getElementById("pf-to").value;
   if(from===to){toast("同じアプリです");return;}
-  const dijkstra=cy.elements().not(".rel-hidden").dijkstra({root:"#"+from,directed:false});
+  const dijkstra=cy.elements().not(".rel-hidden").not(".rel-manual-hidden").dijkstra({root:"#"+from,directed:false});
   const path=dijkstra.pathTo(cy.getElementById(to));
   if(!path||path.length===0){document.getElementById("path-result").textContent="経路なし";return;}
   path.addClass("path-node path-edge");
@@ -12553,9 +12628,9 @@ function startMinimap(){
     if(bb.w===0) return;
     const sx=170/bb.w,sy=120/bb.h,s=Math.min(sx,sy);
     const ox=(180-bb.w*s)/2,oy=(130-bb.h*s)/2;
-    cy.edges().filter(e=>!e.hasClass("rel-hidden")).forEach(e=>{
+    cy.edges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden")).forEach(e=>{
       const sp=e.sourceEndpoint(),tp=e.targetEndpoint();
-      ctx.strokeStyle=e.data("kind")==="LOOKUP"?"#60a5fa":"#34d399";
+      ctx.strokeStyle=e.data("kind")==="LOOKUP"?"#60a5fa":(e.data("kind")==="REF"?"#34d399":"#f59e0b");
       ctx.lineWidth=0.5;ctx.beginPath();
       ctx.moveTo((sp.x-bb.x1)*s+ox,(sp.y-bb.y1)*s+oy);
       ctx.lineTo((tp.x-bb.x1)*s+ox,(tp.y-bb.y1)*s+oy);
@@ -12598,6 +12673,9 @@ const commands=[
   {label:"関連強調解除",icon:"🧹",action:()=>clearFocus()},
   {label:"ルックアップ線 ON/OFF",icon:"🔗",action:()=>toggleRelationKind("LOOKUP")},
   {label:"関連線 ON/OFF",icon:"📋",action:()=>toggleRelationKind("REF")},
+  {label:"アクション線 ON/OFF",icon:"⚡",action:()=>toggleRelationKind("ACTION")},
+  {label:"選択関連を削除",icon:"🗑",action:removeSelectedRelations},
+  {label:"削除関連を復元",icon:"↺",action:restoreRemovedRelations},
   {label:"選択ノード 固定/解除",icon:"📌",action:togglePinFromSelection,keys:"Shift+P"},
   {label:"固定を全解除",icon:"📍",action:clearPins},
   {label:"ミニマップ",icon:"🗺",action:toggleMinimap},
