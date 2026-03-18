@@ -55,7 +55,7 @@
     field: 'json',
     design: 'export',
     jsconfig: 'editor',
-    recordMgr: 'records',
+    recordMgr: 'status',
     er: 'diagram',
     settingsExport: 'export'
   });
@@ -385,13 +385,6 @@
     }
   }
 
-  async function apiDelete(prefix, path, body) {
-    try {
-      return await kintone.api(`${prefix}${path}`, 'DELETE', body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: 'DELETE', prefix, path, payload: body });
-    }
-  }
 
 
   const HIGH_IMPACT_SECTIONS = new Set([
@@ -3366,29 +3359,12 @@
 
           <div class="pane" data-pane="recordMgr">
             <div class="subtabs">
-              <button class="subtab active" data-subtab-parent="recordMgr" data-subtab="records">レコード整備</button>
-              <button class="subtab" data-subtab-parent="recordMgr" data-subtab="status">ステータス更新</button>
+              <button class="subtab active" data-subtab-parent="recordMgr" data-subtab="status">ステータス更新</button>
               <button class="subtab" data-subtab-parent="recordMgr" data-subtab="files">添付DL</button>
               <button class="subtab" data-subtab-parent="recordMgr" data-subtab="csv">CSV</button>
               <button class="subtab" data-subtab-parent="recordMgr" data-subtab="copy">アプリ間コピー</button>
             </div>
-            <div class="subpane active" data-subpane-parent="recordMgr" data-subpane="records">
-              <div class="subpane-note">比較先アプリのテストデータ生成や一括削除をまとめています。</div>
-            <div class="step">レコード一括処理（比較先アプリ）</div>
-            <div style="margin-top:10px" class="muted">比較先アプリに対して、テストデータの自動生成や全レコードの一括削除を行います。</div>
-            <div class="grid2" style="margin-top:8px">
-              <div>
-                <label>生成件数（テストデータ自動生成用）</label>
-                <input type="number" id="u_genCount" value="10" min="1" max="100">
-              </div>
-            </div>
-            <div class="btns">
-              <button class="btn ok" data-act="generateDummyRecords">テストデータ自動生成</button>
-              <button class="btn warn" data-act="deleteAllRecords">全レコード一括削除</button>
-            </div>
-            <div class="result" id="u_recordMgrResult" style="max-height:200px;margin-top:8px"></div>
-            </div>
-            <div class="subpane" data-subpane-parent="recordMgr" data-subpane="status">
+            <div class="subpane active" data-subpane-parent="recordMgr" data-subpane="status">
               <div class="subpane-note">一覧条件に合うレコードのプロセス管理を一括で進めます。</div>
             <hr style="margin:20px 0;border:none;border-top:1px dashed #ccc"/>
             <div class="step">ステータス一括更新（比較先アプリ）</div>
@@ -3839,8 +3815,6 @@
     settingsExportPreview: $('#u_settingsExportPreview'),
     settingsExportScopes: $('#u_settingsExportScopes'),
     settingsExportResult: $('#u_settingsExportResult'),
-    genCount: $('#u_genCount'),
-    recordMgrResult: $('#u_recordMgrResult'),
     mermaidText: $('#u_mermaidText'),
     mermaidView: $('#u_mermaidView'),
     erLayout: $('#u_erLayout'),
@@ -9445,116 +9419,6 @@ ${diffMd}
     setStatus('JS/CSS設定反映完了');
   }
 
-  async function runDeleteAllRecords() {
-    const c = commonParams();
-    const app = c.target.appId;
-    if (!app) throw new Error('比較先アプリIDを入力してください');
-    if (!window.confirm(`比較先アプリ (${app}) の全レコードを一括削除しますか？\n※この操作は元に戻せません。`)) return;
-
-    const prefix = buildApiPrefix(c.target.guestId, false);
-    setStatus('レコード削除中...');
-    const logs = [`比較先アプリ: ${app} レコード全件削除開始`];
-
-    try {
-      let totalDeleted = 0;
-      while (true) {
-        const query = 'order by $id asc limit 500';
-        const res = await apiGet(prefix, '/records.json', { app, fields: ['$id'], query });
-        const ids = res.records.map(r => r.$id.value);
-        if (!ids.length) break;
-        await apiDelete(prefix, '/records.json', { app, ids });
-        totalDeleted += ids.length;
-        logs.push(` - ${ids.length}件削除 (計: ${totalDeleted}件)`);
-        setStatus(`レコード削除中... (計: ${totalDeleted}件)`);
-      }
-      logs.push(totalDeleted > 0 ? `完了：合計 ${totalDeleted} 件のレコードを削除しました。` : '削除対象のレコードがありませんでした。');
-    } catch (e) {
-      logs.push(`エラー: ${e.message || String(e)}`);
-      throw e;
-    } finally {
-      ui.recordMgrResult.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
-      setStatus('レコード全件削除 完了');
-    }
-  }
-
-  function generateDummyValue(type, code) {
-    switch (type) {
-      case 'SINGLE_LINE_TEXT': return `テスト文字列_${Math.floor(Math.random() * 1000)}`;
-      case 'MULTI_LINE_TEXT': return `テスト行1_${Math.floor(Math.random() * 1000)}\nテスト行2_${Math.floor(Math.random() * 1000)}`;
-      case 'RICH_TEXT': return `<div><strong>テストリッチテキスト</strong>_${Math.floor(Math.random() * 1000)}</div>`;
-      case 'NUMBER': return String(Math.floor(Math.random() * 10000));
-      case 'DATE': {
-        const d = new Date(Date.now() - Math.floor(Math.random() * 30) * 86400000);
-        return d.toISOString().split('T')[0];
-      }
-      case 'TIME': return `${String(Math.floor(Math.random() * 24)).padStart(2, '0')}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}`;
-      case 'DATETIME': {
-        const d = new Date(Date.now() - Math.floor(Math.random() * 30) * 86400000);
-        return d.toISOString();
-      }
-      case 'DROP_DOWN':
-      case 'RADIO_BUTTON': return undefined; // Cannot easily predict options without more field data logic, skip or leave empty mapping
-      case 'CHECK_BOX':
-      case 'MULTI_SELECT': return [];
-      case 'LINK': return 'https://cybozu.co.jp';
-      default: return undefined;
-    }
-  }
-
-  async function runGenerateDummyRecords() {
-    const c = commonParams();
-    const app = c.target.appId;
-    if (!app) throw new Error('比較先アプリIDを入力してください');
-    const genCount = parseInt(ui.genCount.value, 10);
-    if (!genCount || genCount < 1 || genCount > 100) throw new Error('生成件数は1から100の間で指定してください');
-
-    const prefix = buildApiPrefix(c.target.guestId, false);
-    setStatus('フィールド情報取得中...');
-    const logs = [`比較先アプリ: ${app} テストデータ生成開始 (${genCount}件)`];
-
-    try {
-      const fieldRes = await apiGet(prefix, '/app/form/fields.json', { app });
-      const props = fieldRes.properties || {};
-
-      const records = [];
-      for (let i = 0; i < genCount; i++) {
-        const rec = {};
-        for (const [code, def] of Object.entries(props)) {
-          if (SYSTEM_FIELD_TYPES.has(def.type)) continue;
-          if (['CALC', 'FILE', 'REFERENCE_TABLE', 'GROUP', 'SUBTABLE', 'USER_SELECT', 'ORGANIZATION_SELECT', 'GROUP_SELECT'].includes(def.type)) continue;
-
-          let val = generateDummyValue(def.type, code);
-
-          if (['DROP_DOWN', 'RADIO_BUTTON', 'CHECK_BOX', 'MULTI_SELECT'].includes(def.type) && def.options) {
-            const opts = Object.values(def.options).sort((a, b) => Number(a.index) - Number(b.index));
-            if (opts.length > 0) {
-              if (['DROP_DOWN', 'RADIO_BUTTON'].includes(def.type)) {
-                val = opts[Math.floor(Math.random() * opts.length)].label;
-              } else {
-                val = [opts[Math.floor(Math.random() * opts.length)].label];
-              }
-            }
-          }
-
-          if (val !== undefined) {
-            rec[code] = { value: val };
-          }
-        }
-        records.push(rec);
-      }
-
-      setStatus('レコード登録中...');
-      const res = await apiPost(prefix, '/records.json', { app, records });
-      logs.push(`完了：${res.ids?.length || 0} 件のレコードを生成しました。`);
-    } catch (e) {
-      logs.push(`エラー: ${e.message || String(e)}`);
-      throw e;
-    } finally {
-      ui.recordMgrResult.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
-      setStatus('ダミーレコード生成 完了');
-    }
-  }
-
   async function ensureMermaid() {
     if (window.mermaid) return window.mermaid;
     setStatus('Mermaid.js を読み込み中...');
@@ -10747,8 +10611,6 @@ ${diffMd}
     if (act === 'importJsConfigJson') return ui.jsconfigFile.click();
     if (act === 'applyJsConfig') return withGuard(runApplyJsConfig);
 
-    if (act === 'generateDummyRecords') return withGuard(runGenerateDummyRecords);
-    if (act === 'deleteAllRecords') return withGuard(runDeleteAllRecords);
     if (act === 'renderProcessFlow') return withGuard(runRenderProcessFlow);
     if (act === 'launchKintoneSql') return withGuard(launchKintoneSql);
     if (act === 'generateERDiagram') return withGuard(runGenerateERDiagram);
