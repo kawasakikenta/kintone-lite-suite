@@ -2408,115 +2408,149 @@
   <title>kintone差分レポート</title>
   <style>
     :root{
-      --bg:#f4f7fb;--fg:#0f172a;--card:#fff;--border:#d7dfeb;--sidebar:#1f2937;--sidebar-fg:#e2e8f0;
-      --add:#e8f5e9;--add-fg:#166534;--del:#fee2e2;--del-fg:#991b1b;--pad:#f1f5f9;
-      --mark-add:#bbf7d0;--mark-del:#fecaca;
+      --bg:#f5f8fb;--fg:#1f2d3d;--card:#ffffff;--card-soft:#f8fbff;--border:#d9e3ee;--sidebar:#f3f7fb;--sidebar-fg:#334155;
+      --accent:#3498db;--accent-strong:#1f7fcc;--accent-soft:#e8f4fd;--header:#ffffff;--header-border:#d7e3f0;
+      --add:#e8f7ef;--add-fg:#1f7a47;--del:#fff0f0;--del-fg:#c0392b;--pad:#f4f7fa;--muted:#6b7c93;
+      --mark-add:#bcebd0;--mark-del:#ffd1cc;--shadow:0 10px 30px rgba(31,45,61,.08);
     }
     body.dark{
-      --bg:#0f172a;--fg:#e2e8f0;--card:#111827;--border:#334155;--sidebar:#020617;--sidebar-fg:#cbd5e1;
-      --add:#083344;--add-fg:#5eead4;--del:#450a0a;--del-fg:#fca5a5;--pad:#1e293b;
-      --mark-add:#134e4a;--mark-del:#7f1d1d;
+      --bg:#0f172a;--fg:#e2e8f0;--card:#111827;--card-soft:#162033;--border:#334155;--sidebar:#0b1220;--sidebar-fg:#d6dfeb;
+      --accent:#4ea7ff;--accent-strong:#7cc0ff;--accent-soft:#13253c;--header:#111827;--header-border:#334155;
+      --add:#083344;--add-fg:#5eead4;--del:#450a0a;--del-fg:#fca5a5;--pad:#1e293b;--muted:#94a3b8;
+      --mark-add:#134e4a;--mark-del:#7f1d1d;--shadow:none;
     }
     *{box-sizing:border-box}
-    body{margin:0;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;background:var(--bg);color:var(--fg);display:flex;height:100vh}
-    aside{width:300px;background:var(--sidebar);color:var(--sidebar-fg);display:flex;flex-direction:column;border-right:1px solid var(--border)}
-    main{flex:1;overflow:auto;padding:18px}
-    .sb-head{padding:14px 16px;border-bottom:1px solid #334155;font-weight:700}
-    .sb-meta{font-size:11px;opacity:.8;margin-top:4px;line-height:1.6}
-    .sb-stats{padding:10px 14px;border-bottom:1px solid #334155;font-size:12px;line-height:1.8}
-    .sb-stats b{font-weight:700}
-    .sb-ctrl{padding:10px 14px;border-bottom:1px solid #334155}
-    .sb-ctrl label{display:block;font-size:12px;margin-bottom:6px}
-    .sb-ctrl input[type="text"]{width:100%;padding:6px 8px;border:1px solid #475569;border-radius:6px;background:#0f172a;color:#e2e8f0}
-    .sb-btns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px}
-    .btn{border:1px solid #475569;background:#334155;color:#fff;border-radius:6px;padding:6px 8px;font-size:11px;cursor:pointer}
-    .btn:hover{opacity:.9}
-    #nav{flex:1;overflow:auto;padding:8px 0}
-    .nav-item{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;font-size:12px;cursor:pointer}
-    .nav-item:hover{background:#334155}
-    .badge{display:inline-block;min-width:24px;text-align:center;padding:2px 6px;border-radius:999px;background:#475569;font-size:10px}
-    .header{background:linear-gradient(135deg,#0f4c81,#2563eb);color:#fff;border-radius:10px;padding:14px 16px;display:flex;justify-content:space-between;gap:16px;align-items:center}
-    .header .app{font-size:13px;line-height:1.6}
-    .header .title{font-size:17px;font-weight:700}
-    .meta{margin:10px 0 14px;font-size:12px;color:#64748b}
-    body.dark .meta{color:#94a3b8}
-    .summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-    .pill{border:1px solid var(--border);border-radius:999px;padding:4px 9px;font-size:11px;background:var(--card)}
-    .warn{font-size:11px;color:#b45309}
-    .issue-box{margin:0 0 12px;border:1px solid #fdba74;border-radius:10px;background:#fff7ed;padding:12px}
-    .issue-box h3{margin:0 0 8px;font-size:13px;color:#9a3412}
+    html,body{height:100%}
+    body{margin:0;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;background:var(--bg);color:var(--fg);display:flex;min-height:100vh}
+    aside{width:320px;background:var(--sidebar);color:var(--sidebar-fg);display:flex;flex-direction:column;border-right:1px solid var(--border)}
+    main{flex:1;overflow:auto;padding:24px}
+    .sb-head{padding:18px 18px 14px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card) 0%,var(--sidebar) 100%)}
+    .sb-kicker{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent-strong);font-size:11px;font-weight:700;letter-spacing:.03em}
+    .sb-title{margin-top:10px;font-size:20px;font-weight:700;color:var(--fg)}
+    .sb-meta{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.7}
+    .sb-panel{margin:14px;border:1px solid var(--border);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}
+    .sb-stats{padding:12px 14px;font-size:12px;line-height:1.9}
+    .sb-stat-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+    .sb-stat{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed var(--border)}
+    .sb-stat:nth-last-child(-n+2){border-bottom:none}
+    .sb-stat b{font-weight:700;color:var(--fg)}
+    .sb-ctrl{padding:14px}
+    .sb-ctrl label{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:8px;color:var(--fg)}
+    .sb-ctrl input[type="text"]{width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--card-soft);color:var(--fg)}
+    .sb-btns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
+    .btn{border:1px solid var(--border);background:var(--card-soft);color:var(--fg);border-radius:8px;padding:8px 10px;font-size:11px;font-weight:700;cursor:pointer}
+    .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .btn:hover{opacity:.92}
+    #nav{flex:1;overflow:auto;padding:0 10px 16px}
+    .nav-item{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;font-size:12px;cursor:pointer;border-radius:10px;margin:2px 4px;color:var(--fg)}
+    .nav-item:hover{background:var(--card);box-shadow:var(--shadow)}
+    .badge{display:inline-block;min-width:24px;text-align:center;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent-strong);font-size:10px;font-weight:700}
+    .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px 18px;border:1px solid var(--header-border);border-radius:16px;background:var(--header);box-shadow:var(--shadow)}
+    .topbar-main{display:flex;flex-direction:column;gap:10px;min-width:0}
+    .topbar-title{font-size:24px;font-weight:700;line-height:1.3}
+    .topbar-desc{font-size:12px;color:var(--muted);line-height:1.8}
+    .header-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .header-badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--card-soft);border-radius:999px;padding:6px 10px;font-size:11px;color:var(--muted)}
+    .settings-shell{margin-top:16px;border:1px solid var(--border);border-radius:18px;overflow:hidden;background:var(--card);box-shadow:var(--shadow)}
+    .settings-tabs{display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card-soft) 0%,var(--card) 100%)}
+    .settings-tab{padding:8px 14px;border-radius:999px;background:var(--accent-soft);color:var(--accent-strong);font-size:12px;font-weight:700}
+    .settings-tab.passive{background:transparent;color:var(--muted);border:1px solid var(--border)}
+    .app-compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px;border-bottom:1px solid var(--border);background:var(--card-soft)}
+    .app-card{border:1px solid var(--border);border-radius:14px;background:var(--card);padding:14px;position:relative;overflow:hidden}
+    .app-card::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--accent)}
+    .app-card.target::before{background:#7f8fa6}
+    .app-role{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent-strong);font-size:11px;font-weight:700}
+    .app-card.target .app-role{background:#eef2f7;color:#52606d}
+    body.dark .app-card.target .app-role{background:#1e293b;color:#cbd5e1}
+    .app-title{margin-top:10px;font-size:22px;font-weight:700}
+    .app-meta-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}
+    .meta-card{padding:10px 12px;border-radius:10px;background:var(--card-soft);border:1px solid var(--border)}
+    .meta-card .label{display:block;font-size:10px;color:var(--muted);margin-bottom:4px}
+    .meta-card .value{display:block;font-size:12px;font-weight:700;color:var(--fg)}
+    .summary-strip{display:flex;gap:8px;flex-wrap:wrap;padding:16px;border-bottom:1px solid var(--border);background:var(--card)}
+    .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:7px 12px;font-size:11px;background:var(--card-soft);font-weight:700}
+    .pill .count{font-size:12px;color:var(--accent-strong)}
+    .info-grid{display:grid;grid-template-columns:1.4fr .9fr;gap:16px;padding:16px;border-bottom:1px solid var(--border);background:var(--card)}
+    .panel{border:1px solid var(--border);border-radius:14px;background:var(--card-soft);padding:14px}
+    .panel h3{margin:0 0 10px;font-size:13px}
+    .detail-list{display:grid;gap:8px}
+    .detail-row{display:flex;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px dashed var(--border);font-size:12px}
+    .detail-row:last-child{padding-bottom:0;border-bottom:none}
+    .detail-key{color:var(--muted)}
+    .warn{font-size:11px;color:#b45309;margin-top:8px}
+    .issue-box{margin:16px;border:1px solid #fdba74;border-radius:14px;background:#fff7ed;padding:14px}
+    body.dark .issue-box{background:#2b190a}
+    .issue-box h3{margin:0 0 10px;font-size:13px;color:#9a3412}
     .issue-box table{width:100%;border-collapse:collapse;font-size:11px}
-    .issue-box th,.issue-box td{border-bottom:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}
+    .issue-box th,.issue-box td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
     .issue-box .msg{white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-    .sec{border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--card);margin-bottom:12px}
-    .sec-head{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;background:var(--pad);font-size:12px;font-weight:700;cursor:pointer}
-    .sec-meta{font-size:10px;color:#64748b}
-    body.dark .sec-meta{color:#94a3b8}
+    .content{padding:16px}
+    .sec{border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--card);margin-bottom:14px;box-shadow:var(--shadow)}
+    .sec-head{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:linear-gradient(180deg,var(--card-soft) 0%,var(--card) 100%);font-size:13px;font-weight:700;cursor:pointer}
+    .sec-meta{font-size:10px;color:var(--muted)}
     .diff-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px}
-    .diff-table th,.diff-table td{border-bottom:1px solid var(--border);padding:6px 8px;vertical-align:top;text-align:left}
-    .diff-table th{position:sticky;top:0;background:var(--card);z-index:1}
+    .diff-table th,.diff-table td{border-bottom:1px solid var(--border);padding:8px 10px;vertical-align:top;text-align:left}
+    .diff-table th{position:sticky;top:0;background:var(--card);z-index:1;font-size:10px;letter-spacing:.03em;color:var(--muted);text-transform:uppercase}
     .type{font-weight:700}
     .type.added{color:#166534}
     .type.removed{color:#b91c1c}
     .type.changed{color:#92400e}
     .type.same{color:#15803d}
-    .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:#64748b}
-    body.dark .path{color:#94a3b8}
+    .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--muted)}
     .meta-wrap{margin-top:6px;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
     .meta-tags{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px}
     .meta-tag{display:inline-flex;align-items:center;padding:2px 6px;border-radius:999px;border:1px solid var(--border);background:var(--pad);font-size:10px;color:var(--fg)}
     .meta-tag.reason{background:#fff7ed;color:#9a3412;border-color:#fdba74}
     .meta-tag.rename{background:#ecfdf5;color:#166534;border-color:#86efac}
     .meta-tag.impact{background:#eff6ff;color:#1d4ed8;border-color:#93c5fd}
-    .meta-line{font-size:10px;line-height:1.45;color:#64748b}
-    body.dark .meta-line{color:#94a3b8}
+    .meta-line{font-size:10px;line-height:1.45;color:var(--muted)}
     .meta-line strong{color:var(--fg)}
     .cell{padding:0;overflow:hidden}
     .scroll{max-height:330px;overflow:auto}
-    .line{display:flex;min-height:1.5em;line-height:1.5;padding:0 6px;white-space:pre-wrap;word-break:break-word}
+    .line{display:flex;min-height:1.6em;line-height:1.6;padding:0 6px;white-space:pre-wrap;word-break:break-word}
     .line.add{background:var(--add);color:var(--add-fg)}
     .line.del{background:var(--del);color:var(--del-fg)}
     .line.pad{background:var(--pad);opacity:.72}
-    .ln{min-width:34px;display:inline-block;text-align:right;margin-right:8px;padding-right:4px;border-right:1px solid var(--border);font-size:10px;color:#64748b;user-select:none;flex-shrink:0}
-    body.dark .ln{color:#94a3b8}
-    .blk{margin:0;padding:8px;white-space:pre-wrap;word-break:break-word;font-size:11px}
+    .ln{min-width:34px;display:inline-block;text-align:right;margin-right:8px;padding-right:4px;border-right:1px solid var(--border);font-size:10px;color:var(--muted);user-select:none;flex-shrink:0}
+    .blk{margin:0;padding:10px;white-space:pre-wrap;word-break:break-word;font-size:11px}
     .blk.add{background:var(--add);color:var(--add-fg)}
     .blk.del{background:var(--del);color:var(--del-fg)}
-    .blk.same{color:#64748b;font-style:italic}
+    .blk.same{color:var(--muted);font-style:italic}
     .blk.same-note{color:#15803d;font-style:italic}
-    .blk.empty{font-style:italic;color:#64748b}
-    body.dark .blk.empty{color:#94a3b8}
+    .blk.empty{font-style:italic;color:var(--muted)}
     mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:2px;padding:0 1px}
     mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:2px;padding:0 1px}
-    .compare-box{margin-top:14px;border:1px solid var(--border);border-radius:10px;background:var(--card);overflow:hidden}
-    .compare-box-head{padding:10px 12px;background:linear-gradient(135deg,#eff6ff,#dbeafe);color:#1d4ed8;font-size:13px;font-weight:700;border-bottom:1px solid var(--border)}
-    body.dark .compare-box-head{background:linear-gradient(135deg,#1e3a8a,#1d4ed8);color:#dbeafe}
+    .compare-box{margin:0 16px 16px;border:1px solid var(--border);border-radius:16px;background:var(--card);overflow:hidden;box-shadow:var(--shadow)}
+    .compare-box-head{padding:12px 14px;background:linear-gradient(180deg,var(--accent-soft) 0%,var(--card) 100%);color:var(--accent-strong);font-size:13px;font-weight:700;border-bottom:1px solid var(--border)}
     .compare-sec{border-bottom:1px solid var(--border)}
     .compare-sec:last-child{border-bottom:none}
     .compare-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;background:var(--pad);font-size:12px;font-weight:700}
-    .compare-head-meta{font-size:10px;color:#64748b;font-weight:600}
-    body.dark .compare-head-meta{color:#94a3b8}
+    .compare-head-meta{font-size:10px;color:var(--muted);font-weight:600}
     .compare-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:12px}
-    .compare-card{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--card)}
+    .compare-card{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card)}
     .compare-title{padding:8px 10px;background:var(--pad);font-size:11px;font-weight:700}
     .compare-pre{margin:0;padding:10px;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     .no-diff{text-align:center;font-size:14px;padding:30px;color:#15803d;background:var(--card);border:1px solid var(--border);border-radius:10px}
-    @media (max-width:980px){
-      .compare-grid{grid-template-columns:1fr}
-      #${TOOL_ID} .reflect-step-grid{grid-template-columns:1fr}
+    @media (max-width:1080px){
+      body{display:block}
+      aside{width:auto;border-right:none;border-bottom:1px solid var(--border)}
+      main{padding:16px}
+      .app-compare,.info-grid,.compare-grid{grid-template-columns:1fr}
+      .header-actions{justify-content:flex-start}
     }
     @media print{
-      aside{display:none!important}
-      body{display:block}
-      main{padding:8px}
-      .btn{display:none!important}
+      aside,.header-actions,.sb-panel .btn,.settings-tabs{display:none!important}
+      body{display:block;background:#fff}
+      main{padding:0}
+      .settings-shell,.sec,.compare-box,.topbar{box-shadow:none}
     }
   </style>
 </head>
 <body>
   <aside>
     <div class="sb-head">
-      差分レポート
+      <div class="sb-kicker">Visual Diff / Settings Review</div>
+      <div class="sb-title">差分レポート</div>
       <div class="sb-meta">
         生成日時: ${esc(reportMeta.generatedAt)}<br>
         対象: ${esc(sectionText || '-')}<br>
@@ -2524,64 +2558,122 @@
         出力内容: ${esc(reportMeta.exportContentLabel || '差分のみ')}
       </div>
     </div>
-    <div class="sb-stats">
-      <div>総件数: <b id="stat-total">${summary.total}</b></div>
-      <div>追加: <b id="stat-added">${summary.added}</b></div>
-      <div>削除: <b id="stat-removed">${summary.removed}</b></div>
-      <div>変更: <b id="stat-changed">${summary.changed}</b></div>
-      <div>移動: <b id="stat-moved">${summary.moved}</b></div>
-      <div>同一: <b id="stat-same">${summary.same}</b></div>
-      <div>取得失敗: <b>${fetchIssues.length}</b></div>
+    <div class="sb-panel sb-stats">
+      <div class="sb-stat-grid">
+        <div class="sb-stat"><span>総件数</span><b id="stat-total">${summary.total}</b></div>
+        <div class="sb-stat"><span>追加</span><b id="stat-added">${summary.added}</b></div>
+        <div class="sb-stat"><span>削除</span><b id="stat-removed">${summary.removed}</b></div>
+        <div class="sb-stat"><span>変更</span><b id="stat-changed">${summary.changed}</b></div>
+        <div class="sb-stat"><span>移動</span><b id="stat-moved">${summary.moved}</b></div>
+        <div class="sb-stat"><span>同一</span><b id="stat-same">${summary.same}</b></div>
+      </div>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted)">取得失敗: <b>${fetchIssues.length}</b></div>
     </div>
-    <div class="sb-ctrl">
+    <div class="sb-panel sb-ctrl">
       <label><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
       <label><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
-      <input type="text" id="search" placeholder="パス / 値を検索">
+      <input type="text" id="search" placeholder="パス / 値 / 理由を検索">
       <div class="sb-btns">
         <button class="btn" id="collapseBtn">全折畳</button>
         <button class="btn" id="expandBtn">全展開</button>
         <button class="btn" id="themeBtn">テーマ切替</button>
         <button class="btn" id="copyBtn">差分コピー</button>
-        <button class="btn" id="patchBtn" style="grid-column:span 2">パッチJSON出力</button>
+        <button class="btn primary" id="patchBtn" style="grid-column:span 2">パッチJSON出力</button>
       </div>
     </div>
     <div id="nav"></div>
   </aside>
   <main>
-    <div class="header">
-      <div class="app">
-        <div class="title">比較元アプリ ${esc(reportMeta.source.appId || '-')}</div>
-        ゲスト: ${esc(reportMeta.source.guestId || '(通常空間)')} / モード: ${reportMeta.source.preview ? 'プレビュー' : '本番'} / Rev: ${esc(reportMeta.source.revision || '-')}
+    <div class="topbar">
+      <div class="topbar-main">
+        <div class="sb-kicker">kintone-like Visual Compare</div>
+        <div class="topbar-title">アプリ設定の差分を、設定画面に近い見た目でレビュー</div>
+        <div class="topbar-desc">比較元・比較先のメタ情報、差分件数、比較対象セクションを一画面に集約し、各セクションは変更種別ごとのハイライト付きで確認できます。</div>
       </div>
-      <div style="font-size:28px;opacity:.85">⇄</div>
-      <div class="app" style="text-align:right">
-        <div class="title">比較先アプリ ${esc(reportMeta.target.appId || '-')}</div>
-        ゲスト: ${esc(reportMeta.target.guestId || '(通常空間)')} / モード: ${reportMeta.target.preview ? 'プレビュー' : '本番'} / Rev: ${esc(reportMeta.target.revision || '-')}
+      <div class="header-actions">
+        <span class="header-badge">セクション ${esc(String((scopes || []).length || 0))}</span>
+        <span class="header-badge">出力 ${esc(reportMeta.exportContentLabel || '差分のみ')}</span>
+        <span class="header-badge">警告 ${warning.threshold ? esc(String(warning.total)) : 'OFF'}</span>
       </div>
     </div>
-    <div class="meta">
-      無視キー: ${esc(reportMeta.ignoreKeys || '-')} / 出力対象: ${esc(reportMeta.exportLabel || '全差分')} / 出力内容: ${esc(reportMeta.exportContentLabel || '差分のみ')} / 正規化: ${esc(reportMeta.normalizationLabels.join(', ') || '-')}
+
+    <div class="settings-shell">
+      <div class="settings-tabs">
+        <span class="settings-tab">アプリ設定比較</span>
+        <span class="settings-tab passive">差分一覧</span>
+        <span class="settings-tab passive">比較対象設定</span>
+      </div>
+
+      <div class="app-compare">
+        <section class="app-card source">
+          <div class="app-role">比較元 Source</div>
+          <div class="app-title">アプリ ${esc(reportMeta.source.appId || '-')}</div>
+          <div class="app-meta-grid">
+            <div class="meta-card"><span class="label">ゲストスペース</span><span class="value">${esc(reportMeta.source.guestId || '(通常空間)')}</span></div>
+            <div class="meta-card"><span class="label">モード</span><span class="value">${reportMeta.source.preview ? 'プレビュー' : '本番'}</span></div>
+            <div class="meta-card"><span class="label">Revision</span><span class="value">${esc(reportMeta.source.revision || '-')}</span></div>
+            <div class="meta-card"><span class="label">比較対象</span><span class="value">${esc(sectionText || '-')}</span></div>
+          </div>
+        </section>
+        <section class="app-card target">
+          <div class="app-role">比較先 Target</div>
+          <div class="app-title">アプリ ${esc(reportMeta.target.appId || '-')}</div>
+          <div class="app-meta-grid">
+            <div class="meta-card"><span class="label">ゲストスペース</span><span class="value">${esc(reportMeta.target.guestId || '(通常空間)')}</span></div>
+            <div class="meta-card"><span class="label">モード</span><span class="value">${reportMeta.target.preview ? 'プレビュー' : '本番'}</span></div>
+            <div class="meta-card"><span class="label">Revision</span><span class="value">${esc(reportMeta.target.revision || '-')}</span></div>
+            <div class="meta-card"><span class="label">正規化</span><span class="value">${esc(reportMeta.normalizationLabels.join(', ') || '-')}</span></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="summary-strip">
+        <span class="pill">総件数 <span class="count">${summary.total}</span></span>
+        <span class="pill">追加 <span class="count">${summary.added}</span></span>
+        <span class="pill">削除 <span class="count">${summary.removed}</span></span>
+        <span class="pill">変更 <span class="count">${summary.changed}</span></span>
+        <span class="pill">移動 <span class="count">${summary.moved}</span></span>
+        <span class="pill">同一 <span class="count">${summary.same}</span></span>
+        <span class="pill">取得失敗 <span class="count">${fetchIssues.length}</span></span>
+      </div>
+
+      <div class="info-grid">
+        <section class="panel">
+          <h3>比較条件</h3>
+          <div class="detail-list">
+            <div class="detail-row"><span class="detail-key">無視キー</span><span>${esc(reportMeta.ignoreKeys || '-')}</span></div>
+            <div class="detail-row"><span class="detail-key">出力対象</span><span>${esc(reportMeta.exportLabel || '全差分')}</span></div>
+            <div class="detail-row"><span class="detail-key">出力内容</span><span>${esc(reportMeta.exportContentLabel || '差分のみ')}</span></div>
+            <div class="detail-row"><span class="detail-key">セクション</span><span>${esc(sectionText || '-')}</span></div>
+          </div>
+          ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? ' (超過)' : ''}</div>` : ''}
+          ${reportMeta.truncated ? `<div class="warn">※ 出力負荷を抑えるため、先頭 ${reportMeta.renderedRows} 件のみをレポートに含めています（元件数 ${reportMeta.totalRows} 件）。</div>` : ''}
+        </section>
+        <section class="panel">
+          <h3>レビュー補助</h3>
+          <div class="detail-list">
+            <div class="detail-row"><span class="detail-key">文字差分</span><span>行内ハイライト対応</span></div>
+            <div class="detail-row"><span class="detail-key">検索</span><span>パス / 値 / 理由</span></div>
+            <div class="detail-row"><span class="detail-key">ナビゲーション</span><span>左ペインからセクション移動</span></div>
+            <div class="detail-row"><span class="detail-key">出力</span><span>Patch JSON / コピー</span></div>
+          </div>
+        </section>
+      </div>
+
+      ${fetchIssues.length ? `<div class="issue-box">
+        <h3>API取得失敗 ${fetchIssues.length}件</h3>
+        <table>
+          <thead><tr><th style="width:200px">セクション</th><th style="width:90px">対象</th><th>内容</th></tr></thead>
+          <tbody>${fetchIssues.map((issue) => `<tr><td>${esc(issue.section || issue.sectionKey || '-')}</td><td>${esc(getIssueSideLabel(issue.side))}</td><td><div class="msg">${esc(issue.message || '-')}</div></td></tr>`).join('')}</tbody>
+        </table>
+      </div>` : ''}
+
+      <div class="content">
+        <div id="main"></div>
+      </div>
+
+      ${compareHtml}
     </div>
-    <div class="summary">
-      <span class="pill">総件数 ${summary.total}</span>
-      <span class="pill">追加 ${summary.added}</span>
-      <span class="pill">削除 ${summary.removed}</span>
-      <span class="pill">変更 ${summary.changed}</span>
-      <span class="pill">移動 ${summary.moved}</span>
-      <span class="pill">同一 ${summary.same}</span>
-      <span class="pill">取得失敗 ${fetchIssues.length}</span>
-    </div>
-    ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? ' (超過)' : ''}</div>` : ''}
-    ${reportMeta.truncated ? `<div class="warn">※ 出力負荷を抑えるため、先頭 ${reportMeta.renderedRows} 件のみをレポートに含めています（元件数 ${reportMeta.totalRows} 件）。</div>` : ''}
-    ${fetchIssues.length ? `<div class="issue-box">
-      <h3>API取得失敗 ${fetchIssues.length}件</h3>
-      <table>
-        <thead><tr><th style="width:200px">セクション</th><th style="width:90px">対象</th><th>内容</th></tr></thead>
-        <tbody>${fetchIssues.map((issue) => `<tr><td>${esc(issue.section || issue.sectionKey || '-')}</td><td>${esc(getIssueSideLabel(issue.side))}</td><td><div class="msg">${esc(issue.message || '-')}</div></td></tr>`).join('')}</tbody>
-      </table>
-    </div>` : ''}
-    <div id="main"></div>
-    ${compareHtml}
   </main>
   <script>${logicScript}</script>
 </body>
