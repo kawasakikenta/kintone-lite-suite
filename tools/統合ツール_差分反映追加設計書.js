@@ -11661,22 +11661,68 @@ if (act === 'runRecordCopy') return withGuard(runRecordCopy);
           apiGet(prefix, '/app/actions.json', { app: appId }).catch(() => ({ actions: {} })),
         ]);
         const fields = [], relations = [];
-        const walk = (props, sub) => {
+        const walk = (props, parentTable = '', parentTableLabel = '') => {
           for (const [c, f] of Object.entries(props)) {
             if (["GROUP", "SPACER", "HR", "LABEL"].includes(f.type)) continue;
             if (f.type === "SUBTABLE") {
-              fields.push({ code: c, label: f.label, type: "SUBTABLE", sub: true, inSubtable: !!sub });
-              if (options?.includeSubtableFields) walk(f.fields, c);
+              fields.push({
+                code: c,
+                label: f.label,
+                type: "SUBTABLE",
+                sub: true,
+                inSubtable: !!parentTable,
+                tableCode: parentTable || '',
+                tableLabel: parentTableLabel || '',
+                path: c,
+                displayPath: f.label ? `${f.label} [${c}]` : c
+              });
+              if (options?.includeSubtableFields) walk(f.fields, c, f.label || c);
               continue;
             }
             const isL = f.type === "LOOKUP", isR = f.type === "REFERENCE_TABLE";
             const isPK = /^(\$id|record_number|レコード番号)$/i.test(c);
-            fields.push({ code: c, label: f.label || c, type: f.type, required: !!f.required, unique: !!f.unique, isPK, isLookup: isL, isRef: isR, inSubtable: !!sub });
-            if (isL && f.lookup?.relatedApp?.app) relations.push({ from: c, fromLabel: f.label, toApp: Number(f.lookup.relatedApp.app), toField: f.lookup.relatedKeyField, kind: "LOOKUP" });
-            if (isR && f.referenceTable?.relatedApp?.app) relations.push({ from: c, fromLabel: f.label, toApp: Number(f.referenceTable.relatedApp.app), toField: f.referenceTable.condition?.field, kind: "REF" });
+            const fieldPath = parentTable ? `${parentTable}.${c}` : c;
+            const displayPath = parentTableLabel ? `${parentTableLabel} > ${f.label || c}` : (f.label || c);
+            fields.push({
+              code: c,
+              label: f.label || c,
+              type: f.type,
+              required: !!f.required,
+              unique: !!f.unique,
+              isPK,
+              isLookup: isL,
+              isRef: isR,
+              inSubtable: !!parentTable,
+              tableCode: parentTable || '',
+              tableLabel: parentTableLabel || '',
+              path: fieldPath,
+              displayPath
+            });
+            if (isL && f.lookup?.relatedApp?.app) relations.push({
+              from: c,
+              fromPath: fieldPath,
+              fromLabel: f.label || c,
+              fromDisplay: displayPath,
+              fromTableCode: parentTable || '',
+              fromTableLabel: parentTableLabel || '',
+              toApp: Number(f.lookup.relatedApp.app),
+              toField: f.lookup.relatedKeyField,
+              kind: "LOOKUP"
+            });
+            if (isR && f.referenceTable?.relatedApp?.app) relations.push({
+              from: c,
+              fromPath: fieldPath,
+              fromLabel: f.label || c,
+              fromDisplay: displayPath,
+              fromTableCode: parentTable || '',
+              fromTableLabel: parentTableLabel || '',
+              toApp: Number(f.referenceTable.relatedApp.app),
+              toField: f.referenceTable.condition?.field,
+              kind: "REF"
+            });
           }
         };
-        walk(fR.properties, null);
+        walk(fR.properties);
         Object.values(actionResp?.actions || {}).forEach((action, index) => {
           const toApp = Number(action?.destApp?.app || 0);
           if (!toApp) return;
@@ -11688,16 +11734,16 @@ if (act === 'runRecordCopy') return withGuard(runRecordCopy);
             kind: 'ACTION'
           });
         });
-        const linkedFieldCodes = new Set(
+        const linkedFieldPaths = new Set(
           relations
             .filter((rel) => rel.kind === 'LOOKUP' || rel.kind === 'REF')
-            .map((rel) => String(rel.from || '').trim())
+            .map((rel) => String(rel.fromPath || rel.from || '').trim())
             .filter(Boolean)
         );
         const essentialFields = fields.filter((field) => {
           if (field.type === 'SUBTABLE') return false;
           if (field.isPK || field.unique) return true;
-          return linkedFieldCodes.has(String(field.code || '').trim());
+          return linkedFieldPaths.has(String(field.path || field.code || '').trim());
         });
         const visibleFieldsSource = essentialFields.length ? essentialFields : fields.filter((field) => field.type !== 'SUBTABLE').slice(0, 6);
         const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
@@ -11804,24 +11850,31 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 #topbar{
   position:fixed;top:0;left:0;right:0;z-index:100;
   display:flex;align-items:center;gap:6px;padding:8px 14px;
-  background:linear-gradient(180deg,var(--bg) 70%,transparent);
-  overflow-x:auto;white-space:nowrap;scrollbar-width:none;
+  background:linear-gradient(180deg,var(--bg) 82%,rgba(8,9,13,0.92));
+  flex-wrap:wrap;overflow-x:hidden;white-space:normal;
 }
 #topbar::-webkit-scrollbar{display:none;}
 #topbar h1{font-size:14px;font-weight:700;margin-right:6px;white-space:nowrap;
   background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-.tb{padding:5px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:11px;cursor:pointer;transition:.15s;font-family:inherit;white-space:nowrap;}
+.tb{padding:5px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:11px;cursor:pointer;transition:.15s;font-family:inherit;white-space:nowrap;flex:0 0 auto;}
 .tb:hover{border-color:var(--accent);color:var(--accent);}
 .tb.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
-.meta-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:10px;color:var(--dim);}
+.meta-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:10px;color:var(--dim);max-width:100%;flex-wrap:wrap;}
 .meta-pill b{color:var(--text);font-weight:700;}
-#topbar select.tb-select{padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;outline:none;}
+#topbar select.tb-select{padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;outline:none;flex:0 0 auto;}
 #topbar select.tb-select:focus{border-color:var(--accent);}
 .sep{width:1px;height:20px;background:var(--border);margin:0 4px;}
 #search-box{padding:5px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;width:180px;font-family:inherit;outline:none;}
 #search-box:focus{border-color:var(--accent);}
 #search-box::placeholder{color:var(--dim);}
-.spacer{flex:1;}
+.spacer{flex:1 1 24px;}
+
+
+@media (max-width: 1280px){
+  #topbar{padding-right:10px;row-gap:8px;}
+  #topbar .sep{display:none;}
+  #search-box{width:min(220px,100%);flex:1 1 220px;}
+}
 
 /* ── Sidebar ── */
 #sidebar{
@@ -12103,6 +12156,11 @@ function fieldIconForLabel(f){
 function visibleFieldsForNode(app){
   return (app.fields || []).filter(f=>ER_OPTIONS.includeSubtableFields || !f.inSubtable);
 }
+function buildFieldDisplayName(field){
+  if(!field) return "";
+  if(field.inSubtable && field.tableLabel) return field.tableLabel + " > " + (field.label || field.code || "");
+  return field.label || field.code || field.path || "";
+}
 function buildNodeLabel(app){
   const limits = { compact: 8, standard: 14, full: 24 };
   const maxLines = limits[ER_OPTIONS.fieldDensity] || limits.standard;
@@ -12111,9 +12169,9 @@ function buildNodeLabel(app){
     const score = (f)=> (f.isPK ? 0 : (f.isLookup ? 1 : (f.isRef ? 2 : (f.required ? 3 : (f.inSubtable ? 5 : 4)))));
     const diff = score(a) - score(b);
     if(diff !== 0) return diff;
-    return String(a.label || a.code || '').localeCompare(String(b.label || b.code || ''));
+    return String(buildFieldDisplayName(a) || a.code || '').localeCompare(String(buildFieldDisplayName(b) || b.code || ''));
   });
-  const preview = ordered.slice(0, maxLines).map((f)=>fieldIconForLabel(f) + " " + ((f.label || f.code || '').trim()));
+  const preview = ordered.slice(0, maxLines).map((f)=>fieldIconForLabel(f) + " " + buildFieldDisplayName(f).trim());
   if(ordered.length > maxLines) preview.push("… +" + (ordered.length - maxLines) + " 件");
   const meta = [
     "ID:" + app.id,
@@ -12121,7 +12179,7 @@ function buildNodeLabel(app){
     "関連:" + app.relations.length,
     "深さ:" + (app.depth || 0)
   ].join(" • ");
-  return [app.name, meta, "─────────", ...preview].join("\\n");
+  return [app.name, meta, "─────────", ...preview].join("\n");
 }
 function detailFieldGroups(app){
   const groups={pk:[],lookup:[],ref:[],required:[],subtable:[],normal:[]};
@@ -12228,7 +12286,7 @@ let ei=0;
 APPS.forEach(app=>{
   app.relations.forEach(r=>{
     if(appMap.has(r.toApp)){
-      elements.push({data:{id:"e"+(ei++),source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label:r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連":"アクション"),fromLabel:r.fromLabel}});
+      elements.push({data:{id:"e"+(ei++),source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label:r.fromDisplay || r.fromLabel || (r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連":"アクション")),fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || ""}});
     }
   });
 });
@@ -12503,7 +12561,7 @@ function searchGraph(q){
     const app=appMap.get(n.data("appId"));
     if(!app) return false;
     if(app.name.toLowerCase().includes(low)) return true;
-    return visibleFieldsForNode(app).some(f=>(f.label||"").toLowerCase().includes(low)||(f.code||"").toLowerCase().includes(low));
+    return visibleFieldsForNode(app).some(f=>buildFieldDisplayName(f).toLowerCase().includes(low)||(f.code||"").toLowerCase().includes(low)||String(f.path||"").toLowerCase().includes(low));
   });
   if(matched.length){
     matched.addClass("highlighted");
@@ -12533,7 +12591,8 @@ cy.on("tap","node",e=>{
       const tgt=appMap.get(r.toApp);
       const tName=tgt?tgt.name:"アプリ "+r.toApp;
       const icon=r.kind==="LOOKUP"?"🔗":(r.kind==="REF"?"📋":"⚡");
-      relHtml+='<div class="field-row" style="cursor:pointer" onclick="focusApp('+r.toApp+')"><span class="field-icon">'+icon+'</span><span class="field-name">'+r.fromLabel+' → '+tName+'</span><span class="field-type">'+(r.kind==="ACTION"?"ACTION(アクション)":r.kind)+'</span></div>';
+      const relationLabel = r.fromDisplay || r.fromLabel || r.from || '';
+      relHtml+='<div class="field-row" style="cursor:pointer" onclick="focusApp('+r.toApp+')"><span class="field-icon">'+icon+'</span><span class="field-name" title="'+relationLabel+' → '+tName+'">'+relationLabel+' → '+tName+'</span><span class="field-type">'+(r.kind==="ACTION"?"ACTION(アクション)":r.kind)+'</span></div>';
     });
   }
   document.getElementById("detail-relations").innerHTML=relHtml;
@@ -12557,7 +12616,9 @@ cy.on("tap","node",e=>{
       if(f.required&&tagLabel!=="必須") tags+='<span class="tag tag-req">必須</span>';
       if(f.inSubtable) tags+='<span class="tag tag-sub">表</span>';
       if(f.unique) tags+='<span class="tag tag-pk">重複不可</span>';
-      fHtml+='<div class="field-row"><span class="field-icon">'+icon+'</span><span class="field-name">'+(f.label||f.code)+tags+'</span><span class="field-type">'+f.type+"</span></div>";
+      const fieldName = buildFieldDisplayName(f);
+      const title = f.path && f.path !== f.code ? fieldName+' ['+f.path+']' : fieldName;
+      fHtml+='<div class="field-row" title="'+title+'"><span class="field-icon">'+icon+'</span><span class="field-name">'+fieldName+tags+'</span><span class="field-type">'+f.type+"</span></div>";
     });
   };
   renderGroup("主キー",fieldGroups.pk,"tag-pk","PK");
