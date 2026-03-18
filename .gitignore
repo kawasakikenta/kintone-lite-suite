@@ -1,0 +1,5 @@
+node_modules/
+.tools/
+.claude/
+*.ppk
+*.zip

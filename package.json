@@ -1,0 +1,21 @@
+{
+  "name": "kintone",
+  "version": "1.0.0",
+  "description": "- 画像一括ダウンロード: `image_bulk_download.js`   - 登録情報: `snippets_registry.json`",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kawasakikenta/kintone.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/kawasakikenta/kintone/issues"
+  },
+  "homepage": "https://github.com/kawasakikenta/kintone#readme"
+}
