@@ -1947,6 +1947,7 @@
   const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
   const REPORT_META = ${safeJsonForScript(reportMeta)};
   const THEME_KEY = '${TOOL_ID}:diffReportTheme';
+  const ACTIVE_TAB_KEY = '${TOOL_ID}:diffReportActiveTab';
   const LINE_DIFF_MAX_CELLS = ${LINE_DIFF_MAX_CELLS};
   const CHAR_DIFF_MAX_CELLS = ${CHAR_DIFF_MAX_CELLS};
   const collapsed = new Set();
@@ -2219,6 +2220,21 @@
     document.getElementById('stat-same').textContent = String(same);
   }
 
+  function setActiveTab(tabName) {
+    const nextTab = tabName || 'summary';
+    document.querySelectorAll('[data-report-tab]').forEach((btn) => {
+      const active = btn.getAttribute('data-report-tab') === nextTab;
+      btn.classList.toggle('passive', !active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    document.querySelectorAll('[data-report-pane]').forEach((pane) => {
+      pane.hidden = pane.getAttribute('data-report-pane') !== nextTab;
+    });
+    const navWrap = document.getElementById('navWrap');
+    if (navWrap) navWrap.hidden = nextTab !== 'diff';
+    try { localStorage.setItem(ACTIVE_TAB_KEY, nextTab); } catch (e) {}
+  }
+
   function render() {
     const hideSame = !!document.getElementById('hideSame').checked;
     const useCharDiff = !!document.getElementById('charDiff').checked;
@@ -2373,7 +2389,7 @@
     URL.revokeObjectURL(a.href);
   }
 
-  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, copyDiffs, exportPatch };
+  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, copyDiffs, exportPatch, setActiveTab };
 
   document.getElementById('hideSame').onchange = render;
   document.getElementById('charDiff').onchange = render;
@@ -2383,6 +2399,9 @@
   document.getElementById('expandBtn').onclick = expandAll;
   document.getElementById('copyBtn').onclick = copyDiffs;
   document.getElementById('patchBtn').onclick = exportPatch;
+  document.querySelectorAll('[data-report-tab]').forEach((btn) => {
+    btn.onclick = () => setActiveTab(btn.getAttribute('data-report-tab'));
+  });
 
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
@@ -2396,6 +2415,7 @@
   });
 
   if (localStorage.getItem(THEME_KEY) === 'dark') document.body.classList.add('dark');
+  setActiveTab(localStorage.getItem(ACTIVE_TAB_KEY) || 'summary');
   render();
 })();
 `;
@@ -2453,8 +2473,9 @@
     .header-badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--card-soft);border-radius:999px;padding:6px 10px;font-size:11px;color:var(--muted)}
     .settings-shell{margin-top:16px;border:1px solid var(--border);border-radius:18px;overflow:hidden;background:var(--card);box-shadow:var(--shadow)}
     .settings-tabs{display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card-soft) 0%,var(--card) 100%)}
-    .settings-tab{padding:8px 14px;border-radius:999px;background:var(--accent-soft);color:var(--accent-strong);font-size:12px;font-weight:700}
-    .settings-tab.passive{background:transparent;color:var(--muted);border:1px solid var(--border)}
+    .settings-tab{padding:8px 14px;border-radius:999px;background:var(--accent-soft);color:var(--accent-strong);font-size:12px;font-weight:700;border:1px solid transparent;cursor:pointer}
+    .settings-tab.passive{background:transparent;color:var(--muted);border-color:var(--border)}
+    .tab-pane[hidden]{display:none!important}
     .app-compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px;border-bottom:1px solid var(--border);background:var(--card-soft)}
     .app-card{border:1px solid var(--border);border-radius:14px;background:var(--card);padding:14px;position:relative;overflow:hidden}
     .app-card::before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:var(--accent)}
@@ -2581,7 +2602,7 @@
         <button class="btn primary" id="patchBtn" style="grid-column:span 2">パッチJSON出力</button>
       </div>
     </div>
-    <div id="nav"></div>
+    <div id="navWrap"><div id="nav"></div></div>
   </aside>
   <main>
     <div class="topbar">
@@ -2599,80 +2620,86 @@
 
     <div class="settings-shell">
       <div class="settings-tabs">
-        <span class="settings-tab">アプリ設定比較</span>
-        <span class="settings-tab passive">差分一覧</span>
-        <span class="settings-tab passive">比較対象設定</span>
+        <button type="button" class="settings-tab" data-report-tab="summary" aria-selected="true">サマリー</button>
+        <button type="button" class="settings-tab passive" data-report-tab="diff" aria-selected="false">差分一覧</button>
+        <button type="button" class="settings-tab passive" data-report-tab="compare" aria-selected="false">比較対象設定</button>
       </div>
 
-      <div class="app-compare">
-        <section class="app-card source">
-          <div class="app-role">比較元 Source</div>
-          <div class="app-title">アプリ ${esc(reportMeta.source.appId || '-')}</div>
-          <div class="app-meta-grid">
-            <div class="meta-card"><span class="label">ゲストスペース</span><span class="value">${esc(reportMeta.source.guestId || '(通常空間)')}</span></div>
-            <div class="meta-card"><span class="label">モード</span><span class="value">${reportMeta.source.preview ? 'プレビュー' : '本番'}</span></div>
-            <div class="meta-card"><span class="label">Revision</span><span class="value">${esc(reportMeta.source.revision || '-')}</span></div>
-            <div class="meta-card"><span class="label">比較対象</span><span class="value">${esc(sectionText || '-')}</span></div>
-          </div>
-        </section>
-        <section class="app-card target">
-          <div class="app-role">比較先 Target</div>
-          <div class="app-title">アプリ ${esc(reportMeta.target.appId || '-')}</div>
-          <div class="app-meta-grid">
-            <div class="meta-card"><span class="label">ゲストスペース</span><span class="value">${esc(reportMeta.target.guestId || '(通常空間)')}</span></div>
-            <div class="meta-card"><span class="label">モード</span><span class="value">${reportMeta.target.preview ? 'プレビュー' : '本番'}</span></div>
-            <div class="meta-card"><span class="label">Revision</span><span class="value">${esc(reportMeta.target.revision || '-')}</span></div>
-            <div class="meta-card"><span class="label">正規化</span><span class="value">${esc(reportMeta.normalizationLabels.join(', ') || '-')}</span></div>
-          </div>
-        </section>
-      </div>
+      <section class="tab-pane" data-report-pane="summary">
+        <div class="app-compare">
+          <section class="app-card source">
+            <div class="app-role">比較元 Source</div>
+            <div class="app-title">アプリ ${esc(reportMeta.source.appId || '-')}</div>
+            <div class="app-meta-grid">
+              <div class="meta-card"><span class="label">ゲストスペース</span><span class="value">${esc(reportMeta.source.guestId || '(通常空間)')}</span></div>
+              <div class="meta-card"><span class="label">モード</span><span class="value">${reportMeta.source.preview ? 'プレビュー' : '本番'}</span></div>
+              <div class="meta-card"><span class="label">Revision</span><span class="value">${esc(reportMeta.source.revision || '-')}</span></div>
+              <div class="meta-card"><span class="label">比較対象</span><span class="value">${esc(sectionText || '-')}</span></div>
+            </div>
+          </section>
+          <section class="app-card target">
+            <div class="app-role">比較先 Target</div>
+            <div class="app-title">アプリ ${esc(reportMeta.target.appId || '-')}</div>
+            <div class="app-meta-grid">
+              <div class="meta-card"><span class="label">ゲストスペース</span><span class="value">${esc(reportMeta.target.guestId || '(通常空間)')}</span></div>
+              <div class="meta-card"><span class="label">モード</span><span class="value">${reportMeta.target.preview ? 'プレビュー' : '本番'}</span></div>
+              <div class="meta-card"><span class="label">Revision</span><span class="value">${esc(reportMeta.target.revision || '-')}</span></div>
+              <div class="meta-card"><span class="label">正規化</span><span class="value">${esc(reportMeta.normalizationLabels.join(', ') || '-')}</span></div>
+            </div>
+          </section>
+        </div>
 
-      <div class="summary-strip">
-        <span class="pill">総件数 <span class="count">${summary.total}</span></span>
-        <span class="pill">追加 <span class="count">${summary.added}</span></span>
-        <span class="pill">削除 <span class="count">${summary.removed}</span></span>
-        <span class="pill">変更 <span class="count">${summary.changed}</span></span>
-        <span class="pill">移動 <span class="count">${summary.moved}</span></span>
-        <span class="pill">同一 <span class="count">${summary.same}</span></span>
-        <span class="pill">取得失敗 <span class="count">${fetchIssues.length}</span></span>
-      </div>
+        <div class="summary-strip">
+          <span class="pill">総件数 <span class="count">${summary.total}</span></span>
+          <span class="pill">追加 <span class="count">${summary.added}</span></span>
+          <span class="pill">削除 <span class="count">${summary.removed}</span></span>
+          <span class="pill">変更 <span class="count">${summary.changed}</span></span>
+          <span class="pill">移動 <span class="count">${summary.moved}</span></span>
+          <span class="pill">同一 <span class="count">${summary.same}</span></span>
+          <span class="pill">取得失敗 <span class="count">${fetchIssues.length}</span></span>
+        </div>
 
-      <div class="info-grid">
-        <section class="panel">
-          <h3>比較条件</h3>
-          <div class="detail-list">
-            <div class="detail-row"><span class="detail-key">無視キー</span><span>${esc(reportMeta.ignoreKeys || '-')}</span></div>
-            <div class="detail-row"><span class="detail-key">出力対象</span><span>${esc(reportMeta.exportLabel || '全差分')}</span></div>
-            <div class="detail-row"><span class="detail-key">出力内容</span><span>${esc(reportMeta.exportContentLabel || '差分のみ')}</span></div>
-            <div class="detail-row"><span class="detail-key">セクション</span><span>${esc(sectionText || '-')}</span></div>
-          </div>
-          ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? ' (超過)' : ''}</div>` : ''}
-          ${reportMeta.truncated ? `<div class="warn">※ 出力負荷を抑えるため、先頭 ${reportMeta.renderedRows} 件のみをレポートに含めています（元件数 ${reportMeta.totalRows} 件）。</div>` : ''}
-        </section>
-        <section class="panel">
-          <h3>レビュー補助</h3>
-          <div class="detail-list">
-            <div class="detail-row"><span class="detail-key">文字差分</span><span>行内ハイライト対応</span></div>
-            <div class="detail-row"><span class="detail-key">検索</span><span>パス / 値 / 理由</span></div>
-            <div class="detail-row"><span class="detail-key">ナビゲーション</span><span>左ペインからセクション移動</span></div>
-            <div class="detail-row"><span class="detail-key">出力</span><span>Patch JSON / コピー</span></div>
-          </div>
-        </section>
-      </div>
+        <div class="info-grid">
+          <section class="panel">
+            <h3>比較条件</h3>
+            <div class="detail-list">
+              <div class="detail-row"><span class="detail-key">無視キー</span><span>${esc(reportMeta.ignoreKeys || '-')}</span></div>
+              <div class="detail-row"><span class="detail-key">出力対象</span><span>${esc(reportMeta.exportLabel || '全差分')}</span></div>
+              <div class="detail-row"><span class="detail-key">出力内容</span><span>${esc(reportMeta.exportContentLabel || '差分のみ')}</span></div>
+              <div class="detail-row"><span class="detail-key">セクション</span><span>${esc(sectionText || '-')}</span></div>
+            </div>
+            ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? ' (超過)' : ''}</div>` : ''}
+            ${reportMeta.truncated ? `<div class="warn">※ 出力負荷を抑えるため、先頭 ${reportMeta.renderedRows} 件のみをレポートに含めています（元件数 ${reportMeta.totalRows} 件）。</div>` : ''}
+          </section>
+          <section class="panel">
+            <h3>レビュー補助</h3>
+            <div class="detail-list">
+              <div class="detail-row"><span class="detail-key">文字差分</span><span>行内ハイライト対応</span></div>
+              <div class="detail-row"><span class="detail-key">検索</span><span>パス / 値 / 理由</span></div>
+              <div class="detail-row"><span class="detail-key">ナビゲーション</span><span>左ペインからセクション移動</span></div>
+              <div class="detail-row"><span class="detail-key">出力</span><span>Patch JSON / コピー</span></div>
+            </div>
+          </section>
+        </div>
 
-      ${fetchIssues.length ? `<div class="issue-box">
-        <h3>API取得失敗 ${fetchIssues.length}件</h3>
-        <table>
-          <thead><tr><th style="width:200px">セクション</th><th style="width:90px">対象</th><th>内容</th></tr></thead>
-          <tbody>${fetchIssues.map((issue) => `<tr><td>${esc(issue.section || issue.sectionKey || '-')}</td><td>${esc(getIssueSideLabel(issue.side))}</td><td><div class="msg">${esc(issue.message || '-')}</div></td></tr>`).join('')}</tbody>
-        </table>
-      </div>` : ''}
+        ${fetchIssues.length ? `<div class="issue-box">
+          <h3>API取得失敗 ${fetchIssues.length}件</h3>
+          <table>
+            <thead><tr><th style="width:200px">セクション</th><th style="width:90px">対象</th><th>内容</th></tr></thead>
+            <tbody>${fetchIssues.map((issue) => `<tr><td>${esc(issue.section || issue.sectionKey || '-')}</td><td>${esc(getIssueSideLabel(issue.side))}</td><td><div class="msg">${esc(issue.message || '-')}</div></td></tr>`).join('')}</tbody>
+          </table>
+        </div>` : ''}
+      </section>
 
-      <div class="content">
-        <div id="main"></div>
-      </div>
+      <section class="tab-pane" data-report-pane="diff" hidden>
+        <div class="content">
+          <div id="main"></div>
+        </div>
+      </section>
 
-      ${compareHtml}
+      <section class="tab-pane" data-report-pane="compare" hidden>
+        ${compareHtml || '<div class="content"><div class="no-diff">比較対象設定の出力はありません。</div></div>'}
+      </section>
     </div>
   </main>
   <script>${logicScript}</script>
