@@ -17,5 +17,8 @@
   "bugs": {
     "url": "https://github.com/kawasakikenta/kintone/issues"
   },
-  "homepage": "https://github.com/kawasakikenta/kintone#readme"
+  "homepage": "https://github.com/kawasakikenta/kintone#readme",
+  "devDependencies": {
+    "@kintone/plugin-packer": "^9.1.0"
+  }
 }

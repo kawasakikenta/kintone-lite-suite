@@ -1,0 +1,1231 @@
+'use strict';
+
+import { SECTION_DEFS, DEFAULT_APP_ID, FEATURE_DEFS } from './constants.js';
+import { state, ui } from './state.js';
+import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys } from './utils.js';
+import { buildApiPrefix } from './api.js';
+import { getActualDiffRows } from './diff/engine.js';
+import { getRenderedDiffRows } from './diff/filter.js';
+import { renderResultRows, renderDiffFilterOptions, syncDiffThemeButton, renderDiffWarningBox, renderDiffSelectionState } from './diff/export.js';
+import {
+  setStatus,
+  setBusy,
+  switchTab,
+  switchSubTab,
+  renderIgnoreKeyChips,
+  renderBundleState,
+  renderReflectNodeList,
+  renderReflectModeUi,
+  renderReflectSidebar,
+  renderReflectMainPanel,
+  renderReflectAssistPanel,
+  renderReflectNodeDetail,
+  renderScopeChips,
+  renderLookupMapRows,
+  syncLookupMapFromRows,
+  setSettingsExportScopeSelection,
+  syncApplyScopesFromSidebar
+} from './ui/components.js';
+import {
+  fitDialogToViewport,
+  applyDialogSizePreset,
+  getRoot,
+  teardownDialogResizeHandling,
+  initDialogResizeHandling,
+  initDialogDragHandling
+} from './ui/dialog.js';
+import { openGuidedTour, closeGuidedTour, moveGuidedTour, scheduleGuidedTourLayout } from './ui/tour.js';
+
+import {
+  runDiff,
+  runDiffAndPreviewPlan,
+  copyDiffSummaryToClipboard,
+  exportBundleJson,
+  exportDiffJson,
+  exportDiffHtml,
+  exportPatchJson,
+  importBundleFromFile,
+  commonParams,
+  saveCurrentDialogState,
+  restoreDialogState,
+  addIgnoreKeyFromInput,
+  applyIgnorePresetKeysToInput,
+  currentDiffSignature,
+  ensureDiffPreparedForReflect
+} from './tabs/diff.js';
+
+import {
+  loadReflectRowsFromLastDiff,
+  getSelectedReflectRows,
+  runReflectModeAll,
+  getEffectiveReflectScopeInfo,
+  getDiffCountsBySection,
+  runPrefetchCommonData,
+  pushReflectUndo,
+  undoReflectState,
+  redoReflectState,
+  reflectRowModeById,
+  getActiveReflectRow,
+  setActiveReflectNode
+} from './tabs/reflect.js';
+
+import {
+  runFieldApply,
+  runLoadTargetFields,
+  runLoadSourceFieldsList,
+  runInsertSelectedSourceFields,
+  parseFieldInput,
+  parseLookupMapInput,
+  parseAppIdList
+} from './tabs/field.js';
+
+import {
+  runSettingsExport,
+  runSettingsExportSearchApps,
+  addAppIdToSettingsExport
+} from './tabs/settings-export.js';
+
+// --- These functions are not yet extracted into modules. They remain in the
+//     monolithic file or will be extracted in future refactoring steps.
+//     For now, they are expected to be injected or available in scope. ---
+//
+//   runDesignExport, runDesignCopyMd, runDesignExportXlsx, runDesignDiffMd,
+//   runFieldDependencyMap, runFetchJsConfig, runExportJsConfig, runApplyJsConfig,
+//   runRenderProcessFlow, launchKintoneSql, runGenerateERDiagram,
+//   runExportERDiagramHtml, runBatchProcess, runBatchFileDownload,
+//   runBatchJsConfigDownload, loadViewsForSelect, runCsvExport, runCsvImport,
+//   exportDiffXlsx, runRecordCopy, saveTemplate, loadTemplate, deleteTemplate,
+//   runSimStart, runSimExecuteAction, runApiTester,
+//   runPreviewApplyPlan, runBackupTargetPreview, runApplyPreview, runDeployOnly,
+//   runApplyPatchJson, importPatchJsonFromFile, parsePatchJsonPayload,
+//   renderPatchJsonSummary, renderCustomizeResult,
+//   runBulkFieldRename, runDetectUnusedFields,
+//   normalizeDiffFavoritePath, renderDiffSnapshotHistory,
+//   renderDiffFavoritesOnlyButton, renderTemplateOptions
+
+// ---------------------------------------------------------------------------
+// withGuard - wraps async actions with running guard and busy indicator
+// ---------------------------------------------------------------------------
+
+export function withGuard(fn, busyText) {
+  if (state.running) {
+    setStatus('別の処理を実行中です。完了までお待ちください。');
+    return;
+  }
+  state.running = true;
+  setBusy(true, busyText || '処理中...');
+  return (async () => {
+    try {
+      await fn();
+    } catch (e) {
+      console.error(e);
+      setStatus(`エラー: ${e.message || String(e)}`, true);
+    } finally {
+      state.running = false;
+      setBusy(false);
+    }
+  })();
+}
+
+// ---------------------------------------------------------------------------
+// setScopeSelection helper
+// ---------------------------------------------------------------------------
+
+function setScopeSelection(container, checked) {
+  [...container.querySelectorAll('input[type="checkbox"]')].forEach((c) => { c.checked = !!checked; });
+  saveCurrentDialogState();
+}
+
+// ---------------------------------------------------------------------------
+// normalizeDiffFavoritePath (local copy - may be extracted later)
+// ---------------------------------------------------------------------------
+
+function normalizeDiffFavoritePath(path) {
+  return String(path || '').trim();
+}
+
+// ---------------------------------------------------------------------------
+// Setup all event handlers
+// ---------------------------------------------------------------------------
+
+export function setupEventHandlers(injected = {}) {
+  const root = getRoot();
+  if (!root) return;
+
+  const {
+    runDesignExport,
+    runDesignCopyMd,
+    runDesignExportXlsx,
+    runDesignDiffMd,
+    runFieldDependencyMap,
+    runFetchJsConfig,
+    runExportJsConfig,
+    runApplyJsConfig,
+    runRenderProcessFlow,
+    launchKintoneSql,
+    runGenerateERDiagram,
+    runExportERDiagramHtml,
+    runBatchProcess,
+    runBatchFileDownload,
+    runBatchJsConfigDownload,
+    loadViewsForSelect,
+    runCsvExport,
+    runCsvImport,
+    exportDiffXlsx,
+    runRecordCopy,
+    saveTemplate,
+    loadTemplate,
+    deleteTemplate,
+    runSimStart,
+    runSimExecuteAction,
+    runApiTester,
+    runPreviewApplyPlan,
+    runBackupTargetPreview,
+    runApplyPreview,
+    runDeployOnly,
+    runApplyPatchJson,
+    importPatchJsonFromFile,
+    parsePatchJsonPayload,
+    renderPatchJsonSummary,
+    renderCustomizeResult,
+    runBulkFieldRename,
+    runDetectUnusedFields,
+    renderDiffSnapshotHistory,
+    renderDiffFavoritesOnlyButton,
+    renderTemplateOptions
+  } = injected;
+
+  // -------------------------------------------------------------------
+  // Initialization
+  // -------------------------------------------------------------------
+
+  renderScopeChips();
+  restoreDialogState();
+  fitDialogToViewport({ persist: false });
+  initDialogResizeHandling();
+  initDialogDragHandling();
+  syncDiffThemeButton();
+  renderIgnoreKeyChips();
+  renderDiffFilterOptions();
+  if (typeof renderDiffFavoritesOnlyButton === 'function') renderDiffFavoritesOnlyButton();
+  renderDiffSelectionState();
+  if (typeof renderDiffWarningBox === 'function') renderDiffWarningBox();
+  if (typeof renderDiffSnapshotHistory === 'function') renderDiffSnapshotHistory();
+  renderLookupMapRows();
+  if (typeof renderTemplateOptions === 'function') renderTemplateOptions();
+  renderBundleState();
+  renderReflectSidebar();
+  renderReflectMainPanel();
+  renderReflectNodeList();
+  if (!ui.settingsExportSearchResult.innerHTML) {
+    ui.settingsExportSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
+  }
+
+  // -------------------------------------------------------------------
+  // Scroll & resize listeners
+  // -------------------------------------------------------------------
+
+  if (ui.toolBody) {
+    ui.toolBody.addEventListener('scroll', () => {
+      if (state.guidedTourActive) scheduleGuidedTourLayout();
+    }, { passive: true });
+  }
+
+  let guidedTourWindowResizeHandler = null;
+  if (!guidedTourWindowResizeHandler) {
+    guidedTourWindowResizeHandler = () => {
+      fitDialogToViewport({ persist: false });
+      if (state.guidedTourActive) scheduleGuidedTourLayout();
+    };
+    window.addEventListener('resize', guidedTourWindowResizeHandler);
+  }
+
+  // -------------------------------------------------------------------
+  // Individual element change listeners
+  // -------------------------------------------------------------------
+
+  ui.applyDiffOnly.addEventListener('change', () => {
+    saveCurrentDialogState();
+    renderBundleState();
+    renderReflectModeUi();
+  });
+
+  [ui.ignorePresetFieldOrder, ui.ignorePresetMeta, ui.ignorePresetLabelName].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('change', () => {
+      applyIgnorePresetKeysToInput({ removeDisabled: true });
+      saveCurrentDialogState();
+    });
+  });
+
+  [ui.diffNormalizeViewOrder, ui.diffNormalizePermissionOrder].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('change', () => {
+      saveCurrentDialogState();
+      setStatus('正規化プリセットを更新しました。次回の差分比較に反映されます');
+    });
+  });
+
+  if (ui.diffWarnThreshold) {
+    ui.diffWarnThreshold.addEventListener('change', () => {
+      saveCurrentDialogState();
+      if (typeof renderDiffWarningBox === 'function') renderDiffWarningBox();
+      if (typeof renderDiffSnapshotHistory === 'function') renderDiffSnapshotHistory();
+    });
+  }
+
+  ui.stopOnError.addEventListener('change', saveCurrentDialogState);
+  ui.nodeMode.addEventListener('change', () => {
+    saveCurrentDialogState();
+    renderBundleState();
+    renderReflectNodeList();
+  });
+
+  let nodeSearchTimer = null;
+  if (ui.nodeSearch) {
+    ui.nodeSearch.addEventListener('input', () => {
+      clearTimeout(nodeSearchTimer);
+      nodeSearchTimer = setTimeout(() => renderReflectNodeList(), 200);
+    });
+  }
+  if (ui.nodeFilterSection) ui.nodeFilterSection.addEventListener('change', () => renderReflectNodeList());
+  if (ui.nodeFilterType) ui.nodeFilterType.addEventListener('change', () => renderReflectNodeList());
+  if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.addEventListener('change', () => renderReflectNodeList());
+
+  [
+    ui.sourceApp, ui.sourceGuest, ui.sourcePreview,
+    ui.targetApp, ui.targetGuest, ui.targetPreview,
+    ui.ignoreKeys, ui.autoBackupPreview,
+    ui.overwriteField, ui.deployField,
+    ui.jsconfigPreview, ui.jsconfigDeployAfter,
+    ui.erLayout, ui.erFieldDensity, ui.erMaxDepth, ui.erExtraApps, ui.erIncludeSubtable,
+    ui.diffMultiTargets,
+    ui.settingsExportAppIds, ui.settingsExportSearchKeyword,
+    ui.settingsExportGuest, ui.settingsExportPreview
+  ].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('change', saveCurrentDialogState);
+  });
+
+  if (ui.charDiff) {
+    ui.charDiff.addEventListener('change', () => {
+      saveCurrentDialogState();
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+    });
+  }
+
+  if (ui.diffIncludeSame) {
+    ui.diffIncludeSame.addEventListener('change', () => {
+      state.diffIncludeSame = !!ui.diffIncludeSame.checked;
+      saveCurrentDialogState();
+      if (state.lastDiffAt && state.lastSourceBundle && state.lastTargetBundle) {
+        withGuard(async () => runDiff(), '差分比較を更新中...');
+        return;
+      }
+      setStatus(`差分なし表示を${state.diffIncludeSame ? 'ON' : 'OFF'}にしました。次回の差分比較から反映されます`);
+    });
+  }
+
+  if (ui.diffSearch) {
+    ui.diffSearch.addEventListener('input', () => {
+      saveCurrentDialogState();
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+    });
+  }
+
+  if (ui.diffMultiTargets) {
+    ui.diffMultiTargets.addEventListener('input', saveCurrentDialogState);
+  }
+
+  [ui.diffFilterSection, ui.diffFilterType, ui.diffFilterSeverity].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('change', () => {
+      state.diffFilterSection = ui.diffFilterSection?.value || '';
+      state.diffFilterType = ui.diffFilterType?.value || '';
+      state.diffFilterSeverity = ui.diffFilterSeverity?.value || '';
+      saveCurrentDialogState();
+      if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+      else renderDiffSelectionState();
+    });
+  });
+
+  if (ui.diffExportMode) {
+    ui.diffExportMode.addEventListener('change', () => {
+      state.diffExportMode = ui.diffExportMode.value || 'all';
+      saveCurrentDialogState();
+      renderDiffSelectionState();
+    });
+  }
+
+  if (ui.diffExportContent) {
+    ui.diffExportContent.addEventListener('change', () => {
+      state.diffExportContent = ui.diffExportContent.value || 'diffOnly';
+      saveCurrentDialogState();
+      renderDiffSelectionState();
+    });
+  }
+
+  ui.doDeploy.addEventListener('change', saveCurrentDialogState);
+
+  // -------------------------------------------------------------------
+  // Keyboard handler
+  // -------------------------------------------------------------------
+
+  root.addEventListener('keydown', (e) => {
+    const editable = e.target && (
+      e.target.tagName === 'INPUT'
+      || e.target.tagName === 'TEXTAREA'
+      || e.target.tagName === 'SELECT'
+      || e.target.isContentEditable
+    );
+
+    if (state.guidedTourActive && !editable) {
+      if (e.key === 'Escape') { e.preventDefault(); closeGuidedTour(); return; }
+      if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); moveGuidedTour(1); return; }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); moveGuidedTour(-1); return; }
+    }
+
+    if (e.target.id === 'u_ignoreKeyInput' && e.key === 'Enter') {
+      e.preventDefault();
+      addIgnoreKeyFromInput();
+      return;
+    }
+
+    const featCard = e.target.closest?.('.feature-card[data-feature]');
+    if (featCard && !editable && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      featCard.click();
+      return;
+    }
+
+    if (state.activeTab !== 'diff') return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      ui.diffSearch?.focus();
+      ui.diffSearch?.select();
+      return;
+    }
+    if (e.key === 'Escape' && document.activeElement === ui.diffSearch) {
+      e.preventDefault();
+      ui.diffSearch.value = '';
+      saveCurrentDialogState();
+      renderResultRows(state.lastDiffRows);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
+      e.preventDefault();
+      withGuard(async () => copyDiffSummaryToClipboard());
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && !editable) {
+      e.preventDefault();
+      state.diffSelectedIds = new Set((state.lastDiffRows || []).map((row) => row._id));
+      renderResultRows(state.lastDiffRows);
+    }
+  });
+
+  // -------------------------------------------------------------------
+  // Input handler
+  // -------------------------------------------------------------------
+
+  root.addEventListener('input', (e) => {
+    if (e.target.closest('#u_lookupMapRows')) {
+      syncLookupMapFromRows();
+      saveCurrentDialogState();
+      return;
+    }
+    if (e.target === ui.diffMultiTargets) {
+      saveCurrentDialogState();
+    }
+  });
+
+  // -------------------------------------------------------------------
+  // Settings export search enter key
+  // -------------------------------------------------------------------
+
+  ui.settingsExportSearchKeyword.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    withGuard(runSettingsExportSearchApps);
+  });
+
+  // -------------------------------------------------------------------
+  // Change handler (delegated)
+  // -------------------------------------------------------------------
+
+  root.addEventListener('change', (e) => {
+    const diffId = e.target?.dataset?.diffRowId;
+    if (diffId) {
+      if (e.target.checked) state.diffSelectedIds.add(diffId);
+      else state.diffSelectedIds.delete(diffId);
+      renderResultRows(state.lastDiffRows);
+      saveCurrentDialogState();
+      return;
+    }
+
+    const id = e.target?.dataset?.nodeId;
+    if (id) {
+      pushReflectUndo();
+      state.reflectActiveNodeId = id;
+      if (e.target.checked) state.reflectSelectedIds.add(id);
+      else state.reflectSelectedIds.delete(id);
+      renderReflectNodeList();
+      return;
+    }
+
+    if (e.target?.closest('#u_diffScopes') || e.target?.closest('#u_applyScopes') || e.target?.closest('#u_settingsExportScopes')) {
+      saveCurrentDialogState();
+      renderBundleState();
+    }
+    if (e.target?.closest('[data-apply-scope]')) {
+      syncApplyScopesFromSidebar();
+      saveCurrentDialogState();
+      renderBundleState();
+      renderReflectMainPanel();
+      const putSections = SECTION_DEFS.filter((d) => d.put);
+      const sidebarCount = document.getElementById('u_sidebarCount');
+      const checkedCount = [...document.querySelectorAll('#u_reflectSidebarSections [data-apply-scope]:checked')].length;
+      if (sidebarCount) sidebarCount.textContent = `${checkedCount} / ${putSections.length}`;
+    }
+  });
+
+  // -------------------------------------------------------------------
+  // File input handlers
+  // -------------------------------------------------------------------
+
+  ui.sourceBundleFile.addEventListener('change', () => {
+    const f = ui.sourceBundleFile.files && ui.sourceBundleFile.files[0];
+    ui.sourceBundleFile.value = '';
+    if (!f) return;
+    withGuard(async () => {
+      await importBundleFromFile('source', f);
+      setStatus(`比較元バンドル読込完了: ${f.name}`);
+    });
+  });
+
+  ui.targetBundleFile.addEventListener('change', () => {
+    const f = ui.targetBundleFile.files && ui.targetBundleFile.files[0];
+    ui.targetBundleFile.value = '';
+    if (!f) return;
+    withGuard(async () => {
+      await importBundleFromFile('target', f);
+      setStatus(`比較先バンドル読込完了: ${f.name}`);
+    });
+  });
+
+  ui.fieldJsonFile.addEventListener('change', () => {
+    const f = ui.fieldJsonFile.files && ui.fieldJsonFile.files[0];
+    ui.fieldJsonFile.value = '';
+    if (!f) return;
+    withGuard(async () => {
+      const text = await readTextFile(f);
+      const parsed = JSON.parse(text);
+      ui.fieldJson.value = JSON.stringify(parsed, null, 2);
+      setStatus(`フィールドJSON読込完了: ${f.name}`);
+    });
+  });
+
+  ui.jsconfigFile.addEventListener('change', () => {
+    const f = ui.jsconfigFile.files && ui.jsconfigFile.files[0];
+    ui.jsconfigFile.value = '';
+    if (!f) return;
+    withGuard(async () => {
+      const text = await readTextFile(f);
+      const parsed = JSON.parse(text);
+      ui.jsconfigJson.value = JSON.stringify(parsed, null, 2);
+      if (typeof renderCustomizeResult === 'function') renderCustomizeResult(parsed);
+      setStatus(`JS/CSS設定JSON読込完了: ${f.name}`);
+    });
+  });
+
+  const patchJsonFileInput = document.getElementById('u_patchJsonFileInput');
+  if (patchJsonFileInput) {
+    patchJsonFileInput.addEventListener('change', () => {
+      const f = patchJsonFileInput.files && patchJsonFileInput.files[0];
+      patchJsonFileInput.value = '';
+      if (!f) return;
+      withGuard(async () => {
+        if (typeof importPatchJsonFromFile === 'function') await importPatchJsonFromFile(f);
+      });
+    });
+  }
+
+  const patchJsonEditor = document.getElementById('u_patchJsonEditor');
+  if (patchJsonEditor) {
+    let patchParseTimer = 0;
+    patchJsonEditor.addEventListener('input', () => {
+      clearTimeout(patchParseTimer);
+      patchParseTimer = setTimeout(() => {
+        try {
+          const text = patchJsonEditor.value.trim();
+          if (!text) { if (typeof renderPatchJsonSummary === 'function') renderPatchJsonSummary(null); return; }
+          if (typeof parsePatchJsonPayload === 'function') {
+            const parsed = parsePatchJsonPayload(text);
+            state.importedPatchPayload = parsed;
+            if (typeof renderPatchJsonSummary === 'function') renderPatchJsonSummary(parsed);
+          }
+        } catch (e) {
+          const el = document.getElementById('u_patchJsonSummary');
+          if (el) {
+            el.style.display = 'block';
+            el.style.background = '#fef2f2';
+            el.style.borderColor = '#fca5a5';
+            el.style.color = '#991b1b';
+            el.textContent = `JSON解析エラー: ${e.message}`;
+          }
+        }
+      }, 400);
+    });
+  }
+
+  // -------------------------------------------------------------------
+  // Main click handler (data-act dispatch)
+  // -------------------------------------------------------------------
+
+  root.addEventListener('click', (e) => {
+    // Favorite toggle
+    const favBtn = e.target.closest('[data-diff-fav-path]');
+    if (favBtn) {
+      const path = normalizeDiffFavoritePath(favBtn.dataset.diffFavPath || '');
+      if (!path) return;
+      if (state.diffFavoritePaths.has(path)) state.diffFavoritePaths.delete(path);
+      else state.diffFavoritePaths.add(path);
+      saveCurrentDialogState();
+      renderResultRows(state.lastDiffRows);
+      return;
+    }
+
+    // Sidebar section click
+    const sidebarItem = e.target.closest('[data-sidebar-sec]');
+    if (sidebarItem && !e.target.closest('.sec-check')) {
+      const secKey = sidebarItem.dataset.sidebarSec || '';
+      state.reflectActiveSidebarSection = (state.reflectActiveSidebarSection === secKey) ? null : secKey;
+      renderReflectSidebar();
+      renderReflectMainPanel();
+      return;
+    }
+
+    // Overview nav
+    const overviewNav = e.target.closest('[data-sidebar-nav]');
+    if (overviewNav) {
+      const secKey = overviewNav.dataset.sidebarNav || '';
+      if (secKey) {
+        state.reflectActiveSidebarSection = secKey;
+        renderReflectSidebar();
+        renderReflectMainPanel();
+      }
+      return;
+    }
+
+    // Section toggle (collapse/expand)
+    const secToggle = e.target.closest('[data-diff-sec-toggle]');
+    if (secToggle) {
+      const secKey = secToggle.dataset.diffSecToggle || '';
+      if (secKey) {
+        if (state.diffCollapsedSections.has(secKey)) state.diffCollapsedSections.delete(secKey);
+        else state.diffCollapsedSections.add(secKey);
+        if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      }
+      return;
+    }
+
+    // More diff rows
+    const moreRowsBtn = e.target.closest('[data-act="moreDiffRows"]');
+    if (moreRowsBtn) {
+      const secKey = moreRowsBtn.dataset.sec || '';
+      if (!secKey) return;
+      const current = Number(state.diffSectionVisibleCounts[secKey] || 80);
+      state.diffSectionVisibleCounts[secKey] = current + 80;
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      return;
+    }
+
+    // Node mode toggle
+    const modeBtn = e.target.closest('[data-node-mode]');
+    if (modeBtn) {
+      const nodeId = modeBtn.dataset.nodeMode;
+      if (nodeId) {
+        pushReflectUndo();
+        state.reflectActiveNodeId = nodeId;
+        state.reflectNodeModes[nodeId] = reflectRowModeById(nodeId) === 'src' ? 'tgt' : 'src';
+        renderReflectNodeList();
+        setStatus(`ノードモード切替: ${state.reflectNodeModes[nodeId] === 'src' ? '比較元' : '比較先'}`);
+      }
+      return;
+    }
+
+    // Node open (select active node)
+    const nodeOpen = e.target.closest('[data-node-open]');
+    if (nodeOpen && !e.target.closest('input,button,label,a')) {
+      const nodeId = nodeOpen.dataset.nodeOpen || '';
+      if (nodeId) {
+        setActiveReflectNode(nodeId, { persist: false });
+        renderReflectNodeList();
+      }
+      return;
+    }
+
+    // Node detail tab
+    const nodeDetailTab = e.target.closest('[data-node-detail-tab]');
+    if (nodeDetailTab) {
+      state.reflectDetailTab = nodeDetailTab.dataset.nodeDetailTab || 'diff';
+      saveCurrentDialogState();
+      renderReflectNodeDetail();
+      return;
+    }
+
+    // Copy button
+    const copyBtn = e.target.closest('[data-copy-val]');
+    if (copyBtn) {
+      const val = copyBtn.dataset.copyVal || '';
+      try {
+        navigator.clipboard.writeText(val);
+        const originalText = copyBtn.textContent;
+        copyBtn.textContent = 'コピー済';
+        setTimeout(() => { copyBtn.textContent = originalText; }, 1500);
+      } catch (err) {
+        setStatus(`コピー失敗: ${err.message}`, true);
+      }
+      return;
+    }
+
+    // Add suggested ignore key
+    const addSuggestedBtn = e.target.closest('[data-act="addSuggestedIgnore"]');
+    if (addSuggestedBtn) {
+      const key = addSuggestedBtn.dataset.key || '';
+      if (!key) return;
+      const current = (ui.ignoreKeys.value || '').split(',').map((k) => k.trim()).filter(Boolean);
+      if (!current.includes(key)) {
+        current.push(key);
+        ui.ignoreKeys.value = current.join(', ');
+        renderIgnoreKeyChips();
+        saveCurrentDialogState();
+        setStatus(`無視キー候補を追加: ${key}`);
+      }
+      return;
+    }
+
+    // Add settings export app
+    const addSettingsAppBtn = e.target.closest('[data-add-settings-app]');
+    if (addSettingsAppBtn) {
+      const appId = addSettingsAppBtn.dataset.addSettingsApp || '';
+      const appName = addSettingsAppBtn.dataset.addSettingsName || '';
+      addAppIdToSettingsExport(appId, appName);
+      return;
+    }
+
+    // Source field check-all
+    if (e.target.id === 'u_sourceFieldCheckAll') {
+      const checked = e.target.checked;
+      [...ui.sourceFieldTbody.querySelectorAll('.src-field-sel')].forEach(c => c.checked = checked);
+      return;
+    }
+
+    // Sub-tab switching
+    const subTab = e.target.closest('.subtab');
+    if (subTab) {
+      switchSubTab(subTab.dataset.subtabParent || '', subTab.dataset.subtab || '');
+      return;
+    }
+
+    // Tab switching
+    const tab = e.target.closest('.tab');
+    if (tab) {
+      switchTab(tab.dataset.tab);
+      return;
+    }
+
+    // data-act dispatch（ランチャー feature-card 内の子要素クリックでも拾う）
+    const actEl = e.target.closest('[data-act]');
+    const act = actEl?.dataset.act;
+    if (!act) return;
+
+    if (act === 'openFeature') {
+      const featureKey = actEl.dataset.feature || '';
+      const def = FEATURE_DEFS.find((f) => f.key === featureKey);
+      if (!def) return;
+      root.classList.remove('screen-launcher');
+      root.classList.add('screen-feature');
+      root.classList.remove('feat-vis', 'feat-data', 'feat-change');
+      if (featureKey === 'vis') root.classList.add('feat-vis');
+      else if (featureKey === 'data') root.classList.add('feat-data');
+      else root.classList.add('feat-change');
+      const conn = root.querySelector('#u_connectionPanel');
+      if (conn instanceof HTMLDetailsElement) conn.open = true;
+      switchTab(def.tabs[0]);
+      if (ui.featureTitle) ui.featureTitle.textContent = def.label;
+      if (ui.featureConn) ui.featureConn.textContent = def.desc;
+      saveCurrentDialogState();
+      setStatus(`${def.label} を開きました`);
+      return;
+    }
+    if (act === 'backToLauncher') {
+      root.classList.remove('screen-feature', 'feat-vis', 'feat-data', 'feat-change');
+      root.classList.add('screen-launcher');
+      saveCurrentDialogState();
+      setStatus('機能を選んでください');
+      return;
+    }
+
+    // ----- Dialog controls -----
+    if (act === 'close') {
+      closeGuidedTour({ silent: true });
+      teardownDialogResizeHandling();
+      root.remove();
+      return;
+    }
+    if (act === 'startGuidedTour') { openGuidedTour(0); return; }
+    if (act === 'tourClose') { closeGuidedTour(); return; }
+    if (act === 'tourPrev') { moveGuidedTour(-1); return; }
+    if (act === 'tourNext') { moveGuidedTour(1); return; }
+    if (act === 'dialogSizeDefault') {
+      const next = applyDialogSizePreset('default');
+      saveCurrentDialogState();
+      setStatus(`ダイアログを標準サイズにしました (${next.width} x ${next.height})`);
+      return;
+    }
+    if (act === 'dialogSizeLarge') {
+      const next = applyDialogSizePreset('large');
+      saveCurrentDialogState();
+      setStatus(`ダイアログを大きめサイズにしました (${next.width} x ${next.height})`);
+      return;
+    }
+    if (act === 'dialogSizeMax') {
+      const next = applyDialogSizePreset('max');
+      saveCurrentDialogState();
+      setStatus(`ダイアログを最大サイズにしました (${next.width} x ${next.height})`);
+      return;
+    }
+
+    // ----- Navigation -----
+    if (act === 'goDiffReview') {
+      switchTab('diff');
+      switchSubTab('diff', (state.lastDiffRows.length || state.lastFetchIssues.length) ? 'view' : 'conditions');
+      setStatus('差分比較タブへ移動しました');
+      return;
+    }
+
+    // ----- Source / Target quick actions -----
+    if (act === 'setSourceCurrent') {
+      ui.sourceApp.value = DEFAULT_APP_ID;
+      saveCurrentDialogState();
+      setStatus(`比較元アプリIDを現在アプリ(${DEFAULT_APP_ID})に設定しました`);
+      return;
+    }
+    if (act === 'copySourceToTarget') {
+      ui.targetApp.value = ui.sourceApp.value.trim();
+      ui.targetGuest.value = ui.sourceGuest.value.trim();
+      ui.targetPreview.checked = !!ui.sourcePreview.checked;
+      saveCurrentDialogState();
+      renderBundleState();
+      setStatus('比較元設定を比較先へコピーしました');
+      return;
+    }
+    if (act === 'swapSourceTarget') {
+      const src = { app: ui.sourceApp.value, guest: ui.sourceGuest.value, preview: ui.sourcePreview.checked };
+      ui.sourceApp.value = ui.targetApp.value;
+      ui.sourceGuest.value = ui.targetGuest.value;
+      ui.sourcePreview.checked = ui.targetPreview.checked;
+      ui.targetApp.value = src.app;
+      ui.targetGuest.value = src.guest;
+      ui.targetPreview.checked = src.preview;
+      saveCurrentDialogState();
+      renderBundleState();
+      setStatus('比較元/比較先設定を入れ替えました');
+      return;
+    }
+
+    // ----- Settings export quick add -----
+    if (act === 'settingsExportUseCurrent') {
+      const cur = String(kintone.app.getId() || '').trim();
+      if (!cur) { setStatus('現在のアプリIDを取得できませんでした', true); return; }
+      const set = new Set(parseAppIdList(ui.settingsExportAppIds.value.trim()));
+      set.add(cur);
+      ui.settingsExportAppIds.value = [...set].join(', ');
+      saveCurrentDialogState();
+      setStatus(`現在のApp(${cur})を追加しました`);
+      return;
+    }
+    if (act === 'settingsExportUseSource') {
+      const srcId = ui.sourceApp.value.trim();
+      if (!srcId) { setStatus('比較元アプリIDが空です', true); return; }
+      const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+      set.add(srcId);
+      ui.settingsExportAppIds.value = [...set].join(', ');
+      ui.settingsExportGuest.value = ui.sourceGuest.value.trim();
+      ui.settingsExportPreview.checked = !!ui.sourcePreview.checked;
+      saveCurrentDialogState();
+      setStatus(`比較元アプリ(${srcId})を追加しました`);
+      return;
+    }
+    if (act === 'settingsExportUseTarget') {
+      const tgtId = ui.targetApp.value.trim();
+      if (!tgtId) { setStatus('比較先アプリIDが空です', true); return; }
+      const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+      set.add(tgtId);
+      ui.settingsExportAppIds.value = [...set].join(', ');
+      ui.settingsExportGuest.value = ui.targetGuest.value.trim();
+      ui.settingsExportPreview.checked = !!ui.targetPreview.checked;
+      saveCurrentDialogState();
+      setStatus(`比較先アプリ(${tgtId})を追加しました`);
+      return;
+    }
+    if (act === 'settingsExportScopeAll') { setSettingsExportScopeSelection(true); setStatus('設定取得セクションを全選択しました'); return; }
+    if (act === 'settingsExportScopeNone') { setSettingsExportScopeSelection(false); setStatus('設定取得セクションを全解除しました'); return; }
+    if (act === 'runSettingsExportJson') return withGuard(async () => runSettingsExport('json'));
+    if (act === 'runSettingsExportZip') return withGuard(async () => runSettingsExport('zip'));
+    if (act === 'settingsExportSearchApps') return withGuard(runSettingsExportSearchApps);
+
+    // ----- Diff actions -----
+    if (act === 'prefetchCommonData') return withGuard(runPrefetchCommonData);
+    if (act === 'runDiffAndPlan') return withGuard(runDiffAndPreviewPlan);
+    if (act === 'runDiff') return withGuard(runDiff);
+    if (act === 'copyDiffSummary') return withGuard(async () => copyDiffSummaryToClipboard());
+    if (act === 'exportDiffJson') return withGuard(exportDiffJson);
+    if (act === 'exportDiffHtml') return withGuard(exportDiffHtml);
+    if (act === 'exportPatchJson') return withGuard(exportPatchJson);
+    if (act === 'exportBundleJson') return withGuard(exportBundleJson);
+
+    // ----- Diff theme / collapse -----
+    if (act === 'toggleDiffTheme') {
+      state.diffViewTheme = state.diffViewTheme === 'dark' ? 'light' : 'dark';
+      syncDiffThemeButton();
+      saveCurrentDialogState();
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      setStatus(`比較ビューを${getThemeDisplayLabel(state.diffViewTheme)}テーマに切り替えました`);
+      return;
+    }
+    if (act === 'collapseDiffSections') {
+      state.diffCollapsedSections = new Set((state.lastDiffRows || []).map((r) => r.sectionKey || r.section || '未分類'));
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      setStatus('比較ビューのセクションを全て折り畳みました');
+      return;
+    }
+    if (act === 'expandDiffSections') {
+      state.diffCollapsedSections = new Set();
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      setStatus('比較ビューのセクションを全て展開しました');
+      return;
+    }
+
+    // ----- Diff scope selection -----
+    if (act === 'diffScopeAll') { setScopeSelection(ui.diffScopes, true); setStatus('比較セクションを全選択しました'); return; }
+    if (act === 'diffScopeNone') { setScopeSelection(ui.diffScopes, false); setStatus('比較セクションを全解除しました'); return; }
+
+    // ----- Diff selection -----
+    if (act === 'selectVisibleDiffs') {
+      state.diffSelectedIds = new Set(getRenderedDiffRows().map((row) => row._id));
+      renderResultRows(state.lastDiffRows);
+      setStatus(`表示中の差分を選択しました (${state.diffSelectedIds.size}件)`);
+      return;
+    }
+    if (act === 'selectAllDiffs') {
+      state.diffSelectedIds = new Set((state.lastDiffRows || []).map((row) => row._id));
+      renderResultRows(state.lastDiffRows);
+      setStatus(`全差分を選択しました (${state.diffSelectedIds.size}件)`);
+      return;
+    }
+    if (act === 'clearDiffSelection') {
+      state.diffSelectedIds = new Set();
+      renderResultRows(state.lastDiffRows);
+      setStatus('差分選択を解除しました');
+      return;
+    }
+
+    // ----- Bundle import/clear -----
+    if (act === 'importSourceBundle') return ui.sourceBundleFile.click();
+    if (act === 'importTargetBundle') return ui.targetBundleFile.click();
+    if (act === 'clearBundle') {
+      state.importedSourceBundle = null;
+      state.importedTargetBundle = null;
+      state.importedSourceName = '';
+      state.importedTargetName = '';
+      state.lastDiffAt = null;
+      state.lastDiffRows = [];
+      state.lastFetchIssues = [];
+      state.lastDiffSignature = '';
+      state.lastApplyPlan = null;
+      state.diffSelectedIds = new Set();
+      state.diffIgnoreSuggestions = [];
+      state.reflectRows = [];
+      state.reflectSelectedIds = new Set();
+      state.reflectNodeModes = {};
+      state.reflectUndoStack = [];
+      state.reflectRedoStack = [];
+      state.reflectActiveNodeId = '';
+      renderResultRows([]);
+      renderDiffFilterOptions();
+      renderReflectNodeList();
+      renderBundleState();
+      setStatus('バンドル読込を解除しました');
+      return;
+    }
+
+    // ----- Ignore key actions -----
+    if (act === 'addPresetKey') {
+      const key = actEl.dataset.key;
+      if (!key) return;
+      const current = (ui.ignoreKeys.value || '').split(',').map((k) => k.trim()).filter(Boolean);
+      if (!current.includes(key)) {
+        current.push(key);
+        ui.ignoreKeys.value = current.join(', ');
+        renderIgnoreKeyChips();
+        saveCurrentDialogState();
+      }
+      return;
+    }
+    if (act === 'addIgnoreKey') { addIgnoreKeyFromInput(); return; }
+    if (act === 'removeIgnoreKey') {
+      const key = actEl.dataset.key;
+      if (!key) return;
+      const current = (ui.ignoreKeys.value || '').split(',').map((k) => k.trim()).filter(Boolean).filter((k) => k !== key);
+      ui.ignoreKeys.value = current.join(', ');
+      renderIgnoreKeyChips();
+      saveCurrentDialogState();
+      return;
+    }
+
+    // ----- Lookup map -----
+    if (act === 'addLookupMapRow') {
+      const container = document.getElementById('u_lookupMapRows');
+      if (!container) return;
+      if (container.querySelector('.muted')) container.innerHTML = '';
+      const i = container.querySelectorAll('[data-lookup-row]').length;
+      const row = document.createElement('div');
+      row.className = 'btns';
+      row.style.marginTop = '4px';
+      row.dataset.lookupRow = String(i);
+      row.innerHTML =
+        `<span style="align-self:center;font-size:11px;color:#64748b;white-space:nowrap">変換元</span>` +
+        `<input type="text" class="lookup-from" value="" placeholder="AppID" style="flex:1;min-width:0">` +
+        `<span style="align-self:center;padding:0 4px;color:#64748b">→</span>` +
+        `<span style="align-self:center;font-size:11px;color:#64748b;white-space:nowrap">変換先</span>` +
+        `<input type="text" class="lookup-to" value="" placeholder="AppID" style="flex:1;min-width:0">` +
+        `<button type="button" class="btn sub" data-act="removeLookupMapRow" data-row="${i}" style="padding:4px 8px">×</button>`;
+      container.appendChild(row);
+      row.querySelector('.lookup-from').focus();
+      return;
+    }
+    if (act === 'removeLookupMapRow') {
+      const row = e.target.closest('[data-lookup-row]');
+      if (row) {
+        row.remove();
+        syncLookupMapFromRows();
+        renderLookupMapRows();
+        saveCurrentDialogState();
+      }
+      return;
+    }
+
+    // ----- Reflect scope selection -----
+    if (act === 'applyScopeAll') {
+      setScopeSelection(ui.applyScopes, true);
+      renderReflectSidebar();
+      renderReflectMainPanel();
+      setStatus('反映セクションを全選択しました');
+      return;
+    }
+    if (act === 'applyScopeNone') {
+      setScopeSelection(ui.applyScopes, false);
+      renderReflectSidebar();
+      renderReflectMainPanel();
+      setStatus('反映セクションを全解除しました');
+      return;
+    }
+    if (act === 'applyScopeDiffOnly') {
+      const diffCounts = getDiffCountsBySection();
+      [...ui.applyScopes.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
+        const dc = diffCounts[c.value];
+        c.checked = !!(dc && dc.total > 0);
+      });
+      saveCurrentDialogState();
+      renderReflectSidebar();
+      renderReflectMainPanel();
+      setStatus('差分のあるセクションのみ選択しました');
+      return;
+    }
+
+    // ----- Reflect mode switching -----
+    if (act === 'reflectModeSection') {
+      ui.nodeMode.checked = false;
+      state.reflectActiveSidebarSection = null;
+      renderReflectModeUi();
+      renderReflectMainPanel();
+      setStatus('セクション反映モードに切り替えました');
+      return;
+    }
+    if (act === 'reflectModeNode') {
+      ui.nodeMode.checked = true;
+      state.reflectActiveSidebarSection = null;
+      renderReflectModeUi();
+      if (state.lastDiffRows && state.lastDiffRows.length > 0 && !state.reflectRows.length) {
+        loadReflectRowsFromLastDiff();
+      }
+      setStatus('ノード反映モードに切り替えました');
+      return;
+    }
+
+    // ----- Reflect node actions -----
+    if (act === 'loadReflectNodes') return withGuard(async () => { loadReflectRowsFromLastDiff(); });
+    if (act === 'selectReflectNodesAll') {
+      pushReflectUndo();
+      state.reflectSelectedIds = new Set((state.reflectRows || []).map((r) => r._id));
+      renderReflectNodeList();
+      setStatus('反映ノードを全選択しました');
+      return;
+    }
+    if (act === 'clearReflectNodes') {
+      pushReflectUndo();
+      state.reflectSelectedIds = new Set();
+      renderReflectNodeList();
+      setStatus('反映ノードを全解除しました');
+      return;
+    }
+    if (act === 'reflectUndo') {
+      if (!undoReflectState()) { setStatus('Undoできる操作がありません'); return; }
+      renderReflectNodeList();
+      setStatus('ノード操作をUndoしました');
+      return;
+    }
+    if (act === 'reflectRedo') {
+      if (!redoReflectState()) { setStatus('Redoできる操作がありません'); return; }
+      renderReflectNodeList();
+      setStatus('ノード操作をRedoしました');
+      return;
+    }
+    if (act === 'reflectModeAllSrc') return runReflectModeAll('src');
+    if (act === 'reflectModeAllTgt') return runReflectModeAll('tgt');
+    if (act === 'toggleActiveReflectNodeSelection') {
+      const row = getActiveReflectRow();
+      if (!row) { setStatus('操作対象のノードがありません'); return; }
+      pushReflectUndo();
+      if (state.reflectSelectedIds.has(row._id)) state.reflectSelectedIds.delete(row._id);
+      else state.reflectSelectedIds.add(row._id);
+      renderReflectNodeList();
+      setStatus(`ノード選択を${state.reflectSelectedIds.has(row._id) ? '追加' : '解除'}しました`);
+      return;
+    }
+    if (act === 'toggleActiveReflectNodeMode') {
+      const row = getActiveReflectRow();
+      if (!row) { setStatus('操作対象のノードがありません'); return; }
+      pushReflectUndo();
+      state.reflectNodeModes[row._id] = reflectRowModeById(row._id) === 'src' ? 'tgt' : 'src';
+      renderReflectNodeList();
+      setStatus(`ノードモード切替: ${state.reflectNodeModes[row._id] === 'src' ? '比較元' : '比較先'}`);
+      return;
+    }
+    if (act === 'focusActiveReflectNodeDiff') {
+      const row = getActiveReflectRow();
+      if (!row) { setStatus('表示対象のノードがありません'); return; }
+      switchTab('diff');
+      switchSubTab('diff', 'view');
+      if (ui.diffFilterSection) ui.diffFilterSection.value = row.sectionKey || '';
+      state.diffFilterSection = row.sectionKey || '';
+      if (ui.diffSearch) ui.diffSearch.value = row.path || '';
+      renderResultRows(state.lastDiffRows);
+      setStatus('差分比較タブで該当ノードを表示しました');
+      return;
+    }
+
+    // ----- Reflect apply actions -----
+    if (act === 'previewApplyPlan' && typeof runPreviewApplyPlan === 'function') return withGuard(runPreviewApplyPlan);
+    if (act === 'backupTargetPreview' && typeof runBackupTargetPreview === 'function') return withGuard(runBackupTargetPreview);
+    if (act === 'applyPreview' && typeof runApplyPreview === 'function') return withGuard(runApplyPreview);
+    if (act === 'deployOnly' && typeof runDeployOnly === 'function') return withGuard(runDeployOnly);
+
+    // ----- Patch JSON panel -----
+    if (act === 'togglePatchJsonPanel') {
+      state.patchJsonPanelOpen = !state.patchJsonPanelOpen;
+      const panel = document.getElementById('u_patchJsonPanel');
+      if (panel) panel.style.display = state.patchJsonPanelOpen ? 'block' : 'none';
+      return;
+    }
+    if (act === 'patchJsonLoadFile') {
+      const input = document.getElementById('u_patchJsonFileInput');
+      if (input) { input.value = ''; input.click(); }
+      return;
+    }
+    if (act === 'patchJsonClear') {
+      state.importedPatchPayload = null;
+      const editor = document.getElementById('u_patchJsonEditor');
+      if (editor) editor.value = '';
+      if (typeof renderPatchJsonSummary === 'function') renderPatchJsonSummary(null);
+      setStatus('パッチJSONをクリアしました');
+      return;
+    }
+    if (act === 'applyPatchJson' && typeof runApplyPatchJson === 'function') return withGuard(runApplyPatchJson);
+
+    // ----- Field tab -----
+    if (act === 'applyField') return withGuard(runFieldApply);
+    if (act === 'loadTargetFields') return withGuard(runLoadTargetFields);
+    if (act === 'formatFieldJson') {
+      try {
+        const text = ui.fieldJson.value.trim();
+        if (!text) throw new Error('フォーマットするJSONがありません');
+        const parsed = JSON.parse(text);
+        ui.fieldJson.value = JSON.stringify(parsed, null, 2);
+        setStatus('フィールドJSONをフォーマットしました');
+      } catch (e) {
+        setStatus(`フォーマットエラー: ${e.message || String(e)}`, true);
+      }
+      return;
+    }
+    if (act === 'importFieldJson') return ui.fieldJsonFile.click();
+    if (act === 'exportFieldJson') {
+      return withGuard(async () => {
+        const { nowStamp, downloadText } = await import('./utils.js');
+        if (!ui.fieldJson.value.trim()) throw new Error('フィールドJSONが空です');
+        const parsed = JSON.parse(ui.fieldJson.value);
+        downloadText(`fields_${nowStamp()}.json`, JSON.stringify(parsed, null, 2), 'application/json');
+        setStatus('フィールドJSONを保存しました');
+      });
+    }
+    if (act === 'loadSourceFieldsList') return withGuard(runLoadSourceFieldsList);
+    if (act === 'insertSelectedSourceFields') return runInsertSelectedSourceFields();
+    if (act === 'closeSourceFieldsList') { ui.sourceFieldListContainer.style.display = 'none'; return; }
+    if (act === 'runBulkFieldRename' && typeof runBulkFieldRename === 'function') return withGuard(runBulkFieldRename);
+    if (act === 'runDetectUnusedFields' && typeof runDetectUnusedFields === 'function') return withGuard(runDetectUnusedFields);
+
+    // ----- Design export -----
+    if (act === 'exportDesignJson' && typeof runDesignExport === 'function') return withGuard(() => runDesignExport('json'));
+    if (act === 'exportDesignMd' && typeof runDesignExport === 'function') return withGuard(() => runDesignExport('md'));
+    if (act === 'copyDesignMd' && typeof runDesignCopyMd === 'function') return withGuard(runDesignCopyMd);
+    if (act === 'exportDesignXlsx' && typeof runDesignExportXlsx === 'function') return withGuard(runDesignExportXlsx);
+    if (act === 'exportDesignDiffMd' && typeof runDesignDiffMd === 'function') return withGuard(runDesignDiffMd);
+    if (act === 'generateFieldDepMap' && typeof runFieldDependencyMap === 'function') return withGuard(runFieldDependencyMap);
+
+    // ----- JS/CSS config -----
+    if (act === 'fetchJsConfig' && typeof runFetchJsConfig === 'function') return withGuard(runFetchJsConfig);
+    if (act === 'exportJsConfigJson' && typeof runExportJsConfig === 'function') return withGuard(runExportJsConfig);
+    if (act === 'importJsConfigJson') return ui.jsconfigFile.click();
+    if (act === 'applyJsConfig' && typeof runApplyJsConfig === 'function') return withGuard(runApplyJsConfig);
+
+    // ----- Other tabs -----
+    if (act === 'renderProcessFlow' && typeof runRenderProcessFlow === 'function') return withGuard(runRenderProcessFlow);
+    if (act === 'launchKintoneSql' && typeof launchKintoneSql === 'function') return withGuard(launchKintoneSql);
+    if (act === 'generateERDiagram' && typeof runGenerateERDiagram === 'function') return withGuard(runGenerateERDiagram);
+    if (act === 'exportERDiagramHtml' && typeof runExportERDiagramHtml === 'function') return withGuard(runExportERDiagramHtml);
+    if (act === 'runBatchProcess' && typeof runBatchProcess === 'function') return withGuard(runBatchProcess);
+    if (act === 'runBatchFileDownload' && typeof runBatchFileDownload === 'function') return withGuard(runBatchFileDownload);
+    if (act === 'runBatchJsConfigDownload' && typeof runBatchJsConfigDownload === 'function') return withGuard(runBatchJsConfigDownload);
+    if (act === 'loadViewsForProc' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_batchProcViewSelect', 'u_batchProcView'));
+    if (act === 'loadViewsForDl' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_batchDlViewSelect', 'u_batchDlView'));
+    if (act === 'loadViewsForCsv' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_csvExportViewSelect', 'u_csvExportView'));
+    if (act === 'runCsvExport' && typeof runCsvExport === 'function') return withGuard(runCsvExport);
+    if (act === 'runCsvImport' && typeof runCsvImport === 'function') return withGuard(runCsvImport);
+    if (act === 'exportDiffXlsx' && typeof exportDiffXlsx === 'function') return withGuard(exportDiffXlsx);
+    if (act === 'runRecordCopy' && typeof runRecordCopy === 'function') return withGuard(runRecordCopy);
+
+    // ----- Templates -----
+    if (act === 'saveTemplate' && typeof saveTemplate === 'function') return withGuard(saveTemplate);
+    if (act === 'loadTemplate' && typeof loadTemplate === 'function') return loadTemplate();
+    if (act === 'deleteTemplate' && typeof deleteTemplate === 'function') return deleteTemplate();
+
+    // ----- Simulation -----
+    if (act === 'simStart' && typeof runSimStart === 'function') return withGuard(runSimStart);
+    if (act === 'simExecuteAction' && typeof runSimExecuteAction === 'function') return withGuard(runSimExecuteAction);
+
+    // ----- API tester -----
+    if (act === 'runApiTester' && typeof runApiTester === 'function') return runApiTester();
+  });
+}
