@@ -4,7 +4,7 @@ import { DEFAULT_IGNORE_KEYS } from '../constants.js';
 import { state, ui } from '../state.js';
 import { getActualDiffRows, parseIgnoreRules, normalizeIgnoreToken, getPathLeafKey } from './engine.js';
 import { pickBundleSections } from '../api.js';
-import { diffRowMatchesKeyword, groupDiffRowsBySection } from './export.js';
+import { diffRowMatchesKeyword, diffRowMatchesFieldNameKeyword, groupDiffRowsBySection } from './export.js';
 
 export function normalizeDiffFavoritePath(path) {
   return String(path || '').trim();
@@ -20,6 +20,9 @@ export function getCurrentDiffFilterState() {
     section: ui.diffFilterSection?.value || state.diffFilterSection || '',
     type: ui.diffFilterType?.value || state.diffFilterType || '',
     severity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || '',
+    searchByFieldName: !!ui.diffSearchFieldName?.checked || !!state.diffSearchFieldName,
+    sourceBundle: state.lastSourceBundle,
+    targetBundle: state.lastTargetBundle,
     favoritesOnly: !!state.diffFavoritesOnly
   };
 }
@@ -38,7 +41,13 @@ export function diffIssueMatchesKeyword(issue, keyword) {
 }
 
 export function diffRowMatchesFilters(row, filters) {
-  if (filters.keyword && !diffRowMatchesKeyword(row, filters.keyword)) return false;
+  if (filters.keyword) {
+    if (filters.searchByFieldName) {
+      if (!diffRowMatchesFieldNameKeyword(row, filters.keyword, filters.sourceBundle, filters.targetBundle)) return false;
+    } else if (!diffRowMatchesKeyword(row, filters.keyword)) {
+      return false;
+    }
+  }
   if (filters.section && row.sectionKey !== filters.section) return false;
   if (filters.type === 'moved') {
     if (!row.moved) return false;

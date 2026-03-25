@@ -22,6 +22,7 @@ export const state = {
   diffFilterSection: '',
   diffFilterType: '',
   diffFilterSeverity: '',
+  diffSearchFieldName: false,
   diffExportMode: 'all',
   diffExportContent: 'diffOnly',
   diffIgnoreSuggestions: [],

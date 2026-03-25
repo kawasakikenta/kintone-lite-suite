@@ -412,6 +412,7 @@ export function saveCurrentDialogState() {
     diffNormalizeViewOrder: !!ui.diffNormalizeViewOrder?.checked,
     diffNormalizePermissionOrder: !!ui.diffNormalizePermissionOrder?.checked,
     diffSearch: ui.diffSearch.value.trim(),
+    diffSearchFieldName: !!ui.diffSearchFieldName?.checked,
     diffFilterSection: ui.diffFilterSection?.value || state.diffFilterSection || '',
     diffFilterType: ui.diffFilterType?.value || '',
     diffIncludeSame: !!ui.diffIncludeSame?.checked,
@@ -480,6 +481,10 @@ export function restoreDialogState() {
   if (saved.diffNormalizeViewOrder != null && ui.diffNormalizeViewOrder) ui.diffNormalizeViewOrder.checked = !!saved.diffNormalizeViewOrder;
   if (saved.diffNormalizePermissionOrder != null && ui.diffNormalizePermissionOrder) ui.diffNormalizePermissionOrder.checked = !!saved.diffNormalizePermissionOrder;
   if (saved.diffSearch != null) ui.diffSearch.value = String(saved.diffSearch);
+  if (saved.diffSearchFieldName != null && ui.diffSearchFieldName) {
+    ui.diffSearchFieldName.checked = !!saved.diffSearchFieldName;
+    state.diffSearchFieldName = !!saved.diffSearchFieldName;
+  }
   if (saved.diffFilterSection != null) state.diffFilterSection = String(saved.diffFilterSection);
   if (saved.diffFilterType != null && ui.diffFilterType) ui.diffFilterType.value = String(saved.diffFilterType || '');
   if (saved.diffFilterSeverity != null && ui.diffFilterSeverity) ui.diffFilterSeverity.value = String(saved.diffFilterSeverity || '');
