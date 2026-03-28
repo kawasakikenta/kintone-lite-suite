@@ -301,7 +301,8 @@ export function setupEventHandlers(injected = {}) {
     ui.erLayout, ui.erFieldDensity, ui.erMaxDepth, ui.erExtraApps, ui.erIncludeSubtable,
     ui.diffMultiTargets,
     ui.settingsExportAppIds, ui.settingsExportSearchKeyword,
-    ui.settingsExportGuest, ui.settingsExportPreview
+    ui.settingsExportGuest, ui.settingsExportPreview,
+    ui.diffSearchFieldName
   ].forEach((el) => {
     if (!el) return;
     el.addEventListener('change', saveCurrentDialogState);
@@ -328,6 +329,14 @@ export function setupEventHandlers(injected = {}) {
 
   if (ui.diffSearch) {
     ui.diffSearch.addEventListener('input', () => {
+      saveCurrentDialogState();
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+    });
+  }
+
+  if (ui.diffSearchFieldName) {
+    ui.diffSearchFieldName.addEventListener('change', () => {
+      state.diffSearchFieldName = !!ui.diffSearchFieldName.checked;
       saveCurrentDialogState();
       if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
     });

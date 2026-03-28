@@ -284,6 +284,9 @@ export function buildRoot() {
                 <div>
                   <label title="パスや値の一部でインライン検索">比較ビュー検索（パス / 値）</label>
                   <input type="text" id="u_diffSearch" placeholder="例: fieldSettings.properties.customer_code" title="Ctrl/Cmd+F でもフォーカスできます（比較条件タブの説明参照）">
+                  <div class="btns" style="margin-top:6px">
+                    <label class="chip" title="ONにすると、フィールドコード/フィールド名（ラベル）を優先して検索します"><input type="checkbox" id="u_diffSearchFieldName"> フィールド名で確認</label>
+                  </div>
                 </div>
                 <div>
                   <label>比較ビュー表示</label>

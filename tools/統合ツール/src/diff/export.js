@@ -15,7 +15,7 @@ import {
   normalizeIgnoreToken, getPathLeafKey,
   getActiveDiffNormalizationLabels
 } from './engine.js';
-import { summarizeSeverity } from './enrich.js';
+import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './enrich.js';
 import { buildIgnoreKeySuggestions } from './filter.js';
 import { resolveBundleRevision, pickBundleSections } from '../api.js';
 
@@ -250,11 +250,15 @@ export function renderDiffRowMeta(row) {
 
 export function diffRowMatchesKeyword(row, keyword) {
   if (!keyword) return true;
+  return buildDiffRowSearchText(row).includes(keyword);
+}
+
+function buildDiffRowSearchText(row) {
   const safe = (v) => {
     try { return v === undefined ? 'undefined' : JSON.stringify(v); }
     catch { return String(v); }
   };
-  const text = [
+  return [
     row.section || '',
     row.sectionKey || '',
     row.severity || '',
@@ -266,7 +270,51 @@ export function diffRowMatchesKeyword(row, keyword) {
     safe(row.left),
     safe(row.right)
   ].join('\n').toLowerCase();
-  return text.includes(keyword);
+}
+
+function collectFieldLabelMapFromProperties(properties, out = new Map()) {
+  if (!properties || typeof properties !== 'object') return out;
+  Object.entries(properties).forEach(([code, field]) => {
+    if (!field || typeof field !== 'object') return;
+    const label = String(field.label || field.name || '').trim();
+    if (label) {
+      if (!out.has(code)) out.set(code, new Set());
+      out.get(code).add(label);
+    }
+    if (field.type === 'SUBTABLE' && field.fields && typeof field.fields === 'object') {
+      collectFieldLabelMapFromProperties(field.fields, out);
+    }
+  });
+  return out;
+}
+
+function buildFieldLabelMapFromBundle(bundle) {
+  const props = bundle?.fieldSettings?.properties;
+  return collectFieldLabelMapFromProperties(props, new Map());
+}
+
+function resolveDiffRowFieldTerms(row, sourceBundle, targetBundle) {
+  const terms = new Set();
+  const fieldInfo = extractFieldPathInfo(row?.path);
+  if (fieldInfo?.activeCode) terms.add(fieldInfo.activeCode);
+  if (row?.renameCandidate?.fromCode) terms.add(row.renameCandidate.fromCode);
+  if (row?.renameCandidate?.toCode) terms.add(row.renameCandidate.toCode);
+  const payload = getFieldRowPayload(row);
+  if (payload?.code) terms.add(String(payload.code));
+  const sourceMap = buildFieldLabelMapFromBundle(sourceBundle);
+  const targetMap = buildFieldLabelMapFromBundle(targetBundle);
+  [...terms].forEach((code) => {
+    (sourceMap.get(code) || []).forEach((label) => terms.add(label));
+    (targetMap.get(code) || []).forEach((label) => terms.add(label));
+  });
+  return [...terms].filter(Boolean);
+}
+
+export function diffRowMatchesFieldNameKeyword(row, keyword, sourceBundle, targetBundle) {
+  if (!keyword) return true;
+  const terms = resolveDiffRowFieldTerms(row, sourceBundle, targetBundle).join('\n').toLowerCase();
+  if (!terms) return false;
+  return terms.includes(keyword);
 }
 
 export function diffIssueMatchesKeyword(issue, keyword) {
@@ -283,7 +331,13 @@ export function diffIssueMatchesKeyword(issue, keyword) {
 }
 
 export function diffRowMatchesFilters(row, filters) {
-  if (filters.keyword && !diffRowMatchesKeyword(row, filters.keyword)) return false;
+  if (filters.keyword) {
+    if (filters.searchByFieldName) {
+      if (!diffRowMatchesFieldNameKeyword(row, filters.keyword, filters.sourceBundle, filters.targetBundle)) return false;
+    } else if (!diffRowMatchesKeyword(row, filters.keyword)) {
+      return false;
+    }
+  }
   if (filters.section && row.sectionKey !== filters.section) return false;
   if (filters.type === 'moved') {
     if (!row.moved) return false;
@@ -299,7 +353,10 @@ export function getCurrentDiffFilterState() {
     keyword: String(ui.diffSearch?.value || '').trim().toLowerCase(),
     section: ui.diffFilterSection?.value || state.diffFilterSection || '',
     type: ui.diffFilterType?.value || state.diffFilterType || '',
-    severity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || ''
+    severity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || '',
+    searchByFieldName: !!ui.diffSearchFieldName?.checked || !!state.diffSearchFieldName,
+    sourceBundle: state.lastSourceBundle,
+    targetBundle: state.lastTargetBundle
   };
 }
 

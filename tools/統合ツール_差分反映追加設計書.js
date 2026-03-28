@@ -255,6 +255,7 @@
         diffFilterSection: "",
         diffFilterType: "",
         diffFilterSeverity: "",
+        diffSearchFieldName: false,
         diffExportMode: "all",
         diffExportContent: "diffOnly",
         diffIgnoreSuggestions: [],
@@ -1977,6 +1978,9 @@ ${contextLine}`);
   }
   function diffRowMatchesKeyword(row, keyword) {
     if (!keyword) return true;
+    return buildDiffRowSearchText(row).includes(keyword);
+  }
+  function buildDiffRowSearchText(row) {
     const safe = (v) => {
       try {
         return v === void 0 ? "undefined" : JSON.stringify(v);
@@ -1984,7 +1988,7 @@ ${contextLine}`);
         return String(v);
       }
     };
-    const text = [
+    return [
       row.section || "",
       row.sectionKey || "",
       row.severity || "",
@@ -1996,7 +2000,47 @@ ${contextLine}`);
       safe(row.left),
       safe(row.right)
     ].join("\n").toLowerCase();
-    return text.includes(keyword);
+  }
+  function collectFieldLabelMapFromProperties(properties, out = /* @__PURE__ */ new Map()) {
+    if (!properties || typeof properties !== "object") return out;
+    Object.entries(properties).forEach(([code, field]) => {
+      if (!field || typeof field !== "object") return;
+      const label = String(field.label || field.name || "").trim();
+      if (label) {
+        if (!out.has(code)) out.set(code, /* @__PURE__ */ new Set());
+        out.get(code).add(label);
+      }
+      if (field.type === "SUBTABLE" && field.fields && typeof field.fields === "object") {
+        collectFieldLabelMapFromProperties(field.fields, out);
+      }
+    });
+    return out;
+  }
+  function buildFieldLabelMapFromBundle(bundle) {
+    const props = bundle?.fieldSettings?.properties;
+    return collectFieldLabelMapFromProperties(props, /* @__PURE__ */ new Map());
+  }
+  function resolveDiffRowFieldTerms(row, sourceBundle, targetBundle) {
+    const terms = /* @__PURE__ */ new Set();
+    const fieldInfo = extractFieldPathInfo(row?.path);
+    if (fieldInfo?.activeCode) terms.add(fieldInfo.activeCode);
+    if (row?.renameCandidate?.fromCode) terms.add(row.renameCandidate.fromCode);
+    if (row?.renameCandidate?.toCode) terms.add(row.renameCandidate.toCode);
+    const payload = getFieldRowPayload(row);
+    if (payload?.code) terms.add(String(payload.code));
+    const sourceMap = buildFieldLabelMapFromBundle(sourceBundle);
+    const targetMap = buildFieldLabelMapFromBundle(targetBundle);
+    [...terms].forEach((code) => {
+      (sourceMap.get(code) || []).forEach((label) => terms.add(label));
+      (targetMap.get(code) || []).forEach((label) => terms.add(label));
+    });
+    return [...terms].filter(Boolean);
+  }
+  function diffRowMatchesFieldNameKeyword(row, keyword, sourceBundle, targetBundle) {
+    if (!keyword) return true;
+    const terms = resolveDiffRowFieldTerms(row, sourceBundle, targetBundle).join("\n").toLowerCase();
+    if (!terms) return false;
+    return terms.includes(keyword);
   }
   function diffIssueMatchesKeyword(issue, keyword) {
     if (!keyword) return true;
@@ -2011,7 +2055,13 @@ ${contextLine}`);
     return text.includes(keyword);
   }
   function diffRowMatchesFilters(row, filters) {
-    if (filters.keyword && !diffRowMatchesKeyword(row, filters.keyword)) return false;
+    if (filters.keyword) {
+      if (filters.searchByFieldName) {
+        if (!diffRowMatchesFieldNameKeyword(row, filters.keyword, filters.sourceBundle, filters.targetBundle)) return false;
+      } else if (!diffRowMatchesKeyword(row, filters.keyword)) {
+        return false;
+      }
+    }
     if (filters.section && row.sectionKey !== filters.section) return false;
     if (filters.type === "moved") {
       if (!row.moved) return false;
@@ -2026,7 +2076,10 @@ ${contextLine}`);
       keyword: String(ui.diffSearch?.value || "").trim().toLowerCase(),
       section: ui.diffFilterSection?.value || state.diffFilterSection || "",
       type: ui.diffFilterType?.value || state.diffFilterType || "",
-      severity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || ""
+      severity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || "",
+      searchByFieldName: !!ui.diffSearchFieldName?.checked || !!state.diffSearchFieldName,
+      sourceBundle: state.lastSourceBundle,
+      targetBundle: state.lastTargetBundle
     };
   }
   function getFilteredDiffRows(rows) {
@@ -3721,11 +3774,20 @@ ${contextLine}`);
       section: ui.diffFilterSection?.value || state.diffFilterSection || "",
       type: ui.diffFilterType?.value || state.diffFilterType || "",
       severity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || "",
+      searchByFieldName: !!ui.diffSearchFieldName?.checked || !!state.diffSearchFieldName,
+      sourceBundle: state.lastSourceBundle,
+      targetBundle: state.lastTargetBundle,
       favoritesOnly: !!state.diffFavoritesOnly
     };
   }
   function diffRowMatchesFilters2(row, filters) {
-    if (filters.keyword && !diffRowMatchesKeyword(row, filters.keyword)) return false;
+    if (filters.keyword) {
+      if (filters.searchByFieldName) {
+        if (!diffRowMatchesFieldNameKeyword(row, filters.keyword, filters.sourceBundle, filters.targetBundle)) return false;
+      } else if (!diffRowMatchesKeyword(row, filters.keyword)) {
+        return false;
+      }
+    }
     if (filters.section && row.sectionKey !== filters.section) return false;
     if (filters.type === "moved") {
       if (!row.moved) return false;
@@ -6413,6 +6475,7 @@ ${contextLine}`);
       diffNormalizeViewOrder: !!ui.diffNormalizeViewOrder?.checked,
       diffNormalizePermissionOrder: !!ui.diffNormalizePermissionOrder?.checked,
       diffSearch: ui.diffSearch.value.trim(),
+      diffSearchFieldName: !!ui.diffSearchFieldName?.checked,
       diffFilterSection: ui.diffFilterSection?.value || state.diffFilterSection || "",
       diffFilterType: ui.diffFilterType?.value || "",
       diffIncludeSame: !!ui.diffIncludeSame?.checked,
@@ -6480,6 +6543,10 @@ ${contextLine}`);
     if (saved.diffNormalizeViewOrder != null && ui.diffNormalizeViewOrder) ui.diffNormalizeViewOrder.checked = !!saved.diffNormalizeViewOrder;
     if (saved.diffNormalizePermissionOrder != null && ui.diffNormalizePermissionOrder) ui.diffNormalizePermissionOrder.checked = !!saved.diffNormalizePermissionOrder;
     if (saved.diffSearch != null) ui.diffSearch.value = String(saved.diffSearch);
+    if (saved.diffSearchFieldName != null && ui.diffSearchFieldName) {
+      ui.diffSearchFieldName.checked = !!saved.diffSearchFieldName;
+      state.diffSearchFieldName = !!saved.diffSearchFieldName;
+    }
     if (saved.diffFilterSection != null) state.diffFilterSection = String(saved.diffFilterSection);
     if (saved.diffFilterType != null && ui.diffFilterType) ui.diffFilterType.value = String(saved.diffFilterType || "");
     if (saved.diffFilterSeverity != null && ui.diffFilterSeverity) ui.diffFilterSeverity.value = String(saved.diffFilterSeverity || "");
@@ -7327,6 +7394,9 @@ ${contextLine}`);
                 <div>
                   <label title="パスや値の一部でインライン検索">比較ビュー検索（パス / 値）</label>
                   <input type="text" id="u_diffSearch" placeholder="例: fieldSettings.properties.customer_code" title="Ctrl/Cmd+F でもフォーカスできます（比較条件タブの説明参照）">
+                  <div class="btns" style="margin-top:6px">
+                    <label class="chip" title="ONにすると、フィールドコード/フィールド名（ラベル）を優先して検索します"><input type="checkbox" id="u_diffSearchFieldName"> フィールド名で確認</label>
+                  </div>
                 </div>
                 <div>
                   <label>比較ビュー表示</label>
@@ -8666,7 +8736,8 @@ ${contextLine}`);
       ui.settingsExportAppIds,
       ui.settingsExportSearchKeyword,
       ui.settingsExportGuest,
-      ui.settingsExportPreview
+      ui.settingsExportPreview,
+      ui.diffSearchFieldName
     ].forEach((el) => {
       if (!el) return;
       el.addEventListener("change", saveCurrentDialogState2);
@@ -8690,6 +8761,13 @@ ${contextLine}`);
     }
     if (ui.diffSearch) {
       ui.diffSearch.addEventListener("input", () => {
+        saveCurrentDialogState2();
+        if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      });
+    }
+    if (ui.diffSearchFieldName) {
+      ui.diffSearchFieldName.addEventListener("change", () => {
+        state.diffSearchFieldName = !!ui.diffSearchFieldName.checked;
         saveCurrentDialogState2();
         if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
       });
@@ -13518,6 +13596,7 @@ ${safety.hash}`, "");
       diffNormalizeViewOrder: $("#u_diffNormalizeViewOrder"),
       diffNormalizePermissionOrder: $("#u_diffNormalizePermissionOrder"),
       diffSearch: $("#u_diffSearch"),
+      diffSearchFieldName: $("#u_diffSearchFieldName"),
       diffFilterSection: $("#u_diffFilterSection"),
       diffFilterType: $("#u_diffFilterType"),
       diffFilterSeverity: $("#u_diffFilterSeverity"),

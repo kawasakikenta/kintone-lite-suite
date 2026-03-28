@@ -82,6 +82,7 @@ if (!window.kintone?.api || !window.kintone?.app) {
     diffNormalizeViewOrder: $('#u_diffNormalizeViewOrder'),
     diffNormalizePermissionOrder: $('#u_diffNormalizePermissionOrder'),
     diffSearch: $('#u_diffSearch'),
+    diffSearchFieldName: $('#u_diffSearchFieldName'),
     diffFilterSection: $('#u_diffFilterSection'),
     diffFilterType: $('#u_diffFilterType'),
     diffFilterSeverity: $('#u_diffFilterSeverity'),
