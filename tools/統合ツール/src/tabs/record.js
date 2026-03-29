@@ -6,6 +6,7 @@ import { esc, deepClone, nowStamp, downloadText, selectedScopeKeys } from '../ut
 import { apiGet, apiPut, apiPost, buildApiPrefix, fetchBundle } from '../api.js';
 import { setStatus, setBusy, renderBundleState } from '../ui/components.js';
 import { commonParams } from './diff.js';
+import { getToolDocument } from '../ui/dialog.js';
 
 export function getSideApiPrefix(isSource, preview) {
   const c = commonParams();
@@ -14,7 +15,7 @@ export function getSideApiPrefix(isSource, preview) {
 }
 
 export async function loadViewsForSelect(selectId, inputId) {
-  const tApp = document.getElementById('u_targetApp').value.trim();
+  const tApp = getToolDocument().getElementById('u_targetApp').value.trim();
   if (!tApp) throw new Error('比較先アプリIDを設定してください。');
   const prefix = getSideApiPrefix(false, false);
   const resp = await apiGet(prefix, '/app/views.json', { app: tApp });
@@ -23,7 +24,7 @@ export async function loadViewsForSelect(selectId, inputId) {
     .filter(v => v.type === 'LIST')
     .sort((a, b) => Number(a.index) - Number(b.index));
 
-  const sel = document.getElementById(selectId);
+  const sel = getToolDocument().getElementById(selectId);
   if (!sel) return;
   sel.innerHTML = '<option value="">-- 一覧を選択 --</option>';
   for (const v of views) {
@@ -37,7 +38,7 @@ export async function loadViewsForSelect(selectId, inputId) {
   sel.onchange = () => {
     const o = sel.options[sel.selectedIndex];
     if (o && o.value) {
-      document.getElementById(inputId).value = decodeURIComponent(o.dataset.q || '');
+      getToolDocument().getElementById(inputId).value = decodeURIComponent(o.dataset.q || '');
     }
   };
   setStatus('比較先アプリの一覧リストを取得しました');
@@ -84,11 +85,11 @@ const chunkArray = (arr, size) => {
 };
 
 export async function runBatchProcess() {
-  const tApp = document.getElementById('u_targetApp').value.trim();
+  const tApp = getToolDocument().getElementById('u_targetApp').value.trim();
   if (!tApp) throw new Error('比較先アプリIDを設定してください。');
-  const query = document.getElementById('u_batchProcView').value;
-  const action = document.getElementById('u_batchProcAction').value.trim();
-  const assignee = document.getElementById('u_batchProcAssignee').value.trim() || null;
+  const query = getToolDocument().getElementById('u_batchProcView').value;
+  const action = getToolDocument().getElementById('u_batchProcAction').value.trim();
+  const assignee = getToolDocument().getElementById('u_batchProcAssignee').value.trim() || null;
   if (!action) throw new Error('アクション名を入力してください。');
 
   setStatus('対象レコードを取得中...');
@@ -143,12 +144,12 @@ async function downloadTargetFile(fileKey) {
 }
 
 export async function runBatchFileDownload() {
-  const tApp = document.getElementById('u_targetApp').value.trim();
+  const tApp = getToolDocument().getElementById('u_targetApp').value.trim();
   if (!tApp) throw new Error('比較先アプリIDを設定してください。');
-  const query = document.getElementById('u_batchDlView').value;
-  const fileCode = document.getElementById('u_batchDlFileCode').value.trim();
-  const folderCode = document.getElementById('u_batchDlFolderCode').value.trim();
-  const zipName = document.getElementById('u_batchDlZipName').value.trim() || 'download.zip';
+  const query = getToolDocument().getElementById('u_batchDlView').value;
+  const fileCode = getToolDocument().getElementById('u_batchDlFileCode').value.trim();
+  const folderCode = getToolDocument().getElementById('u_batchDlFolderCode').value.trim();
+  const zipName = getToolDocument().getElementById('u_batchDlZipName').value.trim() || 'download.zip';
 
   if (!fileCode) throw new Error('ファイルフィールドコードを入力してください。');
 
@@ -236,14 +237,14 @@ export async function downloadBlobWithRetry(fileKey, isSource, guestSpaceId) {
 }
 
 export async function runCsvExport() {
-  const tgtAppId = document.getElementById('u_targetApp')?.value?.trim();
+  const tgtAppId = getToolDocument().getElementById('u_targetApp')?.value?.trim();
   if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
-  const tgtGuestId = document.getElementById('u_targetGuest')?.value?.trim();
+  const tgtGuestId = getToolDocument().getElementById('u_targetGuest')?.value?.trim();
   const guestPrefix = tgtGuestId ? `/k/guest/${tgtGuestId}/v1` : '/k/v1';
 
-  let condition = document.getElementById('u_csvExportViewSelect')?.value || '';
-  if (!condition) condition = document.getElementById('u_csvExportView')?.value || '';
-  const filename = document.getElementById('u_csvExportName')?.value?.trim() || 'records.csv';
+  let condition = getToolDocument().getElementById('u_csvExportViewSelect')?.value || '';
+  if (!condition) condition = getToolDocument().getElementById('u_csvExportView')?.value || '';
+  const filename = getToolDocument().getElementById('u_csvExportName')?.value?.trim() || 'records.csv';
 
   setBusy(true, 'フィールド情報取得中...');
   let fields = null;
@@ -341,11 +342,11 @@ export async function runCsvExport() {
 }
 
 export async function runCsvImport() {
-  const tgtAppId = document.getElementById('u_targetApp')?.value?.trim();
+  const tgtAppId = getToolDocument().getElementById('u_targetApp')?.value?.trim();
   if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
-  const guestPrefix = document.getElementById('u_targetGuest')?.value?.trim() ? `/k/guest/${document.getElementById('u_targetGuest').value.trim()}/v1` : '/k/v1';
+  const guestPrefix = getToolDocument().getElementById('u_targetGuest')?.value?.trim() ? `/k/guest/${getToolDocument().getElementById('u_targetGuest').value.trim()}/v1` : '/k/v1';
 
-  const fileInput = document.getElementById('u_csvImportFile');
+  const fileInput = getToolDocument().getElementById('u_csvImportFile');
   if (!fileInput.files || !fileInput.files.length) {
     throw new Error('CSVファイルを選択してください');
   }
@@ -442,19 +443,19 @@ export async function runCsvImport() {
   setBusy(false);
   alert(`完了: ${successCount}件のレコードを登録しました。`);
   fileInput.value = '';
-  document.getElementById('u_csvImportFileName').textContent = '未選択';
+  getToolDocument().getElementById('u_csvImportFileName').textContent = '未選択';
 }
 
 export async function runRecordCopy() {
-  const srcApp = document.getElementById('u_sourceApp')?.value?.trim();
-  const tgtApp = document.getElementById('u_targetApp')?.value?.trim();
+  const srcApp = getToolDocument().getElementById('u_sourceApp')?.value?.trim();
+  const tgtApp = getToolDocument().getElementById('u_targetApp')?.value?.trim();
   if (!srcApp || !tgtApp) throw new Error('比較元と比較先の両方のアプリIDを指定してください');
 
-  const srcGuestStr = document.getElementById('u_sourceGuest')?.value?.trim() || null;
-  const tgtGuestStr = document.getElementById('u_targetGuest')?.value?.trim() || null;
+  const srcGuestStr = getToolDocument().getElementById('u_sourceGuest')?.value?.trim() || null;
+  const tgtGuestStr = getToolDocument().getElementById('u_targetGuest')?.value?.trim() || null;
   const srcGuest = srcGuestStr ? `/k/guest/${srcGuestStr}/v1` : '/k/v1';
   const tgtGuest = tgtGuestStr ? `/k/guest/${tgtGuestStr}/v1` : '/k/v1';
-  const query = document.getElementById('u_recordCopyQuery')?.value || '';
+  const query = getToolDocument().getElementById('u_recordCopyQuery')?.value || '';
 
   if (!confirm(`比較元(${srcApp}) から 比較先(${tgtApp}) へレコードをコピーします。よろしいですか？`)) return;
 
@@ -531,7 +532,7 @@ function getTemplates() {
 }
 
 export function renderTemplateOptions() {
-  const sel = document.getElementById('u_templateSelect');
+  const sel = getToolDocument().getElementById('u_templateSelect');
   if (!sel) return;
   const tpls = getTemplates();
   const current = sel.value;
@@ -545,7 +546,7 @@ export function renderTemplateOptions() {
 }
 
 export async function saveTemplate() {
-  const name = document.getElementById('u_templateSaveName')?.value?.trim();
+  const name = getToolDocument().getElementById('u_templateSaveName')?.value?.trim();
   if (!name) throw new Error('保存するデータ名を入力してください');
 
   const c = commonParams();
@@ -563,12 +564,12 @@ export async function saveTemplate() {
   }
 
   renderTemplateOptions();
-  document.getElementById('u_templateSaveName').value = '';
+  getToolDocument().getElementById('u_templateSaveName').value = '';
   alert(`データ「${name}」を保存しました。`);
 }
 
 export function loadTemplate() {
-  const name = document.getElementById('u_templateSelect')?.value;
+  const name = getToolDocument().getElementById('u_templateSelect')?.value;
   if (!name) return;
   const tpls = getTemplates();
   const tpl = tpls[name];
@@ -585,7 +586,7 @@ export function loadTemplate() {
 }
 
 export function deleteTemplate() {
-  const name = document.getElementById('u_templateSelect')?.value;
+  const name = getToolDocument().getElementById('u_templateSelect')?.value;
   if (!name) return;
   if (!confirm(`テンプレート「${name}」を削除しますか？`)) return;
   const tpls = getTemplates();

@@ -28,7 +28,8 @@ import {
 import {
   renderResultRows,
   renderDiffFilterOptions,
-  syncDiffThemeButton
+  syncDiffThemeButton,
+  MAIN_RESULT_IDLE_HTML
 } from '../diff/export.js';
 import {
   renderBundleState,
@@ -48,9 +49,17 @@ import {
   fitDialogToViewport,
   getDefaultDialogPosition,
   applyDialogSizePreset,
-  getRoot
+  getRoot,
+  getToolDocument
 } from '../ui/dialog.js';
-import { getDiffTypeDisplayLabel, getSeverityDisplayLabel, getIssueSideLabel } from '../utils.js';
+import {
+  getPreviewCompareStatusPrefix,
+  syncPreviewComparePanel,
+  findMatchingPresetId,
+  getPreviewPresetById
+} from './preview-compare.js';
+import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
+import { getDiffTypeDisplayLabel, getSeverityDisplayLabel, getIssueSideLabel, getPreviewStateLabel } from '../utils.js';
 
 // ---------------------------------------------------------------------------
 // Ignore preset helpers
@@ -80,7 +89,7 @@ export function applyIgnorePresetKeysToInput(options = {}) {
 }
 
 export function addIgnoreKeyFromInput() {
-  const input = document.getElementById('u_ignoreKeyInput');
+  const input = getToolDocument().getElementById('u_ignoreKeyInput');
   if (!input) return;
   const key = input.value.trim();
   if (!key) return;
@@ -202,10 +211,11 @@ export async function runDiff() {
   if (!state.importedTargetBundle && !c.target.appId) throw new Error('比較先アプリIDを入力してください');
   saveCurrentDialogState();
 
-  setStatus('比較元を取得中...');
-  const source = await resolveBundle('source', c.source, scopes, (p, l) => setStatus(`比較元を取得中 ${Math.round(p * 100)}% (${l})`));
-  setStatus('比較先を取得中...');
-  const target = await resolveBundle('target', c.target, scopes, (p, l) => setStatus(`比較先を取得中 ${Math.round(p * 100)}% (${l})`));
+  const modeTag = getPreviewCompareStatusPrefix(ui);
+  setStatus(`${modeTag} 比較元を取得中...`);
+  const source = await resolveBundle('source', c.source, scopes, (p, l) => setStatus(`${modeTag} 比較元を取得中 ${Math.round(p * 100)}% (${l})`));
+  setStatus(`${modeTag} 比較先を取得中...`);
+  const target = await resolveBundle('target', c.target, scopes, (p, l) => setStatus(`${modeTag} 比較先を取得中 ${Math.round(p * 100)}% (${l})`));
 
   setStatus('差分計算中...');
   const diffResult = computeDiffRows(source, target, scopes, ui.ignoreKeys.value, {
@@ -222,12 +232,14 @@ export async function runDiff() {
   state.lastApplyPlan = null;
   state.diffSectionVisibleCounts = {};
   state.diffSelectedIds = new Set();
+  state.diffExcludeSections = null;
 
   state.diffIgnoreSuggestions = buildIgnoreKeySuggestions(rows, ui.ignoreKeys.value);
   renderDiffFilterOptions();
+  switchSubTab('diff', 'view');
   renderResultRows(rows);
   const { loadReflectRowsFromLastDiff } = await import('./reflect.js');
-  if (ui.nodeMode.checked || state.reflectRows.length) {
+  if (isReflectNodeModeEffective() || state.reflectRows.length) {
     try {
       loadReflectRowsFromLastDiff();
     } catch (e) {
@@ -250,6 +262,7 @@ export async function runDiff() {
 export async function runDiffAndPreviewPlan() {
   await runDiff();
   switchTab('reflect');
+  if (ui.result) ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
   const { runPreviewApplyPlan } = await import('../reflect/plan.js');
   await runPreviewApplyPlan();
   setStatus('差分比較→反映プラン確認 完了');
@@ -267,6 +280,14 @@ export async function copyDiffSummaryToClipboard() {
   const lines = [];
   lines.push('kintone差分サマリー');
   lines.push(`出力対象: ${exportInfo.label}`);
+  try {
+    const c = commonParams();
+    const pid = findMatchingPresetId(ui);
+    const pl = pid ? getPreviewPresetById(pid)?.label : '';
+    lines.push(`プレビュー比較: ${pl || 'カスタム'} (比較元GET=${getPreviewStateLabel(c.source.preview)} / 比較先GET=${getPreviewStateLabel(c.target.preview)})`);
+  } catch (e) {
+    lines.push('プレビュー比較: (取得できませんでした)');
+  }
   lines.push(`比較元アプリ: ${state.lastSourceBundle?.appId || '-'}`);
   lines.push(`比較先アプリ: ${state.lastTargetBundle?.appId || '-'}`);
   lines.push(`生成日時: ${new Date().toISOString()}`);
@@ -428,6 +449,7 @@ export function saveCurrentDialogState() {
     autoBackupPreview: ui.autoBackupPreview.checked,
     stopOnError: ui.stopOnError.checked,
     nodeMode: ui.nodeMode.checked,
+    reflectSimpleMode: !!ui.reflectSimpleMode?.checked,
     reflectDetailTab: state.reflectDetailTab,
     doDeploy: ui.doDeploy.checked,
     overwriteField: ui.overwriteField.checked,
@@ -500,6 +522,8 @@ export function restoreDialogState() {
   if (saved.autoBackupPreview != null) ui.autoBackupPreview.checked = !!saved.autoBackupPreview;
   if (saved.stopOnError != null) ui.stopOnError.checked = !!saved.stopOnError;
   if (saved.nodeMode != null) ui.nodeMode.checked = !!saved.nodeMode;
+  if (saved.reflectSimpleMode != null && ui.reflectSimpleMode) ui.reflectSimpleMode.checked = !!saved.reflectSimpleMode;
+  if (ui.reflectSimpleMode?.checked) ui.nodeMode.checked = false;
   if (saved.reflectDetailTab != null) state.reflectDetailTab = String(saved.reflectDetailTab || 'diff');
   if (saved.doDeploy != null) ui.doDeploy.checked = !!saved.doDeploy;
   if (saved.overwriteField != null) ui.overwriteField.checked = !!saved.overwriteField;
@@ -536,4 +560,9 @@ export function restoreDialogState() {
   applyIgnorePresetKeysToInput();
   renderIgnoreKeyChips();
   renderLookupMapRows();
+  const rootAfterRestore = getRoot();
+  if (rootAfterRestore) syncPreviewComparePanel(rootAfterRestore, ui);
+  if (state.activeTab === 'diff') {
+    renderResultRows(state.lastDiffRows || []);
+  }
 }

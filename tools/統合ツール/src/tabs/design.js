@@ -6,6 +6,7 @@ import { esc, stableStringify, deepClone, nowStamp, downloadText, safeJsonForScr
 import { apiGet, buildApiPrefix, fetchBundle } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { commonParams } from './diff.js';
+import { getToolDocument } from '../ui/dialog.js';
 import { getDiffNormalizationPresetState } from '../diff/engine.js';
 import { bundleToMarkdown } from '../diff/export.js';
 
@@ -33,13 +34,9 @@ export async function runDesignExport(kind) {
   } else {
     downloadText(`design_${bundle.appId}_${nowStamp()}.md`, bundleToMarkdown(bundle), 'text/markdown');
   }
-  ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(JSON.stringify({
-    appId: bundle.appId,
-    fetchedAt: bundle.fetchedAt,
-    sections: Object.keys(bundle.sections)
-  }, null, 2))}</pre>`;
-  setStatus('設計書出力完了');
+  setStatus(`設計書出力完了（App ${bundle.appId}）`);
 }
+
 
 export async function runDesignCopyMd() {
   const c = commonParams();
@@ -122,23 +119,25 @@ ${diffMd}
 
 export function loadScript(url) {
   return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
+    const doc = getToolDocument();
+    const s = doc.createElement('script');
     s.src = url;
     s.async = true;
     s.onload = resolve;
     s.onerror = () => reject(new Error(`スクリプト読み込み失敗: ${url}`));
-    document.head.appendChild(s);
+    doc.head.appendChild(s);
   });
 }
 
 export function ensureStylesheet(id, href) {
   if (!href) return;
-  if (document.getElementById(id)) return;
-  const link = document.createElement('link');
+  const doc = getToolDocument();
+  if (doc.getElementById(id)) return;
+  const link = doc.createElement('link');
   link.id = id;
   link.rel = 'stylesheet';
   link.href = href;
-  document.head.appendChild(link);
+  doc.head.appendChild(link);
 }
 
 function buildJsonTreeObjectHash(item) {
@@ -312,7 +311,7 @@ export async function runAdvancedDesignExporter(params = {}) {
   const apiSemaphore = new Semaphore(CONFIG.API_CONCURRENCY);
 
   function getExporterOverlayZIndex() {
-    const main = document.getElementById(TOOL_ID);
+    const main = getToolDocument().getElementById(TOOL_ID);
     const raw = main ? Number(window.getComputedStyle(main).zIndex) : NaN;
     const base = Number.isFinite(raw) ? raw : 2147483646;
     return String(Math.min(2147483647, Math.max(2000000000, base + 1)));
@@ -322,27 +321,29 @@ export async function runAdvancedDesignExporter(params = {}) {
     id: 'kintone-exporter-overlay', totalSteps: 0, currentStep: 0, failedAPIs: [],
     show(msg, totalSteps = 10) {
       UI.totalSteps = totalSteps; UI.currentStep = 0; UI.failedAPIs = [];
-      let el = document.getElementById(UI.id);
-      if (!el) { el = document.createElement('div'); el.id = UI.id; Object.assign(el.style, { position: 'fixed', top: '0', left: '0', width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.7)', zIndex: getExporterOverlayZIndex(), display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', color: '#fff', fontSize: '16px', fontFamily: '"Meiryo", sans-serif' }); document.body.appendChild(el); }
+      const doc = getToolDocument();
+      let el = doc.getElementById(UI.id);
+      if (!el) { el = doc.createElement('div'); el.id = UI.id; Object.assign(el.style, { position: 'fixed', top: '0', left: '0', width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.7)', zIndex: getExporterOverlayZIndex(), display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', color: '#fff', fontSize: '16px', fontFamily: '"Meiryo", sans-serif' }); doc.body.appendChild(el); }
       el.style.zIndex = getExporterOverlayZIndex();
       el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:400px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.0</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div></div>`;
     },
     update(msg, step) {
       if (step !== undefined) UI.currentStep = step; else UI.currentStep++;
       const pct = Math.min(100, Math.round((UI.currentStep / UI.totalSteps) * 100));
-      const statusEl = document.getElementById('kex-status');
-      const barEl = document.getElementById('kex-progress-bar');
-      const pctEl = document.getElementById('kex-percent');
+      const doc = getToolDocument();
+      const statusEl = doc.getElementById('kex-status');
+      const barEl = doc.getElementById('kex-progress-bar');
+      const pctEl = doc.getElementById('kex-percent');
       if (statusEl) statusEl.textContent = msg;
       if (barEl) barEl.style.width = `${pct}%`;
       if (pctEl) pctEl.textContent = `${pct}%`;
     },
     logError(apiName, error) {
       UI.failedAPIs.push({ name: apiName, error: error?.message || String(error) });
-      const errEl = document.getElementById('kex-errors');
+      const errEl = getToolDocument().getElementById('kex-errors');
       if (errEl) errEl.textContent = `⚠ ${UI.failedAPIs.length}件のAPI取得に失敗`;
     },
-    hide() { const el = document.getElementById(UI.id); if (el) document.body.removeChild(el); }
+    hide() { const doc = getToolDocument(); const el = doc.getElementById(UI.id); if (el) doc.body.removeChild(el); }
   };
 
   // The remaining ~1000 lines of internal helpers (Utils, Sty, AOA builders, traverseRows,
@@ -376,7 +377,7 @@ export async function runAdvancedDesignExporter(params = {}) {
 
   async function loadSheetLib() {
     if (typeof window.XLSX !== 'undefined') return { styled: true };
-    const loadScriptLocal = (src, timeout = 15000) => new Promise((resolve, reject) => { const s = document.createElement('script'); s.src = src; s.async = true; let done = false; const timer = setTimeout(() => { if (!done) { done = true; reject(new Error(`Timeout: ${src}`)); } }, timeout); s.onload = () => { if (!done) { done = true; clearTimeout(timer); resolve(true); } }; s.onerror = () => { if (!done) { done = true; clearTimeout(timer); reject(new Error(`Failed: ${src}`)); } }; document.head.appendChild(s); });
+    const loadScriptLocal = (src, timeout = 15000) => new Promise((resolve, reject) => { const doc = getToolDocument(); const s = doc.createElement('script'); s.src = src; s.async = true; let done = false; const timer = setTimeout(() => { if (!done) { done = true; reject(new Error(`Timeout: ${src}`)); } }, timeout); s.onload = () => { if (!done) { done = true; clearTimeout(timer); resolve(true); } }; s.onerror = () => { if (!done) { done = true; clearTimeout(timer); reject(new Error(`Failed: ${src}`)); } }; doc.head.appendChild(s); });
     try { await loadScriptLocal(CONFIG.SHEETLIB_PRIMARY_URL); return { styled: true }; }
     catch { await loadScriptLocal(CONFIG.SHEETLIB_FALLBACK_URL); return { styled: false }; }
   }
@@ -395,7 +396,7 @@ export async function runAdvancedDesignExporter(params = {}) {
 
   function showExportOptionsDialog() {
     return new Promise((resolve) => {
-      const overlay = document.createElement('div');
+      const overlay = getToolDocument().createElement('div');
       Object.assign(overlay.style, { position: 'fixed', top: '0', left: '0', width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', zIndex: getExporterOverlayZIndex(), display: 'flex', justifyContent: 'center', alignItems: 'center', fontFamily: '"Meiryo", sans-serif' });
       const sheets = [
         { key: 'summary', label: 'サマリー', default: true, required: true },
@@ -420,11 +421,11 @@ export async function runAdvancedDesignExporter(params = {}) {
       ];
       const checkboxes = sheets.map(s => `<label style="display:block;margin:3px 0;font-size:13px;cursor:${s.required ? 'default' : 'pointer'};"><input type="checkbox" value="${s.key}" ${s.default ? 'checked' : ''} ${s.required ? 'disabled' : ''} style="margin-right:6px;">${s.label}${s.required ? ' (必須)' : ''}</label>`).join('');
       overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:460px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.3);"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:16px;">📊 エクスポート設定</div><div style="font-size:12px;color:#666;margin-bottom:12px;">出力するシートを選択してください</div><div style="display:flex;gap:8px;margin-bottom:12px;"><button id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div><div id="kex-sheet-options" style="max-height:340px;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${checkboxes}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;"><button id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
-      document.body.appendChild(overlay);
+      getToolDocument().body.appendChild(overlay);
       overlay.querySelector('#kex-select-all').onclick = () => { overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]').forEach(cb => cb.checked = true); };
       overlay.querySelector('#kex-select-none').onclick = () => { overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])').forEach(cb => cb.checked = false); };
-      overlay.querySelector('#kex-cancel').onclick = () => { document.body.removeChild(overlay); resolve(null); };
-      overlay.querySelector('#kex-export').onclick = () => { const selected = new Set(); overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:checked').forEach(cb => selected.add(cb.value)); document.body.removeChild(overlay); resolve(selected); };
+      overlay.querySelector('#kex-cancel').onclick = () => { getToolDocument().body.removeChild(overlay); resolve(null); };
+      overlay.querySelector('#kex-export').onclick = () => { const selected = new Set(); overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:checked').forEach(cb => selected.add(cb.value)); getToolDocument().body.removeChild(overlay); resolve(selected); };
     });
   }
 
@@ -549,11 +550,11 @@ export async function runAdvancedDesignExporter(params = {}) {
     const downloadExcel = (wb2, filename) => {
       const out = XLSX.write(wb2, { bookType: 'xlsx', type: 'array', cellStyles: true });
       const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const a = document.createElement('a');
+      const a = getToolDocument().createElement('a');
       const url = URL.createObjectURL(blob);
       a.href = url; a.download = filename;
-      document.body.appendChild(a); a.click();
-      document.body.removeChild(a); URL.revokeObjectURL(url);
+      getToolDocument().body.appendChild(a); a.click();
+      getToolDocument().body.removeChild(a); URL.revokeObjectURL(url);
     };
     downloadExcel(wb, `${safeAppName}_設計書_v2.xlsx`);
 

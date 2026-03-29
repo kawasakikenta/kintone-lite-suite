@@ -18,6 +18,8 @@ export const state = {
   diffSelectedIds: new Set(),
   diffFavoritePaths: new Set(),
   diffFavoritesOnly: false,
+  diffExcludeSections: null,
+  diffSelectionAnchorId: '',
   diffIncludeSame: false,
   diffFilterSection: '',
   diffFilterType: '',

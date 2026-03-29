@@ -6,7 +6,23 @@ export const TOOL_VERSION = '2.5.0';
 export const DEFAULT_APP_ID = String(kintone.app.getId() || '');
 export const DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
 export const DIFF_SNAPSHOT_STATE_KEY = `${TOOL_ID}:diffSnapshots`;
+export const DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
+export const DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
 export const MAX_DIFF_SNAPSHOTS = 12;
+
+/** 差分ビュー用クイックプリセット（表示フィルタの一括切替） */
+export const DIFF_UI_PRESETS = [
+  { id: 'reset', label: 'フィルタ解除', hint: 'セクション・種別・重要度の絞り込みをクリア' },
+  { id: 'severity_high', label: '高重要度', hint: '重要度「高」だけ表示' },
+  { id: 'type_added', label: '追加のみ', hint: '追加差分だけ' },
+  { id: 'type_removed', label: '削除のみ', hint: '削除差分だけ' },
+  { id: 'type_changed', label: '変更のみ', hint: '変更差分だけ' },
+  { id: 'sec_field', label: 'フィールド', hint: 'フィールド設定セクションに絞る' },
+  { id: 'sec_layout', label: 'レイアウト', hint: 'レイアウト設定に絞る' },
+  { id: 'sec_view', label: 'ビュー', hint: 'ビュー設定に絞る' },
+  { id: 'sec_process', label: 'プロセス', hint: 'プロセス管理に絞る' },
+  { id: 'no_acl', label: '権限系を隠す', hint: 'アプリ/フィールド/レコード権限のセクションを除外して表示' }
+];
 
 export const DIALOG_MARGIN = 16;
 export const DIALOG_MIN_WIDTH = 560;
@@ -39,16 +55,56 @@ export const SECTION_DEFS = [
 export const SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS.filter((s) => s.key !== 'customizeSettings');
 
 export const FEATURE_DEFS = [
-  { key: 'diff', label: '差分比較', desc: '設定の差分を確認・比較', tabs: ['diff'] },
-  { key: 'reflect', label: 'プレビュー反映', desc: '比較元の設定を比較先プレビューへ反映', tabs: ['reflect'] },
-  { key: 'field', label: 'フィールド追加', desc: 'フィールド定義の追加・編集', tabs: ['field'] },
-  { key: 'jsconfig', label: 'JS/CSS設定', desc: 'カスタマイズ設定の取得・反映', tabs: ['jsconfig'] },
-  { key: 'vis', label: '可視化・出力', desc: 'ER図 / プロセス図 / 設計書 / 設定一括取得', tabs: ['er', 'processFlow', 'design', 'settingsExport'] },
-  { key: 'data', label: 'データ・保守', desc: 'レコード管理 / SQL実行 / APIテスター', tabs: ['recordMgr', 'sql', 'apiTester'] }
+  { key: 'diff', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>', label: '差分比較', desc: '設定の差分を確認・比較', tabs: ['diff'] },
+  { key: 'reflect', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>', label: 'プレビュー反映', desc: '比較元の設定を比較先プレビューへ反映', tabs: ['reflect'] },
+  { key: 'field', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>', label: 'フィールド追加', desc: 'フィールド定義の追加・編集', tabs: ['field'] },
+  { key: 'jsconfig', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>', label: 'JS/CSS設定', desc: 'カスタマイズ設定の取得・反映', tabs: ['jsconfig'] },
+  { key: 'vis', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>', label: '可視化・出力', desc: 'ER図 / プロセス図 / 設計書 / 設定一括取得', tabs: ['er', 'processFlow', 'design', 'settingsExport'] },
+  { key: 'data', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>', label: 'データ・保守', desc: 'レコード管理 / SQL実行 / APIテスター', tabs: ['recordMgr', 'sql', 'apiTester'] }
 ];
 
 export const TAB_TO_FEATURE = {};
 FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => { TAB_TO_FEATURE[t] = f.key; }));
+
+/** 差分取得時の「比較元/比較先 × 本番/プレビューAPI」プリセット（チェックボックスと同期） */
+export const PREVIEW_COMPARE_PRESETS = [
+  {
+    id: 'live-to-preview',
+    label: '本番 → プレビュー',
+    shortLine: '比較元は本番API · 比較先はプレビューAPI',
+    hint: 'いちばんよく使うパターンです。本番の現状と、比較先アプリのプレビュー設定を並べて差分し、問題なければプレビューへ反映します。',
+    sourcePreview: false,
+    targetPreview: true,
+    recommended: true
+  },
+  {
+    id: 'preview-to-preview',
+    label: 'プレビュー同士',
+    shortLine: '両方ともプレビューAPIで取得',
+    hint: '開発プレビュー同士の比較や、プレビュー上だけで完結する検証向けです。',
+    sourcePreview: true,
+    targetPreview: true,
+    recommended: false
+  },
+  {
+    id: 'live-to-live',
+    label: '本番同士',
+    shortLine: '両方とも本番APIで取得',
+    hint: '別アプリ間の本番設定比較など。反映タブのPUTは引き続き「比較先プレビュー」のみです（本番への直接書き込みはしません）。',
+    sourcePreview: false,
+    targetPreview: false,
+    recommended: false
+  },
+  {
+    id: 'preview-to-live',
+    label: 'プレビュー → 本番',
+    shortLine: '比較元はプレビュー · 比較先は本番APIで取得',
+    hint: 'プレビューで試した内容と、比較先の本番設定を並べたいとき。反映先は従来どおり比較先プレビューAPIです。',
+    sourcePreview: true,
+    targetPreview: false,
+    recommended: false
+  }
+];
 
 export const META_KEYS = new Set(['revision', 'creator', 'createdAt', 'modifier', 'modifiedAt']);
 
@@ -66,7 +122,6 @@ export const SYSTEM_FIELD_TYPES = new Set([
 export const DEFAULT_SUBTAB_STATE = Object.freeze({
   diff: 'conditions',
   field: 'json',
-  design: 'export',
   jsconfig: 'editor',
   recordMgr: 'status',
   er: 'diagram',
@@ -80,15 +135,15 @@ export const GUIDED_TOUR_STEPS = Object.freeze([
     path: '差分比較 > 比較条件',
     selector: '#u_sourceApp',
     title: '1. 比較元 / 比較先を決める',
-    body: '最初に上部の共通設定で、比較元と比較先のアプリID、ゲストID、プレビュー / 本番を確認します。通常は「比較元=開発」「比較先=プレビュー」から始めます。'
+    body: '共通設定で比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。'
   },
   {
     tab: 'diff',
     subTab: 'conditions',
     path: '差分比較 > 比較条件',
-    selector: '#u_envProfileSelect',
-    title: '2. 環境セットを保存する',
-    body: 'よく使う接続先の組み合わせは環境プロファイルとして保存できます。開発 / 検証 / 本番を頻繁に切り替える場合はここを使うと楽です。'
+    selector: '.preview-preset-grid',
+    title: '2. プレビュー比較プリセットを選ぶ',
+    body: '「本番→プレビュー」が最も一般的です。プリセットを押すと比較元・比較先のプレビューON/OFFがまとめて切り替わり、下のサマリーに実際のAPIパスが表示されます。4パターン以外にしたいときだけ「詳細」のチェックボックスを使います。'
   },
   {
     tab: 'diff',
@@ -125,16 +180,16 @@ export const GUIDED_TOUR_STEPS = Object.freeze([
   {
     tab: 'reflect',
     path: 'プレビュー反映',
-    selector: '[data-act="previewApplyPlan"]',
+    selector: '#u_footerPlan',
     title: '7. 反映プランを先に確認する',
-    body: 'いきなり反映せず、まずは反映プラン確認で API リクエスト内容や対象セクションを確認します。安全確認のための重要ステップです。'
+    body: '画面下の固定バーから「反映プラン確認」を押し、API リクエスト内容や対象セクションを確認します。要約はメイン欄の「プラン要約」にも表示されます。'
   },
   {
     tab: 'reflect',
     path: 'プレビュー反映',
-    selector: '[data-act="applyPreview"]',
+    selector: '#u_footerApply',
     title: '8. 比較先プレビューへ反映する',
-    body: 'プランに問題がなければ、比較元の設定を比較先プレビューへ反映します。必要に応じてバックアップや反映後デプロイも併用します。'
+    body: '固定バーの「比較元 → 比較先(プレビュー) 反映」で書き込みます。本番へのデプロイだけ行う場合は右側の「デプロイのみ」を使います。'
   },
   {
     tab: 'design',
@@ -207,6 +262,12 @@ export const DIFF_NORMALIZATION_PRESETS = {
   permissionOrder: {
     label: '権限/通知/カテゴリ順序',
     sections: new Set(['appAcl', 'fieldAcl', 'recordPermissions', 'notifications', 'perRecordNotifications', 'reminderNotifications', 'categories']),
+    ignoreKeys: new Set(['index', 'no', 'order']),
+    unorderedArrays: true
+  },
+  generalArrayOrder: {
+    label: 'すべて（プロセス等含む）の配列順序',
+    sections: new Set(['fieldSettings', 'processSettings', 'layoutSettings', 'actionSettings', 'appAcl', 'fieldAcl', 'recordPermissions', 'viewSettings', 'reportSettings', 'customizeSettings', 'notifications', 'perRecordNotifications', 'reminderNotifications', 'categories']),
     ignoreKeys: new Set(['index', 'no', 'order']),
     unorderedArrays: true
   }

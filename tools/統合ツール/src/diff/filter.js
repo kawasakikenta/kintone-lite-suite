@@ -62,7 +62,22 @@ export function diffRowMatchesFilters(row, filters) {
 export function getFilteredDiffRows(rows) {
   const list = rows || state.lastDiffRows || [];
   const filters = getCurrentDiffFilterState();
-  return list.filter((row) => diffRowMatchesFilters(row, filters));
+  const ex = state.diffExcludeSections;
+  return list.filter((row) => {
+    if (Array.isArray(ex) && ex.length && ex.includes(row.sectionKey)) return false;
+    return diffRowMatchesFilters(row, filters);
+  });
+}
+
+/** セクションタブ用（セクション条件以外のフィルタのみ適用した件数） */
+export function getFilteredDiffRowsWithoutSectionFilter(rows) {
+  const list = rows || state.lastDiffRows || [];
+  const filters = { ...getCurrentDiffFilterState(), section: '' };
+  const ex = state.diffExcludeSections;
+  return list.filter((row) => {
+    if (Array.isArray(ex) && ex.length && ex.includes(row.sectionKey)) return false;
+    return diffRowMatchesFilters(row, filters);
+  });
 }
 
 export function getFilteredFetchIssues(issues) {

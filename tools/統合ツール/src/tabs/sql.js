@@ -5,14 +5,15 @@ import { esc } from '../utils.js';
 import { apiGet, buildApiPrefix } from '../api.js';
 import { setStatus } from '../ui/components.js';
 import { commonParams } from './diff.js';
+import { getToolDocument } from '../ui/dialog.js';
 
 export async function launchKintoneSql() {
-  const sApp = document.getElementById('u_sourceApp').value.trim();
+  const sApp = getToolDocument().getElementById('u_sourceApp').value.trim();
   if (!sApp) {
     setStatus('エラー: 比較元アプリIDを設定してください', true);
     return;
   }
-  const existing = document.getElementById('kintone-sql-runner');
+  const existing = getToolDocument().getElementById('kintone-sql-runner');
   if (existing) existing.remove();
 
   if (!window.kintone?.api) { setStatus('エラー: kintoneアプリ画面で実行してください', true); return; }
@@ -22,6 +23,7 @@ export async function launchKintoneSql() {
   const STORAGE_KEY = 'kintone-sql-runner-history';
   const THEME_KEY = 'kintone-sql-runner-theme';
   const PAGE_SIZE = 200;
+  const toolD = getToolDocument();
 
   const Themes = {
     light: {
@@ -46,7 +48,7 @@ export async function launchKintoneSql() {
 
   const Utils = {
     el: (tag, attrs = {}, children = []) => {
-      const e = document.createElement(tag);
+      const e = toolD.createElement(tag);
       Object.entries(attrs).forEach(([k, v]) => {
         if (k === 'style' && typeof v === 'object') Object.assign(e.style, v);
         else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2).toLowerCase(), v);
@@ -59,7 +61,7 @@ export async function launchKintoneSql() {
         else e.setAttribute(k, v);
       });
       (Array.isArray(children) ? children : [children]).forEach(c => {
-        if (c != null) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+        if (c != null) e.appendChild(typeof c === 'string' ? toolD.createTextNode(c) : c);
       });
       return e;
     },
@@ -115,11 +117,11 @@ export async function launchKintoneSql() {
 
     loadScript: (src) => new Promise((resolve, reject) => {
       if (window.alasql) return resolve();
-      const s = document.createElement('script');
+      const s = toolD.createElement('script');
       s.src = src;
       s.onload = resolve;
       s.onerror = reject;
-      document.head.appendChild(s);
+      toolD.head.appendChild(s);
     }),
 
     downloadCsv: (data, filename) => {
@@ -135,7 +137,7 @@ export async function launchKintoneSql() {
       ].join('\r\n');
       const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
-      Object.assign(document.createElement('a'), { href: url, download: filename }).click();
+      Object.assign(toolD.createElement('a'), { href: url, download: filename }).click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     },
 
@@ -419,7 +421,7 @@ export async function launchKintoneSql() {
               renderTable();
             }
           }, [
-            document.createTextNode(k),
+            toolD.createTextNode(k),
             Utils.el('span', { className: 'sort-arrow', textContent: arrow })
           ]);
         })
@@ -492,7 +494,7 @@ export async function launchKintoneSql() {
 
       const t0 = performance.now();
       try {
-        const appId = document.getElementById('u_sourceApp').value.trim();
+        const appId = getToolDocument().getElementById('u_sourceApp').value.trim();
 
         setStatus('レコードを取得中...');
         const primary = await Logic.loadApp(appId, expandSubtables, (n) => setStatus(`アプリ ${appId}: ${n}件取得...`));
@@ -567,9 +569,9 @@ export async function launchKintoneSql() {
     };
 
     const init = () => {
-      const old = document.getElementById(ROOT_ID);
+      const old = getToolDocument().getElementById(ROOT_ID);
       if (old) old.remove();
-      const oldStyle = document.getElementById(ROOT_ID + '-style');
+      const oldStyle = getToolDocument().getElementById(ROOT_ID + '-style');
       if (oldStyle) oldStyle.remove();
 
       styleEl = Utils.el('style', { id: ROOT_ID + '-style' });
@@ -635,8 +637,8 @@ export async function launchKintoneSql() {
 
       const btnClose = Utils.el('button', {
         className: 'btn', onclick: () => {
-          root.remove(); styleEl.remove(); document.removeEventListener('click', closeHistory);
-          const sqlPane = document.querySelector('.pane[data-pane="sql"]');
+          root.remove(); styleEl.remove(); toolD.removeEventListener('click', closeHistory);
+          const sqlPane = toolD.querySelector('.pane[data-pane="sql"]');
           const btnWrap = sqlPane ? sqlPane.querySelector('.btns') : null;
           if (btnWrap) btnWrap.style.display = '';
         }
@@ -664,7 +666,7 @@ export async function launchKintoneSql() {
         }
       });
       const subtableLabel = Utils.el('label', { for: ROOT_ID + '-st', style: { fontSize: '11px', color: Themes[currentTheme].text, cursor: 'pointer', userSelect: 'none' } }, [
-        subtableCheck, document.createTextNode(' サブテーブル展開')
+        subtableCheck, toolD.createTextNode(' サブテーブル展開')
       ]);
 
       const appInput = Utils.el('input', {
@@ -705,16 +707,16 @@ export async function launchKintoneSql() {
       const panel = Utils.el('div', { className: 'panel' }, [head, body]);
 
       root = Utils.el('div', { id: ROOT_ID }, panel);
-      document.addEventListener('click', closeHistory);
+      toolD.addEventListener('click', closeHistory);
 
-      document.head.appendChild(styleEl);
+      toolD.head.appendChild(styleEl);
 
-      const sqlPane = document.querySelector('.pane[data-pane="sql"]');
+      const sqlPane = toolD.querySelector('.pane[data-pane="sql"]');
       const btnWrap = sqlPane ? sqlPane.querySelector('.btns') : null;
       if (btnWrap) btnWrap.style.display = 'none';
 
       if (sqlPane) sqlPane.appendChild(root);
-      else document.body.appendChild(root);
+      else toolD.body.appendChild(root);
 
       editorEl.focus();
     };

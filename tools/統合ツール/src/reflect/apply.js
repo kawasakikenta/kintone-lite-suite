@@ -39,6 +39,7 @@ import {
   renderReflectNodeList
 } from './helpers.js';
 import { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
+import { isReflectNodeModeEffective } from './nodeModeUi.js';
 
 export { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
 
@@ -413,7 +414,7 @@ export async function applySectionsLoop(prefix, app, sourceBundle, scopes, logs,
 }
 
 export function resolveBackupScopes(c) {
-  if (ui.nodeMode.checked) {
+  if (isReflectNodeModeEffective()) {
     if (!state.reflectRows.length) loadReflectRowsFromLastDiff();
     const rows = getSelectedReflectRows();
     if (!rows.length) throw new Error('バックアップ対象ノードが未選択です');
@@ -621,7 +622,7 @@ export async function runApplyPreviewByNodes() {
 }
 
 export async function runApplyPreview() {
-  if (ui.nodeMode.checked) return runApplyPreviewByNodes();
+  if (isReflectNodeModeEffective()) return runApplyPreviewByNodes();
   await ensureDiffPreparedForReflect();
   const c = commonParams();
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');

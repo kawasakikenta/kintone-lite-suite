@@ -16,7 +16,7 @@ import {
   getActiveDiffNormalizationLabels
 } from './engine.js';
 import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './enrich.js';
-import { buildIgnoreKeySuggestions } from './filter.js';
+import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter } from './filter.js';
 import { resolveBundleRevision, pickBundleSections } from '../api.js';
 
 // ---------------------------------------------------------------------------
@@ -345,6 +345,10 @@ export function diffRowMatchesFilters(row, filters) {
     return false;
   }
   if (filters.severity && String(row.severity || 'low') !== filters.severity) return false;
+  if (filters.favoritesOnly) {
+    const p = String(row.path || '').trim();
+    if (!state.diffFavoritePaths.has(p)) return false;
+  }
   return true;
 }
 
@@ -356,14 +360,19 @@ export function getCurrentDiffFilterState() {
     severity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || '',
     searchByFieldName: !!ui.diffSearchFieldName?.checked || !!state.diffSearchFieldName,
     sourceBundle: state.lastSourceBundle,
-    targetBundle: state.lastTargetBundle
+    targetBundle: state.lastTargetBundle,
+    favoritesOnly: !!state.diffFavoritesOnly
   };
 }
 
 export function getFilteredDiffRows(rows) {
   const list = rows || state.lastDiffRows || [];
   const filters = getCurrentDiffFilterState();
-  return list.filter((row) => diffRowMatchesFilters(row, filters));
+  const ex = state.diffExcludeSections;
+  return list.filter((row) => {
+    if (Array.isArray(ex) && ex.length && ex.includes(row.sectionKey)) return false;
+    return diffRowMatchesFilters(row, filters);
+  });
 }
 
 export function getFilteredFetchIssues(issues) {
@@ -1944,7 +1953,11 @@ export function renderDiffSuggestionChips() {
 
 export function renderDiffFilterOptions() {
   if (!ui.diffFilterSection) return;
-  const sections = [...new Set([...(state.lastDiffRows || []).map((r) => r.sectionKey), ...(state.lastFetchIssues || []).map((r) => r.sectionKey)].filter(Boolean))];
+  const ex = state.diffExcludeSections;
+  let sections = [...new Set([...(state.lastDiffRows || []).map((r) => r.sectionKey), ...(state.lastFetchIssues || []).map((r) => r.sectionKey)].filter(Boolean))];
+  if (Array.isArray(ex) && ex.length) {
+    sections = sections.filter((k) => !ex.includes(k));
+  }
   const current = state.diffFilterSection || ui.diffFilterSection.value || '';
   ui.diffFilterSection.innerHTML = '<option value="">全セクション</option>' +
     sections.map((secKey) => {
@@ -1996,6 +2009,75 @@ export function renderDiffWarningBox() {
 // Main in-panel diff result renderer
 // ---------------------------------------------------------------------------
 
+function formatDiffPathRich(path) {
+  const p = String(path || '-');
+  if (p === '-') return esc(p);
+  const parts = p.split('.').filter(Boolean);
+  if (parts.length <= 2) {
+    return `<span class="diff-path-line">${esc(p)}</span>`;
+  }
+  const head = parts.slice(0, -2).join('.');
+  const tail = parts.slice(-2).join('.');
+  return `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(head)}</span><span class="diff-path-sep">…</span><span class="diff-path-tail">${esc(tail)}</span></span>`;
+}
+
+function buildDiffSummaryBars(summary) {
+  const seg = [
+    ['diff-bar-added', summary.added],
+    ['diff-bar-removed', summary.removed],
+    ['diff-bar-changed', summary.changed],
+    ['diff-bar-moved', summary.moved]
+  ].filter(([, n]) => n > 0);
+  if (!seg.length) return '';
+  const inner = seg.map(([cls, n]) =>
+    `<span class="diff-bar ${cls}" style="flex:${Math.max(1, n)}"></span>`
+  ).join('');
+  return `<div class="diff-summary-bars" role="presentation" aria-hidden="true">${inner}</div>`;
+}
+
+function buildDiffSectionNavHtml(rows) {
+  const cur = ui.diffFilterSection?.value || state.diffFilterSection || '';
+  const baseRows = getFilteredDiffRowsWithoutSectionFilter(rows);
+  const grouped = groupDiffRowsBySection(baseRows);
+  const sel = state.diffSelectedIds || new Set();
+  const selectedInBase = baseRows.filter((r) => sel.has(r._id)).length;
+  const total = baseRows.length;
+  const pills = [
+    `<button type="button" class="diff-sec-pill${!cur ? ' is-active' : ''}" data-diff-sec-nav="" title="全セクション（セクション以外のフィルタはそのまま）">すべて <span class="diff-sec-pill-n">${total}</span>${selectedInBase ? `<span class="diff-sec-pill-sel">選択${selectedInBase}</span>` : ''}</button>`
+  ];
+  for (const g of grouped) {
+    const nSel = g.rows.filter((r) => sel.has(r._id)).length;
+    const active = cur === g.key ? ' is-active' : '';
+    pills.push(
+      `<button type="button" class="diff-sec-pill${active}" data-diff-sec-nav="${esc(g.key)}" title="${esc(g.label)}">${esc(g.label)} <span class="diff-sec-pill-n">${g.rows.length}</span>${nSel ? `<span class="diff-sec-pill-sel">${nSel}</span>` : ''}</button>`
+    );
+  }
+  return `<nav class="diff-sec-nav" aria-label="セクションで絞り込み">${pills.join('')}</nav>`;
+}
+
+function scheduleDiffPopoutSync() {
+  queueMicrotask(() => {
+    import('./popout.js').then((m) => {
+      try { m.syncDiffPopoutMirror(); } catch (e) { /* ignore */ }
+    }).catch(() => {});
+  });
+}
+
+function paintDiffOffViewPlaceholder(rows) {
+  if (!ui.result) return;
+  const list = rows || state.lastDiffRows || [];
+  const n = list.length;
+  const m = (state.lastFetchIssues || []).length;
+  if (!n && !m) {
+    ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア（差分比較）</p><p class="main-result-placeholder-body">ここに出す詳細テーブルは<strong>結果整理</strong>サブタブを開いたときだけ表示します。このサブタブでは比較条件の設定に集中できます。</p></div>`;
+    return;
+  }
+  ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${m ? `（取得失敗 ${m} 件）` : ''}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>結果整理</strong>サブタブで行ってください。</p></div>`;
+}
+
+/** 差分以外のタブへ移したときに、差分テーブルが残り続けないようにする */
+export const MAIN_RESULT_IDLE_HTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア</p><p class="main-result-placeholder-body">このタブの操作結果やログがここに表示されます。</p></div>`;
+
 export function renderResultRows(rows) {
   const summary = summarizeRows(rows);
   const severitySummary = summarizeSeverity(rows);
@@ -2016,8 +2098,18 @@ export function renderResultRows(rows) {
   renderDiffSuggestionChips();
   renderDiffWarningBox();
 
+  if (state.activeTab === 'diff' && state.activeSubTabs.diff !== 'view') {
+    paintDiffOffViewPlaceholder(rows);
+    scheduleDiffPopoutSync();
+    return;
+  }
+
+  const sectionNavHtml = rows.length ? buildDiffSectionNavHtml(rows) : '';
+
   const summaryHtml = `
-      <div class="diff-summary">
+      <div class="diff-summary-head">
+        ${buildDiffSummaryBars(summary)}
+        <div class="diff-summary">
         <span class="diff-pill">総件数 ${summary.total}</span>
         <span class="diff-pill">追加 ${summary.added}</span>
         <span class="diff-pill">削除 ${summary.removed}</span>
@@ -2034,6 +2126,8 @@ export function renderResultRows(rows) {
         <span class="diff-info">表示 ${renderedRows.length}/${filteredRows.length}/${rows.length}</span>
         ${filteredRows.length !== rows.length ? `<span class="diff-info">絞込重要度 高:${filteredSeverity.high} / 中:${filteredSeverity.medium} / 低:${filteredSeverity.low}</span>` : ''}
         ${rawKeyword ? `<span class="diff-info">検索: ${esc(rawKeyword)}</span>` : ''}
+        </div>
+        ${sectionNavHtml}
       </div>
     `;
 
@@ -2054,6 +2148,7 @@ export function renderResultRows(rows) {
         ${summaryHtml}
         <div class="diff-empty">差分はありません。</div>
       </div>`;
+    scheduleDiffPopoutSync();
     return;
   }
 
@@ -2062,6 +2157,7 @@ export function renderResultRows(rows) {
         ${summaryHtml}
         <div class="diff-empty">検索条件に一致する差分はありません。</div>
       </div>`;
+    scheduleDiffPopoutSync();
     return;
   }
 
@@ -2082,7 +2178,8 @@ export function renderResultRows(rows) {
       const sevClass = sev === 'high' ? 'sev-high' : (sev === 'medium' ? 'sev-medium' : 'sev-low');
       const cols = renderRowColumns(r, useCharDiff);
       const selected = state.diffSelectedIds.has(r._id) ? 'checked' : '';
-      return `<tr class="${selected ? 'diff-row-selected' : ''}">
+      const rowAccent = `diff-row-t-${typeClass}`;
+      return `<tr class="${rowAccent}${selected ? ' diff-row-selected' : ''}">
           <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" ${selected}></td>
           <td><span class="sev-badge ${sevClass}">${esc(getSeverityDisplayLabel(sev))}</span></td>
           <td class="diff-type ${typeClass}">${esc(typeLabel || '-')}</td>
@@ -2090,7 +2187,7 @@ export function renderResultRows(rows) {
             <div class="diff-tools">
               <button type="button" class="diff-mini-btn" data-copy-val="${esc(r.path || '')}">パス</button>
             </div>
-            <div class="diff-path" title="${esc(r.path || '-')}">${esc(r.path || '-')}</div>
+            <div class="diff-path diff-path-cell" title="${esc(r.path || '-')}">${formatDiffPathRich(r.path)}</div>
             ${renderDiffRowMeta(r)}
           </td>
           <td class="diff-cell">${cols.left}</td>
@@ -2118,4 +2215,5 @@ export function renderResultRows(rows) {
       ${!rows.length ? '<div class="diff-empty">比較差分はありません。API取得失敗のみ検出されています。</div>' : ''}
       ${sectionHtml}
     </div>`;
+  scheduleDiffPopoutSync();
 }

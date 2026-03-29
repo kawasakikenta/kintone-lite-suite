@@ -1,12 +1,22 @@
 'use strict';
 
-import { SECTION_DEFS, DEFAULT_APP_ID, FEATURE_DEFS } from './constants.js';
+import { SECTION_DEFS, DEFAULT_APP_ID, FEATURE_DEFS, DIFF_ONBOARDING_DISMISSED_KEY } from './constants.js';
 import { state, ui } from './state.js';
 import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys } from './utils.js';
 import { buildApiPrefix } from './api.js';
 import { getActualDiffRows } from './diff/engine.js';
 import { getRenderedDiffRows } from './diff/filter.js';
-import { renderResultRows, renderDiffFilterOptions, syncDiffThemeButton, renderDiffWarningBox, renderDiffSelectionState } from './diff/export.js';
+import {
+  renderResultRows,
+  renderDiffFilterOptions,
+  syncDiffThemeButton,
+  renderDiffWarningBox,
+  renderDiffSelectionState,
+  MAIN_RESULT_IDLE_HTML
+} from './diff/export.js';
+import { applyDiffUiPreset, applyDiffSectionNav } from './diff/presets.js';
+import { saveDiffSelectionSet, loadDiffSelectionSet, deleteDiffSelectionSet, refreshDiffSelectionSetDropdown } from './diff/selection-sets.js';
+import { openDiffViewerPopout } from './diff/popout.js';
 import {
   setStatus,
   setBusy,
@@ -30,6 +40,8 @@ import {
   fitDialogToViewport,
   applyDialogSizePreset,
   getRoot,
+  getToolDocument,
+  getToolWindow,
   teardownDialogResizeHandling,
   initDialogResizeHandling,
   initDialogDragHandling
@@ -53,6 +65,7 @@ import {
   currentDiffSignature,
   ensureDiffPreparedForReflect
 } from './tabs/diff.js';
+import { applyPreviewPreset, syncPreviewComparePanel } from './tabs/preview-compare.js';
 
 import {
   loadReflectRowsFromLastDiff,
@@ -152,6 +165,14 @@ export function setupEventHandlers(injected = {}) {
   const root = getRoot();
   if (!root) return;
 
+  function syncDiffOnboardingVisibility() {
+    const el = ui.diffOnboarding;
+    if (!el) return;
+    const dismissed = !!localStorage.getItem(DIFF_ONBOARDING_DISMISSED_KEY);
+    const onDiffView = state.activeTab === 'diff' && state.activeSubTabs.diff === 'view';
+    el.style.display = !dismissed && onDiffView ? 'block' : 'none';
+  }
+
   const {
     runDesignExport,
     runDesignCopyMd,
@@ -214,6 +235,7 @@ export function setupEventHandlers(injected = {}) {
   renderLookupMapRows();
   if (typeof renderTemplateOptions === 'function') renderTemplateOptions();
   renderBundleState();
+  syncPreviewComparePanel(root, ui);
   renderReflectSidebar();
   renderReflectMainPanel();
   renderReflectNodeList();
@@ -237,7 +259,7 @@ export function setupEventHandlers(injected = {}) {
       fitDialogToViewport({ persist: false });
       if (state.guidedTourActive) scheduleGuidedTourLayout();
     };
-    window.addEventListener('resize', guidedTourWindowResizeHandler);
+    getToolWindow().addEventListener('resize', guidedTourWindowResizeHandler);
   }
 
   // -------------------------------------------------------------------
@@ -258,7 +280,7 @@ export function setupEventHandlers(injected = {}) {
     });
   });
 
-  [ui.diffNormalizeViewOrder, ui.diffNormalizePermissionOrder].forEach((el) => {
+  [ui.diffNormalizeViewOrder, ui.diffNormalizePermissionOrder, ui.diffNormalizeGeneralArrayOrder].forEach((el) => {
     if (!el) return;
     el.addEventListener('change', () => {
       saveCurrentDialogState();
@@ -293,8 +315,6 @@ export function setupEventHandlers(injected = {}) {
   if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.addEventListener('change', () => renderReflectNodeList());
 
   [
-    ui.sourceApp, ui.sourceGuest, ui.sourcePreview,
-    ui.targetApp, ui.targetGuest, ui.targetPreview,
     ui.ignoreKeys, ui.autoBackupPreview,
     ui.overwriteField, ui.deployField,
     ui.jsconfigPreview, ui.jsconfigDeployAfter,
@@ -306,6 +326,24 @@ export function setupEventHandlers(injected = {}) {
   ].forEach((el) => {
     if (!el) return;
     el.addEventListener('change', saveCurrentDialogState);
+  });
+
+  [ui.sourceApp, ui.sourceGuest, ui.targetApp, ui.targetGuest].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('change', () => {
+      saveCurrentDialogState();
+      syncPreviewComparePanel(root, ui);
+    });
+    el.addEventListener('input', () => syncPreviewComparePanel(root, ui));
+  });
+
+  [ui.sourcePreview, ui.targetPreview].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('change', () => {
+      saveCurrentDialogState();
+      syncPreviewComparePanel(root, ui);
+      renderBundleState();
+    });
   });
 
   if (ui.charDiff) {
@@ -376,6 +414,20 @@ export function setupEventHandlers(injected = {}) {
 
   ui.doDeploy.addEventListener('change', saveCurrentDialogState);
 
+  if (ui.reflectSimpleMode) {
+    ui.reflectSimpleMode.addEventListener('change', () => {
+      if (ui.reflectSimpleMode.checked) {
+        ui.nodeMode.checked = false;
+        state.reflectActiveSidebarSection = null;
+        if (ui.patchJsonPanel) ui.patchJsonPanel.style.display = 'none';
+      }
+      renderReflectModeUi();
+      renderReflectMainPanel();
+      renderReflectNodeList();
+      saveCurrentDialogState();
+    });
+  }
+
   // -------------------------------------------------------------------
   // Keyboard handler
   // -------------------------------------------------------------------
@@ -408,13 +460,22 @@ export function setupEventHandlers(injected = {}) {
     }
 
     if (state.activeTab !== 'diff') return;
+    const resKb = getToolDocument().getElementById('u_result');
+    const tKb = e.target;
+    if (tKb?.matches?.('input[type=checkbox][data-diff-row-id]') && resKb?.contains(tKb) && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      const boxes = [...resKb.querySelectorAll('tbody input[type=checkbox][data-diff-row-id]')];
+      const idx = boxes.indexOf(tKb);
+      const next = e.key === 'ArrowDown' ? boxes[idx + 1] : boxes[idx - 1];
+      if (idx >= 0 && next) { e.preventDefault(); next.focus(); }
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
       e.preventDefault();
       ui.diffSearch?.focus();
       ui.diffSearch?.select();
       return;
     }
-    if (e.key === 'Escape' && document.activeElement === ui.diffSearch) {
+    if (e.key === 'Escape' && getToolDocument().activeElement === ui.diffSearch) {
       e.preventDefault();
       ui.diffSearch.value = '';
       saveCurrentDialogState();
@@ -465,6 +526,8 @@ export function setupEventHandlers(injected = {}) {
   root.addEventListener('change', (e) => {
     const diffId = e.target?.dataset?.diffRowId;
     if (diffId) {
+      const res = getToolDocument().getElementById('u_result');
+      if (res?.contains(e.target)) state.diffSelectionAnchorId = diffId;
       if (e.target.checked) state.diffSelectedIds.add(diffId);
       else state.diffSelectedIds.delete(diffId);
       renderResultRows(state.lastDiffRows);
@@ -492,11 +555,35 @@ export function setupEventHandlers(injected = {}) {
       renderBundleState();
       renderReflectMainPanel();
       const putSections = SECTION_DEFS.filter((d) => d.put);
-      const sidebarCount = document.getElementById('u_sidebarCount');
-      const checkedCount = [...document.querySelectorAll('#u_reflectSidebarSections [data-apply-scope]:checked')].length;
+      const sidebarCount = getToolDocument().getElementById('u_sidebarCount');
+      const checkedCount = [...getToolDocument().querySelectorAll('#u_reflectSidebarSections [data-apply-scope]:checked')].length;
       if (sidebarCount) sidebarCount.textContent = `${checkedCount} / ${putSections.length}`;
     }
   });
+
+  root.addEventListener('mousedown', (e) => {
+    const cb = e.target.closest('input[type=checkbox][data-diff-row-id]');
+    if (!cb) return;
+    const res = getToolDocument().getElementById('u_result');
+    if (!res || !res.contains(cb) || !e.shiftKey || !state.diffSelectionAnchorId) return;
+    const boxes = [...res.querySelectorAll('tbody input[type=checkbox][data-diff-row-id]')];
+    const ids = boxes.map((el) => el.dataset.diffRowId);
+    const i0 = ids.indexOf(state.diffSelectionAnchorId);
+    const i1 = ids.indexOf(cb.dataset.diffRowId);
+    if (i0 < 0 || i1 < 0) return;
+    e.preventDefault();
+    const a = Math.min(i0, i1);
+    const b = Math.max(i0, i1);
+    const anchorEl = boxes.find((el) => el.dataset.diffRowId === state.diffSelectionAnchorId);
+    const anchorChecked = anchorEl ? !!anchorEl.checked : true;
+    for (let i = a; i <= b; i++) {
+      const id = ids[i];
+      if (anchorChecked) state.diffSelectedIds.add(id);
+      else state.diffSelectedIds.delete(id);
+    }
+    renderResultRows(state.lastDiffRows || []);
+    saveCurrentDialogState();
+  }, true);
 
   // -------------------------------------------------------------------
   // File input handlers
@@ -547,7 +634,7 @@ export function setupEventHandlers(injected = {}) {
     });
   });
 
-  const patchJsonFileInput = document.getElementById('u_patchJsonFileInput');
+  const patchJsonFileInput = getToolDocument().getElementById('u_patchJsonFileInput');
   if (patchJsonFileInput) {
     patchJsonFileInput.addEventListener('change', () => {
       const f = patchJsonFileInput.files && patchJsonFileInput.files[0];
@@ -559,7 +646,7 @@ export function setupEventHandlers(injected = {}) {
     });
   }
 
-  const patchJsonEditor = document.getElementById('u_patchJsonEditor');
+  const patchJsonEditor = getToolDocument().getElementById('u_patchJsonEditor');
   if (patchJsonEditor) {
     let patchParseTimer = 0;
     patchJsonEditor.addEventListener('input', () => {
@@ -574,7 +661,7 @@ export function setupEventHandlers(injected = {}) {
             if (typeof renderPatchJsonSummary === 'function') renderPatchJsonSummary(parsed);
           }
         } catch (e) {
-          const el = document.getElementById('u_patchJsonSummary');
+          const el = getToolDocument().getElementById('u_patchJsonSummary');
           if (el) {
             el.style.display = 'block';
             el.style.background = '#fef2f2';
@@ -601,6 +688,16 @@ export function setupEventHandlers(injected = {}) {
       else state.diffFavoritePaths.add(path);
       saveCurrentDialogState();
       renderResultRows(state.lastDiffRows);
+      return;
+    }
+
+    const secNavBtn = e.target.closest('[data-diff-sec-nav]');
+    if (secNavBtn) {
+      const key = secNavBtn.getAttribute('data-diff-sec-nav') ?? '';
+      applyDiffSectionNav(key);
+      saveCurrentDialogState();
+      const label = key ? (SECTION_DEFS.find((d) => d.key === key)?.label || key) : '全セクション';
+      setStatus(key ? `セクションで絞り込み: ${label}` : 'セクション絞り込みを解除しました');
       return;
     }
 
@@ -733,14 +830,24 @@ export function setupEventHandlers(injected = {}) {
     // Sub-tab switching
     const subTab = e.target.closest('.subtab');
     if (subTab) {
-      switchSubTab(subTab.dataset.subtabParent || '', subTab.dataset.subtab || '');
+      const parent = subTab.dataset.subtabParent || '';
+      switchSubTab(parent, subTab.dataset.subtab || '');
+      syncDiffOnboardingVisibility();
+      if (parent === 'diff' && ui.result) renderResultRows(state.lastDiffRows || []);
       return;
     }
 
     // Tab switching
     const tab = e.target.closest('.tab');
     if (tab) {
+      const prevTab = state.activeTab;
       switchTab(tab.dataset.tab);
+      syncDiffOnboardingVisibility();
+      if (prevTab === 'diff' && state.activeTab !== 'diff' && ui.result) {
+        ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
+      } else if (state.activeTab === 'diff' && ui.result) {
+        renderResultRows(state.lastDiffRows || []);
+      }
       return;
     }
 
@@ -761,7 +868,13 @@ export function setupEventHandlers(injected = {}) {
       else root.classList.add('feat-change');
       const conn = root.querySelector('#u_connectionPanel');
       if (conn instanceof HTMLDetailsElement) conn.open = true;
+      const prevTab = state.activeTab;
       switchTab(def.tabs[0]);
+      if (prevTab === 'diff' && state.activeTab !== 'diff' && ui.result) {
+        ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
+      } else if (state.activeTab === 'diff' && ui.result) {
+        renderResultRows(state.lastDiffRows || []);
+      }
       if (ui.featureTitle) ui.featureTitle.textContent = def.label;
       if (ui.featureConn) ui.featureConn.textContent = def.desc;
       saveCurrentDialogState();
@@ -810,6 +923,7 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'goDiffReview') {
       switchTab('diff');
       switchSubTab('diff', (state.lastDiffRows.length || state.lastFetchIssues.length) ? 'view' : 'conditions');
+      if (ui.result) renderResultRows(state.lastDiffRows || []);
       setStatus('差分比較タブへ移動しました');
       return;
     }
@@ -818,6 +932,7 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'setSourceCurrent') {
       ui.sourceApp.value = DEFAULT_APP_ID;
       saveCurrentDialogState();
+      syncPreviewComparePanel(root, ui);
       setStatus(`比較元アプリIDを現在アプリ(${DEFAULT_APP_ID})に設定しました`);
       return;
     }
@@ -826,6 +941,7 @@ export function setupEventHandlers(injected = {}) {
       ui.targetGuest.value = ui.sourceGuest.value.trim();
       ui.targetPreview.checked = !!ui.sourcePreview.checked;
       saveCurrentDialogState();
+      syncPreviewComparePanel(root, ui);
       renderBundleState();
       setStatus('比較元設定を比較先へコピーしました');
       return;
@@ -839,8 +955,19 @@ export function setupEventHandlers(injected = {}) {
       ui.targetGuest.value = src.guest;
       ui.targetPreview.checked = src.preview;
       saveCurrentDialogState();
+      syncPreviewComparePanel(root, ui);
       renderBundleState();
       setStatus('比較元/比較先設定を入れ替えました');
+      return;
+    }
+    if (act === 'setPreviewPreset') {
+      const presetId = actEl.dataset.preset || '';
+      applyPreviewPreset(ui, presetId);
+      saveCurrentDialogState();
+      syncPreviewComparePanel(root, ui);
+      renderBundleState();
+      const label = presetId ? (actEl.querySelector('.pp-title')?.textContent?.trim() || presetId) : '';
+      setStatus(`プレビュー比較プリセットを「${label}」に設定しました`);
       return;
     }
 
@@ -940,6 +1067,56 @@ export function setupEventHandlers(injected = {}) {
       setStatus('差分選択を解除しました');
       return;
     }
+    if (act === 'openDiffPopout') {
+      const w = openDiffViewerPopout();
+      if (!w) setStatus('別ウィンドウを開けませんでした（ポップアップがブロックされている可能性があります）', true);
+      else setStatus('差分を別ウィンドウで開きました');
+      return;
+    }
+    if (act === 'diffUiPreset') {
+      const pid = actEl.dataset.preset || '';
+      applyDiffUiPreset(pid);
+      saveCurrentDialogState();
+      setStatus('差分表示プリセットを適用しました');
+      return;
+    }
+    if (act === 'saveDiffSelectionSet') {
+      try {
+        saveDiffSelectionSet(ui.diffSelectionSetName?.value);
+        setStatus('選択セットを保存しました');
+      } catch (err) {
+        setStatus(err.message || String(err), true);
+      }
+      return;
+    }
+    if (act === 'loadDiffSelectionSet') {
+      const name = ui.diffSelectionSetSelect?.value || '';
+      const r = loadDiffSelectionSet(name);
+      if (!r) {
+        setStatus('読み込めるセットを選択してください', true);
+        return;
+      }
+      saveCurrentDialogState();
+      setStatus(r.mismatch
+        ? `選択を復元しました（比較条件が異なる可能性あり: ${r.restored}/${r.requested}件）`
+        : `選択を復元しました (${r.restored}件)`);
+      return;
+    }
+    if (act === 'deleteDiffSelectionSet') {
+      const name = ui.diffSelectionSetSelect?.value || '';
+      if (!name) {
+        setStatus('削除するセットを選んでください', true);
+        return;
+      }
+      deleteDiffSelectionSet(name);
+      setStatus(`選択セットを削除しました: ${name}`);
+      return;
+    }
+    if (act === 'dismissDiffOnboarding') {
+      try { localStorage.setItem(DIFF_ONBOARDING_DISMISSED_KEY, '1'); } catch (err) { /* ignore */ }
+      syncDiffOnboardingVisibility();
+      return;
+    }
 
     // ----- Bundle import/clear -----
     if (act === 'importSourceBundle') return ui.sourceBundleFile.click();
@@ -996,11 +1173,11 @@ export function setupEventHandlers(injected = {}) {
 
     // ----- Lookup map -----
     if (act === 'addLookupMapRow') {
-      const container = document.getElementById('u_lookupMapRows');
+      const container = getToolDocument().getElementById('u_lookupMapRows');
       if (!container) return;
       if (container.querySelector('.muted')) container.innerHTML = '';
       const i = container.querySelectorAll('[data-lookup-row]').length;
-      const row = document.createElement('div');
+      const row = getToolDocument().createElement('div');
       row.className = 'btns';
       row.style.marginTop = '4px';
       row.dataset.lookupRow = String(i);
@@ -1064,6 +1241,10 @@ export function setupEventHandlers(injected = {}) {
       return;
     }
     if (act === 'reflectModeNode') {
+      if (ui.reflectSimpleMode?.checked) {
+        setStatus('簡易表示中はノード選択に切り替えられません。「簡易表示」をオフにしてください。');
+        return;
+      }
       ui.nodeMode.checked = true;
       state.reflectActiveSidebarSection = null;
       renderReflectModeUi();
@@ -1144,19 +1325,23 @@ export function setupEventHandlers(injected = {}) {
 
     // ----- Patch JSON panel -----
     if (act === 'togglePatchJsonPanel') {
+      if (ui.reflectSimpleMode?.checked) {
+        setStatus('簡易表示中はJSON差分反映を使えません。「簡易表示」をオフにしてください。');
+        return;
+      }
       state.patchJsonPanelOpen = !state.patchJsonPanelOpen;
-      const panel = document.getElementById('u_patchJsonPanel');
+      const panel = getToolDocument().getElementById('u_patchJsonPanel');
       if (panel) panel.style.display = state.patchJsonPanelOpen ? 'block' : 'none';
       return;
     }
     if (act === 'patchJsonLoadFile') {
-      const input = document.getElementById('u_patchJsonFileInput');
+      const input = getToolDocument().getElementById('u_patchJsonFileInput');
       if (input) { input.value = ''; input.click(); }
       return;
     }
     if (act === 'patchJsonClear') {
       state.importedPatchPayload = null;
-      const editor = document.getElementById('u_patchJsonEditor');
+      const editor = getToolDocument().getElementById('u_patchJsonEditor');
       if (editor) editor.value = '';
       if (typeof renderPatchJsonSummary === 'function') renderPatchJsonSummary(null);
       setStatus('パッチJSONをクリアしました');
@@ -1237,4 +1422,7 @@ export function setupEventHandlers(injected = {}) {
     // ----- API tester -----
     if (act === 'runApiTester' && typeof runApiTester === 'function') return runApiTester();
   });
+
+  refreshDiffSelectionSetDropdown();
+  syncDiffOnboardingVisibility();
 }

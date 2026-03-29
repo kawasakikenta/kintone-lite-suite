@@ -35,6 +35,16 @@ export function getRoot() {
   return root;
 }
 
+/** ツールUIが載っている document（別タブ表示時は子ウィンドウ） */
+export function getToolDocument() {
+  return root?.ownerDocument || document;
+}
+
+export function getToolWindow() {
+  const d = getToolDocument();
+  return d.defaultView || window;
+}
+
 export function getUi() {
   return ui;
 }
@@ -50,8 +60,9 @@ export function setRootElement(el) {
 function clampDialogPosition(left, top, width, height) {
   const dialogWidth = Math.max(320, Math.round(Number(width) || root?.offsetWidth || DIALOG_DEFAULT_WIDTH));
   const dialogHeight = Math.max(240, Math.round(Number(height) || root?.offsetHeight || DIALOG_DEFAULT_HEIGHT));
-  const viewportWidth = Math.max(dialogWidth + (DIALOG_MARGIN * 2), window.innerWidth || dialogWidth);
-  const viewportHeight = Math.max(dialogHeight + (DIALOG_MARGIN * 2), window.innerHeight || dialogHeight);
+  const tw = getToolWindow();
+  const viewportWidth = Math.max(dialogWidth + (DIALOG_MARGIN * 2), tw.innerWidth || dialogWidth);
+  const viewportHeight = Math.max(dialogHeight + (DIALOG_MARGIN * 2), tw.innerHeight || dialogHeight);
   const maxLeft = Math.max(DIALOG_MARGIN, viewportWidth - dialogWidth - DIALOG_MARGIN);
   const maxTop = Math.max(DIALOG_MARGIN, viewportHeight - dialogHeight - DIALOG_MARGIN);
   const fallbackLeft = maxLeft;
@@ -64,7 +75,8 @@ function clampDialogPosition(left, top, width, height) {
 export function getDefaultDialogPosition(width, height) {
   const dialogWidth = Math.round(Number(width) || root?.offsetWidth || DIALOG_DEFAULT_WIDTH);
   const dialogHeight = Math.round(Number(height) || root?.offsetHeight || DIALOG_DEFAULT_HEIGHT);
-  return clampDialogPosition((window.innerWidth || dialogWidth) - dialogWidth - DIALOG_MARGIN, DIALOG_MARGIN, dialogWidth, dialogHeight);
+  const tw = getToolWindow();
+  return clampDialogPosition((tw.innerWidth || dialogWidth) - dialogWidth - DIALOG_MARGIN, DIALOG_MARGIN, dialogWidth, dialogHeight);
 }
 
 export function getCurrentDialogPosition(width, height) {
@@ -78,8 +90,9 @@ export function getCurrentDialogPosition(width, height) {
 }
 
 function getDialogSizeBounds() {
-  const maxWidth = Math.max(360, Math.floor((window.innerWidth || DIALOG_DEFAULT_WIDTH) - (DIALOG_MARGIN * 2)));
-  const maxHeight = Math.max(320, Math.floor((window.innerHeight || DIALOG_DEFAULT_HEIGHT) - (DIALOG_MARGIN * 2)));
+  const tw = getToolWindow();
+  const maxWidth = Math.max(360, Math.floor((tw.innerWidth || DIALOG_DEFAULT_WIDTH) - (DIALOG_MARGIN * 2)));
+  const maxHeight = Math.max(320, Math.floor((tw.innerHeight || DIALOG_DEFAULT_HEIGHT) - (DIALOG_MARGIN * 2)));
   return {
     minWidth: Math.min(DIALOG_MIN_WIDTH, maxWidth),
     minHeight: Math.min(DIALOG_MIN_HEIGHT, maxHeight),
@@ -178,11 +191,12 @@ function canStartDialogDrag(target) {
 
 function finishDialogDrag(persist = true) {
   if (!dialogDragState) return;
-  document.removeEventListener('mousemove', dialogDragMoveHandler);
-  document.removeEventListener('mouseup', dialogDragEndHandler);
+  const doc = getToolDocument();
+  doc.removeEventListener('mousemove', dialogDragMoveHandler);
+  doc.removeEventListener('mouseup', dialogDragEndHandler);
   dialogDragState = null;
   root.classList.remove('dragging');
-  document.body.style.userSelect = '';
+  doc.body.style.userSelect = '';
   if (persist) saveCurrentDialogState();
 }
 
@@ -208,10 +222,11 @@ function onDialogDragStart(e) {
   };
   if (!dialogDragMoveHandler) dialogDragMoveHandler = onDialogDragMove;
   if (!dialogDragEndHandler) dialogDragEndHandler = onDialogDragEnd;
-  document.addEventListener('mousemove', dialogDragMoveHandler);
-  document.addEventListener('mouseup', dialogDragEndHandler);
+  const doc = getToolDocument();
+  doc.addEventListener('mousemove', dialogDragMoveHandler);
+  doc.addEventListener('mouseup', dialogDragEndHandler);
   root.classList.add('dragging');
-  document.body.style.userSelect = 'none';
+  doc.body.style.userSelect = 'none';
   e.preventDefault();
 }
 

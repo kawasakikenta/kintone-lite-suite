@@ -511,7 +511,8 @@ export function summarizeFetchIssues(issues) {
 export function getDiffNormalizationPresetState() {
   return {
     viewOrder: !!ui.diffNormalizeViewOrder?.checked,
-    permissionOrder: !!ui.diffNormalizePermissionOrder?.checked
+    permissionOrder: !!ui.diffNormalizePermissionOrder?.checked,
+    generalArrayOrder: !!ui.diffNormalizeGeneralArrayOrder?.checked
   };
 }
 

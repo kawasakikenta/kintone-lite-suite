@@ -3,6 +3,8 @@
 import { SECTION_DEFS } from '../constants.js';
 import { deepClone, stableStringify, esc, normalize } from '../utils.js';
 import { state, ui } from '../state.js';
+import { getToolDocument } from '../ui/dialog.js';
+import { isReflectNodeModeEffective } from './nodeModeUi.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix } from '../api.js';
 import {
   filterWritableFieldProps,
@@ -244,8 +246,8 @@ export function showInlineConfirmation(plan, options) {
     </div>`;
     ui.result.scrollTop = 0;
     const cleanup = () => {
-      const execBtn = document.getElementById('u_planExecute');
-      const cancelBtn = document.getElementById('u_planCancel');
+      const execBtn = getToolDocument().getElementById('u_planExecute');
+      const cancelBtn = getToolDocument().getElementById('u_planCancel');
       if (execBtn) execBtn.removeEventListener('click', onExec);
       if (cancelBtn) cancelBtn.removeEventListener('click', onCancel);
     };
@@ -256,8 +258,8 @@ export function showInlineConfirmation(plan, options) {
       ui.result.scrollTop = previousScrollTop;
       resolve(false);
     };
-    document.getElementById('u_planExecute')?.addEventListener('click', onExec);
-    document.getElementById('u_planCancel')?.addEventListener('click', onCancel);
+    getToolDocument().getElementById('u_planExecute')?.addEventListener('click', onExec);
+    getToolDocument().getElementById('u_planCancel')?.addEventListener('click', onCancel);
   });
 }
 
@@ -384,7 +386,7 @@ export async function runPreviewApplyPlanNodes() {
 }
 
 export async function runPreviewApplyPlan() {
-  if (ui.nodeMode.checked) return runPreviewApplyPlanNodes();
+  if (isReflectNodeModeEffective()) return runPreviewApplyPlanNodes();
   await ensureDiffPreparedForReflect();
   const c = commonParams();
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');

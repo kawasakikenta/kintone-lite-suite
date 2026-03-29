@@ -5,6 +5,7 @@ import { esc } from '../utils.js';
 import { buildApiPrefix, apiGet } from '../api.js';
 import { setStatus } from '../ui/components.js';
 import { commonParams } from './diff.js';
+import { getToolDocument } from '../ui/dialog.js';
 
 let pfSimStates = null;
 let pfSimActions = null;
@@ -23,12 +24,13 @@ async function ensureMermaid() {
 
 function loadScript(url) {
   return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
+    const doc = getToolDocument();
+    const s = doc.createElement('script');
     s.src = url;
     s.async = true;
     s.onload = resolve;
     s.onerror = () => reject(new Error(`スクリプト読み込み失敗: ${url}`));
-    document.head.appendChild(s);
+    doc.head.appendChild(s);
   });
 }
 
@@ -72,9 +74,9 @@ export async function redrawProcessFlow(highlightState) {
 }
 
 export function updateProcessSimulationUI() {
-  const elCurr = document.getElementById('u_simCurrentStatus');
-  const elSel = document.getElementById('u_simActionSelect');
-  const container = document.getElementById('u_simContainer');
+  const elCurr = getToolDocument().getElementById('u_simCurrentStatus');
+  const elSel = getToolDocument().getElementById('u_simActionSelect');
+  const container = getToolDocument().getElementById('u_simContainer');
 
   if (!pfSimStates || Object.keys(pfSimStates).length === 0) {
     if (container) container.style.display = 'none';
@@ -117,7 +119,7 @@ export async function runSimStart() {
 }
 
 export async function runSimExecuteAction() {
-  const sel = document.getElementById('u_simActionSelect');
+  const sel = getToolDocument().getElementById('u_simActionSelect');
   if (sel.disabled) return;
   const actionName = sel.value;
   if (!actionName) return;

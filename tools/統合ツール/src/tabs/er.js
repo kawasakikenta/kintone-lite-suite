@@ -18,7 +18,7 @@ const ER_DEFAULTS = {
 };
 
 export function readErDiagramOptions() {
-  const startAppId = String(document.getElementById('u_sourceApp')?.value || '').trim();
+  const startAppId = String(ui.sourceApp?.value || '').trim();
   const layoutName = String(ui.erLayout?.value || ER_DEFAULTS.layoutName).trim() || ER_DEFAULTS.layoutName;
   const fieldDensity = String(ui.erFieldDensity?.value || ER_DEFAULTS.fieldDensity).trim() || ER_DEFAULTS.fieldDensity;
   const maxDepthRaw = String(ui.erMaxDepth?.value || '').trim();
@@ -466,8 +466,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   <button class="tb" onclick="openCmd()" title="Ctrl+K">⌘K</button>
   <div class="sep"></div>
   <button class="tb" onclick="fit()">📐 全体表示</button>
-  <button class="tb" onclick="exportPNG()">PNG</button>
-  <button class="tb" onclick="exportSVG()">SVG</button>
+  <button class="tb" onclick="exportPNG()">PNG画像</button>
   <button class="tb" onclick="showMermaid()">Mermaid</button>
   <button class="tb" onclick="showDrawio()">draw.io</button>
   <button class="tb" onclick="showSQL()">SQL</button>
@@ -741,6 +740,21 @@ function syncLayoutButtons(name){
 function fit(){cy.fit(undefined,60);}
 cy.one("layoutstop",()=>setTimeout(fit,200));
 syncLayoutButtons(ER_OPTIONS.layoutName || "dagre");
+
+// ─── Export ───
+function exportPNG(){
+  const b64 = cy.png({ full: true, scale: 2, bg: currentPalette().bg });
+  const a = document.createElement("a");
+  a.href = b64;
+  a.download = "kintone_erd.png";
+  a.click();
+}
+function exportSVG(){
+  // cytoscape-svg plugin is not present, so we fallback to a simple message or a data-uri attempt.
+  // Actually, standard cytoscape does not natively support SVG without an extension.
+  // We can try to use JSON instead or alert the user.
+  alert("SVGエクスポートには追加のプラグイン(cytoscape-svg)が必要です。PNGをご利用ください。");
+}
 
 // ─── Layout Switching ───
 function setLayout(name){
@@ -1538,9 +1552,9 @@ export async function runExportERDiagramHtml() {
 }
 
 export async function runFieldDependencyMap() {
-  const srcAppId = document.getElementById('u_sourceApp')?.value?.trim();
+  const srcAppId = ui.sourceApp?.value?.trim();
   if (!srcAppId) throw new Error('比較元アプリIDが指定されていません');
-  const guestId = document.getElementById('u_sourceGuest')?.value?.trim() || null;
+  const guestId = ui.sourceGuest?.value?.trim() || null;
 
   setBusy(true, '比較元アプリの全設定を取得中...');
   const sections = SECTION_DEFS.map(s => s.key);

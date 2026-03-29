@@ -1,6 +1,8 @@
 'use strict';
 
 import { TOOL_ID } from './constants.js';
+
+const TOOL_POPOUT_NAME = 'kintone-unified-suite-v2';
 import { state, ui as sharedUi } from './state.js';
 import { stableStringify, selectedScopeKeys } from './utils.js';
 import { buildRoot, copyTextToClipboard } from './ui/template.js';
@@ -45,16 +47,42 @@ import {
   loadViewsForSelect,
   renderTemplateOptions
 } from './tabs/record.js';
-import { runApiTester } from './tabs/api-tester.js';
+import { runApiTester, clearApiTesterHistory, renderApiTesterHistory } from './tabs/api-tester.js';
 
 if (!window.kintone?.api || !window.kintone?.app) {
   alert('kintone画面で実行してください');
 } else {
-  const old = document.getElementById(TOOL_ID);
-  if (old) old.remove();
+  const removeToolFromDoc = (doc) => {
+    try { doc.getElementById(TOOL_ID)?.remove(); } catch (e) { /* ignore */ }
+  };
+  removeToolFromDoc(document);
+  const prevWin = window.__KUS_TOOL_WINDOW__;
+  if (prevWin && !prevWin.closed) {
+    try { removeToolFromDoc(prevWin.document); } catch (e) { /* ignore */ }
+    try { prevWin.close(); } catch (e) { /* ignore */ }
+  }
 
-  const root = buildRoot();
-  document.body.appendChild(root);
+  let root;
+  const popWin = window.open('', TOOL_POPOUT_NAME, 'width=1260,height=920');
+  if (!popWin) {
+    alert('別タブを開けませんでした（ポップアップがブロックされている可能性があります）。このタブ内に表示します。');
+    root = buildRoot(document, { popout: false });
+    document.body.appendChild(root);
+  } else {
+    window.__KUS_TOOL_WINDOW__ = popWin;
+    popWin.document.open();
+    popWin.document.write(
+      '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>kintone 統合変更ツール</title></head>' +
+      '<body style="margin:0;min-height:100vh;background:#94a3b8;"></body></html>'
+    );
+    popWin.document.close();
+    root = buildRoot(popWin.document, { popout: true });
+    popWin.document.body.appendChild(root);
+    try { popWin.focus(); } catch (e) { /* ignore */ }
+  }
+
   setRootElement(root);
 
   const $ = (id) => root.querySelector(id);
@@ -81,6 +109,7 @@ if (!window.kintone?.api || !window.kintone?.app) {
     ignorePresetLabelName: $('#u_ignorePresetLabelName'),
     diffNormalizeViewOrder: $('#u_diffNormalizeViewOrder'),
     diffNormalizePermissionOrder: $('#u_diffNormalizePermissionOrder'),
+    diffNormalizeGeneralArrayOrder: $('#u_diffNormalizeGeneralArrayOrder'),
     diffSearch: $('#u_diffSearch'),
     diffSearchFieldName: $('#u_diffSearchFieldName'),
     diffFilterSection: $('#u_diffFilterSection'),
@@ -90,6 +119,9 @@ if (!window.kintone?.api || !window.kintone?.app) {
     diffExportContent: $('#u_diffExportContent'),
     diffFavoritesOnlyBtn: $('#u_diffFavoritesOnlyBtn'),
     diffSelectionState: $('#u_diffSelectionState'),
+    diffOnboarding: $('#u_diffOnboarding'),
+    diffSelectionSetName: $('#u_diffSelectionSetName'),
+    diffSelectionSetSelect: $('#u_diffSelectionSetSelect'),
     diffWarnThreshold: $('#u_diffWarnThreshold'),
     diffWarnBox: $('#u_diffWarnBox'),
     diffSuggestedIgnore: $('#u_diffSuggestedIgnore'),
@@ -114,6 +146,7 @@ if (!window.kintone?.api || !window.kintone?.app) {
     backupStatus: $('#u_backupStatus'),
     stopOnError: $('#u_stopOnError'),
     nodeMode: $('#u_nodeMode'),
+    reflectSimpleMode: $('#u_reflectSimpleMode'),
     modeSectionBtn: $('#u_modeSectionBtn'),
     modeNodeBtn: $('#u_modeNodeBtn'),
     nodeFilterBlock: $('#u_nodeFilterBlock'),
@@ -223,6 +256,7 @@ if (!window.kintone?.api || !window.kintone?.app) {
     runSimStart,
     runSimExecuteAction,
     runApiTester,
+    clearApiTesterHistory,
     runPreviewApplyPlan,
     runBackupTargetPreview,
     runApplyPreview,
@@ -230,6 +264,8 @@ if (!window.kintone?.api || !window.kintone?.app) {
     renderCustomizeResult,
     renderTemplateOptions
   });
+
+  renderApiTesterHistory();
 
   setStatus('待機中');
 }

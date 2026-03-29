@@ -4,6 +4,7 @@ import { ui } from '../state.js';
 import { esc, normalize, nowStamp, downloadText } from '../utils.js';
 import { apiGet, apiPut, buildApiPrefix } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
+import { getToolDocument } from '../ui/dialog.js';
 import { commonParams } from './diff.js';
 import { deployAndPoll } from '../reflect/helpers.js';
 import {
@@ -167,13 +168,14 @@ export async function runBatchJsConfigDownload() {
 
   setStatus('ZIPファイル作成中...');
   const zipBlob = await zip.generateAsync({ type: "blob" });
-  const a = document.createElement("a");
+  const doc = getToolDocument();
+  const a = doc.createElement("a");
   const u = URL.createObjectURL(zipBlob);
   a.href = u;
   a.download = "customize_scripts.zip";
-  document.body.appendChild(a);
+  doc.body.appendChild(a);
   a.click();
-  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(u); }, 100);
+  setTimeout(() => { doc.body.removeChild(a); URL.revokeObjectURL(u); }, 100);
 
   setStatus(`JS/CSS一括DL完了 (403スキップ: ${failedCount}件)`);
 }

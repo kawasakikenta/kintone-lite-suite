@@ -23,6 +23,8 @@ import {
 } from '../ui/components.js';
 import { renderResultRows, renderDiffFilterOptions } from '../diff/export.js';
 import { commonParams, saveCurrentDialogState, currentDiffSignature } from './diff.js';
+import { getPreviewCompareStatusPrefix } from './preview-compare.js';
+import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
 
 // ---------------------------------------------------------------------------
 // Reflect state snapshot / undo / redo
@@ -172,7 +174,7 @@ export function runReflectModeAll(mode) {
 
 export function getEffectiveReflectScopeInfo() {
   const baseScopes = selectedScopeKeys(ui.applyScopes);
-  if (ui.nodeMode.checked) {
+  if (isReflectNodeModeEffective()) {
     return { baseScopes, effectiveScopes: [...baseScopes], warning: '' };
   }
   try {
@@ -218,18 +220,19 @@ export async function runPrefetchCommonData() {
   if (!c.source.appId) throw new Error('比較元アプリIDを入力してください');
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
   const sections = SECTION_DEFS.map((d) => d.key);
+  const modeTag = getPreviewCompareStatusPrefix(ui);
 
-  setStatus('共通データ取得: 比較元...');
+  setStatus(`${modeTag} 共通データ取得: 比較元...`);
   const source = await fetchBundle({
     ...c.source,
     sections,
-    onProgress: (p, l) => setStatus(`共通データ取得 比較元 ${Math.round(p * 100)}% (${l})`)
+    onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較元 ${Math.round(p * 100)}% (${l})`)
   });
-  setStatus('共通データ取得: 比較先...');
+  setStatus(`${modeTag} 共通データ取得: 比較先...`);
   const target = await fetchBundle({
     ...c.target,
     sections,
-    onProgress: (p, l) => setStatus(`共通データ取得 比較先 ${Math.round(p * 100)}% (${l})`)
+    onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較先 ${Math.round(p * 100)}% (${l})`)
   });
 
   state.lastSourceBundle = source;

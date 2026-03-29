@@ -26,7 +26,8 @@ import {
   getActiveDiffNormalizationLabels
 } from '../diff/engine.js';
 import { summarizeSeverity } from '../diff/enrich.js';
-import { saveCurrentDialogState } from './dialog.js';
+import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
+import { saveCurrentDialogState, getToolDocument } from './dialog.js';
 
 let ui = {};
 
@@ -58,9 +59,14 @@ export function setComponentDeps(overrides) {
 }
 
 export function setStatus(msg, isError) {
+  if (!ui.status) return;
   ui.status.textContent = msg;
-  ui.status.style.background = isError ? '#fee2e2' : '#e2e8f0';
-  ui.status.style.color = isError ? '#7f1d1d' : '#0f172a';
+  ui.status.style.background = '';
+  ui.status.style.color = '';
+  ui.status.classList.remove('status--neutral', 'status--error');
+  ui.status.classList.add(isError ? 'status--error' : 'status--neutral');
+  const bar = ui.status.closest?.('.status-bar');
+  if (bar) bar.classList.toggle('status-bar--error', !!isError);
 }
 
 export function setBusy(isBusy, message) {
@@ -88,6 +94,16 @@ export function switchTab(tabKey, options) {
   state.activeTab = key;
   ui.tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === key));
   ui.panes.forEach((p) => p.classList.toggle('active', p.dataset.pane === key));
+  
+  const root = getToolDocument().getElementById('kintone-unified-suite-v2');
+  if (root) {
+    if (key === 'diff' || key === 'reflect') {
+      root.classList.add('tab-is-diff-or-reflect');
+    } else {
+      root.classList.remove('tab-is-diff-or-reflect');
+    }
+  }
+
   if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
   if (!options || options.persist !== false) saveCurrentDialogState();
 }
@@ -121,7 +137,7 @@ export function setSettingsExportScopeSelection(checked) {
 }
 
 export function renderIgnoreKeyChips() {
-  const tags = document.getElementById('u_ignoreKeysTags');
+  const tags = getToolDocument().getElementById('u_ignoreKeysTags');
   if (!tags) return;
   const val = ui.ignoreKeys.value || '';
   const keys = val.split(',').map((k) => k.trim()).filter(Boolean);
@@ -198,7 +214,7 @@ export function renderDiffWarningBox() {
 }
 
 export function renderLookupMapRows() {
-  const container = document.getElementById('u_lookupMapRows');
+  const container = getToolDocument().getElementById('u_lookupMapRows');
   if (!container) return;
   let map = {};
   try { map = deps.parseLookupMapInput(ui.lookupMap.value); } catch (e) { map = {}; }
@@ -220,7 +236,7 @@ export function renderLookupMapRows() {
 }
 
 export function syncLookupMapFromRows() {
-  const container = document.getElementById('u_lookupMapRows');
+  const container = getToolDocument().getElementById('u_lookupMapRows');
   if (!container) return;
   const rows = container.querySelectorAll('[data-lookup-row]');
   const map = {};
@@ -260,10 +276,17 @@ export function renderBundleState() {
   const sourceText = describeBundle('比較元', state.importedSourceBundle || state.lastSourceBundle, state.importedSourceName, !!state.importedSourceBundle);
   const targetText = describeBundle('比較先', state.importedTargetBundle || state.lastTargetBundle, state.importedTargetName, !!state.importedTargetBundle);
   ui.bundleState.textContent = `${sourceText} / ${targetText}`;
-  const rangeMode = ui.nodeMode?.checked
+  const rangeMode = (ui.nodeMode?.checked && !ui.reflectSimpleMode?.checked)
     ? `選択ノード(${state.reflectSelectedIds.size})`
     : (ui.applyDiffOnly?.checked ? '前回差分セクションのみ' : '選択セクション');
-  ui.reflectMode.textContent = `${sourceText} / 反映先: 比較先プレビューAPI / 反映範囲: ${rangeMode}`;
+  let readMeta = '';
+  try {
+    const c = deps.commonParams();
+    readMeta = `取得API 比較元:${getPreviewStateLabel(c.source.preview)} · 比較先:${getPreviewStateLabel(c.target.preview)}`;
+  } catch (e) {
+    readMeta = '取得API 比較元:- · 比較先:-';
+  }
+  ui.reflectMode.textContent = `${readMeta} · 反映PUT: 比較先プレビュー（常にプレビューAPI） · 範囲: ${rangeMode}`;
   if (ui.commonDataState) {
     const diffSummary = summarizeRows(state.lastDiffRows || []);
     const diffInfo = state.lastDiffAt
@@ -275,8 +298,15 @@ export function renderBundleState() {
   renderReflectAssistPanel();
 }
 
+export function syncReflectSimpleLayout() {
+  const layout = getToolDocument().getElementById('u_reflectLayout');
+  if (layout && ui.reflectSimpleMode) {
+    layout.classList.toggle('reflect-layout--simple', !!ui.reflectSimpleMode.checked);
+  }
+}
+
 export function renderReflectModeUi() {
-  const node = !!ui.nodeMode.checked;
+  const node = isReflectNodeModeEffective();
   const scopeChecks = [...ui.applyScopes.querySelectorAll('input[type="checkbox"]')];
   scopeChecks.forEach((c) => { c.disabled = node; });
   if (ui.applyDiffOnly) ui.applyDiffOnly.disabled = node;
@@ -294,14 +324,17 @@ export function renderReflectModeUi() {
       : '';
   }
   if (ui.modeSectionBtn && ui.modeNodeBtn) {
-    ui.modeSectionBtn.className = node ? 'btn sub' : 'btn ok';
+    ui.modeSectionBtn.className = node ? 'btn sub reflect-mode-tab' : 'btn ok reflect-mode-tab';
     ui.modeSectionBtn.style.cssText = 'padding:5px 10px;font-size:11px';
-    ui.modeNodeBtn.className = node ? 'btn ok' : 'btn sub';
+    ui.modeNodeBtn.className = node ? 'btn ok reflect-mode-tab' : 'btn sub reflect-mode-tab';
     ui.modeNodeBtn.style.cssText = 'padding:5px 10px;font-size:11px';
+    ui.modeSectionBtn.setAttribute('aria-selected', node ? 'false' : 'true');
+    ui.modeNodeBtn.setAttribute('aria-selected', node ? 'true' : 'false');
   }
   if (ui.reflectOverview) ui.reflectOverview.style.display = 'block';
   if (ui.reflectAssist) ui.reflectAssist.style.display = 'block';
   if (ui.reflectOptionsCard) ui.reflectOptionsCard.style.display = 'block';
+  syncReflectSimpleLayout();
   renderReflectAssistPanel();
   renderReflectSidebar();
   renderReflectNodeDetail();
@@ -309,7 +342,7 @@ export function renderReflectModeUi() {
 
 function getEffectiveReflectScopeInfo() {
   const baseScopes = deps.selectedScopeKeys(ui.applyScopes);
-  if (ui.nodeMode.checked) {
+  if (isReflectNodeModeEffective()) {
     return { baseScopes, effectiveScopes: [...baseScopes], warning: '' };
   }
   try {
@@ -329,7 +362,7 @@ function getEffectiveReflectScopeInfo() {
 
 function getCurrentReflectPlanSignature() {
   const c = deps.commonParams();
-  if (ui.nodeMode.checked) {
+  if (isReflectNodeModeEffective()) {
     const rows = deps.getSelectedReflectRows();
     if (!rows.length) return '';
     const nodeSigRows = rows
@@ -358,7 +391,7 @@ function getCurrentReflectPlanSignature() {
 
 export function buildReflectAssistHtml() {
   const c = deps.commonParams();
-  const isNode = !!ui.nodeMode.checked;
+  const isNode = isReflectNodeModeEffective();
   const scopeInfo = getEffectiveReflectScopeInfo();
   const effectiveScopeSet = new Set(scopeInfo.effectiveScopes);
   const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
@@ -463,22 +496,69 @@ export function buildReflectAssistHtml() {
         <div class="reflect-summary-meta">${esc(planReady ? `最新確認: ${planTime}` : 'まだ反映プラン確認を実行していません')}</div>
       </div>
     </div>
-    <div class="reflect-quick-actions">
+    <div class="reflect-context-actions">
       ${primaryDiffAction}
       ${nodeLoadAction}
       ${scopeDiffAction}
-      <button class="btn sub" data-act="previewApplyPlan">反映プラン確認</button>
-      <button class="btn sub" data-act="backupTargetPreview">バックアップ</button>
-      <button class="btn ok" data-act="applyPreview">プレビュー反映</button>
     </div>
+    <p class="reflect-action-hint">プラン確認・バックアップ・プレビュー反映・本番デプロイは<strong>画面下の固定バー</strong>から操作します。</p>
     ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join('') : '<div class="reflect-good">現在の条件でそのまま進めます。変更前の確認は「反映プラン確認」で行えます。</div>'}
     ${backupState ? `<div class="reflect-good">${esc(backupState)}</div>` : ''}
   </div>`;
 }
 
+export function renderReflectPlanInline() {
+  const el = getToolDocument().getElementById('u_reflectPlanInline');
+  if (!el) return;
+  const planSig = getCurrentReflectPlanSignature();
+  const plan = state.lastApplyPlan;
+  const hasPlan = !!(plan && Array.isArray(plan.logs) && plan.logs.length);
+  const planReady = hasPlan && !!planSig && plan.signature === planSig;
+  const stalePlan = hasPlan && (!!planSig ? plan.signature !== planSig : true);
+
+  if (planReady) {
+    const stamp = new Date(plan.createdAt).toLocaleString();
+    const logs = plan.logs || [];
+    const maxLines = 48;
+    const head = logs.slice(0, maxLines).join('\n');
+    const more = logs.length > maxLines ? `\n… 他 ${logs.length - maxLines} 行（全文は下部の結果エリアを参照）` : '';
+    el.innerHTML = `<div class="reflect-plan-inline__head">
+      <span class="reflect-plan-inline__title">反映プラン（現在の条件と一致）</span>
+      <span class="reflect-plan-inline__meta">予定リクエスト ${plan.totalReq || 0} 件 · ${esc(stamp)}</span>
+    </div>
+    <pre class="reflect-plan-inline__pre">${esc(head)}${esc(more)}</pre>`;
+    return;
+  }
+  if (stalePlan && hasPlan) {
+    el.innerHTML = `<div class="reflect-plan-inline reflect-plan-inline--stale">
+      <div class="reflect-plan-inline__head"><span class="reflect-plan-inline__title">プランは現在の条件と一致しません</span></div>
+      <p class="reflect-plan-inline__muted">差分・反映セクション・ノード・ルックアップ等が変わった可能性があります。再度「反映プラン確認」を実行してください。</p>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `<div class="reflect-plan-inline reflect-plan-inline--empty">
+    <div class="reflect-plan-inline__head"><span class="reflect-plan-inline__title">プラン要約</span></div>
+    <p class="reflect-plan-inline__muted">「反映プラン確認」を実行すると、ここにログ要約が表示されます。詳細は下部の<strong>結果</strong>エリアにも出力されます。</p>
+  </div>`;
+}
+
+export function renderReflectFooterBadges() {
+  const el = getToolDocument().getElementById('u_reflectFooterBadges');
+  if (!el) return;
+  const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
+  const planSig = getCurrentReflectPlanSignature();
+  const plan = state.lastApplyPlan;
+  const planReady = !!(plan && planSig && plan.signature === planSig);
+  el.innerHTML = `
+    <span class="reflect-footer-badge${diffReady ? ' reflect-footer-badge--ok' : ' reflect-footer-badge--warn'}">差分 ${diffReady ? '最新' : '要再実行'}</span>
+    <span class="reflect-footer-badge${planReady ? ' reflect-footer-badge--ok' : ' reflect-footer-badge--warn'}">プラン ${planReady ? '確認済み' : '未確認'}</span>`;
+}
+
 export function renderReflectAssistPanel() {
   if (!ui.reflectAssist) return;
   ui.reflectAssist.innerHTML = buildReflectAssistHtml();
+  renderReflectPlanInline();
+  renderReflectFooterBadges();
 }
 
 function getDiffCountsBySection() {
@@ -496,11 +576,11 @@ function getDiffCountsBySection() {
 }
 
 export function renderReflectSidebar() {
-  const container = document.getElementById('u_reflectSidebarSections');
+  const container = getToolDocument().getElementById('u_reflectSidebarSections');
   if (!container) return;
   const diffCounts = getDiffCountsBySection();
   const selectedScopes = new Set(deps.selectedScopeKeys(ui.applyScopes));
-  const isNode = !!ui.nodeMode?.checked;
+  const isNode = isReflectNodeModeEffective();
   const activeSec = state.reflectActiveSidebarSection;
   let checkedCount = 0;
   const putSections = SECTION_DEFS.filter((d) => d.put);
@@ -521,14 +601,14 @@ export function renderReflectSidebar() {
   }).join('');
 
   container.innerHTML = items;
-  const sidebarCount = document.getElementById('u_sidebarCount');
+  const sidebarCount = getToolDocument().getElementById('u_sidebarCount');
   if (sidebarCount) sidebarCount.textContent = `${checkedCount} / ${putSections.length}`;
 
   syncApplyScopesFromSidebar();
 }
 
 export function syncApplyScopesFromSidebar() {
-  const sidebarChecks = document.querySelectorAll('#u_reflectSidebarSections [data-apply-scope]');
+  const sidebarChecks = getToolDocument().querySelectorAll('#u_reflectSidebarSections [data-apply-scope]');
   const selected = new Set();
   sidebarChecks.forEach((c) => { if (c.checked) selected.add(c.value); });
   const scopeChecks = [...ui.applyScopes.querySelectorAll('input[type="checkbox"]')];
@@ -536,10 +616,10 @@ export function syncApplyScopesFromSidebar() {
 }
 
 export function renderReflectMainPanel() {
-  const overview = document.getElementById('u_reflectOverview');
+  const overview = getToolDocument().getElementById('u_reflectOverview');
   if (!overview) return;
   renderReflectAssistPanel();
-  const isNode = !!ui.nodeMode?.checked;
+  const isNode = isReflectNodeModeEffective();
   overview.style.display = 'block';
   const activeSec = state.reflectActiveSidebarSection;
   const diffCounts = getDiffCountsBySection();
@@ -692,7 +772,7 @@ export function renderReflectNodeList() {
 
 export function renderReflectNodeDetail() {
   if (!ui.reflectNodeDetail) return;
-  if (!ui.nodeMode?.checked) {
+  if (!isReflectNodeModeEffective()) {
     ui.reflectNodeDetail.innerHTML = '';
     ui.reflectNodeDetail.style.display = 'none';
     return;

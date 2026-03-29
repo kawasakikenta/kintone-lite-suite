@@ -3,22 +3,27 @@
 import cssText from './styles.css';
 import {
   TOOL_ID, TOOL_VERSION, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS,
-  FEATURE_DEFS, DEFAULT_SUBTAB_STATE,
+  FEATURE_DEFS, PREVIEW_COMPARE_PRESETS, DEFAULT_SUBTAB_STATE,
   DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT,
   DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_MARGIN,
   DEFAULT_APP_ID
 } from '../constants.js';
 import { esc } from '../utils.js';
+import { getToolDocument } from './dialog.js';
 
-export function buildRoot() {
-  const root = document.createElement('div');
+export function buildRoot(targetDocument = document, options = {}) {
+  const doc = targetDocument || document;
+  const root = doc.createElement('div');
   root.id = TOOL_ID;
-  root.className = 'screen-launcher';
+  root.className = options.popout ? 'screen-launcher suite-popout-tab tab-is-diff-or-reflect' : 'screen-launcher tab-is-diff-or-reflect';
   root.innerHTML = `<style>${cssText}</style>` + `
         <div class="h" data-dialog-drag-handle="1">
+          <div class="h-brand" aria-hidden="true">
+            <span class="suite-mark"></span>
+          </div>
           <div class="h-title-launcher">
             <div class="ht">kintone 統合変更ツール</div>
-            <div class="hs">接続先（比較元・比較先）を確認したうえで、作業するメニューを選んでください</div>
+            <div class="hs">通常は<strong>新しいタブ</strong>で開きます（ポップアップ拒否時はこのタブ内）。アプリ画面のタブはそのまま操作できます。接続情報を確認してから右のメニューで作業を開きます。</div>
             <div><span class="tool-ver hs" data-act="copyToolInfo" title="クリックでツール識別情報をクリップボードにコピー（問い合わせ・再現調査用）">ビルド ${TOOL_VERSION}</span></div>
           </div>
           <div class="h-title-feature">
@@ -37,34 +42,63 @@ export function buildRoot() {
           </div>
         </div>
         <div class="body">
-          <div class="card common-card">
-            <div class="grid">
+          <div class="card common-card" id="u_connectionPanel">
+            <section class="connection-section" aria-labelledby="conn-app-heading">
+              <h3 class="connection-section-title" id="conn-app-heading">アプリとゲスト</h3>
+              <p class="connection-section-lead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
+              <div class="grid connection-grid">
               <div>
-                <label>比較元アプリID</label>
-                <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}">
+                <label for="u_sourceApp">比較元アプリID</label>
+                <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div>
-                <label>比較元 ゲストID</label>
-                <input type="text" id="u_sourceGuest" placeholder="空で通常空間">
+                <label for="u_sourceGuest">比較元 ゲストID</label>
+                <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
               <div>
-                <label>比較先アプリID</label>
-                <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}">
+                <label for="u_targetApp">比較先アプリID</label>
+                <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div>
-                <label>比較先 ゲストID</label>
-                <input type="text" id="u_targetGuest" placeholder="空で通常空間">
+                <label for="u_targetGuest">比較先 ゲストID</label>
+                <input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
             </div>
-            <div class="grid2" style="margin-top:8px">
-              <label class="chip" title="オンにすると比較元はプレビュー環境の設定APIを参照します"><input type="checkbox" id="u_sourcePreview"> 比較元はプレビュー</label>
-              <label class="chip" title="オンにすると比較先はプレビュー環境へ反映・取得します（推奨）"><input type="checkbox" id="u_targetPreview" checked> 比較先はプレビュー</label>
+            </section>
+            <div class="preview-compare-panel">
+              <div class="preview-compare-head">
+                <span class="preview-compare-title">プレビュー比較（取得するAPI）</span>
+              </div>
+              <p class="muted preview-compare-lead" style="margin:6px 0 10px;line-height:1.6">差分・共通データ取得で使う<strong>読み取り先</strong>をプリセットで選びます。反映タブの書き込みは別途説明のとおりプレビュー固定です。</p>
+              <div class="preview-preset-grid" role="group" aria-label="プレビュー比較プリセット">
+                ${PREVIEW_COMPARE_PRESETS.map((p) => `<button type="button" class="preview-preset-btn${p.recommended ? ' preview-preset-btn--rec' : ''}" data-act="setPreviewPreset" data-preset="${esc(p.id)}" title="${esc(p.hint)}" aria-pressed="false">
+                  <span class="pp-title">${p.recommended ? '<span class="pp-rec-tag">推奨</span> ' : ''}${esc(p.label)}</span>
+                  <span class="pp-sub">${esc(p.shortLine)}</span>
+                </button>`).join('')}
+              </div>
+              <div id="u_previewCompareSummary" class="preview-compare-summary" aria-live="polite"></div>
+              <p id="u_previewPresetCustomNote" class="preview-preset-custom-note" style="display:none">チェックボックスを個別に変更したため、上記プリセットとは異なる組み合わせになっています。</p>
+              <details class="diff-fold preview-compare-advanced" style="margin-top:10px">
+                <summary class="diff-fold-summary">
+                  <span class="diff-fold-title">詳細: 比較元/比較先のプレビューを個別に切替</span>
+                  <span class="diff-fold-sub">プリセットと同じ結果なら開く必要はありません</span>
+                </summary>
+                <div class="diff-fold-body">
+                  <div class="grid2" style="margin-top:0">
+                    <label class="chip" title="オンにすると比較元はプレビュー環境の設定APIを参照します"><input type="checkbox" id="u_sourcePreview"> 比較元はプレビュー</label>
+                    <label class="chip" title="オンにすると比較先の取得はプレビュー環境の設定APIを参照します（反映PUTは常にプレビュー）"><input type="checkbox" id="u_targetPreview" checked> 比較先はプレビュー</label>
+                  </div>
+                </div>
+              </details>
             </div>
-            <div class="btns" style="margin-top:8px">
+            <section class="connection-section connection-section--actions" aria-labelledby="conn-quick-heading">
+              <h3 class="connection-section-title" id="conn-quick-heading">よく使う操作</h3>
+              <div class="btns connection-quick-btns">
               <button type="button" class="btn sub" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
               <button type="button" class="btn sub" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
               <button type="button" class="btn sub" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
             </div>
+            </section>
             <details class="diff-fold diff-fold--lookup">
               <summary class="diff-fold-summary">
                 <span class="diff-fold-title">ルックアップ参照先アプリID変換（任意）</span>
@@ -79,20 +113,24 @@ export function buildRoot() {
               <input type="hidden" id="u_lookupMap">
               </div>
             </details>
-            <div class="step" style="margin-top:8px">共通データ取得 / クイック実行（全タブ共通）</div>
-            <div class="muted" style="margin-top:6px">比較元/比較先設定を元に共通データを先読みできます。差分→プランの順番もワンクリック実行できます。</div>
-            <div class="btns" style="margin-top:6px">
+            <div class="step connection-step-banner">共通データ取得 / クイック実行（全タブ共通）</div>
+            <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
+            <div class="btns connection-step-btns">
               <button class="btn sub" data-act="prefetchCommonData">共通データ取得（比較元+比較先）</button>
-              <button class="btn" data-act="runDiffAndPlan">差分比較 → 反映プラン確認</button>
+              <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan">差分比較 → 反映プラン確認</button>
             </div>
             <div class="kv" id="u_commonDataState">共通データ未取得</div>
             <div class="muted connection-footnote">共通設定は全タブで使います。推奨: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
             </div>
 
           <div class="launcher-menu" id="u_launcherMenu">
-            <p class="launcher-lead">作業メニュー</p>
+            <div class="launcher-menu-head">
+              <p class="launcher-lead">作業メニュー</p>
+              <p class="launcher-tagline">カードをクリックして開きます。戻るボタンでいつでもこの画面に戻れます。</p>
+            </div>
             <div class="feature-grid">
               ${FEATURE_DEFS.map((f) => `<div class="feature-card" data-act="openFeature" data-feature="${f.key}" role="button" tabindex="0">
+                <div class="feature-card-icon">${f.icon || ''}</div>
                 <div class="feature-card-label">${f.label}</div>
                 <div class="feature-card-desc">${f.desc}</div>
                 <div class="feature-card-go" aria-hidden="true">開く</div>
@@ -133,7 +171,7 @@ export function buildRoot() {
                 <button class="subtab" data-subtab-parent="diff" data-subtab="history">履歴・監視</button>
               </div>
               <div class="subpane active" data-subpane-parent="diff" data-subpane="conditions">
-                <div class="subpane-note">差分取得前の条件設定と実行操作をまとめています。詳細オプションは折りたたみで隠せます。</div>
+                <div class="subpane-note">上部の<strong>プレビュー比較プリセット</strong>で本番/プレビューAPIの組み合わせを決めてから、セクションと実行操作を進めます。細かいオプションは折りたたみにあります。</div>
               <div class="step">手順1: 比較条件を決めて差分を取得</div>
 
               <details class="diff-fold diff-fold--scopes" open>
@@ -185,6 +223,7 @@ export function buildRoot() {
                 <div class="chips" style="margin-top:4px">
                   <label class="chip" title="ビュー・レポート・アクションの並びをソートしてから比較し、順序差分を抑えます"><input type="checkbox" id="u_diffNormalizeViewOrder"> ビュー/グラフ/アクション順序を正規化</label>
                   <label class="chip" title="権限・通知・カテゴリなどの配列順をソートしてから比較します"><input type="checkbox" id="u_diffNormalizePermissionOrder"> 権限/通知/カテゴリ順序を正規化</label>
+                  <label class="chip" title="すべての設定（プロセス管理などを含む）で配列の順序を無視します。順序が変わっただけの不要な差分を抑えます。"><input type="checkbox" id="u_diffNormalizeGeneralArrayOrder"> すべての配列順序を無視 (強力)</label>
                 </div>
                 <div class="muted" style="margin-top:8px">追加した無視キー（×で削除）</div>
                 <input type="hidden" id="u_ignoreKeys">
@@ -221,7 +260,47 @@ export function buildRoot() {
               </details>
               </div>
               <div class="subpane" data-subpane-parent="diff" data-subpane="view">
-                <div class="subpane-note">取得済みの差分を絞り込み、見やすく整えて出力するための操作です。ブロックは折りたたみできます。</div>
+                <div class="subpane-note">取得済みの差分の絞り込みと出力です。まず下の「フィルタ・出力」を開き、必要なら「拡大・クイック・選択セット」を開いてください。</div>
+              <details class="diff-fold diff-fold--view-extras">
+                <summary class="diff-fold-summary">
+                  <span class="diff-fold-title">拡大・クイック・選択セット</span>
+                  <span class="diff-fold-sub">別ウィンドウ・一括プリセット・チェック選択の保存（普段は閉じたままでOK）</span>
+                </summary>
+                <div class="diff-fold-body">
+              <div id="u_diffOnboarding" class="diff-onboarding" style="display:none" role="note">
+                <div class="diff-onboarding-body">
+                  <p class="diff-onboarding-text"><strong>ヒント</strong> 下の結果欄は<strong>このサブタブ</strong>を開いているときだけ差分テーブルを表示します。帯グラフ・セクションピル・別ウィンドウ・Shift+範囲選択が使えます。</p>
+                  <button type="button" class="btn sub" data-act="dismissDiffOnboarding">了解して閉じる</button>
+                </div>
+              </div>
+              <div class="diff-ext-toolbar">
+                <div class="btns diff-ext-toolbar-row">
+                  <button type="button" class="btn sub" data-act="openDiffPopout" title="メイン画面と選択・折り畳みを同期した別ウィンドウで差分一覧を表示">差分を別ウィンドウで開く</button>
+                </div>
+                <div class="diff-preset-toolbar btns">
+                  <span class="diff-preset-label">クイック</span>
+                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="reset" title="セクション・種別・重要度の絞り込みをクリア">解除</button>
+                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="severity_high" title="重要度「高」だけ表示">高</button>
+                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_added" title="追加差分だけ">追加</button>
+                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_removed" title="削除差分だけ">削除</button>
+                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_changed" title="変更差分だけ">変更</button>
+                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_field" title="フィールド設定セクションに絞る">フィールド</button>
+                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_layout" title="レイアウト設定に絞る">レイアウト</button>
+                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_view" title="ビュー設定に絞る">ビュー</button>
+                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_process" title="プロセス管理に絞る">プロセス</button>
+                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="no_acl" title="アプリ/フィールド/レコード権限のセクションを除外して表示">権限非表示</button>
+                </div>
+                <div class="diff-selection-set-row">
+                  <label class="diff-selection-set-lbl" for="u_diffSelectionSetName">選択セット</label>
+                  <input type="text" id="u_diffSelectionSetName" class="diff-selection-set-name" placeholder="例: レビュー用" title="現在のチェック選択を名前付きで保存します">
+                  <button type="button" class="btn sub" data-act="saveDiffSelectionSet" title="入力した名前で保存">保存</button>
+                  <select id="u_diffSelectionSetSelect" class="diff-selection-set-select" title="保存済みセットを読み込み"><option value="">-- 読込 --</option></select>
+                  <button type="button" class="btn sub" data-act="loadDiffSelectionSet" title="選択したセットを復元">読込</button>
+                  <button type="button" class="btn sub" data-act="deleteDiffSelectionSet" title="選択したセットを削除">削除</button>
+                </div>
+              </div>
+                </div>
+              </details>
               <div class="kv" id="u_diffSelectionState">差分未実行</div>
               <details class="diff-fold diff-fold--view-filter" open>
                 <summary class="diff-fold-summary">
@@ -274,10 +353,10 @@ export function buildRoot() {
               </div>
                 </div>
               </details>
-              <details class="diff-fold diff-fold--view-display" open>
+              <details class="diff-fold diff-fold--view-display">
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">検索・比較ビューの見え方</span>
-                  <span class="diff-fold-sub">パス検索・ハイライト・テーマ・折り畳み</span>
+                  <span class="diff-fold-sub">パス検索・ハイライト・テーマ・折り畳み（必要なときだけ開く）</span>
                 </summary>
                 <div class="diff-fold-body">
               <div class="grid2" style="margin-top:0">
@@ -317,7 +396,7 @@ export function buildRoot() {
               <div style="margin-top:8px">
                 <label title="直近の差分結果から、よくあるノイズキーを提案します">おすすめ無視キー候補（低影響差分から抽出）</label>
                 <div id="u_diffSuggestedIgnore" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:6px;background:#fff;margin-top:4px;align-items:center"></div>
-                <div class="muted" style="margin-top:4px;line-height:1.55">ショートカット: Ctrl/Cmd+F 検索, Esc 検索クリア, Ctrl/Cmd+Shift+C 差分コピー, Ctrl/Cmd+A 全件選択</div>
+                <div class="muted" style="margin-top:4px;line-height:1.55">ショートカット: Ctrl/Cmd+F 検索, Esc 検索クリア, Ctrl/Cmd+Shift+C 差分コピー, Ctrl/Cmd+A 全件選択（検索欄以外フォーカス時）, Shift+クリックでチェック範囲選択, 矢印キーでチェック間移動</div>
               </div>
                 </div>
               </details>
@@ -364,11 +443,11 @@ export function buildRoot() {
                   <span class="diff-fold-sub">初めてのときだけ開いて確認</span>
                 </summary>
                 <div class="diff-fold-body">
-              <div class="muted" style="margin-top:0;line-height:1.65">差分比較が未実行または条件変更時は、反映前に自動で差分比較を実行します。<strong>左の一覧</strong>でチェック＝反映対象、<strong>行クリック</strong>でそのセクションの差分サマリーを表示します（<strong>全体概要</strong>はサイドバー下のボタン）。</div>
+              <div class="muted" style="margin-top:0;line-height:1.65">差分比較が未実行または条件変更時は、反映前に自動で差分比較を実行します。<strong>左の一覧</strong>でチェック＝反映対象、<strong>行クリック</strong>でそのセクションの差分サマリーを表示します（<strong>全体概要</strong>はサイドバー下のボタン）。プラン確認・反映・デプロイは<strong>画面下の固定バー</strong>から行います。</div>
                 </div>
               </details>
               <div id="u_applyScopeBlock" style="display:none"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
-              <div class="reflect-layout">
+              <div class="reflect-layout" id="u_reflectLayout">
                 <div class="reflect-sidebar">
                   <div class="sidebar-head">
                     <div class="sidebar-head-row">
@@ -387,18 +466,24 @@ export function buildRoot() {
                   </div>
                 </div>
                 <div class="reflect-main">
-                  <div class="main-header">
-                    <div>
+                  <div class="main-header reflect-main-header">
+                    <div class="reflect-main-header__text">
                       <div class="main-title" id="u_reflectMainTitle">反映概要</div>
                       <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
                     </div>
-                    <div style="display:flex;gap:4px">
-                      <button class="btn ok" id="u_modeSectionBtn" data-act="reflectModeSection" style="padding:5px 10px;font-size:11px">セクション</button>
-                      <button class="btn sub" id="u_modeNodeBtn" data-act="reflectModeNode" style="padding:5px 10px;font-size:11px">ノード選択</button>
+                    <div class="reflect-main-header__controls">
+                      <label class="reflect-simple-toggle chip" title="ノード選択・JSON差分反映を隠し、セクション反映に集中します">
+                        <input type="checkbox" id="u_reflectSimpleMode"> 簡易表示
+                      </label>
+                      <div class="reflect-mode-tabs" role="tablist" aria-label="反映モード">
+                        <button type="button" class="btn ok reflect-mode-tab" id="u_modeSectionBtn" data-act="reflectModeSection" aria-selected="true">セクション</button>
+                        <button type="button" class="btn sub reflect-mode-tab" id="u_modeNodeBtn" data-act="reflectModeNode" aria-selected="false">ノード選択</button>
+                      </div>
                     </div>
                   </div>
                   <div class="main-body" id="u_reflectMainBody">
                     <div id="u_reflectAssist"></div>
+                    <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
                     <div id="u_reflectOverview"></div>
                     <div id="u_reflectHint" class="kv" style="display:none"></div>
                     <div id="u_sectionOptionsBlock" style="display:none">
@@ -456,28 +541,32 @@ export function buildRoot() {
                       </div>
                     </div>
                   </div>
-                  <details class="diff-fold diff-fold--reflect-opt" open style="margin:0 14px;border-radius:8px 8px 0 0;border:1px solid #e2e8f0;border-bottom:none;background:#fff">
-                    <summary class="diff-fold-summary" style="background:linear-gradient(180deg,#f8fafc,#f1f5f9)">
-                      <span class="diff-fold-title">反映オプション</span>
-                      <span class="diff-fold-sub">バックアップ・エラー時の挙動・デプロイ</span>
-                    </summary>
-                    <div class="diff-fold-body opt-card" id="u_reflectOptionsCard" style="margin:0;border:0;border-radius:0;box-shadow:none;padding-top:8px">
-                    <div style="display:flex;gap:8px;flex-wrap:wrap">
-                      <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存</label>
-                      <label class="chip" title="APIエラーが出た時点で残りの反映を止めます"><input type="checkbox" id="u_stopOnError" checked> エラー時中断</label>
-                      <label class="chip" title="プレビューへの書き込み後、本番反映用のデプロイAPIを続けて呼びます"><input type="checkbox" id="u_doDeploy"> 反映後デプロイ</label>
+                  <div class="reflect-footer-stack">
+                    <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>
+                    <div class="reflect-footer-options" id="u_reflectOptionsCard">
+                      <div class="reflect-footer-options__label">反映オプション</div>
+                      <div class="reflect-footer-options__chips">
+                        <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存</label>
+                        <label class="chip" title="APIエラーが出た時点で残りの反映を止めます"><input type="checkbox" id="u_stopOnError" checked> エラー時中断</label>
+                        <label class="chip reflect-opt-deploy" title="プレビューへの書き込み後、本番反映用のデプロイAPIを続けて呼びます"><input type="checkbox" id="u_doDeploy"> 反映後デプロイ（本番）</label>
+                      </div>
+                      <div id="u_backupStatus" style="display:none;margin-top:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46"></div>
                     </div>
-                    <div id="u_backupStatus" style="display:none;margin-top:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46"></div>
+                    <div class="reflect-footer-actions main-footer" id="u_reflectFooter">
+                      <div class="reflect-footer-actions__preview">
+                        <span class="reflect-footer-zone-label">プレビューAPI</span>
+                        <button type="button" class="btn sub" data-act="runDiff" id="u_footerRunDiff" title="差分比較を実行します">差分比較</button>
+                        <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">反映プラン確認</button>
+                        <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します">バックアップ</button>
+                        <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択セクションを比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">比較元 → 比較先(プレビュー) 反映</button>
+                        <button type="button" class="btn sub reflect-footer-advanced-btn" data-act="togglePatchJsonPanel" title="パッチJSONを直接読み込んで反映するパネルを開きます">JSON差分反映</button>
+                      </div>
+                      <div class="reflect-footer-actions__prod">
+                        <span class="reflect-footer-zone-label reflect-footer-zone-label--prod">本番デプロイ</span>
+                        <button type="button" class="btn btn-deploy-foot" data-act="deployOnly" title="プレビュー内容を本番にデプロイするAPIのみ実行します">デプロイのみ</button>
+                      </div>
+                      <span class="footer-status" id="u_reflectFooterStatus"></span>
                     </div>
-                  </details>
-                  <div class="main-footer" id="u_reflectFooter">
-                    <button type="button" class="btn sub" data-act="runDiff" id="u_footerRunDiff" title="差分比較を実行します">差分比較</button>
-                    <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">反映プラン確認</button>
-                    <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します">バックアップ</button>
-                    <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択セクションを比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">比較元 → 比較先(プレビュー) 反映</button>
-                    <button type="button" class="btn sub" data-act="togglePatchJsonPanel" title="パッチJSONを直接読み込んで反映するパネルを開きます">JSON差分反映</button>
-                    <button type="button" class="btn dark" data-act="deployOnly" title="プレビュー内容を本番にデプロイするAPIのみ実行します">デプロイのみ</button>
-                    <span class="footer-status" id="u_reflectFooterStatus"></span>
                   </div>
                 </div>
               </div>
@@ -581,40 +670,30 @@ export function buildRoot() {
             </div>
 
             <div class="pane" data-pane="design">
-              <div class="subtabs">
-                <button class="subtab active" data-subtab-parent="design" data-subtab="export">設計書出力</button>
-                <button class="subtab" data-subtab-parent="design" data-subtab="diff">差分レポート</button>
-              </div>
               <div class="subpane active" data-subpane-parent="design" data-subpane="export">
-              <div class="subpane-note">比較元の設定を設計書として JSON / Markdown / Excel に出力します。</div>
+              <div class="subpane-note">比較元アプリの設定を設計書として出力します。</div>
               <details class="diff-fold diff-fold--design-export" open>
                 <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">設計書の出力形式</span>
-                  <span class="diff-fold-sub">JSON / Markdown / Excel</span>
+                  <span class="diff-fold-title">設計書出力</span>
+                  <span class="diff-fold-sub">Markdown / Excel 形式で出力</span>
                 </summary>
                 <div class="diff-fold-body">
-              <div class="muted" style="margin-top:0;line-height:1.55">比較元設定を設計書として出力します（JSON / Markdown / Excel）。</div>
-              <div class="btns" style="margin-top:8px">
-                <button type="button" class="btn" data-act="exportDesignJson" title="機械可読な設計書JSON">設計書JSON出力</button>
+              <div class="btns" style="margin-top:0">
+                <button type="button" class="btn dark" data-act="exportDesignXlsx" title="表形式のExcel設計書を出力します">設計書Excel出力</button>
                 <button type="button" class="btn sub" data-act="exportDesignMd" title="ドキュメント向けMarkdownファイル">設計書Markdown出力</button>
-                <button type="button" class="btn sub" data-act="copyDesignMd" style="margin-left:4px" title="クリップボードへ">Markdownコピー</button>
-                <button type="button" class="btn dark" data-act="exportDesignXlsx" style="margin-left:8px" title="表形式のExcel">設計書Excel出力</button>
+                <button type="button" class="btn sub" data-act="copyDesignMd" title="Markdownをクリップボードにコピー">Markdownコピー</button>
               </div>
                 </div>
               </details>
-              </div>
-              <div class="subpane" data-subpane-parent="design" data-subpane="diff">
-              <div class="subpane-note">比較元と比較先の設計書内容を Markdown ベースで比較します。</div>
-              <details class="diff-fold diff-fold--design-diff" open>
+              <details class="diff-fold diff-fold--design-diff">
                 <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">設計書差分レポート（Markdown）</span>
-                  <span class="diff-fold-sub">差分比較タブとは別（文面ベースの差分）</span>
+                  <span class="diff-fold-title">設計書差分レポート</span>
+                  <span class="diff-fold-sub">2アプリ間の設計書をMarkdownレベルで比較</span>
                 </summary>
                 <div class="diff-fold-body">
-              <div class="step" style="margin-top:0">設計書差分レポート出力（比較元 vs 比較先）</div>
-              <div class="muted" style="margin-top:8px;line-height:1.6">比較元と比較先の設計書内容を比較し、変更があった箇所を抽出したMarkdownレポートを生成・ダウンロードします。<br>※「差分比較」タブの結果とは異なり、Markdown文面レベルの差分を提示します。</div>
-              <div class="btns" style="margin-top:10px">
-                <button type="button" class="btn ok" data-act="exportDesignDiffMd" title="比較元・比較先の設計書MDを生成して差分をまとめます">設計書差分レポート(MD)出力</button>
+              <div class="muted" style="margin-top:0;line-height:1.6">比較元・比較先の設計書内容を比較し、差分をMarkdownレポートとして出力します。</div>
+              <div class="btns" style="margin-top:8px">
+                <button type="button" class="btn ok" data-act="exportDesignDiffMd" title="比較元・比較先の設計書MDを生成して差分をまとめます">設計書差分レポート出力</button>
               </div>
                 </div>
               </details>
@@ -928,29 +1007,40 @@ export function buildRoot() {
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">リクエストの組み立てと実行</div>
               <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。</div>
-              <div class="grid2" style="margin-top:8px">
-                <div>
-                  <label>メソッド</label>
-                  <select id="u_apiTesterMethod" title="HTTP メソッド">
-                    <option value="GET" selected>GET</option>
-                    <option value="POST">POST</option>
-                    <option value="PUT">PUT</option>
-                    <option value="DELETE">DELETE</option>
-                  </select>
+              <div style="display:flex;gap:16px;margin-top:8px;">
+                <div style="flex:5;min-width:0;">
+                  <div class="grid2">
+                    <div>
+                      <label>メソッド</label>
+                      <select id="u_apiTesterMethod" title="HTTP メソッド">
+                        <option value="GET" selected>GET</option>
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
+                        <option value="DELETE">DELETE</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label title="相対パスまたは完全URL">エンドポイント（パス または URL）</label>
+                      <input type="text" id="u_apiTesterPath" placeholder="例: /k/v1/record.json または /app/settings">
+                    </div>
+                  </div>
+                  <div style="margin-top:8px">
+                    <label title="GET のときは無視されることがあります">リクエストBody (JSONフォーマット)</label>
+                    <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace" placeholder='{"app": 1, "id": 100}'></textarea>
+                  </div>
+                  <div class="btns" style="margin-top:10px;display:flex;">
+                    <button type="button" class="btn warn" data-act="runApiTester" title="本番データの変更に注意">APIを実行</button>
+                    <button type="button" class="btn sub" data-act="clearApiTesterHistory" style="margin-left:auto;">履歴クリア</button>
+                  </div>
+                  <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>
                 </div>
-                <div>
-                  <label title="相対パスまたは完全URL">エンドポイント（パス または URL）</label>
-                  <input type="text" id="u_apiTesterPath" placeholder="例: /k/v1/record.json または /app/settings">
+                <div style="flex:2;max-width:280px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;display:flex;flex-direction:column;">
+                  <div style="font-size:12px;font-weight:800;color:#334155;margin-bottom:8px;">⏱️ 最近の実行履歴</div>
+                  <div id="u_apiTesterHistoryList" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">
+                    <div style="color:#94a3b8;font-size:11px;font-style:italic;padding:8px;">履歴はありません</div>
+                  </div>
                 </div>
               </div>
-              <div style="margin-top:8px">
-                <label title="GET のときは無視されることがあります">リクエストBody (JSONフォーマット)</label>
-                <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace" placeholder='{"app": 1, "id": 100}'></textarea>
-              </div>
-              <div class="btns" style="margin-top:10px">
-                <button type="button" class="btn warn" data-act="runApiTester" title="本番データの変更に注意">APIを実行</button>
-              </div>
-              <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>
                 </div>
               </details>
             </div>
@@ -1096,13 +1186,19 @@ export function buildRoot() {
             </div>
           </div>
 
-          <div class="status-row status-bar">
-            <div class="status" id="u_status">待機中</div>
+          <div class="status-row status-bar" id="u_statusBar" role="status" aria-live="polite" aria-relevant="text">
+            <div class="status status--neutral" id="u_status">待機中</div>
             <button type="button" class="btn sub status-copy-btn" data-act="copyStatusMessage" title="ステータス行の内容をコピー（エラー時はスタックトレース付き）">コピー</button>
           </div>
 
           <div class="card result-card">
-            <div style="font-size:12px;font-weight:700;margin-bottom:6px">結果</div>
+            <div class="result-card-head">
+              <span class="result-card-mark" aria-hidden="true"></span>
+              <div>
+                <div class="result-card-title">結果</div>
+                <div class="result-card-sub">開いているタブに応じたログやプレビュー。差分の詳細テーブルは差分比較の「結果整理」サブタブ時のみ表示されます。</div>
+              </div>
+            </div>
             <div class="result" id="u_result"></div>
           </div>
         </div>
@@ -1145,14 +1241,15 @@ export function copyTextToClipboard(text) {
   }
   return new Promise((resolve) => {
     try {
-      const ta = document.createElement('textarea');
+      const doc = getToolDocument();
+      const ta = doc.createElement('textarea');
       ta.value = raw;
       ta.style.position = 'fixed';
       ta.style.left = '-9999px';
-      document.body.appendChild(ta);
+      doc.body.appendChild(ta);
       ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
+      const ok = doc.execCommand('copy');
+      doc.body.removeChild(ta);
       resolve(ok);
     } catch (e) {
       resolve(false);

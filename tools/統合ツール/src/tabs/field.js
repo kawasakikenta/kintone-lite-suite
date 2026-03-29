@@ -6,6 +6,7 @@ import { esc, deepClone, downloadText, readTextFile, selectedScopeKeys } from '.
 import { apiGet, apiPut, apiPost, buildApiPrefix, fetchBundle, ensureBundleShape } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { commonParams } from './diff.js';
+import { getToolDocument } from '../ui/dialog.js';
 import { buildCombinedFieldImpactIndex } from '../diff/enrich.js';
 
 export function parseFieldInput(text) {
@@ -284,13 +285,13 @@ export function runInsertSelectedSourceFields() {
 }
 
 export async function runBulkFieldRename() {
-  const tgtAppId = document.getElementById('u_targetApp')?.value?.trim();
+  const tgtAppId = getToolDocument().getElementById('u_targetApp')?.value?.trim();
   if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
-  const guestPrefix = document.getElementById('u_targetGuest')?.value?.trim() ? `/k/guest/${document.getElementById('u_targetGuest').value.trim()}/v1` : '/k/v1';
+  const guestPrefix = getToolDocument().getElementById('u_targetGuest')?.value?.trim() ? `/k/guest/${getToolDocument().getElementById('u_targetGuest').value.trim()}/v1` : '/k/v1';
 
-  const prefixStr = document.getElementById('u_fieldPrefix')?.value?.trim();
+  const prefixStr = getToolDocument().getElementById('u_fieldPrefix')?.value?.trim();
   if (!prefixStr) throw new Error('プレフィックスを入力してください');
-  const isRemove = document.getElementById('u_fieldPrefixRemove')?.checked;
+  const isRemove = getToolDocument().getElementById('u_fieldPrefixRemove')?.checked;
 
   setBusy(true, '比較先のフィールド情報を取得中...');
   const fieldsResp = await apiGet(guestPrefix, '/app/form/fields.json', { app: tgtAppId });
@@ -317,16 +318,16 @@ export async function runBulkFieldRename() {
   }
 
   ui.fieldJson.value = JSON.stringify(newProps, null, 2);
-  const resEl = document.getElementById('u_bulkFieldResult');
+  const resEl = getToolDocument().getElementById('u_bulkFieldResult');
   resEl.style.display = 'block';
   resEl.innerHTML = `<strong>完了:</strong> ${modifiedCount} 個のフィールドコードを変更し、上のテキストエリアにセットしました。`;
   setBusy(false);
 }
 
 export async function runDetectUnusedFields() {
-  const tgtAppId = document.getElementById('u_targetApp')?.value?.trim();
+  const tgtAppId = getToolDocument().getElementById('u_targetApp')?.value?.trim();
   if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
-  const guestId = document.getElementById('u_targetGuest')?.value?.trim() || null;
+  const guestId = getToolDocument().getElementById('u_targetGuest')?.value?.trim() || null;
 
   setBusy(true, '比較先アプリの全設定を取得中...');
   const bundle = await fetchBundle({
@@ -352,7 +353,7 @@ export async function runDetectUnusedFields() {
     }
   }
 
-  const resEl = document.getElementById('u_bulkFieldResult');
+  const resEl = getToolDocument().getElementById('u_bulkFieldResult');
   resEl.style.display = 'block';
   if (unused.length === 0) {
     resEl.innerHTML = '<span style="color:#15803d">全てのフィールドがビューや計算式、プロセスなどで使用されています（または影響判定範囲外です）。</span>';
