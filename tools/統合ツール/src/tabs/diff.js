@@ -459,6 +459,7 @@ export function saveCurrentDialogState() {
     erMaxDepth: ui.erMaxDepth?.value?.trim?.() || '0',
     erExtraApps: ui.erExtraApps?.value?.trim?.() || '',
     erIncludeSubtable: !!ui.erIncludeSubtable?.checked,
+    erIncludeReverseLookup: !!ui.erIncludeReverseLookup?.checked,
     settingsExportAppIds: ui.settingsExportAppIds.value.trim(),
     settingsExportSearchKeyword: ui.settingsExportSearchKeyword.value.trim(),
     settingsExportGuest: ui.settingsExportGuest.value.trim(),
@@ -533,6 +534,7 @@ export function restoreDialogState() {
   if (saved.erMaxDepth != null && ui.erMaxDepth) ui.erMaxDepth.value = String(saved.erMaxDepth || '0');
   if (saved.erExtraApps != null && ui.erExtraApps) ui.erExtraApps.value = String(saved.erExtraApps || '');
   if (saved.erIncludeSubtable != null && ui.erIncludeSubtable) ui.erIncludeSubtable.checked = !!saved.erIncludeSubtable;
+  if (saved.erIncludeReverseLookup != null && ui.erIncludeReverseLookup) ui.erIncludeReverseLookup.checked = !!saved.erIncludeReverseLookup;
   if (saved.settingsExportAppIds != null) ui.settingsExportAppIds.value = String(saved.settingsExportAppIds);
   if (saved.settingsExportSearchKeyword != null) ui.settingsExportSearchKeyword.value = String(saved.settingsExportSearchKeyword);
   if (saved.settingsExportGuest != null) ui.settingsExportGuest.value = String(saved.settingsExportGuest);

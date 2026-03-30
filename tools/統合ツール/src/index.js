@@ -190,6 +190,7 @@ if (!window.kintone?.api || !window.kintone?.app) {
     erMaxDepth: $('#u_erMaxDepth'),
     erExtraApps: $('#u_erExtraApps'),
     erIncludeSubtable: $('#u_erIncludeSubtable'),
+    erIncludeReverseLookup: $('#u_erIncludeReverseLookup'),
     busyOverlay: $('#u_busyOverlay'),
     busyText: $('#u_busyText'),
     tourOverlay: $('#u_tourOverlay'),
