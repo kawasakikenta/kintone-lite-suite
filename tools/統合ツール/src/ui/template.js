@@ -953,6 +953,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                   <label>追加オプション</label>
                   <div class="chips" style="margin-top:4px">
                     <label class="chip" title="サブテーブル内フィールドもERに含めます"><input type="checkbox" id="u_erIncludeSubtable" checked> サブテーブル項目を含める</label>
+                    <label class="chip" title="参照先だけでなく、現在アプリを参照しているアプリも探索します（全アプリを走査）"><input type="checkbox" id="u_erIncludeReverseLookup"> 逆引き探索を有効化</label>
                   </div>
                 </div>
               </div>
