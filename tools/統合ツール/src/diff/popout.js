@@ -1,7 +1,7 @@
 'use strict';
 
 import { state } from '../state.js';
-import { getRoot } from '../ui/dialog.js';
+import { getRoot, getToolWindow } from '../ui/dialog.js';
 import { saveCurrentDialogState } from '../ui/dialog.js';
 import { renderResultRows } from './export.js';
 
@@ -88,7 +88,8 @@ function setupPopoutListeners(win) {
 }
 
 export function openDiffViewerPopout() {
-  const prev = window.__KUS_DIFF_WIN__;
+  const toolWin = getToolWindow();
+  const prev = toolWin.__KUS_DIFF_WIN__;
   if (prev && !prev.closed) {
     try { prev.focus(); } catch (e) { /* ignore */ }
     syncDiffPopoutMirror();
@@ -98,7 +99,7 @@ export function openDiffViewerPopout() {
   const mainRoot = getRoot();
   const styleSrc = mainRoot?.querySelector('style');
 
-  const w = window.open('', WIN_NAME, 'width=1440,height=960');
+  const w = toolWin.open('', WIN_NAME, 'width=1440,height=960');
   if (!w) {
     return null;
   }
@@ -133,12 +134,12 @@ export function openDiffViewerPopout() {
     try { w.close(); } catch (e) { /* ignore */ }
   });
 
-  window.__KUS_DIFF_WIN__ = w;
+  toolWin.__KUS_DIFF_WIN__ = w;
   setupPopoutListeners(w);
 
   w.addEventListener('beforeunload', () => {
     teardownPopoutListeners(w.document);
-    if (window.__KUS_DIFF_WIN__ === w) window.__KUS_DIFF_WIN__ = null;
+    if (toolWin.__KUS_DIFF_WIN__ === w) toolWin.__KUS_DIFF_WIN__ = null;
   });
 
   syncDiffPopoutMirror();
@@ -147,7 +148,7 @@ export function openDiffViewerPopout() {
 }
 
 export function syncDiffPopoutMirror() {
-  const w = window.__KUS_DIFF_WIN__;
+  const w = getToolWindow().__KUS_DIFF_WIN__;
   if (!w || w.closed) return;
   const mount = w.document.getElementById('u_diffPopoutResult');
   const root = getRoot();
@@ -158,9 +159,10 @@ export function syncDiffPopoutMirror() {
 }
 
 export function closeDiffViewerPopout() {
-  const w = window.__KUS_DIFF_WIN__;
+  const toolWin = getToolWindow();
+  const w = toolWin.__KUS_DIFF_WIN__;
   if (w && !w.closed) {
     try { w.close(); } catch (e) { /* ignore */ }
   }
-  window.__KUS_DIFF_WIN__ = null;
+  toolWin.__KUS_DIFF_WIN__ = null;
 }

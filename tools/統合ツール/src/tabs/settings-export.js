@@ -8,6 +8,7 @@ import { selectedScopeKeys } from '../utils.js';
 import { setStatus } from '../ui/components.js';
 import { commonParams, saveCurrentDialogState } from './diff.js';
 import { parseAppIdList } from './field.js';
+import { loadJSZip } from './record.js';
 
 // ---------------------------------------------------------------------------
 // Add app ID to settings export

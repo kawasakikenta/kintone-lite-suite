@@ -1925,7 +1925,8 @@ ${contextLine}`);
     doc.addEventListener("click", popoutClickHandler, true);
   }
   function openDiffViewerPopout() {
-    const prev = window.__KUS_DIFF_WIN__;
+    const toolWin = getToolWindow();
+    const prev = toolWin.__KUS_DIFF_WIN__;
     if (prev && !prev.closed) {
       try {
         prev.focus();
@@ -1936,7 +1937,7 @@ ${contextLine}`);
     }
     const mainRoot = getRoot();
     const styleSrc = mainRoot?.querySelector("style");
-    const w = window.open("", WIN_NAME, "width=1440,height=960");
+    const w = toolWin.open("", WIN_NAME, "width=1440,height=960");
     if (!w) {
       return null;
     }
@@ -1966,11 +1967,11 @@ ${contextLine}`);
       } catch (e) {
       }
     });
-    window.__KUS_DIFF_WIN__ = w;
+    toolWin.__KUS_DIFF_WIN__ = w;
     setupPopoutListeners(w);
     w.addEventListener("beforeunload", () => {
       teardownPopoutListeners(w.document);
-      if (window.__KUS_DIFF_WIN__ === w) window.__KUS_DIFF_WIN__ = null;
+      if (toolWin.__KUS_DIFF_WIN__ === w) toolWin.__KUS_DIFF_WIN__ = null;
     });
     syncDiffPopoutMirror();
     try {
@@ -1980,7 +1981,7 @@ ${contextLine}`);
     return w;
   }
   function syncDiffPopoutMirror() {
-    const w = window.__KUS_DIFF_WIN__;
+    const w = getToolWindow().__KUS_DIFF_WIN__;
     if (!w || w.closed) return;
     const mount = w.document.getElementById("u_diffPopoutResult");
     const root2 = getRoot();
@@ -1990,14 +1991,15 @@ ${contextLine}`);
     }
   }
   function closeDiffViewerPopout() {
-    const w = window.__KUS_DIFF_WIN__;
+    const toolWin = getToolWindow();
+    const w = toolWin.__KUS_DIFF_WIN__;
     if (w && !w.closed) {
       try {
         w.close();
       } catch (e) {
       }
     }
-    window.__KUS_DIFF_WIN__ = null;
+    toolWin.__KUS_DIFF_WIN__ = null;
   }
   var WIN_NAME, popoutClickHandler, popoutChangeHandler, popoutMousedownHandler;
   var init_popout = __esm({
@@ -9842,6 +9844,546 @@ ${contextLine}`);
   init_components();
   init_diff();
   init_field();
+
+  // src/tabs/record.js
+  init_constants();
+  init_state();
+  init_utils();
+  init_api();
+  init_components();
+  init_diff();
+  init_dialog();
+  function getSideApiPrefix(isSource, preview) {
+    const c = commonParams();
+    const side = isSource ? c.source : c.target;
+    return buildApiPrefix(side.guestId, !!preview);
+  }
+  async function loadViewsForSelect(selectId, inputId) {
+    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
+    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
+    const prefix = getSideApiPrefix(false, false);
+    const resp = await apiGet(prefix, "/app/views.json", { app: tApp });
+    const views = Object.entries(resp.views).map(([name, v]) => ({ name, ...v })).filter((v) => v.type === "LIST").sort((a, b) => Number(a.index) - Number(b.index));
+    const sel = getToolDocument().getElementById(selectId);
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- 一覧を選択 --</option>';
+    for (const v of views) {
+      const opt = document.createElement("option");
+      opt.value = v.id;
+      opt.dataset.q = encodeURIComponent(v.filterCond || "");
+      opt.textContent = v.name;
+      sel.appendChild(opt);
+    }
+    sel.style.display = "block";
+    sel.onchange = () => {
+      const o = sel.options[sel.selectedIndex];
+      if (o && o.value) {
+        getToolDocument().getElementById(inputId).value = decodeURIComponent(o.dataset.q || "");
+      }
+    };
+    setStatus("比較先アプリの一覧リストを取得しました");
+  }
+  async function getRecordIdsByQuery(app, query, isSource) {
+    const prefix = getSideApiPrefix(isSource, false);
+    const ids = [];
+    let offset = 0;
+    while (true) {
+      let q = query ? `${query} ` : "";
+      q += `order by $id asc limit 500 offset ${offset}`;
+      const resp = await apiGet(prefix, "/records.json", { app, query: q, fields: ["$id"] });
+      const records = resp.records || [];
+      if (records.length === 0) break;
+      records.forEach((r) => ids.push(Number(r.$id.value)));
+      if (records.length < 500) break;
+      offset += 500;
+    }
+    return ids;
+  }
+  async function getFullRecordsByQuery(app, query, isSource) {
+    const prefix = getSideApiPrefix(isSource, false);
+    let allRecords = [];
+    let offset = 0;
+    while (true) {
+      let q = query ? `${query} ` : "";
+      q += `limit 500 offset ${offset}`;
+      const resp = await apiGet(prefix, "/records.json", { app, query: q });
+      const records = resp.records || [];
+      if (records.length === 0) break;
+      allRecords = allRecords.concat(records);
+      if (records.length < 500) break;
+      offset += 500;
+    }
+    return allRecords;
+  }
+  var chunkArray = (arr, size) => {
+    const out = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  };
+  async function runBatchProcess() {
+    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
+    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
+    const query = getToolDocument().getElementById("u_batchProcView").value;
+    const action = getToolDocument().getElementById("u_batchProcAction").value.trim();
+    const assignee = getToolDocument().getElementById("u_batchProcAssignee").value.trim() || null;
+    if (!action) throw new Error("アクション名を入力してください。");
+    setStatus("対象レコードを取得中...");
+    const ids = await getRecordIdsByQuery(tApp, query, false);
+    if (ids.length === 0) throw new Error("処理対象のレコードが0件です。");
+    if (!confirm(`${ids.length}件のレコードにアクション「${action}」を実行します。よろしいですか？`)) return;
+    setStatus("ステータス一括更新を開始...");
+    const prefix = getSideApiPrefix(false, false);
+    const batches = chunkArray(ids, 100);
+    let okCount = 0;
+    for (let i = 0; i < batches.length; i++) {
+      const batchIds = batches[i];
+      const body = {
+        app: tApp,
+        records: batchIds.map((id) => {
+          let r = { id, action };
+          if (assignee) r.assignee = assignee;
+          return r;
+        })
+      };
+      await apiPut(prefix, "/records/status.json", body);
+      okCount += batchIds.length;
+      setStatus(`進捗: ${okCount}/${ids.length}件 完了...`);
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    setStatus(`ステータス一括更新が完了しました（全${okCount}件）`, false);
+  }
+  async function loadJSZip() {
+    if (typeof JSZip !== "undefined") return;
+    setStatus("JSZipを動的ロード中...");
+    return new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+      script.onload = () => {
+        setStatus("JSZipのロード完了");
+        resolve();
+      };
+      script.onerror = () => {
+        reject(new Error("JSZipの読み込みに失敗しました"));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  async function downloadTargetFile(fileKey) {
+    const prefix = getSideApiPrefix(false, false);
+    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    const resp = await fetch(url, { method: "GET", headers });
+    if (resp.status === 403) return null;
+    return await resp.blob();
+  }
+  async function runBatchFileDownload() {
+    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
+    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
+    const query = getToolDocument().getElementById("u_batchDlView").value;
+    const fileCode = getToolDocument().getElementById("u_batchDlFileCode").value.trim();
+    const folderCode = getToolDocument().getElementById("u_batchDlFolderCode").value.trim();
+    const zipName = getToolDocument().getElementById("u_batchDlZipName").value.trim() || "download.zip";
+    if (!fileCode) throw new Error("ファイルフィールドコードを入力してください。");
+    setStatus("対象レコードを取得中...");
+    const records = await getFullRecordsByQuery(tApp, query, false);
+    if (records.length === 0) throw new Error("処理対象のレコードが0件です。");
+    await loadJSZip();
+    const zip = new JSZip();
+    let fileCount = 0;
+    for (let i = 0; i < records.length; i++) {
+      const rec = records[i];
+      setStatus(`ファイルダウンロード中 (レコード ${i + 1}/${records.length})...`);
+      const fileList = rec[fileCode]?.value || [];
+      if (fileList.length > 0) {
+        let folderName = folderCode && rec[folderCode] ? rec[folderCode].value : "";
+        if (!folderName) folderName = `Record_${rec.$id.value}`;
+        const recordFolder = zip.folder(folderName);
+        for (const f of fileList) {
+          const blob = await downloadTargetFile(f.fileKey);
+          if (blob) {
+            recordFolder.file(f.name, blob);
+            fileCount++;
+          }
+        }
+      }
+    }
+    if (fileCount === 0) {
+      setStatus("ダウンロード対象が見つかりませんでした。", true);
+      return;
+    }
+    setStatus(`ZIP圧縮中 (計${fileCount}ファイル)...`);
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    const a = document.createElement("a");
+    const u = URL.createObjectURL(zipBlob);
+    a.href = u;
+    a.download = zipName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(u);
+    }, 100);
+    setStatus(`添付ファイル一括DL完了 (${fileCount}ファイル)`);
+  }
+  async function getAllAppsInSpace(isSource) {
+    const prefix = getSideApiPrefix(isSource, false);
+    let allApps = [];
+    let offset = 0;
+    while (true) {
+      const resp = await apiGet(prefix, "/apps.json", { limit: 100, offset });
+      const apps = resp.apps || [];
+      allApps = allApps.concat(apps);
+      if (apps.length < 100) break;
+      offset += 100;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return allApps;
+  }
+  async function downloadBlobWithRetry(fileKey, isSource, guestSpaceId) {
+    let prefix = getSideApiPrefix(isSource, false);
+    if (guestSpaceId) {
+      prefix = `/k/guest/${guestSpaceId}/v1`;
+    }
+    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const resp = await fetch(url, { method: "GET", headers });
+        if (resp.status === 403) return null;
+        if (!resp.ok) throw new Error("Download failed: " + resp.status);
+        return await resp.blob();
+      } catch (e) {
+        console.warn("File download failed, retrying...", e);
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    return null;
+  }
+  async function runCsvExport() {
+    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
+    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
+    const tgtGuestId = getToolDocument().getElementById("u_targetGuest")?.value?.trim();
+    const guestPrefix = tgtGuestId ? `/k/guest/${tgtGuestId}/v1` : "/k/v1";
+    let condition = getToolDocument().getElementById("u_csvExportViewSelect")?.value || "";
+    if (!condition) condition = getToolDocument().getElementById("u_csvExportView")?.value || "";
+    const filename = getToolDocument().getElementById("u_csvExportName")?.value?.trim() || "records.csv";
+    setBusy(true, "フィールド情報取得中...");
+    let fields = null;
+    try {
+      fields = await apiGet(guestPrefix, "/app/form/fields.json", { app: tgtAppId });
+    } catch (e) {
+      throw new Error("フィールド情報の取得に失敗: " + e.message);
+    }
+    const propKeys = Object.keys(fields.properties);
+    if (!propKeys.length) throw new Error("出力できるフィールドがありません");
+    setBusy(true, "レコード取得中...");
+    let allRecords = [];
+    let lastRecordId = "0";
+    const limit = 500;
+    let baseQuery = condition;
+    let queryHasOrder = baseQuery.toLowerCase().includes("order by");
+    let queryHasLimit = baseQuery.toLowerCase().includes("limit");
+    if (queryHasLimit) {
+      const resp = await apiGet(guestPrefix, "/records.json", { app: tgtAppId, query: baseQuery });
+      allRecords = resp.records || [];
+    } else {
+      while (true) {
+        setBusy(true, `レコード取得中... (${allRecords.length}件取得済)`);
+        let loopQuery = "";
+        if (baseQuery) {
+          loopQuery = `${baseQuery} ${queryHasOrder ? "" : "order by $id asc"} limit ${limit} offset ${allRecords.length}`;
+        } else {
+          loopQuery = `$id > ${lastRecordId} order by $id asc limit ${limit}`;
+        }
+        const resp = await apiGet(guestPrefix, "/records.json", { app: tgtAppId, query: loopQuery });
+        const batch = resp.records || [];
+        allRecords = allRecords.concat(batch);
+        if (batch.length < limit) break;
+        lastRecordId = batch[batch.length - 1].$id.value;
+      }
+    }
+    if (!allRecords.length) throw new Error("出力するレコードがありません");
+    setStatus(`CSV生成中... (${allRecords.length}件)`);
+    const escapeCsv = (val) => {
+      const s = String(val == null ? "" : val);
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    };
+    const extractValue = (rec, code) => {
+      const field = rec[code];
+      if (!field) return "";
+      if (field.type === "USER_SELECT" || field.type === "ORGANIZATION_SELECT" || field.type === "GROUP_SELECT") {
+        return (field.value || []).map((v) => v.code || v.name).join(",");
+      }
+      if (field.type === "CHECK_BOX" || field.type === "MULTI_SELECT") {
+        return (field.value || []).join(",");
+      }
+      if (field.type === "FILE") {
+        return (field.value || []).map((file) => file.name).join(",");
+      }
+      if (field.type === "SUBTABLE") {
+        return (field.value || []).length + "行";
+      }
+      if (typeof field.value === "object" && field.value !== null) {
+        return JSON.stringify(field.value);
+      }
+      return field.value;
+    };
+    const lines = [];
+    lines.push(propKeys.map(escapeCsv).join(","));
+    for (const rec of allRecords) {
+      lines.push(propKeys.map((key) => escapeCsv(extractValue(rec, key))).join(","));
+    }
+    const csvStr = "\uFEFF" + lines.join("\n");
+    const blob = new Blob([csvStr], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    setBusy(false);
+    setStatus(`CSVを出力しました (${allRecords.length}件)`);
+  }
+  async function runCsvImport() {
+    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
+    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
+    const guestPrefix = getToolDocument().getElementById("u_targetGuest")?.value?.trim() ? `/k/guest/${getToolDocument().getElementById("u_targetGuest").value.trim()}/v1` : "/k/v1";
+    const fileInput = getToolDocument().getElementById("u_csvImportFile");
+    if (!fileInput.files || !fileInput.files.length) {
+      throw new Error("CSVファイルを選択してください");
+    }
+    const file = fileInput.files[0];
+    setBusy(true, "CSVファイルを読み込み中...");
+    const text = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = (e) => reject(new Error("ファイルの読み取りに失敗しました"));
+      reader.readAsText(file);
+    });
+    if (!text) throw new Error("ファイルが空です");
+    setBusy(true, "CSVをパース中...");
+    const parseCsv = (csvText) => {
+      const rows2 = [];
+      let current = [];
+      let cell = "";
+      let inQuotes = false;
+      for (let i = 0; i < csvText.length; i++) {
+        const char = csvText[i];
+        const nextChar = csvText[i + 1];
+        if (inQuotes) {
+          if (char === '"') {
+            if (nextChar === '"') {
+              cell += '"';
+              i++;
+            } else {
+              inQuotes = false;
+            }
+          } else {
+            cell += char;
+          }
+        } else {
+          if (char === '"') {
+            inQuotes = true;
+          } else if (char === ",") {
+            current.push(cell);
+            cell = "";
+          } else if (char === "\n" || char === "\r") {
+            if (char === "\r" && nextChar === "\n") i++;
+            current.push(cell);
+            rows2.push(current);
+            current = [];
+            cell = "";
+          } else {
+            cell += char;
+          }
+        }
+      }
+      if (cell !== "" || current.length > 0) {
+        current.push(cell);
+        rows2.push(current);
+      }
+      return rows2;
+    };
+    const rows = parseCsv(text.replace(/^\uFEFF/, ""));
+    if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
+    const header = rows[0].map((h) => h.trim());
+    if (header.includes("$id")) throw new Error("CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。");
+    const records = [];
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i].length === 1 && rows[i][0] === "") continue;
+      const rec = {};
+      for (let j = 0; j < header.length; j++) {
+        if (!header[j]) continue;
+        const val = rows[i][j] !== void 0 ? rows[i][j] : "";
+        rec[header[j]] = { value: val };
+      }
+      records.push(rec);
+    }
+    if (!records.length) throw new Error("登録するデータが見つかりませんでした");
+    if (!confirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) {
+      setBusy(false);
+      return;
+    }
+    setBusy(true, `インポート開始... (対象 ${records.length}件)`);
+    const batchSize = 100;
+    let successCount = 0;
+    for (let i = 0; i < records.length; i += batchSize) {
+      const batch = records.slice(i, i + batchSize);
+      setBusy(true, `インポート実行中... (${i + 1} ～ ${i + batch.length} / ${records.length} 件目)`);
+      try {
+        await apiPost(guestPrefix, "/records.json", { app: tgtAppId, records: batch });
+        successCount += batch.length;
+      } catch (e) {
+        throw new Error(`レコード登録エラー（${i + 1}件目付近）: ${e.message}`);
+      }
+    }
+    setBusy(false);
+    alert(`完了: ${successCount}件のレコードを登録しました。`);
+    fileInput.value = "";
+    getToolDocument().getElementById("u_csvImportFileName").textContent = "未選択";
+  }
+  async function runRecordCopy() {
+    const srcApp = getToolDocument().getElementById("u_sourceApp")?.value?.trim();
+    const tgtApp = getToolDocument().getElementById("u_targetApp")?.value?.trim();
+    if (!srcApp || !tgtApp) throw new Error("比較元と比較先の両方のアプリIDを指定してください");
+    const srcGuestStr = getToolDocument().getElementById("u_sourceGuest")?.value?.trim() || null;
+    const tgtGuestStr = getToolDocument().getElementById("u_targetGuest")?.value?.trim() || null;
+    const srcGuest = srcGuestStr ? `/k/guest/${srcGuestStr}/v1` : "/k/v1";
+    const tgtGuest = tgtGuestStr ? `/k/guest/${tgtGuestStr}/v1` : "/k/v1";
+    const query = getToolDocument().getElementById("u_recordCopyQuery")?.value || "";
+    if (!confirm(`比較元(${srcApp}) から 比較先(${tgtApp}) へレコードをコピーします。よろしいですか？`)) return;
+    setBusy(true, "比較元のレコードを取得中...");
+    let totalFetched = 0;
+    const records = [];
+    while (true) {
+      const q = `${query} limit 500 offset ${totalFetched}`;
+      const res = await apiGet(srcGuest, "/records.json", { app: srcApp, query: q });
+      if (!res.records || res.records.length === 0) break;
+      records.push(...res.records);
+      totalFetched += res.records.length;
+      if (res.records.length < 500) break;
+      setStatus(`取得中... (${totalFetched}件)`);
+    }
+    if (!records.length) {
+      alert("コピー対象のレコードが見つかりませんでした");
+      setBusy(false);
+      return;
+    }
+    const systemFields = ["$id", "$revision", "作成者", "作成日時", "更新者", "更新日時", "レコード番号", "ステータス", "作業者"];
+    const systemTypes = ["RECORD_NUMBER", "CREATOR", "CREATED_TIME", "MODIFIER", "UPDATED_TIME", "STATUS", "STATUS_ASSIGNEE", "CALC"];
+    const cleanRecords = records.map((rec) => {
+      const clean = {};
+      for (const [k, v] of Object.entries(rec)) {
+        if (!systemFields.includes(k) && !systemTypes.includes(v.type)) {
+          if (v.type === "SUBTABLE") {
+            const cleanSub = v.value.map((sRow) => {
+              const cleanSRow = {};
+              for (const [sk, sv] of Object.entries(sRow.value)) {
+                cleanSRow[sk] = { value: sv.value };
+              }
+              return { value: cleanSRow };
+            });
+            clean[k] = { value: cleanSub };
+          } else {
+            clean[k] = { value: v.value };
+          }
+        }
+      }
+      return clean;
+    });
+    if (!confirm(`${records.length}件のレコードを比較先(AppID: ${tgtApp})へ登録します。実行しますか？`)) {
+      setBusy(false);
+      return;
+    }
+    setBusy(true, `インポート開始... (対象 ${records.length}件)`);
+    const batchSize = 100;
+    let successCount = 0;
+    for (let i = 0; i < cleanRecords.length; i += batchSize) {
+      const batch = cleanRecords.slice(i, i + batchSize);
+      setBusy(true, `登録実行中... (${i + 1} ～ ${i + batch.length} / ${cleanRecords.length} 件目)`);
+      try {
+        await apiPost(tgtGuest, "/records.json", { app: tgtApp, records: batch });
+        successCount += batch.length;
+      } catch (e) {
+        throw new Error(`レコード登録エラー（${i + 1}件目付近）: ${e.message}`);
+      }
+    }
+    setBusy(false);
+    alert(`完了: ${successCount}件のレコードを比較先へコピーしました。`);
+  }
+  var TEMPLATE_STATE_KEY = "kintoneSuperApp_Templates";
+  function getTemplates() {
+    try {
+      return JSON.parse(localStorage.getItem(TEMPLATE_STATE_KEY) || "{}");
+    } catch {
+      return {};
+    }
+  }
+  function renderTemplateOptions() {
+    const sel = getToolDocument().getElementById("u_templateSelect");
+    if (!sel) return;
+    const tpls = getTemplates();
+    const current = sel.value;
+    const keys = Object.keys(tpls).sort((a, b) => tpls[b].savedAt - tpls[a].savedAt);
+    if (!keys.length) {
+      sel.innerHTML = '<option value="">-- 保存済なし --</option>';
+      return;
+    }
+    sel.innerHTML = keys.map((k) => `<option value="${esc(k)}">${esc(k)} (${new Date(tpls[k].savedAt).toLocaleDateString()})</option>`).join("");
+    if (tpls[current]) sel.value = current;
+  }
+  async function saveTemplate() {
+    const name = getToolDocument().getElementById("u_templateSaveName")?.value?.trim();
+    if (!name) throw new Error("保存するデータ名を入力してください");
+    const c = commonParams();
+    if (!c.source.appId) throw new Error("テンプレートとして保存する比較元のアプリIDを指定してください");
+    const scopes = SECTION_DEFS.map((s) => s.key);
+    const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
+    const tpls = getTemplates();
+    tpls[name] = { savedAt: Date.now(), bundle };
+    try {
+      localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
+    } catch (e) {
+      throw new Error("保存に失敗しました。LocalStorageの容量制限(5MB等)に達した可能性があります。不要な履歴を削除してください。");
+    }
+    renderTemplateOptions();
+    getToolDocument().getElementById("u_templateSaveName").value = "";
+    alert(`データ「${name}」を保存しました。`);
+  }
+  function loadTemplate() {
+    const name = getToolDocument().getElementById("u_templateSelect")?.value;
+    if (!name) return;
+    const tpls = getTemplates();
+    const tpl = tpls[name];
+    if (!tpl || !tpl.bundle) {
+      alert("指定されたデータが存在しません");
+      return;
+    }
+    state.importedSourceBundle = tpl.bundle;
+    state.importedSourceName = `[テンプレート] ${name}`;
+    renderBundleState();
+    alert(`テンプレート「${name}」を比較元（ファイル読込扱い）としてセットしました。
+必要に応じて差分比較を実行してください。`);
+  }
+  function deleteTemplate() {
+    const name = getToolDocument().getElementById("u_templateSelect")?.value;
+    if (!name) return;
+    if (!confirm(`テンプレート「${name}」を削除しますか？`)) return;
+    const tpls = getTemplates();
+    delete tpls[name];
+    localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
+    renderTemplateOptions();
+    setStatus(`テンプレート「${name}」を削除しました`);
+  }
+
+  // src/tabs/settings-export.js
   function addAppIdToSettingsExport(appId, appName) {
     if (!/^\d+$/.test(String(appId || "").trim())) return;
     const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
@@ -11816,6 +12358,7 @@ ${diffMd}
   init_utils();
   init_api();
   init_components();
+  init_dialog();
   init_diff();
   init_enrich();
   var ER_DEFAULTS = {
@@ -13375,7 +13918,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   async function runGenerateERDiagram() {
     const options = readErDiagramOptions();
     if (!options.startAppIds?.length) throw new Error("比較元アプリID（および追加起点ID）を入力してください");
-    const popup = window.open("", "_blank");
+    const popup = getToolWindow().open("", "_blank");
     if (!popup) throw new Error("別タブを開けませんでした。ポップアップブロックを確認してください");
     popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
     setStatus(`ER図の解析を開始します... 起点 ${options.startAppIds.join(",")} / ${formatErLayoutLabel(options.layoutName)} / ${options.fieldDensity}`);
@@ -13428,6 +13971,9 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     const srcAppId = ui.sourceApp?.value?.trim();
     if (!srcAppId) throw new Error("比較元アプリIDが指定されていません");
     const guestId = ui.sourceGuest?.value?.trim() || null;
+    const popup = getToolWindow().open("", "_blank");
+    if (!popup) throw new Error("別タブを開けませんでした。ポップアップブロックを確認してください");
+    popup.document.write('<title>フィールド依存関係マップ</title><body style="font-family:sans-serif;padding:24px">依存関係マップを生成中...</body>');
     setBusy(true, "比較元アプリの全設定を取得中...");
     const sections = SECTION_DEFS.map((s) => s.key);
     const bundle = await fetchBundle({ appId: srcAppId, guestId, preview: true, sections, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
@@ -13461,6 +14007,10 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       }
     }
     if (elements.length === 0) {
+      try {
+        popup.close();
+      } catch (e) {
+      }
       alert("フィールド間の依存関係（計算式等）は見つかりませんでした。");
       setBusy(false);
       return;
@@ -13542,7 +14092,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 </html>`;
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    window.open(url, "_blank");
+    popup.location.href = url;
+    setTimeout(() => URL.revokeObjectURL(url), 60 * 1e3);
     setBusy(false);
   }
 
@@ -13554,546 +14105,6 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   init_dialog();
   init_diff();
   init_helpers();
-
-  // src/tabs/record.js
-  init_constants();
-  init_state();
-  init_utils();
-  init_api();
-  init_components();
-  init_diff();
-  init_dialog();
-  function getSideApiPrefix(isSource, preview) {
-    const c = commonParams();
-    const side = isSource ? c.source : c.target;
-    return buildApiPrefix(side.guestId, !!preview);
-  }
-  async function loadViewsForSelect(selectId, inputId) {
-    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
-    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
-    const prefix = getSideApiPrefix(false, false);
-    const resp = await apiGet(prefix, "/app/views.json", { app: tApp });
-    const views = Object.entries(resp.views).map(([name, v]) => ({ name, ...v })).filter((v) => v.type === "LIST").sort((a, b) => Number(a.index) - Number(b.index));
-    const sel = getToolDocument().getElementById(selectId);
-    if (!sel) return;
-    sel.innerHTML = '<option value="">-- 一覧を選択 --</option>';
-    for (const v of views) {
-      const opt = document.createElement("option");
-      opt.value = v.id;
-      opt.dataset.q = encodeURIComponent(v.filterCond || "");
-      opt.textContent = v.name;
-      sel.appendChild(opt);
-    }
-    sel.style.display = "block";
-    sel.onchange = () => {
-      const o = sel.options[sel.selectedIndex];
-      if (o && o.value) {
-        getToolDocument().getElementById(inputId).value = decodeURIComponent(o.dataset.q || "");
-      }
-    };
-    setStatus("比較先アプリの一覧リストを取得しました");
-  }
-  async function getRecordIdsByQuery(app, query, isSource) {
-    const prefix = getSideApiPrefix(isSource, false);
-    const ids = [];
-    let offset = 0;
-    while (true) {
-      let q = query ? `${query} ` : "";
-      q += `order by $id asc limit 500 offset ${offset}`;
-      const resp = await apiGet(prefix, "/records.json", { app, query: q, fields: ["$id"] });
-      const records = resp.records || [];
-      if (records.length === 0) break;
-      records.forEach((r) => ids.push(Number(r.$id.value)));
-      if (records.length < 500) break;
-      offset += 500;
-    }
-    return ids;
-  }
-  async function getFullRecordsByQuery(app, query, isSource) {
-    const prefix = getSideApiPrefix(isSource, false);
-    let allRecords = [];
-    let offset = 0;
-    while (true) {
-      let q = query ? `${query} ` : "";
-      q += `limit 500 offset ${offset}`;
-      const resp = await apiGet(prefix, "/records.json", { app, query: q });
-      const records = resp.records || [];
-      if (records.length === 0) break;
-      allRecords = allRecords.concat(records);
-      if (records.length < 500) break;
-      offset += 500;
-    }
-    return allRecords;
-  }
-  var chunkArray = (arr, size) => {
-    const out = [];
-    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-    return out;
-  };
-  async function runBatchProcess() {
-    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
-    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
-    const query = getToolDocument().getElementById("u_batchProcView").value;
-    const action = getToolDocument().getElementById("u_batchProcAction").value.trim();
-    const assignee = getToolDocument().getElementById("u_batchProcAssignee").value.trim() || null;
-    if (!action) throw new Error("アクション名を入力してください。");
-    setStatus("対象レコードを取得中...");
-    const ids = await getRecordIdsByQuery(tApp, query, false);
-    if (ids.length === 0) throw new Error("処理対象のレコードが0件です。");
-    if (!confirm(`${ids.length}件のレコードにアクション「${action}」を実行します。よろしいですか？`)) return;
-    setStatus("ステータス一括更新を開始...");
-    const prefix = getSideApiPrefix(false, false);
-    const batches = chunkArray(ids, 100);
-    let okCount = 0;
-    for (let i = 0; i < batches.length; i++) {
-      const batchIds = batches[i];
-      const body = {
-        app: tApp,
-        records: batchIds.map((id) => {
-          let r = { id, action };
-          if (assignee) r.assignee = assignee;
-          return r;
-        })
-      };
-      await apiPut(prefix, "/records/status.json", body);
-      okCount += batchIds.length;
-      setStatus(`進捗: ${okCount}/${ids.length}件 完了...`);
-      await new Promise((r) => setTimeout(r, 150));
-    }
-    setStatus(`ステータス一括更新が完了しました（全${okCount}件）`, false);
-  }
-  async function loadJSZip2() {
-    if (typeof JSZip !== "undefined") return;
-    setStatus("JSZipを動的ロード中...");
-    return new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
-      script.onload = () => {
-        setStatus("JSZipのロード完了");
-        resolve();
-      };
-      script.onerror = () => {
-        reject(new Error("JSZipの読み込みに失敗しました"));
-      };
-      document.head.appendChild(script);
-    });
-  }
-  async function downloadTargetFile(fileKey) {
-    const prefix = getSideApiPrefix(false, false);
-    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
-    const headers = { "X-Requested-With": "XMLHttpRequest" };
-    const resp = await fetch(url, { method: "GET", headers });
-    if (resp.status === 403) return null;
-    return await resp.blob();
-  }
-  async function runBatchFileDownload() {
-    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
-    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
-    const query = getToolDocument().getElementById("u_batchDlView").value;
-    const fileCode = getToolDocument().getElementById("u_batchDlFileCode").value.trim();
-    const folderCode = getToolDocument().getElementById("u_batchDlFolderCode").value.trim();
-    const zipName = getToolDocument().getElementById("u_batchDlZipName").value.trim() || "download.zip";
-    if (!fileCode) throw new Error("ファイルフィールドコードを入力してください。");
-    setStatus("対象レコードを取得中...");
-    const records = await getFullRecordsByQuery(tApp, query, false);
-    if (records.length === 0) throw new Error("処理対象のレコードが0件です。");
-    await loadJSZip2();
-    const zip = new JSZip();
-    let fileCount = 0;
-    for (let i = 0; i < records.length; i++) {
-      const rec = records[i];
-      setStatus(`ファイルダウンロード中 (レコード ${i + 1}/${records.length})...`);
-      const fileList = rec[fileCode]?.value || [];
-      if (fileList.length > 0) {
-        let folderName = folderCode && rec[folderCode] ? rec[folderCode].value : "";
-        if (!folderName) folderName = `Record_${rec.$id.value}`;
-        const recordFolder = zip.folder(folderName);
-        for (const f of fileList) {
-          const blob = await downloadTargetFile(f.fileKey);
-          if (blob) {
-            recordFolder.file(f.name, blob);
-            fileCount++;
-          }
-        }
-      }
-    }
-    if (fileCount === 0) {
-      setStatus("ダウンロード対象が見つかりませんでした。", true);
-      return;
-    }
-    setStatus(`ZIP圧縮中 (計${fileCount}ファイル)...`);
-    const zipBlob = await zip.generateAsync({ type: "blob" });
-    const a = document.createElement("a");
-    const u = URL.createObjectURL(zipBlob);
-    a.href = u;
-    a.download = zipName;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(u);
-    }, 100);
-    setStatus(`添付ファイル一括DL完了 (${fileCount}ファイル)`);
-  }
-  async function getAllAppsInSpace(isSource) {
-    const prefix = getSideApiPrefix(isSource, false);
-    let allApps = [];
-    let offset = 0;
-    while (true) {
-      const resp = await apiGet(prefix, "/apps.json", { limit: 100, offset });
-      const apps = resp.apps || [];
-      allApps = allApps.concat(apps);
-      if (apps.length < 100) break;
-      offset += 100;
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    return allApps;
-  }
-  async function downloadBlobWithRetry(fileKey, isSource, guestSpaceId) {
-    let prefix = getSideApiPrefix(isSource, false);
-    if (guestSpaceId) {
-      prefix = `/k/guest/${guestSpaceId}/v1`;
-    }
-    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
-    const headers = { "X-Requested-With": "XMLHttpRequest" };
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const resp = await fetch(url, { method: "GET", headers });
-        if (resp.status === 403) return null;
-        if (!resp.ok) throw new Error("Download failed: " + resp.status);
-        return await resp.blob();
-      } catch (e) {
-        console.warn("File download failed, retrying...", e);
-        await new Promise((r) => setTimeout(r, 500));
-      }
-    }
-    return null;
-  }
-  async function runCsvExport() {
-    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
-    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
-    const tgtGuestId = getToolDocument().getElementById("u_targetGuest")?.value?.trim();
-    const guestPrefix = tgtGuestId ? `/k/guest/${tgtGuestId}/v1` : "/k/v1";
-    let condition = getToolDocument().getElementById("u_csvExportViewSelect")?.value || "";
-    if (!condition) condition = getToolDocument().getElementById("u_csvExportView")?.value || "";
-    const filename = getToolDocument().getElementById("u_csvExportName")?.value?.trim() || "records.csv";
-    setBusy(true, "フィールド情報取得中...");
-    let fields = null;
-    try {
-      fields = await apiGet(guestPrefix, "/app/form/fields.json", { app: tgtAppId });
-    } catch (e) {
-      throw new Error("フィールド情報の取得に失敗: " + e.message);
-    }
-    const propKeys = Object.keys(fields.properties);
-    if (!propKeys.length) throw new Error("出力できるフィールドがありません");
-    setBusy(true, "レコード取得中...");
-    let allRecords = [];
-    let lastRecordId = "0";
-    const limit = 500;
-    let baseQuery = condition;
-    let queryHasOrder = baseQuery.toLowerCase().includes("order by");
-    let queryHasLimit = baseQuery.toLowerCase().includes("limit");
-    if (queryHasLimit) {
-      const resp = await apiGet(guestPrefix, "/records.json", { app: tgtAppId, query: baseQuery });
-      allRecords = resp.records || [];
-    } else {
-      while (true) {
-        setBusy(true, `レコード取得中... (${allRecords.length}件取得済)`);
-        let loopQuery = "";
-        if (baseQuery) {
-          loopQuery = `${baseQuery} ${queryHasOrder ? "" : "order by $id asc"} limit ${limit} offset ${allRecords.length}`;
-        } else {
-          loopQuery = `$id > ${lastRecordId} order by $id asc limit ${limit}`;
-        }
-        const resp = await apiGet(guestPrefix, "/records.json", { app: tgtAppId, query: loopQuery });
-        const batch = resp.records || [];
-        allRecords = allRecords.concat(batch);
-        if (batch.length < limit) break;
-        lastRecordId = batch[batch.length - 1].$id.value;
-      }
-    }
-    if (!allRecords.length) throw new Error("出力するレコードがありません");
-    setStatus(`CSV生成中... (${allRecords.length}件)`);
-    const escapeCsv = (val) => {
-      const s = String(val == null ? "" : val);
-      if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-        return '"' + s.replace(/"/g, '""') + '"';
-      }
-      return s;
-    };
-    const extractValue = (rec, code) => {
-      const field = rec[code];
-      if (!field) return "";
-      if (field.type === "USER_SELECT" || field.type === "ORGANIZATION_SELECT" || field.type === "GROUP_SELECT") {
-        return (field.value || []).map((v) => v.code || v.name).join(",");
-      }
-      if (field.type === "CHECK_BOX" || field.type === "MULTI_SELECT") {
-        return (field.value || []).join(",");
-      }
-      if (field.type === "FILE") {
-        return (field.value || []).map((file) => file.name).join(",");
-      }
-      if (field.type === "SUBTABLE") {
-        return (field.value || []).length + "行";
-      }
-      if (typeof field.value === "object" && field.value !== null) {
-        return JSON.stringify(field.value);
-      }
-      return field.value;
-    };
-    const lines = [];
-    lines.push(propKeys.map(escapeCsv).join(","));
-    for (const rec of allRecords) {
-      lines.push(propKeys.map((key) => escapeCsv(extractValue(rec, key))).join(","));
-    }
-    const csvStr = "\uFEFF" + lines.join("\n");
-    const blob = new Blob([csvStr], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
-    setBusy(false);
-    setStatus(`CSVを出力しました (${allRecords.length}件)`);
-  }
-  async function runCsvImport() {
-    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
-    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
-    const guestPrefix = getToolDocument().getElementById("u_targetGuest")?.value?.trim() ? `/k/guest/${getToolDocument().getElementById("u_targetGuest").value.trim()}/v1` : "/k/v1";
-    const fileInput = getToolDocument().getElementById("u_csvImportFile");
-    if (!fileInput.files || !fileInput.files.length) {
-      throw new Error("CSVファイルを選択してください");
-    }
-    const file = fileInput.files[0];
-    setBusy(true, "CSVファイルを読み込み中...");
-    const text = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
-      reader.onerror = (e) => reject(new Error("ファイルの読み取りに失敗しました"));
-      reader.readAsText(file);
-    });
-    if (!text) throw new Error("ファイルが空です");
-    setBusy(true, "CSVをパース中...");
-    const parseCsv = (csvText) => {
-      const rows2 = [];
-      let current = [];
-      let cell = "";
-      let inQuotes = false;
-      for (let i = 0; i < csvText.length; i++) {
-        const char = csvText[i];
-        const nextChar = csvText[i + 1];
-        if (inQuotes) {
-          if (char === '"') {
-            if (nextChar === '"') {
-              cell += '"';
-              i++;
-            } else {
-              inQuotes = false;
-            }
-          } else {
-            cell += char;
-          }
-        } else {
-          if (char === '"') {
-            inQuotes = true;
-          } else if (char === ",") {
-            current.push(cell);
-            cell = "";
-          } else if (char === "\n" || char === "\r") {
-            if (char === "\r" && nextChar === "\n") i++;
-            current.push(cell);
-            rows2.push(current);
-            current = [];
-            cell = "";
-          } else {
-            cell += char;
-          }
-        }
-      }
-      if (cell !== "" || current.length > 0) {
-        current.push(cell);
-        rows2.push(current);
-      }
-      return rows2;
-    };
-    const rows = parseCsv(text.replace(/^\uFEFF/, ""));
-    if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
-    const header = rows[0].map((h) => h.trim());
-    if (header.includes("$id")) throw new Error("CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。");
-    const records = [];
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i].length === 1 && rows[i][0] === "") continue;
-      const rec = {};
-      for (let j = 0; j < header.length; j++) {
-        if (!header[j]) continue;
-        const val = rows[i][j] !== void 0 ? rows[i][j] : "";
-        rec[header[j]] = { value: val };
-      }
-      records.push(rec);
-    }
-    if (!records.length) throw new Error("登録するデータが見つかりませんでした");
-    if (!confirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) {
-      setBusy(false);
-      return;
-    }
-    setBusy(true, `インポート開始... (対象 ${records.length}件)`);
-    const batchSize = 100;
-    let successCount = 0;
-    for (let i = 0; i < records.length; i += batchSize) {
-      const batch = records.slice(i, i + batchSize);
-      setBusy(true, `インポート実行中... (${i + 1} ～ ${i + batch.length} / ${records.length} 件目)`);
-      try {
-        await apiPost(guestPrefix, "/records.json", { app: tgtAppId, records: batch });
-        successCount += batch.length;
-      } catch (e) {
-        throw new Error(`レコード登録エラー（${i + 1}件目付近）: ${e.message}`);
-      }
-    }
-    setBusy(false);
-    alert(`完了: ${successCount}件のレコードを登録しました。`);
-    fileInput.value = "";
-    getToolDocument().getElementById("u_csvImportFileName").textContent = "未選択";
-  }
-  async function runRecordCopy() {
-    const srcApp = getToolDocument().getElementById("u_sourceApp")?.value?.trim();
-    const tgtApp = getToolDocument().getElementById("u_targetApp")?.value?.trim();
-    if (!srcApp || !tgtApp) throw new Error("比較元と比較先の両方のアプリIDを指定してください");
-    const srcGuestStr = getToolDocument().getElementById("u_sourceGuest")?.value?.trim() || null;
-    const tgtGuestStr = getToolDocument().getElementById("u_targetGuest")?.value?.trim() || null;
-    const srcGuest = srcGuestStr ? `/k/guest/${srcGuestStr}/v1` : "/k/v1";
-    const tgtGuest = tgtGuestStr ? `/k/guest/${tgtGuestStr}/v1` : "/k/v1";
-    const query = getToolDocument().getElementById("u_recordCopyQuery")?.value || "";
-    if (!confirm(`比較元(${srcApp}) から 比較先(${tgtApp}) へレコードをコピーします。よろしいですか？`)) return;
-    setBusy(true, "比較元のレコードを取得中...");
-    let totalFetched = 0;
-    const records = [];
-    while (true) {
-      const q = `${query} limit 500 offset ${totalFetched}`;
-      const res = await apiGet(srcGuest, "/records.json", { app: srcApp, query: q });
-      if (!res.records || res.records.length === 0) break;
-      records.push(...res.records);
-      totalFetched += res.records.length;
-      if (res.records.length < 500) break;
-      setStatus(`取得中... (${totalFetched}件)`);
-    }
-    if (!records.length) {
-      alert("コピー対象のレコードが見つかりませんでした");
-      setBusy(false);
-      return;
-    }
-    const systemFields = ["$id", "$revision", "作成者", "作成日時", "更新者", "更新日時", "レコード番号", "ステータス", "作業者"];
-    const systemTypes = ["RECORD_NUMBER", "CREATOR", "CREATED_TIME", "MODIFIER", "UPDATED_TIME", "STATUS", "STATUS_ASSIGNEE", "CALC"];
-    const cleanRecords = records.map((rec) => {
-      const clean = {};
-      for (const [k, v] of Object.entries(rec)) {
-        if (!systemFields.includes(k) && !systemTypes.includes(v.type)) {
-          if (v.type === "SUBTABLE") {
-            const cleanSub = v.value.map((sRow) => {
-              const cleanSRow = {};
-              for (const [sk, sv] of Object.entries(sRow.value)) {
-                cleanSRow[sk] = { value: sv.value };
-              }
-              return { value: cleanSRow };
-            });
-            clean[k] = { value: cleanSub };
-          } else {
-            clean[k] = { value: v.value };
-          }
-        }
-      }
-      return clean;
-    });
-    if (!confirm(`${records.length}件のレコードを比較先(AppID: ${tgtApp})へ登録します。実行しますか？`)) {
-      setBusy(false);
-      return;
-    }
-    setBusy(true, `インポート開始... (対象 ${records.length}件)`);
-    const batchSize = 100;
-    let successCount = 0;
-    for (let i = 0; i < cleanRecords.length; i += batchSize) {
-      const batch = cleanRecords.slice(i, i + batchSize);
-      setBusy(true, `登録実行中... (${i + 1} ～ ${i + batch.length} / ${cleanRecords.length} 件目)`);
-      try {
-        await apiPost(tgtGuest, "/records.json", { app: tgtApp, records: batch });
-        successCount += batch.length;
-      } catch (e) {
-        throw new Error(`レコード登録エラー（${i + 1}件目付近）: ${e.message}`);
-      }
-    }
-    setBusy(false);
-    alert(`完了: ${successCount}件のレコードを比較先へコピーしました。`);
-  }
-  var TEMPLATE_STATE_KEY = "kintoneSuperApp_Templates";
-  function getTemplates() {
-    try {
-      return JSON.parse(localStorage.getItem(TEMPLATE_STATE_KEY) || "{}");
-    } catch {
-      return {};
-    }
-  }
-  function renderTemplateOptions() {
-    const sel = getToolDocument().getElementById("u_templateSelect");
-    if (!sel) return;
-    const tpls = getTemplates();
-    const current = sel.value;
-    const keys = Object.keys(tpls).sort((a, b) => tpls[b].savedAt - tpls[a].savedAt);
-    if (!keys.length) {
-      sel.innerHTML = '<option value="">-- 保存済なし --</option>';
-      return;
-    }
-    sel.innerHTML = keys.map((k) => `<option value="${esc(k)}">${esc(k)} (${new Date(tpls[k].savedAt).toLocaleDateString()})</option>`).join("");
-    if (tpls[current]) sel.value = current;
-  }
-  async function saveTemplate() {
-    const name = getToolDocument().getElementById("u_templateSaveName")?.value?.trim();
-    if (!name) throw new Error("保存するデータ名を入力してください");
-    const c = commonParams();
-    if (!c.source.appId) throw new Error("テンプレートとして保存する比較元のアプリIDを指定してください");
-    const scopes = SECTION_DEFS.map((s) => s.key);
-    const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
-    const tpls = getTemplates();
-    tpls[name] = { savedAt: Date.now(), bundle };
-    try {
-      localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
-    } catch (e) {
-      throw new Error("保存に失敗しました。LocalStorageの容量制限(5MB等)に達した可能性があります。不要な履歴を削除してください。");
-    }
-    renderTemplateOptions();
-    getToolDocument().getElementById("u_templateSaveName").value = "";
-    alert(`データ「${name}」を保存しました。`);
-  }
-  function loadTemplate() {
-    const name = getToolDocument().getElementById("u_templateSelect")?.value;
-    if (!name) return;
-    const tpls = getTemplates();
-    const tpl = tpls[name];
-    if (!tpl || !tpl.bundle) {
-      alert("指定されたデータが存在しません");
-      return;
-    }
-    state.importedSourceBundle = tpl.bundle;
-    state.importedSourceName = `[テンプレート] ${name}`;
-    renderBundleState();
-    alert(`テンプレート「${name}」を比較元（ファイル読込扱い）としてセットしました。
-必要に応じて差分比較を実行してください。`);
-  }
-  function deleteTemplate() {
-    const name = getToolDocument().getElementById("u_templateSelect")?.value;
-    if (!name) return;
-    if (!confirm(`テンプレート「${name}」を削除しますか？`)) return;
-    const tpls = getTemplates();
-    delete tpls[name];
-    localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
-    renderTemplateOptions();
-    setStatus(`テンプレート「${name}」を削除しました`);
-  }
-
-  // src/tabs/jsconfig.js
   function renderCustomizeResult(data) {
     if (!data) {
       ui.jsconfigResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">データがありません</div>';
@@ -14191,7 +14202,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       return true;
     });
     setStatus(`${uniqueApps.length}個のアプリ設定を解析中...`);
-    await loadJSZip2();
+    await loadJSZip();
     const zip = new JSZip();
     let hasFiles = false;
     let failedCount = 0;
