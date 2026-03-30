@@ -1128,3 +1128,28 @@
 #kintone-unified-suite-v2 .launcher-lead{
   font-size:15px;font-weight:800;color:#0f172a;letter-spacing:-0.02em;
 }
+#kintone-unified-suite-v2 .reflect-preview-playground{margin-top:8px}
+#kintone-unified-suite-v2 .rpp-toolbar,#kintone-unified-suite-v2 .rpp-filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+#kintone-unified-suite-v2 .rpp-filters .btn.is-active{border-color:#0ea5e9;color:#0369a1;background:#e0f2fe}
+#kintone-unified-suite-v2 .rpp-filters .btn span{margin-left:4px;font-size:10px;opacity:.8}
+#kintone-unified-suite-v2 .rpp-list{display:flex;flex-direction:column;gap:8px}
+#kintone-unified-suite-v2 .rpp-card{border:1px solid #d6dee8;border-radius:8px;background:#fff}
+#kintone-unified-suite-v2 .rpp-head{display:flex;align-items:center;gap:6px;padding:8px 10px}
+#kintone-unified-suite-v2 .rpp-open{border:none;background:none;padding:0 2px;cursor:pointer;color:#64748b}
+#kintone-unified-suite-v2 .rpp-badge{display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;color:#fff}
+#kintone-unified-suite-v2 .rpp-added{background:#0d9488}
+#kintone-unified-suite-v2 .rpp-removed{background:#dc2626}
+#kintone-unified-suite-v2 .rpp-modified{background:#d97706}
+#kintone-unified-suite-v2 .rpp-unchanged{background:#64748b}
+#kintone-unified-suite-v2 .rpp-head strong{font-size:12px;color:#0f172a}
+#kintone-unified-suite-v2 .rpp-head code{font-size:10px;color:#64748b;background:#f1f5f9;padding:1px 6px;border-radius:999px}
+#kintone-unified-suite-v2 .rpp-spacer{margin-left:auto}
+#kintone-unified-suite-v2 .rpp-body{border-top:1px solid #e2e8f0;padding:8px 10px}
+#kintone-unified-suite-v2 .rpp-pre{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;line-height:1.5;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px}
+#kintone-unified-suite-v2 .rpp-table{width:100%;border-collapse:collapse;font-size:11px}
+#kintone-unified-suite-v2 .rpp-table th,#kintone-unified-suite-v2 .rpp-table td{border-bottom:1px solid #e2e8f0;padding:4px 6px;vertical-align:top;text-align:left}
+#kintone-unified-suite-v2 .rpp-table th{background:#f8fafc;color:#475569}
+#kintone-unified-suite-v2 .rpp-table pre{margin:0;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#kintone-unified-suite-v2 .rpp-preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#kintone-unified-suite-v2 .rpp-preview-head{font-size:10px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px 6px 0 0;padding:3px 8px}
+#kintone-unified-suite-v2 .rpp-preview-body{font-size:12px;color:#0f172a;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 6px 6px;padding:8px;min-height:36px;background:#fff}
