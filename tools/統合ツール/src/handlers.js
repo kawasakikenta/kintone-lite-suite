@@ -945,7 +945,6 @@ export function setupEventHandlers(injected = {}) {
     }
     if (act === 'openReflectPreviewEditor') {
       const fold = root.querySelector('#u_reflectPreviewEditorFold');
-      if (fold instanceof HTMLDetailsElement) fold.open = true;
       fold?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
       setStatus('フィールド差分プレビューエディタへ移動しました');
       return;

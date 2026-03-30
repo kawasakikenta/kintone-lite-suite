@@ -1129,6 +1129,7 @@
   font-size:15px;font-weight:800;color:#0f172a;letter-spacing:-0.02em;
 }
 #kintone-unified-suite-v2 .reflect-preview-playground{margin-top:8px}
+#kintone-unified-suite-v2 #u_reflectPreviewEditorFold{scroll-margin-top:12px;scroll-margin-bottom:96px}
 #kintone-unified-suite-v2 .rpp-toolbar,#kintone-unified-suite-v2 .rpp-filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
 #kintone-unified-suite-v2 .rpp-filters .btn.is-active{border-color:#0ea5e9;color:#0369a1;background:#e0f2fe}
 #kintone-unified-suite-v2 .rpp-filters .btn span{margin-left:4px;font-size:10px;opacity:.8}
