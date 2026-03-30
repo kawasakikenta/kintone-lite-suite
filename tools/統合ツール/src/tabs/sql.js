@@ -8,7 +8,12 @@ import { commonParams } from './diff.js';
 import { getToolDocument } from '../ui/dialog.js';
 
 export async function launchKintoneSql() {
-  const sApp = getToolDocument().getElementById('u_sourceApp').value.trim();
+  const sourceAppEl = getToolDocument().getElementById('u_sourceApp');
+  if (!sourceAppEl) {
+    setStatus('エラー: 比較元アプリID入力欄が見つかりません。画面を再読み込みしてください。', true);
+    return;
+  }
+  const sApp = sourceAppEl.value.trim();
   if (!sApp) {
     setStatus('エラー: 比較元アプリIDを設定してください', true);
     return;
@@ -141,12 +146,28 @@ export async function launchKintoneSql() {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     },
 
-    copyToClipboard: (data) => {
+    copyToClipboard: async (data) => {
       if (!data?.length) return false;
       const keys = Object.keys(data[0]);
       const tsv = [keys.join('\t'), ...data.map(r => keys.map(k => r[k] ?? '').join('\t'))].join('\n');
-      navigator.clipboard.writeText(tsv);
-      return true;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(tsv);
+          return true;
+        }
+      } catch (e) {
+        console.warn('Clipboard API failed, fallback to execCommand', e);
+      }
+      const ta = toolD.createElement('textarea');
+      ta.value = tsv;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      toolD.body.appendChild(ta);
+      ta.select();
+      const ok = toolD.execCommand('copy');
+      ta.remove();
+      return ok;
     },
 
     hashSql: (sql) => {
@@ -610,8 +631,8 @@ export async function launchKintoneSql() {
       }, '📥 CSV');
 
       const btnCopy = Utils.el('button', {
-        className: 'btn', onclick: () => {
-          if (Utils.copyToClipboard(lastResult)) setStatus('クリップボードへコピーしました。');
+        className: 'btn', onclick: async () => {
+          if (await Utils.copyToClipboard(lastResult)) setStatus('クリップボードへコピーしました。');
           else setStatus('コピー対象データがありません。');
         }, title: 'TSVとしてコピー'
       }, '📋 コピー');

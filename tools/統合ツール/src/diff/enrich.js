@@ -6,7 +6,7 @@ import {
   DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS
 } from '../constants.js';
 import { state } from '../state.js';
-import { normalize, deepClone } from '../utils.js';
+import { normalize, deepClone, stableStringify } from '../utils.js';
 import { getActualDiffRows } from './engine.js';
 
 // utils.js と同一ロジック。IIFE バンドルで utils からの import が欠落した場合でも動作するようローカル定義する。

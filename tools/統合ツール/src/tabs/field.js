@@ -231,7 +231,7 @@ export async function runLoadSourceFieldsList() {
     }
 
     const rows = fields.map(f => {
-      const titleAttr = typeof f.label === 'string' ? f.label.replace(/"/g, '&quot;') : '';
+      const titleAttr = typeof f.label === 'string' ? esc(f.label) : '';
       const displayLabel = f.label ? `<span style="font-size:10px;color:#64748b;margin-left:4px">${esc(f.label)}</span>` : '';
       return `
         <tr>

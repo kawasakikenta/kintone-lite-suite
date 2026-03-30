@@ -1,6 +1,5 @@
 'use strict';
 
-import { ui } from '../state.js';
 import { esc } from '../utils.js';
 import { setBusy } from '../ui/components.js';
 import { setStatus } from '../ui/components.js';
@@ -11,6 +10,11 @@ export async function runApiTester() {
   const path = getToolDocument().getElementById('u_apiTesterPath')?.value?.trim();
   const bodyStr = getToolDocument().getElementById('u_apiTesterBody')?.value?.trim() || '{}';
   const resEl = getToolDocument().getElementById('u_apiTesterResult');
+
+  if (!resEl) {
+    setStatus('APIテスターの結果表示要素が見つかりません。画面を再読み込みしてください。', true);
+    return;
+  }
 
   if (!path) {
     alert('エンドポイントを指定してください');
@@ -102,17 +106,25 @@ export function renderApiTesterHistory() {
     
     // bind events
     const items = listEl.querySelectorAll('.api-history-item');
+    const applyHistoryItem = (item) => {
+      const idx = parseInt(item.dataset.idx, 10);
+      const data = hist[idx];
+      if (!data) return;
+      const methodEl = getToolDocument().getElementById('u_apiTesterMethod');
+      const pathEl = getToolDocument().getElementById('u_apiTesterPath');
+      const bodyEl = getToolDocument().getElementById('u_apiTesterBody');
+      if (methodEl) methodEl.value = data.method;
+      if (pathEl) pathEl.value = data.path;
+      if (bodyEl) bodyEl.value = data.body || '{}';
+    };
     items.forEach(item => {
       item.addEventListener('click', () => {
-        const idx = parseInt(item.dataset.idx, 10);
-        const data = hist[idx];
-        if (!data) return;
-        const methodEl = getToolDocument().getElementById('u_apiTesterMethod');
-        const pathEl = getToolDocument().getElementById('u_apiTesterPath');
-        const bodyEl = getToolDocument().getElementById('u_apiTesterBody');
-        if (methodEl) methodEl.value = data.method;
-        if (pathEl) pathEl.value = data.path;
-        if (bodyEl) bodyEl.value = data.body || '{}';
+        applyHistoryItem(item);
+      });
+      item.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        applyHistoryItem(item);
       });
       // a11y focus outline
       item.addEventListener('focus', () => { item.style.outline = '2px solid #2563eb'; });

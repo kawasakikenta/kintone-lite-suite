@@ -349,7 +349,7 @@
     relativePathFromRow: () => relativePathFromRow,
     safeJsonForScript: () => safeJsonForScript,
     selectedScopeKeys: () => selectedScopeKeys,
-    stableStringify: () => stableStringify2,
+    stableStringify: () => stableStringify,
     tokenizePath: () => tokenizePath
   });
   function esc(s) {
@@ -373,7 +373,7 @@
     }
     return v;
   }
-  function stableStringify2(v) {
+  function stableStringify(v) {
     return JSON.stringify(normalize(v));
   }
   function relativePathFromRow(path, secKey) {
@@ -1074,7 +1074,7 @@ ${contextLine}`);
       if (!s && !t) continue;
       const sourceForDiff = normalizeSectionForCompare(sec, s, presetState);
       const targetForDiff = normalizeSectionForCompare(sec, t, presetState);
-      if (stableStringify2(sourceForDiff) === stableStringify2(targetForDiff)) {
+      if (stableStringify(sourceForDiff) === stableStringify(targetForDiff)) {
         if (includeSame) {
           pushDiffRow(rows, { sectionKey: sec, section: label, type: "same", path: sec, left: sourceForDiff, right: targetForDiff, severity: "low" }, ignoreRules);
         }
@@ -2018,7 +2018,7 @@ ${contextLine}`);
 
   // src/diff/export.js
   function stringifyForDiff(value) {
-    if (value === void 0) return "undefined";
+    if (value === void 0) return "（未定義）";
     const out = JSON.stringify(value, null, 2);
     return out == null ? String(value) : out;
   }
@@ -2214,7 +2214,7 @@ ${contextLine}`);
   function buildDiffRowSearchText(row) {
     const safe = (v) => {
       try {
-        return v === void 0 ? "undefined" : JSON.stringify(v);
+        return v === void 0 ? "" : JSON.stringify(v);
       } catch {
         return String(v);
       }
@@ -2566,7 +2566,7 @@ ${contextLine}`);
   }
 
   function safeText(v) {
-    if (v === undefined) return 'undefined';
+    if (v === undefined) return '（未定義）';
     const out = JSON.stringify(v, null, 2);
     return out == null ? String(v) : out;
   }
@@ -2887,7 +2887,7 @@ ${contextLine}`);
           const v = val[k];
           let cell;
           if (v === null || v === undefined || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-            cell = escHtml(v === undefined ? 'undefined' : JSON.stringify(v));
+            cell = escHtml(v === undefined ? '（未定義）' : JSON.stringify(v));
           } else {
             let j;
             try { j = JSON.stringify(v); } catch (e) { j = String(v); }
@@ -5051,6 +5051,7 @@ ${contextLine}`);
     restoreReflectState: () => restoreReflectState,
     runPrefetchCommonData: () => runPrefetchCommonData,
     runReflectModeAll: () => runReflectModeAll,
+    runReflectModeVisible: () => runReflectModeVisible,
     setActiveReflectNode: () => setActiveReflectNode,
     snapshotReflectState: () => snapshotReflectState,
     undoReflectState: () => undoReflectState
@@ -5160,6 +5161,27 @@ ${contextLine}`);
     }
     renderReflectNodeList();
     setStatus(`選択中ノード(${selected.length}件)のうち、${count}件を ${mode === "src" ? "比較元" : "比較先"} に一括変更しました`);
+  }
+  function runReflectModeVisible(mode) {
+    if (!state.reflectRows.length) {
+      setStatus("反映ノードが読込されていません");
+      return;
+    }
+    const visibleIds = [...ui.reflectNodeList?.querySelectorAll("[data-node-open]") || []].map((el) => el.dataset.nodeOpen).filter(Boolean);
+    if (!visibleIds.length) {
+      setStatus("表示中ノードがありません（絞り込み条件を見直してください）");
+      return;
+    }
+    pushReflectUndo();
+    let count = 0;
+    visibleIds.forEach((id) => {
+      if (state.reflectNodeModes[id] !== mode) {
+        state.reflectNodeModes[id] = mode;
+        count += 1;
+      }
+    });
+    renderReflectNodeList();
+    setStatus(`表示中ノード(${visibleIds.length}件)のうち、${count}件を ${mode === "src" ? "比較元" : "比較先"} に変更しました`);
   }
   function getEffectiveReflectScopeInfo2() {
     const baseScopes = selectedScopeKeys(ui.applyScopes);
@@ -5430,7 +5452,7 @@ ${contextLine}`);
         return;
       }
       const rows = fields.map((f) => {
-        const titleAttr = typeof f.label === "string" ? f.label.replace(/"/g, "&quot;") : "";
+        const titleAttr = typeof f.label === "string" ? esc(f.label) : "";
         const displayLabel = f.label ? `<span style="font-size:10px;color:#64748b;margin-left:4px">${esc(f.label)}</span>` : "";
         return `
         <tr>
@@ -6315,7 +6337,7 @@ ${contextLine}`);
     for (const [k, v] of Object.entries(after)) {
       if (!Object.prototype.hasOwnProperty.call(before, k)) {
         add[k] = deepClone(v);
-      } else if (stableStringify2(before[k]) !== stableStringify2(v)) {
+      } else if (stableStringify(before[k]) !== stableStringify(v)) {
         update[k] = deepClone(v);
       }
     }
@@ -6338,7 +6360,7 @@ ${contextLine}`);
       const outDef = converted.def;
       if (!beforeMap || !beforeMap[code]) {
         add[code] = outDef;
-      } else if (stableStringify2(beforeMap[code]) !== stableStringify2(outDef)) {
+      } else if (stableStringify(beforeMap[code]) !== stableStringify(outDef)) {
         update[code] = outDef;
       }
     }
@@ -6380,7 +6402,7 @@ ${contextLine}`);
     }
   }
   function makeApplyPlanSignature(mode, payload) {
-    return stableStringify2({
+    return stableStringify({
       mode,
       targetApp: payload?.targetApp || "",
       targetGuest: payload?.targetGuest || "",
@@ -6729,7 +6751,7 @@ ${contextLine}`);
   }
   function currentDiffSignature() {
     const c = commonParams();
-    return stableStringify2({
+    return stableStringify({
       source: c.source,
       target: c.target,
       scopes: selectedScopeKeys(ui.diffScopes),
@@ -8767,6 +8789,8 @@ ${contextLine}`);
                         <button class="btn sub" data-act="selectVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中を選択</button>
                         <button class="btn sub" data-act="clearVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中解除</button>
                         <button class="btn sub" data-act="selectHighSeverityReflectNodes" style="padding:4px 8px;font-size:10px">高重要度を選択</button>
+                        <button class="btn ok" data-act="reflectModeVisibleSrc" style="padding:4px 8px;font-size:10px">表示中を比較元</button>
+                        <button class="btn ok" data-act="reflectModeVisibleTgt" style="padding:4px 8px;font-size:10px">表示中を比較先</button>
                         <button class="btn sub" data-act="selectReflectNodesAll" style="padding:4px 8px;font-size:10px">全選択</button>
                         <button class="btn sub" data-act="clearReflectNodes" style="padding:4px 8px;font-size:10px">全解除</button>
                         <button class="btn ok" data-act="reflectModeAllSrc" style="padding:4px 8px;font-size:10px">一括で比較元</button>
@@ -8785,6 +8809,7 @@ ${contextLine}`);
                         <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
                           <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
                         </select>
+                        <button class="btn sub" data-act="clearReflectNodeFilters" style="padding:4px 8px;font-size:10px">絞り込み解除</button>
                       </div>
                     </div>
                     <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none">
@@ -10521,6 +10546,7 @@ ${contextLine}`);
     })();
   }
   function setScopeSelection(container, checked) {
+    if (!container) return;
     [...container.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
       c.checked = !!checked;
     });
@@ -10600,7 +10626,7 @@ ${contextLine}`);
     renderReflectSidebar();
     renderReflectMainPanel();
     renderReflectNodeList();
-    if (!ui.settingsExportSearchResult.innerHTML) {
+    if (ui.settingsExportSearchResult && !ui.settingsExportSearchResult.innerHTML) {
       ui.settingsExportSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
     }
     if (ui.toolBody) {
@@ -11584,6 +11610,17 @@ ${contextLine}`);
       }
       if (act === "reflectModeAllSrc") return runReflectModeAll("src");
       if (act === "reflectModeAllTgt") return runReflectModeAll("tgt");
+      if (act === "reflectModeVisibleSrc") return runReflectModeVisible("src");
+      if (act === "reflectModeVisibleTgt") return runReflectModeVisible("tgt");
+      if (act === "clearReflectNodeFilters") {
+        if (ui.nodeSearch) ui.nodeSearch.value = "";
+        if (ui.nodeFilterSection) ui.nodeFilterSection.value = "";
+        if (ui.nodeFilterType) ui.nodeFilterType.value = "";
+        if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.value = "";
+        renderReflectNodeList();
+        setStatus("ノード絞り込み条件を解除しました");
+        return;
+      }
       if (act === "toggleActiveReflectNodeSelection") {
         const row = getActiveReflectRow();
         if (!row) {
@@ -14414,7 +14451,12 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   init_diff();
   init_dialog();
   async function launchKintoneSql() {
-    const sApp = getToolDocument().getElementById("u_sourceApp").value.trim();
+    const sourceAppEl = getToolDocument().getElementById("u_sourceApp");
+    if (!sourceAppEl) {
+      setStatus("エラー: 比較元アプリID入力欄が見つかりません。画面を再読み込みしてください。", true);
+      return;
+    }
+    const sApp = sourceAppEl.value.trim();
     if (!sApp) {
       setStatus("エラー: 比較元アプリIDを設定してください", true);
       return;
@@ -14564,12 +14606,28 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         Object.assign(toolD.createElement("a"), { href: url, download: filename }).click();
         setTimeout(() => URL.revokeObjectURL(url), 1e3);
       },
-      copyToClipboard: (data) => {
+      copyToClipboard: async (data) => {
         if (!data?.length) return false;
         const keys = Object.keys(data[0]);
         const tsv = [keys.join("	"), ...data.map((r) => keys.map((k) => r[k] ?? "").join("	"))].join("\n");
-        navigator.clipboard.writeText(tsv);
-        return true;
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(tsv);
+            return true;
+          }
+        } catch (e) {
+          console.warn("Clipboard API failed, fallback to execCommand", e);
+        }
+        const ta = toolD.createElement("textarea");
+        ta.value = tsv;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        toolD.body.appendChild(ta);
+        ta.select();
+        const ok = toolD.execCommand("copy");
+        ta.remove();
+        return ok;
       },
       hashSql: (sql) => {
         const str = String(sql || "");
@@ -15033,8 +15091,8 @@ ${safety.hash}`, "");
         }, "📥 CSV");
         const btnCopy = Utils.el("button", {
           className: "btn",
-          onclick: () => {
-            if (Utils.copyToClipboard(lastResult)) setStatus2("クリップボードへコピーしました。");
+          onclick: async () => {
+            if (await Utils.copyToClipboard(lastResult)) setStatus2("クリップボードへコピーしました。");
             else setStatus2("コピー対象データがありません。");
           },
           title: "TSVとしてコピー"
@@ -15159,7 +15217,6 @@ ${safety.hash}`, "");
   }
 
   // src/tabs/api-tester.js
-  init_state();
   init_utils();
   init_components();
   init_components();
@@ -15169,6 +15226,10 @@ ${safety.hash}`, "");
     const path = getToolDocument().getElementById("u_apiTesterPath")?.value?.trim();
     const bodyStr = getToolDocument().getElementById("u_apiTesterBody")?.value?.trim() || "{}";
     const resEl = getToolDocument().getElementById("u_apiTesterResult");
+    if (!resEl) {
+      setStatus("APIテスターの結果表示要素が見つかりません。画面を再読み込みしてください。", true);
+      return;
+    }
     if (!path) {
       alert("エンドポイントを指定してください");
       return;
@@ -15254,17 +15315,25 @@ ${safety.hash}`, "");
       }).join("");
       listEl.innerHTML = html;
       const items = listEl.querySelectorAll(".api-history-item");
+      const applyHistoryItem = (item) => {
+        const idx = parseInt(item.dataset.idx, 10);
+        const data = hist[idx];
+        if (!data) return;
+        const methodEl = getToolDocument().getElementById("u_apiTesterMethod");
+        const pathEl = getToolDocument().getElementById("u_apiTesterPath");
+        const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
+        if (methodEl) methodEl.value = data.method;
+        if (pathEl) pathEl.value = data.path;
+        if (bodyEl) bodyEl.value = data.body || "{}";
+      };
       items.forEach((item) => {
         item.addEventListener("click", () => {
-          const idx = parseInt(item.dataset.idx, 10);
-          const data = hist[idx];
-          if (!data) return;
-          const methodEl = getToolDocument().getElementById("u_apiTesterMethod");
-          const pathEl = getToolDocument().getElementById("u_apiTesterPath");
-          const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
-          if (methodEl) methodEl.value = data.method;
-          if (pathEl) pathEl.value = data.path;
-          if (bodyEl) bodyEl.value = data.body || "{}";
+          applyHistoryItem(item);
+        });
+        item.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          applyHistoryItem(item);
         });
         item.addEventListener("focus", () => {
           item.style.outline = "2px solid #2563eb";
@@ -15471,7 +15540,7 @@ ${safety.hash}`, "");
       getSelectedReflectRows,
       switchTab,
       scheduleGuidedTourLayout,
-      stableStringify: stableStringify2
+      stableStringify
     });
     setupEventHandlers({
       runDesignExport,

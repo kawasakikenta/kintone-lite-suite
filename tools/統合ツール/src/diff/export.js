@@ -24,7 +24,7 @@ import { resolveBundleRevision, pickBundleSections } from '../api.js';
 // ---------------------------------------------------------------------------
 
 export function stringifyForDiff(value) {
-  if (value === undefined) return 'undefined';
+  if (value === undefined) return '（未定義）';
   const out = JSON.stringify(value, null, 2);
   return out == null ? String(value) : out;
 }
@@ -255,7 +255,7 @@ export function diffRowMatchesKeyword(row, keyword) {
 
 function buildDiffRowSearchText(row) {
   const safe = (v) => {
-    try { return v === undefined ? 'undefined' : JSON.stringify(v); }
+    try { return v === undefined ? '' : JSON.stringify(v); }
     catch { return String(v); }
   };
   return [
@@ -677,7 +677,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   }
 
   function safeText(v) {
-    if (v === undefined) return 'undefined';
+    if (v === undefined) return '（未定義）';
     const out = JSON.stringify(v, null, 2);
     return out == null ? String(v) : out;
   }
@@ -998,7 +998,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
           const v = val[k];
           let cell;
           if (v === null || v === undefined || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-            cell = escHtml(v === undefined ? 'undefined' : JSON.stringify(v));
+            cell = escHtml(v === undefined ? '（未定義）' : JSON.stringify(v));
           } else {
             let j;
             try { j = JSON.stringify(v); } catch (e) { j = String(v); }

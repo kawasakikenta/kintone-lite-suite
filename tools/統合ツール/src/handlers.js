@@ -71,6 +71,7 @@ import {
   loadReflectRowsFromLastDiff,
   getSelectedReflectRows,
   runReflectModeAll,
+  runReflectModeVisible,
   getEffectiveReflectScopeInfo,
   getDiffCountsBySection,
   runPrefetchCommonData,
@@ -145,6 +146,7 @@ export function withGuard(fn, busyText) {
 // ---------------------------------------------------------------------------
 
 function setScopeSelection(container, checked) {
+  if (!container) return;
   [...container.querySelectorAll('input[type="checkbox"]')].forEach((c) => { c.checked = !!checked; });
   saveCurrentDialogState();
 }
@@ -239,7 +241,7 @@ export function setupEventHandlers(injected = {}) {
   renderReflectSidebar();
   renderReflectMainPanel();
   renderReflectNodeList();
-  if (!ui.settingsExportSearchResult.innerHTML) {
+  if (ui.settingsExportSearchResult && !ui.settingsExportSearchResult.innerHTML) {
     ui.settingsExportSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
   }
 
@@ -1285,6 +1287,17 @@ export function setupEventHandlers(injected = {}) {
     }
     if (act === 'reflectModeAllSrc') return runReflectModeAll('src');
     if (act === 'reflectModeAllTgt') return runReflectModeAll('tgt');
+    if (act === 'reflectModeVisibleSrc') return runReflectModeVisible('src');
+    if (act === 'reflectModeVisibleTgt') return runReflectModeVisible('tgt');
+    if (act === 'clearReflectNodeFilters') {
+      if (ui.nodeSearch) ui.nodeSearch.value = '';
+      if (ui.nodeFilterSection) ui.nodeFilterSection.value = '';
+      if (ui.nodeFilterType) ui.nodeFilterType.value = '';
+      if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.value = '';
+      renderReflectNodeList();
+      setStatus('ノード絞り込み条件を解除しました');
+      return;
+    }
     if (act === 'toggleActiveReflectNodeSelection') {
       const row = getActiveReflectRow();
       if (!row) { setStatus('操作対象のノードがありません'); return; }
