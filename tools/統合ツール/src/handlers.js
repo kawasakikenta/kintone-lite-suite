@@ -318,7 +318,7 @@ export function setupEventHandlers(injected = {}) {
     ui.ignoreKeys, ui.autoBackupPreview,
     ui.overwriteField, ui.deployField,
     ui.jsconfigPreview, ui.jsconfigDeployAfter,
-    ui.erLayout, ui.erFieldDensity, ui.erMaxDepth, ui.erExtraApps, ui.erIncludeSubtable,
+    ui.erLayout, ui.erFieldDensity, ui.erMaxDepth, ui.erExtraApps, ui.erIncludeSubtable, ui.erIncludeReverseLookup,
     ui.diffMultiTargets,
     ui.settingsExportAppIds, ui.settingsExportSearchKeyword,
     ui.settingsExportGuest, ui.settingsExportPreview,

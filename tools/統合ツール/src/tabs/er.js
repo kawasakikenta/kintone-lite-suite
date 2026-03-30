@@ -14,8 +14,10 @@ const ER_DEFAULTS = {
   layoutName: 'dagre',
   fieldDensity: 'standard',
   maxDepth: 0,
-  includeSubtableFields: true
+  includeSubtableFields: true,
+  includeReverseLookup: false
 };
+const ER_TRAVERSE_RELATION_KINDS = new Set(['LOOKUP', 'REF', 'ACTION']);
 
 export function readErDiagramOptions() {
   const startAppId = String(ui.sourceApp?.value || '').trim();
@@ -35,6 +37,7 @@ export function readErDiagramOptions() {
     fieldDensity: ['compact', 'standard', 'full'].includes(fieldDensity) ? fieldDensity : ER_DEFAULTS.fieldDensity,
     maxDepth: Number.isFinite(maxDepthNum) && maxDepthNum >= 0 ? Math.floor(maxDepthNum) : ER_DEFAULTS.maxDepth,
     includeSubtableFields: !!ui.erIncludeSubtable?.checked,
+    includeReverseLookup: !!ui.erIncludeReverseLookup?.checked,
     maxFields: ER_DEFAULTS.maxFields,
     sleepMs: ER_DEFAULTS.sleepMs,
     source: commonParams().source
@@ -81,6 +84,19 @@ const progressUi = (() => {
 })();
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const fetchAllApps = async (options) => {
+  const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
+  const apps = [];
+  const limit = 100;
+  for (let offset = 0; ; offset += limit) {
+    const resp = await apiGet(prefix, '/apps.json', { limit, offset });
+    const chunk = Array.isArray(resp?.apps) ? resp.apps : [];
+    apps.push(...chunk);
+    if (chunk.length < limit) break;
+  }
+  return apps;
+};
 
 const getSchema = async (appId, options, cache) => {
   if (cache.has(appId)) return cache.get(appId);
@@ -200,9 +216,35 @@ const getSchema = async (appId, options, cache) => {
 const crawl = async (startIds, options) => {
   const cache = new Map();
   const visited = new Set();
+  let reverseLookupIndex = null;
+  const enqueueIfNeeded = (queue, appId, depth) => {
+    if (!Number.isFinite(appId) || appId <= 0) return;
+    if (visited.has(appId) || queue.some((item) => item.id === appId)) return;
+    queue.push({ id: appId, depth });
+  };
   const seeds = (Array.isArray(startIds) ? startIds : [startIds]).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
   const q = seeds.map((id) => ({ id, depth: 0 }));
   const apps = [];
+  if (options?.includeReverseLookup) {
+    progressUi.update(3, '逆引き探索用に全アプリを走査中...');
+    const allApps = await fetchAllApps(options);
+    reverseLookupIndex = new Map();
+    for (let i = 0; i < allApps.length; i += 1) {
+      const appId = Number(allApps[i]?.appId);
+      if (!appId) continue;
+      const schema = await getSchema(appId, options, cache);
+      for (const rel of schema.relations || []) {
+        if (!ER_TRAVERSE_RELATION_KINDS.has(rel.kind)) continue;
+        const targetId = Number(rel.toApp);
+        if (!targetId) continue;
+        const set = reverseLookupIndex.get(targetId) || new Set();
+        set.add(appId);
+        reverseLookupIndex.set(targetId, set);
+      }
+      if (i % 20 === 0) progressUi.update(3 + Math.min(20, Math.floor((i / Math.max(1, allApps.length)) * 20)), `逆引き探索インデックス作成中... ${i + 1}/${allApps.length}`);
+      if (i % 25 === 0) await sleep(Math.max(10, Math.floor((options.sleepMs || ER_DEFAULTS.sleepMs) / 2)));
+    }
+  }
   while (q.length) {
     const current = q.shift();
     const id = current?.id;
@@ -218,8 +260,14 @@ const crawl = async (startIds, options) => {
       continue;
     }
     for (const r of a.relations) {
-      if (visited.has(r.toApp) || q.some((item) => item.id === r.toApp)) continue;
-      q.push({ id: r.toApp, depth: depth + 1 });
+      if (!ER_TRAVERSE_RELATION_KINDS.has(r.kind)) continue;
+      enqueueIfNeeded(q, Number(r.toApp), depth + 1);
+    }
+    if (reverseLookupIndex && reverseLookupIndex.has(id)) {
+      const reverseRefs = Array.from(reverseLookupIndex.get(id));
+      for (const srcId of reverseRefs) {
+        enqueueIfNeeded(q, Number(srcId), depth + 1);
+      }
     }
     await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
   }
@@ -235,6 +283,7 @@ const buildHTML = (apps, options = {}) => {
     fieldDensity: options.fieldDensity || ER_DEFAULTS.fieldDensity,
     maxDepth: options.maxDepth || 0,
     includeSubtableFields: !!options.includeSubtableFields,
+    includeReverseLookup: !!options.includeReverseLookup,
     sourceGuestId: options.source?.guestId || '',
     sourcePreview: !!options.source?.preview
   });
