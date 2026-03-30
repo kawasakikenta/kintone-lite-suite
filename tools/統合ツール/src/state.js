@@ -33,6 +33,8 @@ export const state = {
   reflectNodeModes: {},
   reflectUndoStack: [],
   reflectRedoStack: [],
+  reflectPropertyFilters: new Set(),
+  reflectPropertyPanelOpen: false,
   reflectActiveSidebarSection: null,
   reflectActiveNodeId: '',
   reflectDetailTab: 'diff',

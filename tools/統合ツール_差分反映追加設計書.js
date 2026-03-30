@@ -311,6 +311,8 @@
         reflectNodeModes: {},
         reflectUndoStack: [],
         reflectRedoStack: [],
+        reflectPropertyFilters: /* @__PURE__ */ new Set(),
+        reflectPropertyPanelOpen: false,
         reflectActiveSidebarSection: null,
         reflectActiveNodeId: "",
         reflectDetailTab: "diff",
@@ -4771,10 +4773,20 @@ ${contextLine}`);
     }
   }
   function renderReflectNodeList() {
+    const extractPropertyKeyFromPath = (path) => {
+      const text = String(path || "");
+      if (!text) return "";
+      const m = text.match(/(?:^|\.)(?:properties|fields)\.([^.[\]]+)/);
+      if (m?.[1]) return m[1];
+      const head = text.split(".")[0] || "";
+      return head.includes("[") ? head.split("[")[0] : head;
+    };
     const rows = state.reflectRows || [];
     if (!rows.length) {
       const emptyText = state.lastDiffAt ? "反映対象の差分ノードはありません。" : "差分ノード未読込（差分比較後に「差分ノード読込」）";
       ui3.reflectNodeList.innerHTML = `<div style="padding:10px;font-size:12px;color:#64748b">${emptyText}</div>`;
+      if (ui3.nodePropertyList) ui3.nodePropertyList.innerHTML = '<div class="muted" style="padding:6px">差分ノード読込後に表示されます</div>';
+      if (ui3.nodePropertyChips) ui3.nodePropertyChips.innerHTML = '<span class="muted" style="font-size:10px">未選択（すべて対象）</span>';
       state.reflectActiveNodeId = "";
       renderReflectNodeDetail();
       renderBundleState();
@@ -4786,11 +4798,43 @@ ${contextLine}`);
     const filterSec = ui3.nodeFilterSection?.value || "";
     const filterType = ui3.nodeFilterType?.value || "";
     const filterSev = ui3.nodeFilterSeverity?.value || "";
+    const propertyPanel = ui3.nodePropertyPanel;
+    const propertyList = ui3.nodePropertyList;
+    const propertyChips = ui3.nodePropertyChips;
+    const propertyMap = /* @__PURE__ */ new Map();
+    rows.forEach((r) => {
+      const key = extractPropertyKeyFromPath(r.path);
+      if (!key) return;
+      propertyMap.set(key, (propertyMap.get(key) || 0) + 1);
+    });
+    if (!(state.reflectPropertyFilters instanceof Set)) state.reflectPropertyFilters = /* @__PURE__ */ new Set();
+    state.reflectPropertyFilters = new Set([...state.reflectPropertyFilters].filter((key) => propertyMap.has(key)));
+    if (propertyPanel) propertyPanel.style.display = state.reflectPropertyPanelOpen ? "block" : "none";
+    const sortedProps = [...propertyMap.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+    if (propertyList) {
+      propertyList.innerHTML = sortedProps.length ? sortedProps.map(
+        ([key, count]) => `<label style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 2px;border-bottom:1px solid #f1f5f9">
+          <span style="display:flex;align-items:center;gap:8px;min-width:0">
+            <input type="checkbox" data-reflect-prop="${esc(key)}" ${state.reflectPropertyFilters.has(key) ? "checked" : ""}>
+            <span style="font-size:11px;color:#0f172a;word-break:break-all">${esc(key)}</span>
+          </span>
+          <span style="font-size:10px;color:#64748b">${count}件</span>
+        </label>`
+      ).join("") : '<div class="muted" style="padding:6px">選択可能なプロパティはありません</div>';
+    }
+    if (propertyChips) {
+      const selectedProps = [...state.reflectPropertyFilters];
+      propertyChips.innerHTML = selectedProps.length ? selectedProps.map(
+        (key) => `<button type="button" class="chip" data-act="removeReflectPropertyFilter" data-prop="${esc(key)}" style="font-size:10px;padding:2px 6px;border:none;cursor:pointer">${esc(key)} ×</button>`
+      ).join("") : '<span class="muted" style="font-size:10px">未選択（すべて対象）</span>';
+    }
+    const filterProps = state.reflectPropertyFilters instanceof Set ? state.reflectPropertyFilters : /* @__PURE__ */ new Set();
     const filtered = rows.filter((r) => {
       if (keyword && !(r.path || "").toLowerCase().includes(keyword) && !(r.section || "").toLowerCase().includes(keyword) && !(r.sectionKey || "").toLowerCase().includes(keyword)) return false;
       if (filterSec && r.sectionKey !== filterSec) return false;
       if (filterType && r.type !== filterType) return false;
       if (filterSev && (r.severity || "low").toUpperCase() !== filterSev) return false;
+      if (filterProps.size && !filterProps.has(extractPropertyKeyFromPath(r.path))) return false;
       return true;
     });
     const activeRow = deps.getActiveReflectRow(filtered.map((r) => r._id));
@@ -5125,6 +5169,7 @@ ${contextLine}`);
     });
     state.reflectUndoStack = [];
     state.reflectRedoStack = [];
+    state.reflectPropertyFilters = /* @__PURE__ */ new Set();
     state.reflectActiveNodeId = rows[0]?._id || "";
     if (ui.nodeFilterSection) {
       const sections = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
@@ -5248,6 +5293,7 @@ ${contextLine}`);
     state.reflectNodeModes = {};
     state.reflectUndoStack = [];
     state.reflectRedoStack = [];
+    state.reflectPropertyFilters = /* @__PURE__ */ new Set();
     state.reflectActiveNodeId = "";
     renderResultRows([]);
     renderDiffFilterOptions();
@@ -8809,7 +8855,19 @@ ${contextLine}`);
                         <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
                           <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
                         </select>
+                        <button class="btn sub" type="button" data-act="toggleReflectPropertyPanel" style="padding:4px 8px;font-size:10px">プロパティ選択</button>
                         <button class="btn sub" data-act="clearReflectNodeFilters" style="padding:4px 8px;font-size:10px">絞り込み解除</button>
+                      </div>
+                      <div id="u_nodePropertyPanel" style="display:none;margin-top:8px;border:1px solid #d6dee8;border-radius:8px;background:#f8fafc;padding:8px 10px">
+                        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+                          <div style="font-size:11px;font-weight:700;color:#334155">対象プロパティ（kintone設定風チェックリスト）</div>
+                          <div style="display:flex;gap:6px">
+                            <button class="btn sub" type="button" data-act="selectAllReflectProperties" style="padding:3px 7px;font-size:10px">全選択</button>
+                            <button class="btn sub" type="button" data-act="clearReflectProperties" style="padding:3px 7px;font-size:10px">全解除</button>
+                          </div>
+                        </div>
+                        <div id="u_nodePropertyChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
+                        <div id="u_nodePropertyList" style="max-height:160px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:6px"></div>
                       </div>
                     </div>
                     <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none">
@@ -10684,6 +10742,18 @@ ${contextLine}`);
     if (ui.nodeFilterSection) ui.nodeFilterSection.addEventListener("change", () => renderReflectNodeList());
     if (ui.nodeFilterType) ui.nodeFilterType.addEventListener("change", () => renderReflectNodeList());
     if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.addEventListener("change", () => renderReflectNodeList());
+    if (ui.nodePropertyList) {
+      ui.nodePropertyList.addEventListener("change", (ev) => {
+        const input = ev.target.closest?.("[data-reflect-prop]");
+        if (!input) return;
+        const key = input.dataset.reflectProp;
+        if (!key) return;
+        if (!(state.reflectPropertyFilters instanceof Set)) state.reflectPropertyFilters = /* @__PURE__ */ new Set();
+        if (input.checked) state.reflectPropertyFilters.add(key);
+        else state.reflectPropertyFilters.delete(key);
+        renderReflectNodeList();
+      });
+    }
     [
       ui.ignoreKeys,
       ui.autoBackupPreview,
@@ -11617,8 +11687,43 @@ ${contextLine}`);
         if (ui.nodeFilterSection) ui.nodeFilterSection.value = "";
         if (ui.nodeFilterType) ui.nodeFilterType.value = "";
         if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.value = "";
+        state.reflectPropertyFilters = /* @__PURE__ */ new Set();
         renderReflectNodeList();
         setStatus("ノード絞り込み条件を解除しました");
+        return;
+      }
+      if (act === "toggleReflectPropertyPanel") {
+        state.reflectPropertyPanelOpen = !state.reflectPropertyPanelOpen;
+        renderReflectNodeList();
+        setStatus(`プロパティ選択を${state.reflectPropertyPanelOpen ? "表示" : "非表示"}にしました`);
+        return;
+      }
+      if (act === "selectAllReflectProperties") {
+        const keys = [...state.reflectRows || []].map((row) => {
+          const path = String(row.path || "");
+          const m = path.match(/(?:^|\.)(?:properties|fields)\.([^.[\]]+)/);
+          if (m?.[1]) return m[1];
+          const head = path.split(".")[0] || "";
+          return head.includes("[") ? head.split("[")[0] : head;
+        }).filter(Boolean);
+        state.reflectPropertyFilters = new Set(keys);
+        renderReflectNodeList();
+        setStatus(`プロパティを全選択しました（${state.reflectPropertyFilters.size}件）`);
+        return;
+      }
+      if (act === "clearReflectProperties") {
+        state.reflectPropertyFilters = /* @__PURE__ */ new Set();
+        renderReflectNodeList();
+        setStatus("プロパティ選択を全解除しました");
+        return;
+      }
+      if (act === "removeReflectPropertyFilter") {
+        const key = actEl.dataset.prop;
+        if (!key) return;
+        if (!(state.reflectPropertyFilters instanceof Set)) state.reflectPropertyFilters = /* @__PURE__ */ new Set();
+        state.reflectPropertyFilters.delete(key);
+        renderReflectNodeList();
+        setStatus(`プロパティ選択を解除しました: ${key}`);
         return;
       }
       if (act === "toggleActiveReflectNodeSelection") {
@@ -15467,6 +15572,9 @@ ${safety.hash}`, "");
       nodeFilterSection: $("#u_nodeFilterSection"),
       nodeFilterType: $("#u_nodeFilterType"),
       nodeFilterSeverity: $("#u_nodeFilterSeverity"),
+      nodePropertyPanel: $("#u_nodePropertyPanel"),
+      nodePropertyList: $("#u_nodePropertyList"),
+      nodePropertyChips: $("#u_nodePropertyChips"),
       nodeWarn: $("#u_nodeWarn"),
       nodeControls: $("#u_nodeControls"),
       reflectNodeWorkbench: $("#u_reflectNodeWorkbench"),

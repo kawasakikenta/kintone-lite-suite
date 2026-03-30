@@ -315,6 +315,18 @@ export function setupEventHandlers(injected = {}) {
   if (ui.nodeFilterSection) ui.nodeFilterSection.addEventListener('change', () => renderReflectNodeList());
   if (ui.nodeFilterType) ui.nodeFilterType.addEventListener('change', () => renderReflectNodeList());
   if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.addEventListener('change', () => renderReflectNodeList());
+  if (ui.nodePropertyList) {
+    ui.nodePropertyList.addEventListener('change', (ev) => {
+      const input = ev.target.closest?.('[data-reflect-prop]');
+      if (!input) return;
+      const key = input.dataset.reflectProp;
+      if (!key) return;
+      if (!(state.reflectPropertyFilters instanceof Set)) state.reflectPropertyFilters = new Set();
+      if (input.checked) state.reflectPropertyFilters.add(key);
+      else state.reflectPropertyFilters.delete(key);
+      renderReflectNodeList();
+    });
+  }
 
   [
     ui.ignoreKeys, ui.autoBackupPreview,
@@ -1294,8 +1306,45 @@ export function setupEventHandlers(injected = {}) {
       if (ui.nodeFilterSection) ui.nodeFilterSection.value = '';
       if (ui.nodeFilterType) ui.nodeFilterType.value = '';
       if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.value = '';
+      state.reflectPropertyFilters = new Set();
       renderReflectNodeList();
       setStatus('ノード絞り込み条件を解除しました');
+      return;
+    }
+    if (act === 'toggleReflectPropertyPanel') {
+      state.reflectPropertyPanelOpen = !state.reflectPropertyPanelOpen;
+      renderReflectNodeList();
+      setStatus(`プロパティ選択を${state.reflectPropertyPanelOpen ? '表示' : '非表示'}にしました`);
+      return;
+    }
+    if (act === 'selectAllReflectProperties') {
+      const keys = [...(state.reflectRows || [])]
+        .map((row) => {
+          const path = String(row.path || '');
+          const m = path.match(/(?:^|\.)(?:properties|fields)\.([^.[\]]+)/);
+          if (m?.[1]) return m[1];
+          const head = path.split('.')[0] || '';
+          return head.includes('[') ? head.split('[')[0] : head;
+        })
+        .filter(Boolean);
+      state.reflectPropertyFilters = new Set(keys);
+      renderReflectNodeList();
+      setStatus(`プロパティを全選択しました（${state.reflectPropertyFilters.size}件）`);
+      return;
+    }
+    if (act === 'clearReflectProperties') {
+      state.reflectPropertyFilters = new Set();
+      renderReflectNodeList();
+      setStatus('プロパティ選択を全解除しました');
+      return;
+    }
+    if (act === 'removeReflectPropertyFilter') {
+      const key = actEl.dataset.prop;
+      if (!key) return;
+      if (!(state.reflectPropertyFilters instanceof Set)) state.reflectPropertyFilters = new Set();
+      state.reflectPropertyFilters.delete(key);
+      renderReflectNodeList();
+      setStatus(`プロパティ選択を解除しました: ${key}`);
       return;
     }
     if (act === 'toggleActiveReflectNodeSelection') {
