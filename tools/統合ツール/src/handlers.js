@@ -66,6 +66,7 @@ import {
   ensureDiffPreparedForReflect
 } from './tabs/diff.js';
 import { applyPreviewPreset, syncPreviewComparePanel } from './tabs/preview-compare.js';
+import { initReflectPreviewPlayground } from './tabs/reflect-preview-playground.js';
 
 import {
   loadReflectRowsFromLastDiff,
@@ -241,6 +242,7 @@ export function setupEventHandlers(injected = {}) {
   renderReflectSidebar();
   renderReflectMainPanel();
   renderReflectNodeList();
+  initReflectPreviewPlayground(ui, setStatus);
   if (ui.settingsExportSearchResult && !ui.settingsExportSearchResult.innerHTML) {
     ui.settingsExportSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
   }

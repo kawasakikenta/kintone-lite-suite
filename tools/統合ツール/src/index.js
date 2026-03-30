@@ -162,6 +162,7 @@ if (!window.kintone?.api || !window.kintone?.app) {
     reflectNodeWorkbench: $('#u_reflectNodeWorkbench'),
     reflectNodeList: $('#u_reflectNodeList'),
     reflectNodeDetail: $('#u_reflectNodeDetail'),
+    reflectPreviewPlayground: $('#u_reflectPreviewPlayground'),
     reflectAssist: $('#u_reflectAssist'),
     reflectHowto: $('#u_reflectHowto'),
     reflectOverview: $('#u_reflectOverview'),
