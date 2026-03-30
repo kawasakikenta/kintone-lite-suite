@@ -126,7 +126,9 @@ const getSchema = async (appId, options, cache) => {
           if (options?.includeSubtableFields) walk(f.fields, c, f.label || c);
           continue;
         }
-        const isL = f.type === "LOOKUP", isR = f.type === "REFERENCE_TABLE";
+        const hasLookupSetting = !!(f.lookup && typeof f.lookup === 'object');
+        const isL = hasLookupSetting;
+        const isR = f.type === "REFERENCE_TABLE";
         const isPK = /^(\$id|record_number|レコード番号)$/i.test(c);
         const fieldPath = parentTable ? `${parentTable}.${c}` : c;
         const displayPath = parentTableLabel ? `${parentTableLabel} > ${f.label || c}` : (f.label || c);
