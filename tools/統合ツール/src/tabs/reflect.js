@@ -119,6 +119,7 @@ export function loadReflectRowsFromLastDiff() {
   rows.forEach((r) => { state.reflectNodeModes[r._id] = 'src'; });
   state.reflectUndoStack = [];
   state.reflectRedoStack = [];
+  state.reflectPropertyFilters = new Set();
   state.reflectActiveNodeId = rows[0]?._id || '';
   if (ui.nodeFilterSection) {
     const sections = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
@@ -274,6 +275,7 @@ export async function runPrefetchCommonData() {
   state.reflectNodeModes = {};
   state.reflectUndoStack = [];
   state.reflectRedoStack = [];
+  state.reflectPropertyFilters = new Set();
   state.reflectActiveNodeId = '';
   renderResultRows([]);
   renderDiffFilterOptions();

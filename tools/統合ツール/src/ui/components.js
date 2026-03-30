@@ -701,12 +701,22 @@ export function renderReflectMainPanel() {
 }
 
 export function renderReflectNodeList() {
+  const extractPropertyKeyFromPath = (path) => {
+    const text = String(path || '');
+    if (!text) return '';
+    const m = text.match(/(?:^|\.)(?:properties|fields)\.([^.[\]]+)/);
+    if (m?.[1]) return m[1];
+    const head = text.split('.')[0] || '';
+    return head.includes('[') ? head.split('[')[0] : head;
+  };
   const rows = state.reflectRows || [];
   if (!rows.length) {
     const emptyText = state.lastDiffAt
       ? '反映対象の差分ノードはありません。'
       : '差分ノード未読込（差分比較後に「差分ノード読込」）';
     ui.reflectNodeList.innerHTML = `<div style="padding:10px;font-size:12px;color:#64748b">${emptyText}</div>`;
+    if (ui.nodePropertyList) ui.nodePropertyList.innerHTML = '<div class="muted" style="padding:6px">差分ノード読込後に表示されます</div>';
+    if (ui.nodePropertyChips) ui.nodePropertyChips.innerHTML = '<span class="muted" style="font-size:10px">未選択（すべて対象）</span>';
     state.reflectActiveNodeId = '';
     renderReflectNodeDetail();
     renderBundleState();
@@ -718,6 +728,42 @@ export function renderReflectNodeList() {
   const filterSec = ui.nodeFilterSection?.value || '';
   const filterType = ui.nodeFilterType?.value || '';
   const filterSev = ui.nodeFilterSeverity?.value || '';
+  const propertyPanel = ui.nodePropertyPanel;
+  const propertyList = ui.nodePropertyList;
+  const propertyChips = ui.nodePropertyChips;
+  const propertyMap = new Map();
+  rows.forEach((r) => {
+    const key = extractPropertyKeyFromPath(r.path);
+    if (!key) return;
+    propertyMap.set(key, (propertyMap.get(key) || 0) + 1);
+  });
+  if (!(state.reflectPropertyFilters instanceof Set)) state.reflectPropertyFilters = new Set();
+  state.reflectPropertyFilters = new Set([...state.reflectPropertyFilters].filter((key) => propertyMap.has(key)));
+  if (propertyPanel) propertyPanel.style.display = state.reflectPropertyPanelOpen ? 'block' : 'none';
+  const sortedProps = [...propertyMap.entries()]
+    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+  if (propertyList) {
+    propertyList.innerHTML = sortedProps.length
+      ? sortedProps.map(([key, count]) =>
+        `<label style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 2px;border-bottom:1px solid #f1f5f9">
+          <span style="display:flex;align-items:center;gap:8px;min-width:0">
+            <input type="checkbox" data-reflect-prop="${esc(key)}" ${state.reflectPropertyFilters.has(key) ? 'checked' : ''}>
+            <span style="font-size:11px;color:#0f172a;word-break:break-all">${esc(key)}</span>
+          </span>
+          <span style="font-size:10px;color:#64748b">${count}件</span>
+        </label>`
+      ).join('')
+      : '<div class="muted" style="padding:6px">選択可能なプロパティはありません</div>';
+  }
+  if (propertyChips) {
+    const selectedProps = [...state.reflectPropertyFilters];
+    propertyChips.innerHTML = selectedProps.length
+      ? selectedProps.map((key) =>
+        `<button type="button" class="chip" data-act="removeReflectPropertyFilter" data-prop="${esc(key)}" style="font-size:10px;padding:2px 6px;border:none;cursor:pointer">${esc(key)} ×</button>`
+      ).join('')
+      : '<span class="muted" style="font-size:10px">未選択（すべて対象）</span>';
+  }
+  const filterProps = state.reflectPropertyFilters instanceof Set ? state.reflectPropertyFilters : new Set();
   const filtered = rows.filter((r) => {
     if (keyword && !(r.path || '').toLowerCase().includes(keyword)
       && !(r.section || '').toLowerCase().includes(keyword)
@@ -725,6 +771,7 @@ export function renderReflectNodeList() {
     if (filterSec && r.sectionKey !== filterSec) return false;
     if (filterType && r.type !== filterType) return false;
     if (filterSev && (r.severity || 'low').toUpperCase() !== filterSev) return false;
+    if (filterProps.size && !filterProps.has(extractPropertyKeyFromPath(r.path))) return false;
     return true;
   });
   const activeRow = deps.getActiveReflectRow(filtered.map((r) => r._id));
