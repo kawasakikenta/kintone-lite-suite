@@ -5,6 +5,7 @@ import { state, ui } from '../state.js';
 import { esc, safeJsonForScript, nowStamp, downloadText } from '../utils.js';
 import { apiGet, buildApiPrefix, fetchBundle, ensureBundleShape } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
+import { getToolWindow } from '../ui/dialog.js';
 import { commonParams } from './diff.js';
 import { buildCombinedFieldImpactIndex } from '../diff/enrich.js';
 
@@ -1552,7 +1553,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 export async function runGenerateERDiagram() {
   const options = readErDiagramOptions();
   if (!options.startAppIds?.length) throw new Error('比較元アプリID（および追加起点ID）を入力してください');
-  const popup = window.open('', '_blank');
+  const popup = getToolWindow().open('', '_blank');
   if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
   popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
   setStatus(`ER図の解析を開始します... 起点 ${options.startAppIds.join(",")} / ${formatErLayoutLabel(options.layoutName)} / ${options.fieldDensity}`);
@@ -1606,6 +1607,9 @@ export async function runFieldDependencyMap() {
   const srcAppId = ui.sourceApp?.value?.trim();
   if (!srcAppId) throw new Error('比較元アプリIDが指定されていません');
   const guestId = ui.sourceGuest?.value?.trim() || null;
+  const popup = getToolWindow().open('', '_blank');
+  if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
+  popup.document.write('<title>フィールド依存関係マップ</title><body style="font-family:sans-serif;padding:24px">依存関係マップを生成中...</body>');
 
   setBusy(true, '比較元アプリの全設定を取得中...');
   const sections = SECTION_DEFS.map(s => s.key);
@@ -1646,6 +1650,7 @@ export async function runFieldDependencyMap() {
   }
 
   if (elements.length === 0) {
+    try { popup.close(); } catch (e) { /* noop */ }
     alert('フィールド間の依存関係（計算式等）は見つかりませんでした。');
     setBusy(false);
     return;
@@ -1730,6 +1735,7 @@ export async function runFieldDependencyMap() {
 
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
-  window.open(url, '_blank');
+  popup.location.href = url;
+  setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
   setBusy(false);
 }
