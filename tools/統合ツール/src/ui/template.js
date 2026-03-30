@@ -472,6 +472,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                       <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
                     </div>
                     <div class="reflect-main-header__controls">
+                      <button type="button" class="btn sub" data-act="openReflectPreviewEditor" title="フィールド差分プレビューエディタまでスクロールして展開します">差分プレビューエディタ</button>
                       <label class="reflect-simple-toggle chip" title="ノード選択・JSON差分反映を隠し、セクション反映に集中します">
                         <input type="checkbox" id="u_reflectSimpleMode"> 簡易表示
                       </label>
@@ -556,6 +557,14 @@ export function buildRoot(targetDocument = document, options = {}) {
                         </div>
                       </div>
                     </div>
+                    <section class="opt-card" id="u_reflectPreviewEditorFold" style="margin-top:8px">
+                      <div class="opt-title">フィールド差分プレビューエディタ（試験）</div>
+                      <div class="muted" style="margin-top:-2px;margin-bottom:6px">追加/削除/編集/ドラッグ上書きの事前確認UI</div>
+                      <div>
+                        <div class="muted" style="margin-top:0;line-height:1.6">統合ツール内でフィールド差分のプレビューを操作できる補助エディタです。ドラッグ＆ドロップで別カードへ設定上書き（code/typeは保持）、JSON編集とUndoにも対応します。</div>
+                        <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
+                      </div>
+                    </section>
                   </div>
                   <div class="reflect-footer-stack">
                     <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>
