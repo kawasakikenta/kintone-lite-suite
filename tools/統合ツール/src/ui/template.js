@@ -483,6 +483,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                   </div>
                   <div class="main-body" id="u_reflectMainBody">
                     <div id="u_reflectAssist"></div>
+                    <div id="u_reflectHowto" style="margin-bottom:10px"></div>
                     <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
                     <div id="u_reflectOverview"></div>
                     <div id="u_reflectHint" class="kv" style="display:none"></div>

@@ -163,6 +163,7 @@ if (!window.kintone?.api || !window.kintone?.app) {
     reflectNodeList: $('#u_reflectNodeList'),
     reflectNodeDetail: $('#u_reflectNodeDetail'),
     reflectAssist: $('#u_reflectAssist'),
+    reflectHowto: $('#u_reflectHowto'),
     reflectOverview: $('#u_reflectOverview'),
     reflectMainTitle: $('#u_reflectMainTitle'),
     reflectOptionsCard: $('#u_reflectOptionsCard'),

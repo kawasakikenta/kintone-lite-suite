@@ -557,8 +557,44 @@ export function renderReflectFooterBadges() {
 export function renderReflectAssistPanel() {
   if (!ui.reflectAssist) return;
   ui.reflectAssist.innerHTML = buildReflectAssistHtml();
+  renderReflectHowto();
   renderReflectPlanInline();
   renderReflectFooterBadges();
+}
+
+function renderReflectHowto() {
+  if (!ui.reflectHowto) return;
+  const isNode = isReflectNodeModeEffective();
+  const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
+  const planSig = getCurrentReflectPlanSignature();
+  const planReady = !!(state.lastApplyPlan && planSig && state.lastApplyPlan.signature === planSig);
+  const selectedNodes = deps.getSelectedReflectRows().length;
+  const nodeRows = (state.reflectRows || []).length;
+  const modeLabel = isNode ? 'ノード選択モード' : 'セクションモード';
+  const nodeStep = isNode
+    ? `<li style="margin:4px 0">${nodeRows > 0 ? '✅' : '⬜'} <strong>差分ノード読込</strong>（候補 ${nodeRows}件 / 選択 ${selectedNodes}件）</li>`
+    : '';
+  const step1 = diffReady ? '✅' : '⬜';
+  const step2 = planReady ? '✅' : '⬜';
+  const step3 = planReady ? '▶' : '⬜';
+  ui.reflectHowto.innerHTML = `
+    <details open style="border:1px solid #dbe3ed;border-radius:10px;background:#fff;padding:8px 10px">
+      <summary style="cursor:pointer;font-weight:700;color:#1e293b">使い方ガイド（${esc(modeLabel)}）</summary>
+      <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.7">
+        <ol style="margin:0;padding-left:18px">
+          <li style="margin:4px 0">${step1} <strong>差分比較</strong>を実行して最新差分を作成</li>
+          ${nodeStep}
+          <li style="margin:4px 0">${step2} <strong>反映プラン確認</strong>で API 実行内容を確認</li>
+          <li style="margin:4px 0">${step3} <strong>比較元 → 比較先(プレビュー) 反映</strong>を実行</li>
+        </ol>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+          <button class="btn sub" data-act="runDiff">① 差分比較</button>
+          ${isNode ? '<button class="btn sub" data-act="loadReflectNodes">② 差分ノード読込</button>' : ''}
+          <button class="btn sub" data-act="previewApplyPlan">③ 反映プラン確認</button>
+          <button class="btn ok" data-act="applyPreview">④ プレビュー反映</button>
+        </div>
+      </div>
+    </details>`;
 }
 
 function getDiffCountsBySection() {
