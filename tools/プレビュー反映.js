@@ -1013,29 +1013,31 @@
 
     function createStyles() {
       return `
-        :root{ --bg:#0b0f14;--panel:#0f1621;--panel2:#0b111a;--card:#111b28; --text:#e6edf3;--muted:#9aa7b6;--line:#1f2a3a;--brand:#4ea1ff;--brand2:#2f7dff; --shadow:0 16px 50px rgba(0,0,0,.55); --mono:ui-monospace,SFMono-Regular,monospace; --sans:system-ui,-apple-system,sans-serif; --warn:#ffcc66;--danger:#ff5d5d;--success:#43d576; }
-        .light-mode{ --bg:#f0f2f5;--panel:#ffffff;--panel2:#f7f9fa;--card:#ffffff; --text:#111827;--muted:#6b7280;--line:#e5e7eb;--brand:#0067ff;--brand2:#0052cc; --shadow:0 4px 20px rgba(0,0,0,.15);--warn:#b8860b;--danger:#dc2626;--success:#16a34a; }
-        #${ROOT_ID}{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.60);display:flex;align-items:center;justify-content:center;font-family:var(--sans);color:var(--text)}
+        :root{ --bg:#040612;--panel:#0a1024;--panel2:#0d1630;--card:#121e3d; --text:#f6f8ff;--muted:#95a3c8;--line:#26365f;--brand:#67a4ff;--brand2:#8a6cff; --shadow:0 24px 70px rgba(3,9,24,.72); --mono:ui-monospace,SFMono-Regular,monospace; --sans:Inter,system-ui,-apple-system,sans-serif; --warn:#ffcb66;--danger:#ff8080;--success:#68e6a5; }
+        .light-mode{ --bg:#eef2ff;--panel:#ffffff;--panel2:#f8f9ff;--card:#ffffff; --text:#1b2640;--muted:#61708f;--line:#d8def0;--brand:#2f65ff;--brand2:#744dff; --shadow:0 12px 38px rgba(31,45,93,.14);--warn:#a56a00;--danger:#dc3c6a;--success:#1f9d62; }
+        #${ROOT_ID}{position:fixed;inset:0;z-index:999999;background:radial-gradient(circle at 10% -10%,rgba(103,164,255,.35),transparent 42%),radial-gradient(circle at 100% 100%,rgba(138,108,255,.25),transparent 38%),rgba(0,0,0,.66);display:flex;align-items:center;justify-content:center;font-family:var(--sans);color:var(--text)}
         #${ROOT_ID} *{box-sizing:border-box}
-        #${ROOT_ID} .app{width:min(1540px,97vw);height:min(93vh,97vh);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
-        #${ROOT_ID} .top{padding:12px 16px;background:var(--panel2);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
-        #${ROOT_ID} .dot{width:10px;height:10px;border-radius:999px;background:var(--brand);animation:pulse 2s infinite}
+        #${ROOT_ID} .app{width:min(1600px,97vw);height:min(94vh,97vh);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,0)),var(--panel);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
+        #${ROOT_ID} .top{padding:14px 18px;background:linear-gradient(90deg,rgba(103,164,255,.14),rgba(138,108,255,.08));border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+        #${ROOT_ID} .brand-meta{display:flex;flex-direction:column;gap:2px}
+        #${ROOT_ID} .brand-sub{font-size:11px;color:var(--muted);letter-spacing:.04em}
+        #${ROOT_ID} .dot{width:11px;height:11px;border-radius:999px;background:linear-gradient(180deg,var(--brand),var(--brand2));animation:pulse 2s infinite;box-shadow:0 0 12px rgba(103,164,255,.6)}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
         #${ROOT_ID} .sp{flex:1}
-        #${ROOT_ID} .btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;transition:all .15s}
+        #${ROOT_ID} .btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:7px 12px;border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;white-space:nowrap;transition:all .15s}
         #${ROOT_ID} .btn:hover:not(:disabled){filter:brightness(1.15)}
-        #${ROOT_ID} .btn.primary{background:var(--brand);color:#fff;border-color:var(--brand)}
+        #${ROOT_ID} .btn.primary{background:linear-gradient(90deg,var(--brand),var(--brand2));color:#fff;border-color:transparent}
         #${ROOT_ID} .btn.dng{background:rgba(255,93,93,.1);color:#ff5d5d;border-color:rgba(255,93,93,.3)}
         #${ROOT_ID} .btn.warn{background:rgba(255,204,102,.1);color:var(--warn);border-color:rgba(255,204,102,.3)}
         #${ROOT_ID} .btn.success{background:rgba(43,213,118,.1);color:var(--success);border-color:rgba(43,213,118,.3)}
         #${ROOT_ID} .btn:disabled{opacity:.5;cursor:not-allowed}
         #${ROOT_ID} .grid{display:flex;flex:1;min-height:0}
-        #${ROOT_ID} .side{width:310px;background:var(--panel2);border-right:1px solid var(--line);padding:12px;display:flex;flex-direction:column;gap:12px;overflow:auto}
+        #${ROOT_ID} .side{width:340px;background:var(--panel2);border-right:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:12px;overflow:auto}
         #${ROOT_ID} .main{flex:1;background:var(--panel);display:flex;flex-direction:column;min-width:0}
-        #${ROOT_ID} .right{width:500px;background:var(--panel2);border-left:1px solid var(--line);display:flex;flex-direction:column;min-width:0;transition:width .2s}
+        #${ROOT_ID} .right{width:520px;background:var(--panel2);border-left:1px solid var(--line);display:flex;flex-direction:column;min-width:0;transition:width .2s}
         #${ROOT_ID} .right.collapsed{width:0;overflow:hidden;border-left:none}
-        #${ROOT_ID} .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
-        #${ROOT_ID} label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px}
+        #${ROOT_ID} .card{background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0)),var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+        #${ROOT_ID} label{font-size:11px;color:var(--muted);display:block;margin-bottom:5px;font-weight:700}
         #${ROOT_ID} input[type="text"],#${ROOT_ID} textarea.inp{width:100%;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--text);outline:none;font-size:12px;box-sizing:border-box;transition:border-color .15s}
         #${ROOT_ID} input[type="text"]:focus,#${ROOT_ID} textarea.inp:focus{border-color:var(--brand)}
         #${ROOT_ID} textarea.inp{font-family:var(--mono);resize:vertical;min-height:48px}
@@ -1283,7 +1285,11 @@
       appEl.className = 'app';
       appEl.innerHTML = `
         <div class="top">
-          <span class="dot"></span><b>${esc(TOOL.name)}</b><span style="opacity:.7;font-size:12px">v${esc(TOOL.version)}</span>
+          <span class="dot"></span>
+          <div class="brand-meta">
+            <b>${esc(TOOL.name)}</b>
+            <span class="brand-sub">Preview Reflect Console • v${esc(TOOL.version)}</span>
+          </div>
           <span class="sp"></span>
           <button class="btn" id="xShortcuts" title="ショートカット">⌨️</button>
           <button class="btn" id="xLogs" title="操作ログ">📋</button>
@@ -1293,6 +1299,7 @@
         <div class="grid">
           <div class="side">
             <div class="card">
+              <label>接続ターゲット</label>
               <div class="row">
                 <div><label>Source AppID</label><input type="text" id="xSrc" placeholder="例: 355"></div>
                 <div><label>Target AppID</label><input type="text" id="xTgt" placeholder="例: 333"></div>
@@ -1346,7 +1353,7 @@
           </div>
           <div class="main">
             <div class="toolbar">
-              <div class="hint" id="xHint">[Src/Tgt]で反映するか維持するかを選択</div>
+              <div class="hint" id="xHint">反映方針: [Src/Tgt] で適用する値を即時切替できます</div>
               <div class="summary-bar" id="xSummaryBar" style="display:none"></div>
               <span class="sp"></span>
               <button class="btn" id="xToggleRight" title="右パネル表示切替">◧</button>
