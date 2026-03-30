@@ -496,6 +496,8 @@ export function buildRoot(targetDocument = document, options = {}) {
                         <button class="btn sub" data-act="selectVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中を選択</button>
                         <button class="btn sub" data-act="clearVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中解除</button>
                         <button class="btn sub" data-act="selectHighSeverityReflectNodes" style="padding:4px 8px;font-size:10px">高重要度を選択</button>
+                        <button class="btn ok" data-act="reflectModeVisibleSrc" style="padding:4px 8px;font-size:10px">表示中を比較元</button>
+                        <button class="btn ok" data-act="reflectModeVisibleTgt" style="padding:4px 8px;font-size:10px">表示中を比較先</button>
                         <button class="btn sub" data-act="selectReflectNodesAll" style="padding:4px 8px;font-size:10px">全選択</button>
                         <button class="btn sub" data-act="clearReflectNodes" style="padding:4px 8px;font-size:10px">全解除</button>
                         <button class="btn ok" data-act="reflectModeAllSrc" style="padding:4px 8px;font-size:10px">一括で比較元</button>
@@ -514,6 +516,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                         <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
                           <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
                         </select>
+                        <button class="btn sub" data-act="clearReflectNodeFilters" style="padding:4px 8px;font-size:10px">絞り込み解除</button>
                       </div>
                     </div>
                     <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none">

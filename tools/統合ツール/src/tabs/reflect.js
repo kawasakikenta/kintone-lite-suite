@@ -168,6 +168,30 @@ export function runReflectModeAll(mode) {
   setStatus(`選択中ノード(${selected.length}件)のうち、${count}件を ${mode === 'src' ? '比較元' : '比較先'} に一括変更しました`);
 }
 
+export function runReflectModeVisible(mode) {
+  if (!state.reflectRows.length) {
+    setStatus('反映ノードが読込されていません');
+    return;
+  }
+  const visibleIds = [...(ui.reflectNodeList?.querySelectorAll('[data-node-open]') || [])]
+    .map((el) => el.dataset.nodeOpen)
+    .filter(Boolean);
+  if (!visibleIds.length) {
+    setStatus('表示中ノードがありません（絞り込み条件を見直してください）');
+    return;
+  }
+  pushReflectUndo();
+  let count = 0;
+  visibleIds.forEach((id) => {
+    if (state.reflectNodeModes[id] !== mode) {
+      state.reflectNodeModes[id] = mode;
+      count += 1;
+    }
+  });
+  renderReflectNodeList();
+  setStatus(`表示中ノード(${visibleIds.length}件)のうち、${count}件を ${mode === 'src' ? '比較元' : '比較先'} に変更しました`);
+}
+
 // ---------------------------------------------------------------------------
 // Effective reflect scope info
 // ---------------------------------------------------------------------------
