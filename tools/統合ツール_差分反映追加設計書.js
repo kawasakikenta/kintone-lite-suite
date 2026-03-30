@@ -8869,6 +8869,7 @@ ${contextLine}`);
                       <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
                     </div>
                     <div class="reflect-main-header__controls">
+                      <button type="button" class="btn sub" data-act="openReflectPreviewEditor" title="フィールド差分プレビューエディタまでスクロールして展開します">差分プレビューエディタ</button>
                       <label class="reflect-simple-toggle chip" title="ノード選択・JSON差分反映を隠し、セクション反映に集中します">
                         <input type="checkbox" id="u_reflectSimpleMode"> 簡易表示
                       </label>
@@ -8953,7 +8954,7 @@ ${contextLine}`);
                         </div>
                       </div>
                     </div>
-                    <details class="diff-fold" style="margin-top:8px">
+                    <details class="diff-fold" id="u_reflectPreviewEditorFold" style="margin-top:8px" open>
                       <summary class="diff-fold-summary">
                         <span class="diff-fold-title">フィールド差分プレビューエディタ（試験）</span>
                         <span class="diff-fold-sub">追加/削除/編集/ドラッグ上書きの事前確認UI</span>
@@ -11596,6 +11597,13 @@ ${contextLine}`);
         switchSubTab("diff", state.lastDiffRows.length || state.lastFetchIssues.length ? "view" : "conditions");
         if (ui.result) renderResultRows(state.lastDiffRows || []);
         setStatus("差分比較タブへ移動しました");
+        return;
+      }
+      if (act === "openReflectPreviewEditor") {
+        const fold = root2.querySelector("#u_reflectPreviewEditorFold");
+        if (fold instanceof HTMLDetailsElement) fold.open = true;
+        fold?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        setStatus("フィールド差分プレビューエディタへ移動しました");
         return;
       }
       if (act === "setSourceCurrent") {

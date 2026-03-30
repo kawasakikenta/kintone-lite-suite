@@ -943,6 +943,13 @@ export function setupEventHandlers(injected = {}) {
       setStatus('差分比較タブへ移動しました');
       return;
     }
+    if (act === 'openReflectPreviewEditor') {
+      const fold = root.querySelector('#u_reflectPreviewEditorFold');
+      if (fold instanceof HTMLDetailsElement) fold.open = true;
+      fold?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+      setStatus('フィールド差分プレビューエディタへ移動しました');
+      return;
+    }
 
     // ----- Source / Target quick actions -----
     if (act === 'setSourceCurrent') {
