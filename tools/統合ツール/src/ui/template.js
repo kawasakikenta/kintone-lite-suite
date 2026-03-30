@@ -483,6 +483,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                   </div>
                   <div class="main-body" id="u_reflectMainBody">
                     <div id="u_reflectAssist"></div>
+                    <div id="u_reflectHowto" style="margin-bottom:10px"></div>
                     <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
                     <div id="u_reflectOverview"></div>
                     <div id="u_reflectHint" class="kv" style="display:none"></div>
@@ -516,7 +517,19 @@ export function buildRoot(targetDocument = document, options = {}) {
                         <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
                           <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
                         </select>
+                        <button class="btn sub" type="button" data-act="toggleReflectPropertyPanel" style="padding:4px 8px;font-size:10px">プロパティ選択</button>
                         <button class="btn sub" data-act="clearReflectNodeFilters" style="padding:4px 8px;font-size:10px">絞り込み解除</button>
+                      </div>
+                      <div id="u_nodePropertyPanel" style="display:none;margin-top:8px;border:1px solid #d6dee8;border-radius:8px;background:#f8fafc;padding:8px 10px">
+                        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+                          <div style="font-size:11px;font-weight:700;color:#334155">対象プロパティ（kintone設定風チェックリスト）</div>
+                          <div style="display:flex;gap:6px">
+                            <button class="btn sub" type="button" data-act="selectAllReflectProperties" style="padding:3px 7px;font-size:10px">全選択</button>
+                            <button class="btn sub" type="button" data-act="clearReflectProperties" style="padding:3px 7px;font-size:10px">全解除</button>
+                          </div>
+                        </div>
+                        <div id="u_nodePropertyChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
+                        <div id="u_nodePropertyList" style="max-height:160px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:6px"></div>
                       </div>
                     </div>
                     <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none">
