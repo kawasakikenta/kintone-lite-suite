@@ -8403,6 +8403,18 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .rpp-preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 #kintone-unified-suite-v2 .rpp-preview-head{font-size:10px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px 6px 0 0;padding:3px 8px}
 #kintone-unified-suite-v2 .rpp-preview-body{font-size:12px;color:#0f172a;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 6px 6px;padding:8px;min-height:36px;background:#fff}
+#kintone-unified-suite-v2 .rpp-modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.45);display:flex;align-items:center;justify-content:center;z-index:70;padding:16px}
+#kintone-unified-suite-v2 .rpp-modal{width:min(680px,96vw);background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 20px 60px rgba(2,6,23,.35);overflow:hidden}
+#kintone-unified-suite-v2 .rpp-modal-wide{width:min(980px,96vw)}
+#kintone-unified-suite-v2 .rpp-modal-head{padding:12px 14px;font-size:13px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .rpp-modal-body{padding:12px 14px}
+#kintone-unified-suite-v2 .rpp-modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#kintone-unified-suite-v2 .rpp-modal-label{font-size:11px;font-weight:700;color:#475569;margin-bottom:4px}
+#kintone-unified-suite-v2 .rpp-modal-textarea{width:100%;min-height:220px;max-height:52vh;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;box-sizing:border-box}
+#kintone-unified-suite-v2 .rpp-modal-error{margin-top:8px;padding:8px 10px;border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;border-radius:8px;font-size:11px}
+#kintone-unified-suite-v2 .rpp-modal-error-full{grid-column:1/-1}
+#kintone-unified-suite-v2 .rpp-modal-confirm{margin:0;font-size:12px;color:#334155;line-height:1.7}
+#kintone-unified-suite-v2 .rpp-modal-actions{padding:10px 14px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:flex-end;gap:8px}
 `;
 
   // src/ui/template.js
@@ -10049,11 +10061,37 @@ ${contextLine}`);
       view: "diff",
       undo: [],
       expanded: /* @__PURE__ */ new Set(),
-      dragCode: ""
+      dragCode: "",
+      modal: null
     };
     const pushUndo = () => {
       st.undo.push({ before: deepClone(st.before), after: deepClone(st.after) });
       if (st.undo.length > 20) st.undo.shift();
+    };
+    const parseFieldInput2 = (v) => {
+      const obj = JSON.parse(v);
+      if (!obj || typeof obj !== "object") throw new Error("JSONオブジェクトを入力してください");
+      if (!obj.code || !obj.type || !obj.label) throw new Error("code/type/label が必要です");
+      return obj;
+    };
+    const openModal = (modal) => {
+      st.modal = modal;
+    };
+    const closeModal = () => {
+      st.modal = null;
+    };
+    const renderModal = () => {
+      if (!st.modal) return "";
+      if (st.modal.kind === "fieldJson") {
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><textarea class="rpp-modal-textarea" data-rpp-modal-input="fieldJson">${esc(st.modal.text || "")}</textarea>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldJson">保存</button></div></div></div>`;
+      }
+      if (st.modal.kind === "pairJson") {
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal rpp-modal-wide" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body rpp-modal-grid"><div><div class="rpp-modal-label">変更前（before）</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="beforeJson">${esc(st.modal.beforeText || "")}</textarea></div><div><div class="rpp-modal-label">変更後（after）</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="afterJson">${esc(st.modal.afterText || "")}</textarea></div>${st.modal.error ? `<div class="rpp-modal-error rpp-modal-error-full">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="savePairJson">適用</button></div></div></div>`;
+      }
+      if (st.modal.kind === "confirm") {
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><p class="rpp-modal-confirm">${esc(st.modal.message)}</p></div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="confirmAction">実行</button></div></div></div>`;
+      }
+      return "";
     };
     const render = () => {
       const diff = computeDiff(st.before, st.after);
@@ -10083,15 +10121,87 @@ ${contextLine}`);
         const body = st.view === "diff" ? row.status === "modified" ? `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>変更前</th><th>変更後</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatValue(ch.before))}</pre></td><td><pre>${esc(formatValue(ch.after))}</pre></td></tr>`).join("")}</tbody></table>` : `<pre class="rpp-pre">${esc(formatValue(row.after || row.before))}</pre>` : `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">本番</div><div class="rpp-preview-body">${row.before ? esc(row.before.label || row.before.code || "-") : "なし"}</div></div><div><div class="rpp-preview-head">プレビュー</div><div class="rpp-preview-body">${row.after ? esc(row.after.label || row.after.code || "-") : "なし"}</div></div></div>`;
         return `<div class="rpp-card" draggable="true" data-rpp-code="${esc(row.code)}"><div class="rpp-head"><button type="button" class="rpp-open" data-rpp-act="toggle" data-code="${esc(row.code)}">${opened ? "▾" : "▸"}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.code)}</code><span class="rpp-spacer"></span>${row.after ? `<button type="button" class="btn sub" data-rpp-act="edit" data-code="${esc(row.code)}">編集</button><button type="button" class="btn sub" data-rpp-act="delete" data-code="${esc(row.code)}">削除</button>` : `<button type="button" class="btn sub" data-rpp-act="restore" data-code="${esc(row.code)}">復元</button>`}</div>${opened ? `<div class="rpp-body">${body}</div>` : ""}</div>`;
       }).join("") || '<div class="muted" style="padding:12px">表示対象がありません</div>'}
-      </div>`;
-    };
-    const parseFieldInput2 = (v) => {
-      const obj = JSON.parse(v);
-      if (!obj || typeof obj !== "object") throw new Error("JSONオブジェクトを入力してください");
-      if (!obj.code || !obj.type || !obj.label) throw new Error("code/type/label が必要です");
-      return obj;
+      </div>
+      ${renderModal()}`;
     };
     root2.addEventListener("click", (ev) => {
+      const modalAct = ev.target.closest("[data-rpp-modal-act]")?.dataset.rppModalAct;
+      if (modalAct) {
+        try {
+          if (modalAct === "cancel") {
+            closeModal();
+            render();
+            return;
+          }
+          if (modalAct === "saveFieldJson" && st.modal?.kind === "fieldJson") {
+            const raw = root2.querySelector('[data-rpp-modal-input="fieldJson"]')?.value || "";
+            const parsed = parseFieldInput2(raw);
+            pushUndo();
+            if (st.modal.mode === "add") {
+              st.after[parsed.code] = parsed;
+              setStatus2(`${parsed.code} を追加しました`);
+            } else if (st.modal.mode === "edit") {
+              const oldCode = st.modal.code || parsed.code;
+              st.after[oldCode] = parsed;
+              if (oldCode !== parsed.code) {
+                st.after[parsed.code] = st.after[oldCode];
+                delete st.after[oldCode];
+              }
+              setStatus2(`${parsed.code} を更新しました`);
+            }
+            closeModal();
+            render();
+            return;
+          }
+          if (modalAct === "savePairJson" && st.modal?.kind === "pairJson") {
+            const b = root2.querySelector('[data-rpp-modal-input="beforeJson"]')?.value || "";
+            const a = root2.querySelector('[data-rpp-modal-input="afterJson"]')?.value || "";
+            pushUndo();
+            st.before = JSON.parse(b);
+            st.after = JSON.parse(a);
+            closeModal();
+            setStatus2("before/after JSON を更新しました");
+            render();
+            return;
+          }
+          if (modalAct === "confirmAction" && st.modal?.kind === "confirm") {
+            const payload = st.modal.payload || {};
+            if (st.modal.mode === "delete") {
+              pushUndo();
+              delete st.after[payload.code];
+              setStatus2(`${payload.code} を削除しました`);
+            } else if (st.modal.mode === "overwrite") {
+              const src = st.after[payload.sourceCode] || st.before[payload.sourceCode];
+              const tgt = st.after[payload.targetCode];
+              if (src && tgt) {
+                pushUndo();
+                const keep = { code: tgt.code, type: tgt.type };
+                Object.keys(tgt).forEach((k) => {
+                  if (k !== "code" && k !== "type") delete tgt[k];
+                });
+                Object.keys(src).forEach((k) => {
+                  if (k === "code" || k === "type") return;
+                  tgt[k] = deepClone(src[k]);
+                });
+                tgt.code = keep.code;
+                tgt.type = keep.type;
+                setStatus2(`${payload.sourceCode} → ${payload.targetCode} の設定上書きを実行しました`);
+              }
+            }
+            closeModal();
+            render();
+            return;
+          }
+        } catch (e) {
+          if (st.modal && (st.modal.kind === "fieldJson" || st.modal.kind === "pairJson")) {
+            st.modal.error = e.message || String(e);
+            render();
+            return;
+          }
+          setStatus2(`プレビュー差分エディタエラー: ${e.message || String(e)}`, true);
+          return;
+        }
+      }
       const btn = ev.target.closest("[data-rpp-act]");
       if (!btn) return;
       const act = btn.dataset.rppAct;
@@ -10115,39 +10225,20 @@ ${contextLine}`);
           if (st.expanded.has(code)) st.expanded.delete(code);
           else st.expanded.add(code);
         } else if (act === "delete") {
-          if (!confirm(`${code} を削除しますか？`)) return;
-          pushUndo();
-          delete st.after[code];
+          openModal({ kind: "confirm", mode: "delete", title: "フィールド削除の確認", message: `${code} を削除しますか？`, payload: { code } });
         } else if (act === "restore") {
           if (!st.before[code]) return;
           pushUndo();
           st.after[code] = deepClone(st.before[code]);
+          setStatus2(`${code} を復元しました`);
         } else if (act === "edit") {
           const cur = st.after[code];
           if (!cur) return;
-          const raw = prompt("フィールドJSONを編集してください", JSON.stringify(cur, null, 2));
-          if (raw == null) return;
-          const parsed = parseFieldInput2(raw);
-          pushUndo();
-          st.after[code] = parsed;
-          if (parsed.code !== code) {
-            st.after[parsed.code] = st.after[code];
-            delete st.after[code];
-          }
+          openModal({ kind: "fieldJson", mode: "edit", code, title: `${code} の編集`, text: JSON.stringify(cur, null, 2), error: "" });
         } else if (act === "add") {
-          const raw = prompt("追加するフィールドJSONを入力してください（code/type/label必須）", '{\n  "type": "SINGLE_LINE_TEXT",\n  "code": "new_field",\n  "label": "新規フィールド",\n  "required": false\n}');
-          if (raw == null) return;
-          const parsed = parseFieldInput2(raw);
-          pushUndo();
-          st.after[parsed.code] = parsed;
+          openModal({ kind: "fieldJson", mode: "add", title: "フィールド追加", text: '{\n  "type": "SINGLE_LINE_TEXT",\n  "code": "new_field",\n  "label": "新規フィールド",\n  "required": false\n}', error: "" });
         } else if (act === "editJson") {
-          const b = prompt("変更前JSON（before）を編集してください", JSON.stringify(st.before, null, 2));
-          if (b == null) return;
-          const a = prompt("変更後JSON（after）を編集してください", JSON.stringify(st.after, null, 2));
-          if (a == null) return;
-          pushUndo();
-          st.before = JSON.parse(b);
-          st.after = JSON.parse(a);
+          openModal({ kind: "pairJson", title: "before / after JSON 編集", beforeText: JSON.stringify(st.before, null, 2), afterText: JSON.stringify(st.after, null, 2), error: "" });
         } else if (act === "export") {
           downloadText("kintone-preview-fields.json", JSON.stringify({ properties: st.after }, null, 2), "application/json");
         }
@@ -10178,19 +10269,7 @@ ${contextLine}`);
       const src = st.after[st.dragCode] || st.before[st.dragCode];
       const tgt = st.after[target];
       if (!src || !tgt) return;
-      if (!confirm(`${st.dragCode} の設定で ${target} を上書きしますか？`)) return;
-      pushUndo();
-      const keep = { code: tgt.code, type: tgt.type };
-      Object.keys(tgt).forEach((k) => {
-        if (k !== "code" && k !== "type") delete tgt[k];
-      });
-      Object.keys(src).forEach((k) => {
-        if (k === "code" || k === "type") return;
-        tgt[k] = deepClone(src[k]);
-      });
-      tgt.code = keep.code;
-      tgt.type = keep.type;
-      setStatus2(`${st.dragCode} → ${target} の設定上書きを実行しました`);
+      openModal({ kind: "confirm", mode: "overwrite", title: "設定上書きの確認", message: `${st.dragCode} の設定で ${target} を上書きしますか？`, payload: { sourceCode: st.dragCode, targetCode: target } });
       render();
     });
     render();

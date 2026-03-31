@@ -1154,3 +1154,15 @@
 #kintone-unified-suite-v2 .rpp-preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 #kintone-unified-suite-v2 .rpp-preview-head{font-size:10px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px 6px 0 0;padding:3px 8px}
 #kintone-unified-suite-v2 .rpp-preview-body{font-size:12px;color:#0f172a;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 6px 6px;padding:8px;min-height:36px;background:#fff}
+#kintone-unified-suite-v2 .rpp-modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.45);display:flex;align-items:center;justify-content:center;z-index:70;padding:16px}
+#kintone-unified-suite-v2 .rpp-modal{width:min(680px,96vw);background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 20px 60px rgba(2,6,23,.35);overflow:hidden}
+#kintone-unified-suite-v2 .rpp-modal-wide{width:min(980px,96vw)}
+#kintone-unified-suite-v2 .rpp-modal-head{padding:12px 14px;font-size:13px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .rpp-modal-body{padding:12px 14px}
+#kintone-unified-suite-v2 .rpp-modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#kintone-unified-suite-v2 .rpp-modal-label{font-size:11px;font-weight:700;color:#475569;margin-bottom:4px}
+#kintone-unified-suite-v2 .rpp-modal-textarea{width:100%;min-height:220px;max-height:52vh;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;box-sizing:border-box}
+#kintone-unified-suite-v2 .rpp-modal-error{margin-top:8px;padding:8px 10px;border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;border-radius:8px;font-size:11px}
+#kintone-unified-suite-v2 .rpp-modal-error-full{grid-column:1/-1}
+#kintone-unified-suite-v2 .rpp-modal-confirm{margin:0;font-size:12px;color:#334155;line-height:1.7}
+#kintone-unified-suite-v2 .rpp-modal-actions{padding:10px 14px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:flex-end;gap:8px}
