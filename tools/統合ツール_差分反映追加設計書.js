@@ -8377,6 +8377,44 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .launcher-lead{
   font-size:15px;font-weight:800;color:#0f172a;letter-spacing:-0.02em;
 }
+#kintone-unified-suite-v2 .reflect-preview-playground{margin-top:8px}
+#kintone-unified-suite-v2 #u_reflectPreviewEditorFold{scroll-margin-top:12px;scroll-margin-bottom:96px}
+#kintone-unified-suite-v2 .rpp-toolbar,#kintone-unified-suite-v2 .rpp-filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+#kintone-unified-suite-v2 .rpp-filters .btn.is-active{border-color:#0ea5e9;color:#0369a1;background:#e0f2fe}
+#kintone-unified-suite-v2 .rpp-filters .btn span{margin-left:4px;font-size:10px;opacity:.8}
+#kintone-unified-suite-v2 .rpp-list{display:flex;flex-direction:column;gap:8px}
+#kintone-unified-suite-v2 .rpp-card{border:1px solid #d6dee8;border-radius:8px;background:#fff}
+#kintone-unified-suite-v2 .rpp-head{display:flex;align-items:center;gap:6px;padding:8px 10px}
+#kintone-unified-suite-v2 .rpp-open{border:none;background:none;padding:0 2px;cursor:pointer;color:#64748b}
+#kintone-unified-suite-v2 .rpp-badge{display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;color:#fff}
+#kintone-unified-suite-v2 .rpp-added{background:#0d9488}
+#kintone-unified-suite-v2 .rpp-removed{background:#dc2626}
+#kintone-unified-suite-v2 .rpp-modified{background:#d97706}
+#kintone-unified-suite-v2 .rpp-unchanged{background:#64748b}
+#kintone-unified-suite-v2 .rpp-head strong{font-size:12px;color:#0f172a}
+#kintone-unified-suite-v2 .rpp-head code{font-size:10px;color:#64748b;background:#f1f5f9;padding:1px 6px;border-radius:999px}
+#kintone-unified-suite-v2 .rpp-spacer{margin-left:auto}
+#kintone-unified-suite-v2 .rpp-body{border-top:1px solid #e2e8f0;padding:8px 10px}
+#kintone-unified-suite-v2 .rpp-pre{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;line-height:1.5;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px}
+#kintone-unified-suite-v2 .rpp-table{width:100%;border-collapse:collapse;font-size:11px}
+#kintone-unified-suite-v2 .rpp-table th,#kintone-unified-suite-v2 .rpp-table td{border-bottom:1px solid #e2e8f0;padding:4px 6px;vertical-align:top;text-align:left}
+#kintone-unified-suite-v2 .rpp-table th{background:#f8fafc;color:#475569}
+#kintone-unified-suite-v2 .rpp-table pre{margin:0;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#kintone-unified-suite-v2 .rpp-preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#kintone-unified-suite-v2 .rpp-preview-head{font-size:10px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px 6px 0 0;padding:3px 8px}
+#kintone-unified-suite-v2 .rpp-preview-body{font-size:12px;color:#0f172a;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 6px 6px;padding:8px;min-height:36px;background:#fff}
+#kintone-unified-suite-v2 .rpp-modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.45);display:flex;align-items:center;justify-content:center;z-index:70;padding:16px}
+#kintone-unified-suite-v2 .rpp-modal{width:min(680px,96vw);background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 20px 60px rgba(2,6,23,.35);overflow:hidden}
+#kintone-unified-suite-v2 .rpp-modal-wide{width:min(980px,96vw)}
+#kintone-unified-suite-v2 .rpp-modal-head{padding:12px 14px;font-size:13px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .rpp-modal-body{padding:12px 14px}
+#kintone-unified-suite-v2 .rpp-modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#kintone-unified-suite-v2 .rpp-modal-label{font-size:11px;font-weight:700;color:#475569;margin-bottom:4px}
+#kintone-unified-suite-v2 .rpp-modal-textarea{width:100%;min-height:220px;max-height:52vh;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;box-sizing:border-box}
+#kintone-unified-suite-v2 .rpp-modal-error{margin-top:8px;padding:8px 10px;border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;border-radius:8px;font-size:11px}
+#kintone-unified-suite-v2 .rpp-modal-error-full{grid-column:1/-1}
+#kintone-unified-suite-v2 .rpp-modal-confirm{margin:0;font-size:12px;color:#334155;line-height:1.7}
+#kintone-unified-suite-v2 .rpp-modal-actions{padding:10px 14px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:flex-end;gap:8px}
 `;
 
   // src/ui/template.js
@@ -8844,6 +8882,7 @@ ${contextLine}`);
                       <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
                     </div>
                     <div class="reflect-main-header__controls">
+                      <button type="button" class="btn sub" data-act="openReflectPreviewEditor" title="フィールド差分プレビューエディタまでスクロールして展開します">差分プレビューエディタ</button>
                       <label class="reflect-simple-toggle chip" title="ノード選択・JSON差分反映を隠し、セクション反映に集中します">
                         <input type="checkbox" id="u_reflectSimpleMode"> 簡易表示
                       </label>
@@ -8928,6 +8967,14 @@ ${contextLine}`);
                         </div>
                       </div>
                     </div>
+                    <section class="opt-card" id="u_reflectPreviewEditorFold" style="margin-top:8px">
+                      <div class="opt-title">フィールド差分プレビューエディタ（試験）</div>
+                      <div class="muted" style="margin-top:-2px;margin-bottom:6px">追加/削除/編集/ドラッグ上書きの事前確認UI</div>
+                      <div>
+                        <div class="muted" style="margin-top:0;line-height:1.6">統合ツール内でフィールド差分のプレビューを操作できる補助エディタです。ドラッグ＆ドロップで別カードへ設定上書き（code/typeは保持）、JSON編集とUndoにも対応します。</div>
+                        <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
+                      </div>
+                    </section>
                   </div>
                   <div class="reflect-footer-stack">
                     <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>
@@ -9949,6 +9996,286 @@ ${contextLine}`);
   init_dialog();
   init_diff();
   init_preview_compare();
+
+  // src/tabs/reflect-preview-playground.js
+  init_utils();
+  var SAMPLE_BEFORE = {
+    "文字列__1行_": { type: "SINGLE_LINE_TEXT", code: "文字列__1行_", label: "会社名", noLabel: false, required: true, unique: false, maxLength: "64", minLength: "", defaultValue: "", expression: "", hideExpression: false },
+    "数値": { type: "NUMBER", code: "数値", label: "金額", noLabel: false, required: false, unique: false, maxValue: "", minValue: "", defaultValue: "0", digit: true, unit: "¥", unitPosition: "BEFORE" },
+    "ドロップダウン": { type: "DROP_DOWN", code: "ドロップダウン", label: "ステータス", noLabel: false, required: true, defaultValue: "未着手", options: { "未着手": { label: "未着手", index: 0 }, "進行中": { label: "進行中", index: 1 }, "完了": { label: "完了", index: 2 } } },
+    "日付": { type: "DATE", code: "日付", label: "登録日", noLabel: false, required: false, unique: false, defaultValue: "", defaultNowValue: true },
+    "リッチエディター": { type: "RICH_TEXT", code: "リッチエディター", label: "備考", noLabel: false, required: false, defaultValue: "" }
+  };
+  var SAMPLE_AFTER = {
+    "文字列__1行_": { type: "SINGLE_LINE_TEXT", code: "文字列__1行_", label: "会社名（正式名称）", noLabel: false, required: true, unique: true, maxLength: "128", minLength: "1", defaultValue: "", expression: "", hideExpression: false },
+    "数値": { type: "NUMBER", code: "数値", label: "金額", noLabel: false, required: true, unique: false, maxValue: "9999999", minValue: "0", defaultValue: "0", digit: true, unit: "円", unitPosition: "BEFORE" },
+    "ドロップダウン": { type: "DROP_DOWN", code: "ドロップダウン", label: "ステータス", noLabel: false, required: true, defaultValue: "未着手", options: { "未着手": { label: "未着手", index: 0 }, "進行中": { label: "進行中", index: 1 }, "レビュー中": { label: "レビュー中", index: 2 }, "完了": { label: "完了", index: 3 } } },
+    "日付": { type: "DATE", code: "日付", label: "登録日", noLabel: false, required: true, unique: false, defaultValue: "", defaultNowValue: true },
+    "担当者": { type: "USER_SELECT", code: "担当者", label: "担当者", noLabel: false, required: true, defaultValue: [], entities: [] }
+  };
+  var STATUS_LABELS = { added: "追加", removed: "削除", modified: "変更", unchanged: "変更なし" };
+  function deepEqual(a, b) {
+    if (a === b) return true;
+    if (a == null || b == null) return a === b;
+    if (typeof a !== typeof b || typeof a !== "object") return false;
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    return ka.every((k) => deepEqual(a[k], b[k]));
+  }
+  function formatValue(v) {
+    if (v === void 0 || v === null) return "—";
+    if (typeof v === "boolean") return v ? "はい" : "いいえ";
+    if (typeof v === "object") return JSON.stringify(v, null, 2);
+    if (v === "") return '""';
+    return String(v);
+  }
+  function computeDiff(before, after) {
+    const keys = /* @__PURE__ */ new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+    const rows = [];
+    for (const code of keys) {
+      const bf = before?.[code];
+      const af = after?.[code];
+      if (!bf && af) rows.push({ code, status: "added", before: null, after: af, changes: [] });
+      else if (bf && !af) rows.push({ code, status: "removed", before: bf, after: null, changes: [] });
+      else {
+        const props = /* @__PURE__ */ new Set([...Object.keys(bf || {}), ...Object.keys(af || {})]);
+        const changes = [];
+        props.forEach((prop) => {
+          if (!deepEqual(bf[prop], af[prop])) changes.push({ prop, before: bf[prop], after: af[prop] });
+        });
+        rows.push({ code, status: changes.length ? "modified" : "unchanged", before: bf, after: af, changes });
+      }
+    }
+    const order = { added: 0, removed: 1, modified: 2, unchanged: 3 };
+    rows.sort((a, b) => order[a.status] - order[b.status]);
+    return rows;
+  }
+  function initReflectPreviewPlayground(ui4, setStatus2) {
+    const root2 = ui4.reflectPreviewPlayground;
+    if (!root2) return;
+    const st = {
+      before: deepClone(SAMPLE_BEFORE),
+      after: deepClone(SAMPLE_AFTER),
+      filter: "all",
+      view: "diff",
+      undo: [],
+      expanded: /* @__PURE__ */ new Set(),
+      dragCode: "",
+      modal: null
+    };
+    const pushUndo = () => {
+      st.undo.push({ before: deepClone(st.before), after: deepClone(st.after) });
+      if (st.undo.length > 20) st.undo.shift();
+    };
+    const parseFieldInput2 = (v) => {
+      const obj = JSON.parse(v);
+      if (!obj || typeof obj !== "object") throw new Error("JSONオブジェクトを入力してください");
+      if (!obj.code || !obj.type || !obj.label) throw new Error("code/type/label が必要です");
+      return obj;
+    };
+    const openModal = (modal) => {
+      st.modal = modal;
+    };
+    const closeModal = () => {
+      st.modal = null;
+    };
+    const renderModal = () => {
+      if (!st.modal) return "";
+      if (st.modal.kind === "fieldJson") {
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><textarea class="rpp-modal-textarea" data-rpp-modal-input="fieldJson">${esc(st.modal.text || "")}</textarea>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldJson">保存</button></div></div></div>`;
+      }
+      if (st.modal.kind === "pairJson") {
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal rpp-modal-wide" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body rpp-modal-grid"><div><div class="rpp-modal-label">変更前（before）</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="beforeJson">${esc(st.modal.beforeText || "")}</textarea></div><div><div class="rpp-modal-label">変更後（after）</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="afterJson">${esc(st.modal.afterText || "")}</textarea></div>${st.modal.error ? `<div class="rpp-modal-error rpp-modal-error-full">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="savePairJson">適用</button></div></div></div>`;
+      }
+      if (st.modal.kind === "confirm") {
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><p class="rpp-modal-confirm">${esc(st.modal.message)}</p></div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="confirmAction">実行</button></div></div></div>`;
+      }
+      return "";
+    };
+    const render = () => {
+      const diff = computeDiff(st.before, st.after);
+      const rows = st.filter === "all" ? diff : diff.filter((r) => r.status === st.filter);
+      const stats = { added: 0, removed: 0, modified: 0, unchanged: 0 };
+      diff.forEach((d) => {
+        stats[d.status] += 1;
+      });
+      root2.innerHTML = `
+      <div class="rpp-toolbar">
+        <button type="button" class="btn sub" data-rpp-act="loadSample">サンプル</button>
+        <button type="button" class="btn sub" data-rpp-act="undo" ${st.undo.length ? "" : "disabled"}>↩ 戻す</button>
+        <button type="button" class="btn sub" data-rpp-act="add">＋ フィールド追加</button>
+        <button type="button" class="btn sub" data-rpp-act="editJson">JSON編集</button>
+        <button type="button" class="btn sub" data-rpp-act="export">JSON保存</button>
+        <span style="margin-left:auto"></span>
+        <button type="button" class="btn ${st.view === "diff" ? "ok" : "sub"}" data-rpp-act="viewDiff">差分</button>
+        <button type="button" class="btn ${st.view === "preview" ? "ok" : "sub"}" data-rpp-act="viewPreview">プレビュー</button>
+      </div>
+      <div class="rpp-filters">
+        ${["all", "added", "removed", "modified", "unchanged"].map((k) => `<button type="button" class="btn sub ${st.filter === k ? "is-active" : ""}" data-rpp-act="filter" data-filter="${k}">${k === "all" ? "すべて" : STATUS_LABELS[k]} <span>${k === "all" ? diff.length : stats[k]}</span></button>`).join("")}
+      </div>
+      <div class="rpp-list">
+        ${rows.map((row) => {
+        const opened = st.expanded.has(row.code);
+        const label = row.after?.label || row.before?.label || row.code;
+        const body = st.view === "diff" ? row.status === "modified" ? `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>変更前</th><th>変更後</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatValue(ch.before))}</pre></td><td><pre>${esc(formatValue(ch.after))}</pre></td></tr>`).join("")}</tbody></table>` : `<pre class="rpp-pre">${esc(formatValue(row.after || row.before))}</pre>` : `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">本番</div><div class="rpp-preview-body">${row.before ? esc(row.before.label || row.before.code || "-") : "なし"}</div></div><div><div class="rpp-preview-head">プレビュー</div><div class="rpp-preview-body">${row.after ? esc(row.after.label || row.after.code || "-") : "なし"}</div></div></div>`;
+        return `<div class="rpp-card" draggable="true" data-rpp-code="${esc(row.code)}"><div class="rpp-head"><button type="button" class="rpp-open" data-rpp-act="toggle" data-code="${esc(row.code)}">${opened ? "▾" : "▸"}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.code)}</code><span class="rpp-spacer"></span>${row.after ? `<button type="button" class="btn sub" data-rpp-act="edit" data-code="${esc(row.code)}">編集</button><button type="button" class="btn sub" data-rpp-act="delete" data-code="${esc(row.code)}">削除</button>` : `<button type="button" class="btn sub" data-rpp-act="restore" data-code="${esc(row.code)}">復元</button>`}</div>${opened ? `<div class="rpp-body">${body}</div>` : ""}</div>`;
+      }).join("") || '<div class="muted" style="padding:12px">表示対象がありません</div>'}
+      </div>
+      ${renderModal()}`;
+    };
+    root2.addEventListener("click", (ev) => {
+      const modalAct = ev.target.closest("[data-rpp-modal-act]")?.dataset.rppModalAct;
+      if (modalAct) {
+        try {
+          if (modalAct === "cancel") {
+            closeModal();
+            render();
+            return;
+          }
+          if (modalAct === "saveFieldJson" && st.modal?.kind === "fieldJson") {
+            const raw = root2.querySelector('[data-rpp-modal-input="fieldJson"]')?.value || "";
+            const parsed = parseFieldInput2(raw);
+            pushUndo();
+            if (st.modal.mode === "add") {
+              st.after[parsed.code] = parsed;
+              setStatus2(`${parsed.code} を追加しました`);
+            } else if (st.modal.mode === "edit") {
+              const oldCode = st.modal.code || parsed.code;
+              st.after[oldCode] = parsed;
+              if (oldCode !== parsed.code) {
+                st.after[parsed.code] = st.after[oldCode];
+                delete st.after[oldCode];
+              }
+              setStatus2(`${parsed.code} を更新しました`);
+            }
+            closeModal();
+            render();
+            return;
+          }
+          if (modalAct === "savePairJson" && st.modal?.kind === "pairJson") {
+            const b = root2.querySelector('[data-rpp-modal-input="beforeJson"]')?.value || "";
+            const a = root2.querySelector('[data-rpp-modal-input="afterJson"]')?.value || "";
+            pushUndo();
+            st.before = JSON.parse(b);
+            st.after = JSON.parse(a);
+            closeModal();
+            setStatus2("before/after JSON を更新しました");
+            render();
+            return;
+          }
+          if (modalAct === "confirmAction" && st.modal?.kind === "confirm") {
+            const payload = st.modal.payload || {};
+            if (st.modal.mode === "delete") {
+              pushUndo();
+              delete st.after[payload.code];
+              setStatus2(`${payload.code} を削除しました`);
+            } else if (st.modal.mode === "overwrite") {
+              const src = st.after[payload.sourceCode] || st.before[payload.sourceCode];
+              const tgt = st.after[payload.targetCode];
+              if (src && tgt) {
+                pushUndo();
+                const keep = { code: tgt.code, type: tgt.type };
+                Object.keys(tgt).forEach((k) => {
+                  if (k !== "code" && k !== "type") delete tgt[k];
+                });
+                Object.keys(src).forEach((k) => {
+                  if (k === "code" || k === "type") return;
+                  tgt[k] = deepClone(src[k]);
+                });
+                tgt.code = keep.code;
+                tgt.type = keep.type;
+                setStatus2(`${payload.sourceCode} → ${payload.targetCode} の設定上書きを実行しました`);
+              }
+            }
+            closeModal();
+            render();
+            return;
+          }
+        } catch (e) {
+          if (st.modal && (st.modal.kind === "fieldJson" || st.modal.kind === "pairJson")) {
+            st.modal.error = e.message || String(e);
+            render();
+            return;
+          }
+          setStatus2(`プレビュー差分エディタエラー: ${e.message || String(e)}`, true);
+          return;
+        }
+      }
+      const btn = ev.target.closest("[data-rpp-act]");
+      if (!btn) return;
+      const act = btn.dataset.rppAct;
+      const code = btn.dataset.code || "";
+      try {
+        if (act === "loadSample") {
+          pushUndo();
+          st.before = deepClone(SAMPLE_BEFORE);
+          st.after = deepClone(SAMPLE_AFTER);
+          setStatus2("サンプルデータを再読込しました");
+        } else if (act === "undo") {
+          if (!st.undo.length) return;
+          const prev = st.undo.pop();
+          st.before = prev.before;
+          st.after = prev.after;
+          setStatus2("元に戻しました");
+        } else if (act === "viewDiff") st.view = "diff";
+        else if (act === "viewPreview") st.view = "preview";
+        else if (act === "filter") st.filter = btn.dataset.filter || "all";
+        else if (act === "toggle") {
+          if (st.expanded.has(code)) st.expanded.delete(code);
+          else st.expanded.add(code);
+        } else if (act === "delete") {
+          openModal({ kind: "confirm", mode: "delete", title: "フィールド削除の確認", message: `${code} を削除しますか？`, payload: { code } });
+        } else if (act === "restore") {
+          if (!st.before[code]) return;
+          pushUndo();
+          st.after[code] = deepClone(st.before[code]);
+          setStatus2(`${code} を復元しました`);
+        } else if (act === "edit") {
+          const cur = st.after[code];
+          if (!cur) return;
+          openModal({ kind: "fieldJson", mode: "edit", code, title: `${code} の編集`, text: JSON.stringify(cur, null, 2), error: "" });
+        } else if (act === "add") {
+          openModal({ kind: "fieldJson", mode: "add", title: "フィールド追加", text: '{\n  "type": "SINGLE_LINE_TEXT",\n  "code": "new_field",\n  "label": "新規フィールド",\n  "required": false\n}', error: "" });
+        } else if (act === "editJson") {
+          openModal({ kind: "pairJson", title: "before / after JSON 編集", beforeText: JSON.stringify(st.before, null, 2), afterText: JSON.stringify(st.after, null, 2), error: "" });
+        } else if (act === "export") {
+          downloadText("kintone-preview-fields.json", JSON.stringify({ properties: st.after }, null, 2), "application/json");
+        }
+        render();
+      } catch (e) {
+        setStatus2(`プレビュー差分エディタエラー: ${e.message || String(e)}`, true);
+      }
+    });
+    root2.addEventListener("dragstart", (ev) => {
+      const card = ev.target.closest("[data-rpp-code]");
+      if (!card) return;
+      st.dragCode = card.dataset.rppCode || "";
+      ev.dataTransfer.effectAllowed = "move";
+    });
+    root2.addEventListener("dragover", (ev) => {
+      if (!st.dragCode) return;
+      const card = ev.target.closest("[data-rpp-code]");
+      if (!card) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "move";
+    });
+    root2.addEventListener("drop", (ev) => {
+      const card = ev.target.closest("[data-rpp-code]");
+      if (!card || !st.dragCode) return;
+      ev.preventDefault();
+      const target = card.dataset.rppCode || "";
+      if (!target || target === st.dragCode) return;
+      const src = st.after[st.dragCode] || st.before[st.dragCode];
+      const tgt = st.after[target];
+      if (!src || !tgt) return;
+      openModal({ kind: "confirm", mode: "overwrite", title: "設定上書きの確認", message: `${st.dragCode} の設定で ${target} を上書きしますか？`, payload: { sourceCode: st.dragCode, targetCode: target } });
+      render();
+    });
+    render();
+  }
+
+  // src/handlers.js
   init_reflect();
   init_field();
 
@@ -10718,6 +11045,7 @@ ${contextLine}`);
     renderReflectSidebar();
     renderReflectMainPanel();
     renderReflectNodeList();
+    initReflectPreviewPlayground(ui, setStatus);
     if (ui.settingsExportSearchResult && !ui.settingsExportSearchResult.innerHTML) {
       ui.settingsExportSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
     }
@@ -11347,6 +11675,12 @@ ${contextLine}`);
         switchSubTab("diff", state.lastDiffRows.length || state.lastFetchIssues.length ? "view" : "conditions");
         if (ui.result) renderResultRows(state.lastDiffRows || []);
         setStatus("差分比較タブへ移動しました");
+        return;
+      }
+      if (act === "openReflectPreviewEditor") {
+        const fold = root2.querySelector("#u_reflectPreviewEditorFold");
+        fold?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        setStatus("フィールド差分プレビューエディタへ移動しました");
         return;
       }
       if (act === "setSourceCurrent") {
@@ -15614,6 +15948,7 @@ ${safety.hash}`, "");
       reflectNodeWorkbench: $("#u_reflectNodeWorkbench"),
       reflectNodeList: $("#u_reflectNodeList"),
       reflectNodeDetail: $("#u_reflectNodeDetail"),
+      reflectPreviewPlayground: $("#u_reflectPreviewPlayground"),
       reflectAssist: $("#u_reflectAssist"),
       reflectHowto: $("#u_reflectHowto"),
       reflectOverview: $("#u_reflectOverview"),
