@@ -8415,6 +8415,13 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .rpp-modal-error-full{grid-column:1/-1}
 #kintone-unified-suite-v2 .rpp-modal-confirm{margin:0;font-size:12px;color:#334155;line-height:1.7}
 #kintone-unified-suite-v2 .rpp-modal-actions{padding:10px 14px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:flex-end;gap:8px}
+#kintone-unified-suite-v2 .rpp-field-grid{display:grid;grid-template-columns:1fr;gap:8px}
+#kintone-unified-suite-v2 .rpp-field-row{display:grid;grid-template-columns:160px 1fr;align-items:center;gap:10px}
+#kintone-unified-suite-v2 .rpp-field-row>span{font-size:11px;font-weight:700;color:#334155}
+#kintone-unified-suite-v2 .rpp-field-row input,#kintone-unified-suite-v2 .rpp-field-row select{height:32px;border:1px solid #cbd5e1;border-radius:8px;padding:0 8px;box-sizing:border-box;font-size:12px}
+#kintone-unified-suite-v2 .rpp-field-row input[type="checkbox"]{width:18px;height:18px;padding:0}
+#kintone-unified-suite-v2 .rpp-modal-textarea-mini{min-height:92px}
+#kintone-unified-suite-v2 .rpp-modal-hint{margin-top:8px;font-size:11px;color:#64748b}
 `;
 
   // src/ui/template.js
@@ -10014,6 +10021,38 @@ ${contextLine}`);
     "担当者": { type: "USER_SELECT", code: "担当者", label: "担当者", noLabel: false, required: true, defaultValue: [], entities: [] }
   };
   var STATUS_LABELS = { added: "追加", removed: "削除", modified: "変更", unchanged: "変更なし" };
+  var FIELD_TYPES = [
+    { value: "SINGLE_LINE_TEXT", label: "文字列(1行)" },
+    { value: "MULTI_LINE_TEXT", label: "文字列(複数行)" },
+    { value: "RICH_TEXT", label: "リッチエディター" },
+    { value: "NUMBER", label: "数値" },
+    { value: "CHECK_BOX", label: "チェックボックス" },
+    { value: "RADIO_BUTTON", label: "ラジオボタン" },
+    { value: "DROP_DOWN", label: "ドロップダウン" },
+    { value: "MULTI_SELECT", label: "複数選択" },
+    { value: "DATE", label: "日付" },
+    { value: "TIME", label: "時刻" },
+    { value: "DATETIME", label: "日時" },
+    { value: "LINK", label: "リンク" },
+    { value: "USER_SELECT", label: "ユーザー選択" },
+    { value: "FILE", label: "添付ファイル" }
+  ];
+  var DEFAULT_PROPS = {
+    SINGLE_LINE_TEXT: { noLabel: false, required: false, unique: false, maxLength: "", minLength: "", defaultValue: "", expression: "", hideExpression: false },
+    MULTI_LINE_TEXT: { noLabel: false, required: false, defaultValue: "" },
+    RICH_TEXT: { noLabel: false, required: false, defaultValue: "" },
+    NUMBER: { noLabel: false, required: false, unique: false, maxValue: "", minValue: "", defaultValue: "0", digit: true, unit: "", unitPosition: "BEFORE" },
+    CHECK_BOX: { noLabel: false, required: false, defaultValue: [], options: {} },
+    RADIO_BUTTON: { noLabel: false, required: true, defaultValue: "", options: {} },
+    DROP_DOWN: { noLabel: false, required: false, defaultValue: "", options: {} },
+    MULTI_SELECT: { noLabel: false, required: false, defaultValue: [], options: {} },
+    DATE: { noLabel: false, required: false, unique: false, defaultValue: "", defaultNowValue: false },
+    TIME: { noLabel: false, required: false, defaultValue: "" },
+    DATETIME: { noLabel: false, required: false, unique: false, defaultValue: "", defaultNowValue: false },
+    LINK: { noLabel: false, required: false, unique: false, defaultValue: "", protocol: "WEB" },
+    USER_SELECT: { noLabel: false, required: false, defaultValue: [], entities: [] },
+    FILE: { noLabel: false, required: false }
+  };
   function deepEqual(a, b) {
     if (a === b) return true;
     if (a == null || b == null) return a === b;
@@ -10050,6 +10089,73 @@ ${contextLine}`);
     const order = { added: 0, removed: 1, modified: 2, unchanged: 3 };
     rows.sort((a, b) => order[a.status] - order[b.status]);
     return rows;
+  }
+  function parseLooseValue(text) {
+    const t = String(text || "").trim();
+    if (t === "") return "";
+    if (t === "true") return true;
+    if (t === "false") return false;
+    if (t[0] === "{" || t[0] === "[") return JSON.parse(t);
+    return t;
+  }
+  function normalizeFieldValue(key, value) {
+    if (key === "defaultValue") {
+      if (Array.isArray(value)) return value;
+      if (typeof value !== "string") return value;
+      const list = value.split(",").map((s) => s.trim()).filter(Boolean);
+      if (list.length > 1) return list;
+      return value;
+    }
+    if (key === "options") {
+      if (typeof value !== "string") return value || {};
+      const lines = value.split("\n").map((s) => s.trim()).filter(Boolean);
+      const out = {};
+      lines.forEach((label, idx) => {
+        out[label] = { label, index: idx };
+      });
+      return out;
+    }
+    if (Array.isArray(value)) {
+      if (!value.length) return [];
+      return value;
+    }
+    return value;
+  }
+  function collectFieldFromForm(form, fallback) {
+    const type = form.querySelector('[data-rpp-field="type"]')?.value || fallback?.type || "SINGLE_LINE_TEXT";
+    const code = (form.querySelector('[data-rpp-field="code"]')?.value || fallback?.code || "").trim();
+    const label = (form.querySelector('[data-rpp-field="label"]')?.value || fallback?.label || "").trim();
+    if (!code || !type || !label) throw new Error("code/type/label は必須です");
+    const next = { type, code, label };
+    const rows = form.querySelectorAll("[data-rpp-key]");
+    rows.forEach((row) => {
+      const key = row.getAttribute("data-rpp-key");
+      const input = row.querySelector("[data-rpp-input]");
+      if (!key || !input) return;
+      let value;
+      if (input.type === "checkbox") value = !!input.checked;
+      else value = parseLooseValue(input.value);
+      next[key] = normalizeFieldValue(key, value);
+    });
+    return next;
+  }
+  function renderFieldFormRows(draft) {
+    const keys = Object.keys(draft).filter((k) => !["type", "code", "label"].includes(k));
+    return keys.map((key) => {
+      const value = draft[key];
+      if (typeof value === "boolean") {
+        return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(key)}</span><input data-rpp-input type="checkbox" ${value ? "checked" : ""}></label>`;
+      }
+      if (key === "unitPosition") {
+        return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(key)}</span><select data-rpp-input><option value="BEFORE" ${value === "BEFORE" ? "selected" : ""}>BEFORE</option><option value="AFTER" ${value === "AFTER" ? "selected" : ""}>AFTER</option></select></label>`;
+      }
+      if (key === "options" && value && typeof value === "object") {
+        const lines = Object.values(value).sort((a, b) => a.index - b.index).map((o) => o.label).join("\n");
+        return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(key)}（1行1候補）</span><textarea data-rpp-input class="rpp-modal-textarea rpp-modal-textarea-mini">${esc(lines)}</textarea></label>`;
+      }
+      const text = typeof value === "string" ? value : JSON.stringify(value);
+      return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(key)}</span><input data-rpp-input type="text" value="${esc(text || "")}"></label>`;
+    }).join("");
   }
   function initReflectPreviewPlayground(ui4, setStatus2) {
     const root2 = ui4.reflectPreviewPlayground;
@@ -10090,6 +10196,9 @@ ${contextLine}`);
       }
       if (st.modal.kind === "confirm") {
         return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><p class="rpp-modal-confirm">${esc(st.modal.message)}</p></div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="confirmAction">実行</button></div></div></div>`;
+      }
+      if (st.modal.kind === "fieldForm") {
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><div class="rpp-field-grid"><label class="rpp-field-row"><span>type</span>${st.modal.mode === "edit" ? `<input data-rpp-field="type" type="text" value="${esc(st.modal.draft.type)}" readonly>` : `<select data-rpp-field="type">${FIELD_TYPES.map((t) => `<option value="${esc(t.value)}" ${st.modal.draft.type === t.value ? "selected" : ""}>${esc(t.label)}</option>`).join("")}</select>`}</label><label class="rpp-field-row"><span>code</span><input data-rpp-field="code" type="text" value="${esc(st.modal.draft.code || "")}" ${st.modal.mode === "edit" ? "readonly" : ""}></label><label class="rpp-field-row"><span>label</span><input data-rpp-field="label" type="text" value="${esc(st.modal.draft.label || "")}"></label>${renderFieldFormRows(st.modal.draft)}</div><div class="rpp-modal-hint">詳細JSONでの編集が必要な場合は「JSON編集」を利用してください。</div>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn sub" data-rpp-modal-act="switchFieldJson">JSON編集</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldForm">保存</button></div></div></div>`;
       }
       return "";
     };
@@ -10153,6 +10262,27 @@ ${contextLine}`);
             render();
             return;
           }
+          if (modalAct === "switchFieldJson" && st.modal?.kind === "fieldForm") {
+            openModal({ kind: "fieldJson", mode: st.modal.mode, code: st.modal.code || st.modal.draft.code, title: `${st.modal.title}（JSON）`, text: JSON.stringify(st.modal.draft, null, 2), error: "" });
+            render();
+            return;
+          }
+          if (modalAct === "saveFieldForm" && st.modal?.kind === "fieldForm") {
+            const form = root2.querySelector(".rpp-field-grid");
+            const parsed = collectFieldFromForm(form, st.modal.draft);
+            pushUndo();
+            if (st.modal.mode === "add") {
+              if (st.after[parsed.code]) throw new Error(`code "${parsed.code}" は既に存在します`);
+              st.after[parsed.code] = parsed;
+              setStatus2(`${parsed.code} を追加しました`);
+            } else if (st.modal.mode === "edit") {
+              st.after[parsed.code] = parsed;
+              setStatus2(`${parsed.code} を更新しました`);
+            }
+            closeModal();
+            render();
+            return;
+          }
           if (modalAct === "savePairJson" && st.modal?.kind === "pairJson") {
             const b = root2.querySelector('[data-rpp-modal-input="beforeJson"]')?.value || "";
             const a = root2.querySelector('[data-rpp-modal-input="afterJson"]')?.value || "";
@@ -10193,7 +10323,7 @@ ${contextLine}`);
             return;
           }
         } catch (e) {
-          if (st.modal && (st.modal.kind === "fieldJson" || st.modal.kind === "pairJson")) {
+          if (st.modal && (st.modal.kind === "fieldJson" || st.modal.kind === "pairJson" || st.modal.kind === "fieldForm")) {
             st.modal.error = e.message || String(e);
             render();
             return;
@@ -10234,9 +10364,9 @@ ${contextLine}`);
         } else if (act === "edit") {
           const cur = st.after[code];
           if (!cur) return;
-          openModal({ kind: "fieldJson", mode: "edit", code, title: `${code} の編集`, text: JSON.stringify(cur, null, 2), error: "" });
+          openModal({ kind: "fieldForm", mode: "edit", code, title: `${code} の編集`, draft: deepClone(cur), error: "" });
         } else if (act === "add") {
-          openModal({ kind: "fieldJson", mode: "add", title: "フィールド追加", text: '{\n  "type": "SINGLE_LINE_TEXT",\n  "code": "new_field",\n  "label": "新規フィールド",\n  "required": false\n}', error: "" });
+          openModal({ kind: "fieldForm", mode: "add", title: "フィールド追加", draft: { type: "SINGLE_LINE_TEXT", code: `new_field_${Object.keys(st.after).length + 1}`, label: "新規フィールド", ...deepClone(DEFAULT_PROPS.SINGLE_LINE_TEXT) }, error: "" });
         } else if (act === "editJson") {
           openModal({ kind: "pairJson", title: "before / after JSON 編集", beforeText: JSON.stringify(st.before, null, 2), afterText: JSON.stringify(st.after, null, 2), error: "" });
         } else if (act === "export") {
@@ -10270,6 +10400,14 @@ ${contextLine}`);
       const tgt = st.after[target];
       if (!src || !tgt) return;
       openModal({ kind: "confirm", mode: "overwrite", title: "設定上書きの確認", message: `${st.dragCode} の設定で ${target} を上書きしますか？`, payload: { sourceCode: st.dragCode, targetCode: target } });
+      render();
+    });
+    root2.addEventListener("change", (ev) => {
+      if (st.modal?.kind !== "fieldForm" || st.modal.mode !== "add") return;
+      const sel = ev.target.closest('[data-rpp-field="type"]');
+      if (!sel) return;
+      const type = sel.value || "SINGLE_LINE_TEXT";
+      st.modal.draft = { type, code: st.modal.draft.code, label: st.modal.draft.label, ...deepClone(DEFAULT_PROPS[type] || {}) };
       render();
     });
     render();
