@@ -261,6 +261,16 @@ export function buildRoot(targetDocument = document, options = {}) {
               </div>
               <div class="subpane" data-subpane-parent="diff" data-subpane="view">
                 <div class="subpane-note">取得済みの差分の絞り込みと出力です。まず下の「フィルタ・出力」を開き、必要なら「拡大・クイック・選択セット」を開いてください。</div>
+                <div class="diff-view-overview">
+                  <div class="diff-view-overview-main">
+                    <div class="diff-view-overview-title">現在の比較結果</div>
+                    <div class="kv diff-view-overview-state" id="u_diffSelectionState">差分未実行</div>
+                  </div>
+                  <div class="diff-view-overview-side">
+                    <div class="diff-view-overview-side-title">主な操作</div>
+                    <div class="diff-view-overview-side-body">フィルタ調整 → 必要行を選択 → JSON/HTML/Excel/パッチを出力。別ウィンドウ表示や選択セット保存もこのサブタブで実行できます。</div>
+                  </div>
+                </div>
               <details class="diff-fold diff-fold--view-extras">
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">拡大・クイック・選択セット</span>
@@ -301,7 +311,6 @@ export function buildRoot(targetDocument = document, options = {}) {
               </div>
                 </div>
               </details>
-              <div class="kv" id="u_diffSelectionState">差分未実行</div>
               <details class="diff-fold diff-fold--view-filter" open>
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">フィルタ・出力対象・選択</span>
