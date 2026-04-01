@@ -2107,7 +2107,7 @@ export function renderResultRows(rows) {
   const sectionNavHtml = rows.length ? buildDiffSectionNavHtml(rows) : '';
 
   const summaryHtml = `
-      <div class="diff-summary-head">
+      <div class="diff-summary-head" role="region" aria-label="差分サマリー">
         ${buildDiffSummaryBars(summary)}
         <div class="diff-summary">
         <span class="diff-pill">総件数 ${summary.total}</span>

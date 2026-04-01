@@ -21,10 +21,10 @@
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // src/constants.js
+  // tools/統合ツール/src/constants.js
   var TOOL_ID, TOOL_VERSION, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SNAPSHOT_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, FEATURE_DEFS, TAB_TO_FEATURE, PREVIEW_COMPARE_PRESETS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
-    "src/constants.js"() {
+    "tools/統合ツール/src/constants.js"() {
       "use strict";
       TOOL_ID = "kintone-unified-suite-v2";
       TOOL_VERSION = "2.5.0";
@@ -261,7 +261,7 @@
     }
   });
 
-  // src/state.js
+  // tools/統合ツール/src/state.js
   function loadDialogState() {
     try {
       return JSON.parse(localStorage.getItem(DIALOG_STATE_KEY) || "{}");
@@ -277,7 +277,7 @@
   }
   var state, ui;
   var init_state = __esm({
-    "src/state.js"() {
+    "tools/統合ツール/src/state.js"() {
       "use strict";
       init_constants();
       state = {
@@ -330,7 +330,7 @@
     }
   });
 
-  // src/utils.js
+  // tools/統合ツール/src/utils.js
   var utils_exports = {};
   __export(utils_exports, {
     apiErrorWithContext: () => apiErrorWithContext,
@@ -490,13 +490,13 @@ ${contextLine}`);
     });
   }
   var init_utils = __esm({
-    "src/utils.js"() {
+    "tools/統合ツール/src/utils.js"() {
       "use strict";
       init_constants();
     }
   });
 
-  // src/ui/dialog.js
+  // tools/統合ツール/src/ui/dialog.js
   function callScheduleGuidedTourLayout() {
     if (typeof scheduleGuidedTourLayoutFn === "function") scheduleGuidedTourLayoutFn();
   }
@@ -687,7 +687,7 @@ ${contextLine}`);
   }
   var root, ui2, dialogResizeObserver, dialogResizeSaveTimer, dialogDragState, dialogDragMoveHandler, dialogDragEndHandler, scheduleGuidedTourLayoutFn;
   var init_dialog = __esm({
-    "src/ui/dialog.js"() {
+    "tools/統合ツール/src/ui/dialog.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -703,7 +703,7 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/engine.js
+  // tools/統合ツール/src/diff/engine.js
   function detectRowSeverity(row) {
     const sec = row?.sectionKey || "";
     const path = String(row?.path || "").toLowerCase();
@@ -1185,7 +1185,7 @@ ${contextLine}`);
   }
   var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES;
   var init_engine = __esm({
-    "src/diff/engine.js"() {
+    "tools/統合ツール/src/diff/engine.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -1227,7 +1227,7 @@ ${contextLine}`);
     }
   });
 
-  // src/api.js
+  // tools/統合ツール/src/api.js
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
@@ -1349,7 +1349,7 @@ ${contextLine}`);
     return first != null ? String(first) : "";
   }
   var init_api = __esm({
-    "src/api.js"() {
+    "tools/統合ツール/src/api.js"() {
       "use strict";
       init_constants();
       init_utils();
@@ -1357,7 +1357,7 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/enrich.js
+  // tools/統合ツール/src/diff/enrich.js
   function relativePathFromRow2(path, secKey) {
     if (!path) return "";
     if (path === secKey) return "";
@@ -1838,7 +1838,7 @@ ${contextLine}`);
     });
   }
   var init_enrich = __esm({
-    "src/diff/enrich.js"() {
+    "tools/統合ツール/src/diff/enrich.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -1847,7 +1847,7 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/popout.js
+  // tools/統合ツール/src/diff/popout.js
   var popout_exports = {};
   __export(popout_exports, {
     closeDiffViewerPopout: () => closeDiffViewerPopout,
@@ -2005,7 +2005,7 @@ ${contextLine}`);
   }
   var WIN_NAME, popoutClickHandler, popoutChangeHandler, popoutMousedownHandler;
   var init_popout = __esm({
-    "src/diff/popout.js"() {
+    "tools/統合ツール/src/diff/popout.js"() {
       "use strict";
       init_state();
       init_dialog();
@@ -2018,7 +2018,7 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/export.js
+  // tools/統合ツール/src/diff/export.js
   function stringifyForDiff(value) {
     if (value === void 0) return "（未定義）";
     const out = JSON.stringify(value, null, 2);
@@ -3973,7 +3973,7 @@ ${contextLine}`);
     }
     const sectionNavHtml = rows.length ? buildDiffSectionNavHtml(rows) : "";
     const summaryHtml = `
-      <div class="diff-summary-head">
+      <div class="diff-summary-head" role="region" aria-label="差分サマリー">
         ${buildDiffSummaryBars(summary)}
         <div class="diff-summary">
         <span class="diff-pill">総件数 ${summary.total}</span>
@@ -4076,7 +4076,7 @@ ${contextLine}`);
   }
   var MAIN_RESULT_IDLE_HTML;
   var init_export = __esm({
-    "src/diff/export.js"() {
+    "tools/統合ツール/src/diff/export.js"() {
       init_constants();
       init_utils();
       init_state();
@@ -4088,7 +4088,7 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/filter.js
+  // tools/統合ツール/src/diff/filter.js
   function normalizeDiffFavoritePath(path) {
     return String(path || "").trim();
   }
@@ -4185,7 +4185,7 @@ ${contextLine}`);
     return [...counts.values()].filter((item) => item.count >= 2).sort((a, b) => b.count - a.count || b.sections.size - a.sections.size || a.key.localeCompare(b.key)).slice(0, 8).map((item) => ({ key: item.key, count: item.count, sectionCount: item.sections.size }));
   }
   var init_filter = __esm({
-    "src/diff/filter.js"() {
+    "tools/統合ツール/src/diff/filter.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -4195,18 +4195,18 @@ ${contextLine}`);
     }
   });
 
-  // src/reflect/nodeModeUi.js
+  // tools/統合ツール/src/reflect/nodeModeUi.js
   function isReflectNodeModeEffective() {
     return !!ui.nodeMode?.checked && !ui.reflectSimpleMode?.checked;
   }
   var init_nodeModeUi = __esm({
-    "src/reflect/nodeModeUi.js"() {
+    "tools/統合ツール/src/reflect/nodeModeUi.js"() {
       "use strict";
       init_state();
     }
   });
 
-  // src/ui/components.js
+  // tools/統合ツール/src/ui/components.js
   function setComponentUi(uiRefs) {
     ui3 = uiRefs;
   }
@@ -4997,7 +4997,7 @@ ${contextLine}`);
   }
   var ui3, deps;
   var init_components = __esm({
-    "src/ui/components.js"() {
+    "tools/統合ツール/src/ui/components.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5029,7 +5029,7 @@ ${contextLine}`);
     }
   });
 
-  // src/tabs/preview-compare.js
+  // tools/統合ツール/src/tabs/preview-compare.js
   function findMatchingPresetId(ui4) {
     if (!ui4?.sourcePreview || !ui4?.targetPreview) return null;
     const sp = !!ui4.sourcePreview.checked;
@@ -5089,7 +5089,7 @@ ${contextLine}`);
     renderPreviewCompareSummary(root2, ui4);
   }
   var init_preview_compare = __esm({
-    "src/tabs/preview-compare.js"() {
+    "tools/統合ツール/src/tabs/preview-compare.js"() {
       "use strict";
       init_constants();
       init_api();
@@ -5097,7 +5097,7 @@ ${contextLine}`);
     }
   });
 
-  // src/reflect/rowMode.js
+  // tools/統合ツール/src/reflect/rowMode.js
   function reflectRowModeById(rowId) {
     return state.reflectNodeModes[rowId] === "tgt" ? "tgt" : "src";
   }
@@ -5105,13 +5105,13 @@ ${contextLine}`);
     return reflectRowModeById(row._id) === "tgt" ? row.right : row.left;
   }
   var init_rowMode = __esm({
-    "src/reflect/rowMode.js"() {
+    "tools/統合ツール/src/reflect/rowMode.js"() {
       "use strict";
       init_state();
     }
   });
 
-  // src/tabs/reflect.js
+  // tools/統合ツール/src/tabs/reflect.js
   var reflect_exports = {};
   __export(reflect_exports, {
     ensureActiveReflectNodeId: () => ensureActiveReflectNodeId,
@@ -5339,7 +5339,7 @@ ${contextLine}`);
     setStatus(`共通データ取得完了: 比較元 ${sections.length}セクション(NG ${sourceErr}) / 比較先 ${sections.length}セクション(NG ${targetErr})`);
   }
   var init_reflect = __esm({
-    "src/tabs/reflect.js"() {
+    "tools/統合ツール/src/tabs/reflect.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5357,7 +5357,7 @@ ${contextLine}`);
     }
   });
 
-  // src/tabs/field.js
+  // tools/統合ツール/src/tabs/field.js
   function parseFieldInput(text) {
     const obj = JSON.parse(text);
     if (!obj || typeof obj !== "object") throw new Error("JSONはオブジェクト形式で入力してください");
@@ -5580,7 +5580,7 @@ ${contextLine}`);
     setStatus(`${mergedCount} 件のフィールド定義を挿入しました`);
   }
   var init_field = __esm({
-    "src/tabs/field.js"() {
+    "tools/統合ツール/src/tabs/field.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5593,7 +5593,7 @@ ${contextLine}`);
     }
   });
 
-  // src/reflect/helpers.js
+  // tools/統合ツール/src/reflect/helpers.js
   function diffSectionKeySet() {
     const set = /* @__PURE__ */ new Set();
     for (const row of getActualDiffRows(state.lastDiffRows || [])) {
@@ -5678,7 +5678,7 @@ ${contextLine}`);
     return last;
   }
   var init_helpers = __esm({
-    "src/reflect/helpers.js"() {
+    "tools/統合ツール/src/reflect/helpers.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5693,7 +5693,7 @@ ${contextLine}`);
     }
   });
 
-  // src/reflect/apply.js
+  // tools/統合ツール/src/reflect/apply.js
   function convertLookupAppIds2(fieldDef, map) {
     const def = deepClone(fieldDef || {});
     const lookupMap = map || {};
@@ -6295,7 +6295,7 @@ ${contextLine}`);
     setStatus(`デプロイ処理完了: ${st === "SUCCESS" ? "SUCCESS" : st}`, st !== "SUCCESS");
   }
   var init_apply = __esm({
-    "src/reflect/apply.js"() {
+    "tools/統合ツール/src/reflect/apply.js"() {
       "use strict";
       init_constants();
       init_utils();
@@ -6309,7 +6309,7 @@ ${contextLine}`);
     }
   });
 
-  // src/reflect/plan.js
+  // tools/統合ツール/src/reflect/plan.js
   var plan_exports = {};
   __export(plan_exports, {
     appendRequestPlanLogs: () => appendRequestPlanLogs,
@@ -6736,7 +6736,7 @@ ${contextLine}`);
     setStatus("反映プラン確認完了");
   }
   var init_plan = __esm({
-    "src/reflect/plan.js"() {
+    "tools/統合ツール/src/reflect/plan.js"() {
       "use strict";
       init_constants();
       init_utils();
@@ -6750,7 +6750,7 @@ ${contextLine}`);
     }
   });
 
-  // src/tabs/diff.js
+  // tools/統合ツール/src/tabs/diff.js
   var diff_exports = {};
   __export(diff_exports, {
     addIgnoreKeyFromInput: () => addIgnoreKeyFromInput,
@@ -7222,7 +7222,7 @@ ${contextLine}`);
     }
   }
   var init_diff = __esm({
-    "src/tabs/diff.js"() {
+    "tools/統合ツール/src/tabs/diff.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -7241,12 +7241,12 @@ ${contextLine}`);
     }
   });
 
-  // src/index.js
+  // tools/統合ツール/src/index.js
   init_constants();
   init_state();
   init_utils();
 
-  // src/ui/styles.css
+  // tools/統合ツール/src/ui/styles.css
   var styles_default = `#kintone-unified-suite-v2{position:fixed;top:16px;left:calc(100vw - min(980px,calc(100vw - 32px)) - 16px);z-index:2147483647;width:min(980px,calc(100vw - 32px));height:min(860px,calc(100vh - 32px));min-width:min(560px,calc(100vw - 32px));min-height:min(360px,calc(100vh - 32px));max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);background:#f6f8fb;border:1px solid #d9e2ec;border-radius:14px;box-shadow:0 18px 40px rgba(15,23,42,.28);font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;color:#1f2937;display:flex;flex-direction:column;overflow:hidden;resize:both;box-sizing:border-box}
 #kintone-unified-suite-v2.suite-popout-tab{top:0!important;left:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;border-radius:0;resize:none;box-shadow:none;border-width:0 0 1px}
 #kintone-unified-suite-v2 .h{padding:12px 16px;background:linear-gradient(135deg,#0f4c81,#2563eb);color:#fff;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-shrink:0;cursor:move;user-select:none}
@@ -7327,7 +7327,7 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .diff-view{--dv-bg:#f8fafc;--dv-card:#fff;--dv-border:#dbe3ed;--dv-text:#0f172a;--dv-sub:#64748b;--dv-add:#e8f5e9;--dv-add-txt:#166534;--dv-del:#fee2e2;--dv-del-txt:#991b1b;--dv-pad:#f1f5f9;--dv-mark-add:#bbf7d0;--dv-mark-del:#fecaca;background:var(--dv-bg);color:var(--dv-text)}
 #kintone-unified-suite-v2 .diff-view.dark{--dv-bg:#0f172a;--dv-card:#111827;--dv-border:#334155;--dv-text:#e2e8f0;--dv-sub:#94a3b8;--dv-add:#083344;--dv-add-txt:#5eead4;--dv-del:#450a0a;--dv-del-txt:#fca5a5;--dv-pad:#1e293b;--dv-mark-add:#134e4a;--dv-mark-del:#7f1d1d}
 #kintone-unified-suite-v2 .diff-view .diff-summary{padding:8px 10px;border-bottom:1px solid var(--dv-border);font-size:11px;background:var(--dv-card);display:flex;gap:8px;flex-wrap:wrap}
-#kintone-unified-suite-v2 .diff-view .diff-pill{border:1px solid var(--dv-border);border-radius:999px;padding:3px 8px}
+#kintone-unified-suite-v2 .diff-view .diff-pill{border:1px solid var(--dv-border);border-radius:999px;padding:3px 8px;background:var(--dv-bg);font-weight:700}
 #kintone-unified-suite-v2 .diff-view .diff-info{color:var(--dv-sub)}
 #kintone-unified-suite-v2 .diff-view .diff-empty{padding:12px;font-size:12px;color:var(--dv-sub)}
 #kintone-unified-suite-v2 .diff-view .diff-sec{border-bottom:1px solid var(--dv-border);background:var(--dv-card)}
@@ -7394,6 +7394,15 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .diff-view.dark .diff-sec-pill.is-active{background:#1e3a5f;border-color:#3b82f6;color:#bfdbfe}
 #kintone-unified-suite-v2 .diff-view .diff-sec-pill-n{opacity:.85;font-weight:700}
 #kintone-unified-suite-v2 .diff-view .diff-sec-pill-sel{margin-left:4px;font-size:10px;color:var(--dv-sub);font-weight:600}
+#kintone-unified-suite-v2 .diff-view-overview{display:grid;grid-template-columns:1.3fr 1fr;gap:10px;margin:8px 0 10px}
+#kintone-unified-suite-v2 .diff-view-overview-main,#kintone-unified-suite-v2 .diff-view-overview-side{border:1px solid #dbe3ed;border-radius:10px;background:linear-gradient(180deg,#f8fafc,#fff);padding:10px}
+#kintone-unified-suite-v2 .diff-view-overview-title,#kintone-unified-suite-v2 .diff-view-overview-side-title{font-size:11px;font-weight:800;color:#1e293b}
+#kintone-unified-suite-v2 .diff-view-overview-state{margin-top:6px}
+#kintone-unified-suite-v2 .diff-view-overview-side-body{margin-top:6px;font-size:11px;line-height:1.6;color:#475569}
+#kintone-unified-suite-v2 .diff-view.dark .diff-pill{background:#172033}
+#kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-main,#kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-side{border-color:var(--dv-border);background:linear-gradient(180deg,#192236,#111827)}
+#kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-title,#kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-side-title{color:#dbeafe}
+#kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-side-body{color:#94a3b8}
 #kintone-unified-suite-v2 .diff-view .diff-path-cell .diff-path-line{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
 #kintone-unified-suite-v2 .diff-view .diff-path-prefix{opacity:.75}
 #kintone-unified-suite-v2 .diff-view .diff-path-sep{margin:0 2px;opacity:.55}
@@ -8424,7 +8433,7 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .rpp-modal-hint{margin-top:8px;font-size:11px;color:#64748b}
 `;
 
-  // src/ui/template.js
+  // tools/統合ツール/src/ui/template.js
   init_constants();
   init_utils();
   init_dialog();
@@ -8678,6 +8687,16 @@ ${contextLine}`);
               </div>
               <div class="subpane" data-subpane-parent="diff" data-subpane="view">
                 <div class="subpane-note">取得済みの差分の絞り込みと出力です。まず下の「フィルタ・出力」を開き、必要なら「拡大・クイック・選択セット」を開いてください。</div>
+                <div class="diff-view-overview">
+                  <div class="diff-view-overview-main">
+                    <div class="diff-view-overview-title">現在の比較結果</div>
+                    <div class="kv diff-view-overview-state" id="u_diffSelectionState">差分未実行</div>
+                  </div>
+                  <div class="diff-view-overview-side">
+                    <div class="diff-view-overview-side-title">主な操作</div>
+                    <div class="diff-view-overview-side-body">フィルタ調整 → 必要行を選択 → JSON/HTML/Excel/パッチを出力。別ウィンドウ表示や選択セット保存もこのサブタブで実行できます。</div>
+                  </div>
+                </div>
               <details class="diff-fold diff-fold--view-extras">
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">拡大・クイック・選択セット</span>
@@ -8718,7 +8737,6 @@ ${contextLine}`);
               </div>
                 </div>
               </details>
-              <div class="kv" id="u_diffSelectionState">差分未実行</div>
               <details class="diff-fold diff-fold--view-filter" open>
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">フィルタ・出力対象・選択</span>
@@ -9699,7 +9717,7 @@ ${contextLine}`);
     });
   }
 
-  // src/index.js
+  // tools/統合ツール/src/index.js
   init_dialog();
   init_components();
   init_export();
@@ -9711,7 +9729,7 @@ ${contextLine}`);
   init_helpers();
   init_plan();
 
-  // src/ui/tour.js
+  // tools/統合ツール/src/ui/tour.js
   init_constants();
   init_state();
   init_utils();
@@ -9855,7 +9873,7 @@ ${contextLine}`);
     renderGuidedTourStep();
   }
 
-  // src/handlers.js
+  // tools/統合ツール/src/handlers.js
   init_constants();
   init_state();
   init_utils();
@@ -9864,7 +9882,7 @@ ${contextLine}`);
   init_filter();
   init_export();
 
-  // src/diff/presets.js
+  // tools/統合ツール/src/diff/presets.js
   init_state();
   init_export();
   function syncFilterStateFromUi() {
@@ -9928,7 +9946,7 @@ ${contextLine}`);
     renderResultRows(state.lastDiffRows || []);
   }
 
-  // src/diff/selection-sets.js
+  // tools/統合ツール/src/diff/selection-sets.js
   init_constants();
   init_state();
   init_diff();
@@ -9997,14 +10015,14 @@ ${contextLine}`);
     refreshDiffSelectionSetDropdown();
   }
 
-  // src/handlers.js
+  // tools/統合ツール/src/handlers.js
   init_popout();
   init_components();
   init_dialog();
   init_diff();
   init_preview_compare();
 
-  // src/tabs/reflect-preview-playground.js
+  // tools/統合ツール/src/tabs/reflect-preview-playground.js
   init_utils();
   var SAMPLE_BEFORE = {
     "文字列__1行_": { type: "SINGLE_LINE_TEXT", code: "文字列__1行_", label: "会社名", noLabel: false, required: true, unique: false, maxLength: "64", minLength: "", defaultValue: "", expression: "", hideExpression: false },
@@ -10413,11 +10431,11 @@ ${contextLine}`);
     render();
   }
 
-  // src/handlers.js
+  // tools/統合ツール/src/handlers.js
   init_reflect();
   init_field();
 
-  // src/tabs/settings-export.js
+  // tools/統合ツール/src/tabs/settings-export.js
   init_constants();
   init_state();
   init_utils();
@@ -10427,7 +10445,7 @@ ${contextLine}`);
   init_diff();
   init_field();
 
-  // src/tabs/record.js
+  // tools/統合ツール/src/tabs/record.js
   init_constants();
   init_state();
   init_utils();
@@ -10965,7 +10983,7 @@ ${contextLine}`);
     setStatus(`テンプレート「${name}」を削除しました`);
   }
 
-  // src/tabs/settings-export.js
+  // tools/統合ツール/src/tabs/settings-export.js
   function addAppIdToSettingsExport(appId, appName) {
     if (!/^\d+$/.test(String(appId || "").trim())) return;
     const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
@@ -11082,7 +11100,7 @@ ${contextLine}`);
     setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）`);
   }
 
-  // src/handlers.js
+  // tools/統合ツール/src/handlers.js
   function withGuard(fn, busyText) {
     if (state.running) {
       setStatus("別の処理を実行中です。完了までお待ちください。");
@@ -12370,7 +12388,7 @@ ${contextLine}`);
     syncDiffOnboardingVisibility();
   }
 
-  // src/tabs/design.js
+  // tools/統合ツール/src/tabs/design.js
   init_constants();
   init_state();
   init_utils();
@@ -13000,7 +13018,7 @@ ${diffMd}
     }
   }
 
-  // src/tabs/er.js
+  // tools/統合ツール/src/tabs/er.js
   init_constants();
   init_state();
   init_utils();
@@ -14745,7 +14763,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setBusy(false);
   }
 
-  // src/tabs/jsconfig.js
+  // tools/統合ツール/src/tabs/jsconfig.js
   init_state();
   init_utils();
   init_api();
@@ -14906,7 +14924,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setStatus(`JS/CSS一括DL完了 (403スキップ: ${failedCount}件)`);
   }
 
-  // src/tabs/process.js
+  // tools/統合ツール/src/tabs/process.js
   init_state();
   init_utils();
   init_api();
@@ -15054,7 +15072,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     }
   }
 
-  // src/tabs/sql.js
+  // tools/統合ツール/src/tabs/sql.js
   init_state();
   init_utils();
   init_api();
@@ -15827,7 +15845,7 @@ ${safety.hash}`, "");
     UI.init();
   }
 
-  // src/tabs/api-tester.js
+  // tools/統合ツール/src/tabs/api-tester.js
   init_utils();
   init_components();
   init_components();
@@ -15966,7 +15984,7 @@ ${safety.hash}`, "");
     }
   }
 
-  // src/index.js
+  // tools/統合ツール/src/index.js
   var TOOL_POPOUT_NAME = "kintone-unified-suite-v2";
   if (!window.kintone?.api || !window.kintone?.app) {
     alert("kintone画面で実行してください");
