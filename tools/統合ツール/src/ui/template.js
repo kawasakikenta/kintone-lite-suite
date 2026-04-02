@@ -3,7 +3,7 @@
 import cssText from './styles.css';
 import {
   TOOL_ID, TOOL_VERSION, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS,
-  FEATURE_DEFS, PREVIEW_COMPARE_PRESETS, DEFAULT_SUBTAB_STATE,
+  FEATURE_DEFS, DEFAULT_SUBTAB_STATE,
   DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT,
   DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_MARGIN,
   DEFAULT_APP_ID
@@ -15,7 +15,7 @@ export function buildRoot(targetDocument = document, options = {}) {
   const doc = targetDocument || document;
   const root = doc.createElement('div');
   root.id = TOOL_ID;
-  root.className = options.popout ? 'screen-launcher suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-preview-presets tab-needs-connection-actions' : 'screen-launcher tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-preview-presets tab-needs-connection-actions';
+  root.className = options.popout ? 'screen-launcher suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions' : 'screen-launcher tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions';
   root.innerHTML = `<style>${cssText}</style>` + `
         <div class="h" data-dialog-drag-handle="1">
           <div class="h-brand" aria-hidden="true">
@@ -65,32 +65,8 @@ export function buildRoot(targetDocument = document, options = {}) {
               </div>
             </div>
             </section>
-            <div class="preview-compare-panel">
-              <div class="preview-compare-head">
-                <span class="preview-compare-title">プレビュー比較（取得するAPI）</span>
-              </div>
-              <p class="muted preview-compare-lead" style="margin:6px 0 10px;line-height:1.6">差分・共通データ取得で使う<strong>読み取り先</strong>をプリセットで選びます。反映タブの書き込みは別途説明のとおりプレビュー固定です。</p>
-              <div class="preview-preset-grid" role="group" aria-label="プレビュー比較プリセット">
-                ${PREVIEW_COMPARE_PRESETS.map((p) => `<button type="button" class="preview-preset-btn${p.recommended ? ' preview-preset-btn--rec' : ''}" data-act="setPreviewPreset" data-preset="${esc(p.id)}" title="${esc(p.hint)}" aria-pressed="false">
-                  <span class="pp-title">${p.recommended ? '<span class="pp-rec-tag">推奨</span> ' : ''}${esc(p.label)}</span>
-                  <span class="pp-sub">${esc(p.shortLine)}</span>
-                </button>`).join('')}
-              </div>
-              <div id="u_previewCompareSummary" class="preview-compare-summary" aria-live="polite"></div>
-              <p id="u_previewPresetCustomNote" class="preview-preset-custom-note" style="display:none">チェックボックスを個別に変更したため、上記プリセットとは異なる組み合わせになっています。</p>
-              <details class="diff-fold preview-compare-advanced" style="margin-top:10px">
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">詳細: 比較元/比較先のプレビューを個別に切替</span>
-                  <span class="diff-fold-sub">プリセットと同じ結果なら開く必要はありません</span>
-                </summary>
-                <div class="diff-fold-body">
-                  <div class="grid2" style="margin-top:0">
-                    <label class="chip" title="オンにすると比較元はプレビュー環境の設定APIを参照します"><input type="checkbox" id="u_sourcePreview"> 比較元はプレビュー</label>
-                    <label class="chip" title="オンにすると比較先の取得はプレビュー環境の設定APIを参照します（反映PUTは常にプレビュー）"><input type="checkbox" id="u_targetPreview" checked> 比較先はプレビュー</label>
-                  </div>
-                </div>
-              </details>
-            </div>
+            <input type="checkbox" id="u_sourcePreview" style="display:none">
+            <input type="checkbox" id="u_targetPreview" checked style="display:none">
             <section class="connection-section connection-section--actions" aria-labelledby="conn-quick-heading">
               <h3 class="connection-section-title" id="conn-quick-heading">よく使う操作</h3>
               <div class="btns connection-quick-btns">

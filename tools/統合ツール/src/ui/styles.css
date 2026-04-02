@@ -501,9 +501,6 @@
 /* 比較先が不要なタブ（er, processFlow, sql）では比較先入力欄を隠す */
 #kintone-unified-suite-v2:not(.tab-needs-target) .conn-target { display: none !important; }
 
-/* プレビュー比較プリセットが不要なタブでは隠す（diff/reflect以外） */
-#kintone-unified-suite-v2:not(.tab-needs-preview-presets) .preview-compare-panel { display: none !important; }
-
 /* 「よく使う操作」等の差分/反映専用UIは該当タブ以外で隠す */
 #kintone-unified-suite-v2:not(.tab-needs-connection-actions) .connection-section--actions,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .diff-fold--lookup,
@@ -998,62 +995,6 @@
   outline-offset:2px;
 }
 
-/* プレビュー比較プリセット */
-#kintone-unified-suite-v2 .preview-compare-panel{
-  margin-top:10px;padding:12px 14px;border-radius:12px;
-  border:1px solid rgba(14,165,233,.28);
-  background:linear-gradient(165deg,#f0f9ff 0%,#fff 55%,#f8fafc 100%);
-}
-#kintone-unified-suite-v2 .preview-compare-head{margin-bottom:2px}
-#kintone-unified-suite-v2 .preview-compare-title{
-  font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#0369a1;
-}
-#kintone-unified-suite-v2 .preview-preset-grid{
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-top:8px;
-}
-#kintone-unified-suite-v2 .preview-preset-btn{
-  display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:4px;
-  padding:10px 12px;border-radius:10px;cursor:pointer;font:inherit;
-  border:1px solid #bae6fd;background:#fff;color:#0f172a;
-  box-shadow:0 1px 2px rgba(15,23,42,.04);
-  transition:border-color .15s ease,box-shadow .15s ease,background .15s ease,transform .1s ease;
-}
-#kintone-unified-suite-v2 .preview-preset-btn:hover{
-  border-color:#38bdf8;box-shadow:0 4px 12px rgba(14,165,233,.12);
-}
-#kintone-unified-suite-v2 .preview-preset-btn.is-active{
-  border-color:#0284c7;background:linear-gradient(180deg,#e0f2fe,#fff);
-  box-shadow:0 0 0 2px rgba(14,165,233,.35);
-}
-#kintone-unified-suite-v2 .preview-preset-btn--rec{border-color:#7dd3fc}
-#kintone-unified-suite-v2 .pp-rec-tag{
-  display:inline-block;font-size:9px;font-weight:800;letter-spacing:.06em;
-  padding:2px 6px;border-radius:999px;background:#0284c7;color:#fff;margin-right:4px;vertical-align:middle;
-}
-#kintone-unified-suite-v2 .pp-title{font-size:13px;font-weight:800;line-height:1.35}
-#kintone-unified-suite-v2 .pp-sub{font-size:11px;font-weight:600;color:#64748b;line-height:1.45}
-#kintone-unified-suite-v2 .preview-compare-summary{
-  margin-top:12px;padding:10px 12px;border-radius:10px;
-  border:1px solid #e0f2fe;background:#fff;font-size:11px;line-height:1.65;color:#334155;
-}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-head{margin-bottom:6px}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-badge{
-  display:inline-block;font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
-  padding:2px 7px;border-radius:999px;background:#dbeafe;color:#1d4ed8;margin-right:6px;
-}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-badge-custom{background:#f1f5f9;color:#475569}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-hint{margin:0 0 8px;color:#64748b;font-size:11px;line-height:1.55}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-api-list{margin:0;padding-left:18px}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-api-list li{margin:4px 0}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-k{font-weight:700;color:#0f172a;margin-right:6px}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-code{font-size:10px;background:#f1f5f9;padding:2px 6px;border-radius:4px;color:#0f172a}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-meta{list-style:none;margin-left:-18px;padding-left:0;color:#64748b}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-footnote{
-  margin:10px 0 0;padding-top:10px;border-top:1px dashed #bae6fd;font-size:11px;line-height:1.6;color:#475569;
-}
-#kintone-unified-suite-v2 .preview-preset-custom-note{
-  margin:8px 0 0;font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;
-}
 
 /* ========== UX: 見やすさ・操作しやすさ ========== */
 #kintone-unified-suite-v2 .muted{line-height:1.65;color:#64748b}
@@ -1141,7 +1082,6 @@
 #kintone-unified-suite-v2.screen-feature .body{gap:14px}
 #kintone-unified-suite-v2 .tabs{row-gap:10px}
 @media (max-width:640px){
-  #kintone-unified-suite-v2 .preview-preset-grid{grid-template-columns:1fr}
   #kintone-unified-suite-v2 .feature-grid{grid-template-columns:1fr}
 }
 #kintone-unified-suite-v2 .launcher-lead{

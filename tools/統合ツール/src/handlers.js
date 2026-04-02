@@ -65,7 +65,6 @@ import {
   currentDiffSignature,
   ensureDiffPreparedForReflect
 } from './tabs/diff.js';
-import { applyPreviewPreset, syncPreviewComparePanel } from './tabs/preview-compare.js';
 import { initReflectPreviewPlayground } from './tabs/reflect-preview-playground.js';
 
 import {
@@ -238,7 +237,6 @@ export function setupEventHandlers(injected = {}) {
   renderLookupMapRows();
   if (typeof renderTemplateOptions === 'function') renderTemplateOptions();
   renderBundleState();
-  syncPreviewComparePanel(root, ui);
   renderReflectSidebar();
   renderReflectMainPanel();
   renderReflectNodeList();
@@ -346,20 +344,7 @@ export function setupEventHandlers(injected = {}) {
 
   [ui.sourceApp, ui.sourceGuest, ui.targetApp, ui.targetGuest].forEach((el) => {
     if (!el) return;
-    el.addEventListener('change', () => {
-      saveCurrentDialogState();
-      syncPreviewComparePanel(root, ui);
-    });
-    el.addEventListener('input', () => syncPreviewComparePanel(root, ui));
-  });
-
-  [ui.sourcePreview, ui.targetPreview].forEach((el) => {
-    if (!el) return;
-    el.addEventListener('change', () => {
-      saveCurrentDialogState();
-      syncPreviewComparePanel(root, ui);
-      renderBundleState();
-    });
+    el.addEventListener('change', saveCurrentDialogState);
   });
 
   if (ui.charDiff) {
@@ -954,7 +939,6 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'setSourceCurrent') {
       ui.sourceApp.value = DEFAULT_APP_ID;
       saveCurrentDialogState();
-      syncPreviewComparePanel(root, ui);
       setStatus(`比較元アプリIDを現在アプリ(${DEFAULT_APP_ID})に設定しました`);
       return;
     }
@@ -963,7 +947,6 @@ export function setupEventHandlers(injected = {}) {
       ui.targetGuest.value = ui.sourceGuest.value.trim();
       ui.targetPreview.checked = !!ui.sourcePreview.checked;
       saveCurrentDialogState();
-      syncPreviewComparePanel(root, ui);
       renderBundleState();
       setStatus('比較元設定を比較先へコピーしました');
       return;
@@ -977,22 +960,10 @@ export function setupEventHandlers(injected = {}) {
       ui.targetGuest.value = src.guest;
       ui.targetPreview.checked = src.preview;
       saveCurrentDialogState();
-      syncPreviewComparePanel(root, ui);
       renderBundleState();
       setStatus('比較元/比較先設定を入れ替えました');
       return;
     }
-    if (act === 'setPreviewPreset') {
-      const presetId = actEl.dataset.preset || '';
-      applyPreviewPreset(ui, presetId);
-      saveCurrentDialogState();
-      syncPreviewComparePanel(root, ui);
-      renderBundleState();
-      const label = presetId ? (actEl.querySelector('.pp-title')?.textContent?.trim() || presetId) : '';
-      setStatus(`プレビュー比較プリセットを「${label}」に設定しました`);
-      return;
-    }
-
     // ----- Settings export quick add -----
     if (act === 'settingsExportUseCurrent') {
       const cur = String(kintone.app.getId() || '').trim();

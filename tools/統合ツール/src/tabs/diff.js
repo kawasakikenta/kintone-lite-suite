@@ -52,12 +52,7 @@ import {
   getRoot,
   getToolDocument
 } from '../ui/dialog.js';
-import {
-  getPreviewCompareStatusPrefix,
-  syncPreviewComparePanel,
-  findMatchingPresetId,
-  getPreviewPresetById
-} from './preview-compare.js';
+import { getPreviewCompareStatusPrefix } from './preview-compare.js';
 import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
 import { getDiffTypeDisplayLabel, getSeverityDisplayLabel, getIssueSideLabel, getPreviewStateLabel } from '../utils.js';
 
@@ -282,9 +277,7 @@ export async function copyDiffSummaryToClipboard() {
   lines.push(`出力対象: ${exportInfo.label}`);
   try {
     const c = commonParams();
-    const pid = findMatchingPresetId(ui);
-    const pl = pid ? getPreviewPresetById(pid)?.label : '';
-    lines.push(`プレビュー比較: ${pl || 'カスタム'} (比較元GET=${getPreviewStateLabel(c.source.preview)} / 比較先GET=${getPreviewStateLabel(c.target.preview)})`);
+    lines.push(`プレビュー比較: (比較元GET=${getPreviewStateLabel(c.source.preview)} / 比較先GET=${getPreviewStateLabel(c.target.preview)})`);
   } catch (e) {
     lines.push('プレビュー比較: (取得できませんでした)');
   }
@@ -562,8 +555,6 @@ export function restoreDialogState() {
   applyIgnorePresetKeysToInput();
   renderIgnoreKeyChips();
   renderLookupMapRows();
-  const rootAfterRestore = getRoot();
-  if (rootAfterRestore) syncPreviewComparePanel(rootAfterRestore, ui);
   if (state.activeTab === 'diff') {
     renderResultRows(state.lastDiffRows || []);
   }
