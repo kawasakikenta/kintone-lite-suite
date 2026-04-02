@@ -68,58 +68,19 @@ FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => { TAB_TO_FEATURE[t] = f.key; }
 
 /** 各タブが接続パネルのどの要素を必要とするかのマッピング */
 export const TAB_CONNECTION_NEEDS = {
-  diff:           { appInputs: true,  target: true,  previewPresets: true,  connectionActions: true  },
-  reflect:        { appInputs: true,  target: true,  previewPresets: true,  connectionActions: true  },
-  field:          { appInputs: true,  target: true,  previewPresets: false, connectionActions: false },
-  jsconfig:       { appInputs: true,  target: true,  previewPresets: false, connectionActions: false },
-  design:         { appInputs: true,  target: true,  previewPresets: false, connectionActions: false },
-  recordMgr:      { appInputs: true,  target: true,  previewPresets: false, connectionActions: false },
-  er:             { appInputs: true,  target: false, previewPresets: false, connectionActions: false },
-  processFlow:    { appInputs: true,  target: false, previewPresets: false, connectionActions: false },
-  sql:            { appInputs: true,  target: false, previewPresets: false, connectionActions: false },
-  apiTester:      { appInputs: false, target: false, previewPresets: false, connectionActions: false },
-  settingsExport: { appInputs: false, target: false, previewPresets: false, connectionActions: false }
+  diff:           { appInputs: true,  target: true,  connectionActions: true  },
+  reflect:        { appInputs: true,  target: true,  connectionActions: true  },
+  field:          { appInputs: true,  target: true,  connectionActions: false },
+  jsconfig:       { appInputs: true,  target: true,  connectionActions: false },
+  design:         { appInputs: true,  target: true,  connectionActions: false },
+  recordMgr:      { appInputs: true,  target: true,  connectionActions: false },
+  er:             { appInputs: true,  target: false, connectionActions: false },
+  processFlow:    { appInputs: true,  target: false, connectionActions: false },
+  sql:            { appInputs: true,  target: false, connectionActions: false },
+  apiTester:      { appInputs: false, target: false, connectionActions: false },
+  settingsExport: { appInputs: false, target: false, connectionActions: false }
 };
 
-/** 差分取得時の「比較元/比較先 × 本番/プレビューAPI」プリセット（チェックボックスと同期） */
-export const PREVIEW_COMPARE_PRESETS = [
-  {
-    id: 'live-to-preview',
-    label: '本番 → プレビュー',
-    shortLine: '比較元は本番API · 比較先はプレビューAPI',
-    hint: 'いちばんよく使うパターンです。本番の現状と、比較先アプリのプレビュー設定を並べて差分し、問題なければプレビューへ反映します。',
-    sourcePreview: false,
-    targetPreview: true,
-    recommended: true
-  },
-  {
-    id: 'preview-to-preview',
-    label: 'プレビュー同士',
-    shortLine: '両方ともプレビューAPIで取得',
-    hint: '開発プレビュー同士の比較や、プレビュー上だけで完結する検証向けです。',
-    sourcePreview: true,
-    targetPreview: true,
-    recommended: false
-  },
-  {
-    id: 'live-to-live',
-    label: '本番同士',
-    shortLine: '両方とも本番APIで取得',
-    hint: '別アプリ間の本番設定比較など。反映タブのPUTは引き続き「比較先プレビュー」のみです（本番への直接書き込みはしません）。',
-    sourcePreview: false,
-    targetPreview: false,
-    recommended: false
-  },
-  {
-    id: 'preview-to-live',
-    label: 'プレビュー → 本番',
-    shortLine: '比較元はプレビュー · 比較先は本番APIで取得',
-    hint: 'プレビューで試した内容と、比較先の本番設定を並べたいとき。反映先は従来どおり比較先プレビューAPIです。',
-    sourcePreview: true,
-    targetPreview: false,
-    recommended: false
-  }
-];
 
 export const META_KEYS = new Set(['revision', 'creator', 'createdAt', 'modifier', 'modifiedAt']);
 
@@ -151,14 +112,6 @@ export const GUIDED_TOUR_STEPS = Object.freeze([
     selector: '#u_sourceApp',
     title: '1. 比較元 / 比較先を決める',
     body: '共通設定で比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。'
-  },
-  {
-    tab: 'diff',
-    subTab: 'conditions',
-    path: '差分比較 > 比較条件',
-    selector: '.preview-preset-grid',
-    title: '2. プレビュー比較プリセットを選ぶ',
-    body: '「本番→プレビュー」が最も一般的です。プリセットを押すと比較元・比較先のプレビューON/OFFがまとめて切り替わり、下のサマリーに実際のAPIパスが表示されます。4パターン以外にしたいときだけ「詳細」のチェックボックスを使います。'
   },
   {
     tab: 'diff',
