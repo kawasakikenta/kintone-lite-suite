@@ -66,6 +66,21 @@ export const FEATURE_DEFS = [
 export const TAB_TO_FEATURE = {};
 FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => { TAB_TO_FEATURE[t] = f.key; }));
 
+/** 各タブが接続パネルのどの要素を必要とするかのマッピング */
+export const TAB_CONNECTION_NEEDS = {
+  diff:           { appInputs: true,  target: true,  previewPresets: true,  connectionActions: true  },
+  reflect:        { appInputs: true,  target: true,  previewPresets: true,  connectionActions: true  },
+  field:          { appInputs: true,  target: true,  previewPresets: false, connectionActions: false },
+  jsconfig:       { appInputs: true,  target: true,  previewPresets: false, connectionActions: false },
+  design:         { appInputs: true,  target: true,  previewPresets: false, connectionActions: false },
+  recordMgr:      { appInputs: true,  target: true,  previewPresets: false, connectionActions: false },
+  er:             { appInputs: true,  target: false, previewPresets: false, connectionActions: false },
+  processFlow:    { appInputs: true,  target: false, previewPresets: false, connectionActions: false },
+  sql:            { appInputs: true,  target: false, previewPresets: false, connectionActions: false },
+  apiTester:      { appInputs: false, target: false, previewPresets: false, connectionActions: false },
+  settingsExport: { appInputs: false, target: false, previewPresets: false, connectionActions: false }
+};
+
 /** 差分取得時の「比較元/比較先 × 本番/プレビューAPI」プリセット（チェックボックスと同期） */
 export const PREVIEW_COMPARE_PRESETS = [
   {

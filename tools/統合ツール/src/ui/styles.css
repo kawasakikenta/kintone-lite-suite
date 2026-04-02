@@ -493,9 +493,19 @@
 #kintone-unified-suite-v2 .connection-panel-body{padding:10px 12px 12px}
 #kintone-unified-suite-v2 .connection-footnote{margin-top:8px}
 
-/* 条件に応じて接続パネルの複雑な機能を隠す */
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .preview-compare-panel,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--actions,
+/* ========== 接続パネルのタブ別表示制御 ========== */
+
+/* アプリID入力が不要なタブ（apiTester, settingsExport）では接続パネル全体を隠す */
+#kintone-unified-suite-v2:not(.tab-needs-app-inputs) .connection-section--app-inputs { display: none !important; }
+
+/* 比較先が不要なタブ（er, processFlow, sql）では比較先入力欄を隠す */
+#kintone-unified-suite-v2:not(.tab-needs-target) .conn-target { display: none !important; }
+
+/* プレビュー比較プリセットが不要なタブでは隠す（diff/reflect以外） */
+#kintone-unified-suite-v2:not(.tab-needs-preview-presets) .preview-compare-panel { display: none !important; }
+
+/* 「よく使う操作」等の差分/反映専用UIは該当タブ以外で隠す */
+#kintone-unified-suite-v2:not(.tab-needs-connection-actions) .connection-section--actions,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .diff-fold--lookup,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-step-banner,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-step-desc,
