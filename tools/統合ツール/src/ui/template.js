@@ -15,7 +15,7 @@ export function buildRoot(targetDocument = document, options = {}) {
   const doc = targetDocument || document;
   const root = doc.createElement('div');
   root.id = TOOL_ID;
-  root.className = options.popout ? 'screen-launcher suite-popout-tab tab-is-diff-or-reflect' : 'screen-launcher tab-is-diff-or-reflect';
+  root.className = options.popout ? 'screen-launcher suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-preview-presets tab-needs-connection-actions' : 'screen-launcher tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-preview-presets tab-needs-connection-actions';
   root.innerHTML = `<style>${cssText}</style>` + `
         <div class="h" data-dialog-drag-handle="1">
           <div class="h-brand" aria-hidden="true">
@@ -43,23 +43,23 @@ export function buildRoot(targetDocument = document, options = {}) {
         </div>
         <div class="body">
           <div class="card common-card" id="u_connectionPanel">
-            <section class="connection-section" aria-labelledby="conn-app-heading">
+            <section class="connection-section connection-section--app-inputs" aria-labelledby="conn-app-heading">
               <h3 class="connection-section-title" id="conn-app-heading">アプリとゲスト</h3>
-              <p class="connection-section-lead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
+              <p class="connection-section-lead" id="u_connectionLead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
               <div class="grid connection-grid">
-              <div>
+              <div class="conn-source">
                 <label for="u_sourceApp">比較元アプリID</label>
                 <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
-              <div>
+              <div class="conn-source">
                 <label for="u_sourceGuest">比較元 ゲストID</label>
                 <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
-              <div>
+              <div class="conn-target">
                 <label for="u_targetApp">比較先アプリID</label>
                 <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
-              <div>
+              <div class="conn-target">
                 <label for="u_targetGuest">比較先 ゲストID</label>
                 <input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>

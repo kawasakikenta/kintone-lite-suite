@@ -2,7 +2,8 @@
 
 import {
   SECTION_DEFS,
-  SETTINGS_EXPORT_SCOPE_DEFS
+  SETTINGS_EXPORT_SCOPE_DEFS,
+  TAB_CONNECTION_NEEDS
 } from '../constants.js';
 import { state } from '../state.js';
 import {
@@ -97,10 +98,22 @@ export function switchTab(tabKey, options) {
   
   const root = getToolDocument().getElementById('kintone-unified-suite-v2');
   if (root) {
-    if (key === 'diff' || key === 'reflect') {
-      root.classList.add('tab-is-diff-or-reflect');
-    } else {
-      root.classList.remove('tab-is-diff-or-reflect');
+    const needs = TAB_CONNECTION_NEEDS[key] || {};
+    root.classList.toggle('tab-is-diff-or-reflect', !!(needs.previewPresets));
+    root.classList.toggle('tab-needs-app-inputs', !!(needs.appInputs));
+    root.classList.toggle('tab-needs-target', !!(needs.target));
+    root.classList.toggle('tab-needs-preview-presets', !!(needs.previewPresets));
+    root.classList.toggle('tab-needs-connection-actions', !!(needs.connectionActions));
+
+    const lead = root.querySelector('#u_connectionLead');
+    if (lead) {
+      if (!needs.appInputs) {
+        lead.textContent = '';
+      } else if (needs.target) {
+        lead.textContent = '比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。';
+      } else {
+        lead.textContent = '対象アプリの数値IDと、ゲストスペース利用時はゲストIDを入力します。';
+      }
     }
   }
 
