@@ -20,8 +20,7 @@ FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => { TAB_TO_FEATURE[t] = f.key; }
  * tab は FEATURE_DEFS の tabs に含まれること。
  *
  * - bundleEntry あり: esbuild で IIFE 1 ファイルに同梱。`統合ツール.js` を別途読み込まない。
- *   - 軽量: diff / design / settingsExport / jsconfig / sql（`*-lite-entry.js` + standalone ロジック）
- *   - フル UI: reflect / field / er / processFlow / recordMgr（`suite-tab-*-entry.js` → boot + 全タブ）
+ *   - 全エントリが軽量 lite（`*-lite-entry.js` + standalone ロジック）
  */
 export const STANDALONE_LAUNCH_ENTRIES = [
   {
@@ -36,14 +35,14 @@ export const STANDALONE_LAUNCH_ENTRIES = [
     module: 'tabs/reflect.js',
     file: 'プレビュー反映.js',
     label: 'プレビュー反映',
-    bundleEntry: 'suite-tab-reflect-entry.js'
+    bundleEntry: 'reflect-lite-entry.js'
   },
   {
     tab: 'field',
     module: 'tabs/field.js',
     file: 'フィールド追加.js',
     label: 'フィールド追加',
-    bundleEntry: 'suite-tab-field-entry.js'
+    bundleEntry: 'field-lite-entry.js'
   },
   {
     tab: 'jsconfig',
@@ -71,21 +70,21 @@ export const STANDALONE_LAUNCH_ENTRIES = [
     module: 'tabs/er.js',
     file: 'ER図.js',
     label: 'ER図',
-    bundleEntry: 'suite-tab-er-entry.js'
+    bundleEntry: 'er-lite-entry.js'
   },
   {
     tab: 'processFlow',
     module: 'tabs/process.js',
     file: 'プロセス実行.js',
     label: 'プロセス図',
-    bundleEntry: 'suite-tab-process-entry.js'
+    bundleEntry: 'process-lite-entry.js'
   },
   {
     tab: 'recordMgr',
     module: 'tabs/record.js',
     file: 'kintoneレコード取得.js',
     label: 'レコード管理',
-    bundleEntry: 'suite-tab-record-entry.js'
+    bundleEntry: 'record-lite-entry.js'
   },
   {
     tab: 'sql',

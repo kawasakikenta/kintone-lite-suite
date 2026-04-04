@@ -84,6 +84,8 @@ const progressUi = (() => {
   };
 })();
 
+export { progressUi, ER_DEFAULTS };
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const fetchAllApps = async (options) => {
@@ -216,7 +218,7 @@ const getSchema = async (appId, options, cache) => {
   } catch (e) { console.error(`App ${appId}:`, e); const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], relations: [], ok: false }; cache.set(appId, r); return r; }
 };
 
-const crawl = async (startIds, options) => {
+export const crawl = async (startIds, options) => {
   const cache = new Map();
   const visited = new Set();
   let reverseLookupIndex = null;
@@ -277,7 +279,7 @@ const crawl = async (startIds, options) => {
   return apps;
 };
 
-const buildHTML = (apps, options = {}) => {
+export const buildHTML = (apps, options = {}) => {
   const data = safeJsonForScript(apps);
   const diagramOptions = safeJsonForScript({
     startAppId: options.startAppId || '',
