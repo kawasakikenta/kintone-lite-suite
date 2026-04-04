@@ -24,7 +24,11 @@ export async function launchKintoneSql() {
   if (!window.kintone?.api) { setStatus('エラー: kintoneアプリ画面で実行してください', true); return; }
 
   const ROOT_ID = 'kintone-sql-runner';
-  const ALASQL_CDN = 'https://cdn.jsdelivr.net/npm/alasql@4';
+  const ALASQL_CDN_CANDIDATES = [
+    'https://cdn.jsdelivr.net/npm/alasql@4/dist/alasql.min.js',
+    'https://unpkg.com/alasql@4/dist/alasql.min.js',
+    'https://cdn.jsdelivr.net/npm/alasql@4',
+  ];
   const STORAGE_KEY = 'kintone-sql-runner-history';
   const THEME_KEY = 'kintone-sql-runner-theme';
   const PAGE_SIZE = 200;
@@ -125,20 +129,34 @@ export async function launchKintoneSql() {
       if (typeof window.alasql?.default === 'function') return window.alasql.default;
       if (typeof window.AlaSQL === 'function') return window.AlaSQL;
       if (typeof window.AlaSQL?.default === 'function') return window.AlaSQL.default;
+      if (typeof globalThis?.alasql === 'function') return globalThis.alasql;
       return null;
     },
 
-    loadScript: (src) => new Promise((resolve, reject) => {
-      if (Utils.resolveAlaSql()) return resolve();
-      const s = toolD.createElement('script');
-      s.src = src;
-      s.onload = () => {
-        if (Utils.resolveAlaSql()) resolve();
-        else reject(new Error('AlaSQLの読み込み後も実行関数を検出できませんでした。'));
+    waitForAlaSql: (timeoutMs = 1200) => new Promise((resolve) => {
+      const start = Date.now();
+      const tick = () => {
+        const fn = Utils.resolveAlaSql();
+        if (fn) return resolve(fn);
+        if (Date.now() - start >= timeoutMs) return resolve(null);
+        setTimeout(tick, 50);
       };
-      s.onerror = () => reject(new Error('AlaSQLスクリプトの読み込みに失敗しました。'));
-      toolD.head.appendChild(s);
+      tick();
     }),
+
+    loadScript: async (src) => {
+      if (Utils.resolveAlaSql()) return;
+      await new Promise((resolve, reject) => {
+        const s = toolD.createElement('script');
+        s.src = src;
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error(`AlaSQLスクリプトの読み込みに失敗しました: ${src}`));
+        toolD.head.appendChild(s);
+      });
+      const fn = await Utils.waitForAlaSql();
+      if (!fn) throw new Error('AlaSQLの読み込み後も実行関数を検出できませんでした。');
+    },
 
     downloadCsv: (data, filename) => {
       if (!data?.length) return;
@@ -363,7 +381,19 @@ export async function launchKintoneSql() {
     },
 
     async runSql(query, ...datasets) {
-      await Utils.loadScript(ALASQL_CDN);
+      let loaded = false;
+      let lastError = null;
+      for (const cdn of ALASQL_CDN_CANDIDATES) {
+        try {
+          await Utils.loadScript(cdn);
+          loaded = true;
+          break;
+        } catch (e) {
+          lastError = e;
+          console.warn('[KintoneSQL] AlaSQL load failed:', cdn, e);
+        }
+      }
+      if (!loaded) throw lastError || new Error('AlaSQLの読み込みに失敗しました。');
       const alasql = Utils.resolveAlaSql();
       if (!alasql) {
         throw new Error('AlaSQL実行関数が見つかりません。ページ再読み込み後に再実行してください。');
