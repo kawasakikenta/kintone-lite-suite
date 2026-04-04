@@ -167,8 +167,8 @@ ${mappingRows}
 ## 削除対象の分類
 
 - 上記 ${LEGACY_ENTRYPOINTS.length} 本は全て「統合版が上位互換」に分類済み。
-- ただし既存ブックマークレット利用者の互換性を維持するため、当面は**ファイル自体は残し、内部実装のみ薄いエントリポイント化**する。
-- 次期メジャー更新時に、利用実績がないものから段階的に物理削除する。
+- 互換エントリはビルド時に既存ファイルを削除してから再生成し、重複実装を残さない。
+- そのため \`tools/*.js\` の単機能エントリは手編集せず、\`npm run build\` の自動生成結果を利用する。
 
 ## 運用ルール（機能一覧表）
 
@@ -179,12 +179,26 @@ ${featureRows}
 }
 
 async function generateLegacyEntrypoints() {
+  const managedFiles = [
+    launcherFile,
+    ...LEGACY_ENTRYPOINTS.map((item) => path.resolve(toolsDir, item.file))
+  ];
+
+  let removedCount = 0;
+  for (const file of managedFiles) {
+    if (fs.existsSync(file)) {
+      await fs.promises.unlink(file);
+      removedCount += 1;
+    }
+  }
+
   await fs.promises.writeFile(launcherFile, createLauncherSource(), 'utf8');
   for (const item of LEGACY_ENTRYPOINTS) {
     const target = path.resolve(toolsDir, item.file);
     await fs.promises.writeFile(target, createLegacyWrapperSource(item.tab), 'utf8');
   }
   await fs.promises.writeFile(inventoryFile, createInventorySource(), 'utf8');
+  console.log(`Removed duplicate legacy files: ${removedCount}`);
   console.log(`Generated legacy entrypoints: ${LEGACY_ENTRYPOINTS.length} files + launcher + inventory`);
 }
 
