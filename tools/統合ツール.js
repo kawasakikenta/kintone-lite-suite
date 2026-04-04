@@ -1,3 +1,13 @@
+// ==========================================================================
+// 統合ツール.js  —  自動生成ファイル（手編集禁止）
+// ==========================================================================
+// このファイルは tools/統合ツール/ の npm run build (esbuild) で生成されます。
+// エントリ: tools/統合ツール/src/index.js
+//
+// ■ 修正する場合は tools/統合ツール/src/ 配下のソースを編集し、
+//   cd tools/統合ツール && npm run build で再生成してください。
+// ■ このファイルを直接編集しても次回ビルドで上書きされます。
+// ==========================================================================
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
@@ -21,11 +31,32 @@
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
+  // src/featureDefs.mjs
+  var FEATURE_DEFS, TAB_TO_FEATURE;
+  var init_featureDefs = __esm({
+    "src/featureDefs.mjs"() {
+      "use strict";
+      FEATURE_DEFS = [
+        { key: "diff", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>', label: "差分比較", desc: "設定の差分を確認・比較", tabs: ["diff"] },
+        { key: "reflect", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>', label: "プレビュー反映", desc: "比較元の設定を比較先プレビューへ反映", tabs: ["reflect"] },
+        { key: "field", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>', label: "フィールド追加", desc: "フィールド定義の追加・編集", tabs: ["field"] },
+        { key: "jsconfig", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>', label: "JS/CSS設定", desc: "カスタマイズ設定の取得・反映", tabs: ["jsconfig"] },
+        { key: "vis", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>', label: "可視化・出力", desc: "ER図 / プロセス図 / 設計書 / 設定一括取得", tabs: ["er", "processFlow", "design", "settingsExport"] },
+        { key: "data", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>', label: "データ・保守", desc: "レコード管理 / SQL実行 / APIテスター", tabs: ["recordMgr", "sql", "apiTester"] }
+      ];
+      TAB_TO_FEATURE = {};
+      FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
+        TAB_TO_FEATURE[t] = f.key;
+      }));
+    }
+  });
+
   // src/constants.js
-  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SNAPSHOT_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, FEATURE_DEFS, TAB_TO_FEATURE, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SNAPSHOT_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.js"() {
       "use strict";
+      init_featureDefs();
       TOOL_ID = "kintone-unified-suite-v2";
       TOOL_VERSION = "2.5.0";
       EXTERNAL_LIBRARIES = Object.freeze({
@@ -92,18 +123,6 @@
         { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
       ];
       SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS.filter((s) => s.key !== "customizeSettings");
-      FEATURE_DEFS = [
-        { key: "diff", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>', label: "差分比較", desc: "設定の差分を確認・比較", tabs: ["diff"] },
-        { key: "reflect", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>', label: "プレビュー反映", desc: "比較元の設定を比較先プレビューへ反映", tabs: ["reflect"] },
-        { key: "field", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>', label: "フィールド追加", desc: "フィールド定義の追加・編集", tabs: ["field"] },
-        { key: "jsconfig", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>', label: "JS/CSS設定", desc: "カスタマイズ設定の取得・反映", tabs: ["jsconfig"] },
-        { key: "vis", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>', label: "可視化・出力", desc: "ER図 / プロセス図 / 設計書 / 設定一括取得", tabs: ["er", "processFlow", "design", "settingsExport"] },
-        { key: "data", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>', label: "データ・保守", desc: "レコード管理 / SQL実行 / APIテスター", tabs: ["recordMgr", "sql", "apiTester"] }
-      ];
-      TAB_TO_FEATURE = {};
-      FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
-        TAB_TO_FEATURE[t] = f.key;
-      }));
       TAB_CONNECTION_NEEDS = {
         diff: { appInputs: true, target: true, connectionActions: true },
         reflect: { appInputs: true, target: true, connectionActions: true },
@@ -257,75 +276,6 @@
         "modifiedat",
         "modifier"
       ]);
-    }
-  });
-
-  // src/state.js
-  function loadDialogState() {
-    try {
-      return JSON.parse(localStorage.getItem(DIALOG_STATE_KEY) || "{}");
-    } catch {
-      return {};
-    }
-  }
-  function saveDialogState(dialogState) {
-    try {
-      localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(dialogState || {}));
-    } catch {
-    }
-  }
-  var state, ui;
-  var init_state = __esm({
-    "src/state.js"() {
-      "use strict";
-      init_constants();
-      state = {
-        activeTab: "diff",
-        activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
-        lastSourceBundle: null,
-        lastTargetBundle: null,
-        lastDiffRows: [],
-        lastFetchIssues: [],
-        lastDiffAt: null,
-        lastDiffSignature: "",
-        lastApplyPlan: null,
-        diffViewTheme: "light",
-        diffCollapsedSections: /* @__PURE__ */ new Set(),
-        diffSectionVisibleCounts: {},
-        diffSelectedIds: /* @__PURE__ */ new Set(),
-        diffFavoritePaths: /* @__PURE__ */ new Set(),
-        diffFavoritesOnly: false,
-        diffExcludeSections: null,
-        diffSelectionAnchorId: "",
-        diffIncludeSame: false,
-        diffFilterSection: "",
-        diffFilterType: "",
-        diffFilterSeverity: "",
-        diffSearchFieldName: false,
-        diffExportMode: "all",
-        diffExportContent: "diffOnly",
-        diffIgnoreSuggestions: [],
-        reflectRows: [],
-        reflectSelectedIds: /* @__PURE__ */ new Set(),
-        reflectNodeModes: {},
-        reflectUndoStack: [],
-        reflectRedoStack: [],
-        reflectPropertyFilters: /* @__PURE__ */ new Set(),
-        reflectPropertyPanelOpen: false,
-        reflectActiveSidebarSection: null,
-        reflectActiveNodeId: "",
-        reflectDetailTab: "diff",
-        importedSourceBundle: null,
-        importedTargetBundle: null,
-        importedSourceName: "",
-        importedTargetName: "",
-        patchJsonPanelOpen: false,
-        importedPatchPayload: null,
-        guidedTourActive: false,
-        guidedTourIndex: 0,
-        running: false
-      };
-      ui = {};
     }
   });
 
@@ -495,210 +445,202 @@ ${contextLine}`);
     }
   });
 
-  // src/ui/dialog.js
-  function callScheduleGuidedTourLayout() {
-    if (typeof scheduleGuidedTourLayoutFn === "function") scheduleGuidedTourLayoutFn();
-  }
-  function getRoot() {
-    return root;
-  }
-  function getToolDocument() {
-    return root?.ownerDocument || document;
-  }
-  function getToolWindow() {
-    const d = getToolDocument();
-    return d.defaultView || window;
-  }
-  function setUiRefs(uiRefs) {
-    ui2 = uiRefs;
-  }
-  function setRootElement(el) {
-    root = el;
-  }
-  function clampDialogPosition(left, top, width, height) {
-    const dialogWidth = Math.max(320, Math.round(Number(width) || root?.offsetWidth || DIALOG_DEFAULT_WIDTH));
-    const dialogHeight = Math.max(240, Math.round(Number(height) || root?.offsetHeight || DIALOG_DEFAULT_HEIGHT));
-    const tw = getToolWindow();
-    const viewportWidth = Math.max(dialogWidth + DIALOG_MARGIN * 2, tw.innerWidth || dialogWidth);
-    const viewportHeight = Math.max(dialogHeight + DIALOG_MARGIN * 2, tw.innerHeight || dialogHeight);
-    const maxLeft = Math.max(DIALOG_MARGIN, viewportWidth - dialogWidth - DIALOG_MARGIN);
-    const maxTop = Math.max(DIALOG_MARGIN, viewportHeight - dialogHeight - DIALOG_MARGIN);
-    const fallbackLeft = maxLeft;
-    const fallbackTop = DIALOG_MARGIN;
-    const nextLeft = Math.min(maxLeft, Math.max(DIALOG_MARGIN, Math.round(Number.isFinite(Number(left)) ? Number(left) : fallbackLeft)));
-    const nextTop = Math.min(maxTop, Math.max(DIALOG_MARGIN, Math.round(Number.isFinite(Number(top)) ? Number(top) : fallbackTop)));
-    return { left: nextLeft, top: nextTop, maxLeft, maxTop };
-  }
-  function getDefaultDialogPosition(width, height) {
-    const dialogWidth = Math.round(Number(width) || root?.offsetWidth || DIALOG_DEFAULT_WIDTH);
-    const dialogHeight = Math.round(Number(height) || root?.offsetHeight || DIALOG_DEFAULT_HEIGHT);
-    const tw = getToolWindow();
-    return clampDialogPosition((tw.innerWidth || dialogWidth) - dialogWidth - DIALOG_MARGIN, DIALOG_MARGIN, dialogWidth, dialogHeight);
-  }
-  function getCurrentDialogPosition(width, height) {
-    const rect = root.getBoundingClientRect();
-    const defaultPos = getDefaultDialogPosition(width || rect.width, height || rect.height);
-    const rawLeft = Number.parseFloat(root.style.left);
-    const rawTop = Number.parseFloat(root.style.top);
-    const left = Number.isFinite(rawLeft) ? rawLeft : rect.left || defaultPos.left;
-    const top = Number.isFinite(rawTop) ? rawTop : rect.top || defaultPos.top;
-    return clampDialogPosition(left, top, width || rect.width, height || rect.height);
-  }
-  function getDialogSizeBounds() {
-    const tw = getToolWindow();
-    const maxWidth = Math.max(360, Math.floor((tw.innerWidth || DIALOG_DEFAULT_WIDTH) - DIALOG_MARGIN * 2));
-    const maxHeight = Math.max(320, Math.floor((tw.innerHeight || DIALOG_DEFAULT_HEIGHT) - DIALOG_MARGIN * 2));
-    return {
-      minWidth: Math.min(DIALOG_MIN_WIDTH, maxWidth),
-      minHeight: Math.min(DIALOG_MIN_HEIGHT, maxHeight),
-      maxWidth,
-      maxHeight
-    };
-  }
-  function clampDialogSize(width, height) {
-    const bounds = getDialogSizeBounds();
-    const nextWidth = Math.max(bounds.minWidth, Math.min(bounds.maxWidth, Math.round(Number(width) || DIALOG_DEFAULT_WIDTH)));
-    const nextHeight = Math.max(bounds.minHeight, Math.min(bounds.maxHeight, Math.round(Number(height) || DIALOG_DEFAULT_HEIGHT)));
-    return { ...bounds, width: nextWidth, height: nextHeight };
-  }
-  function applyDialogSize(width, height, options = {}) {
-    const next = clampDialogSize(width, height);
-    root.style.width = `${next.width}px`;
-    root.style.height = `${next.height}px`;
-    const currentPos = getCurrentDialogPosition(next.width, next.height);
-    root.style.left = `${currentPos.left}px`;
-    root.style.top = `${currentPos.top}px`;
-    root.style.right = "auto";
-    root.style.bottom = "auto";
-    if (options.persist !== false) scheduleDialogSizeSave();
-    return next;
-  }
-  function applyDialogPosition(left, top, options = {}) {
-    const rect = root.getBoundingClientRect();
-    const next = clampDialogPosition(left, top, rect.width || root.offsetWidth, rect.height || root.offsetHeight);
-    root.style.left = `${next.left}px`;
-    root.style.top = `${next.top}px`;
-    root.style.right = "auto";
-    root.style.bottom = "auto";
-    if (options.persist !== false) scheduleDialogSizeSave();
-    if (state.guidedTourActive) callScheduleGuidedTourLayout();
-    return next;
-  }
-  function applyDialogSizePreset(mode) {
-    if (mode === "large") {
-      return applyDialogSize(DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT);
+  // src/state.js
+  function loadDialogState() {
+    try {
+      return JSON.parse(localStorage.getItem(DIALOG_STATE_KEY) || "{}");
+    } catch {
+      return {};
     }
-    if (mode === "max") {
-      const bounds = getDialogSizeBounds();
-      return applyDialogSize(bounds.maxWidth, bounds.maxHeight);
+  }
+  function saveDialogState(dialogState) {
+    try {
+      localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(dialogState || {}));
+    } catch {
     }
-    return applyDialogSize(DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT);
   }
-  function fitDialogToViewport(options = {}) {
-    const rect = root.getBoundingClientRect();
-    const size = applyDialogSize(rect.width || DIALOG_DEFAULT_WIDTH, rect.height || DIALOG_DEFAULT_HEIGHT, { persist: false });
-    const pos = applyDialogPosition(getCurrentDialogPosition(size.width, size.height).left, getCurrentDialogPosition(size.width, size.height).top, { persist: false });
-    if (options.persist !== false) saveCurrentDialogState();
-    return { ...size, ...pos };
-  }
-  function scheduleDialogSizeSave() {
-    window.clearTimeout(dialogResizeSaveTimer);
-    dialogResizeSaveTimer = window.setTimeout(() => {
-      dialogResizeSaveTimer = 0;
-      saveCurrentDialogState();
-    }, 180);
-  }
-  function saveCurrentDialogState() {
-    if (!root) return;
-    const rect = root.getBoundingClientRect();
-    const saved = loadDialogState();
-    saved.width = Math.round(rect.width || root.offsetWidth);
-    saved.height = Math.round(rect.height || root.offsetHeight);
-    const rawLeft = Number.parseFloat(root.style.left);
-    const rawTop = Number.parseFloat(root.style.top);
-    if (Number.isFinite(rawLeft)) saved.left = Math.round(rawLeft);
-    if (Number.isFinite(rawTop)) saved.top = Math.round(rawTop);
-    saved.activeTab = state.activeTab || "diff";
-    saved.activeSubTabs = { ...state.activeSubTabs };
-    saveDialogState(saved);
-  }
-  function initDialogResizeHandling() {
-    if (dialogResizeObserver || typeof ResizeObserver !== "function") return;
-    dialogResizeObserver = new ResizeObserver(() => {
-      scheduleDialogSizeSave();
-      callScheduleGuidedTourLayout();
-    });
-    dialogResizeObserver.observe(root);
-  }
-  function canStartDialogDrag(target) {
-    if (!target || !target.closest("[data-dialog-drag-handle]")) return false;
-    return !target.closest("button, input, textarea, select, label, a, [data-no-dialog-drag]");
-  }
-  function finishDialogDrag(persist = true) {
-    if (!dialogDragState) return;
-    const doc = getToolDocument();
-    doc.removeEventListener("mousemove", dialogDragMoveHandler);
-    doc.removeEventListener("mouseup", dialogDragEndHandler);
-    dialogDragState = null;
-    root.classList.remove("dragging");
-    doc.body.style.userSelect = "";
-    if (persist) saveCurrentDialogState();
-  }
-  function onDialogDragMove(e) {
-    if (!dialogDragState) return;
-    const nextLeft = dialogDragState.left + (e.clientX - dialogDragState.startX);
-    const nextTop = dialogDragState.top + (e.clientY - dialogDragState.startY);
-    applyDialogPosition(nextLeft, nextTop, { persist: false });
-  }
-  function onDialogDragEnd() {
-    finishDialogDrag(true);
-  }
-  function onDialogDragStart(e) {
-    if (e.button !== 0 || !canStartDialogDrag(e.target)) return;
-    const current = getCurrentDialogPosition();
-    dialogDragState = {
-      startX: e.clientX,
-      startY: e.clientY,
-      left: current.left,
-      top: current.top
-    };
-    if (!dialogDragMoveHandler) dialogDragMoveHandler = onDialogDragMove;
-    if (!dialogDragEndHandler) dialogDragEndHandler = onDialogDragEnd;
-    const doc = getToolDocument();
-    doc.addEventListener("mousemove", dialogDragMoveHandler);
-    doc.addEventListener("mouseup", dialogDragEndHandler);
-    root.classList.add("dragging");
-    doc.body.style.userSelect = "none";
-    e.preventDefault();
-  }
-  function initDialogDragHandling() {
-    ui2.dialogHandle?.addEventListener("mousedown", onDialogDragStart);
-  }
-  function teardownDialogResizeHandling() {
-    if (dialogResizeObserver) {
-      dialogResizeObserver.disconnect();
-      dialogResizeObserver = null;
-    }
-    window.clearTimeout(dialogResizeSaveTimer);
-    dialogResizeSaveTimer = 0;
-    ui2.dialogHandle?.removeEventListener("mousedown", onDialogDragStart);
-    finishDialogDrag(false);
-  }
-  var root, ui2, dialogResizeObserver, dialogResizeSaveTimer, dialogDragState, dialogDragMoveHandler, dialogDragEndHandler, scheduleGuidedTourLayoutFn;
-  var init_dialog = __esm({
-    "src/ui/dialog.js"() {
+  var state, ui;
+  var init_state = __esm({
+    "src/state.js"() {
       "use strict";
       init_constants();
-      init_state();
+      state = {
+        activeTab: "diff",
+        activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
+        lastSourceBundle: null,
+        lastTargetBundle: null,
+        lastDiffRows: [],
+        lastFetchIssues: [],
+        lastDiffAt: null,
+        lastDiffSignature: "",
+        lastApplyPlan: null,
+        diffViewTheme: "light",
+        diffCollapsedSections: /* @__PURE__ */ new Set(),
+        diffSectionVisibleCounts: {},
+        diffSelectedIds: /* @__PURE__ */ new Set(),
+        diffFavoritePaths: /* @__PURE__ */ new Set(),
+        diffFavoritesOnly: false,
+        diffExcludeSections: null,
+        diffSelectionAnchorId: "",
+        diffIncludeSame: false,
+        diffFilterSection: "",
+        diffFilterType: "",
+        diffFilterSeverity: "",
+        diffSearchFieldName: false,
+        diffExportMode: "all",
+        diffExportContent: "diffOnly",
+        diffIgnoreSuggestions: [],
+        reflectRows: [],
+        reflectSelectedIds: /* @__PURE__ */ new Set(),
+        reflectNodeModes: {},
+        reflectUndoStack: [],
+        reflectRedoStack: [],
+        reflectPropertyFilters: /* @__PURE__ */ new Set(),
+        reflectPropertyPanelOpen: false,
+        reflectActiveSidebarSection: null,
+        reflectActiveNodeId: "",
+        reflectDetailTab: "diff",
+        importedSourceBundle: null,
+        importedTargetBundle: null,
+        importedSourceName: "",
+        importedTargetName: "",
+        patchJsonPanelOpen: false,
+        importedPatchPayload: null,
+        guidedTourActive: false,
+        guidedTourIndex: 0,
+        running: false
+      };
+      ui = {};
+    }
+  });
+
+  // src/api.js
+  function buildApiPrefix(guestId, preview) {
+    const g = String(guestId || "").trim();
+    if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
+    return `/k/v1${preview ? "/preview" : ""}`;
+  }
+  async function apiGet(prefix, path, params, retries = 3) {
+    let err;
+    for (let i = 0; i < retries; i++) {
+      try {
+        return await kintone.api(`${prefix}${path}`, "GET", params);
+      } catch (e) {
+        err = e;
+        if (i < retries - 1) await new Promise((r) => setTimeout(r, (i + 1) * 700));
+      }
+    }
+    throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
+  }
+  async function apiPut(prefix, path, body) {
+    try {
+      return await kintone.api(`${prefix}${path}`, "PUT", body);
+    } catch (e) {
+      throw apiErrorWithContext(e, { method: "PUT", prefix, path, payload: body });
+    }
+  }
+  async function apiPost(prefix, path, body) {
+    try {
+      return await kintone.api(`${prefix}${path}`, "POST", body);
+    } catch (e) {
+      throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
+    }
+  }
+  function sanitizeBundleMeta(meta) {
+    const out = { sectionRevisions: {} };
+    const revisions = meta?.sectionRevisions;
+    if (!revisions || typeof revisions !== "object") return out;
+    Object.keys(revisions).forEach((key) => {
+      const value = revisions[key];
+      if (value == null || value === "") return;
+      out.sectionRevisions[key] = String(value);
+    });
+    return out;
+  }
+  function extractSectionRevision(res) {
+    if (!res || typeof res !== "object") return "";
+    const candidates = [res.revision, res.appRevision, res.revisionNo, res.app?.revision];
+    for (const value of candidates) {
+      if (value == null || value === "") continue;
+      return String(value);
+    }
+    return "";
+  }
+  function ensureBundleShape(bundle) {
+    if (!bundle || typeof bundle !== "object") throw new Error("バンドル形式が不正です");
+    if (!bundle.sections || typeof bundle.sections !== "object") throw new Error("sections がありません");
+    return {
+      appId: String(bundle.appId || ""),
+      guestId: String(bundle.guestId || ""),
+      preview: !!bundle.preview,
+      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      meta: sanitizeBundleMeta(bundle.meta),
+      sections: normalize(bundle.sections)
+    };
+  }
+  function pickBundleSections(bundle, sections) {
+    const picked = {
+      appId: String(bundle.appId || ""),
+      guestId: String(bundle.guestId || ""),
+      preview: !!bundle.preview,
+      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      meta: { sectionRevisions: {} },
+      sections: {}
+    };
+    for (const sec of sections) {
+      if (Object.prototype.hasOwnProperty.call(bundle.sections || {}, sec)) {
+        picked.sections[sec] = deepClone(bundle.sections[sec]);
+      } else {
+        picked.sections[sec] = { _fetchError: "bundleに該当セクションなし" };
+      }
+      const revision = bundle?.meta?.sectionRevisions?.[sec];
+      if (revision != null && revision !== "") picked.meta.sectionRevisions[sec] = String(revision);
+    }
+    return picked;
+  }
+  async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
+    const prefix = buildApiPrefix(guestId, preview);
+    const app = String(appId || "").trim();
+    if (!app) throw new Error("アプリIDが必要です");
+    const bundle = {
+      appId: app,
+      guestId: String(guestId || "").trim(),
+      preview: !!preview,
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      meta: { sectionRevisions: {} },
+      sections: {}
+    };
+    for (let i = 0; i < sections.length; i++) {
+      const sec = sections[i];
+      const def = SECTION_DEFS.find((x) => x.key === sec);
+      if (!def) continue;
+      try {
+        const res = await apiGet(prefix, def.endpoint, { app });
+        const revision = extractSectionRevision(res);
+        if (revision) bundle.meta.sectionRevisions[sec] = revision;
+        bundle.sections[sec] = normalize(res);
+      } catch (e) {
+        bundle.sections[sec] = { _fetchError: e.message || String(e) };
+      }
+      if (onProgress) onProgress((i + 1) / sections.length, def.label);
+    }
+    return bundle;
+  }
+  function resolveBundleRevision(bundle) {
+    const revisions = bundle?.meta?.sectionRevisions || {};
+    for (const key of ["appSettings", "fieldSettings", "layoutSettings", "viewSettings", "processSettings"]) {
+      const revision = revisions[key];
+      if (revision != null && revision !== "") return String(revision);
+    }
+    const first = Object.values(revisions).find((value) => value != null && value !== "");
+    return first != null ? String(first) : "";
+  }
+  var init_api = __esm({
+    "src/api.js"() {
+      "use strict";
+      init_constants();
       init_utils();
-      root = null;
-      ui2 = {};
-      dialogResizeObserver = null;
-      dialogResizeSaveTimer = 0;
-      dialogDragState = null;
-      dialogDragMoveHandler = null;
-      dialogDragEndHandler = null;
-      scheduleGuidedTourLayoutFn = null;
+      init_state();
     }
   });
 
@@ -1226,136 +1168,6 @@ ${contextLine}`);
     }
   });
 
-  // src/api.js
-  function buildApiPrefix(guestId, preview) {
-    const g = String(guestId || "").trim();
-    if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
-    return `/k/v1${preview ? "/preview" : ""}`;
-  }
-  async function apiGet(prefix, path, params, retries = 3) {
-    let err;
-    for (let i = 0; i < retries; i++) {
-      try {
-        return await kintone.api(`${prefix}${path}`, "GET", params);
-      } catch (e) {
-        err = e;
-        if (i < retries - 1) await new Promise((r) => setTimeout(r, (i + 1) * 700));
-      }
-    }
-    throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
-  }
-  async function apiPut(prefix, path, body) {
-    try {
-      return await kintone.api(`${prefix}${path}`, "PUT", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "PUT", prefix, path, payload: body });
-    }
-  }
-  async function apiPost(prefix, path, body) {
-    try {
-      return await kintone.api(`${prefix}${path}`, "POST", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
-    }
-  }
-  function sanitizeBundleMeta(meta) {
-    const out = { sectionRevisions: {} };
-    const revisions = meta?.sectionRevisions;
-    if (!revisions || typeof revisions !== "object") return out;
-    Object.keys(revisions).forEach((key) => {
-      const value = revisions[key];
-      if (value == null || value === "") return;
-      out.sectionRevisions[key] = String(value);
-    });
-    return out;
-  }
-  function extractSectionRevision(res) {
-    if (!res || typeof res !== "object") return "";
-    const candidates = [res.revision, res.appRevision, res.revisionNo, res.app?.revision];
-    for (const value of candidates) {
-      if (value == null || value === "") continue;
-      return String(value);
-    }
-    return "";
-  }
-  function ensureBundleShape(bundle) {
-    if (!bundle || typeof bundle !== "object") throw new Error("バンドル形式が不正です");
-    if (!bundle.sections || typeof bundle.sections !== "object") throw new Error("sections がありません");
-    return {
-      appId: String(bundle.appId || ""),
-      guestId: String(bundle.guestId || ""),
-      preview: !!bundle.preview,
-      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
-      meta: sanitizeBundleMeta(bundle.meta),
-      sections: normalize(bundle.sections)
-    };
-  }
-  function pickBundleSections(bundle, sections) {
-    const picked = {
-      appId: String(bundle.appId || ""),
-      guestId: String(bundle.guestId || ""),
-      preview: !!bundle.preview,
-      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
-      meta: { sectionRevisions: {} },
-      sections: {}
-    };
-    for (const sec of sections) {
-      if (Object.prototype.hasOwnProperty.call(bundle.sections || {}, sec)) {
-        picked.sections[sec] = deepClone(bundle.sections[sec]);
-      } else {
-        picked.sections[sec] = { _fetchError: "bundleに該当セクションなし" };
-      }
-      const revision = bundle?.meta?.sectionRevisions?.[sec];
-      if (revision != null && revision !== "") picked.meta.sectionRevisions[sec] = String(revision);
-    }
-    return picked;
-  }
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
-    const prefix = buildApiPrefix(guestId, preview);
-    const app = String(appId || "").trim();
-    if (!app) throw new Error("アプリIDが必要です");
-    const bundle = {
-      appId: app,
-      guestId: String(guestId || "").trim(),
-      preview: !!preview,
-      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      meta: { sectionRevisions: {} },
-      sections: {}
-    };
-    for (let i = 0; i < sections.length; i++) {
-      const sec = sections[i];
-      const def = SECTION_DEFS.find((x) => x.key === sec);
-      if (!def) continue;
-      try {
-        const res = await apiGet(prefix, def.endpoint, { app });
-        const revision = extractSectionRevision(res);
-        if (revision) bundle.meta.sectionRevisions[sec] = revision;
-        bundle.sections[sec] = normalize(res);
-      } catch (e) {
-        bundle.sections[sec] = { _fetchError: e.message || String(e) };
-      }
-      if (onProgress) onProgress((i + 1) / sections.length, def.label);
-    }
-    return bundle;
-  }
-  function resolveBundleRevision(bundle) {
-    const revisions = bundle?.meta?.sectionRevisions || {};
-    for (const key of ["appSettings", "fieldSettings", "layoutSettings", "viewSettings", "processSettings"]) {
-      const revision = revisions[key];
-      if (revision != null && revision !== "") return String(revision);
-    }
-    const first = Object.values(revisions).find((value) => value != null && value !== "");
-    return first != null ? String(first) : "";
-  }
-  var init_api = __esm({
-    "src/api.js"() {
-      "use strict";
-      init_constants();
-      init_utils();
-      init_state();
-    }
-  });
-
   // src/diff/enrich.js
   function relativePathFromRow2(path, secKey) {
     if (!path) return "";
@@ -1843,6 +1655,213 @@ ${contextLine}`);
       init_state();
       init_utils();
       init_engine();
+    }
+  });
+
+  // src/ui/dialog.js
+  function callScheduleGuidedTourLayout() {
+    if (typeof scheduleGuidedTourLayoutFn === "function") scheduleGuidedTourLayoutFn();
+  }
+  function getRoot() {
+    return root;
+  }
+  function getToolDocument() {
+    return root?.ownerDocument || document;
+  }
+  function getToolWindow() {
+    const d = getToolDocument();
+    return d.defaultView || window;
+  }
+  function setUiRefs(uiRefs) {
+    ui2 = uiRefs;
+  }
+  function setRootElement(el) {
+    root = el;
+  }
+  function clampDialogPosition(left, top, width, height) {
+    const dialogWidth = Math.max(320, Math.round(Number(width) || root?.offsetWidth || DIALOG_DEFAULT_WIDTH));
+    const dialogHeight = Math.max(240, Math.round(Number(height) || root?.offsetHeight || DIALOG_DEFAULT_HEIGHT));
+    const tw = getToolWindow();
+    const viewportWidth = Math.max(dialogWidth + DIALOG_MARGIN * 2, tw.innerWidth || dialogWidth);
+    const viewportHeight = Math.max(dialogHeight + DIALOG_MARGIN * 2, tw.innerHeight || dialogHeight);
+    const maxLeft = Math.max(DIALOG_MARGIN, viewportWidth - dialogWidth - DIALOG_MARGIN);
+    const maxTop = Math.max(DIALOG_MARGIN, viewportHeight - dialogHeight - DIALOG_MARGIN);
+    const fallbackLeft = maxLeft;
+    const fallbackTop = DIALOG_MARGIN;
+    const nextLeft = Math.min(maxLeft, Math.max(DIALOG_MARGIN, Math.round(Number.isFinite(Number(left)) ? Number(left) : fallbackLeft)));
+    const nextTop = Math.min(maxTop, Math.max(DIALOG_MARGIN, Math.round(Number.isFinite(Number(top)) ? Number(top) : fallbackTop)));
+    return { left: nextLeft, top: nextTop, maxLeft, maxTop };
+  }
+  function getDefaultDialogPosition(width, height) {
+    const dialogWidth = Math.round(Number(width) || root?.offsetWidth || DIALOG_DEFAULT_WIDTH);
+    const dialogHeight = Math.round(Number(height) || root?.offsetHeight || DIALOG_DEFAULT_HEIGHT);
+    const tw = getToolWindow();
+    return clampDialogPosition((tw.innerWidth || dialogWidth) - dialogWidth - DIALOG_MARGIN, DIALOG_MARGIN, dialogWidth, dialogHeight);
+  }
+  function getCurrentDialogPosition(width, height) {
+    const rect = root.getBoundingClientRect();
+    const defaultPos = getDefaultDialogPosition(width || rect.width, height || rect.height);
+    const rawLeft = Number.parseFloat(root.style.left);
+    const rawTop = Number.parseFloat(root.style.top);
+    const left = Number.isFinite(rawLeft) ? rawLeft : rect.left || defaultPos.left;
+    const top = Number.isFinite(rawTop) ? rawTop : rect.top || defaultPos.top;
+    return clampDialogPosition(left, top, width || rect.width, height || rect.height);
+  }
+  function getDialogSizeBounds() {
+    const tw = getToolWindow();
+    const maxWidth = Math.max(360, Math.floor((tw.innerWidth || DIALOG_DEFAULT_WIDTH) - DIALOG_MARGIN * 2));
+    const maxHeight = Math.max(320, Math.floor((tw.innerHeight || DIALOG_DEFAULT_HEIGHT) - DIALOG_MARGIN * 2));
+    return {
+      minWidth: Math.min(DIALOG_MIN_WIDTH, maxWidth),
+      minHeight: Math.min(DIALOG_MIN_HEIGHT, maxHeight),
+      maxWidth,
+      maxHeight
+    };
+  }
+  function clampDialogSize(width, height) {
+    const bounds = getDialogSizeBounds();
+    const nextWidth = Math.max(bounds.minWidth, Math.min(bounds.maxWidth, Math.round(Number(width) || DIALOG_DEFAULT_WIDTH)));
+    const nextHeight = Math.max(bounds.minHeight, Math.min(bounds.maxHeight, Math.round(Number(height) || DIALOG_DEFAULT_HEIGHT)));
+    return { ...bounds, width: nextWidth, height: nextHeight };
+  }
+  function applyDialogSize(width, height, options = {}) {
+    const next = clampDialogSize(width, height);
+    root.style.width = `${next.width}px`;
+    root.style.height = `${next.height}px`;
+    const currentPos = getCurrentDialogPosition(next.width, next.height);
+    root.style.left = `${currentPos.left}px`;
+    root.style.top = `${currentPos.top}px`;
+    root.style.right = "auto";
+    root.style.bottom = "auto";
+    if (options.persist !== false) scheduleDialogSizeSave();
+    return next;
+  }
+  function applyDialogPosition(left, top, options = {}) {
+    const rect = root.getBoundingClientRect();
+    const next = clampDialogPosition(left, top, rect.width || root.offsetWidth, rect.height || root.offsetHeight);
+    root.style.left = `${next.left}px`;
+    root.style.top = `${next.top}px`;
+    root.style.right = "auto";
+    root.style.bottom = "auto";
+    if (options.persist !== false) scheduleDialogSizeSave();
+    if (state.guidedTourActive) callScheduleGuidedTourLayout();
+    return next;
+  }
+  function applyDialogSizePreset(mode) {
+    if (mode === "large") {
+      return applyDialogSize(DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT);
+    }
+    if (mode === "max") {
+      const bounds = getDialogSizeBounds();
+      return applyDialogSize(bounds.maxWidth, bounds.maxHeight);
+    }
+    return applyDialogSize(DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT);
+  }
+  function fitDialogToViewport(options = {}) {
+    const rect = root.getBoundingClientRect();
+    const size = applyDialogSize(rect.width || DIALOG_DEFAULT_WIDTH, rect.height || DIALOG_DEFAULT_HEIGHT, { persist: false });
+    const pos = applyDialogPosition(getCurrentDialogPosition(size.width, size.height).left, getCurrentDialogPosition(size.width, size.height).top, { persist: false });
+    if (options.persist !== false) saveCurrentDialogState();
+    return { ...size, ...pos };
+  }
+  function scheduleDialogSizeSave() {
+    window.clearTimeout(dialogResizeSaveTimer);
+    dialogResizeSaveTimer = window.setTimeout(() => {
+      dialogResizeSaveTimer = 0;
+      saveCurrentDialogState();
+    }, 180);
+  }
+  function saveCurrentDialogState() {
+    if (!root) return;
+    const rect = root.getBoundingClientRect();
+    const saved = loadDialogState();
+    saved.width = Math.round(rect.width || root.offsetWidth);
+    saved.height = Math.round(rect.height || root.offsetHeight);
+    const rawLeft = Number.parseFloat(root.style.left);
+    const rawTop = Number.parseFloat(root.style.top);
+    if (Number.isFinite(rawLeft)) saved.left = Math.round(rawLeft);
+    if (Number.isFinite(rawTop)) saved.top = Math.round(rawTop);
+    saved.activeTab = state.activeTab || "diff";
+    saved.activeSubTabs = { ...state.activeSubTabs };
+    saveDialogState(saved);
+  }
+  function initDialogResizeHandling() {
+    if (dialogResizeObserver || typeof ResizeObserver !== "function") return;
+    dialogResizeObserver = new ResizeObserver(() => {
+      scheduleDialogSizeSave();
+      callScheduleGuidedTourLayout();
+    });
+    dialogResizeObserver.observe(root);
+  }
+  function canStartDialogDrag(target) {
+    if (!target || !target.closest("[data-dialog-drag-handle]")) return false;
+    return !target.closest("button, input, textarea, select, label, a, [data-no-dialog-drag]");
+  }
+  function finishDialogDrag(persist = true) {
+    if (!dialogDragState) return;
+    const doc = getToolDocument();
+    doc.removeEventListener("mousemove", dialogDragMoveHandler);
+    doc.removeEventListener("mouseup", dialogDragEndHandler);
+    dialogDragState = null;
+    root.classList.remove("dragging");
+    doc.body.style.userSelect = "";
+    if (persist) saveCurrentDialogState();
+  }
+  function onDialogDragMove(e) {
+    if (!dialogDragState) return;
+    const nextLeft = dialogDragState.left + (e.clientX - dialogDragState.startX);
+    const nextTop = dialogDragState.top + (e.clientY - dialogDragState.startY);
+    applyDialogPosition(nextLeft, nextTop, { persist: false });
+  }
+  function onDialogDragEnd() {
+    finishDialogDrag(true);
+  }
+  function onDialogDragStart(e) {
+    if (e.button !== 0 || !canStartDialogDrag(e.target)) return;
+    const current = getCurrentDialogPosition();
+    dialogDragState = {
+      startX: e.clientX,
+      startY: e.clientY,
+      left: current.left,
+      top: current.top
+    };
+    if (!dialogDragMoveHandler) dialogDragMoveHandler = onDialogDragMove;
+    if (!dialogDragEndHandler) dialogDragEndHandler = onDialogDragEnd;
+    const doc = getToolDocument();
+    doc.addEventListener("mousemove", dialogDragMoveHandler);
+    doc.addEventListener("mouseup", dialogDragEndHandler);
+    root.classList.add("dragging");
+    doc.body.style.userSelect = "none";
+    e.preventDefault();
+  }
+  function initDialogDragHandling() {
+    ui2.dialogHandle?.addEventListener("mousedown", onDialogDragStart);
+  }
+  function teardownDialogResizeHandling() {
+    if (dialogResizeObserver) {
+      dialogResizeObserver.disconnect();
+      dialogResizeObserver = null;
+    }
+    window.clearTimeout(dialogResizeSaveTimer);
+    dialogResizeSaveTimer = 0;
+    ui2.dialogHandle?.removeEventListener("mousedown", onDialogDragStart);
+    finishDialogDrag(false);
+  }
+  var root, ui2, dialogResizeObserver, dialogResizeSaveTimer, dialogDragState, dialogDragMoveHandler, dialogDragEndHandler, scheduleGuidedTourLayoutFn;
+  var init_dialog = __esm({
+    "src/ui/dialog.js"() {
+      "use strict";
+      init_constants();
+      init_state();
+      init_utils();
+      root = null;
+      ui2 = {};
+      dialogResizeObserver = null;
+      dialogResizeSaveTimer = 0;
+      dialogDragState = null;
+      dialogDragMoveHandler = null;
+      dialogDragEndHandler = null;
+      scheduleGuidedTourLayoutFn = null;
     }
   });
 
@@ -7193,7 +7212,619 @@ ${contextLine}`);
     }
   });
 
-  // src/index.js
+  // src/tabs/design-xlsx.js
+  var design_xlsx_exports = {};
+  __export(design_xlsx_exports, {
+    runAdvancedDesignExporter: () => runAdvancedDesignExporter
+  });
+  async function runAdvancedDesignExporter(params = {}) {
+    const sourceAppId = Number(params.appId);
+    if (!sourceAppId) throw new Error("有効な比較元アプリIDが指定されませんでした。");
+    const sourceGuestId = String(params.guestId || "").trim();
+    const CONFIG = {
+      SHEETLIB_PRIMARY_URL: "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js",
+      SHEETLIB_FALLBACK_URL: "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
+      MAX_RETRIES: 3,
+      RETRY_DELAY: 1e3,
+      API_CONCURRENCY: 4,
+      FONT_NAME: "Meiryo",
+      STYLES: {
+        ENABLE_BORDER: true,
+        ENABLE_HEADER_FILL: true,
+        ENABLE_ZEBRA: true,
+        ENABLE_AUTOFILTER: true,
+        FREEZE_HEADER: true,
+        ENABLE_TITLE_STYLING: true,
+        ENABLE_CONDITIONAL_FORMAT: true,
+        ENABLE_OUTLINE: true
+      },
+      DEFAULT_COL_WIDTH: 12,
+      MAX_COL_WIDTH: 80,
+      MIN_COL_WIDTH: 8,
+      COLORS: {
+        HEADER_BG: "FF4A90E2",
+        HEADER_TEXT: "FFFFFFFF",
+        TITLE_BG: "FF2E5C8A",
+        TITLE_TEXT: "FFFFFFFF",
+        ZEBRA_EVEN: "FFF8F9FA",
+        ZEBRA_ODD: "FFFFFFFF",
+        BORDER: "FF666666",
+        SECTION_BG: "FFECF0F1",
+        REQUIRED_BG: "FFFFF2CC",
+        WARNING_BG: "FFFFC000",
+        SUCCESS_BG: "FFC6EFCE",
+        DANGER_BG: "FFF8CBAD",
+        INFO_BG: "FFD9E1F2",
+        SUBTABLE_BG: "FFE8EAF6",
+        DEPENDENCY_BG: "FFFCE4EC"
+      },
+      SANITIZE_LABEL_HTML_IN_LAYOUT: true
+    };
+    const FIELD_TYPE = {
+      "LABEL": "ラベル",
+      "HR": "罫線",
+      "SPACER": "スペース",
+      "GROUP": "グループ",
+      "FILE": "添付ファイル",
+      "LINK": "リンク",
+      "REFERENCE_TABLE": "関連レコード一覧",
+      "SINGLE_LINE_TEXT": "文字列(1行)",
+      "MULTI_LINE_TEXT": "文字列(複数行)",
+      "RICH_TEXT": "リッチエディター",
+      "NUMBER": "数値",
+      "CALC": "計算",
+      "RADIO_BUTTON": "ラジオボタン",
+      "CHECK_BOX": "チェックボックス",
+      "DROP_DOWN": "ドロップダウン",
+      "MULTI_SELECT": "複数選択",
+      "DATE": "日付",
+      "DATETIME": "日時",
+      "TIME": "時刻",
+      "USER_SELECT": "ユーザー選択",
+      "ORGANIZATION_SELECT": "組織選択",
+      "GROUP_SELECT": "グループ選択",
+      "LOOKUP": "ルックアップ",
+      "SUBTABLE": "テーブル",
+      "RECORD_NUMBER": "レコード番号",
+      "CREATOR": "作成者",
+      "CREATED_TIME": "作成日時",
+      "MODIFIER": "更新者",
+      "UPDATED_TIME": "更新日時",
+      "STATUS": "ステータス",
+      "CATEGORY": "カテゴリー",
+      "STATUS_ASSIGNEE": "作業者"
+    };
+    const SYSTEM_FIELDS = /* @__PURE__ */ new Set(["$id", "$revision", "status", "category", "assignee"]);
+    class Semaphore {
+      constructor(max) {
+        this.max = max;
+        this.current = 0;
+        this.queue = [];
+      }
+      acquire() {
+        return new Promise((resolve) => {
+          if (this.current < this.max) {
+            this.current++;
+            resolve();
+          } else this.queue.push(resolve);
+        });
+      }
+      release() {
+        this.current--;
+        if (this.queue.length > 0) {
+          this.current++;
+          this.queue.shift()();
+        }
+      }
+      async run(fn) {
+        await this.acquire();
+        try {
+          return await fn();
+        } finally {
+          this.release();
+        }
+      }
+    }
+    const apiSemaphore = new Semaphore(CONFIG.API_CONCURRENCY);
+    function getExporterOverlayZIndex() {
+      const main = getToolDocument().getElementById(TOOL_ID);
+      const raw = main ? Number(window.getComputedStyle(main).zIndex) : NaN;
+      const base = Number.isFinite(raw) ? raw : 2147483646;
+      return String(Math.min(2147483647, Math.max(2e9, base + 1)));
+    }
+    const UI = {
+      id: "kintone-exporter-overlay",
+      totalSteps: 0,
+      currentStep: 0,
+      failedAPIs: [],
+      show(msg, totalSteps = 10) {
+        UI.totalSteps = totalSteps;
+        UI.currentStep = 0;
+        UI.failedAPIs = [];
+        const doc = getToolDocument();
+        let el = doc.getElementById(UI.id);
+        if (!el) {
+          el = doc.createElement("div");
+          el.id = UI.id;
+          Object.assign(el.style, { position: "fixed", top: "0", left: "0", width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.7)", zIndex: getExporterOverlayZIndex(), display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", color: "#fff", fontSize: "16px", fontFamily: '"Meiryo", sans-serif' });
+          doc.body.appendChild(el);
+        }
+        el.style.zIndex = getExporterOverlayZIndex();
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:400px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.0</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div></div>`;
+      },
+      update(msg, step) {
+        if (step !== void 0) UI.currentStep = step;
+        else UI.currentStep++;
+        const pct = Math.min(100, Math.round(UI.currentStep / UI.totalSteps * 100));
+        const doc = getToolDocument();
+        const statusEl = doc.getElementById("kex-status");
+        const barEl = doc.getElementById("kex-progress-bar");
+        const pctEl = doc.getElementById("kex-percent");
+        if (statusEl) statusEl.textContent = msg;
+        if (barEl) barEl.style.width = `${pct}%`;
+        if (pctEl) pctEl.textContent = `${pct}%`;
+      },
+      logError(apiName, error) {
+        UI.failedAPIs.push({ name: apiName, error: error?.message || String(error) });
+        const errEl = getToolDocument().getElementById("kex-errors");
+        if (errEl) errEl.textContent = `⚠ ${UI.failedAPIs.length}件のAPI取得に失敗`;
+      },
+      hide() {
+        const doc = getToolDocument();
+        const el = doc.getElementById(UI.id);
+        if (el) doc.body.removeChild(el);
+      }
+    };
+    const UtilsX = {
+      pad: (n) => n.toString().padStart(2, "0"),
+      dt: (d = /* @__PURE__ */ new Date()) => {
+        const p = UtilsX.pad;
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+      },
+      toJST: (isoString) => {
+        if (!isoString) return "-";
+        try {
+          return new Date(isoString).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
+        } catch {
+          return isoString;
+        }
+      },
+      safeGet: (obj, path, def = "") => {
+        try {
+          if (!obj || typeof obj !== "object") return def;
+          const v = path.split(".").reduce((o, k) => o && o[k] !== void 0 ? o[k] : void 0, obj);
+          return v === void 0 ? def : v;
+        } catch (e) {
+          return def;
+        }
+      },
+      ensureArray: (v) => Array.isArray(v) ? v : [],
+      safeJoin: (arr, sep = "、") => Array.isArray(arr) ? arr.filter((v) => v !== "" && v != null).join(sep) : "",
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      calculateCellWidth: (text) => {
+        if (!text) return CONFIG.MIN_COL_WIDTH;
+        const str = String(text);
+        let width = 0;
+        for (const line of str.split("\n")) {
+          let lw = 0;
+          for (const ch of line) lw += /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF00-\uFFEF]/.test(ch) ? 2 : 1;
+          if (lw > width) width = lw;
+        }
+        return Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, width + 2));
+      },
+      colToA1: (n) => {
+        let s = "";
+        while (n > 0) {
+          const m = (n - 1) % 26;
+          s = String.fromCharCode(65 + m) + s;
+          n = (n - 1) / 26 | 0;
+        }
+        return s;
+      },
+      a1: (r, c) => `${UtilsX.colToA1(c)}${r}`,
+      escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      stripHtml: (html) => String(html || "").replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"),
+      formatBoolean: (val) => val ? "○" : "-",
+      formatEntity: (entity) => {
+        if (!entity) return "-";
+        if (Array.isArray(entity)) return entity.map((e2) => UtilsX.formatEntity(e2)).join("\n");
+        const e = entity.entity || entity;
+        const t = (e.type || "").toString().toUpperCase();
+        const typeMap = { USER: "ユーザー", GROUP: "グループ", ORGANIZATION: "組織", FIELD_ENTITY: "フィールド値", CREATOR: "作成者", MODIFIER: "更新者", LOGIN_USER: "ログインユーザー", ALL: "全員" };
+        const typeJP = typeMap[t] || e.type || "不明";
+        if (e.name) return `${typeJP}:${e.name}`;
+        if (e.code) return `${typeJP}:${e.code}`;
+        return typeJP;
+      },
+      formatEntityDetailed: (entity) => {
+        if (!entity) return "-";
+        if (Array.isArray(entity)) return entity.map((e2) => UtilsX.formatEntityDetailed(e2)).join("\n");
+        const e = entity.entity || entity;
+        const t = (e.type || "").toString().toUpperCase();
+        const typeMap = { USER: "ユーザー", GROUP: "グループ", ORGANIZATION: "組織", FIELD_ENTITY: "フィールド値", CREATOR: "作成者", MODIFIER: "更新者", LOGIN_USER: "ログインユーザー", ALL: "全員" };
+        const typeJP = typeMap[t] || e.type || "不明";
+        const parts = [typeJP];
+        if (e.name) parts.push(e.name);
+        else if (e.code) parts.push(`コード:${e.code}`);
+        if (entity.includeSubs) parts.push("(サブ組織含)");
+        return parts.join(": ");
+      },
+      formatSort: (sortStr) => {
+        if (!sortStr) return "-";
+        return String(sortStr).replace(/\basc\b/gi, "昇順").replace(/\bdesc\b/gi, "降順");
+      },
+      formatFilterCond: (condStr) => {
+        if (!condStr) return "-";
+        let r = String(condStr);
+        r = r.replace(/\s*,\s*/g, ", ");
+        return r;
+      },
+      formatFieldFormat: (f) => {
+        if (!f || typeof f !== "object") return "";
+        const parts = [];
+        if (f.digit !== void 0) parts.push(`桁区切り: ${f.digit ? "あり" : "なし"}`);
+        if (f.displayScale !== void 0) parts.push(`小数点: ${f.displayScale}桁`);
+        if (f.unit) parts.push(`単位: ${f.unit}`);
+        return parts.join("、");
+      },
+      formatDefaultValue: (dv) => {
+        if (dv == null) return "";
+        if (Array.isArray(dv)) {
+          if (dv.length > 0 && typeof dv[0] === "object") return dv.map((i) => i.name || i.code || JSON.stringify(i)).join("、");
+          return dv.join("、");
+        }
+        if (typeof dv === "object") {
+          if (dv.type === "NUMBER") return String(dv.value || "");
+          return dv.name || dv.code || JSON.stringify(dv);
+        }
+        return String(dv);
+      },
+      safeJSONStringify: (obj) => {
+        try {
+          return JSON.stringify(obj, null, 2);
+        } catch (e) {
+          return String(obj);
+        }
+      }
+    };
+    async function loadSheetLib() {
+      if (typeof window.XLSX !== "undefined") return { styled: true };
+      const loadScriptLocal = (src, timeout = 15e3) => new Promise((resolve, reject) => {
+        const doc = getToolDocument();
+        const s = doc.createElement("script");
+        s.src = src;
+        s.async = true;
+        let done = false;
+        const timer = setTimeout(() => {
+          if (!done) {
+            done = true;
+            reject(new Error(`Timeout: ${src}`));
+          }
+        }, timeout);
+        s.onload = () => {
+          if (!done) {
+            done = true;
+            clearTimeout(timer);
+            resolve(true);
+          }
+        };
+        s.onerror = () => {
+          if (!done) {
+            done = true;
+            clearTimeout(timer);
+            reject(new Error(`Failed: ${src}`));
+          }
+        };
+        doc.head.appendChild(s);
+      });
+      try {
+        await loadScriptLocal(CONFIG.SHEETLIB_PRIMARY_URL);
+        return { styled: true };
+      } catch {
+        await loadScriptLocal(CONFIG.SHEETLIB_FALLBACK_URL);
+        return { styled: false };
+      }
+    }
+    async function retry(fn, max = CONFIG.MAX_RETRIES) {
+      for (let i = 0; i < max; i++) {
+        try {
+          return await fn();
+        } catch (e) {
+          if (i === max - 1) throw e;
+          await UtilsX.sleep(CONFIG.RETRY_DELAY * (i + 1));
+        }
+      }
+    }
+    async function fetchJob(name, promiseFn) {
+      try {
+        return await apiSemaphore.run(() => retry(promiseFn));
+      } catch (e) {
+        console.warn(`[${name}] Failed:`, e);
+        UI.logError(name, e);
+        return null;
+      }
+    }
+    function showExportOptionsDialog() {
+      return new Promise((resolve) => {
+        const overlay = getToolDocument().createElement("div");
+        Object.assign(overlay.style, { position: "fixed", top: "0", left: "0", width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.6)", zIndex: getExporterOverlayZIndex(), display: "flex", justifyContent: "center", alignItems: "center", fontFamily: '"Meiryo", sans-serif' });
+        const sheets = [
+          { key: "summary", label: "サマリー", default: true, required: true },
+          { key: "fields", label: "項目定義", default: true },
+          { key: "layout", label: "フォームレイアウト", default: true },
+          { key: "views", label: "一覧", default: true },
+          { key: "reports", label: "レポート", default: true },
+          { key: "status", label: "プロセス管理", default: true },
+          { key: "statusMatrix", label: "遷移マトリクス", default: true },
+          { key: "appAcl", label: "アプリ権限", default: true },
+          { key: "recordAcl", label: "レコード権限", default: true },
+          { key: "fieldAcl", label: "フィールド権限", default: true },
+          { key: "customize", label: "JS/CSSカスタマイズ", default: true },
+          { key: "actions", label: "アクション", default: true },
+          { key: "plugins", label: "プラグイン", default: true },
+          { key: "genNotif", label: "通知（一般）", default: true },
+          { key: "recNotif", label: "通知（レコード）", default: true },
+          { key: "remNotif", label: "通知（リマインダー）", default: true },
+          { key: "webhook", label: "Webhook", default: true },
+          { key: "adminNotes", label: "管理者メモ", default: true },
+          { key: "dependencies", label: "フィールド依存関係", default: true }
+        ];
+        const checkboxes = sheets.map((s) => `<label style="display:block;margin:3px 0;font-size:13px;cursor:${s.required ? "default" : "pointer"};"><input type="checkbox" value="${s.key}" ${s.default ? "checked" : ""} ${s.required ? "disabled" : ""} style="margin-right:6px;">${s.label}${s.required ? " (必須)" : ""}</label>`).join("");
+        overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:460px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.3);"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:16px;">📊 エクスポート設定</div><div style="font-size:12px;color:#666;margin-bottom:12px;">出力するシートを選択してください</div><div style="display:flex;gap:8px;margin-bottom:12px;"><button id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div><div id="kex-sheet-options" style="max-height:340px;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${checkboxes}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;"><button id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
+        getToolDocument().body.appendChild(overlay);
+        overlay.querySelector("#kex-select-all").onclick = () => {
+          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]').forEach((cb) => cb.checked = true);
+        };
+        overlay.querySelector("#kex-select-none").onclick = () => {
+          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])').forEach((cb) => cb.checked = false);
+        };
+        overlay.querySelector("#kex-cancel").onclick = () => {
+          getToolDocument().body.removeChild(overlay);
+          resolve(null);
+        };
+        overlay.querySelector("#kex-export").onclick = () => {
+          const selected = /* @__PURE__ */ new Set();
+          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:checked').forEach((cb) => selected.add(cb.value));
+          getToolDocument().body.removeChild(overlay);
+          resolve(selected);
+        };
+      });
+    }
+    try {
+      const APP_ID = Number(sourceAppId);
+      if (!APP_ID) throw new Error("有効な比較元アプリIDが指定されませんでした。");
+      const selectedSheets = await showExportOptionsDialog();
+      if (!selectedSheets) return false;
+      UI.show("ライブラリ読み込み中...", 12);
+      const { styled } = await loadSheetLib();
+      const api = kintone.api;
+      const apiUrl = (path) => {
+        let p = String(path || "");
+        if (sourceGuestId) {
+          p = p.replace("/k/v1/preview/", `/k/guest/${sourceGuestId}/v1/preview/`).replace("/k/v1/", `/k/guest/${sourceGuestId}/v1/`);
+        }
+        return kintone.api.url(p, true);
+      };
+      UI.update("基本情報を取得中...");
+      const appSettings = await fetchJob("App", () => api(apiUrl("/k/v1/app.json"), "GET", { id: APP_ID }));
+      const generalSettings = await fetchJob("Settings", () => api(apiUrl("/k/v1/app/settings.json"), "GET", { app: APP_ID }));
+      UI.update("フィールド・レイアウトを取得中...");
+      let fieldResp = await fetchJob("FieldsPrev", () => api(apiUrl("/k/v1/preview/app/form/fields.json"), "GET", { app: APP_ID }));
+      if (!fieldResp) fieldResp = await fetchJob("FieldsProd", () => api(apiUrl("/k/v1/app/form/fields.json"), "GET", { app: APP_ID }));
+      let layout = await fetchJob("LayoutPrev", () => api(apiUrl("/k/v1/preview/app/form/layout.json"), "GET", { app: APP_ID }));
+      if (!layout) layout = await fetchJob("LayoutProd", () => api(apiUrl("/k/v1/app/form/layout.json"), "GET", { app: APP_ID }));
+      const filterUserFields = (fields2) => {
+        const filtered = {};
+        for (const [code, field] of Object.entries(fields2)) {
+          if (SYSTEM_FIELDS.has(code) || SYSTEM_FIELDS.has(field.code)) continue;
+          if (["STATUS", "CATEGORY", "STATUS_ASSIGNEE"].includes(field.type)) continue;
+          filtered[code] = field;
+        }
+        return filtered;
+      };
+      const fields = filterUserFields(fieldResp?.properties || {});
+      UI.update("レコード件数を取得中...");
+      let recordCount = null;
+      try {
+        const countResp = await fetchJob("RecordCount", () => api(apiUrl("/k/v1/records.json"), "GET", { app: APP_ID, query: "limit 1", totalCount: true }));
+        recordCount = countResp?.totalCount ?? null;
+      } catch (e) {
+      }
+      UI.update("一覧・権限・通知設定を取得中...");
+      const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif] = await Promise.all([
+        fetchJob("Views", () => api(apiUrl("/k/v1/app/views.json"), "GET", { app: APP_ID })),
+        fetchJob("Reports", () => api(apiUrl("/k/v1/app/reports.json"), "GET", { app: APP_ID })),
+        fetchJob("Status", () => api(apiUrl("/k/v1/app/status.json"), "GET", { app: APP_ID })),
+        fetchJob("アプリ権限", () => api(apiUrl("/k/v1/app/acl.json"), "GET", { app: APP_ID })),
+        fetchJob("レコード権限", () => api(apiUrl("/k/v1/record/acl.json"), "GET", { app: APP_ID })),
+        fetchJob("フィールド権限", () => api(apiUrl("/k/v1/field/acl.json"), "GET", { app: APP_ID })),
+        fetchJob("Customize", () => api(apiUrl("/k/v1/app/customize.json"), "GET", { app: APP_ID })),
+        fetchJob("Actions", () => api(apiUrl("/k/v1/preview/app/actions.json"), "GET", { app: APP_ID })),
+        fetchJob("Plugins", () => api(apiUrl("/k/v1/app/plugins.json"), "GET", { app: APP_ID })),
+        fetchJob("AdminNotes", () => api(apiUrl("/k/v1/app/adminNotes.json"), "GET", { app: APP_ID })),
+        fetchJob("Webhooks", () => api(apiUrl("/k/v1/app/webhook.json"), "GET", { app: APP_ID })),
+        fetchJob("GenNotif", () => api(apiUrl("/k/v1/app/notifications/general.json"), "GET", { app: APP_ID })),
+        fetchJob("RecNotif", () => api(apiUrl("/k/v1/app/notifications/perRecord.json"), "GET", { app: APP_ID })),
+        fetchJob("RemNotif", () => api(apiUrl("/k/v1/app/notifications/reminder.json"), "GET", { app: APP_ID }))
+      ]);
+      const actions = UtilsX.safeGet(actionsResp, "actions", {});
+      UI.update("関連アプリ名を解決中...");
+      const referencedAppIds = /* @__PURE__ */ new Set();
+      const scanField = (f) => {
+        if (f.lookup?.relatedApp?.app) referencedAppIds.add(f.lookup.relatedApp.app);
+        if (f.referenceTable?.relatedApp?.app) referencedAppIds.add(f.referenceTable.relatedApp.app);
+      };
+      Object.values(fields).forEach((f) => {
+        scanField(f);
+        if (f.type === "SUBTABLE" && f.fields) Object.values(f.fields).forEach(scanField);
+      });
+      Object.values(actions).forEach((a) => {
+        if (a.destApp?.app) referencedAppIds.add(a.destApp.app);
+      });
+      const appNames = {};
+      const refPromises = [...referencedAppIds].map(
+        (id) => fetchJob(`RefApp_${id}`, () => api(apiUrl("/k/v1/app.json"), "GET", { id })).then((info) => {
+          appNames[id] = info?.name || `(ID:${id})`;
+        })
+      );
+      await Promise.all(refPromises);
+      UI.update("Excelファイルを生成中...", 10);
+      const wb = XLSX.utils.book_new();
+      const makeSafeSheetName = (raw, existingNames) => {
+        let name = String(raw ?? "").trim() || "Sheet";
+        name = name.replace(/[:\\/\?\*\[\]]/g, "_").replace(/[\u0000-\u001F]/g, "").replace(/^'+|'+$/g, "");
+        if (!name) name = "Sheet";
+        if (name.length > 31) name = name.slice(0, 31);
+        const existing = existingNames || /* @__PURE__ */ new Set();
+        if (!existing.has(name)) return name;
+        let i = 2;
+        while (true) {
+          const suffix = `(${i})`;
+          const base = name.length > 31 - suffix.length ? name.slice(0, 31 - suffix.length) : name;
+          const candidate = base + suffix;
+          if (!existing.has(candidate)) return candidate;
+          i++;
+        }
+      };
+      const appendSheet = (name, data) => {
+        if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return;
+        const ws = XLSX.utils.aoa_to_sheet(data.aoa);
+        const safeName = makeSafeSheetName(name, new Set(wb.SheetNames));
+        XLSX.utils.book_append_sheet(wb, ws, safeName);
+      };
+      const buildSimpleAOA = (title, headers, rows) => ({
+        aoa: [title ? [title] : [], headers, ...rows],
+        options: { headerRowIndex: title ? 1 : 0, titleRows: title ? [0] : [] }
+      });
+      appendSheet("サマリー", buildSimpleAOA("kintone アプリ設計書", ["項目", "値"], [
+        ["アプリID", APP_ID],
+        ["アプリ名", appSettings?.name || ""],
+        ["出力日時", UtilsX.dt()],
+        ["フィールド数", Object.keys(fields).length],
+        ["ビュー数", Object.keys(views?.views || {}).length]
+      ]));
+      UI.update("ダウンロード中...", 12);
+      const safeAppName = String(appSettings?.name || `App${APP_ID}`).replace(/[\\/:*?"<>|]/g, "_");
+      const downloadExcel = (wb2, filename) => {
+        const out = XLSX.write(wb2, { bookType: "xlsx", type: "array", cellStyles: true });
+        const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const a = getToolDocument().createElement("a");
+        const url = URL.createObjectURL(blob);
+        a.href = url;
+        a.download = filename;
+        getToolDocument().body.appendChild(a);
+        a.click();
+        getToolDocument().body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+      downloadExcel(wb, `${safeAppName}_設計書_v2.xlsx`);
+      UI.hide();
+      const errorMsg = UI.failedAPIs.length > 0 ? `
+⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : "";
+      alert(`✅ エクスポート完了${errorMsg}`);
+      return true;
+    } catch (e) {
+      UI.hide();
+      console.error("kintone設計書エクスポートエラー:", e);
+      alert(`❌ エラーが発生しました: ${e.message}`);
+      throw e;
+    }
+  }
+  var init_design_xlsx = __esm({
+    "src/tabs/design-xlsx.js"() {
+      "use strict";
+      init_constants();
+      init_dialog();
+    }
+  });
+
+  // src/register-api.js
+  init_constants();
+
+  // src/tabs/diff-standalone.js
+  init_api();
+  init_engine();
+  init_enrich();
+  function warningInfoForStandalone(rows, fetchIssues) {
+    const diffCount = countActualDiffRows(rows || []);
+    const issueCount = (fetchIssues || []).length;
+    const total = diffCount + issueCount;
+    return { threshold: 0, diffCount, issueCount, total, exceeded: false };
+  }
+  async function runDiffStandalone(opts) {
+    const onStatus = typeof opts.onStatus === "function" ? opts.onStatus : () => {
+    };
+    const onProgress = typeof opts.onProgress === "function" ? opts.onProgress : () => {
+    };
+    const source = opts.source || {};
+    const target = opts.target || {};
+    const scopes = opts.scopes || [];
+    const ignoreKeys = opts.ignoreKeys != null ? String(opts.ignoreKeys) : "";
+    const includeSame = !!opts.includeSame;
+    const normalizationPresetState = opts.normalizationPresetState || {
+      viewOrder: false,
+      permissionOrder: false,
+      generalArrayOrder: false
+    };
+    if (!scopes.length) throw new Error("比較セクションを選択してください");
+    if (!opts.importedSourceBundle && !String(source.appId || "").trim()) {
+      throw new Error("比較元アプリIDを入力してください");
+    }
+    if (!opts.importedTargetBundle && !String(target.appId || "").trim()) {
+      throw new Error("比較先アプリIDを入力してください");
+    }
+    async function resolveSide(side) {
+      const imported = side === "source" ? opts.importedSourceBundle : opts.importedTargetBundle;
+      if (imported) return imported;
+      const params = side === "source" ? source : target;
+      return fetchBundle({
+        appId: String(params.appId || "").trim(),
+        guestId: String(params.guestId || "").trim(),
+        preview: !!params.preview,
+        sections: scopes,
+        onProgress: onProgress ? (progress, label) => {
+          onProgress(side, progress, label);
+        } : void 0
+      });
+    }
+    onStatus("比較元を取得中...");
+    const sourceBundle = await resolveSide("source");
+    onStatus("比較先を取得中...");
+    const targetBundle = await resolveSide("target");
+    onStatus("差分計算中...");
+    const diffResult = computeDiffRows(sourceBundle, targetBundle, scopes, ignoreKeys, {
+      normalizationPresetState,
+      includeSame
+    });
+    const rows = enrichDiffRows(diffResult.rows, sourceBundle, targetBundle);
+    const fetchIssues = diffResult.fetchIssues || [];
+    const s = summarizeRows(rows);
+    const sev = summarizeSeverity(rows);
+    const warning = warningInfoForStandalone(rows, fetchIssues);
+    const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ""} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`;
+    onStatus(statusLine);
+    return {
+      rows,
+      fetchIssues,
+      sourceBundle,
+      targetBundle,
+      summary: {
+        text: statusLine,
+        counts: s,
+        severity: sev,
+        warning
+      }
+    };
+  }
+
+  // src/register-api.js
+  if (typeof window !== "undefined") {
+    window.__KUS__ = window.__KUS__ || {};
+    window.__KUS__.VERSION = TOOL_VERSION;
+    window.__KUS__.runDiffStandalone = runDiffStandalone;
+  }
+
+  // src/boot.js
   init_constants();
   init_state();
   init_utils();
@@ -9595,7 +10226,7 @@ ${contextLine}`);
     });
   }
 
-  // src/index.js
+  // src/boot.js
   init_dialog();
   init_components();
   init_export();
@@ -12253,6 +12884,7 @@ ${contextLine}`);
   init_dialog();
   init_engine();
   init_export();
+  init_design_xlsx();
   async function runDesignExport(kind) {
     const c = commonParams();
     if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
@@ -12347,9 +12979,10 @@ ${diffMd}
     setStatus("設計書差分レポートを出力しました");
   }
   async function runDesignExportXlsx() {
+    const { runAdvancedDesignExporter: runXlsx } = await Promise.resolve().then(() => (init_design_xlsx(), design_xlsx_exports));
     const c = commonParams();
     if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
-    const done = await runAdvancedDesignExporter({
+    const done = await runXlsx({
       appId: c.source.appId,
       guestId: c.source.guestId
     });
@@ -12358,519 +12991,6 @@ ${diffMd}
       return;
     }
     setStatus("設計書Excel出力完了");
-  }
-  async function runAdvancedDesignExporter(params = {}) {
-    const sourceAppId = Number(params.appId);
-    if (!sourceAppId) throw new Error("有効な比較元アプリIDが指定されませんでした。");
-    const sourceGuestId = String(params.guestId || "").trim();
-    const CONFIG = {
-      SHEETLIB_PRIMARY_URL: "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js",
-      SHEETLIB_FALLBACK_URL: "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
-      MAX_RETRIES: 3,
-      RETRY_DELAY: 1e3,
-      API_CONCURRENCY: 4,
-      FONT_NAME: "Meiryo",
-      STYLES: {
-        ENABLE_BORDER: true,
-        ENABLE_HEADER_FILL: true,
-        ENABLE_ZEBRA: true,
-        ENABLE_AUTOFILTER: true,
-        FREEZE_HEADER: true,
-        ENABLE_TITLE_STYLING: true,
-        ENABLE_CONDITIONAL_FORMAT: true,
-        ENABLE_OUTLINE: true
-      },
-      DEFAULT_COL_WIDTH: 12,
-      MAX_COL_WIDTH: 80,
-      MIN_COL_WIDTH: 8,
-      COLORS: {
-        HEADER_BG: "FF4A90E2",
-        HEADER_TEXT: "FFFFFFFF",
-        TITLE_BG: "FF2E5C8A",
-        TITLE_TEXT: "FFFFFFFF",
-        ZEBRA_EVEN: "FFF8F9FA",
-        ZEBRA_ODD: "FFFFFFFF",
-        BORDER: "FF666666",
-        SECTION_BG: "FFECF0F1",
-        REQUIRED_BG: "FFFFF2CC",
-        WARNING_BG: "FFFFC000",
-        SUCCESS_BG: "FFC6EFCE",
-        DANGER_BG: "FFF8CBAD",
-        INFO_BG: "FFD9E1F2",
-        SUBTABLE_BG: "FFE8EAF6",
-        DEPENDENCY_BG: "FFFCE4EC"
-      },
-      SANITIZE_LABEL_HTML_IN_LAYOUT: true
-    };
-    const FIELD_TYPE = {
-      "LABEL": "ラベル",
-      "HR": "罫線",
-      "SPACER": "スペース",
-      "GROUP": "グループ",
-      "FILE": "添付ファイル",
-      "LINK": "リンク",
-      "REFERENCE_TABLE": "関連レコード一覧",
-      "SINGLE_LINE_TEXT": "文字列(1行)",
-      "MULTI_LINE_TEXT": "文字列(複数行)",
-      "RICH_TEXT": "リッチエディター",
-      "NUMBER": "数値",
-      "CALC": "計算",
-      "RADIO_BUTTON": "ラジオボタン",
-      "CHECK_BOX": "チェックボックス",
-      "DROP_DOWN": "ドロップダウン",
-      "MULTI_SELECT": "複数選択",
-      "DATE": "日付",
-      "DATETIME": "日時",
-      "TIME": "時刻",
-      "USER_SELECT": "ユーザー選択",
-      "ORGANIZATION_SELECT": "組織選択",
-      "GROUP_SELECT": "グループ選択",
-      "LOOKUP": "ルックアップ",
-      "SUBTABLE": "テーブル",
-      "RECORD_NUMBER": "レコード番号",
-      "CREATOR": "作成者",
-      "CREATED_TIME": "作成日時",
-      "MODIFIER": "更新者",
-      "UPDATED_TIME": "更新日時",
-      "STATUS": "ステータス",
-      "CATEGORY": "カテゴリー",
-      "STATUS_ASSIGNEE": "作業者"
-    };
-    const SYSTEM_FIELDS = /* @__PURE__ */ new Set(["$id", "$revision", "status", "category", "assignee"]);
-    class Semaphore {
-      constructor(max) {
-        this.max = max;
-        this.current = 0;
-        this.queue = [];
-      }
-      acquire() {
-        return new Promise((resolve) => {
-          if (this.current < this.max) {
-            this.current++;
-            resolve();
-          } else this.queue.push(resolve);
-        });
-      }
-      release() {
-        this.current--;
-        if (this.queue.length > 0) {
-          this.current++;
-          this.queue.shift()();
-        }
-      }
-      async run(fn) {
-        await this.acquire();
-        try {
-          return await fn();
-        } finally {
-          this.release();
-        }
-      }
-    }
-    const apiSemaphore = new Semaphore(CONFIG.API_CONCURRENCY);
-    function getExporterOverlayZIndex() {
-      const main = getToolDocument().getElementById(TOOL_ID);
-      const raw = main ? Number(window.getComputedStyle(main).zIndex) : NaN;
-      const base = Number.isFinite(raw) ? raw : 2147483646;
-      return String(Math.min(2147483647, Math.max(2e9, base + 1)));
-    }
-    const UI = {
-      id: "kintone-exporter-overlay",
-      totalSteps: 0,
-      currentStep: 0,
-      failedAPIs: [],
-      show(msg, totalSteps = 10) {
-        UI.totalSteps = totalSteps;
-        UI.currentStep = 0;
-        UI.failedAPIs = [];
-        const doc = getToolDocument();
-        let el = doc.getElementById(UI.id);
-        if (!el) {
-          el = doc.createElement("div");
-          el.id = UI.id;
-          Object.assign(el.style, { position: "fixed", top: "0", left: "0", width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.7)", zIndex: getExporterOverlayZIndex(), display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", color: "#fff", fontSize: "16px", fontFamily: '"Meiryo", sans-serif' });
-          doc.body.appendChild(el);
-        }
-        el.style.zIndex = getExporterOverlayZIndex();
-        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:400px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.0</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div></div>`;
-      },
-      update(msg, step) {
-        if (step !== void 0) UI.currentStep = step;
-        else UI.currentStep++;
-        const pct = Math.min(100, Math.round(UI.currentStep / UI.totalSteps * 100));
-        const doc = getToolDocument();
-        const statusEl = doc.getElementById("kex-status");
-        const barEl = doc.getElementById("kex-progress-bar");
-        const pctEl = doc.getElementById("kex-percent");
-        if (statusEl) statusEl.textContent = msg;
-        if (barEl) barEl.style.width = `${pct}%`;
-        if (pctEl) pctEl.textContent = `${pct}%`;
-      },
-      logError(apiName, error) {
-        UI.failedAPIs.push({ name: apiName, error: error?.message || String(error) });
-        const errEl = getToolDocument().getElementById("kex-errors");
-        if (errEl) errEl.textContent = `⚠ ${UI.failedAPIs.length}件のAPI取得に失敗`;
-      },
-      hide() {
-        const doc = getToolDocument();
-        const el = doc.getElementById(UI.id);
-        if (el) doc.body.removeChild(el);
-      }
-    };
-    const UtilsX = {
-      pad: (n) => n.toString().padStart(2, "0"),
-      dt: (d = /* @__PURE__ */ new Date()) => {
-        const p = UtilsX.pad;
-        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-      },
-      toJST: (isoString) => {
-        if (!isoString) return "-";
-        try {
-          return new Date(isoString).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
-        } catch {
-          return isoString;
-        }
-      },
-      safeGet: (obj, path, def = "") => {
-        try {
-          if (!obj || typeof obj !== "object") return def;
-          const v = path.split(".").reduce((o, k) => o && o[k] !== void 0 ? o[k] : void 0, obj);
-          return v === void 0 ? def : v;
-        } catch (e) {
-          return def;
-        }
-      },
-      ensureArray: (v) => Array.isArray(v) ? v : [],
-      safeJoin: (arr, sep = "、") => Array.isArray(arr) ? arr.filter((v) => v !== "" && v != null).join(sep) : "",
-      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-      calculateCellWidth: (text) => {
-        if (!text) return CONFIG.MIN_COL_WIDTH;
-        const str = String(text);
-        let width = 0;
-        for (const line of str.split("\n")) {
-          let lw = 0;
-          for (const ch of line) lw += /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF00-\uFFEF]/.test(ch) ? 2 : 1;
-          if (lw > width) width = lw;
-        }
-        return Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, width + 2));
-      },
-      colToA1: (n) => {
-        let s = "";
-        while (n > 0) {
-          const m = (n - 1) % 26;
-          s = String.fromCharCode(65 + m) + s;
-          n = (n - 1) / 26 | 0;
-        }
-        return s;
-      },
-      a1: (r, c) => `${UtilsX.colToA1(c)}${r}`,
-      escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-      stripHtml: (html) => String(html || "").replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"),
-      formatBoolean: (val) => val ? "○" : "-",
-      formatEntity: (entity) => {
-        if (!entity) return "-";
-        if (Array.isArray(entity)) return entity.map((e2) => UtilsX.formatEntity(e2)).join("\n");
-        const e = entity.entity || entity;
-        const t = (e.type || "").toString().toUpperCase();
-        const typeMap = { USER: "ユーザー", GROUP: "グループ", ORGANIZATION: "組織", FIELD_ENTITY: "フィールド値", CREATOR: "作成者", MODIFIER: "更新者", LOGIN_USER: "ログインユーザー", ALL: "全員" };
-        const typeJP = typeMap[t] || e.type || "不明";
-        if (e.name) return `${typeJP}:${e.name}`;
-        if (e.code) return `${typeJP}:${e.code}`;
-        return typeJP;
-      },
-      formatEntityDetailed: (entity) => {
-        if (!entity) return "-";
-        if (Array.isArray(entity)) return entity.map((e2) => UtilsX.formatEntityDetailed(e2)).join("\n");
-        const e = entity.entity || entity;
-        const t = (e.type || "").toString().toUpperCase();
-        const typeMap = { USER: "ユーザー", GROUP: "グループ", ORGANIZATION: "組織", FIELD_ENTITY: "フィールド値", CREATOR: "作成者", MODIFIER: "更新者", LOGIN_USER: "ログインユーザー", ALL: "全員" };
-        const typeJP = typeMap[t] || e.type || "不明";
-        const parts = [typeJP];
-        if (e.name) parts.push(e.name);
-        else if (e.code) parts.push(`コード:${e.code}`);
-        if (entity.includeSubs) parts.push("(サブ組織含)");
-        return parts.join(": ");
-      },
-      formatSort: (sortStr) => {
-        if (!sortStr) return "-";
-        return String(sortStr).replace(/\basc\b/gi, "昇順").replace(/\bdesc\b/gi, "降順");
-      },
-      formatFilterCond: (condStr) => {
-        if (!condStr) return "-";
-        let r = String(condStr);
-        r = r.replace(/\s*,\s*/g, ", ");
-        return r;
-      },
-      formatFieldFormat: (f) => {
-        if (!f || typeof f !== "object") return "";
-        const parts = [];
-        if (f.digit !== void 0) parts.push(`桁区切り: ${f.digit ? "あり" : "なし"}`);
-        if (f.displayScale !== void 0) parts.push(`小数点: ${f.displayScale}桁`);
-        if (f.unit) parts.push(`単位: ${f.unit}`);
-        return parts.join("、");
-      },
-      formatDefaultValue: (dv) => {
-        if (dv == null) return "";
-        if (Array.isArray(dv)) {
-          if (dv.length > 0 && typeof dv[0] === "object") return dv.map((i) => i.name || i.code || JSON.stringify(i)).join("、");
-          return dv.join("、");
-        }
-        if (typeof dv === "object") {
-          if (dv.type === "NUMBER") return String(dv.value || "");
-          return dv.name || dv.code || JSON.stringify(dv);
-        }
-        return String(dv);
-      },
-      safeJSONStringify: (obj) => {
-        try {
-          return JSON.stringify(obj, null, 2);
-        } catch (e) {
-          return String(obj);
-        }
-      }
-    };
-    async function loadSheetLib() {
-      if (typeof window.XLSX !== "undefined") return { styled: true };
-      const loadScriptLocal = (src, timeout = 15e3) => new Promise((resolve, reject) => {
-        const doc = getToolDocument();
-        const s = doc.createElement("script");
-        s.src = src;
-        s.async = true;
-        let done = false;
-        const timer = setTimeout(() => {
-          if (!done) {
-            done = true;
-            reject(new Error(`Timeout: ${src}`));
-          }
-        }, timeout);
-        s.onload = () => {
-          if (!done) {
-            done = true;
-            clearTimeout(timer);
-            resolve(true);
-          }
-        };
-        s.onerror = () => {
-          if (!done) {
-            done = true;
-            clearTimeout(timer);
-            reject(new Error(`Failed: ${src}`));
-          }
-        };
-        doc.head.appendChild(s);
-      });
-      try {
-        await loadScriptLocal(CONFIG.SHEETLIB_PRIMARY_URL);
-        return { styled: true };
-      } catch {
-        await loadScriptLocal(CONFIG.SHEETLIB_FALLBACK_URL);
-        return { styled: false };
-      }
-    }
-    async function retry(fn, max = CONFIG.MAX_RETRIES) {
-      for (let i = 0; i < max; i++) {
-        try {
-          return await fn();
-        } catch (e) {
-          if (i === max - 1) throw e;
-          await UtilsX.sleep(CONFIG.RETRY_DELAY * (i + 1));
-        }
-      }
-    }
-    async function fetchJob(name, promiseFn) {
-      try {
-        return await apiSemaphore.run(() => retry(promiseFn));
-      } catch (e) {
-        console.warn(`[${name}] Failed:`, e);
-        UI.logError(name, e);
-        return null;
-      }
-    }
-    function showExportOptionsDialog() {
-      return new Promise((resolve) => {
-        const overlay = getToolDocument().createElement("div");
-        Object.assign(overlay.style, { position: "fixed", top: "0", left: "0", width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.6)", zIndex: getExporterOverlayZIndex(), display: "flex", justifyContent: "center", alignItems: "center", fontFamily: '"Meiryo", sans-serif' });
-        const sheets = [
-          { key: "summary", label: "サマリー", default: true, required: true },
-          { key: "fields", label: "項目定義", default: true },
-          { key: "layout", label: "フォームレイアウト", default: true },
-          { key: "views", label: "一覧", default: true },
-          { key: "reports", label: "レポート", default: true },
-          { key: "status", label: "プロセス管理", default: true },
-          { key: "statusMatrix", label: "遷移マトリクス", default: true },
-          { key: "appAcl", label: "アプリ権限", default: true },
-          { key: "recordAcl", label: "レコード権限", default: true },
-          { key: "fieldAcl", label: "フィールド権限", default: true },
-          { key: "customize", label: "JS/CSSカスタマイズ", default: true },
-          { key: "actions", label: "アクション", default: true },
-          { key: "plugins", label: "プラグイン", default: true },
-          { key: "genNotif", label: "通知（一般）", default: true },
-          { key: "recNotif", label: "通知（レコード）", default: true },
-          { key: "remNotif", label: "通知（リマインダー）", default: true },
-          { key: "webhook", label: "Webhook", default: true },
-          { key: "adminNotes", label: "管理者メモ", default: true },
-          { key: "dependencies", label: "フィールド依存関係", default: true }
-        ];
-        const checkboxes = sheets.map((s) => `<label style="display:block;margin:3px 0;font-size:13px;cursor:${s.required ? "default" : "pointer"};"><input type="checkbox" value="${s.key}" ${s.default ? "checked" : ""} ${s.required ? "disabled" : ""} style="margin-right:6px;">${s.label}${s.required ? " (必須)" : ""}</label>`).join("");
-        overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:460px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.3);"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:16px;">📊 エクスポート設定</div><div style="font-size:12px;color:#666;margin-bottom:12px;">出力するシートを選択してください</div><div style="display:flex;gap:8px;margin-bottom:12px;"><button id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div><div id="kex-sheet-options" style="max-height:340px;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${checkboxes}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;"><button id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
-        getToolDocument().body.appendChild(overlay);
-        overlay.querySelector("#kex-select-all").onclick = () => {
-          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]').forEach((cb) => cb.checked = true);
-        };
-        overlay.querySelector("#kex-select-none").onclick = () => {
-          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])').forEach((cb) => cb.checked = false);
-        };
-        overlay.querySelector("#kex-cancel").onclick = () => {
-          getToolDocument().body.removeChild(overlay);
-          resolve(null);
-        };
-        overlay.querySelector("#kex-export").onclick = () => {
-          const selected = /* @__PURE__ */ new Set();
-          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:checked').forEach((cb) => selected.add(cb.value));
-          getToolDocument().body.removeChild(overlay);
-          resolve(selected);
-        };
-      });
-    }
-    try {
-      const APP_ID = Number(sourceAppId);
-      if (!APP_ID) throw new Error("有効な比較元アプリIDが指定されませんでした。");
-      const selectedSheets = await showExportOptionsDialog();
-      if (!selectedSheets) return false;
-      UI.show("ライブラリ読み込み中...", 12);
-      const { styled } = await loadSheetLib();
-      const api = kintone.api;
-      const apiUrl = (path) => {
-        let p = String(path || "");
-        if (sourceGuestId) {
-          p = p.replace("/k/v1/preview/", `/k/guest/${sourceGuestId}/v1/preview/`).replace("/k/v1/", `/k/guest/${sourceGuestId}/v1/`);
-        }
-        return kintone.api.url(p, true);
-      };
-      UI.update("基本情報を取得中...");
-      const appSettings = await fetchJob("App", () => api(apiUrl("/k/v1/app.json"), "GET", { id: APP_ID }));
-      const generalSettings = await fetchJob("Settings", () => api(apiUrl("/k/v1/app/settings.json"), "GET", { app: APP_ID }));
-      UI.update("フィールド・レイアウトを取得中...");
-      let fieldResp = await fetchJob("FieldsPrev", () => api(apiUrl("/k/v1/preview/app/form/fields.json"), "GET", { app: APP_ID }));
-      if (!fieldResp) fieldResp = await fetchJob("FieldsProd", () => api(apiUrl("/k/v1/app/form/fields.json"), "GET", { app: APP_ID }));
-      let layout = await fetchJob("LayoutPrev", () => api(apiUrl("/k/v1/preview/app/form/layout.json"), "GET", { app: APP_ID }));
-      if (!layout) layout = await fetchJob("LayoutProd", () => api(apiUrl("/k/v1/app/form/layout.json"), "GET", { app: APP_ID }));
-      const filterUserFields = (fields2) => {
-        const filtered = {};
-        for (const [code, field] of Object.entries(fields2)) {
-          if (SYSTEM_FIELDS.has(code) || SYSTEM_FIELDS.has(field.code)) continue;
-          if (["STATUS", "CATEGORY", "STATUS_ASSIGNEE"].includes(field.type)) continue;
-          filtered[code] = field;
-        }
-        return filtered;
-      };
-      const fields = filterUserFields(fieldResp?.properties || {});
-      UI.update("レコード件数を取得中...");
-      let recordCount = null;
-      try {
-        const countResp = await fetchJob("RecordCount", () => api(apiUrl("/k/v1/records.json"), "GET", { app: APP_ID, query: "limit 1", totalCount: true }));
-        recordCount = countResp?.totalCount ?? null;
-      } catch (e) {
-      }
-      UI.update("一覧・権限・通知設定を取得中...");
-      const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif] = await Promise.all([
-        fetchJob("Views", () => api(apiUrl("/k/v1/app/views.json"), "GET", { app: APP_ID })),
-        fetchJob("Reports", () => api(apiUrl("/k/v1/app/reports.json"), "GET", { app: APP_ID })),
-        fetchJob("Status", () => api(apiUrl("/k/v1/app/status.json"), "GET", { app: APP_ID })),
-        fetchJob("アプリ権限", () => api(apiUrl("/k/v1/app/acl.json"), "GET", { app: APP_ID })),
-        fetchJob("レコード権限", () => api(apiUrl("/k/v1/record/acl.json"), "GET", { app: APP_ID })),
-        fetchJob("フィールド権限", () => api(apiUrl("/k/v1/field/acl.json"), "GET", { app: APP_ID })),
-        fetchJob("Customize", () => api(apiUrl("/k/v1/app/customize.json"), "GET", { app: APP_ID })),
-        fetchJob("Actions", () => api(apiUrl("/k/v1/preview/app/actions.json"), "GET", { app: APP_ID })),
-        fetchJob("Plugins", () => api(apiUrl("/k/v1/app/plugins.json"), "GET", { app: APP_ID })),
-        fetchJob("AdminNotes", () => api(apiUrl("/k/v1/app/adminNotes.json"), "GET", { app: APP_ID })),
-        fetchJob("Webhooks", () => api(apiUrl("/k/v1/app/webhook.json"), "GET", { app: APP_ID })),
-        fetchJob("GenNotif", () => api(apiUrl("/k/v1/app/notifications/general.json"), "GET", { app: APP_ID })),
-        fetchJob("RecNotif", () => api(apiUrl("/k/v1/app/notifications/perRecord.json"), "GET", { app: APP_ID })),
-        fetchJob("RemNotif", () => api(apiUrl("/k/v1/app/notifications/reminder.json"), "GET", { app: APP_ID }))
-      ]);
-      const actions = UtilsX.safeGet(actionsResp, "actions", {});
-      UI.update("関連アプリ名を解決中...");
-      const referencedAppIds = /* @__PURE__ */ new Set();
-      const scanField = (f) => {
-        if (f.lookup?.relatedApp?.app) referencedAppIds.add(f.lookup.relatedApp.app);
-        if (f.referenceTable?.relatedApp?.app) referencedAppIds.add(f.referenceTable.relatedApp.app);
-      };
-      Object.values(fields).forEach((f) => {
-        scanField(f);
-        if (f.type === "SUBTABLE" && f.fields) Object.values(f.fields).forEach(scanField);
-      });
-      Object.values(actions).forEach((a) => {
-        if (a.destApp?.app) referencedAppIds.add(a.destApp.app);
-      });
-      const appNames = {};
-      const refPromises = [...referencedAppIds].map(
-        (id) => fetchJob(`RefApp_${id}`, () => api(apiUrl("/k/v1/app.json"), "GET", { id })).then((info) => {
-          appNames[id] = info?.name || `(ID:${id})`;
-        })
-      );
-      await Promise.all(refPromises);
-      UI.update("Excelファイルを生成中...", 10);
-      const wb = XLSX.utils.book_new();
-      const makeSafeSheetName = (raw, existingNames) => {
-        let name = String(raw ?? "").trim() || "Sheet";
-        name = name.replace(/[:\\/\?\*\[\]]/g, "_").replace(/[\u0000-\u001F]/g, "").replace(/^'+|'+$/g, "");
-        if (!name) name = "Sheet";
-        if (name.length > 31) name = name.slice(0, 31);
-        const existing = existingNames || /* @__PURE__ */ new Set();
-        if (!existing.has(name)) return name;
-        let i = 2;
-        while (true) {
-          const suffix = `(${i})`;
-          const base = name.length > 31 - suffix.length ? name.slice(0, 31 - suffix.length) : name;
-          const candidate = base + suffix;
-          if (!existing.has(candidate)) return candidate;
-          i++;
-        }
-      };
-      const appendSheet = (name, data) => {
-        if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return;
-        const ws = XLSX.utils.aoa_to_sheet(data.aoa);
-        const safeName = makeSafeSheetName(name, new Set(wb.SheetNames));
-        XLSX.utils.book_append_sheet(wb, ws, safeName);
-      };
-      const buildSimpleAOA = (title, headers, rows) => ({
-        aoa: [title ? [title] : [], headers, ...rows],
-        options: { headerRowIndex: title ? 1 : 0, titleRows: title ? [0] : [] }
-      });
-      appendSheet("サマリー", buildSimpleAOA("kintone アプリ設計書", ["項目", "値"], [
-        ["アプリID", APP_ID],
-        ["アプリ名", appSettings?.name || ""],
-        ["出力日時", UtilsX.dt()],
-        ["フィールド数", Object.keys(fields).length],
-        ["ビュー数", Object.keys(views?.views || {}).length]
-      ]));
-      UI.update("ダウンロード中...", 12);
-      const safeAppName = String(appSettings?.name || `App${APP_ID}`).replace(/[\\/:*?"<>|]/g, "_");
-      const downloadExcel = (wb2, filename) => {
-        const out = XLSX.write(wb2, { bookType: "xlsx", type: "array", cellStyles: true });
-        const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-        const a = getToolDocument().createElement("a");
-        const url = URL.createObjectURL(blob);
-        a.href = url;
-        a.download = filename;
-        getToolDocument().body.appendChild(a);
-        a.click();
-        getToolDocument().body.removeChild(a);
-        URL.revokeObjectURL(url);
-      };
-      downloadExcel(wb, `${safeAppName}_設計書_v2.xlsx`);
-      UI.hide();
-      const errorMsg = UI.failedAPIs.length > 0 ? `
-⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : "";
-      alert(`✅ エクスポート完了${errorMsg}`);
-      return true;
-    } catch (e) {
-      UI.hide();
-      console.error("kintone設計書エクスポートエラー:", e);
-      alert(`❌ エラーが発生しました: ${e.message}`);
-      throw e;
-    }
   }
 
   // src/tabs/er.js
@@ -14935,18 +15055,23 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   init_constants();
   init_diff();
   init_dialog();
-  async function launchKintoneSql() {
-    const sourceAppEl = getToolDocument().getElementById("u_sourceApp");
-    if (!sourceAppEl) {
-      setStatus("エラー: 比較元アプリID入力欄が見つかりません。画面を再読み込みしてください。", true);
-      return;
-    }
-    const sApp = sourceAppEl.value.trim();
+  async function launchKintoneSql(liteOpts) {
+    const toolD = liteOpts?.document || getToolDocument();
+    const liteAppId = liteOpts?.appId != null ? String(liteOpts.appId).trim() : "";
+    let sApp = liteAppId;
     if (!sApp) {
-      setStatus("エラー: 比較元アプリIDを設定してください", true);
-      return;
+      const sourceAppEl = toolD.getElementById("u_sourceApp");
+      if (!sourceAppEl) {
+        setStatus("エラー: 比較元アプリID入力欄が見つかりません。画面を再読み込みしてください。", true);
+        return;
+      }
+      sApp = sourceAppEl.value.trim();
+      if (!sApp) {
+        setStatus("エラー: 比較元アプリIDを設定してください", true);
+        return;
+      }
     }
-    const existing = getToolDocument().getElementById("kintone-sql-runner");
+    const existing = toolD.getElementById("kintone-sql-runner");
     if (existing) existing.remove();
     if (!window.kintone?.api) {
       setStatus("エラー: kintoneアプリ画面で実行してください", true);
@@ -14957,7 +15082,6 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     const STORAGE_KEY = "kintone-sql-runner-history";
     const THEME_KEY = "kintone-sql-runner-theme";
     const PAGE_SIZE = 200;
-    const toolD = getToolDocument();
     const Themes = {
       light: {
         bg: "#fff",
@@ -15631,7 +15755,7 @@ ${safety.hash}`, "");
         isExecuting = true;
         if (btnRun) btnRun.disabled = true;
         try {
-          const appId = getToolDocument().getElementById("u_sourceApp").value.trim();
+          const appId = (liteAppId || toolD.getElementById("u_sourceApp")?.value || "").trim();
           setStatus2("レコードを取得中...");
           const primary = await Logic.loadApp(appId, expandSubtables, (n) => setStatus2(`アプリ ${appId}: ${n}件取得...`));
           currentPrimary = primary;
@@ -15705,9 +15829,9 @@ ${safety.hash}`, "");
         }
       };
       const init = () => {
-        const old = getToolDocument().getElementById(ROOT_ID);
+        const old = toolD.getElementById(ROOT_ID);
         if (old) old.remove();
-        const oldStyle = getToolDocument().getElementById(ROOT_ID + "-style");
+        const oldStyle = toolD.getElementById(ROOT_ID + "-style");
         if (oldStyle) oldStyle.remove();
         styleEl = Utils.el("style", { id: ROOT_ID + "-style" });
         applyTheme();
@@ -15866,7 +15990,7 @@ ${safety.hash}`, "");
         if (btnWrap) btnWrap.style.display = "none";
         if (sqlPane) sqlPane.appendChild(root2);
         else toolD.body.appendChild(root2);
-        const initialAppId = getToolDocument().getElementById("u_sourceApp")?.value?.trim();
+        const initialAppId = (liteAppId || toolD.getElementById("u_sourceApp")?.value || "").trim();
         if (initialAppId) {
           Logic.fetchFields(initialAppId).then((fields) => {
             if (fields && Object.keys(fields).length) renderFields(fields);
@@ -16019,11 +16143,13 @@ ${safety.hash}`, "");
     }
   }
 
-  // src/index.js
+  // src/boot.js
   var TOOL_POPOUT_NAME = "kintone-unified-suite-v2";
-  if (!window.kintone?.api || !window.kintone?.app) {
-    alert("kintone画面で実行してください");
-  } else {
+  function runKintoneUnifiedSuite(options = {}) {
+    if (!window.kintone?.api || !window.kintone?.app) {
+      alert("kintone画面で実行してください");
+      return;
+    }
     const removeToolFromDoc = (doc) => {
       try {
         doc.getElementById(TOOL_ID)?.remove();
@@ -16247,5 +16373,13 @@ ${safety.hash}`, "");
     });
     renderApiTesterHistory();
     setStatus("待機中");
+    if (options.initialTab) {
+      switchTab(options.initialTab);
+    }
+  }
+
+  // src/index.js
+  if (typeof window !== "undefined" && window.__KUS_AUTOBOOT__ !== false) {
+    runKintoneUnifiedSuite({});
   }
 })();

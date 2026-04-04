@@ -8,18 +8,28 @@ import { EXTERNAL_LIBRARIES } from '../constants.js';
 import { commonParams } from './diff.js';
 import { getToolDocument } from '../ui/dialog.js';
 
-export async function launchKintoneSql() {
-  const sourceAppEl = getToolDocument().getElementById('u_sourceApp');
-  if (!sourceAppEl) {
-    setStatus('エラー: 比較元アプリID入力欄が見つかりません。画面を再読み込みしてください。', true);
-    return;
-  }
-  const sApp = sourceAppEl.value.trim();
+/**
+ * @param {{ document?: Document, appId?: string } | void} liteOpts
+ * 単体スクリプト用: `document` と任意の `appId` を渡すと統合UIの比較元欄なしで起動できる。
+ */
+export async function launchKintoneSql(liteOpts) {
+  const toolD = liteOpts?.document || getToolDocument();
+  const liteAppId = liteOpts?.appId != null ? String(liteOpts.appId).trim() : '';
+
+  let sApp = liteAppId;
   if (!sApp) {
-    setStatus('エラー: 比較元アプリIDを設定してください', true);
-    return;
+    const sourceAppEl = toolD.getElementById('u_sourceApp');
+    if (!sourceAppEl) {
+      setStatus('エラー: 比較元アプリID入力欄が見つかりません。画面を再読み込みしてください。', true);
+      return;
+    }
+    sApp = sourceAppEl.value.trim();
+    if (!sApp) {
+      setStatus('エラー: 比較元アプリIDを設定してください', true);
+      return;
+    }
   }
-  const existing = getToolDocument().getElementById('kintone-sql-runner');
+  const existing = toolD.getElementById('kintone-sql-runner');
   if (existing) existing.remove();
 
   if (!window.kintone?.api) { setStatus('エラー: kintoneアプリ画面で実行してください', true); return; }
@@ -29,7 +39,6 @@ export async function launchKintoneSql() {
   const STORAGE_KEY = 'kintone-sql-runner-history';
   const THEME_KEY = 'kintone-sql-runner-theme';
   const PAGE_SIZE = 200;
-  const toolD = getToolDocument();
 
   const Themes = {
     light: {
@@ -696,7 +705,7 @@ export async function launchKintoneSql() {
       isExecuting = true;
       if (btnRun) btnRun.disabled = true;
       try {
-        const appId = getToolDocument().getElementById('u_sourceApp').value.trim();
+        const appId = (liteAppId || toolD.getElementById('u_sourceApp')?.value || '').trim();
 
         setStatus('レコードを取得中...');
         const primary = await Logic.loadApp(appId, expandSubtables, (n) => setStatus(`アプリ ${appId}: ${n}件取得...`));
@@ -775,9 +784,9 @@ export async function launchKintoneSql() {
     };
 
     const init = () => {
-      const old = getToolDocument().getElementById(ROOT_ID);
+      const old = toolD.getElementById(ROOT_ID);
       if (old) old.remove();
-      const oldStyle = getToolDocument().getElementById(ROOT_ID + '-style');
+      const oldStyle = toolD.getElementById(ROOT_ID + '-style');
       if (oldStyle) oldStyle.remove();
 
       styleEl = Utils.el('style', { id: ROOT_ID + '-style' });
@@ -920,7 +929,7 @@ export async function launchKintoneSql() {
       if (sqlPane) sqlPane.appendChild(root);
       else toolD.body.appendChild(root);
 
-      const initialAppId = getToolDocument().getElementById('u_sourceApp')?.value?.trim();
+      const initialAppId = (liteAppId || toolD.getElementById('u_sourceApp')?.value || '').trim();
       if (initialAppId) {
         Logic.fetchFields(initialAppId).then((fields) => {
           if (fields && Object.keys(fields).length) renderFields(fields);

@@ -1,25 +1,26 @@
 const esbuild = require('esbuild');
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 const watch = process.argv.includes('--watch');
 
 const toolsDir = path.resolve(__dirname, '..');
-const outfile = path.resolve(toolsDir, '統合ツール_差分反映追加設計書.js');
+const outfile = path.resolve(toolsDir, '統合ツール.js');
 const inventoryFile = path.resolve(toolsDir, '単機能スクリプト棚卸し.md');
 
-const STANDALONE_TOOLS = [
-  { feature: '差分比較', module: 'tabs/diff.js', file: '差分比較.js', tab: 'diff' },
-  { feature: 'プレビュー反映', module: 'tabs/reflect.js', file: 'プレビュー反映.js', tab: 'reflect' },
-  { feature: 'フィールド追加', module: 'tabs/field.js', file: 'フィールド追加.js', tab: 'field' },
-  { feature: 'JS/CSS設定', module: 'tabs/jsconfig.js', file: 'kintoneJS取得.js', tab: 'jsconfig' },
-  { feature: '設定一括取得', module: 'tabs/settings-export.js', file: '設定取得.js', tab: 'settingsExport' },
-  { feature: '設計書', module: 'tabs/design.js', file: '設計書作成.js', tab: 'design' },
-  { feature: 'ER図', module: 'tabs/er.js', file: 'ER図.js', tab: 'er' },
-  { feature: 'プロセス図', module: 'tabs/process.js', file: 'プロセス実行.js', tab: 'processFlow' },
-  { feature: 'レコード管理', module: 'tabs/record.js', file: 'kintoneレコード取得.js', tab: 'recordMgr' },
-  { feature: 'SQL実行', module: 'tabs/sql.js', file: 'kintoneSQL.js', tab: 'sql' }
-];
+async function loadStandaloneLaunchEntries() {
+  const href = pathToFileURL(path.resolve(__dirname, 'src', 'featureDefs.mjs')).href;
+  const mod = await import(href);
+  const { FEATURE_DEFS, STANDALONE_LAUNCH_ENTRIES } = mod;
+  const allowedTabs = new Set(FEATURE_DEFS.flatMap((f) => f.tabs));
+  for (const e of STANDALONE_LAUNCH_ENTRIES) {
+    if (!allowedTabs.has(e.tab)) {
+      console.warn(`[build] STANDALONE_LAUNCH_ENTRIES: tab "${e.tab}" is not listed in FEATURE_DEFS`);
+    }
+  }
+  return STANDALONE_LAUNCH_ENTRIES;
+}
 
 const cssPlugin = {
   name: 'inline-css',
@@ -35,13 +36,40 @@ const cssPlugin = {
   }
 };
 
-function createStandaloneSource(tab) {
+function createStandaloneSource(tab, label) {
+  const displayLabel = label || 'ツール';
   return `(function (global) {
   'use strict';
 
+  const LABEL = ${JSON.stringify(displayLabel)};
+
+  function showLoader() {
+    if (global.document.getElementById('kus-standalone-loader')) return;
+    var wrap = global.document.createElement('div');
+    wrap.id = 'kus-standalone-loader';
+    wrap.style.cssText = 'position:fixed;z-index:999997;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.48);backdrop-filter:blur(6px);font:14px system-ui,sans-serif;';
+    var box = global.document.createElement('div');
+    box.style.cssText = 'background:linear-gradient(165deg,#1e293b,#0f172a);color:#f8fafc;padding:22px 28px;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.4);max-width:min(400px,90vw);text-align:center;line-height:1.45;border:1px solid #334155';
+    var title = global.document.createElement('div');
+    title.style.cssText = 'font-size:16px;font-weight:700;margin-bottom:8px';
+    title.textContent = LABEL;
+    var sub = global.document.createElement('div');
+    sub.style.cssText = 'font-size:13px;color:#cbd5e1';
+    sub.textContent = '統合ツール.js を読み込み、該当タブのみ前面に表示します…';
+    box.appendChild(title);
+    box.appendChild(sub);
+    wrap.appendChild(box);
+    global.document.body.appendChild(wrap);
+  }
+
+  function hideLoader() {
+    var el = global.document.getElementById('kus-standalone-loader');
+    if (el) el.remove();
+  }
+
   const 統合ツール候補パス = [
-    './統合ツール_差分反映追加設計書.js',
-    './tools/統合ツール_差分反映追加設計書.js'
+    './統合ツール.js',
+    './tools/統合ツール.js'
   ];
 
   function タブを開く() {
@@ -104,6 +132,7 @@ function createStandaloneSource(tab) {
       };
       fallback.onerror = () => {
         global.__KUS_BUNDLE_LOADING__ = false;
+        hideLoader();
         alert('統合ツール本体を読み込めませんでした。統合版ブックマークレットを先に実行してください。');
       };
       document.head.appendChild(fallback);
@@ -111,25 +140,46 @@ function createStandaloneSource(tab) {
     document.head.appendChild(script);
   }
 
-  統合ツール本体を読み込む(() => タブ起動待機(25));
+  showLoader();
+  統合ツール本体を読み込む(function () {
+    hideLoader();
+    タブ起動待機(25);
+  });
 })(window);
 `;
 }
 
-function createInventorySource() {
-  const mappingRows = STANDALONE_TOOLS
-    .map((item) => `| \`${item.file}\` | \`${item.module}\` | 単機能スタンドアロン | タブを直接起動する専用ツールとして自動生成 |`)
+function describeStandaloneKind(item) {
+  if (!item.bundleEntry) {
+    return '薄いラッパー（\`統合ツール.js\` 読み込み）';
+  }
+  const e = item.bundleEntry;
+  if (e === 'diff-lite-entry.js') {
+    return '軽量 esbuild 同梱（\`diff-lite-ui.js\` 等・\`統合ツール.js\` 不要）';
+  }
+  if (e.startsWith('suite-tab-')) {
+    return `フル UI esbuild 同梱（\`src/entries/${e}\` → \`boot.js\`・ファイルサイズ大・\`統合ツール.js\` 不要）`;
+  }
+  return `軽量 esbuild 同梱（\`src/entries/${e}\`・\`統合ツール.js\` 不要）`;
+}
+
+function createInventorySource(entries) {
+  const mappingRows = entries
+    .map((item) => {
+      const kind = describeStandaloneKind(item);
+      return `| \`${item.file}\` | \`${item.module}\` | ${kind} | ビルドで自動生成 |`;
+    })
     .join('\n');
 
-  const featureRows = STANDALONE_TOOLS
-    .map((item) => `| ${item.feature} | \`tools/統合ツール/src/${item.module}\` | \`tools/${item.file}\` |`)
+  const featureRows = entries
+    .map((item) => `| ${item.label} | \`tools/統合ツール/src/${item.module}\` | \`tools/${item.file}\` |`)
     .join('\n');
 
   return `# tools/ 単機能スクリプト棚卸し（統合ツール対応）
 
 統合方針: \`tools/統合ツール/src/tabs/\` を**正規実装**とし、\`tools/*.js\` は**単機能スタンドアロン実行スクリプト**として管理する。
 
-各スクリプトは統合バンドルを読み込み後、対象タブを自動で開く。\`tools/統合ツール起動.js\` のような共通エントリは作成しない。
+**差分比較**のみ \`bundleEntry: diff-lite-entry.js\` で esbuild し、差分＋出力を単一スクリプトに同梱（\`統合ツール.js\` 不要）。それ以外の単機能スクリプトは**薄いラッパー**のみで、起動時に \`統合ツール.js\` を読み込み、**該当タブだけ**を開く（全タブの実装は \`統合ツール.js\` 1 本に集約され、個別ファイルに全機能を重複同梱しない）。
 
 ## マッピング表
 
@@ -139,7 +189,8 @@ ${mappingRows}
 
 ## 運用ルール
 
-- 単機能スクリプトはすべて \`npm run build\` で再生成する。
+- 単機能スクリプトはすべて \`npm run build\` で再生成する（エントリ一覧は \`tools/統合ツール/src/featureDefs.mjs\` の \`STANDALONE_LAUNCH_ENTRIES\`）。
+- \`STANDALONE_LAUNCH_ENTRIES\` の各項目は \`bundleEntry\` で esbuild される。\`window.__KUS__.runDiffStandalone\` は \`register-api.js\`（統合版・フル単機バンドル双方に含まれる場合あり）で公開。
 - \`tools/*.js\` は手編集せず、\`tools/統合ツール/src/tabs/*.js\` 側を修正する。
 - 単体で実行しても対象機能へ直接遷移することを前提とする。
 
@@ -151,27 +202,90 @@ ${featureRows}
 `;
 }
 
-async function generateStandaloneTools() {
-  const managedFiles = STANDALONE_TOOLS.map((item) => path.resolve(toolsDir, item.file));
-
+async function cleanManagedStandaloneFiles(entries) {
   let removedCount = 0;
-  for (const file of managedFiles) {
+  for (const item of entries) {
+    const file = path.resolve(toolsDir, item.file);
     if (fs.existsSync(file)) {
       await fs.promises.unlink(file);
       removedCount += 1;
     }
   }
+  return removedCount;
+}
 
-  for (const item of STANDALONE_TOOLS) {
-    const target = path.resolve(toolsDir, item.file);
-    await fs.promises.writeFile(target, createStandaloneSource(item.tab), 'utf8');
+function buildBanner(item) {
+  const lines = [
+    `// ==========================================================================`,
+    `// ${item.file}  —  自動生成ファイル（手編集禁止）`,
+    `// ==========================================================================`,
+    `// このファイルは tools/統合ツール/ の npm run build (esbuild) で生成されます。`,
+    `// ソース: tools/統合ツール/src/entries/${item.bundleEntry}`,
+    `//         tools/統合ツール/src/${item.module}  ← 機能の正規実装`,
+    `//`,
+    `// ■ 修正する場合は tools/統合ツール/src/ 配下のソースを編集し、`,
+    `//   cd tools/統合ツール && npm run build で再生成してください。`,
+    `// ■ このファイルを直接編集しても次回ビルドで上書きされます。`,
+    `// ==========================================================================`,
+  ];
+  return lines.join('\n');
+}
+
+function buildMainBundleBanner() {
+  return [
+    `// ==========================================================================`,
+    `// 統合ツール.js  —  自動生成ファイル（手編集禁止）`,
+    `// ==========================================================================`,
+    `// このファイルは tools/統合ツール/ の npm run build (esbuild) で生成されます。`,
+    `// エントリ: tools/統合ツール/src/index.js`,
+    `//`,
+    `// ■ 修正する場合は tools/統合ツール/src/ 配下のソースを編集し、`,
+    `//   cd tools/統合ツール && npm run build で再生成してください。`,
+    `// ■ このファイルを直接編集しても次回ビルドで上書きされます。`,
+    `// ==========================================================================`,
+  ].join('\n');
+}
+
+async function buildStandaloneBundles(entries) {
+  const lite = entries.filter((e) => e.bundleEntry);
+  for (const item of lite) {
+    const outAbs = path.resolve(toolsDir, item.file);
+    await esbuild.build({
+      absWorkingDir: path.resolve(__dirname),
+      entryPoints: [path.resolve(__dirname, 'src', 'entries', item.bundleEntry)],
+      bundle: true,
+      format: 'iife',
+      outfile: outAbs,
+      charset: 'utf8',
+      target: ['es2020'],
+      minify: false,
+      plugins: [cssPlugin],
+      banner: { js: buildBanner(item) },
+      logLevel: 'info'
+    });
+    const st = fs.statSync(outAbs);
+    console.log(`Built standalone bundle: ${item.file} (${(st.size / 1024).toFixed(1)} KB)`);
   }
-  await fs.promises.writeFile(inventoryFile, createInventorySource(), 'utf8');
-  console.log(`Removed managed standalone files: ${removedCount}`);
-  console.log(`Generated standalone single-purpose tools: ${STANDALONE_TOOLS.length} files + inventory`);
+}
+
+async function writeThinStandaloneTools(entries) {
+  let written = 0;
+  for (const item of entries) {
+    if (item.bundleEntry) continue;
+    const target = path.resolve(toolsDir, item.file);
+    await fs.promises.writeFile(target, createStandaloneSource(item.tab, item.label), 'utf8');
+    written += 1;
+  }
+  await fs.promises.writeFile(inventoryFile, createInventorySource(entries), 'utf8');
+  console.log(`Generated thin standalone wrappers: ${written} files + inventory`);
 }
 
 async function run() {
+  const standaloneEntries = await loadStandaloneLaunchEntries();
+
+  const removed = await cleanManagedStandaloneFiles(standaloneEntries);
+  console.log(`Removed managed standalone files: ${removed}`);
+
   const ctx = await esbuild.context({
     entryPoints: [path.resolve(__dirname, 'src', 'index.js')],
     bundle: true,
@@ -181,17 +295,20 @@ async function run() {
     target: ['es2020'],
     minify: false,
     plugins: [cssPlugin],
+    banner: { js: buildMainBundleBanner() },
     logLevel: 'info'
   });
 
   if (watch) {
     await ctx.watch();
-    await generateStandaloneTools();
+    await buildStandaloneBundles(standaloneEntries);
+    await writeThinStandaloneTools(standaloneEntries);
     console.log('Watching for changes...');
   } else {
     await ctx.rebuild();
     await ctx.dispose();
-    await generateStandaloneTools();
+    await buildStandaloneBundles(standaloneEntries);
+    await writeThinStandaloneTools(standaloneEntries);
     const stat = fs.statSync(outfile);
     console.log(`Built: ${outfile} (${(stat.size / 1024).toFixed(1)} KB)`);
   }
