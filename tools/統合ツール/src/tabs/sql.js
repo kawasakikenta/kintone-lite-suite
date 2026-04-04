@@ -4,6 +4,7 @@ import { ui } from '../state.js';
 import { esc } from '../utils.js';
 import { apiGet, buildApiPrefix } from '../api.js';
 import { setStatus } from '../ui/components.js';
+import { EXTERNAL_LIBRARIES } from '../constants.js';
 import { commonParams } from './diff.js';
 import { getToolDocument } from '../ui/dialog.js';
 
@@ -24,11 +25,7 @@ export async function launchKintoneSql() {
   if (!window.kintone?.api) { setStatus('エラー: kintoneアプリ画面で実行してください', true); return; }
 
   const ROOT_ID = 'kintone-sql-runner';
-  const ALASQL_CDN_CANDIDATES = [
-    'https://cdn.jsdelivr.net/npm/alasql@4/dist/alasql.min.js',
-    'https://unpkg.com/alasql@4/dist/alasql.min.js',
-    'https://cdn.jsdelivr.net/npm/alasql@4',
-  ];
+  const ALASQL_CDN_CANDIDATES = EXTERNAL_LIBRARIES.alasql.cdnCandidates;
   const STORAGE_KEY = 'kintone-sql-runner-history';
   const THEME_KEY = 'kintone-sql-runner-theme';
   const PAGE_SIZE = 200;
@@ -185,14 +182,18 @@ export async function launchKintoneSql() {
       if (!fn) throw new Error('AlaSQLの読み込み後も実行関数を検出できませんでした。');
     },
     loadJSZip: async () => {
-      if (typeof JSZip !== 'undefined') return;
+      if (typeof globalThis.JSZip !== 'undefined') return globalThis.JSZip;
       await new Promise((resolve, reject) => {
         const s = toolD.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+        s.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
         s.onload = resolve;
         s.onerror = () => reject(new Error('JSZipの読み込みに失敗しました。'));
         toolD.head.appendChild(s);
       });
+      if (typeof globalThis.JSZip === 'undefined') {
+        throw new Error('JSZipのロード後もグローバル変数が見つかりませんでした。');
+      }
+      return globalThis.JSZip;
     },
     safeName: (name) => String(name || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || 'unknown',
 
@@ -502,8 +503,8 @@ export async function launchKintoneSql() {
       const prefix = buildApiPrefix(src.guestId, false);
       const rawById = new Map(currentPrimary.raw.map((r) => [String(r.$id?.value || ''), r]));
 
-      await Utils.loadJSZip();
-      const zip = new JSZip();
+      const JSZipCtor = await Utils.loadJSZip();
+      const zip = new JSZipCtor();
       const manifest = [];
       let fileCount = 0;
 

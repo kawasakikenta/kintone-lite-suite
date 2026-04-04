@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS } from '../constants.js';
+import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, deepClone, nowStamp, downloadText, selectedScopeKeys } from '../utils.js';
 import { apiGet, apiPut, apiPost, buildApiPrefix, fetchBundle } from '../api.js';
@@ -122,12 +122,19 @@ export async function runBatchProcess() {
 }
 
 export async function loadJSZip() {
-  if (typeof JSZip !== 'undefined') return;
+  if (typeof globalThis.JSZip !== 'undefined') return globalThis.JSZip;
   setStatus('JSZipを動的ロード中...');
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
-    script.onload = () => { setStatus('JSZipのロード完了'); resolve(); };
+    script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
+    script.onload = () => {
+      if (typeof globalThis.JSZip === 'undefined') {
+        reject(new Error('JSZipのロード後もグローバル変数が見つかりません'));
+        return;
+      }
+      setStatus('JSZipのロード完了');
+      resolve(globalThis.JSZip);
+    };
     script.onerror = () => { reject(new Error('JSZipの読み込みに失敗しました')); };
     document.head.appendChild(script);
   });
@@ -157,9 +164,8 @@ export async function runBatchFileDownload() {
   const records = await getFullRecordsByQuery(tApp, query, false);
   if (records.length === 0) throw new Error('処理対象のレコードが0件です。');
 
-  await loadJSZip();
-
-  const zip = new JSZip();
+  const JSZipCtor = await loadJSZip();
+  const zip = new JSZipCtor();
   let fileCount = 0;
 
   for (let i = 0; i < records.length; i++) {

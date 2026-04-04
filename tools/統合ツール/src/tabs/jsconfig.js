@@ -117,8 +117,8 @@ export async function runBatchJsConfigDownload() {
   });
 
   setStatus(`${uniqueApps.length}個のアプリ設定を解析中...`);
-  await loadJSZip();
-  const zip = new JSZip();
+  const JSZipCtor = await loadJSZip();
+  const zip = new JSZipCtor();
   let hasFiles = false;
   let failedCount = 0;
 

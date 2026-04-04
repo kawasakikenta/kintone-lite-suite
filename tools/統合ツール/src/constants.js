@@ -3,6 +3,40 @@
 export const TOOL_ID = 'kintone-unified-suite-v2';
 export const TOOL_VERSION = '2.5.0';
 
+/** 実行時に読み込む外部ライブラリ/CDN 一覧 */
+export const EXTERNAL_LIBRARIES = Object.freeze({
+  jszip: Object.freeze({
+    version: '3.10.1',
+    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
+  }),
+  alasql: Object.freeze({
+    version: '4',
+    cdnCandidates: Object.freeze([
+      'https://cdn.jsdelivr.net/npm/alasql@4/dist/alasql.min.js',
+      'https://unpkg.com/alasql@4/dist/alasql.min.js',
+      'https://cdn.jsdelivr.net/npm/alasql@4'
+    ])
+  }),
+  cytoscape: Object.freeze({
+    version: '3.28.1',
+    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js',
+    altVersion: '3.26.0',
+    altCdnUrl: 'https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js'
+  }),
+  dagre: Object.freeze({
+    version: '0.8.5',
+    cdnUrl: 'https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js'
+  }),
+  cytoscapeDagre: Object.freeze({
+    version: '2.5.0',
+    cdnUrl: 'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js',
+    altCdnUrl: 'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js'
+  }),
+  googleFontsDmSansMono: Object.freeze({
+    cdnUrl: 'https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap'
+  })
+});
+
 export const DEFAULT_APP_ID = String(kintone.app.getId() || '');
 export const DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
 export const DIFF_SNAPSHOT_STATE_KEY = `${TOOL_ID}:diffSnapshots`;
