@@ -125,11 +125,16 @@ export async function launchKintoneSql() {
   `,
 
     resolveAlaSql: () => {
+      const toolWindow = toolD?.defaultView;
       const roots = [
         window.alasql,
         window.AlaSQL,
         globalThis?.alasql,
         globalThis?.AlaSQL,
+        toolWindow?.alasql,
+        toolWindow?.AlaSQL,
+        toolWindow?.globalThis?.alasql,
+        toolWindow?.globalThis?.AlaSQL,
       ].filter(Boolean);
 
       const resolveRunner = (candidate) => {
