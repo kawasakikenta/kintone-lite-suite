@@ -125,11 +125,32 @@ export async function launchKintoneSql() {
   `,
 
     resolveAlaSql: () => {
-      if (typeof window.alasql === 'function') return window.alasql;
-      if (typeof window.alasql?.default === 'function') return window.alasql.default;
-      if (typeof window.AlaSQL === 'function') return window.AlaSQL;
-      if (typeof window.AlaSQL?.default === 'function') return window.AlaSQL.default;
-      if (typeof globalThis?.alasql === 'function') return globalThis.alasql;
+      const roots = [
+        window.alasql,
+        window.AlaSQL,
+        globalThis?.alasql,
+        globalThis?.AlaSQL,
+      ].filter(Boolean);
+
+      const resolveRunner = (candidate) => {
+        if (!candidate) return null;
+        if (typeof candidate === 'function') return candidate;
+        if (typeof candidate.default === 'function') return candidate.default;
+        if (typeof candidate.alasql === 'function') return candidate.alasql;
+        if (typeof candidate.default?.alasql === 'function') return candidate.default.alasql;
+        if (typeof candidate.exec === 'function') {
+          return (query, params) => candidate.exec(query, params);
+        }
+        if (typeof candidate.default?.exec === 'function') {
+          return (query, params) => candidate.default.exec(query, params);
+        }
+        return null;
+      };
+
+      for (const root of roots) {
+        const runner = resolveRunner(root);
+        if (runner) return runner;
+      }
       return null;
     },
 
