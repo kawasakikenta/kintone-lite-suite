@@ -120,12 +120,23 @@ export async function launchKintoneSql() {
     #${ROOT_ID} .no-result { padding:30px; text-align:center; color:${t.subText}; font-size:14px; }
   `,
 
+    resolveAlaSql: () => {
+      if (typeof window.alasql === 'function') return window.alasql;
+      if (typeof window.alasql?.default === 'function') return window.alasql.default;
+      if (typeof window.AlaSQL === 'function') return window.AlaSQL;
+      if (typeof window.AlaSQL?.default === 'function') return window.AlaSQL.default;
+      return null;
+    },
+
     loadScript: (src) => new Promise((resolve, reject) => {
-      if (window.alasql) return resolve();
+      if (Utils.resolveAlaSql()) return resolve();
       const s = toolD.createElement('script');
       s.src = src;
-      s.onload = resolve;
-      s.onerror = reject;
+      s.onload = () => {
+        if (Utils.resolveAlaSql()) resolve();
+        else reject(new Error('AlaSQLの読み込み後も実行関数を検出できませんでした。'));
+      };
+      s.onerror = () => reject(new Error('AlaSQLスクリプトの読み込みに失敗しました。'));
       toolD.head.appendChild(s);
     }),
 
@@ -353,7 +364,11 @@ export async function launchKintoneSql() {
 
     async runSql(query, ...datasets) {
       await Utils.loadScript(ALASQL_CDN);
-      return window.alasql(query, datasets);
+      const alasql = Utils.resolveAlaSql();
+      if (!alasql) {
+        throw new Error('AlaSQL実行関数が見つかりません。ページ再読み込み後に再実行してください。');
+      }
+      return alasql(query, datasets);
     }
   };
 
