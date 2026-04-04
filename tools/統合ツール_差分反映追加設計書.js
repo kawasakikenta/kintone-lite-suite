@@ -15035,11 +15035,16 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     #${ROOT_ID} .no-result { padding:30px; text-align:center; color:${t.subText}; font-size:14px; }
   `,
       resolveAlaSql: () => {
+        const toolWindow = toolD?.defaultView;
         const roots = [
           window.alasql,
           window.AlaSQL,
           globalThis?.alasql,
-          globalThis?.AlaSQL
+          globalThis?.AlaSQL,
+          toolWindow?.alasql,
+          toolWindow?.AlaSQL,
+          toolWindow?.globalThis?.alasql,
+          toolWindow?.globalThis?.AlaSQL
         ].filter(Boolean);
         const resolveRunner = (candidate) => {
           if (!candidate) return null;
