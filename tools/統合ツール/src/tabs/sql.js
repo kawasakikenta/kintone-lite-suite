@@ -83,13 +83,14 @@ export async function launchKintoneSql() {
     #${ROOT_ID} .head b { color:${t.text}; font-size:14px; white-space:nowrap; }
     #${ROOT_ID} .body { flex:1; display:flex; min-height:0; }
     #${ROOT_ID} .main-area { flex:1; display:flex; flex-direction:column; min-width:0; }
-    #${ROOT_ID} .sidebar { width:240px; background:${t.sidebarBg}; border-left:1px solid ${t.sidebarBorder}; display:flex; flex-direction:column; overflow:hidden; transition:width .2s; }
-    #${ROOT_ID} .sidebar.collapsed { width:0; border-left:none; }
-    #${ROOT_ID} .sidebar-head { padding:8px 10px; font-weight:bold; font-size:12px; color:${t.text}; background:${t.headBg}; border-bottom:1px solid ${t.headBorder}; display:flex; justify-content:space-between; align-items:center; }
-    #${ROOT_ID} .sidebar-body { flex:1; overflow-y:auto; padding:4px 0; }
-    #${ROOT_ID} .field-item { padding:4px 10px; font-size:11px; cursor:pointer; color:${t.text}; display:flex; justify-content:space-between; align-items:center; }
-    #${ROOT_ID} .field-item:hover { background:${t.accent}22; }
-    #${ROOT_ID} .field-type { font-size:10px; color:${t.subText}; background:${t.headBg}; padding:1px 5px; border-radius:3px; }
+    #${ROOT_ID} .field-panel { border-bottom:1px solid ${t.headBorder}; background:${t.sidebarBg}; }
+    #${ROOT_ID} .field-head { padding:8px 10px; font-weight:bold; font-size:12px; color:${t.text}; background:${t.headBg}; border-bottom:1px solid ${t.headBorder}; display:flex; justify-content:space-between; align-items:center; }
+    #${ROOT_ID} .field-body { max-height:180px; overflow:auto; }
+    #${ROOT_ID} .field-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:11px; }
+    #${ROOT_ID} .field-table th, #${ROOT_ID} .field-table td { border:1px solid ${t.tdBorder}; padding:4px 8px; color:${t.text}; }
+    #${ROOT_ID} .field-table th { position:sticky; top:0; z-index:1; background:${t.thBg}; font-size:10px; }
+    #${ROOT_ID} .field-table td { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+    #${ROOT_ID} .field-table tr:hover td { background:${t.accent}22; }
     #${ROOT_ID} .editor-wrap { position:relative; border-bottom:1px solid ${t.headBorder}; }
     #${ROOT_ID} .editor { width:100%; height:160px; padding:12px; background:${t.editorBg}; color:${t.editorColor}; font-family:'Fira Code','Cascadia Code','Consolas',monospace; font-size:13px; resize:vertical; border:none; outline:none; line-height:1.5; tab-size:2; min-height:60px; max-height:50vh; }
     #${ROOT_ID} .toolbar { padding:6px 10px; background:${t.headBg}; border-bottom:1px solid ${t.headBorder}; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
@@ -183,6 +184,17 @@ export async function launchKintoneSql() {
       const fn = await Utils.waitForAlaSql();
       if (!fn) throw new Error('AlaSQLの読み込み後も実行関数を検出できませんでした。');
     },
+    loadJSZip: async () => {
+      if (typeof JSZip !== 'undefined') return;
+      await new Promise((resolve, reject) => {
+        const s = toolD.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('JSZipの読み込みに失敗しました。'));
+        toolD.head.appendChild(s);
+      });
+    },
+    safeName: (name) => String(name || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || 'unknown',
 
     downloadCsv: (data, filename) => {
       if (!data?.length) return;
@@ -429,7 +441,7 @@ export async function launchKintoneSql() {
   };
 
   const UI = (() => {
-    let root, styleEl, statusEl, resultEl, editorEl, sidebarBody, pagerEl;
+    let root, styleEl, statusEl, resultEl, editorEl, fieldBody, pagerEl;
     let currentTheme = Utils.getTheme();
     let lastResult = null;
     let currentPage = 0;
@@ -439,6 +451,7 @@ export async function launchKintoneSql() {
     let extraAppId = '';
     let isExecuting = false;
     let btnRun = null;
+    let currentPrimary = null;
 
     const setStatus = (msg) => { if (statusEl) statusEl.textContent = msg; };
 
@@ -446,23 +459,91 @@ export async function launchKintoneSql() {
       if (styleEl) styleEl.textContent = Utils.css(Themes[currentTheme]);
     };
 
-    const renderFields = (fields, flatData) => {
-      if (!sidebarBody) return;
-      sidebarBody.innerHTML = '';
-
-      if (flatData?.length) {
-        const keys = Object.keys(flatData[0]);
-        keys.forEach(k => {
-          const fType = fields[k]?.type || '?';
-          const item = Utils.el('div', { className: 'field-item', onclick: () => insertField(k) }, [
-            Utils.el('span', { textContent: k, title: k, style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '150px' } }),
-            Utils.el('span', { className: 'field-type', textContent: fType })
-          ]);
-          sidebarBody.appendChild(item);
-        });
-      } else {
-        sidebarBody.appendChild(Utils.el('div', { style: { padding: '10px', fontSize: '11px', color: Themes[currentTheme].subText } }, '先にクエリを実行すると項目一覧を表示します'));
+    const renderFields = (fields) => {
+      if (!fieldBody) return;
+      fieldBody.innerHTML = '';
+      const entries = Object.entries(fields || {});
+      if (!entries.length) {
+        fieldBody.appendChild(Utils.el('div', { style: { padding: '10px', fontSize: '11px', color: Themes[currentTheme].subText } }, '比較元アプリの項目を取得すると一覧を表示します'));
+        return;
       }
+      const table = Utils.el('table', { className: 'field-table' }, [
+        Utils.el('thead', {}, Utils.el('tr', {}, [
+          Utils.el('th', { textContent: 'フィールドコード', style: { width: '38%' } }),
+          Utils.el('th', { textContent: 'フィールド名', style: { width: '38%' } }),
+          Utils.el('th', { textContent: 'タイプ', style: { width: '24%' } })
+        ])),
+        Utils.el('tbody', {}, entries.map(([code, def]) => Utils.el('tr', { onclick: () => insertField(code) }, [
+          Utils.el('td', { title: code }, code),
+          Utils.el('td', { title: def.label || code }, def.label || code),
+          Utils.el('td', { title: def.type || '?' }, def.type || '?')
+        ])))
+      ]);
+      fieldBody.appendChild(table);
+    };
+
+    const downloadSqlResultBundle = async () => {
+      if (!lastResult?.length || !currentPrimary?.raw?.length || !currentPrimary?.fields) {
+        setStatus('先にSQLを実行して結果を表示してください。');
+        return;
+      }
+      const idKey = Object.prototype.hasOwnProperty.call(lastResult[0], '$id') ? '$id' : null;
+      if (!idKey) {
+        setStatus('結果に $id 列がないため、添付ファイルDLを実行できません。');
+        return;
+      }
+      const resultKeys = Object.keys(lastResult[0]);
+      const fileFieldCodes = resultKeys.filter((k) => currentPrimary.fields[k]?.type === 'FILE');
+      if (!fileFieldCodes.length) {
+        setStatus('結果に添付ファイルフィールドが含まれていません。');
+        return;
+      }
+      const src = commonParams().source;
+      const prefix = buildApiPrefix(src.guestId, false);
+      const rawById = new Map(currentPrimary.raw.map((r) => [String(r.$id?.value || ''), r]));
+
+      await Utils.loadJSZip();
+      const zip = new JSZip();
+      const manifest = [];
+      let fileCount = 0;
+
+      for (let i = 0; i < lastResult.length; i++) {
+        const row = lastResult[i];
+        const recordId = String(row[idKey] ?? '');
+        const raw = rawById.get(recordId);
+        if (!recordId || !raw) continue;
+
+        const picked = [];
+        for (const code of fileFieldCodes) {
+          const files = raw[code]?.value || [];
+          for (const f of files) {
+            setStatus(`添付ファイル取得中... ${i + 1}/${lastResult.length}`);
+            const resp = await fetch(`${prefix}/file.json?fileKey=${encodeURIComponent(f.fileKey)}`, { method: 'GET', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            if (!resp.ok) continue;
+            const blob = await resp.blob();
+            const path = `files/record_${recordId}/${Utils.safeName(code)}/${Utils.safeName(f.name)}`;
+            zip.file(path, blob);
+            fileCount++;
+            picked.push({ fieldCode: code, name: f.name, fileKey: f.fileKey, path });
+          }
+        }
+        manifest.push({ rowIndex: i + 1, recordId, row, attachments: picked });
+      }
+      if (!manifest.length) {
+        setStatus('対象レコードが見つかりませんでした。');
+        return;
+      }
+      zip.file('records.json', JSON.stringify(manifest, null, 2));
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const a = toolD.createElement('a');
+      const u = URL.createObjectURL(blob);
+      a.href = u;
+      a.download = `sql_result_bundle_${Date.now()}.zip`;
+      toolD.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(u), 200);
+      setStatus(`SQL結果と添付ファイルをZIPで出力しました (${manifest.length}件 / ${fileCount}ファイル)。`);
     };
 
     const insertField = (name) => {
@@ -601,6 +682,7 @@ export async function launchKintoneSql() {
 
         setStatus('レコードを取得中...');
         const primary = await Logic.loadApp(appId, expandSubtables, (n) => setStatus(`アプリ ${appId}: ${n}件取得...`));
+        currentPrimary = primary;
 
         const datasets = [primary.flat];
 
@@ -623,7 +705,7 @@ export async function launchKintoneSql() {
         renderTable();
         setStatus(`${lastResult.length}件 / ${elapsed}s [${safety.hash}]`);
 
-        renderFields(primary.fields, primary.flat);
+        renderFields(primary.fields);
 
         Utils.addHistory(sql, { hash: safety.hash, safety: safety.issues.length ? 'double-confirm' : 'normal' });
         console.info(`[KintoneSQL] hash=${safety.hash} safety=${safety.issues.length ? 'double-confirm' : 'normal'}`);
@@ -721,6 +803,11 @@ export async function launchKintoneSql() {
           else setStatus('コピー対象データがありません。');
         }, title: 'TSVとしてコピー'
       }, '📋 コピー');
+      const btnBundle = Utils.el('button', {
+        className: 'btn',
+        onclick: downloadSqlResultBundle,
+        title: 'SQL結果のレコード内容と添付ファイルをZIP出力'
+      }, '🗂 結果+添付DL');
 
       const btnReload = Utils.el('button', {
         className: 'btn', onclick: () => {
@@ -752,7 +839,7 @@ export async function launchKintoneSql() {
 
       const head = Utils.el('div', { className: 'head' }, [
         Utils.el('b', {}, '⚡ kintone SQL 実行'),
-        btnRun, btnCsv, btnCopy, btnReload, historyWrap,
+        btnRun, btnCsv, btnCopy, btnBundle, btnReload, historyWrap,
         btnTheme, statusEl, btnClose
       ]);
 
@@ -790,26 +877,17 @@ export async function launchKintoneSql() {
         appLabel, appInput,
       ]);
 
-      let sidebarCollapsed = false;
-      sidebarBody = Utils.el('div', { className: 'sidebar-body' });
-      const btnToggleSidebar = Utils.el('button', {
-        className: 'btn sm', onclick: () => {
-          sidebarCollapsed = !sidebarCollapsed;
-          sidebar.classList.toggle('collapsed', sidebarCollapsed);
-          btnToggleSidebar.textContent = sidebarCollapsed ? '◀' : '▶';
-        }
-      }, '▶');
-      const sidebarHead = Utils.el('div', { className: 'sidebar-head' }, [
-        Utils.el('span', {}, '項目一覧'),
-        btnToggleSidebar
+      fieldBody = Utils.el('div', { className: 'field-body' });
+      const fieldPanel = Utils.el('div', { className: 'field-panel' }, [
+        Utils.el('div', { className: 'field-head' }, Utils.el('span', {}, '項目一覧（クリックでSQLへ挿入）')),
+        fieldBody
       ]);
-      const sidebar = Utils.el('div', { className: 'sidebar' }, [sidebarHead, sidebarBody]);
-      renderFields({}, null);
+      renderFields({});
 
       const editorWrap = Utils.el('div', { className: 'editor-wrap' }, editorEl);
       const resultWrap = Utils.el('div', { className: 'result-wrap' }, [resultEl, pagerEl]);
-      const mainArea = Utils.el('div', { className: 'main-area' }, [editorWrap, toolbar, resultWrap]);
-      const body = Utils.el('div', { className: 'body' }, [mainArea, sidebar]);
+      const mainArea = Utils.el('div', { className: 'main-area' }, [editorWrap, toolbar, fieldPanel, resultWrap]);
+      const body = Utils.el('div', { className: 'body' }, [mainArea]);
       const panel = Utils.el('div', { className: 'panel' }, [head, body]);
 
       root = Utils.el('div', { id: ROOT_ID }, panel);
@@ -823,6 +901,13 @@ export async function launchKintoneSql() {
 
       if (sqlPane) sqlPane.appendChild(root);
       else toolD.body.appendChild(root);
+
+      const initialAppId = getToolDocument().getElementById('u_sourceApp')?.value?.trim();
+      if (initialAppId) {
+        Logic.fetchFields(initialAppId).then((fields) => {
+          if (fields && Object.keys(fields).length) renderFields(fields);
+        }).catch(() => {});
+      }
 
       editorEl.focus();
     };
