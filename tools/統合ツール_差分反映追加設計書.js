@@ -21,10 +21,10 @@
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // tools/統合ツール/src/constants.js
+  // src/constants.js
   var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SNAPSHOT_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, FEATURE_DEFS, TAB_TO_FEATURE, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
-    "tools/統合ツール/src/constants.js"() {
+    "src/constants.js"() {
       "use strict";
       TOOL_ID = "kintone-unified-suite-v2";
       TOOL_VERSION = "2.5.0";
@@ -260,7 +260,7 @@
     }
   });
 
-  // tools/統合ツール/src/state.js
+  // src/state.js
   function loadDialogState() {
     try {
       return JSON.parse(localStorage.getItem(DIALOG_STATE_KEY) || "{}");
@@ -276,7 +276,7 @@
   }
   var state, ui;
   var init_state = __esm({
-    "tools/統合ツール/src/state.js"() {
+    "src/state.js"() {
       "use strict";
       init_constants();
       state = {
@@ -329,7 +329,7 @@
     }
   });
 
-  // tools/統合ツール/src/utils.js
+  // src/utils.js
   var utils_exports = {};
   __export(utils_exports, {
     apiErrorWithContext: () => apiErrorWithContext,
@@ -489,13 +489,13 @@ ${contextLine}`);
     });
   }
   var init_utils = __esm({
-    "tools/統合ツール/src/utils.js"() {
+    "src/utils.js"() {
       "use strict";
       init_constants();
     }
   });
 
-  // tools/統合ツール/src/ui/dialog.js
+  // src/ui/dialog.js
   function callScheduleGuidedTourLayout() {
     if (typeof scheduleGuidedTourLayoutFn === "function") scheduleGuidedTourLayoutFn();
   }
@@ -686,7 +686,7 @@ ${contextLine}`);
   }
   var root, ui2, dialogResizeObserver, dialogResizeSaveTimer, dialogDragState, dialogDragMoveHandler, dialogDragEndHandler, scheduleGuidedTourLayoutFn;
   var init_dialog = __esm({
-    "tools/統合ツール/src/ui/dialog.js"() {
+    "src/ui/dialog.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -702,7 +702,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/diff/engine.js
+  // src/diff/engine.js
   function detectRowSeverity(row) {
     const sec = row?.sectionKey || "";
     const path = String(row?.path || "").toLowerCase();
@@ -1184,7 +1184,7 @@ ${contextLine}`);
   }
   var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES;
   var init_engine = __esm({
-    "tools/統合ツール/src/diff/engine.js"() {
+    "src/diff/engine.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -1226,7 +1226,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/api.js
+  // src/api.js
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
@@ -1348,7 +1348,7 @@ ${contextLine}`);
     return first != null ? String(first) : "";
   }
   var init_api = __esm({
-    "tools/統合ツール/src/api.js"() {
+    "src/api.js"() {
       "use strict";
       init_constants();
       init_utils();
@@ -1356,7 +1356,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/diff/enrich.js
+  // src/diff/enrich.js
   function relativePathFromRow2(path, secKey) {
     if (!path) return "";
     if (path === secKey) return "";
@@ -1837,7 +1837,7 @@ ${contextLine}`);
     });
   }
   var init_enrich = __esm({
-    "tools/統合ツール/src/diff/enrich.js"() {
+    "src/diff/enrich.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -1846,7 +1846,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/diff/popout.js
+  // src/diff/popout.js
   var popout_exports = {};
   __export(popout_exports, {
     closeDiffViewerPopout: () => closeDiffViewerPopout,
@@ -2004,7 +2004,7 @@ ${contextLine}`);
   }
   var WIN_NAME, popoutClickHandler, popoutChangeHandler, popoutMousedownHandler;
   var init_popout = __esm({
-    "tools/統合ツール/src/diff/popout.js"() {
+    "src/diff/popout.js"() {
       "use strict";
       init_state();
       init_dialog();
@@ -2017,7 +2017,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/diff/export.js
+  // src/diff/export.js
   function stringifyForDiff(value) {
     if (value === void 0) return "（未定義）";
     const out = JSON.stringify(value, null, 2);
@@ -4075,7 +4075,7 @@ ${contextLine}`);
   }
   var MAIN_RESULT_IDLE_HTML;
   var init_export = __esm({
-    "tools/統合ツール/src/diff/export.js"() {
+    "src/diff/export.js"() {
       init_constants();
       init_utils();
       init_state();
@@ -4087,7 +4087,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/diff/filter.js
+  // src/diff/filter.js
   function normalizeDiffFavoritePath(path) {
     return String(path || "").trim();
   }
@@ -4184,7 +4184,7 @@ ${contextLine}`);
     return [...counts.values()].filter((item) => item.count >= 2).sort((a, b) => b.count - a.count || b.sections.size - a.sections.size || a.key.localeCompare(b.key)).slice(0, 8).map((item) => ({ key: item.key, count: item.count, sectionCount: item.sections.size }));
   }
   var init_filter = __esm({
-    "tools/統合ツール/src/diff/filter.js"() {
+    "src/diff/filter.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -4194,18 +4194,18 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/reflect/nodeModeUi.js
+  // src/reflect/nodeModeUi.js
   function isReflectNodeModeEffective() {
     return !!ui.nodeMode?.checked && !ui.reflectSimpleMode?.checked;
   }
   var init_nodeModeUi = __esm({
-    "tools/統合ツール/src/reflect/nodeModeUi.js"() {
+    "src/reflect/nodeModeUi.js"() {
       "use strict";
       init_state();
     }
   });
 
-  // tools/統合ツール/src/ui/components.js
+  // src/ui/components.js
   function setComponentUi(uiRefs) {
     ui3 = uiRefs;
   }
@@ -5006,7 +5006,7 @@ ${contextLine}`);
   }
   var ui3, deps;
   var init_components = __esm({
-    "tools/統合ツール/src/ui/components.js"() {
+    "src/ui/components.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5038,7 +5038,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/tabs/preview-compare.js
+  // src/tabs/preview-compare.js
   function getPreviewCompareStatusPrefix(ui4) {
     const sp = !!ui4?.sourcePreview?.checked;
     const tp = !!ui4?.targetPreview?.checked;
@@ -5048,12 +5048,12 @@ ${contextLine}`);
     return "〔プレビュー → 本番〕";
   }
   var init_preview_compare = __esm({
-    "tools/統合ツール/src/tabs/preview-compare.js"() {
+    "src/tabs/preview-compare.js"() {
       "use strict";
     }
   });
 
-  // tools/統合ツール/src/reflect/rowMode.js
+  // src/reflect/rowMode.js
   function reflectRowModeById(rowId) {
     return state.reflectNodeModes[rowId] === "tgt" ? "tgt" : "src";
   }
@@ -5061,13 +5061,13 @@ ${contextLine}`);
     return reflectRowModeById(row._id) === "tgt" ? row.right : row.left;
   }
   var init_rowMode = __esm({
-    "tools/統合ツール/src/reflect/rowMode.js"() {
+    "src/reflect/rowMode.js"() {
       "use strict";
       init_state();
     }
   });
 
-  // tools/統合ツール/src/tabs/reflect.js
+  // src/tabs/reflect.js
   var reflect_exports = {};
   __export(reflect_exports, {
     ensureActiveReflectNodeId: () => ensureActiveReflectNodeId,
@@ -5295,7 +5295,7 @@ ${contextLine}`);
     setStatus(`共通データ取得完了: 比較元 ${sections.length}セクション(NG ${sourceErr}) / 比較先 ${sections.length}セクション(NG ${targetErr})`);
   }
   var init_reflect = __esm({
-    "tools/統合ツール/src/tabs/reflect.js"() {
+    "src/tabs/reflect.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5313,7 +5313,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/tabs/field.js
+  // src/tabs/field.js
   function parseFieldInput(text) {
     const obj = JSON.parse(text);
     if (!obj || typeof obj !== "object") throw new Error("JSONはオブジェクト形式で入力してください");
@@ -5536,7 +5536,7 @@ ${contextLine}`);
     setStatus(`${mergedCount} 件のフィールド定義を挿入しました`);
   }
   var init_field = __esm({
-    "tools/統合ツール/src/tabs/field.js"() {
+    "src/tabs/field.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5549,7 +5549,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/reflect/helpers.js
+  // src/reflect/helpers.js
   function diffSectionKeySet() {
     const set = /* @__PURE__ */ new Set();
     for (const row of getActualDiffRows(state.lastDiffRows || [])) {
@@ -5634,7 +5634,7 @@ ${contextLine}`);
     return last;
   }
   var init_helpers = __esm({
-    "tools/統合ツール/src/reflect/helpers.js"() {
+    "src/reflect/helpers.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5649,7 +5649,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/reflect/apply.js
+  // src/reflect/apply.js
   function convertLookupAppIds2(fieldDef, map) {
     const def = deepClone(fieldDef || {});
     const lookupMap = map || {};
@@ -6251,7 +6251,7 @@ ${contextLine}`);
     setStatus(`デプロイ処理完了: ${st === "SUCCESS" ? "SUCCESS" : st}`, st !== "SUCCESS");
   }
   var init_apply = __esm({
-    "tools/統合ツール/src/reflect/apply.js"() {
+    "src/reflect/apply.js"() {
       "use strict";
       init_constants();
       init_utils();
@@ -6265,7 +6265,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/reflect/plan.js
+  // src/reflect/plan.js
   var plan_exports = {};
   __export(plan_exports, {
     appendRequestPlanLogs: () => appendRequestPlanLogs,
@@ -6692,7 +6692,7 @@ ${contextLine}`);
     setStatus("反映プラン確認完了");
   }
   var init_plan = __esm({
-    "tools/統合ツール/src/reflect/plan.js"() {
+    "src/reflect/plan.js"() {
       "use strict";
       init_constants();
       init_utils();
@@ -6706,7 +6706,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/tabs/diff.js
+  // src/tabs/diff.js
   var diff_exports = {};
   __export(diff_exports, {
     addIgnoreKeyFromInput: () => addIgnoreKeyFromInput,
@@ -7174,7 +7174,7 @@ ${contextLine}`);
     }
   }
   var init_diff = __esm({
-    "tools/統合ツール/src/tabs/diff.js"() {
+    "src/tabs/diff.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -7193,12 +7193,12 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/index.js
+  // src/index.js
   init_constants();
   init_state();
   init_utils();
 
-  // tools/統合ツール/src/ui/styles.css
+  // src/ui/styles.css
   var styles_default = `#kintone-unified-suite-v2{position:fixed;top:16px;left:calc(100vw - min(980px,calc(100vw - 32px)) - 16px);z-index:2147483647;width:min(980px,calc(100vw - 32px));height:min(860px,calc(100vh - 32px));min-width:min(560px,calc(100vw - 32px));min-height:min(360px,calc(100vh - 32px));max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);background:#f6f8fb;border:1px solid #d9e2ec;border-radius:14px;box-shadow:0 18px 40px rgba(15,23,42,.28);font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;color:#1f2937;display:flex;flex-direction:column;overflow:hidden;resize:both;box-sizing:border-box}
 #kintone-unified-suite-v2.suite-popout-tab{top:0!important;left:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;border-radius:0;resize:none;box-shadow:none;border-width:0 0 1px}
 #kintone-unified-suite-v2 .h{padding:12px 16px;background:linear-gradient(135deg,#0f4c81,#2563eb);color:#fff;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-shrink:0;cursor:move;user-select:none}
@@ -8335,7 +8335,7 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .rpp-modal-hint{margin-top:8px;font-size:11px;color:#64748b}
 `;
 
-  // tools/統合ツール/src/ui/template.js
+  // src/ui/template.js
   init_constants();
   init_utils();
   init_dialog();
@@ -9595,7 +9595,7 @@ ${contextLine}`);
     });
   }
 
-  // tools/統合ツール/src/index.js
+  // src/index.js
   init_dialog();
   init_components();
   init_export();
@@ -9607,7 +9607,7 @@ ${contextLine}`);
   init_helpers();
   init_plan();
 
-  // tools/統合ツール/src/ui/tour.js
+  // src/ui/tour.js
   init_constants();
   init_state();
   init_utils();
@@ -9751,7 +9751,7 @@ ${contextLine}`);
     renderGuidedTourStep();
   }
 
-  // tools/統合ツール/src/handlers.js
+  // src/handlers.js
   init_constants();
   init_state();
   init_utils();
@@ -9760,7 +9760,7 @@ ${contextLine}`);
   init_filter();
   init_export();
 
-  // tools/統合ツール/src/diff/presets.js
+  // src/diff/presets.js
   init_state();
   init_export();
   function syncFilterStateFromUi() {
@@ -9824,7 +9824,7 @@ ${contextLine}`);
     renderResultRows(state.lastDiffRows || []);
   }
 
-  // tools/統合ツール/src/diff/selection-sets.js
+  // src/diff/selection-sets.js
   init_constants();
   init_state();
   init_diff();
@@ -9893,13 +9893,13 @@ ${contextLine}`);
     refreshDiffSelectionSetDropdown();
   }
 
-  // tools/統合ツール/src/handlers.js
+  // src/handlers.js
   init_popout();
   init_components();
   init_dialog();
   init_diff();
 
-  // tools/統合ツール/src/tabs/reflect-preview-playground.js
+  // src/tabs/reflect-preview-playground.js
   init_utils();
   var SAMPLE_BEFORE = {
     "文字列__1行_": { type: "SINGLE_LINE_TEXT", code: "文字列__1行_", label: "会社名", noLabel: false, required: true, unique: false, maxLength: "64", minLength: "", defaultValue: "", expression: "", hideExpression: false },
@@ -10308,11 +10308,11 @@ ${contextLine}`);
     render();
   }
 
-  // tools/統合ツール/src/handlers.js
+  // src/handlers.js
   init_reflect();
   init_field();
 
-  // tools/統合ツール/src/tabs/settings-export.js
+  // src/tabs/settings-export.js
   init_constants();
   init_state();
   init_utils();
@@ -10322,7 +10322,7 @@ ${contextLine}`);
   init_diff();
   init_field();
 
-  // tools/統合ツール/src/tabs/record.js
+  // src/tabs/record.js
   init_constants();
   init_state();
   init_utils();
@@ -10864,7 +10864,7 @@ ${contextLine}`);
     setStatus(`テンプレート「${name}」を削除しました`);
   }
 
-  // tools/統合ツール/src/tabs/settings-export.js
+  // src/tabs/settings-export.js
   function addAppIdToSettingsExport(appId, appName) {
     if (!/^\d+$/.test(String(appId || "").trim())) return;
     const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
@@ -10981,7 +10981,7 @@ ${contextLine}`);
     setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）`);
   }
 
-  // tools/統合ツール/src/handlers.js
+  // src/handlers.js
   function withGuard(fn, busyText) {
     if (state.running) {
       setStatus("別の処理を実行中です。完了までお待ちください。");
@@ -12243,7 +12243,7 @@ ${contextLine}`);
     syncDiffOnboardingVisibility();
   }
 
-  // tools/統合ツール/src/tabs/design.js
+  // src/tabs/design.js
   init_constants();
   init_state();
   init_utils();
@@ -12873,7 +12873,7 @@ ${diffMd}
     }
   }
 
-  // tools/統合ツール/src/tabs/er.js
+  // src/tabs/er.js
   init_constants();
   init_state();
   init_utils();
@@ -14618,7 +14618,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setBusy(false);
   }
 
-  // tools/統合ツール/src/tabs/jsconfig.js
+  // src/tabs/jsconfig.js
   init_state();
   init_utils();
   init_api();
@@ -14779,7 +14779,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setStatus(`JS/CSS一括DL完了 (403スキップ: ${failedCount}件)`);
   }
 
-  // tools/統合ツール/src/tabs/process.js
+  // src/tabs/process.js
   init_state();
   init_utils();
   init_api();
@@ -14927,7 +14927,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     }
   }
 
-  // tools/統合ツール/src/tabs/sql.js
+  // src/tabs/sql.js
   init_state();
   init_utils();
   init_api();
@@ -15880,7 +15880,7 @@ ${safety.hash}`, "");
     UI.init();
   }
 
-  // tools/統合ツール/src/tabs/api-tester.js
+  // src/tabs/api-tester.js
   init_utils();
   init_components();
   init_components();
@@ -16019,7 +16019,7 @@ ${safety.hash}`, "");
     }
   }
 
-  // tools/統合ツール/src/index.js
+  // src/index.js
   var TOOL_POPOUT_NAME = "kintone-unified-suite-v2";
   if (!window.kintone?.api || !window.kintone?.app) {
     alert("kintone画面で実行してください");
