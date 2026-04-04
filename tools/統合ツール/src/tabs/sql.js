@@ -181,8 +181,24 @@ export async function launchKintoneSql() {
       const fn = await Utils.waitForAlaSql();
       if (!fn) throw new Error('AlaSQLの読み込み後も実行関数を検出できませんでした。');
     },
+    resolveJSZip: () => {
+      const toolWindow = toolD?.defaultView;
+      const roots = [
+        window.JSZip,
+        globalThis?.JSZip,
+        toolWindow?.JSZip,
+        toolWindow?.globalThis?.JSZip,
+      ].filter(Boolean);
+
+      for (const root of roots) {
+        if (typeof root === 'function') return root;
+        if (typeof root?.default === 'function') return root.default;
+      }
+      return null;
+    },
     loadJSZip: async () => {
-      if (typeof globalThis.JSZip !== 'undefined') return globalThis.JSZip;
+      const existing = Utils.resolveJSZip();
+      if (existing) return existing;
       await new Promise((resolve, reject) => {
         const s = toolD.createElement('script');
         s.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
@@ -190,10 +206,11 @@ export async function launchKintoneSql() {
         s.onerror = () => reject(new Error('JSZipの読み込みに失敗しました。'));
         toolD.head.appendChild(s);
       });
-      if (typeof globalThis.JSZip === 'undefined') {
+      const loaded = Utils.resolveJSZip();
+      if (!loaded) {
         throw new Error('JSZipのロード後もグローバル変数が見つかりませんでした。');
       }
-      return globalThis.JSZip;
+      return loaded;
     },
     safeName: (name) => String(name || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || 'unknown',
 

@@ -15123,8 +15123,23 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         const fn = await Utils.waitForAlaSql();
         if (!fn) throw new Error("AlaSQLの読み込み後も実行関数を検出できませんでした。");
       },
+      resolveJSZip: () => {
+        const toolWindow = toolD?.defaultView;
+        const roots = [
+          window.JSZip,
+          globalThis?.JSZip,
+          toolWindow?.JSZip,
+          toolWindow?.globalThis?.JSZip
+        ].filter(Boolean);
+        for (const root2 of roots) {
+          if (typeof root2 === "function") return root2;
+          if (typeof root2?.default === "function") return root2.default;
+        }
+        return null;
+      },
       loadJSZip: async () => {
-        if (typeof globalThis.JSZip !== "undefined") return globalThis.JSZip;
+        const existing2 = Utils.resolveJSZip();
+        if (existing2) return existing2;
         await new Promise((resolve, reject) => {
           const s = toolD.createElement("script");
           s.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
@@ -15132,10 +15147,11 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
           s.onerror = () => reject(new Error("JSZipの読み込みに失敗しました。"));
           toolD.head.appendChild(s);
         });
-        if (typeof globalThis.JSZip === "undefined") {
+        const loaded = Utils.resolveJSZip();
+        if (!loaded) {
           throw new Error("JSZipのロード後もグローバル変数が見つかりませんでした。");
         }
-        return globalThis.JSZip;
+        return loaded;
       },
       safeName: (name) => String(name || "").replace(/[\\/:*?"<>|]/g, "_").slice(0, 180) || "unknown",
       downloadCsv: (data, filename) => {
