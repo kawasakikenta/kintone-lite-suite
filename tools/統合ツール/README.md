@@ -17,6 +17,10 @@ npm run build
 
 `tools/統合ツール_差分反映追加設計書.js` に単一 IIFE として出力されます。
 
+
+> `npm run build` 実行時に、互換用の個別エントリポイント（`tools/*.js`）と共通ランチャー（`tools/統合ツール起動.js`）も自動生成されます。
+
+
 開発時はファイル変更を監視して自動ビルドできます。
 
 ```bash
@@ -117,6 +121,26 @@ tools/統合ツール/
 3. 反映プランを確認し、問題なければプレビュー反映を実行
 4. デプロイして本番に適用
 5. 設計書や差分レポートを出力して記録を残す
+
+
+## 正規実装と公開エントリ
+
+統合後の運用では、機能ロジックは `src/tabs/*.js` を正規実装とし、`tools/*.js` は互換用の公開エントリポイントとして管理します。
+
+| 機能名 | 正規モジュール | 公開エントリ |
+|---|---|---|
+| 差分比較 | `src/tabs/diff.js` | `../差分比較.js` |
+| プレビュー反映 | `src/tabs/reflect.js` | `../プレビュー反映.js` |
+| フィールド追加 | `src/tabs/field.js` | `../フィールド追加.js` |
+| JS/CSS設定 | `src/tabs/jsconfig.js` | `../kintoneJS取得.js` |
+| 設定一括取得 | `src/tabs/settings-export.js` | `../設定取得.js` |
+| 設計書 | `src/tabs/design.js` | `../設計書作成.js` |
+| ER図 | `src/tabs/er.js` | `../ER図.js` |
+| プロセス図 | `src/tabs/process.js` | `../プロセス実行.js` |
+| レコード管理 | `src/tabs/record.js` | `../kintoneレコード取得.js` |
+| SQL実行 | `src/tabs/sql.js` | `../kintoneSQL.js` |
+
+詳細な棚卸し・削除対象分類は `../単機能スクリプト棚卸し.md` を参照してください。
 
 ## 注意事項
 
