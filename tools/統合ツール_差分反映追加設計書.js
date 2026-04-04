@@ -22,12 +22,44 @@
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
   // src/constants.js
-  var TOOL_ID, TOOL_VERSION, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SNAPSHOT_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, FEATURE_DEFS, TAB_TO_FEATURE, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SNAPSHOT_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, FEATURE_DEFS, TAB_TO_FEATURE, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.js"() {
       "use strict";
       TOOL_ID = "kintone-unified-suite-v2";
       TOOL_VERSION = "2.5.0";
+      EXTERNAL_LIBRARIES = Object.freeze({
+        jszip: Object.freeze({
+          version: "3.10.1",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+        }),
+        alasql: Object.freeze({
+          version: "4",
+          cdnCandidates: Object.freeze([
+            "https://cdn.jsdelivr.net/npm/alasql@4/dist/alasql.min.js",
+            "https://unpkg.com/alasql@4/dist/alasql.min.js",
+            "https://cdn.jsdelivr.net/npm/alasql@4"
+          ])
+        }),
+        cytoscape: Object.freeze({
+          version: "3.28.1",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
+          altVersion: "3.26.0",
+          altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"
+        }),
+        dagre: Object.freeze({
+          version: "0.8.5",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
+        }),
+        cytoscapeDagre: Object.freeze({
+          version: "2.5.0",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
+          altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
+        }),
+        googleFontsDmSansMono: Object.freeze({
+          cdnUrl: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap"
+        })
+      });
       DEFAULT_APP_ID = String(kintone.app.getId() || "");
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       DIFF_SNAPSHOT_STATE_KEY = `${TOOL_ID}:diffSnapshots`;
@@ -10398,14 +10430,18 @@ ${contextLine}`);
     setStatus(`ステータス一括更新が完了しました（全${okCount}件）`, false);
   }
   async function loadJSZip() {
-    if (typeof JSZip !== "undefined") return;
+    if (typeof globalThis.JSZip !== "undefined") return globalThis.JSZip;
     setStatus("JSZipを動的ロード中...");
     return new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+      script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
       script.onload = () => {
+        if (typeof globalThis.JSZip === "undefined") {
+          reject(new Error("JSZipのロード後もグローバル変数が見つかりません"));
+          return;
+        }
         setStatus("JSZipのロード完了");
-        resolve();
+        resolve(globalThis.JSZip);
       };
       script.onerror = () => {
         reject(new Error("JSZipの読み込みに失敗しました"));
@@ -10432,8 +10468,8 @@ ${contextLine}`);
     setStatus("対象レコードを取得中...");
     const records = await getFullRecordsByQuery(tApp, query, false);
     if (records.length === 0) throw new Error("処理対象のレコードが0件です。");
-    await loadJSZip();
-    const zip = new JSZip();
+    const JSZipCtor = await loadJSZip();
+    const zip = new JSZipCtor();
     let fileCount = 0;
     for (let i = 0; i < records.length; i++) {
       const rec = records[i];
@@ -10922,8 +10958,8 @@ ${contextLine}`);
       apps: bundles
     };
     if (mode === "zip") {
-      await loadJSZip();
-      const zip = new JSZip();
+      const JSZipCtor = await loadJSZip();
+      const zip = new JSZipCtor();
       zip.file("manifest.json", JSON.stringify({
         generatedAt: payload.generatedAt,
         guestId: payload.guestId,
@@ -13146,11 +13182,11 @@ ${diffMd}
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>kintone ER図 v3</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"><\/script>
-<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"><\/script>
-<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"><\/script>
+<script src="${EXTERNAL_LIBRARIES.cytoscape.cdnUrl}"><\/script>
+<script src="${EXTERNAL_LIBRARIES.dagre.cdnUrl}"><\/script>
+<script src="${EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl}"><\/script>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+@import url('${EXTERNAL_LIBRARIES.googleFontsDmSansMono.cdnUrl}');
 
 *{margin:0;padding:0;box-sizing:border-box;}
 
@@ -14507,9 +14543,9 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 <head>
   <meta charset="utf-8">
   <title>フィールド依存関係マップ - App ${srcAppId}</title>
-  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"><\/script>
-  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"><\/script>
-  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"><\/script>
+  <script src="${EXTERNAL_LIBRARIES.cytoscape.altCdnUrl}"><\/script>
+  <script src="${EXTERNAL_LIBRARIES.dagre.cdnUrl}"><\/script>
+  <script src="${EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl}"><\/script>
   <style>
     body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background: #f8fafc; }
     #header { padding: 12px 20px; background: #fff; border-bottom: 1px solid #cbd5e1; display: flex; align-items: center; justify-content: space-between; }
@@ -14687,8 +14723,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       return true;
     });
     setStatus(`${uniqueApps.length}個のアプリ設定を解析中...`);
-    await loadJSZip();
-    const zip = new JSZip();
+    const JSZipCtor = await loadJSZip();
+    const zip = new JSZipCtor();
     let hasFiles = false;
     let failedCount = 0;
     for (let i = 0; i < uniqueApps.length; i++) {
@@ -14896,6 +14932,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   init_utils();
   init_api();
   init_components();
+  init_constants();
   init_diff();
   init_dialog();
   async function launchKintoneSql() {
@@ -14916,11 +14953,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       return;
     }
     const ROOT_ID = "kintone-sql-runner";
-    const ALASQL_CDN_CANDIDATES = [
-      "https://cdn.jsdelivr.net/npm/alasql@4/dist/alasql.min.js",
-      "https://unpkg.com/alasql@4/dist/alasql.min.js",
-      "https://cdn.jsdelivr.net/npm/alasql@4"
-    ];
+    const ALASQL_CDN_CANDIDATES = EXTERNAL_LIBRARIES.alasql.cdnCandidates;
     const STORAGE_KEY = "kintone-sql-runner-history";
     const THEME_KEY = "kintone-sql-runner-theme";
     const PAGE_SIZE = 200;
@@ -15091,14 +15124,18 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         if (!fn) throw new Error("AlaSQLの読み込み後も実行関数を検出できませんでした。");
       },
       loadJSZip: async () => {
-        if (typeof JSZip !== "undefined") return;
+        if (typeof globalThis.JSZip !== "undefined") return globalThis.JSZip;
         await new Promise((resolve, reject) => {
           const s = toolD.createElement("script");
-          s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+          s.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
           s.onload = resolve;
           s.onerror = () => reject(new Error("JSZipの読み込みに失敗しました。"));
           toolD.head.appendChild(s);
         });
+        if (typeof globalThis.JSZip === "undefined") {
+          throw new Error("JSZipのロード後もグローバル変数が見つかりませんでした。");
+        }
+        return globalThis.JSZip;
       },
       safeName: (name) => String(name || "").replace(/[\\/:*?"<>|]/g, "_").slice(0, 180) || "unknown",
       downloadCsv: (data, filename) => {
@@ -15392,8 +15429,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         const src = commonParams().source;
         const prefix = buildApiPrefix(src.guestId, false);
         const rawById = new Map(currentPrimary.raw.map((r) => [String(r.$id?.value || ""), r]));
-        await Utils.loadJSZip();
-        const zip = new JSZip();
+        const JSZipCtor = await Utils.loadJSZip();
+        const zip = new JSZipCtor();
         const manifest = [];
         let fileCount = 0;
         for (let i = 0; i < lastResult.length; i++) {

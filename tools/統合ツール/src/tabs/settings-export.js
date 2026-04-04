@@ -136,8 +136,8 @@ export async function runSettingsExport(mode) {
   };
 
   if (mode === 'zip') {
-    await loadJSZip();
-    const zip = new JSZip();
+    const JSZipCtor = await loadJSZip();
+    const zip = new JSZipCtor();
     zip.file('manifest.json', JSON.stringify({
       generatedAt: payload.generatedAt,
       guestId: payload.guestId,

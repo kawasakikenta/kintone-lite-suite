@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS } from '../constants.js';
+import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, safeJsonForScript, nowStamp, downloadText } from '../utils.js';
 import { apiGet, buildApiPrefix, fetchBundle, ensureBundleShape } from '../api.js';
@@ -295,11 +295,11 @@ const buildHTML = (apps, options = {}) => {
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>kintone ER図 v3</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"><\/script>
-<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"><\/script>
-<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"><\/script>
+<script src="${EXTERNAL_LIBRARIES.cytoscape.cdnUrl}"><\/script>
+<script src="${EXTERNAL_LIBRARIES.dagre.cdnUrl}"><\/script>
+<script src="${EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl}"><\/script>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+@import url('${EXTERNAL_LIBRARIES.googleFontsDmSansMono.cdnUrl}');
 
 *{margin:0;padding:0;box-sizing:border-box;}
 
@@ -1664,9 +1664,9 @@ export async function runFieldDependencyMap() {
 <head>
   <meta charset="utf-8">
   <title>フィールド依存関係マップ - App ${srcAppId}</title>
-  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"><\/script>
-  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"><\/script>
-  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"><\/script>
+  <script src="${EXTERNAL_LIBRARIES.cytoscape.altCdnUrl}"><\/script>
+  <script src="${EXTERNAL_LIBRARIES.dagre.cdnUrl}"><\/script>
+  <script src="${EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl}"><\/script>
   <style>
     body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background: #f8fafc; }
     #header { padding: 12px 20px; background: #fff; border-bottom: 1px solid #cbd5e1; display: flex; align-items: center; justify-content: space-between; }
