@@ -21,10 +21,10 @@
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // tools/統合ツール/src/constants.js
-  var TOOL_ID, TOOL_VERSION, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SNAPSHOT_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, FEATURE_DEFS, TAB_TO_FEATURE, PREVIEW_COMPARE_PRESETS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  // src/constants.js
+  var TOOL_ID, TOOL_VERSION, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SNAPSHOT_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, FEATURE_DEFS, TAB_TO_FEATURE, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
-    "tools/統合ツール/src/constants.js"() {
+    "src/constants.js"() {
       "use strict";
       TOOL_ID = "kintone-unified-suite-v2";
       TOOL_VERSION = "2.5.0";
@@ -72,44 +72,19 @@
       FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
         TAB_TO_FEATURE[t] = f.key;
       }));
-      PREVIEW_COMPARE_PRESETS = [
-        {
-          id: "live-to-preview",
-          label: "本番 → プレビュー",
-          shortLine: "比較元は本番API · 比較先はプレビューAPI",
-          hint: "いちばんよく使うパターンです。本番の現状と、比較先アプリのプレビュー設定を並べて差分し、問題なければプレビューへ反映します。",
-          sourcePreview: false,
-          targetPreview: true,
-          recommended: true
-        },
-        {
-          id: "preview-to-preview",
-          label: "プレビュー同士",
-          shortLine: "両方ともプレビューAPIで取得",
-          hint: "開発プレビュー同士の比較や、プレビュー上だけで完結する検証向けです。",
-          sourcePreview: true,
-          targetPreview: true,
-          recommended: false
-        },
-        {
-          id: "live-to-live",
-          label: "本番同士",
-          shortLine: "両方とも本番APIで取得",
-          hint: "別アプリ間の本番設定比較など。反映タブのPUTは引き続き「比較先プレビュー」のみです（本番への直接書き込みはしません）。",
-          sourcePreview: false,
-          targetPreview: false,
-          recommended: false
-        },
-        {
-          id: "preview-to-live",
-          label: "プレビュー → 本番",
-          shortLine: "比較元はプレビュー · 比較先は本番APIで取得",
-          hint: "プレビューで試した内容と、比較先の本番設定を並べたいとき。反映先は従来どおり比較先プレビューAPIです。",
-          sourcePreview: true,
-          targetPreview: false,
-          recommended: false
-        }
-      ];
+      TAB_CONNECTION_NEEDS = {
+        diff: { appInputs: true, target: true, connectionActions: true },
+        reflect: { appInputs: true, target: true, connectionActions: true },
+        field: { appInputs: true, target: true, connectionActions: false },
+        jsconfig: { appInputs: true, target: true, connectionActions: false },
+        design: { appInputs: true, target: true, connectionActions: false },
+        recordMgr: { appInputs: true, target: true, connectionActions: false },
+        er: { appInputs: true, target: false, connectionActions: false },
+        processFlow: { appInputs: true, target: false, connectionActions: false },
+        sql: { appInputs: true, target: false, connectionActions: false },
+        apiTester: { appInputs: false, target: false, connectionActions: false },
+        settingsExport: { appInputs: false, target: false, connectionActions: false }
+      };
       META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
       SYSTEM_FIELD_TYPES = /* @__PURE__ */ new Set([
         "STATUS",
@@ -137,14 +112,6 @@
           selector: "#u_sourceApp",
           title: "1. 比較元 / 比較先を決める",
           body: "共通設定で比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
-        },
-        {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
-          selector: ".preview-preset-grid",
-          title: "2. プレビュー比較プリセットを選ぶ",
-          body: "「本番→プレビュー」が最も一般的です。プリセットを押すと比較元・比較先のプレビューON/OFFがまとめて切り替わり、下のサマリーに実際のAPIパスが表示されます。4パターン以外にしたいときだけ「詳細」のチェックボックスを使います。"
         },
         {
           tab: "diff",
@@ -261,7 +228,7 @@
     }
   });
 
-  // tools/統合ツール/src/state.js
+  // src/state.js
   function loadDialogState() {
     try {
       return JSON.parse(localStorage.getItem(DIALOG_STATE_KEY) || "{}");
@@ -277,7 +244,7 @@
   }
   var state, ui;
   var init_state = __esm({
-    "tools/統合ツール/src/state.js"() {
+    "src/state.js"() {
       "use strict";
       init_constants();
       state = {
@@ -330,7 +297,7 @@
     }
   });
 
-  // tools/統合ツール/src/utils.js
+  // src/utils.js
   var utils_exports = {};
   __export(utils_exports, {
     apiErrorWithContext: () => apiErrorWithContext,
@@ -490,13 +457,13 @@ ${contextLine}`);
     });
   }
   var init_utils = __esm({
-    "tools/統合ツール/src/utils.js"() {
+    "src/utils.js"() {
       "use strict";
       init_constants();
     }
   });
 
-  // tools/統合ツール/src/ui/dialog.js
+  // src/ui/dialog.js
   function callScheduleGuidedTourLayout() {
     if (typeof scheduleGuidedTourLayoutFn === "function") scheduleGuidedTourLayoutFn();
   }
@@ -687,7 +654,7 @@ ${contextLine}`);
   }
   var root, ui2, dialogResizeObserver, dialogResizeSaveTimer, dialogDragState, dialogDragMoveHandler, dialogDragEndHandler, scheduleGuidedTourLayoutFn;
   var init_dialog = __esm({
-    "tools/統合ツール/src/ui/dialog.js"() {
+    "src/ui/dialog.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -703,7 +670,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/diff/engine.js
+  // src/diff/engine.js
   function detectRowSeverity(row) {
     const sec = row?.sectionKey || "";
     const path = String(row?.path || "").toLowerCase();
@@ -1185,7 +1152,7 @@ ${contextLine}`);
   }
   var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES;
   var init_engine = __esm({
-    "tools/統合ツール/src/diff/engine.js"() {
+    "src/diff/engine.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -1227,7 +1194,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/api.js
+  // src/api.js
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
@@ -1349,7 +1316,7 @@ ${contextLine}`);
     return first != null ? String(first) : "";
   }
   var init_api = __esm({
-    "tools/統合ツール/src/api.js"() {
+    "src/api.js"() {
       "use strict";
       init_constants();
       init_utils();
@@ -1357,7 +1324,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/diff/enrich.js
+  // src/diff/enrich.js
   function relativePathFromRow2(path, secKey) {
     if (!path) return "";
     if (path === secKey) return "";
@@ -1838,7 +1805,7 @@ ${contextLine}`);
     });
   }
   var init_enrich = __esm({
-    "tools/統合ツール/src/diff/enrich.js"() {
+    "src/diff/enrich.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -1847,7 +1814,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/diff/popout.js
+  // src/diff/popout.js
   var popout_exports = {};
   __export(popout_exports, {
     closeDiffViewerPopout: () => closeDiffViewerPopout,
@@ -2005,7 +1972,7 @@ ${contextLine}`);
   }
   var WIN_NAME, popoutClickHandler, popoutChangeHandler, popoutMousedownHandler;
   var init_popout = __esm({
-    "tools/統合ツール/src/diff/popout.js"() {
+    "src/diff/popout.js"() {
       "use strict";
       init_state();
       init_dialog();
@@ -2018,7 +1985,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/diff/export.js
+  // src/diff/export.js
   function stringifyForDiff(value) {
     if (value === void 0) return "（未定義）";
     const out = JSON.stringify(value, null, 2);
@@ -4076,7 +4043,7 @@ ${contextLine}`);
   }
   var MAIN_RESULT_IDLE_HTML;
   var init_export = __esm({
-    "tools/統合ツール/src/diff/export.js"() {
+    "src/diff/export.js"() {
       init_constants();
       init_utils();
       init_state();
@@ -4088,7 +4055,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/diff/filter.js
+  // src/diff/filter.js
   function normalizeDiffFavoritePath(path) {
     return String(path || "").trim();
   }
@@ -4185,7 +4152,7 @@ ${contextLine}`);
     return [...counts.values()].filter((item) => item.count >= 2).sort((a, b) => b.count - a.count || b.sections.size - a.sections.size || a.key.localeCompare(b.key)).slice(0, 8).map((item) => ({ key: item.key, count: item.count, sectionCount: item.sections.size }));
   }
   var init_filter = __esm({
-    "tools/統合ツール/src/diff/filter.js"() {
+    "src/diff/filter.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -4195,18 +4162,18 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/reflect/nodeModeUi.js
+  // src/reflect/nodeModeUi.js
   function isReflectNodeModeEffective() {
     return !!ui.nodeMode?.checked && !ui.reflectSimpleMode?.checked;
   }
   var init_nodeModeUi = __esm({
-    "tools/統合ツール/src/reflect/nodeModeUi.js"() {
+    "src/reflect/nodeModeUi.js"() {
       "use strict";
       init_state();
     }
   });
 
-  // tools/統合ツール/src/ui/components.js
+  // src/ui/components.js
   function setComponentUi(uiRefs) {
     ui3 = uiRefs;
   }
@@ -4248,10 +4215,20 @@ ${contextLine}`);
     ui3.panes.forEach((p) => p.classList.toggle("active", p.dataset.pane === key));
     const root2 = getToolDocument().getElementById("kintone-unified-suite-v2");
     if (root2) {
-      if (key === "diff" || key === "reflect") {
-        root2.classList.add("tab-is-diff-or-reflect");
-      } else {
-        root2.classList.remove("tab-is-diff-or-reflect");
+      const needs = TAB_CONNECTION_NEEDS[key] || {};
+      root2.classList.toggle("tab-is-diff-or-reflect", key === "diff" || key === "reflect");
+      root2.classList.toggle("tab-needs-app-inputs", !!needs.appInputs);
+      root2.classList.toggle("tab-needs-target", !!needs.target);
+      root2.classList.toggle("tab-needs-connection-actions", !!needs.connectionActions);
+      const lead = root2.querySelector("#u_connectionLead");
+      if (lead) {
+        if (!needs.appInputs) {
+          lead.textContent = "";
+        } else if (needs.target) {
+          lead.textContent = "比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。";
+        } else {
+          lead.textContent = "対象アプリの数値IDと、ゲストスペース利用時はゲストIDを入力します。";
+        }
       }
     }
     if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
@@ -4997,7 +4974,7 @@ ${contextLine}`);
   }
   var ui3, deps;
   var init_components = __esm({
-    "tools/統合ツール/src/ui/components.js"() {
+    "src/ui/components.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5029,75 +5006,22 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/tabs/preview-compare.js
-  function findMatchingPresetId(ui4) {
-    if (!ui4?.sourcePreview || !ui4?.targetPreview) return null;
-    const sp = !!ui4.sourcePreview.checked;
-    const tp = !!ui4.targetPreview.checked;
-    const m = PREVIEW_COMPARE_PRESETS.find((p) => p.sourcePreview === sp && p.targetPreview === tp);
-    return m ? m.id : null;
-  }
-  function getPreviewPresetById(id) {
-    return PREVIEW_COMPARE_PRESETS.find((p) => p.id === id) || null;
-  }
-  function applyPreviewPreset(ui4, presetId) {
-    const p = getPreviewPresetById(presetId);
-    if (!p || !ui4?.sourcePreview || !ui4?.targetPreview) return;
-    ui4.sourcePreview.checked = !!p.sourcePreview;
-    ui4.targetPreview.checked = !!p.targetPreview;
-  }
+  // src/tabs/preview-compare.js
   function getPreviewCompareStatusPrefix(ui4) {
-    const id = findMatchingPresetId(ui4);
-    if (id) {
-      const p = getPreviewPresetById(id);
-      if (p) return `〔${p.label}〕`;
-    }
-    return "〔カスタム環境〕";
-  }
-  function syncPreviewPresetButtons(root2, ui4) {
-    if (!root2) return;
-    const id = findMatchingPresetId(ui4);
-    root2.querySelectorAll('[data-act="setPreviewPreset"]').forEach((btn) => {
-      const pid = btn.dataset.preset || "";
-      const match = pid === id;
-      btn.classList.toggle("is-active", !!match);
-      btn.setAttribute("aria-pressed", match ? "true" : "false");
-    });
-    const note = root2.querySelector("#u_previewPresetCustomNote");
-    if (note) note.style.display = id ? "none" : "block";
-  }
-  function renderPreviewCompareSummary(root2, ui4) {
-    const el = root2?.querySelector?.("#u_previewCompareSummary");
-    if (!el || !ui4?.sourcePreview || !ui4?.targetPreview) return;
-    const sg = (ui4.sourceGuest?.value || "").trim();
-    const tg = (ui4.targetGuest?.value || "").trim();
-    const sp = !!ui4.sourcePreview.checked;
-    const tp = !!ui4.targetPreview.checked;
-    const srcPrefix = buildApiPrefix(sg, sp);
-    const tgtPrefix = buildApiPrefix(tg, tp);
-    const presetId = findMatchingPresetId(ui4);
-    const preset = presetId ? getPreviewPresetById(presetId) : null;
-    const guestLine = (label, g) => {
-      if (!g) return `${label}: 通常スペース`;
-      return `${label}: ゲスト ${esc(g)}`;
-    };
-    const head = preset ? `<div class="pcs-head"><span class="pcs-badge">選択中</span> <strong>${esc(preset.label)}</strong></div><p class="pcs-hint">${esc(preset.hint)}</p>` : '<div class="pcs-head"><span class="pcs-badge pcs-badge-custom">カスタム</span> <strong>チェックボックスで個別指定</strong></div><p class="pcs-hint">4パターン以外の組み合わせです。下のチェックで比較元・比較先それぞれのプレビューON/OFFを調整できます。</p>';
-    el.innerHTML = `${head}<ul class="pcs-api-list"><li><span class="pcs-k">比較元GET</span> <code class="pcs-code">${esc(srcPrefix)}</code> …</li><li><span class="pcs-k">比較先GET</span> <code class="pcs-code">${esc(tgtPrefix)}</code> …</li><li class="pcs-meta">${guestLine("比較元", sg)} · ${guestLine("比較先", tg)}</li></ul><p class="pcs-footnote">プレビュー反映タブの<strong>PUT（設定書き込み）</strong>は、安全のため常に「比較先アプリのプレビューAPI」に対して行われます（上の「比較先GET」が本番でも同様）。本番環境への直接PUTは行いません。デプロイは別操作です。</p>`;
-  }
-  function syncPreviewComparePanel(root2, ui4) {
-    syncPreviewPresetButtons(root2, ui4);
-    renderPreviewCompareSummary(root2, ui4);
+    const sp = !!ui4?.sourcePreview?.checked;
+    const tp = !!ui4?.targetPreview?.checked;
+    if (!sp && tp) return "〔本番 → プレビュー〕";
+    if (sp && tp) return "〔プレビュー同士〕";
+    if (!sp && !tp) return "〔本番同士〕";
+    return "〔プレビュー → 本番〕";
   }
   var init_preview_compare = __esm({
-    "tools/統合ツール/src/tabs/preview-compare.js"() {
+    "src/tabs/preview-compare.js"() {
       "use strict";
-      init_constants();
-      init_api();
-      init_utils();
     }
   });
 
-  // tools/統合ツール/src/reflect/rowMode.js
+  // src/reflect/rowMode.js
   function reflectRowModeById(rowId) {
     return state.reflectNodeModes[rowId] === "tgt" ? "tgt" : "src";
   }
@@ -5105,13 +5029,13 @@ ${contextLine}`);
     return reflectRowModeById(row._id) === "tgt" ? row.right : row.left;
   }
   var init_rowMode = __esm({
-    "tools/統合ツール/src/reflect/rowMode.js"() {
+    "src/reflect/rowMode.js"() {
       "use strict";
       init_state();
     }
   });
 
-  // tools/統合ツール/src/tabs/reflect.js
+  // src/tabs/reflect.js
   var reflect_exports = {};
   __export(reflect_exports, {
     ensureActiveReflectNodeId: () => ensureActiveReflectNodeId,
@@ -5339,7 +5263,7 @@ ${contextLine}`);
     setStatus(`共通データ取得完了: 比較元 ${sections.length}セクション(NG ${sourceErr}) / 比較先 ${sections.length}セクション(NG ${targetErr})`);
   }
   var init_reflect = __esm({
-    "tools/統合ツール/src/tabs/reflect.js"() {
+    "src/tabs/reflect.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5357,7 +5281,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/tabs/field.js
+  // src/tabs/field.js
   function parseFieldInput(text) {
     const obj = JSON.parse(text);
     if (!obj || typeof obj !== "object") throw new Error("JSONはオブジェクト形式で入力してください");
@@ -5580,7 +5504,7 @@ ${contextLine}`);
     setStatus(`${mergedCount} 件のフィールド定義を挿入しました`);
   }
   var init_field = __esm({
-    "tools/統合ツール/src/tabs/field.js"() {
+    "src/tabs/field.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5593,7 +5517,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/reflect/helpers.js
+  // src/reflect/helpers.js
   function diffSectionKeySet() {
     const set = /* @__PURE__ */ new Set();
     for (const row of getActualDiffRows(state.lastDiffRows || [])) {
@@ -5678,7 +5602,7 @@ ${contextLine}`);
     return last;
   }
   var init_helpers = __esm({
-    "tools/統合ツール/src/reflect/helpers.js"() {
+    "src/reflect/helpers.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -5693,7 +5617,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/reflect/apply.js
+  // src/reflect/apply.js
   function convertLookupAppIds2(fieldDef, map) {
     const def = deepClone(fieldDef || {});
     const lookupMap = map || {};
@@ -6295,7 +6219,7 @@ ${contextLine}`);
     setStatus(`デプロイ処理完了: ${st === "SUCCESS" ? "SUCCESS" : st}`, st !== "SUCCESS");
   }
   var init_apply = __esm({
-    "tools/統合ツール/src/reflect/apply.js"() {
+    "src/reflect/apply.js"() {
       "use strict";
       init_constants();
       init_utils();
@@ -6309,7 +6233,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/reflect/plan.js
+  // src/reflect/plan.js
   var plan_exports = {};
   __export(plan_exports, {
     appendRequestPlanLogs: () => appendRequestPlanLogs,
@@ -6736,7 +6660,7 @@ ${contextLine}`);
     setStatus("反映プラン確認完了");
   }
   var init_plan = __esm({
-    "tools/統合ツール/src/reflect/plan.js"() {
+    "src/reflect/plan.js"() {
       "use strict";
       init_constants();
       init_utils();
@@ -6750,7 +6674,7 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/tabs/diff.js
+  // src/tabs/diff.js
   var diff_exports = {};
   __export(diff_exports, {
     addIgnoreKeyFromInput: () => addIgnoreKeyFromInput,
@@ -6949,9 +6873,7 @@ ${contextLine}`);
     lines.push(`出力対象: ${exportInfo.label}`);
     try {
       const c = commonParams();
-      const pid = findMatchingPresetId(ui);
-      const pl = pid ? getPreviewPresetById(pid)?.label : "";
-      lines.push(`プレビュー比較: ${pl || "カスタム"} (比較元GET=${getPreviewStateLabel(c.source.preview)} / 比較先GET=${getPreviewStateLabel(c.target.preview)})`);
+      lines.push(`プレビュー比較: (比較元GET=${getPreviewStateLabel(c.source.preview)} / 比較先GET=${getPreviewStateLabel(c.target.preview)})`);
     } catch (e) {
       lines.push("プレビュー比較: (取得できませんでした)");
     }
@@ -7215,14 +7137,12 @@ ${contextLine}`);
     applyIgnorePresetKeysToInput();
     renderIgnoreKeyChips();
     renderLookupMapRows();
-    const rootAfterRestore = getRoot();
-    if (rootAfterRestore) syncPreviewComparePanel(rootAfterRestore, ui);
     if (state.activeTab === "diff") {
       renderResultRows(state.lastDiffRows || []);
     }
   }
   var init_diff = __esm({
-    "tools/統合ツール/src/tabs/diff.js"() {
+    "src/tabs/diff.js"() {
       "use strict";
       init_constants();
       init_state();
@@ -7241,12 +7161,12 @@ ${contextLine}`);
     }
   });
 
-  // tools/統合ツール/src/index.js
+  // src/index.js
   init_constants();
   init_state();
   init_utils();
 
-  // tools/統合ツール/src/ui/styles.css
+  // src/ui/styles.css
   var styles_default = `#kintone-unified-suite-v2{position:fixed;top:16px;left:calc(100vw - min(980px,calc(100vw - 32px)) - 16px);z-index:2147483647;width:min(980px,calc(100vw - 32px));height:min(860px,calc(100vh - 32px));min-width:min(560px,calc(100vw - 32px));min-height:min(360px,calc(100vh - 32px));max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);background:#f6f8fb;border:1px solid #d9e2ec;border-radius:14px;box-shadow:0 18px 40px rgba(15,23,42,.28);font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;color:#1f2937;display:flex;flex-direction:column;overflow:hidden;resize:both;box-sizing:border-box}
 #kintone-unified-suite-v2.suite-popout-tab{top:0!important;left:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;border-radius:0;resize:none;box-shadow:none;border-width:0 0 1px}
 #kintone-unified-suite-v2 .h{padding:12px 16px;background:linear-gradient(135deg,#0f4c81,#2563eb);color:#fff;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-shrink:0;cursor:move;user-select:none}
@@ -7742,9 +7662,16 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .connection-panel-body{padding:10px 12px 12px}
 #kintone-unified-suite-v2 .connection-footnote{margin-top:8px}
 
-/* 条件に応じて接続パネルの複雑な機能を隠す */
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .preview-compare-panel,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--actions,
+/* ========== 接続パネルのタブ別表示制御 ========== */
+
+/* アプリID入力が不要なタブ（apiTester, settingsExport）では接続パネル全体を隠す */
+#kintone-unified-suite-v2:not(.tab-needs-app-inputs) .connection-section--app-inputs { display: none !important; }
+
+/* 比較先が不要なタブ（er, processFlow, sql）では比較先入力欄を隠す */
+#kintone-unified-suite-v2:not(.tab-needs-target) .conn-target { display: none !important; }
+
+/* 「よく使う操作」等の差分/反映専用UIは該当タブ以外で隠す */
+#kintone-unified-suite-v2:not(.tab-needs-connection-actions) .connection-section--actions,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .diff-fold--lookup,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-step-banner,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-step-desc,
@@ -8237,62 +8164,6 @@ ${contextLine}`);
   outline-offset:2px;
 }
 
-/* プレビュー比較プリセット */
-#kintone-unified-suite-v2 .preview-compare-panel{
-  margin-top:10px;padding:12px 14px;border-radius:12px;
-  border:1px solid rgba(14,165,233,.28);
-  background:linear-gradient(165deg,#f0f9ff 0%,#fff 55%,#f8fafc 100%);
-}
-#kintone-unified-suite-v2 .preview-compare-head{margin-bottom:2px}
-#kintone-unified-suite-v2 .preview-compare-title{
-  font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#0369a1;
-}
-#kintone-unified-suite-v2 .preview-preset-grid{
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-top:8px;
-}
-#kintone-unified-suite-v2 .preview-preset-btn{
-  display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:4px;
-  padding:10px 12px;border-radius:10px;cursor:pointer;font:inherit;
-  border:1px solid #bae6fd;background:#fff;color:#0f172a;
-  box-shadow:0 1px 2px rgba(15,23,42,.04);
-  transition:border-color .15s ease,box-shadow .15s ease,background .15s ease,transform .1s ease;
-}
-#kintone-unified-suite-v2 .preview-preset-btn:hover{
-  border-color:#38bdf8;box-shadow:0 4px 12px rgba(14,165,233,.12);
-}
-#kintone-unified-suite-v2 .preview-preset-btn.is-active{
-  border-color:#0284c7;background:linear-gradient(180deg,#e0f2fe,#fff);
-  box-shadow:0 0 0 2px rgba(14,165,233,.35);
-}
-#kintone-unified-suite-v2 .preview-preset-btn--rec{border-color:#7dd3fc}
-#kintone-unified-suite-v2 .pp-rec-tag{
-  display:inline-block;font-size:9px;font-weight:800;letter-spacing:.06em;
-  padding:2px 6px;border-radius:999px;background:#0284c7;color:#fff;margin-right:4px;vertical-align:middle;
-}
-#kintone-unified-suite-v2 .pp-title{font-size:13px;font-weight:800;line-height:1.35}
-#kintone-unified-suite-v2 .pp-sub{font-size:11px;font-weight:600;color:#64748b;line-height:1.45}
-#kintone-unified-suite-v2 .preview-compare-summary{
-  margin-top:12px;padding:10px 12px;border-radius:10px;
-  border:1px solid #e0f2fe;background:#fff;font-size:11px;line-height:1.65;color:#334155;
-}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-head{margin-bottom:6px}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-badge{
-  display:inline-block;font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
-  padding:2px 7px;border-radius:999px;background:#dbeafe;color:#1d4ed8;margin-right:6px;
-}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-badge-custom{background:#f1f5f9;color:#475569}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-hint{margin:0 0 8px;color:#64748b;font-size:11px;line-height:1.55}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-api-list{margin:0;padding-left:18px}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-api-list li{margin:4px 0}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-k{font-weight:700;color:#0f172a;margin-right:6px}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-code{font-size:10px;background:#f1f5f9;padding:2px 6px;border-radius:4px;color:#0f172a}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-meta{list-style:none;margin-left:-18px;padding-left:0;color:#64748b}
-#kintone-unified-suite-v2 .preview-compare-summary .pcs-footnote{
-  margin:10px 0 0;padding-top:10px;border-top:1px dashed #bae6fd;font-size:11px;line-height:1.6;color:#475569;
-}
-#kintone-unified-suite-v2 .preview-preset-custom-note{
-  margin:8px 0 0;font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;
-}
 
 /* ========== UX: 見やすさ・操作しやすさ ========== */
 #kintone-unified-suite-v2 .muted{line-height:1.65;color:#64748b}
@@ -8380,7 +8251,6 @@ ${contextLine}`);
 #kintone-unified-suite-v2.screen-feature .body{gap:14px}
 #kintone-unified-suite-v2 .tabs{row-gap:10px}
 @media (max-width:640px){
-  #kintone-unified-suite-v2 .preview-preset-grid{grid-template-columns:1fr}
   #kintone-unified-suite-v2 .feature-grid{grid-template-columns:1fr}
 }
 #kintone-unified-suite-v2 .launcher-lead{
@@ -8433,7 +8303,7 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .rpp-modal-hint{margin-top:8px;font-size:11px;color:#64748b}
 `;
 
-  // tools/統合ツール/src/ui/template.js
+  // src/ui/template.js
   init_constants();
   init_utils();
   init_dialog();
@@ -8441,7 +8311,7 @@ ${contextLine}`);
     const doc = targetDocument || document;
     const root2 = doc.createElement("div");
     root2.id = TOOL_ID;
-    root2.className = options.popout ? "screen-launcher suite-popout-tab tab-is-diff-or-reflect" : "screen-launcher tab-is-diff-or-reflect";
+    root2.className = options.popout ? "screen-launcher suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions" : "screen-launcher tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions";
     root2.innerHTML = `<style>${styles_default}</style>
         <div class="h" data-dialog-drag-handle="1">
           <div class="h-brand" aria-hidden="true">
@@ -8469,54 +8339,30 @@ ${contextLine}`);
         </div>
         <div class="body">
           <div class="card common-card" id="u_connectionPanel">
-            <section class="connection-section" aria-labelledby="conn-app-heading">
+            <section class="connection-section connection-section--app-inputs" aria-labelledby="conn-app-heading">
               <h3 class="connection-section-title" id="conn-app-heading">アプリとゲスト</h3>
-              <p class="connection-section-lead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
+              <p class="connection-section-lead" id="u_connectionLead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
               <div class="grid connection-grid">
-              <div>
+              <div class="conn-source">
                 <label for="u_sourceApp">比較元アプリID</label>
                 <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
-              <div>
+              <div class="conn-source">
                 <label for="u_sourceGuest">比較元 ゲストID</label>
                 <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
-              <div>
+              <div class="conn-target">
                 <label for="u_targetApp">比較先アプリID</label>
                 <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
-              <div>
+              <div class="conn-target">
                 <label for="u_targetGuest">比較先 ゲストID</label>
                 <input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
             </div>
             </section>
-            <div class="preview-compare-panel">
-              <div class="preview-compare-head">
-                <span class="preview-compare-title">プレビュー比較（取得するAPI）</span>
-              </div>
-              <p class="muted preview-compare-lead" style="margin:6px 0 10px;line-height:1.6">差分・共通データ取得で使う<strong>読み取り先</strong>をプリセットで選びます。反映タブの書き込みは別途説明のとおりプレビュー固定です。</p>
-              <div class="preview-preset-grid" role="group" aria-label="プレビュー比較プリセット">
-                ${PREVIEW_COMPARE_PRESETS.map((p) => `<button type="button" class="preview-preset-btn${p.recommended ? " preview-preset-btn--rec" : ""}" data-act="setPreviewPreset" data-preset="${esc(p.id)}" title="${esc(p.hint)}" aria-pressed="false">
-                  <span class="pp-title">${p.recommended ? '<span class="pp-rec-tag">推奨</span> ' : ""}${esc(p.label)}</span>
-                  <span class="pp-sub">${esc(p.shortLine)}</span>
-                </button>`).join("")}
-              </div>
-              <div id="u_previewCompareSummary" class="preview-compare-summary" aria-live="polite"></div>
-              <p id="u_previewPresetCustomNote" class="preview-preset-custom-note" style="display:none">チェックボックスを個別に変更したため、上記プリセットとは異なる組み合わせになっています。</p>
-              <details class="diff-fold preview-compare-advanced" style="margin-top:10px">
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">詳細: 比較元/比較先のプレビューを個別に切替</span>
-                  <span class="diff-fold-sub">プリセットと同じ結果なら開く必要はありません</span>
-                </summary>
-                <div class="diff-fold-body">
-                  <div class="grid2" style="margin-top:0">
-                    <label class="chip" title="オンにすると比較元はプレビュー環境の設定APIを参照します"><input type="checkbox" id="u_sourcePreview"> 比較元はプレビュー</label>
-                    <label class="chip" title="オンにすると比較先の取得はプレビュー環境の設定APIを参照します（反映PUTは常にプレビュー）"><input type="checkbox" id="u_targetPreview" checked> 比較先はプレビュー</label>
-                  </div>
-                </div>
-              </details>
-            </div>
+            <input type="checkbox" id="u_sourcePreview" style="display:none">
+            <input type="checkbox" id="u_targetPreview" checked style="display:none">
             <section class="connection-section connection-section--actions" aria-labelledby="conn-quick-heading">
               <h3 class="connection-section-title" id="conn-quick-heading">よく使う操作</h3>
               <div class="btns connection-quick-btns">
@@ -9717,7 +9563,7 @@ ${contextLine}`);
     });
   }
 
-  // tools/統合ツール/src/index.js
+  // src/index.js
   init_dialog();
   init_components();
   init_export();
@@ -9729,7 +9575,7 @@ ${contextLine}`);
   init_helpers();
   init_plan();
 
-  // tools/統合ツール/src/ui/tour.js
+  // src/ui/tour.js
   init_constants();
   init_state();
   init_utils();
@@ -9873,7 +9719,7 @@ ${contextLine}`);
     renderGuidedTourStep();
   }
 
-  // tools/統合ツール/src/handlers.js
+  // src/handlers.js
   init_constants();
   init_state();
   init_utils();
@@ -9882,7 +9728,7 @@ ${contextLine}`);
   init_filter();
   init_export();
 
-  // tools/統合ツール/src/diff/presets.js
+  // src/diff/presets.js
   init_state();
   init_export();
   function syncFilterStateFromUi() {
@@ -9946,7 +9792,7 @@ ${contextLine}`);
     renderResultRows(state.lastDiffRows || []);
   }
 
-  // tools/統合ツール/src/diff/selection-sets.js
+  // src/diff/selection-sets.js
   init_constants();
   init_state();
   init_diff();
@@ -10015,14 +9861,13 @@ ${contextLine}`);
     refreshDiffSelectionSetDropdown();
   }
 
-  // tools/統合ツール/src/handlers.js
+  // src/handlers.js
   init_popout();
   init_components();
   init_dialog();
   init_diff();
-  init_preview_compare();
 
-  // tools/統合ツール/src/tabs/reflect-preview-playground.js
+  // src/tabs/reflect-preview-playground.js
   init_utils();
   var SAMPLE_BEFORE = {
     "文字列__1行_": { type: "SINGLE_LINE_TEXT", code: "文字列__1行_", label: "会社名", noLabel: false, required: true, unique: false, maxLength: "64", minLength: "", defaultValue: "", expression: "", hideExpression: false },
@@ -10431,11 +10276,11 @@ ${contextLine}`);
     render();
   }
 
-  // tools/統合ツール/src/handlers.js
+  // src/handlers.js
   init_reflect();
   init_field();
 
-  // tools/統合ツール/src/tabs/settings-export.js
+  // src/tabs/settings-export.js
   init_constants();
   init_state();
   init_utils();
@@ -10445,7 +10290,7 @@ ${contextLine}`);
   init_diff();
   init_field();
 
-  // tools/統合ツール/src/tabs/record.js
+  // src/tabs/record.js
   init_constants();
   init_state();
   init_utils();
@@ -10983,7 +10828,7 @@ ${contextLine}`);
     setStatus(`テンプレート「${name}」を削除しました`);
   }
 
-  // tools/統合ツール/src/tabs/settings-export.js
+  // src/tabs/settings-export.js
   function addAppIdToSettingsExport(appId, appName) {
     if (!/^\d+$/.test(String(appId || "").trim())) return;
     const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
@@ -11100,7 +10945,7 @@ ${contextLine}`);
     setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）`);
   }
 
-  // tools/統合ツール/src/handlers.js
+  // src/handlers.js
   function withGuard(fn, busyText) {
     if (state.running) {
       setStatus("別の処理を実行中です。完了までお待ちください。");
@@ -11197,7 +11042,6 @@ ${contextLine}`);
     renderLookupMapRows();
     if (typeof renderTemplateOptions2 === "function") renderTemplateOptions2();
     renderBundleState();
-    syncPreviewComparePanel(root2, ui);
     renderReflectSidebar();
     renderReflectMainPanel();
     renderReflectNodeList();
@@ -11297,19 +11141,7 @@ ${contextLine}`);
     });
     [ui.sourceApp, ui.sourceGuest, ui.targetApp, ui.targetGuest].forEach((el) => {
       if (!el) return;
-      el.addEventListener("change", () => {
-        saveCurrentDialogState2();
-        syncPreviewComparePanel(root2, ui);
-      });
-      el.addEventListener("input", () => syncPreviewComparePanel(root2, ui));
-    });
-    [ui.sourcePreview, ui.targetPreview].forEach((el) => {
-      if (!el) return;
-      el.addEventListener("change", () => {
-        saveCurrentDialogState2();
-        syncPreviewComparePanel(root2, ui);
-        renderBundleState();
-      });
+      el.addEventListener("change", saveCurrentDialogState2);
     });
     if (ui.charDiff) {
       ui.charDiff.addEventListener("change", () => {
@@ -11842,7 +11674,6 @@ ${contextLine}`);
       if (act === "setSourceCurrent") {
         ui.sourceApp.value = DEFAULT_APP_ID;
         saveCurrentDialogState2();
-        syncPreviewComparePanel(root2, ui);
         setStatus(`比較元アプリIDを現在アプリ(${DEFAULT_APP_ID})に設定しました`);
         return;
       }
@@ -11851,7 +11682,6 @@ ${contextLine}`);
         ui.targetGuest.value = ui.sourceGuest.value.trim();
         ui.targetPreview.checked = !!ui.sourcePreview.checked;
         saveCurrentDialogState2();
-        syncPreviewComparePanel(root2, ui);
         renderBundleState();
         setStatus("比較元設定を比較先へコピーしました");
         return;
@@ -11865,19 +11695,8 @@ ${contextLine}`);
         ui.targetGuest.value = src.guest;
         ui.targetPreview.checked = src.preview;
         saveCurrentDialogState2();
-        syncPreviewComparePanel(root2, ui);
         renderBundleState();
         setStatus("比較元/比較先設定を入れ替えました");
-        return;
-      }
-      if (act === "setPreviewPreset") {
-        const presetId = actEl.dataset.preset || "";
-        applyPreviewPreset(ui, presetId);
-        saveCurrentDialogState2();
-        syncPreviewComparePanel(root2, ui);
-        renderBundleState();
-        const label = presetId ? actEl.querySelector(".pp-title")?.textContent?.trim() || presetId : "";
-        setStatus(`プレビュー比較プリセットを「${label}」に設定しました`);
         return;
       }
       if (act === "settingsExportUseCurrent") {
@@ -12388,7 +12207,7 @@ ${contextLine}`);
     syncDiffOnboardingVisibility();
   }
 
-  // tools/統合ツール/src/tabs/design.js
+  // src/tabs/design.js
   init_constants();
   init_state();
   init_utils();
@@ -13018,7 +12837,7 @@ ${diffMd}
     }
   }
 
-  // tools/統合ツール/src/tabs/er.js
+  // src/tabs/er.js
   init_constants();
   init_state();
   init_utils();
@@ -14763,7 +14582,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setBusy(false);
   }
 
-  // tools/統合ツール/src/tabs/jsconfig.js
+  // src/tabs/jsconfig.js
   init_state();
   init_utils();
   init_api();
@@ -14924,7 +14743,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setStatus(`JS/CSS一括DL完了 (403スキップ: ${failedCount}件)`);
   }
 
-  // tools/統合ツール/src/tabs/process.js
+  // src/tabs/process.js
   init_state();
   init_utils();
   init_api();
@@ -15072,7 +14891,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     }
   }
 
-  // tools/統合ツール/src/tabs/sql.js
+  // src/tabs/sql.js
   init_state();
   init_utils();
   init_api();
@@ -15211,12 +15030,22 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     #${ROOT_ID} [data-tooltip] { position:relative; }
     #${ROOT_ID} .no-result { padding:30px; text-align:center; color:${t.subText}; font-size:14px; }
   `,
+      resolveAlaSql: () => {
+        if (typeof window.alasql === "function") return window.alasql;
+        if (typeof window.alasql?.default === "function") return window.alasql.default;
+        if (typeof window.AlaSQL === "function") return window.AlaSQL;
+        if (typeof window.AlaSQL?.default === "function") return window.AlaSQL.default;
+        return null;
+      },
       loadScript: (src) => new Promise((resolve, reject) => {
-        if (window.alasql) return resolve();
+        if (Utils.resolveAlaSql()) return resolve();
         const s = toolD.createElement("script");
         s.src = src;
-        s.onload = resolve;
-        s.onerror = reject;
+        s.onload = () => {
+          if (Utils.resolveAlaSql()) resolve();
+          else reject(new Error("AlaSQLの読み込み後も実行関数を検出できませんでした。"));
+        };
+        s.onerror = () => reject(new Error("AlaSQLスクリプトの読み込みに失敗しました。"));
         toolD.head.appendChild(s);
       }),
       downloadCsv: (data, filename) => {
@@ -15432,7 +15261,11 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       },
       async runSql(query, ...datasets) {
         await Utils.loadScript(ALASQL_CDN);
-        return window.alasql(query, datasets);
+        const alasql = Utils.resolveAlaSql();
+        if (!alasql) {
+          throw new Error("AlaSQL実行関数が見つかりません。ページ再読み込み後に再実行してください。");
+        }
+        return alasql(query, datasets);
       }
     };
     const UI = (() => {
@@ -15845,7 +15678,7 @@ ${safety.hash}`, "");
     UI.init();
   }
 
-  // tools/統合ツール/src/tabs/api-tester.js
+  // src/tabs/api-tester.js
   init_utils();
   init_components();
   init_components();
@@ -15984,7 +15817,7 @@ ${safety.hash}`, "");
     }
   }
 
-  // tools/統合ツール/src/index.js
+  // src/index.js
   var TOOL_POPOUT_NAME = "kintone-unified-suite-v2";
   if (!window.kintone?.api || !window.kintone?.app) {
     alert("kintone画面で実行してください");
