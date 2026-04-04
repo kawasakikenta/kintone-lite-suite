@@ -6,10 +6,9 @@ const watch = process.argv.includes('--watch');
 
 const toolsDir = path.resolve(__dirname, '..');
 const outfile = path.resolve(toolsDir, '統合ツール_差分反映追加設計書.js');
-const launcherFile = path.resolve(toolsDir, '統合ツール起動.js');
 const inventoryFile = path.resolve(toolsDir, '単機能スクリプト棚卸し.md');
 
-const LEGACY_ENTRYPOINTS = [
+const STANDALONE_TOOLS = [
   { feature: '差分比較', module: 'tabs/diff.js', file: '差分比較.js', tab: 'diff' },
   { feature: 'プレビュー反映', module: 'tabs/reflect.js', file: 'プレビュー反映.js', tab: 'reflect' },
   { feature: 'フィールド追加', module: 'tabs/field.js', file: 'フィールド追加.js', tab: 'field' },
@@ -36,7 +35,7 @@ const cssPlugin = {
   }
 };
 
-function createLauncherSource() {
+function createStandaloneSource(tab) {
   return `(function (global) {
   'use strict';
 
@@ -45,15 +44,15 @@ function createLauncherSource() {
     './tools/統合ツール_差分反映追加設計書.js'
   ];
 
-  function タブを開く(tabKey) {
+  function タブを開く() {
     const 別ウィンドウ = global.__KUS_TOOL_WINDOW__;
     const rootDoc = (別ウィンドウ && !別ウィンドウ.closed && 別ウィンドウ.document) ? 別ウィンドウ.document : document;
-    const ランチャー = rootDoc.querySelector(\`[data-launch-feature][data-launch-tab="\${tabKey}"]\`);
+    const ランチャー = rootDoc.querySelector('[data-launch-feature][data-launch-tab="${tab}"]');
     if (ランチャー) {
       ランチャー.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       return true;
     }
-    const タブ = rootDoc.querySelector(\`.tab[data-tab="\${tabKey}"]\`);
+    const タブ = rootDoc.querySelector('.tab[data-tab="${tab}"]');
     if (タブ) {
       タブ.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       return true;
@@ -61,13 +60,13 @@ function createLauncherSource() {
     return false;
   }
 
-  function タブ起動待機(tabKey, retries) {
-    if (タブを開く(tabKey)) return;
+  function タブ起動待機(retries) {
+    if (タブを開く()) return;
     if (retries <= 0) {
-      console.warn('[統合ツール] タブ切り替えに失敗しました:', tabKey);
+      console.warn('[統合ツール] タブ切り替えに失敗しました:', '${tab}');
       return;
     }
-    setTimeout(() => タブ起動待機(tabKey, retries - 1), 200);
+    setTimeout(() => タブ起動待機(retries - 1), 200);
   }
 
   function 統合ツール本体を読み込む(onLoaded) {
@@ -112,51 +111,25 @@ function createLauncherSource() {
     document.head.appendChild(script);
   }
 
-  global.__統合ツールを開く = function (tabKey) {
-    統合ツール本体を読み込む(() => タブ起動待機(tabKey, 25));
-  };
-
-  global.__openUnifiedToolTab = global.__openUnifiedToolTab || global.__統合ツールを開く;
+  統合ツール本体を読み込む(() => タブ起動待機(25));
 })(window);
 `;
 }
 
-function createLegacyWrapperSource(tab) {
-  return `(function () {
-  'use strict';
-
-  function open() {
-    if (typeof window.__統合ツールを開く === 'function') {
-      window.__統合ツールを開く('${tab}');
-      return;
-    }
-
-    const loader = document.createElement('script');
-    loader.src = './tools/統合ツール起動.js';
-    loader.onload = () => window.__統合ツールを開く?.('${tab}');
-    loader.onerror = () => alert('統合ツール起動スクリプトの読み込みに失敗しました。統合ツールを直接実行してください。');
-    document.head.appendChild(loader);
-  }
-
-  open();
-})();
-`;
-}
-
 function createInventorySource() {
-  const mappingRows = LEGACY_ENTRYPOINTS
-    .map((item) => `| \`${item.file}\` | \`${item.module}\` | 統合版が上位互換 | 互換維持の薄いエントリポイントに置換 |`)
+  const mappingRows = STANDALONE_TOOLS
+    .map((item) => `| \`${item.file}\` | \`${item.module}\` | 単機能スタンドアロン | タブを直接起動する専用ツールとして自動生成 |`)
     .join('\n');
 
-  const featureRows = LEGACY_ENTRYPOINTS
+  const featureRows = STANDALONE_TOOLS
     .map((item) => `| ${item.feature} | \`tools/統合ツール/src/${item.module}\` | \`tools/${item.file}\` |`)
     .join('\n');
 
   return `# tools/ 単機能スクリプト棚卸し（統合ツール対応）
 
-統合方針: \`tools/統合ツール/src/tabs/\` を**正規実装**とし、\`tools/*.js\` は互換用途の公開エントリのみを残す。
+統合方針: \`tools/統合ツール/src/tabs/\` を**正規実装**とし、\`tools/*.js\` は**単機能スタンドアロン実行スクリプト**として管理する。
 
-互換エントリの共通起動は \`tools/統合ツール起動.js\`（公開関数: \`window.__統合ツールを開く(tabKey)\`）を利用する。
+各スクリプトは統合バンドルを読み込み後、対象タブを自動で開く。\`tools/統合ツール起動.js\` のような共通エントリは作成しない。
 
 ## マッピング表
 
@@ -164,25 +137,22 @@ function createInventorySource() {
 |---|---|---|---|
 ${mappingRows}
 
-## 削除対象の分類
+## 運用ルール
 
-- 上記 ${LEGACY_ENTRYPOINTS.length} 本は全て「統合版が上位互換」に分類済み。
-- 互換エントリはビルド時に既存ファイルを削除してから再生成し、重複実装を残さない。
-- そのため \`tools/*.js\` の単機能エントリは手編集せず、\`npm run build\` の自動生成結果を利用する。
+- 単機能スクリプトはすべて \`npm run build\` で再生成する。
+- \`tools/*.js\` は手編集せず、\`tools/統合ツール/src/tabs/*.js\` 側を修正する。
+- 単体で実行しても対象機能へ直接遷移することを前提とする。
 
-## 運用ルール（機能一覧表）
+## 機能一覧表
 
-| 機能名 | 正規モジュール | 公開エントリ |
+| 機能名 | 正規モジュール | 単機能スクリプト |
 |---|---|---|
 ${featureRows}
 `;
 }
 
-async function generateLegacyEntrypoints() {
-  const managedFiles = [
-    launcherFile,
-    ...LEGACY_ENTRYPOINTS.map((item) => path.resolve(toolsDir, item.file))
-  ];
+async function generateStandaloneTools() {
+  const managedFiles = STANDALONE_TOOLS.map((item) => path.resolve(toolsDir, item.file));
 
   let removedCount = 0;
   for (const file of managedFiles) {
@@ -192,14 +162,13 @@ async function generateLegacyEntrypoints() {
     }
   }
 
-  await fs.promises.writeFile(launcherFile, createLauncherSource(), 'utf8');
-  for (const item of LEGACY_ENTRYPOINTS) {
+  for (const item of STANDALONE_TOOLS) {
     const target = path.resolve(toolsDir, item.file);
-    await fs.promises.writeFile(target, createLegacyWrapperSource(item.tab), 'utf8');
+    await fs.promises.writeFile(target, createStandaloneSource(item.tab), 'utf8');
   }
   await fs.promises.writeFile(inventoryFile, createInventorySource(), 'utf8');
-  console.log(`Removed duplicate legacy files: ${removedCount}`);
-  console.log(`Generated legacy entrypoints: ${LEGACY_ENTRYPOINTS.length} files + launcher + inventory`);
+  console.log(`Removed managed standalone files: ${removedCount}`);
+  console.log(`Generated standalone single-purpose tools: ${STANDALONE_TOOLS.length} files + inventory`);
 }
 
 async function run() {
@@ -217,12 +186,12 @@ async function run() {
 
   if (watch) {
     await ctx.watch();
-    await generateLegacyEntrypoints();
+    await generateStandaloneTools();
     console.log('Watching for changes...');
   } else {
     await ctx.rebuild();
     await ctx.dispose();
-    await generateLegacyEntrypoints();
+    await generateStandaloneTools();
     const stat = fs.statSync(outfile);
     console.log(`Built: ${outfile} (${(stat.size / 1024).toFixed(1)} KB)`);
   }
