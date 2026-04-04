@@ -437,6 +437,8 @@ export async function launchKintoneSql() {
     let sortAsc = true;
     let expandSubtables = false;
     let extraAppId = '';
+    let isExecuting = false;
+    let btnRun = null;
 
     const setStatus = (msg) => { if (statusEl) statusEl.textContent = msg; };
 
@@ -563,8 +565,15 @@ export async function launchKintoneSql() {
     };
 
     const execute = async () => {
+      if (isExecuting) {
+        setStatus('SQLを実行中です。完了までお待ちください。');
+        return;
+      }
       const sql = editorEl.value.trim();
-      if (!sql) return;
+      if (!sql) {
+        setStatus('SQLを入力してください。');
+        return;
+      }
       const safety = Utils.analyzeSqlSafety(sql);
       if (safety.issues.length) {
         const ok1 = window.confirm(
@@ -585,6 +594,8 @@ export async function launchKintoneSql() {
       }
 
       const t0 = performance.now();
+      isExecuting = true;
+      if (btnRun) btnRun.disabled = true;
       try {
         const appId = getToolDocument().getElementById('u_sourceApp').value.trim();
 
@@ -618,6 +629,9 @@ export async function launchKintoneSql() {
         console.info(`[KintoneSQL] hash=${safety.hash} safety=${safety.issues.length ? 'double-confirm' : 'normal'}`);
       } catch (e) {
         handleError(e);
+      } finally {
+        isExecuting = false;
+        if (btnRun) btnRun.disabled = false;
       }
     };
 
@@ -691,7 +705,7 @@ export async function launchKintoneSql() {
       resultEl = Utils.el('div', { className: 'result' });
       pagerEl = Utils.el('div', { className: 'pager' });
 
-      const btnRun = Utils.el('button', { className: 'btn primary', onclick: execute, title: 'Ctrl+Enter' }, '▶ 実行');
+      btnRun = Utils.el('button', { className: 'btn primary', onclick: execute, title: 'Ctrl+Enter' }, '▶ 実行');
 
       const btnCsv = Utils.el('button', {
         className: 'btn', onclick: () => {
