@@ -59,7 +59,7 @@ import {
   loadViewsForSelect,
   renderTemplateOptions
 } from './tabs/record.js';
-import { runApiTester, clearApiTesterHistory, renderApiTesterHistory } from './tabs/api-tester.js';
+import { runApiTester, clearApiTesterHistory, renderApiTesterHistory, initApiTesterEnhancements } from './tabs/api-tester.js';
 
 /**
  * @param {{ initialTab?: string }} [options]
@@ -297,6 +297,7 @@ export function runKintoneUnifiedSuite(options = {}) {
   });
 
   renderApiTesterHistory();
+  initApiTesterEnhancements();
 
   setStatus('待機中');
 
