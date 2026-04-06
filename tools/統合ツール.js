@@ -10876,6 +10876,18 @@ ${contextLine}`);
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">リクエストの組み立てと実行</div>
               <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。<strong>POST/PUT/DELETE</strong> は <code>/v1/preview/</code> を含むパスのみ可能です（本番への書き込み・デプロイAPIは不可）。</div>
+              <div class="grid2" style="margin-top:8px">
+                <div>
+                  <label title="よく使うAPIを選ぶと、メソッド・パス・Bodyの参考値を反映します">APIプリセット（参考値）</label>
+                  <select id="u_apiTesterPreset">
+                    <option value="">-- プリセットを選択 --</option>
+                  </select>
+                </div>
+                <div>
+                  <label>補足</label>
+                  <div id="u_apiTesterPresetHint" class="muted" style="min-height:34px;padding:8px 10px;border:1px dashed #cbd5e1;border-radius:7px;background:#f8fafc;">プリセットを選択すると、入力例と注意点が表示されます。</div>
+                </div>
+              </div>
               <div style="display:flex;gap:16px;margin-top:8px;">
                 <div style="flex:5;min-width:0;">
                   <div class="grid2">
@@ -10890,7 +10902,8 @@ ${contextLine}`);
                     </div>
                     <div>
                       <label title="相対パスまたは完全URL">エンドポイント（パス または URL）</label>
-                      <input type="text" id="u_apiTesterPath" placeholder="書き込み例: /k/v1/preview/app/form/fields.json">
+                      <input type="text" id="u_apiTesterPath" list="u_apiTesterPathSuggest" placeholder="書き込み例: /k/v1/preview/app/form/fields.json">
+                      <datalist id="u_apiTesterPathSuggest"></datalist>
                     </div>
                   </div>
                   <div style="margin-top:8px">
@@ -17027,6 +17040,84 @@ ${safety.hash}`, "");
   init_components();
   init_components();
   init_dialog();
+  var API_TESTER_PRESETS = [
+    {
+      id: "app-settings",
+      label: "アプリ設定を取得（GET）",
+      method: "GET",
+      path: "/k/v1/app/settings.json",
+      body: { app: 1 },
+      hint: "読み取り専用APIです。app に対象アプリIDを指定します。"
+    },
+    {
+      id: "form-fields-get",
+      label: "フォーム項目を取得（GET）",
+      method: "GET",
+      path: "/k/v1/app/form/fields.json",
+      body: { app: 1 },
+      hint: "フォーム構造確認用。返却値の properties でフィールド一覧を確認できます。"
+    },
+    {
+      id: "form-fields-put-preview",
+      label: "フォーム項目を更新（PUT / preview）",
+      method: "PUT",
+      path: "/k/v1/preview/app/form/fields.json",
+      body: {
+        app: 1,
+        properties: {
+          sample_text: {
+            type: "SINGLE_LINE_TEXT",
+            code: "sample_text",
+            label: "サンプルテキスト"
+          }
+        }
+      },
+      hint: "更新系APIのため preview パス必須です。反映後の本番デプロイは管理画面で実施してください。"
+    },
+    {
+      id: "record-get",
+      label: "レコード1件取得（GET）",
+      method: "GET",
+      path: "/k/v1/record.json",
+      body: { app: 1, id: 1 },
+      hint: "app と id の組み合わせで1件取得します。"
+    },
+    {
+      id: "records-get",
+      label: "レコード一覧取得（GET）",
+      method: "GET",
+      path: "/k/v1/records.json",
+      body: {
+        app: 1,
+        query: "order by $id desc limit 10"
+      },
+      hint: "大量取得時は limit/offset や query を調整してください。"
+    },
+    {
+      id: "record-post-preview",
+      label: "レコード追加（POST / preview）",
+      method: "POST",
+      path: "/k/v1/preview/record.json",
+      body: {
+        app: 1,
+        record: {
+          text_0: { value: "sample" }
+        }
+      },
+      hint: "書き込み系APIの参考値です。フィールドコード(text_0など)は実アプリに合わせて変更してください。"
+    },
+    {
+      id: "record-delete-preview",
+      label: "レコード削除（DELETE / preview）",
+      method: "DELETE",
+      path: "/k/v1/preview/records.json",
+      body: {
+        app: 1,
+        ids: [1]
+      },
+      hint: "削除系APIのため preview パスを使用します。対象IDを十分確認してから実行してください。"
+    }
+  ];
   async function runApiTester() {
     const method = getToolDocument().getElementById("u_apiTesterMethod")?.value || "GET";
     const path = getToolDocument().getElementById("u_apiTesterPath")?.value?.trim();
@@ -17078,6 +17169,69 @@ ${safety.hash}`, "");
     }
   }
   var API_HISTORY_KEY = "KUS_API_TESTER_HISTORY";
+  var apiTesterEnhanced = false;
+  function prettyJson(value) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (_) {
+      return "{}";
+    }
+  }
+  function setPresetHint(text) {
+    const hintEl = getToolDocument().getElementById("u_apiTesterPresetHint");
+    if (!hintEl) return;
+    hintEl.textContent = text || "プリセットを選択すると、入力例と注意点が表示されます。";
+  }
+  function applyApiTesterPreset(presetId) {
+    const preset = API_TESTER_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    const methodEl = getToolDocument().getElementById("u_apiTesterMethod");
+    const pathEl = getToolDocument().getElementById("u_apiTesterPath");
+    const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
+    if (methodEl) methodEl.value = preset.method;
+    if (pathEl) pathEl.value = preset.path;
+    if (bodyEl) bodyEl.value = prettyJson(preset.body);
+    setPresetHint(preset.hint);
+  }
+  function initApiTesterEnhancements() {
+    if (apiTesterEnhanced) return;
+    apiTesterEnhanced = true;
+    const presetEl = getToolDocument().getElementById("u_apiTesterPreset");
+    const suggestEl = getToolDocument().getElementById("u_apiTesterPathSuggest");
+    if (presetEl) {
+      const options = API_TESTER_PRESETS.map((preset) => `<option value="${esc(preset.id)}">${esc(preset.label)}</option>`).join("");
+      presetEl.insertAdjacentHTML("beforeend", options);
+      presetEl.addEventListener("change", () => {
+        const presetId = presetEl.value;
+        if (!presetId) {
+          setPresetHint("");
+          return;
+        }
+        applyApiTesterPreset(presetId);
+      });
+    }
+    if (suggestEl) {
+      const seen = /* @__PURE__ */ new Set();
+      suggestEl.innerHTML = API_TESTER_PRESETS.filter((preset) => {
+        if (seen.has(preset.path)) return false;
+        seen.add(preset.path);
+        return true;
+      }).map((preset) => `<option value="${esc(preset.path)}"></option>`).join("");
+    }
+    const methodEl = getToolDocument().getElementById("u_apiTesterMethod");
+    const pathEl = getToolDocument().getElementById("u_apiTesterPath");
+    const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
+    if (methodEl && pathEl && bodyEl) {
+      const getPresetByMethod = (method) => API_TESTER_PRESETS.find((preset) => preset.method === method);
+      methodEl.addEventListener("change", () => {
+        const preset = getPresetByMethod(methodEl.value);
+        if (!preset) return;
+        if (!pathEl.value.trim()) pathEl.value = preset.path;
+        if (!bodyEl.value.trim()) bodyEl.value = prettyJson(preset.body);
+        setPresetHint(preset.hint);
+      });
+    }
+  }
   function saveApiTesterHistory(method, path, bodyStr) {
     try {
       let hist = JSON.parse(localStorage.getItem(API_HISTORY_KEY) || "[]");
@@ -17399,6 +17553,7 @@ ${safety.hash}`, "");
       renderTemplateOptions
     });
     renderApiTesterHistory();
+    initApiTesterEnhancements();
     setStatus("待機中");
     if (options.initialTab) {
       switchTab(options.initialTab);

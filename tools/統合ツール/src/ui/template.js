@@ -1040,6 +1040,18 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">リクエストの組み立てと実行</div>
               <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。<strong>POST/PUT/DELETE</strong> は <code>/v1/preview/</code> を含むパスのみ可能です（本番への書き込み・デプロイAPIは不可）。</div>
+              <div class="grid2" style="margin-top:8px">
+                <div>
+                  <label title="よく使うAPIを選ぶと、メソッド・パス・Bodyの参考値を反映します">APIプリセット（参考値）</label>
+                  <select id="u_apiTesterPreset">
+                    <option value="">-- プリセットを選択 --</option>
+                  </select>
+                </div>
+                <div>
+                  <label>補足</label>
+                  <div id="u_apiTesterPresetHint" class="muted" style="min-height:34px;padding:8px 10px;border:1px dashed #cbd5e1;border-radius:7px;background:#f8fafc;">プリセットを選択すると、入力例と注意点が表示されます。</div>
+                </div>
+              </div>
               <div style="display:flex;gap:16px;margin-top:8px;">
                 <div style="flex:5;min-width:0;">
                   <div class="grid2">
@@ -1054,7 +1066,8 @@ export function buildRoot(targetDocument = document, options = {}) {
                     </div>
                     <div>
                       <label title="相対パスまたは完全URL">エンドポイント（パス または URL）</label>
-                      <input type="text" id="u_apiTesterPath" placeholder="書き込み例: /k/v1/preview/app/form/fields.json">
+                      <input type="text" id="u_apiTesterPath" list="u_apiTesterPathSuggest" placeholder="書き込み例: /k/v1/preview/app/form/fields.json">
+                      <datalist id="u_apiTesterPathSuggest"></datalist>
                     </div>
                   </div>
                   <div style="margin-top:8px">
