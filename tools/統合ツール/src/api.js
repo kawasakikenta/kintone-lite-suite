@@ -10,6 +10,52 @@ export function buildApiPrefix(guestId, preview) {
   return `/k/v1${preview ? '/preview' : ''}`;
 }
 
+const DEPLOY_PATH_SNIPPET = 'app/deploy.json';
+
+const ERR_NO_PROD_WRITE =
+  '本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。';
+const ERR_NO_DEPLOY_API =
+  'デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。';
+
+/** REST ベース URL がプレビュー用（/v1/preview を含む）か */
+export function isPreviewRestPrefix(prefix) {
+  return String(prefix || '').includes('/v1/preview');
+}
+
+/**
+ * prefix + path への POST/PUT/DELETE を許可するか検査（GET は呼ばない想定）
+ */
+export function assertAllowsMutatingRestCall(prefix, path, method) {
+  const m = String(method || '').toUpperCase();
+  if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return;
+  if (m !== 'POST' && m !== 'PUT' && m !== 'DELETE' && m !== 'PATCH') return;
+
+  const rel = String(path || '').replace(/\\/g, '/');
+  if (rel.includes(DEPLOY_PATH_SNIPPET)) {
+    throw new Error(ERR_NO_DEPLOY_API);
+  }
+  if (!isPreviewRestPrefix(prefix)) {
+    throw new Error(ERR_NO_PROD_WRITE);
+  }
+}
+
+/**
+ * kintone.api の完全パス（例: /k/v1/preview/app.json）用。APIテスター等。
+ */
+export function assertAllowsMutatingApiUrl(fullPath, method) {
+  const m = String(method || '').toUpperCase();
+  if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return;
+  if (m !== 'POST' && m !== 'PUT' && m !== 'DELETE' && m !== 'PATCH') return;
+
+  const fp = String(fullPath || '').replace(/\\/g, '/');
+  if (fp.includes(DEPLOY_PATH_SNIPPET)) {
+    throw new Error(ERR_NO_DEPLOY_API);
+  }
+  if (!/\/v1\/preview(\/|$)/.test(fp)) {
+    throw new Error(ERR_NO_PROD_WRITE);
+  }
+}
+
 export async function apiGet(prefix, path, params, retries = 3) {
   let err;
   for (let i = 0; i < retries; i++) {
@@ -24,6 +70,7 @@ export async function apiGet(prefix, path, params, retries = 3) {
 }
 
 export async function apiPut(prefix, path, body) {
+  assertAllowsMutatingRestCall(prefix, path, 'PUT');
   try {
     return await kintone.api(`${prefix}${path}`, 'PUT', body);
   } catch (e) {
@@ -32,6 +79,7 @@ export async function apiPut(prefix, path, body) {
 }
 
 export async function apiPost(prefix, path, body) {
+  assertAllowsMutatingRestCall(prefix, path, 'POST');
   try {
     return await kintone.api(`${prefix}${path}`, 'POST', body);
   } catch (e) {

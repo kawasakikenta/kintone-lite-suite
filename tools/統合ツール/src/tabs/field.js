@@ -194,11 +194,6 @@ export async function runFieldApply() {
   });
   logs.push('OK フィールド反映');
 
-  if (ui.deployField.checked) {
-    setStatus('デプロイ実行中...');
-    await apiPost(prefix, '/app/deploy.json', { apps: [{ app, revision: -1 }] });
-    logs.push('OK デプロイ実行');
-  }
   ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
   setStatus('フィールド追加処理完了');
 }

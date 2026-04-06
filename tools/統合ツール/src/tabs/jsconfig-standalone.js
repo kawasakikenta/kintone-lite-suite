@@ -1,26 +1,7 @@
 'use strict';
 
 import { normalize, nowStamp, downloadText, esc } from '../utils.js';
-import { apiGet, apiPut, apiPost, buildApiPrefix } from '../api.js';
-
-async function deployAndPoll(prefix, app, logs) {
-  logs.push('START デプロイ実行');
-  await apiPost(prefix, '/app/deploy.json', { apps: [{ app, revision: -1 }] });
-  let last = 'PROCESSING';
-  for (let i = 0; i < 25; i++) {
-    await new Promise((r) => setTimeout(r, 1500));
-    try {
-      const statusRes = await apiGet(prefix, '/app/deploy.json', { apps: [app] }, 1);
-      const st = statusRes?.apps?.[0]?.status || 'UNKNOWN';
-      last = st;
-      logs.push(`  - デプロイ状態: ${st}`);
-      if (st === 'SUCCESS' || st === 'FAIL' || st === 'CANCEL') break;
-    } catch (e) {
-      logs.push(`  - Deploy Status取得失敗: ${e.message || String(e)}`);
-    }
-  }
-  return last;
-}
+import { apiGet, apiPut, buildApiPrefix } from '../api.js';
 
 export function renderCustomizeResultHtml(data) {
   if (!data) {
@@ -102,11 +83,6 @@ export async function runApplyJsConfigStandalone(p, setStatus, setLogHtml) {
   await apiPut(prefix, '/app/customize.json', body);
   const logs = [`OK JS/CSS設定反映（アプリ: ${targetAppId}）`];
 
-  if (p.deployAfter) {
-    setStatus('デプロイ実行中...');
-    const st = await deployAndPoll(prefix, targetAppId, logs);
-    logs.push(st === 'SUCCESS' ? 'OK デプロイ完了' : `NG デプロイ終了ステータス: ${st}`);
-  }
   setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`);
   setStatus('JS/CSS設定反映完了');
 }

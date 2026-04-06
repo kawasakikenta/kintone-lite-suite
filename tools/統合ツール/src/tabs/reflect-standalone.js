@@ -86,7 +86,6 @@ async function applyViewsSection(prefix, app, sourceViews, logs, stopOnError) {
  *   scopes: string[],
  *   lookupMap?: Record<string,string>,
  *   stopOnError?: boolean,
- *   doDeploy?: boolean,
  *   doBackup?: boolean
  * }} opts
  * @param {(msg: string, err?: boolean) => void} setStatus
@@ -171,21 +170,6 @@ export async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
       if (stopOnError) { logs.push('中断'); break; }
     }
     onProgress(logs);
-  }
-
-  if (opts.doDeploy && !hadError) {
-    setStatus('デプロイ実行中...');
-    logs.push('');
-    await apiPost(prefix, '/app/deploy.json', { apps: [{ app, revision: -1 }] });
-    for (let i = 0; i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 1500));
-      try {
-        const st = (await apiGet(prefix, '/app/deploy.json', { apps: [app] }, 1))?.apps?.[0]?.status;
-        logs.push(`デプロイ状態: ${st}`);
-        onProgress(logs);
-        if (st === 'SUCCESS' || st === 'FAIL' || st === 'CANCEL') break;
-      } catch (e) { logs.push(`デプロイ確認失敗: ${e.message}`); }
-    }
   }
 
   const ok = logs.filter(l => l.startsWith('OK ')).length;

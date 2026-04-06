@@ -1,6 +1,6 @@
 'use strict';
 
-import { META_KEYS } from './constants.js';
+import { META_KEYS, EXTERNAL_LIBRARIES } from './constants.js';
 
 export function esc(s) {
   return String(s ?? '')
@@ -162,4 +162,89 @@ export function readTextFile(file) {
     r.onerror = () => reject(r.error || new Error('ファイル読み込みに失敗しました'));
     r.readAsText(file, 'utf-8');
   });
+}
+
+
+
+
+const loadedScripts = new Set();
+const loadedStyles = new Set();
+
+export function loadExternalScript(url) {
+  if (!url) return Promise.resolve();
+  if (loadedScripts.has(url)) return Promise.resolve();
+  if (document.querySelector(`script[src="${url}"]`)) {
+    loadedScripts.add(url);
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = url;
+    script.onload = () => {
+      loadedScripts.add(url);
+      resolve();
+    };
+    script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
+    document.head.appendChild(script);
+  });
+}
+
+export function loadExternalStyle(url) {
+  if (!url) return Promise.resolve();
+  if (loadedStyles.has(url)) return Promise.resolve();
+  if (document.querySelector(`link[href="${url}"]`)) {
+    loadedStyles.add(url);
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = url;
+    link.onload = () => {
+      loadedStyles.add(url);
+      resolve();
+    };
+    link.onerror = () => reject(new Error(`Failed to load style: ${url}`));
+    document.head.appendChild(link);
+  });
+}
+
+export async function loadExternalLibrary(name) {
+  const lib = EXTERNAL_LIBRARIES[name];
+  if (!lib) throw new Error(`Unknown external library: ${name}`);
+  const promises = [];
+  if (lib.cssUrl) promises.push(loadExternalStyle(lib.cssUrl));
+  if (lib.cdnUrl) promises.push(loadExternalScript(lib.cdnUrl));
+  await Promise.all(promises);
+}
+
+export async function showToast(message, type = 'info') {
+  try {
+    await loadExternalLibrary('toastify');
+    let bg = '#3b82f6'; // blue
+    if (type === 'success') bg = '#10b981'; // green
+    if (type === 'error') bg = '#ef4444'; // red
+    if (type === 'warn') bg = '#f59e0b'; // yellow
+
+    window.Toastify({
+      text: message,
+      duration: type === 'error' ? 5000 : 3000,
+      close: true,
+      gravity: 'bottom',
+      position: 'right',
+      style: {
+        background: bg,
+        borderRadius: '6px',
+        fontSize: '13px',
+        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
+      }
+    }).showToast();
+  } catch (err) {
+    if (type === 'error') {
+      console.error(message);
+      alert(message);
+    } else {
+      console.log(`[Toast] ${message}`);
+    }
+  }
 }

@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, deepClone, nowStamp, downloadText, selectedScopeKeys } from '../utils.js';
+import { esc, deepClone, nowStamp, downloadText, selectedScopeKeys, showToast } from '../utils.js';
 import { apiGet, apiPut, apiPost, buildApiPrefix, fetchBundle } from '../api.js';
 import { setStatus, setBusy, renderBundleState } from '../ui/components.js';
 import { commonParams } from './diff.js';
@@ -447,7 +447,7 @@ export async function runCsvImport() {
   }
 
   setBusy(false);
-  alert(`完了: ${successCount}件のレコードを登録しました。`);
+  showToast(`完了: ${successCount}件のレコードを登録しました。`, 'success');
   fileInput.value = '';
   getToolDocument().getElementById('u_csvImportFileName').textContent = '未選択';
 }
@@ -479,7 +479,7 @@ export async function runRecordCopy() {
   }
 
   if (!records.length) {
-    alert('コピー対象のレコードが見つかりませんでした');
+    showToast('コピー対象のレコードが見つかりませんでした', 'warn');
     setBusy(false);
     return;
   }
@@ -527,7 +527,7 @@ export async function runRecordCopy() {
   }
 
   setBusy(false);
-  alert(`完了: ${successCount}件のレコードを比較先へコピーしました。`);
+  showToast(`完了: ${successCount}件のレコードを比較先へコピーしました。`, 'success');
 }
 
 const TEMPLATE_STATE_KEY = 'kintoneSuperApp_Templates';
@@ -571,7 +571,7 @@ export async function saveTemplate() {
 
   renderTemplateOptions();
   getToolDocument().getElementById('u_templateSaveName').value = '';
-  alert(`データ「${name}」を保存しました。`);
+  showToast(`データ「${name}」を保存しました。`, 'success');
 }
 
 export function loadTemplate() {
@@ -580,7 +580,7 @@ export function loadTemplate() {
   const tpls = getTemplates();
   const tpl = tpls[name];
   if (!tpl || !tpl.bundle) {
-    alert('指定されたデータが存在しません');
+    showToast('指定されたデータが存在しません', 'error');
     return;
   }
 
@@ -588,7 +588,7 @@ export function loadTemplate() {
   state.importedSourceName = `[テンプレート] ${name}`;
   renderBundleState();
 
-  alert(`テンプレート「${name}」を比較元（ファイル読込扱い）としてセットしました。\n必要に応じて差分比較を実行してください。`);
+  showToast(`テンプレート「${name}」を比較元としてセットしました。差分比較を実行してください。`, 'success');
 }
 
 export function deleteTemplate() {

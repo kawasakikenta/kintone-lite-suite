@@ -1,6 +1,7 @@
 'use strict';
 
-import { esc } from '../utils.js';
+import { esc, showToast } from '../utils.js';
+import { assertAllowsMutatingApiUrl } from '../api.js';
 import { setBusy } from '../ui/components.js';
 import { setStatus } from '../ui/components.js';
 import { getToolDocument } from '../ui/dialog.js';
@@ -17,7 +18,7 @@ export async function runApiTester() {
   }
 
   if (!path) {
-    alert('エンドポイントを指定してください');
+    showToast('エンドポイントを指定してください', 'warn');
     return;
   }
 
@@ -26,7 +27,7 @@ export async function runApiTester() {
     try {
       payload = JSON.parse(bodyStr);
     } catch (e) {
-      alert('リクエストBodyのJSON形式が不正です:\n' + e.message);
+      showToast('リクエストBodyのJSON形式が不正です: ' + e.message, 'error');
       return;
     }
   }
@@ -41,6 +42,8 @@ export async function runApiTester() {
       const prefix = g ? `/k/guest/${g}/v1` : '/k/v1';
       finalPath = prefix + (path.startsWith('/') ? path : `/${path}`);
     }
+
+    assertAllowsMutatingApiUrl(finalPath, method);
 
     const res = await kintone.api(finalPath, method, payload);
     resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(JSON.stringify(res, null, 2))}</pre>`;

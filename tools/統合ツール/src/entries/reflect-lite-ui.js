@@ -76,11 +76,14 @@ export function mountReflectLitePanel() {
     optRow.appendChild(label);
     return cb;
   };
-  const deployCb = mkOpt('デプロイ実行');
   const backupCb = mkOpt('バックアップ保存');
   backupCb.checked = true;
   const stopCb = mkOpt('エラー時中断');
   bodySlot.appendChild(optRow);
+  const deployNote = document.createElement('div');
+  deployNote.style.cssText = 'font-size:11px;color:#64748b;margin:-4px 0 10px;line-height:1.45';
+  deployNote.textContent = '本番デプロイはツールから実行できません。プレビュー反映後、kintone管理画面から手動でデプロイしてください。';
+  bodySlot.appendChild(deployNote);
 
   const logArea = document.createElement('pre');
   logArea.style.cssText = 'margin:0;padding:10px;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;max-height:200px;overflow:auto;white-space:pre-wrap;display:none';
@@ -105,7 +108,7 @@ export function mountReflectLitePanel() {
           targetAppId: tgtApp.value.trim(),
           targetGuestId: tgtGuest.value.trim(),
           scopes,
-          doDeploy: deployCb.checked,
+          doDeploy: false,
           doBackup: backupCb.checked,
           stopOnError: stopCb.checked
         },

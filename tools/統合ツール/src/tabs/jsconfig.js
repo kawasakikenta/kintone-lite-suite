@@ -6,7 +6,6 @@ import { apiGet, apiPut, buildApiPrefix } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { commonParams } from './diff.js';
-import { deployAndPoll } from '../reflect/helpers.js';
 import {
   getSideApiPrefix,
   getAllAppsInSpace,
@@ -94,11 +93,6 @@ export async function runApplyJsConfig() {
   await apiPut(prefix, '/app/customize.json', body);
   const logs = [`OK JS/CSS設定反映（アプリ: ${c.target.appId}）`];
 
-  if (ui.jsconfigDeployAfter.checked) {
-    setStatus('デプロイ実行中...');
-    const st = await deployAndPoll(prefix, c.target.appId, logs);
-    logs.push(st === 'SUCCESS' ? 'OK デプロイ完了' : `NG デプロイ終了ステータス: ${st}`);
-  }
   ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
   setStatus('JS/CSS設定反映完了');
 }

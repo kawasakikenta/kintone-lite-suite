@@ -3,7 +3,7 @@
 import { SECTION_DEFS } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, selectedScopeKeys } from '../utils.js';
-import { apiGet, apiPost, fetchBundle, pickBundleSections } from '../api.js';
+import { apiGet, fetchBundle, pickBundleSections } from '../api.js';
 import { getActualDiffRows } from '../diff/engine.js';
 import { setStatus } from '../ui/components.js';
 import { commonParams, currentDiffSignature, runDiff, saveCurrentDialogState } from '../tabs/diff.js';
@@ -110,21 +110,3 @@ export function appendProgressSummary(logs) {
   logs.push(`=== 完了: OK ${ok} / NG ${ng} / SKIP ${skip} ===`);
 }
 
-export async function deployAndPoll(prefix, app, logs) {
-  logs.push('START デプロイ実行');
-  await apiPost(prefix, '/app/deploy.json', { apps: [{ app, revision: -1 }] });
-  let last = 'PROCESSING';
-  for (let i = 0; i < 25; i++) {
-    await new Promise((r) => setTimeout(r, 1500));
-    try {
-      const statusRes = await apiGet(prefix, '/app/deploy.json', { apps: [app] }, 1);
-      const st = statusRes?.apps?.[0]?.status || 'UNKNOWN';
-      last = st;
-      logs.push(`  - デプロイ状態: ${st}`);
-      if (st === 'SUCCESS' || st === 'FAIL' || st === 'CANCEL') break;
-    } catch (e) {
-      logs.push(`  - Deploy Status取得失敗: ${e.message || String(e)}`);
-    }
-  }
-  return last;
-}

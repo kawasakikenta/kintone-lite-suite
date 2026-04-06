@@ -6,7 +6,7 @@ import {
   relativePathFromRow, tokenizePath
 } from '../utils.js';
 import { state, ui } from '../state.js';
-import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle } from '../api.js';
+import { apiGet, assertAllowsMutatingRestCall, buildApiPrefix, fetchBundle } from '../api.js';
 import {
   planFieldSectionDiffRequests,
   planViewsSectionDiffRequests,
@@ -34,7 +34,6 @@ import {
   renderReflectMainPanel,
   renderProgressLog,
   appendProgressSummary,
-  deployAndPoll,
   pushReflectUndo,
   renderReflectNodeList
 } from './helpers.js';
@@ -317,8 +316,16 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError) {
     try {
       let _err;
       for (let _r = 0; _r <= 2; _r++) {
-        try { await kintone.api(`${prefix}${req.path}`, req.method, req.body); _err = null; break; }
-        catch (re) { _err = re; if (_r < 2) await new Promise((r) => setTimeout(r, 700 * (_r + 1))); }
+        try {
+          assertAllowsMutatingRestCall(prefix, req.path, req.method);
+          await kintone.api(`${prefix}${req.path}`, req.method, req.body);
+          _err = null;
+          break;
+        }
+        catch (re) {
+          _err = re;
+          if (_r < 2) await new Promise((r) => setTimeout(r, 700 * (_r + 1)));
+        }
       }
       if (_err) throw apiErrorWithContext(_err, { method: req.method, prefix, path: req.path, payload: req.body });
       if (logs) logs.push(`  - OK ${req.method} ${req.path}${req.note ? ` (${req.note})` : ''}`);
@@ -600,20 +607,6 @@ export async function runApplyPreviewByNodes() {
     }
   }
 
-  if (ui.doDeploy.checked) {
-    if (hadError) {
-      logs.push('SKIP デプロイ: 反映エラーがあるため実行しません');
-    } else {
-      setStatus('デプロイ実行中...');
-      try {
-        const st = await deployAndPoll(prefix, app, logs);
-        logs.push(st === 'SUCCESS' ? 'OK デプロイ完了' : `NG デプロイ終了ステータス: ${st}`);
-      } catch (e) {
-        logs.push(`NG デプロイ: ${e.message || String(e)}`);
-      }
-    }
-  }
-
   appendProgressSummary(logs);
   renderProgressLog(logs, { phase: 'ノード反映完了' });
   renderReflectAssistPanel();
@@ -666,20 +659,6 @@ export async function runApplyPreview() {
     onProgress: (i, total) => renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total })
   });
 
-  if (ui.doDeploy.checked) {
-    if (hadError) {
-      logs.push('SKIP デプロイ: 反映エラーがあるため実行しません');
-    } else {
-      setStatus('デプロイ実行中...');
-      try {
-        const st = await deployAndPoll(prefix, app, logs);
-        logs.push(st === 'SUCCESS' ? 'OK デプロイ完了' : `NG デプロイ終了ステータス: ${st}`);
-      } catch (e) {
-        logs.push(`NG デプロイ: ${e.message || String(e)}`);
-      }
-    }
-  }
-
   appendProgressSummary(logs);
   renderProgressLog(logs, { phase: 'プレビュー反映完了' });
   renderReflectAssistPanel();
@@ -695,19 +674,9 @@ export async function runBackupTargetPreview() {
 }
 
 export async function runDeployOnly() {
-  const c = commonParams();
-  if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
-  if (!window.confirm(`デプロイのみ実行しますか？\n比較先アプリ: ${c.target.appId}`)) {
-    setStatus('デプロイをキャンセルしました');
-    return;
+  const msg = 'ツールからのデプロイAPI実行は無効です。プレビューへの反映後、本番へのデプロイはkintone管理画面から手動で行ってください。';
+  setStatus(msg, true);
+  if (ui.result) {
+    ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(msg)}</pre>`;
   }
-  const prefix = buildApiPrefix(c.target.guestId, true);
-  const app = c.target.appId;
-  setStatus('デプロイ実行中...');
-  const logs = [];
-  const st = await deployAndPoll(prefix, app, logs);
-  if (st === 'SUCCESS') logs.push('OK デプロイ完了');
-  else logs.push(`NG デプロイ終了ステータス: ${st}`);
-  ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
-  setStatus(`デプロイ処理完了: ${st === 'SUCCESS' ? 'SUCCESS' : st}`, st !== 'SUCCESS');
 }

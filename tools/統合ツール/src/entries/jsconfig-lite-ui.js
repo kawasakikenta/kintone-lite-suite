@@ -76,13 +76,6 @@ export function mountJsconfigLitePanel() {
   tgtGuest.style.cssText =
     'width:min(100px,36vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
 
-  const deployAfter = document.createElement('label');
-  deployAfter.style.cssText = 'font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer';
-  const deployCb = document.createElement('input');
-  deployCb.type = 'checkbox';
-  deployAfter.appendChild(deployCb);
-  deployAfter.appendChild(document.createTextNode('反映後にデプロイ'));
-
   const applyBtn = document.createElement('button');
   applyBtn.type = 'button';
   applyBtn.textContent = '比較先プレビューへ反映';
@@ -104,8 +97,11 @@ export function mountJsconfigLitePanel() {
   row2.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px';
   row2.appendChild(tgtApp);
   row2.appendChild(tgtGuest);
-  row2.appendChild(deployAfter);
   bodySlot.appendChild(row2);
+  const deployNote = document.createElement('div');
+  deployNote.style.cssText = 'font-size:11px;color:#64748b;margin-bottom:6px;line-height:1.45';
+  deployNote.textContent = '反映後の本番デプロイは管理画面で手動行ってください。';
+  bodySlot.appendChild(deployNote);
   bodySlot.appendChild(applyBtn);
 
   const uiApi = {
@@ -145,7 +141,7 @@ export function mountJsconfigLitePanel() {
           targetAppId: tgtApp.value.trim(),
           targetGuestId: tgtGuest.value.trim(),
           jsonText: jsonTa.value,
-          deployAfter: deployCb.checked
+          deployAfter: false
         },
         (m, e) => setStatus(m, e),
         (html) => { result.innerHTML = html; }

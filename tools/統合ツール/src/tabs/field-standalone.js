@@ -35,7 +35,7 @@ function convertLookup(fieldDef, map) {
 }
 
 export async function runFieldApplyStandalone(opts, setStatus) {
-  const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite, deploy } = opts;
+  const { targetAppId, targetGuestId, fieldJson, lookupMapJson, overwrite } = opts;
   if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
   if (!fieldJson?.trim()) throw new Error('フィールドJSONを入力してください');
 
@@ -79,12 +79,6 @@ export async function runFieldApplyStandalone(opts, setStatus) {
   setStatus('フィールド追加/更新中...');
   if (Object.keys(adds).length) await apiPost(prefix, '/app/form/fields.json', { app: targetAppId, properties: adds });
   if (Object.keys(updates).length) await apiPut(prefix, '/app/form/fields.json', { app: targetAppId, properties: updates });
-
-  if (deploy) {
-    setStatus('デプロイ実行中...');
-    await apiPost(prefix, '/app/deploy.json', { apps: [{ app: targetAppId, revision: -1 }] });
-    logs.push('OK デプロイ実行');
-  }
 
   setStatus('フィールド追加処理完了');
   return logs;

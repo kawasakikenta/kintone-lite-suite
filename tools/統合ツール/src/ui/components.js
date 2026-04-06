@@ -29,6 +29,7 @@ import {
 import { summarizeSeverity } from '../diff/enrich.js';
 import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
 import { saveCurrentDialogState, getToolDocument } from './dialog.js';
+import { renderRichDiff } from '../oss_integrations.js';
 
 let ui = {};
 
@@ -418,13 +419,12 @@ export function buildReflectAssistHtml() {
   const planTime = planReady ? new Date(state.lastApplyPlan.createdAt).toLocaleString() : '';
   const backupReady = !!ui.autoBackupPreview?.checked;
   const stopOnError = !!ui.stopOnError?.checked;
-  const deployAfter = !!ui.doDeploy?.checked;
   const backupState = ui.backupStatus && ui.backupStatus.style.display !== 'none'
     ? String(ui.backupStatus.textContent || '').trim()
     : '';
   const targetCountLabel = isNode ? '選択ノード' : '実反映セクション';
   const targetCountValue = isNode ? selectedNodeRows.length : scopeInfo.effectiveScopes.length;
-  const safetyLabel = (backupReady && stopOnError && !deployAfter) ? '推奨設定' : '要確認';
+  const safetyLabel = (backupReady && stopOnError) ? '推奨設定' : '要確認';
   const warnings = [];
   if (!diffReady) warnings.push('差分比較が未実行、または条件が変わっています。まず差分を確定してください。');
   if (!scopeInfo.baseScopes.length && !isNode) warnings.push('左の一覧から反映セクションを選択してください。');
@@ -500,7 +500,7 @@ export function buildReflectAssistHtml() {
       <div class="reflect-summary-card">
         <div class="reflect-summary-label">安全設定</div>
         <div class="reflect-summary-value">${esc(safetyLabel)}</div>
-        <div class="reflect-summary-meta">バックアップ ${backupReady ? 'ON' : 'OFF'} / エラー時 ${stopOnError ? '中断' : '継続'} / デプロイ ${deployAfter ? 'ON' : 'OFF'}</div>
+        <div class="reflect-summary-meta">バックアップ ${backupReady ? 'ON' : 'OFF'} / エラー時 ${stopOnError ? '中断' : '継続'} / 本番デプロイは管理画面で手動</div>
       </div>
       <div class="reflect-summary-card">
         <div class="reflect-summary-label">プラン状態</div>
@@ -513,7 +513,7 @@ export function buildReflectAssistHtml() {
       ${nodeLoadAction}
       ${scopeDiffAction}
     </div>
-    <p class="reflect-action-hint">プラン確認・バックアップ・プレビュー反映・本番デプロイは<strong>画面下の固定バー</strong>から操作します。</p>
+    <p class="reflect-action-hint">プラン確認・バックアップ・プレビュー反映は<strong>画面下の固定バー</strong>から操作します。本番デプロイはツールから実行できません。</p>
     ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join('') : '<div class="reflect-good">現在の条件でそのまま進めます。変更前の確認は「反映プラン確認」で行えます。</div>'}
     ${backupState ? `<div class="reflect-good">${esc(backupState)}</div>` : ''}
   </div>`;
@@ -899,18 +899,22 @@ export function renderReflectNodeDetail() {
   if (activeTab === 'diff') {
     const cols = deps.renderRowColumns(row, useCharDiff);
     bodyHtml = `<div class="reflect-node-detail-note">差分表示です。反映元を「比較元 / 比較先」で切り替えると、実際に採用される値は「反映値」タブで確認できます。</div>
-      <div class="diff-view">
-        <div class="reflect-node-compare">
-          <div class="reflect-node-card">
-            <div class="reflect-node-card-head">比較元</div>
-            <div class="reflect-node-card-body">${cols.left}</div>
-          </div>
-          <div class="reflect-node-card">
-            <div class="reflect-node-card-head">比較先</div>
-            <div class="reflect-node-card-body">${cols.right}</div>
+      <div id="u_richDiffContainer_${esc(row._id)}" class="reflect-rich-diff-container" style="margin-bottom:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:auto;max-height:400px;"></div>
+      <details style="margin-top:4px">
+        <summary style="cursor:pointer;font-size:11px;color:#64748b;padding:4px 0">従来の差分表示を開く</summary>
+        <div class="diff-view">
+          <div class="reflect-node-compare">
+            <div class="reflect-node-card">
+              <div class="reflect-node-card-head">比較元</div>
+              <div class="reflect-node-card-body">${cols.left}</div>
+            </div>
+            <div class="reflect-node-card">
+              <div class="reflect-node-card-head">比較先</div>
+              <div class="reflect-node-card-body">${cols.right}</div>
+            </div>
           </div>
         </div>
-      </div>`;
+      </details>`;
   } else {
     const value = activeTab === 'src'
       ? row.left
@@ -955,6 +959,27 @@ export function renderReflectNodeDetail() {
     </div>
     ${bodyHtml}
   </div>`;
+
+  // Asynchronously render rich diff (diff2html) if on the diff tab
+  if (activeTab === 'diff') {
+    const containerId = `u_richDiffContainer_${row._id}`;
+    setTimeout(() => {
+      const diffContainer = getToolDocument().getElementById(containerId);
+      if (diffContainer) {
+        const leftStr = deps.stringifyForDiff(row.left);
+        const rightStr = deps.stringifyForDiff(row.right);
+        renderRichDiff(leftStr, rightStr, diffContainer, {
+          fileName: row.path || 'settings.json',
+          leftLabel: '比較元',
+          rightLabel: '比較先',
+          sideBySide: true
+        }).catch((err) => {
+          diffContainer.innerHTML = `<div style="padding:8px;color:#64748b;font-size:11px">リッチ差分表示の読み込み中にエラーが発生しました。下の「従来の差分表示」をご利用ください。</div>`;
+          console.warn('Rich diff error:', err);
+        });
+      }
+    }, 50);
+  }
 }
 
 export function renderAppIdConfirmSection(appIdRefs) {

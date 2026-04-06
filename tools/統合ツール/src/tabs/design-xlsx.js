@@ -2,6 +2,7 @@
 
 import { TOOL_ID } from '../constants.js';
 import { getToolDocument } from '../ui/dialog.js';
+import { showToast } from '../utils.js';
 
 export async function runAdvancedDesignExporter(params = {}) {
   const sourceAppId = Number(params.appId);
@@ -320,13 +321,13 @@ export async function runAdvancedDesignExporter(params = {}) {
 
     UI.hide();
     const errorMsg = UI.failedAPIs.length > 0 ? `\n⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : '';
-    alert(`✅ エクスポート完了${errorMsg}`);
+    showToast(`✅ エクスポート完了${errorMsg}`, UI.failedAPIs.length > 0 ? 'warn' : 'success');
     return true;
 
   } catch (e) {
     UI.hide();
     console.error('kintone設計書エクスポートエラー:', e);
-    alert(`❌ エラーが発生しました: ${e.message}`);
+    showToast(`❌ エラーが発生しました: ${e.message}`, 'error');
     throw e;
   }
 }

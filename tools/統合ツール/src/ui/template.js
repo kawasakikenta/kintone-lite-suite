@@ -421,167 +421,184 @@ export function buildRoot(targetDocument = document, options = {}) {
             </div>
 
             <div class="pane" data-pane="reflect">
-              <input type="checkbox" id="u_nodeMode" style="display:none">
-              <details class="diff-fold diff-fold--reflect-hint">
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">プレビュー反映の操作ヒント</span>
-                  <span class="diff-fold-sub">初めてのときだけ開いて確認</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div class="muted" style="margin-top:0;line-height:1.65">差分比較が未実行または条件変更時は、反映前に自動で差分比較を実行します。<strong>左の一覧</strong>でチェック＝反映対象、<strong>行クリック</strong>でそのセクションの差分サマリーを表示します（<strong>全体概要</strong>はサイドバー下のボタン）。プラン確認・反映・デプロイは<strong>画面下の固定バー</strong>から行います。</div>
-                </div>
-              </details>
-              <div id="u_applyScopeBlock" style="display:none"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
-              <div class="reflect-layout" id="u_reflectLayout">
-                <div class="reflect-sidebar">
-                  <div class="sidebar-head">
-                    <div class="sidebar-head-row">
-                      <span>反映セクション</span>
-                      <span style="font-size:10px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
-                    </div>
-                    <p class="sidebar-hint">チェックで反映に含める · 行クリックで詳細パネル</p>
-                  </div>
-                  <div class="sidebar-sections" id="u_reflectSidebarSections"></div>
-                  <div class="sidebar-footer">
-                    <button type="button" class="btn sub" data-act="reflectSidebarOverview">全体概要</button>
-                    <button class="btn sub" data-act="applyScopeAll">全選択</button>
-                    <button class="btn sub" data-act="applyScopeNone">全解除</button>
-                    <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn">差分のみ</button>
-                    <button class="btn sub" data-act="applyScopeHighRisk">高重要度</button>
-                  </div>
-                </div>
-                <div class="reflect-main">
-                  <div class="main-header reflect-main-header">
-                    <div class="reflect-main-header__text">
-                      <div class="main-title" id="u_reflectMainTitle">反映概要</div>
-                      <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
-                    </div>
-                    <div class="reflect-main-header__controls">
-                      <button type="button" class="btn sub" data-act="openReflectPreviewEditor" title="フィールド差分プレビューエディタまでスクロールして展開します">差分プレビューエディタ</button>
-                      <label class="reflect-simple-toggle chip" title="ノード選択・JSON差分反映を隠し、セクション反映に集中します">
-                        <input type="checkbox" id="u_reflectSimpleMode"> 簡易表示
-                      </label>
-                      <div class="reflect-mode-tabs" role="tablist" aria-label="反映モード">
-                        <button type="button" class="btn ok reflect-mode-tab" id="u_modeSectionBtn" data-act="reflectModeSection" aria-selected="true">セクション</button>
-                        <button type="button" class="btn sub reflect-mode-tab" id="u_modeNodeBtn" data-act="reflectModeNode" aria-selected="false">ノード選択</button>
+              <div class="subtabs">
+                <button class="subtab active" data-subtab-parent="reflect" data-subtab="section">セクション反映</button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="node">ノード詳細反映</button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="patch">JSONパッチ</button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="editor">プレビューエディタ</button>
+              </div>
+
+              <!-- ===== Subpane: section ===== -->
+              <div class="subpane active" data-subpane-parent="reflect" data-subpane="section">
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">比較元から比較先へ、セクション（アプリ設定やフィールド設定など）単位で一括反映します。</div>
+                <div id="u_applyScopeBlock" style="display:none"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
+                <div class="reflect-layout" id="u_reflectLayout">
+                  <div class="reflect-sidebar">
+                    <div class="sidebar-head">
+                      <div class="sidebar-head-row">
+                        <span>反映セクション</span>
+                        <span style="font-size:10px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
                       </div>
+                      <p class="sidebar-hint">チェックで反映に含める · 行クリックで詳細パネル</p>
+                    </div>
+                    <div class="sidebar-sections" id="u_reflectSidebarSections"></div>
+                    <div class="sidebar-footer">
+                      <button type="button" class="btn sub" data-act="reflectSidebarOverview">全体概要</button>
+                      <button class="btn sub" data-act="applyScopeAll">全選択</button>
+                      <button class="btn sub" data-act="applyScopeNone">全解除</button>
+                      <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn">差分のみ</button>
+                      <button class="btn sub" data-act="applyScopeHighRisk">高重要度</button>
                     </div>
                   </div>
-                  <div class="main-body" id="u_reflectMainBody">
-                    <div id="u_reflectAssist"></div>
-                    <div id="u_reflectHowto" style="margin-bottom:10px"></div>
-                    <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
-                    <div id="u_reflectOverview"></div>
-                    <div id="u_reflectHint" class="kv" style="display:none"></div>
-                    <div id="u_sectionOptionsBlock" style="display:none">
-                      <label class="chip"><input type="checkbox" id="u_applyDiffOnly"> 前回差分のあるセクションのみ反映</label>
-                    </div>
-                    <div class="warnbox" id="u_nodeWarn" style="display:none">注: ノードモードは「前回差分」から選択して反映します。まず差分比較を実行してください。</div>
-                    <div id="u_nodeControls" style="display:none">
-                      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-                        <button class="btn sub" data-act="loadReflectNodes" style="padding:4px 8px;font-size:10px">差分ノード読込</button>
-                        <button class="btn sub" data-act="selectVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中を選択</button>
-                        <button class="btn sub" data-act="clearVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中解除</button>
-                        <button class="btn sub" data-act="selectHighSeverityReflectNodes" style="padding:4px 8px;font-size:10px">高重要度を選択</button>
-                        <button class="btn ok" data-act="reflectModeVisibleSrc" style="padding:4px 8px;font-size:10px">表示中を比較元</button>
-                        <button class="btn ok" data-act="reflectModeVisibleTgt" style="padding:4px 8px;font-size:10px">表示中を比較先</button>
-                        <button class="btn sub" data-act="selectReflectNodesAll" style="padding:4px 8px;font-size:10px">全選択</button>
-                        <button class="btn sub" data-act="clearReflectNodes" style="padding:4px 8px;font-size:10px">全解除</button>
-                        <button class="btn ok" data-act="reflectModeAllSrc" style="padding:4px 8px;font-size:10px">一括で比較元</button>
-                        <button class="btn ok" data-act="reflectModeAllTgt" style="padding:4px 8px;font-size:10px">一括で比較先</button>
-                        <button class="btn sub" data-act="reflectUndo" style="padding:4px 8px;font-size:10px">Undo</button>
-                        <button class="btn sub" data-act="reflectRedo" style="padding:4px 8px;font-size:10px">Redo</button>
+                  <div class="reflect-main">
+                    <div class="main-header reflect-main-header">
+                      <div class="reflect-main-header__text">
+                        <div class="main-title" id="u_reflectMainTitle">反映概要</div>
+                        <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
                       </div>
                     </div>
-                    <div id="u_nodeFilterBlock" style="display:none;margin-bottom:8px">
-                      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                        <input type="text" id="u_nodeSearch" placeholder="パス / セクション で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                        <select id="u_nodeFilterSection" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px"><option value="">全セクション</option></select>
-                        <select id="u_nodeFilterType" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                          <option value="">全種別</option><option value="added">追加</option><option value="removed">削除</option><option value="changed">変更</option>
-                        </select>
-                        <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                          <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
-                        </select>
-                        <button class="btn sub" type="button" data-act="toggleReflectPropertyPanel" style="padding:4px 8px;font-size:10px">プロパティ選択</button>
-                        <button class="btn sub" data-act="clearReflectNodeFilters" style="padding:4px 8px;font-size:10px">絞り込み解除</button>
+                    <div class="main-body" id="u_reflectMainBody">
+                      <div id="u_reflectAssist"></div>
+                      <div id="u_reflectHowto" style="margin-bottom:10px"></div>
+                      <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
+                      <div id="u_reflectOverview"></div>
+                      <div id="u_sectionOptionsBlock" style="display:none">
+                        <label class="chip"><input type="checkbox" id="u_applyDiffOnly"> 前回差分のあるセクションのみ反映</label>
                       </div>
-                      <div id="u_nodePropertyPanel" style="display:none;margin-top:8px;border:1px solid #d6dee8;border-radius:8px;background:#f8fafc;padding:8px 10px">
-                        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
-                          <div style="font-size:11px;font-weight:700;color:#334155">対象プロパティ（kintone設定風チェックリスト）</div>
-                          <div style="display:flex;gap:6px">
-                            <button class="btn sub" type="button" data-act="selectAllReflectProperties" style="padding:3px 7px;font-size:10px">全選択</button>
-                            <button class="btn sub" type="button" data-act="clearReflectProperties" style="padding:3px 7px;font-size:10px">全解除</button>
-                          </div>
-                        </div>
-                        <div id="u_nodePropertyChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
-                        <div id="u_nodePropertyList" style="max-height:160px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:6px"></div>
-                      </div>
-                    </div>
-                    <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none">
-                      <div class="reflect-node-pane">
-                        <div class="reflect-node-list-wrap">
-                          <div class="result" id="u_reflectNodeList" style="max-height:none;border:1px solid #dbe3ed;border-radius:8px;overflow:auto;flex:1"></div>
-                        </div>
-                      </div>
-                      <div class="reflect-node-detail" id="u_reflectNodeDetail"></div>
-                    </div>
-                    <div id="u_patchJsonPanel" style="display:none">
-                      <div class="opt-card" style="margin-top:8px">
-                        <div class="opt-title">JSON差分反映</div>
-                        <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、直接編集して比較先プレビューに反映します。</div>
-                        <div class="btns" style="margin-bottom:6px">
-                          <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
-                          <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
-                          <button class="btn sub" data-act="patchJsonClear">クリア</button>
-                        </div>
-                        <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
-                        <textarea id="u_patchJsonEditor" placeholder='パッチJSONをここに貼り付け、またはファイルから読み込み...' style="width:100%;min-height:160px;max-height:320px;font-family:monospace;font-size:11px;resize:vertical;border:1px solid #d1d5db;border-radius:6px;padding:8px;box-sizing:border-box"></textarea>
-                        <div class="btns" style="margin-top:6px">
-                          <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
-                        </div>
-                      </div>
-                    </div>
-                    <section class="opt-card" id="u_reflectPreviewEditorFold" style="margin-top:8px">
-                      <div class="opt-title">フィールド差分プレビューエディタ（試験）</div>
-                      <div class="muted" style="margin-top:-2px;margin-bottom:6px">追加/削除/編集/ドラッグ上書きの事前確認UI</div>
-                      <div>
-                        <div class="muted" style="margin-top:0;line-height:1.6">統合ツール内でフィールド差分のプレビューを操作できる補助エディタです。ドラッグ＆ドロップで別カードへ設定上書き（code/typeは保持）、JSON編集とUndoにも対応します。</div>
-                        <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
-                      </div>
-                    </section>
-                  </div>
-                  <div class="reflect-footer-stack">
-                    <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>
-                    <div class="reflect-footer-options" id="u_reflectOptionsCard">
-                      <div class="reflect-footer-options__label">反映オプション</div>
-                      <div class="reflect-footer-options__chips">
-                        <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存</label>
-                        <label class="chip" title="APIエラーが出た時点で残りの反映を止めます"><input type="checkbox" id="u_stopOnError" checked> エラー時中断</label>
-                        <label class="chip reflect-opt-deploy" title="プレビューへの書き込み後、本番反映用のデプロイAPIを続けて呼びます"><input type="checkbox" id="u_doDeploy"> 反映後デプロイ（本番）</label>
-                      </div>
-                      <div id="u_backupStatus" style="display:none;margin-top:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46"></div>
-                    </div>
-                    <div class="reflect-footer-actions main-footer" id="u_reflectFooter">
-                      <div class="reflect-footer-actions__preview">
-                        <span class="reflect-footer-zone-label">プレビューAPI</span>
-                        <button type="button" class="btn sub" data-act="runDiff" id="u_footerRunDiff" title="差分比較を実行します">差分比較</button>
-                        <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">反映プラン確認</button>
-                        <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します">バックアップ</button>
-                        <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択セクションを比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">比較元 → 比較先(プレビュー) 反映</button>
-                        <button type="button" class="btn sub reflect-footer-advanced-btn" data-act="togglePatchJsonPanel" title="パッチJSONを直接読み込んで反映するパネルを開きます">JSON差分反映</button>
-                      </div>
-                      <div class="reflect-footer-actions__prod">
-                        <span class="reflect-footer-zone-label reflect-footer-zone-label--prod">本番デプロイ</span>
-                        <button type="button" class="btn btn-deploy-foot" data-act="deployOnly" title="プレビュー内容を本番にデプロイするAPIのみ実行します">デプロイのみ</button>
-                      </div>
-                      <span class="footer-status" id="u_reflectFooterStatus"></span>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
 
+              <!-- ===== Subpane: node ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="node">
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">ノードモード: 差分詳細行を選択して部分反映します。</div>
+                <div class="reflect-layout">
+                  <div class="reflect-main" style="width:100%">
+                    <div class="main-body" style="padding:12px">
+                      <div class="warnbox" id="u_nodeWarn" style="display:none">注: ノードモードは「前回差分」から選択して反映します。まず差分比較を実行してください。</div>
+                      <div id="u_reflectHint" class="kv" style="display:none"></div>
+                      <div id="u_nodeControls" style="display:none">
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                          <button class="btn sub" data-act="loadReflectNodes" style="padding:4px 8px;font-size:10px">差分ノード読込</button>
+                          <button class="btn sub" data-act="selectVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中を選択</button>
+                          <button class="btn sub" data-act="clearVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中解除</button>
+                          <button class="btn sub" data-act="selectHighSeverityReflectNodes" style="padding:4px 8px;font-size:10px">高重要度を選択</button>
+                          <button class="btn ok" data-act="reflectModeVisibleSrc" style="padding:4px 8px;font-size:10px">表示中を比較元</button>
+                          <button class="btn ok" data-act="reflectModeVisibleTgt" style="padding:4px 8px;font-size:10px">表示中を比較先</button>
+                          <button class="btn sub" data-act="selectReflectNodesAll" style="padding:4px 8px;font-size:10px">全選択</button>
+                          <button class="btn sub" data-act="clearReflectNodes" style="padding:4px 8px;font-size:10px">全解除</button>
+                          <button class="btn ok" data-act="reflectModeAllSrc" style="padding:4px 8px;font-size:10px">一括で比較元</button>
+                          <button class="btn ok" data-act="reflectModeAllTgt" style="padding:4px 8px;font-size:10px">一括で比較先</button>
+                          <button class="btn sub" data-act="reflectUndo" style="padding:4px 8px;font-size:10px">Undo</button>
+                          <button class="btn sub" data-act="reflectRedo" style="padding:4px 8px;font-size:10px">Redo</button>
+                        </div>
+                      </div>
+                      <div id="u_nodeFilterBlock" style="display:none;margin-bottom:8px">
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                          <input type="text" id="u_nodeSearch" placeholder="パス / セクション で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                          <select id="u_nodeFilterSection" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px"><option value="">全セクション</option></select>
+                          <select id="u_nodeFilterType" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                            <option value="">全種別</option><option value="added">追加</option><option value="removed">削除</option><option value="changed">変更</option>
+                          </select>
+                          <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                            <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
+                          </select>
+                          <button class="btn sub" type="button" data-act="toggleReflectPropertyPanel" style="padding:4px 8px;font-size:10px">プロパティ選択</button>
+                          <button class="btn sub" data-act="clearReflectNodeFilters" style="padding:4px 8px;font-size:10px">絞り込み解除</button>
+                        </div>
+                        <div id="u_nodePropertyPanel" style="display:none;margin-top:8px;border:1px solid #d6dee8;border-radius:8px;background:#f8fafc;padding:8px 10px">
+                          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+                            <div style="font-size:11px;font-weight:700;color:#334155">対象プロパティ（kintone設定風チェックリスト）</div>
+                            <div style="display:flex;gap:6px">
+                              <button class="btn sub" type="button" data-act="selectAllReflectProperties" style="padding:3px 7px;font-size:10px">全選択</button>
+                              <button class="btn sub" type="button" data-act="clearReflectProperties" style="padding:3px 7px;font-size:10px">全解除</button>
+                            </div>
+                          </div>
+                          <div id="u_nodePropertyChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
+                          <div id="u_nodePropertyList" style="max-height:160px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:6px"></div>
+                        </div>
+                      </div>
+                      <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none;height:600px;">
+                        <div class="reflect-node-pane">
+                          <div class="reflect-node-list-wrap">
+                            <div class="result" id="u_reflectNodeList" style="max-height:none;border:1px solid #dbe3ed;border-radius:8px;overflow:auto;flex:1"></div>
+                          </div>
+                        </div>
+                        <div class="reflect-node-detail" id="u_reflectNodeDetail"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ===== Subpane: patch ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="patch">
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">JSONパッチを直接入力・編集して、比較先プレビューに反映します。</div>
+                <div id="u_patchJsonPanel" style="display:block">
+                  <div class="opt-card" style="margin:12px">
+                    <div class="opt-title">JSON差分反映</div>
+                    <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、直接編集して比較先プレビューに反映します。</div>
+                    <div class="btns" style="margin-bottom:6px">
+                      <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
+                      <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
+                      <button class="btn sub" data-act="patchJsonClear">クリア</button>
+                    </div>
+                    <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
+                    <div id="u_patchJsonEditor" style="width:100%;height:400px;border-radius:6px;"></div>
+                    <div class="btns" style="margin-top:6px">
+                      <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ===== Subpane: editor ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="editor">
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">追加・削除・編集・ドラッグ上書きができる事前確認用エディタです。</div>
+                <section class="opt-card reflect-preview-editor-card" id="u_reflectPreviewEditorFold" style="display:block;margin:12px">
+                  <div class="opt-title">フィールド差分プレビューエディタ（試験）</div>
+                  <p class="reflect-preview-editor-lead">ドラッグ＆ドロップで別カードへ設定上書き（code/typeは保持）、JSON編集とUndoにも対応します。</p>
+                  <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
+                </section>
+              </div>
+
+              <div class="reflect-footer-stack" style="margin-top:auto">
+                <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>
+                <div class="reflect-footer-options" id="u_reflectOptionsCard">
+                  <div class="reflect-footer-options__label">反映オプション</div>
+                  <div class="reflect-footer-options__chips">
+                    <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存</label>
+                    <label class="chip" title="APIエラーが出た時点で残りの反映を止めます"><input type="checkbox" id="u_stopOnError" checked> エラー時中断</label>
+                    <span class="muted" style="font-size:11px;line-height:1.45;max-width:420px;display:inline-block;vertical-align:middle">本番デプロイAPIは利用できません。プレビュー反映後は管理画面から手動デプロイしてください。</span>
+                    <input type="checkbox" id="u_doDeploy" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
+                  </div>
+                  <div id="u_backupStatus" style="display:none;margin-top:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46"></div>
+                </div>
+                <div class="reflect-footer-actions main-footer" id="u_reflectFooter">
+                  <div class="reflect-footer-actions__preview">
+                    <span class="reflect-footer-zone-label">プレビューAPI</span>
+                    <button type="button" class="btn sub" data-act="runDiff" id="u_footerRunDiff" title="差分比較を実行します">差分比較</button>
+                    <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">反映プラン確認</button>
+                    <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します">バックアップ</button>
+                    <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択枠を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">比較元 → 比較先(プレビュー) 反映</button>
+                  </div>
+                  <div class="reflect-footer-actions__prod">
+                    <span class="reflect-footer-zone-label reflect-footer-zone-label--prod">本番反映</span>
+                    <span class="muted" style="font-size:11px;line-height:1.45;max-width:220px;display:inline-block">デプロイはkintone管理画面から手動で行ってください。</span>
+                  </div>
+                  <span class="footer-status" id="u_reflectFooterStatus"></span>
+                </div>
+              </div>
+
+              <!-- Keep hidden inputs used by logic -->
+              <input type="checkbox" id="u_nodeMode" style="display:none">
+              <label class="reflect-simple-toggle chip" style="display:none"><input type="checkbox" id="u_reflectSimpleMode"></label>
+              <button type="button" id="u_modeSectionBtn" data-act="reflectModeSection" style="display:none"></button>
+              <button type="button" id="u_modeNodeBtn" data-act="reflectModeNode" style="display:none"></button>
+              <button data-act="togglePatchJsonPanel" style="display:none"></button>
+              <button data-act="openReflectPreviewEditor" style="display:none"></button>
+            </div>
             <div class="pane" data-pane="field">
               <div class="subtabs">
                 <button class="subtab active" data-subtab-parent="field" data-subtab="json">JSON編集</button>
@@ -598,12 +615,13 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <div class="diff-fold-body">
               <div style="margin-top:0">
                 <label title="kintone の field 定義と同じ properties オブジェクト">追加フィールドJSON（properties形式）</label>
-                <textarea id="u_fieldJson" placeholder='{"text_1":{"type":"SINGLE_LINE_TEXT","code":"text_1","label":"テキスト"}}' title="有効なフィールド型・code・label を含むJSON"></textarea>
+                <div id="u_fieldJson" style="width:100%;height:300px;border-radius:6px;"></div>
               </div>
               <div class="grid2" style="margin-top:8px">
                 <label class="chip" title="既存の同一 code のフィールドを置き換えます"><input type="checkbox" id="u_overwriteField"> 同一コードは上書き</label>
-                <label class="chip" title="フィールド更新APIの後にデプロイを実行します"><input type="checkbox" id="u_deployField"> 更新後にデプロイ</label>
+                <span class="muted" style="font-size:11px;align-self:center;line-height:1.45">本番デプロイはツールから実行できません。</span>
               </div>
+              <input type="checkbox" id="u_deployField" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
               <div class="btns">
                 <button type="button" class="btn warn" data-act="applyField" title="比較先プレビューにフィールドを追加・更新します">比較先(プレビュー)へフィールド適用</button>
                 <button type="button" class="btn sub" data-act="loadTargetFields" title="現在の比較先アプリの fields.json を読み込み">比較先の現在値を読込</button>
@@ -727,8 +745,9 @@ export function buildRoot(targetDocument = document, options = {}) {
               <div class="muted" style="margin-top:8px;line-height:1.6">比較元アプリIDの JS/CSS カスタマイズ設定（<code>/app/customize.json</code>）を取得・表示します。編集後に比較先(プレビュー)へ反映も可能です。</div>
               <div class="grid2" style="margin-top:8px">
                 <label class="chip" title="プレビュー環境のカスタマイズ設定を読みます"><input type="checkbox" id="u_jsconfigPreview"> プレビュー版を取得</label>
-                <label class="chip" title="PUT 後にデプロイAPIを続けて呼びます"><input type="checkbox" id="u_jsconfigDeployAfter"> 反映後にデプロイ</label>
+                <span class="muted" style="font-size:11px;align-self:center;line-height:1.45">反映後のデプロイは管理画面で手動行ってください。</span>
               </div>
+              <input type="checkbox" id="u_jsconfigDeployAfter" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
               <div class="btns">
                 <button type="button" class="btn" data-act="fetchJsConfig" title="比較元アプリIDで customize.json を取得">JS/CSS設定を取得</button>
                 <button type="button" class="btn sub" data-act="exportJsConfigJson">JSON出力</button>
@@ -1017,7 +1036,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                 </summary>
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">リクエストの組み立てと実行</div>
-              <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。</div>
+              <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。<strong>POST/PUT/DELETE</strong> は <code>/v1/preview/</code> を含むパスのみ可能です（本番への書き込み・デプロイAPIは不可）。</div>
               <div style="display:flex;gap:16px;margin-top:8px;">
                 <div style="flex:5;min-width:0;">
                   <div class="grid2">
@@ -1032,7 +1051,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                     </div>
                     <div>
                       <label title="相対パスまたは完全URL">エンドポイント（パス または URL）</label>
-                      <input type="text" id="u_apiTesterPath" placeholder="例: /k/v1/record.json または /app/settings">
+                      <input type="text" id="u_apiTesterPath" placeholder="書き込み例: /k/v1/preview/app/form/fields.json">
                     </div>
                   </div>
                   <div style="margin-top:8px">
@@ -1040,7 +1059,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                     <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace" placeholder='{"app": 1, "id": 100}'></textarea>
                   </div>
                   <div class="btns" style="margin-top:10px;display:flex;">
-                    <button type="button" class="btn warn" data-act="runApiTester" title="本番データの変更に注意">APIを実行</button>
+                    <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ">APIを実行</button>
                     <button type="button" class="btn sub" data-act="clearApiTesterHistory" style="margin-left:auto;">履歴クリア</button>
                   </div>
                   <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>

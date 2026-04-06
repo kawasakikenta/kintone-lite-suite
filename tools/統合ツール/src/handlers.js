@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, DEFAULT_APP_ID, FEATURE_DEFS, DIFF_ONBOARDING_DISMISSED_KEY } from './constants.js';
 import { state, ui } from './state.js';
-import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys } from './utils.js';
+import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast } from './utils.js';
 import { buildApiPrefix } from './api.js';
 import { getActualDiffRows } from './diff/engine.js';
 import { getRenderedDiffRows } from './diff/filter.js';
@@ -133,7 +133,9 @@ export function withGuard(fn, busyText) {
       await fn();
     } catch (e) {
       console.error(e);
-      setStatus(`エラー: ${e.message || String(e)}`, true);
+      const msg = `エラー: ${e.message || String(e)}`;
+      setStatus(msg, true);
+      showToast(msg, 'error').catch(() => {});
     } finally {
       state.running = false;
       setBusy(false);
@@ -647,33 +649,10 @@ export function setupEventHandlers(injected = {}) {
     });
   }
 
-  const patchJsonEditor = getToolDocument().getElementById('u_patchJsonEditor');
-  if (patchJsonEditor) {
-    let patchParseTimer = 0;
-    patchJsonEditor.addEventListener('input', () => {
-      clearTimeout(patchParseTimer);
-      patchParseTimer = setTimeout(() => {
-        try {
-          const text = patchJsonEditor.value.trim();
-          if (!text) { if (typeof renderPatchJsonSummary === 'function') renderPatchJsonSummary(null); return; }
-          if (typeof parsePatchJsonPayload === 'function') {
-            const parsed = parsePatchJsonPayload(text);
-            state.importedPatchPayload = parsed;
-            if (typeof renderPatchJsonSummary === 'function') renderPatchJsonSummary(parsed);
-          }
-        } catch (e) {
-          const el = getToolDocument().getElementById('u_patchJsonSummary');
-          if (el) {
-            el.style.display = 'block';
-            el.style.background = '#fef2f2';
-            el.style.borderColor = '#fca5a5';
-            el.style.color = '#991b1b';
-            el.textContent = `JSON解析エラー: ${e.message}`;
-          }
-        }
-      }, 400);
-    });
-  }
+// Legacy textarea input handling removed – JSONEditor now manages changes.
+// The previous code that listened for 'input' events on the textarea has been deprecated.
+// JSONEditor instance will invoke its onChange callback defined during initialization.
+
 
   // -------------------------------------------------------------------
   // Main click handler (data-act dispatch)

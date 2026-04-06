@@ -18,6 +18,9 @@ import { resolveApplyScopes } from './reflect/helpers.js';
 import { makeApplyPlanSignature, runPreviewApplyPlan } from './reflect/plan.js';
 import { scheduleGuidedTourLayout } from './ui/tour.js';
 import { setupEventHandlers } from './handlers.js';
+import { initJsonEditor, getJsonEditorInstance, startGuidedTour } from './oss_integrations.js';
+import { loadExternalLibrary, showToast } from './utils.js';
+import { GUIDED_TOUR_STEPS } from './constants.js';
 
 import {
   runDesignExport,
@@ -282,5 +285,101 @@ export function runKintoneUnifiedSuite(options = {}) {
 
   if (options.initialTab) {
     switchTab(options.initialTab);
+  }
+
+  // --- OSS Integrations: Init JSONEditors + Enhanced Tour ---
+  initOssIntegrations();
+}
+
+async function initOssIntegrations() {
+  try {
+    // Load Toastify early for notification usage
+    await loadExternalLibrary('toastify');
+  } catch (e) {
+    console.warn('Toastify load skipped:', e.message);
+  }
+
+  // Initialize JSONEditor for patchJsonEditor container
+  try {
+    const patchContainer = document.getElementById('u_patchJsonEditor')
+      || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document.getElementById('u_patchJsonEditor') : null);
+    if (patchContainer && patchContainer.tagName === 'DIV') {
+      const editor = await initJsonEditor('u_patchJsonEditor', {
+        mode: 'code',
+        modes: ['code', 'tree'],
+        initialValue: {},
+        onChange: () => {
+          // Auto-parse patch JSON on change
+          try {
+            const inst = getJsonEditorInstance('u_patchJsonEditor');
+            if (inst) {
+              const val = inst.get();
+              if (val && typeof val === 'object') {
+                // Trigger patch summary if the function exists
+              }
+            }
+          } catch (e) { /* parse error is normal during typing */ }
+        }
+      });
+      // Add .value compatibility shim for existing code
+      if (editor && patchContainer) {
+        Object.defineProperty(patchContainer, 'value', {
+          get() {
+            try { return editor.getText(); } catch (e) { return ''; }
+          },
+          set(v) {
+            try {
+              if (typeof v === 'string') {
+                if (!v.trim()) { editor.set({}); return; }
+                editor.set(JSON.parse(v));
+              } else {
+                editor.set(v || {});
+              }
+            } catch (e) {
+              try { editor.setText(String(v)); } catch (e2) { /* */ }
+            }
+          },
+          configurable: true
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('JSONEditor (patch) init skipped:', e.message);
+  }
+
+  // Initialize JSONEditor for fieldJson container
+  try {
+    const fieldContainer = document.getElementById('u_fieldJson')
+      || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document.getElementById('u_fieldJson') : null);
+    if (fieldContainer && fieldContainer.tagName === 'DIV') {
+      const editor = await initJsonEditor('u_fieldJson', {
+        mode: 'code',
+        modes: ['code', 'tree'],
+        initialValue: {}
+      });
+      // Add .value compatibility shim
+      if (editor && fieldContainer) {
+        Object.defineProperty(fieldContainer, 'value', {
+          get() {
+            try { return editor.getText(); } catch (e) { return ''; }
+          },
+          set(v) {
+            try {
+              if (typeof v === 'string') {
+                if (!v.trim()) { editor.set({}); return; }
+                editor.set(JSON.parse(v));
+              } else {
+                editor.set(v || {});
+              }
+            } catch (e) {
+              try { editor.setText(String(v)); } catch (e2) { /* */ }
+            }
+          },
+          configurable: true
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('JSONEditor (field) init skipped:', e.message);
   }
 }

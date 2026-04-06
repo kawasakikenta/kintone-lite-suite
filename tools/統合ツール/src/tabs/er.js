@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, safeJsonForScript, nowStamp, downloadText } from '../utils.js';
+import { esc, safeJsonForScript, nowStamp, downloadText, showToast } from '../utils.js';
 import { apiGet, buildApiPrefix, fetchBundle, ensureBundleShape } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { getToolWindow } from '../ui/dialog.js';
@@ -807,7 +807,7 @@ function exportSVG(){
   // cytoscape-svg plugin is not present, so we fallback to a simple message or a data-uri attempt.
   // Actually, standard cytoscape does not natively support SVG without an extension.
   // We can try to use JSON instead or alert the user.
-  alert("SVGエクスポートには追加のプラグイン(cytoscape-svg)が必要です。PNGをご利用ください。");
+  showToast("SVGエクスポートには追加のプラグイン(cytoscape-svg)が必要です。PNGをご利用ください。", 'warn');
 }
 
 // ─── Layout Switching ───
@@ -1653,7 +1653,7 @@ export async function runFieldDependencyMap() {
 
   if (elements.length === 0) {
     try { popup.close(); } catch (e) { /* noop */ }
-    alert('フィールド間の依存関係（計算式等）は見つかりませんでした。');
+    showToast('フィールド間の依存関係（計算式等）は見つかりませんでした。', 'warn');
     setBusy(false);
     return;
   }

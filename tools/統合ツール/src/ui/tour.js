@@ -135,8 +135,39 @@ export function renderGuidedTourStep(options = {}) {
   });
 }
 
-export function openGuidedTour(index = 0) {
+export async function openGuidedTour(index = 0) {
   if (!GUIDED_TOUR_STEPS.length || !ui.tourOverlay) return;
+
+  // Try driver.js enhanced tour first
+  try {
+    const { startGuidedTour: startDriverTour } = await import('../oss_integrations.js');
+    const { switchTab: swTab } = await import('./components.js');
+    const stepsForDriver = GUIDED_TOUR_STEPS.map((step) => {
+      return {
+        selector: step.selector,
+        element: step.selector,
+        title: step.title || '',
+        body: step.body || '',
+        description: step.body || '',
+        side: 'bottom',
+        onHighlightStarted: () => {
+          if (step.tab) swTab(step.tab, { persist: false });
+          if (step.tab && step.subTab) switchSubTab(step.tab, step.subTab, { persist: false });
+        }
+      };
+    });
+    await startDriverTour(stepsForDriver, {
+      onComplete: () => {
+        setStatus('操作ガイドを完了しました。');
+      }
+    });
+    setStatus('操作ガイドを開始しました（driver.js 拡張版）。');
+    return;
+  } catch (e) {
+    console.warn('driver.js tour fallback to custom tour:', e.message);
+  }
+
+  // Fallback: custom tour
   state.guidedTourActive = true;
   state.guidedTourIndex = Math.max(0, Math.min(GUIDED_TOUR_STEPS.length - 1, Number(index) || 0));
   renderGuidedTourStep();
