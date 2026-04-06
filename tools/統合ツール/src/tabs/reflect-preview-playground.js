@@ -272,8 +272,13 @@ export function initReflectPreviewPlayground(ui, setStatus) {
   };
 
   root.addEventListener('click', (ev) => {
-    const modalActionEl = ev.target.closest('[data-rpp-modal-act]');
-    if (st.modal && !modalActionEl && ev.target.closest('.rpp-modal')) return;
+    const insideModalContent = ev.target.closest('.rpp-modal');
+    const rawModalActionEl = ev.target.closest('[data-rpp-modal-act]');
+    // モーダル内(.rpp-modal)をクリックした場合、backdrop のアクションがバブルで拾われないよう制限する
+    const modalActionEl = (insideModalContent && rawModalActionEl && !insideModalContent.contains(rawModalActionEl))
+      ? null
+      : rawModalActionEl;
+    if (st.modal && !modalActionEl && insideModalContent) return;
     const modalAct = modalActionEl?.dataset.rppModalAct;
     if (modalAct) {
       try {
