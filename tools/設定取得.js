@@ -73,6 +73,30 @@
         }),
         googleFontsDmSansMono: Object.freeze({
           cdnUrl: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap"
+        }),
+        jsoneditor: Object.freeze({
+          version: "9.10.3",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.js",
+          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.css"
+        }),
+        toastify: Object.freeze({
+          version: "1.12.0",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/toastify-js",
+          cssUrl: "https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
+        }),
+        jsdiff: Object.freeze({
+          version: "7.0.0",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsdiff/7.0.0/diff.min.js"
+        }),
+        diff2html: Object.freeze({
+          version: "3.4.4",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.js",
+          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.css"
+        }),
+        driver: Object.freeze({
+          version: "1.3.1",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js",
+          cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
         })
       });
       DEFAULT_APP_ID = String(kintone.app.getId() || "");
@@ -103,6 +127,7 @@
       META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
+        reflect: "section",
         field: "json",
         jsconfig: "editor",
         recordMgr: "status",
@@ -162,7 +187,7 @@
           path: "プレビュー反映",
           selector: "#u_footerApply",
           title: "8. 比較先プレビューへ反映する",
-          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」で書き込みます。本番へのデプロイだけ行う場合は右側の「デプロイのみ」を使います。"
+          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」でプレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。"
         },
         {
           tab: "design",
@@ -440,6 +465,14 @@ ${contextLine}`);
     }
   });
 
+  // src/oss_integrations.js
+  var init_oss_integrations = __esm({
+    "src/oss_integrations.js"() {
+      "use strict";
+      init_utils();
+    }
+  });
+
   // src/ui/components.js
   function setComponentUi(uiRefs) {
     ui2 = uiRefs;
@@ -466,6 +499,7 @@ ${contextLine}`);
       init_enrich();
       init_nodeModeUi();
       init_dialog();
+      init_oss_integrations();
       ui2 = {};
     }
   });

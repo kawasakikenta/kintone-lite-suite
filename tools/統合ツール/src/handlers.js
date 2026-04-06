@@ -161,6 +161,12 @@ function normalizeDiffFavoritePath(path) {
   return String(path || '').trim();
 }
 
+function getVisibleReflectNodeIds() {
+  return [...(ui.reflectNodeList?.querySelectorAll('[data-node-open]') || [])]
+    .map((el) => el.dataset.nodeOpen)
+    .filter(Boolean);
+}
+
 // ---------------------------------------------------------------------------
 // Setup all event handlers
 // ---------------------------------------------------------------------------
@@ -212,6 +218,7 @@ export function setupEventHandlers(injected = {}) {
     importPatchJsonFromFile,
     parsePatchJsonPayload,
     renderPatchJsonSummary,
+    populatePatchJsonFromCurrentDiff,
     renderCustomizeResult,
     runBulkFieldRename,
     runDetectUnusedFields,
@@ -811,9 +818,20 @@ export function setupEventHandlers(injected = {}) {
     const subTab = e.target.closest('.subtab');
     if (subTab) {
       const parent = subTab.dataset.subtabParent || '';
-      switchSubTab(parent, subTab.dataset.subtab || '');
+      const nextSubTab = subTab.dataset.subtab || '';
+      switchSubTab(parent, nextSubTab);
       syncDiffOnboardingVisibility();
       if (parent === 'diff' && ui.result) renderResultRows(state.lastDiffRows || []);
+      if (parent === 'reflect') {
+        if (nextSubTab === 'patch' && typeof populatePatchJsonFromCurrentDiff === 'function') {
+          try {
+            populatePatchJsonFromCurrentDiff({ silent: true });
+          } catch (err) { /* ignore until diff exists */ }
+        }
+        renderReflectModeUi();
+        renderReflectMainPanel();
+        renderReflectNodeList();
+      }
       return;
     }
 
@@ -1202,11 +1220,36 @@ export function setupEventHandlers(injected = {}) {
       setStatus('差分のあるセクションのみ選択しました');
       return;
     }
+    if (act === 'applyScopeHighRisk') {
+      const highRiskSections = new Set(
+        getActualDiffRows(state.lastDiffRows || [])
+          .filter((row) => String(row.severity || '').toLowerCase() === 'high')
+          .map((row) => row.sectionKey)
+          .filter(Boolean)
+      );
+      [...ui.applyScopes.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
+        c.checked = highRiskSections.has(c.value);
+      });
+      saveCurrentDialogState();
+      renderReflectSidebar();
+      renderReflectMainPanel();
+      setStatus(highRiskSections.size
+        ? `高重要度の差分があるセクションを選択しました (${highRiskSections.size}件)`
+        : '高重要度の差分セクションはありません');
+      return;
+    }
+    if (act === 'reflectSidebarOverview') {
+      state.reflectActiveSidebarSection = null;
+      renderReflectSidebar();
+      renderReflectMainPanel();
+      setStatus('反映概要を表示しました');
+      return;
+    }
 
     // ----- Reflect mode switching -----
     if (act === 'reflectModeSection') {
-      ui.nodeMode.checked = false;
       state.reflectActiveSidebarSection = null;
+      switchSubTab('reflect', 'section');
       renderReflectModeUi();
       renderReflectMainPanel();
       setStatus('セクション反映モードに切り替えました');
@@ -1217,8 +1260,8 @@ export function setupEventHandlers(injected = {}) {
         setStatus('簡易表示中はノード選択に切り替えられません。「簡易表示」をオフにしてください。');
         return;
       }
-      ui.nodeMode.checked = true;
       state.reflectActiveSidebarSection = null;
+      switchSubTab('reflect', 'node');
       renderReflectModeUi();
       if (state.lastDiffRows && state.lastDiffRows.length > 0 && !state.reflectRows.length) {
         loadReflectRowsFromLastDiff();
@@ -1229,6 +1272,48 @@ export function setupEventHandlers(injected = {}) {
 
     // ----- Reflect node actions -----
     if (act === 'loadReflectNodes') return withGuard(async () => { loadReflectRowsFromLastDiff(); });
+    if (act === 'selectVisibleReflectNodes') {
+      const visibleIds = getVisibleReflectNodeIds();
+      if (!visibleIds.length) {
+        setStatus('表示中のノードがありません');
+        return;
+      }
+      pushReflectUndo();
+      visibleIds.forEach((id) => state.reflectSelectedIds.add(id));
+      renderReflectNodeList();
+      setStatus(`表示中ノードを選択しました (${visibleIds.length}件)`);
+      return;
+    }
+    if (act === 'clearVisibleReflectNodes') {
+      const visibleIds = getVisibleReflectNodeIds();
+      if (!visibleIds.length) {
+        setStatus('表示中のノードがありません');
+        return;
+      }
+      pushReflectUndo();
+      let cleared = 0;
+      visibleIds.forEach((id) => {
+        if (state.reflectSelectedIds.delete(id)) cleared += 1;
+      });
+      renderReflectNodeList();
+      setStatus(`表示中ノードの選択を解除しました (${cleared}件)`);
+      return;
+    }
+    if (act === 'selectHighSeverityReflectNodes') {
+      const highIds = (state.reflectRows || [])
+        .filter((row) => String(row.severity || 'low').toLowerCase() === 'high')
+        .map((row) => row._id)
+        .filter(Boolean);
+      if (!highIds.length) {
+        setStatus('高重要度のノードはありません');
+        return;
+      }
+      pushReflectUndo();
+      highIds.forEach((id) => state.reflectSelectedIds.add(id));
+      renderReflectNodeList();
+      setStatus(`高重要度ノードを選択しました (${highIds.length}件)`);
+      return;
+    }
     if (act === 'selectReflectNodesAll') {
       pushReflectUndo();
       state.reflectSelectedIds = new Set((state.reflectRows || []).map((r) => r._id));
@@ -1357,6 +1442,18 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'patchJsonLoadFile') {
       const input = getToolDocument().getElementById('u_patchJsonFileInput');
       if (input) { input.value = ''; input.click(); }
+      return;
+    }
+    if (act === 'patchJsonUseCurrentDiff') {
+      if (typeof populatePatchJsonFromCurrentDiff !== 'function') {
+        setStatus('差分比較結果からのパッチJSON生成は未対応です', true);
+        return;
+      }
+      try {
+        populatePatchJsonFromCurrentDiff({ force: true });
+      } catch (err) {
+        setStatus(err.message || String(err), true);
+      }
       return;
     }
     if (act === 'patchJsonClear') {

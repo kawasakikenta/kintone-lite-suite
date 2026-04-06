@@ -73,6 +73,30 @@
         }),
         googleFontsDmSansMono: Object.freeze({
           cdnUrl: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap"
+        }),
+        jsoneditor: Object.freeze({
+          version: "9.10.3",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.js",
+          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.css"
+        }),
+        toastify: Object.freeze({
+          version: "1.12.0",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/toastify-js",
+          cssUrl: "https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
+        }),
+        jsdiff: Object.freeze({
+          version: "7.0.0",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsdiff/7.0.0/diff.min.js"
+        }),
+        diff2html: Object.freeze({
+          version: "3.4.4",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.js",
+          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.css"
+        }),
+        driver: Object.freeze({
+          version: "1.3.1",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js",
+          cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
         })
       });
       DEFAULT_APP_ID = String(kintone.app.getId() || "");
@@ -103,6 +127,7 @@
       META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
+        reflect: "section",
         field: "json",
         jsconfig: "editor",
         recordMgr: "status",
@@ -162,7 +187,7 @@
           path: "プレビュー反映",
           selector: "#u_footerApply",
           title: "8. 比較先プレビューへ反映する",
-          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」で書き込みます。本番へのデプロイだけ行う場合は右側の「デプロイのみ」を使います。"
+          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」でプレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。"
         },
         {
           tab: "design",
@@ -313,6 +338,21 @@ ${contextLine}`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
+  function isPreviewRestPrefix(prefix) {
+    return String(prefix || "").includes("/v1/preview");
+  }
+  function assertAllowsMutatingRestCall(prefix, path, method) {
+    const m = String(method || "").toUpperCase();
+    if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
+    if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
+    const rel = String(path || "").replace(/\\/g, "/");
+    if (rel.includes(DEPLOY_PATH_SNIPPET)) {
+      throw new Error(ERR_NO_DEPLOY_API);
+    }
+    if (!isPreviewRestPrefix(prefix)) {
+      throw new Error(ERR_NO_PROD_WRITE);
+    }
+  }
   async function apiGet(prefix, path, params, retries = 3) {
     let err;
     for (let i = 0; i < retries; i++) {
@@ -326,25 +366,23 @@ ${contextLine}`);
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
   async function apiPut(prefix, path, body) {
+    assertAllowsMutatingRestCall(prefix, path, "PUT");
     try {
       return await kintone.api(`${prefix}${path}`, "PUT", body);
     } catch (e) {
       throw apiErrorWithContext(e, { method: "PUT", prefix, path, payload: body });
     }
   }
-  async function apiPost(prefix, path, body) {
-    try {
-      return await kintone.api(`${prefix}${path}`, "POST", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
-    }
-  }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API;
   var init_api = __esm({
     "src/api.js"() {
       "use strict";
       init_constants();
       init_utils();
       init_state();
+      DEPLOY_PATH_SNIPPET = "app/deploy.json";
+      ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+      ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
     }
   });
 
@@ -415,6 +453,11 @@ ${contextLine}`);
 
   // src/ui/components.js
   init_dialog();
+
+  // src/oss_integrations.js
+  init_utils();
+
+  // src/ui/components.js
   var ui2 = {};
   function setComponentUi(uiRefs) {
     ui2 = uiRefs;
@@ -433,24 +476,6 @@ ${contextLine}`);
   // src/tabs/jsconfig-standalone.js
   init_utils();
   init_api();
-  async function deployAndPoll(prefix, app, logs) {
-    logs.push("START デプロイ実行");
-    await apiPost(prefix, "/app/deploy.json", { apps: [{ app, revision: -1 }] });
-    let last = "PROCESSING";
-    for (let i = 0; i < 25; i++) {
-      await new Promise((r) => setTimeout(r, 1500));
-      try {
-        const statusRes = await apiGet(prefix, "/app/deploy.json", { apps: [app] }, 1);
-        const st = statusRes?.apps?.[0]?.status || "UNKNOWN";
-        last = st;
-        logs.push(`  - デプロイ状態: ${st}`);
-        if (st === "SUCCESS" || st === "FAIL" || st === "CANCEL") break;
-      } catch (e) {
-        logs.push(`  - Deploy Status取得失敗: ${e.message || String(e)}`);
-      }
-    }
-    return last;
-  }
   function renderCustomizeResultHtml(data) {
     if (!data) {
       return '<div style="padding:10px;font-size:12px;color:#64748b">データがありません</div>';
@@ -527,11 +552,6 @@ ${contextLine}`);
     setStatus2("JS/CSS設定を反映中...");
     await apiPut(prefix, "/app/customize.json", body);
     const logs = [`OK JS/CSS設定反映（アプリ: ${targetAppId}）`];
-    if (p.deployAfter) {
-      setStatus2("デプロイ実行中...");
-      const st = await deployAndPoll(prefix, targetAppId, logs);
-      logs.push(st === "SUCCESS" ? "OK デプロイ完了" : `NG デプロイ終了ステータス: ${st}`);
-    }
     setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`);
     setStatus2("JS/CSS設定反映完了");
   }
@@ -635,12 +655,6 @@ ${contextLine}`);
     tgtGuest.type = "text";
     tgtGuest.placeholder = "ゲスト（任意）";
     tgtGuest.style.cssText = "width:min(100px,36vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-    const deployAfter = document.createElement("label");
-    deployAfter.style.cssText = "font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer";
-    const deployCb = document.createElement("input");
-    deployCb.type = "checkbox";
-    deployAfter.appendChild(deployCb);
-    deployAfter.appendChild(document.createTextNode("反映後にデプロイ"));
     const applyBtn = document.createElement("button");
     applyBtn.type = "button";
     applyBtn.textContent = "比較先プレビューへ反映";
@@ -658,8 +672,11 @@ ${contextLine}`);
     row2.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px";
     row2.appendChild(tgtApp);
     row2.appendChild(tgtGuest);
-    row2.appendChild(deployAfter);
     bodySlot.appendChild(row2);
+    const deployNote = document.createElement("div");
+    deployNote.style.cssText = "font-size:11px;color:#64748b;margin-bottom:6px;line-height:1.45";
+    deployNote.textContent = "反映後の本番デプロイは管理画面で手動行ってください。";
+    bodySlot.appendChild(deployNote);
     bodySlot.appendChild(applyBtn);
     const uiApi = {
       setJson: (t) => {
@@ -699,7 +716,7 @@ ${contextLine}`);
             targetAppId: tgtApp.value.trim(),
             targetGuestId: tgtGuest.value.trim(),
             jsonText: jsonTa.value,
-            deployAfter: deployCb.checked
+            deployAfter: false
           },
           (m, e) => setStatus(m, e),
           (html) => {

@@ -89,6 +89,30 @@
         }),
         googleFontsDmSansMono: Object.freeze({
           cdnUrl: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap"
+        }),
+        jsoneditor: Object.freeze({
+          version: "9.10.3",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.js",
+          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.css"
+        }),
+        toastify: Object.freeze({
+          version: "1.12.0",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/toastify-js",
+          cssUrl: "https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
+        }),
+        jsdiff: Object.freeze({
+          version: "7.0.0",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsdiff/7.0.0/diff.min.js"
+        }),
+        diff2html: Object.freeze({
+          version: "3.4.4",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.js",
+          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.css"
+        }),
+        driver: Object.freeze({
+          version: "1.3.1",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js",
+          cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
         })
       });
       DEFAULT_APP_ID = String(kintone.app.getId() || "");
@@ -149,6 +173,7 @@
       ]);
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
+        reflect: "section",
         field: "json",
         jsconfig: "editor",
         recordMgr: "status",
@@ -208,7 +233,7 @@
           path: "プレビュー反映",
           selector: "#u_footerApply",
           title: "8. 比較先プレビューへ反映する",
-          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」で書き込みます。本番へのデプロイだけ行う場合は右側の「デプロイのみ」を使います。"
+          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」でプレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。"
         },
         {
           tab: "design",
@@ -294,12 +319,16 @@
     getPreviewStateLabel: () => getPreviewStateLabel,
     getSeverityDisplayLabel: () => getSeverityDisplayLabel,
     getThemeDisplayLabel: () => getThemeDisplayLabel,
+    loadExternalLibrary: () => loadExternalLibrary,
+    loadExternalScript: () => loadExternalScript,
+    loadExternalStyle: () => loadExternalStyle,
     normalize: () => normalize,
     nowStamp: () => nowStamp,
     readTextFile: () => readTextFile,
     relativePathFromRow: () => relativePathFromRow,
     safeJsonForScript: () => safeJsonForScript,
     selectedScopeKeys: () => selectedScopeKeys,
+    showToast: () => showToast,
     stableStringify: () => stableStringify,
     tokenizePath: () => tokenizePath
   });
@@ -438,10 +467,87 @@ ${contextLine}`);
       r.readAsText(file, "utf-8");
     });
   }
+  function loadExternalScript(url) {
+    if (!url) return Promise.resolve();
+    if (loadedScripts.has(url)) return Promise.resolve();
+    if (document.querySelector(`script[src="${url}"]`)) {
+      loadedScripts.add(url);
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = url;
+      script.onload = () => {
+        loadedScripts.add(url);
+        resolve();
+      };
+      script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
+      document.head.appendChild(script);
+    });
+  }
+  function loadExternalStyle(url) {
+    if (!url) return Promise.resolve();
+    if (loadedStyles.has(url)) return Promise.resolve();
+    if (document.querySelector(`link[href="${url}"]`)) {
+      loadedStyles.add(url);
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = url;
+      link.onload = () => {
+        loadedStyles.add(url);
+        resolve();
+      };
+      link.onerror = () => reject(new Error(`Failed to load style: ${url}`));
+      document.head.appendChild(link);
+    });
+  }
+  async function loadExternalLibrary(name) {
+    const lib = EXTERNAL_LIBRARIES[name];
+    if (!lib) throw new Error(`Unknown external library: ${name}`);
+    const promises = [];
+    if (lib.cssUrl) promises.push(loadExternalStyle(lib.cssUrl));
+    if (lib.cdnUrl) promises.push(loadExternalScript(lib.cdnUrl));
+    await Promise.all(promises);
+  }
+  async function showToast(message, type = "info") {
+    try {
+      await loadExternalLibrary("toastify");
+      let bg = "#3b82f6";
+      if (type === "success") bg = "#10b981";
+      if (type === "error") bg = "#ef4444";
+      if (type === "warn") bg = "#f59e0b";
+      window.Toastify({
+        text: message,
+        duration: type === "error" ? 5e3 : 3e3,
+        close: true,
+        gravity: "bottom",
+        position: "right",
+        style: {
+          background: bg,
+          borderRadius: "6px",
+          fontSize: "13px",
+          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)"
+        }
+      }).showToast();
+    } catch (err) {
+      if (type === "error") {
+        console.error(message);
+        alert(message);
+      } else {
+        console.log(`[Toast] ${message}`);
+      }
+    }
+  }
+  var loadedScripts, loadedStyles;
   var init_utils = __esm({
     "src/utils.js"() {
       "use strict";
       init_constants();
+      loadedScripts = /* @__PURE__ */ new Set();
+      loadedStyles = /* @__PURE__ */ new Set();
     }
   });
 
@@ -520,6 +626,33 @@ ${contextLine}`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
+  function isPreviewRestPrefix(prefix) {
+    return String(prefix || "").includes("/v1/preview");
+  }
+  function assertAllowsMutatingRestCall(prefix, path, method) {
+    const m = String(method || "").toUpperCase();
+    if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
+    if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
+    const rel = String(path || "").replace(/\\/g, "/");
+    if (rel.includes(DEPLOY_PATH_SNIPPET)) {
+      throw new Error(ERR_NO_DEPLOY_API);
+    }
+    if (!isPreviewRestPrefix(prefix)) {
+      throw new Error(ERR_NO_PROD_WRITE);
+    }
+  }
+  function assertAllowsMutatingApiUrl(fullPath, method) {
+    const m = String(method || "").toUpperCase();
+    if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
+    if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
+    const fp = String(fullPath || "").replace(/\\/g, "/");
+    if (fp.includes(DEPLOY_PATH_SNIPPET)) {
+      throw new Error(ERR_NO_DEPLOY_API);
+    }
+    if (!/\/v1\/preview(\/|$)/.test(fp)) {
+      throw new Error(ERR_NO_PROD_WRITE);
+    }
+  }
   async function apiGet(prefix, path, params, retries = 3) {
     let err;
     for (let i = 0; i < retries; i++) {
@@ -533,6 +666,7 @@ ${contextLine}`);
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
   async function apiPut(prefix, path, body) {
+    assertAllowsMutatingRestCall(prefix, path, "PUT");
     try {
       return await kintone.api(`${prefix}${path}`, "PUT", body);
     } catch (e) {
@@ -540,6 +674,7 @@ ${contextLine}`);
     }
   }
   async function apiPost(prefix, path, body) {
+    assertAllowsMutatingRestCall(prefix, path, "POST");
     try {
       return await kintone.api(`${prefix}${path}`, "POST", body);
     } catch (e) {
@@ -635,12 +770,16 @@ ${contextLine}`);
     const first = Object.values(revisions).find((value) => value != null && value !== "");
     return first != null ? String(first) : "";
   }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API;
   var init_api = __esm({
     "src/api.js"() {
       "use strict";
       init_constants();
       init_utils();
       init_state();
+      DEPLOY_PATH_SNIPPET = "app/deploy.json";
+      ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+      ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
     }
   });
 
@@ -4215,7 +4354,7 @@ ${contextLine}`);
 
   // src/reflect/nodeModeUi.js
   function isReflectNodeModeEffective() {
-    return !!ui.nodeMode?.checked && !ui.reflectSimpleMode?.checked;
+    return state.activeSubTabs["reflect"] === "node";
   }
   var init_nodeModeUi = __esm({
     "src/reflect/nodeModeUi.js"() {
@@ -4224,7 +4363,387 @@ ${contextLine}`);
     }
   });
 
+  // src/oss_integrations.js
+  var oss_integrations_exports = {};
+  __export(oss_integrations_exports, {
+    destroyGuidedTour: () => destroyGuidedTour,
+    getJsonEditorInstance: () => getJsonEditorInstance,
+    getJsonEditorText: () => getJsonEditorText,
+    getJsonEditorValue: () => getJsonEditorValue,
+    initJsonEditor: () => initJsonEditor,
+    renderRichDiff: () => renderRichDiff,
+    startGuidedTour: () => startGuidedTour
+  });
+  async function initJsonEditor(containerId, options = {}) {
+    await loadExternalLibrary("jsoneditor");
+    const container = document.getElementById(containerId);
+    if (!container) return null;
+    if (editorInstances[containerId]) {
+      try {
+        editorInstances[containerId].destroy();
+      } catch (e) {
+      }
+    }
+    const JSONEditor = window.JSONEditor;
+    if (!JSONEditor) {
+      console.warn("JSONEditor not loaded");
+      return null;
+    }
+    const defaultOpts = {
+      mode: options.mode || "code",
+      modes: options.modes || ["code", "tree", "view"],
+      language: "ja",
+      mainMenuBar: options.mainMenuBar !== false,
+      statusBar: options.statusBar !== false,
+      search: options.search !== false,
+      onChange: options.onChange || null,
+      onError: options.onError || null
+    };
+    const editor = new JSONEditor(container, defaultOpts);
+    if (options.initialValue !== void 0) {
+      try {
+        editor.set(options.initialValue);
+      } catch (e) {
+        try {
+          editor.setText(typeof options.initialValue === "string" ? options.initialValue : JSON.stringify(options.initialValue, null, 2));
+        } catch (e2) {
+        }
+      }
+    }
+    editorInstances[containerId] = editor;
+    return editor;
+  }
+  function getJsonEditorInstance(containerId) {
+    return editorInstances[containerId] || null;
+  }
+  function getJsonEditorValue(containerId) {
+    const editor = editorInstances[containerId];
+    if (!editor) return null;
+    try {
+      return editor.get();
+    } catch (e) {
+      try {
+        const text = editor.getText();
+        return JSON.parse(text);
+      } catch (e2) {
+        return null;
+      }
+    }
+  }
+  function getJsonEditorText(containerId) {
+    const editor = editorInstances[containerId];
+    if (!editor) return "";
+    try {
+      return editor.getText();
+    } catch (e) {
+      return "";
+    }
+  }
+  function escRichDiffHtml(value) {
+    return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function renderPlainCompare(leftStr, rightStr, outputElement, options = {}) {
+    const leftLabel = options.leftLabel || "比較元";
+    const rightLabel = options.rightLabel || "比較先";
+    const message = options.message || "差分ライブラリの読み込みに失敗したため、プレーン比較を表示しています。";
+    outputElement.innerHTML = `
+    <div style="display:grid;gap:8px">
+      <div style="padding:8px 10px;border:1px solid #fde68a;border-radius:8px;background:#fffbeb;color:#92400e;font-size:11px;line-height:1.5">${escRichDiffHtml(message)}</div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
+        <section style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff">
+          <div style="padding:8px 10px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11px;font-weight:700">${escRichDiffHtml(leftLabel)}</div>
+          <pre style="margin:0;padding:10px;max-height:360px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">${escRichDiffHtml(leftStr)}</pre>
+        </section>
+        <section style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff">
+          <div style="padding:8px 10px;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:11px;font-weight:700">${escRichDiffHtml(rightLabel)}</div>
+          <pre style="margin:0;padding:10px;max-height:360px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">${escRichDiffHtml(rightStr)}</pre>
+        </section>
+      </div>
+    </div>`;
+  }
+  function renderFallbackCell(text, tone) {
+    const toneStyle = {
+      same: "background:#ffffff;color:#0f172a;",
+      removed: "background:#fef2f2;color:#991b1b;",
+      added: "background:#ecfdf5;color:#065f46;"
+    }[tone] || "background:#ffffff;color:#0f172a;";
+    if (!text) {
+      return `<div style="padding:10px;color:#94a3b8;font-size:11px;font-style:italic">（なし）</div>`;
+    }
+    return `<pre style="margin:0;padding:10px;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;${toneStyle}">${escRichDiffHtml(text)}</pre>`;
+  }
+  function buildLocalLineDiffOps(leftLines, rightLines) {
+    const n = leftLines.length;
+    const m = rightLines.length;
+    if (n * m > 9e4) return null;
+    const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i2 = n - 1; i2 >= 0; i2 -= 1) {
+      for (let j2 = m - 1; j2 >= 0; j2 -= 1) {
+        dp[i2][j2] = leftLines[i2] === rightLines[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
+      }
+    }
+    const ops = [];
+    let i = 0;
+    let j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && leftLines[i] === rightLines[j]) {
+        ops.push({ type: "same", left: leftLines[i], right: rightLines[j] });
+        i += 1;
+        j += 1;
+        continue;
+      }
+      const down = i < n ? dp[i + 1][j] : -1;
+      const right = j < m ? dp[i][j + 1] : -1;
+      const diag = i < n && j < m ? dp[i + 1][j + 1] : -1;
+      if (i < n && j < m && diag >= down && diag >= right) {
+        ops.push({ type: "replace", left: leftLines[i], right: rightLines[j] });
+        i += 1;
+        j += 1;
+        continue;
+      }
+      if (j < m && (i >= n || right >= down)) {
+        ops.push({ type: "add", right: rightLines[j] });
+        j += 1;
+      } else if (i < n) {
+        ops.push({ type: "del", left: leftLines[i] });
+        i += 1;
+      } else {
+        break;
+      }
+    }
+    return ops;
+  }
+  function buildLocalCharDiffHtml(leftText, rightText) {
+    const a = [...String(leftText || "")];
+    const b = [...String(rightText || "")];
+    if (!a.length || !b.length) return null;
+    if (a.length * b.length > 2e4) return null;
+    const dp = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+    for (let i2 = 1; i2 <= a.length; i2 += 1) {
+      for (let j2 = 1; j2 <= b.length; j2 += 1) {
+        dp[i2][j2] = a[i2 - 1] === b[j2 - 1] ? dp[i2 - 1][j2 - 1] + 1 : Math.max(dp[i2 - 1][j2], dp[i2][j2 - 1]);
+      }
+    }
+    const ops = [];
+    let i = a.length;
+    let j = b.length;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+        ops.push({ type: "same", ch: a[i - 1] });
+        i -= 1;
+        j -= 1;
+      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        ops.push({ type: "add", ch: b[j - 1] });
+        j -= 1;
+      } else if (i > 0) {
+        ops.push({ type: "del", ch: a[i - 1] });
+        i -= 1;
+      } else {
+        break;
+      }
+    }
+    ops.reverse();
+    let left = "";
+    let right = "";
+    for (const op of ops) {
+      if (op.type === "same") {
+        const ch = escRichDiffHtml(op.ch);
+        left += ch;
+        right += ch;
+      } else if (op.type === "del") {
+        left += `<mark style="background:#fecaca;color:#991b1b;border-radius:3px;padding:0 2px">${escRichDiffHtml(op.ch)}</mark>`;
+      } else {
+        right += `<mark style="background:#bbf7d0;color:#065f46;border-radius:3px;padding:0 2px">${escRichDiffHtml(op.ch)}</mark>`;
+      }
+    }
+    return { left, right };
+  }
+  function renderLocalDiffLine(lineNo, contentHtml, tone = "same") {
+    const toneStyle = {
+      same: "background:#ffffff;color:#0f172a;",
+      removed: "background:#fef2f2;color:#991b1b;",
+      added: "background:#ecfdf5;color:#065f46;",
+      pad: "background:#f8fafc;color:#94a3b8;"
+    }[tone] || "background:#ffffff;color:#0f172a;";
+    return `<div style="display:flex;min-height:1.6em;line-height:1.6;white-space:pre-wrap;word-break:break-word;${toneStyle}">
+    <span style="min-width:38px;display:inline-block;text-align:right;margin-right:8px;padding:0 6px 0 8px;border-right:1px solid #e2e8f0;font-size:10px;color:#64748b;flex-shrink:0">${lineNo || ""}</span>
+    <span style="display:block;flex:1;padding:0 8px 0 0">${contentHtml || ""}</span>
+  </div>`;
+  }
+  function renderLocalRichDiff(leftStr, rightStr, outputElement, options = {}) {
+    const leftLabel = options.leftLabel || "比較元";
+    const rightLabel = options.rightLabel || "比較先";
+    const leftLines = String(leftStr || "").split("\n");
+    const rightLines = String(rightStr || "").split("\n");
+    const ops = buildLocalLineDiffOps(leftLines, rightLines);
+    if (!ops) {
+      renderPlainCompare(leftStr, rightStr, outputElement, {
+        leftLabel,
+        rightLabel,
+        message: "差分サイズが大きいため、プレーン比較を表示しています。"
+      });
+      return;
+    }
+    let leftHtml = "";
+    let rightHtml = "";
+    let leftNo = 0;
+    let rightNo = 0;
+    for (const op of ops) {
+      if (op.type === "same") {
+        leftNo += 1;
+        rightNo += 1;
+        leftHtml += renderLocalDiffLine(leftNo, escRichDiffHtml(op.left || ""), "same");
+        rightHtml += renderLocalDiffLine(rightNo, escRichDiffHtml(op.right || ""), "same");
+        continue;
+      }
+      if (op.type === "replace") {
+        leftNo += 1;
+        rightNo += 1;
+        const charDiff = options.highlightChars === false ? null : buildLocalCharDiffHtml(op.left, op.right);
+        leftHtml += renderLocalDiffLine(leftNo, charDiff ? charDiff.left : escRichDiffHtml(op.left || ""), "removed");
+        rightHtml += renderLocalDiffLine(rightNo, charDiff ? charDiff.right : escRichDiffHtml(op.right || ""), "added");
+        continue;
+      }
+      if (op.type === "del") {
+        leftNo += 1;
+        leftHtml += renderLocalDiffLine(leftNo, escRichDiffHtml(op.left || ""), "removed");
+        rightHtml += renderLocalDiffLine("", "", "pad");
+        continue;
+      }
+      rightNo += 1;
+      leftHtml += renderLocalDiffLine("", "", "pad");
+      rightHtml += renderLocalDiffLine(rightNo, escRichDiffHtml(op.right || ""), "added");
+    }
+    outputElement.innerHTML = `
+    <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff">
+      <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+        <thead>
+          <tr>
+            <th style="width:50%;padding:8px 10px;background:#f8fafc;border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;text-align:left;font-size:11px;font-weight:700">${escRichDiffHtml(leftLabel)}</th>
+            <th style="width:50%;padding:8px 10px;background:#f8fafc;border-bottom:1px solid #e2e8f0;text-align:left;font-size:11px;font-weight:700">${escRichDiffHtml(rightLabel)}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="vertical-align:top;border-right:1px solid #e2e8f0"><div style="max-height:360px;overflow:auto">${leftHtml || renderFallbackCell("", "same")}</div></td>
+            <td style="vertical-align:top"><div style="max-height:360px;overflow:auto">${rightHtml || renderFallbackCell("", "same")}</div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+  }
+  async function renderRichDiff(leftText, rightText, outputElement, options = {}) {
+    const leftLabel = options.leftLabel || "比較元";
+    const rightLabel = options.rightLabel || "比較先";
+    const leftStr = typeof leftText === "string" ? leftText : JSON.stringify(leftText, null, 2);
+    const rightStr = typeof rightText === "string" ? rightText : JSON.stringify(rightText, null, 2);
+    try {
+      renderLocalRichDiff(leftStr, rightStr, outputElement, {
+        ...options,
+        leftLabel,
+        rightLabel
+      });
+    } catch (err) {
+      renderPlainCompare(leftStr, rightStr, outputElement, {
+        leftLabel,
+        rightLabel,
+        message: `ローカル差分描画に失敗したため、プレーン比較を表示しています。`
+      });
+      throw err;
+    }
+  }
+  async function startGuidedTour(steps, options = {}) {
+    await loadExternalLibrary("driver");
+    const driverModule = window.driver;
+    if (!driverModule) {
+      console.warn("driver.js not loaded");
+      return;
+    }
+    if (driverInstance) {
+      try {
+        driverInstance.destroy();
+      } catch (e) {
+      }
+    }
+    driverInstance = driverModule.driver({
+      showProgress: true,
+      allowClose: true,
+      animate: true,
+      overlayColor: "rgba(0, 0, 0, 0.55)",
+      stagePadding: 8,
+      stageRadius: 8,
+      popoverClass: "kus-driver-popover",
+      nextBtnText: "次へ",
+      prevBtnText: "前へ",
+      doneBtnText: "完了",
+      progressText: "{{current}} / {{total}}",
+      onDestroyed: () => {
+        driverInstance = null;
+        if (options.onComplete) options.onComplete();
+      },
+      steps: steps.map((step) => ({
+        element: step.selector || step.element,
+        popover: {
+          title: step.title,
+          description: step.body || step.description || "",
+          side: step.side || "bottom",
+          align: step.align || "start"
+        }
+      }))
+    });
+    driverInstance.drive();
+  }
+  function destroyGuidedTour() {
+    if (driverInstance) {
+      try {
+        driverInstance.destroy();
+      } catch (e) {
+      }
+      driverInstance = null;
+    }
+  }
+  var editorInstances, driverInstance;
+  var init_oss_integrations = __esm({
+    "src/oss_integrations.js"() {
+      "use strict";
+      init_utils();
+      editorInstances = {};
+      driverInstance = null;
+    }
+  });
+
   // src/ui/components.js
+  var components_exports = {};
+  __export(components_exports, {
+    buildReflectAssistHtml: () => buildReflectAssistHtml,
+    renderAppIdConfirmSection: () => renderAppIdConfirmSection,
+    renderBundleState: () => renderBundleState,
+    renderDiffFilterOptions: () => renderDiffFilterOptions2,
+    renderDiffSelectionState: () => renderDiffSelectionState2,
+    renderDiffSuggestionChips: () => renderDiffSuggestionChips2,
+    renderDiffWarningBox: () => renderDiffWarningBox2,
+    renderIgnoreKeyChips: () => renderIgnoreKeyChips,
+    renderLookupMapRows: () => renderLookupMapRows,
+    renderReflectAssistPanel: () => renderReflectAssistPanel,
+    renderReflectFooterBadges: () => renderReflectFooterBadges,
+    renderReflectMainPanel: () => renderReflectMainPanel,
+    renderReflectModeUi: () => renderReflectModeUi,
+    renderReflectNodeDetail: () => renderReflectNodeDetail,
+    renderReflectNodeList: () => renderReflectNodeList,
+    renderReflectPlanInline: () => renderReflectPlanInline,
+    renderReflectSidebar: () => renderReflectSidebar,
+    renderScopeChips: () => renderScopeChips,
+    setBusy: () => setBusy,
+    setComponentDeps: () => setComponentDeps,
+    setComponentUi: () => setComponentUi,
+    setSettingsExportScopeSelection: () => setSettingsExportScopeSelection,
+    setStatus: () => setStatus,
+    switchSubTab: () => switchSubTab,
+    switchTab: () => switchTab,
+    syncApplyScopesFromSidebar: () => syncApplyScopesFromSidebar,
+    syncLookupMapFromRows: () => syncLookupMapFromRows,
+    syncReflectSimpleLayout: () => syncReflectSimpleLayout
+  });
   function setComponentUi(uiRefs) {
     ui3 = uiRefs;
   }
@@ -4254,6 +4773,9 @@ ${contextLine}`);
     const fallback = state.activeSubTabs[parentKey] || tabs[0]?.dataset.subtab || "";
     const key = tabs.some((tab) => tab.dataset.subtab === subKey) ? subKey : fallback;
     state.activeSubTabs[parentKey] = key;
+    if (parentKey === "reflect" && ui3.nodeMode) {
+      ui3.nodeMode.checked = key === "node";
+    }
     tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.subtab === key));
     panes.forEach((pane) => pane.classList.toggle("active", pane.dataset.subpane === key));
     if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
@@ -4340,6 +4862,17 @@ ${contextLine}`);
       (item) => `<button type="button" class="btn sub" data-act="addSuggestedIgnore" data-key="${esc(item.key)}" style="font-size:11px;padding:4px 8px">＋${esc(item.key)} <span style="opacity:.8">(${item.count})</span></button>`
     ).join("");
   }
+  function renderDiffFilterOptions2() {
+    if (!ui3.diffFilterSection) return;
+    const sections = [...new Set([...(state.lastDiffRows || []).map((r) => r.sectionKey), ...(state.lastFetchIssues || []).map((r) => r.sectionKey)].filter(Boolean))];
+    const current = state.diffFilterSection || ui3.diffFilterSection.value || "";
+    ui3.diffFilterSection.innerHTML = '<option value="">全セクション</option>' + sections.map((secKey) => {
+      const label = SECTION_DEFS.find((d) => d.key === secKey)?.label || secKey;
+      return `<option value="${esc(secKey)}">${esc(label)}</option>`;
+    }).join("");
+    ui3.diffFilterSection.value = sections.includes(current) ? current : "";
+    state.diffFilterSection = ui3.diffFilterSection.value;
+  }
   function renderDiffSelectionState2() {
     if (!ui3.diffSelectionState) return;
     const total = (state.lastDiffRows || []).length;
@@ -4352,6 +4885,22 @@ ${contextLine}`);
       return;
     }
     ui3.diffSelectionState.textContent = `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / 出力対象 ${resolveDiffExportMode2() === "all" ? "全差分" : resolveDiffExportMode2() === "selected" ? "選択差分" : resolveDiffExportMode2() === "visible" ? "現在表示中" : "全差分"} / 出力内容 ${getDiffExportContentLabel2(resolveDiffExportContentMode2())} / 正規化 ${normalization.join(", ") || "-"}`;
+  }
+  function renderDiffWarningBox2() {
+    if (!ui3.diffWarnBox) return;
+    const warning = deps.buildDiffWarningInfo(state.lastDiffRows, state.lastFetchIssues);
+    if (!warning.threshold) {
+      ui3.diffWarnBox.style.display = "none";
+      ui3.diffWarnBox.textContent = "";
+      return;
+    }
+    if (!warning.exceeded) {
+      ui3.diffWarnBox.style.display = "none";
+      ui3.diffWarnBox.textContent = "";
+      return;
+    }
+    ui3.diffWarnBox.style.display = "block";
+    ui3.diffWarnBox.textContent = `差分 ${warning.diffCount}件 + API取得失敗 ${warning.issueCount}件 = ${warning.total}件 が警告しきい値 ${warning.threshold}件以上です。`;
   }
   function renderLookupMapRows() {
     const container = getToolDocument().getElementById("u_lookupMapRows");
@@ -4414,7 +4963,7 @@ ${contextLine}`);
     const sourceText = describeBundle("比較元", state.importedSourceBundle || state.lastSourceBundle, state.importedSourceName, !!state.importedSourceBundle);
     const targetText = describeBundle("比較先", state.importedTargetBundle || state.lastTargetBundle, state.importedTargetName, !!state.importedTargetBundle);
     ui3.bundleState.textContent = `${sourceText} / ${targetText}`;
-    const rangeMode = ui3.nodeMode?.checked && !ui3.reflectSimpleMode?.checked ? `選択ノード(${state.reflectSelectedIds.size})` : ui3.applyDiffOnly?.checked ? "前回差分セクションのみ" : "選択セクション";
+    const rangeMode = isReflectNodeModeEffective() ? `選択ノード(${state.reflectSelectedIds.size})` : ui3.applyDiffOnly?.checked ? "前回差分セクションのみ" : "選択セクション";
     let readMeta = "";
     try {
       const c = deps.commonParams();
@@ -4531,11 +5080,10 @@ ${contextLine}`);
     const planTime = planReady ? new Date(state.lastApplyPlan.createdAt).toLocaleString() : "";
     const backupReady = !!ui3.autoBackupPreview?.checked;
     const stopOnError = !!ui3.stopOnError?.checked;
-    const deployAfter = !!ui3.doDeploy?.checked;
     const backupState = ui3.backupStatus && ui3.backupStatus.style.display !== "none" ? String(ui3.backupStatus.textContent || "").trim() : "";
     const targetCountLabel = isNode ? "選択ノード" : "実反映セクション";
     const targetCountValue = isNode ? selectedNodeRows.length : scopeInfo.effectiveScopes.length;
-    const safetyLabel = backupReady && stopOnError && !deployAfter ? "推奨設定" : "要確認";
+    const safetyLabel = backupReady && stopOnError ? "推奨設定" : "要確認";
     const warnings = [];
     if (!diffReady) warnings.push("差分比較が未実行、または条件が変わっています。まず差分を確定してください。");
     if (!scopeInfo.baseScopes.length && !isNode) warnings.push("左の一覧から反映セクションを選択してください。");
@@ -4596,7 +5144,7 @@ ${contextLine}`);
       <div class="reflect-summary-card">
         <div class="reflect-summary-label">安全設定</div>
         <div class="reflect-summary-value">${esc(safetyLabel)}</div>
-        <div class="reflect-summary-meta">バックアップ ${backupReady ? "ON" : "OFF"} / エラー時 ${stopOnError ? "中断" : "継続"} / デプロイ ${deployAfter ? "ON" : "OFF"}</div>
+        <div class="reflect-summary-meta">バックアップ ${backupReady ? "ON" : "OFF"} / エラー時 ${stopOnError ? "中断" : "継続"} / 本番デプロイは管理画面で手動</div>
       </div>
       <div class="reflect-summary-card">
         <div class="reflect-summary-label">プラン状態</div>
@@ -4609,7 +5157,7 @@ ${contextLine}`);
       ${nodeLoadAction}
       ${scopeDiffAction}
     </div>
-    <p class="reflect-action-hint">プラン確認・バックアップ・プレビュー反映・本番デプロイは<strong>画面下の固定バー</strong>から操作します。</p>
+    <p class="reflect-action-hint">プラン確認・バックアップ・プレビュー反映は<strong>画面下の固定バー</strong>から操作します。本番デプロイはツールから実行できません。</p>
     ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join("") : '<div class="reflect-good">現在の条件でそのまま進めます。変更前の確認は「反映プラン確認」で行えます。</div>'}
     ${backupState ? `<div class="reflect-good">${esc(backupState)}</div>` : ""}
   </div>`;
@@ -4973,18 +5521,22 @@ ${contextLine}`);
     if (activeTab === "diff") {
       const cols = deps.renderRowColumns(row, useCharDiff);
       bodyHtml = `<div class="reflect-node-detail-note">差分表示です。反映元を「比較元 / 比較先」で切り替えると、実際に採用される値は「反映値」タブで確認できます。</div>
-      <div class="diff-view">
-        <div class="reflect-node-compare">
-          <div class="reflect-node-card">
-            <div class="reflect-node-card-head">比較元</div>
-            <div class="reflect-node-card-body">${cols.left}</div>
-          </div>
-          <div class="reflect-node-card">
-            <div class="reflect-node-card-head">比較先</div>
-            <div class="reflect-node-card-body">${cols.right}</div>
+      <div id="u_richDiffContainer_${esc(row._id)}" class="reflect-rich-diff-container" style="margin-bottom:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:auto;max-height:400px;"></div>
+      <details style="margin-top:4px">
+        <summary style="cursor:pointer;font-size:11px;color:#64748b;padding:4px 0">従来の差分表示を開く</summary>
+        <div class="diff-view">
+          <div class="reflect-node-compare">
+            <div class="reflect-node-card">
+              <div class="reflect-node-card-head">比較元</div>
+              <div class="reflect-node-card-body">${cols.left}</div>
+            </div>
+            <div class="reflect-node-card">
+              <div class="reflect-node-card-head">比較先</div>
+              <div class="reflect-node-card-body">${cols.right}</div>
+            </div>
           </div>
         </div>
-      </div>`;
+      </details>`;
     } else {
       const value = activeTab === "src" ? row.left : activeTab === "tgt" ? row.right : deps.reflectRowDesiredValue(row);
       const title = activeTab === "src" ? "比較元JSON" : activeTab === "tgt" ? "比較先JSON" : `反映値JSON (${mode === "src" ? "比較元" : "比較先"}を採用)`;
@@ -5022,6 +5574,46 @@ ${contextLine}`);
     </div>
     ${bodyHtml}
   </div>`;
+    if (activeTab === "diff") {
+      const containerId = `u_richDiffContainer_${row._id}`;
+      setTimeout(() => {
+        const diffContainer = getToolDocument().getElementById(containerId);
+        if (diffContainer) {
+          const leftStr = deps.stringifyForDiff(row.left);
+          const rightStr = deps.stringifyForDiff(row.right);
+          renderRichDiff(leftStr, rightStr, diffContainer, {
+            fileName: row.path || "settings.json",
+            leftLabel: "比較元",
+            rightLabel: "比較先",
+            sideBySide: true
+          }).catch((err) => {
+            diffContainer.innerHTML = `<div style="padding:8px;color:#64748b;font-size:11px">リッチ差分表示の読み込み中にエラーが発生しました。下の「従来の差分表示」をご利用ください。</div>`;
+            console.warn("Rich diff error:", err);
+          });
+        }
+      }, 50);
+    }
+  }
+  function renderAppIdConfirmSection(appIdRefs) {
+    if (!appIdRefs || !appIdRefs.length) return '<div style="color:#64748b;font-size:12px;margin-bottom:8px">関連アプリIDなし</div>';
+    const rows = appIdRefs.map(
+      (r) => `<tr><td style="padding:3px 8px;font-size:11px">${esc(r.fieldCode)}</td><td style="padding:3px 8px;font-size:11px">${esc(r.type)}</td><td style="padding:3px 8px;font-size:11px;font-weight:700">${esc(r.refAppId)}</td><td style="padding:3px 8px;font-size:11px;color:${r.convertedAppId ? "#2563eb" : "#94a3b8"}">${r.convertedAppId ? `→ ${esc(r.convertedAppId)}` : "-"}</td><td style="padding:3px 8px;font-size:11px">${esc(r.section)}</td></tr>`
+    ).join("");
+    return `<div style="margin-bottom:10px">
+    <div style="font-weight:600;font-size:12px;margin-bottom:4px;color:#dc2626">関連アプリID一覧 (${appIdRefs.length}件)</div>
+    <div style="max-height:160px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px">
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr style="background:#f1f5f9">
+          <th style="padding:4px 8px;text-align:left">フィールド</th>
+          <th style="padding:4px 8px;text-align:left">種別</th>
+          <th style="padding:4px 8px;text-align:left">参照先アプリID</th>
+          <th style="padding:4px 8px;text-align:left">変換後</th>
+          <th style="padding:4px 8px;text-align:left">セクション</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
   }
   var ui3, deps;
   var init_components = __esm({
@@ -5035,6 +5627,7 @@ ${contextLine}`);
       init_enrich();
       init_nodeModeUi();
       init_dialog();
+      init_oss_integrations();
       ui3 = {};
       deps = {
         buildDiffWarningInfo: null,
@@ -5474,11 +6067,6 @@ ${contextLine}`);
       lookupMap
     });
     logs.push("OK フィールド反映");
-    if (ui.deployField.checked) {
-      setStatus("デプロイ実行中...");
-      await apiPost(prefix, "/app/deploy.json", { apps: [{ app, revision: -1 }] });
-      logs.push("OK デプロイ実行");
-    }
     ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`;
     setStatus("フィールド追加処理完了");
   }
@@ -5633,24 +6221,6 @@ ${contextLine}`);
     const skip = logs.filter((l) => l.startsWith("SKIP ")).length;
     logs.push("");
     logs.push(`=== 完了: OK ${ok} / NG ${ng} / SKIP ${skip} ===`);
-  }
-  async function deployAndPoll(prefix, app, logs) {
-    logs.push("START デプロイ実行");
-    await apiPost(prefix, "/app/deploy.json", { apps: [{ app, revision: -1 }] });
-    let last = "PROCESSING";
-    for (let i = 0; i < 25; i++) {
-      await new Promise((r) => setTimeout(r, 1500));
-      try {
-        const statusRes = await apiGet(prefix, "/app/deploy.json", { apps: [app] }, 1);
-        const st = statusRes?.apps?.[0]?.status || "UNKNOWN";
-        last = st;
-        logs.push(`  - デプロイ状態: ${st}`);
-        if (st === "SUCCESS" || st === "FAIL" || st === "CANCEL") break;
-      } catch (e) {
-        logs.push(`  - Deploy Status取得失敗: ${e.message || String(e)}`);
-      }
-    }
-    return last;
   }
   var init_helpers = __esm({
     "src/reflect/helpers.js"() {
@@ -5919,6 +6489,7 @@ ${contextLine}`);
         let _err;
         for (let _r = 0; _r <= 2; _r++) {
           try {
+            assertAllowsMutatingRestCall(prefix, req.path, req.method);
             await kintone.api(`${prefix}${req.path}`, req.method, req.body);
             _err = null;
             break;
@@ -6057,6 +6628,309 @@ ${contextLine}`);
     }
     return { filename, payload };
   }
+  function resolvePatchSectionKey(name) {
+    const raw = String(name || "").trim();
+    if (!raw) return "";
+    const def = SECTION_DEFS.find((item) => item.key === raw || item.label === raw);
+    return def?.key || raw;
+  }
+  function getPatchEditorText() {
+    try {
+      const editor = getJsonEditorInstance("u_patchJsonEditor");
+      if (editor) return editor.getText() || "";
+    } catch (e) {
+    }
+    const el = getToolDocument().getElementById("u_patchJsonEditor");
+    if (!el) return "";
+    if (typeof el.value === "string") return el.value;
+    return typeof el.textContent === "string" ? el.textContent : "";
+  }
+  function setPatchEditorValue(value) {
+    const text = typeof value === "string" ? value : JSON.stringify(value || {}, null, 2);
+    try {
+      const editor = getJsonEditorInstance("u_patchJsonEditor");
+      if (editor) {
+        editor.set(typeof value === "string" ? JSON.parse(value || "{}") : value || {});
+        return;
+      }
+    } catch (e) {
+      try {
+        const editor = getJsonEditorInstance("u_patchJsonEditor");
+        if (editor) {
+          editor.setText(text);
+          return;
+        }
+      } catch (e2) {
+      }
+    }
+    const el = getToolDocument().getElementById("u_patchJsonEditor");
+    if (el && typeof el.value !== "undefined") el.value = text;
+  }
+  function isPatchEditorEffectivelyEmpty(text) {
+    const raw = String(text || "").trim();
+    return !raw || raw === "{}" || raw === "null";
+  }
+  function normalizePatchRows(sectionKey, rows) {
+    const def = SECTION_DEFS.find((item) => item.key === sectionKey);
+    return (Array.isArray(rows) ? rows : []).map((row, index) => ({
+      _id: `patch:${sectionKey}:${index}`,
+      sectionKey,
+      section: def?.label || sectionKey,
+      type: String(row?.type || "changed"),
+      path: String(row?.path || sectionKey),
+      left: row?.sourceValue,
+      right: row?.targetValue,
+      moved: !!row?.moved,
+      movedFrom: row?.movedFrom,
+      movedTo: row?.movedTo,
+      arrayKey: row?.arrayKey,
+      arrayKeyValue: row?.arrayKeyValue,
+      reasonSummary: row?.reasonSummary || "",
+      renameCandidate: row?.renameCandidate || null,
+      impactCount: row?.impactCount || 0,
+      impactRefs: Array.isArray(row?.impactRefs) ? row.impactRefs : []
+    }));
+  }
+  function buildPatchDiffPreviewPayload(payload) {
+    const sourceView = {
+      app: payload?.source || {},
+      sections: {}
+    };
+    const targetView = {
+      app: payload?.target || {},
+      sections: {}
+    };
+    const order = new Map(SECTION_DEFS.map((item, index) => [item.key, index]));
+    const sectionKeys = Object.keys(payload?.sections || {}).sort((a, b) => {
+      const ao = order.has(a) ? order.get(a) : 999;
+      const bo = order.has(b) ? order.get(b) : 999;
+      if (ao !== bo) return ao - bo;
+      return String(a).localeCompare(String(b));
+    });
+    sectionKeys.forEach((sectionKey) => {
+      const def = SECTION_DEFS.find((item) => item.key === sectionKey);
+      const label = def?.label || sectionKey;
+      const rows = normalizePatchRows(sectionKey, payload.sections[sectionKey]).sort((a, b) => String(a.path || "").localeCompare(String(b.path || "")));
+      sourceView.sections[label] = rows.map((row) => ({
+        path: row.path,
+        type: row.type,
+        value: row.left === void 0 ? "（なし）" : row.left
+      }));
+      targetView.sections[label] = rows.map((row) => ({
+        path: row.path,
+        type: row.type,
+        value: row.right === void 0 ? "（なし）" : row.right
+      }));
+    });
+    return {
+      leftText: JSON.stringify(sourceView, null, 2),
+      rightText: JSON.stringify(targetView, null, 2)
+    };
+  }
+  function clearPatchJsonDiff(message) {
+    const el = getToolDocument().getElementById("u_patchJsonDiff");
+    if (!el) return;
+    el.innerHTML = `<div style="padding:8px;color:#64748b;font-size:11px">${esc(message || "パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。")}</div>`;
+  }
+  function renderPatchJsonDiff(payload) {
+    const el = getToolDocument().getElementById("u_patchJsonDiff");
+    if (!el) return;
+    if (!payload || !payload.sections || !Object.keys(payload.sections).length) {
+      clearPatchJsonDiff();
+      return;
+    }
+    const seq = ++patchJsonDiffSeq;
+    clearTimeout(patchJsonDiffTimer);
+    el.innerHTML = '<div style="padding:8px;color:#64748b;font-size:11px">JSON差分比較を描画中...</div>';
+    patchJsonDiffTimer = window.setTimeout(async () => {
+      try {
+        const preview = buildPatchDiffPreviewPayload(payload);
+        await renderRichDiff(preview.leftText, preview.rightText, el, {
+          fileName: "patch-preview.json",
+          leftLabel: "比較元",
+          rightLabel: "比較先",
+          sideBySide: true
+        });
+        if (seq !== patchJsonDiffSeq) return;
+      } catch (err) {
+        if (seq !== patchJsonDiffSeq) return;
+        el.innerHTML = `<div style="padding:8px;color:#b91c1c;font-size:11px">JSON差分比較の描画に失敗しました: ${esc(err?.message || String(err))}</div>`;
+      }
+    }, 120);
+  }
+  function parsePatchJsonPayload(input) {
+    const payload = typeof input === "string" ? JSON.parse(input) : deepClone(input);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("パッチJSONはオブジェクト形式で入力してください");
+    }
+    const rawSections = payload.sections;
+    if (!rawSections || typeof rawSections !== "object" || Array.isArray(rawSections)) {
+      throw new Error("パッチJSONに sections がありません");
+    }
+    const normalizedSections = {};
+    Object.entries(rawSections).forEach(([name, rows]) => {
+      const key = resolvePatchSectionKey(name);
+      if (!key) return;
+      normalizedSections[key] = normalizePatchRows(key, rows);
+    });
+    const scopeKeys = Object.keys(normalizedSections);
+    if (!scopeKeys.length) throw new Error("パッチJSONに反映対象セクションがありません");
+    return {
+      generatedAt: payload.generatedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      source: payload.source || {},
+      target: payload.target || {},
+      sections: normalizedSections
+    };
+  }
+  function renderPatchJsonSummary(payload) {
+    const el = getToolDocument().getElementById("u_patchJsonSummary");
+    if (!el) {
+      renderPatchJsonDiff(payload);
+      return;
+    }
+    if (!payload || !payload.sections || !Object.keys(payload.sections).length) {
+      el.style.display = "none";
+      el.textContent = "";
+      renderPatchJsonDiff(null);
+      return;
+    }
+    const sectionLabels = Object.entries(payload.sections).map(([key, rows]) => {
+      const def = SECTION_DEFS.find((item) => item.key === key);
+      return `${def?.label || key}:${Array.isArray(rows) ? rows.length : 0}件`;
+    });
+    const totalRows = Object.values(payload.sections).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
+    el.textContent = `生成日時 ${payload.generatedAt || "-"} / source ${payload.source?.appId || "-"} → target ${payload.target?.appId || "-"} / ${sectionLabels.join(" / ")} / 合計 ${totalRows} 行`;
+    el.style.display = "block";
+    renderPatchJsonDiff(payload);
+  }
+  async function importPatchJsonFromFile(file) {
+    const text = await readTextFile(file);
+    const payload = parsePatchJsonPayload(text);
+    state.importedPatchPayload = payload;
+    setPatchEditorValue(payload);
+    renderPatchJsonSummary(payload);
+    setStatus(`パッチJSON読込完了: ${file.name}`);
+    return payload;
+  }
+  function populatePatchJsonFromCurrentDiff(options = {}) {
+    if (!state.lastDiffRows.length) throw new Error("先に差分比較を実行してください");
+    if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error("差分比較の比較元/比較先バンドルがありません");
+    const payload = parsePatchJsonPayload(buildPatchPayload(state.lastDiffRows, state.lastSourceBundle, state.lastTargetBundle));
+    state.importedPatchPayload = payload;
+    const currentText = getPatchEditorText();
+    if (options.force || isPatchEditorEffectivelyEmpty(currentText)) {
+      setPatchEditorValue(payload);
+    }
+    renderPatchJsonSummary(payload);
+    if (!options.silent) setStatus(`差分比較結果からパッチJSONを生成しました (${Object.keys(payload.sections).length}セクション)`);
+    return payload;
+  }
+  function getPatchPayloadForApply() {
+    const text = getPatchEditorText();
+    if (!isPatchEditorEffectivelyEmpty(text)) {
+      const payload = parsePatchJsonPayload(text);
+      state.importedPatchPayload = payload;
+      renderPatchJsonSummary(payload);
+      return payload;
+    }
+    if (state.importedPatchPayload?.sections && Object.keys(state.importedPatchPayload.sections).length) {
+      const payload = parsePatchJsonPayload(state.importedPatchPayload);
+      renderPatchJsonSummary(payload);
+      return payload;
+    }
+    return populatePatchJsonFromCurrentDiff({ force: true, silent: true });
+  }
+  function applyPatchRowsToSection(sectionObj, rows, secKey) {
+    const previousModes = {};
+    let patched = deepClone(sectionObj);
+    let appliedCount = 0;
+    const normalizedRows = sortRowsForPatch(rows, secKey);
+    try {
+      normalizedRows.forEach((row) => {
+        previousModes[row._id] = state.reflectNodeModes[row._id];
+        state.reflectNodeModes[row._id] = "src";
+        const result = applyDiffRowToSection(patched, row, secKey);
+        patched = result.section;
+        if (result.applied) appliedCount += 1;
+      });
+    } finally {
+      normalizedRows.forEach((row) => {
+        if (previousModes[row._id] == null) delete state.reflectNodeModes[row._id];
+        else state.reflectNodeModes[row._id] = previousModes[row._id];
+      });
+    }
+    return { patched, appliedCount, rows: normalizedRows };
+  }
+  async function runApplyPatchJson() {
+    const c = commonParams();
+    if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
+    const payload = getPatchPayloadForApply();
+    const sectionKeys = Object.keys(payload.sections).filter((key) => SECTION_DEFS.find((item) => item.key === key)?.put);
+    if (!sectionKeys.length) throw new Error("適用可能なパッチセクションがありません");
+    renderPatchJsonSummary(payload);
+    if (!window.confirm(`JSONパッチを比較先(プレビュー)へ反映しますか？
+比較先アプリ: ${c.target.appId}
+対象セクション: ${sectionKeys.length}件`)) {
+      setStatus("JSONパッチ反映をキャンセルしました");
+      return;
+    }
+    const prefix = buildApiPrefix(c.target.guestId, true);
+    const app = c.target.appId;
+    const stopOnError = !!ui.stopOnError?.checked;
+    const lookupMap = parseLookupMapInput(ui.lookupMap.value);
+    const logs = [];
+    let hadError = false;
+    logs.push(`比較先アプリ: ${app}`);
+    logs.push(`JSONパッチ: ${sectionKeys.map((key) => SECTION_DEFS.find((item) => item.key === key)?.label || key).join(", ")}`);
+    logs.push(`エラー時動作: ${stopOnError ? "中断" : "継続"}`);
+    if (ui.autoBackupPreview?.checked) {
+      const backup = await backupTargetPreviewSettings(c, sectionKeys, { silentStatus: true });
+      logs.push(`バックアップ保存: ${backup.filename}`);
+    }
+    logs.push("");
+    for (let i = 0; i < sectionKeys.length; i++) {
+      const secKey = sectionKeys[i];
+      const def = SECTION_DEFS.find((item) => item.key === secKey);
+      const rows = payload.sections[secKey] || [];
+      if (!def || !def.put || !rows.length) continue;
+      setStatus(`JSONパッチ反映中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
+      renderProgressLog(logs, { phase: "JSONパッチ反映中", current: i, total: sectionKeys.length });
+      try {
+        const current = normalize(await apiGet(prefix, def.endpoint, { app }));
+        const before = deepClone(current);
+        const { patched, appliedCount, rows: sortedRows } = applyPatchRowsToSection(current, rows, secKey);
+        if (secKey === "fieldSettings") {
+          const beforeProps = before.properties || before || {};
+          const afterProps = patched.properties || patched || {};
+          const sourceModeCodes = new Set(sortedRows.map(extractFieldCodeFromRowPath).filter(Boolean));
+          await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
+        } else if (secKey === "viewSettings") {
+          await applyViewsSectionDiff(prefix, app, before.views || before || {}, patched.views || patched || {}, logs, stopOnError);
+        } else if (secKey === "reportSettings") {
+          await applyReportsSectionDiff(prefix, app, before.reports || before || {}, patched.reports || patched || {}, logs, stopOnError);
+        } else if (secKey === "actionSettings") {
+          await applyActionsSectionDiff(prefix, app, before.actions || before || {}, patched.actions || patched || {}, logs, stopOnError);
+        } else {
+          const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder(patched) }, note: `${def.label} put` }];
+          appendRequestPlanLogs(logs, { requests: reqs });
+          await executeRequestPlan(prefix, reqs, logs, stopOnError);
+        }
+        logs.push(`OK ${def.label}: patch ${appliedCount}/${sortedRows.length}`);
+      } catch (e) {
+        hadError = true;
+        logs.push(`NG ${def.label}: ${e.message || String(e)}`);
+        if (stopOnError) {
+          logs.push("中断: エラーが発生したため処理を停止しました");
+          break;
+        }
+      }
+    }
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: "JSONパッチ反映完了" });
+    renderReflectAssistPanel();
+    renderReflectMainPanel();
+    setStatus(hadError ? "JSONパッチ反映完了（一部エラーあり）" : "JSONパッチ反映完了");
+  }
   async function runApplyPreviewByNodes() {
     await ensureDiffPreparedForReflect();
     const c = commonParams();
@@ -6165,19 +7039,6 @@ ${contextLine}`);
         }
       }
     }
-    if (ui.doDeploy.checked) {
-      if (hadError) {
-        logs.push("SKIP デプロイ: 反映エラーがあるため実行しません");
-      } else {
-        setStatus("デプロイ実行中...");
-        try {
-          const st = await deployAndPoll(prefix, app, logs);
-          logs.push(st === "SUCCESS" ? "OK デプロイ完了" : `NG デプロイ終了ステータス: ${st}`);
-        } catch (e) {
-          logs.push(`NG デプロイ: ${e.message || String(e)}`);
-        }
-      }
-    }
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: "ノード反映完了" });
     renderReflectAssistPanel();
@@ -6226,19 +7087,6 @@ ${contextLine}`);
       phaseLabel: "反映",
       onProgress: (i, total) => renderProgressLog(logs, { phase: "プレビュー反映実行中", current: i, total })
     });
-    if (ui.doDeploy.checked) {
-      if (hadError) {
-        logs.push("SKIP デプロイ: 反映エラーがあるため実行しません");
-      } else {
-        setStatus("デプロイ実行中...");
-        try {
-          const st = await deployAndPoll(prefix, app, logs);
-          logs.push(st === "SUCCESS" ? "OK デプロイ完了" : `NG デプロイ終了ステータス: ${st}`);
-        } catch (e) {
-          logs.push(`NG デプロイ: ${e.message || String(e)}`);
-        }
-      }
-    }
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: "プレビュー反映完了" });
     renderReflectAssistPanel();
@@ -6252,23 +7100,13 @@ ${contextLine}`);
     renderReflectAssistPanel();
   }
   async function runDeployOnly() {
-    const c = commonParams();
-    if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
-    if (!window.confirm(`デプロイのみ実行しますか？
-比較先アプリ: ${c.target.appId}`)) {
-      setStatus("デプロイをキャンセルしました");
-      return;
+    const msg = "ツールからのデプロイAPI実行は無効です。プレビューへの反映後、本番へのデプロイはkintone管理画面から手動で行ってください。";
+    setStatus(msg, true);
+    if (ui.result) {
+      ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(msg)}</pre>`;
     }
-    const prefix = buildApiPrefix(c.target.guestId, true);
-    const app = c.target.appId;
-    setStatus("デプロイ実行中...");
-    const logs = [];
-    const st = await deployAndPoll(prefix, app, logs);
-    if (st === "SUCCESS") logs.push("OK デプロイ完了");
-    else logs.push(`NG デプロイ終了ステータス: ${st}`);
-    ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`;
-    setStatus(`デプロイ処理完了: ${st === "SUCCESS" ? "SUCCESS" : st}`, st !== "SUCCESS");
   }
+  var patchJsonDiffTimer, patchJsonDiffSeq;
   var init_apply = __esm({
     "src/reflect/apply.js"() {
       "use strict";
@@ -6276,11 +7114,16 @@ ${contextLine}`);
       init_utils();
       init_state();
       init_api();
+      init_export();
       init_plan();
       init_helpers();
       init_rowMode();
       init_nodeModeUi();
+      init_dialog();
+      init_oss_integrations();
       init_rowMode();
+      patchJsonDiffTimer = 0;
+      patchJsonDiffSeq = 0;
     }
   });
 
@@ -6295,7 +7138,7 @@ ${contextLine}`);
     planFieldSectionDiffRequests: () => planFieldSectionDiffRequests,
     planReportsSectionDiffRequests: () => planReportsSectionDiffRequests,
     planViewsSectionDiffRequests: () => planViewsSectionDiffRequests,
-    renderAppIdConfirmSection: () => renderAppIdConfirmSection,
+    renderAppIdConfirmSection: () => renderAppIdConfirmSection2,
     runPreviewApplyPlan: () => runPreviewApplyPlan,
     runPreviewApplyPlanNodes: () => runPreviewApplyPlanNodes,
     showInlineConfirmation: () => showInlineConfirmation,
@@ -6303,7 +7146,7 @@ ${contextLine}`);
     splitUpsertMap: () => splitUpsertMap2,
     upsertFields: () => upsertFields2
   });
-  function renderAppIdConfirmSection(appIdRefs) {
+  function renderAppIdConfirmSection2(appIdRefs) {
     if (!appIdRefs || !appIdRefs.length) return '<div style="color:#64748b;font-size:12px;margin-bottom:8px">関連アプリIDなし</div>';
     const rows = appIdRefs.map(
       (r) => `<tr><td style="padding:3px 8px;font-size:11px">${esc(r.fieldCode)}</td><td style="padding:3px 8px;font-size:11px">${esc(r.type)}</td><td style="padding:3px 8px;font-size:11px;font-weight:700">${esc(r.refAppId)}</td><td style="padding:3px 8px;font-size:11px;color:${r.convertedAppId ? "#2563eb" : "#94a3b8"}">${r.convertedAppId ? `→ ${esc(r.convertedAppId)}` : "-"}</td><td style="padding:3px 8px;font-size:11px">${esc(r.section)}</td></tr>`
@@ -6482,7 +7325,7 @@ ${contextLine}`);
     return new Promise((resolve) => {
       const stamp = new Date(plan.createdAt).toLocaleString();
       const planText = (plan.logs || []).join("\n") || "(プラン詳細なし)";
-      const appIdSection = renderAppIdConfirmSection(appIdRefs);
+      const appIdSection = renderAppIdConfirmSection2(appIdRefs);
       const previousHtml = ui.result.innerHTML;
       const previousScrollTop = ui.result.scrollTop;
       ui.result.innerHTML = `<div class="plan-confirm-panel">
@@ -7075,7 +7918,7 @@ ${contextLine}`);
       applyDiffOnly: ui.applyDiffOnly.checked,
       autoBackupPreview: ui.autoBackupPreview.checked,
       stopOnError: ui.stopOnError.checked,
-      nodeMode: ui.nodeMode.checked,
+      nodeMode: state.activeSubTabs.reflect === "node",
       reflectSimpleMode: !!ui.reflectSimpleMode?.checked,
       reflectDetailTab: state.reflectDetailTab,
       doDeploy: ui.doDeploy.checked,
@@ -7721,12 +8564,12 @@ ${contextLine}`);
       UI.hide();
       const errorMsg = UI.failedAPIs.length > 0 ? `
 ⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : "";
-      alert(`✅ エクスポート完了${errorMsg}`);
+      showToast(`✅ エクスポート完了${errorMsg}`, UI.failedAPIs.length > 0 ? "warn" : "success");
       return true;
     } catch (e) {
       UI.hide();
       console.error("kintone設計書エクスポートエラー:", e);
-      alert(`❌ エラーが発生しました: ${e.message}`);
+      showToast(`❌ エラーが発生しました: ${e.message}`, "error");
       throw e;
     }
   }
@@ -7735,6 +8578,7 @@ ${contextLine}`);
       "use strict";
       init_constants();
       init_dialog();
+      init_utils();
     }
   });
 
@@ -8125,13 +8969,13 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .busy-chip{display:flex;align-items:center;gap:10px;background:#0f172a;color:#fff;border-radius:999px;padding:10px 14px;font-size:12px;font-weight:700;box-shadow:0 8px 22px rgba(15,23,42,.32)}
 #kintone-unified-suite-v2 .busy-spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:999px;animation:kintone-unified-suite-v2-spin .8s linear infinite}
 @keyframes kintone-unified-suite-v2-spin{to{transform:rotate(360deg)}}
-#kintone-unified-suite-v2 .reflect-layout{display:flex;gap:0;height:clamp(360px,62vh,860px);border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-top:10px;background:#fff;resize:vertical;min-height:320px}
-#kintone-unified-suite-v2 .reflect-sidebar{width:220px;min-width:220px;background:#f8fafc;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;overflow:hidden}
+#kintone-unified-suite-v2 .reflect-layout{display:flex;gap:0;height:clamp(480px,72vh,960px);border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-top:10px;background:#fff;resize:vertical;min-height:400px}
+#kintone-unified-suite-v2 .reflect-sidebar{width:248px;min-width:248px;background:#f8fafc;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;overflow:hidden}
 #kintone-unified-suite-v2 .reflect-sidebar .sidebar-head{padding:10px 12px;border-bottom:1px solid #e2e8f0;font-size:12px;font-weight:700;background:#eef2ff;color:#1e293b;display:flex;flex-direction:column;align-items:stretch;gap:4px}
 #kintone-unified-suite-v2 .reflect-sidebar .sidebar-head-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
 #kintone-unified-suite-v2 .reflect-sidebar .sidebar-hint{font-size:10px;font-weight:400;color:#64748b;line-height:1.45;margin:0}
 #kintone-unified-suite-v2 .reflect-sidebar .sidebar-sections{flex:1;overflow:auto;padding:4px 0}
-#kintone-unified-suite-v2 .reflect-sidebar .sidebar-item{display:flex;align-items:center;gap:6px;padding:7px 12px;font-size:11px;cursor:pointer;border-left:3px solid transparent;transition:background .15s,border-color .15s}
+#kintone-unified-suite-v2 .reflect-sidebar .sidebar-item{display:flex;align-items:center;gap:6px;padding:8px 12px;font-size:12px;cursor:pointer;border-left:3px solid transparent;transition:background .15s,border-color .15s}
 #kintone-unified-suite-v2 .reflect-sidebar .sidebar-item:hover{background:#eef2ff}
 #kintone-unified-suite-v2 .reflect-sidebar .sidebar-item.active{background:#dbeafe;border-left-color:#2563eb;font-weight:700}
 #kintone-unified-suite-v2 .reflect-sidebar .sidebar-item.disabled{opacity:.5;cursor:default}
@@ -8148,6 +8992,7 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .reflect-main .main-header{padding:10px 14px;border-bottom:1px solid #e2e8f0;background:#fff}
 #kintone-unified-suite-v2 .reflect-main-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
 #kintone-unified-suite-v2 .reflect-main-header__controls{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+#kintone-unified-suite-v2 .reflect-main-header__controls>.btn{padding:8px 14px;font-size:12px;font-weight:600}
 #kintone-unified-suite-v2 .reflect-simple-toggle{margin:0;font-size:11px}
 #kintone-unified-suite-v2 .reflect-mode-tabs{display:inline-flex;gap:0;padding:3px;border-radius:10px;background:#e2e8f0;border:1px solid #cbd5e1}
 #kintone-unified-suite-v2 .reflect-mode-tabs .reflect-mode-tab{border-radius:8px;margin:0}
@@ -8163,7 +9008,7 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .reflect-layout--simple .reflect-footer-advanced-btn{display:none!important}
 #kintone-unified-suite-v2 .reflect-main .main-header .main-title{font-size:13px;font-weight:700;color:#0f172a}
 #kintone-unified-suite-v2 .reflect-main .main-header .main-meta{font-size:11px;color:#64748b;margin-top:4px}
-#kintone-unified-suite-v2 .reflect-main .main-body{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px;min-height:0}
+#kintone-unified-suite-v2 .reflect-main .main-body{flex:1;overflow:auto;padding:16px 16px 18px;display:flex;flex-direction:column;gap:14px;min-height:0}
 #kintone-unified-suite-v2 .reflect-main .main-footer{padding:10px 14px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 #kintone-unified-suite-v2 .reflect-footer-stack{border-top:1px solid #e2e8f0;background:#fafbfc}
 #kintone-unified-suite-v2 .reflect-footer-badges{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 14px 0}
@@ -8187,6 +9032,9 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .reflect-main .reflect-footer-actions .btn{padding:7px 12px}
 #kintone-unified-suite-v2 .opt-card{border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#fff}
 #kintone-unified-suite-v2 .opt-card .opt-title{font-size:11px;font-weight:700;color:#334155;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+#kintone-unified-suite-v2 .reflect-preview-editor-card{border:1px solid #93c5fd;border-radius:12px;padding:14px 16px 16px;margin-top:12px;background:linear-gradient(180deg,#f8fbff,#fff);box-shadow:0 1px 3px rgba(37,99,235,.08)}
+#kintone-unified-suite-v2 .reflect-preview-editor-card .opt-title{font-size:14px;font-weight:800;color:#1e3a8a;margin-bottom:8px;letter-spacing:-0.02em}
+#kintone-unified-suite-v2 .reflect-preview-editor-card .reflect-preview-editor-lead{font-size:13px;line-height:1.65;color:#475569;margin-bottom:10px}
 #kintone-unified-suite-v2 .opt-card .opt-title .opt-icon{font-size:14px}
 #kintone-unified-suite-v2 .sec-preview{border:1px solid #dbeafe;border-radius:8px;background:#eff6ff;padding:12px;margin-bottom:10px}
 #kintone-unified-suite-v2 .sec-preview .sec-preview-title{font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:6px}
@@ -8919,51 +9767,95 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .launcher-lead{
   font-size:15px;font-weight:800;color:#0f172a;letter-spacing:-0.02em;
 }
-#kintone-unified-suite-v2 .reflect-preview-playground{margin-top:8px}
-#kintone-unified-suite-v2 #u_reflectPreviewEditorFold{scroll-margin-top:12px;scroll-margin-bottom:96px}
-#kintone-unified-suite-v2 .rpp-toolbar,#kintone-unified-suite-v2 .rpp-filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+#kintone-unified-suite-v2 .reflect-preview-playground{
+  margin-top:4px;
+  padding:14px 14px 12px;
+  background:linear-gradient(180deg,#f1f5f9,#fff);
+  border:1px solid #cbd5e1;
+  border-radius:12px;
+  min-height:min(460px,52vh);
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  box-sizing:border-box;
+}
+#kintone-unified-suite-v2 #u_reflectPreviewEditorFold{scroll-margin-top:16px;scroll-margin-bottom:96px}
+#kintone-unified-suite-v2 .rpp-toolbar,#kintone-unified-suite-v2 .rpp-filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:2px}
+#kintone-unified-suite-v2 .rpp-toolbar .btn,#kintone-unified-suite-v2 .rpp-filters .btn{padding:7px 12px;font-size:12px}
 #kintone-unified-suite-v2 .rpp-filters .btn.is-active{border-color:#0ea5e9;color:#0369a1;background:#e0f2fe}
-#kintone-unified-suite-v2 .rpp-filters .btn span{margin-left:4px;font-size:10px;opacity:.8}
-#kintone-unified-suite-v2 .rpp-list{display:flex;flex-direction:column;gap:8px}
-#kintone-unified-suite-v2 .rpp-card{border:1px solid #d6dee8;border-radius:8px;background:#fff}
-#kintone-unified-suite-v2 .rpp-head{display:flex;align-items:center;gap:6px;padding:8px 10px}
-#kintone-unified-suite-v2 .rpp-open{border:none;background:none;padding:0 2px;cursor:pointer;color:#64748b}
-#kintone-unified-suite-v2 .rpp-badge{display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;color:#fff}
+#kintone-unified-suite-v2 .rpp-filters .btn span{margin-left:4px;font-size:11px;opacity:.85}
+#kintone-unified-suite-v2 .rpp-list{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  flex:1;
+  min-height:260px;
+  max-height:min(520px,46vh);
+  overflow-y:auto;
+  overflow-x:hidden;
+  padding:4px 6px 6px 2px;
+}
+#kintone-unified-suite-v2 .rpp-card{border:1px solid #cbd5e1;border-radius:10px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+#kintone-unified-suite-v2 .rpp-head{display:flex;align-items:center;gap:8px;padding:10px 12px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .rpp-open{border:none;background:none;padding:2px 4px;cursor:pointer;color:#64748b;font-size:14px;line-height:1}
+#kintone-unified-suite-v2 .rpp-badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;color:#fff}
 #kintone-unified-suite-v2 .rpp-added{background:#0d9488}
 #kintone-unified-suite-v2 .rpp-removed{background:#dc2626}
 #kintone-unified-suite-v2 .rpp-modified{background:#d97706}
 #kintone-unified-suite-v2 .rpp-unchanged{background:#64748b}
-#kintone-unified-suite-v2 .rpp-head strong{font-size:12px;color:#0f172a}
-#kintone-unified-suite-v2 .rpp-head code{font-size:10px;color:#64748b;background:#f1f5f9;padding:1px 6px;border-radius:999px}
+#kintone-unified-suite-v2 .rpp-head strong{font-size:14px;color:#0f172a;font-weight:800}
+#kintone-unified-suite-v2 .rpp-head code{font-size:11px;color:#475569;background:#e2e8f0;padding:2px 8px;border-radius:999px}
+#kintone-unified-suite-v2 .rpp-head .btn{padding:6px 10px;font-size:12px}
 #kintone-unified-suite-v2 .rpp-spacer{margin-left:auto}
-#kintone-unified-suite-v2 .rpp-body{border-top:1px solid #e2e8f0;padding:8px 10px}
-#kintone-unified-suite-v2 .rpp-pre{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;line-height:1.5;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px}
-#kintone-unified-suite-v2 .rpp-table{width:100%;border-collapse:collapse;font-size:11px}
-#kintone-unified-suite-v2 .rpp-table th,#kintone-unified-suite-v2 .rpp-table td{border-bottom:1px solid #e2e8f0;padding:4px 6px;vertical-align:top;text-align:left}
-#kintone-unified-suite-v2 .rpp-table th{background:#f8fafc;color:#475569}
-#kintone-unified-suite-v2 .rpp-table pre{margin:0;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-#kintone-unified-suite-v2 .rpp-preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-#kintone-unified-suite-v2 .rpp-preview-head{font-size:10px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px 6px 0 0;padding:3px 8px}
-#kintone-unified-suite-v2 .rpp-preview-body{font-size:12px;color:#0f172a;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 6px 6px;padding:8px;min-height:36px;background:#fff}
+#kintone-unified-suite-v2 .rpp-body{border-top:1px solid #e2e8f0;padding:12px 12px}
+#kintone-unified-suite-v2 .rpp-pre{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre-wrap;line-height:1.55;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px}
+#kintone-unified-suite-v2 .rpp-table{width:100%;border-collapse:collapse;font-size:12px}
+#kintone-unified-suite-v2 .rpp-table th,#kintone-unified-suite-v2 .rpp-table td{border-bottom:1px solid #e2e8f0;padding:8px 10px;vertical-align:top;text-align:left}
+#kintone-unified-suite-v2 .rpp-table th{background:#f1f5f9;color:#334155;font-weight:700}
+#kintone-unified-suite-v2 .rpp-table pre{margin:0;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.5}
+#kintone-unified-suite-v2 .rpp-preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#kintone-unified-suite-v2 .rpp-preview-head{font-size:11px;font-weight:700;color:#475569;background:#e2e8f0;border:1px solid #cbd5e1;border-radius:8px 8px 0 0;padding:6px 10px}
+#kintone-unified-suite-v2 .rpp-preview-body{font-size:13px;line-height:1.5;color:#0f172a;border:1px solid #cbd5e1;border-top:none;border-radius:0 0 8px 8px;padding:10px 12px;min-height:44px;background:#fff}
 #kintone-unified-suite-v2 .rpp-modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.45);display:flex;align-items:center;justify-content:center;z-index:70;padding:16px}
-#kintone-unified-suite-v2 .rpp-modal{width:min(680px,96vw);background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 20px 60px rgba(2,6,23,.35);overflow:hidden}
-#kintone-unified-suite-v2 .rpp-modal-wide{width:min(980px,96vw)}
-#kintone-unified-suite-v2 .rpp-modal-head{padding:12px 14px;font-size:13px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e2e8f0}
-#kintone-unified-suite-v2 .rpp-modal-body{padding:12px 14px}
-#kintone-unified-suite-v2 .rpp-modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-#kintone-unified-suite-v2 .rpp-modal-label{font-size:11px;font-weight:700;color:#475569;margin-bottom:4px}
-#kintone-unified-suite-v2 .rpp-modal-textarea{width:100%;min-height:220px;max-height:52vh;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;box-sizing:border-box}
-#kintone-unified-suite-v2 .rpp-modal-error{margin-top:8px;padding:8px 10px;border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;border-radius:8px;font-size:11px}
+#kintone-unified-suite-v2 .rpp-modal{width:min(720px,96vw);background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 20px 60px rgba(2,6,23,.35);overflow:hidden}
+#kintone-unified-suite-v2 .rpp-modal-wide{width:min(1040px,96vw)}
+#kintone-unified-suite-v2 .rpp-modal-head{padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .rpp-modal-body{padding:14px 16px}
+#kintone-unified-suite-v2 .rpp-modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+#kintone-unified-suite-v2 .rpp-modal-label{font-size:12px;font-weight:700;color:#475569;margin-bottom:6px}
+#kintone-unified-suite-v2 .rpp-modal-textarea{width:100%;min-height:260px;max-height:56vh;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.5;box-sizing:border-box}
+#kintone-unified-suite-v2 .rpp-modal-error{margin-top:8px;padding:8px 10px;border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;border-radius:8px;font-size:12px}
 #kintone-unified-suite-v2 .rpp-modal-error-full{grid-column:1/-1}
-#kintone-unified-suite-v2 .rpp-modal-confirm{margin:0;font-size:12px;color:#334155;line-height:1.7}
-#kintone-unified-suite-v2 .rpp-modal-actions{padding:10px 14px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:flex-end;gap:8px}
-#kintone-unified-suite-v2 .rpp-field-grid{display:grid;grid-template-columns:1fr;gap:8px}
-#kintone-unified-suite-v2 .rpp-field-row{display:grid;grid-template-columns:160px 1fr;align-items:center;gap:10px}
-#kintone-unified-suite-v2 .rpp-field-row>span{font-size:11px;font-weight:700;color:#334155}
-#kintone-unified-suite-v2 .rpp-field-row input,#kintone-unified-suite-v2 .rpp-field-row select{height:32px;border:1px solid #cbd5e1;border-radius:8px;padding:0 8px;box-sizing:border-box;font-size:12px}
-#kintone-unified-suite-v2 .rpp-field-row input[type="checkbox"]{width:18px;height:18px;padding:0}
-#kintone-unified-suite-v2 .rpp-modal-textarea-mini{min-height:92px}
-#kintone-unified-suite-v2 .rpp-modal-hint{margin-top:8px;font-size:11px;color:#64748b}
+#kintone-unified-suite-v2 .rpp-modal-confirm{margin:0;font-size:13px;color:#334155;line-height:1.7}
+#kintone-unified-suite-v2 .rpp-modal-actions{padding:12px 16px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:flex-end;gap:8px}
+#kintone-unified-suite-v2 .rpp-field-grid{display:grid;grid-template-columns:1fr;gap:10px}
+#kintone-unified-suite-v2 .rpp-field-row{display:grid;grid-template-columns:minmax(168px,200px) 1fr;align-items:center;gap:12px}
+#kintone-unified-suite-v2 .rpp-field-row>span{font-size:12px;font-weight:700;color:#334155}
+#kintone-unified-suite-v2 .rpp-field-row input,#kintone-unified-suite-v2 .rpp-field-row select{min-height:36px;border:1px solid #cbd5e1;border-radius:8px;padding:0 10px;box-sizing:border-box;font-size:13px}
+#kintone-unified-suite-v2 .rpp-field-row input[type="checkbox"]{width:18px;height:18px;padding:0;min-height:18px}
+#kintone-unified-suite-v2 .rpp-modal-textarea-mini{min-height:110px;font-size:12px}
+#kintone-unified-suite-v2 .rpp-modal-hint{margin-top:10px;font-size:12px;color:#64748b;line-height:1.55}
+
+/* ========== diff2html / JSONEditor overrides ========== */
+#kintone-unified-suite-v2 .d2h-wrapper {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+#kintone-unified-suite-v2 .d2h-file-header {
+  display: none;
+}
+#kintone-unified-suite-v2 .jsoneditor {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+#kintone-unified-suite-v2 .jsoneditor-menu {
+  background-color: #f1f5f9;
+  border-bottom: 1px solid #cbd5e1;
+}
+#kintone-unified-suite-v2 .jsoneditor-menu > button {
+  background-color: transparent;
+}
+
 `;
 
   // src/ui/template.js
@@ -9380,167 +10272,187 @@ ${contextLine}`);
             </div>
 
             <div class="pane" data-pane="reflect">
-              <input type="checkbox" id="u_nodeMode" style="display:none">
-              <details class="diff-fold diff-fold--reflect-hint">
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">プレビュー反映の操作ヒント</span>
-                  <span class="diff-fold-sub">初めてのときだけ開いて確認</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div class="muted" style="margin-top:0;line-height:1.65">差分比較が未実行または条件変更時は、反映前に自動で差分比較を実行します。<strong>左の一覧</strong>でチェック＝反映対象、<strong>行クリック</strong>でそのセクションの差分サマリーを表示します（<strong>全体概要</strong>はサイドバー下のボタン）。プラン確認・反映・デプロイは<strong>画面下の固定バー</strong>から行います。</div>
-                </div>
-              </details>
-              <div id="u_applyScopeBlock" style="display:none"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
-              <div class="reflect-layout" id="u_reflectLayout">
-                <div class="reflect-sidebar">
-                  <div class="sidebar-head">
-                    <div class="sidebar-head-row">
-                      <span>反映セクション</span>
-                      <span style="font-size:10px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
-                    </div>
-                    <p class="sidebar-hint">チェックで反映に含める · 行クリックで詳細パネル</p>
-                  </div>
-                  <div class="sidebar-sections" id="u_reflectSidebarSections"></div>
-                  <div class="sidebar-footer">
-                    <button type="button" class="btn sub" data-act="reflectSidebarOverview">全体概要</button>
-                    <button class="btn sub" data-act="applyScopeAll">全選択</button>
-                    <button class="btn sub" data-act="applyScopeNone">全解除</button>
-                    <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn">差分のみ</button>
-                    <button class="btn sub" data-act="applyScopeHighRisk">高重要度</button>
-                  </div>
-                </div>
-                <div class="reflect-main">
-                  <div class="main-header reflect-main-header">
-                    <div class="reflect-main-header__text">
-                      <div class="main-title" id="u_reflectMainTitle">反映概要</div>
-                      <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
-                    </div>
-                    <div class="reflect-main-header__controls">
-                      <button type="button" class="btn sub" data-act="openReflectPreviewEditor" title="フィールド差分プレビューエディタまでスクロールして展開します">差分プレビューエディタ</button>
-                      <label class="reflect-simple-toggle chip" title="ノード選択・JSON差分反映を隠し、セクション反映に集中します">
-                        <input type="checkbox" id="u_reflectSimpleMode"> 簡易表示
-                      </label>
-                      <div class="reflect-mode-tabs" role="tablist" aria-label="反映モード">
-                        <button type="button" class="btn ok reflect-mode-tab" id="u_modeSectionBtn" data-act="reflectModeSection" aria-selected="true">セクション</button>
-                        <button type="button" class="btn sub reflect-mode-tab" id="u_modeNodeBtn" data-act="reflectModeNode" aria-selected="false">ノード選択</button>
+              <div class="subtabs">
+                <button class="subtab active" data-subtab-parent="reflect" data-subtab="section">セクション反映</button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="node">ノード詳細反映</button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="patch">JSONパッチ</button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="editor">プレビューエディタ</button>
+              </div>
+
+              <!-- ===== Subpane: section ===== -->
+              <div class="subpane active" data-subpane-parent="reflect" data-subpane="section">
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">比較元から比較先へ、セクション（アプリ設定やフィールド設定など）単位で一括反映します。</div>
+                <div id="u_applyScopeBlock" style="display:none"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
+                <div class="reflect-layout" id="u_reflectLayout">
+                  <div class="reflect-sidebar">
+                    <div class="sidebar-head">
+                      <div class="sidebar-head-row">
+                        <span>反映セクション</span>
+                        <span style="font-size:10px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
                       </div>
+                      <p class="sidebar-hint">チェックで反映に含める · 行クリックで詳細パネル</p>
+                    </div>
+                    <div class="sidebar-sections" id="u_reflectSidebarSections"></div>
+                    <div class="sidebar-footer">
+                      <button type="button" class="btn sub" data-act="reflectSidebarOverview">全体概要</button>
+                      <button class="btn sub" data-act="applyScopeAll">全選択</button>
+                      <button class="btn sub" data-act="applyScopeNone">全解除</button>
+                      <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn">差分のみ</button>
+                      <button class="btn sub" data-act="applyScopeHighRisk">高重要度</button>
                     </div>
                   </div>
-                  <div class="main-body" id="u_reflectMainBody">
-                    <div id="u_reflectAssist"></div>
-                    <div id="u_reflectHowto" style="margin-bottom:10px"></div>
-                    <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
-                    <div id="u_reflectOverview"></div>
-                    <div id="u_reflectHint" class="kv" style="display:none"></div>
-                    <div id="u_sectionOptionsBlock" style="display:none">
-                      <label class="chip"><input type="checkbox" id="u_applyDiffOnly"> 前回差分のあるセクションのみ反映</label>
-                    </div>
-                    <div class="warnbox" id="u_nodeWarn" style="display:none">注: ノードモードは「前回差分」から選択して反映します。まず差分比較を実行してください。</div>
-                    <div id="u_nodeControls" style="display:none">
-                      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-                        <button class="btn sub" data-act="loadReflectNodes" style="padding:4px 8px;font-size:10px">差分ノード読込</button>
-                        <button class="btn sub" data-act="selectVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中を選択</button>
-                        <button class="btn sub" data-act="clearVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中解除</button>
-                        <button class="btn sub" data-act="selectHighSeverityReflectNodes" style="padding:4px 8px;font-size:10px">高重要度を選択</button>
-                        <button class="btn ok" data-act="reflectModeVisibleSrc" style="padding:4px 8px;font-size:10px">表示中を比較元</button>
-                        <button class="btn ok" data-act="reflectModeVisibleTgt" style="padding:4px 8px;font-size:10px">表示中を比較先</button>
-                        <button class="btn sub" data-act="selectReflectNodesAll" style="padding:4px 8px;font-size:10px">全選択</button>
-                        <button class="btn sub" data-act="clearReflectNodes" style="padding:4px 8px;font-size:10px">全解除</button>
-                        <button class="btn ok" data-act="reflectModeAllSrc" style="padding:4px 8px;font-size:10px">一括で比較元</button>
-                        <button class="btn ok" data-act="reflectModeAllTgt" style="padding:4px 8px;font-size:10px">一括で比較先</button>
-                        <button class="btn sub" data-act="reflectUndo" style="padding:4px 8px;font-size:10px">Undo</button>
-                        <button class="btn sub" data-act="reflectRedo" style="padding:4px 8px;font-size:10px">Redo</button>
+                  <div class="reflect-main">
+                    <div class="main-header reflect-main-header">
+                      <div class="reflect-main-header__text">
+                        <div class="main-title" id="u_reflectMainTitle">反映概要</div>
+                        <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
                       </div>
                     </div>
-                    <div id="u_nodeFilterBlock" style="display:none;margin-bottom:8px">
-                      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                        <input type="text" id="u_nodeSearch" placeholder="パス / セクション で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                        <select id="u_nodeFilterSection" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px"><option value="">全セクション</option></select>
-                        <select id="u_nodeFilterType" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                          <option value="">全種別</option><option value="added">追加</option><option value="removed">削除</option><option value="changed">変更</option>
-                        </select>
-                        <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                          <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
-                        </select>
-                        <button class="btn sub" type="button" data-act="toggleReflectPropertyPanel" style="padding:4px 8px;font-size:10px">プロパティ選択</button>
-                        <button class="btn sub" data-act="clearReflectNodeFilters" style="padding:4px 8px;font-size:10px">絞り込み解除</button>
+                    <div class="main-body" id="u_reflectMainBody">
+                      <div id="u_reflectAssist"></div>
+                      <div id="u_reflectHowto" style="margin-bottom:10px"></div>
+                      <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
+                      <div id="u_reflectOverview"></div>
+                      <div id="u_sectionOptionsBlock" style="display:none">
+                        <label class="chip"><input type="checkbox" id="u_applyDiffOnly"> 前回差分のあるセクションのみ反映</label>
                       </div>
-                      <div id="u_nodePropertyPanel" style="display:none;margin-top:8px;border:1px solid #d6dee8;border-radius:8px;background:#f8fafc;padding:8px 10px">
-                        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
-                          <div style="font-size:11px;font-weight:700;color:#334155">対象プロパティ（kintone設定風チェックリスト）</div>
-                          <div style="display:flex;gap:6px">
-                            <button class="btn sub" type="button" data-act="selectAllReflectProperties" style="padding:3px 7px;font-size:10px">全選択</button>
-                            <button class="btn sub" type="button" data-act="clearReflectProperties" style="padding:3px 7px;font-size:10px">全解除</button>
-                          </div>
-                        </div>
-                        <div id="u_nodePropertyChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
-                        <div id="u_nodePropertyList" style="max-height:160px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:6px"></div>
-                      </div>
-                    </div>
-                    <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none">
-                      <div class="reflect-node-pane">
-                        <div class="reflect-node-list-wrap">
-                          <div class="result" id="u_reflectNodeList" style="max-height:none;border:1px solid #dbe3ed;border-radius:8px;overflow:auto;flex:1"></div>
-                        </div>
-                      </div>
-                      <div class="reflect-node-detail" id="u_reflectNodeDetail"></div>
-                    </div>
-                    <div id="u_patchJsonPanel" style="display:none">
-                      <div class="opt-card" style="margin-top:8px">
-                        <div class="opt-title">JSON差分反映</div>
-                        <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、直接編集して比較先プレビューに反映します。</div>
-                        <div class="btns" style="margin-bottom:6px">
-                          <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
-                          <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
-                          <button class="btn sub" data-act="patchJsonClear">クリア</button>
-                        </div>
-                        <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
-                        <textarea id="u_patchJsonEditor" placeholder='パッチJSONをここに貼り付け、またはファイルから読み込み...' style="width:100%;min-height:160px;max-height:320px;font-family:monospace;font-size:11px;resize:vertical;border:1px solid #d1d5db;border-radius:6px;padding:8px;box-sizing:border-box"></textarea>
-                        <div class="btns" style="margin-top:6px">
-                          <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
-                        </div>
-                      </div>
-                    </div>
-                    <section class="opt-card" id="u_reflectPreviewEditorFold" style="margin-top:8px">
-                      <div class="opt-title">フィールド差分プレビューエディタ（試験）</div>
-                      <div class="muted" style="margin-top:-2px;margin-bottom:6px">追加/削除/編集/ドラッグ上書きの事前確認UI</div>
-                      <div>
-                        <div class="muted" style="margin-top:0;line-height:1.6">統合ツール内でフィールド差分のプレビューを操作できる補助エディタです。ドラッグ＆ドロップで別カードへ設定上書き（code/typeは保持）、JSON編集とUndoにも対応します。</div>
-                        <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
-                      </div>
-                    </section>
-                  </div>
-                  <div class="reflect-footer-stack">
-                    <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>
-                    <div class="reflect-footer-options" id="u_reflectOptionsCard">
-                      <div class="reflect-footer-options__label">反映オプション</div>
-                      <div class="reflect-footer-options__chips">
-                        <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存</label>
-                        <label class="chip" title="APIエラーが出た時点で残りの反映を止めます"><input type="checkbox" id="u_stopOnError" checked> エラー時中断</label>
-                        <label class="chip reflect-opt-deploy" title="プレビューへの書き込み後、本番反映用のデプロイAPIを続けて呼びます"><input type="checkbox" id="u_doDeploy"> 反映後デプロイ（本番）</label>
-                      </div>
-                      <div id="u_backupStatus" style="display:none;margin-top:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46"></div>
-                    </div>
-                    <div class="reflect-footer-actions main-footer" id="u_reflectFooter">
-                      <div class="reflect-footer-actions__preview">
-                        <span class="reflect-footer-zone-label">プレビューAPI</span>
-                        <button type="button" class="btn sub" data-act="runDiff" id="u_footerRunDiff" title="差分比較を実行します">差分比較</button>
-                        <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">反映プラン確認</button>
-                        <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します">バックアップ</button>
-                        <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択セクションを比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">比較元 → 比較先(プレビュー) 反映</button>
-                        <button type="button" class="btn sub reflect-footer-advanced-btn" data-act="togglePatchJsonPanel" title="パッチJSONを直接読み込んで反映するパネルを開きます">JSON差分反映</button>
-                      </div>
-                      <div class="reflect-footer-actions__prod">
-                        <span class="reflect-footer-zone-label reflect-footer-zone-label--prod">本番デプロイ</span>
-                        <button type="button" class="btn btn-deploy-foot" data-act="deployOnly" title="プレビュー内容を本番にデプロイするAPIのみ実行します">デプロイのみ</button>
-                      </div>
-                      <span class="footer-status" id="u_reflectFooterStatus"></span>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
 
+              <!-- ===== Subpane: node ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="node">
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">ノードモード: 差分詳細行を選択して部分反映します。</div>
+                <div class="reflect-layout">
+                  <div class="reflect-main" style="width:100%">
+                    <div class="main-body" style="padding:12px">
+                      <div class="warnbox" id="u_nodeWarn" style="display:none">注: ノードモードは「前回差分」から選択して反映します。まず差分比較を実行してください。</div>
+                      <div id="u_reflectHint" class="kv" style="display:none"></div>
+                      <div id="u_nodeControls" style="display:none">
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                          <button class="btn sub" data-act="loadReflectNodes" style="padding:4px 8px;font-size:10px">差分ノード読込</button>
+                          <button class="btn sub" data-act="selectVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中を選択</button>
+                          <button class="btn sub" data-act="clearVisibleReflectNodes" style="padding:4px 8px;font-size:10px">表示中解除</button>
+                          <button class="btn sub" data-act="selectHighSeverityReflectNodes" style="padding:4px 8px;font-size:10px">高重要度を選択</button>
+                          <button class="btn ok" data-act="reflectModeVisibleSrc" style="padding:4px 8px;font-size:10px">表示中を比較元</button>
+                          <button class="btn ok" data-act="reflectModeVisibleTgt" style="padding:4px 8px;font-size:10px">表示中を比較先</button>
+                          <button class="btn sub" data-act="selectReflectNodesAll" style="padding:4px 8px;font-size:10px">全選択</button>
+                          <button class="btn sub" data-act="clearReflectNodes" style="padding:4px 8px;font-size:10px">全解除</button>
+                          <button class="btn ok" data-act="reflectModeAllSrc" style="padding:4px 8px;font-size:10px">一括で比較元</button>
+                          <button class="btn ok" data-act="reflectModeAllTgt" style="padding:4px 8px;font-size:10px">一括で比較先</button>
+                          <button class="btn sub" data-act="reflectUndo" style="padding:4px 8px;font-size:10px">Undo</button>
+                          <button class="btn sub" data-act="reflectRedo" style="padding:4px 8px;font-size:10px">Redo</button>
+                        </div>
+                      </div>
+                      <div id="u_nodeFilterBlock" style="display:none;margin-bottom:8px">
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                          <input type="text" id="u_nodeSearch" placeholder="パス / セクション で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                          <select id="u_nodeFilterSection" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px"><option value="">全セクション</option></select>
+                          <select id="u_nodeFilterType" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                            <option value="">全種別</option><option value="added">追加</option><option value="removed">削除</option><option value="changed">変更</option>
+                          </select>
+                          <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                            <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
+                          </select>
+                          <button class="btn sub" type="button" data-act="toggleReflectPropertyPanel" style="padding:4px 8px;font-size:10px">プロパティ選択</button>
+                          <button class="btn sub" data-act="clearReflectNodeFilters" style="padding:4px 8px;font-size:10px">絞り込み解除</button>
+                        </div>
+                        <div id="u_nodePropertyPanel" style="display:none;margin-top:8px;border:1px solid #d6dee8;border-radius:8px;background:#f8fafc;padding:8px 10px">
+                          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+                            <div style="font-size:11px;font-weight:700;color:#334155">対象プロパティ（kintone設定風チェックリスト）</div>
+                            <div style="display:flex;gap:6px">
+                              <button class="btn sub" type="button" data-act="selectAllReflectProperties" style="padding:3px 7px;font-size:10px">全選択</button>
+                              <button class="btn sub" type="button" data-act="clearReflectProperties" style="padding:3px 7px;font-size:10px">全解除</button>
+                            </div>
+                          </div>
+                          <div id="u_nodePropertyChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
+                          <div id="u_nodePropertyList" style="max-height:160px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:6px"></div>
+                        </div>
+                      </div>
+                      <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none;height:600px;">
+                        <div class="reflect-node-pane">
+                          <div class="reflect-node-list-wrap">
+                            <div class="result" id="u_reflectNodeList" style="max-height:none;border:1px solid #dbe3ed;border-radius:8px;overflow:auto;flex:1"></div>
+                          </div>
+                        </div>
+                        <div class="reflect-node-detail" id="u_reflectNodeDetail"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ===== Subpane: patch ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="patch">
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">JSONパッチを直接入力・編集して、比較先プレビューに反映します。</div>
+                <div id="u_patchJsonPanel" style="display:block">
+                  <div class="opt-card" style="margin:12px">
+                    <div class="opt-title">JSON差分反映</div>
+                    <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、差分比較結果から生成した内容をそのまま使って、比較先プレビューに反映します。</div>
+                    <div class="btns" style="margin-bottom:6px">
+                      <button class="btn sub" data-act="patchJsonUseCurrentDiff">差分比較結果を読込</button>
+                      <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
+                      <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
+                      <button class="btn sub" data-act="patchJsonClear">クリア</button>
+                    </div>
+                    <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
+                    <div id="u_patchJsonEditor" style="width:100%;height:400px;border-radius:6px;"></div>
+                    <div style="margin-top:10px;font-size:11px;font-weight:700;color:#334155">JSON差分比較</div>
+                    <div id="u_patchJsonDiff" style="margin-top:6px;min-height:120px;max-height:420px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
+                    <div class="btns" style="margin-top:6px">
+                      <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ===== Subpane: editor ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="editor">
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">追加・削除・編集・ドラッグ上書きができる事前確認用エディタです。</div>
+                <section class="opt-card reflect-preview-editor-card" id="u_reflectPreviewEditorFold" style="display:block;margin:12px">
+                  <div class="opt-title">フィールド差分プレビューエディタ（試験）</div>
+                  <p class="reflect-preview-editor-lead">ドラッグ＆ドロップで別カードへ設定上書き（code/typeは保持）、JSON編集とUndoにも対応します。</p>
+                  <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
+                </section>
+              </div>
+
+              <div class="reflect-footer-stack" style="margin-top:auto">
+                <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>
+                <div class="reflect-footer-options" id="u_reflectOptionsCard">
+                  <div class="reflect-footer-options__label">反映オプション</div>
+                  <div class="reflect-footer-options__chips">
+                    <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存</label>
+                    <label class="chip" title="APIエラーが出た時点で残りの反映を止めます"><input type="checkbox" id="u_stopOnError" checked> エラー時中断</label>
+                    <span class="muted" style="font-size:11px;line-height:1.45;max-width:420px;display:inline-block;vertical-align:middle">本番デプロイAPIは利用できません。プレビュー反映後は管理画面から手動デプロイしてください。</span>
+                    <input type="checkbox" id="u_doDeploy" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
+                  </div>
+                  <div id="u_backupStatus" style="display:none;margin-top:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46"></div>
+                </div>
+                <div class="reflect-footer-actions main-footer" id="u_reflectFooter">
+                  <div class="reflect-footer-actions__preview">
+                    <span class="reflect-footer-zone-label">プレビューAPI</span>
+                    <button type="button" class="btn sub" data-act="runDiff" id="u_footerRunDiff" title="差分比較を実行します">差分比較</button>
+                    <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">反映プラン確認</button>
+                    <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します">バックアップ</button>
+                    <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択枠を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">比較元 → 比較先(プレビュー) 反映</button>
+                  </div>
+                  <div class="reflect-footer-actions__prod">
+                    <span class="reflect-footer-zone-label reflect-footer-zone-label--prod">本番反映</span>
+                    <span class="muted" style="font-size:11px;line-height:1.45;max-width:220px;display:inline-block">デプロイはkintone管理画面から手動で行ってください。</span>
+                  </div>
+                  <span class="footer-status" id="u_reflectFooterStatus"></span>
+                </div>
+              </div>
+
+              <!-- Keep hidden inputs used by logic -->
+              <input type="checkbox" id="u_nodeMode" style="display:none">
+              <label class="reflect-simple-toggle chip" style="display:none"><input type="checkbox" id="u_reflectSimpleMode"></label>
+              <button type="button" id="u_modeSectionBtn" data-act="reflectModeSection" style="display:none"></button>
+              <button type="button" id="u_modeNodeBtn" data-act="reflectModeNode" style="display:none"></button>
+              <button data-act="togglePatchJsonPanel" style="display:none"></button>
+              <button data-act="openReflectPreviewEditor" style="display:none"></button>
+            </div>
             <div class="pane" data-pane="field">
               <div class="subtabs">
                 <button class="subtab active" data-subtab-parent="field" data-subtab="json">JSON編集</button>
@@ -9557,12 +10469,13 @@ ${contextLine}`);
                 <div class="diff-fold-body">
               <div style="margin-top:0">
                 <label title="kintone の field 定義と同じ properties オブジェクト">追加フィールドJSON（properties形式）</label>
-                <textarea id="u_fieldJson" placeholder='{"text_1":{"type":"SINGLE_LINE_TEXT","code":"text_1","label":"テキスト"}}' title="有効なフィールド型・code・label を含むJSON"></textarea>
+                <div id="u_fieldJson" style="width:100%;height:300px;border-radius:6px;"></div>
               </div>
               <div class="grid2" style="margin-top:8px">
                 <label class="chip" title="既存の同一 code のフィールドを置き換えます"><input type="checkbox" id="u_overwriteField"> 同一コードは上書き</label>
-                <label class="chip" title="フィールド更新APIの後にデプロイを実行します"><input type="checkbox" id="u_deployField"> 更新後にデプロイ</label>
+                <span class="muted" style="font-size:11px;align-self:center;line-height:1.45">本番デプロイはツールから実行できません。</span>
               </div>
+              <input type="checkbox" id="u_deployField" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
               <div class="btns">
                 <button type="button" class="btn warn" data-act="applyField" title="比較先プレビューにフィールドを追加・更新します">比較先(プレビュー)へフィールド適用</button>
                 <button type="button" class="btn sub" data-act="loadTargetFields" title="現在の比較先アプリの fields.json を読み込み">比較先の現在値を読込</button>
@@ -9686,8 +10599,9 @@ ${contextLine}`);
               <div class="muted" style="margin-top:8px;line-height:1.6">比較元アプリIDの JS/CSS カスタマイズ設定（<code>/app/customize.json</code>）を取得・表示します。編集後に比較先(プレビュー)へ反映も可能です。</div>
               <div class="grid2" style="margin-top:8px">
                 <label class="chip" title="プレビュー環境のカスタマイズ設定を読みます"><input type="checkbox" id="u_jsconfigPreview"> プレビュー版を取得</label>
-                <label class="chip" title="PUT 後にデプロイAPIを続けて呼びます"><input type="checkbox" id="u_jsconfigDeployAfter"> 反映後にデプロイ</label>
+                <span class="muted" style="font-size:11px;align-self:center;line-height:1.45">反映後のデプロイは管理画面で手動行ってください。</span>
               </div>
+              <input type="checkbox" id="u_jsconfigDeployAfter" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
               <div class="btns">
                 <button type="button" class="btn" data-act="fetchJsConfig" title="比較元アプリIDで customize.json を取得">JS/CSS設定を取得</button>
                 <button type="button" class="btn sub" data-act="exportJsConfigJson">JSON出力</button>
@@ -9976,7 +10890,7 @@ ${contextLine}`);
                 </summary>
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">リクエストの組み立てと実行</div>
-              <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。</div>
+              <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。<strong>POST/PUT/DELETE</strong> は <code>/v1/preview/</code> を含むパスのみ可能です（本番への書き込み・デプロイAPIは不可）。</div>
               <div style="display:flex;gap:16px;margin-top:8px;">
                 <div style="flex:5;min-width:0;">
                   <div class="grid2">
@@ -9991,7 +10905,7 @@ ${contextLine}`);
                     </div>
                     <div>
                       <label title="相対パスまたは完全URL">エンドポイント（パス または URL）</label>
-                      <input type="text" id="u_apiTesterPath" placeholder="例: /k/v1/record.json または /app/settings">
+                      <input type="text" id="u_apiTesterPath" placeholder="書き込み例: /k/v1/preview/app/form/fields.json">
                     </div>
                   </div>
                   <div style="margin-top:8px">
@@ -9999,7 +10913,7 @@ ${contextLine}`);
                     <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace" placeholder='{"app": 1, "id": 100}'></textarea>
                   </div>
                   <div class="btns" style="margin-top:10px;display:flex;">
-                    <button type="button" class="btn warn" data-act="runApiTester" title="本番データの変更に注意">APIを実行</button>
+                    <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ">APIを実行</button>
                     <button type="button" class="btn sub" data-act="clearApiTesterHistory" style="margin-left:auto;">履歴クリア</button>
                   </div>
                   <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>
@@ -10352,8 +11266,35 @@ ${contextLine}`);
       });
     });
   }
-  function openGuidedTour(index = 0) {
+  async function openGuidedTour(index = 0) {
     if (!GUIDED_TOUR_STEPS.length || !ui.tourOverlay) return;
+    try {
+      const { startGuidedTour: startDriverTour } = await Promise.resolve().then(() => (init_oss_integrations(), oss_integrations_exports));
+      const { switchTab: swTab } = await Promise.resolve().then(() => (init_components(), components_exports));
+      const stepsForDriver = GUIDED_TOUR_STEPS.map((step) => {
+        return {
+          selector: step.selector,
+          element: step.selector,
+          title: step.title || "",
+          body: step.body || "",
+          description: step.body || "",
+          side: "bottom",
+          onHighlightStarted: () => {
+            if (step.tab) swTab(step.tab, { persist: false });
+            if (step.tab && step.subTab) switchSubTab2(step.tab, step.subTab, { persist: false });
+          }
+        };
+      });
+      await startDriverTour(stepsForDriver, {
+        onComplete: () => {
+          setStatus("操作ガイドを完了しました。");
+        }
+      });
+      setStatus("操作ガイドを開始しました（driver.js 拡張版）。");
+      return;
+    } catch (e) {
+      console.warn("driver.js tour fallback to custom tour:", e.message);
+    }
     state.guidedTourActive = true;
     state.guidedTourIndex = Math.max(0, Math.min(GUIDED_TOUR_STEPS.length - 1, Number(index) || 0));
     renderGuidedTourStep();
@@ -10532,6 +11473,7 @@ ${contextLine}`);
 
   // src/tabs/reflect-preview-playground.js
   init_utils();
+  init_state();
   var SAMPLE_BEFORE = {
     "文字列__1行_": { type: "SINGLE_LINE_TEXT", code: "文字列__1行_", label: "会社名", noLabel: false, required: true, unique: false, maxLength: "64", minLength: "", defaultValue: "", expression: "", hideExpression: false },
     "数値": { type: "NUMBER", code: "数値", label: "金額", noLabel: false, required: false, unique: false, maxValue: "", minValue: "", defaultValue: "0", digit: true, unit: "¥", unitPosition: "BEFORE" },
@@ -10683,6 +11625,11 @@ ${contextLine}`);
       return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(key)}</span><input data-rpp-input type="text" value="${esc(text || "")}"></label>`;
     }).join("");
   }
+  function extractFieldProperties(bundle) {
+    const props = bundle?.sections?.fieldSettings?.properties || bundle?.sections?.fieldSettings;
+    if (!props || typeof props !== "object" || Array.isArray(props)) return null;
+    return deepClone(props);
+  }
   function initReflectPreviewPlayground(ui4, setStatus2) {
     const root2 = ui4.reflectPreviewPlayground;
     if (!root2) return;
@@ -10695,6 +11642,22 @@ ${contextLine}`);
       expanded: /* @__PURE__ */ new Set(),
       dragCode: "",
       modal: null
+    };
+    const loadFromDiffBundles = (options = {}) => {
+      const sourceProps = extractFieldProperties(state.importedSourceBundle || state.lastSourceBundle);
+      const targetProps = extractFieldProperties(state.importedTargetBundle || state.lastTargetBundle);
+      if (!sourceProps && !targetProps) return false;
+      if (options.pushUndo) pushUndo();
+      st.before = sourceProps || {};
+      st.after = targetProps || {};
+      st.filter = "all";
+      st.view = "diff";
+      st.expanded = new Set(
+        computeDiff(st.before, st.after).filter((row) => row.status !== "unchanged").slice(0, 8).map((row) => row.code)
+      );
+      closeModal();
+      if (!options.silent) setStatus2("差分比較のフィールド設定をプレビューエディタへ読込しました");
+      return true;
     };
     const pushUndo = () => {
       st.undo.push({ before: deepClone(st.before), after: deepClone(st.after) });
@@ -10715,16 +11678,16 @@ ${contextLine}`);
     const renderModal = () => {
       if (!st.modal) return "";
       if (st.modal.kind === "fieldJson") {
-        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><textarea class="rpp-modal-textarea" data-rpp-modal-input="fieldJson">${esc(st.modal.text || "")}</textarea>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldJson">保存</button></div></div></div>`;
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><textarea class="rpp-modal-textarea" data-rpp-modal-input="fieldJson">${esc(st.modal.text || "")}</textarea>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldJson">保存</button></div></div></div>`;
       }
       if (st.modal.kind === "pairJson") {
-        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal rpp-modal-wide" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body rpp-modal-grid"><div><div class="rpp-modal-label">変更前（before）</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="beforeJson">${esc(st.modal.beforeText || "")}</textarea></div><div><div class="rpp-modal-label">変更後（after）</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="afterJson">${esc(st.modal.afterText || "")}</textarea></div>${st.modal.error ? `<div class="rpp-modal-error rpp-modal-error-full">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="savePairJson">適用</button></div></div></div>`;
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal rpp-modal-wide"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body rpp-modal-grid"><div><div class="rpp-modal-label">比較元JSON</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="beforeJson">${esc(st.modal.beforeText || "")}</textarea></div><div><div class="rpp-modal-label">比較先JSON</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="afterJson">${esc(st.modal.afterText || "")}</textarea></div>${st.modal.error ? `<div class="rpp-modal-error rpp-modal-error-full">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="savePairJson">適用</button></div></div></div>`;
       }
       if (st.modal.kind === "confirm") {
-        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><p class="rpp-modal-confirm">${esc(st.modal.message)}</p></div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="confirmAction">実行</button></div></div></div>`;
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><p class="rpp-modal-confirm">${esc(st.modal.message)}</p></div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="confirmAction">実行</button></div></div></div>`;
       }
       if (st.modal.kind === "fieldForm") {
-        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><div class="rpp-field-grid"><label class="rpp-field-row"><span>type</span>${st.modal.mode === "edit" ? `<input data-rpp-field="type" type="text" value="${esc(st.modal.draft.type)}" readonly>` : `<select data-rpp-field="type">${FIELD_TYPES.map((t) => `<option value="${esc(t.value)}" ${st.modal.draft.type === t.value ? "selected" : ""}>${esc(t.label)}</option>`).join("")}</select>`}</label><label class="rpp-field-row"><span>code</span><input data-rpp-field="code" type="text" value="${esc(st.modal.draft.code || "")}" ${st.modal.mode === "edit" ? "readonly" : ""}></label><label class="rpp-field-row"><span>label</span><input data-rpp-field="label" type="text" value="${esc(st.modal.draft.label || "")}"></label>${renderFieldFormRows(st.modal.draft)}</div><div class="rpp-modal-hint">詳細JSONでの編集が必要な場合は「JSON編集」を利用してください。</div>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn sub" data-rpp-modal-act="switchFieldJson">JSON編集</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldForm">保存</button></div></div></div>`;
+        return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><div class="rpp-field-grid"><label class="rpp-field-row"><span>type</span>${st.modal.mode === "edit" ? `<input data-rpp-field="type" type="text" value="${esc(st.modal.draft.type)}" readonly>` : `<select data-rpp-field="type">${FIELD_TYPES.map((t) => `<option value="${esc(t.value)}" ${st.modal.draft.type === t.value ? "selected" : ""}>${esc(t.label)}</option>`).join("")}</select>`}</label><label class="rpp-field-row"><span>code</span><input data-rpp-field="code" type="text" value="${esc(st.modal.draft.code || "")}" ${st.modal.mode === "edit" ? "readonly" : ""}></label><label class="rpp-field-row"><span>label</span><input data-rpp-field="label" type="text" value="${esc(st.modal.draft.label || "")}"></label>${renderFieldFormRows(st.modal.draft)}</div><div class="rpp-modal-hint">詳細JSONでの編集が必要な場合は「JSON編集」を利用してください。</div>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn sub" data-rpp-modal-act="switchFieldJson">JSON編集</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldForm">保存</button></div></div></div>`;
       }
       return "";
     };
@@ -10738,6 +11701,7 @@ ${contextLine}`);
       root2.innerHTML = `
       <div class="rpp-toolbar">
         <button type="button" class="btn sub" data-rpp-act="loadSample">サンプル</button>
+        <button type="button" class="btn sub" data-rpp-act="loadDiff">差分比較から読込</button>
         <button type="button" class="btn sub" data-rpp-act="undo" ${st.undo.length ? "" : "disabled"}>↩ 戻す</button>
         <button type="button" class="btn sub" data-rpp-act="add">＋ フィールド追加</button>
         <button type="button" class="btn sub" data-rpp-act="editJson">JSON編集</button>
@@ -10753,14 +11717,16 @@ ${contextLine}`);
         ${rows.map((row) => {
         const opened = st.expanded.has(row.code);
         const label = row.after?.label || row.before?.label || row.code;
-        const body = st.view === "diff" ? row.status === "modified" ? `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>変更前</th><th>変更後</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatValue(ch.before))}</pre></td><td><pre>${esc(formatValue(ch.after))}</pre></td></tr>`).join("")}</tbody></table>` : `<pre class="rpp-pre">${esc(formatValue(row.after || row.before))}</pre>` : `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">本番</div><div class="rpp-preview-body">${row.before ? esc(row.before.label || row.before.code || "-") : "なし"}</div></div><div><div class="rpp-preview-head">プレビュー</div><div class="rpp-preview-body">${row.after ? esc(row.after.label || row.after.code || "-") : "なし"}</div></div></div>`;
+        const body = st.view === "diff" ? row.status === "modified" ? `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>変更前</th><th>変更後</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatValue(ch.before))}</pre></td><td><pre>${esc(formatValue(ch.after))}</pre></td></tr>`).join("")}</tbody></table>` : `<pre class="rpp-pre">${esc(formatValue(row.after || row.before))}</pre>` : `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">比較元</div><div class="rpp-preview-body">${row.before ? esc(row.before.label || row.before.code || "-") : "なし"}</div></div><div><div class="rpp-preview-head">比較先</div><div class="rpp-preview-body">${row.after ? esc(row.after.label || row.after.code || "-") : "なし"}</div></div></div>`;
         return `<div class="rpp-card" draggable="true" data-rpp-code="${esc(row.code)}"><div class="rpp-head"><button type="button" class="rpp-open" data-rpp-act="toggle" data-code="${esc(row.code)}">${opened ? "▾" : "▸"}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.code)}</code><span class="rpp-spacer"></span>${row.after ? `<button type="button" class="btn sub" data-rpp-act="edit" data-code="${esc(row.code)}">編集</button><button type="button" class="btn sub" data-rpp-act="delete" data-code="${esc(row.code)}">削除</button>` : `<button type="button" class="btn sub" data-rpp-act="restore" data-code="${esc(row.code)}">復元</button>`}</div>${opened ? `<div class="rpp-body">${body}</div>` : ""}</div>`;
       }).join("") || '<div class="muted" style="padding:12px">表示対象がありません</div>'}
       </div>
       ${renderModal()}`;
     };
     root2.addEventListener("click", (ev) => {
-      const modalAct = ev.target.closest("[data-rpp-modal-act]")?.dataset.rppModalAct;
+      const modalActionEl = ev.target.closest("[data-rpp-modal-act]");
+      if (st.modal && !modalActionEl && ev.target.closest(".rpp-modal")) return;
+      const modalAct = modalActionEl?.dataset.rppModalAct;
       if (modalAct) {
         try {
           if (modalAct === "cancel") {
@@ -10868,6 +11834,8 @@ ${contextLine}`);
           st.before = deepClone(SAMPLE_BEFORE);
           st.after = deepClone(SAMPLE_AFTER);
           setStatus2("サンプルデータを再読込しました");
+        } else if (act === "loadDiff") {
+          if (!loadFromDiffBundles({ pushUndo: true })) throw new Error("先に差分比較を実行し、fieldSettings を取得してください");
         } else if (act === "undo") {
           if (!st.undo.length) return;
           const prev = st.undo.pop();
@@ -10932,10 +11900,14 @@ ${contextLine}`);
       if (st.modal?.kind !== "fieldForm" || st.modal.mode !== "add") return;
       const sel = ev.target.closest('[data-rpp-field="type"]');
       if (!sel) return;
+      const form = root2.querySelector(".rpp-field-grid");
+      const currentCode = form?.querySelector('[data-rpp-field="code"]')?.value || st.modal.draft.code;
+      const currentLabel = form?.querySelector('[data-rpp-field="label"]')?.value || st.modal.draft.label;
       const type = sel.value || "SINGLE_LINE_TEXT";
-      st.modal.draft = { type, code: st.modal.draft.code, label: st.modal.draft.label, ...deepClone(DEFAULT_PROPS[type] || {}) };
+      st.modal.draft = { type, code: currentCode, label: currentLabel, ...deepClone(DEFAULT_PROPS[type] || {}) };
       render();
     });
+    loadFromDiffBundles({ silent: true });
     render();
   }
 
@@ -11357,7 +12329,7 @@ ${contextLine}`);
       }
     }
     setBusy(false);
-    alert(`完了: ${successCount}件のレコードを登録しました。`);
+    showToast(`完了: ${successCount}件のレコードを登録しました。`, "success");
     fileInput.value = "";
     getToolDocument().getElementById("u_csvImportFileName").textContent = "未選択";
   }
@@ -11384,7 +12356,7 @@ ${contextLine}`);
       setStatus(`取得中... (${totalFetched}件)`);
     }
     if (!records.length) {
-      alert("コピー対象のレコードが見つかりませんでした");
+      showToast("コピー対象のレコードが見つかりませんでした", "warn");
       setBusy(false);
       return;
     }
@@ -11428,7 +12400,7 @@ ${contextLine}`);
       }
     }
     setBusy(false);
-    alert(`完了: ${successCount}件のレコードを比較先へコピーしました。`);
+    showToast(`完了: ${successCount}件のレコードを比較先へコピーしました。`, "success");
   }
   var TEMPLATE_STATE_KEY = "kintoneSuperApp_Templates";
   function getTemplates() {
@@ -11467,7 +12439,7 @@ ${contextLine}`);
     }
     renderTemplateOptions();
     getToolDocument().getElementById("u_templateSaveName").value = "";
-    alert(`データ「${name}」を保存しました。`);
+    showToast(`データ「${name}」を保存しました。`, "success");
   }
   function loadTemplate() {
     const name = getToolDocument().getElementById("u_templateSelect")?.value;
@@ -11475,14 +12447,13 @@ ${contextLine}`);
     const tpls = getTemplates();
     const tpl = tpls[name];
     if (!tpl || !tpl.bundle) {
-      alert("指定されたデータが存在しません");
+      showToast("指定されたデータが存在しません", "error");
       return;
     }
     state.importedSourceBundle = tpl.bundle;
     state.importedSourceName = `[テンプレート] ${name}`;
     renderBundleState();
-    alert(`テンプレート「${name}」を比較元（ファイル読込扱い）としてセットしました。
-必要に応じて差分比較を実行してください。`);
+    showToast(`テンプレート「${name}」を比較元としてセットしました。差分比較を実行してください。`, "success");
   }
   function deleteTemplate() {
     const name = getToolDocument().getElementById("u_templateSelect")?.value;
@@ -11625,7 +12596,10 @@ ${contextLine}`);
         await fn();
       } catch (e) {
         console.error(e);
-        setStatus(`エラー: ${e.message || String(e)}`, true);
+        const msg = `エラー: ${e.message || String(e)}`;
+        setStatus(msg, true);
+        showToast(msg, "error").catch(() => {
+        });
       } finally {
         state.running = false;
         setBusy(false);
@@ -11641,6 +12615,9 @@ ${contextLine}`);
   }
   function normalizeDiffFavoritePath2(path) {
     return String(path || "").trim();
+  }
+  function getVisibleReflectNodeIds() {
+    return [...ui.reflectNodeList?.querySelectorAll("[data-node-open]") || []].map((el) => el.dataset.nodeOpen).filter(Boolean);
   }
   function setupEventHandlers(injected = {}) {
     const root2 = getRoot();
@@ -11683,10 +12660,11 @@ ${contextLine}`);
       runBackupTargetPreview: runBackupTargetPreview2,
       runApplyPreview: runApplyPreview2,
       runDeployOnly: runDeployOnly2,
-      runApplyPatchJson,
-      importPatchJsonFromFile,
-      parsePatchJsonPayload,
-      renderPatchJsonSummary,
+      runApplyPatchJson: runApplyPatchJson2,
+      importPatchJsonFromFile: importPatchJsonFromFile2,
+      parsePatchJsonPayload: parsePatchJsonPayload2,
+      renderPatchJsonSummary: renderPatchJsonSummary2,
+      populatePatchJsonFromCurrentDiff: populatePatchJsonFromCurrentDiff2,
       renderCustomizeResult: renderCustomizeResult2,
       runBulkFieldRename,
       runDetectUnusedFields,
@@ -12070,38 +13048,8 @@ ${contextLine}`);
         patchJsonFileInput.value = "";
         if (!f) return;
         withGuard(async () => {
-          if (typeof importPatchJsonFromFile === "function") await importPatchJsonFromFile(f);
+          if (typeof importPatchJsonFromFile2 === "function") await importPatchJsonFromFile2(f);
         });
-      });
-    }
-    const patchJsonEditor = getToolDocument().getElementById("u_patchJsonEditor");
-    if (patchJsonEditor) {
-      let patchParseTimer = 0;
-      patchJsonEditor.addEventListener("input", () => {
-        clearTimeout(patchParseTimer);
-        patchParseTimer = setTimeout(() => {
-          try {
-            const text = patchJsonEditor.value.trim();
-            if (!text) {
-              if (typeof renderPatchJsonSummary === "function") renderPatchJsonSummary(null);
-              return;
-            }
-            if (typeof parsePatchJsonPayload === "function") {
-              const parsed = parsePatchJsonPayload(text);
-              state.importedPatchPayload = parsed;
-              if (typeof renderPatchJsonSummary === "function") renderPatchJsonSummary(parsed);
-            }
-          } catch (e) {
-            const el = getToolDocument().getElementById("u_patchJsonSummary");
-            if (el) {
-              el.style.display = "block";
-              el.style.background = "#fef2f2";
-              el.style.borderColor = "#fca5a5";
-              el.style.color = "#991b1b";
-              el.textContent = `JSON解析エラー: ${e.message}`;
-            }
-          }
-        }, 400);
       });
     }
     root2.addEventListener("click", (e) => {
@@ -12233,9 +13181,21 @@ ${contextLine}`);
       const subTab = e.target.closest(".subtab");
       if (subTab) {
         const parent = subTab.dataset.subtabParent || "";
-        switchSubTab(parent, subTab.dataset.subtab || "");
+        const nextSubTab = subTab.dataset.subtab || "";
+        switchSubTab(parent, nextSubTab);
         syncDiffOnboardingVisibility();
         if (parent === "diff" && ui.result) renderResultRows(state.lastDiffRows || []);
+        if (parent === "reflect") {
+          if (nextSubTab === "patch" && typeof populatePatchJsonFromCurrentDiff2 === "function") {
+            try {
+              populatePatchJsonFromCurrentDiff2({ silent: true });
+            } catch (err) {
+            }
+          }
+          renderReflectModeUi();
+          renderReflectMainPanel();
+          renderReflectNodeList();
+        }
         return;
       }
       const tab = e.target.closest(".tab");
@@ -12631,9 +13591,29 @@ ${contextLine}`);
         setStatus("差分のあるセクションのみ選択しました");
         return;
       }
-      if (act === "reflectModeSection") {
-        ui.nodeMode.checked = false;
+      if (act === "applyScopeHighRisk") {
+        const highRiskSections = new Set(
+          getActualDiffRows(state.lastDiffRows || []).filter((row) => String(row.severity || "").toLowerCase() === "high").map((row) => row.sectionKey).filter(Boolean)
+        );
+        [...ui.applyScopes.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
+          c.checked = highRiskSections.has(c.value);
+        });
+        saveCurrentDialogState2();
+        renderReflectSidebar();
+        renderReflectMainPanel();
+        setStatus(highRiskSections.size ? `高重要度の差分があるセクションを選択しました (${highRiskSections.size}件)` : "高重要度の差分セクションはありません");
+        return;
+      }
+      if (act === "reflectSidebarOverview") {
         state.reflectActiveSidebarSection = null;
+        renderReflectSidebar();
+        renderReflectMainPanel();
+        setStatus("反映概要を表示しました");
+        return;
+      }
+      if (act === "reflectModeSection") {
+        state.reflectActiveSidebarSection = null;
+        switchSubTab("reflect", "section");
         renderReflectModeUi();
         renderReflectMainPanel();
         setStatus("セクション反映モードに切り替えました");
@@ -12644,8 +13624,8 @@ ${contextLine}`);
           setStatus("簡易表示中はノード選択に切り替えられません。「簡易表示」をオフにしてください。");
           return;
         }
-        ui.nodeMode.checked = true;
         state.reflectActiveSidebarSection = null;
+        switchSubTab("reflect", "node");
         renderReflectModeUi();
         if (state.lastDiffRows && state.lastDiffRows.length > 0 && !state.reflectRows.length) {
           loadReflectRowsFromLastDiff();
@@ -12656,6 +13636,45 @@ ${contextLine}`);
       if (act === "loadReflectNodes") return withGuard(async () => {
         loadReflectRowsFromLastDiff();
       });
+      if (act === "selectVisibleReflectNodes") {
+        const visibleIds = getVisibleReflectNodeIds();
+        if (!visibleIds.length) {
+          setStatus("表示中のノードがありません");
+          return;
+        }
+        pushReflectUndo();
+        visibleIds.forEach((id) => state.reflectSelectedIds.add(id));
+        renderReflectNodeList();
+        setStatus(`表示中ノードを選択しました (${visibleIds.length}件)`);
+        return;
+      }
+      if (act === "clearVisibleReflectNodes") {
+        const visibleIds = getVisibleReflectNodeIds();
+        if (!visibleIds.length) {
+          setStatus("表示中のノードがありません");
+          return;
+        }
+        pushReflectUndo();
+        let cleared = 0;
+        visibleIds.forEach((id) => {
+          if (state.reflectSelectedIds.delete(id)) cleared += 1;
+        });
+        renderReflectNodeList();
+        setStatus(`表示中ノードの選択を解除しました (${cleared}件)`);
+        return;
+      }
+      if (act === "selectHighSeverityReflectNodes") {
+        const highIds = (state.reflectRows || []).filter((row) => String(row.severity || "low").toLowerCase() === "high").map((row) => row._id).filter(Boolean);
+        if (!highIds.length) {
+          setStatus("高重要度のノードはありません");
+          return;
+        }
+        pushReflectUndo();
+        highIds.forEach((id) => state.reflectSelectedIds.add(id));
+        renderReflectNodeList();
+        setStatus(`高重要度ノードを選択しました (${highIds.length}件)`);
+        return;
+      }
       if (act === "selectReflectNodesAll") {
         pushReflectUndo();
         state.reflectSelectedIds = new Set((state.reflectRows || []).map((r) => r._id));
@@ -12798,15 +13817,27 @@ ${contextLine}`);
         }
         return;
       }
+      if (act === "patchJsonUseCurrentDiff") {
+        if (typeof populatePatchJsonFromCurrentDiff2 !== "function") {
+          setStatus("差分比較結果からのパッチJSON生成は未対応です", true);
+          return;
+        }
+        try {
+          populatePatchJsonFromCurrentDiff2({ force: true });
+        } catch (err) {
+          setStatus(err.message || String(err), true);
+        }
+        return;
+      }
       if (act === "patchJsonClear") {
         state.importedPatchPayload = null;
         const editor = getToolDocument().getElementById("u_patchJsonEditor");
         if (editor) editor.value = "";
-        if (typeof renderPatchJsonSummary === "function") renderPatchJsonSummary(null);
+        if (typeof renderPatchJsonSummary2 === "function") renderPatchJsonSummary2(null);
         setStatus("パッチJSONをクリアしました");
         return;
       }
-      if (act === "applyPatchJson" && typeof runApplyPatchJson === "function") return withGuard(runApplyPatchJson);
+      if (act === "applyPatchJson" && typeof runApplyPatchJson2 === "function") return withGuard(runApplyPatchJson2);
       if (act === "applyField") return withGuard(runFieldApply);
       if (act === "loadTargetFields") return withGuard(runLoadTargetFields);
       if (act === "formatFieldJson") {
@@ -12873,6 +13904,11 @@ ${contextLine}`);
     refreshDiffSelectionSetDropdown();
     syncDiffOnboardingVisibility();
   }
+
+  // src/boot.js
+  init_oss_integrations();
+  init_utils();
+  init_constants();
 
   // src/tabs/design.js
   init_constants();
@@ -13812,7 +14848,7 @@ function exportSVG(){
   // cytoscape-svg plugin is not present, so we fallback to a simple message or a data-uri attempt.
   // Actually, standard cytoscape does not natively support SVG without an extension.
   // We can try to use JSON instead or alert the user.
-  alert("SVGエクスポートには追加のプラグイン(cytoscape-svg)が必要です。PNGをご利用ください。");
+  showToast("SVGエクスポートには追加のプラグイン(cytoscape-svg)が必要です。PNGをご利用ください。", 'warn');
 }
 
 // ─── Layout Switching ───
@@ -14652,7 +15688,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         popup.close();
       } catch (e) {
       }
-      alert("フィールド間の依存関係（計算式等）は見つかりませんでした。");
+      showToast("フィールド間の依存関係（計算式等）は見つかりませんでした。", "warn");
       setBusy(false);
       return;
     }
@@ -14745,7 +15781,6 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   init_components();
   init_dialog();
   init_diff();
-  init_helpers();
   function renderCustomizeResult(data) {
     if (!data) {
       ui.jsconfigResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">データがありません</div>';
@@ -14823,11 +15858,6 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setStatus("JS/CSS設定を反映中...");
     await apiPut(prefix, "/app/customize.json", body);
     const logs = [`OK JS/CSS設定反映（アプリ: ${c.target.appId}）`];
-    if (ui.jsconfigDeployAfter.checked) {
-      setStatus("デプロイ実行中...");
-      const st = await deployAndPoll(prefix, c.target.appId, logs);
-      logs.push(st === "SUCCESS" ? "OK デプロイ完了" : `NG デプロイ終了ステータス: ${st}`);
-    }
     ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`;
     setStatus("JS/CSS設定反映完了");
   }
@@ -16006,6 +17036,7 @@ ${safety.hash}`, "");
 
   // src/tabs/api-tester.js
   init_utils();
+  init_api();
   init_components();
   init_components();
   init_dialog();
@@ -16019,7 +17050,7 @@ ${safety.hash}`, "");
       return;
     }
     if (!path) {
-      alert("エンドポイントを指定してください");
+      showToast("エンドポイントを指定してください", "warn");
       return;
     }
     let payload = {};
@@ -16027,7 +17058,7 @@ ${safety.hash}`, "");
       try {
         payload = JSON.parse(bodyStr);
       } catch (e) {
-        alert("リクエストBodyのJSON形式が不正です:\n" + e.message);
+        showToast("リクエストBodyのJSON形式が不正です: " + e.message, "error");
         return;
       }
     }
@@ -16040,6 +17071,7 @@ ${safety.hash}`, "");
         const prefix = g ? `/k/guest/${g}/v1` : "/k/v1";
         finalPath = prefix + (path.startsWith("/") ? path : `/${path}`);
       }
+      assertAllowsMutatingApiUrl(finalPath, method);
       const res = await kintone.api(finalPath, method, payload);
       resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(JSON.stringify(res, null, 2))}</pre>`;
       setStatus(`API実行成功: ${method} ${finalPath}`);
@@ -16272,6 +17304,9 @@ ${safety.hash}`, "");
       reflectMainTitle: $("#u_reflectMainTitle"),
       reflectOptionsCard: $("#u_reflectOptionsCard"),
       doDeploy: $("#u_doDeploy"),
+      patchJsonPanel: $("#u_patchJsonPanel"),
+      patchJsonSummary: $("#u_patchJsonSummary"),
+      patchJsonEditor: $("#u_patchJsonEditor"),
       fieldJson: $("#u_fieldJson"),
       overwriteField: $("#u_overwriteField"),
       deployField: $("#u_deployField"),
@@ -16368,6 +17403,11 @@ ${safety.hash}`, "");
       runBackupTargetPreview,
       runApplyPreview,
       runDeployOnly,
+      runApplyPatchJson,
+      importPatchJsonFromFile,
+      parsePatchJsonPayload,
+      renderPatchJsonSummary,
+      populatePatchJsonFromCurrentDiff,
       renderCustomizeResult,
       renderTemplateOptions
     });
@@ -16375,6 +17415,111 @@ ${safety.hash}`, "");
     setStatus("待機中");
     if (options.initialTab) {
       switchTab(options.initialTab);
+    }
+    initOssIntegrations();
+  }
+  async function initOssIntegrations() {
+    try {
+      await loadExternalLibrary("toastify");
+    } catch (e) {
+      console.warn("Toastify load skipped:", e.message);
+    }
+    try {
+      const patchContainer = document.getElementById("u_patchJsonEditor") || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document.getElementById("u_patchJsonEditor") : null);
+      if (patchContainer && patchContainer.tagName === "DIV") {
+        const editor = await initJsonEditor("u_patchJsonEditor", {
+          mode: "code",
+          modes: ["code", "tree"],
+          initialValue: {},
+          onChange: () => {
+            try {
+              const inst = getJsonEditorInstance("u_patchJsonEditor");
+              if (inst) {
+                const val = inst.get();
+                if (val && typeof val === "object" && typeof parsePatchJsonPayload === "function" && typeof renderPatchJsonSummary === "function") {
+                  renderPatchJsonSummary(parsePatchJsonPayload(val));
+                }
+              }
+            } catch (e) {
+              if (typeof renderPatchJsonSummary === "function") renderPatchJsonSummary(null);
+            }
+          }
+        });
+        if (editor && patchContainer) {
+          Object.defineProperty(patchContainer, "value", {
+            get() {
+              try {
+                return editor.getText();
+              } catch (e) {
+                return "";
+              }
+            },
+            set(v) {
+              try {
+                if (typeof v === "string") {
+                  if (!v.trim()) {
+                    editor.set({});
+                    return;
+                  }
+                  editor.set(JSON.parse(v));
+                } else {
+                  editor.set(v || {});
+                }
+              } catch (e) {
+                try {
+                  editor.setText(String(v));
+                } catch (e2) {
+                }
+              }
+            },
+            configurable: true
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("JSONEditor (patch) init skipped:", e.message);
+    }
+    try {
+      const fieldContainer = document.getElementById("u_fieldJson") || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document.getElementById("u_fieldJson") : null);
+      if (fieldContainer && fieldContainer.tagName === "DIV") {
+        const editor = await initJsonEditor("u_fieldJson", {
+          mode: "code",
+          modes: ["code", "tree"],
+          initialValue: {}
+        });
+        if (editor && fieldContainer) {
+          Object.defineProperty(fieldContainer, "value", {
+            get() {
+              try {
+                return editor.getText();
+              } catch (e) {
+                return "";
+              }
+            },
+            set(v) {
+              try {
+                if (typeof v === "string") {
+                  if (!v.trim()) {
+                    editor.set({});
+                    return;
+                  }
+                  editor.set(JSON.parse(v));
+                } else {
+                  editor.set(v || {});
+                }
+              } catch (e) {
+                try {
+                  editor.setText(String(v));
+                } catch (e2) {
+                }
+              }
+            },
+            configurable: true
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("JSONEditor (field) init skipped:", e.message);
     }
   }
 

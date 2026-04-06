@@ -1,6 +1,7 @@
 'use strict';
 
 import { deepClone, esc, downloadText } from '../utils.js';
+import { state } from '../state.js';
 
 const SAMPLE_BEFORE = {
   '文字列__1行_': { type: 'SINGLE_LINE_TEXT', code: '文字列__1行_', label: '会社名', noLabel: false, required: true, unique: false, maxLength: '64', minLength: '', defaultValue: '', expression: '', hideExpression: false },
@@ -161,6 +162,12 @@ function renderFieldFormRows(draft) {
   }).join('');
 }
 
+function extractFieldProperties(bundle) {
+  const props = bundle?.sections?.fieldSettings?.properties || bundle?.sections?.fieldSettings;
+  if (!props || typeof props !== 'object' || Array.isArray(props)) return null;
+  return deepClone(props);
+}
+
 export function initReflectPreviewPlayground(ui, setStatus) {
   const root = ui.reflectPreviewPlayground;
   if (!root) return;
@@ -174,6 +181,26 @@ export function initReflectPreviewPlayground(ui, setStatus) {
     expanded: new Set(),
     dragCode: '',
     modal: null
+  };
+
+  const loadFromDiffBundles = (options = {}) => {
+    const sourceProps = extractFieldProperties(state.importedSourceBundle || state.lastSourceBundle);
+    const targetProps = extractFieldProperties(state.importedTargetBundle || state.lastTargetBundle);
+    if (!sourceProps && !targetProps) return false;
+    if (options.pushUndo) pushUndo();
+    st.before = sourceProps || {};
+    st.after = targetProps || {};
+    st.filter = 'all';
+    st.view = 'diff';
+    st.expanded = new Set(
+      computeDiff(st.before, st.after)
+        .filter((row) => row.status !== 'unchanged')
+        .slice(0, 8)
+        .map((row) => row.code)
+    );
+    closeModal();
+    if (!options.silent) setStatus('差分比較のフィールド設定をプレビューエディタへ読込しました');
+    return true;
   };
 
   const pushUndo = () => {
@@ -194,16 +221,16 @@ export function initReflectPreviewPlayground(ui, setStatus) {
   const renderModal = () => {
     if (!st.modal) return '';
     if (st.modal.kind === 'fieldJson') {
-      return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><textarea class="rpp-modal-textarea" data-rpp-modal-input="fieldJson">${esc(st.modal.text || '')}</textarea>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ''}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldJson">保存</button></div></div></div>`;
+      return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><textarea class="rpp-modal-textarea" data-rpp-modal-input="fieldJson">${esc(st.modal.text || '')}</textarea>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ''}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldJson">保存</button></div></div></div>`;
     }
     if (st.modal.kind === 'pairJson') {
-      return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal rpp-modal-wide" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body rpp-modal-grid"><div><div class="rpp-modal-label">変更前（before）</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="beforeJson">${esc(st.modal.beforeText || '')}</textarea></div><div><div class="rpp-modal-label">変更後（after）</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="afterJson">${esc(st.modal.afterText || '')}</textarea></div>${st.modal.error ? `<div class="rpp-modal-error rpp-modal-error-full">${esc(st.modal.error)}</div>` : ''}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="savePairJson">適用</button></div></div></div>`;
+      return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal rpp-modal-wide"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body rpp-modal-grid"><div><div class="rpp-modal-label">比較元JSON</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="beforeJson">${esc(st.modal.beforeText || '')}</textarea></div><div><div class="rpp-modal-label">比較先JSON</div><textarea class="rpp-modal-textarea" data-rpp-modal-input="afterJson">${esc(st.modal.afterText || '')}</textarea></div>${st.modal.error ? `<div class="rpp-modal-error rpp-modal-error-full">${esc(st.modal.error)}</div>` : ''}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="savePairJson">適用</button></div></div></div>`;
     }
     if (st.modal.kind === 'confirm') {
-      return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><p class="rpp-modal-confirm">${esc(st.modal.message)}</p></div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="confirmAction">実行</button></div></div></div>`;
+      return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><p class="rpp-modal-confirm">${esc(st.modal.message)}</p></div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="confirmAction">実行</button></div></div></div>`;
     }
     if (st.modal.kind === 'fieldForm') {
-      return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal" onclick="event.stopPropagation()"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><div class="rpp-field-grid"><label class="rpp-field-row"><span>type</span>${st.modal.mode === 'edit' ? `<input data-rpp-field="type" type="text" value="${esc(st.modal.draft.type)}" readonly>` : `<select data-rpp-field="type">${FIELD_TYPES.map((t) => `<option value="${esc(t.value)}" ${st.modal.draft.type === t.value ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select>`}</label><label class="rpp-field-row"><span>code</span><input data-rpp-field="code" type="text" value="${esc(st.modal.draft.code || '')}" ${st.modal.mode === 'edit' ? 'readonly' : ''}></label><label class="rpp-field-row"><span>label</span><input data-rpp-field="label" type="text" value="${esc(st.modal.draft.label || '')}"></label>${renderFieldFormRows(st.modal.draft)}</div><div class="rpp-modal-hint">詳細JSONでの編集が必要な場合は「JSON編集」を利用してください。</div>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ''}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn sub" data-rpp-modal-act="switchFieldJson">JSON編集</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldForm">保存</button></div></div></div>`;
+      return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><div class="rpp-field-grid"><label class="rpp-field-row"><span>type</span>${st.modal.mode === 'edit' ? `<input data-rpp-field="type" type="text" value="${esc(st.modal.draft.type)}" readonly>` : `<select data-rpp-field="type">${FIELD_TYPES.map((t) => `<option value="${esc(t.value)}" ${st.modal.draft.type === t.value ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select>`}</label><label class="rpp-field-row"><span>code</span><input data-rpp-field="code" type="text" value="${esc(st.modal.draft.code || '')}" ${st.modal.mode === 'edit' ? 'readonly' : ''}></label><label class="rpp-field-row"><span>label</span><input data-rpp-field="label" type="text" value="${esc(st.modal.draft.label || '')}"></label>${renderFieldFormRows(st.modal.draft)}</div><div class="rpp-modal-hint">詳細JSONでの編集が必要な場合は「JSON編集」を利用してください。</div>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ''}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn sub" data-rpp-modal-act="switchFieldJson">JSON編集</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldForm">保存</button></div></div></div>`;
     }
     return '';
   };
@@ -217,6 +244,7 @@ export function initReflectPreviewPlayground(ui, setStatus) {
     root.innerHTML = `
       <div class="rpp-toolbar">
         <button type="button" class="btn sub" data-rpp-act="loadSample">サンプル</button>
+        <button type="button" class="btn sub" data-rpp-act="loadDiff">差分比較から読込</button>
         <button type="button" class="btn sub" data-rpp-act="undo" ${st.undo.length ? '' : 'disabled'}>↩ 戻す</button>
         <button type="button" class="btn sub" data-rpp-act="add">＋ フィールド追加</button>
         <button type="button" class="btn sub" data-rpp-act="editJson">JSON編集</button>
@@ -236,7 +264,7 @@ export function initReflectPreviewPlayground(ui, setStatus) {
             ? (row.status === 'modified'
               ? `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>変更前</th><th>変更後</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatValue(ch.before))}</pre></td><td><pre>${esc(formatValue(ch.after))}</pre></td></tr>`).join('')}</tbody></table>`
               : `<pre class="rpp-pre">${esc(formatValue(row.after || row.before))}</pre>`)
-            : `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">本番</div><div class="rpp-preview-body">${row.before ? esc(row.before.label || row.before.code || '-') : 'なし'}</div></div><div><div class="rpp-preview-head">プレビュー</div><div class="rpp-preview-body">${row.after ? esc(row.after.label || row.after.code || '-') : 'なし'}</div></div></div>`;
+            : `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">比較元</div><div class="rpp-preview-body">${row.before ? esc(row.before.label || row.before.code || '-') : 'なし'}</div></div><div><div class="rpp-preview-head">比較先</div><div class="rpp-preview-body">${row.after ? esc(row.after.label || row.after.code || '-') : 'なし'}</div></div></div>`;
           return `<div class="rpp-card" draggable="true" data-rpp-code="${esc(row.code)}"><div class="rpp-head"><button type="button" class="rpp-open" data-rpp-act="toggle" data-code="${esc(row.code)}">${opened ? '▾' : '▸'}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.code)}</code><span class="rpp-spacer"></span>${row.after ? `<button type="button" class="btn sub" data-rpp-act="edit" data-code="${esc(row.code)}">編集</button><button type="button" class="btn sub" data-rpp-act="delete" data-code="${esc(row.code)}">削除</button>` : `<button type="button" class="btn sub" data-rpp-act="restore" data-code="${esc(row.code)}">復元</button>`}</div>${opened ? `<div class="rpp-body">${body}</div>` : ''}</div>`;
         }).join('') || '<div class="muted" style="padding:12px">表示対象がありません</div>'}
       </div>
@@ -244,7 +272,9 @@ export function initReflectPreviewPlayground(ui, setStatus) {
   };
 
   root.addEventListener('click', (ev) => {
-    const modalAct = ev.target.closest('[data-rpp-modal-act]')?.dataset.rppModalAct;
+    const modalActionEl = ev.target.closest('[data-rpp-modal-act]');
+    if (st.modal && !modalActionEl && ev.target.closest('.rpp-modal')) return;
+    const modalAct = modalActionEl?.dataset.rppModalAct;
     if (modalAct) {
       try {
         if (modalAct === 'cancel') {
@@ -352,6 +382,8 @@ export function initReflectPreviewPlayground(ui, setStatus) {
         st.before = deepClone(SAMPLE_BEFORE);
         st.after = deepClone(SAMPLE_AFTER);
         setStatus('サンプルデータを再読込しました');
+      } else if (act === 'loadDiff') {
+        if (!loadFromDiffBundles({ pushUndo: true })) throw new Error('先に差分比較を実行し、fieldSettings を取得してください');
       } else if (act === 'undo') {
         if (!st.undo.length) return;
         const prev = st.undo.pop();
@@ -420,10 +452,14 @@ export function initReflectPreviewPlayground(ui, setStatus) {
     if (st.modal?.kind !== 'fieldForm' || st.modal.mode !== 'add') return;
     const sel = ev.target.closest('[data-rpp-field="type"]');
     if (!sel) return;
+    const form = root.querySelector('.rpp-field-grid');
+    const currentCode = form?.querySelector('[data-rpp-field="code"]')?.value || st.modal.draft.code;
+    const currentLabel = form?.querySelector('[data-rpp-field="label"]')?.value || st.modal.draft.label;
     const type = sel.value || 'SINGLE_LINE_TEXT';
-    st.modal.draft = { type, code: st.modal.draft.code, label: st.modal.draft.label, ...deepClone(DEFAULT_PROPS[type] || {}) };
+    st.modal.draft = { type, code: currentCode, label: currentLabel, ...deepClone(DEFAULT_PROPS[type] || {}) };
     render();
   });
 
+  loadFromDiffBundles({ silent: true });
   render();
 }

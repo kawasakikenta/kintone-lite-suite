@@ -73,6 +73,30 @@
         }),
         googleFontsDmSansMono: Object.freeze({
           cdnUrl: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap"
+        }),
+        jsoneditor: Object.freeze({
+          version: "9.10.3",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.js",
+          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.css"
+        }),
+        toastify: Object.freeze({
+          version: "1.12.0",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/toastify-js",
+          cssUrl: "https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
+        }),
+        jsdiff: Object.freeze({
+          version: "7.0.0",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsdiff/7.0.0/diff.min.js"
+        }),
+        diff2html: Object.freeze({
+          version: "3.4.4",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.js",
+          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.css"
+        }),
+        driver: Object.freeze({
+          version: "1.3.1",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js",
+          cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
         })
       });
       DEFAULT_APP_ID = String(kintone.app.getId() || "");
@@ -113,6 +137,7 @@
       ]);
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
+        reflect: "section",
         field: "json",
         jsconfig: "editor",
         recordMgr: "status",
@@ -172,7 +197,7 @@
           path: "プレビュー反映",
           selector: "#u_footerApply",
           title: "8. 比較先プレビューへ反映する",
-          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」で書き込みます。本番へのデプロイだけ行う場合は右側の「デプロイのみ」を使います。"
+          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」でプレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。"
         },
         {
           tab: "design",
@@ -310,6 +335,21 @@ ${contextLine}`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
+  function isPreviewRestPrefix(prefix) {
+    return String(prefix || "").includes("/v1/preview");
+  }
+  function assertAllowsMutatingRestCall(prefix, path, method) {
+    const m = String(method || "").toUpperCase();
+    if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
+    if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
+    const rel = String(path || "").replace(/\\/g, "/");
+    if (rel.includes(DEPLOY_PATH_SNIPPET)) {
+      throw new Error(ERR_NO_DEPLOY_API);
+    }
+    if (!isPreviewRestPrefix(prefix)) {
+      throw new Error(ERR_NO_PROD_WRITE);
+    }
+  }
   async function apiGet(prefix, path, params, retries = 3) {
     let err;
     for (let i = 0; i < retries; i++) {
@@ -323,6 +363,7 @@ ${contextLine}`);
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
   async function apiPut(prefix, path, body) {
+    assertAllowsMutatingRestCall(prefix, path, "PUT");
     try {
       return await kintone.api(`${prefix}${path}`, "PUT", body);
     } catch (e) {
@@ -330,6 +371,7 @@ ${contextLine}`);
     }
   }
   async function apiPost(prefix, path, body) {
+    assertAllowsMutatingRestCall(prefix, path, "POST");
     try {
       return await kintone.api(`${prefix}${path}`, "POST", body);
     } catch (e) {
@@ -373,12 +415,16 @@ ${contextLine}`);
     }
     return bundle;
   }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API;
   var init_api = __esm({
     "src/api.js"() {
       "use strict";
       init_constants();
       init_utils();
       init_state();
+      DEPLOY_PATH_SNIPPET = "app/deploy.json";
+      ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+      ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
     }
   });
 
@@ -449,6 +495,11 @@ ${contextLine}`);
 
   // src/ui/components.js
   init_dialog();
+
+  // src/oss_integrations.js
+  init_utils();
+
+  // src/ui/components.js
   var ui2 = {};
   function setComponentUi(uiRefs) {
     ui2 = uiRefs;
@@ -610,22 +661,6 @@ ${contextLine}`);
       }
       onProgress(logs);
     }
-    if (opts.doDeploy && !hadError) {
-      setStatus2("デプロイ実行中...");
-      logs.push("");
-      await apiPost(prefix, "/app/deploy.json", { apps: [{ app, revision: -1 }] });
-      for (let i = 0; i < 20; i++) {
-        await new Promise((r) => setTimeout(r, 1500));
-        try {
-          const st = (await apiGet(prefix, "/app/deploy.json", { apps: [app] }, 1))?.apps?.[0]?.status;
-          logs.push(`デプロイ状態: ${st}`);
-          onProgress(logs);
-          if (st === "SUCCESS" || st === "FAIL" || st === "CANCEL") break;
-        } catch (e) {
-          logs.push(`デプロイ確認失敗: ${e.message}`);
-        }
-      }
-    }
     const ok = logs.filter((l) => l.startsWith("OK ")).length;
     const ng = logs.filter((l) => l.startsWith("NG ")).length;
     logs.push("");
@@ -750,11 +785,14 @@ ${contextLine}`);
       optRow.appendChild(label);
       return cb;
     };
-    const deployCb = mkOpt("デプロイ実行");
     const backupCb = mkOpt("バックアップ保存");
     backupCb.checked = true;
     const stopCb = mkOpt("エラー時中断");
     bodySlot.appendChild(optRow);
+    const deployNote = document.createElement("div");
+    deployNote.style.cssText = "font-size:11px;color:#64748b;margin:-4px 0 10px;line-height:1.45";
+    deployNote.textContent = "本番デプロイはツールから実行できません。プレビュー反映後、kintone管理画面から手動でデプロイしてください。";
+    bodySlot.appendChild(deployNote);
     const logArea = document.createElement("pre");
     logArea.style.cssText = "margin:0;padding:10px;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;max-height:200px;overflow:auto;white-space:pre-wrap;display:none";
     bodySlot.appendChild(logArea);
@@ -775,7 +813,7 @@ ${contextLine}`);
             targetAppId: tgtApp.value.trim(),
             targetGuestId: tgtGuest.value.trim(),
             scopes,
-            doDeploy: deployCb.checked,
+            doDeploy: false,
             doBackup: backupCb.checked,
             stopOnError: stopCb.checked
           },

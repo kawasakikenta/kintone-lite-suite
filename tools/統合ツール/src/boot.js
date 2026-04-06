@@ -12,7 +12,16 @@ import { stringifyForDiff, renderRowColumns, buildDiffWarningInfo, renderResultR
 import { commonParams, currentDiffSignature } from './tabs/diff.js';
 import { parseLookupMapInput } from './tabs/field.js';
 import { reflectRowModeById, reflectRowDesiredValue } from './reflect/rowMode.js';
-import { runBackupTargetPreview, runDeployOnly, runApplyPreview } from './reflect/apply.js';
+import {
+  runBackupTargetPreview,
+  runDeployOnly,
+  runApplyPreview,
+  runApplyPatchJson,
+  importPatchJsonFromFile,
+  parsePatchJsonPayload,
+  renderPatchJsonSummary,
+  populatePatchJsonFromCurrentDiff
+} from './reflect/apply.js';
 import { getActiveReflectRow, getSelectedReflectRows } from './tabs/reflect.js';
 import { resolveApplyScopes } from './reflect/helpers.js';
 import { makeApplyPlanSignature, runPreviewApplyPlan } from './reflect/plan.js';
@@ -177,6 +186,9 @@ export function runKintoneUnifiedSuite(options = {}) {
     reflectMainTitle: $('#u_reflectMainTitle'),
     reflectOptionsCard: $('#u_reflectOptionsCard'),
     doDeploy: $('#u_doDeploy'),
+    patchJsonPanel: $('#u_patchJsonPanel'),
+    patchJsonSummary: $('#u_patchJsonSummary'),
+    patchJsonEditor: $('#u_patchJsonEditor'),
     fieldJson: $('#u_fieldJson'),
     overwriteField: $('#u_overwriteField'),
     deployField: $('#u_deployField'),
@@ -275,6 +287,11 @@ export function runKintoneUnifiedSuite(options = {}) {
     runBackupTargetPreview,
     runApplyPreview,
     runDeployOnly,
+    runApplyPatchJson,
+    importPatchJsonFromFile,
+    parsePatchJsonPayload,
+    renderPatchJsonSummary,
+    populatePatchJsonFromCurrentDiff,
     renderCustomizeResult,
     renderTemplateOptions
   });
@@ -309,16 +326,17 @@ async function initOssIntegrations() {
         modes: ['code', 'tree'],
         initialValue: {},
         onChange: () => {
-          // Auto-parse patch JSON on change
           try {
             const inst = getJsonEditorInstance('u_patchJsonEditor');
             if (inst) {
               const val = inst.get();
-              if (val && typeof val === 'object') {
-                // Trigger patch summary if the function exists
+              if (val && typeof val === 'object' && typeof parsePatchJsonPayload === 'function' && typeof renderPatchJsonSummary === 'function') {
+                renderPatchJsonSummary(parsePatchJsonPayload(val));
               }
             }
-          } catch (e) { /* parse error is normal during typing */ }
+          } catch (e) {
+            if (typeof renderPatchJsonSummary === 'function') renderPatchJsonSummary(null);
+          }
         }
       });
       // Add .value compatibility shim for existing code

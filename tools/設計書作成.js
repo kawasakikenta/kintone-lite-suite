@@ -73,6 +73,30 @@
         }),
         googleFontsDmSansMono: Object.freeze({
           cdnUrl: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap"
+        }),
+        jsoneditor: Object.freeze({
+          version: "9.10.3",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.js",
+          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.css"
+        }),
+        toastify: Object.freeze({
+          version: "1.12.0",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/toastify-js",
+          cssUrl: "https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
+        }),
+        jsdiff: Object.freeze({
+          version: "7.0.0",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsdiff/7.0.0/diff.min.js"
+        }),
+        diff2html: Object.freeze({
+          version: "3.4.4",
+          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.js",
+          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.css"
+        }),
+        driver: Object.freeze({
+          version: "1.3.1",
+          cdnUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js",
+          cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
         })
       });
       DEFAULT_APP_ID = String(kintone.app.getId() || "");
@@ -103,6 +127,7 @@
       META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
+        reflect: "section",
         field: "json",
         jsconfig: "editor",
         recordMgr: "status",
@@ -162,7 +187,7 @@
           path: "プレビュー反映",
           selector: "#u_footerApply",
           title: "8. 比較先プレビューへ反映する",
-          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」で書き込みます。本番へのデプロイだけ行う場合は右側の「デプロイのみ」を使います。"
+          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」でプレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。"
         },
         {
           tab: "design",
@@ -287,10 +312,87 @@ ${contextLine}`);
     a.click();
     URL.revokeObjectURL(a.href);
   }
+  function loadExternalScript(url) {
+    if (!url) return Promise.resolve();
+    if (loadedScripts.has(url)) return Promise.resolve();
+    if (document.querySelector(`script[src="${url}"]`)) {
+      loadedScripts.add(url);
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = url;
+      script.onload = () => {
+        loadedScripts.add(url);
+        resolve();
+      };
+      script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
+      document.head.appendChild(script);
+    });
+  }
+  function loadExternalStyle(url) {
+    if (!url) return Promise.resolve();
+    if (loadedStyles.has(url)) return Promise.resolve();
+    if (document.querySelector(`link[href="${url}"]`)) {
+      loadedStyles.add(url);
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = url;
+      link.onload = () => {
+        loadedStyles.add(url);
+        resolve();
+      };
+      link.onerror = () => reject(new Error(`Failed to load style: ${url}`));
+      document.head.appendChild(link);
+    });
+  }
+  async function loadExternalLibrary(name) {
+    const lib = EXTERNAL_LIBRARIES[name];
+    if (!lib) throw new Error(`Unknown external library: ${name}`);
+    const promises = [];
+    if (lib.cssUrl) promises.push(loadExternalStyle(lib.cssUrl));
+    if (lib.cdnUrl) promises.push(loadExternalScript(lib.cdnUrl));
+    await Promise.all(promises);
+  }
+  async function showToast(message, type = "info") {
+    try {
+      await loadExternalLibrary("toastify");
+      let bg = "#3b82f6";
+      if (type === "success") bg = "#10b981";
+      if (type === "error") bg = "#ef4444";
+      if (type === "warn") bg = "#f59e0b";
+      window.Toastify({
+        text: message,
+        duration: type === "error" ? 5e3 : 3e3,
+        close: true,
+        gravity: "bottom",
+        position: "right",
+        style: {
+          background: bg,
+          borderRadius: "6px",
+          fontSize: "13px",
+          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)"
+        }
+      }).showToast();
+    } catch (err) {
+      if (type === "error") {
+        console.error(message);
+        alert(message);
+      } else {
+        console.log(`[Toast] ${message}`);
+      }
+    }
+  }
+  var loadedScripts, loadedStyles;
   var init_utils = __esm({
     "src/utils.js"() {
       "use strict";
       init_constants();
+      loadedScripts = /* @__PURE__ */ new Set();
+      loadedStyles = /* @__PURE__ */ new Set();
     }
   });
 
@@ -459,6 +561,11 @@ ${contextLine}`);
 
   // src/ui/components.js
   init_dialog();
+
+  // src/oss_integrations.js
+  init_utils();
+
+  // src/ui/components.js
   var ui2 = {};
   function setComponentUi(uiRefs) {
     ui2 = uiRefs;
@@ -484,6 +591,7 @@ ${contextLine}`);
   // src/tabs/design-xlsx.js
   init_constants();
   init_dialog();
+  init_utils();
   async function runAdvancedDesignExporter(params = {}) {
     const sourceAppId = Number(params.appId);
     if (!sourceAppId) throw new Error("有効な比較元アプリIDが指定されませんでした。");
@@ -988,12 +1096,12 @@ ${contextLine}`);
       UI.hide();
       const errorMsg = UI.failedAPIs.length > 0 ? `
 ⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : "";
-      alert(`✅ エクスポート完了${errorMsg}`);
+      showToast(`✅ エクスポート完了${errorMsg}`, UI.failedAPIs.length > 0 ? "warn" : "success");
       return true;
     } catch (e) {
       UI.hide();
       console.error("kintone設計書エクスポートエラー:", e);
-      alert(`❌ エラーが発生しました: ${e.message}`);
+      showToast(`❌ エラーが発生しました: ${e.message}`, "error");
       throw e;
     }
   }

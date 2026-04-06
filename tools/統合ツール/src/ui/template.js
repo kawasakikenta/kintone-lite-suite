@@ -538,14 +538,17 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <div id="u_patchJsonPanel" style="display:block">
                   <div class="opt-card" style="margin:12px">
                     <div class="opt-title">JSON差分反映</div>
-                    <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、直接編集して比較先プレビューに反映します。</div>
+                    <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、差分比較結果から生成した内容をそのまま使って、比較先プレビューに反映します。</div>
                     <div class="btns" style="margin-bottom:6px">
+                      <button class="btn sub" data-act="patchJsonUseCurrentDiff">差分比較結果を読込</button>
                       <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
                       <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
                       <button class="btn sub" data-act="patchJsonClear">クリア</button>
                     </div>
                     <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
                     <div id="u_patchJsonEditor" style="width:100%;height:400px;border-radius:6px;"></div>
+                    <div style="margin-top:10px;font-size:11px;font-weight:700;color:#334155">JSON差分比較</div>
+                    <div id="u_patchJsonDiff" style="margin-top:6px;min-height:120px;max-height:420px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
                     <div class="btns" style="margin-top:6px">
                       <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
                     </div>

@@ -85,6 +85,9 @@ export function switchSubTab(parentKey, subKey, options = {}) {
   const fallback = state.activeSubTabs[parentKey] || tabs[0]?.dataset.subtab || '';
   const key = tabs.some((tab) => tab.dataset.subtab === subKey) ? subKey : fallback;
   state.activeSubTabs[parentKey] = key;
+  if (parentKey === 'reflect' && ui.nodeMode) {
+    ui.nodeMode.checked = key === 'node';
+  }
   tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.subtab === key));
   panes.forEach((pane) => pane.classList.toggle('active', pane.dataset.subpane === key));
   if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
@@ -289,7 +292,7 @@ export function renderBundleState() {
   const sourceText = describeBundle('比較元', state.importedSourceBundle || state.lastSourceBundle, state.importedSourceName, !!state.importedSourceBundle);
   const targetText = describeBundle('比較先', state.importedTargetBundle || state.lastTargetBundle, state.importedTargetName, !!state.importedTargetBundle);
   ui.bundleState.textContent = `${sourceText} / ${targetText}`;
-  const rangeMode = (ui.nodeMode?.checked && !ui.reflectSimpleMode?.checked)
+  const rangeMode = isReflectNodeModeEffective()
     ? `選択ノード(${state.reflectSelectedIds.size})`
     : (ui.applyDiffOnly?.checked ? '前回差分セクションのみ' : '選択セクション');
   let readMeta = '';
@@ -960,7 +963,7 @@ export function renderReflectNodeDetail() {
     ${bodyHtml}
   </div>`;
 
-  // Asynchronously render rich diff (diff2html) if on the diff tab
+  // Asynchronously render local rich diff if on the diff tab
   if (activeTab === 'diff') {
     const containerId = `u_richDiffContainer_${row._id}`;
     setTimeout(() => {

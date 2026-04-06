@@ -441,7 +441,7 @@ export function saveCurrentDialogState() {
     applyDiffOnly: ui.applyDiffOnly.checked,
     autoBackupPreview: ui.autoBackupPreview.checked,
     stopOnError: ui.stopOnError.checked,
-    nodeMode: ui.nodeMode.checked,
+    nodeMode: state.activeSubTabs.reflect === 'node',
     reflectSimpleMode: !!ui.reflectSimpleMode?.checked,
     reflectDetailTab: state.reflectDetailTab,
     doDeploy: ui.doDeploy.checked,

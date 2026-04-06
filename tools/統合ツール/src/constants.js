@@ -45,15 +45,6 @@ export const EXTERNAL_LIBRARIES = Object.freeze({
     cdnUrl: 'https://cdn.jsdelivr.net/npm/toastify-js',
     cssUrl: 'https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css'
   }),
-  jsdiff: Object.freeze({
-    version: '7.0.0',
-    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/jsdiff/7.0.0/diff.min.js'
-  }),
-  diff2html: Object.freeze({
-    version: '3.4.4',
-    cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.js',
-    cssUrl: 'https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.css'
-  }),
   driver: Object.freeze({
     version: '1.3.1',
     cdnUrl: 'https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js',

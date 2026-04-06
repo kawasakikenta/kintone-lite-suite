@@ -2,11 +2,12 @@
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import {
-  deepClone, normalize, stableStringify, nowStamp, downloadText, apiErrorWithContext, esc,
+  deepClone, normalize, stableStringify, nowStamp, downloadText, apiErrorWithContext, esc, readTextFile,
   relativePathFromRow, tokenizePath
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import { apiGet, assertAllowsMutatingRestCall, buildApiPrefix, fetchBundle } from '../api.js';
+import { buildPatchPayload } from '../diff/export.js';
 import {
   planFieldSectionDiffRequests,
   planViewsSectionDiffRequests,
@@ -39,8 +40,13 @@ import {
 } from './helpers.js';
 import { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
 import { isReflectNodeModeEffective } from './nodeModeUi.js';
+import { getToolDocument } from '../ui/dialog.js';
+import { getJsonEditorInstance, renderRichDiff } from '../oss_integrations.js';
 
 export { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
+
+let patchJsonDiffTimer = 0;
+let patchJsonDiffSeq = 0;
 
 export function convertLookupAppIds(fieldDef, map) {
   const def = deepClone(fieldDef || {});
@@ -463,6 +469,325 @@ export async function backupTargetPreviewSettings(c, scopes, options = {}) {
     ui.backupStatus.style.display = 'block';
   }
   return { filename, payload };
+}
+
+function resolvePatchSectionKey(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+  const def = SECTION_DEFS.find((item) => item.key === raw || item.label === raw);
+  return def?.key || raw;
+}
+
+function getPatchEditorText() {
+  try {
+    const editor = getJsonEditorInstance('u_patchJsonEditor');
+    if (editor) return editor.getText() || '';
+  } catch (e) { /* ignore */ }
+  const el = getToolDocument().getElementById('u_patchJsonEditor');
+  if (!el) return '';
+  if (typeof el.value === 'string') return el.value;
+  return typeof el.textContent === 'string' ? el.textContent : '';
+}
+
+function setPatchEditorValue(value) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value || {}, null, 2);
+  try {
+    const editor = getJsonEditorInstance('u_patchJsonEditor');
+    if (editor) {
+      editor.set(typeof value === 'string' ? JSON.parse(value || '{}') : (value || {}));
+      return;
+    }
+  } catch (e) {
+    try {
+      const editor = getJsonEditorInstance('u_patchJsonEditor');
+      if (editor) {
+        editor.setText(text);
+        return;
+      }
+    } catch (e2) { /* ignore */ }
+  }
+  const el = getToolDocument().getElementById('u_patchJsonEditor');
+  if (el && typeof el.value !== 'undefined') el.value = text;
+}
+
+function isPatchEditorEffectivelyEmpty(text) {
+  const raw = String(text || '').trim();
+  return !raw || raw === '{}' || raw === 'null';
+}
+
+function normalizePatchRows(sectionKey, rows) {
+  const def = SECTION_DEFS.find((item) => item.key === sectionKey);
+  return (Array.isArray(rows) ? rows : []).map((row, index) => ({
+    _id: `patch:${sectionKey}:${index}`,
+    sectionKey,
+    section: def?.label || sectionKey,
+    type: String(row?.type || 'changed'),
+    path: String(row?.path || sectionKey),
+    left: row?.sourceValue,
+    right: row?.targetValue,
+    moved: !!row?.moved,
+    movedFrom: row?.movedFrom,
+    movedTo: row?.movedTo,
+    arrayKey: row?.arrayKey,
+    arrayKeyValue: row?.arrayKeyValue,
+    reasonSummary: row?.reasonSummary || '',
+    renameCandidate: row?.renameCandidate || null,
+    impactCount: row?.impactCount || 0,
+    impactRefs: Array.isArray(row?.impactRefs) ? row.impactRefs : []
+  }));
+}
+
+function buildPatchDiffPreviewPayload(payload) {
+  const sourceView = {
+    app: payload?.source || {},
+    sections: {}
+  };
+  const targetView = {
+    app: payload?.target || {},
+    sections: {}
+  };
+  const order = new Map(SECTION_DEFS.map((item, index) => [item.key, index]));
+  const sectionKeys = Object.keys(payload?.sections || {}).sort((a, b) => {
+    const ao = order.has(a) ? order.get(a) : 999;
+    const bo = order.has(b) ? order.get(b) : 999;
+    if (ao !== bo) return ao - bo;
+    return String(a).localeCompare(String(b));
+  });
+  sectionKeys.forEach((sectionKey) => {
+    const def = SECTION_DEFS.find((item) => item.key === sectionKey);
+    const label = def?.label || sectionKey;
+    const rows = normalizePatchRows(sectionKey, payload.sections[sectionKey]).sort((a, b) => String(a.path || '').localeCompare(String(b.path || '')));
+    sourceView.sections[label] = rows.map((row) => ({
+      path: row.path,
+      type: row.type,
+      value: row.left === undefined ? '（なし）' : row.left
+    }));
+    targetView.sections[label] = rows.map((row) => ({
+      path: row.path,
+      type: row.type,
+      value: row.right === undefined ? '（なし）' : row.right
+    }));
+  });
+  return {
+    leftText: JSON.stringify(sourceView, null, 2),
+    rightText: JSON.stringify(targetView, null, 2)
+  };
+}
+
+function clearPatchJsonDiff(message) {
+  const el = getToolDocument().getElementById('u_patchJsonDiff');
+  if (!el) return;
+  el.innerHTML = `<div style="padding:8px;color:#64748b;font-size:11px">${esc(message || 'パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。')}</div>`;
+}
+
+function renderPatchJsonDiff(payload) {
+  const el = getToolDocument().getElementById('u_patchJsonDiff');
+  if (!el) return;
+  if (!payload || !payload.sections || !Object.keys(payload.sections).length) {
+    clearPatchJsonDiff();
+    return;
+  }
+  const seq = ++patchJsonDiffSeq;
+  clearTimeout(patchJsonDiffTimer);
+  el.innerHTML = '<div style="padding:8px;color:#64748b;font-size:11px">JSON差分比較を描画中...</div>';
+  patchJsonDiffTimer = window.setTimeout(async () => {
+    try {
+      const preview = buildPatchDiffPreviewPayload(payload);
+      await renderRichDiff(preview.leftText, preview.rightText, el, {
+        fileName: 'patch-preview.json',
+        leftLabel: '比較元',
+        rightLabel: '比較先',
+        sideBySide: true
+      });
+      if (seq !== patchJsonDiffSeq) return;
+    } catch (err) {
+      if (seq !== patchJsonDiffSeq) return;
+      el.innerHTML = `<div style="padding:8px;color:#b91c1c;font-size:11px">JSON差分比較の描画に失敗しました: ${esc(err?.message || String(err))}</div>`;
+    }
+  }, 120);
+}
+
+export function parsePatchJsonPayload(input) {
+  const payload = typeof input === 'string' ? JSON.parse(input) : deepClone(input);
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('パッチJSONはオブジェクト形式で入力してください');
+  }
+  const rawSections = payload.sections;
+  if (!rawSections || typeof rawSections !== 'object' || Array.isArray(rawSections)) {
+    throw new Error('パッチJSONに sections がありません');
+  }
+  const normalizedSections = {};
+  Object.entries(rawSections).forEach(([name, rows]) => {
+    const key = resolvePatchSectionKey(name);
+    if (!key) return;
+    normalizedSections[key] = normalizePatchRows(key, rows);
+  });
+  const scopeKeys = Object.keys(normalizedSections);
+  if (!scopeKeys.length) throw new Error('パッチJSONに反映対象セクションがありません');
+  return {
+    generatedAt: payload.generatedAt || new Date().toISOString(),
+    source: payload.source || {},
+    target: payload.target || {},
+    sections: normalizedSections
+  };
+}
+
+export function renderPatchJsonSummary(payload) {
+  const el = getToolDocument().getElementById('u_patchJsonSummary');
+  if (!el) {
+    renderPatchJsonDiff(payload);
+    return;
+  }
+  if (!payload || !payload.sections || !Object.keys(payload.sections).length) {
+    el.style.display = 'none';
+    el.textContent = '';
+    renderPatchJsonDiff(null);
+    return;
+  }
+  const sectionLabels = Object.entries(payload.sections).map(([key, rows]) => {
+    const def = SECTION_DEFS.find((item) => item.key === key);
+    return `${def?.label || key}:${Array.isArray(rows) ? rows.length : 0}件`;
+  });
+  const totalRows = Object.values(payload.sections).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
+  el.textContent = `生成日時 ${payload.generatedAt || '-'} / source ${payload.source?.appId || '-'} → target ${payload.target?.appId || '-'} / ${sectionLabels.join(' / ')} / 合計 ${totalRows} 行`;
+  el.style.display = 'block';
+  renderPatchJsonDiff(payload);
+}
+
+export async function importPatchJsonFromFile(file) {
+  const text = await readTextFile(file);
+  const payload = parsePatchJsonPayload(text);
+  state.importedPatchPayload = payload;
+  setPatchEditorValue(payload);
+  renderPatchJsonSummary(payload);
+  setStatus(`パッチJSON読込完了: ${file.name}`);
+  return payload;
+}
+
+export function populatePatchJsonFromCurrentDiff(options = {}) {
+  if (!state.lastDiffRows.length) throw new Error('先に差分比較を実行してください');
+  if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error('差分比較の比較元/比較先バンドルがありません');
+  const payload = parsePatchJsonPayload(buildPatchPayload(state.lastDiffRows, state.lastSourceBundle, state.lastTargetBundle));
+  state.importedPatchPayload = payload;
+  const currentText = getPatchEditorText();
+  if (options.force || isPatchEditorEffectivelyEmpty(currentText)) {
+    setPatchEditorValue(payload);
+  }
+  renderPatchJsonSummary(payload);
+  if (!options.silent) setStatus(`差分比較結果からパッチJSONを生成しました (${Object.keys(payload.sections).length}セクション)`);
+  return payload;
+}
+
+function getPatchPayloadForApply() {
+  const text = getPatchEditorText();
+  if (!isPatchEditorEffectivelyEmpty(text)) {
+    const payload = parsePatchJsonPayload(text);
+    state.importedPatchPayload = payload;
+    renderPatchJsonSummary(payload);
+    return payload;
+  }
+  if (state.importedPatchPayload?.sections && Object.keys(state.importedPatchPayload.sections).length) {
+    const payload = parsePatchJsonPayload(state.importedPatchPayload);
+    renderPatchJsonSummary(payload);
+    return payload;
+  }
+  return populatePatchJsonFromCurrentDiff({ force: true, silent: true });
+}
+
+function applyPatchRowsToSection(sectionObj, rows, secKey) {
+  const previousModes = {};
+  let patched = deepClone(sectionObj);
+  let appliedCount = 0;
+  const normalizedRows = sortRowsForPatch(rows, secKey);
+  try {
+    normalizedRows.forEach((row) => {
+      previousModes[row._id] = state.reflectNodeModes[row._id];
+      state.reflectNodeModes[row._id] = 'src';
+      const result = applyDiffRowToSection(patched, row, secKey);
+      patched = result.section;
+      if (result.applied) appliedCount += 1;
+    });
+  } finally {
+    normalizedRows.forEach((row) => {
+      if (previousModes[row._id] == null) delete state.reflectNodeModes[row._id];
+      else state.reflectNodeModes[row._id] = previousModes[row._id];
+    });
+  }
+  return { patched, appliedCount, rows: normalizedRows };
+}
+
+export async function runApplyPatchJson() {
+  const c = commonParams();
+  if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
+  const payload = getPatchPayloadForApply();
+  const sectionKeys = Object.keys(payload.sections).filter((key) => SECTION_DEFS.find((item) => item.key === key)?.put);
+  if (!sectionKeys.length) throw new Error('適用可能なパッチセクションがありません');
+  renderPatchJsonSummary(payload);
+  if (!window.confirm(`JSONパッチを比較先(プレビュー)へ反映しますか？\n比較先アプリ: ${c.target.appId}\n対象セクション: ${sectionKeys.length}件`)) {
+    setStatus('JSONパッチ反映をキャンセルしました');
+    return;
+  }
+
+  const prefix = buildApiPrefix(c.target.guestId, true);
+  const app = c.target.appId;
+  const stopOnError = !!ui.stopOnError?.checked;
+  const lookupMap = parseLookupMapInput(ui.lookupMap.value);
+  const logs = [];
+  let hadError = false;
+
+  logs.push(`比較先アプリ: ${app}`);
+  logs.push(`JSONパッチ: ${sectionKeys.map((key) => SECTION_DEFS.find((item) => item.key === key)?.label || key).join(', ')}`);
+  logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+  if (ui.autoBackupPreview?.checked) {
+    const backup = await backupTargetPreviewSettings(c, sectionKeys, { silentStatus: true });
+    logs.push(`バックアップ保存: ${backup.filename}`);
+  }
+  logs.push('');
+
+  for (let i = 0; i < sectionKeys.length; i++) {
+    const secKey = sectionKeys[i];
+    const def = SECTION_DEFS.find((item) => item.key === secKey);
+    const rows = payload.sections[secKey] || [];
+    if (!def || !def.put || !rows.length) continue;
+    setStatus(`JSONパッチ反映中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
+    renderProgressLog(logs, { phase: 'JSONパッチ反映中', current: i, total: sectionKeys.length });
+    try {
+      const current = normalize(await apiGet(prefix, def.endpoint, { app }));
+      const before = deepClone(current);
+      const { patched, appliedCount, rows: sortedRows } = applyPatchRowsToSection(current, rows, secKey);
+
+      if (secKey === 'fieldSettings') {
+        const beforeProps = before.properties || before || {};
+        const afterProps = patched.properties || patched || {};
+        const sourceModeCodes = new Set(sortedRows.map(extractFieldCodeFromRowPath).filter(Boolean));
+        await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
+      } else if (secKey === 'viewSettings') {
+        await applyViewsSectionDiff(prefix, app, before.views || before || {}, patched.views || patched || {}, logs, stopOnError);
+      } else if (secKey === 'reportSettings') {
+        await applyReportsSectionDiff(prefix, app, before.reports || before || {}, patched.reports || patched || {}, logs, stopOnError);
+      } else if (secKey === 'actionSettings') {
+        await applyActionsSectionDiff(prefix, app, before.actions || before || {}, patched.actions || patched || {}, logs, stopOnError);
+      } else {
+        const reqs = [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(patched) }, note: `${def.label} put` }];
+        appendRequestPlanLogs(logs, { requests: reqs });
+        await executeRequestPlan(prefix, reqs, logs, stopOnError);
+      }
+      logs.push(`OK ${def.label}: patch ${appliedCount}/${sortedRows.length}`);
+    } catch (e) {
+      hadError = true;
+      logs.push(`NG ${def.label}: ${e.message || String(e)}`);
+      if (stopOnError) {
+        logs.push('中断: エラーが発生したため処理を停止しました');
+        break;
+      }
+    }
+  }
+
+  appendProgressSummary(logs);
+  renderProgressLog(logs, { phase: 'JSONパッチ反映完了' });
+  renderReflectAssistPanel();
+  renderReflectMainPanel();
+  setStatus(hadError ? 'JSONパッチ反映完了（一部エラーあり）' : 'JSONパッチ反映完了');
 }
 
 export function runReflectModeAll(mode) {
