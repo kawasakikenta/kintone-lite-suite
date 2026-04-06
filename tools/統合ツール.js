@@ -100,15 +100,6 @@
           cdnUrl: "https://cdn.jsdelivr.net/npm/toastify-js",
           cssUrl: "https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
         }),
-        jsdiff: Object.freeze({
-          version: "7.0.0",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsdiff/7.0.0/diff.min.js"
-        }),
-        diff2html: Object.freeze({
-          version: "3.4.4",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.js",
-          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/diff2html/3.4.4/diff2html.min.css"
-        }),
         driver: Object.freeze({
           version: "1.3.1",
           cdnUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js",
@@ -9836,13 +9827,7 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .rpp-modal-textarea-mini{min-height:110px;font-size:12px}
 #kintone-unified-suite-v2 .rpp-modal-hint{margin-top:10px;font-size:12px;color:#64748b;line-height:1.55}
 
-/* ========== diff2html / JSONEditor overrides ========== */
-#kintone-unified-suite-v2 .d2h-wrapper {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-#kintone-unified-suite-v2 .d2h-file-header {
-  display: none;
-}
+/* ========== JSONEditor overrides ========== */
 #kintone-unified-suite-v2 .jsoneditor {
   border: 1px solid #cbd5e1;
   border-radius: 6px;
@@ -11724,8 +11709,10 @@ ${contextLine}`);
       ${renderModal()}`;
     };
     root2.addEventListener("click", (ev) => {
-      const modalActionEl = ev.target.closest("[data-rpp-modal-act]");
-      if (st.modal && !modalActionEl && ev.target.closest(".rpp-modal")) return;
+      const insideModalContent = ev.target.closest(".rpp-modal");
+      const rawModalActionEl = ev.target.closest("[data-rpp-modal-act]");
+      const modalActionEl = insideModalContent && rawModalActionEl && !insideModalContent.contains(rawModalActionEl) ? null : rawModalActionEl;
+      if (st.modal && !modalActionEl && insideModalContent) return;
       const modalAct = modalActionEl?.dataset.rppModalAct;
       if (modalAct) {
         try {
