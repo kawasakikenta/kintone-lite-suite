@@ -52,7 +52,7 @@
   });
 
   // src/constants.js
-  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SNAPSHOT_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.js"() {
       "use strict";
@@ -108,7 +108,6 @@
       });
       DEFAULT_APP_ID = String(kintone.app.getId() || "");
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-      DIFF_SNAPSHOT_STATE_KEY = `${TOOL_ID}:diffSnapshots`;
       DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
       DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
       DIALOG_MARGIN = 16;
@@ -579,7 +578,7 @@ ${contextLine}`);
         diffFavoritesOnly: false,
         diffExcludeSections: null,
         diffSelectionAnchorId: "",
-        diffIncludeSame: false,
+        diffIncludeSame: true,
         diffFilterSection: "",
         diffFilterType: "",
         diffFilterSeverity: "",
@@ -1182,11 +1181,11 @@ ${contextLine}`);
     }
     return s;
   }
-  function getActualDiffRows(rows) {
+  function getActualDiffRows2(rows) {
     return (rows || []).filter((row) => row && row.type !== "same");
   }
   function countActualDiffRows(rows) {
-    return getActualDiffRows(rows).length;
+    return getActualDiffRows2(rows).length;
   }
   function summarizeFetchIssues(issues) {
     const out = { total: (issues || []).length, source: 0, target: 0, both: 0 };
@@ -2556,6 +2555,11 @@ ${contextLine}`);
       if (!rows.length) throw new Error("現在表示中の差分がありません");
       return { mode: exportMode, label: "現在表示中", rows };
     }
+    if (exportMode === "favorites") {
+      const rows = (state.lastDiffRows || []).filter((row) => state.diffFavoritePaths.has(String(row.path || "").trim()));
+      if (!rows.length) throw new Error("お気に入り差分がありません");
+      return { mode: exportMode, label: "お気に入り差分", rows };
+    }
     return { mode: "all", label: "全差分", rows: state.lastDiffRows || [] };
   }
   function resolveDiffExportComparedScopes(exportInfo, scopes) {
@@ -2597,7 +2601,7 @@ ${contextLine}`);
   }
   function buildPatchPayload(rows, sourceBundle, targetBundle) {
     const grouped = {};
-    for (const r of getActualDiffRows(rows)) {
+    for (const r of getActualDiffRows2(rows)) {
       const section = r.section || "未分類";
       if (!grouped[section]) grouped[section] = [];
       grouped[section].push({
@@ -4005,15 +4009,16 @@ ${contextLine}`);
     const issues = (state.lastFetchIssues || []).length;
     const normalization = getActiveDiffNormalizationLabels();
     const exportModeLabelMap = {
-      all: "全差分",
-      selected: "選択差分",
-      visible: "現在表示中"
+      all: "全件（比較結果）",
+      selected: "選択済み行のみ",
+      visible: "現在表示中のみ",
+      favorites: "お気に入り行のみ"
     };
     if (!total && !issues && !state.lastDiffAt) {
       ui.diffSelectionState.textContent = "差分未実行";
       return;
     }
-    ui.diffSelectionState.textContent = `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || "全差分"} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(", ") || "-"}`;
+    ui.diffSelectionState.textContent = `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || "全件（比較結果）"} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(", ") || "-"}`;
   }
   function renderDiffWarningBox() {
     if (!ui.diffWarnBox) return;
@@ -4318,7 +4323,7 @@ ${contextLine}`);
   function buildIgnoreKeySuggestions(rows, ignoreKeysText) {
     const ignoreRules = parseIgnoreRules(ignoreKeysText);
     const counts = /* @__PURE__ */ new Map();
-    for (const row of getActualDiffRows(rows)) {
+    for (const row of getActualDiffRows2(rows)) {
       if (row.severity !== "low") continue;
       const leaf = normalizeIgnoreToken(getPathLeafKey(row.path));
       if (!leaf || leaf.length < 2) continue;
@@ -5062,7 +5067,7 @@ ${contextLine}`);
     const scopeInfo = getEffectiveReflectScopeInfo();
     const effectiveScopeSet = new Set(scopeInfo.effectiveScopes);
     const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
-    const actualDiffRows = getActualDiffRows(state.lastDiffRows || []);
+    const actualDiffRows = getActualDiffRows2(state.lastDiffRows || []);
     const selectedNodeRows = deps.getSelectedReflectRows();
     const targetRows = isNode ? selectedNodeRows : actualDiffRows.filter((row) => effectiveScopeSet.has(row.sectionKey));
     const sev = summarizeSeverity(targetRows);
@@ -5239,7 +5244,7 @@ ${contextLine}`);
   }
   function getDiffCountsBySection() {
     const counts = {};
-    for (const row of getActualDiffRows(state.lastDiffRows || [])) {
+    for (const row of getActualDiffRows2(state.lastDiffRows || [])) {
       const key = row.sectionKey || "";
       if (!key) continue;
       if (!counts[key]) counts[key] = { total: 0, added: 0, removed: 0, changed: 0 };
@@ -5322,7 +5327,7 @@ ${contextLine}`);
         return;
       }
       const count = diffCounts[activeSec] || { total: 0, added: 0, removed: 0, changed: 0 };
-      const rows = getActualDiffRows(state.lastDiffRows || []).filter((r) => r.sectionKey === activeSec);
+      const rows = getActualDiffRows2(state.lastDiffRows || []).filter((r) => r.sectionKey === activeSec);
       const topPaths = rows.slice(0, 12).map((r) => {
         const cls = r.type === "added" ? "#166534" : r.type === "removed" ? "#b91c1c" : "#92400e";
         const typeLabel = r.moved ? `${r.type}(moved)` : r.type || "-";
@@ -5752,7 +5757,7 @@ ${contextLine}`);
   function loadReflectRowsFromLastDiff() {
     if (!state.lastDiffRows.length) throw new Error("先に差分比較を実行してください");
     const putKeys = new Set(SECTION_DEFS.filter((d) => d.put).map((d) => d.key));
-    const rows = getActualDiffRows(state.lastDiffRows).filter((r) => putKeys.has(r.sectionKey)).map((r, idx) => ({ ...r, _id: `n${idx}` }));
+    const rows = getActualDiffRows2(state.lastDiffRows).filter((r) => putKeys.has(r.sectionKey)).map((r, idx) => ({ ...r, _id: `n${idx}` }));
     state.reflectRows = rows;
     state.reflectSelectedIds = new Set(rows.map((r) => r._id));
     state.reflectNodeModes = {};
@@ -5842,7 +5847,7 @@ ${contextLine}`);
   }
   function getDiffCountsBySection2() {
     const counts = {};
-    for (const row of getActualDiffRows(state.lastDiffRows || [])) {
+    for (const row of getActualDiffRows2(state.lastDiffRows || [])) {
       const key = row.sectionKey || "";
       if (!key) continue;
       if (!counts[key]) counts[key] = { total: 0, added: 0, removed: 0, changed: 0 };
@@ -6150,7 +6155,7 @@ ${contextLine}`);
   // src/reflect/helpers.js
   function diffSectionKeySet() {
     const set = /* @__PURE__ */ new Set();
-    for (const row of getActualDiffRows(state.lastDiffRows || [])) {
+    for (const row of getActualDiffRows2(state.lastDiffRows || [])) {
       let key = row.sectionKey;
       if (!key && row.section) {
         const def = SECTION_DEFS.find((d) => d.label === row.section || d.key === row.section);
@@ -9980,7 +9985,6 @@ ${contextLine}`);
               <div class="subtabs">
                 <button class="subtab active" data-subtab-parent="diff" data-subtab="conditions">比較条件</button>
                 <button class="subtab" data-subtab-parent="diff" data-subtab="view">結果整理</button>
-                <button class="subtab" data-subtab-parent="diff" data-subtab="history">履歴・監視</button>
               </div>
               <div class="subpane active" data-subpane-parent="diff" data-subpane="conditions">
                 <div class="subpane-note">上部の<strong>プレビュー比較プリセット</strong>で本番/プレビューAPIの組み合わせを決めてから、セクションと実行操作を進めます。細かいオプションは折りたたみにあります。</div>
@@ -10070,6 +10074,21 @@ ${contextLine}`);
               </div>
                 </div>
               </details>
+              <details class="diff-fold diff-fold--multi">
+                <summary class="diff-fold-summary">
+                  <span class="diff-fold-title">複数比較先の一括比較</span>
+                  <span class="diff-fold-sub">同じ比較元に対し複数アプリを比較</span>
+                </summary>
+                <div class="diff-fold-body">
+                <div class="muted" style="margin-top:0;line-height:1.6">比較元 / 比較セクション / 無視キー / 正規化は現在の差分条件を使います。比較先ゲストID / プレビューは上の比較先設定を共通利用します。</div>
+                <textarea id="u_diffMultiTargets" rows="3" placeholder="アプリIDを改行またはカンマ区切りで入力" style="margin-top:6px" title="比較先アプリIDを列挙"></textarea>
+                <div class="btns" style="margin-top:4px">
+                  <button type="button" class="btn sub" data-act="diffMultiUseCurrentTarget" title="上部の比較先アプリIDを1行追加">現在の比較先を追加</button>
+                  <button type="button" class="btn sub" data-act="runMultiTargetDiff" title="各IDに対し順に差分を計算">複数比較先を比較</button>
+                </div>
+                <div id="u_diffMultiTargetResult" class="result" style="max-height:260px;margin-top:6px"></div>
+                </div>
+              </details>
               </div>
               <div class="subpane" data-subpane-parent="diff" data-subpane="view">
                 <div class="subpane-note">取得済みの差分の絞り込みと出力です。まず下の「フィルタ・出力」を開き、必要なら「拡大・クイック・選択セット」を開いてください。</div>
@@ -10153,18 +10172,21 @@ ${contextLine}`);
                   </div>
                 </div>
                 <div>
-                  <label title="ファイル保存やコピー時に含める差分の範囲">出力対象 / 内容 / 選択操作</label>
+                  <label title="保存やコピー時に含める範囲を選びます">出力対象（どの行を出すか）</label>
                   <div class="btns" style="margin-top:0">
                     <select id="u_diffExportMode" style="flex:1;min-width:160px" title="保存・コピーに含める行の範囲">
-                      <option value="all">出力対象: 全差分</option>
-                      <option value="selected">出力対象: 選択差分</option>
-                      <option value="visible">出力対象: 現在表示中</option>
-                      <option value="favorites">出力対象: お気に入り</option>
+                      <option value="all">全件（同一を含む比較結果すべて）</option>
+                      <option value="selected">選択済み行のみ（チェック行）</option>
+                      <option value="visible">現在表示中のみ（フィルタ適用後）</option>
+                      <option value="favorites">お気に入り行のみ（★）</option>
                     </select>
                     <select id="u_diffExportContent" style="flex:1;min-width:180px" title="比較対象の生設定をレポートに含めるか">
                       <option value="diffOnly">出力内容: 差分のみ</option>
                       <option value="withCompared">出力内容: 差分 + 比較設定</option>
                     </select>
+                  </div>
+                  <label title="画面上のチェック状態をまとめて変更します" style="margin-top:8px;display:block">選択操作（チェック行の操作）</label>
+                  <div class="btns" style="margin-top:0">
                     <button type="button" class="btn sub" data-act="selectVisibleDiffs" title="現在フィルタで見えている行を選択状態にします">表示中を選択</button>
                     <button type="button" class="btn sub" data-act="selectAllDiffs" title="全行を選択">全件選択</button>
                     <button type="button" class="btn sub" data-act="clearDiffSelection" title="選択をすべて外す">選択解除</button>
@@ -10192,7 +10214,7 @@ ${contextLine}`);
                   <label>比較ビュー表示</label>
                   <div class="btns" style="margin-top:0">
                     <label class="chip" title="変更行内の文字単位で追加削除を着色"><input type="checkbox" id="u_charDiff" checked> 文字単位ハイライト</label>
-                    <label class="chip" title="同一種別の行もテーブルに出す"><input type="checkbox" id="u_diffIncludeSame"> 差分なしも表示</label>
+                    <label class="chip" title="同一種別の行もテーブルに出す"><input type="checkbox" id="u_diffIncludeSame" checked> 差分なしも表示</label>
                     <button type="button" class="btn sub" data-act="toggleDiffTheme" id="u_diffThemeBtn" title="ライト/ダークの表示テーマ">比較テーマ: ライト</button>
                     <button type="button" class="btn sub" data-act="collapseDiffSections" title="セクション見出しをすべて閉じる">全折畳</button>
                     <button type="button" class="btn sub" data-act="expandDiffSections" title="セクション見出しをすべて開く">全展開</button>
@@ -10219,36 +10241,6 @@ ${contextLine}`);
                 <div id="u_diffSuggestedIgnore" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:6px;background:#fff;margin-top:4px;align-items:center"></div>
                 <div class="muted" style="margin-top:4px;line-height:1.55">ショートカット: Ctrl/Cmd+F 検索, Esc 検索クリア, Ctrl/Cmd+Shift+C 差分コピー, Ctrl/Cmd+A 全件選択（検索欄以外フォーカス時）, Shift+クリックでチェック範囲選択, 矢印キーでチェック間移動</div>
               </div>
-                </div>
-              </details>
-              </div>
-              <div class="subpane" data-subpane-parent="diff" data-subpane="history">
-                <div class="subpane-note">比較履歴、監視、複数比較先チェックをまとめています。</div>
-              <details class="diff-fold diff-fold--snap" open>
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">比較スナップショット履歴</span>
-                  <span class="diff-fold-sub">過去の比較結果の一覧・復元</span>
-                </summary>
-                <div class="diff-fold-body">
-                <div class="btns" style="margin-top:0">
-                  <button type="button" class="btn sub" data-act="clearDiffSnapshots" title="保存済みスナップショットをすべて削除">履歴全削除</button>
-                </div>
-                <div id="u_diffSnapshotList" class="result" style="max-height:220px;margin-top:6px"></div>
-                </div>
-              </details>
-              <details class="diff-fold diff-fold--multi" open>
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">複数比較先の一括比較</span>
-                  <span class="diff-fold-sub">同じ比較元に対し複数アプリを比較</span>
-                </summary>
-                <div class="diff-fold-body">
-                <div class="muted" style="margin-top:0;line-height:1.6">比較元 / 比較セクション / 無視キー / 正規化は現在の差分条件を使います。比較先ゲストID / プレビューは上の比較先設定を共通利用します。</div>
-                <textarea id="u_diffMultiTargets" rows="3" placeholder="アプリIDを改行またはカンマ区切りで入力" style="margin-top:6px" title="比較先アプリIDを列挙"></textarea>
-                <div class="btns" style="margin-top:4px">
-                  <button type="button" class="btn sub" data-act="diffMultiUseCurrentTarget" title="上部の比較先アプリIDを1行追加">現在の比較先を追加</button>
-                  <button type="button" class="btn sub" data-act="runMultiTargetDiff" title="各IDに対し順に差分を計算">複数比較先を比較</button>
-                </div>
-                <div id="u_diffMultiTargetResult" class="result" style="max-height:260px;margin-top:6px"></div>
                 </div>
               </details>
               </div>
@@ -12668,10 +12660,14 @@ ${contextLine}`);
       renderCustomizeResult: renderCustomizeResult2,
       runBulkFieldRename,
       runDetectUnusedFields,
-      renderDiffSnapshotHistory,
       renderDiffFavoritesOnlyButton,
       renderTemplateOptions: renderTemplateOptions2
     } = injected;
+    function updateDiffFavoritesOnlyButton() {
+      if (!ui.diffFavoritesOnlyBtn) return;
+      ui.diffFavoritesOnlyBtn.textContent = `お気に入りのみ: ${state.diffFavoritesOnly ? "ON" : "OFF"}`;
+      ui.diffFavoritesOnlyBtn.classList.toggle("dark", !!state.diffFavoritesOnly);
+    }
     renderScopeChips();
     restoreDialogState();
     fitDialogToViewport({ persist: false });
@@ -12681,9 +12677,9 @@ ${contextLine}`);
     renderIgnoreKeyChips();
     renderDiffFilterOptions();
     if (typeof renderDiffFavoritesOnlyButton === "function") renderDiffFavoritesOnlyButton();
+    else updateDiffFavoritesOnlyButton();
     renderDiffSelectionState();
     if (typeof renderDiffWarningBox === "function") renderDiffWarningBox();
-    if (typeof renderDiffSnapshotHistory === "function") renderDiffSnapshotHistory();
     renderLookupMapRows();
     if (typeof renderTemplateOptions2 === "function") renderTemplateOptions2();
     renderBundleState();
@@ -12730,7 +12726,6 @@ ${contextLine}`);
       ui.diffWarnThreshold.addEventListener("change", () => {
         saveCurrentDialogState2();
         if (typeof renderDiffWarningBox === "function") renderDiffWarningBox();
-        if (typeof renderDiffSnapshotHistory === "function") renderDiffSnapshotHistory();
       });
     }
     ui.stopOnError.addEventListener("change", saveCurrentDialogState2);
@@ -13488,6 +13483,66 @@ ${contextLine}`);
         }
         syncDiffOnboardingVisibility();
         return;
+      }
+      if (act === "toggleDiffFavoritesOnly") {
+        state.diffFavoritesOnly = !state.diffFavoritesOnly;
+        updateDiffFavoritesOnlyButton();
+        saveCurrentDialogState2();
+        if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+        else renderDiffSelectionState();
+        setStatus(`お気に入りフィルタを${state.diffFavoritesOnly ? "ON" : "OFF"}にしました`);
+        return;
+      }
+      if (act === "diffMultiUseCurrentTarget") {
+        if (!ui.diffMultiTargets) return;
+        const cur = ui.targetApp.value.trim();
+        if (!cur) {
+          setStatus("比較先アプリIDを入力してから追加してください", true);
+          return;
+        }
+        const ids = new Set(String(ui.diffMultiTargets.value || "").split(/[\s,]+/).map((v) => v.trim()).filter(Boolean));
+        ids.add(cur);
+        ui.diffMultiTargets.value = [...ids].join("\n");
+        saveCurrentDialogState2();
+        setStatus(`比較先アプリID ${cur} を一括比較リストへ追加しました`);
+        return;
+      }
+      if (act === "runMultiTargetDiff") {
+        return withGuard(async () => {
+          const area = ui.diffMultiTargets;
+          const out = ui.diffMultiTargetResult;
+          if (!area || !out) throw new Error("複数比較先UIが見つかりません");
+          const targets = [...new Set(String(area.value || "").split(/[\s,]+/).map((v) => v.trim()).filter(Boolean))];
+          if (!targets.length) throw new Error("比較先アプリIDを1件以上入力してください");
+          const sourceId = ui.sourceApp.value.trim();
+          if (!state.importedSourceBundle && !sourceId) throw new Error("比較元アプリIDを入力してください");
+          const originalTarget = {
+            appId: ui.targetApp.value,
+            guest: ui.targetGuest.value,
+            preview: !!ui.targetPreview.checked
+          };
+          const rows = [];
+          for (let i = 0; i < targets.length; i += 1) {
+            const targetAppId = targets[i];
+            ui.targetApp.value = targetAppId;
+            saveCurrentDialogState2();
+            setStatus(`複数比較先を比較中 (${i + 1}/${targets.length}) App:${targetAppId}`);
+            await runDiff();
+            const summary = summarizeRows(state.lastDiffRows || []);
+            rows.push({
+              targetAppId,
+              diffCount: countActualDiffRows(state.lastDiffRows || []),
+              sameCount: summary.same,
+              issueCount: (state.lastFetchIssues || []).length
+            });
+          }
+          ui.targetApp.value = originalTarget.appId;
+          ui.targetGuest.value = originalTarget.guest;
+          ui.targetPreview.checked = originalTarget.preview;
+          saveCurrentDialogState2();
+          out.innerHTML = `<table class="diff-table"><thead><tr><th style="width:120px">比較先App</th><th style="width:90px">差分</th><th style="width:90px">同一</th><th style="width:120px">取得失敗</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.targetAppId)}</td><td>${r.diffCount}</td><td>${r.sameCount}</td><td>${r.issueCount}</td></tr>`).join("")}</tbody></table>`;
+          setStatus(`複数比較先の比較が完了しました (${rows.length}件)`);
+        });
       }
       if (act === "importSourceBundle") return ui.sourceBundleFile.click();
       if (act === "importTargetBundle") return ui.targetBundleFile.click();
@@ -17401,7 +17456,6 @@ ${safety.hash}`, "");
       diffWarnThreshold: $("#u_diffWarnThreshold"),
       diffWarnBox: $("#u_diffWarnBox"),
       diffSuggestedIgnore: $("#u_diffSuggestedIgnore"),
-      diffSnapshotList: $("#u_diffSnapshotList"),
       diffMultiTargets: $("#u_diffMultiTargets"),
       diffMultiTargetResult: $("#u_diffMultiTargetResult"),
       commonDataState: $("#u_commonDataState"),

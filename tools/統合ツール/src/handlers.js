@@ -4,7 +4,7 @@ import { SECTION_DEFS, DEFAULT_APP_ID, FEATURE_DEFS, DIFF_ONBOARDING_DISMISSED_K
 import { state, ui } from './state.js';
 import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast } from './utils.js';
 import { buildApiPrefix } from './api.js';
-import { getActualDiffRows } from './diff/engine.js';
+import { countActualDiffRows, summarizeRows } from './diff/engine.js';
 import { getRenderedDiffRows } from './diff/filter.js';
 import {
   renderResultRows,
@@ -114,7 +114,7 @@ import {
 //   runApplyPatchJson, importPatchJsonFromFile, parsePatchJsonPayload,
 //   renderPatchJsonSummary, renderCustomizeResult,
 //   runBulkFieldRename, runDetectUnusedFields,
-//   normalizeDiffFavoritePath, renderDiffSnapshotHistory,
+//   normalizeDiffFavoritePath,
 //   renderDiffFavoritesOnlyButton, renderTemplateOptions
 
 // ---------------------------------------------------------------------------
@@ -222,10 +222,15 @@ export function setupEventHandlers(injected = {}) {
     renderCustomizeResult,
     runBulkFieldRename,
     runDetectUnusedFields,
-    renderDiffSnapshotHistory,
     renderDiffFavoritesOnlyButton,
     renderTemplateOptions
   } = injected;
+
+  function updateDiffFavoritesOnlyButton() {
+    if (!ui.diffFavoritesOnlyBtn) return;
+    ui.diffFavoritesOnlyBtn.textContent = `お気に入りのみ: ${state.diffFavoritesOnly ? 'ON' : 'OFF'}`;
+    ui.diffFavoritesOnlyBtn.classList.toggle('dark', !!state.diffFavoritesOnly);
+  }
 
   // -------------------------------------------------------------------
   // Initialization
@@ -240,9 +245,9 @@ export function setupEventHandlers(injected = {}) {
   renderIgnoreKeyChips();
   renderDiffFilterOptions();
   if (typeof renderDiffFavoritesOnlyButton === 'function') renderDiffFavoritesOnlyButton();
+  else updateDiffFavoritesOnlyButton();
   renderDiffSelectionState();
   if (typeof renderDiffWarningBox === 'function') renderDiffWarningBox();
-  if (typeof renderDiffSnapshotHistory === 'function') renderDiffSnapshotHistory();
   renderLookupMapRows();
   if (typeof renderTemplateOptions === 'function') renderTemplateOptions();
   renderBundleState();
@@ -303,7 +308,6 @@ export function setupEventHandlers(injected = {}) {
     ui.diffWarnThreshold.addEventListener('change', () => {
       saveCurrentDialogState();
       if (typeof renderDiffWarningBox === 'function') renderDiffWarningBox();
-      if (typeof renderDiffSnapshotHistory === 'function') renderDiffSnapshotHistory();
     });
   }
 
@@ -1106,6 +1110,66 @@ export function setupEventHandlers(injected = {}) {
       try { localStorage.setItem(DIFF_ONBOARDING_DISMISSED_KEY, '1'); } catch (err) { /* ignore */ }
       syncDiffOnboardingVisibility();
       return;
+    }
+    if (act === 'toggleDiffFavoritesOnly') {
+      state.diffFavoritesOnly = !state.diffFavoritesOnly;
+      updateDiffFavoritesOnlyButton();
+      saveCurrentDialogState();
+      if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+      else renderDiffSelectionState();
+      setStatus(`お気に入りフィルタを${state.diffFavoritesOnly ? 'ON' : 'OFF'}にしました`);
+      return;
+    }
+    if (act === 'diffMultiUseCurrentTarget') {
+      if (!ui.diffMultiTargets) return;
+      const cur = ui.targetApp.value.trim();
+      if (!cur) {
+        setStatus('比較先アプリIDを入力してから追加してください', true);
+        return;
+      }
+      const ids = new Set(String(ui.diffMultiTargets.value || '').split(/[\s,]+/).map((v) => v.trim()).filter(Boolean));
+      ids.add(cur);
+      ui.diffMultiTargets.value = [...ids].join('\n');
+      saveCurrentDialogState();
+      setStatus(`比較先アプリID ${cur} を一括比較リストへ追加しました`);
+      return;
+    }
+    if (act === 'runMultiTargetDiff') {
+      return withGuard(async () => {
+        const area = ui.diffMultiTargets;
+        const out = ui.diffMultiTargetResult;
+        if (!area || !out) throw new Error('複数比較先UIが見つかりません');
+        const targets = [...new Set(String(area.value || '').split(/[\s,]+/).map((v) => v.trim()).filter(Boolean))];
+        if (!targets.length) throw new Error('比較先アプリIDを1件以上入力してください');
+        const sourceId = ui.sourceApp.value.trim();
+        if (!state.importedSourceBundle && !sourceId) throw new Error('比較元アプリIDを入力してください');
+        const originalTarget = {
+          appId: ui.targetApp.value,
+          guest: ui.targetGuest.value,
+          preview: !!ui.targetPreview.checked
+        };
+        const rows = [];
+        for (let i = 0; i < targets.length; i += 1) {
+          const targetAppId = targets[i];
+          ui.targetApp.value = targetAppId;
+          saveCurrentDialogState();
+          setStatus(`複数比較先を比較中 (${i + 1}/${targets.length}) App:${targetAppId}`);
+          await runDiff();
+          const summary = summarizeRows(state.lastDiffRows || []);
+          rows.push({
+            targetAppId,
+            diffCount: countActualDiffRows(state.lastDiffRows || []),
+            sameCount: summary.same,
+            issueCount: (state.lastFetchIssues || []).length
+          });
+        }
+        ui.targetApp.value = originalTarget.appId;
+        ui.targetGuest.value = originalTarget.guest;
+        ui.targetPreview.checked = originalTarget.preview;
+        saveCurrentDialogState();
+        out.innerHTML = `<table class="diff-table"><thead><tr><th style="width:120px">比較先App</th><th style="width:90px">差分</th><th style="width:90px">同一</th><th style="width:120px">取得失敗</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.targetAppId)}</td><td>${r.diffCount}</td><td>${r.sameCount}</td><td>${r.issueCount}</td></tr>`).join('')}</tbody></table>`;
+        setStatus(`複数比較先の比較が完了しました (${rows.length}件)`);
+      });
     }
 
     // ----- Bundle import/clear -----

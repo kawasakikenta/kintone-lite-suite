@@ -54,10 +54,8 @@ export const EXTERNAL_LIBRARIES = Object.freeze({
 
 export const DEFAULT_APP_ID = String(kintone.app.getId() || '');
 export const DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-export const DIFF_SNAPSHOT_STATE_KEY = `${TOOL_ID}:diffSnapshots`;
 export const DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
 export const DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
-export const MAX_DIFF_SNAPSHOTS = 12;
 
 /** 差分ビュー用クイックプリセット（表示フィルタの一括切替） */
 export const DIFF_UI_PRESETS = [

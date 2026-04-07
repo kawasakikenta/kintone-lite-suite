@@ -144,7 +144,6 @@ export function buildRoot(targetDocument = document, options = {}) {
               <div class="subtabs">
                 <button class="subtab active" data-subtab-parent="diff" data-subtab="conditions">比較条件</button>
                 <button class="subtab" data-subtab-parent="diff" data-subtab="view">結果整理</button>
-                <button class="subtab" data-subtab-parent="diff" data-subtab="history">履歴・監視</button>
               </div>
               <div class="subpane active" data-subpane-parent="diff" data-subpane="conditions">
                 <div class="subpane-note">上部の<strong>プレビュー比較プリセット</strong>で本番/プレビューAPIの組み合わせを決めてから、セクションと実行操作を進めます。細かいオプションは折りたたみにあります。</div>
@@ -234,6 +233,21 @@ export function buildRoot(targetDocument = document, options = {}) {
               </div>
                 </div>
               </details>
+              <details class="diff-fold diff-fold--multi">
+                <summary class="diff-fold-summary">
+                  <span class="diff-fold-title">複数比較先の一括比較</span>
+                  <span class="diff-fold-sub">同じ比較元に対し複数アプリを比較</span>
+                </summary>
+                <div class="diff-fold-body">
+                <div class="muted" style="margin-top:0;line-height:1.6">比較元 / 比較セクション / 無視キー / 正規化は現在の差分条件を使います。比較先ゲストID / プレビューは上の比較先設定を共通利用します。</div>
+                <textarea id="u_diffMultiTargets" rows="3" placeholder="アプリIDを改行またはカンマ区切りで入力" style="margin-top:6px" title="比較先アプリIDを列挙"></textarea>
+                <div class="btns" style="margin-top:4px">
+                  <button type="button" class="btn sub" data-act="diffMultiUseCurrentTarget" title="上部の比較先アプリIDを1行追加">現在の比較先を追加</button>
+                  <button type="button" class="btn sub" data-act="runMultiTargetDiff" title="各IDに対し順に差分を計算">複数比較先を比較</button>
+                </div>
+                <div id="u_diffMultiTargetResult" class="result" style="max-height:260px;margin-top:6px"></div>
+                </div>
+              </details>
               </div>
               <div class="subpane" data-subpane-parent="diff" data-subpane="view">
                 <div class="subpane-note">取得済みの差分の絞り込みと出力です。まず下の「フィルタ・出力」を開き、必要なら「拡大・クイック・選択セット」を開いてください。</div>
@@ -317,18 +331,21 @@ export function buildRoot(targetDocument = document, options = {}) {
                   </div>
                 </div>
                 <div>
-                  <label title="ファイル保存やコピー時に含める差分の範囲">出力対象 / 内容 / 選択操作</label>
+                  <label title="保存やコピー時に含める範囲を選びます">出力対象（どの行を出すか）</label>
                   <div class="btns" style="margin-top:0">
                     <select id="u_diffExportMode" style="flex:1;min-width:160px" title="保存・コピーに含める行の範囲">
-                      <option value="all">出力対象: 全差分</option>
-                      <option value="selected">出力対象: 選択差分</option>
-                      <option value="visible">出力対象: 現在表示中</option>
-                      <option value="favorites">出力対象: お気に入り</option>
+                      <option value="all">全件（同一を含む比較結果すべて）</option>
+                      <option value="selected">選択済み行のみ（チェック行）</option>
+                      <option value="visible">現在表示中のみ（フィルタ適用後）</option>
+                      <option value="favorites">お気に入り行のみ（★）</option>
                     </select>
                     <select id="u_diffExportContent" style="flex:1;min-width:180px" title="比較対象の生設定をレポートに含めるか">
                       <option value="diffOnly">出力内容: 差分のみ</option>
                       <option value="withCompared">出力内容: 差分 + 比較設定</option>
                     </select>
+                  </div>
+                  <label title="画面上のチェック状態をまとめて変更します" style="margin-top:8px;display:block">選択操作（チェック行の操作）</label>
+                  <div class="btns" style="margin-top:0">
                     <button type="button" class="btn sub" data-act="selectVisibleDiffs" title="現在フィルタで見えている行を選択状態にします">表示中を選択</button>
                     <button type="button" class="btn sub" data-act="selectAllDiffs" title="全行を選択">全件選択</button>
                     <button type="button" class="btn sub" data-act="clearDiffSelection" title="選択をすべて外す">選択解除</button>
@@ -356,7 +373,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                   <label>比較ビュー表示</label>
                   <div class="btns" style="margin-top:0">
                     <label class="chip" title="変更行内の文字単位で追加削除を着色"><input type="checkbox" id="u_charDiff" checked> 文字単位ハイライト</label>
-                    <label class="chip" title="同一種別の行もテーブルに出す"><input type="checkbox" id="u_diffIncludeSame"> 差分なしも表示</label>
+                    <label class="chip" title="同一種別の行もテーブルに出す"><input type="checkbox" id="u_diffIncludeSame" checked> 差分なしも表示</label>
                     <button type="button" class="btn sub" data-act="toggleDiffTheme" id="u_diffThemeBtn" title="ライト/ダークの表示テーマ">比較テーマ: ライト</button>
                     <button type="button" class="btn sub" data-act="collapseDiffSections" title="セクション見出しをすべて閉じる">全折畳</button>
                     <button type="button" class="btn sub" data-act="expandDiffSections" title="セクション見出しをすべて開く">全展開</button>
@@ -383,36 +400,6 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <div id="u_diffSuggestedIgnore" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:6px;background:#fff;margin-top:4px;align-items:center"></div>
                 <div class="muted" style="margin-top:4px;line-height:1.55">ショートカット: Ctrl/Cmd+F 検索, Esc 検索クリア, Ctrl/Cmd+Shift+C 差分コピー, Ctrl/Cmd+A 全件選択（検索欄以外フォーカス時）, Shift+クリックでチェック範囲選択, 矢印キーでチェック間移動</div>
               </div>
-                </div>
-              </details>
-              </div>
-              <div class="subpane" data-subpane-parent="diff" data-subpane="history">
-                <div class="subpane-note">比較履歴、監視、複数比較先チェックをまとめています。</div>
-              <details class="diff-fold diff-fold--snap" open>
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">比較スナップショット履歴</span>
-                  <span class="diff-fold-sub">過去の比較結果の一覧・復元</span>
-                </summary>
-                <div class="diff-fold-body">
-                <div class="btns" style="margin-top:0">
-                  <button type="button" class="btn sub" data-act="clearDiffSnapshots" title="保存済みスナップショットをすべて削除">履歴全削除</button>
-                </div>
-                <div id="u_diffSnapshotList" class="result" style="max-height:220px;margin-top:6px"></div>
-                </div>
-              </details>
-              <details class="diff-fold diff-fold--multi" open>
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">複数比較先の一括比較</span>
-                  <span class="diff-fold-sub">同じ比較元に対し複数アプリを比較</span>
-                </summary>
-                <div class="diff-fold-body">
-                <div class="muted" style="margin-top:0;line-height:1.6">比較元 / 比較セクション / 無視キー / 正規化は現在の差分条件を使います。比較先ゲストID / プレビューは上の比較先設定を共通利用します。</div>
-                <textarea id="u_diffMultiTargets" rows="3" placeholder="アプリIDを改行またはカンマ区切りで入力" style="margin-top:6px" title="比較先アプリIDを列挙"></textarea>
-                <div class="btns" style="margin-top:4px">
-                  <button type="button" class="btn sub" data-act="diffMultiUseCurrentTarget" title="上部の比較先アプリIDを1行追加">現在の比較先を追加</button>
-                  <button type="button" class="btn sub" data-act="runMultiTargetDiff" title="各IDに対し順に差分を計算">複数比較先を比較</button>
-                </div>
-                <div id="u_diffMultiTargetResult" class="result" style="max-height:260px;margin-top:6px"></div>
                 </div>
               </details>
               </div>
