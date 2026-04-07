@@ -20,7 +20,6 @@ import {
   resolveDiffExportComparedScopes,
   buildDiffExportComparedBundles,
   getDiffExportContentLabel,
-  groupDiffRowsBySection,
   buildDiffWarningInfo,
   buildDiffHtml,
   buildPatchPayload
@@ -54,7 +53,6 @@ import {
 } from '../ui/dialog.js';
 import { getPreviewCompareStatusPrefix } from './preview-compare.js';
 import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
-import { getDiffTypeDisplayLabel, getSeverityDisplayLabel, getIssueSideLabel, getPreviewStateLabel } from '../utils.js';
 
 // ---------------------------------------------------------------------------
 // Ignore preset helpers
@@ -267,49 +265,6 @@ export async function runDiffAndPreviewPlan() {
 // Diff summary/export functions
 // ---------------------------------------------------------------------------
 
-export async function copyDiffSummaryToClipboard() {
-  if (!state.lastDiffRows.length && !state.lastFetchIssues.length) throw new Error('先に差分比較を実行してください');
-  const exportInfo = resolveDiffExportRows();
-  const rows = exportInfo.rows || [];
-  const groups = groupDiffRowsBySection(rows);
-  const lines = [];
-  lines.push('kintone差分サマリー');
-  lines.push(`出力対象: ${exportInfo.label}`);
-  try {
-    const c = commonParams();
-    lines.push(`プレビュー比較: (比較元GET=${getPreviewStateLabel(c.source.preview)} / 比較先GET=${getPreviewStateLabel(c.target.preview)})`);
-  } catch (e) {
-    lines.push('プレビュー比較: (取得できませんでした)');
-  }
-  lines.push(`比較元アプリ: ${state.lastSourceBundle?.appId || '-'}`);
-  lines.push(`比較先アプリ: ${state.lastTargetBundle?.appId || '-'}`);
-  lines.push(`生成日時: ${new Date().toISOString()}`);
-  lines.push(`取得失敗: ${state.lastFetchIssues.length}`);
-  lines.push('');
-  groups.forEach((group) => {
-    lines.push(`[${group.label}] ${group.rows.length}件`);
-    group.rows.forEach((row) => {
-      const typeLabel = getDiffTypeDisplayLabel(row.type, { moved: !!row.moved });
-      const meta = [
-        row.reasonSummary || '',
-        row.renameCandidate ? `名称変更候補 ${row.renameCandidate.fromCode || '-'}→${row.renameCandidate.toCode || '-'}` : '',
-        row.impactCount ? `影響 ${row.impactCount}件` : ''
-      ].filter(Boolean).join(' / ');
-      lines.push(` - ${typeLabel} / ${getSeverityDisplayLabel(row.severity || 'low')} / ${row.path || '-'}${meta ? ` / ${meta}` : ''}`);
-    });
-    lines.push('');
-  });
-  if (state.lastFetchIssues.length) {
-    lines.push('[API取得失敗]');
-    state.lastFetchIssues.forEach((issue) => {
-      lines.push(` - ${issue.section || issue.sectionKey || '-'} / ${getIssueSideLabel(issue.side)} / ${String(issue.message || '-').replace(/\n+/g, ' | ')}`);
-    });
-    lines.push('');
-  }
-  await navigator.clipboard.writeText(lines.join('\n'));
-  setStatus(`差分サマリーをコピーしました (${rows.length}件 / ${exportInfo.label})`);
-}
-
 export async function exportBundleJson() {
   if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error('先に差分比較を実行してください');
   const payload = {
@@ -358,9 +313,17 @@ export async function exportDiffJson() {
 
 export async function exportDiffHtml() {
   if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error('先に差分比較を実行してください');
-  const exportInfo = resolveDiffExportRows();
   const scopes = selectedScopeKeys(ui.diffScopes);
+
+  // Always recompute with includeSame: true so that same items appear in HTML
+  const diffResult = computeDiffRows(state.lastSourceBundle, state.lastTargetBundle, scopes, ui.ignoreKeys.value, {
+    normalizationPresetState: getDiffNormalizationPresetState(),
+    includeSame: true
+  });
+  const rows = enrichDiffRows(diffResult.rows, state.lastSourceBundle, state.lastTargetBundle);
+
   const exportContentMode = resolveDiffExportContentMode();
+  const exportInfo = { mode: 'all', label: '全差分（同一含む）', rows };
   const compareInfo = shouldIncludeComparedContent(exportContentMode)
     ? buildDiffExportComparedBundles(
       state.lastSourceBundle,
@@ -368,10 +331,10 @@ export async function exportDiffHtml() {
       resolveDiffExportComparedScopes(exportInfo, scopes)
     )
     : null;
-  if (!exportInfo.rows.length && !state.lastFetchIssues.length && !compareInfo?.scopes?.length) {
+  if (!rows.length && !state.lastFetchIssues.length && !compareInfo?.scopes?.length) {
     throw new Error('出力できる比較結果がありません');
   }
-  const html = buildDiffHtml(state.lastSourceBundle, state.lastTargetBundle, exportInfo.rows || [], scopes, ui.ignoreKeys.value, {
+  const html = buildDiffHtml(state.lastSourceBundle, state.lastTargetBundle, rows, scopes, ui.ignoreKeys.value, {
     fetchIssues: state.lastFetchIssues,
     exportMode: exportInfo.mode,
     exportLabel: exportInfo.label,
@@ -381,7 +344,7 @@ export async function exportDiffHtml() {
     compareSourceBundle: compareInfo?.sourceBundle || null,
     compareTargetBundle: compareInfo?.targetBundle || null,
     normalizationState: getDiffNormalizationPresetState(),
-    warning: buildDiffWarningInfo(exportInfo.rows, state.lastFetchIssues)
+    warning: buildDiffWarningInfo(rows, state.lastFetchIssues)
   });
   downloadText(`diff_${nowStamp()}.html`, html, 'text/html');
   setStatus(`差分HTMLを保存しました (${exportInfo.label} / ${getDiffExportContentLabel(exportContentMode)})`);

@@ -1419,31 +1419,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     render();
   }
 
-  function copyDiffs() {
-    const lines = [];
-    lines.push('kintone差分レポート');
-    lines.push('比較元アプリ: ' + REPORT_META.source.appId + ' / 比較先アプリ: ' + REPORT_META.target.appId);
-    lines.push('生成日時: ' + REPORT_META.generatedAt);
-    lines.push('');
-    const groups = groupBySection(REPORT_ROWS);
-    groups.forEach((g) => {
-      lines.push('[' + g.label + ']');
-      g.rows.forEach((row) => {
-        const typeLabel = diffTypeLabel(row.type, row.moved);
-        const meta = [
-          row.reasonSummary || '',
-          row.renameCandidate ? ('名称変更候補 ' + (row.renameCandidate.fromCode || '-') + '→' + (row.renameCandidate.toCode || '-')) : '',
-          row.impactCount ? ('影響 ' + row.impactCount + '件') : ''
-        ].filter(Boolean).join(' / ');
-        lines.push(' - ' + typeLabel + ' : ' + (row.path || '-') + (meta ? ' / ' + meta : ''));
-      });
-      lines.push('');
-    });
-    navigator.clipboard.writeText(lines.join('\\n'))
-      .then(() => alert('差分をクリップボードへコピーしました'))
-      .catch((e) => alert('コピーに失敗しました: ' + (e.message || e)));
-  }
-
   function exportPatch() {
     const patchRows = REPORT_ROWS.filter((row) => row.type !== 'same');
     if (!patchRows.length) {
@@ -1484,7 +1459,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     URL.revokeObjectURL(a.href);
   }
 
-  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, copyDiffs, exportPatch, setActiveTab };
+  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, exportPatch, setActiveTab };
 
   document.getElementById('hideSame').onchange = onReportFilterChange;
   document.getElementById('charDiff').onchange = onReportFilterChange;
@@ -1492,7 +1467,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   document.getElementById('themeBtn').onclick = toggleTheme;
   document.getElementById('collapseBtn').onclick = collapseAll;
   document.getElementById('expandBtn').onclick = expandAll;
-  document.getElementById('copyBtn').onclick = copyDiffs;
   document.getElementById('patchBtn').onclick = exportPatch;
   document.querySelectorAll('[data-report-tab]').forEach((btn) => {
     btn.onclick = () => setActiveTab(btn.getAttribute('data-report-tab'));
@@ -1824,7 +1798,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <button type="button" class="btn" id="collapseBtn">全折畳</button>
         <button type="button" class="btn" id="expandBtn">全展開</button>
         <button type="button" class="btn" id="themeBtn">ダークに切替</button>
-        <button type="button" class="btn" id="copyBtn">差分コピー</button>
         <button type="button" class="btn primary" id="patchBtn" style="grid-column:span 2">パッチJSON出力</button>
       </div>
     </div>
