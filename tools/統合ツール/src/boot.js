@@ -142,7 +142,6 @@ export function runKintoneUnifiedSuite(options = {}) {
     diffWarnThreshold: $('#u_diffWarnThreshold'),
     diffWarnBox: $('#u_diffWarnBox'),
     diffSuggestedIgnore: $('#u_diffSuggestedIgnore'),
-    diffSnapshotList: $('#u_diffSnapshotList'),
     diffMultiTargets: $('#u_diffMultiTargets'),
     diffMultiTargetResult: $('#u_diffMultiTargetResult'),
     commonDataState: $('#u_commonDataState'),

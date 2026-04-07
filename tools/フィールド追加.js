@@ -37,7 +37,7 @@
   });
 
   // src/constants.js
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SNAPSHOT_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.js"() {
       "use strict";
@@ -92,7 +92,6 @@
       });
       DEFAULT_APP_ID = String(kintone.app.getId() || "");
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-      DIFF_SNAPSHOT_STATE_KEY = `${TOOL_ID}:diffSnapshots`;
       DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
       DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
       SECTION_DEFS = [
@@ -225,7 +224,7 @@
         diffFavoritesOnly: false,
         diffExcludeSections: null,
         diffSelectionAnchorId: "",
-        diffIncludeSame: false,
+        diffIncludeSame: true,
         diffFilterSection: "",
         diffFilterType: "",
         diffFilterSeverity: "",

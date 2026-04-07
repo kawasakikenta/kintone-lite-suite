@@ -20,7 +20,7 @@ export const state = {
   diffFavoritesOnly: false,
   diffExcludeSections: null,
   diffSelectionAnchorId: '',
-  diffIncludeSame: false,
+  diffIncludeSame: true,
   diffFilterSection: '',
   diffFilterType: '',
   diffFilterSeverity: '',

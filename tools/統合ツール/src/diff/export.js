@@ -452,25 +452,6 @@ export function buildDiffWarningInfo(rows, issues) {
   return { threshold, diffCount, issueCount, total, exceeded };
 }
 
-export function buildDiffSnapshotSummary(rows, issues) {
-  const summary = summarizeRows(rows || []);
-  const severity = summarizeSeverity(rows || []);
-  const warning = buildDiffWarningInfo(rows, issues);
-  return {
-    total: summary.total,
-    added: summary.added,
-    removed: summary.removed,
-    changed: summary.changed,
-    moved: summary.moved,
-    high: severity.high,
-    medium: severity.medium,
-    low: severity.low,
-    fetchIssues: (issues || []).length,
-    warningThreshold: warning.threshold,
-    warningExceeded: warning.exceeded
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Export mode resolution
 // ---------------------------------------------------------------------------
@@ -494,6 +475,11 @@ export function resolveDiffExportRows(mode) {
     const rows = getRenderedDiffRows();
     if (!rows.length) throw new Error('現在表示中の差分がありません');
     return { mode: exportMode, label: '現在表示中', rows };
+  }
+  if (exportMode === 'favorites') {
+    const rows = (state.lastDiffRows || []).filter((row) => state.diffFavoritePaths.has(String(row.path || '').trim()));
+    if (!rows.length) throw new Error('お気に入り差分がありません');
+    return { mode: exportMode, label: 'お気に入り差分', rows };
   }
   return { mode: 'all', label: '全差分', rows: state.lastDiffRows || [] };
 }
@@ -1976,16 +1962,17 @@ export function renderDiffSelectionState() {
   const issues = (state.lastFetchIssues || []).length;
   const normalization = getActiveDiffNormalizationLabels();
   const exportModeLabelMap = {
-    all: '全差分',
-    selected: '選択差分',
-    visible: '現在表示中'
+    all: '全件（比較結果）',
+    selected: '選択済み行のみ',
+    visible: '現在表示中のみ',
+    favorites: 'お気に入り行のみ'
   };
   if (!total && !issues && !state.lastDiffAt) {
     ui.diffSelectionState.textContent = '差分未実行';
     return;
   }
   ui.diffSelectionState.textContent =
-    `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || '全差分'} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(', ') || '-'}`;
+    `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || '全件（比較結果）'} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(', ') || '-'}`;
 }
 
 export function renderDiffWarningBox() {
