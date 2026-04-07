@@ -168,6 +168,117 @@ function extractFieldProperties(bundle) {
   return deepClone(props);
 }
 
+// ---------------------------------------------------------------------------
+// kintone フォームスタイル プレビュー
+// ---------------------------------------------------------------------------
+
+const FIELD_TYPE_LABELS_MAP = {
+  SINGLE_LINE_TEXT: '文字列(1行)', MULTI_LINE_TEXT: '文字列(複数行)', RICH_TEXT: 'リッチエディター',
+  NUMBER: '数値', CHECK_BOX: 'チェックボックス', RADIO_BUTTON: 'ラジオボタン',
+  DROP_DOWN: 'ドロップダウン', MULTI_SELECT: '複数選択',
+  DATE: '日付', TIME: '時刻', DATETIME: '日時', LINK: 'リンク',
+  USER_SELECT: 'ユーザー選択', GROUP_SELECT: 'グループ選択', ORGANIZATION_SELECT: '組織選択',
+  FILE: '添付ファイル', CALC: '計算', LOOKUP: 'ルックアップ',
+  REFERENCE_TABLE: '関連レコード一覧', SUBTABLE: 'サブテーブル',
+  HR: '罫線', LABEL: 'ラベル', SPACER: 'スペース'
+};
+
+function renderKintoneInputCtrl(field) {
+  const type = field.type || '';
+  const opts = Object.values(field.options || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
+  switch (type) {
+    case 'SINGLE_LINE_TEXT':
+    case 'LINK':
+      return '<div class="kfp-ctrl kfp-ctrl-text"><div class="kfp-input-mock"></div></div>';
+    case 'MULTI_LINE_TEXT':
+      return '<div class="kfp-ctrl"><div class="kfp-input-mock kfp-input-mock-tall"></div></div>';
+    case 'RICH_TEXT':
+      return '<div class="kfp-ctrl kfp-ctrl-rt"><div class="kfp-rt-bar"><span>B</span><span><em>I</em></span><span><u>U</u></span></div><div class="kfp-input-mock kfp-input-mock-tall"></div></div>';
+    case 'NUMBER': {
+      const u = field.unit ? `<span class="kfp-unit">${esc(field.unit)}</span>` : '';
+      const pre = field.unitPosition !== 'AFTER' ? u : '';
+      const post = field.unitPosition === 'AFTER' ? u : '';
+      return `<div class="kfp-ctrl kfp-ctrl-num">${pre}<div class="kfp-input-mock kfp-input-mock-num"></div>${post}</div>`;
+    }
+    case 'CHECK_BOX':
+      return `<div class="kfp-ctrl kfp-ctrl-choices">${opts.slice(0, 4).map((o) => `<label class="kfp-choice"><span class="kfp-chk"></span><span>${esc(o.label)}</span></label>`).join('')}${opts.length > 4 ? `<span class="kfp-more">…+${opts.length - 4}</span>` : ''}</div>`;
+    case 'RADIO_BUTTON':
+      return `<div class="kfp-ctrl kfp-ctrl-choices">${opts.slice(0, 4).map((o) => `<label class="kfp-choice"><span class="kfp-radio-dot"></span><span>${esc(o.label)}</span></label>`).join('')}${opts.length > 4 ? `<span class="kfp-more">…+${opts.length - 4}</span>` : ''}</div>`;
+    case 'DROP_DOWN':
+      return `<div class="kfp-ctrl kfp-ctrl-dd"><span class="kfp-dd-val">${esc(field.defaultValue || (opts[0]?.label || '選択してください'))}</span><span class="kfp-dd-caret">▾</span></div>`;
+    case 'MULTI_SELECT':
+      return `<div class="kfp-ctrl kfp-ctrl-ms">${opts.slice(0, 3).map((o) => `<span class="kfp-tag">${esc(o.label)}</span>`).join('')}${opts.length > 3 ? `<span class="kfp-more">+${opts.length - 3}</span>` : ''}</div>`;
+    case 'DATE':
+      return '<div class="kfp-ctrl kfp-ctrl-dt"><span class="kfp-dt-ph">YYYY/MM/DD</span></div>';
+    case 'TIME':
+      return '<div class="kfp-ctrl kfp-ctrl-dt"><span class="kfp-dt-ph">HH:MM</span></div>';
+    case 'DATETIME':
+      return '<div class="kfp-ctrl kfp-ctrl-dt"><span class="kfp-dt-ph">YYYY/MM/DD HH:MM</span></div>';
+    case 'FILE':
+      return '<div class="kfp-ctrl kfp-ctrl-file"><span>📎</span><span>添付ファイル</span></div>';
+    case 'USER_SELECT':
+    case 'GROUP_SELECT':
+    case 'ORGANIZATION_SELECT':
+      return '<div class="kfp-ctrl kfp-ctrl-entity"><span class="kfp-entity-plus">＋</span><span>追加</span></div>';
+    case 'CALC':
+      return `<div class="kfp-ctrl kfp-ctrl-calc"><span class="kfp-calc-eq">=</span><span class="kfp-calc-expr">${esc(field.expression || '計算式')}</span></div>`;
+    case 'LOOKUP':
+      return '<div class="kfp-ctrl kfp-ctrl-lookup"><div class="kfp-input-mock kfp-input-mock-lookup"></div><span class="kfp-lookup-btn">参照</span></div>';
+    case 'REFERENCE_TABLE':
+      return '<div class="kfp-ctrl kfp-ctrl-ref"><span class="kfp-ref-icon">▤</span><span>関連レコード一覧</span></div>';
+    case 'SUBTABLE':
+      return '<div class="kfp-ctrl kfp-ctrl-sub"><div class="kfp-sub-bar">▶ サブテーブル</div></div>';
+    case 'HR':
+      return '<div class="kfp-ctrl"><hr class="kfp-hr"></div>';
+    case 'LABEL':
+      return `<div class="kfp-ctrl kfp-ctrl-lbl-field"><span>${esc(field.label || '')}</span></div>`;
+    case 'SPACER':
+      return '<div class="kfp-ctrl kfp-ctrl-spacer"></div>';
+    default:
+      return `<div class="kfp-ctrl kfp-ctrl-unknown"><span class="kfp-type-name">${esc(type || '?')}</span></div>`;
+  }
+}
+
+function renderKintoneFormField(field, statusKey) {
+  const type = field.type || '';
+  const label = field.label || field.code || type;
+  const required = !!field.required;
+  const typeLabel = FIELD_TYPE_LABELS_MAP[type] || type;
+  return `<div class="kfp-field kfp-field-${statusKey}">
+    <div class="kfp-field-lbl">
+      <span class="kfp-lbl-text">${esc(label)}</span>
+      ${required ? '<span class="kfp-req">必須</span>' : ''}
+      <span class="kfp-type-chip">${esc(typeLabel)}</span>
+    </div>
+    <div class="kfp-field-ctrl">${renderKintoneInputCtrl(field)}</div>
+  </div>`;
+}
+
+function renderKintoneView(rows) {
+  if (!rows.length) return '<div class="kfp-empty">表示対象がありません</div>';
+  const pairRows = rows.map((row) => {
+    const srcStatus = row.status === 'removed' ? 'removed' : (row.status === 'modified' ? 'modified' : 'unchanged');
+    const tgtStatus = row.status === 'added' ? 'added' : (row.status === 'modified' ? 'modified' : 'unchanged');
+    const srcCell = row.before
+      ? renderKintoneFormField(row.before, srcStatus)
+      : '<div class="kfp-absent"><span>（なし）</span></div>';
+    const tgtCell = row.after
+      ? renderKintoneFormField(row.after, tgtStatus)
+      : '<div class="kfp-absent"><span>（なし）</span></div>';
+    return `<div class="kfp-pair kfp-pair-${row.status}">
+      <div class="kfp-col">${srcCell}</div>
+      <div class="kfp-col kfp-col-r">${tgtCell}</div>
+    </div>`;
+  }).join('');
+  return `<div class="kfp-view">
+    <div class="kfp-view-hd">
+      <div class="kfp-view-hd-cell">比較元</div>
+      <div class="kfp-view-hd-cell kfp-view-hd-r">比較先</div>
+    </div>
+    <div class="kfp-view-body">${pairRows}</div>
+  </div>`;
+}
+
 export function initReflectPreviewPlayground(ui, setStatus) {
   const root = ui.reflectPreviewPlayground;
   if (!root) return;
@@ -252,22 +363,25 @@ export function initReflectPreviewPlayground(ui, setStatus) {
         <span style="margin-left:auto"></span>
         <button type="button" class="btn ${st.view === 'diff' ? 'ok' : 'sub'}" data-rpp-act="viewDiff">差分</button>
         <button type="button" class="btn ${st.view === 'preview' ? 'ok' : 'sub'}" data-rpp-act="viewPreview">プレビュー</button>
+        <button type="button" class="btn ${st.view === 'kintone' ? 'ok' : 'sub'}" data-rpp-act="viewKintone">kintone風</button>
       </div>
       <div class="rpp-filters">
         ${['all', 'added', 'removed', 'modified', 'unchanged'].map((k) => `<button type="button" class="btn sub ${st.filter === k ? 'is-active' : ''}" data-rpp-act="filter" data-filter="${k}">${k === 'all' ? 'すべて' : STATUS_LABELS[k]} <span>${k === 'all' ? diff.length : stats[k]}</span></button>`).join('')}
       </div>
-      <div class="rpp-list">
-        ${rows.map((row) => {
-          const opened = st.expanded.has(row.code);
-          const label = row.after?.label || row.before?.label || row.code;
-          const body = st.view === 'diff'
-            ? (row.status === 'modified'
-              ? `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>変更前</th><th>変更後</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatValue(ch.before))}</pre></td><td><pre>${esc(formatValue(ch.after))}</pre></td></tr>`).join('')}</tbody></table>`
-              : `<pre class="rpp-pre">${esc(formatValue(row.after || row.before))}</pre>`)
-            : `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">比較元</div><div class="rpp-preview-body">${row.before ? esc(row.before.label || row.before.code || '-') : 'なし'}</div></div><div><div class="rpp-preview-head">比較先</div><div class="rpp-preview-body">${row.after ? esc(row.after.label || row.after.code || '-') : 'なし'}</div></div></div>`;
-          return `<div class="rpp-card" draggable="true" data-rpp-code="${esc(row.code)}"><div class="rpp-head"><button type="button" class="rpp-open" data-rpp-act="toggle" data-code="${esc(row.code)}">${opened ? '▾' : '▸'}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.code)}</code><span class="rpp-spacer"></span>${row.after ? `<button type="button" class="btn sub" data-rpp-act="edit" data-code="${esc(row.code)}">編集</button><button type="button" class="btn sub" data-rpp-act="delete" data-code="${esc(row.code)}">削除</button>` : `<button type="button" class="btn sub" data-rpp-act="restore" data-code="${esc(row.code)}">復元</button>`}</div>${opened ? `<div class="rpp-body">${body}</div>` : ''}</div>`;
-        }).join('') || '<div class="muted" style="padding:12px">表示対象がありません</div>'}
-      </div>
+      ${st.view === 'kintone'
+        ? `<div class="rpp-kfp-wrap">${renderKintoneView(rows)}</div>`
+        : `<div class="rpp-list">
+          ${rows.map((row) => {
+            const opened = st.expanded.has(row.code);
+            const label = row.after?.label || row.before?.label || row.code;
+            const body = st.view === 'diff'
+              ? (row.status === 'modified'
+                ? `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>変更前</th><th>変更後</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatValue(ch.before))}</pre></td><td><pre>${esc(formatValue(ch.after))}</pre></td></tr>`).join('')}</tbody></table>`
+                : `<pre class="rpp-pre">${esc(formatValue(row.after || row.before))}</pre>`)
+              : `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">比較元</div><div class="rpp-preview-body">${row.before ? esc(row.before.label || row.before.code || '-') : 'なし'}</div></div><div><div class="rpp-preview-head">比較先</div><div class="rpp-preview-body">${row.after ? esc(row.after.label || row.after.code || '-') : 'なし'}</div></div></div>`;
+            return `<div class="rpp-card" draggable="true" data-rpp-code="${esc(row.code)}"><div class="rpp-head"><button type="button" class="rpp-open" data-rpp-act="toggle" data-code="${esc(row.code)}">${opened ? '▾' : '▸'}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.code)}</code><span class="rpp-spacer"></span>${row.after ? `<button type="button" class="btn sub" data-rpp-act="edit" data-code="${esc(row.code)}">編集</button><button type="button" class="btn sub" data-rpp-act="delete" data-code="${esc(row.code)}">削除</button>` : `<button type="button" class="btn sub" data-rpp-act="restore" data-code="${esc(row.code)}">復元</button>`}</div>${opened ? `<div class="rpp-body">${body}</div>` : ''}</div>`;
+          }).join('') || '<div class="muted" style="padding:12px">表示対象がありません</div>'}
+        </div>`}
       ${renderModal()}`;
   };
 
@@ -397,6 +511,7 @@ export function initReflectPreviewPlayground(ui, setStatus) {
         setStatus('元に戻しました');
       } else if (act === 'viewDiff') st.view = 'diff';
       else if (act === 'viewPreview') st.view = 'preview';
+      else if (act === 'viewKintone') st.view = 'kintone';
       else if (act === 'filter') st.filter = btn.dataset.filter || 'all';
       else if (act === 'toggle') {
         if (st.expanded.has(code)) st.expanded.delete(code);

@@ -9796,6 +9796,72 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .rpp-modal-textarea-mini{min-height:110px;font-size:12px}
 #kintone-unified-suite-v2 .rpp-modal-hint{margin-top:10px;font-size:12px;color:#64748b;line-height:1.55}
 
+/* ========== kintone form preview (kfp-*) ========== */
+#kintone-unified-suite-v2 .rpp-kfp-wrap{flex:1;min-height:260px;max-height:min(520px,46vh);overflow-y:auto;overflow-x:hidden;padding:2px 2px 4px}
+#kintone-unified-suite-v2 .kfp-view{border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff}
+#kintone-unified-suite-v2 .kfp-view-hd{display:grid;grid-template-columns:1fr 1fr;position:sticky;top:0;z-index:2}
+#kintone-unified-suite-v2 .kfp-view-hd-cell{padding:7px 12px;font-size:11px;font-weight:700;color:#fff;background:#1e40af;letter-spacing:.03em}
+#kintone-unified-suite-v2 .kfp-view-hd-r{border-left:2px solid rgba(255,255,255,.25)}
+#kintone-unified-suite-v2 .kfp-view-body{display:flex;flex-direction:column}
+#kintone-unified-suite-v2 .kfp-pair{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #e2e8f0;align-items:stretch}
+#kintone-unified-suite-v2 .kfp-pair:last-child{border-bottom:none}
+#kintone-unified-suite-v2 .kfp-col{display:flex;flex-direction:column}
+#kintone-unified-suite-v2 .kfp-col-r{border-left:1px solid #e2e8f0}
+/* Field card */
+#kintone-unified-suite-v2 .kfp-field{display:flex;align-items:stretch;width:100%;min-height:46px;border-left:3px solid transparent;box-sizing:border-box}
+#kintone-unified-suite-v2 .kfp-field-unchanged{border-left-color:#e2e8f0;background:#fafafa}
+#kintone-unified-suite-v2 .kfp-field-added{border-left-color:#16a34a;background:#f0fdf4}
+#kintone-unified-suite-v2 .kfp-field-removed{border-left-color:#dc2626;background:#fef2f2;opacity:.75}
+#kintone-unified-suite-v2 .kfp-field-modified{border-left-color:#d97706;background:#fffbeb}
+/* Label area */
+#kintone-unified-suite-v2 .kfp-field-lbl{display:flex;flex-direction:column;justify-content:center;gap:3px;width:40%;max-width:150px;min-width:72px;flex-shrink:0;padding:7px 9px;background:#f1f5f9;border-right:1px solid #e2e8f0;box-sizing:border-box}
+#kintone-unified-suite-v2 .kfp-lbl-text{font-size:11px;font-weight:700;color:#0f172a;line-height:1.3;word-break:break-all}
+#kintone-unified-suite-v2 .kfp-req{display:inline-block;background:#dc2626;color:#fff;font-size:9px;font-weight:700;padding:1px 4px;border-radius:2px;width:fit-content}
+#kintone-unified-suite-v2 .kfp-type-chip{font-size:9px;color:#64748b;background:#e2e8f0;padding:1px 4px;border-radius:2px;display:inline-block;width:fit-content}
+/* Input control area */
+#kintone-unified-suite-v2 .kfp-field-ctrl{flex:1;padding:8px 10px;display:flex;align-items:center;min-width:0;background:#fff}
+#kintone-unified-suite-v2 .kfp-ctrl{width:100%}
+#kintone-unified-suite-v2 .kfp-input-mock{height:26px;border:1px solid #cbd5e1;border-radius:3px;background:#fff}
+#kintone-unified-suite-v2 .kfp-input-mock-tall{height:54px}
+#kintone-unified-suite-v2 .kfp-input-mock-num{width:90px;display:inline-block}
+#kintone-unified-suite-v2 .kfp-input-mock-lookup{flex:1}
+#kintone-unified-suite-v2 .kfp-ctrl-rt{display:flex;flex-direction:column;gap:3px;width:100%}
+#kintone-unified-suite-v2 .kfp-rt-bar{display:flex;gap:5px;padding:3px 7px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:3px 3px 0 0;font-size:11px;font-weight:700;color:#475569}
+#kintone-unified-suite-v2 .kfp-ctrl-num{display:flex;align-items:center;gap:5px}
+#kintone-unified-suite-v2 .kfp-unit{font-size:12px;font-weight:600;color:#475569}
+#kintone-unified-suite-v2 .kfp-ctrl-choices{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center}
+#kintone-unified-suite-v2 .kfp-choice{display:flex;align-items:center;gap:4px;font-size:11px;color:#334155;cursor:default}
+#kintone-unified-suite-v2 .kfp-chk{width:13px;height:13px;border:1px solid #64748b;border-radius:2px;display:inline-block;flex-shrink:0}
+#kintone-unified-suite-v2 .kfp-radio-dot{width:13px;height:13px;border:1px solid #64748b;border-radius:50%;display:inline-block;flex-shrink:0}
+#kintone-unified-suite-v2 .kfp-ctrl-dd{display:flex;align-items:center;border:1px solid #cbd5e1;border-radius:3px;background:#fff;padding:4px 7px;max-width:180px}
+#kintone-unified-suite-v2 .kfp-dd-val{flex:1;font-size:11px;color:#475569;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .kfp-dd-caret{color:#94a3b8;font-size:10px;margin-left:3px;flex-shrink:0}
+#kintone-unified-suite-v2 .kfp-ctrl-ms{display:flex;flex-wrap:wrap;gap:3px}
+#kintone-unified-suite-v2 .kfp-tag{background:#dbeafe;color:#1e40af;font-size:10px;padding:2px 6px;border-radius:999px}
+#kintone-unified-suite-v2 .kfp-ctrl-dt{display:inline-flex;align-items:center;border:1px solid #cbd5e1;border-radius:3px;background:#fff;padding:4px 7px}
+#kintone-unified-suite-v2 .kfp-dt-ph{font-size:10px;color:#94a3b8;font-family:ui-monospace,monospace}
+#kintone-unified-suite-v2 .kfp-ctrl-file{display:flex;align-items:center;gap:5px;padding:4px 8px;border:1px dashed #94a3b8;border-radius:5px;font-size:11px;color:#64748b;background:#f8fafc;max-width:140px}
+#kintone-unified-suite-v2 .kfp-ctrl-entity{display:inline-flex;align-items:center;gap:3px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:3px 9px;font-size:11px;color:#1e40af}
+#kintone-unified-suite-v2 .kfp-entity-plus{font-weight:700;font-size:13px}
+#kintone-unified-suite-v2 .kfp-ctrl-calc{display:flex;align-items:center;gap:4px}
+#kintone-unified-suite-v2 .kfp-calc-eq{font-size:14px;font-weight:700;color:#6366f1}
+#kintone-unified-suite-v2 .kfp-calc-expr{font-size:10px;color:#475569;font-family:ui-monospace,monospace;background:#eff6ff;padding:2px 5px;border-radius:3px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .kfp-ctrl-lookup{display:flex;align-items:center;gap:6px;width:100%}
+#kintone-unified-suite-v2 .kfp-lookup-btn{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:3px;padding:3px 7px;font-size:10px;color:#334155;white-space:nowrap}
+#kintone-unified-suite-v2 .kfp-ctrl-ref{display:flex;align-items:center;gap:5px;font-size:11px;color:#475569;padding:5px 7px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px}
+#kintone-unified-suite-v2 .kfp-ref-icon{font-size:15px}
+#kintone-unified-suite-v2 .kfp-ctrl-sub{border:1px solid #e2e8f0;border-radius:5px;overflow:hidden;background:#f8fafc;width:100%}
+#kintone-unified-suite-v2 .kfp-sub-bar{padding:5px 9px;font-size:10px;font-weight:700;color:#475569;background:#f1f5f9;border-bottom:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .kfp-hr{border:none;border-top:1px solid #cbd5e1;margin:4px 0}
+#kintone-unified-suite-v2 .kfp-ctrl-lbl-field{font-size:12px;color:#334155}
+#kintone-unified-suite-v2 .kfp-ctrl-spacer{height:18px}
+#kintone-unified-suite-v2 .kfp-ctrl-unknown{display:flex;align-items:center}
+#kintone-unified-suite-v2 .kfp-type-name{font-size:9px;color:#94a3b8;background:#f1f5f9;padding:2px 5px;border-radius:2px}
+#kintone-unified-suite-v2 .kfp-more{font-size:9px;color:#64748b;background:#f1f5f9;padding:1px 4px;border-radius:2px}
+#kintone-unified-suite-v2 .kfp-absent{display:flex;align-items:center;justify-content:center;min-height:46px;width:100%;background:#f8fafc;padding:8px;box-sizing:border-box}
+#kintone-unified-suite-v2 .kfp-absent span{font-size:11px;color:#94a3b8;font-style:italic}
+#kintone-unified-suite-v2 .kfp-empty{padding:20px;text-align:center;color:#64748b;font-size:13px}
+
 /* ========== Section Preview Editor ========== */
 #kintone-unified-suite-v2 .section-preview-editor{min-height:200px}
 #kintone-unified-suite-v2 .spe-section-select{min-height:36px;border:1px solid #cbd5e1;border-radius:8px;padding:0 10px;font-size:13px;background:#fff;color:#0f172a;cursor:pointer;min-width:180px}
@@ -11601,6 +11667,120 @@ ${contextLine}`);
     if (!props || typeof props !== "object" || Array.isArray(props)) return null;
     return deepClone(props);
   }
+  var FIELD_TYPE_LABELS_MAP = {
+    SINGLE_LINE_TEXT: "文字列(1行)",
+    MULTI_LINE_TEXT: "文字列(複数行)",
+    RICH_TEXT: "リッチエディター",
+    NUMBER: "数値",
+    CHECK_BOX: "チェックボックス",
+    RADIO_BUTTON: "ラジオボタン",
+    DROP_DOWN: "ドロップダウン",
+    MULTI_SELECT: "複数選択",
+    DATE: "日付",
+    TIME: "時刻",
+    DATETIME: "日時",
+    LINK: "リンク",
+    USER_SELECT: "ユーザー選択",
+    GROUP_SELECT: "グループ選択",
+    ORGANIZATION_SELECT: "組織選択",
+    FILE: "添付ファイル",
+    CALC: "計算",
+    LOOKUP: "ルックアップ",
+    REFERENCE_TABLE: "関連レコード一覧",
+    SUBTABLE: "サブテーブル",
+    HR: "罫線",
+    LABEL: "ラベル",
+    SPACER: "スペース"
+  };
+  function renderKintoneInputCtrl(field) {
+    const type = field.type || "";
+    const opts = Object.values(field.options || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
+    switch (type) {
+      case "SINGLE_LINE_TEXT":
+      case "LINK":
+        return '<div class="kfp-ctrl kfp-ctrl-text"><div class="kfp-input-mock"></div></div>';
+      case "MULTI_LINE_TEXT":
+        return '<div class="kfp-ctrl"><div class="kfp-input-mock kfp-input-mock-tall"></div></div>';
+      case "RICH_TEXT":
+        return '<div class="kfp-ctrl kfp-ctrl-rt"><div class="kfp-rt-bar"><span>B</span><span><em>I</em></span><span><u>U</u></span></div><div class="kfp-input-mock kfp-input-mock-tall"></div></div>';
+      case "NUMBER": {
+        const u = field.unit ? `<span class="kfp-unit">${esc(field.unit)}</span>` : "";
+        const pre = field.unitPosition !== "AFTER" ? u : "";
+        const post = field.unitPosition === "AFTER" ? u : "";
+        return `<div class="kfp-ctrl kfp-ctrl-num">${pre}<div class="kfp-input-mock kfp-input-mock-num"></div>${post}</div>`;
+      }
+      case "CHECK_BOX":
+        return `<div class="kfp-ctrl kfp-ctrl-choices">${opts.slice(0, 4).map((o) => `<label class="kfp-choice"><span class="kfp-chk"></span><span>${esc(o.label)}</span></label>`).join("")}${opts.length > 4 ? `<span class="kfp-more">…+${opts.length - 4}</span>` : ""}</div>`;
+      case "RADIO_BUTTON":
+        return `<div class="kfp-ctrl kfp-ctrl-choices">${opts.slice(0, 4).map((o) => `<label class="kfp-choice"><span class="kfp-radio-dot"></span><span>${esc(o.label)}</span></label>`).join("")}${opts.length > 4 ? `<span class="kfp-more">…+${opts.length - 4}</span>` : ""}</div>`;
+      case "DROP_DOWN":
+        return `<div class="kfp-ctrl kfp-ctrl-dd"><span class="kfp-dd-val">${esc(field.defaultValue || (opts[0]?.label || "選択してください"))}</span><span class="kfp-dd-caret">▾</span></div>`;
+      case "MULTI_SELECT":
+        return `<div class="kfp-ctrl kfp-ctrl-ms">${opts.slice(0, 3).map((o) => `<span class="kfp-tag">${esc(o.label)}</span>`).join("")}${opts.length > 3 ? `<span class="kfp-more">+${opts.length - 3}</span>` : ""}</div>`;
+      case "DATE":
+        return '<div class="kfp-ctrl kfp-ctrl-dt"><span class="kfp-dt-ph">YYYY/MM/DD</span></div>';
+      case "TIME":
+        return '<div class="kfp-ctrl kfp-ctrl-dt"><span class="kfp-dt-ph">HH:MM</span></div>';
+      case "DATETIME":
+        return '<div class="kfp-ctrl kfp-ctrl-dt"><span class="kfp-dt-ph">YYYY/MM/DD HH:MM</span></div>';
+      case "FILE":
+        return '<div class="kfp-ctrl kfp-ctrl-file"><span>📎</span><span>添付ファイル</span></div>';
+      case "USER_SELECT":
+      case "GROUP_SELECT":
+      case "ORGANIZATION_SELECT":
+        return '<div class="kfp-ctrl kfp-ctrl-entity"><span class="kfp-entity-plus">＋</span><span>追加</span></div>';
+      case "CALC":
+        return `<div class="kfp-ctrl kfp-ctrl-calc"><span class="kfp-calc-eq">=</span><span class="kfp-calc-expr">${esc(field.expression || "計算式")}</span></div>`;
+      case "LOOKUP":
+        return '<div class="kfp-ctrl kfp-ctrl-lookup"><div class="kfp-input-mock kfp-input-mock-lookup"></div><span class="kfp-lookup-btn">参照</span></div>';
+      case "REFERENCE_TABLE":
+        return '<div class="kfp-ctrl kfp-ctrl-ref"><span class="kfp-ref-icon">▤</span><span>関連レコード一覧</span></div>';
+      case "SUBTABLE":
+        return '<div class="kfp-ctrl kfp-ctrl-sub"><div class="kfp-sub-bar">▶ サブテーブル</div></div>';
+      case "HR":
+        return '<div class="kfp-ctrl"><hr class="kfp-hr"></div>';
+      case "LABEL":
+        return `<div class="kfp-ctrl kfp-ctrl-lbl-field"><span>${esc(field.label || "")}</span></div>`;
+      case "SPACER":
+        return '<div class="kfp-ctrl kfp-ctrl-spacer"></div>';
+      default:
+        return `<div class="kfp-ctrl kfp-ctrl-unknown"><span class="kfp-type-name">${esc(type || "?")}</span></div>`;
+    }
+  }
+  function renderKintoneFormField(field, statusKey) {
+    const type = field.type || "";
+    const label = field.label || field.code || type;
+    const required = !!field.required;
+    const typeLabel = FIELD_TYPE_LABELS_MAP[type] || type;
+    return `<div class="kfp-field kfp-field-${statusKey}">
+    <div class="kfp-field-lbl">
+      <span class="kfp-lbl-text">${esc(label)}</span>
+      ${required ? '<span class="kfp-req">必須</span>' : ""}
+      <span class="kfp-type-chip">${esc(typeLabel)}</span>
+    </div>
+    <div class="kfp-field-ctrl">${renderKintoneInputCtrl(field)}</div>
+  </div>`;
+  }
+  function renderKintoneView(rows) {
+    if (!rows.length) return '<div class="kfp-empty">表示対象がありません</div>';
+    const pairRows = rows.map((row) => {
+      const srcStatus = row.status === "removed" ? "removed" : row.status === "modified" ? "modified" : "unchanged";
+      const tgtStatus = row.status === "added" ? "added" : row.status === "modified" ? "modified" : "unchanged";
+      const srcCell = row.before ? renderKintoneFormField(row.before, srcStatus) : '<div class="kfp-absent"><span>（なし）</span></div>';
+      const tgtCell = row.after ? renderKintoneFormField(row.after, tgtStatus) : '<div class="kfp-absent"><span>（なし）</span></div>';
+      return `<div class="kfp-pair kfp-pair-${row.status}">
+      <div class="kfp-col">${srcCell}</div>
+      <div class="kfp-col kfp-col-r">${tgtCell}</div>
+    </div>`;
+    }).join("");
+    return `<div class="kfp-view">
+    <div class="kfp-view-hd">
+      <div class="kfp-view-hd-cell">比較元</div>
+      <div class="kfp-view-hd-cell kfp-view-hd-r">比較先</div>
+    </div>
+    <div class="kfp-view-body">${pairRows}</div>
+  </div>`;
+  }
   function initReflectPreviewPlayground(ui4, setStatus2) {
     const root2 = ui4.reflectPreviewPlayground;
     if (!root2) return;
@@ -11680,18 +11860,19 @@ ${contextLine}`);
         <span style="margin-left:auto"></span>
         <button type="button" class="btn ${st.view === "diff" ? "ok" : "sub"}" data-rpp-act="viewDiff">差分</button>
         <button type="button" class="btn ${st.view === "preview" ? "ok" : "sub"}" data-rpp-act="viewPreview">プレビュー</button>
+        <button type="button" class="btn ${st.view === "kintone" ? "ok" : "sub"}" data-rpp-act="viewKintone">kintone風</button>
       </div>
       <div class="rpp-filters">
         ${["all", "added", "removed", "modified", "unchanged"].map((k) => `<button type="button" class="btn sub ${st.filter === k ? "is-active" : ""}" data-rpp-act="filter" data-filter="${k}">${k === "all" ? "すべて" : STATUS_LABELS[k]} <span>${k === "all" ? diff.length : stats[k]}</span></button>`).join("")}
       </div>
-      <div class="rpp-list">
-        ${rows.map((row) => {
+      ${st.view === "kintone" ? `<div class="rpp-kfp-wrap">${renderKintoneView(rows)}</div>` : `<div class="rpp-list">
+          ${rows.map((row) => {
         const opened = st.expanded.has(row.code);
         const label = row.after?.label || row.before?.label || row.code;
         const body = st.view === "diff" ? row.status === "modified" ? `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>変更前</th><th>変更後</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatValue(ch.before))}</pre></td><td><pre>${esc(formatValue(ch.after))}</pre></td></tr>`).join("")}</tbody></table>` : `<pre class="rpp-pre">${esc(formatValue(row.after || row.before))}</pre>` : `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">比較元</div><div class="rpp-preview-body">${row.before ? esc(row.before.label || row.before.code || "-") : "なし"}</div></div><div><div class="rpp-preview-head">比較先</div><div class="rpp-preview-body">${row.after ? esc(row.after.label || row.after.code || "-") : "なし"}</div></div></div>`;
         return `<div class="rpp-card" draggable="true" data-rpp-code="${esc(row.code)}"><div class="rpp-head"><button type="button" class="rpp-open" data-rpp-act="toggle" data-code="${esc(row.code)}">${opened ? "▾" : "▸"}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.code)}</code><span class="rpp-spacer"></span>${row.after ? `<button type="button" class="btn sub" data-rpp-act="edit" data-code="${esc(row.code)}">編集</button><button type="button" class="btn sub" data-rpp-act="delete" data-code="${esc(row.code)}">削除</button>` : `<button type="button" class="btn sub" data-rpp-act="restore" data-code="${esc(row.code)}">復元</button>`}</div>${opened ? `<div class="rpp-body">${body}</div>` : ""}</div>`;
       }).join("") || '<div class="muted" style="padding:12px">表示対象がありません</div>'}
-      </div>
+        </div>`}
       ${renderModal()}`;
     };
     root2.addEventListener("click", (ev) => {
@@ -11817,6 +11998,7 @@ ${contextLine}`);
           setStatus2("元に戻しました");
         } else if (act === "viewDiff") st.view = "diff";
         else if (act === "viewPreview") st.view = "preview";
+        else if (act === "viewKintone") st.view = "kintone";
         else if (act === "filter") st.filter = btn.dataset.filter || "all";
         else if (act === "toggle") {
           if (st.expanded.has(code)) st.expanded.delete(code);
