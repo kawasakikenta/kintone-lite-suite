@@ -2628,14 +2628,44 @@ ${contextLine}`);
     };
   }
   function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKeys, options = {}) {
-    const summary = summarizeRows(rows || []);
+    const withSameSections = (() => {
+      const baseRows = Array.isArray(rows) ? [...rows] : [];
+      const scopeList = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
+      if (!scopeList.length || !sourceBundle?.sections || !targetBundle?.sections) return baseRows;
+      const issueSectionSet = new Set((Array.isArray(options.fetchIssues) ? options.fetchIssues : []).map((issue) => issue?.sectionKey).filter(Boolean));
+      const rowSectionSet = new Set(baseRows.map((row) => row?.sectionKey).filter(Boolean));
+      const presetState = options.normalizationState || {};
+      for (const sec of scopeList) {
+        if (rowSectionSet.has(sec) || issueSectionSet.has(sec)) continue;
+        const sourceSec = sourceBundle.sections?.[sec];
+        const targetSec = targetBundle.sections?.[sec];
+        if (!sourceSec || !targetSec) continue;
+        const normalizedSource = normalizeSectionForCompare(sec, sourceSec, presetState);
+        const normalizedTarget = normalizeSectionForCompare(sec, targetSec, presetState);
+        if (JSON.stringify(normalizedSource) !== JSON.stringify(normalizedTarget)) continue;
+        const sectionLabel = (SECTION_DEFS.find((def) => def.key === sec) || {}).label || sec;
+        baseRows.push({
+          _id: `same:${sec}`,
+          sectionKey: sec,
+          section: sectionLabel,
+          type: "same",
+          path: sec,
+          left: normalizedSource,
+          right: normalizedTarget,
+          severity: "low"
+        });
+        rowSectionSet.add(sec);
+      }
+      return baseRows;
+    })();
+    const summary = summarizeRows(withSameSections);
     const sectionText = (scopes || []).map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ");
     const sectionLabelMap = Object.fromEntries(SECTION_DEFS.map((d) => [d.key, d.label]));
     const MAX_EXPORT_ROWS = 2e3;
-    const exportRows = (rows || []).slice(0, MAX_EXPORT_ROWS);
+    const exportRows = withSameSections.slice(0, MAX_EXPORT_ROWS);
     const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
     const normalizationLabels = getActiveDiffNormalizationLabels(options.normalizationState || {});
-    const warning = options.warning || { threshold: 0, exceeded: false, total: (rows || []).length + fetchIssues.length };
+    const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
     const exportContentMode = options.exportContentMode || "diffOnly";
     const exportContentLabel = options.exportContentLabel || getDiffExportContentLabel(exportContentMode);
     const compareScopes = Array.isArray(options.compareScopes) ? options.compareScopes : [];
@@ -2667,9 +2697,9 @@ ${contextLine}`);
       },
       summary,
       fetchIssues,
-      totalRows: (rows || []).length,
+      totalRows: withSameSections.length,
       renderedRows: exportRows.length,
-      truncated: (rows || []).length > exportRows.length,
+      truncated: withSameSections.length > exportRows.length,
       compareScopes
     };
     const compareSectionsHtml = shouldIncludeComparedContent(exportContentMode) && compareScopes.length ? compareScopes.map((secKey) => {
