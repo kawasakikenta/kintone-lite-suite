@@ -225,10 +225,8 @@ export function buildRoot(targetDocument = document, options = {}) {
               </div>
               <div class="btns">
                 <button type="button" class="btn" data-act="runDiff">差分比較を実行</button>
-                <button type="button" class="btn sub" data-act="copyDiffSummary">差分コピー</button>
                 <button type="button" class="btn sub" data-act="exportDiffJson">差分JSON保存</button>
                 <button type="button" class="btn sub" data-act="exportDiffHtml">差分HTML保存</button>
-                <button type="button" class="btn dark" data-act="exportDiffXlsx">差分Excel保存</button>
                 <button type="button" class="btn sub" data-act="exportPatchJson">パッチJSON保存</button>
               </div>
                 </div>
@@ -398,7 +396,7 @@ export function buildRoot(targetDocument = document, options = {}) {
               <div style="margin-top:8px">
                 <label title="直近の差分結果から、よくあるノイズキーを提案します">おすすめ無視キー候補（低影響差分から抽出）</label>
                 <div id="u_diffSuggestedIgnore" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:6px;background:#fff;margin-top:4px;align-items:center"></div>
-                <div class="muted" style="margin-top:4px;line-height:1.55">ショートカット: Ctrl/Cmd+F 検索, Esc 検索クリア, Ctrl/Cmd+Shift+C 差分コピー, Ctrl/Cmd+A 全件選択（検索欄以外フォーカス時）, Shift+クリックでチェック範囲選択, 矢印キーでチェック間移動</div>
+                <div class="muted" style="margin-top:4px;line-height:1.55">ショートカット: Ctrl/Cmd+F 検索, Esc 検索クリア, Ctrl/Cmd+A 全件選択（検索欄以外フォーカス時）, Shift+クリックでチェック範囲選択, 矢印キーでチェック間移動</div>
               </div>
                 </div>
               </details>

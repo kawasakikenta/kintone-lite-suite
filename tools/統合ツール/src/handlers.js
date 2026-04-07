@@ -51,7 +51,6 @@ import { openGuidedTour, closeGuidedTour, moveGuidedTour, scheduleGuidedTourLayo
 import {
   runDiff,
   runDiffAndPreviewPlan,
-  copyDiffSummaryToClipboard,
   exportBundleJson,
   exportDiffJson,
   exportDiffHtml,
@@ -202,7 +201,6 @@ export function setupEventHandlers(injected = {}) {
     loadViewsForSelect,
     runCsvExport,
     runCsvImport,
-    exportDiffXlsx,
     runRecordCopy,
     saveTemplate,
     loadTemplate,
@@ -494,11 +492,6 @@ export function setupEventHandlers(injected = {}) {
       ui.diffSearch.value = '';
       saveCurrentDialogState();
       renderResultRows(state.lastDiffRows);
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
-      e.preventDefault();
-      withGuard(async () => copyDiffSummaryToClipboard());
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && !editable) {
@@ -1010,7 +1003,6 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'prefetchCommonData') return withGuard(runPrefetchCommonData);
     if (act === 'runDiffAndPlan') return withGuard(runDiffAndPreviewPlan);
     if (act === 'runDiff') return withGuard(runDiff);
-    if (act === 'copyDiffSummary') return withGuard(async () => copyDiffSummaryToClipboard());
     if (act === 'exportDiffJson') return withGuard(exportDiffJson);
     if (act === 'exportDiffHtml') return withGuard(exportDiffHtml);
     if (act === 'exportPatchJson') return withGuard(exportPatchJson);
@@ -1588,7 +1580,6 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'loadViewsForCsv' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_csvExportViewSelect', 'u_csvExportView'));
     if (act === 'runCsvExport' && typeof runCsvExport === 'function') return withGuard(runCsvExport);
     if (act === 'runCsvImport' && typeof runCsvImport === 'function') return withGuard(runCsvImport);
-    if (act === 'exportDiffXlsx' && typeof exportDiffXlsx === 'function') return withGuard(exportDiffXlsx);
     if (act === 'runRecordCopy' && typeof runRecordCopy === 'function') return withGuard(runRecordCopy);
 
     // ----- Templates -----
