@@ -3474,31 +3474,6 @@ ${contextLine}`);
     render();
   }
 
-  function copyDiffs() {
-    const lines = [];
-    lines.push('kintone差分レポート');
-    lines.push('比較元アプリ: ' + REPORT_META.source.appId + ' / 比較先アプリ: ' + REPORT_META.target.appId);
-    lines.push('生成日時: ' + REPORT_META.generatedAt);
-    lines.push('');
-    const groups = groupBySection(REPORT_ROWS);
-    groups.forEach((g) => {
-      lines.push('[' + g.label + ']');
-      g.rows.forEach((row) => {
-        const typeLabel = diffTypeLabel(row.type, row.moved);
-        const meta = [
-          row.reasonSummary || '',
-          row.renameCandidate ? ('名称変更候補 ' + (row.renameCandidate.fromCode || '-') + '→' + (row.renameCandidate.toCode || '-')) : '',
-          row.impactCount ? ('影響 ' + row.impactCount + '件') : ''
-        ].filter(Boolean).join(' / ');
-        lines.push(' - ' + typeLabel + ' : ' + (row.path || '-') + (meta ? ' / ' + meta : ''));
-      });
-      lines.push('');
-    });
-    navigator.clipboard.writeText(lines.join('\\n'))
-      .then(() => alert('差分をクリップボードへコピーしました'))
-      .catch((e) => alert('コピーに失敗しました: ' + (e.message || e)));
-  }
-
   function exportPatch() {
     const patchRows = REPORT_ROWS.filter((row) => row.type !== 'same');
     if (!patchRows.length) {
@@ -3539,7 +3514,7 @@ ${contextLine}`);
     URL.revokeObjectURL(a.href);
   }
 
-  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, copyDiffs, exportPatch, setActiveTab };
+  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, exportPatch, setActiveTab };
 
   document.getElementById('hideSame').onchange = onReportFilterChange;
   document.getElementById('charDiff').onchange = onReportFilterChange;
@@ -3547,7 +3522,6 @@ ${contextLine}`);
   document.getElementById('themeBtn').onclick = toggleTheme;
   document.getElementById('collapseBtn').onclick = collapseAll;
   document.getElementById('expandBtn').onclick = expandAll;
-  document.getElementById('copyBtn').onclick = copyDiffs;
   document.getElementById('patchBtn').onclick = exportPatch;
   document.querySelectorAll('[data-report-tab]').forEach((btn) => {
     btn.onclick = () => setActiveTab(btn.getAttribute('data-report-tab'));
@@ -3878,7 +3852,6 @@ ${contextLine}`);
         <button type="button" class="btn" id="collapseBtn">全折畳</button>
         <button type="button" class="btn" id="expandBtn">全展開</button>
         <button type="button" class="btn" id="themeBtn">ダークに切替</button>
-        <button type="button" class="btn" id="copyBtn">差分コピー</button>
         <button type="button" class="btn primary" id="patchBtn" style="grid-column:span 2">パッチJSON出力</button>
       </div>
     </div>
@@ -7600,7 +7573,6 @@ ${contextLine}`);
     addIgnoreKeyFromInput: () => addIgnoreKeyFromInput,
     applyIgnorePresetKeysToInput: () => applyIgnorePresetKeysToInput,
     commonParams: () => commonParams,
-    copyDiffSummaryToClipboard: () => copyDiffSummaryToClipboard,
     currentDiffSignature: () => currentDiffSignature,
     ensureDiffPreparedForReflect: () => ensureDiffPreparedForReflect2,
     exportBundleJson: () => exportBundleJson,
@@ -7783,48 +7755,6 @@ ${contextLine}`);
     await runPreviewApplyPlan2();
     setStatus("差分比較→反映プラン確認 完了");
   }
-  async function copyDiffSummaryToClipboard() {
-    if (!state.lastDiffRows.length && !state.lastFetchIssues.length) throw new Error("先に差分比較を実行してください");
-    const exportInfo = resolveDiffExportRows();
-    const rows = exportInfo.rows || [];
-    const groups = groupDiffRowsBySection(rows);
-    const lines = [];
-    lines.push("kintone差分サマリー");
-    lines.push(`出力対象: ${exportInfo.label}`);
-    try {
-      const c = commonParams();
-      lines.push(`プレビュー比較: (比較元GET=${getPreviewStateLabel(c.source.preview)} / 比較先GET=${getPreviewStateLabel(c.target.preview)})`);
-    } catch (e) {
-      lines.push("プレビュー比較: (取得できませんでした)");
-    }
-    lines.push(`比較元アプリ: ${state.lastSourceBundle?.appId || "-"}`);
-    lines.push(`比較先アプリ: ${state.lastTargetBundle?.appId || "-"}`);
-    lines.push(`生成日時: ${(/* @__PURE__ */ new Date()).toISOString()}`);
-    lines.push(`取得失敗: ${state.lastFetchIssues.length}`);
-    lines.push("");
-    groups.forEach((group) => {
-      lines.push(`[${group.label}] ${group.rows.length}件`);
-      group.rows.forEach((row) => {
-        const typeLabel = getDiffTypeDisplayLabel(row.type, { moved: !!row.moved });
-        const meta = [
-          row.reasonSummary || "",
-          row.renameCandidate ? `名称変更候補 ${row.renameCandidate.fromCode || "-"}→${row.renameCandidate.toCode || "-"}` : "",
-          row.impactCount ? `影響 ${row.impactCount}件` : ""
-        ].filter(Boolean).join(" / ");
-        lines.push(` - ${typeLabel} / ${getSeverityDisplayLabel(row.severity || "low")} / ${row.path || "-"}${meta ? ` / ${meta}` : ""}`);
-      });
-      lines.push("");
-    });
-    if (state.lastFetchIssues.length) {
-      lines.push("[API取得失敗]");
-      state.lastFetchIssues.forEach((issue) => {
-        lines.push(` - ${issue.section || issue.sectionKey || "-"} / ${getIssueSideLabel(issue.side)} / ${String(issue.message || "-").replace(/\n+/g, " | ")}`);
-      });
-      lines.push("");
-    }
-    await navigator.clipboard.writeText(lines.join("\n"));
-    setStatus(`差分サマリーをコピーしました (${rows.length}件 / ${exportInfo.label})`);
-  }
   async function exportBundleJson() {
     if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error("先に差分比較を実行してください");
     const payload = {
@@ -7869,18 +7799,23 @@ ${contextLine}`);
   }
   async function exportDiffHtml() {
     if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error("先に差分比較を実行してください");
-    const exportInfo = resolveDiffExportRows();
     const scopes = selectedScopeKeys(ui.diffScopes);
+    const diffResult = computeDiffRows(state.lastSourceBundle, state.lastTargetBundle, scopes, ui.ignoreKeys.value, {
+      normalizationPresetState: getDiffNormalizationPresetState(),
+      includeSame: true
+    });
+    const rows = enrichDiffRows(diffResult.rows, state.lastSourceBundle, state.lastTargetBundle);
     const exportContentMode = resolveDiffExportContentMode();
+    const exportInfo = { mode: "all", label: "全差分（同一含む）", rows };
     const compareInfo = shouldIncludeComparedContent(exportContentMode) ? buildDiffExportComparedBundles(
       state.lastSourceBundle,
       state.lastTargetBundle,
       resolveDiffExportComparedScopes(exportInfo, scopes)
     ) : null;
-    if (!exportInfo.rows.length && !state.lastFetchIssues.length && !compareInfo?.scopes?.length) {
+    if (!rows.length && !state.lastFetchIssues.length && !compareInfo?.scopes?.length) {
       throw new Error("出力できる比較結果がありません");
     }
-    const html = buildDiffHtml(state.lastSourceBundle, state.lastTargetBundle, exportInfo.rows || [], scopes, ui.ignoreKeys.value, {
+    const html = buildDiffHtml(state.lastSourceBundle, state.lastTargetBundle, rows, scopes, ui.ignoreKeys.value, {
       fetchIssues: state.lastFetchIssues,
       exportMode: exportInfo.mode,
       exportLabel: exportInfo.label,
@@ -7890,7 +7825,7 @@ ${contextLine}`);
       compareSourceBundle: compareInfo?.sourceBundle || null,
       compareTargetBundle: compareInfo?.targetBundle || null,
       normalizationState: getDiffNormalizationPresetState(),
-      warning: buildDiffWarningInfo(exportInfo.rows, state.lastFetchIssues)
+      warning: buildDiffWarningInfo(rows, state.lastFetchIssues)
     });
     downloadText(`diff_${nowStamp()}.html`, html, "text/html");
     setStatus(`差分HTMLを保存しました (${exportInfo.label} / ${getDiffExportContentLabel(exportContentMode)})`);
@@ -8077,7 +8012,6 @@ ${contextLine}`);
       init_dialog();
       init_preview_compare();
       init_nodeModeUi();
-      init_utils();
     }
   });
 
@@ -9862,6 +9796,14 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .rpp-modal-textarea-mini{min-height:110px;font-size:12px}
 #kintone-unified-suite-v2 .rpp-modal-hint{margin-top:10px;font-size:12px;color:#64748b;line-height:1.55}
 
+/* ========== Section Preview Editor ========== */
+#kintone-unified-suite-v2 .section-preview-editor{min-height:200px}
+#kintone-unified-suite-v2 .spe-section-select{min-height:36px;border:1px solid #cbd5e1;border-radius:8px;padding:0 10px;font-size:13px;background:#fff;color:#0f172a;cursor:pointer;min-width:180px}
+#kintone-unified-suite-v2 .spe-section-select:focus{outline:2px solid #3b82f6;outline-offset:-1px}
+#kintone-unified-suite-v2 .spe-empty{padding:32px 20px;text-align:center;color:#64748b;font-size:13px;line-height:1.7}
+#kintone-unified-suite-v2 .spe-empty p{margin:0 0 8px}
+#kintone-unified-suite-v2 .spe-empty-actions{margin-top:16px}
+
 /* ========== JSONEditor overrides ========== */
 #kintone-unified-suite-v2 .jsoneditor {
   border: 1px solid #cbd5e1;
@@ -10096,10 +10038,8 @@ ${contextLine}`);
               </div>
               <div class="btns">
                 <button type="button" class="btn" data-act="runDiff">差分比較を実行</button>
-                <button type="button" class="btn sub" data-act="copyDiffSummary">差分コピー</button>
                 <button type="button" class="btn sub" data-act="exportDiffJson">差分JSON保存</button>
                 <button type="button" class="btn sub" data-act="exportDiffHtml">差分HTML保存</button>
-                <button type="button" class="btn dark" data-act="exportDiffXlsx">差分Excel保存</button>
                 <button type="button" class="btn sub" data-act="exportPatchJson">パッチJSON保存</button>
               </div>
                 </div>
@@ -10269,7 +10209,7 @@ ${contextLine}`);
               <div style="margin-top:8px">
                 <label title="直近の差分結果から、よくあるノイズキーを提案します">おすすめ無視キー候補（低影響差分から抽出）</label>
                 <div id="u_diffSuggestedIgnore" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:6px;background:#fff;margin-top:4px;align-items:center"></div>
-                <div class="muted" style="margin-top:4px;line-height:1.55">ショートカット: Ctrl/Cmd+F 検索, Esc 検索クリア, Ctrl/Cmd+Shift+C 差分コピー, Ctrl/Cmd+A 全件選択（検索欄以外フォーカス時）, Shift+クリックでチェック範囲選択, 矢印キーでチェック間移動</div>
+                <div class="muted" style="margin-top:4px;line-height:1.55">ショートカット: Ctrl/Cmd+F 検索, Esc 検索クリア, Ctrl/Cmd+A 全件選択（検索欄以外フォーカス時）, Shift+クリックでチェック範囲選択, 矢印キーでチェック間移動</div>
               </div>
                 </div>
               </details>
@@ -10284,6 +10224,7 @@ ${contextLine}`);
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="node">ノード詳細反映</button>
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="patch">JSONパッチ</button>
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="editor">プレビューエディタ</button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="sectionPreview">セクションプレビュー</button>
               </div>
 
               <!-- ===== Subpane: section ===== -->
@@ -10421,6 +10362,16 @@ ${contextLine}`);
                   <div class="opt-title">フィールド差分プレビューエディタ（試験）</div>
                   <p class="reflect-preview-editor-lead">ドラッグ＆ドロップで別カードへ設定上書き（code/typeは保持）、JSON編集とUndoにも対応します。</p>
                   <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
+                </section>
+              </div>
+
+              <!-- ===== Subpane: sectionPreview ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="sectionPreview">
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">フィールド以外の全セクション（ビュー・レイアウト・権限・通知等）のJSON差分を確認・編集できる汎用エディタです。</div>
+                <section class="opt-card" style="display:block;margin:12px">
+                  <div class="opt-title">セクション汎用プレビューエディタ</div>
+                  <p class="muted" style="margin:0 0 8px;font-size:12px">セクションを選択して差分を確認・編集し、比較先JSONを調整できます。</p>
+                  <div id="u_sectionPreviewEditor" class="section-preview-editor"></div>
                 </section>
               </div>
 
@@ -11933,6 +11884,394 @@ ${contextLine}`);
     render();
   }
 
+  // src/tabs/reflect-section-preview.js
+  init_constants();
+  init_utils();
+  init_state();
+  init_api();
+  var PUT_SECTIONS = SECTION_DEFS.filter((d) => d.put && d.key !== "fieldSettings");
+  var WRAPPER_MAP = {
+    viewSettings: "views",
+    reportSettings: "reports",
+    actionSettings: "actions",
+    categories: "categories",
+    layoutSettings: "layout",
+    pluginSettings: "plugins",
+    appAcl: "rights",
+    fieldAcl: "rights",
+    recordPermissions: "rights",
+    notifications: "notifications",
+    perRecordNotifications: "notifications",
+    reminderNotifications: "notifications"
+  };
+  var MAP_SECTIONS = /* @__PURE__ */ new Set(["viewSettings", "reportSettings", "actionSettings", "categories"]);
+  function isMapSection(key) {
+    return MAP_SECTIONS.has(key);
+  }
+  function unwrap(data, sectionKey) {
+    const w = WRAPPER_MAP[sectionKey];
+    if (w && data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, w)) return data[w];
+    return data;
+  }
+  function rewrap(items, sectionKey) {
+    const w = WRAPPER_MAP[sectionKey];
+    if (w) return { [w]: items };
+    return items;
+  }
+  function deepEqual2(a, b) {
+    return stableStringify(a) === stableStringify(b);
+  }
+  function formatJson(v) {
+    if (v === void 0 || v === null) return "(なし)";
+    return JSON.stringify(v, null, 2);
+  }
+  function computeMapDiff(beforeMap, afterMap) {
+    const keys = /* @__PURE__ */ new Set([...Object.keys(beforeMap || {}), ...Object.keys(afterMap || {})]);
+    const rows = [];
+    for (const key of keys) {
+      const bf = (beforeMap || {})[key];
+      const af = (afterMap || {})[key];
+      if (!bf && af) rows.push({ key, status: "added", before: null, after: af, changes: [] });
+      else if (bf && !af) rows.push({ key, status: "removed", before: bf, after: null, changes: [] });
+      else {
+        const bfKeys = new Set(Object.keys(bf || {}));
+        const afKeys = new Set(Object.keys(af || {}));
+        const allProps = /* @__PURE__ */ new Set([...bfKeys, ...afKeys]);
+        const changes = [];
+        allProps.forEach((prop) => {
+          if (!deepEqual2((bf || {})[prop], (af || {})[prop])) {
+            changes.push({ prop, before: (bf || {})[prop], after: (af || {})[prop] });
+          }
+        });
+        rows.push({ key, status: changes.length ? "modified" : "unchanged", before: bf, after: af, changes });
+      }
+    }
+    const order = { added: 0, removed: 1, modified: 2, unchanged: 3 };
+    rows.sort((a, b) => order[a.status] - order[b.status]);
+    return rows;
+  }
+  function computeArrayDiff(beforeArr, afterArr) {
+    const bf = Array.isArray(beforeArr) ? beforeArr : [];
+    const af = Array.isArray(afterArr) ? afterArr : [];
+    const maxLen = Math.max(bf.length, af.length);
+    const rows = [];
+    for (let i = 0; i < maxLen; i++) {
+      const bItem = i < bf.length ? bf[i] : void 0;
+      const aItem = i < af.length ? af[i] : void 0;
+      const key = `[${i}]`;
+      if (bItem === void 0) rows.push({ key, status: "added", before: null, after: aItem, changes: [] });
+      else if (aItem === void 0) rows.push({ key, status: "removed", before: bItem, after: null, changes: [] });
+      else if (!deepEqual2(bItem, aItem)) rows.push({ key, status: "modified", before: bItem, after: aItem, changes: [] });
+      else rows.push({ key, status: "unchanged", before: bItem, after: aItem, changes: [] });
+    }
+    return rows;
+  }
+  function computeDiff2(before, after, sectionKey) {
+    const bData = unwrap(before, sectionKey);
+    const aData = unwrap(after, sectionKey);
+    if (isMapSection(sectionKey)) {
+      return computeMapDiff(bData, aData);
+    }
+    if (Array.isArray(bData) || Array.isArray(aData)) {
+      return computeArrayDiff(bData, aData);
+    }
+    if (!deepEqual2(bData, aData)) {
+      return [{ key: "(root)", status: "modified", before: bData, after: aData, changes: [] }];
+    }
+    return [{ key: "(root)", status: "unchanged", before: bData, after: aData, changes: [] }];
+  }
+  function itemLabel(row, sectionKey) {
+    if (isMapSection(sectionKey)) return row.key;
+    const item = row.after || row.before;
+    if (item && typeof item === "object") {
+      return item.name || item.code || item.status || item.filterCond || row.key;
+    }
+    return row.key;
+  }
+  var STATUS_LABELS2 = { added: "追加", removed: "削除", modified: "変更", unchanged: "変更なし" };
+  function extractSectionData(bundle, sectionKey) {
+    const sec = bundle?.sections?.[sectionKey];
+    if (!sec || sec._fetchError) return null;
+    return deepClone(sec);
+  }
+  function initSectionPreviewEditor(ui4, setStatus2) {
+    const root2 = ui4.sectionPreviewEditor;
+    if (!root2) return;
+    const st = {
+      sectionKey: PUT_SECTIONS[0]?.key || "",
+      before: null,
+      after: null,
+      filter: "all",
+      undo: [],
+      expanded: /* @__PURE__ */ new Set(),
+      modal: null,
+      loaded: false
+    };
+    function pushUndo() {
+      st.undo.push({ before: deepClone(st.before), after: deepClone(st.after), sectionKey: st.sectionKey });
+      if (st.undo.length > 30) st.undo.shift();
+    }
+    function loadFromDiffBundles(options = {}) {
+      const source = state.importedSourceBundle || state.lastSourceBundle;
+      const target = state.importedTargetBundle || state.lastTargetBundle;
+      if (!source && !target) return false;
+      if (options.pushUndo && st.loaded) pushUndo();
+      st.before = extractSectionData(source, st.sectionKey);
+      st.after = extractSectionData(target, st.sectionKey);
+      st.filter = "all";
+      st.expanded = /* @__PURE__ */ new Set();
+      st.loaded = true;
+      const diff = computeDiff2(st.before, st.after, st.sectionKey);
+      diff.filter((r) => r.status !== "unchanged").slice(0, 6).forEach((r) => st.expanded.add(r.key));
+      if (!options.silent) {
+        const label = SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey;
+        setStatus2(`${label} を差分比較バンドルから読込しました`);
+      }
+      return true;
+    }
+    function closeModal() {
+      st.modal = null;
+    }
+    function renderModal() {
+      if (!st.modal) return "";
+      if (st.modal.kind === "itemJson") {
+        return `<div class="rpp-modal-backdrop" data-spe-modal-act="cancel"><div class="rpp-modal rpp-modal-wide"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><textarea class="rpp-modal-textarea" data-spe-modal-input="itemJson">${esc(st.modal.text || "")}</textarea>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-spe-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-spe-modal-act="saveItemJson">保存</button></div></div></div>`;
+      }
+      if (st.modal.kind === "fullJson") {
+        return `<div class="rpp-modal-backdrop" data-spe-modal-act="cancel"><div class="rpp-modal rpp-modal-wide"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body rpp-modal-grid"><div><div class="rpp-modal-label">比較元（読み取り専用）</div><textarea class="rpp-modal-textarea" readonly style="background:#f1f5f9;color:#64748b">${esc(st.modal.beforeText || "")}</textarea></div><div><div class="rpp-modal-label">比較先（編集可）</div><textarea class="rpp-modal-textarea" data-spe-modal-input="afterJson">${esc(st.modal.afterText || "")}</textarea></div>${st.modal.error ? `<div class="rpp-modal-error rpp-modal-error-full">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-spe-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-spe-modal-act="saveFullJson">適用</button></div></div></div>`;
+      }
+      if (st.modal.kind === "confirm") {
+        return `<div class="rpp-modal-backdrop" data-spe-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><p class="rpp-modal-confirm">${esc(st.modal.message)}</p></div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-spe-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-spe-modal-act="confirmAction">実行</button></div></div></div>`;
+      }
+      if (st.modal.kind === "addItem") {
+        return `<div class="rpp-modal-backdrop" data-spe-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><label class="rpp-field-row" style="margin-bottom:8px"><span>キー名</span><input type="text" data-spe-modal-input="newKey" value="${esc(st.modal.newKey || "")}" style="min-height:36px;border:1px solid #cbd5e1;border-radius:8px;padding:0 10px;font-size:13px"></label><textarea class="rpp-modal-textarea" data-spe-modal-input="newItemJson">${esc(st.modal.text || "{}")}</textarea>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ""}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-spe-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-spe-modal-act="saveAddItem">追加</button></div></div></div>`;
+      }
+      return "";
+    }
+    function renderDiffBody(row) {
+      if (row.status === "modified" && row.changes.length) {
+        return `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>比較元</th><th>比較先</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatJson(ch.before))}</pre></td><td><pre>${esc(formatJson(ch.after))}</pre></td></tr>`).join("")}</tbody></table>`;
+      }
+      if (row.status === "modified") {
+        return `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">比較元</div><div class="rpp-preview-body"><pre class="rpp-pre">${esc(formatJson(row.before))}</pre></div></div><div><div class="rpp-preview-head">比較先</div><div class="rpp-preview-body"><pre class="rpp-pre">${esc(formatJson(row.after))}</pre></div></div></div>`;
+      }
+      return `<pre class="rpp-pre">${esc(formatJson(row.after || row.before))}</pre>`;
+    }
+    function render() {
+      if (!st.loaded) {
+        root2.innerHTML = `<div class="spe-empty"><p>差分比較のバンドルデータがありません。</p><p>先に「差分比較」を実行するか、下のボタンから読込してください。</p><div class="spe-empty-actions"><button type="button" class="btn ok" data-spe-act="loadDiff">差分比較から読込</button></div></div>`;
+        return;
+      }
+      const diff = computeDiff2(st.before, st.after, st.sectionKey);
+      const rows = st.filter === "all" ? diff : diff.filter((r) => r.status === st.filter);
+      const stats = { added: 0, removed: 0, modified: 0, unchanged: 0 };
+      diff.forEach((d) => {
+        stats[d.status] += 1;
+      });
+      const sectionLabel = SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey;
+      const isMap = isMapSection(st.sectionKey);
+      root2.innerHTML = `
+      <div class="rpp-toolbar">
+        <select class="spe-section-select" data-spe-act="changeSection">
+          ${PUT_SECTIONS.map((d) => `<option value="${esc(d.key)}" ${d.key === st.sectionKey ? "selected" : ""}>${esc(d.label)}</option>`).join("")}
+        </select>
+        <button type="button" class="btn sub" data-spe-act="loadDiff">差分読込</button>
+        <button type="button" class="btn sub" data-spe-act="undo" ${st.undo.length ? "" : "disabled"}>↩ 戻す</button>
+        ${isMap ? `<button type="button" class="btn sub" data-spe-act="addItem">＋ 追加</button>` : ""}
+        <button type="button" class="btn sub" data-spe-act="editFullJson">JSON編集</button>
+        <button type="button" class="btn sub" data-spe-act="export">JSON保存</button>
+      </div>
+      <div class="rpp-filters">
+        ${["all", "added", "removed", "modified", "unchanged"].map((k) => `<button type="button" class="btn sub ${st.filter === k ? "is-active" : ""}" data-spe-act="filter" data-filter="${k}">${k === "all" ? `すべて` : STATUS_LABELS2[k]} <span>${k === "all" ? diff.length : stats[k]}</span></button>`).join("")}
+      </div>
+      <div class="rpp-list">
+        ${rows.map((row) => {
+        const opened = st.expanded.has(row.key);
+        const label = itemLabel(row, st.sectionKey);
+        const canEdit = row.after != null;
+        const canRestore = row.after == null && row.before != null;
+        const canDelete = row.after != null && isMap;
+        return `<div class="rpp-card"><div class="rpp-head"><button type="button" class="rpp-open" data-spe-act="toggle" data-key="${esc(row.key)}">${opened ? "▾" : "▸"}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS2[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.key)}</code><span class="rpp-spacer"></span>${canEdit ? `<button type="button" class="btn sub" data-spe-act="editItem" data-key="${esc(row.key)}">編集</button>` : ""}${canDelete ? `<button type="button" class="btn sub" data-spe-act="deleteItem" data-key="${esc(row.key)}">削除</button>` : ""}${canRestore ? `<button type="button" class="btn sub" data-spe-act="restoreItem" data-key="${esc(row.key)}">復元</button>` : ""}</div>${opened ? `<div class="rpp-body">${renderDiffBody(row)}</div>` : ""}</div>`;
+      }).join("") || '<div class="muted" style="padding:12px">差分がありません（同一の内容です）</div>'}
+      </div>
+      ${renderModal()}`;
+    }
+    function getAfterItems() {
+      return unwrap(st.after, st.sectionKey);
+    }
+    function setAfterItems(items) {
+      st.after = rewrap(items, st.sectionKey);
+    }
+    root2.addEventListener("click", (ev) => {
+      const insideModalContent = ev.target.closest(".rpp-modal");
+      const rawModalEl = ev.target.closest("[data-spe-modal-act]");
+      const modalEl = insideModalContent && rawModalEl && !insideModalContent.contains(rawModalEl) ? null : rawModalEl;
+      if (st.modal && !modalEl && insideModalContent) return;
+      const modalAct = modalEl?.dataset.speModalAct;
+      if (modalAct) {
+        try {
+          if (modalAct === "cancel") {
+            closeModal();
+            render();
+            return;
+          }
+          if (modalAct === "saveItemJson" && st.modal?.kind === "itemJson") {
+            const raw = root2.querySelector('[data-spe-modal-input="itemJson"]')?.value || "";
+            const parsed = JSON.parse(raw);
+            pushUndo();
+            if (isMapSection(st.sectionKey)) {
+              const items = deepClone(getAfterItems() || {});
+              items[st.modal.itemKey] = parsed;
+              setAfterItems(items);
+            } else if (Array.isArray(getAfterItems())) {
+              const arr = deepClone(getAfterItems());
+              const idx = parseInt(st.modal.itemKey.replace(/[\[\]]/g, ""), 10);
+              if (idx >= 0 && idx < arr.length) arr[idx] = parsed;
+              setAfterItems(arr);
+            } else {
+              st.after = deepClone(parsed);
+            }
+            closeModal();
+            setStatus2(`${st.modal.itemKey} を更新しました`);
+            render();
+            return;
+          }
+          if (modalAct === "saveFullJson" && st.modal?.kind === "fullJson") {
+            const raw = root2.querySelector('[data-spe-modal-input="afterJson"]')?.value || "";
+            const parsed = JSON.parse(raw);
+            pushUndo();
+            st.after = deepClone(parsed);
+            closeModal();
+            setStatus2("比較先 JSON を更新しました");
+            render();
+            return;
+          }
+          if (modalAct === "confirmAction" && st.modal?.kind === "confirm") {
+            if (st.modal.mode === "delete") {
+              pushUndo();
+              const items = deepClone(getAfterItems() || {});
+              delete items[st.modal.payload.key];
+              setAfterItems(items);
+              setStatus2(`${st.modal.payload.key} を削除しました`);
+            }
+            closeModal();
+            render();
+            return;
+          }
+          if (modalAct === "saveAddItem" && st.modal?.kind === "addItem") {
+            const newKey = root2.querySelector('[data-spe-modal-input="newKey"]')?.value?.trim();
+            const raw = root2.querySelector('[data-spe-modal-input="newItemJson"]')?.value || "";
+            if (!newKey) throw new Error("キー名を入力してください");
+            const parsed = JSON.parse(raw);
+            const items = deepClone(getAfterItems() || {});
+            if (items[newKey]) throw new Error(`"${newKey}" は既に存在します`);
+            pushUndo();
+            items[newKey] = parsed;
+            setAfterItems(items);
+            closeModal();
+            setStatus2(`${newKey} を追加しました`);
+            render();
+            return;
+          }
+        } catch (e) {
+          if (st.modal) {
+            st.modal.error = e.message || String(e);
+            render();
+            return;
+          }
+          setStatus2(`セクションエディタエラー: ${e.message}`, true);
+          return;
+        }
+      }
+      const btn = ev.target.closest("[data-spe-act]");
+      if (!btn) return;
+      const act = btn.dataset.speAct;
+      const key = btn.dataset.key || "";
+      try {
+        if (act === "loadDiff") {
+          if (!loadFromDiffBundles({ pushUndo: true })) throw new Error("先に差分比較を実行してください");
+        } else if (act === "undo") {
+          if (!st.undo.length) return;
+          const prev = st.undo.pop();
+          st.before = prev.before;
+          st.after = prev.after;
+          if (prev.sectionKey) st.sectionKey = prev.sectionKey;
+          setStatus2("元に戻しました");
+        } else if (act === "filter") {
+          st.filter = btn.dataset.filter || "all";
+        } else if (act === "toggle") {
+          if (st.expanded.has(key)) st.expanded.delete(key);
+          else st.expanded.add(key);
+        } else if (act === "editItem") {
+          const items = getAfterItems();
+          let item;
+          if (isMapSection(st.sectionKey)) {
+            item = items?.[key];
+          } else if (Array.isArray(items)) {
+            const idx = parseInt(key.replace(/[\[\]]/g, ""), 10);
+            item = items?.[idx];
+          } else {
+            item = st.after;
+          }
+          if (item == null) return;
+          st.modal = { kind: "itemJson", title: `${key} の編集`, itemKey: key, text: JSON.stringify(item, null, 2), error: "" };
+        } else if (act === "deleteItem") {
+          st.modal = { kind: "confirm", mode: "delete", title: "削除の確認", message: `${key} を削除しますか？`, payload: { key } };
+        } else if (act === "restoreItem") {
+          const bItems = unwrap(st.before, st.sectionKey);
+          let restoreVal;
+          if (isMapSection(st.sectionKey)) {
+            restoreVal = bItems?.[key];
+          } else if (Array.isArray(bItems)) {
+            const idx = parseInt(key.replace(/[\[\]]/g, ""), 10);
+            restoreVal = bItems?.[idx];
+          }
+          if (restoreVal == null) return;
+          pushUndo();
+          if (isMapSection(st.sectionKey)) {
+            const items = deepClone(getAfterItems() || {});
+            items[key] = deepClone(restoreVal);
+            setAfterItems(items);
+          } else if (Array.isArray(getAfterItems())) {
+            const arr = deepClone(getAfterItems());
+            const idx = parseInt(key.replace(/[\[\]]/g, ""), 10);
+            arr.splice(idx, 0, deepClone(restoreVal));
+            setAfterItems(arr);
+          }
+          setStatus2(`${key} を復元しました`);
+        } else if (act === "addItem") {
+          st.modal = { kind: "addItem", title: "アイテム追加", newKey: "", text: "{}", error: "" };
+        } else if (act === "editFullJson") {
+          st.modal = {
+            kind: "fullJson",
+            title: `${SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey} - JSON編集`,
+            beforeText: formatJson(st.before),
+            afterText: formatJson(st.after),
+            error: ""
+          };
+        } else if (act === "export") {
+          const label = SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey;
+          downloadText(`kintone-${st.sectionKey}-preview.json`, JSON.stringify(st.after, null, 2), "application/json");
+          setStatus2(`${label} の比較先JSONを保存しました`);
+        }
+        render();
+      } catch (e) {
+        setStatus2(`セクションエディタエラー: ${e.message || String(e)}`, true);
+      }
+    });
+    root2.addEventListener("change", (ev) => {
+      const sel = ev.target.closest('[data-spe-act="changeSection"]');
+      if (!sel) return;
+      st.sectionKey = sel.value;
+      st.filter = "all";
+      st.expanded = /* @__PURE__ */ new Set();
+      loadFromDiffBundles({ silent: true });
+      render();
+    });
+    loadFromDiffBundles({ silent: true });
+    render();
+  }
+
   // src/handlers.js
   init_reflect();
   init_field();
@@ -12670,7 +13009,6 @@ ${contextLine}`);
       loadViewsForSelect: loadViewsForSelect2,
       runCsvExport: runCsvExport2,
       runCsvImport: runCsvImport2,
-      exportDiffXlsx,
       runRecordCopy: runRecordCopy2,
       saveTemplate: saveTemplate2,
       loadTemplate: loadTemplate2,
@@ -12717,6 +13055,7 @@ ${contextLine}`);
     renderReflectMainPanel();
     renderReflectNodeList();
     initReflectPreviewPlayground(ui, setStatus);
+    initSectionPreviewEditor(ui, setStatus);
     if (ui.settingsExportSearchResult && !ui.settingsExportSearchResult.innerHTML) {
       ui.settingsExportSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
     }
@@ -12939,11 +13278,6 @@ ${contextLine}`);
         ui.diffSearch.value = "";
         saveCurrentDialogState2();
         renderResultRows(state.lastDiffRows);
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "c") {
-        e.preventDefault();
-        withGuard(async () => copyDiffSummaryToClipboard());
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && !editable) {
@@ -13410,7 +13744,6 @@ ${contextLine}`);
       if (act === "prefetchCommonData") return withGuard(runPrefetchCommonData);
       if (act === "runDiffAndPlan") return withGuard(runDiffAndPreviewPlan);
       if (act === "runDiff") return withGuard(runDiff);
-      if (act === "copyDiffSummary") return withGuard(async () => copyDiffSummaryToClipboard());
       if (act === "exportDiffJson") return withGuard(exportDiffJson);
       if (act === "exportDiffHtml") return withGuard(exportDiffHtml);
       if (act === "exportPatchJson") return withGuard(exportPatchJson);
@@ -13977,7 +14310,6 @@ ${contextLine}`);
       if (act === "loadViewsForCsv" && typeof loadViewsForSelect2 === "function") return withGuard(async () => loadViewsForSelect2("u_csvExportViewSelect", "u_csvExportView"));
       if (act === "runCsvExport" && typeof runCsvExport2 === "function") return withGuard(runCsvExport2);
       if (act === "runCsvImport" && typeof runCsvImport2 === "function") return withGuard(runCsvImport2);
-      if (act === "exportDiffXlsx" && typeof exportDiffXlsx === "function") return withGuard(exportDiffXlsx);
       if (act === "runRecordCopy" && typeof runRecordCopy2 === "function") return withGuard(runRecordCopy2);
       if (act === "saveTemplate" && typeof saveTemplate2 === "function") return withGuard(saveTemplate2);
       if (act === "loadTemplate" && typeof loadTemplate2 === "function") return loadTemplate2();
@@ -17523,6 +17855,7 @@ ${safety.hash}`, "");
       reflectNodeList: $("#u_reflectNodeList"),
       reflectNodeDetail: $("#u_reflectNodeDetail"),
       reflectPreviewPlayground: $("#u_reflectPreviewPlayground"),
+      sectionPreviewEditor: $("#u_sectionPreviewEditor"),
       reflectAssist: $("#u_reflectAssist"),
       reflectHowto: $("#u_reflectHowto"),
       reflectOverview: $("#u_reflectOverview"),

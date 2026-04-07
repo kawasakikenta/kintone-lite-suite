@@ -1160,6 +1160,14 @@
 #kintone-unified-suite-v2 .rpp-modal-textarea-mini{min-height:110px;font-size:12px}
 #kintone-unified-suite-v2 .rpp-modal-hint{margin-top:10px;font-size:12px;color:#64748b;line-height:1.55}
 
+/* ========== Section Preview Editor ========== */
+#kintone-unified-suite-v2 .section-preview-editor{min-height:200px}
+#kintone-unified-suite-v2 .spe-section-select{min-height:36px;border:1px solid #cbd5e1;border-radius:8px;padding:0 10px;font-size:13px;background:#fff;color:#0f172a;cursor:pointer;min-width:180px}
+#kintone-unified-suite-v2 .spe-section-select:focus{outline:2px solid #3b82f6;outline-offset:-1px}
+#kintone-unified-suite-v2 .spe-empty{padding:32px 20px;text-align:center;color:#64748b;font-size:13px;line-height:1.7}
+#kintone-unified-suite-v2 .spe-empty p{margin:0 0 8px}
+#kintone-unified-suite-v2 .spe-empty-actions{margin-top:16px}
+
 /* ========== JSONEditor overrides ========== */
 #kintone-unified-suite-v2 .jsoneditor {
   border: 1px solid #cbd5e1;

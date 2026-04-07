@@ -179,6 +179,7 @@ export function runKintoneUnifiedSuite(options = {}) {
     reflectNodeList: $('#u_reflectNodeList'),
     reflectNodeDetail: $('#u_reflectNodeDetail'),
     reflectPreviewPlayground: $('#u_reflectPreviewPlayground'),
+    sectionPreviewEditor: $('#u_sectionPreviewEditor'),
     reflectAssist: $('#u_reflectAssist'),
     reflectHowto: $('#u_reflectHowto'),
     reflectOverview: $('#u_reflectOverview'),

@@ -518,7 +518,6 @@ ${contextLine}`);
       init_dialog();
       init_preview_compare();
       init_nodeModeUi();
-      init_utils();
     }
   });
 
