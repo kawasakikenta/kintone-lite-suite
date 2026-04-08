@@ -2246,87 +2246,17 @@ ${contextLine}`);
   }
 
   // ---------------------------------------------------------------------------
-  // kintone フォームプレビュー
+  // フォームプレビュー（プレビュー反映エディター風）
   // ---------------------------------------------------------------------------
 
-  const FP_TYPE_LABELS = {
-    SINGLE_LINE_TEXT: '文字列(1行)', MULTI_LINE_TEXT: '文字列(複数行)', RICH_TEXT: 'リッチエディター',
-    NUMBER: '数値', CHECK_BOX: 'チェックボックス', RADIO_BUTTON: 'ラジオボタン',
-    DROP_DOWN: 'ドロップダウン', MULTI_SELECT: '複数選択',
-    DATE: '日付', TIME: '時刻', DATETIME: '日時', LINK: 'リンク',
-    USER_SELECT: 'ユーザー選択', GROUP_SELECT: 'グループ選択', ORGANIZATION_SELECT: '組織選択',
-    FILE: '添付ファイル', CALC: '計算', LOOKUP: 'ルックアップ',
-    REFERENCE_TABLE: '関連レコード一覧', SUBTABLE: 'サブテーブル',
-    HR: '罫線', LABEL: 'ラベル', SPACER: 'スペース'
-  };
-
-  function fpInputCtrl(field) {
-    const type = field.type || '';
-    const opts = Object.values(field.options || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
-    const eh = escHtml;
-    switch (type) {
-      case 'SINGLE_LINE_TEXT': case 'LINK':
-        return '<div class="fp-ctrl fp-text"><div class="fp-mock"></div></div>';
-      case 'MULTI_LINE_TEXT':
-        return '<div class="fp-ctrl"><div class="fp-mock fp-mock-tall"></div></div>';
-      case 'RICH_TEXT':
-        return '<div class="fp-ctrl fp-rt"><div class="fp-rt-bar"><b>B</b>&nbsp;<em>I</em>&nbsp;<u>U</u></div><div class="fp-mock fp-mock-tall"></div></div>';
-      case 'NUMBER': {
-        const u = field.unit ? '<span class="fp-unit">' + eh(field.unit) + '</span>' : '';
-        const pre = field.unitPosition !== 'AFTER' ? u : '';
-        const post = field.unitPosition === 'AFTER' ? u : '';
-        return '<div class="fp-ctrl fp-num">' + pre + '<div class="fp-mock fp-mock-num"></div>' + post + '</div>';
-      }
-      case 'CHECK_BOX':
-        return '<div class="fp-ctrl fp-choices">' + opts.slice(0, 4).map((o) => '<label class="fp-choice"><span class="fp-chk"></span><span>' + eh(o.label) + '</span></label>').join('') + (opts.length > 4 ? '<span class="fp-more">…+' + (opts.length - 4) + '</span>' : '') + '</div>';
-      case 'RADIO_BUTTON':
-        return '<div class="fp-ctrl fp-choices">' + opts.slice(0, 4).map((o) => '<label class="fp-choice"><span class="fp-radio"></span><span>' + eh(o.label) + '</span></label>').join('') + (opts.length > 4 ? '<span class="fp-more">…+' + (opts.length - 4) + '</span>' : '') + '</div>';
-      case 'DROP_DOWN':
-        return '<div class="fp-ctrl fp-dd"><span class="fp-dd-val">' + eh(field.defaultValue || (opts[0] && opts[0].label) || '選択してください') + '</span><span class="fp-dd-caret">▾</span></div>';
-      case 'MULTI_SELECT':
-        return '<div class="fp-ctrl fp-ms">' + opts.slice(0, 3).map((o) => '<span class="fp-tag">' + eh(o.label) + '</span>').join('') + (opts.length > 3 ? '<span class="fp-more">+' + (opts.length - 3) + '</span>' : '') + '</div>';
-      case 'DATE':
-        return '<div class="fp-ctrl fp-dt"><span class="fp-dt-ph">YYYY/MM/DD</span></div>';
-      case 'TIME':
-        return '<div class="fp-ctrl fp-dt"><span class="fp-dt-ph">HH:MM</span></div>';
-      case 'DATETIME':
-        return '<div class="fp-ctrl fp-dt"><span class="fp-dt-ph">YYYY/MM/DD HH:MM</span></div>';
-      case 'FILE':
-        return '<div class="fp-ctrl fp-file"><span>&#128206;</span><span>添付ファイル</span></div>';
-      case 'USER_SELECT': case 'GROUP_SELECT': case 'ORGANIZATION_SELECT':
-        return '<div class="fp-ctrl fp-entity"><span class="fp-ep">＋</span><span>追加</span></div>';
-      case 'CALC':
-        return '<div class="fp-ctrl fp-calc"><span class="fp-ceq">=</span><span class="fp-cexpr">' + eh(field.expression || '計算式') + '</span></div>';
-      case 'LOOKUP':
-        return '<div class="fp-ctrl fp-lookup"><div class="fp-mock fp-mock-lk"></div><span class="fp-lb">参照</span></div>';
-      case 'REFERENCE_TABLE':
-        return '<div class="fp-ctrl fp-ref"><span>▤</span><span>関連レコード一覧</span></div>';
-      case 'SUBTABLE':
-        return '<div class="fp-ctrl fp-sub"><div class="fp-sub-bar">▶ サブテーブル</div></div>';
-      case 'HR':
-        return '<div class="fp-ctrl"><hr class="fp-hr"></div>';
-      case 'LABEL':
-        return '<div class="fp-ctrl fp-lbl-f"><span>' + eh(field.label || '') + '</span></div>';
-      case 'SPACER':
-        return '<div class="fp-ctrl fp-spacer"></div>';
-      default:
-        return '<div class="fp-ctrl fp-unknown"><span class="fp-tn">' + eh(type || '?') + '</span></div>';
-    }
-  }
-
-  function fpField(field, statusKey) {
-    const type = field.type || '';
-    const label = field.label || field.code || type;
-    const required = !!field.required;
-    const typeLabel = FP_TYPE_LABELS[type] || type;
-    const eh = escHtml;
-    return '<div class="fp-field fp-field-' + statusKey + '">' +
-      '<div class="fp-field-lbl">' +
-        '<span class="fp-lbl-text">' + eh(label) + '</span>' +
-        (required ? '<span class="fp-req">必須</span>' : '') +
-        '<span class="fp-type-chip">' + eh(typeLabel) + '</span>' +
-      '</div>' +
-      '<div class="fp-field-ctrl">' + fpInputCtrl(field) + '</div>' +
+  function fpFieldPreview(field) {
+    if (!field) return '<div class="fp-preview-body muted">なし</div>';
+    const label = field.label || field.code || '-';
+    const code = field.code || '-';
+    const type = field.type || '-';
+    return '<div class="fp-preview-body">' +
+      '<div class="fp-title">' + escHtml(label) + '</div>' +
+      '<div class="fp-meta"><span>code: <code>' + escHtml(code) + '</code></span><span>type: ' + escHtml(type) + '</span>' + (field.required ? '<span class="fp-req-chip">必須</span>' : '') + '</div>' +
       '</div>';
   }
 
@@ -2373,16 +2303,15 @@ ${contextLine}`);
       return;
     }
     let html = '<div class="fp-view">';
-    html += '<div class="fp-view-hd"><div class="fp-view-hd-cell">比較元</div><div class="fp-view-hd-cell fp-hd-r">比較先</div></div>';
-    html += '<div class="fp-view-body">';
     for (const row of diff) {
-      const srcStatus = row.status === 'removed' ? 'removed' : (row.status === 'modified' ? 'modified' : 'unchanged');
-      const tgtStatus = row.status === 'added' ? 'added' : (row.status === 'modified' ? 'modified' : 'unchanged');
-      const srcCell = row.before ? fpField(row.before, srcStatus) : '<div class="fp-absent"><span>（なし）</span></div>';
-      const tgtCell = row.after ? fpField(row.after, tgtStatus) : '<div class="fp-absent"><span>（なし）</span></div>';
-      html += '<div class="fp-pair fp-pair-' + row.status + '"><div class="fp-col">' + srcCell + '</div><div class="fp-col fp-col-r">' + tgtCell + '</div></div>';
+      const displayLabel = row.after?.label || row.before?.label || row.code;
+      const typeKey = row.status === 'unchanged' ? 'same' : (row.status === 'modified' ? 'changed' : row.status);
+      html += '<article class="fp-card fp-' + row.status + '">' +
+        '<header class="fp-card-head"><span class="fp-badge">' + escHtml(diffTypeLabel(typeKey, false)) + '</span><strong>' + escHtml(displayLabel) + '</strong><code>' + escHtml(row.code) + '</code></header>' +
+        '<div class="fp-preview-grid"><div><div class="fp-preview-head">比較元</div>' + fpFieldPreview(row.before) + '</div><div><div class="fp-preview-head">比較先</div>' + fpFieldPreview(row.after) + '</div></div>' +
+      '</article>';
     }
-    html += '</div></div>';
+    html += '</div>';
     root.innerHTML = html;
   }
 
@@ -2880,73 +2809,25 @@ ${contextLine}`);
       .app-compare,.info-grid,.compare-grid{grid-template-columns:1fr}
       .header-actions{justify-content:flex-start}
     }
-    /* Form Preview (fp-*) */
+    /* Form Preview (preview editor-like) */
     .fp-root{padding:16px 18px 28px;background:var(--card-soft);min-height:320px}
-    .fp-view{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card)}
-    .fp-view-hd{display:grid;grid-template-columns:1fr 1fr;position:sticky;top:0;z-index:2}
-    .fp-view-hd-cell{padding:8px 14px;font-size:12px;font-weight:700;color:#fff;background:#1e40af;letter-spacing:.03em}
-    .fp-hd-r{border-left:2px solid rgba(255,255,255,.25)}
-    body.dark .fp-view-hd-cell{background:#1e3a5f}
-    .fp-view-body{display:flex;flex-direction:column}
-    .fp-pair{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border);align-items:stretch}
-    .fp-pair:last-child{border-bottom:none}
-    .fp-col{display:flex;flex-direction:column}
-    .fp-col-r{border-left:1px solid var(--border)}
-    .fp-field{display:flex;align-items:stretch;width:100%;min-height:44px;border-left:3px solid transparent;box-sizing:border-box}
-    .fp-field-unchanged{border-left-color:var(--border);background:var(--card-soft)}
-    .fp-field-added{border-left-color:#16a34a;background:#f0fdf4}
-    body.dark .fp-field-added{background:#052e16}
-    .fp-field-removed{border-left-color:#dc2626;background:#fef2f2;opacity:.75}
-    body.dark .fp-field-removed{background:#1c0a0a}
-    .fp-field-modified{border-left-color:#d97706;background:#fffbeb}
-    body.dark .fp-field-modified{background:#1c1407}
-    .fp-field-lbl{display:flex;flex-direction:column;justify-content:center;gap:3px;width:40%;max-width:150px;min-width:72px;flex-shrink:0;padding:8px 10px;background:#f1f5f9;border-right:1px solid var(--border);box-sizing:border-box}
-    body.dark .fp-field-lbl{background:#1e293b}
-    .fp-lbl-text{font-size:11px;font-weight:700;color:var(--fg);line-height:1.3;word-break:break-all}
-    .fp-req{display:inline-block;background:#dc2626;color:#fff;font-size:9px;font-weight:700;padding:1px 4px;border-radius:2px;width:fit-content}
-    .fp-type-chip{font-size:9px;color:var(--muted);background:var(--border);padding:1px 4px;border-radius:2px;display:inline-block;width:fit-content}
-    .fp-field-ctrl{flex:1;padding:8px 10px;display:flex;align-items:center;min-width:0;background:var(--card)}
-    .fp-ctrl{width:100%}
-    .fp-mock{height:26px;border:1px solid var(--border);border-radius:3px;background:var(--card)}
-    .fp-mock-tall{height:54px}
-    .fp-mock-num{width:90px;display:inline-block}
-    .fp-mock-lk{flex:1}
-    .fp-rt{display:flex;flex-direction:column;gap:3px;width:100%}
-    .fp-rt-bar{display:flex;gap:5px;padding:3px 7px;background:var(--card-soft);border:1px solid var(--border);border-radius:3px 3px 0 0;font-size:11px;font-weight:700;color:var(--muted)}
-    .fp-num{display:flex;align-items:center;gap:5px}
-    .fp-unit{font-size:12px;font-weight:600;color:var(--muted)}
-    .fp-choices{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center}
-    .fp-choice{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--fg);cursor:default}
-    .fp-chk{width:13px;height:13px;border:1px solid var(--muted);border-radius:2px;display:inline-block;flex-shrink:0}
-    .fp-radio{width:13px;height:13px;border:1px solid var(--muted);border-radius:50%;display:inline-block;flex-shrink:0}
-    .fp-dd{display:flex;align-items:center;border:1px solid var(--border);border-radius:3px;background:var(--card);padding:4px 7px;max-width:180px}
-    .fp-dd-val{flex:1;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .fp-dd-caret{color:var(--muted);font-size:10px;margin-left:3px;flex-shrink:0}
-    .fp-ms{display:flex;flex-wrap:wrap;gap:3px}
-    .fp-tag{background:#dbeafe;color:#1e40af;font-size:10px;padding:2px 6px;border-radius:999px}
-    body.dark .fp-tag{background:#1e3a5f;color:#93c5fd}
-    .fp-dt{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:3px;background:var(--card);padding:4px 7px}
-    .fp-dt-ph{font-size:10px;color:var(--muted);font-family:ui-monospace,monospace}
-    .fp-file{display:flex;align-items:center;gap:5px;padding:4px 8px;border:1px dashed var(--muted);border-radius:5px;font-size:11px;color:var(--muted);background:var(--card-soft);max-width:140px}
-    .fp-entity{display:inline-flex;align-items:center;gap:3px;background:var(--accent-soft);border:1px solid var(--border);border-radius:999px;padding:3px 9px;font-size:11px;color:var(--accent-strong)}
-    .fp-ep{font-weight:700;font-size:13px}
-    .fp-calc{display:flex;align-items:center;gap:4px}
-    .fp-ceq{font-size:14px;font-weight:700;color:#6366f1}
-    .fp-cexpr{font-size:10px;color:var(--muted);font-family:ui-monospace,monospace;background:var(--accent-soft);padding:2px 5px;border-radius:3px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .fp-lookup{display:flex;align-items:center;gap:6px;width:100%}
-    .fp-lb{background:var(--card-soft);border:1px solid var(--border);border-radius:3px;padding:3px 7px;font-size:10px;color:var(--fg);white-space:nowrap}
-    .fp-ref{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);padding:5px 7px;background:var(--card-soft);border:1px solid var(--border);border-radius:5px}
-    .fp-sub{border:1px solid var(--border);border-radius:5px;overflow:hidden;background:var(--card-soft);width:100%}
-    .fp-sub-bar{padding:5px 9px;font-size:10px;font-weight:700;color:var(--muted);background:var(--card-soft);border-bottom:1px solid var(--border)}
-    .fp-hr{border:none;border-top:1px solid var(--border);margin:4px 0}
-    .fp-lbl-f{font-size:12px;color:var(--fg)}
-    .fp-spacer{height:18px}
-    .fp-unknown{display:flex;align-items:center}
-    .fp-tn{font-size:9px;color:var(--muted);background:var(--card-soft);padding:2px 5px;border-radius:2px}
-    .fp-more{font-size:9px;color:var(--muted);background:var(--card-soft);padding:1px 4px;border-radius:2px}
-    .fp-absent{display:flex;align-items:center;justify-content:center;min-height:44px;width:100%;background:var(--card-soft);padding:8px;box-sizing:border-box}
-    .fp-absent span{font-size:11px;color:var(--muted);font-style:italic}
-    @media (max-width:900px){.fp-pair{grid-template-columns:1fr}.fp-col-r{border-left:none;border-top:1px solid var(--border)}}
+    .fp-view{display:flex;flex-direction:column;gap:10px}
+    .fp-card{border:1px solid var(--border);border-radius:10px;background:var(--card);overflow:hidden}
+    .fp-card-head{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--card-soft)}
+    .fp-card-head strong{font-size:14px;line-height:1.35}
+    .fp-card-head code{font-size:11px;color:var(--muted);background:var(--border);padding:2px 8px;border-radius:999px}
+    .fp-badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;color:#fff}
+    .fp-added .fp-badge{background:#0d9488}
+    .fp-removed .fp-badge{background:#dc2626}
+    .fp-modified .fp-badge{background:#d97706}
+    .fp-unchanged .fp-badge{background:#64748b}
+    .fp-preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 12px 12px}
+    .fp-preview-head{font-size:11px;font-weight:700;color:var(--muted);background:var(--border);border:1px solid var(--border);border-radius:8px 8px 0 0;padding:6px 10px}
+    .fp-preview-body{font-size:13px;line-height:1.5;color:var(--fg);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;padding:10px 12px;min-height:44px;background:var(--card)}
+    .fp-title{font-weight:700}
+    .fp-meta{margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+    .fp-req-chip{display:inline-block;background:#dc2626;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px}
+    @media (max-width:900px){.fp-preview-grid{grid-template-columns:1fr}}
     @media print{
       aside,.header-actions,.sb-panel .btn,.settings-tabs,.search-hint{display:none!important}
       body{display:block;background:#fff}
@@ -3100,7 +2981,7 @@ ${contextLine}`);
 
       <section class="tab-pane" data-report-pane="formPreview" hidden>
         <div class="content" style="padding:0">
-          <p style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6;color:var(--muted)"><strong>フィールド設定</strong>の比較元／比較先を、kintoneのフォーム設定画面に近いレイアウトで並べて表示します。左の「同一を隠す」「検索」が連動します。</p>
+          <p style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6;color:var(--muted)"><strong>フィールド設定</strong>の比較元／比較先を、プレビュー反映タブのプレビューエディターに近いカード表示で並べます。左の「同一を隠す」「検索」が連動します。</p>
           <div id="formPreviewRoot" class="fp-root"></div>
         </div>
       </section>
