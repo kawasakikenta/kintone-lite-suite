@@ -140,9 +140,24 @@ export function itemKeySignature(v) {
   return `${typeof v}:${String(v)}`;
 }
 
+const ARRAY_KEY_FALLBACK_CANDIDATES = ['code', 'id', 'name', 'entity', 'field', 'status', 'state', 'app', 'from', 'to', 'key'];
+
+function inferArrayKeyFromRow(row) {
+  const candidates = [row?.left, row?.right, reflectRowDesiredValue(row)];
+  for (const key of ARRAY_KEY_FALLBACK_CANDIDATES) {
+    for (const value of candidates) {
+      if (!value || typeof value !== 'object') continue;
+      if (Object.prototype.hasOwnProperty.call(value, key) && value[key] !== undefined && value[key] !== null) {
+        return { key, value: value[key] };
+      }
+    }
+  }
+  return { key: null, value: undefined };
+}
+
 export function resolveArrayKeyValue(row, desired) {
   const key = row.arrayKey;
-  if (!key) return { key: null, value: undefined };
+  if (!key) return inferArrayKeyFromRow(row);
   if (row.arrayKeyValue !== undefined) return { key, value: row.arrayKeyValue };
   const candidates = [desired, row.left, row.right];
   for (const obj of candidates) {
@@ -156,17 +171,18 @@ export function resolveArrayKeyValue(row, desired) {
 export function findArrayIndexByKey(arr, key, value) {
   if (!Array.isArray(arr) || !key) return -1;
   const sig = itemKeySignature(value);
+  const asText = String(value);
   for (let i = 0; i < arr.length; i++) {
     const obj = arr[i];
     if (!obj || typeof obj !== 'object') continue;
     if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
     if (itemKeySignature(obj[key]) === sig) return i;
+    if (String(obj[key]) === asText) return i;
   }
   return -1;
 }
 
 export function applyArrayRowByKey(sectionObj, row, tokens, desired) {
-  if (!row.arrayKey) return null;
   if (!tokens.length) return null;
   const last = tokens[tokens.length - 1];
   if (typeof last !== 'number') return null;
