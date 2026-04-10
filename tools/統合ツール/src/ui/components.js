@@ -129,7 +129,35 @@ export function switchTab(tabKey, options) {
   }
 
   if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
+  updateConnectionStepIndicators();
   if (!options || options.persist !== false) saveCurrentDialogState();
+}
+
+export function updateConnectionStepIndicators() {
+  const step1 = ui.step1Indicator;
+  const step2 = ui.step2Indicator;
+  const step3 = ui.step3Indicator;
+  if (!step1 && !step2 && !step3) return;
+
+  const sourceApp = (ui.sourceApp?.value || '').trim();
+  const targetApp = (ui.targetApp?.value || '').trim();
+  const hasConnection = !!sourceApp && !!targetApp;
+  const hasCommonData = !!(state.lastSourceBundle || state.importedSourceBundle) && !!(state.lastTargetBundle || state.importedTargetBundle);
+  const currentStep = !hasConnection ? 1 : (state.activeTab === 'diff' || state.activeTab === 'reflect' ? 2 : 3);
+
+  if (step1) {
+    step1.textContent = hasConnection ? '入力済み' : '未入力';
+    step1.dataset.stepState = currentStep === 1 ? 'current' : (hasConnection ? 'done' : 'pending');
+  }
+  if (step2) {
+    step2.textContent = hasCommonData ? '取得済み' : '未取得';
+    step2.dataset.stepState = currentStep === 2 ? 'current' : (hasCommonData ? 'done' : 'pending');
+  }
+  if (step3) {
+    const featureSelected = currentStep === 3;
+    step3.textContent = featureSelected ? '選択中' : '未選択';
+    step3.dataset.stepState = featureSelected ? 'current' : 'pending';
+  }
 }
 
 function diffScopeTooltip(s) {
@@ -318,6 +346,7 @@ export function renderBundleState() {
       : '差分: 未実行';
     ui.commonDataState.textContent = `${sourceText} / ${targetText} / ${diffInfo}`;
   }
+  updateConnectionStepIndicators();
   renderDiffSelectionState();
   renderReflectAssistPanel();
 }

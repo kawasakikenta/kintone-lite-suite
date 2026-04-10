@@ -505,14 +505,13 @@
 /* 比較先が不要なタブ（er, processFlow, sql）では比較先入力欄を隠す */
 #kintone-unified-suite-v2:not(.tab-needs-target) .conn-target { display: none !important; }
 
-/* 「よく使う操作」等の差分/反映専用UIは該当タブ以外で隠す */
+/* 差分/反映専用UIは該当タブ以外で隠す */
 #kintone-unified-suite-v2:not(.tab-needs-connection-actions) .connection-section--actions,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .diff-fold--lookup,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-step-banner,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-step-desc,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-step-btns,
+#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--step2 .connection-step-desc,
+#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--step2 .connection-step-btns,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) #u_commonDataState,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-footnote {
+#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--step2 .connection-footnote {
   display: none !important;
 }
 
@@ -1065,17 +1064,50 @@
 #kintone-unified-suite-v2 .connection-section-lead{
   margin:0 0 12px;font-size:12px;line-height:1.6;color:#64748b;
 }
+#kintone-unified-suite-v2 .connection-lookup-note{
+  margin:-4px 0 12px;
+}
 #kintone-unified-suite-v2 .connection-section{
-  margin-top:14px;padding-top:14px;border-top:1px solid #e8eef5;
+  margin-top:22px;padding-top:18px;border-top:1px solid #e8eef5;
 }
 #kintone-unified-suite-v2 .connection-section:first-of-type{
   margin-top:0;padding-top:0;border-top:none;
 }
 #kintone-unified-suite-v2 .connection-grid{gap:10px 12px}
 #kintone-unified-suite-v2 .connection-section--actions .connection-quick-btns{margin-top:0}
-#kintone-unified-suite-v2 .connection-step-banner{margin-top:14px}
-#kintone-unified-suite-v2 .connection-step-desc{margin:8px 0 10px;font-size:12px}
-#kintone-unified-suite-v2 .connection-step-btns{margin-top:0;gap:10px}
+#kintone-unified-suite-v2 .connection-step-banner{
+  margin-top:0;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+#kintone-unified-suite-v2 .connection-step-title{
+  font-size:13px;
+  font-weight:800;
+  color:#0f172a;
+}
+#kintone-unified-suite-v2 .connection-step-indicator{
+  font-size:11px;
+  font-weight:700;
+  border-radius:999px;
+  padding:2px 9px;
+  border:1px solid #cbd5e1;
+  color:#475569;
+  background:#f8fafc;
+}
+#kintone-unified-suite-v2 .connection-step-indicator[data-step-state="done"]{
+  border-color:#86efac;
+  color:#166534;
+  background:#f0fdf4;
+}
+#kintone-unified-suite-v2 .connection-step-indicator[data-step-state="current"]{
+  border-color:#7dd3fc;
+  color:#0c4a6e;
+  background:#f0f9ff;
+}
+#kintone-unified-suite-v2 .connection-step-desc{margin:10px 0 12px;font-size:12px}
+#kintone-unified-suite-v2 .connection-step-btns{margin-top:0;gap:12px}
 #kintone-unified-suite-v2 .btn-primary-emphasis{
   background:linear-gradient(180deg,#0284c7,#0369a1)!important;
   box-shadow:0 2px 10px rgba(14,165,233,.35)!important;
@@ -1083,6 +1115,14 @@
   font-size:13px!important;
 }
 #kintone-unified-suite-v2 .btn-primary-emphasis:hover{filter:brightness(1.06)}
+#kintone-unified-suite-v2 .connection-secondary-cta,
+#kintone-unified-suite-v2 .connection-secondary-action{
+  background:#f8fafc!important;
+  border-color:#dbe3ee!important;
+  color:#334155!important;
+  font-size:12px!important;
+  padding:7px 11px!important;
+}
 #kintone-unified-suite-v2 .connection-footnote{margin-top:10px;font-size:11px;line-height:1.6}
 #kintone-unified-suite-v2 .h-actions .x{
   min-height:36px;min-width:36px;padding:8px 12px;display:inline-flex;align-items:center;justify-content:center;
