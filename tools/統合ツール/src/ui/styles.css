@@ -1152,6 +1152,17 @@
 #kintone-unified-suite-v2 .rpp-mini-badge{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;background:#fed7aa;color:#9a3412;font-size:10px;font-weight:700}
 #kintone-unified-suite-v2 .rpp-chip-list{display:flex;flex-wrap:wrap;gap:6px}
 #kintone-unified-suite-v2 .rpp-chip-list span{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:#e2e8f0;color:#334155;font-size:11px}
+#kintone-unified-suite-v2 .rpp-k-like-compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+#kintone-unified-suite-v2 .rpp-k-like-head{font-size:11px;font-weight:800;color:#1e293b;background:#e9f2ff;border:1px solid #bfd5ff;border-radius:8px 8px 0 0;padding:7px 10px}
+#kintone-unified-suite-v2 .rpp-k-like-body{border:1px solid #bfd5ff;border-top:none;border-radius:0 0 8px 8px;padding:10px;background:#f8fbff}
+#kintone-unified-suite-v2 .rpp-k-like-card{border:1px solid #d8e5f7;border-radius:8px;background:#fff;padding:8px 10px}
+#kintone-unified-suite-v2 .rpp-k-like-card-title{margin:0 0 8px;font-size:12px;font-weight:800;color:#0f3a75}
+#kintone-unified-suite-v2 .rpp-k-like-subtitle{margin:8px 0 6px;font-size:11px;color:#334155}
+#kintone-unified-suite-v2 .rpp-k-like-table{width:100%;border-collapse:collapse;font-size:12px}
+#kintone-unified-suite-v2 .rpp-k-like-table th,#kintone-unified-suite-v2 .rpp-k-like-table td{padding:6px 8px;border-bottom:1px solid #e2e8f0;vertical-align:top;text-align:left}
+#kintone-unified-suite-v2 .rpp-k-like-table th{color:#334155;font-weight:700;background:#f8fbff}
+#kintone-unified-suite-v2 .rpp-k-like-table tr.is-changed th,#kintone-unified-suite-v2 .rpp-k-like-table tr.is-changed td{background:#fff7ed}
+#kintone-unified-suite-v2 .rpp-k-like-badge{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;background:#ffe7c2;color:#9a3412;font-size:10px;font-weight:700}
 #kintone-unified-suite-v2 .rpp-modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.45);display:flex;align-items:center;justify-content:center;z-index:70;padding:16px}
 #kintone-unified-suite-v2 .rpp-modal{width:min(720px,96vw);background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 20px 60px rgba(2,6,23,.35);overflow:hidden}
 #kintone-unified-suite-v2 .rpp-modal-wide{width:min(1040px,96vw)}
