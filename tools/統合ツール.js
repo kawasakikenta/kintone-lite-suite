@@ -643,16 +643,84 @@ ${contextLine}`);
       throw new Error(ERR_NO_PROD_WRITE);
     }
   }
-  async function apiGet(prefix, path, params, retries = 3) {
+  function normalizeApiGetOptions(optionsOrRetries) {
+    if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
+    if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
+    return optionsOrRetries;
+  }
+  function resolveHttpStatus(error) {
+    const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const text = String(error?.message || "");
+    const matched = text.match(/\b([45]\d{2})\b/);
+    return matched ? Number(matched[1]) : 0;
+  }
+  function isRetriableApiError(error) {
+    if (!error) return false;
+    const status = resolveHttpStatus(error);
+    if (RETRIABLE_STATUS_CODES.has(status)) return true;
+    const code = String(error?.code || "").toUpperCase();
+    if (code && (code.includes("NETWORK") || code.includes("TIMEOUT") || code === "ECONNRESET")) return true;
+    const message = String(error?.message || "").toLowerCase();
+    return message.includes("network") || message.includes("timeout");
+  }
+  function computeRetryDelayMs(attempt, baseDelayMs, maxDelayMs) {
+    const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
+    const jitter = Math.random() * Math.min(200, baseDelayMs);
+    return Math.round(expDelay + jitter);
+  }
+  function touchApiPathMetric(path, field) {
+    const key = String(path || "");
+    const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
+    row[field] += 1;
+    apiGetMetrics.byPath[key] = row;
+    return row;
+  }
+  function getApiGetMetrics() {
+    return deepClone(apiGetMetrics);
+  }
+  function resetApiGetMetrics() {
+    apiGetMetrics.calls = 0;
+    apiGetMetrics.retries = 0;
+    apiGetMetrics.failures = 0;
+    apiGetMetrics.lastLatencyMs = 0;
+    apiGetMetrics.lastError = "";
+    apiGetMetrics.byPath = {};
+  }
+  async function apiGet(prefix, path, params, optionsOrRetries) {
+    const options = normalizeApiGetOptions(optionsOrRetries);
+    const retries = Number.isFinite(options.retries) ? Math.max(1, Number(options.retries)) : DEFAULT_API_GET_RETRIES;
+    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? Math.max(1, Number(options.baseDelayMs)) : DEFAULT_RETRY_BASE_DELAY_MS;
+    const maxDelayMs = Number.isFinite(options.maxDelayMs) ? Math.max(baseDelayMs, Number(options.maxDelayMs)) : DEFAULT_RETRY_MAX_DELAY_MS;
     let err;
+    const startAt = Date.now();
+    apiGetMetrics.calls += 1;
+    touchApiPathMetric(path, "calls");
     for (let i = 0; i < retries; i++) {
       try {
-        return await kintone.api(`${prefix}${path}`, "GET", params);
+        const res = await kintone.api(`${prefix}${path}`, "GET", params);
+        apiGetMetrics.lastLatencyMs = Date.now() - startAt;
+        apiGetMetrics.lastError = "";
+        return res;
       } catch (e) {
         err = e;
-        if (i < retries - 1) await new Promise((r) => setTimeout(r, (i + 1) * 700));
+        const retriable = isRetriableApiError(e);
+        if (i < retries - 1 && retriable) {
+          apiGetMetrics.retries += 1;
+          touchApiPathMetric(path, "retries");
+          const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
       }
     }
+    apiGetMetrics.failures += 1;
+    const pathMetric = touchApiPathMetric(path, "failures");
+    const lastError = err?.message || String(err);
+    pathMetric.lastError = lastError;
+    apiGetMetrics.lastError = lastError;
+    apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
   async function apiPut(prefix, path, body) {
@@ -760,7 +828,7 @@ ${contextLine}`);
     const first = Object.values(revisions).find((value) => value != null && value !== "");
     return first != null ? String(first) : "";
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
   var init_api = __esm({
     "src/api.js"() {
       "use strict";
@@ -770,6 +838,18 @@ ${contextLine}`);
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
       ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+      DEFAULT_API_GET_RETRIES = 3;
+      DEFAULT_RETRY_BASE_DELAY_MS = 500;
+      DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+      RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+      apiGetMetrics = {
+        calls: 0,
+        retries: 0,
+        failures: 0,
+        lastLatencyMs: 0,
+        lastError: "",
+        byPath: {}
+      };
     }
   });
 
@@ -8750,10 +8830,13 @@ ${contextLine}`);
   }
 
   // src/register-api.js
+  init_api();
   if (typeof window !== "undefined") {
     window.__KUS__ = window.__KUS__ || {};
     window.__KUS__.VERSION = TOOL_VERSION;
     window.__KUS__.runDiffStandalone = runDiffStandalone;
+    window.__KUS__.getApiGetMetrics = getApiGetMetrics;
+    window.__KUS__.resetApiGetMetrics = resetApiGetMetrics;
   }
 
   // src/boot.js
