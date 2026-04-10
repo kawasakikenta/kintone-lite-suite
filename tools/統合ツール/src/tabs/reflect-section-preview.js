@@ -128,12 +128,101 @@ function itemLabel(row, sectionKey) {
 }
 
 const STATUS_LABELS = { added: '追加', removed: '削除', modified: '変更', unchanged: '変更なし' };
+const SUPPORTED_PREVIEW_SECTIONS = new Set(['viewSettings', 'layoutSettings', 'processSettings', 'notifications']);
 
 function extractSectionData(bundle, sectionKey) {
   const sec = bundle?.sections?.[sectionKey];
   if (!sec || sec._fetchError) return null;
   return deepClone(sec);
 }
+
+function changedPropSet(row) {
+  const out = new Set();
+  if (Array.isArray(row?.changes) && row.changes.length) {
+    row.changes.forEach((ch) => { if (ch?.prop) out.add(String(ch.prop)); });
+    return out;
+  }
+  const bf = row?.before && typeof row.before === 'object' ? row.before : {};
+  const af = row?.after && typeof row.after === 'object' ? row.after : {};
+  const keys = new Set([...Object.keys(bf), ...Object.keys(af)]);
+  keys.forEach((key) => {
+    if (!deepEqual(bf[key], af[key])) out.add(key);
+  });
+  return out;
+}
+
+function normalizeText(v) {
+  if (v === undefined || v === null || v === '') return '—';
+  if (Array.isArray(v)) return v.length ? v.join(', ') : '—';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
+function renderAdminCard(title, rows, options = {}) {
+  const changed = options.changed || new Set();
+  return `<section class="rpp-admin-card"><h4>${esc(title)}</h4><table class="rpp-admin-table"><tbody>${rows.map((row) => {
+    const key = row?.key || '';
+    const isChanged = changed.has(key);
+    return `<tr class="${isChanged ? 'is-changed' : ''}"><th>${esc(row.label || key)}</th><td>${esc(normalizeText(row.value))}${isChanged ? ' <span class="rpp-mini-badge">差分</span>' : ''}</td></tr>`;
+  }).join('')}</tbody></table></section>`;
+}
+
+function renderLayoutCard(layout) {
+  const rows = Array.isArray(layout) ? layout : [];
+  const body = rows.map((line, idx) => {
+    const fields = Array.isArray(line?.fields) ? line.fields : [];
+    const names = fields.map((f) => f?.code || f?.type || '-');
+    return `<tr><td>${idx + 1}</td><td>${esc(line?.type || 'ROW')}</td><td>${esc(names.join(' / ') || '—')}</td></tr>`;
+  }).join('');
+  return `<section class="rpp-admin-card"><h4>レイアウト行</h4><table class="rpp-admin-table"><thead><tr><th>#</th><th>type</th><th>配置フィールド</th></tr></thead><tbody>${body || '<tr><td colspan="3">設定なし</td></tr>'}</tbody></table></section>`;
+}
+
+function renderProcessCard(process) {
+  if (!process || typeof process !== 'object') return renderAdminCard('プロセス管理', [{ label: '状態', value: '設定なし' }]);
+  const states = Array.isArray(process.states) ? process.states : [];
+  const actions = Array.isArray(process.actions) ? process.actions : [];
+  const stateRows = states.map((s) => `<tr><td>${esc(s?.name || '-')}</td><td>${esc(s?.assignee?.type || '-')}</td></tr>`).join('');
+  const actionRows = actions.map((a) => `<tr><td>${esc(a?.name || '-')}</td><td>${esc(a?.from || '-')}</td><td>${esc(a?.to || '-')}</td></tr>`).join('');
+  return `<section class="rpp-admin-card"><h4>プロセス管理</h4><table class="rpp-admin-table"><tbody><tr><th>有効化</th><td>${esc(normalizeText(process.enable))}</td></tr></tbody></table><h5>ステータス</h5><table class="rpp-admin-table"><thead><tr><th>状態名</th><th>担当者</th></tr></thead><tbody>${stateRows || '<tr><td colspan="2">設定なし</td></tr>'}</tbody></table><h5>アクション</h5><table class="rpp-admin-table"><thead><tr><th>アクション名</th><th>遷移元</th><th>遷移先</th></tr></thead><tbody>${actionRows || '<tr><td colspan="3">設定なし</td></tr>'}</tbody></table></section>`;
+}
+
+function renderNotificationsCard(notifications) {
+  const list = Array.isArray(notifications) ? notifications : [];
+  const rows = list.map((item, idx) => {
+    const cond = item?.filterCond || item?.condition || '-';
+    const recipients = Array.isArray(item?.recipients) ? item.recipients.map((r) => r?.entity?.code || r?.entity?.type || r?.code || '-').join(', ') : '-';
+    return `<tr><td>${idx + 1}</td><td>${esc(cond)}</td><td>${esc(recipients)}</td></tr>`;
+  }).join('');
+  return `<section class="rpp-admin-card"><h4>通知設定</h4><table class="rpp-admin-table"><thead><tr><th>#</th><th>通知条件</th><th>通知先</th></tr></thead><tbody>${rows || '<tr><td colspan="3">設定なし</td></tr>'}</tbody></table></section>`;
+}
+
+function renderViewSettingsCard(view, row) {
+  const changed = changedPropSet(row);
+  const rows = [
+    { key: 'name', label: 'ビュー名', value: view?.name },
+    { key: 'type', label: '表示形式', value: view?.type },
+    { key: 'index', label: '表示順', value: view?.index },
+    { key: 'filterCond', label: '絞り込み条件', value: view?.filterCond },
+    { key: 'sort', label: 'ソート', value: Array.isArray(view?.sort) ? view.sort.map((s) => `${s.field || '-'}:${s.order || '-'}`) : view?.sort }
+  ];
+  return `${renderAdminCard('ビュー設定', rows, { changed })}<section class="rpp-admin-card"><h4>表示カラム</h4><div class="rpp-chip-list">${(Array.isArray(view?.fields) ? view.fields : []).map((f) => `<span>${esc(f)}</span>`).join('') || '<span>設定なし</span>'}</div></section>`;
+}
+
+function renderAclCard(rights) {
+  const list = Array.isArray(rights) ? rights : [];
+  const body = list.map((r, idx) => `<tr><td>${idx + 1}</td><td>${esc(r?.entity?.code || r?.entity?.type || '-')}</td><td>${esc((r?.includeSubs ? '配下含む' : '単体'))}</td><td>${esc(normalizeText(r?.appEditable || r?.recordViewable || r?.editable || r?.viewable))}</td></tr>`).join('');
+  return `<section class="rpp-admin-card"><h4>アクセス権</h4><table class="rpp-admin-table"><thead><tr><th>#</th><th>対象</th><th>範囲</th><th>許可</th></tr></thead><tbody>${body || '<tr><td colspan="4">設定なし</td></tr>'}</tbody></table></section>`;
+}
+
+const PREVIEW_ADAPTERS = {
+  viewSettings: (val, row) => renderViewSettingsCard(val, row),
+  layoutSettings: (val) => renderLayoutCard(val),
+  processSettings: (val) => renderProcessCard(val),
+  notifications: (val) => renderNotificationsCard(val),
+  appAcl: (val) => renderAclCard(val?.rights || val),
+  fieldAcl: (val) => renderAclCard(val?.rights || val),
+  recordPermissions: (val) => renderAclCard(val?.rights || val)
+};
 
 export function initSectionPreviewEditor(ui, setStatus) {
   const root = ui.sectionPreviewEditor;
@@ -143,6 +232,7 @@ export function initSectionPreviewEditor(ui, setStatus) {
     sectionKey: PUT_SECTIONS[0]?.key || '',
     before: null,
     after: null,
+    view: 'diff',
     filter: 'all',
     undo: [],
     expanded: new Set(),
@@ -203,6 +293,14 @@ export function initSectionPreviewEditor(ui, setStatus) {
     return `<pre class="rpp-pre">${esc(formatJson(row.after || row.before))}</pre>`;
   }
 
+  function renderPreviewBody(row) {
+    const adapter = PREVIEW_ADAPTERS[st.sectionKey];
+    if (!adapter || !SUPPORTED_PREVIEW_SECTIONS.has(st.sectionKey)) return renderDiffBody(row);
+    const beforeHtml = adapter(row.before, row);
+    const afterHtml = adapter(row.after, row);
+    return `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">比較元</div><div class="rpp-preview-body rpp-preview-admin">${beforeHtml}</div></div><div><div class="rpp-preview-head">比較先</div><div class="rpp-preview-body rpp-preview-admin">${afterHtml}</div></div></div>`;
+  }
+
   function render() {
     if (!st.loaded) {
       root.innerHTML = `<div class="spe-empty"><p>差分比較のバンドルデータがありません。</p><p>先に「差分比較」を実行するか、下のボタンから読込してください。</p><div class="spe-empty-actions"><button type="button" class="btn ok" data-spe-act="loadDiff">差分比較から読込</button></div></div>`;
@@ -226,6 +324,9 @@ export function initSectionPreviewEditor(ui, setStatus) {
         ${isMap ? `<button type="button" class="btn sub" data-spe-act="addItem">＋ 追加</button>` : ''}
         <button type="button" class="btn sub" data-spe-act="editFullJson">JSON編集</button>
         <button type="button" class="btn sub" data-spe-act="export">JSON保存</button>
+        <span class="rpp-spacer"></span>
+        <button type="button" class="btn ${st.view === 'diff' ? 'ok' : 'sub'}" data-spe-act="viewDiff">差分</button>
+        <button type="button" class="btn ${st.view === 'preview' ? 'ok' : 'sub'}" data-spe-act="viewPreview">プレビュー</button>
       </div>
       <div class="rpp-filters">
         ${['all', 'added', 'removed', 'modified', 'unchanged'].map((k) => `<button type="button" class="btn sub ${st.filter === k ? 'is-active' : ''}" data-spe-act="filter" data-filter="${k}">${k === 'all' ? `すべて` : STATUS_LABELS[k]} <span>${k === 'all' ? diff.length : stats[k]}</span></button>`).join('')}
@@ -237,7 +338,7 @@ export function initSectionPreviewEditor(ui, setStatus) {
           const canEdit = row.after != null;
           const canRestore = row.after == null && row.before != null;
           const canDelete = row.after != null && isMap;
-          return `<div class="rpp-card"><div class="rpp-head"><button type="button" class="rpp-open" data-spe-act="toggle" data-key="${esc(row.key)}">${opened ? '▾' : '▸'}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.key)}</code><span class="rpp-spacer"></span>${canEdit ? `<button type="button" class="btn sub" data-spe-act="editItem" data-key="${esc(row.key)}">編集</button>` : ''}${canDelete ? `<button type="button" class="btn sub" data-spe-act="deleteItem" data-key="${esc(row.key)}">削除</button>` : ''}${canRestore ? `<button type="button" class="btn sub" data-spe-act="restoreItem" data-key="${esc(row.key)}">復元</button>` : ''}</div>${opened ? `<div class="rpp-body">${renderDiffBody(row)}</div>` : ''}</div>`;
+          return `<div class="rpp-card"><div class="rpp-head"><button type="button" class="rpp-open" data-spe-act="toggle" data-key="${esc(row.key)}">${opened ? '▾' : '▸'}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.key)}</code><span class="rpp-spacer"></span>${canEdit ? `<button type="button" class="btn sub" data-spe-act="editItem" data-key="${esc(row.key)}">編集</button>` : ''}${canDelete ? `<button type="button" class="btn sub" data-spe-act="deleteItem" data-key="${esc(row.key)}">削除</button>` : ''}${canRestore ? `<button type="button" class="btn sub" data-spe-act="restoreItem" data-key="${esc(row.key)}">復元</button>` : ''}</div>${opened ? `<div class="rpp-body">${st.view === 'preview' ? renderPreviewBody(row) : renderDiffBody(row)}</div>` : ''}</div>`;
         }).join('') || '<div class="muted" style="padding:12px">差分がありません（同一の内容です）</div>'}
       </div>
       ${renderModal()}`;
@@ -348,6 +449,10 @@ export function initSectionPreviewEditor(ui, setStatus) {
         setStatus('元に戻しました');
       } else if (act === 'filter') {
         st.filter = btn.dataset.filter || 'all';
+      } else if (act === 'viewDiff') {
+        st.view = 'diff';
+      } else if (act === 'viewPreview') {
+        st.view = 'preview';
       } else if (act === 'toggle') {
         if (st.expanded.has(key)) st.expanded.delete(key);
         else st.expanded.add(key);
