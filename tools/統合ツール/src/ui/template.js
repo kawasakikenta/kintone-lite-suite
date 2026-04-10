@@ -128,9 +128,22 @@ export function buildRoot(targetDocument = document, options = {}) {
               <p class="launcher-lead">作業メニュー</p>
               <p class="launcher-tagline">カードをクリックして開きます。作業開始後も「← 戻る」でこの画面に戻れます。</p>
             </div>
+            <div class="launcher-sort">
+              <label for="u_featureSortMode">並び順</label>
+              <select id="u_featureSortMode" class="launcher-sort-select">
+                <option value="onboarding">初回推奨順</option>
+                <option value="usage">よく使う順</option>
+              </select>
+            </div>
             <div class="feature-grid">
               ${FEATURE_DEFS.map((f) => `<div class="feature-card" data-act="openFeature" data-feature="${f.key}" role="button" tabindex="0">
                 <div class="feature-card-icon">${f.icon || ''}</div>
+                ${f.badge ? `<div class="feature-card-badges">
+                  <span class="feature-badge feature-badge--${f.badge.tone || 'recommended'}" aria-label="バッジ: ${esc(f.badge.label || '')}">
+                    <span class="feature-badge-icon" aria-hidden="true">${f.badge.icon || '•'}</span>
+                    <span class="feature-badge-label">${esc(f.badge.label || '')}</span>
+                  </span>
+                </div>` : ''}
                 <div class="feature-card-label">${f.label}</div>
                 <div class="feature-card-desc">${f.desc}</div>
                 <div class="feature-card-go" aria-hidden="true">開く</div>
