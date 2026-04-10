@@ -9480,6 +9480,10 @@ ${contextLine}`);
   box-shadow:0 25px 50px -12px rgba(15,23,42,.2),0 0 0 1px rgba(255,255,255,.55) inset;
   font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI","Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;
   color:#0f172a;
+  --font-xs:12px;
+  --font-sm:13px;
+  --font-md:14px;
+  --line-relaxed:1.65;
 }
 #kintone-unified-suite-v2 .h{
   padding:14px 18px;
@@ -9522,8 +9526,8 @@ ${contextLine}`);
   line-height:1.3;
 }
 #kintone-unified-suite-v2 .hs{
-  font-size:12px;
-  line-height:1.55;
+  font-size:var(--font-xs);
+  line-height:var(--line-relaxed);
   opacity:.88;
   margin-top:4px;
   max-width:52ch;
@@ -9581,7 +9585,7 @@ ${contextLine}`);
   box-shadow:0 1px 3px rgba(15,23,42,.05);
 }
 #kintone-unified-suite-v2 label{
-  font-size:11px;
+  font-size:var(--font-xs);
   font-weight:700;
   color:#475569;
   letter-spacing:.02em;
@@ -9615,7 +9619,7 @@ ${contextLine}`);
   gap:5px;
 }
 #kintone-unified-suite-v2 .tab-group-lbl{
-  font-size:9px;
+  font-size:var(--font-xs);
   text-transform:uppercase;
   letter-spacing:.08em;
   color:#64748b;
@@ -9740,8 +9744,8 @@ ${contextLine}`);
 }
 #kintone-unified-suite-v2 .launcher-tagline{
   margin:6px 0 0;
-  font-size:11px;
-  line-height:1.55;
+  font-size:var(--font-sm);
+  line-height:var(--line-relaxed);
   color:#64748b;
 }
 #kintone-unified-suite-v2 .feature-grid{
@@ -9783,8 +9787,8 @@ ${contextLine}`);
   letter-spacing:-0.02em;
 }
 #kintone-unified-suite-v2 .feature-card-desc{
-  font-size:12px;
-  line-height:1.55;
+  font-size:var(--font-xs);
+  line-height:var(--line-relaxed);
   margin-top:6px;
 }
 #kintone-unified-suite-v2 .feature-card-go{
@@ -9848,11 +9852,15 @@ ${contextLine}`);
 
 
 /* ========== UX: 見やすさ・操作しやすさ ========== */
-#kintone-unified-suite-v2 .muted{line-height:1.65;color:#64748b}
+#kintone-unified-suite-v2 .muted{font-size:var(--font-xs);line-height:var(--line-relaxed);color:#64748b}
 #kintone-unified-suite-v2 .subpane-note{
-  font-size:12px;line-height:1.65;color:#475569;margin:0 0 12px;padding:10px 12px;
+  font-size:var(--font-sm);line-height:var(--line-relaxed);color:#475569;margin:0 0 12px;padding:10px 12px;
   background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;border-left:4px solid #0ea5e9;
 }
+#kintone-unified-suite-v2 .hs-list{margin:6px 0 0;padding-left:1.2em}
+#kintone-unified-suite-v2 .hs-list li{margin:2px 0;line-height:var(--line-relaxed)}
+#kintone-unified-suite-v2 .subpane-note ul{margin:6px 0 0;padding-left:1.2em}
+#kintone-unified-suite-v2 .subpane-note li{margin:2px 0;line-height:var(--line-relaxed)}
 #kintone-unified-suite-v2 h3.connection-section-title{
   margin:0 0 6px;font-size:13px;font-weight:800;color:#0f172a;letter-spacing:-0.02em;
 }
@@ -10069,7 +10077,7 @@ ${contextLine}`);
           </div>
           <div class="h-title-launcher">
             <div class="ht">kintone 統合変更ツール</div>
-            <div class="hs">通常は<strong>新しいタブ</strong>で開きます（ポップアップ拒否時はこのタブ内）。アプリ画面のタブはそのまま操作できます。接続情報を確認してから右のメニューで作業を開きます。</div>
+            <div class="hs">通常は<strong>新しいタブ</strong>で開きます（ポップアップ拒否時はこのタブ内）。<ul class="hs-list"><li>元の kintone 画面は開いたまま操作できます。</li><li>先に接続情報（比較元/比較先）を確認します。</li><li>右側のカードから作業メニューを開きます。</li></ul></div>
             <div><span class="tool-ver hs" data-act="copyToolInfo" title="クリックでツール識別情報をクリップボードにコピー（問い合わせ・再現調査用）">ビルド ${TOOL_VERSION}</span></div>
           </div>
           <div class="h-title-feature">
@@ -10148,7 +10156,7 @@ ${contextLine}`);
           <div class="launcher-menu" id="u_launcherMenu">
             <div class="launcher-menu-head">
               <p class="launcher-lead">作業メニュー</p>
-              <p class="launcher-tagline">カードをクリックして開きます。戻るボタンでいつでもこの画面に戻れます。</p>
+              <p class="launcher-tagline">カードをクリックして開きます。作業開始後も「← 戻る」でこの画面に戻れます。</p>
             </div>
             <div class="feature-grid">
               ${FEATURE_DEFS.map((f) => `<div class="feature-card" data-act="openFeature" data-feature="${f.key}" role="button" tabindex="0">
@@ -10192,7 +10200,7 @@ ${contextLine}`);
                 <button class="subtab" data-subtab-parent="diff" data-subtab="view">結果整理</button>
               </div>
               <div class="subpane active" data-subpane-parent="diff" data-subpane="conditions">
-                <div class="subpane-note">上部の<strong>プレビュー比較プリセット</strong>で本番/プレビューAPIの組み合わせを決めてから、セクションと実行操作を進めます。細かいオプションは折りたたみにあります。</div>
+                <div class="subpane-note">上部の<strong>プレビュー比較プリセット</strong>を先に決めてから、比較設定を進めます。<ul><li>手順1: 本番/プレビュー API の組み合わせを選ぶ。</li><li>手順2: 比較セクションと無視キーを調整する。</li><li>手順3: 差分比較を実行し、必要時のみ折りたたみの詳細設定を開く。</li></ul></div>
               <div class="step">手順1: 比較条件を決めて差分を取得</div>
 
               <details class="diff-fold diff-fold--scopes" open>
@@ -10294,7 +10302,7 @@ ${contextLine}`);
               </details>
               </div>
               <div class="subpane" data-subpane-parent="diff" data-subpane="view">
-                <div class="subpane-note">取得済みの差分の絞り込みと出力です。まず下の「フィルタ・出力」を開き、必要なら「拡大・クイック・選択セット」を開いてください。</div>
+                <div class="subpane-note">取得済み差分の整理と出力を行います。<ul><li>まず「フィルタ・出力」で対象を絞る。</li><li>次に必要に応じて「拡大・クイック・選択セット」を使う。</li><li>最後に JSON / HTML / Excel / パッチを出力する。</li></ul></div>
                 <div class="diff-view-overview">
                   <div class="diff-view-overview-main">
                     <div class="diff-view-overview-title">現在の比較結果</div>

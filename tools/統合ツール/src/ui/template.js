@@ -23,7 +23,7 @@ export function buildRoot(targetDocument = document, options = {}) {
           </div>
           <div class="h-title-launcher">
             <div class="ht">kintone 統合変更ツール</div>
-            <div class="hs">通常は<strong>新しいタブ</strong>で開きます（ポップアップ拒否時はこのタブ内）。アプリ画面のタブはそのまま操作できます。接続情報を確認してから右のメニューで作業を開きます。</div>
+            <div class="hs">通常は<strong>新しいタブ</strong>で開きます（ポップアップ拒否時はこのタブ内）。<ul class="hs-list"><li>元の kintone 画面は開いたまま操作できます。</li><li>先に接続情報（比較元/比較先）を確認します。</li><li>右側のカードから作業メニューを開きます。</li></ul></div>
             <div><span class="tool-ver hs" data-act="copyToolInfo" title="クリックでツール識別情報をクリップボードにコピー（問い合わせ・再現調査用）">ビルド ${TOOL_VERSION}</span></div>
           </div>
           <div class="h-title-feature">
@@ -102,7 +102,7 @@ export function buildRoot(targetDocument = document, options = {}) {
           <div class="launcher-menu" id="u_launcherMenu">
             <div class="launcher-menu-head">
               <p class="launcher-lead">作業メニュー</p>
-              <p class="launcher-tagline">カードをクリックして開きます。戻るボタンでいつでもこの画面に戻れます。</p>
+              <p class="launcher-tagline">カードをクリックして開きます。作業開始後も「← 戻る」でこの画面に戻れます。</p>
             </div>
             <div class="feature-grid">
               ${FEATURE_DEFS.map((f) => `<div class="feature-card" data-act="openFeature" data-feature="${f.key}" role="button" tabindex="0">
@@ -146,7 +146,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <button class="subtab" data-subtab-parent="diff" data-subtab="view">結果整理</button>
               </div>
               <div class="subpane active" data-subpane-parent="diff" data-subpane="conditions">
-                <div class="subpane-note">上部の<strong>プレビュー比較プリセット</strong>で本番/プレビューAPIの組み合わせを決めてから、セクションと実行操作を進めます。細かいオプションは折りたたみにあります。</div>
+                <div class="subpane-note">上部の<strong>プレビュー比較プリセット</strong>を先に決めてから、比較設定を進めます。<ul><li>手順1: 本番/プレビュー API の組み合わせを選ぶ。</li><li>手順2: 比較セクションと無視キーを調整する。</li><li>手順3: 差分比較を実行し、必要時のみ折りたたみの詳細設定を開く。</li></ul></div>
               <div class="step">手順1: 比較条件を決めて差分を取得</div>
 
               <details class="diff-fold diff-fold--scopes" open>
@@ -248,7 +248,7 @@ export function buildRoot(targetDocument = document, options = {}) {
               </details>
               </div>
               <div class="subpane" data-subpane-parent="diff" data-subpane="view">
-                <div class="subpane-note">取得済みの差分の絞り込みと出力です。まず下の「フィルタ・出力」を開き、必要なら「拡大・クイック・選択セット」を開いてください。</div>
+                <div class="subpane-note">取得済み差分の整理と出力を行います。<ul><li>まず「フィルタ・出力」で対象を絞る。</li><li>次に必要に応じて「拡大・クイック・選択セット」を使う。</li><li>最後に JSON / HTML / Excel / パッチを出力する。</li></ul></div>
                 <div class="diff-view-overview">
                   <div class="diff-view-overview-main">
                     <div class="diff-view-overview-title">現在の比較結果</div>
