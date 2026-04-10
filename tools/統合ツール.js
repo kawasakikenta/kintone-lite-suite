@@ -37,12 +37,84 @@
     "src/featureDefs.mjs"() {
       "use strict";
       FEATURE_DEFS = [
-        { key: "diff", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>', label: "差分比較", desc: "設定の差分を確認・比較", tabs: ["diff"] },
-        { key: "reflect", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>', label: "プレビュー反映", desc: "比較元の設定を比較先プレビューへ反映", tabs: ["reflect"] },
-        { key: "field", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>', label: "フィールド追加", desc: "フィールド定義の追加・編集", tabs: ["field"] },
-        { key: "jsconfig", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>', label: "JS/CSS設定", desc: "カスタマイズ設定の取得・反映", tabs: ["jsconfig"] },
-        { key: "vis", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>', label: "可視化・出力", desc: "ER図 / プロセス図 / 設計書 / 設定一括取得", tabs: ["er", "processFlow", "design", "settingsExport"] },
-        { key: "data", icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>', label: "データ・保守", desc: "レコード管理 / SQL実行 / APIテスター", tabs: ["recordMgr", "sql", "apiTester"] }
+        {
+          key: "diff",
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
+          label: "差分比較",
+          desc: "設定の差分を確認・比較",
+          tabs: ["diff"],
+          priority: "high",
+          riskLevel: "safe",
+          recommendedFor: ["初回利用", "設定変更前の確認"],
+          usageOrder: 1,
+          onboardingOrder: 1,
+          badge: { tone: "recommended", label: "初回推奨", icon: "⭐" }
+        },
+        {
+          key: "reflect",
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+          label: "プレビュー反映",
+          desc: "比較元の設定を比較先プレビューへ反映",
+          tabs: ["reflect"],
+          priority: "high",
+          riskLevel: "warning",
+          recommendedFor: ["差分確認後", "本番反映前の検証"],
+          usageOrder: 2,
+          onboardingOrder: 2,
+          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+        },
+        {
+          key: "field",
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+          label: "フィールド追加",
+          desc: "フィールド定義の追加・編集",
+          tabs: ["field"],
+          priority: "medium",
+          riskLevel: "warning",
+          recommendedFor: ["項目追加時", "一括メンテナンス"],
+          usageOrder: 4,
+          onboardingOrder: 4,
+          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+        },
+        {
+          key: "jsconfig",
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+          label: "JS/CSS設定",
+          desc: "カスタマイズ設定の取得・反映",
+          tabs: ["jsconfig"],
+          priority: "medium",
+          riskLevel: "warning",
+          recommendedFor: ["カスタマイズ配布", "環境同期"],
+          usageOrder: 5,
+          onboardingOrder: 5,
+          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+        },
+        {
+          key: "vis",
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>',
+          label: "可視化・出力",
+          desc: "ER図 / プロセス図 / 設計書 / 設定一括取得",
+          tabs: ["er", "processFlow", "design", "settingsExport"],
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["現状把握", "レビュー資料作成"],
+          usageOrder: 3,
+          onboardingOrder: 3,
+          badge: { tone: "safe", label: "安全", icon: "🛡️" }
+        },
+        {
+          key: "data",
+          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
+          label: "データ・保守",
+          desc: "レコード管理 / SQL実行 / APIテスター",
+          tabs: ["recordMgr", "sql", "apiTester"],
+          priority: "low",
+          riskLevel: "warning",
+          recommendedFor: ["保守作業", "調査"],
+          usageOrder: 6,
+          onboardingOrder: 6,
+          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+        }
       ];
       TAB_TO_FEATURE = {};
       FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
@@ -9816,6 +9888,27 @@ ${contextLine}`);
   line-height:var(--line-relaxed);
   color:#64748b;
 }
+#kintone-unified-suite-v2 .launcher-sort{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:8px;
+  margin-top:10px;
+}
+#kintone-unified-suite-v2 .launcher-sort label{
+  font-size:11px;
+  font-weight:700;
+  color:#475569;
+}
+#kintone-unified-suite-v2 .launcher-sort-select{
+  border:1px solid #cbd5e1;
+  border-radius:8px;
+  padding:6px 10px;
+  background:#fff;
+  color:#0f172a;
+  font-size:12px;
+  font-weight:700;
+}
 #kintone-unified-suite-v2 .feature-grid{
   grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
   gap:12px;
@@ -9856,6 +9949,26 @@ ${contextLine}`);
   font-weight:800;
   letter-spacing:-0.02em;
 }
+#kintone-unified-suite-v2 .feature-card-badges{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .feature-badge{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:3px 9px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:800;
+  border:1px solid transparent;
+}
+#kintone-unified-suite-v2 .feature-badge-icon{font-size:11px;line-height:1}
+#kintone-unified-suite-v2 .feature-badge--recommended{background:#ede9fe;border-color:#c4b5fd;color:#5b21b6}
+#kintone-unified-suite-v2 .feature-badge--safe{background:#dcfce7;border-color:#86efac;color:#166534}
+#kintone-unified-suite-v2 .feature-badge--caution{background:#ffedd5;border-color:#fdba74;color:#9a3412}
 #kintone-unified-suite-v2 .feature-card-desc{
   font-size:var(--font-xs);
   line-height:var(--line-relaxed);
@@ -10320,9 +10433,22 @@ ${contextLine}`);
               <p class="launcher-lead">作業メニュー</p>
               <p class="launcher-tagline">カードをクリックして開きます。作業開始後も「← 戻る」でこの画面に戻れます。</p>
             </div>
+            <div class="launcher-sort">
+              <label for="u_featureSortMode">並び順</label>
+              <select id="u_featureSortMode" class="launcher-sort-select">
+                <option value="onboarding">初回推奨順</option>
+                <option value="usage">よく使う順</option>
+              </select>
+            </div>
             <div class="feature-grid">
               ${FEATURE_DEFS.map((f) => `<div class="feature-card" data-act="openFeature" data-feature="${f.key}" role="button" tabindex="0">
                 <div class="feature-card-icon">${f.icon || ""}</div>
+                ${f.badge ? `<div class="feature-card-badges">
+                  <span class="feature-badge feature-badge--${f.badge.tone || "recommended"}" aria-label="バッジ: ${esc(f.badge.label || "")}">
+                    <span class="feature-badge-icon" aria-hidden="true">${f.badge.icon || "•"}</span>
+                    <span class="feature-badge-label">${esc(f.badge.label || "")}</span>
+                  </span>
+                </div>` : ""}
                 <div class="feature-card-label">${f.label}</div>
                 <div class="feature-card-desc">${f.desc}</div>
                 <div class="feature-card-go" aria-hidden="true">開く</div>
@@ -18608,6 +18734,7 @@ ${safety.hash}`, "");
       featureTitle: $("#u_featureTitle"),
       featureConn: $("#u_featureConn"),
       launcherMenu: $("#u_launcherMenu"),
+      featureSortMode: $("#u_featureSortMode"),
       copyTextToClipboard
     };
     Object.assign(ui, ui4);
@@ -18672,11 +18799,38 @@ ${safety.hash}`, "");
     });
     renderApiTesterHistory();
     initApiTesterEnhancements();
+    setupLauncherFeatureSort(ui4);
     setStatus("待機中");
     if (options.initialTab) {
       switchTab(options.initialTab);
     }
     initOssIntegrations();
+  }
+  function setupLauncherFeatureSort(ui4) {
+    const featureGrid = ui4.launcherMenu?.querySelector(".feature-grid");
+    if (!featureGrid) return;
+    const orderByFeature = FEATURE_DEFS.reduce((acc, def) => {
+      acc[def.key] = {
+        onboarding: Number.isFinite(def.onboardingOrder) ? def.onboardingOrder : 999,
+        usage: Number.isFinite(def.usageOrder) ? def.usageOrder : 999
+      };
+      return acc;
+    }, {});
+    const applySort = (mode) => {
+      const cards = [...featureGrid.querySelectorAll(".feature-card[data-feature]")];
+      cards.sort((a, b) => {
+        const aKey = a.dataset.feature || "";
+        const bKey = b.dataset.feature || "";
+        const aOrder = orderByFeature[aKey]?.[mode] ?? 999;
+        const bOrder = orderByFeature[bKey]?.[mode] ?? 999;
+        return aOrder - bOrder;
+      }).forEach((card) => featureGrid.appendChild(card));
+    };
+    applySort("onboarding");
+    ui4.featureSortMode?.addEventListener("change", () => {
+      const mode = ui4.featureSortMode.value === "usage" ? "usage" : "onboarding";
+      applySort(mode);
+    });
   }
   async function initOssIntegrations() {
     try {

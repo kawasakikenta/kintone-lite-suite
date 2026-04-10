@@ -1,6 +1,6 @@
 'use strict';
 
-import { TOOL_ID } from './constants.js';
+import { TOOL_ID, FEATURE_DEFS } from './constants.js';
 
 const TOOL_POPOUT_NAME = 'kintone-unified-suite-v2';
 import { ui as sharedUi } from './state.js';
@@ -234,6 +234,7 @@ export function runKintoneUnifiedSuite(options = {}) {
     featureTitle: $('#u_featureTitle'),
     featureConn: $('#u_featureConn'),
     launcherMenu: $('#u_launcherMenu'),
+    featureSortMode: $('#u_featureSortMode'),
     copyTextToClipboard
   };
 
@@ -301,6 +302,7 @@ export function runKintoneUnifiedSuite(options = {}) {
 
   renderApiTesterHistory();
   initApiTesterEnhancements();
+  setupLauncherFeatureSort(ui);
 
   setStatus('待機中');
 
@@ -310,6 +312,35 @@ export function runKintoneUnifiedSuite(options = {}) {
 
   // --- OSS Integrations: Init JSONEditors + Enhanced Tour ---
   initOssIntegrations();
+}
+
+function setupLauncherFeatureSort(ui) {
+  const featureGrid = ui.launcherMenu?.querySelector('.feature-grid');
+  if (!featureGrid) return;
+  const orderByFeature = FEATURE_DEFS.reduce((acc, def) => {
+    acc[def.key] = {
+      onboarding: Number.isFinite(def.onboardingOrder) ? def.onboardingOrder : 999,
+      usage: Number.isFinite(def.usageOrder) ? def.usageOrder : 999
+    };
+    return acc;
+  }, {});
+  const applySort = (mode) => {
+    const cards = [...featureGrid.querySelectorAll('.feature-card[data-feature]')];
+    cards
+      .sort((a, b) => {
+        const aKey = a.dataset.feature || '';
+        const bKey = b.dataset.feature || '';
+        const aOrder = orderByFeature[aKey]?.[mode] ?? 999;
+        const bOrder = orderByFeature[bKey]?.[mode] ?? 999;
+        return aOrder - bOrder;
+      })
+      .forEach((card) => featureGrid.appendChild(card));
+  };
+  applySort('onboarding');
+  ui.featureSortMode?.addEventListener('change', () => {
+    const mode = ui.featureSortMode.value === 'usage' ? 'usage' : 'onboarding';
+    applySort(mode);
+  });
 }
 
 async function initOssIntegrations() {

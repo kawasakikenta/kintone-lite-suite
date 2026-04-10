@@ -934,6 +934,27 @@
   line-height:var(--line-relaxed);
   color:#64748b;
 }
+#kintone-unified-suite-v2 .launcher-sort{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:8px;
+  margin-top:10px;
+}
+#kintone-unified-suite-v2 .launcher-sort label{
+  font-size:11px;
+  font-weight:700;
+  color:#475569;
+}
+#kintone-unified-suite-v2 .launcher-sort-select{
+  border:1px solid #cbd5e1;
+  border-radius:8px;
+  padding:6px 10px;
+  background:#fff;
+  color:#0f172a;
+  font-size:12px;
+  font-weight:700;
+}
 #kintone-unified-suite-v2 .feature-grid{
   grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
   gap:12px;
@@ -974,6 +995,26 @@
   font-weight:800;
   letter-spacing:-0.02em;
 }
+#kintone-unified-suite-v2 .feature-card-badges{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .feature-badge{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:3px 9px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:800;
+  border:1px solid transparent;
+}
+#kintone-unified-suite-v2 .feature-badge-icon{font-size:11px;line-height:1}
+#kintone-unified-suite-v2 .feature-badge--recommended{background:#ede9fe;border-color:#c4b5fd;color:#5b21b6}
+#kintone-unified-suite-v2 .feature-badge--safe{background:#dcfce7;border-color:#86efac;color:#166534}
+#kintone-unified-suite-v2 .feature-badge--caution{background:#ffedd5;border-color:#fdba74;color:#9a3412}
 #kintone-unified-suite-v2 .feature-card-desc{
   font-size:var(--font-xs);
   line-height:var(--line-relaxed);
