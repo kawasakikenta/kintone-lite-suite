@@ -92,11 +92,22 @@ export function buildRoot(targetDocument = document, options = {}) {
             <div class="step connection-step-banner">共通データ取得 / クイック実行（全タブ共通）</div>
             <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
             <div class="btns connection-step-btns">
-              <button class="btn sub" data-act="prefetchCommonData">共通データ取得（比較元+比較先）</button>
-              <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan">差分比較 → 反映プラン確認</button>
+              <button class="btn sub" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
+              <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較 → 反映プラン確認</button>
             </div>
             <div class="kv" id="u_commonDataState">共通データ未取得</div>
             <div class="muted connection-footnote">共通設定は全タブで使います。推奨: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
+            <table class="state-matrix" aria-label="状態マトリクス">
+              <thead>
+                <tr><th>対象</th><th>通常</th><th>ホバー</th><th>アクティブ</th><th>フォーカス</th><th>無効</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>タブ / サブタブ</td><td>白背景 + 透明マーカー</td><td>背景を薄く強調</td><td>左線 / 下線を常時表示</td><td>水色リング + 外側影</td><td>busy時にopacity低下</td></tr>
+                <tr><td>操作ボタン</td><td>ラベル + 状態バッジ可</td><td>明度を少し上げる</td><td>押下時に1px沈む</td><td>共通リング仕様</td><td>無効時は半透明 + 操作不可</td></tr>
+                <tr><td>feature-card</td><td>上部アクセント線</td><td>左線追加 + 影を強調</td><td>（クリックで画面遷移）</td><td>共通リング仕様</td><td>対象外</td></tr>
+                <tr><td>status--error</td><td>赤系背景 + 左4px線</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
+              </tbody>
+            </table>
             </div>
 
           <div class="launcher-menu" id="u_launcherMenu">
@@ -118,32 +129,32 @@ export function buildRoot(targetDocument = document, options = {}) {
             <div class="tabs">
               <div class="tab-group" data-group="change">
                 <div class="tab-group-lbl">変更・反映</div>
-                <button class="tab active" data-tab="diff">差分比較</button>
-                <button class="tab" data-tab="reflect">プレビュー反映</button>
-                <button class="tab" data-tab="field">フィールド追加</button>
-                <button class="tab" data-tab="jsconfig">JS/CSS設定</button>
+                <button class="tab active" data-tab="diff" data-state="selected">差分比較</button>
+                <button class="tab" data-tab="reflect" data-state="idle">プレビュー反映</button>
+                <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
+                <button class="tab" data-tab="jsconfig" data-state="idle">JS/CSS設定</button>
               </div>
               
               <div class="tab-group" data-group="vis">
                 <div class="tab-group-lbl">可視化・出力</div>
-                <button class="tab" data-tab="er">ER図</button>
-                <button class="tab" data-tab="processFlow">プロセス図</button>
-                <button class="tab" data-tab="design">設計書</button>
-                <button class="tab" data-tab="settingsExport">設定一括取得</button>
+                <button class="tab" data-tab="er" data-state="idle">ER図</button>
+                <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
+                <button class="tab" data-tab="design" data-state="idle">設計書</button>
+                <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
               </div>
               
               <div class="tab-group" data-group="data">
                 <div class="tab-group-lbl">データ・保守</div>
-                <button class="tab" data-tab="recordMgr">レコード管理</button>
-                <button class="tab" data-tab="sql">SQL実行</button>
-                <button class="tab" data-tab="apiTester">APIテスター</button>
+                <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
+                <button class="tab" data-tab="sql" data-state="idle">SQL実行</button>
+                <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
               </div>
             </div>
 
             <div class="pane active" data-pane="diff">
               <div class="subtabs">
-                <button class="subtab active" data-subtab-parent="diff" data-subtab="conditions">比較条件</button>
-                <button class="subtab" data-subtab-parent="diff" data-subtab="view">結果整理</button>
+                <button class="subtab active" data-subtab-parent="diff" data-subtab="conditions" data-state="selected">比較条件</button>
+                <button class="subtab" data-subtab-parent="diff" data-subtab="view" data-state="idle">結果整理</button>
               </div>
               <div class="subpane active" data-subpane-parent="diff" data-subpane="conditions">
                 <div class="subpane-note">上部の<strong>プレビュー比較プリセット</strong>を先に決めてから、比較設定を進めます。<ul><li>手順1: 本番/プレビュー API の組み合わせを選ぶ。</li><li>手順2: 比較セクションと無視キーを調整する。</li><li>手順3: 差分比較を実行し、必要時のみ折りたたみの詳細設定を開く。</li></ul></div>

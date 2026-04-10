@@ -88,7 +88,11 @@ export function switchSubTab(parentKey, subKey, options = {}) {
   if (parentKey === 'reflect' && ui.nodeMode) {
     ui.nodeMode.checked = key === 'node';
   }
-  tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.subtab === key));
+  tabs.forEach((tab) => {
+    const active = tab.dataset.subtab === key;
+    tab.classList.toggle('active', active);
+    tab.dataset.state = active ? 'selected' : 'idle';
+  });
   panes.forEach((pane) => pane.classList.toggle('active', pane.dataset.subpane === key));
   if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
   if (options.persist !== false) saveCurrentDialogState();
@@ -97,7 +101,11 @@ export function switchSubTab(parentKey, subKey, options = {}) {
 export function switchTab(tabKey, options) {
   const key = ui.tabs.some((t) => t.dataset.tab === tabKey) ? tabKey : 'diff';
   state.activeTab = key;
-  ui.tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === key));
+  ui.tabs.forEach((t) => {
+    const active = t.dataset.tab === key;
+    t.classList.toggle('active', active);
+    t.dataset.state = active ? 'selected' : 'idle';
+  });
   ui.panes.forEach((p) => p.classList.toggle('active', p.dataset.pane === key));
   
   const root = getToolDocument().getElementById('kintone-unified-suite-v2');
