@@ -554,10 +554,10 @@ export function buildRoot(targetDocument = document, options = {}) {
 
               <!-- ===== Subpane: sectionPreview ===== -->
               <div class="subpane" data-subpane-parent="reflect" data-subpane="sectionPreview">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">フィールド以外の全セクション（ビュー・レイアウト・権限・通知等）のJSON差分を確認・編集できる汎用エディタです。</div>
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">フィールド以外の全セクションをプレビュー比較しながら、差分確認とJSON編集を行える汎用エディタです。</div>
                 <section class="opt-card" style="display:block;margin:12px">
                   <div class="opt-title">セクション汎用プレビューエディタ</div>
-                  <p class="muted" style="margin:0 0 8px;font-size:12px">セクションを選択して差分を確認・編集し、比較先JSONを調整できます。</p>
+                  <p class="muted" style="margin:0 0 8px;font-size:12px">セクションを選択してプレビュー比較し、差分確認と比較先JSON調整ができます。</p>
                   <div id="u_sectionPreviewEditor" class="section-preview-editor"></div>
                 </section>
               </div>
