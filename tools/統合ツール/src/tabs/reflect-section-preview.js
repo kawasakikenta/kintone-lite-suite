@@ -82,20 +82,164 @@ function computeMapDiff(beforeMap, afterMap) {
   return rows;
 }
 
+const ARRAY_IDENTIFIER_RULES = {
+  layoutSettings: [
+    (item) => item?.id,
+    (item) => item?.code,
+    (item) => item?.name,
+    (item) => item?.status,
+    (item) => {
+      const fields = Array.isArray(item?.fields) ? item.fields.map((f) => f?.code || f?.type || '').filter(Boolean) : [];
+      if (!fields.length) return null;
+      return `${item?.type || 'ROW'}:${fields.join('|')}`;
+    }
+  ],
+  notifications: [
+    (item) => item?.id,
+    (item) => item?.code,
+    (item) => item?.name,
+    (item) => item?.status,
+    (item) => item?.filterCond,
+    (item) => item?.condition
+  ],
+  perRecordNotifications: [
+    (item) => item?.id,
+    (item) => item?.code,
+    (item) => item?.name,
+    (item) => item?.status,
+    (item) => item?.filterCond,
+    (item) => item?.condition
+  ],
+  reminderNotifications: [
+    (item) => item?.id,
+    (item) => item?.code,
+    (item) => item?.name,
+    (item) => item?.status,
+    (item) => item?.condition
+  ]
+};
+
+const DEFAULT_ARRAY_IDENTIFIER_RULES = [
+  (item) => item?.id,
+  (item) => item?.code,
+  (item) => item?.name,
+  (item) => item?.status
+];
+
+function normalizeIdentifierValue(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return null;
+}
+
+function resolveArrayIdentifier(item, sectionKey) {
+  if (!item || typeof item !== 'object') return null;
+  const rules = ARRAY_IDENTIFIER_RULES[sectionKey] || DEFAULT_ARRAY_IDENTIFIER_RULES;
+  for (const getter of rules) {
+    const normalized = normalizeIdentifierValue(getter(item));
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function buildChanges(beforeVal, afterVal) {
+  if (!beforeVal || !afterVal || typeof beforeVal !== 'object' || typeof afterVal !== 'object' || Array.isArray(beforeVal) || Array.isArray(afterVal)) return [];
+  const keys = new Set([...Object.keys(beforeVal), ...Object.keys(afterVal)]);
+  const changes = [];
+  keys.forEach((prop) => {
+    if (!deepEqual(beforeVal[prop], afterVal[prop])) changes.push({ prop, before: beforeVal[prop], after: afterVal[prop] });
+  });
+  return changes;
+}
+
 /** 配列型セクションの差分（要素単位） */
-function computeArrayDiff(beforeArr, afterArr) {
+function computeArrayDiff(beforeArr, afterArr, sectionKey) {
   const bf = Array.isArray(beforeArr) ? beforeArr : [];
   const af = Array.isArray(afterArr) ? afterArr : [];
+
+  const beforeEntries = [];
+  const afterEntries = [];
+  const beforeCount = new Map();
+  const afterCount = new Map();
+  let canUseIdentifier = true;
+
+  for (let i = 0; i < bf.length; i++) {
+    const id = resolveArrayIdentifier(bf[i], sectionKey);
+    if (!id) { canUseIdentifier = false; break; }
+    const next = (beforeCount.get(id) || 0) + 1;
+    beforeCount.set(id, next);
+    beforeEntries.push({ idx: i, item: bf[i], id: next > 1 ? `${id}#${next}` : id });
+  }
+  if (canUseIdentifier) {
+    for (let i = 0; i < af.length; i++) {
+      const id = resolveArrayIdentifier(af[i], sectionKey);
+      if (!id) { canUseIdentifier = false; break; }
+      const next = (afterCount.get(id) || 0) + 1;
+      afterCount.set(id, next);
+      afterEntries.push({ idx: i, item: af[i], id: next > 1 ? `${id}#${next}` : id });
+    }
+  }
+
+  if (canUseIdentifier) {
+    const beforeMap = new Map(beforeEntries.map((entry) => [entry.id, entry]));
+    const afterMap = new Map(afterEntries.map((entry) => [entry.id, entry]));
+    const ids = new Set([...beforeMap.keys(), ...afterMap.keys()]);
+    const rows = [];
+    ids.forEach((id) => {
+      const bEntry = beforeMap.get(id);
+      const aEntry = afterMap.get(id);
+      if (!bEntry && aEntry) {
+        rows.push({ key: id, status: 'added', before: null, after: aEntry.item, changes: [], indexBefore: null, indexAfter: aEntry.idx, identifier: id });
+      } else if (bEntry && !aEntry) {
+        rows.push({ key: id, status: 'removed', before: bEntry.item, after: null, changes: [], indexBefore: bEntry.idx, indexAfter: null, identifier: id });
+      } else if (bEntry && aEntry) {
+        const moved = bEntry.idx !== aEntry.idx;
+        if (!deepEqual(bEntry.item, aEntry.item)) {
+          rows.push({
+            key: id,
+            status: 'modified',
+            before: bEntry.item,
+            after: aEntry.item,
+            changes: buildChanges(bEntry.item, aEntry.item),
+            reordered: moved,
+            indexBefore: bEntry.idx,
+            indexAfter: aEntry.idx,
+            identifier: id
+          });
+        } else {
+          rows.push({
+            key: id,
+            status: moved ? 'reordered' : 'unchanged',
+            before: bEntry.item,
+            after: aEntry.item,
+            changes: [],
+            reordered: moved,
+            indexBefore: bEntry.idx,
+            indexAfter: aEntry.idx,
+            identifier: id
+          });
+        }
+      }
+    });
+    const order = { added: 0, removed: 1, modified: 2, reordered: 3, unchanged: 4 };
+    rows.sort((a, b) => {
+      const statusDiff = (order[a.status] || 9) - (order[b.status] || 9);
+      if (statusDiff !== 0) return statusDiff;
+      return (a.indexAfter ?? a.indexBefore ?? 0) - (b.indexAfter ?? b.indexBefore ?? 0);
+    });
+    return rows;
+  }
+
   const maxLen = Math.max(bf.length, af.length);
   const rows = [];
   for (let i = 0; i < maxLen; i++) {
     const bItem = i < bf.length ? bf[i] : undefined;
     const aItem = i < af.length ? af[i] : undefined;
     const key = `[${i}]`;
-    if (bItem === undefined) rows.push({ key, status: 'added', before: null, after: aItem, changes: [] });
-    else if (aItem === undefined) rows.push({ key, status: 'removed', before: bItem, after: null, changes: [] });
-    else if (!deepEqual(bItem, aItem)) rows.push({ key, status: 'modified', before: bItem, after: aItem, changes: [] });
-    else rows.push({ key, status: 'unchanged', before: bItem, after: aItem, changes: [] });
+    if (bItem === undefined) rows.push({ key, status: 'added', before: null, after: aItem, changes: [], indexBefore: null, indexAfter: i });
+    else if (aItem === undefined) rows.push({ key, status: 'removed', before: bItem, after: null, changes: [], indexBefore: i, indexAfter: null });
+    else if (!deepEqual(bItem, aItem)) rows.push({ key, status: 'modified', before: bItem, after: aItem, changes: buildChanges(bItem, aItem), indexBefore: i, indexAfter: i });
+    else rows.push({ key, status: 'unchanged', before: bItem, after: aItem, changes: [], indexBefore: i, indexAfter: i });
   }
   return rows;
 }
@@ -108,7 +252,7 @@ function computeDiff(before, after, sectionKey) {
     return computeMapDiff(bData, aData);
   }
   if (Array.isArray(bData) || Array.isArray(aData)) {
-    return computeArrayDiff(bData, aData);
+    return computeArrayDiff(bData, aData, sectionKey);
   }
   // オブジェクト全体を1アイテムとして比較
   if (!deepEqual(bData, aData)) {
@@ -127,7 +271,7 @@ function itemLabel(row, sectionKey) {
   return row.key;
 }
 
-const STATUS_LABELS = { added: '追加', removed: '削除', modified: '変更', unchanged: '変更なし' };
+const STATUS_LABELS = { added: '追加', removed: '削除', modified: '変更', reordered: '並び替え', unchanged: '変更なし' };
 const SUPPORTED_PREVIEW_SECTIONS = new Set(['viewSettings', 'layoutSettings', 'processSettings', 'notifications']);
 
 function extractSectionData(bundle, sectionKey) {
@@ -309,8 +453,8 @@ export function initSectionPreviewEditor(ui, setStatus) {
 
     const diff = computeDiff(st.before, st.after, st.sectionKey);
     const rows = st.filter === 'all' ? diff : diff.filter((r) => r.status === st.filter);
-    const stats = { added: 0, removed: 0, modified: 0, unchanged: 0 };
-    diff.forEach((d) => { stats[d.status] += 1; });
+    const stats = { added: 0, removed: 0, modified: 0, reordered: 0, unchanged: 0 };
+    diff.forEach((d) => { stats[d.status] = (stats[d.status] || 0) + 1; });
     const sectionLabel = SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey;
     const isMap = isMapSection(st.sectionKey);
 
@@ -329,7 +473,7 @@ export function initSectionPreviewEditor(ui, setStatus) {
         <button type="button" class="btn ${st.view === 'preview' ? 'ok' : 'sub'}" data-spe-act="viewPreview">プレビュー</button>
       </div>
       <div class="rpp-filters">
-        ${['all', 'added', 'removed', 'modified', 'unchanged'].map((k) => `<button type="button" class="btn sub ${st.filter === k ? 'is-active' : ''}" data-spe-act="filter" data-filter="${k}">${k === 'all' ? `すべて` : STATUS_LABELS[k]} <span>${k === 'all' ? diff.length : stats[k]}</span></button>`).join('')}
+        ${['all', 'added', 'removed', 'modified', 'reordered', 'unchanged'].map((k) => `<button type="button" class="btn sub ${st.filter === k ? 'is-active' : ''}" data-spe-act="filter" data-filter="${k}">${k === 'all' ? `すべて` : STATUS_LABELS[k]} <span>${k === 'all' ? diff.length : stats[k]}</span></button>`).join('')}
       </div>
       <div class="rpp-list">
         ${rows.map((row) => {
@@ -338,10 +482,15 @@ export function initSectionPreviewEditor(ui, setStatus) {
           const canEdit = row.after != null;
           const canRestore = row.after == null && row.before != null;
           const canDelete = row.after != null && isMap;
-          return `<div class="rpp-card"><div class="rpp-head"><button type="button" class="rpp-open" data-spe-act="toggle" data-key="${esc(row.key)}">${opened ? '▾' : '▸'}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.key)}</code><span class="rpp-spacer"></span>${canEdit ? `<button type="button" class="btn sub" data-spe-act="editItem" data-key="${esc(row.key)}">編集</button>` : ''}${canDelete ? `<button type="button" class="btn sub" data-spe-act="deleteItem" data-key="${esc(row.key)}">削除</button>` : ''}${canRestore ? `<button type="button" class="btn sub" data-spe-act="restoreItem" data-key="${esc(row.key)}">復元</button>` : ''}</div>${opened ? `<div class="rpp-body">${st.view === 'preview' ? renderPreviewBody(row) : renderDiffBody(row)}</div>` : ''}</div>`;
+          return `<div class="rpp-card"><div class="rpp-head"><button type="button" class="rpp-open" data-spe-act="toggle" data-key="${esc(row.key)}">${opened ? '▾' : '▸'}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span>${row.reordered && row.status !== 'reordered' ? '<span class="rpp-badge rpp-reordered">並び替え</span>' : ''}<strong>${esc(label)}</strong><code>${esc(row.key)}</code><span class="rpp-spacer"></span>${canEdit ? `<button type="button" class="btn sub" data-spe-act="editItem" data-key="${esc(row.key)}">編集</button>` : ''}${canDelete ? `<button type="button" class="btn sub" data-spe-act="deleteItem" data-key="${esc(row.key)}">削除</button>` : ''}${canRestore ? `<button type="button" class="btn sub" data-spe-act="restoreItem" data-key="${esc(row.key)}">復元</button>` : ''}</div>${opened ? `<div class="rpp-body">${st.view === 'preview' ? renderPreviewBody(row) : renderDiffBody(row)}</div>` : ''}</div>`;
         }).join('') || '<div class="muted" style="padding:12px">差分がありません（同一の内容です）</div>'}
       </div>
       ${renderModal()}`;
+  }
+
+  function findDiffRow(key) {
+    const diff = computeDiff(st.before, st.after, st.sectionKey);
+    return diff.find((row) => row.key === key);
   }
 
   function getAfterItems() {
@@ -374,7 +523,8 @@ export function initSectionPreviewEditor(ui, setStatus) {
             setAfterItems(items);
           } else if (Array.isArray(getAfterItems())) {
             const arr = deepClone(getAfterItems());
-            const idx = parseInt(st.modal.itemKey.replace(/[\[\]]/g, ''), 10);
+            const row = findDiffRow(st.modal.itemKey);
+            const idx = row?.indexAfter;
             if (idx >= 0 && idx < arr.length) arr[idx] = parsed;
             setAfterItems(arr);
           } else {
@@ -462,7 +612,8 @@ export function initSectionPreviewEditor(ui, setStatus) {
         if (isMapSection(st.sectionKey)) {
           item = items?.[key];
         } else if (Array.isArray(items)) {
-          const idx = parseInt(key.replace(/[\[\]]/g, ''), 10);
+          const row = findDiffRow(key);
+          const idx = row?.indexAfter;
           item = items?.[idx];
         } else {
           item = st.after;
@@ -477,7 +628,8 @@ export function initSectionPreviewEditor(ui, setStatus) {
         if (isMapSection(st.sectionKey)) {
           restoreVal = bItems?.[key];
         } else if (Array.isArray(bItems)) {
-          const idx = parseInt(key.replace(/[\[\]]/g, ''), 10);
+          const row = findDiffRow(key);
+          const idx = row?.indexBefore;
           restoreVal = bItems?.[idx];
         }
         if (restoreVal == null) return;
@@ -488,8 +640,9 @@ export function initSectionPreviewEditor(ui, setStatus) {
           setAfterItems(items);
         } else if (Array.isArray(getAfterItems())) {
           const arr = deepClone(getAfterItems());
-          const idx = parseInt(key.replace(/[\[\]]/g, ''), 10);
-          arr.splice(idx, 0, deepClone(restoreVal));
+          const row = findDiffRow(key);
+          const idx = row?.indexAfter ?? row?.indexBefore ?? arr.length;
+          arr.splice(Math.max(0, Math.min(idx, arr.length)), 0, deepClone(restoreVal));
           setAfterItems(arr);
         }
         setStatus(`${key} を復元しました`);
