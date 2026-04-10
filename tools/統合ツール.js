@@ -4935,7 +4935,8 @@ ${contextLine}`);
     switchTab: () => switchTab,
     syncApplyScopesFromSidebar: () => syncApplyScopesFromSidebar,
     syncLookupMapFromRows: () => syncLookupMapFromRows,
-    syncReflectSimpleLayout: () => syncReflectSimpleLayout
+    syncReflectSimpleLayout: () => syncReflectSimpleLayout,
+    updateConnectionStepIndicators: () => updateConnectionStepIndicators
   });
   function setComponentUi(uiRefs) {
     ui3 = uiRefs;
@@ -5006,7 +5007,32 @@ ${contextLine}`);
       }
     }
     if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
+    updateConnectionStepIndicators();
     if (!options || options.persist !== false) saveCurrentDialogState();
+  }
+  function updateConnectionStepIndicators() {
+    const step1 = ui3.step1Indicator;
+    const step2 = ui3.step2Indicator;
+    const step3 = ui3.step3Indicator;
+    if (!step1 && !step2 && !step3) return;
+    const sourceApp = (ui3.sourceApp?.value || "").trim();
+    const targetApp = (ui3.targetApp?.value || "").trim();
+    const hasConnection = !!sourceApp && !!targetApp;
+    const hasCommonData = !!(state.lastSourceBundle || state.importedSourceBundle) && !!(state.lastTargetBundle || state.importedTargetBundle);
+    const currentStep = !hasConnection ? 1 : state.activeTab === "diff" || state.activeTab === "reflect" ? 2 : 3;
+    if (step1) {
+      step1.textContent = hasConnection ? "入力済み" : "未入力";
+      step1.dataset.stepState = currentStep === 1 ? "current" : hasConnection ? "done" : "pending";
+    }
+    if (step2) {
+      step2.textContent = hasCommonData ? "取得済み" : "未取得";
+      step2.dataset.stepState = currentStep === 2 ? "current" : hasCommonData ? "done" : "pending";
+    }
+    if (step3) {
+      const featureSelected = currentStep === 3;
+      step3.textContent = featureSelected ? "選択中" : "未選択";
+      step3.dataset.stepState = featureSelected ? "current" : "pending";
+    }
   }
   function diffScopeTooltip(s) {
     let t = `API ${s.endpoint} の設定を比較・取得の対象に含めます。`;
@@ -5178,6 +5204,7 @@ ${contextLine}`);
       const diffInfo = state.lastDiffAt ? `差分: ${fmtFetchTime(state.lastDiffAt)} (差分 ${countActualDiffRows(state.lastDiffRows)}件 / 同一 ${diffSummary.same}件 / 取得失敗 ${state.lastFetchIssues.length}件)` : "差分: 未実行";
       ui3.commonDataState.textContent = `${sourceText} / ${targetText} / ${diffInfo}`;
     }
+    updateConnectionStepIndicators();
     renderDiffSelectionState2();
     renderReflectAssistPanel();
   }
@@ -9360,14 +9387,13 @@ ${contextLine}`);
 /* 比較先が不要なタブ（er, processFlow, sql）では比較先入力欄を隠す */
 #kintone-unified-suite-v2:not(.tab-needs-target) .conn-target { display: none !important; }
 
-/* 「よく使う操作」等の差分/反映専用UIは該当タブ以外で隠す */
+/* 差分/反映専用UIは該当タブ以外で隠す */
 #kintone-unified-suite-v2:not(.tab-needs-connection-actions) .connection-section--actions,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .diff-fold--lookup,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-step-banner,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-step-desc,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-step-btns,
+#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--step2 .connection-step-desc,
+#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--step2 .connection-step-btns,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) #u_commonDataState,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-footnote {
+#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--step2 .connection-footnote {
   display: none !important;
 }
 
@@ -9920,17 +9946,50 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .connection-section-lead{
   margin:0 0 12px;font-size:12px;line-height:1.6;color:#64748b;
 }
+#kintone-unified-suite-v2 .connection-lookup-note{
+  margin:-4px 0 12px;
+}
 #kintone-unified-suite-v2 .connection-section{
-  margin-top:14px;padding-top:14px;border-top:1px solid #e8eef5;
+  margin-top:22px;padding-top:18px;border-top:1px solid #e8eef5;
 }
 #kintone-unified-suite-v2 .connection-section:first-of-type{
   margin-top:0;padding-top:0;border-top:none;
 }
 #kintone-unified-suite-v2 .connection-grid{gap:10px 12px}
 #kintone-unified-suite-v2 .connection-section--actions .connection-quick-btns{margin-top:0}
-#kintone-unified-suite-v2 .connection-step-banner{margin-top:14px}
-#kintone-unified-suite-v2 .connection-step-desc{margin:8px 0 10px;font-size:12px}
-#kintone-unified-suite-v2 .connection-step-btns{margin-top:0;gap:10px}
+#kintone-unified-suite-v2 .connection-step-banner{
+  margin-top:0;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+#kintone-unified-suite-v2 .connection-step-title{
+  font-size:13px;
+  font-weight:800;
+  color:#0f172a;
+}
+#kintone-unified-suite-v2 .connection-step-indicator{
+  font-size:11px;
+  font-weight:700;
+  border-radius:999px;
+  padding:2px 9px;
+  border:1px solid #cbd5e1;
+  color:#475569;
+  background:#f8fafc;
+}
+#kintone-unified-suite-v2 .connection-step-indicator[data-step-state="done"]{
+  border-color:#86efac;
+  color:#166534;
+  background:#f0fdf4;
+}
+#kintone-unified-suite-v2 .connection-step-indicator[data-step-state="current"]{
+  border-color:#7dd3fc;
+  color:#0c4a6e;
+  background:#f0f9ff;
+}
+#kintone-unified-suite-v2 .connection-step-desc{margin:10px 0 12px;font-size:12px}
+#kintone-unified-suite-v2 .connection-step-btns{margin-top:0;gap:12px}
 #kintone-unified-suite-v2 .btn-primary-emphasis{
   background:linear-gradient(180deg,#0284c7,#0369a1)!important;
   box-shadow:0 2px 10px rgba(14,165,233,.35)!important;
@@ -9938,6 +9997,14 @@ ${contextLine}`);
   font-size:13px!important;
 }
 #kintone-unified-suite-v2 .btn-primary-emphasis:hover{filter:brightness(1.06)}
+#kintone-unified-suite-v2 .connection-secondary-cta,
+#kintone-unified-suite-v2 .connection-secondary-action{
+  background:#f8fafc!important;
+  border-color:#dbe3ee!important;
+  color:#334155!important;
+  font-size:12px!important;
+  padding:7px 11px!important;
+}
 #kintone-unified-suite-v2 .connection-footnote{margin-top:10px;font-size:11px;line-height:1.6}
 #kintone-unified-suite-v2 .h-actions .x{
   min-height:36px;min-width:36px;padding:8px 12px;display:inline-flex;align-items:center;justify-content:center;
@@ -10168,9 +10235,13 @@ ${contextLine}`);
         </div>
         <div class="body">
           <div class="card common-card" id="u_connectionPanel">
-            <section class="connection-section connection-section--app-inputs" aria-labelledby="conn-app-heading">
-              <h3 class="connection-section-title" id="conn-app-heading">アプリとゲスト</h3>
+            <section class="connection-section connection-section--step1 connection-section--app-inputs" aria-labelledby="conn-app-heading">
+              <div class="connection-step-banner">
+                <span class="connection-step-title" id="conn-app-heading">Step 1 接続設定</span>
+                <span class="connection-step-indicator" id="u_step1Indicator" data-step-state="pending">未入力</span>
+              </div>
               <p class="connection-section-lead" id="u_connectionLead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
+              <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
               <div class="conn-source">
                 <label for="u_sourceApp">比較元アプリID</label>
@@ -10189,21 +10260,10 @@ ${contextLine}`);
                 <input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
             </div>
-            </section>
-            <input type="checkbox" id="u_sourcePreview" style="display:none">
-            <input type="checkbox" id="u_targetPreview" checked style="display:none">
-            <section class="connection-section connection-section--actions" aria-labelledby="conn-quick-heading">
-              <h3 class="connection-section-title" id="conn-quick-heading">よく使う操作</h3>
-              <div class="btns connection-quick-btns">
-              <button type="button" class="btn sub" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
-              <button type="button" class="btn sub" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
-              <button type="button" class="btn sub" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
-            </div>
-            </section>
             <details class="diff-fold diff-fold--lookup">
               <summary class="diff-fold-summary">
                 <span class="diff-fold-title">ルックアップ参照先アプリID変換（任意）</span>
-                <span class="diff-fold-sub">環境間で参照先アプリIDが違うときのみ開いてください</span>
+                <span class="diff-fold-sub">初期は閉じた状態</span>
               </summary>
               <div class="diff-fold-body">
               <div class="muted" style="margin-bottom:4px;line-height:1.6">ルックアップフィールドを反映する際、参照先アプリIDを自動変換します。開発→本番など環境間でアプリIDが異なる場合に設定してください。</div>
@@ -10214,14 +10274,34 @@ ${contextLine}`);
               <input type="hidden" id="u_lookupMap">
               </div>
             </details>
-            <div class="step connection-step-banner">共通データ取得 / クイック実行（全タブ共通）</div>
-            <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
-            <div class="btns connection-step-btns">
-              <button class="btn sub" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
-              <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較 → 反映プラン確認</button>
-            </div>
-            <div class="kv" id="u_commonDataState">共通データ未取得</div>
-            <div class="muted connection-footnote">共通設定は全タブで使います。推奨: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
+            </section>
+            <input type="checkbox" id="u_sourcePreview" style="display:none">
+            <input type="checkbox" id="u_targetPreview" checked style="display:none">
+            <section class="connection-section connection-section--step2 connection-section--actions" aria-labelledby="conn-common-heading">
+              <div class="connection-step-banner">
+                <span class="connection-step-title" id="conn-common-heading">Step 2 共通データ取得</span>
+                <span class="connection-step-indicator" id="u_step2Indicator" data-step-state="pending">未取得</span>
+              </div>
+              <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
+              <div class="btns connection-step-btns">
+                <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較 → 反映プラン確認</button>
+                <button class="btn sub connection-secondary-cta" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
+              </div>
+              <div class="kv" id="u_commonDataState">共通データ未取得</div>
+              <div class="muted connection-footnote">共通設定は全タブで使います。推奨: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
+            </section>
+            <section class="connection-section connection-section--step3 connection-section--actions" aria-labelledby="conn-feature-heading">
+              <div class="connection-step-banner">
+                <span class="connection-step-title" id="conn-feature-heading">Step 3 機能選択</span>
+                <span class="connection-step-indicator" id="u_step3Indicator" data-step-state="pending">未選択</span>
+              </div>
+              <p class="muted connection-step-desc">下の「作業メニュー」カードから機能を選択し、必要時のみ補助操作を使って接続情報を調整します。</p>
+              <div class="btns connection-step-btns connection-quick-btns">
+                <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
+                <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
+                <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
+              </div>
+            </section>
             <table class="state-matrix" aria-label="状態マトリクス">
               <thead>
                 <tr><th>対象</th><th>通常</th><th>ホバー</th><th>アクティブ</th><th>フォーカス</th><th>無効</th></tr>
@@ -13764,7 +13844,10 @@ ${contextLine}`);
     });
     [ui.sourceApp, ui.sourceGuest, ui.targetApp, ui.targetGuest].forEach((el) => {
       if (!el) return;
-      el.addEventListener("change", saveCurrentDialogState2);
+      el.addEventListener("change", () => {
+        saveCurrentDialogState2();
+        updateConnectionStepIndicators();
+      });
     });
     if (ui.charDiff) {
       ui.charDiff.addEventListener("change", () => {
@@ -14274,6 +14357,7 @@ ${contextLine}`);
       if (act === "setSourceCurrent") {
         ui.sourceApp.value = DEFAULT_APP_ID;
         saveCurrentDialogState2();
+        updateConnectionStepIndicators();
         setStatus(`比較元アプリIDを現在アプリ(${DEFAULT_APP_ID})に設定しました`);
         return;
       }
@@ -18435,6 +18519,9 @@ ${safety.hash}`, "");
       diffMultiTargets: $("#u_diffMultiTargets"),
       diffMultiTargetResult: $("#u_diffMultiTargetResult"),
       commonDataState: $("#u_commonDataState"),
+      step1Indicator: $("#u_step1Indicator"),
+      step2Indicator: $("#u_step2Indicator"),
+      step3Indicator: $("#u_step3Indicator"),
       charDiff: $("#u_charDiff"),
       diffIncludeSame: $("#u_diffIncludeSame"),
       diffThemeBtn: $("#u_diffThemeBtn"),

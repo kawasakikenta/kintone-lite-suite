@@ -34,7 +34,8 @@ import {
   renderLookupMapRows,
   syncLookupMapFromRows,
   setSettingsExportScopeSelection,
-  syncApplyScopesFromSidebar
+  syncApplyScopesFromSidebar,
+  updateConnectionStepIndicators
 } from './ui/components.js';
 import {
   fitDialogToViewport,
@@ -357,7 +358,10 @@ export function setupEventHandlers(injected = {}) {
 
   [ui.sourceApp, ui.sourceGuest, ui.targetApp, ui.targetGuest].forEach((el) => {
     if (!el) return;
-    el.addEventListener('change', saveCurrentDialogState);
+    el.addEventListener('change', () => {
+      saveCurrentDialogState();
+      updateConnectionStepIndicators();
+    });
   });
 
   if (ui.charDiff) {
@@ -935,6 +939,7 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'setSourceCurrent') {
       ui.sourceApp.value = DEFAULT_APP_ID;
       saveCurrentDialogState();
+      updateConnectionStepIndicators();
       setStatus(`比較元アプリIDを現在アプリ(${DEFAULT_APP_ID})に設定しました`);
       return;
     }

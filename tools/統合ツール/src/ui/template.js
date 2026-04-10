@@ -43,9 +43,13 @@ export function buildRoot(targetDocument = document, options = {}) {
         </div>
         <div class="body">
           <div class="card common-card" id="u_connectionPanel">
-            <section class="connection-section connection-section--app-inputs" aria-labelledby="conn-app-heading">
-              <h3 class="connection-section-title" id="conn-app-heading">アプリとゲスト</h3>
+            <section class="connection-section connection-section--step1 connection-section--app-inputs" aria-labelledby="conn-app-heading">
+              <div class="connection-step-banner">
+                <span class="connection-step-title" id="conn-app-heading">Step 1 接続設定</span>
+                <span class="connection-step-indicator" id="u_step1Indicator" data-step-state="pending">未入力</span>
+              </div>
               <p class="connection-section-lead" id="u_connectionLead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
+              <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
               <div class="conn-source">
                 <label for="u_sourceApp">比較元アプリID</label>
@@ -64,21 +68,10 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
             </div>
-            </section>
-            <input type="checkbox" id="u_sourcePreview" style="display:none">
-            <input type="checkbox" id="u_targetPreview" checked style="display:none">
-            <section class="connection-section connection-section--actions" aria-labelledby="conn-quick-heading">
-              <h3 class="connection-section-title" id="conn-quick-heading">よく使う操作</h3>
-              <div class="btns connection-quick-btns">
-              <button type="button" class="btn sub" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
-              <button type="button" class="btn sub" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
-              <button type="button" class="btn sub" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
-            </div>
-            </section>
             <details class="diff-fold diff-fold--lookup">
               <summary class="diff-fold-summary">
                 <span class="diff-fold-title">ルックアップ参照先アプリID変換（任意）</span>
-                <span class="diff-fold-sub">環境間で参照先アプリIDが違うときのみ開いてください</span>
+                <span class="diff-fold-sub">初期は閉じた状態</span>
               </summary>
               <div class="diff-fold-body">
               <div class="muted" style="margin-bottom:4px;line-height:1.6">ルックアップフィールドを反映する際、参照先アプリIDを自動変換します。開発→本番など環境間でアプリIDが異なる場合に設定してください。</div>
@@ -89,14 +82,34 @@ export function buildRoot(targetDocument = document, options = {}) {
               <input type="hidden" id="u_lookupMap">
               </div>
             </details>
-            <div class="step connection-step-banner">共通データ取得 / クイック実行（全タブ共通）</div>
-            <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
-            <div class="btns connection-step-btns">
-              <button class="btn sub" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
-              <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較 → 反映プラン確認</button>
-            </div>
-            <div class="kv" id="u_commonDataState">共通データ未取得</div>
-            <div class="muted connection-footnote">共通設定は全タブで使います。推奨: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
+            </section>
+            <input type="checkbox" id="u_sourcePreview" style="display:none">
+            <input type="checkbox" id="u_targetPreview" checked style="display:none">
+            <section class="connection-section connection-section--step2 connection-section--actions" aria-labelledby="conn-common-heading">
+              <div class="connection-step-banner">
+                <span class="connection-step-title" id="conn-common-heading">Step 2 共通データ取得</span>
+                <span class="connection-step-indicator" id="u_step2Indicator" data-step-state="pending">未取得</span>
+              </div>
+              <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
+              <div class="btns connection-step-btns">
+                <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較 → 反映プラン確認</button>
+                <button class="btn sub connection-secondary-cta" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
+              </div>
+              <div class="kv" id="u_commonDataState">共通データ未取得</div>
+              <div class="muted connection-footnote">共通設定は全タブで使います。推奨: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
+            </section>
+            <section class="connection-section connection-section--step3 connection-section--actions" aria-labelledby="conn-feature-heading">
+              <div class="connection-step-banner">
+                <span class="connection-step-title" id="conn-feature-heading">Step 3 機能選択</span>
+                <span class="connection-step-indicator" id="u_step3Indicator" data-step-state="pending">未選択</span>
+              </div>
+              <p class="muted connection-step-desc">下の「作業メニュー」カードから機能を選択し、必要時のみ補助操作を使って接続情報を調整します。</p>
+              <div class="btns connection-step-btns connection-quick-btns">
+                <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
+                <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
+                <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
+              </div>
+            </section>
             <table class="state-matrix" aria-label="状態マトリクス">
               <thead>
                 <tr><th>対象</th><th>通常</th><th>ホバー</th><th>アクティブ</th><th>フォーカス</th><th>無効</th></tr>
