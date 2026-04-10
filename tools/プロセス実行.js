@@ -302,24 +302,94 @@ ${contextLine}`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
-  async function apiGet(prefix, path, params, retries = 3) {
+  function normalizeApiGetOptions(optionsOrRetries) {
+    if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
+    if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
+    return optionsOrRetries;
+  }
+  function resolveHttpStatus(error) {
+    const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const text = String(error?.message || "");
+    const matched = text.match(/\b([45]\d{2})\b/);
+    return matched ? Number(matched[1]) : 0;
+  }
+  function isRetriableApiError(error) {
+    if (!error) return false;
+    const status = resolveHttpStatus(error);
+    if (RETRIABLE_STATUS_CODES.has(status)) return true;
+    const code = String(error?.code || "").toUpperCase();
+    if (code && (code.includes("NETWORK") || code.includes("TIMEOUT") || code === "ECONNRESET")) return true;
+    const message = String(error?.message || "").toLowerCase();
+    return message.includes("network") || message.includes("timeout");
+  }
+  function computeRetryDelayMs(attempt, baseDelayMs, maxDelayMs) {
+    const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
+    const jitter = Math.random() * Math.min(200, baseDelayMs);
+    return Math.round(expDelay + jitter);
+  }
+  function touchApiPathMetric(path, field) {
+    const key = String(path || "");
+    const row2 = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
+    row2[field] += 1;
+    apiGetMetrics.byPath[key] = row2;
+    return row2;
+  }
+  async function apiGet(prefix, path, params, optionsOrRetries) {
+    const options = normalizeApiGetOptions(optionsOrRetries);
+    const retries = Number.isFinite(options.retries) ? Math.max(1, Number(options.retries)) : DEFAULT_API_GET_RETRIES;
+    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? Math.max(1, Number(options.baseDelayMs)) : DEFAULT_RETRY_BASE_DELAY_MS;
+    const maxDelayMs = Number.isFinite(options.maxDelayMs) ? Math.max(baseDelayMs, Number(options.maxDelayMs)) : DEFAULT_RETRY_MAX_DELAY_MS;
     let err;
+    const startAt = Date.now();
+    apiGetMetrics.calls += 1;
+    touchApiPathMetric(path, "calls");
     for (let i = 0; i < retries; i++) {
       try {
-        return await kintone.api(`${prefix}${path}`, "GET", params);
+        const res = await kintone.api(`${prefix}${path}`, "GET", params);
+        apiGetMetrics.lastLatencyMs = Date.now() - startAt;
+        apiGetMetrics.lastError = "";
+        return res;
       } catch (e) {
         err = e;
-        if (i < retries - 1) await new Promise((r) => setTimeout(r, (i + 1) * 700));
+        const retriable = isRetriableApiError(e);
+        if (i < retries - 1 && retriable) {
+          apiGetMetrics.retries += 1;
+          touchApiPathMetric(path, "retries");
+          const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
       }
     }
+    apiGetMetrics.failures += 1;
+    const pathMetric = touchApiPathMetric(path, "failures");
+    const lastError = err?.message || String(err);
+    pathMetric.lastError = lastError;
+    apiGetMetrics.lastError = lastError;
+    apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
   var init_api = __esm({
     "src/api.js"() {
       "use strict";
       init_constants();
       init_utils();
       init_state();
+      DEFAULT_API_GET_RETRIES = 3;
+      DEFAULT_RETRY_BASE_DELAY_MS = 500;
+      DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+      RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+      apiGetMetrics = {
+        calls: 0,
+        retries: 0,
+        failures: 0,
+        lastLatencyMs: 0,
+        lastError: "",
+        byPath: {}
+      };
     }
   });
 
