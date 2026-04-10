@@ -4969,7 +4969,11 @@ ${contextLine}`);
     if (parentKey === "reflect" && ui3.nodeMode) {
       ui3.nodeMode.checked = key === "node";
     }
-    tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.subtab === key));
+    tabs.forEach((tab) => {
+      const active = tab.dataset.subtab === key;
+      tab.classList.toggle("active", active);
+      tab.dataset.state = active ? "selected" : "idle";
+    });
     panes.forEach((pane) => pane.classList.toggle("active", pane.dataset.subpane === key));
     if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
     if (options.persist !== false) saveCurrentDialogState();
@@ -4977,7 +4981,11 @@ ${contextLine}`);
   function switchTab(tabKey, options) {
     const key = ui3.tabs.some((t) => t.dataset.tab === tabKey) ? tabKey : "diff";
     state.activeTab = key;
-    ui3.tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === key));
+    ui3.tabs.forEach((t) => {
+      const active = t.dataset.tab === key;
+      t.classList.toggle("active", active);
+      t.dataset.state = active ? "selected" : "idle";
+    });
     ui3.panes.forEach((p) => p.classList.toggle("active", p.dataset.pane === key));
     const root2 = getToolDocument().getElementById("kintone-unified-suite-v2");
     if (root2) {
@@ -9624,6 +9632,7 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .tab{
   border:1px solid transparent;
   background:#fff;
+  border-left:3px solid transparent;
   border-radius:8px;
   padding:8px 12px;
   font-size:12px;
@@ -9634,8 +9643,12 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .tab.active{
   background:linear-gradient(180deg,#0ea5e9,#0284c7);
   border-color:#0369a1;
+  border-left-color:#bae6fd;
   color:#fff;
   box-shadow:0 2px 8px rgba(14,165,233,.35);
+  text-decoration:underline;
+  text-decoration-thickness:2px;
+  text-underline-offset:3px;
 }
 #kintone-unified-suite-v2 .subtabs{
   margin:10px 0 14px;
@@ -9647,13 +9660,18 @@ ${contextLine}`);
 }
 #kintone-unified-suite-v2 .subtab{
   border:1px solid #e2e8f0;
+  border-bottom:2px solid transparent;
   padding:7px 14px;
   font-size:12px;
 }
 #kintone-unified-suite-v2 .subtab.active{
   background:#0f172a;
   border-color:#0f172a;
+  border-bottom-color:#67e8f9;
   color:#fff;
+  text-decoration:underline;
+  text-decoration-thickness:2px;
+  text-underline-offset:3px;
 }
 #kintone-unified-suite-v2 .btn{
   border:none;
@@ -9669,6 +9687,30 @@ ${contextLine}`);
   color:#334155;
   border:1px solid #cbd5e1;
   box-shadow:0 1px 2px rgba(15,23,42,.04);
+}
+#kintone-unified-suite-v2 .btn[data-state]::before{
+  content:attr(data-state);
+  display:inline-block;
+  margin-right:6px;
+  padding:1px 6px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.02em;
+  border:1px solid rgba(255,255,255,.45);
+  background:rgba(255,255,255,.18);
+}
+#kintone-unified-suite-v2 .btn[data-state="推奨"]::before{
+  border-color:#a3e635;
+  background:rgba(163,230,53,.18);
+}
+#kintone-unified-suite-v2 .btn[data-state="選択中"]::before{
+  border-color:#93c5fd;
+  background:rgba(147,197,253,.2);
+}
+#kintone-unified-suite-v2 .btn[data-state="実行済み"]::before{
+  border-color:#86efac;
+  background:rgba(134,239,172,.2);
 }
 #kintone-unified-suite-v2 .btn.sub:hover{filter:none;background:#e2e8f0}
 #kintone-unified-suite-v2 .btn.ok{
@@ -9776,6 +9818,8 @@ ${contextLine}`);
   border-color:#7dd3fc;
   box-shadow:0 8px 24px rgba(14,165,233,.12);
   transform:translateY(-1px);
+  border-style:solid;
+  border-width:1px 1px 1px 4px;
 }
 #kintone-unified-suite-v2 .feature-card-label{
   font-size:14px;
@@ -9838,12 +9882,21 @@ ${contextLine}`);
 #kintone-unified-suite-v2 button:focus-visible,
 #kintone-unified-suite-v2 .tab:focus-visible,
 #kintone-unified-suite-v2 .subtab:focus-visible,
+#kintone-unified-suite-v2 .feature-card:focus-visible,
 #kintone-unified-suite-v2 input:focus-visible,
 #kintone-unified-suite-v2 select:focus-visible,
 #kintone-unified-suite-v2 textarea:focus-visible,
 #kintone-unified-suite-v2 summary.diff-fold-summary:focus-visible{
   outline:2px solid #0ea5e9;
   outline-offset:2px;
+  box-shadow:0 0 0 4px rgba(14,165,233,.28);
+  border-radius:8px;
+}
+#kintone-unified-suite-v2 .tab:focus-visible,
+#kintone-unified-suite-v2 .subtab:focus-visible,
+#kintone-unified-suite-v2 .feature-card:focus-visible{
+  position:relative;
+  z-index:1;
 }
 
 
@@ -9899,6 +9952,8 @@ ${contextLine}`);
 }
 #kintone-unified-suite-v2 .status--error{
   background:linear-gradient(180deg,#fef2f2,#fee2e2);color:#7f1d1d;border:1px solid #fecaca;
+  border-left-width:4px;
+  font-weight:700;
 }
 #kintone-unified-suite-v2 .status-copy-btn{align-self:center;flex-shrink:0}
 #kintone-unified-suite-v2 .result-card{
@@ -9929,6 +9984,22 @@ ${contextLine}`);
 #kintone-unified-suite-v2 #u_result:empty::before{
   content:"まだ結果はありません。差分比較の実行や、各タブの操作後にここに表示されます。";
   max-width:36ch;padding:8px;
+}
+#kintone-unified-suite-v2 .state-matrix{
+  width:100%;
+  margin-top:10px;
+  border-collapse:collapse;
+  font-size:11px;
+}
+#kintone-unified-suite-v2 .state-matrix th,
+#kintone-unified-suite-v2 .state-matrix td{
+  border:1px solid #dbe3ed;
+  padding:6px 8px;
+  vertical-align:top;
+}
+#kintone-unified-suite-v2 .state-matrix th{
+  background:#f8fafc;
+  font-weight:700;
 }
 #kintone-unified-suite-v2.screen-feature .body{gap:14px}
 #kintone-unified-suite-v2 .tabs{row-gap:10px}
@@ -10138,11 +10209,22 @@ ${contextLine}`);
             <div class="step connection-step-banner">共通データ取得 / クイック実行（全タブ共通）</div>
             <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
             <div class="btns connection-step-btns">
-              <button class="btn sub" data-act="prefetchCommonData">共通データ取得（比較元+比較先）</button>
-              <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan">差分比較 → 反映プラン確認</button>
+              <button class="btn sub" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
+              <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較 → 反映プラン確認</button>
             </div>
             <div class="kv" id="u_commonDataState">共通データ未取得</div>
             <div class="muted connection-footnote">共通設定は全タブで使います。推奨: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
+            <table class="state-matrix" aria-label="状態マトリクス">
+              <thead>
+                <tr><th>対象</th><th>通常</th><th>ホバー</th><th>アクティブ</th><th>フォーカス</th><th>無効</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>タブ / サブタブ</td><td>白背景 + 透明マーカー</td><td>背景を薄く強調</td><td>左線 / 下線を常時表示</td><td>水色リング + 外側影</td><td>busy時にopacity低下</td></tr>
+                <tr><td>操作ボタン</td><td>ラベル + 状態バッジ可</td><td>明度を少し上げる</td><td>押下時に1px沈む</td><td>共通リング仕様</td><td>無効時は半透明 + 操作不可</td></tr>
+                <tr><td>feature-card</td><td>上部アクセント線</td><td>左線追加 + 影を強調</td><td>（クリックで画面遷移）</td><td>共通リング仕様</td><td>対象外</td></tr>
+                <tr><td>status--error</td><td>赤系背景 + 左4px線</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
+              </tbody>
+            </table>
             </div>
 
           <div class="launcher-menu" id="u_launcherMenu">
@@ -10164,32 +10246,32 @@ ${contextLine}`);
             <div class="tabs">
               <div class="tab-group" data-group="change">
                 <div class="tab-group-lbl">変更・反映</div>
-                <button class="tab active" data-tab="diff">差分比較</button>
-                <button class="tab" data-tab="reflect">プレビュー反映</button>
-                <button class="tab" data-tab="field">フィールド追加</button>
-                <button class="tab" data-tab="jsconfig">JS/CSS設定</button>
+                <button class="tab active" data-tab="diff" data-state="selected">差分比較</button>
+                <button class="tab" data-tab="reflect" data-state="idle">プレビュー反映</button>
+                <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
+                <button class="tab" data-tab="jsconfig" data-state="idle">JS/CSS設定</button>
               </div>
               
               <div class="tab-group" data-group="vis">
                 <div class="tab-group-lbl">可視化・出力</div>
-                <button class="tab" data-tab="er">ER図</button>
-                <button class="tab" data-tab="processFlow">プロセス図</button>
-                <button class="tab" data-tab="design">設計書</button>
-                <button class="tab" data-tab="settingsExport">設定一括取得</button>
+                <button class="tab" data-tab="er" data-state="idle">ER図</button>
+                <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
+                <button class="tab" data-tab="design" data-state="idle">設計書</button>
+                <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
               </div>
               
               <div class="tab-group" data-group="data">
                 <div class="tab-group-lbl">データ・保守</div>
-                <button class="tab" data-tab="recordMgr">レコード管理</button>
-                <button class="tab" data-tab="sql">SQL実行</button>
-                <button class="tab" data-tab="apiTester">APIテスター</button>
+                <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
+                <button class="tab" data-tab="sql" data-state="idle">SQL実行</button>
+                <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
               </div>
             </div>
 
             <div class="pane active" data-pane="diff">
               <div class="subtabs">
-                <button class="subtab active" data-subtab-parent="diff" data-subtab="conditions">比較条件</button>
-                <button class="subtab" data-subtab-parent="diff" data-subtab="view">結果整理</button>
+                <button class="subtab active" data-subtab-parent="diff" data-subtab="conditions" data-state="selected">比較条件</button>
+                <button class="subtab" data-subtab-parent="diff" data-subtab="view" data-state="idle">結果整理</button>
               </div>
               <div class="subpane active" data-subpane-parent="diff" data-subpane="conditions">
                 <div class="subpane-note">上部の<strong>プレビュー比較プリセット</strong>で本番/プレビューAPIの組み合わせを決めてから、セクションと実行操作を進めます。細かいオプションは折りたたみにあります。</div>

@@ -777,6 +777,7 @@
 #kintone-unified-suite-v2 .tab{
   border:1px solid transparent;
   background:#fff;
+  border-left:3px solid transparent;
   border-radius:8px;
   padding:8px 12px;
   font-size:12px;
@@ -787,8 +788,12 @@
 #kintone-unified-suite-v2 .tab.active{
   background:linear-gradient(180deg,#0ea5e9,#0284c7);
   border-color:#0369a1;
+  border-left-color:#bae6fd;
   color:#fff;
   box-shadow:0 2px 8px rgba(14,165,233,.35);
+  text-decoration:underline;
+  text-decoration-thickness:2px;
+  text-underline-offset:3px;
 }
 #kintone-unified-suite-v2 .subtabs{
   margin:10px 0 14px;
@@ -800,13 +805,18 @@
 }
 #kintone-unified-suite-v2 .subtab{
   border:1px solid #e2e8f0;
+  border-bottom:2px solid transparent;
   padding:7px 14px;
   font-size:12px;
 }
 #kintone-unified-suite-v2 .subtab.active{
   background:#0f172a;
   border-color:#0f172a;
+  border-bottom-color:#67e8f9;
   color:#fff;
+  text-decoration:underline;
+  text-decoration-thickness:2px;
+  text-underline-offset:3px;
 }
 #kintone-unified-suite-v2 .btn{
   border:none;
@@ -822,6 +832,30 @@
   color:#334155;
   border:1px solid #cbd5e1;
   box-shadow:0 1px 2px rgba(15,23,42,.04);
+}
+#kintone-unified-suite-v2 .btn[data-state]::before{
+  content:attr(data-state);
+  display:inline-block;
+  margin-right:6px;
+  padding:1px 6px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.02em;
+  border:1px solid rgba(255,255,255,.45);
+  background:rgba(255,255,255,.18);
+}
+#kintone-unified-suite-v2 .btn[data-state="推奨"]::before{
+  border-color:#a3e635;
+  background:rgba(163,230,53,.18);
+}
+#kintone-unified-suite-v2 .btn[data-state="選択中"]::before{
+  border-color:#93c5fd;
+  background:rgba(147,197,253,.2);
+}
+#kintone-unified-suite-v2 .btn[data-state="実行済み"]::before{
+  border-color:#86efac;
+  background:rgba(134,239,172,.2);
 }
 #kintone-unified-suite-v2 .btn.sub:hover{filter:none;background:#e2e8f0}
 #kintone-unified-suite-v2 .btn.ok{
@@ -929,6 +963,8 @@
   border-color:#7dd3fc;
   box-shadow:0 8px 24px rgba(14,165,233,.12);
   transform:translateY(-1px);
+  border-style:solid;
+  border-width:1px 1px 1px 4px;
 }
 #kintone-unified-suite-v2 .feature-card-label{
   font-size:14px;
@@ -991,12 +1027,21 @@
 #kintone-unified-suite-v2 button:focus-visible,
 #kintone-unified-suite-v2 .tab:focus-visible,
 #kintone-unified-suite-v2 .subtab:focus-visible,
+#kintone-unified-suite-v2 .feature-card:focus-visible,
 #kintone-unified-suite-v2 input:focus-visible,
 #kintone-unified-suite-v2 select:focus-visible,
 #kintone-unified-suite-v2 textarea:focus-visible,
 #kintone-unified-suite-v2 summary.diff-fold-summary:focus-visible{
   outline:2px solid #0ea5e9;
   outline-offset:2px;
+  box-shadow:0 0 0 4px rgba(14,165,233,.28);
+  border-radius:8px;
+}
+#kintone-unified-suite-v2 .tab:focus-visible,
+#kintone-unified-suite-v2 .subtab:focus-visible,
+#kintone-unified-suite-v2 .feature-card:focus-visible{
+  position:relative;
+  z-index:1;
 }
 
 
@@ -1052,6 +1097,8 @@
 }
 #kintone-unified-suite-v2 .status--error{
   background:linear-gradient(180deg,#fef2f2,#fee2e2);color:#7f1d1d;border:1px solid #fecaca;
+  border-left-width:4px;
+  font-weight:700;
 }
 #kintone-unified-suite-v2 .status-copy-btn{align-self:center;flex-shrink:0}
 #kintone-unified-suite-v2 .result-card{
@@ -1082,6 +1129,22 @@
 #kintone-unified-suite-v2 #u_result:empty::before{
   content:"まだ結果はありません。差分比較の実行や、各タブの操作後にここに表示されます。";
   max-width:36ch;padding:8px;
+}
+#kintone-unified-suite-v2 .state-matrix{
+  width:100%;
+  margin-top:10px;
+  border-collapse:collapse;
+  font-size:11px;
+}
+#kintone-unified-suite-v2 .state-matrix th,
+#kintone-unified-suite-v2 .state-matrix td{
+  border:1px solid #dbe3ed;
+  padding:6px 8px;
+  vertical-align:top;
+}
+#kintone-unified-suite-v2 .state-matrix th{
+  background:#f8fafc;
+  font-weight:700;
 }
 #kintone-unified-suite-v2.screen-feature .body{gap:14px}
 #kintone-unified-suite-v2 .tabs{row-gap:10px}
