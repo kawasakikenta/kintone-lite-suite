@@ -22,7 +22,8 @@ import {
   getDiffExportContentLabel,
   buildDiffWarningInfo,
   buildDiffHtml,
-  buildPatchPayload
+  buildPatchPayload,
+  buildDiffExportPayload
 } from '../diff/export.js';
 import {
   renderResultRows,
@@ -39,7 +40,9 @@ import {
   renderReflectMainPanel,
   setStatus,
   switchTab,
-  switchSubTab
+  switchSubTab,
+  openFeatureScreen,
+  showLauncherScreen
 } from '../ui/components.js';
 import {
   getCurrentDialogPosition,
@@ -290,23 +293,22 @@ export async function exportDiffJson() {
   if (!exportInfo.rows.length && !state.lastFetchIssues.length && !compareInfo?.scopes?.length) {
     throw new Error('出力できる比較結果がありません');
   }
-  const payload = {
-    generatedAt: new Date().toISOString(),
+  const payload = buildDiffExportPayload({
+    sourceBundle: state.lastSourceBundle,
+    targetBundle: state.lastTargetBundle,
+    rows: exportInfo.rows,
+    fetchIssues: state.lastFetchIssues,
+    ignoreKeys: ui.ignoreKeys.value,
     exportMode: exportInfo.mode,
     exportLabel: exportInfo.label,
     exportContentMode,
     exportContentLabel: getDiffExportContentLabel(exportContentMode),
-    normalization: getDiffNormalizationPresetState(),
+    normalizationState: getDiffNormalizationPresetState(),
     warning: buildDiffWarningInfo(exportInfo.rows, state.lastFetchIssues),
-    source: state.lastSourceBundle,
-    target: state.lastTargetBundle,
-    diffCount: exportInfo.rows.length,
-    fetchIssues: state.lastFetchIssues,
-    rows: exportInfo.rows,
-    comparedScopes: compareInfo?.scopes || [],
-    sourceComparedBundle: compareInfo?.sourceBundle || null,
-    targetComparedBundle: compareInfo?.targetBundle || null
-  };
+    compareScopes: compareInfo?.scopes || [],
+    compareSourceBundle: compareInfo?.sourceBundle || null,
+    compareTargetBundle: compareInfo?.targetBundle || null
+  });
   downloadText(`diff_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
   setStatus(`差分JSONを保存しました (${exportInfo.label} / ${getDiffExportContentLabel(exportContentMode)})`);
 }
@@ -370,7 +372,10 @@ export function saveCurrentDialogState() {
   const dialogPos = getCurrentDialogPosition(dialogRect.width || DIALOG_DEFAULT_WIDTH, dialogRect.height || DIALOG_DEFAULT_HEIGHT);
   saveDialogState({
     activeTab: state.activeTab,
+    activeFeatureKey: state.activeFeatureKey || '',
     activeSubTabs: { ...state.activeSubTabs },
+    screenMode: getRoot()?.classList.contains('screen-feature') ? 'feature' : 'launcher',
+    launcherSortMode: ui.featureSortMode?.value || state.launcherSortMode || 'onboarding',
     dialogWidth: Math.round(dialogRect.width || DIALOG_DEFAULT_WIDTH),
     dialogHeight: Math.round(dialogRect.height || DIALOG_DEFAULT_HEIGHT),
     dialogLeft: dialogPos.left,
@@ -495,6 +500,10 @@ export function restoreDialogState() {
   if (saved.settingsExportSearchKeyword != null) ui.settingsExportSearchKeyword.value = String(saved.settingsExportSearchKeyword);
   if (saved.settingsExportGuest != null) ui.settingsExportGuest.value = String(saved.settingsExportGuest);
   if (saved.settingsExportPreview != null) ui.settingsExportPreview.checked = !!saved.settingsExportPreview;
+  if (saved.launcherSortMode != null) {
+    state.launcherSortMode = String(saved.launcherSortMode) === 'usage' ? 'usage' : 'onboarding';
+    if (ui.featureSortMode) ui.featureSortMode.value = state.launcherSortMode;
+  }
 
   const markChecks = (container, selected) => {
     if (!Array.isArray(selected)) return;
@@ -512,13 +521,21 @@ export function restoreDialogState() {
       : defaultKey;
     switchSubTab(parentKey, nextKey, { persist: false });
   });
-  if (saved.activeTab && ui.tabs.some((t) => t.dataset.tab === saved.activeTab)) {
-    switchTab(saved.activeTab, { persist: false });
+  let nextActive = saved.activeTab;
+  if (nextActive === 'common' || nextActive === 'diff') nextActive = 'reflect';
+  if (nextActive && ui.tabs.some((t) => t.dataset.tab === nextActive)) {
+    switchTab(nextActive, { persist: false });
   }
+  const nextFeatureKey = String(saved.activeFeatureKey || '').trim();
+  const restoredFeature = saved.screenMode === 'feature' && nextFeatureKey
+    ? openFeatureScreen(nextFeatureKey, { persist: false, focus: false })
+    : null;
+  if (!restoredFeature) showLauncherScreen({ persist: false });
   applyIgnorePresetKeysToInput();
   renderIgnoreKeyChips();
   renderLookupMapRows();
-  if (state.activeTab === 'diff') {
+  const rootEl = getRoot();
+  if (rootEl?.classList.contains('tab-needs-connection-actions') && state.activeSubTabs.diff === 'view') {
     renderResultRows(state.lastDiffRows || []);
   }
 }

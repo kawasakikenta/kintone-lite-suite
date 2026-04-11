@@ -3,17 +3,18 @@
 import { TOOL_ID, FEATURE_DEFS } from './constants.js';
 
 const TOOL_POPOUT_NAME = 'kintone-unified-suite-v2';
-import { ui as sharedUi } from './state.js';
+import { ui as sharedUi, state } from './state.js';
 import { stableStringify, selectedScopeKeys } from './utils.js';
 import { buildRoot, copyTextToClipboard } from './ui/template.js';
 import { setRootElement, setUiRefs } from './ui/dialog.js';
-import { setComponentUi, setComponentDeps, setStatus, switchTab } from './ui/components.js';
+import { setComponentUi, setComponentDeps, setStatus, switchTab, openFeatureScreen } from './ui/components.js';
 import { stringifyForDiff, renderRowColumns, buildDiffWarningInfo, renderResultRows, renderDiffFilterOptions, renderDiffSelectionState, renderDiffWarningBox, syncDiffThemeButton } from './diff/export.js';
-import { commonParams, currentDiffSignature } from './tabs/diff.js';
-import { parseLookupMapInput } from './tabs/field.js';
+import { commonParams, currentDiffSignature, saveCurrentDialogState } from './tabs/diff.js';
+import { parseLookupMapInput, runBulkFieldRename, runDetectUnusedFields } from './tabs/field.js';
 import { reflectRowModeById, reflectRowDesiredValue } from './reflect/rowMode.js';
 import {
   runBackupTargetPreview,
+  runRestoreTargetPreviewBackup,
   runDeployOnly,
   runApplyPreview,
   runApplyPatchJson,
@@ -289,6 +290,7 @@ export function runKintoneUnifiedSuite(options = {}) {
     clearApiTesterHistory,
     runPreviewApplyPlan,
     runBackupTargetPreview,
+    runRestoreTargetPreviewBackup,
     runApplyPreview,
     runDeployOnly,
     runApplyPatchJson,
@@ -297,6 +299,8 @@ export function runKintoneUnifiedSuite(options = {}) {
     renderPatchJsonSummary,
     populatePatchJsonFromCurrentDiff,
     renderCustomizeResult,
+    runBulkFieldRename,
+    runDetectUnusedFields,
     renderTemplateOptions
   });
 
@@ -307,7 +311,10 @@ export function runKintoneUnifiedSuite(options = {}) {
   setStatus('待機中');
 
   if (options.initialTab) {
-    switchTab(options.initialTab);
+    const initialFeature = FEATURE_DEFS.find((def) => def.key === options.initialTab)
+      || FEATURE_DEFS.find((def) => (def.tab || def.tabs?.[0]) === options.initialTab && (options.initialTab !== 'reflect' || def.key === 'reflect'));
+    if (initialFeature) openFeatureScreen(initialFeature.key, { persist: false, focus: false });
+    else switchTab(options.initialTab, { persist: false });
   }
 
   // --- OSS Integrations: Init JSONEditors + Enhanced Tour ---
@@ -336,10 +343,15 @@ function setupLauncherFeatureSort(ui) {
       })
       .forEach((card) => featureGrid.appendChild(card));
   };
-  applySort('onboarding');
+  const initialMode = ui.featureSortMode?.value === 'usage' ? 'usage' : (state.launcherSortMode === 'usage' ? 'usage' : 'onboarding');
+  if (ui.featureSortMode) ui.featureSortMode.value = initialMode;
+  state.launcherSortMode = initialMode;
+  applySort(initialMode);
   ui.featureSortMode?.addEventListener('change', () => {
     const mode = ui.featureSortMode.value === 'usage' ? 'usage' : 'onboarding';
+    state.launcherSortMode = mode;
     applySort(mode);
+    saveCurrentDialogState();
   });
 }
 

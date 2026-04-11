@@ -17,93 +17,222 @@
   };
 
   // src/featureDefs.mjs
-  var FEATURE_DEFS, TAB_TO_FEATURE;
+  var ICONS, FEATURE_DEFS, TAB_TO_FEATURE;
   var init_featureDefs = __esm({
     "src/featureDefs.mjs"() {
       "use strict";
+      ICONS = Object.freeze({
+        diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
+        reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+        field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+        jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+        er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
+        processFlow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M10 6.5h4"/><path d="M17.5 9v2.5h-11V9"/><path d="M12 11.5V15"/></svg>',
+        design: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
+        settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
+        recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
+        sql: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h10"/><path d="M4 19h7"/><path d="M17 15l3 4 3-4"/></svg>',
+        apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>'
+      });
       FEATURE_DEFS = [
         {
           key: "diff",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.diff,
           label: "差分比較",
-          desc: "設定の差分を確認・比較",
-          tabs: ["diff"],
+          desc: "2アプリの設定差分を確認します。",
+          tabs: ["reflect"],
+          tab: "reflect",
+          diffSubTab: "conditions",
+          focusSelector: "#u_headerDiffSuite",
           priority: "high",
           riskLevel: "safe",
-          recommendedFor: ["初回利用", "設定変更前の確認"],
+          recommendedFor: ["最初に確認", "変更前チェック"],
           usageOrder: 1,
           onboardingOrder: 1,
-          badge: { tone: "recommended", label: "初回推奨", icon: "⭐" }
+          badge: { tone: "recommended", label: "初回推奨", icon: "1" }
         },
         {
           key: "reflect",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.reflect,
           label: "プレビュー反映",
-          desc: "比較元の設定を比較先プレビューへ反映",
+          desc: "差分を見ながら比較先プレビューへ反映します。",
           tabs: ["reflect"],
+          tab: "reflect",
+          subTab: "section",
+          focusSelector: "#u_reflectAssist",
           priority: "high",
           riskLevel: "warning",
           recommendedFor: ["差分確認後", "本番反映前の検証"],
           usageOrder: 2,
           onboardingOrder: 2,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "caution", label: "要確認", icon: "2" }
         },
         {
           key: "field",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.field,
           label: "フィールド追加",
-          desc: "フィールド定義の追加・編集",
+          desc: "フィールド定義を追加・編集します。",
           tabs: ["field"],
+          tab: "field",
+          subTab: "json",
+          focusSelector: "#u_fieldJson",
           priority: "medium",
           riskLevel: "warning",
-          recommendedFor: ["項目追加時", "一括メンテナンス"],
+          recommendedFor: ["項目追加", "定義の一括修正"],
           usageOrder: 4,
           onboardingOrder: 4,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "caution", label: "要注意", icon: "!" }
         },
         {
           key: "jsconfig",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.jsconfig,
           label: "JS/CSS設定",
-          desc: "カスタマイズ設定の取得・反映",
+          desc: "カスタマイズ設定の取得・反映を行います。",
           tabs: ["jsconfig"],
+          tab: "jsconfig",
+          subTab: "editor",
+          focusSelector: "#u_jsconfigJson",
           priority: "medium",
           riskLevel: "warning",
           recommendedFor: ["カスタマイズ配布", "環境同期"],
           usageOrder: 5,
           onboardingOrder: 5,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "caution", label: "要注意", icon: "!" }
         },
         {
-          key: "vis",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>',
-          label: "可視化・出力",
-          desc: "ER図 / プロセス図 / 設計書 / 設定一括取得",
-          tabs: ["er", "processFlow", "design", "settingsExport"],
+          key: "design",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.design,
+          label: "設計書",
+          desc: "設計書や差分レポートを出力します。",
+          tabs: ["design"],
+          tab: "design",
+          focusSelector: '[data-act="exportDesignMd"]',
           priority: "medium",
           riskLevel: "safe",
-          recommendedFor: ["現状把握", "レビュー資料作成"],
+          recommendedFor: ["変更記録", "レビュー資料作成"],
           usageOrder: 3,
           onboardingOrder: 3,
-          badge: { tone: "safe", label: "安全", icon: "🛡️" }
+          badge: { tone: "safe", label: "安全", icon: "OK" }
         },
         {
-          key: "data",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
-          label: "データ・保守",
-          desc: "レコード管理 / SQL実行 / APIテスター",
-          tabs: ["recordMgr", "sql", "apiTester"],
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["保守作業", "調査"],
+          key: "settingsExport",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.settingsExport,
+          label: "設定一括取得",
+          desc: "複数アプリの設定をまとめて保存します。",
+          tabs: ["settingsExport"],
+          tab: "settingsExport",
+          subTab: "export",
+          focusSelector: "#u_settingsExportAppIds",
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["バックアップ", "棚卸し"],
           usageOrder: 6,
           onboardingOrder: 6,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "safe", label: "安全", icon: "OK" }
+        },
+        {
+          key: "er",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.er,
+          label: "ER図",
+          desc: "関連アプリや参照関係を図で確認します。",
+          tabs: ["er"],
+          tab: "er",
+          subTab: "diagram",
+          focusSelector: "#u_erLayout",
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["現状把握", "依存関係確認"],
+          usageOrder: 7,
+          onboardingOrder: 7,
+          badge: { tone: "safe", label: "安全", icon: "OK" }
+        },
+        {
+          key: "processFlow",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.processFlow,
+          label: "プロセス図",
+          desc: "プロセス管理をフロー図で確認します。",
+          tabs: ["processFlow"],
+          tab: "processFlow",
+          focusSelector: '[data-act="renderProcessFlow"]',
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["状態遷移確認", "運用レビュー"],
+          usageOrder: 8,
+          onboardingOrder: 8,
+          badge: { tone: "safe", label: "安全", icon: "OK" }
+        },
+        {
+          key: "recordMgr",
+          group: "data",
+          groupLabel: "データ・保守",
+          icon: ICONS.recordMgr,
+          label: "レコード管理",
+          desc: "CSV、添付DL、ステータス更新などを行います。",
+          tabs: ["recordMgr"],
+          tab: "recordMgr",
+          subTab: "status",
+          focusSelector: '[data-act="runBatchProcess"]',
+          priority: "low",
+          riskLevel: "warning",
+          recommendedFor: ["保守作業", "テストデータ操作"],
+          usageOrder: 9,
+          onboardingOrder: 9,
+          badge: { tone: "caution", label: "要注意", icon: "!" }
+        },
+        {
+          key: "sql",
+          group: "data",
+          groupLabel: "データ・保守",
+          icon: ICONS.sql,
+          label: "SQL実行",
+          desc: "kintoneデータをSQLライクに参照します。",
+          tabs: ["sql"],
+          tab: "sql",
+          focusSelector: '[data-act="launchKintoneSql"]',
+          priority: "low",
+          riskLevel: "warning",
+          recommendedFor: ["調査", "データ確認"],
+          usageOrder: 10,
+          onboardingOrder: 10,
+          badge: { tone: "caution", label: "要注意", icon: "!" }
+        },
+        {
+          key: "apiTester",
+          group: "data",
+          groupLabel: "データ・保守",
+          icon: ICONS.apiTester,
+          label: "APIテスター",
+          desc: "REST APIを直接試します。",
+          tabs: ["apiTester"],
+          tab: "apiTester",
+          focusSelector: "#u_apiTesterMethod",
+          priority: "low",
+          riskLevel: "warning",
+          recommendedFor: ["調査", "レスポンス確認"],
+          usageOrder: 11,
+          onboardingOrder: 11,
+          badge: { tone: "caution", label: "上級者向け", icon: "!" }
         }
       ];
       TAB_TO_FEATURE = {};
       FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
-        TAB_TO_FEATURE[t] = f.key;
+        if (!TAB_TO_FEATURE[t]) TAB_TO_FEATURE[t] = f.key;
       }));
     }
   });
@@ -198,41 +327,41 @@
       });
       GUIDED_TOUR_STEPS = Object.freeze([
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
           selector: "#u_sourceApp",
           title: "1. 比較元 / 比較先を決める",
-          body: "共通設定で比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
+          body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
         },
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
           selector: "#u_diffScopes",
           title: "3. 比較対象セクションを選ぶ",
           body: "差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。"
         },
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
           selector: "#u_ignoreKeyInput",
           title: "4. ノイズ差分を減らす",
           body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
         },
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
-          selector: '[data-act="runDiff"]',
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
+          selector: "#u_runDiffPrimary",
           title: "5. 差分比較を実行する",
           body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
         },
         {
-          tab: "diff",
-          subTab: "view",
-          path: "差分比較 > 結果整理",
+          tab: "reflect",
+          diffSubTab: "view",
+          path: "ヘッダー > 結果整理",
           selector: "#u_diffSearch",
           title: "6. 結果を絞り込んで確認する",
           body: "比較結果はセクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。"
@@ -381,6 +510,23 @@ ${contextLine}`);
     if (side === "both") return "両方";
     return String(side || "-");
   }
+  function getDiffTypeDisplayLabel(type, options = {}) {
+    const map = {
+      added: "追加",
+      removed: "削除",
+      changed: "変更",
+      moved: "移動",
+      same: "同一"
+    };
+    const base = map[type] || String(type || "-");
+    return options.moved && type !== "moved" ? `${base}(移動)` : base;
+  }
+  function getSeverityDisplayLabel(severity) {
+    if (severity === "high") return "高";
+    if (severity === "medium") return "中";
+    if (severity === "low") return "低";
+    return String(severity || "-");
+  }
   function downloadText(filename, text, type) {
     const blob = new Blob([text], { type: type || "text/plain" });
     const a = document.createElement("a");
@@ -403,8 +549,10 @@ ${contextLine}`);
       "use strict";
       init_constants();
       state = {
-        activeTab: "diff",
+        activeTab: "reflect",
+        activeFeatureKey: "",
         activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
+        launcherSortMode: "onboarding",
         lastSourceBundle: null,
         lastTargetBundle: null,
         lastDiffRows: [],
@@ -412,6 +560,8 @@ ${contextLine}`);
         lastDiffAt: null,
         lastDiffSignature: "",
         lastApplyPlan: null,
+        lastPreviewBackupPayload: null,
+        lastPreviewBackupFilename: "",
         diffViewTheme: "light",
         diffCollapsedSections: /* @__PURE__ */ new Set(),
         diffSectionVisibleCounts: {},
@@ -1652,9 +1802,219 @@ ${contextLine}`);
       targetBundle: pickBundleSections(targetBundle, compareScopes)
     };
   }
+  function getSectionLabel(sectionKeyOrLabel) {
+    const raw = String(sectionKeyOrLabel || "").trim();
+    if (!raw) return "-";
+    return SECTION_DEFS.find((item) => item.key === raw || item.label === raw)?.label || raw;
+  }
+  function getSectionOrder(sectionKeyOrLabel) {
+    const raw = String(sectionKeyOrLabel || "").trim();
+    const index = SECTION_DEFS.findIndex((item) => item.key === raw || item.label === raw);
+    return index >= 0 ? index : 9999;
+  }
+  function getRelativeDiffPath(row) {
+    const path = String(row?.path || "").trim();
+    const secKey = String(row?.sectionKey || "").trim();
+    if (!path) return "";
+    if (!secKey) return path;
+    if (path === secKey) return "（セクション全体）";
+    if (path.startsWith(`${secKey}.`)) return path.slice(secKey.length + 1);
+    if (path.startsWith(`${secKey}[`)) return path.slice(secKey.length);
+    return path;
+  }
+  function compactDiffValuePreview(value, maxLength = 140) {
+    const raw = stringifyForDiff(value).replace(/\s+/g, " ").trim();
+    if (!raw) return "";
+    return raw.length > maxLength ? `${raw.slice(0, maxLength)}...` : raw;
+  }
+  function getBundleExportMeta(bundle) {
+    return {
+      appId: String(bundle?.appId || ""),
+      guestId: String(bundle?.guestId || ""),
+      preview: !!bundle?.preview,
+      revision: resolveBundleRevision(bundle) || "",
+      fetchedAt: bundle?.fetchedAt || "",
+      sectionCount: Object.keys(bundle?.sections || {}).length
+    };
+  }
+  function buildDiffTypeSummary(rows) {
+    const summarized = summarizeRows(rows || []);
+    return {
+      totalRows: summarized.total,
+      diffCount: countActualDiffRows(rows || []),
+      sameCount: summarized.same,
+      added: summarized.added,
+      removed: summarized.removed,
+      changed: summarized.changed,
+      moved: summarized.moved
+    };
+  }
+  function buildCompactFetchIssue(issue) {
+    return {
+      sectionKey: String(issue?.sectionKey || ""),
+      sectionLabel: getSectionLabel(issue?.sectionKey || issue?.section),
+      side: String(issue?.side || ""),
+      message: String(issue?.message || ""),
+      sourceError: String(issue?.sourceError || ""),
+      targetError: String(issue?.targetError || "")
+    };
+  }
+  function buildCompactDiffRow(row) {
+    return {
+      sectionKey: String(row?.sectionKey || ""),
+      sectionLabel: getSectionLabel(row?.sectionKey || row?.section),
+      type: String(row?.type || ""),
+      severity: String(row?.severity || "low"),
+      path: String(row?.path || ""),
+      relativePath: getRelativeDiffPath(row),
+      moved: !!row?.moved,
+      reasonSummary: String(row?.reasonSummary || ""),
+      impactCount: Number(row?.impactCount || 0),
+      impactSummary: String(row?.impactSummary || ""),
+      renameCandidate: row?.renameCandidate || null,
+      preview: {
+        source: compactDiffValuePreview(row?.left),
+        target: compactDiffValuePreview(row?.right)
+      }
+    };
+  }
+  function buildDiffSectionSummaries(rows, fetchIssues = []) {
+    const groupedRows = /* @__PURE__ */ new Map();
+    const issueKeys = /* @__PURE__ */ new Set();
+    (rows || []).forEach((row) => {
+      const key = String(row?.sectionKey || row?.section || "").trim() || "未分類";
+      if (!groupedRows.has(key)) groupedRows.set(key, []);
+      groupedRows.get(key).push(row);
+    });
+    (fetchIssues || []).forEach((issue) => {
+      const key = String(issue?.sectionKey || issue?.section || "").trim();
+      if (key) issueKeys.add(key);
+    });
+    const keys = [.../* @__PURE__ */ new Set([...groupedRows.keys(), ...issueKeys])];
+    keys.sort((a, b) => {
+      const ao = getSectionOrder(a);
+      const bo = getSectionOrder(b);
+      if (ao !== bo) return ao - bo;
+      return String(getSectionLabel(a)).localeCompare(String(getSectionLabel(b)));
+    });
+    return keys.map((sectionKey) => {
+      const sectionRows = groupedRows.get(sectionKey) || [];
+      const diffRows = getActualDiffRows(sectionRows);
+      const typeSummary = buildDiffTypeSummary(sectionRows);
+      const severity = summarizeSeverity(sectionRows);
+      const issueCount = (fetchIssues || []).filter((issue) => String(issue?.sectionKey || issue?.section || "").trim() === sectionKey).length;
+      const reasonCounts = /* @__PURE__ */ new Map();
+      diffRows.forEach((row) => {
+        const reason = String(row?.reasonSummary || "").trim();
+        if (!reason) return;
+        reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
+      });
+      const topReasons = [...reasonCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 3).map(([reason, count]) => ({ reason, count }));
+      const samplePaths = [...new Set(diffRows.map((row) => getRelativeDiffPath(row)).filter(Boolean))].slice(0, 3);
+      return {
+        sectionKey,
+        sectionLabel: getSectionLabel(sectionKey),
+        ...typeSummary,
+        fetchIssueCount: issueCount,
+        severity,
+        topReasons,
+        samplePaths
+      };
+    });
+  }
+  function buildDiffHighlightRows(rows, limit = 8) {
+    const severityWeight = { high: 300, medium: 200, low: 100 };
+    return getActualDiffRows(rows || []).map((row, index) => {
+      let score = severityWeight[row?.severity] || 0;
+      if (row?.type === "removed") score += 30;
+      else if (row?.type === "added") score += 18;
+      else score += 12;
+      if (row?.renameCandidate) score += 12;
+      if (row?.moved) score += 6;
+      score += Math.min(40, Number(row?.impactCount || 0) * 4);
+      return { row, index, score };
+    }).sort((a, b) => b.score - a.score || a.index - b.index).slice(0, limit).map(({ row }) => ({
+      ...buildCompactDiffRow(row),
+      impactRefs: Array.isArray(row?.impactRefs) ? row.impactRefs.slice(0, 3) : []
+    }));
+  }
+  function buildCompactRowsBySection(rows) {
+    const grouped = {};
+    (rows || []).forEach((row) => {
+      const key = String(row?.sectionKey || row?.section || "").trim() || "未分類";
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(buildCompactDiffRow(row));
+    });
+    return grouped;
+  }
+  function buildDiffExportPayload({
+    sourceBundle,
+    targetBundle,
+    rows,
+    fetchIssues,
+    ignoreKeys,
+    exportMode,
+    exportLabel,
+    exportContentMode,
+    exportContentLabel,
+    normalizationState,
+    warning,
+    compareScopes,
+    compareSourceBundle,
+    compareTargetBundle
+  } = {}) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const safeIssues = Array.isArray(fetchIssues) ? fetchIssues : [];
+    const stateMap = normalizationState || {};
+    const sectionSummaries = buildDiffSectionSummaries(safeRows, safeIssues);
+    const typeSummary = buildDiffTypeSummary(safeRows);
+    const compared = shouldIncludeComparedContent(exportContentMode) && Array.isArray(compareScopes) && compareScopes.length ? {
+      scopes: [...new Set(compareScopes.filter(Boolean))],
+      sourceBundle: compareSourceBundle || null,
+      targetBundle: compareTargetBundle || null
+    } : null;
+    return {
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      export: {
+        mode: exportMode || "all",
+        label: exportLabel || "全差分",
+        contentMode: exportContentMode || "diffOnly",
+        contentLabel: exportContentLabel || getDiffExportContentLabel(exportContentMode),
+        ignoreKeys: String(ignoreKeys || ""),
+        normalizationState: stateMap,
+        normalizationLabels: getActiveDiffNormalizationLabels(stateMap)
+      },
+      source: getBundleExportMeta(sourceBundle),
+      target: getBundleExportMeta(targetBundle),
+      summary: {
+        ...typeSummary,
+        fetchIssueCount: safeIssues.length,
+        sectionCount: sectionSummaries.length,
+        sectionsWithDiff: sectionSummaries.filter((item) => item.diffCount > 0).length,
+        severity: summarizeSeverity(safeRows),
+        warning: warning || {
+          threshold: 0,
+          diffCount: typeSummary.diffCount,
+          issueCount: safeIssues.length,
+          total: typeSummary.diffCount + safeIssues.length,
+          exceeded: false
+        }
+      },
+      sectionSummaries,
+      highlights: buildDiffHighlightRows(safeRows),
+      fetchIssues: safeIssues.map(buildCompactFetchIssue),
+      details: {
+        rows: safeRows,
+        rowsCompact: safeRows.map(buildCompactDiffRow),
+        rowsBySection: buildCompactRowsBySection(safeRows)
+      },
+      compared
+    };
+  }
   function buildPatchPayload(rows, sourceBundle, targetBundle) {
     const grouped = {};
-    for (const r of getActualDiffRows(rows)) {
+    const diffRows = getActualDiffRows(rows);
+    for (const r of diffRows) {
       const section = r.section || "未分類";
       if (!grouped[section]) grouped[section] = [];
       grouped[section].push({
@@ -1673,10 +2033,38 @@ ${contextLine}`);
         impactRefs: r.impactRefs || []
       });
     }
+    const byType = { added: 0, removed: 0, changed: 0, moved: 0 };
+    diffRows.forEach((row) => {
+      if (row?.type === "added") byType.added += 1;
+      else if (row?.type === "removed") byType.removed += 1;
+      else byType.changed += 1;
+      if (row?.moved) byType.moved += 1;
+    });
+    const sectionsMeta = Object.entries(grouped).map(([sectionLabel, sectionRows]) => {
+      const sectionKey = SECTION_DEFS.find((item) => item.label === sectionLabel || item.key === sectionLabel)?.key || sectionLabel;
+      const sectionTypeSummary = { totalRows: sectionRows.length, diffCount: sectionRows.length, sameCount: 0, added: 0, removed: 0, changed: 0, moved: 0 };
+      sectionRows.forEach((row) => {
+        if (row?.type === "added") sectionTypeSummary.added += 1;
+        else if (row?.type === "removed") sectionTypeSummary.removed += 1;
+        else sectionTypeSummary.changed += 1;
+        if (row?.moved) sectionTypeSummary.moved += 1;
+      });
+      return {
+        sectionKey,
+        sectionLabel: getSectionLabel(sectionKey),
+        ...sectionTypeSummary
+      };
+    }).sort((a, b) => getSectionOrder(a.sectionKey) - getSectionOrder(b.sectionKey) || a.sectionLabel.localeCompare(b.sectionLabel));
     return {
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      source: { appId: sourceBundle?.appId || "", guestId: sourceBundle?.guestId || "", preview: !!sourceBundle?.preview },
-      target: { appId: targetBundle?.appId || "", guestId: targetBundle?.guestId || "", preview: !!targetBundle?.preview },
+      source: getBundleExportMeta(sourceBundle),
+      target: getBundleExportMeta(targetBundle),
+      summary: {
+        diffCount: diffRows.length,
+        sectionCount: sectionsMeta.length,
+        byType
+      },
+      sectionsMeta,
       sections: grouped
     };
   }
@@ -1717,7 +2105,6 @@ ${contextLine}`);
     const MAX_EXPORT_ROWS = 2e3;
     const exportRows = withSameSections.slice(0, MAX_EXPORT_ROWS);
     const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
-    const normalizationLabels = getActiveDiffNormalizationLabels(options.normalizationState || {});
     const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
     const exportContentMode = options.exportContentMode || "diffOnly";
     const exportContentLabel = options.exportContentLabel || getDiffExportContentLabel(exportContentMode);
@@ -1725,36 +2112,87 @@ ${contextLine}`);
     const compareSourceBundle = options.compareSourceBundle || null;
     const compareTargetBundle = options.compareTargetBundle || null;
     const KUC_REPORT_VERSION = "1.24.0";
-    const reportMeta = {
-      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      ignoreKeys: String(ignoreKeys || ""),
-      scopes: scopes || [],
-      sectionText,
+    const exportPayload = buildDiffExportPayload({
+      sourceBundle,
+      targetBundle,
+      rows: withSameSections,
+      fetchIssues,
+      ignoreKeys,
       exportMode: options.exportMode || "all",
       exportLabel: options.exportLabel || "全差分",
       exportContentMode,
       exportContentLabel,
-      normalizationLabels,
+      normalizationState: options.normalizationState || {},
       warning,
-      source: {
-        appId: sourceBundle?.appId || "",
-        guestId: sourceBundle?.guestId || "",
-        preview: !!sourceBundle?.preview,
-        revision: resolveBundleRevision(sourceBundle) || ""
-      },
-      target: {
-        appId: targetBundle?.appId || "",
-        guestId: targetBundle?.guestId || "",
-        preview: !!targetBundle?.preview,
-        revision: resolveBundleRevision(targetBundle) || ""
-      },
+      compareScopes,
+      compareSourceBundle,
+      compareTargetBundle
+    });
+    const reportMeta = {
+      generatedAt: exportPayload.generatedAt,
+      scopes: scopes || [],
+      sectionText,
+      ignoreKeys: exportPayload.export.ignoreKeys,
+      exportMode: exportPayload.export.mode,
+      exportLabel: exportPayload.export.label,
+      exportContentMode: exportPayload.export.contentMode,
+      exportContentLabel: exportPayload.export.contentLabel,
+      normalizationLabels: exportPayload.export.normalizationLabels,
+      warning: exportPayload.summary.warning,
+      source: exportPayload.source,
+      target: exportPayload.target,
       summary,
+      diffOverview: exportPayload.summary,
+      sectionSummaries: exportPayload.sectionSummaries,
+      highlights: exportPayload.highlights,
       fetchIssues,
       totalRows: withSameSections.length,
       renderedRows: exportRows.length,
       truncated: withSameSections.length > exportRows.length,
       compareScopes
     };
+    const sectionSummaryRowsHtml = reportMeta.sectionSummaries.map((item) => `<tr>
+        <td>
+          <div class="sum-table-name">${esc(item.sectionLabel)}</div>
+          <div class="sum-table-sub">${esc(
+      item.topReasons.length ? item.topReasons.map((reason) => `${reason.reason} (${reason.count})`).join(" / ") : item.samplePaths.join(" / ") || "-"
+    )}</div>
+        </td>
+        <td>${item.diffCount}</td>
+        <td>${item.added}</td>
+        <td>${item.removed}</td>
+        <td>${item.changed}</td>
+        <td>${item.sameCount}</td>
+        <td>${item.fetchIssueCount}</td>
+        <td>${item.severity.high} / ${item.severity.medium} / ${item.severity.low}</td>
+      </tr>`).join("");
+    const sectionSummaryHtml = reportMeta.sectionSummaries.length ? `<section class="panel">
+            <h3>セクション別サマリー</h3>
+            <div class="sum-table-wrap">
+              <table class="sum-table">
+                <thead><tr><th>セクション</th><th>差分</th><th>追加</th><th>削除</th><th>変更</th><th>同一</th><th>取得失敗</th><th>高 / 中 / 低</th></tr></thead>
+                <tbody>${sectionSummaryRowsHtml}</tbody>
+              </table>
+            </div>
+          </section>` : `<section class="panel"><h3>セクション別サマリー</h3><div class="muted-note">対象セクションはありません。</div></section>`;
+    const highlightCardsHtml = reportMeta.highlights.map((item) => `<article class="highlight-card">
+        <div class="highlight-top">
+          <span class="meta-tag reason">${esc(getDiffTypeDisplayLabel(item.type, { moved: item.moved }))}</span>
+          <span class="meta-tag impact">重要度 ${esc(getSeverityDisplayLabel(item.severity))}</span>
+        </div>
+        <div class="highlight-title">${esc(item.sectionLabel)} / ${esc(item.relativePath || item.path || "-")}</div>
+        <div class="highlight-sub">${esc(item.reasonSummary || "-")}</div>
+        ${item.impactSummary ? `<div class="highlight-sub">影響: ${esc(item.impactSummary)}</div>` : ""}
+        ${item.renameCandidate ? `<div class="highlight-sub">名称変更候補: ${esc(item.renameCandidate.fromCode || "-")} → ${esc(item.renameCandidate.toCode || "-")}</div>` : ""}
+        <div class="highlight-preview">
+          <div class="highlight-pane"><span class="highlight-pane-label">比較元</span>${esc(item.preview.source || "（なし）")}</div>
+          <div class="highlight-pane"><span class="highlight-pane-label">比較先</span>${esc(item.preview.target || "（なし）")}</div>
+        </div>
+      </article>`).join("");
+    const highlightSummaryHtml = reportMeta.highlights.length ? `<section class="panel">
+            <h3>注目差分</h3>
+            <div class="highlight-list">${highlightCardsHtml}</div>
+          </section>` : `<section class="panel"><h3>注目差分</h3><div class="muted-note">注目差分はありません。</div></section>`;
     const compareSectionsHtml = shouldIncludeComparedContent(exportContentMode) && compareScopes.length ? compareScopes.map((secKey) => {
       const label = sectionLabelMap[secKey] || secKey;
       const sourceValue = compareSourceBundle?.sections?.[secKey];
@@ -2051,6 +2489,54 @@ ${contextLine}`);
       if (oa !== ob) return oa - ob;
       return String(a.label).localeCompare(String(b.label));
     });
+  }
+
+  function relativePathLabel(row) {
+    const path = String(row?.path || '');
+    const secKey = String(row?.sectionKey || '');
+    if (!path) return '-';
+    if (!secKey) return path;
+    if (path === secKey) return '（セクション全体）';
+    if (path.startsWith(secKey + '.')) return path.slice(secKey.length + 1);
+    if (path.startsWith(secKey + '[')) return path.slice(secKey.length);
+    return path;
+  }
+
+  function summarizeGroupRows(rows) {
+    const out = { total: rows.length, diffCount: 0, added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
+    rows.forEach((row) => {
+      if (row.type === 'same') {
+        out.same += 1;
+        return;
+      }
+      out.diffCount += 1;
+      if (row.type === 'added') out.added += 1;
+      else if (row.type === 'removed') out.removed += 1;
+      else out.changed += 1;
+      if (row.moved) out.moved += 1;
+    });
+    return out;
+  }
+
+  function groupSummaryLabel(rows) {
+    const s = summarizeGroupRows(rows);
+    const parts = ['差分 ' + s.diffCount];
+    if (s.added) parts.push('追加 ' + s.added);
+    if (s.removed) parts.push('削除 ' + s.removed);
+    if (s.changed) parts.push('変更 ' + s.changed);
+    if (s.moved) parts.push('移動 ' + s.moved);
+    if (s.same) parts.push('同一 ' + s.same);
+    return parts.join(' / ');
+  }
+
+  function renderPathCell(row) {
+    const fullPath = String(row?.path || '-');
+    const relPath = relativePathLabel(row);
+    let html = '<div class="path-main">' + escHtml(relPath || fullPath) + '</div>';
+    if (relPath && relPath !== fullPath) {
+      html += '<div class="path-sub">' + escHtml(fullPath) + '</div>';
+    }
+    return html + renderRowMeta(row);
   }
 
   function settingsTone(row) {
@@ -2538,9 +3024,10 @@ ${contextLine}`);
     groups.forEach((g, idx) => {
       const secId = 'sec_' + idx;
       const collapsedNow = collapsed.has(g.key);
+      const groupSummary = summarizeGroupRows(g.rows);
       const navItem = document.createElement('div');
       navItem.className = 'nav-item';
-      navItem.innerHTML = '<span>' + escHtml(g.label) + '</span><span class="badge">' + g.rows.length + '</span>';
+      navItem.innerHTML = '<span>' + escHtml(g.label) + '</span><span class="badge">' + groupSummary.diffCount + '</span>';
       navItem.onclick = () => {
         collapsed.delete(g.key);
         render();
@@ -2556,7 +3043,7 @@ ${contextLine}`);
       sec.className = 'sec';
       const head = document.createElement('div');
       head.className = 'sec-head';
-      head.innerHTML = '<span>' + (collapsedNow ? '▶' : '▼') + ' ' + escHtml(g.label) + '</span><span class="sec-meta">' + g.rows.length + ' 件</span>';
+      head.innerHTML = '<span>' + (collapsedNow ? '▶' : '▼') + ' ' + escHtml(g.label) + '</span><span class="sec-meta">' + escHtml(groupSummaryLabel(g.rows)) + '</span>';
       head.onclick = () => {
         if (collapsed.has(g.key)) collapsed.delete(g.key);
         else collapsed.add(g.key);
@@ -2576,7 +3063,7 @@ ${contextLine}`);
           const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
           tr.innerHTML =
             '<td class="type ' + typeClass + '">' + escHtml(typeLabel) + '</td>' +
-            '<td class="path" title="' + escHtml(row.path || '-') + '">' + escHtml(row.path || '-') + renderRowMeta(row) + '</td>' +
+            '<td class="path" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</td>' +
             '<td class="cell">' + cells.left + '</td>' +
             '<td class="cell">' + cells.right + '</td>';
           tbody.appendChild(tr);
@@ -2821,6 +3308,22 @@ ${contextLine}`);
     .detail-key{color:var(--muted);font-weight:600;flex-shrink:0}
     .warn{font-size:11px;color:#b45309;margin-top:10px;padding:10px 12px;border-radius:10px;background:#fffbeb;border:1px solid #fde68a;line-height:1.6}
     body.dark .warn{color:#fbbf24;background:#422006;border-color:#92400e}
+    .muted-note{font-size:12px;color:var(--muted);line-height:1.7}
+    .sum-table-wrap{overflow:auto}
+    .sum-table{width:100%;border-collapse:collapse;font-size:11px}
+    .sum-table th,.sum-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+    .sum-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);white-space:nowrap}
+    .sum-table-name{font-weight:800;color:var(--fg);margin-bottom:4px}
+    .sum-table-sub{font-size:10px;line-height:1.5;color:var(--muted)}
+    .highlight-list{display:grid;gap:10px}
+    .highlight-card{border:1px solid var(--border);border-radius:14px;padding:12px 14px;background:var(--card);box-shadow:var(--shadow)}
+    .highlight-top{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+    .highlight-title{font-size:12px;font-weight:800;color:var(--fg);line-height:1.45}
+    .highlight-sub{font-size:10px;line-height:1.6;color:var(--muted);margin-top:4px}
+    .highlight-preview{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+    .highlight-pane{border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:var(--card-soft);font-size:10px;line-height:1.5;color:var(--fg);word-break:break-word}
+    .highlight-pane-label{display:block;font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+    @media (max-width:900px){.highlight-preview{grid-template-columns:1fr}}
     .issue-box{margin:18px;border:1px solid #fdba74;border-radius:16px;background:#fff7ed;padding:16px 18px;box-shadow:0 4px 16px -4px rgba(180,83,9,.15)}
     body.dark .issue-box{background:#1c1410;border-color:#78350f}
     .issue-box h3{margin:0 0 12px;font-size:13px;font-weight:800;color:#9a3412}
@@ -2844,6 +3347,8 @@ ${contextLine}`);
     .type.changed{color:#b45309}
     .type.same{color:#0d9488}
     .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--muted);font-size:11px}
+    .path-main{font-size:11px;font-weight:700;color:var(--fg);margin-bottom:4px;word-break:break-all}
+    .path-sub{font-size:10px;line-height:1.45;color:var(--muted);word-break:break-all}
     .meta-wrap{margin-top:8px;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
     .meta-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
     .meta-tag{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;border:1px solid var(--border);background:var(--pad);font-size:10px;font-weight:600;color:var(--fg)}
@@ -3099,6 +3604,11 @@ ${contextLine}`);
           </section>
         </div>
 
+        <div class="info-grid info-grid--review">
+          ${sectionSummaryHtml}
+          ${highlightSummaryHtml}
+        </div>
+
         ${fetchIssues.length ? `<div class="issue-box">
           <h3>API取得失敗 ${fetchIssues.length}件</h3>
           <table>
@@ -3259,23 +3769,22 @@ ${contextLine}`);
     if (!rows.length && !fetchIssues.length && !compareInfo?.scopes?.length) {
       throw new Error("出力できる比較結果がありません");
     }
-    const payload = {
-      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    const payload = buildDiffExportPayload({
+      sourceBundle: ctx.sourceBundle,
+      targetBundle: ctx.targetBundle,
+      rows,
+      fetchIssues,
+      ignoreKeys: ctx.ignoreKeys || "",
       exportMode: exportInfo.mode,
       exportLabel: exportInfo.label,
       exportContentMode,
       exportContentLabel: getDiffExportContentLabel(exportContentMode),
-      normalization: ctx.normalizationPresetState || {},
+      normalizationState: ctx.normalizationPresetState || {},
       warning: warningInfoLite(rows, fetchIssues),
-      source: ctx.sourceBundle,
-      target: ctx.targetBundle,
-      diffCount: rows.length,
-      fetchIssues,
-      rows,
-      comparedScopes: compareInfo?.scopes || [],
-      sourceComparedBundle: compareInfo?.sourceBundle || null,
-      targetComparedBundle: compareInfo?.targetBundle || null
-    };
+      compareScopes: compareInfo?.scopes || [],
+      compareSourceBundle: compareInfo?.sourceBundle || null,
+      compareTargetBundle: compareInfo?.targetBundle || null
+    });
     downloadText(`diff_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
   }
   function runExportDiffHtmlStandalone(ctx) {

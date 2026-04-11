@@ -164,14 +164,24 @@ export function saveCurrentDialogState() {
   if (!root) return;
   const rect = root.getBoundingClientRect();
   const saved = loadDialogState();
-  saved.width = Math.round(rect.width || root.offsetWidth);
-  saved.height = Math.round(rect.height || root.offsetHeight);
+  const w = Math.round(rect.width || root.offsetWidth);
+  const h = Math.round(rect.height || root.offsetHeight);
+  const pos = getCurrentDialogPosition(w, h);
   const rawLeft = Number.parseFloat(root.style.left);
   const rawTop = Number.parseFloat(root.style.top);
-  if (Number.isFinite(rawLeft)) saved.left = Math.round(rawLeft);
-  if (Number.isFinite(rawTop)) saved.top = Math.round(rawTop);
-  saved.activeTab = state.activeTab || 'diff';
+  saved.dialogWidth = w;
+  saved.dialogHeight = h;
+  saved.dialogLeft = Number.isFinite(rawLeft) ? Math.round(rawLeft) : Math.round(pos.left);
+  saved.dialogTop = Number.isFinite(rawTop) ? Math.round(rawTop) : Math.round(pos.top);
+  delete saved.width;
+  delete saved.height;
+  delete saved.left;
+  delete saved.top;
+  saved.activeTab = state.activeTab || 'reflect';
+  saved.activeFeatureKey = state.activeFeatureKey || '';
   saved.activeSubTabs = { ...state.activeSubTabs };
+  saved.screenMode = root.classList.contains('screen-feature') ? 'feature' : 'launcher';
+  saved.launcherSortMode = ui.featureSortMode?.value || state.launcherSortMode || 'onboarding';
   saveDialogState(saved);
 }
 

@@ -17,93 +17,222 @@
   };
 
   // src/featureDefs.mjs
-  var FEATURE_DEFS, TAB_TO_FEATURE;
+  var ICONS, FEATURE_DEFS, TAB_TO_FEATURE;
   var init_featureDefs = __esm({
     "src/featureDefs.mjs"() {
       "use strict";
+      ICONS = Object.freeze({
+        diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
+        reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+        field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+        jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+        er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
+        processFlow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M10 6.5h4"/><path d="M17.5 9v2.5h-11V9"/><path d="M12 11.5V15"/></svg>',
+        design: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
+        settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
+        recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
+        sql: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h10"/><path d="M4 19h7"/><path d="M17 15l3 4 3-4"/></svg>',
+        apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>'
+      });
       FEATURE_DEFS = [
         {
           key: "diff",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.diff,
           label: "差分比較",
-          desc: "設定の差分を確認・比較",
-          tabs: ["diff"],
+          desc: "2アプリの設定差分を確認します。",
+          tabs: ["reflect"],
+          tab: "reflect",
+          diffSubTab: "conditions",
+          focusSelector: "#u_headerDiffSuite",
           priority: "high",
           riskLevel: "safe",
-          recommendedFor: ["初回利用", "設定変更前の確認"],
+          recommendedFor: ["最初に確認", "変更前チェック"],
           usageOrder: 1,
           onboardingOrder: 1,
-          badge: { tone: "recommended", label: "初回推奨", icon: "⭐" }
+          badge: { tone: "recommended", label: "初回推奨", icon: "1" }
         },
         {
           key: "reflect",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.reflect,
           label: "プレビュー反映",
-          desc: "比較元の設定を比較先プレビューへ反映",
+          desc: "差分を見ながら比較先プレビューへ反映します。",
           tabs: ["reflect"],
+          tab: "reflect",
+          subTab: "section",
+          focusSelector: "#u_reflectAssist",
           priority: "high",
           riskLevel: "warning",
           recommendedFor: ["差分確認後", "本番反映前の検証"],
           usageOrder: 2,
           onboardingOrder: 2,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "caution", label: "要確認", icon: "2" }
         },
         {
           key: "field",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.field,
           label: "フィールド追加",
-          desc: "フィールド定義の追加・編集",
+          desc: "フィールド定義を追加・編集します。",
           tabs: ["field"],
+          tab: "field",
+          subTab: "json",
+          focusSelector: "#u_fieldJson",
           priority: "medium",
           riskLevel: "warning",
-          recommendedFor: ["項目追加時", "一括メンテナンス"],
+          recommendedFor: ["項目追加", "定義の一括修正"],
           usageOrder: 4,
           onboardingOrder: 4,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "caution", label: "要注意", icon: "!" }
         },
         {
           key: "jsconfig",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.jsconfig,
           label: "JS/CSS設定",
-          desc: "カスタマイズ設定の取得・反映",
+          desc: "カスタマイズ設定の取得・反映を行います。",
           tabs: ["jsconfig"],
+          tab: "jsconfig",
+          subTab: "editor",
+          focusSelector: "#u_jsconfigJson",
           priority: "medium",
           riskLevel: "warning",
           recommendedFor: ["カスタマイズ配布", "環境同期"],
           usageOrder: 5,
           onboardingOrder: 5,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "caution", label: "要注意", icon: "!" }
         },
         {
-          key: "vis",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>',
-          label: "可視化・出力",
-          desc: "ER図 / プロセス図 / 設計書 / 設定一括取得",
-          tabs: ["er", "processFlow", "design", "settingsExport"],
+          key: "design",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.design,
+          label: "設計書",
+          desc: "設計書や差分レポートを出力します。",
+          tabs: ["design"],
+          tab: "design",
+          focusSelector: '[data-act="exportDesignMd"]',
           priority: "medium",
           riskLevel: "safe",
-          recommendedFor: ["現状把握", "レビュー資料作成"],
+          recommendedFor: ["変更記録", "レビュー資料作成"],
           usageOrder: 3,
           onboardingOrder: 3,
-          badge: { tone: "safe", label: "安全", icon: "🛡️" }
+          badge: { tone: "safe", label: "安全", icon: "OK" }
         },
         {
-          key: "data",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
-          label: "データ・保守",
-          desc: "レコード管理 / SQL実行 / APIテスター",
-          tabs: ["recordMgr", "sql", "apiTester"],
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["保守作業", "調査"],
+          key: "settingsExport",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.settingsExport,
+          label: "設定一括取得",
+          desc: "複数アプリの設定をまとめて保存します。",
+          tabs: ["settingsExport"],
+          tab: "settingsExport",
+          subTab: "export",
+          focusSelector: "#u_settingsExportAppIds",
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["バックアップ", "棚卸し"],
           usageOrder: 6,
           onboardingOrder: 6,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "safe", label: "安全", icon: "OK" }
+        },
+        {
+          key: "er",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.er,
+          label: "ER図",
+          desc: "関連アプリや参照関係を図で確認します。",
+          tabs: ["er"],
+          tab: "er",
+          subTab: "diagram",
+          focusSelector: "#u_erLayout",
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["現状把握", "依存関係確認"],
+          usageOrder: 7,
+          onboardingOrder: 7,
+          badge: { tone: "safe", label: "安全", icon: "OK" }
+        },
+        {
+          key: "processFlow",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.processFlow,
+          label: "プロセス図",
+          desc: "プロセス管理をフロー図で確認します。",
+          tabs: ["processFlow"],
+          tab: "processFlow",
+          focusSelector: '[data-act="renderProcessFlow"]',
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["状態遷移確認", "運用レビュー"],
+          usageOrder: 8,
+          onboardingOrder: 8,
+          badge: { tone: "safe", label: "安全", icon: "OK" }
+        },
+        {
+          key: "recordMgr",
+          group: "data",
+          groupLabel: "データ・保守",
+          icon: ICONS.recordMgr,
+          label: "レコード管理",
+          desc: "CSV、添付DL、ステータス更新などを行います。",
+          tabs: ["recordMgr"],
+          tab: "recordMgr",
+          subTab: "status",
+          focusSelector: '[data-act="runBatchProcess"]',
+          priority: "low",
+          riskLevel: "warning",
+          recommendedFor: ["保守作業", "テストデータ操作"],
+          usageOrder: 9,
+          onboardingOrder: 9,
+          badge: { tone: "caution", label: "要注意", icon: "!" }
+        },
+        {
+          key: "sql",
+          group: "data",
+          groupLabel: "データ・保守",
+          icon: ICONS.sql,
+          label: "SQL実行",
+          desc: "kintoneデータをSQLライクに参照します。",
+          tabs: ["sql"],
+          tab: "sql",
+          focusSelector: '[data-act="launchKintoneSql"]',
+          priority: "low",
+          riskLevel: "warning",
+          recommendedFor: ["調査", "データ確認"],
+          usageOrder: 10,
+          onboardingOrder: 10,
+          badge: { tone: "caution", label: "要注意", icon: "!" }
+        },
+        {
+          key: "apiTester",
+          group: "data",
+          groupLabel: "データ・保守",
+          icon: ICONS.apiTester,
+          label: "APIテスター",
+          desc: "REST APIを直接試します。",
+          tabs: ["apiTester"],
+          tab: "apiTester",
+          focusSelector: "#u_apiTesterMethod",
+          priority: "low",
+          riskLevel: "warning",
+          recommendedFor: ["調査", "レスポンス確認"],
+          usageOrder: 11,
+          onboardingOrder: 11,
+          badge: { tone: "caution", label: "上級者向け", icon: "!" }
         }
       ];
       TAB_TO_FEATURE = {};
       FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
-        TAB_TO_FEATURE[t] = f.key;
+        if (!TAB_TO_FEATURE[t]) TAB_TO_FEATURE[t] = f.key;
       }));
     }
   });
@@ -207,41 +336,41 @@
       });
       GUIDED_TOUR_STEPS = Object.freeze([
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
           selector: "#u_sourceApp",
           title: "1. 比較元 / 比較先を決める",
-          body: "共通設定で比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
+          body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
         },
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
           selector: "#u_diffScopes",
           title: "3. 比較対象セクションを選ぶ",
           body: "差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。"
         },
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
           selector: "#u_ignoreKeyInput",
           title: "4. ノイズ差分を減らす",
           body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
         },
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
-          selector: '[data-act="runDiff"]',
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
+          selector: "#u_runDiffPrimary",
           title: "5. 差分比較を実行する",
           body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
         },
         {
-          tab: "diff",
-          subTab: "view",
-          path: "差分比較 > 結果整理",
+          tab: "reflect",
+          diffSubTab: "view",
+          path: "ヘッダー > 結果整理",
           selector: "#u_diffSearch",
           title: "6. 結果を絞り込んで確認する",
           body: "比較結果はセクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。"
@@ -279,8 +408,10 @@
       "use strict";
       init_constants();
       state = {
-        activeTab: "diff",
+        activeTab: "reflect",
+        activeFeatureKey: "",
         activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
+        launcherSortMode: "onboarding",
         lastSourceBundle: null,
         lastTargetBundle: null,
         lastDiffRows: [],
@@ -288,6 +419,8 @@
         lastDiffAt: null,
         lastDiffSignature: "",
         lastApplyPlan: null,
+        lastPreviewBackupPayload: null,
+        lastPreviewBackupFilename: "",
         diffViewTheme: "light",
         diffCollapsedSections: /* @__PURE__ */ new Set(),
         diffSectionVisibleCounts: {},

@@ -16,6 +16,27 @@ export function buildRoot(targetDocument = document, options = {}) {
   const root = doc.createElement('div');
   root.id = TOOL_ID;
   root.className = options.popout ? 'screen-launcher suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions' : 'screen-launcher tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions';
+  const getRiskLabel = (riskLevel) => riskLevel === 'warning' ? '要注意' : '比較的安全';
+  const renderFeatureCard = (f) => {
+    const recommended = Array.isArray(f.recommendedFor) ? f.recommendedFor : [];
+    return `<div class="feature-card" data-act="openFeature" data-feature="${f.key}" role="button" tabindex="0">
+      <div class="feature-card-top">
+        <div class="feature-card-icon">${f.icon || ''}</div>
+        <div class="feature-card-group">${esc(f.groupLabel || '')}</div>
+      </div>
+      <div class="feature-card-badges">
+        ${f.badge ? `<span class="feature-badge feature-badge--${f.badge.tone || 'recommended'}" aria-label="バッジ: ${esc(f.badge.label || '')}">
+          <span class="feature-badge-icon" aria-hidden="true">${f.badge.icon || '•'}</span>
+          <span class="feature-badge-label">${esc(f.badge.label || '')}</span>
+        </span>` : ''}
+        <span class="feature-risk feature-risk--${f.riskLevel === 'warning' ? 'warning' : 'safe'}">${getRiskLabel(f.riskLevel)}</span>
+      </div>
+      <div class="feature-card-label">${f.label}</div>
+      <div class="feature-card-desc">${f.desc}</div>
+      ${recommended.length ? `<div class="feature-card-tags">${recommended.map((item) => `<span class="feature-card-tag">${esc(item)}</span>`).join('')}</div>` : ''}
+      <div class="feature-card-go" aria-hidden="true">開く</div>
+    </div>`;
+  };
   root.innerHTML = `<style>${cssText}</style>` + `
         <div class="h" data-dialog-drag-handle="1">
           <div class="h-brand" aria-hidden="true">
@@ -85,99 +106,22 @@ export function buildRoot(targetDocument = document, options = {}) {
             </section>
             <input type="checkbox" id="u_sourcePreview" style="display:none">
             <input type="checkbox" id="u_targetPreview" checked style="display:none">
-            <section class="connection-section connection-section--step2 connection-section--actions" aria-labelledby="conn-common-heading">
-              <div class="connection-step-banner">
-                <span class="connection-step-title" id="conn-common-heading">Step 2 共通データ取得</span>
-                <span class="connection-step-indicator" id="u_step2Indicator" data-step-state="pending">未取得</span>
-              </div>
-              <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
-              <div class="btns connection-step-btns">
-                <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較 → 反映プラン確認</button>
-                <button class="btn sub connection-secondary-cta" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
-              </div>
-              <div class="kv" id="u_commonDataState">共通データ未取得</div>
-              <div class="muted connection-footnote">共通設定は全タブで使います。推奨: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
-            </section>
-            <section class="connection-section connection-section--step3 connection-section--actions" aria-labelledby="conn-feature-heading">
-              <div class="connection-step-banner">
-                <span class="connection-step-title" id="conn-feature-heading">Step 3 機能選択</span>
-                <span class="connection-step-indicator" id="u_step3Indicator" data-step-state="pending">未選択</span>
-              </div>
-              <p class="muted connection-step-desc">下の「作業メニュー」カードから機能を選択し、必要時のみ補助操作を使って接続情報を調整します。</p>
-              <div class="btns connection-step-btns connection-quick-btns">
-                <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
-                <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
-                <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
-              </div>
-            </section>
-            <table class="state-matrix" aria-label="状態マトリクス">
-              <thead>
-                <tr><th>対象</th><th>通常</th><th>ホバー</th><th>アクティブ</th><th>フォーカス</th><th>無効</th></tr>
-              </thead>
-              <tbody>
-                <tr><td>タブ / サブタブ</td><td>白背景 + 透明マーカー</td><td>背景を薄く強調</td><td>左線 / 下線を常時表示</td><td>水色リング + 外側影</td><td>busy時にopacity低下</td></tr>
-                <tr><td>操作ボタン</td><td>ラベル + 状態バッジ可</td><td>明度を少し上げる</td><td>押下時に1px沈む</td><td>共通リング仕様</td><td>無効時は半透明 + 操作不可</td></tr>
-                <tr><td>feature-card</td><td>上部アクセント線</td><td>左線追加 + 影を強調</td><td>（クリックで画面遷移）</td><td>共通リング仕様</td><td>対象外</td></tr>
-                <tr><td>status--error</td><td>赤系背景 + 左4px線</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
-              </tbody>
-            </table>
-            </div>
-
-          <div class="launcher-menu" id="u_launcherMenu">
-            <div class="launcher-menu-head">
-              <p class="launcher-lead">作業メニュー</p>
-              <p class="launcher-tagline">カードをクリックして開きます。作業開始後も「← 戻る」でこの画面に戻れます。</p>
-            </div>
-            <div class="launcher-sort">
-              <label for="u_featureSortMode">並び順</label>
-              <select id="u_featureSortMode" class="launcher-sort-select">
-                <option value="onboarding">初回推奨順</option>
-                <option value="usage">よく使う順</option>
-              </select>
-            </div>
-            <div class="feature-grid">
-              ${FEATURE_DEFS.map((f) => `<div class="feature-card" data-act="openFeature" data-feature="${f.key}" role="button" tabindex="0">
-                <div class="feature-card-icon">${f.icon || ''}</div>
-                ${f.badge ? `<div class="feature-card-badges">
-                  <span class="feature-badge feature-badge--${f.badge.tone || 'recommended'}" aria-label="バッジ: ${esc(f.badge.label || '')}">
-                    <span class="feature-badge-icon" aria-hidden="true">${f.badge.icon || '•'}</span>
-                    <span class="feature-badge-label">${esc(f.badge.label || '')}</span>
-                  </span>
-                </div>` : ''}
-                <div class="feature-card-label">${f.label}</div>
-                <div class="feature-card-desc">${f.desc}</div>
-                <div class="feature-card-go" aria-hidden="true">開く</div>
-              </div>`).join('')}
-            </div>
-          </div>
-
-          <div class="card tab-card">
-            <div class="tabs">
-              <div class="tab-group" data-group="change">
-                <div class="tab-group-lbl">変更・反映</div>
-                <button class="tab active" data-tab="diff" data-state="selected">差分比較</button>
-                <button class="tab" data-tab="reflect" data-state="idle">プレビュー反映</button>
-                <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
-                <button class="tab" data-tab="jsconfig" data-state="idle">JS/CSS設定</button>
-              </div>
-              
-              <div class="tab-group" data-group="vis">
-                <div class="tab-group-lbl">可視化・出力</div>
-                <button class="tab" data-tab="er" data-state="idle">ER図</button>
-                <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
-                <button class="tab" data-tab="design" data-state="idle">設計書</button>
-                <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
-              </div>
-              
-              <div class="tab-group" data-group="data">
-                <div class="tab-group-lbl">データ・保守</div>
-                <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
-                <button class="tab" data-tab="sql" data-state="idle">SQL実行</button>
-                <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
-              </div>
-            </div>
-
-            <div class="pane active" data-pane="diff">
+            <div class="kus-header-diff-suite" id="u_headerDiffSuite">
+            <p class="muted kus-header-diff-lead" style="margin:6px 0 10px;font-size:12px;line-height:1.55">Step 2 以降はこのエリアで操作します。比較元・比較先は上の Step 1、反映操作は下の「プレビュー反映」タブです。</p>
+            <section class="connection-section connection-section--step2 connection-section--actions diff-pane-step2" aria-labelledby="conn-diff-pane-heading">
+                <div class="connection-step-banner">
+                  <span class="connection-step-title" id="conn-diff-pane-heading">比較データ取得・一括フロー</span>
+                  <span class="connection-step-indicator" id="u_step2Indicator" data-step-state="pending">未取得</span>
+                </div>
+                <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
+                <div class="btns connection-step-btns">
+                  <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較 → 反映プラン確認</button>
+                  <button class="btn sub connection-secondary-cta" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
+                </div>
+                <div class="kv" id="u_commonDataState">共通データ未取得</div>
+                <div class="muted connection-footnote">接続パネルの設定は全タブで共有されます。推奨: ヘッダーで差分確認 → 反映プラン確認 → プレビュー反映。</div>
+              </section>
+              <section class="diff-pane-embed" aria-label="差分の条件・一覧">
               <div class="subtabs">
                 <button class="subtab active" data-subtab-parent="diff" data-subtab="conditions" data-state="selected">比較条件</button>
                 <button class="subtab" data-subtab-parent="diff" data-subtab="view" data-state="idle">結果整理</button>
@@ -202,7 +146,7 @@ export function buildRoot(targetDocument = document, options = {}) {
 
               <details class="diff-fold diff-fold--ignore">
                 <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">無視キー・プリセット・正規化</span>
+                  <span class="diff-fold-title">差分ノイズを減らす</span>
                   <span class="diff-fold-sub">ノイズ差分を減らす（初期は閉じた状態）</span>
                 </summary>
                 <div class="diff-fold-body">
@@ -249,19 +193,19 @@ export function buildRoot(targetDocument = document, options = {}) {
 
               <details class="diff-fold diff-fold--run" open>
                 <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">バンドル読込・差分の実行・保存</span>
-                  <span class="diff-fold-sub">オフライン JSON やエクスポート操作</span>
+                  <span class="diff-fold-title">差分の実行・保存・設定JSON読込</span>
+                  <span class="diff-fold-sub">保存済み設定JSONの読込や各種エクスポート</span>
                 </summary>
                 <div class="diff-fold-body">
               <div class="kv" id="u_bundleState">比較元: API取得 / 比較先: API取得</div>
               <div class="btns">
-                <button type="button" class="btn sub" data-act="importSourceBundle">比較元バンドル読込</button>
-                <button type="button" class="btn sub" data-act="importTargetBundle">比較先バンドル読込</button>
-                <button type="button" class="btn sub" data-act="clearBundle">バンドル読込解除</button>
-                <button type="button" class="btn sub" data-act="exportBundleJson">バンドル保存</button>
+                <button type="button" class="btn sub" data-act="importSourceBundle">比較元JSON読込</button>
+                <button type="button" class="btn sub" data-act="importTargetBundle">比較先JSON読込</button>
+                <button type="button" class="btn sub" data-act="clearBundle">JSON読込解除</button>
+                <button type="button" class="btn sub" data-act="exportBundleJson">設定JSON保存</button>
               </div>
               <div class="btns">
-                <button type="button" class="btn" data-act="runDiff">差分比較を実行</button>
+                <button type="button" class="btn" id="u_runDiffPrimary" data-act="runDiff">差分比較を実行</button>
                 <button type="button" class="btn sub" data-act="exportDiffJson">差分JSON保存</button>
                 <button type="button" class="btn sub" data-act="exportDiffHtml">差分HTML保存</button>
                 <button type="button" class="btn sub" data-act="exportPatchJson">パッチJSON保存</button>
@@ -304,7 +248,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <div class="diff-fold-body">
               <div id="u_diffOnboarding" class="diff-onboarding" style="display:none" role="note">
                 <div class="diff-onboarding-body">
-                  <p class="diff-onboarding-text"><strong>ヒント</strong> 下の結果欄は<strong>このサブタブ</strong>を開いているときだけ差分テーブルを表示します。帯グラフ・セクションピル・別ウィンドウ・Shift+範囲選択が使えます。</p>
+                  <p class="diff-onboarding-text"><strong>ヒント</strong> 結果欄は<strong>ヘッダー内の結果整理</strong>を開いているときだけ差分テーブルを表示します。帯グラフ・セクションピル・別ウィンドウ・Shift+範囲選択が使えます。</p>
                   <button type="button" class="btn sub" data-act="dismissDiffOnboarding">了解して閉じる</button>
                 </div>
               </div>
@@ -399,7 +343,7 @@ export function buildRoot(targetDocument = document, options = {}) {
               <div class="grid2" style="margin-top:0">
                 <div>
                   <label title="パスや値の一部でインライン検索">比較ビュー検索（パス / 値）</label>
-                  <input type="text" id="u_diffSearch" placeholder="例: fieldSettings.properties.customer_code" title="Ctrl/Cmd+F でもフォーカスできます（比較条件タブの説明参照）">
+                  <input type="text" id="u_diffSearch" placeholder="例: fieldSettings.properties.customer_code" title="Ctrl/Cmd+F でもフォーカスできます（ヘッダー比較条件の説明参照）">
                   <div class="btns" style="margin-top:6px">
                     <label class="chip" title="ONにすると、フィールドコード/フィールド名（ラベル）を優先して検索します"><input type="checkbox" id="u_diffSearchFieldName"> フィールド名で確認</label>
                   </div>
@@ -440,12 +384,72 @@ export function buildRoot(targetDocument = document, options = {}) {
               </div>
               <input type="file" id="u_sourceBundleFile" accept=".json" style="display:none">
               <input type="file" id="u_targetBundleFile" accept=".json" style="display:none">
+              </section>
+            </div>
+            <section class="connection-section connection-section--step3 connection-section--actions" aria-labelledby="conn-feature-heading">
+              <div class="connection-step-banner">
+                <span class="connection-step-title" id="conn-feature-heading">Step 3 機能選択</span>
+                <span class="connection-step-indicator" id="u_step3Indicator" data-step-state="pending">未選択</span>
+              </div>
+              <p class="muted connection-step-desc">下のカードからやりたい作業を選びます。カードには「用途」と「安全性」を表示しているので、迷ったらまず「差分比較」から進めてください。</p>
+              <div class="btns connection-step-btns connection-quick-btns">
+                <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
+                <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
+                <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
+              </div>
+            </section>
+            <div class="launcher-flow-note">
+              <strong>おすすめの流れ</strong>
+              <span>差分比較 → プレビュー反映 → 設計書 / 設定一括取得 の順で進めると安全です。</span>
+            </div>
             </div>
 
-            <div class="pane" data-pane="reflect">
+          <div class="launcher-menu" id="u_launcherMenu">
+            <div class="launcher-menu-head">
+              <p class="launcher-lead">作業メニュー</p>
+              <p class="launcher-tagline">カードをクリックすると、その作業に合った画面へ直接移動します。用途タグと安全性を見ながら選べます。</p>
+            </div>
+            <div class="launcher-sort">
+              <label for="u_featureSortMode">並び順</label>
+              <select id="u_featureSortMode" class="launcher-sort-select">
+                <option value="onboarding">初回推奨順</option>
+                <option value="usage">よく使う順</option>
+              </select>
+            </div>
+            <div class="feature-grid">
+              ${FEATURE_DEFS.map(renderFeatureCard).join('')}
+            </div>
+          </div>
+
+          <div class="card tab-card">
+            <div class="tabs">
+              <div class="tab-group" data-group="change">
+                <div class="tab-group-lbl">変更・反映</div>
+                <button class="tab active" data-tab="reflect" data-state="selected">プレビュー反映</button>
+                <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
+                <button class="tab" data-tab="jsconfig" data-state="idle">JS/CSS設定</button>
+              </div>
+              
+              <div class="tab-group" data-group="vis">
+                <div class="tab-group-lbl">可視化・出力</div>
+                <button class="tab" data-tab="er" data-state="idle">ER図</button>
+                <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
+                <button class="tab" data-tab="design" data-state="idle">設計書</button>
+                <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
+              </div>
+              
+              <div class="tab-group" data-group="data">
+                <div class="tab-group-lbl">データ・保守</div>
+                <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
+                <button class="tab" data-tab="sql" data-state="idle">SQL実行</button>
+                <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
+              </div>
+            </div>
+
+            <div class="pane active" data-pane="reflect">
               <div class="subtabs">
                 <button class="subtab active" data-subtab-parent="reflect" data-subtab="section">セクション反映</button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="node">ノード詳細反映</button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="node">差分単位で部分反映</button>
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="patch">JSONパッチ</button>
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="editor">プレビューエディタ</button>
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="sectionPreview">セクションプレビュー</button>
@@ -495,11 +499,11 @@ export function buildRoot(targetDocument = document, options = {}) {
 
               <!-- ===== Subpane: node ===== -->
               <div class="subpane" data-subpane-parent="reflect" data-subpane="node">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">ノードモード: 差分詳細行を選択して部分反映します。</div>
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">差分ごとに、比較元を反映するか比較先を維持するかを選んで部分反映します。</div>
                 <div class="reflect-layout">
                   <div class="reflect-main" style="width:100%">
                     <div class="main-body" style="padding:12px">
-                      <div class="warnbox" id="u_nodeWarn" style="display:none">注: ノードモードは「前回差分」から選択して反映します。まず差分比較を実行してください。</div>
+                      <div class="warnbox" id="u_nodeWarn" style="display:none">差分単位で部分反映するには、先に差分比較を実行して候補を読み込んでください。</div>
                       <div id="u_reflectHint" class="kv" style="display:none"></div>
                       <div id="u_nodeControls" style="display:none">
                         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
@@ -614,9 +618,9 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <div class="reflect-footer-actions main-footer" id="u_reflectFooter">
                   <div class="reflect-footer-actions__preview">
                     <span class="reflect-footer-zone-label">プレビューAPI</span>
-                    <button type="button" class="btn sub" data-act="runDiff" id="u_footerRunDiff" title="差分比較を実行します">差分比較</button>
                     <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">反映プラン確認</button>
                     <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します">バックアップ</button>
+                    <button type="button" class="btn sub" data-act="restoreTargetPreviewBackup" title="このセッションで保存した直前バックアップを比較先プレビューへ戻します">直前バックアップ復元</button>
                     <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択枠を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">比較元 → 比較先(プレビュー) 反映</button>
                   </div>
                   <div class="reflect-footer-actions__prod">
@@ -1265,18 +1269,10 @@ export function buildRoot(targetDocument = document, options = {}) {
             </div>
           </div>
 
-          <div class="status-row status-bar" id="u_statusBar" role="status" aria-live="polite" aria-relevant="text">
-            <div class="status status--neutral" id="u_status">待機中</div>
-            <button type="button" class="btn sub status-copy-btn" data-act="copyStatusMessage" title="ステータス行の内容をコピー（エラー時はスタックトレース付き）">コピー</button>
-          </div>
-
-          <div class="card result-card">
-            <div class="result-card-head">
-              <span class="result-card-mark" aria-hidden="true"></span>
-              <div>
-                <div class="result-card-title">結果</div>
-                <div class="result-card-sub">開いているタブに応じたログやプレビュー。差分の詳細テーブルは差分比較の「結果整理」サブタブ時のみ表示されます。</div>
-              </div>
+          <div class="kus-host-hidden" aria-hidden="true">
+            <div class="status-row status-bar" id="u_statusBar" role="status">
+              <div class="status status--neutral" id="u_status">待機中</div>
+              <button type="button" class="btn sub status-copy-btn" data-act="copyStatusMessage" title="ステータスをコピー">コピー</button>
             </div>
             <div class="result" id="u_result"></div>
           </div>

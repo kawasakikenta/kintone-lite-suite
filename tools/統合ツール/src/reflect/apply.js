@@ -6,7 +6,14 @@ import {
   relativePathFromRow, tokenizePath
 } from '../utils.js';
 import { state, ui } from '../state.js';
-import { apiGet, assertAllowsMutatingRestCall, buildApiPrefix, fetchBundle } from '../api.js';
+import {
+  apiGet,
+  assertAllowsMutatingRestCall,
+  buildApiPrefix,
+  fetchBundle,
+  extractSectionRevision,
+  ensureBundleShape
+} from '../api.js';
 import { buildPatchPayload } from '../diff/export.js';
 import {
   planFieldSectionDiffRequests,
@@ -478,6 +485,8 @@ export async function backupTargetPreviewSettings(c, scopes, options = {}) {
     bundle
   };
   const filename = `target_preview_backup_app${target.appId}_${nowStamp()}.json`;
+  state.lastPreviewBackupPayload = deepClone(payload);
+  state.lastPreviewBackupFilename = filename;
   downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
   if (!options?.silentStatus) setStatus(`比較先(プレビュー)バックアップ保存: ${filename}`);
   if (ui.backupStatus) {
@@ -485,6 +494,56 @@ export async function backupTargetPreviewSettings(c, scopes, options = {}) {
     ui.backupStatus.style.display = 'block';
   }
   return { filename, payload };
+}
+
+function getSectionDisplayLabel(sectionKey) {
+  return SECTION_DEFS.find((item) => item.key === sectionKey)?.label || sectionKey;
+}
+
+function formatSectionList(sectionKeys) {
+  return (sectionKeys || []).map((sectionKey) => getSectionDisplayLabel(sectionKey)).join(', ');
+}
+
+async function assertTargetPreviewMatchesPlannedBaseline(prefix, app, sectionKeys) {
+  const plan = state.lastApplyPlan;
+  const baselines = plan?.targetSectionBaselines || {};
+  const uniqueSectionKeys = [...new Set((sectionKeys || []).filter(Boolean))];
+  const checked = [];
+  const skipped = [];
+  const mismatches = [];
+
+  for (const secKey of uniqueSectionKeys) {
+    const baseline = baselines[secKey];
+    const def = SECTION_DEFS.find((item) => item.key === secKey);
+    if (!baseline || !def) {
+      skipped.push(secKey);
+      continue;
+    }
+    const current = await apiGet(prefix, def.endpoint, { app });
+    const currentRevision = extractSectionRevision(current);
+    const currentFingerprint = stableStringify(current);
+    const revisionChanged = baseline.revision && currentRevision && baseline.revision !== currentRevision;
+    const fingerprintChanged = baseline.fingerprint && baseline.fingerprint !== currentFingerprint;
+    if (revisionChanged || fingerprintChanged) {
+      mismatches.push({
+        sectionKey: secKey,
+        label: getSectionDisplayLabel(secKey),
+        plannedRevision: baseline.revision || '-',
+        currentRevision: currentRevision || '-'
+      });
+      continue;
+    }
+    checked.push(secKey);
+  }
+
+  if (mismatches.length) {
+    const detail = mismatches
+      .map((item) => `${item.label} (plan ${item.plannedRevision} / current ${item.currentRevision})`)
+      .join(', ');
+    throw new Error(`プラン確認後に比較先プレビューが更新されています。再度「反映プラン確認」を実行してください。対象: ${detail}`);
+  }
+
+  return { checked, skipped };
 }
 
 function resolvePatchSectionKey(name) {
@@ -861,12 +920,16 @@ export async function runApplyPreviewByNodes() {
   const app = c.target.appId;
   const logs = [];
   let hadError = false;
+  setStatus('反映前チェック中...');
+  const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, nodeScopes);
   const srcModeCount = rows.filter((r) => reflectRowModeById(r._id) === 'src').length;
   const tgtModeCount = rows.length - srcModeCount;
   logs.push(`比較先アプリ: ${app}`);
   logs.push(`ノードモード選択数: ${rows.length}`);
   logs.push(`モード内訳: 比較元 ${srcModeCount} / 比較先 ${tgtModeCount}`);
   logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+  if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
+  if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
   if (ui.autoBackupPreview?.checked) {
     const backupScopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
     const backup = await backupTargetPreviewSettings(c, backupScopes, { silentStatus: true });
@@ -986,9 +1049,13 @@ export async function runApplyPreview() {
   const stopOnError = !!ui.stopOnError.checked;
   const logs = [];
   let hadError = false;
+  setStatus('反映前チェック中...');
+  const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, scopes);
   logs.push(`比較先アプリ: ${app}`);
   logs.push(`適用セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
   logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+  if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
+  if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
   if (ui.autoBackupPreview?.checked) {
     const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
     logs.push(`バックアップ保存: ${backup.filename}`);
@@ -1012,6 +1079,61 @@ export async function runBackupTargetPreview() {
   const scopes = resolveBackupScopes(c);
   await backupTargetPreviewSettings(c, scopes);
   renderReflectAssistPanel();
+}
+
+export async function runRestoreTargetPreviewBackup() {
+  const c = commonParams();
+  if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
+  if (!state.lastPreviewBackupPayload?.bundle?.sections) {
+    throw new Error('このセッションで復元できるバックアップがありません。先に「バックアップ」を実行してください');
+  }
+
+  const restorePayload = deepClone(state.lastPreviewBackupPayload);
+  const restoreFilename = state.lastPreviewBackupFilename || 'session-backup.json';
+  const backupTarget = restorePayload.target || {};
+  if (String(backupTarget.appId || '') !== String(c.target.appId || '')) {
+    throw new Error(`比較先アプリがバックアップ取得時と異なります。現在: ${c.target.appId || '-'} / バックアップ: ${backupTarget.appId || '-'}`);
+  }
+  if (String(backupTarget.guestId || '') !== String(c.target.guestId || '')) {
+    throw new Error('比較先ゲストIDがバックアップ取得時と異なります。同じ接続先で実行してください');
+  }
+
+  const backupBundle = ensureBundleShape(restorePayload.bundle);
+  const scopes = Array.isArray(restorePayload.scopes) && restorePayload.scopes.length
+    ? restorePayload.scopes.filter(Boolean)
+    : Object.keys(backupBundle.sections || {});
+  if (!scopes.length) throw new Error('復元対象セクションがありません');
+
+  const labels = formatSectionList(scopes);
+  if (!window.confirm(`直前バックアップを比較先(プレビュー)へ復元しますか？\n比較先アプリ: ${c.target.appId}\n対象セクション: ${labels || '-'}`)) {
+    setStatus('バックアップ復元をキャンセルしました');
+    return;
+  }
+
+  const prefix = buildApiPrefix(c.target.guestId, true);
+  const app = c.target.appId;
+  const stopOnError = !!ui.stopOnError?.checked;
+  const logs = [];
+  logs.push(`比較先アプリ: ${app}`);
+  logs.push(`復元元バックアップ: ${restoreFilename}`);
+  logs.push(`復元セクション: ${labels || '-'}`);
+  logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+  if (ui.autoBackupPreview?.checked) {
+    const beforeRestoreBackup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
+    logs.push(`復元前バックアップ保存: ${beforeRestoreBackup.filename}`);
+  }
+  logs.push('');
+
+  const hadError = await applySectionsLoop(prefix, app, backupBundle, scopes, logs, {}, stopOnError, {
+    phaseLabel: 'バックアップ復元',
+    onProgress: (i, total) => renderProgressLog(logs, { phase: 'バックアップ復元中', current: i, total })
+  });
+
+  appendProgressSummary(logs);
+  renderProgressLog(logs, { phase: 'バックアップ復元完了' });
+  renderReflectAssistPanel();
+  renderReflectMainPanel();
+  setStatus(hadError ? 'バックアップ復元で一部エラーが発生しました' : '直前バックアップから復元しました');
 }
 
 export async function runDeployOnly() {

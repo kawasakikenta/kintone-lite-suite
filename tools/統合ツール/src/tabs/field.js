@@ -335,7 +335,7 @@ export async function runDetectUnusedFields() {
   ensureBundleShape(bundle);
 
   const index = buildCombinedFieldImpactIndex(bundle);
-  const usedCodes = new Set(Object.keys(index.refs || {}));
+  const usedCodes = new Set(index.keys());
 
   const fieldsResp = bundle.sections.fieldSettings;
   const props = fieldsResp ? fieldsResp.properties : {};

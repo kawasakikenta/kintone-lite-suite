@@ -1,6 +1,7 @@
 'use strict';
 
 import {
+  FEATURE_DEFS,
   SECTION_DEFS,
   SETTINGS_EXPORT_SCOPE_DEFS,
   TAB_CONNECTION_NEEDS
@@ -77,6 +78,76 @@ export function setBusy(isBusy, message) {
   if (root) root.classList.toggle('busy', !!isBusy);
 }
 
+function getFeatureDef(featureKey) {
+  return FEATURE_DEFS.find((item) => item.key === featureKey) || null;
+}
+
+function buildFeatureSummary(def) {
+  if (!def) return '';
+  const parts = [def.desc || ''];
+  if (Array.isArray(def.recommendedFor) && def.recommendedFor.length) {
+    parts.push(`おすすめ: ${def.recommendedFor.join(' / ')}`);
+  }
+  if (def.riskLevel === 'warning') {
+    parts.push('変更系のため実行前に内容確認を推奨');
+  } else if (def.riskLevel === 'safe') {
+    parts.push('確認・出力中心で比較的安全');
+  }
+  return parts.filter(Boolean).join(' ・ ');
+}
+
+function applyFeatureGroupClass(root, group) {
+  if (!root) return;
+  root.classList.remove('feat-vis', 'feat-data', 'feat-change');
+  if (group === 'vis') root.classList.add('feat-vis');
+  else if (group === 'data') root.classList.add('feat-data');
+  else root.classList.add('feat-change');
+}
+
+export function showLauncherScreen(options = {}) {
+  const root = getToolDocument().getElementById('kintone-unified-suite-v2');
+  if (!root) return;
+  state.activeFeatureKey = '';
+  root.classList.remove('screen-feature', 'feat-vis', 'feat-data', 'feat-change');
+  root.classList.add('screen-launcher');
+  if (ui.featureTitle) ui.featureTitle.textContent = '';
+  if (ui.featureConn) ui.featureConn.textContent = '';
+  updateConnectionStepIndicators();
+  if (options.persist !== false) saveCurrentDialogState();
+}
+
+export function openFeatureScreen(featureKey, options = {}) {
+  const def = getFeatureDef(featureKey);
+  const root = getToolDocument().getElementById('kintone-unified-suite-v2');
+  if (!def || !root) return null;
+
+  state.activeFeatureKey = def.key;
+  root.classList.remove('screen-launcher');
+  root.classList.add('screen-feature');
+  applyFeatureGroupClass(root, def.group);
+
+  switchTab(def.tab || def.tabs?.[0] || 'reflect', { persist: false });
+  if (def.subTab) switchSubTab(def.tab, def.subTab, { persist: false });
+  if (def.diffSubTab) switchSubTab('diff', def.diffSubTab, { persist: false });
+
+  if (ui.featureTitle) ui.featureTitle.textContent = def.label;
+  if (ui.featureConn) ui.featureConn.textContent = buildFeatureSummary(def);
+
+  updateConnectionStepIndicators();
+
+  if (options.persist !== false) saveCurrentDialogState();
+
+  if (def.focusSelector && options.focus !== false) {
+    const targetWindow = getToolDocument().defaultView || window;
+    targetWindow.requestAnimationFrame(() => {
+      const target = getToolDocument().querySelector(def.focusSelector);
+      target?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    });
+  }
+
+  return def;
+}
+
 export function switchSubTab(parentKey, subKey, options = {}) {
   if (!parentKey) return;
   const tabs = ui.subTabs.filter((tab) => tab.dataset.subtabParent === parentKey);
@@ -99,7 +170,7 @@ export function switchSubTab(parentKey, subKey, options = {}) {
 }
 
 export function switchTab(tabKey, options) {
-  const key = ui.tabs.some((t) => t.dataset.tab === tabKey) ? tabKey : 'diff';
+  const key = ui.tabs.some((t) => t.dataset.tab === tabKey) ? tabKey : 'reflect';
   state.activeTab = key;
   ui.tabs.forEach((t) => {
     const active = t.dataset.tab === key;
@@ -110,8 +181,24 @@ export function switchTab(tabKey, options) {
   
   const root = getToolDocument().getElementById('kintone-unified-suite-v2');
   if (root) {
+    if (root.classList.contains('screen-feature')) {
+      const matches = FEATURE_DEFS.filter((def) => (def.tab || def.tabs?.[0]) === key);
+      const currentFeature = getFeatureDef(state.activeFeatureKey);
+      const currentMatchesTab = currentFeature && (currentFeature.tab || currentFeature.tabs?.[0]) === key;
+      if (key !== 'reflect' && matches.length === 1) {
+        state.activeFeatureKey = matches[0].key;
+      } else if (!currentMatchesTab) {
+        state.activeFeatureKey = matches.find((def) => def.key === 'reflect')?.key || matches[0]?.key || '';
+      }
+      const activeFeature = getFeatureDef(state.activeFeatureKey);
+      if (activeFeature) {
+        applyFeatureGroupClass(root, activeFeature.group);
+        if (ui.featureTitle) ui.featureTitle.textContent = activeFeature.label;
+        if (ui.featureConn) ui.featureConn.textContent = buildFeatureSummary(activeFeature);
+      }
+    }
     const needs = TAB_CONNECTION_NEEDS[key] || {};
-    root.classList.toggle('tab-is-diff-or-reflect', key === 'diff' || key === 'reflect');
+    root.classList.toggle('tab-is-diff-or-reflect', key === 'reflect' || key === 'field' || key === 'jsconfig');
     root.classList.toggle('tab-needs-app-inputs', !!(needs.appInputs));
     root.classList.toggle('tab-needs-target', !!(needs.target));
     root.classList.toggle('tab-needs-connection-actions', !!(needs.connectionActions));
@@ -139,11 +226,14 @@ export function updateConnectionStepIndicators() {
   const step3 = ui.step3Indicator;
   if (!step1 && !step2 && !step3) return;
 
+  const root = getToolDocument().getElementById('kintone-unified-suite-v2');
   const sourceApp = (ui.sourceApp?.value || '').trim();
   const targetApp = (ui.targetApp?.value || '').trim();
   const hasConnection = !!sourceApp && !!targetApp;
   const hasCommonData = !!(state.lastSourceBundle || state.importedSourceBundle) && !!(state.lastTargetBundle || state.importedTargetBundle);
-  const currentStep = !hasConnection ? 1 : (state.activeTab === 'diff' || state.activeTab === 'reflect' ? 2 : 3);
+  const activeFeature = getFeatureDef(state.activeFeatureKey);
+  const featureSelected = !!activeFeature && root?.classList.contains('screen-feature');
+  const currentStep = !hasConnection ? 1 : (featureSelected ? 3 : 2);
 
   if (step1) {
     step1.textContent = hasConnection ? '入力済み' : '未入力';
@@ -154,9 +244,9 @@ export function updateConnectionStepIndicators() {
     step2.dataset.stepState = currentStep === 2 ? 'current' : (hasCommonData ? 'done' : 'pending');
   }
   if (step3) {
-    const featureSelected = currentStep === 3;
-    step3.textContent = featureSelected ? '選択中' : '未選択';
-    step3.dataset.stepState = featureSelected ? 'current' : 'pending';
+    const step3Active = hasConnection && featureSelected;
+    step3.textContent = featureSelected ? activeFeature.label : '未選択';
+    step3.dataset.stepState = step3Active ? 'current' : 'pending';
   }
 }
 
@@ -245,7 +335,7 @@ export function renderDiffSelectionState() {
     return;
   }
   ui.diffSelectionState.textContent =
-    `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / 出力対象 ${resolveDiffExportMode() === 'all' ? '全差分' : resolveDiffExportMode() === 'selected' ? '選択差分' : resolveDiffExportMode() === 'visible' ? '現在表示中' : '全差分'} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(', ') || '-'}`;
+    `選択 ${selected}/${total}件 ・ 表示 ${rendered}件 ・ API失敗 ${issues}件 ・ 出力 ${resolveDiffExportMode() === 'all' ? '全差分' : resolveDiffExportMode() === 'selected' ? '選択差分' : resolveDiffExportMode() === 'visible' ? '現在表示中' : '全差分'} ・ 内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} ・ 正規化 ${normalization.join(', ') || '-'}`;
 }
 
 export function renderDiffWarningBox() {
@@ -321,7 +411,7 @@ export function renderBundleState() {
     const revisionText = resolveBundleRevision(bundle) || '-';
     const guestText = bundle.guestId ? `ゲスト ${bundle.guestId}` : '通常空間';
     if (imported) {
-      return `${label}: 読込済み(${importedName || bundle.appId || '-'}) [${previewText} / rev ${revisionText} / ${guestText}]`;
+      return `${label}: 保存済みJSONを読込 (${importedName || bundle.appId || '-'}) [${previewText} / rev ${revisionText} / ${guestText}]`;
     }
     return `${label}: API取得済み(アプリ ${bundle.appId || '-'} / ${previewText} / rev ${revisionText} / ${guestText} / ${fmtFetchTime(bundle.fetchedAt)})`;
   };
@@ -499,15 +589,13 @@ export function buildReflectAssistHtml() {
     }
   ];
 
-  const primaryDiffAction = diffReady
-    ? `<button class="btn sub" data-act="goDiffReview">差分結果を確認</button>`
-    : `<button class="btn sub" data-act="runDiff">差分比較を実行</button>`;
   const nodeLoadAction = isNode && !state.reflectRows.length
     ? '<button class="btn sub" data-act="loadReflectNodes">差分ノード読込</button>'
     : '';
   const scopeDiffAction = !isNode && actualDiffRows.length
     ? '<button class="btn sub" data-act="applyScopeDiffOnly">差分のみ選択</button>'
     : '';
+  const contextActions = [nodeLoadAction, scopeDiffAction].filter(Boolean).join('');
 
   return `<div class="reflect-assist">
     <div class="reflect-guide">
@@ -548,14 +636,10 @@ export function buildReflectAssistHtml() {
         <div class="reflect-summary-meta">${esc(planReady ? `最新確認: ${planTime}` : 'まだ反映プラン確認を実行していません')}</div>
       </div>
     </div>
-    <div class="reflect-context-actions">
-      ${primaryDiffAction}
-      ${nodeLoadAction}
-      ${scopeDiffAction}
-    </div>
-    <p class="reflect-action-hint">プラン確認・バックアップ・プレビュー反映は<strong>画面下の固定バー</strong>から操作します。本番デプロイはツールから実行できません。</p>
+    ${contextActions ? `<div class="reflect-context-actions">${contextActions}</div>` : ''}
+    <p class="reflect-action-hint">差分の再実行は<strong>上部の接続パネル（ヘッダー）</strong>内の差分エリアから。プラン確認・バックアップ・復元・プレビュー反映は<strong>画面下の固定バー</strong>から操作します。本番デプロイはツールから実行できません。</p>
     ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join('') : '<div class="reflect-good">現在の条件でそのまま進めます。変更前の確認は「反映プラン確認」で行えます。</div>'}
-    ${backupState ? `<div class="reflect-good">${esc(backupState)}</div>` : ''}
+    ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? ' / 必要なら「直前バックアップ復元」で戻せます。' : ''}</div>` : ''}
   </div>`;
 }
 
@@ -639,12 +723,7 @@ function renderReflectHowto() {
           <li style="margin:4px 0">${step2} <strong>反映プラン確認</strong>で API 実行内容を確認</li>
           <li style="margin:4px 0">${step3} <strong>比較元 → 比較先(プレビュー) 反映</strong>を実行</li>
         </ol>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-          <button class="btn sub" data-act="runDiff">① 差分比較</button>
-          ${isNode ? '<button class="btn sub" data-act="loadReflectNodes">② 差分ノード読込</button>' : ''}
-          <button class="btn sub" data-act="previewApplyPlan">③ 反映プラン確認</button>
-          <button class="btn ok" data-act="applyPreview">④ プレビュー反映</button>
-        </div>
+        <p class="muted" style="margin:8px 0 0;font-size:11px;line-height:1.6">差分比較は<strong>上部の接続パネル（ヘッダー）</strong>内から。反映プラン確認・プレビュー反映は画面下の固定バーから実行してください。</p>
       </div>
     </details>`;
 }
@@ -984,7 +1063,7 @@ export function renderReflectNodeDetail() {
     <div class="reflect-node-actions">
       <button class="btn ${selected ? 'sub' : 'ok'}" data-act="toggleActiveReflectNodeSelection">${selected ? '選択解除' : 'このノードを選択'}</button>
       <button class="btn ok" data-act="toggleActiveReflectNodeMode">${mode === 'src' ? '比較先へ切替' : '比較元へ切替'}</button>
-      <button class="btn sub" data-act="focusActiveReflectNodeDiff">差分タブで開く</button>
+      <button class="btn sub" data-act="focusActiveReflectNodeDiff">ヘッダーの結果整理で開く</button>
       <button class="btn sub" data-copy-val="${esc(row.path || '')}">パスコピー</button>
     </div>
   </div>

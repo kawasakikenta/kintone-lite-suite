@@ -502,6 +502,236 @@ export function buildDiffExportComparedBundles(sourceBundle, targetBundle, scope
   };
 }
 
+function getSectionLabel(sectionKeyOrLabel) {
+  const raw = String(sectionKeyOrLabel || '').trim();
+  if (!raw) return '-';
+  return SECTION_DEFS.find((item) => item.key === raw || item.label === raw)?.label || raw;
+}
+
+function getSectionOrder(sectionKeyOrLabel) {
+  const raw = String(sectionKeyOrLabel || '').trim();
+  const index = SECTION_DEFS.findIndex((item) => item.key === raw || item.label === raw);
+  return index >= 0 ? index : 9999;
+}
+
+function getRelativeDiffPath(row) {
+  const path = String(row?.path || '').trim();
+  const secKey = String(row?.sectionKey || '').trim();
+  if (!path) return '';
+  if (!secKey) return path;
+  if (path === secKey) return '（セクション全体）';
+  if (path.startsWith(`${secKey}.`)) return path.slice(secKey.length + 1);
+  if (path.startsWith(`${secKey}[`)) return path.slice(secKey.length);
+  return path;
+}
+
+function compactDiffValuePreview(value, maxLength = 140) {
+  const raw = stringifyForDiff(value).replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  return raw.length > maxLength ? `${raw.slice(0, maxLength)}...` : raw;
+}
+
+function getBundleExportMeta(bundle) {
+  return {
+    appId: String(bundle?.appId || ''),
+    guestId: String(bundle?.guestId || ''),
+    preview: !!bundle?.preview,
+    revision: resolveBundleRevision(bundle) || '',
+    fetchedAt: bundle?.fetchedAt || '',
+    sectionCount: Object.keys(bundle?.sections || {}).length
+  };
+}
+
+function buildDiffTypeSummary(rows) {
+  const summarized = summarizeRows(rows || []);
+  return {
+    totalRows: summarized.total,
+    diffCount: countActualDiffRows(rows || []),
+    sameCount: summarized.same,
+    added: summarized.added,
+    removed: summarized.removed,
+    changed: summarized.changed,
+    moved: summarized.moved
+  };
+}
+
+function buildCompactFetchIssue(issue) {
+  return {
+    sectionKey: String(issue?.sectionKey || ''),
+    sectionLabel: getSectionLabel(issue?.sectionKey || issue?.section),
+    side: String(issue?.side || ''),
+    message: String(issue?.message || ''),
+    sourceError: String(issue?.sourceError || ''),
+    targetError: String(issue?.targetError || '')
+  };
+}
+
+function buildCompactDiffRow(row) {
+  return {
+    sectionKey: String(row?.sectionKey || ''),
+    sectionLabel: getSectionLabel(row?.sectionKey || row?.section),
+    type: String(row?.type || ''),
+    severity: String(row?.severity || 'low'),
+    path: String(row?.path || ''),
+    relativePath: getRelativeDiffPath(row),
+    moved: !!row?.moved,
+    reasonSummary: String(row?.reasonSummary || ''),
+    impactCount: Number(row?.impactCount || 0),
+    impactSummary: String(row?.impactSummary || ''),
+    renameCandidate: row?.renameCandidate || null,
+    preview: {
+      source: compactDiffValuePreview(row?.left),
+      target: compactDiffValuePreview(row?.right)
+    }
+  };
+}
+
+export function buildDiffSectionSummaries(rows, fetchIssues = []) {
+  const groupedRows = new Map();
+  const issueKeys = new Set();
+  (rows || []).forEach((row) => {
+    const key = String(row?.sectionKey || row?.section || '').trim() || '未分類';
+    if (!groupedRows.has(key)) groupedRows.set(key, []);
+    groupedRows.get(key).push(row);
+  });
+  (fetchIssues || []).forEach((issue) => {
+    const key = String(issue?.sectionKey || issue?.section || '').trim();
+    if (key) issueKeys.add(key);
+  });
+  const keys = [...new Set([...groupedRows.keys(), ...issueKeys])];
+  keys.sort((a, b) => {
+    const ao = getSectionOrder(a);
+    const bo = getSectionOrder(b);
+    if (ao !== bo) return ao - bo;
+    return String(getSectionLabel(a)).localeCompare(String(getSectionLabel(b)));
+  });
+  return keys.map((sectionKey) => {
+    const sectionRows = groupedRows.get(sectionKey) || [];
+    const diffRows = getActualDiffRows(sectionRows);
+    const typeSummary = buildDiffTypeSummary(sectionRows);
+    const severity = summarizeSeverity(sectionRows);
+    const issueCount = (fetchIssues || []).filter((issue) => String(issue?.sectionKey || issue?.section || '').trim() === sectionKey).length;
+    const reasonCounts = new Map();
+    diffRows.forEach((row) => {
+      const reason = String(row?.reasonSummary || '').trim();
+      if (!reason) return;
+      reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
+    });
+    const topReasons = [...reasonCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 3)
+      .map(([reason, count]) => ({ reason, count }));
+    const samplePaths = [...new Set(diffRows.map((row) => getRelativeDiffPath(row)).filter(Boolean))].slice(0, 3);
+    return {
+      sectionKey,
+      sectionLabel: getSectionLabel(sectionKey),
+      ...typeSummary,
+      fetchIssueCount: issueCount,
+      severity,
+      topReasons,
+      samplePaths
+    };
+  });
+}
+
+export function buildDiffHighlightRows(rows, limit = 8) {
+  const severityWeight = { high: 300, medium: 200, low: 100 };
+  return getActualDiffRows(rows || [])
+    .map((row, index) => {
+      let score = severityWeight[row?.severity] || 0;
+      if (row?.type === 'removed') score += 30;
+      else if (row?.type === 'added') score += 18;
+      else score += 12;
+      if (row?.renameCandidate) score += 12;
+      if (row?.moved) score += 6;
+      score += Math.min(40, Number(row?.impactCount || 0) * 4);
+      return { row, index, score };
+    })
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, limit)
+    .map(({ row }) => ({
+      ...buildCompactDiffRow(row),
+      impactRefs: Array.isArray(row?.impactRefs) ? row.impactRefs.slice(0, 3) : []
+    }));
+}
+
+function buildCompactRowsBySection(rows) {
+  const grouped = {};
+  (rows || []).forEach((row) => {
+    const key = String(row?.sectionKey || row?.section || '').trim() || '未分類';
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(buildCompactDiffRow(row));
+  });
+  return grouped;
+}
+
+export function buildDiffExportPayload({
+  sourceBundle,
+  targetBundle,
+  rows,
+  fetchIssues,
+  ignoreKeys,
+  exportMode,
+  exportLabel,
+  exportContentMode,
+  exportContentLabel,
+  normalizationState,
+  warning,
+  compareScopes,
+  compareSourceBundle,
+  compareTargetBundle
+} = {}) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const safeIssues = Array.isArray(fetchIssues) ? fetchIssues : [];
+  const stateMap = normalizationState || {};
+  const sectionSummaries = buildDiffSectionSummaries(safeRows, safeIssues);
+  const typeSummary = buildDiffTypeSummary(safeRows);
+  const compared = shouldIncludeComparedContent(exportContentMode) && Array.isArray(compareScopes) && compareScopes.length
+    ? {
+        scopes: [...new Set(compareScopes.filter(Boolean))],
+        sourceBundle: compareSourceBundle || null,
+        targetBundle: compareTargetBundle || null
+      }
+    : null;
+  return {
+    generatedAt: new Date().toISOString(),
+    export: {
+      mode: exportMode || 'all',
+      label: exportLabel || '全差分',
+      contentMode: exportContentMode || 'diffOnly',
+      contentLabel: exportContentLabel || getDiffExportContentLabel(exportContentMode),
+      ignoreKeys: String(ignoreKeys || ''),
+      normalizationState: stateMap,
+      normalizationLabels: getActiveDiffNormalizationLabels(stateMap)
+    },
+    source: getBundleExportMeta(sourceBundle),
+    target: getBundleExportMeta(targetBundle),
+    summary: {
+      ...typeSummary,
+      fetchIssueCount: safeIssues.length,
+      sectionCount: sectionSummaries.length,
+      sectionsWithDiff: sectionSummaries.filter((item) => item.diffCount > 0).length,
+      severity: summarizeSeverity(safeRows),
+      warning: warning || {
+        threshold: 0,
+        diffCount: typeSummary.diffCount,
+        issueCount: safeIssues.length,
+        total: typeSummary.diffCount + safeIssues.length,
+        exceeded: false
+      }
+    },
+    sectionSummaries,
+    highlights: buildDiffHighlightRows(safeRows),
+    fetchIssues: safeIssues.map(buildCompactFetchIssue),
+    details: {
+      rows: safeRows,
+      rowsCompact: safeRows.map(buildCompactDiffRow),
+      rowsBySection: buildCompactRowsBySection(safeRows)
+    },
+    compared
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Markdown export
 // ---------------------------------------------------------------------------
@@ -534,7 +764,8 @@ export function bundleToMarkdown(bundle) {
 
 export function buildPatchPayload(rows, sourceBundle, targetBundle) {
   const grouped = {};
-  for (const r of getActualDiffRows(rows)) {
+  const diffRows = getActualDiffRows(rows);
+  for (const r of diffRows) {
     const section = r.section || '未分類';
     if (!grouped[section]) grouped[section] = [];
     grouped[section].push({
@@ -553,10 +784,40 @@ export function buildPatchPayload(rows, sourceBundle, targetBundle) {
       impactRefs: r.impactRefs || []
     });
   }
+  const byType = { added: 0, removed: 0, changed: 0, moved: 0 };
+  diffRows.forEach((row) => {
+    if (row?.type === 'added') byType.added += 1;
+    else if (row?.type === 'removed') byType.removed += 1;
+    else byType.changed += 1;
+    if (row?.moved) byType.moved += 1;
+  });
+  const sectionsMeta = Object.entries(grouped)
+    .map(([sectionLabel, sectionRows]) => {
+      const sectionKey = SECTION_DEFS.find((item) => item.label === sectionLabel || item.key === sectionLabel)?.key || sectionLabel;
+      const sectionTypeSummary = { totalRows: sectionRows.length, diffCount: sectionRows.length, sameCount: 0, added: 0, removed: 0, changed: 0, moved: 0 };
+      sectionRows.forEach((row) => {
+        if (row?.type === 'added') sectionTypeSummary.added += 1;
+        else if (row?.type === 'removed') sectionTypeSummary.removed += 1;
+        else sectionTypeSummary.changed += 1;
+        if (row?.moved) sectionTypeSummary.moved += 1;
+      });
+      return {
+        sectionKey,
+        sectionLabel: getSectionLabel(sectionKey),
+        ...sectionTypeSummary
+      };
+    })
+    .sort((a, b) => getSectionOrder(a.sectionKey) - getSectionOrder(b.sectionKey) || a.sectionLabel.localeCompare(b.sectionLabel));
   return {
     generatedAt: new Date().toISOString(),
-    source: { appId: sourceBundle?.appId || '', guestId: sourceBundle?.guestId || '', preview: !!sourceBundle?.preview },
-    target: { appId: targetBundle?.appId || '', guestId: targetBundle?.guestId || '', preview: !!targetBundle?.preview },
+    source: getBundleExportMeta(sourceBundle),
+    target: getBundleExportMeta(targetBundle),
+    summary: {
+      diffCount: diffRows.length,
+      sectionCount: sectionsMeta.length,
+      byType
+    },
+    sectionsMeta,
     sections: grouped
   };
 }
@@ -604,7 +865,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const MAX_EXPORT_ROWS = 2000;
   const exportRows = withSameSections.slice(0, MAX_EXPORT_ROWS);
   const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
-  const normalizationLabels = getActiveDiffNormalizationLabels(options.normalizationState || {});
   const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
   const exportContentMode = options.exportContentMode || 'diffOnly';
   const exportContentLabel = options.exportContentLabel || getDiffExportContentLabel(exportContentMode);
@@ -613,36 +873,93 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const compareTargetBundle = options.compareTargetBundle || null;
   /** kintone-ui-component UMD / Kucs グローバルと一致させる */
   const KUC_REPORT_VERSION = '1.24.0';
-  const reportMeta = {
-    generatedAt: new Date().toISOString(),
-    ignoreKeys: String(ignoreKeys || ''),
-    scopes: scopes || [],
-    sectionText,
+  const exportPayload = buildDiffExportPayload({
+    sourceBundle,
+    targetBundle,
+    rows: withSameSections,
+    fetchIssues,
+    ignoreKeys,
     exportMode: options.exportMode || 'all',
     exportLabel: options.exportLabel || '全差分',
     exportContentMode,
     exportContentLabel,
-    normalizationLabels,
+    normalizationState: options.normalizationState || {},
     warning,
-    source: {
-      appId: sourceBundle?.appId || '',
-      guestId: sourceBundle?.guestId || '',
-      preview: !!sourceBundle?.preview,
-      revision: resolveBundleRevision(sourceBundle) || ''
-    },
-    target: {
-      appId: targetBundle?.appId || '',
-      guestId: targetBundle?.guestId || '',
-      preview: !!targetBundle?.preview,
-      revision: resolveBundleRevision(targetBundle) || ''
-    },
+    compareScopes,
+    compareSourceBundle,
+    compareTargetBundle
+  });
+  const reportMeta = {
+    generatedAt: exportPayload.generatedAt,
+    scopes: scopes || [],
+    sectionText,
+    ignoreKeys: exportPayload.export.ignoreKeys,
+    exportMode: exportPayload.export.mode,
+    exportLabel: exportPayload.export.label,
+    exportContentMode: exportPayload.export.contentMode,
+    exportContentLabel: exportPayload.export.contentLabel,
+    normalizationLabels: exportPayload.export.normalizationLabels,
+    warning: exportPayload.summary.warning,
+    source: exportPayload.source,
+    target: exportPayload.target,
     summary,
+    diffOverview: exportPayload.summary,
+    sectionSummaries: exportPayload.sectionSummaries,
+    highlights: exportPayload.highlights,
     fetchIssues,
     totalRows: withSameSections.length,
     renderedRows: exportRows.length,
     truncated: withSameSections.length > exportRows.length,
     compareScopes
   };
+  const sectionSummaryRowsHtml = reportMeta.sectionSummaries.map((item) => `<tr>
+        <td>
+          <div class="sum-table-name">${esc(item.sectionLabel)}</div>
+          <div class="sum-table-sub">${esc(
+            item.topReasons.length
+              ? item.topReasons.map((reason) => `${reason.reason} (${reason.count})`).join(' / ')
+              : item.samplePaths.join(' / ') || '-'
+          )}</div>
+        </td>
+        <td>${item.diffCount}</td>
+        <td>${item.added}</td>
+        <td>${item.removed}</td>
+        <td>${item.changed}</td>
+        <td>${item.sameCount}</td>
+        <td>${item.fetchIssueCount}</td>
+        <td>${item.severity.high} / ${item.severity.medium} / ${item.severity.low}</td>
+      </tr>`).join('');
+  const sectionSummaryHtml = reportMeta.sectionSummaries.length
+    ? `<section class="panel">
+            <h3>セクション別サマリー</h3>
+            <div class="sum-table-wrap">
+              <table class="sum-table">
+                <thead><tr><th>セクション</th><th>差分</th><th>追加</th><th>削除</th><th>変更</th><th>同一</th><th>取得失敗</th><th>高 / 中 / 低</th></tr></thead>
+                <tbody>${sectionSummaryRowsHtml}</tbody>
+              </table>
+            </div>
+          </section>`
+    : `<section class="panel"><h3>セクション別サマリー</h3><div class="muted-note">対象セクションはありません。</div></section>`;
+  const highlightCardsHtml = reportMeta.highlights.map((item) => `<article class="highlight-card">
+        <div class="highlight-top">
+          <span class="meta-tag reason">${esc(getDiffTypeDisplayLabel(item.type, { moved: item.moved }))}</span>
+          <span class="meta-tag impact">重要度 ${esc(getSeverityDisplayLabel(item.severity))}</span>
+        </div>
+        <div class="highlight-title">${esc(item.sectionLabel)} / ${esc(item.relativePath || item.path || '-')}</div>
+        <div class="highlight-sub">${esc(item.reasonSummary || '-')}</div>
+        ${item.impactSummary ? `<div class="highlight-sub">影響: ${esc(item.impactSummary)}</div>` : ''}
+        ${item.renameCandidate ? `<div class="highlight-sub">名称変更候補: ${esc(item.renameCandidate.fromCode || '-')} → ${esc(item.renameCandidate.toCode || '-')}</div>` : ''}
+        <div class="highlight-preview">
+          <div class="highlight-pane"><span class="highlight-pane-label">比較元</span>${esc(item.preview.source || '（なし）')}</div>
+          <div class="highlight-pane"><span class="highlight-pane-label">比較先</span>${esc(item.preview.target || '（なし）')}</div>
+        </div>
+      </article>`).join('');
+  const highlightSummaryHtml = reportMeta.highlights.length
+    ? `<section class="panel">
+            <h3>注目差分</h3>
+            <div class="highlight-list">${highlightCardsHtml}</div>
+          </section>`
+    : `<section class="panel"><h3>注目差分</h3><div class="muted-note">注目差分はありません。</div></section>`;
 
   const compareSectionsHtml = shouldIncludeComparedContent(exportContentMode) && compareScopes.length
     ? compareScopes.map((secKey) => {
@@ -944,6 +1261,54 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       if (oa !== ob) return oa - ob;
       return String(a.label).localeCompare(String(b.label));
     });
+  }
+
+  function relativePathLabel(row) {
+    const path = String(row?.path || '');
+    const secKey = String(row?.sectionKey || '');
+    if (!path) return '-';
+    if (!secKey) return path;
+    if (path === secKey) return '（セクション全体）';
+    if (path.startsWith(secKey + '.')) return path.slice(secKey.length + 1);
+    if (path.startsWith(secKey + '[')) return path.slice(secKey.length);
+    return path;
+  }
+
+  function summarizeGroupRows(rows) {
+    const out = { total: rows.length, diffCount: 0, added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
+    rows.forEach((row) => {
+      if (row.type === 'same') {
+        out.same += 1;
+        return;
+      }
+      out.diffCount += 1;
+      if (row.type === 'added') out.added += 1;
+      else if (row.type === 'removed') out.removed += 1;
+      else out.changed += 1;
+      if (row.moved) out.moved += 1;
+    });
+    return out;
+  }
+
+  function groupSummaryLabel(rows) {
+    const s = summarizeGroupRows(rows);
+    const parts = ['差分 ' + s.diffCount];
+    if (s.added) parts.push('追加 ' + s.added);
+    if (s.removed) parts.push('削除 ' + s.removed);
+    if (s.changed) parts.push('変更 ' + s.changed);
+    if (s.moved) parts.push('移動 ' + s.moved);
+    if (s.same) parts.push('同一 ' + s.same);
+    return parts.join(' / ');
+  }
+
+  function renderPathCell(row) {
+    const fullPath = String(row?.path || '-');
+    const relPath = relativePathLabel(row);
+    let html = '<div class="path-main">' + escHtml(relPath || fullPath) + '</div>';
+    if (relPath && relPath !== fullPath) {
+      html += '<div class="path-sub">' + escHtml(fullPath) + '</div>';
+    }
+    return html + renderRowMeta(row);
   }
 
   function settingsTone(row) {
@@ -1431,9 +1796,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     groups.forEach((g, idx) => {
       const secId = 'sec_' + idx;
       const collapsedNow = collapsed.has(g.key);
+      const groupSummary = summarizeGroupRows(g.rows);
       const navItem = document.createElement('div');
       navItem.className = 'nav-item';
-      navItem.innerHTML = '<span>' + escHtml(g.label) + '</span><span class="badge">' + g.rows.length + '</span>';
+      navItem.innerHTML = '<span>' + escHtml(g.label) + '</span><span class="badge">' + groupSummary.diffCount + '</span>';
       navItem.onclick = () => {
         collapsed.delete(g.key);
         render();
@@ -1449,7 +1815,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       sec.className = 'sec';
       const head = document.createElement('div');
       head.className = 'sec-head';
-      head.innerHTML = '<span>' + (collapsedNow ? '▶' : '▼') + ' ' + escHtml(g.label) + '</span><span class="sec-meta">' + g.rows.length + ' 件</span>';
+      head.innerHTML = '<span>' + (collapsedNow ? '▶' : '▼') + ' ' + escHtml(g.label) + '</span><span class="sec-meta">' + escHtml(groupSummaryLabel(g.rows)) + '</span>';
       head.onclick = () => {
         if (collapsed.has(g.key)) collapsed.delete(g.key);
         else collapsed.add(g.key);
@@ -1469,7 +1835,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
           const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
           tr.innerHTML =
             '<td class="type ' + typeClass + '">' + escHtml(typeLabel) + '</td>' +
-            '<td class="path" title="' + escHtml(row.path || '-') + '">' + escHtml(row.path || '-') + renderRowMeta(row) + '</td>' +
+            '<td class="path" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</td>' +
             '<td class="cell">' + cells.left + '</td>' +
             '<td class="cell">' + cells.right + '</td>';
           tbody.appendChild(tr);
@@ -1715,6 +2081,22 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .detail-key{color:var(--muted);font-weight:600;flex-shrink:0}
     .warn{font-size:11px;color:#b45309;margin-top:10px;padding:10px 12px;border-radius:10px;background:#fffbeb;border:1px solid #fde68a;line-height:1.6}
     body.dark .warn{color:#fbbf24;background:#422006;border-color:#92400e}
+    .muted-note{font-size:12px;color:var(--muted);line-height:1.7}
+    .sum-table-wrap{overflow:auto}
+    .sum-table{width:100%;border-collapse:collapse;font-size:11px}
+    .sum-table th,.sum-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+    .sum-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);white-space:nowrap}
+    .sum-table-name{font-weight:800;color:var(--fg);margin-bottom:4px}
+    .sum-table-sub{font-size:10px;line-height:1.5;color:var(--muted)}
+    .highlight-list{display:grid;gap:10px}
+    .highlight-card{border:1px solid var(--border);border-radius:14px;padding:12px 14px;background:var(--card);box-shadow:var(--shadow)}
+    .highlight-top{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+    .highlight-title{font-size:12px;font-weight:800;color:var(--fg);line-height:1.45}
+    .highlight-sub{font-size:10px;line-height:1.6;color:var(--muted);margin-top:4px}
+    .highlight-preview{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+    .highlight-pane{border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:var(--card-soft);font-size:10px;line-height:1.5;color:var(--fg);word-break:break-word}
+    .highlight-pane-label{display:block;font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+    @media (max-width:900px){.highlight-preview{grid-template-columns:1fr}}
     .issue-box{margin:18px;border:1px solid #fdba74;border-radius:16px;background:#fff7ed;padding:16px 18px;box-shadow:0 4px 16px -4px rgba(180,83,9,.15)}
     body.dark .issue-box{background:#1c1410;border-color:#78350f}
     .issue-box h3{margin:0 0 12px;font-size:13px;font-weight:800;color:#9a3412}
@@ -1738,6 +2120,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .type.changed{color:#b45309}
     .type.same{color:#0d9488}
     .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--muted);font-size:11px}
+    .path-main{font-size:11px;font-weight:700;color:var(--fg);margin-bottom:4px;word-break:break-all}
+    .path-sub{font-size:10px;line-height:1.45;color:var(--muted);word-break:break-all}
     .meta-wrap{margin-top:8px;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
     .meta-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
     .meta-tag{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;border:1px solid var(--border);background:var(--pad);font-size:10px;font-weight:600;color:var(--fg)}
@@ -1993,6 +2377,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
           </section>
         </div>
 
+        <div class="info-grid info-grid--review">
+          ${sectionSummaryHtml}
+          ${highlightSummaryHtml}
+        </div>
+
         ${fetchIssues.length ? `<div class="issue-box">
           <h3>API取得失敗 ${fetchIssues.length}件</h3>
           <table>
@@ -2176,10 +2565,10 @@ function paintDiffOffViewPlaceholder(rows) {
   const n = list.length;
   const m = (state.lastFetchIssues || []).length;
   if (!n && !m) {
-    ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア（差分比較）</p><p class="main-result-placeholder-body">ここに出す詳細テーブルは<strong>結果整理</strong>サブタブを開いたときだけ表示します。このサブタブでは比較条件の設定に集中できます。</p></div>`;
+    ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア（ヘッダー差分）</p><p class="main-result-placeholder-body">ここに出す詳細テーブルは<strong>ヘッダー内の結果整理</strong>を開いたときだけ表示します。比較条件では一覧を出しません。</p></div>`;
     return;
   }
-  ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${m ? `（取得失敗 ${m} 件）` : ''}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>結果整理</strong>サブタブで行ってください。</p></div>`;
+  ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${m ? `（取得失敗 ${m} 件）` : ''}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>ヘッダー内の結果整理</strong>で行ってください。</p></div>`;
 }
 
 /** 差分以外のタブへ移したときに、差分テーブルが残り続けないようにする */
@@ -2205,7 +2594,7 @@ export function renderResultRows(rows) {
   renderDiffSuggestionChips();
   renderDiffWarningBox();
 
-  if (state.activeTab === 'diff' && state.activeSubTabs.diff !== 'view') {
+  if (state.activeSubTabs.diff !== 'view') {
     paintDiffOffViewPlaceholder(rows);
     scheduleDiffPopoutSync();
     return;

@@ -5,7 +5,7 @@ import { deepClone, stableStringify, esc, normalize } from '../utils.js';
 import { state, ui } from '../state.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { isReflectNodeModeEffective } from './nodeModeUi.js';
-import { apiGet, apiPost, apiPut, buildApiPrefix } from '../api.js';
+import { apiGet, apiPost, apiPut, buildApiPrefix, extractSectionRevision } from '../api.js';
 import {
   filterWritableFieldProps,
   convertLookupAppIds,
@@ -215,14 +215,22 @@ export function makeApplyPlanSignature(mode, payload) {
   });
 }
 
-export function markApplyPlan(signature, mode, totalReq, lines) {
+function makeSectionPlanBaseline(response) {
+  return {
+    revision: extractSectionRevision(response),
+    fingerprint: stableStringify(response)
+  };
+}
+
+export function markApplyPlan(signature, mode, totalReq, lines, extra = {}) {
   state.lastApplyPlan = {
     signature,
     mode,
     totalReq: Number(totalReq || 0),
     createdAt: Date.now(),
     summary: (lines || []).slice(0, 16).join('\n'),
-    logs: lines || []
+    logs: lines || [],
+    ...extra
   };
 }
 
@@ -331,6 +339,7 @@ export async function runPreviewApplyPlanNodes() {
   }
 
   let totalReq = 0;
+  const targetSectionBaselines = {};
   const sectionKeys = Object.keys(bySection);
   for (let i = 0; i < sectionKeys.length; i++) {
     const secKey = sectionKeys[i];
@@ -338,7 +347,9 @@ export async function runPreviewApplyPlanNodes() {
     if (!def || !def.put) continue;
     try {
       setStatus(`ノード反映プラン計算中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
-      const current = normalize(await apiGet(prefix, def.endpoint, { app }));
+      const currentRes = await apiGet(prefix, def.endpoint, { app });
+      targetSectionBaselines[secKey] = makeSectionPlanBaseline(currentRes);
+      const current = normalize(currentRes);
       const before = deepClone(current);
       let patched = deepClone(current);
       const rowsInSection = sortRowsForPatch(bySection[secKey], secKey);
@@ -377,7 +388,7 @@ export async function runPreviewApplyPlanNodes() {
   lines.push('');
   lines.push(`合計予定リクエスト数: ${totalReq}`);
   lines.push('※ ノードモードは差分パスをもとに比較先プレビューへ反映します。');
-  markApplyPlan(planSignature, 'nodes', totalReq, lines);
+  markApplyPlan(planSignature, 'nodes', totalReq, lines, { targetSectionBaselines });
 
   ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(lines.join('\n'))}</pre>`;
   renderReflectAssistPanel();
@@ -408,6 +419,7 @@ export async function runPreviewApplyPlan() {
   const prefix = buildApiPrefix(c.target.guestId, true);
   const app = c.target.appId;
   const logs = [];
+  const targetSectionBaselines = {};
   logs.push('=== 反映プラン（ドライラン）===');
   logs.push(`比較先アプリ: ${app}`);
   logs.push(`対象セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
@@ -429,6 +441,7 @@ export async function runPreviewApplyPlan() {
 
     if (secKey === 'fieldSettings') {
       const current = await apiGet(prefix, '/app/form/fields.json', { app });
+      targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
       const plan = planFieldSectionDiffRequests(app, current.properties || {}, sourceSec.properties || sourceSec || {}, lookupMap);
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
       appendRequestPlanLogs(logs, plan);
@@ -438,6 +451,7 @@ export async function runPreviewApplyPlan() {
     }
     if (secKey === 'viewSettings') {
       const current = await apiGet(prefix, '/app/views.json', { app });
+      targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
       const plan = planViewsSectionDiffRequests(app, current.views || {}, sourceSec.views || sourceSec || {});
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
       appendRequestPlanLogs(logs, plan);
@@ -447,6 +461,7 @@ export async function runPreviewApplyPlan() {
     }
     if (secKey === 'reportSettings') {
       const current = await apiGet(prefix, '/app/reports.json', { app });
+      targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
       const plan = planReportsSectionDiffRequests(app, current.reports || {}, sourceSec.reports || sourceSec || {});
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
       appendRequestPlanLogs(logs, plan);
@@ -455,6 +470,7 @@ export async function runPreviewApplyPlan() {
     }
     if (secKey === 'actionSettings') {
       const current = await apiGet(prefix, '/app/actions.json', { app });
+      targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
       const plan = planActionsSectionDiffRequests(app, current.actions || {}, sourceSec.actions || sourceSec || {});
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
       appendRequestPlanLogs(logs, plan);
@@ -462,6 +478,8 @@ export async function runPreviewApplyPlan() {
       totalReq += plan.requests.length;
       continue;
     }
+    const current = await apiGet(prefix, def.endpoint, { app });
+    targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
     const plan = { requests: [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(sourceSec) }, note: `${def.label} put` }] };
     logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
     appendRequestPlanLogs(logs, plan);
@@ -469,7 +487,7 @@ export async function runPreviewApplyPlan() {
   }
   logs.push('');
   logs.push(`合計予定リクエスト数: ${totalReq}`);
-  markApplyPlan(planSignature, 'section', totalReq, logs);
+  markApplyPlan(planSignature, 'section', totalReq, logs, { targetSectionBaselines });
   ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
   renderReflectAssistPanel();
   renderReflectMainPanel();

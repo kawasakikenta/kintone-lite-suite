@@ -110,7 +110,8 @@ export function renderGuidedTourStep(options = {}) {
   const step = getGuidedTourStep(state.guidedTourIndex);
   if (!step) return;
   if (step.tab) switchTab(step.tab, { persist: false });
-  if (step.tab && step.subTab) switchSubTab(step.tab, step.subTab, { persist: false });
+  if (step.diffSubTab) switchSubTab('diff', step.diffSubTab, { persist: false });
+  else if (step.tab && step.subTab) switchSubTab(step.tab, step.subTab, { persist: false });
 
   const total = GUIDED_TOUR_STEPS.length;
   ui.tourOverlay.classList.add('active');
@@ -152,7 +153,8 @@ export async function openGuidedTour(index = 0) {
         side: 'bottom',
         onHighlightStarted: () => {
           if (step.tab) swTab(step.tab, { persist: false });
-          if (step.tab && step.subTab) switchSubTab(step.tab, step.subTab, { persist: false });
+          if (step.diffSubTab) switchSubTab('diff', step.diffSubTab, { persist: false });
+          else if (step.tab && step.subTab) switchSubTab(step.tab, step.subTab, { persist: false });
         }
       };
     });

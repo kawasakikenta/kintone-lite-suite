@@ -105,7 +105,6 @@ export { FEATURE_DEFS, TAB_TO_FEATURE } from './featureDefs.mjs';
 
 /** 各タブが接続パネルのどの要素を必要とするかのマッピング */
 export const TAB_CONNECTION_NEEDS = {
-  diff:           { appInputs: true,  target: true,  connectionActions: true  },
   reflect:        { appInputs: true,  target: true,  connectionActions: true  },
   field:          { appInputs: true,  target: true,  connectionActions: false },
   jsconfig:       { appInputs: true,  target: true,  connectionActions: false },
@@ -144,41 +143,41 @@ export const DEFAULT_SUBTAB_STATE = Object.freeze({
 
 export const GUIDED_TOUR_STEPS = Object.freeze([
   {
-    tab: 'diff',
-    subTab: 'conditions',
-    path: '差分比較 > 比較条件',
+    tab: 'reflect',
+    diffSubTab: 'conditions',
+    path: 'ヘッダー > 比較条件',
     selector: '#u_sourceApp',
     title: '1. 比較元 / 比較先を決める',
-    body: '共通設定で比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。'
+    body: '上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。'
   },
   {
-    tab: 'diff',
-    subTab: 'conditions',
-    path: '差分比較 > 比較条件',
+    tab: 'reflect',
+    diffSubTab: 'conditions',
+    path: 'ヘッダー > 比較条件',
     selector: '#u_diffScopes',
     title: '3. 比較対象セクションを選ぶ',
     body: '差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。'
   },
   {
-    tab: 'diff',
-    subTab: 'conditions',
-    path: '差分比較 > 比較条件',
+    tab: 'reflect',
+    diffSubTab: 'conditions',
+    path: 'ヘッダー > 比較条件',
     selector: '#u_ignoreKeyInput',
     title: '4. ノイズ差分を減らす',
     body: '無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。'
   },
   {
-    tab: 'diff',
-    subTab: 'conditions',
-    path: '差分比較 > 比較条件',
-    selector: '[data-act="runDiff"]',
+    tab: 'reflect',
+    diffSubTab: 'conditions',
+    path: 'ヘッダー > 比較条件',
+    selector: '#u_runDiffPrimary',
     title: '5. 差分比較を実行する',
     body: '条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。'
   },
   {
-    tab: 'diff',
-    subTab: 'view',
-    path: '差分比較 > 結果整理',
+    tab: 'reflect',
+    diffSubTab: 'view',
+    path: 'ヘッダー > 結果整理',
     selector: '#u_diffSearch',
     title: '6. 結果を絞り込んで確認する',
     body: '比較結果はセクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。'

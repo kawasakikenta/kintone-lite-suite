@@ -32,93 +32,222 @@
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
   // src/featureDefs.mjs
-  var FEATURE_DEFS, TAB_TO_FEATURE;
+  var ICONS, FEATURE_DEFS, TAB_TO_FEATURE;
   var init_featureDefs = __esm({
     "src/featureDefs.mjs"() {
       "use strict";
+      ICONS = Object.freeze({
+        diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
+        reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+        field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+        jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+        er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
+        processFlow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M10 6.5h4"/><path d="M17.5 9v2.5h-11V9"/><path d="M12 11.5V15"/></svg>',
+        design: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
+        settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
+        recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
+        sql: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h10"/><path d="M4 19h7"/><path d="M17 15l3 4 3-4"/></svg>',
+        apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>'
+      });
       FEATURE_DEFS = [
         {
           key: "diff",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.diff,
           label: "差分比較",
-          desc: "設定の差分を確認・比較",
-          tabs: ["diff"],
+          desc: "2アプリの設定差分を確認します。",
+          tabs: ["reflect"],
+          tab: "reflect",
+          diffSubTab: "conditions",
+          focusSelector: "#u_headerDiffSuite",
           priority: "high",
           riskLevel: "safe",
-          recommendedFor: ["初回利用", "設定変更前の確認"],
+          recommendedFor: ["最初に確認", "変更前チェック"],
           usageOrder: 1,
           onboardingOrder: 1,
-          badge: { tone: "recommended", label: "初回推奨", icon: "⭐" }
+          badge: { tone: "recommended", label: "初回推奨", icon: "1" }
         },
         {
           key: "reflect",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.reflect,
           label: "プレビュー反映",
-          desc: "比較元の設定を比較先プレビューへ反映",
+          desc: "差分を見ながら比較先プレビューへ反映します。",
           tabs: ["reflect"],
+          tab: "reflect",
+          subTab: "section",
+          focusSelector: "#u_reflectAssist",
           priority: "high",
           riskLevel: "warning",
           recommendedFor: ["差分確認後", "本番反映前の検証"],
           usageOrder: 2,
           onboardingOrder: 2,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "caution", label: "要確認", icon: "2" }
         },
         {
           key: "field",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.field,
           label: "フィールド追加",
-          desc: "フィールド定義の追加・編集",
+          desc: "フィールド定義を追加・編集します。",
           tabs: ["field"],
+          tab: "field",
+          subTab: "json",
+          focusSelector: "#u_fieldJson",
           priority: "medium",
           riskLevel: "warning",
-          recommendedFor: ["項目追加時", "一括メンテナンス"],
+          recommendedFor: ["項目追加", "定義の一括修正"],
           usageOrder: 4,
           onboardingOrder: 4,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "caution", label: "要注意", icon: "!" }
         },
         {
           key: "jsconfig",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+          group: "change",
+          groupLabel: "変更・反映",
+          icon: ICONS.jsconfig,
           label: "JS/CSS設定",
-          desc: "カスタマイズ設定の取得・反映",
+          desc: "カスタマイズ設定の取得・反映を行います。",
           tabs: ["jsconfig"],
+          tab: "jsconfig",
+          subTab: "editor",
+          focusSelector: "#u_jsconfigJson",
           priority: "medium",
           riskLevel: "warning",
           recommendedFor: ["カスタマイズ配布", "環境同期"],
           usageOrder: 5,
           onboardingOrder: 5,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "caution", label: "要注意", icon: "!" }
         },
         {
-          key: "vis",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>',
-          label: "可視化・出力",
-          desc: "ER図 / プロセス図 / 設計書 / 設定一括取得",
-          tabs: ["er", "processFlow", "design", "settingsExport"],
+          key: "design",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.design,
+          label: "設計書",
+          desc: "設計書や差分レポートを出力します。",
+          tabs: ["design"],
+          tab: "design",
+          focusSelector: '[data-act="exportDesignMd"]',
           priority: "medium",
           riskLevel: "safe",
-          recommendedFor: ["現状把握", "レビュー資料作成"],
+          recommendedFor: ["変更記録", "レビュー資料作成"],
           usageOrder: 3,
           onboardingOrder: 3,
-          badge: { tone: "safe", label: "安全", icon: "🛡️" }
+          badge: { tone: "safe", label: "安全", icon: "OK" }
         },
         {
-          key: "data",
-          icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
-          label: "データ・保守",
-          desc: "レコード管理 / SQL実行 / APIテスター",
-          tabs: ["recordMgr", "sql", "apiTester"],
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["保守作業", "調査"],
+          key: "settingsExport",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.settingsExport,
+          label: "設定一括取得",
+          desc: "複数アプリの設定をまとめて保存します。",
+          tabs: ["settingsExport"],
+          tab: "settingsExport",
+          subTab: "export",
+          focusSelector: "#u_settingsExportAppIds",
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["バックアップ", "棚卸し"],
           usageOrder: 6,
           onboardingOrder: 6,
-          badge: { tone: "caution", label: "要注意", icon: "⚠️" }
+          badge: { tone: "safe", label: "安全", icon: "OK" }
+        },
+        {
+          key: "er",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.er,
+          label: "ER図",
+          desc: "関連アプリや参照関係を図で確認します。",
+          tabs: ["er"],
+          tab: "er",
+          subTab: "diagram",
+          focusSelector: "#u_erLayout",
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["現状把握", "依存関係確認"],
+          usageOrder: 7,
+          onboardingOrder: 7,
+          badge: { tone: "safe", label: "安全", icon: "OK" }
+        },
+        {
+          key: "processFlow",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.processFlow,
+          label: "プロセス図",
+          desc: "プロセス管理をフロー図で確認します。",
+          tabs: ["processFlow"],
+          tab: "processFlow",
+          focusSelector: '[data-act="renderProcessFlow"]',
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["状態遷移確認", "運用レビュー"],
+          usageOrder: 8,
+          onboardingOrder: 8,
+          badge: { tone: "safe", label: "安全", icon: "OK" }
+        },
+        {
+          key: "recordMgr",
+          group: "data",
+          groupLabel: "データ・保守",
+          icon: ICONS.recordMgr,
+          label: "レコード管理",
+          desc: "CSV、添付DL、ステータス更新などを行います。",
+          tabs: ["recordMgr"],
+          tab: "recordMgr",
+          subTab: "status",
+          focusSelector: '[data-act="runBatchProcess"]',
+          priority: "low",
+          riskLevel: "warning",
+          recommendedFor: ["保守作業", "テストデータ操作"],
+          usageOrder: 9,
+          onboardingOrder: 9,
+          badge: { tone: "caution", label: "要注意", icon: "!" }
+        },
+        {
+          key: "sql",
+          group: "data",
+          groupLabel: "データ・保守",
+          icon: ICONS.sql,
+          label: "SQL実行",
+          desc: "kintoneデータをSQLライクに参照します。",
+          tabs: ["sql"],
+          tab: "sql",
+          focusSelector: '[data-act="launchKintoneSql"]',
+          priority: "low",
+          riskLevel: "warning",
+          recommendedFor: ["調査", "データ確認"],
+          usageOrder: 10,
+          onboardingOrder: 10,
+          badge: { tone: "caution", label: "要注意", icon: "!" }
+        },
+        {
+          key: "apiTester",
+          group: "data",
+          groupLabel: "データ・保守",
+          icon: ICONS.apiTester,
+          label: "APIテスター",
+          desc: "REST APIを直接試します。",
+          tabs: ["apiTester"],
+          tab: "apiTester",
+          focusSelector: "#u_apiTesterMethod",
+          priority: "low",
+          riskLevel: "warning",
+          recommendedFor: ["調査", "レスポンス確認"],
+          usageOrder: 11,
+          onboardingOrder: 11,
+          badge: { tone: "caution", label: "上級者向け", icon: "!" }
         }
       ];
       TAB_TO_FEATURE = {};
       FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
-        TAB_TO_FEATURE[t] = f.key;
+        if (!TAB_TO_FEATURE[t]) TAB_TO_FEATURE[t] = f.key;
       }));
     }
   });
@@ -210,7 +339,6 @@
       ];
       SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS.filter((s) => s.key !== "customizeSettings");
       TAB_CONNECTION_NEEDS = {
-        diff: { appInputs: true, target: true, connectionActions: true },
         reflect: { appInputs: true, target: true, connectionActions: true },
         field: { appInputs: true, target: true, connectionActions: false },
         jsconfig: { appInputs: true, target: true, connectionActions: false },
@@ -244,41 +372,41 @@
       });
       GUIDED_TOUR_STEPS = Object.freeze([
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
           selector: "#u_sourceApp",
           title: "1. 比較元 / 比較先を決める",
-          body: "共通設定で比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
+          body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
         },
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
           selector: "#u_diffScopes",
           title: "3. 比較対象セクションを選ぶ",
           body: "差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。"
         },
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
           selector: "#u_ignoreKeyInput",
           title: "4. ノイズ差分を減らす",
           body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
         },
         {
-          tab: "diff",
-          subTab: "conditions",
-          path: "差分比較 > 比較条件",
-          selector: '[data-act="runDiff"]',
+          tab: "reflect",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 比較条件",
+          selector: "#u_runDiffPrimary",
           title: "5. 差分比較を実行する",
           body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
         },
         {
-          tab: "diff",
-          subTab: "view",
-          path: "差分比較 > 結果整理",
+          tab: "reflect",
+          diffSubTab: "view",
+          path: "ヘッダー > 結果整理",
           selector: "#u_diffSearch",
           title: "6. 結果を絞り込んで確認する",
           body: "比較結果はセクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。"
@@ -633,8 +761,10 @@ ${contextLine}`);
       "use strict";
       init_constants();
       state = {
-        activeTab: "diff",
+        activeTab: "reflect",
+        activeFeatureKey: "",
         activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
+        launcherSortMode: "onboarding",
         lastSourceBundle: null,
         lastTargetBundle: null,
         lastDiffRows: [],
@@ -642,6 +772,8 @@ ${contextLine}`);
         lastDiffAt: null,
         lastDiffSignature: "",
         lastApplyPlan: null,
+        lastPreviewBackupPayload: null,
+        lastPreviewBackupFilename: "",
         diffViewTheme: "light",
         diffCollapsedSections: /* @__PURE__ */ new Set(),
         diffSectionVisibleCounts: {},
@@ -2056,14 +2188,24 @@ ${contextLine}`);
     if (!root) return;
     const rect = root.getBoundingClientRect();
     const saved = loadDialogState();
-    saved.width = Math.round(rect.width || root.offsetWidth);
-    saved.height = Math.round(rect.height || root.offsetHeight);
+    const w = Math.round(rect.width || root.offsetWidth);
+    const h = Math.round(rect.height || root.offsetHeight);
+    const pos = getCurrentDialogPosition(w, h);
     const rawLeft = Number.parseFloat(root.style.left);
     const rawTop = Number.parseFloat(root.style.top);
-    if (Number.isFinite(rawLeft)) saved.left = Math.round(rawLeft);
-    if (Number.isFinite(rawTop)) saved.top = Math.round(rawTop);
-    saved.activeTab = state.activeTab || "diff";
+    saved.dialogWidth = w;
+    saved.dialogHeight = h;
+    saved.dialogLeft = Number.isFinite(rawLeft) ? Math.round(rawLeft) : Math.round(pos.left);
+    saved.dialogTop = Number.isFinite(rawTop) ? Math.round(rawTop) : Math.round(pos.top);
+    delete saved.width;
+    delete saved.height;
+    delete saved.left;
+    delete saved.top;
+    saved.activeTab = state.activeTab || "reflect";
+    saved.activeFeatureKey = state.activeFeatureKey || "";
     saved.activeSubTabs = { ...state.activeSubTabs };
+    saved.screenMode = root.classList.contains("screen-feature") ? "feature" : "launcher";
+    saved.launcherSortMode = ui2.featureSortMode?.value || state.launcherSortMode || "onboarding";
     saveDialogState(saved);
   }
   function initDialogResizeHandling() {
@@ -2730,6 +2872,215 @@ ${contextLine}`);
       targetBundle: pickBundleSections(targetBundle, compareScopes)
     };
   }
+  function getSectionLabel(sectionKeyOrLabel) {
+    const raw = String(sectionKeyOrLabel || "").trim();
+    if (!raw) return "-";
+    return SECTION_DEFS.find((item) => item.key === raw || item.label === raw)?.label || raw;
+  }
+  function getSectionOrder(sectionKeyOrLabel) {
+    const raw = String(sectionKeyOrLabel || "").trim();
+    const index = SECTION_DEFS.findIndex((item) => item.key === raw || item.label === raw);
+    return index >= 0 ? index : 9999;
+  }
+  function getRelativeDiffPath(row) {
+    const path = String(row?.path || "").trim();
+    const secKey = String(row?.sectionKey || "").trim();
+    if (!path) return "";
+    if (!secKey) return path;
+    if (path === secKey) return "（セクション全体）";
+    if (path.startsWith(`${secKey}.`)) return path.slice(secKey.length + 1);
+    if (path.startsWith(`${secKey}[`)) return path.slice(secKey.length);
+    return path;
+  }
+  function compactDiffValuePreview(value, maxLength = 140) {
+    const raw = stringifyForDiff(value).replace(/\s+/g, " ").trim();
+    if (!raw) return "";
+    return raw.length > maxLength ? `${raw.slice(0, maxLength)}...` : raw;
+  }
+  function getBundleExportMeta(bundle) {
+    return {
+      appId: String(bundle?.appId || ""),
+      guestId: String(bundle?.guestId || ""),
+      preview: !!bundle?.preview,
+      revision: resolveBundleRevision(bundle) || "",
+      fetchedAt: bundle?.fetchedAt || "",
+      sectionCount: Object.keys(bundle?.sections || {}).length
+    };
+  }
+  function buildDiffTypeSummary(rows) {
+    const summarized = summarizeRows(rows || []);
+    return {
+      totalRows: summarized.total,
+      diffCount: countActualDiffRows(rows || []),
+      sameCount: summarized.same,
+      added: summarized.added,
+      removed: summarized.removed,
+      changed: summarized.changed,
+      moved: summarized.moved
+    };
+  }
+  function buildCompactFetchIssue(issue) {
+    return {
+      sectionKey: String(issue?.sectionKey || ""),
+      sectionLabel: getSectionLabel(issue?.sectionKey || issue?.section),
+      side: String(issue?.side || ""),
+      message: String(issue?.message || ""),
+      sourceError: String(issue?.sourceError || ""),
+      targetError: String(issue?.targetError || "")
+    };
+  }
+  function buildCompactDiffRow(row) {
+    return {
+      sectionKey: String(row?.sectionKey || ""),
+      sectionLabel: getSectionLabel(row?.sectionKey || row?.section),
+      type: String(row?.type || ""),
+      severity: String(row?.severity || "low"),
+      path: String(row?.path || ""),
+      relativePath: getRelativeDiffPath(row),
+      moved: !!row?.moved,
+      reasonSummary: String(row?.reasonSummary || ""),
+      impactCount: Number(row?.impactCount || 0),
+      impactSummary: String(row?.impactSummary || ""),
+      renameCandidate: row?.renameCandidate || null,
+      preview: {
+        source: compactDiffValuePreview(row?.left),
+        target: compactDiffValuePreview(row?.right)
+      }
+    };
+  }
+  function buildDiffSectionSummaries(rows, fetchIssues = []) {
+    const groupedRows = /* @__PURE__ */ new Map();
+    const issueKeys = /* @__PURE__ */ new Set();
+    (rows || []).forEach((row) => {
+      const key = String(row?.sectionKey || row?.section || "").trim() || "未分類";
+      if (!groupedRows.has(key)) groupedRows.set(key, []);
+      groupedRows.get(key).push(row);
+    });
+    (fetchIssues || []).forEach((issue) => {
+      const key = String(issue?.sectionKey || issue?.section || "").trim();
+      if (key) issueKeys.add(key);
+    });
+    const keys = [.../* @__PURE__ */ new Set([...groupedRows.keys(), ...issueKeys])];
+    keys.sort((a, b) => {
+      const ao = getSectionOrder(a);
+      const bo = getSectionOrder(b);
+      if (ao !== bo) return ao - bo;
+      return String(getSectionLabel(a)).localeCompare(String(getSectionLabel(b)));
+    });
+    return keys.map((sectionKey) => {
+      const sectionRows = groupedRows.get(sectionKey) || [];
+      const diffRows = getActualDiffRows2(sectionRows);
+      const typeSummary = buildDiffTypeSummary(sectionRows);
+      const severity = summarizeSeverity(sectionRows);
+      const issueCount = (fetchIssues || []).filter((issue) => String(issue?.sectionKey || issue?.section || "").trim() === sectionKey).length;
+      const reasonCounts = /* @__PURE__ */ new Map();
+      diffRows.forEach((row) => {
+        const reason = String(row?.reasonSummary || "").trim();
+        if (!reason) return;
+        reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
+      });
+      const topReasons = [...reasonCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 3).map(([reason, count]) => ({ reason, count }));
+      const samplePaths = [...new Set(diffRows.map((row) => getRelativeDiffPath(row)).filter(Boolean))].slice(0, 3);
+      return {
+        sectionKey,
+        sectionLabel: getSectionLabel(sectionKey),
+        ...typeSummary,
+        fetchIssueCount: issueCount,
+        severity,
+        topReasons,
+        samplePaths
+      };
+    });
+  }
+  function buildDiffHighlightRows(rows, limit = 8) {
+    const severityWeight = { high: 300, medium: 200, low: 100 };
+    return getActualDiffRows2(rows || []).map((row, index) => {
+      let score = severityWeight[row?.severity] || 0;
+      if (row?.type === "removed") score += 30;
+      else if (row?.type === "added") score += 18;
+      else score += 12;
+      if (row?.renameCandidate) score += 12;
+      if (row?.moved) score += 6;
+      score += Math.min(40, Number(row?.impactCount || 0) * 4);
+      return { row, index, score };
+    }).sort((a, b) => b.score - a.score || a.index - b.index).slice(0, limit).map(({ row }) => ({
+      ...buildCompactDiffRow(row),
+      impactRefs: Array.isArray(row?.impactRefs) ? row.impactRefs.slice(0, 3) : []
+    }));
+  }
+  function buildCompactRowsBySection(rows) {
+    const grouped = {};
+    (rows || []).forEach((row) => {
+      const key = String(row?.sectionKey || row?.section || "").trim() || "未分類";
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(buildCompactDiffRow(row));
+    });
+    return grouped;
+  }
+  function buildDiffExportPayload({
+    sourceBundle,
+    targetBundle,
+    rows,
+    fetchIssues,
+    ignoreKeys,
+    exportMode,
+    exportLabel,
+    exportContentMode,
+    exportContentLabel,
+    normalizationState,
+    warning,
+    compareScopes,
+    compareSourceBundle,
+    compareTargetBundle
+  } = {}) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const safeIssues = Array.isArray(fetchIssues) ? fetchIssues : [];
+    const stateMap = normalizationState || {};
+    const sectionSummaries = buildDiffSectionSummaries(safeRows, safeIssues);
+    const typeSummary = buildDiffTypeSummary(safeRows);
+    const compared = shouldIncludeComparedContent(exportContentMode) && Array.isArray(compareScopes) && compareScopes.length ? {
+      scopes: [...new Set(compareScopes.filter(Boolean))],
+      sourceBundle: compareSourceBundle || null,
+      targetBundle: compareTargetBundle || null
+    } : null;
+    return {
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      export: {
+        mode: exportMode || "all",
+        label: exportLabel || "全差分",
+        contentMode: exportContentMode || "diffOnly",
+        contentLabel: exportContentLabel || getDiffExportContentLabel(exportContentMode),
+        ignoreKeys: String(ignoreKeys || ""),
+        normalizationState: stateMap,
+        normalizationLabels: getActiveDiffNormalizationLabels(stateMap)
+      },
+      source: getBundleExportMeta(sourceBundle),
+      target: getBundleExportMeta(targetBundle),
+      summary: {
+        ...typeSummary,
+        fetchIssueCount: safeIssues.length,
+        sectionCount: sectionSummaries.length,
+        sectionsWithDiff: sectionSummaries.filter((item) => item.diffCount > 0).length,
+        severity: summarizeSeverity(safeRows),
+        warning: warning || {
+          threshold: 0,
+          diffCount: typeSummary.diffCount,
+          issueCount: safeIssues.length,
+          total: typeSummary.diffCount + safeIssues.length,
+          exceeded: false
+        }
+      },
+      sectionSummaries,
+      highlights: buildDiffHighlightRows(safeRows),
+      fetchIssues: safeIssues.map(buildCompactFetchIssue),
+      details: {
+        rows: safeRows,
+        rowsCompact: safeRows.map(buildCompactDiffRow),
+        rowsBySection: buildCompactRowsBySection(safeRows)
+      },
+      compared
+    };
+  }
   function bundleToMarkdown(bundle) {
     const lines = [];
     lines.push("# kintone 設計書");
@@ -2753,7 +3104,8 @@ ${contextLine}`);
   }
   function buildPatchPayload(rows, sourceBundle, targetBundle) {
     const grouped = {};
-    for (const r of getActualDiffRows2(rows)) {
+    const diffRows = getActualDiffRows2(rows);
+    for (const r of diffRows) {
       const section = r.section || "未分類";
       if (!grouped[section]) grouped[section] = [];
       grouped[section].push({
@@ -2772,10 +3124,38 @@ ${contextLine}`);
         impactRefs: r.impactRefs || []
       });
     }
+    const byType = { added: 0, removed: 0, changed: 0, moved: 0 };
+    diffRows.forEach((row) => {
+      if (row?.type === "added") byType.added += 1;
+      else if (row?.type === "removed") byType.removed += 1;
+      else byType.changed += 1;
+      if (row?.moved) byType.moved += 1;
+    });
+    const sectionsMeta = Object.entries(grouped).map(([sectionLabel, sectionRows]) => {
+      const sectionKey = SECTION_DEFS.find((item) => item.label === sectionLabel || item.key === sectionLabel)?.key || sectionLabel;
+      const sectionTypeSummary = { totalRows: sectionRows.length, diffCount: sectionRows.length, sameCount: 0, added: 0, removed: 0, changed: 0, moved: 0 };
+      sectionRows.forEach((row) => {
+        if (row?.type === "added") sectionTypeSummary.added += 1;
+        else if (row?.type === "removed") sectionTypeSummary.removed += 1;
+        else sectionTypeSummary.changed += 1;
+        if (row?.moved) sectionTypeSummary.moved += 1;
+      });
+      return {
+        sectionKey,
+        sectionLabel: getSectionLabel(sectionKey),
+        ...sectionTypeSummary
+      };
+    }).sort((a, b) => getSectionOrder(a.sectionKey) - getSectionOrder(b.sectionKey) || a.sectionLabel.localeCompare(b.sectionLabel));
     return {
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      source: { appId: sourceBundle?.appId || "", guestId: sourceBundle?.guestId || "", preview: !!sourceBundle?.preview },
-      target: { appId: targetBundle?.appId || "", guestId: targetBundle?.guestId || "", preview: !!targetBundle?.preview },
+      source: getBundleExportMeta(sourceBundle),
+      target: getBundleExportMeta(targetBundle),
+      summary: {
+        diffCount: diffRows.length,
+        sectionCount: sectionsMeta.length,
+        byType
+      },
+      sectionsMeta,
       sections: grouped
     };
   }
@@ -2816,7 +3196,6 @@ ${contextLine}`);
     const MAX_EXPORT_ROWS = 2e3;
     const exportRows = withSameSections.slice(0, MAX_EXPORT_ROWS);
     const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
-    const normalizationLabels = getActiveDiffNormalizationLabels(options.normalizationState || {});
     const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
     const exportContentMode = options.exportContentMode || "diffOnly";
     const exportContentLabel = options.exportContentLabel || getDiffExportContentLabel(exportContentMode);
@@ -2824,36 +3203,87 @@ ${contextLine}`);
     const compareSourceBundle = options.compareSourceBundle || null;
     const compareTargetBundle = options.compareTargetBundle || null;
     const KUC_REPORT_VERSION = "1.24.0";
-    const reportMeta = {
-      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      ignoreKeys: String(ignoreKeys || ""),
-      scopes: scopes || [],
-      sectionText,
+    const exportPayload = buildDiffExportPayload({
+      sourceBundle,
+      targetBundle,
+      rows: withSameSections,
+      fetchIssues,
+      ignoreKeys,
       exportMode: options.exportMode || "all",
       exportLabel: options.exportLabel || "全差分",
       exportContentMode,
       exportContentLabel,
-      normalizationLabels,
+      normalizationState: options.normalizationState || {},
       warning,
-      source: {
-        appId: sourceBundle?.appId || "",
-        guestId: sourceBundle?.guestId || "",
-        preview: !!sourceBundle?.preview,
-        revision: resolveBundleRevision(sourceBundle) || ""
-      },
-      target: {
-        appId: targetBundle?.appId || "",
-        guestId: targetBundle?.guestId || "",
-        preview: !!targetBundle?.preview,
-        revision: resolveBundleRevision(targetBundle) || ""
-      },
+      compareScopes,
+      compareSourceBundle,
+      compareTargetBundle
+    });
+    const reportMeta = {
+      generatedAt: exportPayload.generatedAt,
+      scopes: scopes || [],
+      sectionText,
+      ignoreKeys: exportPayload.export.ignoreKeys,
+      exportMode: exportPayload.export.mode,
+      exportLabel: exportPayload.export.label,
+      exportContentMode: exportPayload.export.contentMode,
+      exportContentLabel: exportPayload.export.contentLabel,
+      normalizationLabels: exportPayload.export.normalizationLabels,
+      warning: exportPayload.summary.warning,
+      source: exportPayload.source,
+      target: exportPayload.target,
       summary,
+      diffOverview: exportPayload.summary,
+      sectionSummaries: exportPayload.sectionSummaries,
+      highlights: exportPayload.highlights,
       fetchIssues,
       totalRows: withSameSections.length,
       renderedRows: exportRows.length,
       truncated: withSameSections.length > exportRows.length,
       compareScopes
     };
+    const sectionSummaryRowsHtml = reportMeta.sectionSummaries.map((item) => `<tr>
+        <td>
+          <div class="sum-table-name">${esc(item.sectionLabel)}</div>
+          <div class="sum-table-sub">${esc(
+      item.topReasons.length ? item.topReasons.map((reason) => `${reason.reason} (${reason.count})`).join(" / ") : item.samplePaths.join(" / ") || "-"
+    )}</div>
+        </td>
+        <td>${item.diffCount}</td>
+        <td>${item.added}</td>
+        <td>${item.removed}</td>
+        <td>${item.changed}</td>
+        <td>${item.sameCount}</td>
+        <td>${item.fetchIssueCount}</td>
+        <td>${item.severity.high} / ${item.severity.medium} / ${item.severity.low}</td>
+      </tr>`).join("");
+    const sectionSummaryHtml = reportMeta.sectionSummaries.length ? `<section class="panel">
+            <h3>セクション別サマリー</h3>
+            <div class="sum-table-wrap">
+              <table class="sum-table">
+                <thead><tr><th>セクション</th><th>差分</th><th>追加</th><th>削除</th><th>変更</th><th>同一</th><th>取得失敗</th><th>高 / 中 / 低</th></tr></thead>
+                <tbody>${sectionSummaryRowsHtml}</tbody>
+              </table>
+            </div>
+          </section>` : `<section class="panel"><h3>セクション別サマリー</h3><div class="muted-note">対象セクションはありません。</div></section>`;
+    const highlightCardsHtml = reportMeta.highlights.map((item) => `<article class="highlight-card">
+        <div class="highlight-top">
+          <span class="meta-tag reason">${esc(getDiffTypeDisplayLabel(item.type, { moved: item.moved }))}</span>
+          <span class="meta-tag impact">重要度 ${esc(getSeverityDisplayLabel(item.severity))}</span>
+        </div>
+        <div class="highlight-title">${esc(item.sectionLabel)} / ${esc(item.relativePath || item.path || "-")}</div>
+        <div class="highlight-sub">${esc(item.reasonSummary || "-")}</div>
+        ${item.impactSummary ? `<div class="highlight-sub">影響: ${esc(item.impactSummary)}</div>` : ""}
+        ${item.renameCandidate ? `<div class="highlight-sub">名称変更候補: ${esc(item.renameCandidate.fromCode || "-")} → ${esc(item.renameCandidate.toCode || "-")}</div>` : ""}
+        <div class="highlight-preview">
+          <div class="highlight-pane"><span class="highlight-pane-label">比較元</span>${esc(item.preview.source || "（なし）")}</div>
+          <div class="highlight-pane"><span class="highlight-pane-label">比較先</span>${esc(item.preview.target || "（なし）")}</div>
+        </div>
+      </article>`).join("");
+    const highlightSummaryHtml = reportMeta.highlights.length ? `<section class="panel">
+            <h3>注目差分</h3>
+            <div class="highlight-list">${highlightCardsHtml}</div>
+          </section>` : `<section class="panel"><h3>注目差分</h3><div class="muted-note">注目差分はありません。</div></section>`;
     const compareSectionsHtml = shouldIncludeComparedContent(exportContentMode) && compareScopes.length ? compareScopes.map((secKey) => {
       const label = sectionLabelMap[secKey] || secKey;
       const sourceValue = compareSourceBundle?.sections?.[secKey];
@@ -3150,6 +3580,54 @@ ${contextLine}`);
       if (oa !== ob) return oa - ob;
       return String(a.label).localeCompare(String(b.label));
     });
+  }
+
+  function relativePathLabel(row) {
+    const path = String(row?.path || '');
+    const secKey = String(row?.sectionKey || '');
+    if (!path) return '-';
+    if (!secKey) return path;
+    if (path === secKey) return '（セクション全体）';
+    if (path.startsWith(secKey + '.')) return path.slice(secKey.length + 1);
+    if (path.startsWith(secKey + '[')) return path.slice(secKey.length);
+    return path;
+  }
+
+  function summarizeGroupRows(rows) {
+    const out = { total: rows.length, diffCount: 0, added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
+    rows.forEach((row) => {
+      if (row.type === 'same') {
+        out.same += 1;
+        return;
+      }
+      out.diffCount += 1;
+      if (row.type === 'added') out.added += 1;
+      else if (row.type === 'removed') out.removed += 1;
+      else out.changed += 1;
+      if (row.moved) out.moved += 1;
+    });
+    return out;
+  }
+
+  function groupSummaryLabel(rows) {
+    const s = summarizeGroupRows(rows);
+    const parts = ['差分 ' + s.diffCount];
+    if (s.added) parts.push('追加 ' + s.added);
+    if (s.removed) parts.push('削除 ' + s.removed);
+    if (s.changed) parts.push('変更 ' + s.changed);
+    if (s.moved) parts.push('移動 ' + s.moved);
+    if (s.same) parts.push('同一 ' + s.same);
+    return parts.join(' / ');
+  }
+
+  function renderPathCell(row) {
+    const fullPath = String(row?.path || '-');
+    const relPath = relativePathLabel(row);
+    let html = '<div class="path-main">' + escHtml(relPath || fullPath) + '</div>';
+    if (relPath && relPath !== fullPath) {
+      html += '<div class="path-sub">' + escHtml(fullPath) + '</div>';
+    }
+    return html + renderRowMeta(row);
   }
 
   function settingsTone(row) {
@@ -3637,9 +4115,10 @@ ${contextLine}`);
     groups.forEach((g, idx) => {
       const secId = 'sec_' + idx;
       const collapsedNow = collapsed.has(g.key);
+      const groupSummary = summarizeGroupRows(g.rows);
       const navItem = document.createElement('div');
       navItem.className = 'nav-item';
-      navItem.innerHTML = '<span>' + escHtml(g.label) + '</span><span class="badge">' + g.rows.length + '</span>';
+      navItem.innerHTML = '<span>' + escHtml(g.label) + '</span><span class="badge">' + groupSummary.diffCount + '</span>';
       navItem.onclick = () => {
         collapsed.delete(g.key);
         render();
@@ -3655,7 +4134,7 @@ ${contextLine}`);
       sec.className = 'sec';
       const head = document.createElement('div');
       head.className = 'sec-head';
-      head.innerHTML = '<span>' + (collapsedNow ? '▶' : '▼') + ' ' + escHtml(g.label) + '</span><span class="sec-meta">' + g.rows.length + ' 件</span>';
+      head.innerHTML = '<span>' + (collapsedNow ? '▶' : '▼') + ' ' + escHtml(g.label) + '</span><span class="sec-meta">' + escHtml(groupSummaryLabel(g.rows)) + '</span>';
       head.onclick = () => {
         if (collapsed.has(g.key)) collapsed.delete(g.key);
         else collapsed.add(g.key);
@@ -3675,7 +4154,7 @@ ${contextLine}`);
           const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
           tr.innerHTML =
             '<td class="type ' + typeClass + '">' + escHtml(typeLabel) + '</td>' +
-            '<td class="path" title="' + escHtml(row.path || '-') + '">' + escHtml(row.path || '-') + renderRowMeta(row) + '</td>' +
+            '<td class="path" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</td>' +
             '<td class="cell">' + cells.left + '</td>' +
             '<td class="cell">' + cells.right + '</td>';
           tbody.appendChild(tr);
@@ -3920,6 +4399,22 @@ ${contextLine}`);
     .detail-key{color:var(--muted);font-weight:600;flex-shrink:0}
     .warn{font-size:11px;color:#b45309;margin-top:10px;padding:10px 12px;border-radius:10px;background:#fffbeb;border:1px solid #fde68a;line-height:1.6}
     body.dark .warn{color:#fbbf24;background:#422006;border-color:#92400e}
+    .muted-note{font-size:12px;color:var(--muted);line-height:1.7}
+    .sum-table-wrap{overflow:auto}
+    .sum-table{width:100%;border-collapse:collapse;font-size:11px}
+    .sum-table th,.sum-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+    .sum-table th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);white-space:nowrap}
+    .sum-table-name{font-weight:800;color:var(--fg);margin-bottom:4px}
+    .sum-table-sub{font-size:10px;line-height:1.5;color:var(--muted)}
+    .highlight-list{display:grid;gap:10px}
+    .highlight-card{border:1px solid var(--border);border-radius:14px;padding:12px 14px;background:var(--card);box-shadow:var(--shadow)}
+    .highlight-top{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+    .highlight-title{font-size:12px;font-weight:800;color:var(--fg);line-height:1.45}
+    .highlight-sub{font-size:10px;line-height:1.6;color:var(--muted);margin-top:4px}
+    .highlight-preview{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+    .highlight-pane{border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:var(--card-soft);font-size:10px;line-height:1.5;color:var(--fg);word-break:break-word}
+    .highlight-pane-label{display:block;font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+    @media (max-width:900px){.highlight-preview{grid-template-columns:1fr}}
     .issue-box{margin:18px;border:1px solid #fdba74;border-radius:16px;background:#fff7ed;padding:16px 18px;box-shadow:0 4px 16px -4px rgba(180,83,9,.15)}
     body.dark .issue-box{background:#1c1410;border-color:#78350f}
     .issue-box h3{margin:0 0 12px;font-size:13px;font-weight:800;color:#9a3412}
@@ -3943,6 +4438,8 @@ ${contextLine}`);
     .type.changed{color:#b45309}
     .type.same{color:#0d9488}
     .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--muted);font-size:11px}
+    .path-main{font-size:11px;font-weight:700;color:var(--fg);margin-bottom:4px;word-break:break-all}
+    .path-sub{font-size:10px;line-height:1.45;color:var(--muted);word-break:break-all}
     .meta-wrap{margin-top:8px;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
     .meta-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
     .meta-tag{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;border:1px solid var(--border);background:var(--pad);font-size:10px;font-weight:600;color:var(--fg)}
@@ -4198,6 +4695,11 @@ ${contextLine}`);
           </section>
         </div>
 
+        <div class="info-grid info-grid--review">
+          ${sectionSummaryHtml}
+          ${highlightSummaryHtml}
+        </div>
+
         ${fetchIssues.length ? `<div class="issue-box">
           <h3>API取得失敗 ${fetchIssues.length}件</h3>
           <table>
@@ -4365,10 +4867,10 @@ ${contextLine}`);
     const n = list.length;
     const m = (state.lastFetchIssues || []).length;
     if (!n && !m) {
-      ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア（差分比較）</p><p class="main-result-placeholder-body">ここに出す詳細テーブルは<strong>結果整理</strong>サブタブを開いたときだけ表示します。このサブタブでは比較条件の設定に集中できます。</p></div>`;
+      ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア（ヘッダー差分）</p><p class="main-result-placeholder-body">ここに出す詳細テーブルは<strong>ヘッダー内の結果整理</strong>を開いたときだけ表示します。比較条件では一覧を出しません。</p></div>`;
       return;
     }
-    ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${m ? `（取得失敗 ${m} 件）` : ""}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>結果整理</strong>サブタブで行ってください。</p></div>`;
+    ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${m ? `（取得失敗 ${m} 件）` : ""}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>ヘッダー内の結果整理</strong>で行ってください。</p></div>`;
   }
   function renderResultRows(rows) {
     const summary = summarizeRows(rows);
@@ -4388,7 +4890,7 @@ ${contextLine}`);
     renderDiffSelectionState();
     renderDiffSuggestionChips();
     renderDiffWarningBox();
-    if (state.activeTab === "diff" && state.activeSubTabs.diff !== "view") {
+    if (state.activeSubTabs.diff !== "view") {
       paintDiffOffViewPlaceholder(rows);
       scheduleDiffPopoutSync();
       return;
@@ -4981,6 +5483,7 @@ ${contextLine}`);
   var components_exports = {};
   __export(components_exports, {
     buildReflectAssistHtml: () => buildReflectAssistHtml,
+    openFeatureScreen: () => openFeatureScreen,
     renderAppIdConfirmSection: () => renderAppIdConfirmSection,
     renderBundleState: () => renderBundleState,
     renderDiffFilterOptions: () => renderDiffFilterOptions2,
@@ -5003,6 +5506,7 @@ ${contextLine}`);
     setComponentUi: () => setComponentUi,
     setSettingsExportScopeSelection: () => setSettingsExportScopeSelection,
     setStatus: () => setStatus,
+    showLauncherScreen: () => showLauncherScreen,
     switchSubTab: () => switchSubTab,
     switchTab: () => switchTab,
     syncApplyScopesFromSidebar: () => syncApplyScopesFromSidebar,
@@ -5031,6 +5535,64 @@ ${contextLine}`);
     if (message && ui3.busyText) ui3.busyText.textContent = message;
     if (root2) root2.classList.toggle("busy", !!isBusy);
   }
+  function getFeatureDef(featureKey) {
+    return FEATURE_DEFS.find((item) => item.key === featureKey) || null;
+  }
+  function buildFeatureSummary(def) {
+    if (!def) return "";
+    const parts = [def.desc || ""];
+    if (Array.isArray(def.recommendedFor) && def.recommendedFor.length) {
+      parts.push(`おすすめ: ${def.recommendedFor.join(" / ")}`);
+    }
+    if (def.riskLevel === "warning") {
+      parts.push("変更系のため実行前に内容確認を推奨");
+    } else if (def.riskLevel === "safe") {
+      parts.push("確認・出力中心で比較的安全");
+    }
+    return parts.filter(Boolean).join(" ・ ");
+  }
+  function applyFeatureGroupClass(root2, group) {
+    if (!root2) return;
+    root2.classList.remove("feat-vis", "feat-data", "feat-change");
+    if (group === "vis") root2.classList.add("feat-vis");
+    else if (group === "data") root2.classList.add("feat-data");
+    else root2.classList.add("feat-change");
+  }
+  function showLauncherScreen(options = {}) {
+    const root2 = getToolDocument().getElementById("kintone-unified-suite-v2");
+    if (!root2) return;
+    state.activeFeatureKey = "";
+    root2.classList.remove("screen-feature", "feat-vis", "feat-data", "feat-change");
+    root2.classList.add("screen-launcher");
+    if (ui3.featureTitle) ui3.featureTitle.textContent = "";
+    if (ui3.featureConn) ui3.featureConn.textContent = "";
+    updateConnectionStepIndicators();
+    if (options.persist !== false) saveCurrentDialogState();
+  }
+  function openFeatureScreen(featureKey, options = {}) {
+    const def = getFeatureDef(featureKey);
+    const root2 = getToolDocument().getElementById("kintone-unified-suite-v2");
+    if (!def || !root2) return null;
+    state.activeFeatureKey = def.key;
+    root2.classList.remove("screen-launcher");
+    root2.classList.add("screen-feature");
+    applyFeatureGroupClass(root2, def.group);
+    switchTab(def.tab || def.tabs?.[0] || "reflect", { persist: false });
+    if (def.subTab) switchSubTab(def.tab, def.subTab, { persist: false });
+    if (def.diffSubTab) switchSubTab("diff", def.diffSubTab, { persist: false });
+    if (ui3.featureTitle) ui3.featureTitle.textContent = def.label;
+    if (ui3.featureConn) ui3.featureConn.textContent = buildFeatureSummary(def);
+    updateConnectionStepIndicators();
+    if (options.persist !== false) saveCurrentDialogState();
+    if (def.focusSelector && options.focus !== false) {
+      const targetWindow = getToolDocument().defaultView || window;
+      targetWindow.requestAnimationFrame(() => {
+        const target = getToolDocument().querySelector(def.focusSelector);
+        target?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      });
+    }
+    return def;
+  }
   function switchSubTab(parentKey, subKey, options = {}) {
     if (!parentKey) return;
     const tabs = ui3.subTabs.filter((tab) => tab.dataset.subtabParent === parentKey);
@@ -5052,7 +5614,7 @@ ${contextLine}`);
     if (options.persist !== false) saveCurrentDialogState();
   }
   function switchTab(tabKey, options) {
-    const key = ui3.tabs.some((t) => t.dataset.tab === tabKey) ? tabKey : "diff";
+    const key = ui3.tabs.some((t) => t.dataset.tab === tabKey) ? tabKey : "reflect";
     state.activeTab = key;
     ui3.tabs.forEach((t) => {
       const active = t.dataset.tab === key;
@@ -5062,8 +5624,24 @@ ${contextLine}`);
     ui3.panes.forEach((p) => p.classList.toggle("active", p.dataset.pane === key));
     const root2 = getToolDocument().getElementById("kintone-unified-suite-v2");
     if (root2) {
+      if (root2.classList.contains("screen-feature")) {
+        const matches = FEATURE_DEFS.filter((def) => (def.tab || def.tabs?.[0]) === key);
+        const currentFeature = getFeatureDef(state.activeFeatureKey);
+        const currentMatchesTab = currentFeature && (currentFeature.tab || currentFeature.tabs?.[0]) === key;
+        if (key !== "reflect" && matches.length === 1) {
+          state.activeFeatureKey = matches[0].key;
+        } else if (!currentMatchesTab) {
+          state.activeFeatureKey = matches.find((def) => def.key === "reflect")?.key || matches[0]?.key || "";
+        }
+        const activeFeature = getFeatureDef(state.activeFeatureKey);
+        if (activeFeature) {
+          applyFeatureGroupClass(root2, activeFeature.group);
+          if (ui3.featureTitle) ui3.featureTitle.textContent = activeFeature.label;
+          if (ui3.featureConn) ui3.featureConn.textContent = buildFeatureSummary(activeFeature);
+        }
+      }
       const needs = TAB_CONNECTION_NEEDS[key] || {};
-      root2.classList.toggle("tab-is-diff-or-reflect", key === "diff" || key === "reflect");
+      root2.classList.toggle("tab-is-diff-or-reflect", key === "reflect" || key === "field" || key === "jsconfig");
       root2.classList.toggle("tab-needs-app-inputs", !!needs.appInputs);
       root2.classList.toggle("tab-needs-target", !!needs.target);
       root2.classList.toggle("tab-needs-connection-actions", !!needs.connectionActions);
@@ -5087,11 +5665,14 @@ ${contextLine}`);
     const step2 = ui3.step2Indicator;
     const step3 = ui3.step3Indicator;
     if (!step1 && !step2 && !step3) return;
+    const root2 = getToolDocument().getElementById("kintone-unified-suite-v2");
     const sourceApp = (ui3.sourceApp?.value || "").trim();
     const targetApp = (ui3.targetApp?.value || "").trim();
     const hasConnection = !!sourceApp && !!targetApp;
     const hasCommonData = !!(state.lastSourceBundle || state.importedSourceBundle) && !!(state.lastTargetBundle || state.importedTargetBundle);
-    const currentStep = !hasConnection ? 1 : state.activeTab === "diff" || state.activeTab === "reflect" ? 2 : 3;
+    const activeFeature = getFeatureDef(state.activeFeatureKey);
+    const featureSelected = !!activeFeature && root2?.classList.contains("screen-feature");
+    const currentStep = !hasConnection ? 1 : featureSelected ? 3 : 2;
     if (step1) {
       step1.textContent = hasConnection ? "入力済み" : "未入力";
       step1.dataset.stepState = currentStep === 1 ? "current" : hasConnection ? "done" : "pending";
@@ -5101,9 +5682,9 @@ ${contextLine}`);
       step2.dataset.stepState = currentStep === 2 ? "current" : hasCommonData ? "done" : "pending";
     }
     if (step3) {
-      const featureSelected = currentStep === 3;
-      step3.textContent = featureSelected ? "選択中" : "未選択";
-      step3.dataset.stepState = featureSelected ? "current" : "pending";
+      const step3Active = hasConnection && featureSelected;
+      step3.textContent = featureSelected ? activeFeature.label : "未選択";
+      step3.dataset.stepState = step3Active ? "current" : "pending";
     }
   }
   function diffScopeTooltip(s) {
@@ -5183,7 +5764,7 @@ ${contextLine}`);
       ui3.diffSelectionState.textContent = "差分未実行";
       return;
     }
-    ui3.diffSelectionState.textContent = `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / 出力対象 ${resolveDiffExportMode2() === "all" ? "全差分" : resolveDiffExportMode2() === "selected" ? "選択差分" : resolveDiffExportMode2() === "visible" ? "現在表示中" : "全差分"} / 出力内容 ${getDiffExportContentLabel2(resolveDiffExportContentMode2())} / 正規化 ${normalization.join(", ") || "-"}`;
+    ui3.diffSelectionState.textContent = `選択 ${selected}/${total}件 ・ 表示 ${rendered}件 ・ API失敗 ${issues}件 ・ 出力 ${resolveDiffExportMode2() === "all" ? "全差分" : resolveDiffExportMode2() === "selected" ? "選択差分" : resolveDiffExportMode2() === "visible" ? "現在表示中" : "全差分"} ・ 内容 ${getDiffExportContentLabel2(resolveDiffExportContentMode2())} ・ 正規化 ${normalization.join(", ") || "-"}`;
   }
   function renderDiffWarningBox2() {
     if (!ui3.diffWarnBox) return;
@@ -5255,7 +5836,7 @@ ${contextLine}`);
       const revisionText = resolveBundleRevision2(bundle) || "-";
       const guestText = bundle.guestId ? `ゲスト ${bundle.guestId}` : "通常空間";
       if (imported) {
-        return `${label}: 読込済み(${importedName || bundle.appId || "-"}) [${previewText} / rev ${revisionText} / ${guestText}]`;
+        return `${label}: 保存済みJSONを読込 (${importedName || bundle.appId || "-"}) [${previewText} / rev ${revisionText} / ${guestText}]`;
       }
       return `${label}: API取得済み(アプリ ${bundle.appId || "-"} / ${previewText} / rev ${revisionText} / ${guestText} / ${fmtFetchTime(bundle.fetchedAt)})`;
     };
@@ -5410,9 +5991,9 @@ ${contextLine}`);
         cls: planReady ? "current" : ""
       }
     ];
-    const primaryDiffAction = diffReady ? `<button class="btn sub" data-act="goDiffReview">差分結果を確認</button>` : `<button class="btn sub" data-act="runDiff">差分比較を実行</button>`;
     const nodeLoadAction = isNode && !state.reflectRows.length ? '<button class="btn sub" data-act="loadReflectNodes">差分ノード読込</button>' : "";
     const scopeDiffAction = !isNode && actualDiffRows.length ? '<button class="btn sub" data-act="applyScopeDiffOnly">差分のみ選択</button>' : "";
+    const contextActions = [nodeLoadAction, scopeDiffAction].filter(Boolean).join("");
     return `<div class="reflect-assist">
     <div class="reflect-guide">
       <div class="reflect-guide-head">
@@ -5452,14 +6033,10 @@ ${contextLine}`);
         <div class="reflect-summary-meta">${esc(planReady ? `最新確認: ${planTime}` : "まだ反映プラン確認を実行していません")}</div>
       </div>
     </div>
-    <div class="reflect-context-actions">
-      ${primaryDiffAction}
-      ${nodeLoadAction}
-      ${scopeDiffAction}
-    </div>
-    <p class="reflect-action-hint">プラン確認・バックアップ・プレビュー反映は<strong>画面下の固定バー</strong>から操作します。本番デプロイはツールから実行できません。</p>
+    ${contextActions ? `<div class="reflect-context-actions">${contextActions}</div>` : ""}
+    <p class="reflect-action-hint">差分の再実行は<strong>上部の接続パネル（ヘッダー）</strong>内の差分エリアから。プラン確認・バックアップ・復元・プレビュー反映は<strong>画面下の固定バー</strong>から操作します。本番デプロイはツールから実行できません。</p>
     ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join("") : '<div class="reflect-good">現在の条件でそのまま進めます。変更前の確認は「反映プラン確認」で行えます。</div>'}
-    ${backupState ? `<div class="reflect-good">${esc(backupState)}</div>` : ""}
+    ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? " / 必要なら「直前バックアップ復元」で戻せます。" : ""}</div>` : ""}
   </div>`;
   }
   function renderReflectPlanInline() {
@@ -5537,12 +6114,7 @@ ${contextLine}`);
           <li style="margin:4px 0">${step2} <strong>反映プラン確認</strong>で API 実行内容を確認</li>
           <li style="margin:4px 0">${step3} <strong>比較元 → 比較先(プレビュー) 反映</strong>を実行</li>
         </ol>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-          <button class="btn sub" data-act="runDiff">① 差分比較</button>
-          ${isNode ? '<button class="btn sub" data-act="loadReflectNodes">② 差分ノード読込</button>' : ""}
-          <button class="btn sub" data-act="previewApplyPlan">③ 反映プラン確認</button>
-          <button class="btn ok" data-act="applyPreview">④ プレビュー反映</button>
-        </div>
+        <p class="muted" style="margin:8px 0 0;font-size:11px;line-height:1.6">差分比較は<strong>上部の接続パネル（ヘッダー）</strong>内から。反映プラン確認・プレビュー反映は画面下の固定バーから実行してください。</p>
       </div>
     </details>`;
   }
@@ -5859,7 +6431,7 @@ ${contextLine}`);
     <div class="reflect-node-actions">
       <button class="btn ${selected ? "sub" : "ok"}" data-act="toggleActiveReflectNodeSelection">${selected ? "選択解除" : "このノードを選択"}</button>
       <button class="btn ok" data-act="toggleActiveReflectNodeMode">${mode === "src" ? "比較先へ切替" : "比較元へ切替"}</button>
-      <button class="btn sub" data-act="focusActiveReflectNodeDiff">差分タブで開く</button>
+      <button class="btn sub" data-act="focusActiveReflectNodeDiff">ヘッダーの結果整理で開く</button>
       <button class="btn sub" data-copy-val="${esc(row.path || "")}">パスコピー</button>
     </div>
   </div>
@@ -6442,6 +7014,78 @@ ${contextLine}`);
     ui.sourceFieldListContainer.style.display = "none";
     setStatus(`${mergedCount} 件のフィールド定義を挿入しました`);
   }
+  async function runBulkFieldRename() {
+    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
+    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
+    const guestPrefix = getToolDocument().getElementById("u_targetGuest")?.value?.trim() ? `/k/guest/${getToolDocument().getElementById("u_targetGuest").value.trim()}/v1` : "/k/v1";
+    const prefixStr = getToolDocument().getElementById("u_fieldPrefix")?.value?.trim();
+    if (!prefixStr) throw new Error("プレフィックスを入力してください");
+    const isRemove = getToolDocument().getElementById("u_fieldPrefixRemove")?.checked;
+    setBusy(true, "比較先のフィールド情報を取得中...");
+    const fieldsResp = await apiGet(guestPrefix, "/app/form/fields.json", { app: tgtAppId });
+    const props = fieldsResp.properties;
+    let modifiedCount = 0;
+    const newProps = {};
+    for (const [code, field] of Object.entries(props)) {
+      if (["RECORD_NUMBER", "CREATOR", "CREATED_TIME", "MODIFIER", "UPDATED_TIME", "STATUS", "STATUS_ASSIGNEE", "CATEGORY"].includes(field.type)) continue;
+      let newCode = code;
+      if (isRemove && code.startsWith(prefixStr)) {
+        newCode = code.slice(prefixStr.length);
+      } else if (!isRemove && !code.startsWith(prefixStr)) {
+        newCode = prefixStr + code;
+      }
+      if (newCode !== code) {
+        const cloned = deepClone(field);
+        cloned.code = newCode;
+        newProps[newCode] = cloned;
+        modifiedCount++;
+      }
+    }
+    ui.fieldJson.value = JSON.stringify(newProps, null, 2);
+    const resEl = getToolDocument().getElementById("u_bulkFieldResult");
+    resEl.style.display = "block";
+    resEl.innerHTML = `<strong>完了:</strong> ${modifiedCount} 個のフィールドコードを変更し、上のテキストエリアにセットしました。`;
+    setBusy(false);
+  }
+  async function runDetectUnusedFields() {
+    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
+    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
+    const guestId = getToolDocument().getElementById("u_targetGuest")?.value?.trim() || null;
+    setBusy(true, "比較先アプリの全設定を取得中...");
+    const bundle = await fetchBundle({
+      appId: tgtAppId,
+      guestId,
+      preview: true,
+      sections: SECTION_DEFS.map((s) => s.key),
+      onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
+    });
+    ensureBundleShape(bundle);
+    const index = buildCombinedFieldImpactIndex(bundle);
+    const usedCodes = new Set(index.keys());
+    const fieldsResp = bundle.sections.fieldSettings;
+    const props = fieldsResp ? fieldsResp.properties : {};
+    const unused = [];
+    for (const [code, field] of Object.entries(props)) {
+      if (["RECORD_NUMBER", "CREATOR", "CREATED_TIME", "MODIFIER", "UPDATED_TIME", "STATUS", "STATUS_ASSIGNEE", "CATEGORY"].includes(field.type)) continue;
+      if (!usedCodes.has(code)) {
+        unused.push(code);
+      }
+    }
+    const resEl = getToolDocument().getElementById("u_bulkFieldResult");
+    resEl.style.display = "block";
+    if (unused.length === 0) {
+      resEl.innerHTML = '<span style="color:#15803d">全てのフィールドがビューや計算式、プロセスなどで使用されています（または影響判定範囲外です）。</span>';
+    } else {
+      resEl.innerHTML = `
+      <strong style="color:#b45309">影響のない（未使用の可能性が高い）フィールド ${unused.length}件:</strong>
+      <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
+        ${unused.map((c) => `<span class="chip" style="font-family:monospace">${esc(c)}</span>`).join("")}
+      </div>
+      <div class="muted" style="margin-top:6px">※JavaScriptカスタマイズや外部API連携での使用は検知できません。</div>
+    `;
+    }
+    setBusy(false);
+  }
   var init_field = __esm({
     "src/tabs/field.js"() {
       "use strict";
@@ -6933,6 +7577,8 @@ ${contextLine}`);
       bundle
     };
     const filename = `target_preview_backup_app${target.appId}_${nowStamp()}.json`;
+    state.lastPreviewBackupPayload = deepClone(payload);
+    state.lastPreviewBackupFilename = filename;
     downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
     if (!options?.silentStatus) setStatus(`比較先(プレビュー)バックアップ保存: ${filename}`);
     if (ui.backupStatus) {
@@ -6940,6 +7586,48 @@ ${contextLine}`);
       ui.backupStatus.style.display = "block";
     }
     return { filename, payload };
+  }
+  function getSectionDisplayLabel(sectionKey) {
+    return SECTION_DEFS.find((item) => item.key === sectionKey)?.label || sectionKey;
+  }
+  function formatSectionList(sectionKeys) {
+    return (sectionKeys || []).map((sectionKey) => getSectionDisplayLabel(sectionKey)).join(", ");
+  }
+  async function assertTargetPreviewMatchesPlannedBaseline(prefix, app, sectionKeys) {
+    const plan = state.lastApplyPlan;
+    const baselines = plan?.targetSectionBaselines || {};
+    const uniqueSectionKeys = [...new Set((sectionKeys || []).filter(Boolean))];
+    const checked = [];
+    const skipped = [];
+    const mismatches = [];
+    for (const secKey of uniqueSectionKeys) {
+      const baseline = baselines[secKey];
+      const def = SECTION_DEFS.find((item) => item.key === secKey);
+      if (!baseline || !def) {
+        skipped.push(secKey);
+        continue;
+      }
+      const current = await apiGet(prefix, def.endpoint, { app });
+      const currentRevision = extractSectionRevision(current);
+      const currentFingerprint = stableStringify(current);
+      const revisionChanged = baseline.revision && currentRevision && baseline.revision !== currentRevision;
+      const fingerprintChanged = baseline.fingerprint && baseline.fingerprint !== currentFingerprint;
+      if (revisionChanged || fingerprintChanged) {
+        mismatches.push({
+          sectionKey: secKey,
+          label: getSectionDisplayLabel(secKey),
+          plannedRevision: baseline.revision || "-",
+          currentRevision: currentRevision || "-"
+        });
+        continue;
+      }
+      checked.push(secKey);
+    }
+    if (mismatches.length) {
+      const detail = mismatches.map((item) => `${item.label} (plan ${item.plannedRevision} / current ${item.currentRevision})`).join(", ");
+      throw new Error(`プラン確認後に比較先プレビューが更新されています。再度「反映プラン確認」を実行してください。対象: ${detail}`);
+    }
+    return { checked, skipped };
   }
   function resolvePatchSectionKey(name) {
     const raw = String(name || "").trim();
@@ -7274,12 +7962,16 @@ ${contextLine}`);
     const app = c.target.appId;
     const logs = [];
     let hadError = false;
+    setStatus("反映前チェック中...");
+    const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, nodeScopes);
     const srcModeCount = rows.filter((r) => reflectRowModeById(r._id) === "src").length;
     const tgtModeCount = rows.length - srcModeCount;
     logs.push(`比較先アプリ: ${app}`);
     logs.push(`ノードモード選択数: ${rows.length}`);
     logs.push(`モード内訳: 比較元 ${srcModeCount} / 比較先 ${tgtModeCount}`);
     logs.push(`エラー時動作: ${stopOnError ? "中断" : "継続"}`);
+    if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
+    if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
     if (ui.autoBackupPreview?.checked) {
       const backupScopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
       const backup = await backupTargetPreviewSettings(c, backupScopes, { silentStatus: true });
@@ -7388,9 +8080,13 @@ ${contextLine}`);
     const stopOnError = !!ui.stopOnError.checked;
     const logs = [];
     let hadError = false;
+    setStatus("反映前チェック中...");
+    const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, scopes);
     logs.push(`比較先アプリ: ${app}`);
     logs.push(`適用セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ")}`);
     logs.push(`エラー時動作: ${stopOnError ? "中断" : "継続"}`);
+    if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
+    if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
     if (ui.autoBackupPreview?.checked) {
       const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
       logs.push(`バックアップ保存: ${backup.filename}`);
@@ -7411,6 +8107,54 @@ ${contextLine}`);
     const scopes = resolveBackupScopes(c);
     await backupTargetPreviewSettings(c, scopes);
     renderReflectAssistPanel();
+  }
+  async function runRestoreTargetPreviewBackup() {
+    const c = commonParams();
+    if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
+    if (!state.lastPreviewBackupPayload?.bundle?.sections) {
+      throw new Error("このセッションで復元できるバックアップがありません。先に「バックアップ」を実行してください");
+    }
+    const restorePayload = deepClone(state.lastPreviewBackupPayload);
+    const restoreFilename = state.lastPreviewBackupFilename || "session-backup.json";
+    const backupTarget = restorePayload.target || {};
+    if (String(backupTarget.appId || "") !== String(c.target.appId || "")) {
+      throw new Error(`比較先アプリがバックアップ取得時と異なります。現在: ${c.target.appId || "-"} / バックアップ: ${backupTarget.appId || "-"}`);
+    }
+    if (String(backupTarget.guestId || "") !== String(c.target.guestId || "")) {
+      throw new Error("比較先ゲストIDがバックアップ取得時と異なります。同じ接続先で実行してください");
+    }
+    const backupBundle = ensureBundleShape(restorePayload.bundle);
+    const scopes = Array.isArray(restorePayload.scopes) && restorePayload.scopes.length ? restorePayload.scopes.filter(Boolean) : Object.keys(backupBundle.sections || {});
+    if (!scopes.length) throw new Error("復元対象セクションがありません");
+    const labels = formatSectionList(scopes);
+    if (!window.confirm(`直前バックアップを比較先(プレビュー)へ復元しますか？
+比較先アプリ: ${c.target.appId}
+対象セクション: ${labels || "-"}`)) {
+      setStatus("バックアップ復元をキャンセルしました");
+      return;
+    }
+    const prefix = buildApiPrefix(c.target.guestId, true);
+    const app = c.target.appId;
+    const stopOnError = !!ui.stopOnError?.checked;
+    const logs = [];
+    logs.push(`比較先アプリ: ${app}`);
+    logs.push(`復元元バックアップ: ${restoreFilename}`);
+    logs.push(`復元セクション: ${labels || "-"}`);
+    logs.push(`エラー時動作: ${stopOnError ? "中断" : "継続"}`);
+    if (ui.autoBackupPreview?.checked) {
+      const beforeRestoreBackup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
+      logs.push(`復元前バックアップ保存: ${beforeRestoreBackup.filename}`);
+    }
+    logs.push("");
+    const hadError = await applySectionsLoop(prefix, app, backupBundle, scopes, logs, {}, stopOnError, {
+      phaseLabel: "バックアップ復元",
+      onProgress: (i, total) => renderProgressLog(logs, { phase: "バックアップ復元中", current: i, total })
+    });
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: "バックアップ復元完了" });
+    renderReflectAssistPanel();
+    renderReflectMainPanel();
+    setStatus(hadError ? "バックアップ復元で一部エラーが発生しました" : "直前バックアップから復元しました");
   }
   async function runDeployOnly() {
     const msg = "ツールからのデプロイAPI実行は無効です。プレビューへの反映後、本番へのデプロイはkintone管理画面から手動で行ってください。";
@@ -7624,14 +8368,21 @@ ${contextLine}`);
       lookupMap: payload?.lookupMap || ""
     });
   }
-  function markApplyPlan(signature, mode, totalReq, lines) {
+  function makeSectionPlanBaseline(response) {
+    return {
+      revision: extractSectionRevision(response),
+      fingerprint: stableStringify(response)
+    };
+  }
+  function markApplyPlan(signature, mode, totalReq, lines, extra = {}) {
     state.lastApplyPlan = {
       signature,
       mode,
       totalReq: Number(totalReq || 0),
       createdAt: Date.now(),
       summary: (lines || []).slice(0, 16).join("\n"),
-      logs: lines || []
+      logs: lines || [],
+      ...extra
     };
   }
   function showInlineConfirmation(plan, options) {
@@ -7734,6 +8485,7 @@ ${contextLine}`);
       bySection[row.sectionKey].push(row);
     }
     let totalReq = 0;
+    const targetSectionBaselines = {};
     const sectionKeys = Object.keys(bySection);
     for (let i = 0; i < sectionKeys.length; i++) {
       const secKey = sectionKeys[i];
@@ -7741,7 +8493,9 @@ ${contextLine}`);
       if (!def || !def.put) continue;
       try {
         setStatus(`ノード反映プラン計算中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
-        const current = normalize(await apiGet(prefix, def.endpoint, { app }));
+        const currentRes = await apiGet(prefix, def.endpoint, { app });
+        targetSectionBaselines[secKey] = makeSectionPlanBaseline(currentRes);
+        const current = normalize(currentRes);
         const before = deepClone(current);
         let patched = deepClone(current);
         const rowsInSection = sortRowsForPatch(bySection[secKey], secKey);
@@ -7774,7 +8528,7 @@ ${contextLine}`);
     lines.push("");
     lines.push(`合計予定リクエスト数: ${totalReq}`);
     lines.push("※ ノードモードは差分パスをもとに比較先プレビューへ反映します。");
-    markApplyPlan(planSignature, "nodes", totalReq, lines);
+    markApplyPlan(planSignature, "nodes", totalReq, lines, { targetSectionBaselines });
     ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(lines.join("\n"))}</pre>`;
     renderReflectAssistPanel();
     renderReflectMainPanel();
@@ -7802,6 +8556,7 @@ ${contextLine}`);
     const prefix = buildApiPrefix(c.target.guestId, true);
     const app = c.target.appId;
     const logs = [];
+    const targetSectionBaselines = {};
     logs.push("=== 反映プラン（ドライラン）===");
     logs.push(`比較先アプリ: ${app}`);
     logs.push(`対象セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ")}`);
@@ -7820,8 +8575,9 @@ ${contextLine}`);
         continue;
       }
       if (secKey === "fieldSettings") {
-        const current = await apiGet(prefix, "/app/form/fields.json", { app });
-        const plan2 = planFieldSectionDiffRequests(app, current.properties || {}, sourceSec.properties || sourceSec || {}, lookupMap);
+        const current2 = await apiGet(prefix, "/app/form/fields.json", { app });
+        targetSectionBaselines[secKey] = makeSectionPlanBaseline(current2);
+        const plan2 = planFieldSectionDiffRequests(app, current2.properties || {}, sourceSec.properties || sourceSec || {}, lookupMap);
         logs.push(`PLAN ${def.label}: ${plan2.requests.length} request(s)`);
         appendRequestPlanLogs(logs, plan2);
         if (plan2.lookupChanged) logs.push(`  - lookup appId 変換: ${plan2.lookupChanged}`);
@@ -7829,8 +8585,9 @@ ${contextLine}`);
         continue;
       }
       if (secKey === "viewSettings") {
-        const current = await apiGet(prefix, "/app/views.json", { app });
-        const plan2 = planViewsSectionDiffRequests(app, current.views || {}, sourceSec.views || sourceSec || {});
+        const current2 = await apiGet(prefix, "/app/views.json", { app });
+        targetSectionBaselines[secKey] = makeSectionPlanBaseline(current2);
+        const plan2 = planViewsSectionDiffRequests(app, current2.views || {}, sourceSec.views || sourceSec || {});
         logs.push(`PLAN ${def.label}: ${plan2.requests.length} request(s)`);
         appendRequestPlanLogs(logs, plan2);
         if (plan2.deleteSkipCount) logs.push(`  - views delete(skip): ${plan2.deleteSkipCount} (互換モード: 削除は行いません)`);
@@ -7838,22 +8595,26 @@ ${contextLine}`);
         continue;
       }
       if (secKey === "reportSettings") {
-        const current = await apiGet(prefix, "/app/reports.json", { app });
-        const plan2 = planReportsSectionDiffRequests(app, current.reports || {}, sourceSec.reports || sourceSec || {});
+        const current2 = await apiGet(prefix, "/app/reports.json", { app });
+        targetSectionBaselines[secKey] = makeSectionPlanBaseline(current2);
+        const plan2 = planReportsSectionDiffRequests(app, current2.reports || {}, sourceSec.reports || sourceSec || {});
         logs.push(`PLAN ${def.label}: ${plan2.requests.length} request(s)`);
         appendRequestPlanLogs(logs, plan2);
         totalReq += plan2.requests.length;
         continue;
       }
       if (secKey === "actionSettings") {
-        const current = await apiGet(prefix, "/app/actions.json", { app });
-        const plan2 = planActionsSectionDiffRequests(app, current.actions || {}, sourceSec.actions || sourceSec || {});
+        const current2 = await apiGet(prefix, "/app/actions.json", { app });
+        targetSectionBaselines[secKey] = makeSectionPlanBaseline(current2);
+        const plan2 = planActionsSectionDiffRequests(app, current2.actions || {}, sourceSec.actions || sourceSec || {});
         logs.push(`PLAN ${def.label}: ${plan2.requests.length} request(s)`);
         appendRequestPlanLogs(logs, plan2);
         if (plan2.deleteSkipCount) logs.push(`  - actions delete(skip): ${plan2.deleteSkipCount} (互換モード: 削除は行いません)`);
         totalReq += plan2.requests.length;
         continue;
       }
+      const current = await apiGet(prefix, def.endpoint, { app });
+      targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
       const plan = { requests: [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder(sourceSec) }, note: `${def.label} put` }] };
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
       appendRequestPlanLogs(logs, plan);
@@ -7861,7 +8622,7 @@ ${contextLine}`);
     }
     logs.push("");
     logs.push(`合計予定リクエスト数: ${totalReq}`);
-    markApplyPlan(planSignature, "section", totalReq, logs);
+    markApplyPlan(planSignature, "section", totalReq, logs, { targetSectionBaselines });
     ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`;
     renderReflectAssistPanel();
     renderReflectMainPanel();
@@ -8092,23 +8853,22 @@ ${contextLine}`);
     if (!exportInfo.rows.length && !state.lastFetchIssues.length && !compareInfo?.scopes?.length) {
       throw new Error("出力できる比較結果がありません");
     }
-    const payload = {
-      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    const payload = buildDiffExportPayload({
+      sourceBundle: state.lastSourceBundle,
+      targetBundle: state.lastTargetBundle,
+      rows: exportInfo.rows,
+      fetchIssues: state.lastFetchIssues,
+      ignoreKeys: ui.ignoreKeys.value,
       exportMode: exportInfo.mode,
       exportLabel: exportInfo.label,
       exportContentMode,
       exportContentLabel: getDiffExportContentLabel(exportContentMode),
-      normalization: getDiffNormalizationPresetState(),
+      normalizationState: getDiffNormalizationPresetState(),
       warning: buildDiffWarningInfo(exportInfo.rows, state.lastFetchIssues),
-      source: state.lastSourceBundle,
-      target: state.lastTargetBundle,
-      diffCount: exportInfo.rows.length,
-      fetchIssues: state.lastFetchIssues,
-      rows: exportInfo.rows,
-      comparedScopes: compareInfo?.scopes || [],
-      sourceComparedBundle: compareInfo?.sourceBundle || null,
-      targetComparedBundle: compareInfo?.targetBundle || null
-    };
+      compareScopes: compareInfo?.scopes || [],
+      compareSourceBundle: compareInfo?.sourceBundle || null,
+      compareTargetBundle: compareInfo?.targetBundle || null
+    });
     downloadText(`diff_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
     setStatus(`差分JSONを保存しました (${exportInfo.label} / ${getDiffExportContentLabel(exportContentMode)})`);
   }
@@ -8160,7 +8920,10 @@ ${contextLine}`);
     const dialogPos = getCurrentDialogPosition(dialogRect.width || DIALOG_DEFAULT_WIDTH, dialogRect.height || DIALOG_DEFAULT_HEIGHT);
     saveDialogState({
       activeTab: state.activeTab,
+      activeFeatureKey: state.activeFeatureKey || "",
       activeSubTabs: { ...state.activeSubTabs },
+      screenMode: getRoot()?.classList.contains("screen-feature") ? "feature" : "launcher",
+      launcherSortMode: ui.featureSortMode?.value || state.launcherSortMode || "onboarding",
       dialogWidth: Math.round(dialogRect.width || DIALOG_DEFAULT_WIDTH),
       dialogHeight: Math.round(dialogRect.height || DIALOG_DEFAULT_HEIGHT),
       dialogLeft: dialogPos.left,
@@ -8287,6 +9050,10 @@ ${contextLine}`);
     if (saved.settingsExportSearchKeyword != null) ui.settingsExportSearchKeyword.value = String(saved.settingsExportSearchKeyword);
     if (saved.settingsExportGuest != null) ui.settingsExportGuest.value = String(saved.settingsExportGuest);
     if (saved.settingsExportPreview != null) ui.settingsExportPreview.checked = !!saved.settingsExportPreview;
+    if (saved.launcherSortMode != null) {
+      state.launcherSortMode = String(saved.launcherSortMode) === "usage" ? "usage" : "onboarding";
+      if (ui.featureSortMode) ui.featureSortMode.value = state.launcherSortMode;
+    }
     const markChecks = (container, selected) => {
       if (!Array.isArray(selected)) return;
       const set = new Set(selected);
@@ -8301,13 +9068,19 @@ ${contextLine}`);
       const nextKey = saved.activeSubTabs && typeof saved.activeSubTabs === "object" ? String(saved.activeSubTabs[parentKey] || defaultKey) : defaultKey;
       switchSubTab(parentKey, nextKey, { persist: false });
     });
-    if (saved.activeTab && ui.tabs.some((t) => t.dataset.tab === saved.activeTab)) {
-      switchTab(saved.activeTab, { persist: false });
+    let nextActive = saved.activeTab;
+    if (nextActive === "common" || nextActive === "diff") nextActive = "reflect";
+    if (nextActive && ui.tabs.some((t) => t.dataset.tab === nextActive)) {
+      switchTab(nextActive, { persist: false });
     }
+    const nextFeatureKey = String(saved.activeFeatureKey || "").trim();
+    const restoredFeature = saved.screenMode === "feature" && nextFeatureKey ? openFeatureScreen(nextFeatureKey, { persist: false, focus: false }) : null;
+    if (!restoredFeature) showLauncherScreen({ persist: false });
     applyIgnorePresetKeysToInput();
     renderIgnoreKeyChips();
     renderLookupMapRows();
-    if (state.activeTab === "diff") {
+    const rootEl = getRoot();
+    if (rootEl?.classList.contains("tab-needs-connection-actions") && state.activeSubTabs.diff === "view") {
       renderResultRows(state.lastDiffRows || []);
     }
   }
@@ -8954,6 +9727,10 @@ ${contextLine}`);
   // src/ui/styles.css
   var styles_default = `#kintone-unified-suite-v2{position:fixed;top:16px;left:calc(100vw - min(980px,calc(100vw - 32px)) - 16px);z-index:2147483647;width:min(980px,calc(100vw - 32px));height:min(860px,calc(100vh - 32px));min-width:min(560px,calc(100vw - 32px));min-height:min(360px,calc(100vh - 32px));max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);background:#f6f8fb;border:1px solid #d9e2ec;border-radius:14px;box-shadow:0 18px 40px rgba(15,23,42,.28);font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;color:#1f2937;display:flex;flex-direction:column;overflow:hidden;resize:both;box-sizing:border-box}
 #kintone-unified-suite-v2.suite-popout-tab{top:0!important;left:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;border-radius:0;resize:none;box-shadow:none;border-width:0 0 1px}
+/* 別タブ表示はウィンドウ全体にフィット済みのため、サイズプリセットは隠す（閉じる・操作ガイドはそのまま） */
+#kintone-unified-suite-v2.suite-popout-tab .h-actions .x.size[data-act="dialogSizeDefault"],
+#kintone-unified-suite-v2.suite-popout-tab .h-actions .x.size[data-act="dialogSizeLarge"],
+#kintone-unified-suite-v2.suite-popout-tab .h-actions .x.size[data-act="dialogSizeMax"]{display:none!important}
 #kintone-unified-suite-v2 .h{padding:12px 16px;background:linear-gradient(135deg,#0f4c81,#2563eb);color:#fff;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-shrink:0;cursor:move;user-select:none}
 #kintone-unified-suite-v2 .ht{font-size:15px;font-weight:700}
 #kintone-unified-suite-v2 .hs{font-size:11px;opacity:.92}
@@ -9437,6 +10214,13 @@ ${contextLine}`);
 #kintone-unified-suite-v2.screen-feature.feat-change .tabs{display:flex}
 #kintone-unified-suite-v2.screen-feature.feat-change .tab-group:not([data-group="change"]){display:none}
 
+/* #u_status / #u_result は既存スクリプト互換のため DOM に残すが UI には出さない */
+#kintone-unified-suite-v2 .kus-host-hidden{display:none !important}
+
+#kintone-unified-suite-v2:not(.tab-needs-connection-actions) .kus-header-diff-suite{display:none !important}
+#kintone-unified-suite-v2 .kus-header-diff-suite{margin-top:8px;padding:10px 12px 12px;border:1px solid #dbeafe;border-radius:10px;background:linear-gradient(180deg,#fff,#f8fafc);max-height:min(72vh,920px);overflow:auto}
+#kintone-unified-suite-v2 .kus-header-diff-suite .diff-pane-embed{margin-top:10px;padding-top:10px;border-top:1px solid #e2e8f0}
+
 /* ========== UX: 接続パネル（折りたたみ） ========== */
 #kintone-unified-suite-v2 .connection-panel{border:1px solid #c7d2fe;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);box-shadow:0 1px 3px rgba(15,23,42,.06)}
 #kintone-unified-suite-v2 .connection-panel > summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:9px;user-select:none}
@@ -9459,14 +10243,15 @@ ${contextLine}`);
 /* 比較先が不要なタブ（er, processFlow, sql）では比較先入力欄を隠す */
 #kintone-unified-suite-v2:not(.tab-needs-target) .conn-target { display: none !important; }
 
-/* 差分/反映専用UIは該当タブ以外で隠す */
+/* 差分/反映系以外では接続パネル内の専用UIを隠す（Step2 の差分 UI はヘッダー内 .kus-header-diff-suite） */
 #kintone-unified-suite-v2:not(.tab-needs-connection-actions) .connection-section--actions,
 #kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .diff-fold--lookup,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--step2 .connection-step-desc,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--step2 .connection-step-btns,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) #u_commonDataState,
-#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--step2 .connection-footnote {
+#kintone-unified-suite-v2:not(.tab-is-diff-or-reflect) .connection-section--step2-bridge .connection-step-desc {
   display: none !important;
+}
+
+#kintone-unified-suite-v2 .kus-header-diff-suite .diff-pane-step2 {
+  margin-top: 4px;
 }
 
 /* ランチャー */
@@ -9909,6 +10694,19 @@ ${contextLine}`);
   font-size:12px;
   font-weight:700;
 }
+#kintone-unified-suite-v2 .launcher-flow-note{
+  margin-top:12px;
+  padding:10px 12px;
+  border:1px solid #dbeafe;
+  border-radius:10px;
+  background:linear-gradient(180deg,#f8fbff,#eff6ff);
+  color:#1e3a8a;
+  font-size:12px;
+  line-height:1.6;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
 #kintone-unified-suite-v2 .feature-grid{
   grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
   gap:12px;
@@ -9920,6 +10718,24 @@ ${contextLine}`);
   box-shadow:0 2px 8px rgba(15,23,42,.05);
   position:relative;
   overflow:hidden;
+}
+#kintone-unified-suite-v2 .feature-card-top{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:10px;
+}
+#kintone-unified-suite-v2 .feature-card-top .feature-card-icon{
+  margin-bottom:0;
+  flex-shrink:0;
+}
+#kintone-unified-suite-v2 .feature-card-group{
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:#64748b;
+  margin-top:4px;
 }
 #kintone-unified-suite-v2 .feature-card::before{
   content:"";
@@ -9935,8 +10751,13 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .feature-card[data-feature="reflect"]::before{background:linear-gradient(90deg,#22c55e,#14b8a6)}
 #kintone-unified-suite-v2 .feature-card[data-feature="field"]::before{background:linear-gradient(90deg,#a855f7,#6366f1)}
 #kintone-unified-suite-v2 .feature-card[data-feature="jsconfig"]::before{background:linear-gradient(90deg,#f59e0b,#eab308)}
-#kintone-unified-suite-v2 .feature-card[data-feature="vis"]::before{background:linear-gradient(90deg,#3b82f6,#8b5cf6)}
-#kintone-unified-suite-v2 .feature-card[data-feature="data"]::before{background:linear-gradient(90deg,#64748b,#475569)}
+#kintone-unified-suite-v2 .feature-card[data-feature="design"]::before{background:linear-gradient(90deg,#3b82f6,#8b5cf6)}
+#kintone-unified-suite-v2 .feature-card[data-feature="settingsExport"]::before{background:linear-gradient(90deg,#0ea5e9,#3b82f6)}
+#kintone-unified-suite-v2 .feature-card[data-feature="er"]::before{background:linear-gradient(90deg,#6366f1,#8b5cf6)}
+#kintone-unified-suite-v2 .feature-card[data-feature="processFlow"]::before{background:linear-gradient(90deg,#2563eb,#0891b2)}
+#kintone-unified-suite-v2 .feature-card[data-feature="recordMgr"]::before{background:linear-gradient(90deg,#64748b,#475569)}
+#kintone-unified-suite-v2 .feature-card[data-feature="sql"]::before{background:linear-gradient(90deg,#475569,#334155)}
+#kintone-unified-suite-v2 .feature-card[data-feature="apiTester"]::before{background:linear-gradient(90deg,#7c2d12,#b45309)}
 #kintone-unified-suite-v2 .feature-card:hover{
   border-color:#7dd3fc;
   box-shadow:0 8px 24px rgba(14,165,233,.12);
@@ -9955,6 +10776,17 @@ ${contextLine}`);
   gap:6px;
   margin-bottom:8px;
 }
+#kintone-unified-suite-v2 .feature-risk{
+  display:inline-flex;
+  align-items:center;
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:800;
+  border:1px solid transparent;
+}
+#kintone-unified-suite-v2 .feature-risk--safe{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+#kintone-unified-suite-v2 .feature-risk--warning{background:#fff7ed;border-color:#fdba74;color:#9a3412}
 #kintone-unified-suite-v2 .feature-badge{
   display:inline-flex;
   align-items:center;
@@ -9973,6 +10805,23 @@ ${contextLine}`);
   font-size:var(--font-xs);
   line-height:var(--line-relaxed);
   margin-top:6px;
+}
+#kintone-unified-suite-v2 .feature-card-tags{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:10px;
+}
+#kintone-unified-suite-v2 .feature-card-tag{
+  display:inline-flex;
+  align-items:center;
+  padding:3px 8px;
+  border-radius:999px;
+  background:#f8fafc;
+  border:1px solid #e2e8f0;
+  color:#475569;
+  font-size:10px;
+  font-weight:700;
 }
 #kintone-unified-suite-v2 .feature-card-go{
   right:16px;
@@ -10321,6 +11170,27 @@ ${contextLine}`);
     const root2 = doc.createElement("div");
     root2.id = TOOL_ID;
     root2.className = options.popout ? "screen-launcher suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions" : "screen-launcher tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions";
+    const getRiskLabel = (riskLevel) => riskLevel === "warning" ? "要注意" : "比較的安全";
+    const renderFeatureCard = (f) => {
+      const recommended = Array.isArray(f.recommendedFor) ? f.recommendedFor : [];
+      return `<div class="feature-card" data-act="openFeature" data-feature="${f.key}" role="button" tabindex="0">
+      <div class="feature-card-top">
+        <div class="feature-card-icon">${f.icon || ""}</div>
+        <div class="feature-card-group">${esc(f.groupLabel || "")}</div>
+      </div>
+      <div class="feature-card-badges">
+        ${f.badge ? `<span class="feature-badge feature-badge--${f.badge.tone || "recommended"}" aria-label="バッジ: ${esc(f.badge.label || "")}">
+          <span class="feature-badge-icon" aria-hidden="true">${f.badge.icon || "•"}</span>
+          <span class="feature-badge-label">${esc(f.badge.label || "")}</span>
+        </span>` : ""}
+        <span class="feature-risk feature-risk--${f.riskLevel === "warning" ? "warning" : "safe"}">${getRiskLabel(f.riskLevel)}</span>
+      </div>
+      <div class="feature-card-label">${f.label}</div>
+      <div class="feature-card-desc">${f.desc}</div>
+      ${recommended.length ? `<div class="feature-card-tags">${recommended.map((item) => `<span class="feature-card-tag">${esc(item)}</span>`).join("")}</div>` : ""}
+      <div class="feature-card-go" aria-hidden="true">開く</div>
+    </div>`;
+    };
     root2.innerHTML = `<style>${styles_default}</style>
         <div class="h" data-dialog-drag-handle="1">
           <div class="h-brand" aria-hidden="true">
@@ -10390,99 +11260,22 @@ ${contextLine}`);
             </section>
             <input type="checkbox" id="u_sourcePreview" style="display:none">
             <input type="checkbox" id="u_targetPreview" checked style="display:none">
-            <section class="connection-section connection-section--step2 connection-section--actions" aria-labelledby="conn-common-heading">
-              <div class="connection-step-banner">
-                <span class="connection-step-title" id="conn-common-heading">Step 2 共通データ取得</span>
-                <span class="connection-step-indicator" id="u_step2Indicator" data-step-state="pending">未取得</span>
-              </div>
-              <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
-              <div class="btns connection-step-btns">
-                <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較 → 反映プラン確認</button>
-                <button class="btn sub connection-secondary-cta" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
-              </div>
-              <div class="kv" id="u_commonDataState">共通データ未取得</div>
-              <div class="muted connection-footnote">共通設定は全タブで使います。推奨: 差分比較 → 反映プラン確認 → プレビュー反映。</div>
-            </section>
-            <section class="connection-section connection-section--step3 connection-section--actions" aria-labelledby="conn-feature-heading">
-              <div class="connection-step-banner">
-                <span class="connection-step-title" id="conn-feature-heading">Step 3 機能選択</span>
-                <span class="connection-step-indicator" id="u_step3Indicator" data-step-state="pending">未選択</span>
-              </div>
-              <p class="muted connection-step-desc">下の「作業メニュー」カードから機能を選択し、必要時のみ補助操作を使って接続情報を調整します。</p>
-              <div class="btns connection-step-btns connection-quick-btns">
-                <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
-                <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
-                <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
-              </div>
-            </section>
-            <table class="state-matrix" aria-label="状態マトリクス">
-              <thead>
-                <tr><th>対象</th><th>通常</th><th>ホバー</th><th>アクティブ</th><th>フォーカス</th><th>無効</th></tr>
-              </thead>
-              <tbody>
-                <tr><td>タブ / サブタブ</td><td>白背景 + 透明マーカー</td><td>背景を薄く強調</td><td>左線 / 下線を常時表示</td><td>水色リング + 外側影</td><td>busy時にopacity低下</td></tr>
-                <tr><td>操作ボタン</td><td>ラベル + 状態バッジ可</td><td>明度を少し上げる</td><td>押下時に1px沈む</td><td>共通リング仕様</td><td>無効時は半透明 + 操作不可</td></tr>
-                <tr><td>feature-card</td><td>上部アクセント線</td><td>左線追加 + 影を強調</td><td>（クリックで画面遷移）</td><td>共通リング仕様</td><td>対象外</td></tr>
-                <tr><td>status--error</td><td>赤系背景 + 左4px線</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>
-              </tbody>
-            </table>
-            </div>
-
-          <div class="launcher-menu" id="u_launcherMenu">
-            <div class="launcher-menu-head">
-              <p class="launcher-lead">作業メニュー</p>
-              <p class="launcher-tagline">カードをクリックして開きます。作業開始後も「← 戻る」でこの画面に戻れます。</p>
-            </div>
-            <div class="launcher-sort">
-              <label for="u_featureSortMode">並び順</label>
-              <select id="u_featureSortMode" class="launcher-sort-select">
-                <option value="onboarding">初回推奨順</option>
-                <option value="usage">よく使う順</option>
-              </select>
-            </div>
-            <div class="feature-grid">
-              ${FEATURE_DEFS.map((f) => `<div class="feature-card" data-act="openFeature" data-feature="${f.key}" role="button" tabindex="0">
-                <div class="feature-card-icon">${f.icon || ""}</div>
-                ${f.badge ? `<div class="feature-card-badges">
-                  <span class="feature-badge feature-badge--${f.badge.tone || "recommended"}" aria-label="バッジ: ${esc(f.badge.label || "")}">
-                    <span class="feature-badge-icon" aria-hidden="true">${f.badge.icon || "•"}</span>
-                    <span class="feature-badge-label">${esc(f.badge.label || "")}</span>
-                  </span>
-                </div>` : ""}
-                <div class="feature-card-label">${f.label}</div>
-                <div class="feature-card-desc">${f.desc}</div>
-                <div class="feature-card-go" aria-hidden="true">開く</div>
-              </div>`).join("")}
-            </div>
-          </div>
-
-          <div class="card tab-card">
-            <div class="tabs">
-              <div class="tab-group" data-group="change">
-                <div class="tab-group-lbl">変更・反映</div>
-                <button class="tab active" data-tab="diff" data-state="selected">差分比較</button>
-                <button class="tab" data-tab="reflect" data-state="idle">プレビュー反映</button>
-                <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
-                <button class="tab" data-tab="jsconfig" data-state="idle">JS/CSS設定</button>
-              </div>
-              
-              <div class="tab-group" data-group="vis">
-                <div class="tab-group-lbl">可視化・出力</div>
-                <button class="tab" data-tab="er" data-state="idle">ER図</button>
-                <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
-                <button class="tab" data-tab="design" data-state="idle">設計書</button>
-                <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
-              </div>
-              
-              <div class="tab-group" data-group="data">
-                <div class="tab-group-lbl">データ・保守</div>
-                <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
-                <button class="tab" data-tab="sql" data-state="idle">SQL実行</button>
-                <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
-              </div>
-            </div>
-
-            <div class="pane active" data-pane="diff">
+            <div class="kus-header-diff-suite" id="u_headerDiffSuite">
+            <p class="muted kus-header-diff-lead" style="margin:6px 0 10px;font-size:12px;line-height:1.55">Step 2 以降はこのエリアで操作します。比較元・比較先は上の Step 1、反映操作は下の「プレビュー反映」タブです。</p>
+            <section class="connection-section connection-section--step2 connection-section--actions diff-pane-step2" aria-labelledby="conn-diff-pane-heading">
+                <div class="connection-step-banner">
+                  <span class="connection-step-title" id="conn-diff-pane-heading">比較データ取得・一括フロー</span>
+                  <span class="connection-step-indicator" id="u_step2Indicator" data-step-state="pending">未取得</span>
+                </div>
+                <p class="muted connection-step-desc">比較元・比較先の設定を使い、一覧で共有するデータを先に取り込めます。「差分→プラン」は連続実行のショートカットです。</p>
+                <div class="btns connection-step-btns">
+                  <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較 → 反映プラン確認</button>
+                  <button class="btn sub connection-secondary-cta" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
+                </div>
+                <div class="kv" id="u_commonDataState">共通データ未取得</div>
+                <div class="muted connection-footnote">接続パネルの設定は全タブで共有されます。推奨: ヘッダーで差分確認 → 反映プラン確認 → プレビュー反映。</div>
+              </section>
+              <section class="diff-pane-embed" aria-label="差分の条件・一覧">
               <div class="subtabs">
                 <button class="subtab active" data-subtab-parent="diff" data-subtab="conditions" data-state="selected">比較条件</button>
                 <button class="subtab" data-subtab-parent="diff" data-subtab="view" data-state="idle">結果整理</button>
@@ -10507,7 +11300,7 @@ ${contextLine}`);
 
               <details class="diff-fold diff-fold--ignore">
                 <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">無視キー・プリセット・正規化</span>
+                  <span class="diff-fold-title">差分ノイズを減らす</span>
                   <span class="diff-fold-sub">ノイズ差分を減らす（初期は閉じた状態）</span>
                 </summary>
                 <div class="diff-fold-body">
@@ -10554,19 +11347,19 @@ ${contextLine}`);
 
               <details class="diff-fold diff-fold--run" open>
                 <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">バンドル読込・差分の実行・保存</span>
-                  <span class="diff-fold-sub">オフライン JSON やエクスポート操作</span>
+                  <span class="diff-fold-title">差分の実行・保存・設定JSON読込</span>
+                  <span class="diff-fold-sub">保存済み設定JSONの読込や各種エクスポート</span>
                 </summary>
                 <div class="diff-fold-body">
               <div class="kv" id="u_bundleState">比較元: API取得 / 比較先: API取得</div>
               <div class="btns">
-                <button type="button" class="btn sub" data-act="importSourceBundle">比較元バンドル読込</button>
-                <button type="button" class="btn sub" data-act="importTargetBundle">比較先バンドル読込</button>
-                <button type="button" class="btn sub" data-act="clearBundle">バンドル読込解除</button>
-                <button type="button" class="btn sub" data-act="exportBundleJson">バンドル保存</button>
+                <button type="button" class="btn sub" data-act="importSourceBundle">比較元JSON読込</button>
+                <button type="button" class="btn sub" data-act="importTargetBundle">比較先JSON読込</button>
+                <button type="button" class="btn sub" data-act="clearBundle">JSON読込解除</button>
+                <button type="button" class="btn sub" data-act="exportBundleJson">設定JSON保存</button>
               </div>
               <div class="btns">
-                <button type="button" class="btn" data-act="runDiff">差分比較を実行</button>
+                <button type="button" class="btn" id="u_runDiffPrimary" data-act="runDiff">差分比較を実行</button>
                 <button type="button" class="btn sub" data-act="exportDiffJson">差分JSON保存</button>
                 <button type="button" class="btn sub" data-act="exportDiffHtml">差分HTML保存</button>
                 <button type="button" class="btn sub" data-act="exportPatchJson">パッチJSON保存</button>
@@ -10609,7 +11402,7 @@ ${contextLine}`);
                 <div class="diff-fold-body">
               <div id="u_diffOnboarding" class="diff-onboarding" style="display:none" role="note">
                 <div class="diff-onboarding-body">
-                  <p class="diff-onboarding-text"><strong>ヒント</strong> 下の結果欄は<strong>このサブタブ</strong>を開いているときだけ差分テーブルを表示します。帯グラフ・セクションピル・別ウィンドウ・Shift+範囲選択が使えます。</p>
+                  <p class="diff-onboarding-text"><strong>ヒント</strong> 結果欄は<strong>ヘッダー内の結果整理</strong>を開いているときだけ差分テーブルを表示します。帯グラフ・セクションピル・別ウィンドウ・Shift+範囲選択が使えます。</p>
                   <button type="button" class="btn sub" data-act="dismissDiffOnboarding">了解して閉じる</button>
                 </div>
               </div>
@@ -10704,7 +11497,7 @@ ${contextLine}`);
               <div class="grid2" style="margin-top:0">
                 <div>
                   <label title="パスや値の一部でインライン検索">比較ビュー検索（パス / 値）</label>
-                  <input type="text" id="u_diffSearch" placeholder="例: fieldSettings.properties.customer_code" title="Ctrl/Cmd+F でもフォーカスできます（比較条件タブの説明参照）">
+                  <input type="text" id="u_diffSearch" placeholder="例: fieldSettings.properties.customer_code" title="Ctrl/Cmd+F でもフォーカスできます（ヘッダー比較条件の説明参照）">
                   <div class="btns" style="margin-top:6px">
                     <label class="chip" title="ONにすると、フィールドコード/フィールド名（ラベル）を優先して検索します"><input type="checkbox" id="u_diffSearchFieldName"> フィールド名で確認</label>
                   </div>
@@ -10745,12 +11538,72 @@ ${contextLine}`);
               </div>
               <input type="file" id="u_sourceBundleFile" accept=".json" style="display:none">
               <input type="file" id="u_targetBundleFile" accept=".json" style="display:none">
+              </section>
+            </div>
+            <section class="connection-section connection-section--step3 connection-section--actions" aria-labelledby="conn-feature-heading">
+              <div class="connection-step-banner">
+                <span class="connection-step-title" id="conn-feature-heading">Step 3 機能選択</span>
+                <span class="connection-step-indicator" id="u_step3Indicator" data-step-state="pending">未選択</span>
+              </div>
+              <p class="muted connection-step-desc">下のカードからやりたい作業を選びます。カードには「用途」と「安全性」を表示しているので、迷ったらまず「差分比較」から進めてください。</p>
+              <div class="btns connection-step-btns connection-quick-btns">
+                <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
+                <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
+                <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
+              </div>
+            </section>
+            <div class="launcher-flow-note">
+              <strong>おすすめの流れ</strong>
+              <span>差分比較 → プレビュー反映 → 設計書 / 設定一括取得 の順で進めると安全です。</span>
+            </div>
             </div>
 
-            <div class="pane" data-pane="reflect">
+          <div class="launcher-menu" id="u_launcherMenu">
+            <div class="launcher-menu-head">
+              <p class="launcher-lead">作業メニュー</p>
+              <p class="launcher-tagline">カードをクリックすると、その作業に合った画面へ直接移動します。用途タグと安全性を見ながら選べます。</p>
+            </div>
+            <div class="launcher-sort">
+              <label for="u_featureSortMode">並び順</label>
+              <select id="u_featureSortMode" class="launcher-sort-select">
+                <option value="onboarding">初回推奨順</option>
+                <option value="usage">よく使う順</option>
+              </select>
+            </div>
+            <div class="feature-grid">
+              ${FEATURE_DEFS.map(renderFeatureCard).join("")}
+            </div>
+          </div>
+
+          <div class="card tab-card">
+            <div class="tabs">
+              <div class="tab-group" data-group="change">
+                <div class="tab-group-lbl">変更・反映</div>
+                <button class="tab active" data-tab="reflect" data-state="selected">プレビュー反映</button>
+                <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
+                <button class="tab" data-tab="jsconfig" data-state="idle">JS/CSS設定</button>
+              </div>
+              
+              <div class="tab-group" data-group="vis">
+                <div class="tab-group-lbl">可視化・出力</div>
+                <button class="tab" data-tab="er" data-state="idle">ER図</button>
+                <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
+                <button class="tab" data-tab="design" data-state="idle">設計書</button>
+                <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
+              </div>
+              
+              <div class="tab-group" data-group="data">
+                <div class="tab-group-lbl">データ・保守</div>
+                <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
+                <button class="tab" data-tab="sql" data-state="idle">SQL実行</button>
+                <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
+              </div>
+            </div>
+
+            <div class="pane active" data-pane="reflect">
               <div class="subtabs">
                 <button class="subtab active" data-subtab-parent="reflect" data-subtab="section">セクション反映</button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="node">ノード詳細反映</button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="node">差分単位で部分反映</button>
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="patch">JSONパッチ</button>
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="editor">プレビューエディタ</button>
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="sectionPreview">セクションプレビュー</button>
@@ -10800,11 +11653,11 @@ ${contextLine}`);
 
               <!-- ===== Subpane: node ===== -->
               <div class="subpane" data-subpane-parent="reflect" data-subpane="node">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">ノードモード: 差分詳細行を選択して部分反映します。</div>
+                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">差分ごとに、比較元を反映するか比較先を維持するかを選んで部分反映します。</div>
                 <div class="reflect-layout">
                   <div class="reflect-main" style="width:100%">
                     <div class="main-body" style="padding:12px">
-                      <div class="warnbox" id="u_nodeWarn" style="display:none">注: ノードモードは「前回差分」から選択して反映します。まず差分比較を実行してください。</div>
+                      <div class="warnbox" id="u_nodeWarn" style="display:none">差分単位で部分反映するには、先に差分比較を実行して候補を読み込んでください。</div>
                       <div id="u_reflectHint" class="kv" style="display:none"></div>
                       <div id="u_nodeControls" style="display:none">
                         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
@@ -10919,9 +11772,9 @@ ${contextLine}`);
                 <div class="reflect-footer-actions main-footer" id="u_reflectFooter">
                   <div class="reflect-footer-actions__preview">
                     <span class="reflect-footer-zone-label">プレビューAPI</span>
-                    <button type="button" class="btn sub" data-act="runDiff" id="u_footerRunDiff" title="差分比較を実行します">差分比較</button>
                     <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">反映プラン確認</button>
                     <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します">バックアップ</button>
+                    <button type="button" class="btn sub" data-act="restoreTargetPreviewBackup" title="このセッションで保存した直前バックアップを比較先プレビューへ戻します">直前バックアップ復元</button>
                     <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択枠を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">比較元 → 比較先(プレビュー) 反映</button>
                   </div>
                   <div class="reflect-footer-actions__prod">
@@ -11570,18 +12423,10 @@ ${contextLine}`);
             </div>
           </div>
 
-          <div class="status-row status-bar" id="u_statusBar" role="status" aria-live="polite" aria-relevant="text">
-            <div class="status status--neutral" id="u_status">待機中</div>
-            <button type="button" class="btn sub status-copy-btn" data-act="copyStatusMessage" title="ステータス行の内容をコピー（エラー時はスタックトレース付き）">コピー</button>
-          </div>
-
-          <div class="card result-card">
-            <div class="result-card-head">
-              <span class="result-card-mark" aria-hidden="true"></span>
-              <div>
-                <div class="result-card-title">結果</div>
-                <div class="result-card-sub">開いているタブに応じたログやプレビュー。差分の詳細テーブルは差分比較の「結果整理」サブタブ時のみ表示されます。</div>
-              </div>
+          <div class="kus-host-hidden" aria-hidden="true">
+            <div class="status-row status-bar" id="u_statusBar" role="status">
+              <div class="status status--neutral" id="u_status">待機中</div>
+              <button type="button" class="btn sub status-copy-btn" data-act="copyStatusMessage" title="ステータスをコピー">コピー</button>
             </div>
             <div class="result" id="u_result"></div>
           </div>
@@ -11745,7 +12590,8 @@ ${contextLine}`);
     const step = getGuidedTourStep(state.guidedTourIndex);
     if (!step) return;
     if (step.tab) switchTab(step.tab, { persist: false });
-    if (step.tab && step.subTab) switchSubTab2(step.tab, step.subTab, { persist: false });
+    if (step.diffSubTab) switchSubTab2("diff", step.diffSubTab, { persist: false });
+    else if (step.tab && step.subTab) switchSubTab2(step.tab, step.subTab, { persist: false });
     const total = GUIDED_TOUR_STEPS.length;
     ui.tourOverlay.classList.add("active");
     ui.tourStepLabel.textContent = `基本フロー ${state.guidedTourIndex + 1} / ${total}`;
@@ -11781,7 +12627,8 @@ ${contextLine}`);
           side: "bottom",
           onHighlightStarted: () => {
             if (step.tab) swTab(step.tab, { persist: false });
-            if (step.tab && step.subTab) switchSubTab2(step.tab, step.subTab, { persist: false });
+            if (step.diffSubTab) switchSubTab2("diff", step.diffSubTab, { persist: false });
+            else if (step.tab && step.subTab) switchSubTab2(step.tab, step.subTab, { persist: false });
           }
         };
       });
@@ -13807,7 +14654,8 @@ ${contextLine}`);
       const el = ui.diffOnboarding;
       if (!el) return;
       const dismissed = !!localStorage.getItem(DIFF_ONBOARDING_DISMISSED_KEY);
-      const onDiffView = state.activeTab === "diff" && state.activeSubTabs.diff === "view";
+      const rootEl = getRoot();
+      const onDiffView = state.activeSubTabs.diff === "view" && rootEl?.classList.contains("tab-needs-connection-actions");
       el.style.display = !dismissed && onDiffView ? "block" : "none";
     }
     const {
@@ -13838,6 +14686,7 @@ ${contextLine}`);
       runApiTester: runApiTester2,
       runPreviewApplyPlan: runPreviewApplyPlan2,
       runBackupTargetPreview: runBackupTargetPreview2,
+      runRestoreTargetPreviewBackup: runRestoreTargetPreviewBackup2,
       runApplyPreview: runApplyPreview2,
       runDeployOnly: runDeployOnly2,
       runApplyPatchJson: runApplyPatchJson2,
@@ -13846,8 +14695,8 @@ ${contextLine}`);
       renderPatchJsonSummary: renderPatchJsonSummary2,
       populatePatchJsonFromCurrentDiff: populatePatchJsonFromCurrentDiff2,
       renderCustomizeResult: renderCustomizeResult2,
-      runBulkFieldRename,
-      runDetectUnusedFields,
+      runBulkFieldRename: runBulkFieldRename2,
+      runDetectUnusedFields: runDetectUnusedFields2,
       renderDiffFavoritesOnlyButton,
       renderTemplateOptions: renderTemplateOptions2
     } = injected;
@@ -14077,7 +14926,7 @@ ${contextLine}`);
         featCard.click();
         return;
       }
-      if (state.activeTab !== "diff") return;
+      if (state.activeSubTabs.diff !== "view" || !getRoot()?.classList.contains("tab-needs-connection-actions")) return;
       const resKb = getToolDocument().getElementById("u_result");
       const tKb = e.target;
       if (tKb?.matches?.("input[type=checkbox][data-diff-row-id]") && resKb?.contains(tKb) && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -14382,13 +15231,12 @@ ${contextLine}`);
       }
       const tab = e.target.closest(".tab");
       if (tab) {
-        const prevTab = state.activeTab;
         switchTab(tab.dataset.tab);
         syncDiffOnboardingVisibility();
-        if (prevTab === "diff" && state.activeTab !== "diff" && ui.result) {
-          ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
-        } else if (state.activeTab === "diff" && ui.result) {
-          renderResultRows(state.lastDiffRows || []);
+        const needsConn = root2.classList.contains("tab-needs-connection-actions");
+        if (ui.result) {
+          if (needsConn && state.activeSubTabs.diff === "view") renderResultRows(state.lastDiffRows || []);
+          else ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
         }
         return;
       }
@@ -14397,32 +15245,19 @@ ${contextLine}`);
       if (!act) return;
       if (act === "openFeature") {
         const featureKey = actEl.dataset.feature || "";
-        const def = FEATURE_DEFS.find((f) => f.key === featureKey);
+        const def = openFeatureScreen(featureKey, { persist: false });
         if (!def) return;
-        root2.classList.remove("screen-launcher");
-        root2.classList.add("screen-feature");
-        root2.classList.remove("feat-vis", "feat-data", "feat-change");
-        if (featureKey === "vis") root2.classList.add("feat-vis");
-        else if (featureKey === "data") root2.classList.add("feat-data");
-        else root2.classList.add("feat-change");
-        const conn = root2.querySelector("#u_connectionPanel");
-        if (conn instanceof HTMLDetailsElement) conn.open = true;
-        const prevTab = state.activeTab;
-        switchTab(def.tabs[0]);
-        if (prevTab === "diff" && state.activeTab !== "diff" && ui.result) {
-          ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
-        } else if (state.activeTab === "diff" && ui.result) {
-          renderResultRows(state.lastDiffRows || []);
+        const needsConnOpen = root2.classList.contains("tab-needs-connection-actions");
+        if (ui.result) {
+          if (needsConnOpen && state.activeSubTabs.diff === "view") renderResultRows(state.lastDiffRows || []);
+          else ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
         }
-        if (ui.featureTitle) ui.featureTitle.textContent = def.label;
-        if (ui.featureConn) ui.featureConn.textContent = def.desc;
         saveCurrentDialogState2();
         setStatus(`${def.label} を開きました`);
         return;
       }
       if (act === "backToLauncher") {
-        root2.classList.remove("screen-feature", "feat-vis", "feat-data", "feat-change");
-        root2.classList.add("screen-launcher");
+        showLauncherScreen({ persist: false });
         saveCurrentDialogState2();
         setStatus("機能を選んでください");
         return;
@@ -14430,7 +15265,19 @@ ${contextLine}`);
       if (act === "close") {
         closeGuidedTour({ silent: true });
         teardownDialogResizeHandling();
+        const toolWin = getToolWindow();
+        const isPopout = toolWin !== window;
         root2.remove();
+        if (isPopout) {
+          try {
+            if (window.__KUS_TOOL_WINDOW__ === toolWin) window.__KUS_TOOL_WINDOW__ = null;
+          } catch (e2) {
+          }
+          try {
+            toolWin.close();
+          } catch (e2) {
+          }
+        }
         return;
       }
       if (act === "startGuidedTour") {
@@ -14468,10 +15315,10 @@ ${contextLine}`);
         return;
       }
       if (act === "goDiffReview") {
-        switchTab("diff");
+        switchTab("reflect");
         switchSubTab("diff", state.lastDiffRows.length || state.lastFetchIssues.length ? "view" : "conditions");
         if (ui.result) renderResultRows(state.lastDiffRows || []);
-        setStatus("差分比較タブへ移動しました");
+        setStatus("ヘッダーの差分エリアへ移動しました");
         return;
       }
       if (act === "openReflectPreviewEditor") {
@@ -15028,17 +15875,18 @@ ${contextLine}`);
           setStatus("表示対象のノードがありません");
           return;
         }
-        switchTab("diff");
+        switchTab("reflect");
         switchSubTab("diff", "view");
         if (ui.diffFilterSection) ui.diffFilterSection.value = row.sectionKey || "";
         state.diffFilterSection = row.sectionKey || "";
         if (ui.diffSearch) ui.diffSearch.value = row.path || "";
         renderResultRows(state.lastDiffRows);
-        setStatus("差分比較タブで該当ノードを表示しました");
+        setStatus("ヘッダーの結果整理で該当ノードを表示しました");
         return;
       }
       if (act === "previewApplyPlan" && typeof runPreviewApplyPlan2 === "function") return withGuard(runPreviewApplyPlan2);
       if (act === "backupTargetPreview" && typeof runBackupTargetPreview2 === "function") return withGuard(runBackupTargetPreview2);
+      if (act === "restoreTargetPreviewBackup" && typeof runRestoreTargetPreviewBackup2 === "function") return withGuard(runRestoreTargetPreviewBackup2);
       if (act === "applyPreview" && typeof runApplyPreview2 === "function") return withGuard(runApplyPreview2);
       if (act === "deployOnly" && typeof runDeployOnly2 === "function") return withGuard(runDeployOnly2);
       if (act === "togglePatchJsonPanel") {
@@ -15110,8 +15958,8 @@ ${contextLine}`);
         ui.sourceFieldListContainer.style.display = "none";
         return;
       }
-      if (act === "runBulkFieldRename" && typeof runBulkFieldRename === "function") return withGuard(runBulkFieldRename);
-      if (act === "runDetectUnusedFields" && typeof runDetectUnusedFields === "function") return withGuard(runDetectUnusedFields);
+      if (act === "runBulkFieldRename" && typeof runBulkFieldRename2 === "function") return withGuard(runBulkFieldRename2);
+      if (act === "runDetectUnusedFields" && typeof runDetectUnusedFields2 === "function") return withGuard(runDetectUnusedFields2);
       if (act === "exportDesignJson" && typeof runDesignExport2 === "function") return withGuard(() => runDesignExport2("json"));
       if (act === "exportDesignMd" && typeof runDesignExport2 === "function") return withGuard(() => runDesignExport2("md"));
       if (act === "copyDesignMd" && typeof runDesignCopyMd2 === "function") return withGuard(runDesignCopyMd2);
@@ -18787,6 +19635,7 @@ ${safety.hash}`, "");
       clearApiTesterHistory,
       runPreviewApplyPlan,
       runBackupTargetPreview,
+      runRestoreTargetPreviewBackup,
       runApplyPreview,
       runDeployOnly,
       runApplyPatchJson,
@@ -18795,6 +19644,8 @@ ${safety.hash}`, "");
       renderPatchJsonSummary,
       populatePatchJsonFromCurrentDiff,
       renderCustomizeResult,
+      runBulkFieldRename,
+      runDetectUnusedFields,
       renderTemplateOptions
     });
     renderApiTesterHistory();
@@ -18802,7 +19653,9 @@ ${safety.hash}`, "");
     setupLauncherFeatureSort(ui4);
     setStatus("待機中");
     if (options.initialTab) {
-      switchTab(options.initialTab);
+      const initialFeature = FEATURE_DEFS.find((def) => def.key === options.initialTab) || FEATURE_DEFS.find((def) => (def.tab || def.tabs?.[0]) === options.initialTab && (options.initialTab !== "reflect" || def.key === "reflect"));
+      if (initialFeature) openFeatureScreen(initialFeature.key, { persist: false, focus: false });
+      else switchTab(options.initialTab, { persist: false });
     }
     initOssIntegrations();
   }
@@ -18826,10 +19679,15 @@ ${safety.hash}`, "");
         return aOrder - bOrder;
       }).forEach((card) => featureGrid.appendChild(card));
     };
-    applySort("onboarding");
+    const initialMode = ui4.featureSortMode?.value === "usage" ? "usage" : state.launcherSortMode === "usage" ? "usage" : "onboarding";
+    if (ui4.featureSortMode) ui4.featureSortMode.value = initialMode;
+    state.launcherSortMode = initialMode;
+    applySort(initialMode);
     ui4.featureSortMode?.addEventListener("change", () => {
       const mode = ui4.featureSortMode.value === "usage" ? "usage" : "onboarding";
+      state.launcherSortMode = mode;
       applySort(mode);
+      saveCurrentDialogState2();
     });
   }
   async function initOssIntegrations() {

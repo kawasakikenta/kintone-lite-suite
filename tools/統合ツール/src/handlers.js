@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS, DEFAULT_APP_ID, FEATURE_DEFS, DIFF_ONBOARDING_DISMISSED_KEY } from './constants.js';
+import { SECTION_DEFS, DEFAULT_APP_ID, DIFF_ONBOARDING_DISMISSED_KEY } from './constants.js';
 import { state, ui } from './state.js';
 import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast } from './utils.js';
 import { buildApiPrefix } from './api.js';
@@ -35,7 +35,9 @@ import {
   syncLookupMapFromRows,
   setSettingsExportScopeSelection,
   syncApplyScopesFromSidebar,
-  updateConnectionStepIndicators
+  updateConnectionStepIndicators,
+  openFeatureScreen,
+  showLauncherScreen
 } from './ui/components.js';
 import {
   fitDialogToViewport,
@@ -180,7 +182,9 @@ export function setupEventHandlers(injected = {}) {
     const el = ui.diffOnboarding;
     if (!el) return;
     const dismissed = !!localStorage.getItem(DIFF_ONBOARDING_DISMISSED_KEY);
-    const onDiffView = state.activeTab === 'diff' && state.activeSubTabs.diff === 'view';
+    const rootEl = getRoot();
+    const onDiffView = state.activeSubTabs.diff === 'view'
+      && rootEl?.classList.contains('tab-needs-connection-actions');
     el.style.display = !dismissed && onDiffView ? 'block' : 'none';
   }
 
@@ -212,6 +216,7 @@ export function setupEventHandlers(injected = {}) {
     runApiTester,
     runPreviewApplyPlan,
     runBackupTargetPreview,
+    runRestoreTargetPreviewBackup,
     runApplyPreview,
     runDeployOnly,
     runApplyPatchJson,
@@ -477,7 +482,7 @@ export function setupEventHandlers(injected = {}) {
       return;
     }
 
-    if (state.activeTab !== 'diff') return;
+    if (state.activeSubTabs.diff !== 'view' || !getRoot()?.classList.contains('tab-needs-connection-actions')) return;
     const resKb = getToolDocument().getElementById('u_result');
     const tKb = e.target;
     if (tKb?.matches?.('input[type=checkbox][data-diff-row-id]') && resKb?.contains(tKb) && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
@@ -841,13 +846,12 @@ export function setupEventHandlers(injected = {}) {
     // Tab switching
     const tab = e.target.closest('.tab');
     if (tab) {
-      const prevTab = state.activeTab;
       switchTab(tab.dataset.tab);
       syncDiffOnboardingVisibility();
-      if (prevTab === 'diff' && state.activeTab !== 'diff' && ui.result) {
-        ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
-      } else if (state.activeTab === 'diff' && ui.result) {
-        renderResultRows(state.lastDiffRows || []);
+      const needsConn = root.classList.contains('tab-needs-connection-actions');
+      if (ui.result) {
+        if (needsConn && state.activeSubTabs.diff === 'view') renderResultRows(state.lastDiffRows || []);
+        else ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
       }
       return;
     }
@@ -859,32 +863,19 @@ export function setupEventHandlers(injected = {}) {
 
     if (act === 'openFeature') {
       const featureKey = actEl.dataset.feature || '';
-      const def = FEATURE_DEFS.find((f) => f.key === featureKey);
+      const def = openFeatureScreen(featureKey, { persist: false });
       if (!def) return;
-      root.classList.remove('screen-launcher');
-      root.classList.add('screen-feature');
-      root.classList.remove('feat-vis', 'feat-data', 'feat-change');
-      if (featureKey === 'vis') root.classList.add('feat-vis');
-      else if (featureKey === 'data') root.classList.add('feat-data');
-      else root.classList.add('feat-change');
-      const conn = root.querySelector('#u_connectionPanel');
-      if (conn instanceof HTMLDetailsElement) conn.open = true;
-      const prevTab = state.activeTab;
-      switchTab(def.tabs[0]);
-      if (prevTab === 'diff' && state.activeTab !== 'diff' && ui.result) {
-        ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
-      } else if (state.activeTab === 'diff' && ui.result) {
-        renderResultRows(state.lastDiffRows || []);
+      const needsConnOpen = root.classList.contains('tab-needs-connection-actions');
+      if (ui.result) {
+        if (needsConnOpen && state.activeSubTabs.diff === 'view') renderResultRows(state.lastDiffRows || []);
+        else ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
       }
-      if (ui.featureTitle) ui.featureTitle.textContent = def.label;
-      if (ui.featureConn) ui.featureConn.textContent = def.desc;
       saveCurrentDialogState();
       setStatus(`${def.label} を開きました`);
       return;
     }
     if (act === 'backToLauncher') {
-      root.classList.remove('screen-feature', 'feat-vis', 'feat-data', 'feat-change');
-      root.classList.add('screen-launcher');
+      showLauncherScreen({ persist: false });
       saveCurrentDialogState();
       setStatus('機能を選んでください');
       return;
@@ -894,7 +885,17 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'close') {
       closeGuidedTour({ silent: true });
       teardownDialogResizeHandling();
+      const toolWin = getToolWindow();
+      const isPopout = toolWin !== window;
       root.remove();
+      if (isPopout) {
+        try {
+          if (window.__KUS_TOOL_WINDOW__ === toolWin) window.__KUS_TOOL_WINDOW__ = null;
+        } catch (e) { /* ignore */ }
+        try {
+          toolWin.close();
+        } catch (e) { /* ignore */ }
+      }
       return;
     }
     if (act === 'startGuidedTour') { openGuidedTour(0); return; }
@@ -922,10 +923,10 @@ export function setupEventHandlers(injected = {}) {
 
     // ----- Navigation -----
     if (act === 'goDiffReview') {
-      switchTab('diff');
+      switchTab('reflect');
       switchSubTab('diff', (state.lastDiffRows.length || state.lastFetchIssues.length) ? 'view' : 'conditions');
       if (ui.result) renderResultRows(state.lastDiffRows || []);
-      setStatus('差分比較タブへ移動しました');
+      setStatus('ヘッダーの差分エリアへ移動しました');
       return;
     }
     if (act === 'openReflectPreviewEditor') {
@@ -1475,19 +1476,20 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'focusActiveReflectNodeDiff') {
       const row = getActiveReflectRow();
       if (!row) { setStatus('表示対象のノードがありません'); return; }
-      switchTab('diff');
+      switchTab('reflect');
       switchSubTab('diff', 'view');
       if (ui.diffFilterSection) ui.diffFilterSection.value = row.sectionKey || '';
       state.diffFilterSection = row.sectionKey || '';
       if (ui.diffSearch) ui.diffSearch.value = row.path || '';
       renderResultRows(state.lastDiffRows);
-      setStatus('差分比較タブで該当ノードを表示しました');
+      setStatus('ヘッダーの結果整理で該当ノードを表示しました');
       return;
     }
 
     // ----- Reflect apply actions -----
     if (act === 'previewApplyPlan' && typeof runPreviewApplyPlan === 'function') return withGuard(runPreviewApplyPlan);
     if (act === 'backupTargetPreview' && typeof runBackupTargetPreview === 'function') return withGuard(runBackupTargetPreview);
+    if (act === 'restoreTargetPreviewBackup' && typeof runRestoreTargetPreviewBackup === 'function') return withGuard(runRestoreTargetPreviewBackup);
     if (act === 'applyPreview' && typeof runApplyPreview === 'function') return withGuard(runApplyPreview);
     if (act === 'deployOnly' && typeof runDeployOnly === 'function') return withGuard(runDeployOnly);
 

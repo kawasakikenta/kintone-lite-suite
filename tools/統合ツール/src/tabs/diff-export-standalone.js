@@ -5,6 +5,7 @@ import { countActualDiffRows } from '../diff/engine.js';
 import {
   buildDiffHtml,
   buildPatchPayload,
+  buildDiffExportPayload,
   getDiffExportContentLabel,
   buildDiffExportComparedBundles
 } from '../diff/export.js';
@@ -56,23 +57,22 @@ export function runExportDiffJsonStandalone(ctx) {
   if (!rows.length && !fetchIssues.length && !compareInfo?.scopes?.length) {
     throw new Error('出力できる比較結果がありません');
   }
-  const payload = {
-    generatedAt: new Date().toISOString(),
+  const payload = buildDiffExportPayload({
+    sourceBundle: ctx.sourceBundle,
+    targetBundle: ctx.targetBundle,
+    rows,
+    fetchIssues,
+    ignoreKeys: ctx.ignoreKeys || '',
     exportMode: exportInfo.mode,
     exportLabel: exportInfo.label,
     exportContentMode,
     exportContentLabel: getDiffExportContentLabel(exportContentMode),
-    normalization: ctx.normalizationPresetState || {},
+    normalizationState: ctx.normalizationPresetState || {},
     warning: warningInfoLite(rows, fetchIssues),
-    source: ctx.sourceBundle,
-    target: ctx.targetBundle,
-    diffCount: rows.length,
-    fetchIssues,
-    rows,
-    comparedScopes: compareInfo?.scopes || [],
-    sourceComparedBundle: compareInfo?.sourceBundle || null,
-    targetComparedBundle: compareInfo?.targetBundle || null
-  };
+    compareScopes: compareInfo?.scopes || [],
+    compareSourceBundle: compareInfo?.sourceBundle || null,
+    compareTargetBundle: compareInfo?.targetBundle || null
+  });
   downloadText(`diff_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
 }
 

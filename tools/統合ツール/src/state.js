@@ -3,8 +3,10 @@
 import { DIALOG_STATE_KEY, DEFAULT_SUBTAB_STATE } from './constants.js';
 
 export const state = {
-  activeTab: 'diff',
+  activeTab: 'reflect',
+  activeFeatureKey: '',
   activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
+  launcherSortMode: 'onboarding',
   lastSourceBundle: null,
   lastTargetBundle: null,
   lastDiffRows: [],
@@ -12,6 +14,8 @@ export const state = {
   lastDiffAt: null,
   lastDiffSignature: '',
   lastApplyPlan: null,
+  lastPreviewBackupPayload: null,
+  lastPreviewBackupFilename: '',
   diffViewTheme: 'light',
   diffCollapsedSections: new Set(),
   diffSectionVisibleCounts: {},
