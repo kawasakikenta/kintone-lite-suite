@@ -61,7 +61,7 @@ export function resolveApplyScopes(baseScopes) {
   const diffSet = diffSectionKeySet();
   if (!diffSet.size) throw new Error('「前回差分のあるセクションのみ反映」がONのため先に差分比較が必要です。差分なしで反映する場合はこのチェックをOFFにしてください');
   scopes = scopes.filter((k) => diffSet.has(k));
-  if (!scopes.length) throw new Error('選択中の反映セクションに差分がありません');
+  if (!scopes.length) throw new Error('選択中の反映対象セクションに差分がありません');
   return scopes;
 }
 
@@ -109,4 +109,3 @@ export function appendProgressSummary(logs) {
   logs.push('');
   logs.push(`=== 完了: OK ${ok} / NG ${ng} / SKIP ${skip} ===`);
 }
-

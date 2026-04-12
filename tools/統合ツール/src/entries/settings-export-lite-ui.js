@@ -76,11 +76,26 @@ export function mountSettingsExportLitePanel() {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = s.key;
-    cb.checked = ['fieldSettings', 'layoutSettings', 'viewSettings', 'processSettings'].includes(s.key);
+    cb.checked = true;
     lab.appendChild(cb);
     lab.appendChild(document.createTextNode(s.label));
     scopeRoot.appendChild(lab);
   }
+
+  const scopeActions = document.createElement('div');
+  scopeActions.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 8px';
+  const selectAllBtn = document.createElement('button');
+  selectAllBtn.type = 'button';
+  selectAllBtn.textContent = '全選択';
+  selectAllBtn.style.cssText =
+    'padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer';
+  const clearAllBtn = document.createElement('button');
+  clearAllBtn.type = 'button';
+  clearAllBtn.textContent = '全解除';
+  clearAllBtn.style.cssText =
+    'padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer';
+  scopeActions.appendChild(selectAllBtn);
+  scopeActions.appendChild(clearAllBtn);
 
   const btnJson = document.createElement('button');
   btnJson.type = 'button';
@@ -104,7 +119,12 @@ export function mountSettingsExportLitePanel() {
     w.appendChild(prev);
     return w;
   })()));
-  bodySlot.appendChild(row('取得セクション', scopeRoot));
+  bodySlot.appendChild(row('取得セクション', (() => {
+    const w = document.createElement('div');
+    w.appendChild(scopeActions);
+    w.appendChild(scopeRoot);
+    return w;
+  })()));
   bodySlot.appendChild(btnJson);
   bodySlot.appendChild(btnZip);
 
@@ -140,6 +160,14 @@ export function mountSettingsExportLitePanel() {
     const cur = appTa.value.trim();
     const next = cur ? `${cur}\n${id}` : id;
     appTa.value = next;
+  });
+
+  selectAllBtn.addEventListener('click', () => {
+    scopeRoot.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.checked = true; });
+  });
+
+  clearAllBtn.addEventListener('click', () => {
+    scopeRoot.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.checked = false; });
   });
 
   btnJson.addEventListener('click', async () => {

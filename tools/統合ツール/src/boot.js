@@ -53,6 +53,7 @@ import {
   runBatchFileDownload,
   runCsvExport,
   runCsvImport,
+  runRecordBackup,
   runRecordCopy,
   saveTemplate,
   loadTemplate,
@@ -210,8 +211,18 @@ export function runKintoneUnifiedSuite(options = {}) {
     settingsExportSearchResult: $('#u_settingsExportSearchResult'),
     settingsExportGuest: $('#u_settingsExportGuest'),
     settingsExportPreview: $('#u_settingsExportPreview'),
+    settingsExportIncludePluginConfig: $('#u_settingsExportIncludePluginConfig'),
     settingsExportScopes: $('#u_settingsExportScopes'),
     settingsExportResult: $('#u_settingsExportResult'),
+    recordBackupView: $('#u_recordBackupView'),
+    recordBackupViewSelect: $('#u_recordBackupViewSelect'),
+    recordBackupZipName: $('#u_recordBackupZipName'),
+    recordBackupIncludeFiles: $('#u_recordBackupIncludeFiles'),
+    recordBackupIncludeComments: $('#u_recordBackupIncludeComments'),
+    recordBackupResult: $('#u_recordBackupResult'),
+    scopePickerModal: $('#u_scopePickerModal'),
+    scopePickerTitle: $('#u_scopePickerTitle'),
+    scopePickerSub: $('#u_scopePickerSub'),
     mermaidText: $('#u_mermaidText'),
     mermaidView: $('#u_mermaidView'),
     erLayout: $('#u_erLayout'),
@@ -235,7 +246,7 @@ export function runKintoneUnifiedSuite(options = {}) {
     featureTitle: $('#u_featureTitle'),
     featureConn: $('#u_featureConn'),
     launcherMenu: $('#u_launcherMenu'),
-    featureSortMode: $('#u_featureSortMode'),
+    launcherToggleMore: $('#u_launcherToggleMore'),
     copyTextToClipboard
   };
 
@@ -280,6 +291,7 @@ export function runKintoneUnifiedSuite(options = {}) {
     loadViewsForSelect,
     runCsvExport,
     runCsvImport,
+    runRecordBackup,
     runRecordCopy,
     saveTemplate,
     loadTemplate,
@@ -306,7 +318,6 @@ export function runKintoneUnifiedSuite(options = {}) {
 
   renderApiTesterHistory();
   initApiTesterEnhancements();
-  setupLauncherFeatureSort(ui);
 
   setStatus('待機中');
 
@@ -319,40 +330,6 @@ export function runKintoneUnifiedSuite(options = {}) {
 
   // --- OSS Integrations: Init JSONEditors + Enhanced Tour ---
   initOssIntegrations();
-}
-
-function setupLauncherFeatureSort(ui) {
-  const featureGrid = ui.launcherMenu?.querySelector('.feature-grid');
-  if (!featureGrid) return;
-  const orderByFeature = FEATURE_DEFS.reduce((acc, def) => {
-    acc[def.key] = {
-      onboarding: Number.isFinite(def.onboardingOrder) ? def.onboardingOrder : 999,
-      usage: Number.isFinite(def.usageOrder) ? def.usageOrder : 999
-    };
-    return acc;
-  }, {});
-  const applySort = (mode) => {
-    const cards = [...featureGrid.querySelectorAll('.feature-card[data-feature]')];
-    cards
-      .sort((a, b) => {
-        const aKey = a.dataset.feature || '';
-        const bKey = b.dataset.feature || '';
-        const aOrder = orderByFeature[aKey]?.[mode] ?? 999;
-        const bOrder = orderByFeature[bKey]?.[mode] ?? 999;
-        return aOrder - bOrder;
-      })
-      .forEach((card) => featureGrid.appendChild(card));
-  };
-  const initialMode = ui.featureSortMode?.value === 'usage' ? 'usage' : (state.launcherSortMode === 'usage' ? 'usage' : 'onboarding');
-  if (ui.featureSortMode) ui.featureSortMode.value = initialMode;
-  state.launcherSortMode = initialMode;
-  applySort(initialMode);
-  ui.featureSortMode?.addEventListener('change', () => {
-    const mode = ui.featureSortMode.value === 'usage' ? 'usage' : 'onboarding';
-    state.launcherSortMode = mode;
-    applySort(mode);
-    saveCurrentDialogState();
-  });
 }
 
 async function initOssIntegrations() {

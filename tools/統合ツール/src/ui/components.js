@@ -198,7 +198,8 @@ export function switchTab(tabKey, options) {
       }
     }
     const needs = TAB_CONNECTION_NEEDS[key] || {};
-    root.classList.toggle('tab-is-diff-or-reflect', key === 'reflect' || key === 'field' || key === 'jsconfig');
+    root.classList.toggle('tab-is-diff', key === 'diff');
+    root.classList.toggle('tab-is-diff-or-reflect', key === 'diff' || key === 'reflect' || key === 'field' || key === 'jsconfig');
     root.classList.toggle('tab-needs-app-inputs', !!(needs.appInputs));
     root.classList.toggle('tab-needs-target', !!(needs.target));
     root.classList.toggle('tab-needs-connection-actions', !!(needs.connectionActions));
@@ -259,6 +260,92 @@ function diffScopeTooltip(s) {
   return t;
 }
 
+const SCOPE_PICKER_META = Object.freeze({
+  diff: Object.freeze({
+    title: '比較対象セクション',
+    sub: '差分比較で取得する API 設定を選びます。'
+  }),
+  reflect: Object.freeze({
+    title: '反映するセクション',
+    sub: 'プレビュー反映でまとめて適用するセクションを選びます。'
+  }),
+  settingsExport: Object.freeze({
+    title: '取得対象セクション',
+    sub: '設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。'
+  })
+});
+
+function scopeSummaryLabel(defs, selectedKeys, options = {}) {
+  const labelByKey = new Map((defs || []).map((def) => [def.key, def.label]));
+  const labels = (selectedKeys || []).map((key) => labelByKey.get(key) || key).filter(Boolean);
+  const total = (defs || []).length;
+  const selected = labels.length;
+  const head = `<strong>${selected} / ${total}件を選択</strong>`;
+  if (!selected) return `${head} / ${options.emptyText || '未選択です'}`;
+  const tail = labels.slice(0, 3).join(' / ');
+  const more = labels.length > 3 ? ` / ほか${labels.length - 3}件` : '';
+  const extra = options.extraText ? ` / ${options.extraText}` : '';
+  return `${head} / ${tail}${more}${extra}`;
+}
+
+export function renderScopePickerSummaries() {
+  const diffSummary = getToolDocument().getElementById('u_diffScopeSummary');
+  if (diffSummary) {
+    diffSummary.innerHTML = scopeSummaryLabel(
+      SECTION_DEFS,
+      deps.selectedScopeKeys?.(ui.diffScopes) || [],
+      { emptyText: '比較対象がまだ選ばれていません' }
+    );
+  }
+
+  const reflectSummary = getToolDocument().getElementById('u_reflectScopeSummary');
+  if (reflectSummary) {
+    const extraText = isReflectNodeModeEffective()
+      ? '差分を選んで反映モード中'
+      : (ui.applyDiffOnly?.checked ? '差分ありセクションのみ反映' : '');
+    reflectSummary.innerHTML = scopeSummaryLabel(
+      SECTION_DEFS.filter((def) => def.put),
+      deps.selectedScopeKeys?.(ui.applyScopes) || [],
+      { emptyText: '反映対象がまだ選ばれていません', extraText }
+    );
+  }
+
+  const settingsSummary = getToolDocument().getElementById('u_settingsExportScopeSummary');
+  if (settingsSummary) {
+    settingsSummary.innerHTML = scopeSummaryLabel(
+      SETTINGS_EXPORT_SCOPE_DEFS,
+      deps.selectedScopeKeys?.(ui.settingsExportScopes) || [],
+      { emptyText: '取得対象がまだ選ばれていません' }
+    );
+  }
+}
+
+export function openScopePicker(kind) {
+  if (!ui.scopePickerModal) return;
+  const meta = SCOPE_PICKER_META[kind] || SCOPE_PICKER_META.diff;
+  ui.scopePickerModal.hidden = false;
+  ui.scopePickerModal.dataset.scopePickerKind = kind;
+  if (ui.scopePickerTitle) ui.scopePickerTitle.textContent = meta.title;
+  if (ui.scopePickerSub) ui.scopePickerSub.textContent = meta.sub;
+  [...getToolDocument().querySelectorAll('[data-scope-picker-panel]')].forEach((panel) => {
+    panel.classList.toggle('active', panel.getAttribute('data-scope-picker-panel') === kind);
+  });
+  const firstFocusable = ui.scopePickerModal.querySelector(
+    `[data-scope-picker-panel="${kind}"] button, [data-scope-picker-panel="${kind}"] input[type="checkbox"]`
+  );
+  getToolDocument().body.classList.add('scope-picker-open');
+  if (firstFocusable) {
+    getToolDocument().defaultView?.requestAnimationFrame?.(() => firstFocusable.focus());
+  }
+}
+
+export function closeScopePicker() {
+  if (!ui.scopePickerModal) return;
+  ui.scopePickerModal.hidden = true;
+  delete ui.scopePickerModal.dataset.scopePickerKind;
+  getToolDocument().body.classList.remove('scope-picker-open');
+}
+
 export function renderScopeChips() {
   ui.diffScopes.innerHTML = SECTION_DEFS.map((s) =>
     `<label class="chip" title="${esc(diffScopeTooltip(s))}"><input type="checkbox" value="${s.key}" ${s.key === 'pluginSettings' ? '' : 'checked'}>${s.label}</label>`
@@ -269,12 +356,14 @@ export function renderScopeChips() {
   ui.settingsExportScopes.innerHTML = SETTINGS_EXPORT_SCOPE_DEFS.map((s) =>
     `<label class="chip" title="${esc(diffScopeTooltip(s))}"><input type="checkbox" value="${s.key}" checked>${s.label}</label>`
   ).join('');
+  renderScopePickerSummaries();
 }
 
 export function setSettingsExportScopeSelection(checked) {
   [...ui.settingsExportScopes.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
     c.checked = !!checked;
   });
+  renderScopePickerSummaries();
   saveCurrentDialogState();
 }
 
@@ -463,7 +552,7 @@ export function renderReflectModeUi() {
   if (ui.reflectHint) {
     ui.reflectHint.style.display = node ? 'block' : 'none';
     ui.reflectHint.textContent = node
-      ? `ノード反映モード: 差分ノードを選択して部分反映します（選択: ${state.reflectSelectedIds.size}件 / Undo: ${state.reflectUndoStack.length}）`
+      ? `差分を選んで反映: 候補から必要な差分だけ選びます（選択 ${state.reflectSelectedIds.size}件 / 元に戻す ${state.reflectUndoStack.length}回）`
       : '';
   }
   if (ui.modeSectionBtn && ui.modeNodeBtn) {
@@ -477,6 +566,7 @@ export function renderReflectModeUi() {
   if (ui.reflectOverview) ui.reflectOverview.style.display = 'block';
   if (ui.reflectAssist) ui.reflectAssist.style.display = 'block';
   if (ui.reflectOptionsCard) ui.reflectOptionsCard.style.display = 'block';
+  renderScopePickerSummaries();
   syncReflectSimpleLayout();
   renderReflectAssistPanel();
   renderReflectSidebar();
@@ -552,94 +642,76 @@ export function buildReflectAssistHtml() {
   const backupState = ui.backupStatus && ui.backupStatus.style.display !== 'none'
     ? String(ui.backupStatus.textContent || '').trim()
     : '';
-  const targetCountLabel = isNode ? '選択ノード' : '実反映セクション';
+  const targetCountLabel = isNode ? '選んだ差分' : '選んだセクション';
   const targetCountValue = isNode ? selectedNodeRows.length : scopeInfo.effectiveScopes.length;
-  const safetyLabel = (backupReady && stopOnError) ? '推奨設定' : '要確認';
+  const nonFieldScopes = scopeInfo.effectiveScopes.filter((key) => key && key !== 'fieldSettings');
+  const firstNonFieldScope = nonFieldScopes[0] || '';
+  const safetyLabel = (backupReady && stopOnError) ? '準備OK' : '要見直し';
   const warnings = [];
-  if (!diffReady) warnings.push('差分比較が未実行、または条件が変わっています。まず差分を確定してください。');
-  if (!scopeInfo.baseScopes.length && !isNode) warnings.push('左の一覧から反映セクションを選択してください。');
+  if (!diffReady) warnings.push('差分比較がまだ最新ではありません。先にヘッダーで差分比較をやり直してください。');
+  if (!scopeInfo.baseScopes.length && !isNode) warnings.push('「反映セクションを選ぶ」から、今回まとめて反映するセクションを選んでください。');
   if (scopeInfo.warning) warnings.push(scopeInfo.warning);
-  if (isNode && !state.reflectRows.length) warnings.push('ノードモードです。まず「差分ノード読込」で候補を表示してください。');
-  if (!backupReady) warnings.push('バックアップ自動保存がOFFです。反映前に手動バックアップを推奨します。');
-
-  const steps = [
-    {
-      no: 'Step 1',
-      title: isNode ? '差分と反映ノードを確認' : '差分と反映セクションを確認',
-      desc: diffReady
-        ? `${countActualDiffRows(state.lastDiffRows)}件の差分を保持中`
-        : '差分比較を最新状態にしてください',
-      cls: diffReady ? 'done' : 'current'
-    },
-    {
-      no: 'Step 2',
-      title: '反映プラン確認',
-      desc: planReady
-        ? `最新プラン確認済み${planTime ? ` (${planTime})` : ''}`
-        : 'APIリクエスト内容を確認して安全性を見ます',
-      cls: planReady ? 'done' : (diffReady ? 'current' : '')
-    },
-    {
-      no: 'Step 3',
-      title: '比較先プレビューへ反映',
-      desc: backupReady
-        ? 'バックアップ保存とあわせて実行できます'
-        : '反映前にバックアップを取ってから進めてください',
-      cls: planReady ? 'current' : ''
-    }
-  ];
+  if (isNode && !state.reflectRows.length) warnings.push('差分を選んで反映モードです。まず「差分候補を読込」で候補を出してください。');
+  if (!backupReady) warnings.push('バックアップ自動保存がOFFです。反映前に「今の比較先を保存」をおすすめします。');
 
   const nodeLoadAction = isNode && !state.reflectRows.length
-    ? '<button class="btn sub" data-act="loadReflectNodes">差分ノード読込</button>'
+    ? '<button class="btn sub" data-act="loadReflectNodes">差分候補を読込</button>'
     : '';
   const scopeDiffAction = !isNode && actualDiffRows.length
-    ? '<button class="btn sub" data-act="applyScopeDiffOnly">差分のみ選択</button>'
+    ? '<button class="btn sub" data-act="applyScopeDiffOnly">差分があるセクションだけ選ぶ</button>'
     : '';
-  const contextActions = [nodeLoadAction, scopeDiffAction].filter(Boolean).join('');
+  const fieldEditorAction = !isNode && scopeInfo.effectiveScopes.includes('fieldSettings')
+    ? '<button class="btn sub" data-act="openReflectPreviewEditor">フィールド確認を開く</button>'
+    : '';
+  const sectionEditorAction = !isNode && firstNonFieldScope
+    ? `<button class="btn sub" data-act="openSectionPreviewEditor" data-section="${esc(firstNonFieldScope)}">他設定を編集</button>`
+    : '';
+  const guideActions = [
+    '<button class="btn sub" data-act="startGuidedTour">操作手順を開く</button>',
+    nodeLoadAction,
+    scopeDiffAction,
+    fieldEditorAction,
+    sectionEditorAction
+  ].filter(Boolean).join('');
 
   return `<div class="reflect-assist">
     <div class="reflect-guide">
       <div class="reflect-guide-head">
         <div>
-          <div class="reflect-guide-title">${isNode ? '細かい差分を選んでプレビューへ反映します' : 'セクション単位で安全にプレビューへ反映します'}</div>
-          <div class="reflect-guide-sub">比較先アプリ ${esc(c.target.appId || '-')} / 反映先は常にプレビューです。まず差分を見て、次にプラン確認、その後に反映の順で進めます。</div>
+          <div class="reflect-guide-title">${isNode ? '一部だけ採用したい差分を選んで反映します' : 'まずはここで、反映するセクションを決めます'}</div>
+          <div class="reflect-guide-sub">比較先アプリ ${esc(c.target.appId || '-')} / 反映先は常にプレビューです。差分は「差分比較」で最新化し、詳しい流れは「操作手順を開く」から確認できます。</div>
         </div>
-        <span class="reflect-guide-badge">${esc(isNode ? 'ノード選択モード' : 'セクションモード')}</span>
-      </div>
-      <div class="reflect-step-grid">
-        ${steps.map((step) => `<div class="reflect-step-card${step.cls ? ` ${step.cls}` : ''}">
-          <div class="reflect-step-no">${esc(step.no)}</div>
-          <div class="reflect-step-title">${esc(step.title)}</div>
-          <div class="reflect-step-desc">${esc(step.desc)}</div>
-        </div>`).join('')}
+        <div class="reflect-guide-actions">
+          <span class="reflect-guide-badge">${esc(isNode ? '細かく選ぶモード' : 'まず使うモード')}</span>
+          ${guideActions}
+        </div>
       </div>
     </div>
     <div class="reflect-summary-grid">
       <div class="reflect-summary-card">
-        <div class="reflect-summary-label">対象</div>
+        <div class="reflect-summary-label">反映対象</div>
         <div class="reflect-summary-value">${targetCountValue}</div>
         <div class="reflect-summary-meta">${esc(targetCountLabel)} / ${isNode ? `候補 ${state.reflectRows.length}件` : `選択 ${scopeInfo.baseScopes.length}件`}</div>
       </div>
       <div class="reflect-summary-card">
-        <div class="reflect-summary-label">対象差分</div>
+        <div class="reflect-summary-label">反映される差分</div>
         <div class="reflect-summary-value">${targetRows.length}</div>
         <div class="reflect-summary-meta">高 ${sev.high} / 中 ${sev.medium} / 低 ${sev.low}</div>
       </div>
       <div class="reflect-summary-card">
-        <div class="reflect-summary-label">安全設定</div>
+        <div class="reflect-summary-label">反映前チェック</div>
         <div class="reflect-summary-value">${esc(safetyLabel)}</div>
         <div class="reflect-summary-meta">バックアップ ${backupReady ? 'ON' : 'OFF'} / エラー時 ${stopOnError ? '中断' : '継続'} / 本番デプロイは管理画面で手動</div>
       </div>
       <div class="reflect-summary-card">
-        <div class="reflect-summary-label">プラン状態</div>
-        <div class="reflect-summary-value">${esc(planReady ? '確認済み' : '未確認')}</div>
-        <div class="reflect-summary-meta">${esc(planReady ? `最新確認: ${planTime}` : 'まだ反映プラン確認を実行していません')}</div>
+        <div class="reflect-summary-label">プラン確認</div>
+      <div class="reflect-summary-value">${esc(planReady ? '確認済み' : '未確認')}</div>
+      <div class="reflect-summary-meta">${esc(planReady ? `最新確認: ${planTime}` : 'まだ実行前プラン確認をしていません')}</div>
       </div>
     </div>
-    ${contextActions ? `<div class="reflect-context-actions">${contextActions}</div>` : ''}
-    <p class="reflect-action-hint">差分の再実行は<strong>上部の接続パネル（ヘッダー）</strong>内の差分エリアから。プラン確認・バックアップ・復元・プレビュー反映は<strong>画面下の固定バー</strong>から操作します。本番デプロイはツールから実行できません。</p>
-    ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join('') : '<div class="reflect-good">現在の条件でそのまま進めます。変更前の確認は「反映プラン確認」で行えます。</div>'}
-    ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? ' / 必要なら「直前バックアップ復元」で戻せます。' : ''}</div>` : ''}
+    <p class="reflect-action-hint">差分の再実行は<strong>上部の接続パネル（ヘッダー）</strong>から、実行前の確認と反映は<strong>画面下の固定バー</strong>から行います。フィールドは<strong>フィールド確認</strong>、それ以外は<strong>他設定を編集</strong>から比較先プレビューの内容を細かく調整できます。</p>
+    ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join('') : '<div class="reflect-good">このまま「実行前プラン確認」へ進めます。最終確認後に「プレビューへ反映」を実行してください。</div>'}
+    ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? ' / 必要なら「直前保存を戻す」で元に戻せます。' : ''}</div>` : ''}
   </div>`;
 }
 
@@ -659,7 +731,7 @@ export function renderReflectPlanInline() {
     const head = logs.slice(0, maxLines).join('\n');
     const more = logs.length > maxLines ? `\n… 他 ${logs.length - maxLines} 行（全文は下部の結果エリアを参照）` : '';
     el.innerHTML = `<div class="reflect-plan-inline__head">
-      <span class="reflect-plan-inline__title">反映プラン（現在の条件と一致）</span>
+      <span class="reflect-plan-inline__title">実行前プラン（現在の条件と一致）</span>
       <span class="reflect-plan-inline__meta">予定リクエスト ${plan.totalReq || 0} 件 · ${esc(stamp)}</span>
     </div>
     <pre class="reflect-plan-inline__pre">${esc(head)}${esc(more)}</pre>`;
@@ -667,14 +739,14 @@ export function renderReflectPlanInline() {
   }
   if (stalePlan && hasPlan) {
     el.innerHTML = `<div class="reflect-plan-inline reflect-plan-inline--stale">
-      <div class="reflect-plan-inline__head"><span class="reflect-plan-inline__title">プランは現在の条件と一致しません</span></div>
-      <p class="reflect-plan-inline__muted">差分・反映セクション・ノード・ルックアップ等が変わった可能性があります。再度「反映プラン確認」を実行してください。</p>
+      <div class="reflect-plan-inline__head"><span class="reflect-plan-inline__title">前回のプランは古くなっています</span></div>
+      <p class="reflect-plan-inline__muted">差分・反映対象・差分候補・ルックアップ等が変わった可能性があります。再度「実行前プラン確認」を実行してください。</p>
     </div>`;
     return;
   }
   el.innerHTML = `<div class="reflect-plan-inline reflect-plan-inline--empty">
-    <div class="reflect-plan-inline__head"><span class="reflect-plan-inline__title">プラン要約</span></div>
-    <p class="reflect-plan-inline__muted">「反映プラン確認」を実行すると、ここにログ要約が表示されます。詳細は下部の<strong>結果</strong>エリアにも出力されます。</p>
+    <div class="reflect-plan-inline__head"><span class="reflect-plan-inline__title">まだプラン未確認です</span></div>
+    <p class="reflect-plan-inline__muted">「実行前プラン確認」を実行すると、ここにログ要約が表示されます。詳細は下部の<strong>結果</strong>エリアにも出力されます。</p>
   </div>`;
 }
 
@@ -706,24 +778,24 @@ function renderReflectHowto() {
   const planReady = !!(state.lastApplyPlan && planSig && state.lastApplyPlan.signature === planSig);
   const selectedNodes = deps.getSelectedReflectRows().length;
   const nodeRows = (state.reflectRows || []).length;
-  const modeLabel = isNode ? 'ノード選択モード' : 'セクションモード';
+  const modeLabel = isNode ? '差分選択モード' : 'まとめて反映モード';
   const nodeStep = isNode
-    ? `<li style="margin:4px 0">${nodeRows > 0 ? '✅' : '⬜'} <strong>差分ノード読込</strong>（候補 ${nodeRows}件 / 選択 ${selectedNodes}件）</li>`
+    ? `<li style="margin:4px 0">${nodeRows > 0 ? '✅' : '⬜'} <strong>差分候補を読込</strong>して、反映したい差分だけ選ぶ（候補 ${nodeRows}件 / 選択 ${selectedNodes}件）</li>`
     : '';
   const step1 = diffReady ? '✅' : '⬜';
   const step2 = planReady ? '✅' : '⬜';
   const step3 = planReady ? '▶' : '⬜';
   ui.reflectHowto.innerHTML = `
     <details open style="border:1px solid #dbe3ed;border-radius:10px;background:#fff;padding:8px 10px">
-      <summary style="cursor:pointer;font-weight:700;color:#1e293b">使い方ガイド（${esc(modeLabel)}）</summary>
+      <summary style="cursor:pointer;font-weight:700;color:#1e293b">進め方（${esc(modeLabel)}）</summary>
       <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.7">
         <ol style="margin:0;padding-left:18px">
           <li style="margin:4px 0">${step1} <strong>差分比較</strong>を実行して最新差分を作成</li>
           ${nodeStep}
-          <li style="margin:4px 0">${step2} <strong>反映プラン確認</strong>で API 実行内容を確認</li>
-          <li style="margin:4px 0">${step3} <strong>比較元 → 比較先(プレビュー) 反映</strong>を実行</li>
+          <li style="margin:4px 0">${step2} 固定バーの<strong>実行前プラン確認</strong>で API 実行内容を確認</li>
+          <li style="margin:4px 0">${step3} 固定バーの<strong>プレビューへ反映</strong>を実行</li>
         </ol>
-        <p class="muted" style="margin:8px 0 0;font-size:11px;line-height:1.6">差分比較は<strong>上部の接続パネル（ヘッダー）</strong>内から。反映プラン確認・プレビュー反映は画面下の固定バーから実行してください。</p>
+        <p class="muted" style="margin:8px 0 0;font-size:11px;line-height:1.6">差分比較は<strong>上部の接続パネル（ヘッダー）</strong>から、実行系は<strong>画面下の固定バー</strong>から行います。</p>
       </div>
     </details>`;
 }
@@ -772,6 +844,7 @@ export function renderReflectSidebar() {
   if (sidebarCount) sidebarCount.textContent = `${checkedCount} / ${putSections.length}`;
 
   syncApplyScopesFromSidebar();
+  renderScopePickerSummaries();
 }
 
 export function syncApplyScopesFromSidebar() {
@@ -797,7 +870,7 @@ export function renderReflectMainPanel() {
     const sev = summarizeSeverity(rows);
     overview.innerHTML = `
       <div class="sec-preview" style="border-color:#bfdbfe;background:#f8fbff">
-        <div class="sec-preview-title" style="color:#1d4ed8">ノード反映の現在地</div>
+        <div class="sec-preview-title" style="color:#1d4ed8">差分選択の状況</div>
         <div class="sec-diff-summary">
           <span class="sec-diff-pill">候補 ${state.reflectRows.length}件</span>
           <span class="sec-diff-pill">選択 ${rows.length}件</span>
@@ -806,7 +879,7 @@ export function renderReflectMainPanel() {
         </div>
         <div class="muted" style="margin-top:8px">重要度: 高 ${sev.high} / 中 ${sev.medium} / 低 ${sev.low}</div>
       </div>`;
-    if (ui.reflectMainTitle) ui.reflectMainTitle.textContent = 'ノード反映';
+    if (ui.reflectMainTitle) ui.reflectMainTitle.textContent = '差分を選んで反映';
     return;
   }
 
@@ -815,6 +888,9 @@ export function renderReflectMainPanel() {
     if (!def) { overview.innerHTML = ''; return; }
     const count = diffCounts[activeSec] || { total: 0, added: 0, removed: 0, changed: 0 };
     const rows = getActualDiffRows(state.lastDiffRows || []).filter((r) => r.sectionKey === activeSec);
+    const openEditorBtn = activeSec === 'fieldSettings'
+      ? '<button class="btn primary-action" data-act="openReflectPreviewEditor">フィールド確認を開く</button>'
+      : `<button class="btn primary-action" data-act="openSectionPreviewEditor" data-section="${esc(activeSec)}">このセクションを編集</button>`;
     const topPaths = rows.slice(0, 12).map((r) => {
       const cls = r.type === 'added' ? '#166534' : (r.type === 'removed' ? '#b91c1c' : '#92400e');
       const typeLabel = r.moved ? `${r.type}(moved)` : (r.type || '-');
@@ -830,6 +906,10 @@ export function renderReflectMainPanel() {
           <span class="sec-diff-pill" style="color:#166534">追加 ${count.added}</span>
           <span class="sec-diff-pill" style="color:#b91c1c">削除 ${count.removed}</span>
           <span class="sec-diff-pill" style="color:#92400e">変更 ${count.changed}</span>
+        </div>
+        <div class="reflect-section-actions">
+          ${openEditorBtn}
+          <button class="btn sub" data-act="goDiffReview">差分一覧でこの差分を見る</button>
         </div>
         ${count.total > 0 ? `<div style="margin-top:10px;max-height:200px;overflow:auto">
           <table><thead><tr><th style="width:80px">種別</th><th>パス</th></tr></thead><tbody>${topPaths}</tbody></table>
@@ -854,16 +934,23 @@ export function renderReflectMainPanel() {
     }).join('');
 
     const totalDiff = Object.values(diffCounts).reduce((s, c) => s + c.total, 0);
+    const fieldSelected = selectedScopes.has('fieldSettings');
+    const hasNonFieldSelected = [...selectedScopes].some((key) => key && key !== 'fieldSettings');
     overview.innerHTML = `
       <div class="sec-preview" style="border-color:#c7d2fe;background:#eef2ff">
-        <div class="sec-preview-title" style="color:#4338ca">反映概要</div>
+        <div class="sec-preview-title" style="color:#4338ca">まとめて反映の全体像</div>
         <div class="sec-diff-summary">
           <span class="sec-diff-pill" style="border-color:#c7d2fe">選択セクション ${selectedScopes.size}件</span>
           <span class="sec-diff-pill" style="border-color:#c7d2fe">総差分 ${totalDiff}件</span>
         </div>
       </div>
-      ${selectedScopes.size > 0 ? `<div class="sec-overview-grid">${cards}</div>` : '<div class="muted" style="text-align:center;padding:20px">反映セクションを左のサイドバーから選択してください</div>'}`;
-    if (ui.reflectMainTitle) ui.reflectMainTitle.textContent = '反映概要';
+      ${selectedScopes.size > 0 ? `<div class="sec-overview-grid">${cards}</div>
+      <div class="reflect-inline-note">選んだセクションの中で、フィールドは「フィールド確認」、ビュー・レイアウト・通知・権限などは「他設定を編集」から細かく直せます。</div>
+      <div class="reflect-inline-list">
+        ${fieldSelected ? '<button class="btn sub" data-act="openReflectPreviewEditor">フィールド確認を開く</button>' : ''}
+        ${hasNonFieldSelected ? '<button class="btn sub" data-act="openSectionPreviewEditor">他設定を編集</button>' : ''}
+      </div>` : '<div class="muted" style="text-align:center;padding:20px">「反映セクションを選ぶ」から、まとめて反映したいセクションを選んでください</div>'}`;
+    if (ui.reflectMainTitle) ui.reflectMainTitle.textContent = 'いまの反映内容';
   }
 }
 
@@ -879,10 +966,10 @@ export function renderReflectNodeList() {
   const rows = state.reflectRows || [];
   if (!rows.length) {
     const emptyText = state.lastDiffAt
-      ? '反映対象の差分ノードはありません。'
-      : '差分ノード未読込（差分比較後に「差分ノード読込」）';
+      ? '反映対象の差分候補はありません。'
+      : '差分候補はまだ読み込まれていません（差分比較後に「差分候補を読込」）';
     ui.reflectNodeList.innerHTML = `<div style="padding:10px;font-size:12px;color:#64748b">${emptyText}</div>`;
-    if (ui.nodePropertyList) ui.nodePropertyList.innerHTML = '<div class="muted" style="padding:6px">差分ノード読込後に表示されます</div>';
+    if (ui.nodePropertyList) ui.nodePropertyList.innerHTML = '<div class="muted" style="padding:6px">差分候補を読み込むと表示されます</div>';
     if (ui.nodePropertyChips) ui.nodePropertyChips.innerHTML = '<span class="muted" style="font-size:10px">未選択（すべて対象）</span>';
     state.reflectActiveNodeId = '';
     renderReflectNodeDetail();
@@ -948,7 +1035,7 @@ export function renderReflectNodeList() {
   const srcCount = selectedRows.filter((r) => deps.reflectRowModeById(r._id) === 'src').length;
   const tgtCount = selectedRows.length - srcCount;
   const sev = summarizeSeverity(selectedRows);
-  const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">候補 ${rows.length}件 / 表示 ${filtered.length}件 / 選択 ${selectedCount}件 / 比較元 ${srcCount} / 比較先 ${tgtCount} / 高:${sev.high} 中:${sev.medium} 低:${sev.low}</div>`;
+  const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">候補 ${rows.length}件 / 表示 ${filtered.length}件 / 選択 ${selectedCount}件 / 比較元採用 ${srcCount} / 比較先維持 ${tgtCount} / 高:${sev.high} 中:${sev.medium} 低:${sev.low}</div>`;
   if (!filtered.length) {
     ui.reflectNodeList.innerHTML = `${header}<div style="padding:12px;font-size:12px;color:#64748b">条件に一致するノードがありません。検索または絞り込み条件を見直してください。</div>`;
     renderReflectNodeDetail();
@@ -993,13 +1080,13 @@ export function renderReflectNodeDetail() {
   }
   ui.reflectNodeDetail.style.display = 'flex';
   if (ui.reflectNodeList && !ui.reflectNodeList.querySelector('[data-node-open]') && (state.reflectRows || []).length) {
-    ui.reflectNodeDetail.innerHTML = '<div class="reflect-node-detail-empty">表示中のノードがありません。左の検索条件や絞り込みを調整してください。</div>';
+    ui.reflectNodeDetail.innerHTML = '<div class="reflect-node-detail-empty">表示中の差分候補がありません。左の検索条件や絞り込みを調整してください。</div>';
     return;
   }
   const visibleIds = Array.from(ui.reflectNodeList?.querySelectorAll('[data-node-open]') || []).map((el) => el.dataset.nodeOpen).filter(Boolean);
   const row = deps.getActiveReflectRow(visibleIds.length ? visibleIds : null);
   if (!row) {
-    ui.reflectNodeDetail.innerHTML = '<div class="reflect-node-detail-empty">選択中または表示中のノードがありません。左の一覧から差分ノードを選ぶと、ここに比較内容と反映値を表示します。</div>';
+    ui.reflectNodeDetail.innerHTML = '<div class="reflect-node-detail-empty">差分候補を選ぶと、ここで比較内容と実際に反映される値を確認できます。</div>';
     return;
   }
 
@@ -1052,18 +1139,18 @@ export function renderReflectNodeDetail() {
     .map((ref) => `${ref.section || ref.sectionKey || '-'} / ${ref.kind || '-'}${ref.label ? ` / ${ref.label}` : ''}`)
     .join('\n');
   ui.reflectNodeDetail.innerHTML = `<div class="reflect-node-detail-head">
-    <div class="reflect-node-detail-eyebrow">Node Workbench</div>
+    <div class="reflect-node-detail-eyebrow">差分の詳細</div>
     <div class="reflect-node-detail-title">${esc(row.section || '-')} / ${esc(getDiffTypeDisplayLabel(row.type, { moved: !!row.moved }))}</div>
     <div class="reflect-node-detail-path">${esc(row.path || '-')}</div>
     <div class="reflect-node-badges">
       <span class="reflect-node-badge ${esc(severity)}">${esc(getSeverityDisplayLabel(severity))}重要度</span>
       <span class="reflect-node-badge">${selected ? '選択中' : '未選択'}</span>
-      <span class="reflect-node-badge">${mode === 'src' ? '比較元を反映' : '比較先を維持'}</span>
+      <span class="reflect-node-badge">${mode === 'src' ? '比較元を採用' : '比較先を残す'}</span>
     </div>
     <div class="reflect-node-actions">
       <button class="btn ${selected ? 'sub' : 'ok'}" data-act="toggleActiveReflectNodeSelection">${selected ? '選択解除' : 'このノードを選択'}</button>
-      <button class="btn ok" data-act="toggleActiveReflectNodeMode">${mode === 'src' ? '比較先へ切替' : '比較元へ切替'}</button>
-      <button class="btn sub" data-act="focusActiveReflectNodeDiff">ヘッダーの結果整理で開く</button>
+      <button class="btn ok" data-act="toggleActiveReflectNodeMode">${mode === 'src' ? '比較先を採用' : '比較元を採用'}</button>
+      <button class="btn sub" data-act="focusActiveReflectNodeDiff">上の差分一覧で開く</button>
       <button class="btn sub" data-copy-val="${esc(row.path || '')}">パスコピー</button>
     </div>
   </div>

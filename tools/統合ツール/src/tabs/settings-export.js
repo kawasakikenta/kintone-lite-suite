@@ -74,15 +74,77 @@ export function renderSettingsExportSummary(rows, scopes) {
     <td>${esc(r.appId)}</td>
     <td>${esc(String(r.okCount))}</td>
     <td>${esc(String(r.ngCount))}</td>
+    <td>${esc(r.pluginConfigLabel || '-')}</td>
     <td>${esc(r.note || '-')}</td>
   </tr>`).join('');
   return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
     <table>
-      <thead><tr><th>アプリID</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
-      <tbody>${body || '<tr><td colspan="4">結果なし</td></tr>'}</tbody>
+      <thead><tr><th>アプリID</th><th>取得OK</th><th>取得NG</th><th>プラグイン設定</th><th>メモ</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
     </table>
   `;
+}
+
+function formatPluginConfigSummary(backup) {
+  if (!backup || !backup.requested) return '-';
+  if (backup._fetchError) return '一覧取得NG';
+  if (!backup.totalPlugins) return '0件';
+  return `OK ${backup.okCount} / NG ${backup.ngCount}`;
+}
+
+async function fetchPluginConfigBackup({ appId, guestId, preview, existingPluginList, onProgress }) {
+  const prefix = buildApiPrefix(guestId, preview);
+  const result = {
+    requested: true,
+    endpoint: '/app/plugin/config.json',
+    source: 'api-lab',
+    experimental: true,
+    totalPlugins: 0,
+    okCount: 0,
+    ngCount: 0,
+    plugins: []
+  };
+
+  let plugins = Array.isArray(existingPluginList) ? existingPluginList : null;
+  if (!plugins) {
+    try {
+      const res = await apiGet(prefix, '/app/plugins.json', { app: appId });
+      plugins = Array.isArray(res?.plugins) ? res.plugins : [];
+    } catch (error) {
+      result._fetchError = error.message || String(error);
+      return result;
+    }
+  }
+
+  result.totalPlugins = plugins.length;
+  if (!plugins.length) return result;
+
+  for (let i = 0; i < plugins.length; i++) {
+    const plugin = plugins[i] || {};
+    const pluginId = String(plugin.id || '').trim();
+    if (!pluginId) continue;
+    if (typeof onProgress === 'function') onProgress(i, plugins.length, plugin);
+    try {
+      const res = await apiGet(prefix, '/app/plugin/config.json', { app: appId, id: pluginId });
+      result.plugins.push({
+        ...plugin,
+        id: pluginId,
+        config: res?.config || {},
+        revision: res?.revision != null ? String(res.revision) : ''
+      });
+      result.okCount += 1;
+    } catch (error) {
+      result.plugins.push({
+        ...plugin,
+        id: pluginId,
+        _fetchError: error.message || String(error)
+      });
+      result.ngCount += 1;
+    }
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +159,7 @@ export async function runSettingsExport(mode) {
 
   const guestId = ui.settingsExportGuest.value.trim();
   const preview = !!ui.settingsExportPreview.checked;
+  const includePluginConfig = !!ui.settingsExportIncludePluginConfig?.checked;
   saveCurrentDialogState();
 
   const bundles = [];
@@ -120,7 +183,37 @@ export async function runSettingsExport(mode) {
       if (sec && sec._fetchError) ngCount += 1;
       else okCount += 1;
     }
-    rows.push({ appId, okCount, ngCount, note: ngCount ? '一部セクション取得失敗あり' : 'OK' });
+
+    let pluginConfigBackup = null;
+    if (includePluginConfig) {
+      pluginConfigBackup = await fetchPluginConfigBackup({
+        appId,
+        guestId,
+        preview,
+        existingPluginList: bundle?.sections?.pluginSettings?.plugins,
+        onProgress: (pluginIndex, pluginTotal, plugin) => {
+          const pluginName = String(plugin?.name || plugin?.id || '');
+          setStatus(`プラグイン設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId} ${pluginIndex + 1}/${pluginTotal}${pluginName ? ` (${pluginName})` : ''}`);
+        }
+      });
+      bundle.pluginConfigBackup = pluginConfigBackup;
+    }
+
+    const noteParts = [];
+    noteParts.push(ngCount ? '一部セクション取得失敗あり' : 'OK');
+    if (includePluginConfig) {
+      if (pluginConfigBackup?._fetchError) noteParts.push('プラグイン一覧取得失敗');
+      else if (pluginConfigBackup?.ngCount) noteParts.push('プラグイン設定一部取得失敗');
+      else noteParts.push(`プラグイン設定 ${pluginConfigBackup?.okCount || 0}件`);
+    }
+
+    rows.push({
+      appId,
+      okCount,
+      ngCount,
+      pluginConfigLabel: formatPluginConfigSummary(pluginConfigBackup),
+      note: noteParts.join(' / ')
+    });
   }
 
   ui.settingsExportResult.innerHTML = renderSettingsExportSummary(rows, scopes);
@@ -130,6 +223,7 @@ export async function runSettingsExport(mode) {
     generatedAt: new Date().toISOString(),
     guestId: guestId || '',
     preview,
+    includePluginConfig,
     scopes,
     scopeLabels,
     apps: bundles
@@ -139,12 +233,13 @@ export async function runSettingsExport(mode) {
     const JSZipCtor = await loadJSZip();
     const zip = new JSZipCtor();
     zip.file('manifest.json', JSON.stringify({
-      generatedAt: payload.generatedAt,
-      guestId: payload.guestId,
-      preview: payload.preview,
-      scopes: payload.scopes,
-      appCount: bundles.length
-    }, null, 2));
+          generatedAt: payload.generatedAt,
+          guestId: payload.guestId,
+          preview: payload.preview,
+          includePluginConfig: payload.includePluginConfig,
+          scopes: payload.scopes,
+          appCount: bundles.length
+        }, null, 2));
     for (const bundle of bundles) {
       const suffix = `${guestId ? `_guest_${guestId}` : ''}${preview ? '_preview' : '_live'}`;
       const name = `app_${bundle.appId}${suffix}.json`;
@@ -152,10 +247,10 @@ export async function runSettingsExport(mode) {
     }
     const zipBlob = await zip.generateAsync({ type: 'blob' });
     downloadBlob(`settings_export_${bundles.length}apps_${nowStamp()}.zip`, zipBlob);
-    setStatus(`設定一括取得ZIPを保存しました（${bundles.length} apps）`);
+    setStatus(`設定バックアップZIPを保存しました（${bundles.length} apps）`);
     return;
   }
 
   downloadText(`settings_export_${bundles.length}apps_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
-  setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）`);
+  setStatus(`設定バックアップJSONを保存しました（${bundles.length}アプリ）`);
 }

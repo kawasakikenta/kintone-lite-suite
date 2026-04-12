@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, deepClone, nowStamp, downloadText, selectedScopeKeys, showToast } from '../utils.js';
+import { esc, nowStamp, downloadText, downloadBlob, showToast } from '../utils.js';
 import { apiGet, apiPut, apiPost, buildApiPrefix, fetchBundle } from '../api.js';
 import { setStatus, setBusy, renderBundleState } from '../ui/components.js';
 import { commonParams } from './diff.js';
@@ -242,98 +242,219 @@ export async function downloadBlobWithRetry(fileKey, isSource, guestSpaceId) {
   return null;
 }
 
+async function fetchFieldDefinitionsForExport(prefix, appId) {
+  const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId });
+  const properties = fields?.properties || {};
+  const propKeys = Object.keys(properties);
+  if (!propKeys.length) throw new Error('出力できるフィールドがありません');
+  return { fields, properties, propKeys };
+}
+
+async function fetchAllRecordsForExport(prefix, appId, condition) {
+  let allRecords = [];
+  let lastRecordId = '0';
+  const limit = 500;
+  const baseQuery = String(condition || '').trim();
+  const queryHasOrder = baseQuery.toLowerCase().includes('order by');
+  const queryHasLimit = baseQuery.toLowerCase().includes('limit');
+
+  if (queryHasLimit) {
+    const resp = await apiGet(prefix, '/records.json', { app: appId, query: baseQuery });
+    return resp.records || [];
+  }
+
+  while (true) {
+    setBusy(true, `レコード取得中... (${allRecords.length}件取得済)`);
+    let loopQuery = '';
+    if (baseQuery) {
+      loopQuery = `${baseQuery} ${queryHasOrder ? '' : 'order by $id asc'} limit ${limit} offset ${allRecords.length}`;
+    } else {
+      loopQuery = `$id > ${lastRecordId} order by $id asc limit ${limit}`;
+    }
+
+    const resp = await apiGet(prefix, '/records.json', { app: appId, query: loopQuery });
+    const batch = resp.records || [];
+    allRecords = allRecords.concat(batch);
+    if (batch.length < limit) break;
+    lastRecordId = batch[batch.length - 1].$id.value;
+  }
+
+  return allRecords;
+}
+
+function escapeCsvCell(val) {
+  const s = String(val == null ? '' : val);
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function extractCsvFieldValue(rec, code) {
+  const field = rec[code];
+  if (!field) return '';
+  if (field.type === 'USER_SELECT' || field.type === 'ORGANIZATION_SELECT' || field.type === 'GROUP_SELECT') {
+    return (field.value || []).map(v => v.code || v.name).join(',');
+  }
+  if (field.type === 'CHECK_BOX' || field.type === 'MULTI_SELECT') {
+    return (field.value || []).join(',');
+  }
+  if (field.type === 'FILE') {
+    return (field.value || []).map(file => file.name).join(',');
+  }
+  if (field.type === 'SUBTABLE') {
+    return (field.value || []).length + '行';
+  }
+  if (typeof field.value === 'object' && field.value !== null) {
+    return JSON.stringify(field.value);
+  }
+  return field.value;
+}
+
+function buildRecordsCsvString(records, propKeys) {
+  const lines = [];
+  lines.push(propKeys.map(escapeCsvCell).join(','));
+  for (const rec of records) {
+    lines.push(propKeys.map(key => escapeCsvCell(extractCsvFieldValue(rec, key))).join(','));
+  }
+  return '\uFEFF' + lines.join('\n');
+}
+
+function sanitizeZipPathSegment(value, fallback = 'item') {
+  const cleaned = String(value == null ? '' : value)
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/[\u0000-\u001f]/g, '')
+    .trim();
+  return cleaned || fallback;
+}
+
+function getRecordNumberValue(record) {
+  const match = Object.values(record || {}).find((field) => field?.type === 'RECORD_NUMBER');
+  return String(match?.value || record?.$id?.value || '');
+}
+
+function collectRecordFileEntries(record) {
+  const entries = [];
+  const recordId = String(record?.$id?.value || '').trim();
+  const recordNumber = getRecordNumberValue(record);
+  Object.entries(record || {}).forEach(([fieldCode, field]) => {
+    if (!field || typeof field !== 'object') return;
+    if (field.type === 'FILE') {
+      (field.value || []).forEach((file, fileIndex) => {
+        entries.push({
+          recordId,
+          recordNumber,
+          fieldCode,
+          fileIndex,
+          fileKey: String(file?.fileKey || ''),
+          name: String(file?.name || ''),
+          size: file?.size != null ? Number(file.size) : null,
+          contentType: String(file?.contentType || '')
+        });
+      });
+      return;
+    }
+    if (field.type !== 'SUBTABLE') return;
+    (field.value || []).forEach((row, rowIndex) => {
+      Object.entries(row?.value || {}).forEach(([childFieldCode, childField]) => {
+        if (childField?.type !== 'FILE') return;
+        (childField.value || []).forEach((file, fileIndex) => {
+          entries.push({
+            recordId,
+            recordNumber,
+            fieldCode,
+            childFieldCode,
+            rowIndex,
+            fileIndex,
+            fileKey: String(file?.fileKey || ''),
+            name: String(file?.name || ''),
+            size: file?.size != null ? Number(file.size) : null,
+            contentType: String(file?.contentType || '')
+          });
+        });
+      });
+    });
+  });
+  return entries.filter((entry) => entry.fileKey);
+}
+
+function buildAttachmentZipPath(entry) {
+  const parts = [
+    'attachments',
+    `record_${sanitizeZipPathSegment(entry.recordId || entry.recordNumber || 'unknown')}`
+  ];
+  if (entry.childFieldCode) {
+    parts.push(sanitizeZipPathSegment(entry.fieldCode || 'subtable'));
+    parts.push(`row_${Number(entry.rowIndex) + 1}`);
+    parts.push(sanitizeZipPathSegment(entry.childFieldCode));
+  } else {
+    parts.push(sanitizeZipPathSegment(entry.fieldCode || 'files'));
+  }
+  const filePrefix = sanitizeZipPathSegment((entry.fileKey || '').slice(0, 12) || String(entry.fileIndex + 1));
+  parts.push(`${filePrefix}_${sanitizeZipPathSegment(entry.name || 'file.bin', 'file.bin')}`);
+  return parts.join('/');
+}
+
+async function fetchRecordComments(prefix, appId, recordId) {
+  const comments = [];
+  const limit = 10;
+  let offset = 0;
+  while (true) {
+    const resp = await apiGet(prefix, '/record/comments.json', {
+      app: appId,
+      record: recordId,
+      order: 'asc',
+      offset,
+      limit
+    });
+    const batch = resp.comments || [];
+    comments.push(...batch);
+    if (batch.length < limit) break;
+    offset += batch.length;
+  }
+  return comments;
+}
+
+function renderRecordBackupSummary(summary) {
+  const notes = Array.isArray(summary?.notes) ? summary.notes : [];
+  return `
+    <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">
+      ZIP: ${esc(summary?.zipName || '-')} / レコード: ${esc(String(summary?.recordCount || 0))}
+    </div>
+    <table>
+      <tbody>
+        <tr><th style="width:140px">CSV</th><td>${esc(summary?.csvName || '-')}</td></tr>
+        <tr><th>添付ファイル</th><td>${esc(String(summary?.fileCount || 0))}件 ${summary?.includeFiles ? '' : '(未取得)'}</td></tr>
+        <tr><th>コメント</th><td>${esc(String(summary?.commentCount || 0))}件 / コメントあり ${esc(String(summary?.commentRecordCount || 0))}レコード ${summary?.includeComments ? '' : '(未取得)'}</td></tr>
+        <tr><th>注意</th><td>${esc(notes.length ? notes.join(' / ') : 'なし')}</td></tr>
+      </tbody>
+    </table>
+  `;
+}
+
 export async function runCsvExport() {
   const tgtAppId = getToolDocument().getElementById('u_targetApp')?.value?.trim();
   if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
   const tgtGuestId = getToolDocument().getElementById('u_targetGuest')?.value?.trim();
   const guestPrefix = tgtGuestId ? `/k/guest/${tgtGuestId}/v1` : '/k/v1';
 
-  let condition = getToolDocument().getElementById('u_csvExportViewSelect')?.value || '';
-  if (!condition) condition = getToolDocument().getElementById('u_csvExportView')?.value || '';
+  const condition = getToolDocument().getElementById('u_csvExportView')?.value || '';
   const filename = getToolDocument().getElementById('u_csvExportName')?.value?.trim() || 'records.csv';
 
   setBusy(true, 'フィールド情報取得中...');
-  let fields = null;
+  let propKeys = [];
   try {
-    fields = await apiGet(guestPrefix, '/app/form/fields.json', { app: tgtAppId });
+    ({ propKeys } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId));
   } catch (e) {
     throw new Error('フィールド情報の取得に失敗: ' + e.message);
   }
-  const propKeys = Object.keys(fields.properties);
-  if (!propKeys.length) throw new Error('出力できるフィールドがありません');
 
   setBusy(true, 'レコード取得中...');
-  let allRecords = [];
-  let lastRecordId = '0';
-  const limit = 500;
-
-  let baseQuery = condition;
-  let queryHasOrder = baseQuery.toLowerCase().includes('order by');
-  let queryHasLimit = baseQuery.toLowerCase().includes('limit');
-
-  if (queryHasLimit) {
-    const resp = await apiGet(guestPrefix, '/records.json', { app: tgtAppId, query: baseQuery });
-    allRecords = resp.records || [];
-  } else {
-    while (true) {
-      setBusy(true, `レコード取得中... (${allRecords.length}件取得済)`);
-      let loopQuery = '';
-      if (baseQuery) {
-        loopQuery = `${baseQuery} ${queryHasOrder ? '' : 'order by $id asc'} limit ${limit} offset ${allRecords.length}`;
-      } else {
-        loopQuery = `$id > ${lastRecordId} order by $id asc limit ${limit}`;
-      }
-
-      const resp = await apiGet(guestPrefix, '/records.json', { app: tgtAppId, query: loopQuery });
-      const batch = resp.records || [];
-      allRecords = allRecords.concat(batch);
-
-      if (batch.length < limit) break;
-      lastRecordId = batch[batch.length - 1].$id.value;
-    }
-  }
-
+  const allRecords = await fetchAllRecordsForExport(guestPrefix, tgtAppId, condition);
   if (!allRecords.length) throw new Error('出力するレコードがありません');
 
   setStatus(`CSV生成中... (${allRecords.length}件)`);
-
-  const escapeCsv = (val) => {
-    const s = String(val == null ? '' : val);
-    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-      return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
-  };
-
-  const extractValue = (rec, code) => {
-    const field = rec[code];
-    if (!field) return '';
-    if (field.type === 'USER_SELECT' || field.type === 'ORGANIZATION_SELECT' || field.type === 'GROUP_SELECT') {
-      return (field.value || []).map(v => v.code || v.name).join(',');
-    }
-    if (field.type === 'CHECK_BOX' || field.type === 'MULTI_SELECT') {
-      return (field.value || []).join(',');
-    }
-    if (field.type === 'FILE') {
-      return (field.value || []).map(file => file.name).join(',');
-    }
-    if (field.type === 'SUBTABLE') {
-      return (field.value || []).length + '行';
-    }
-    if (typeof field.value === 'object' && field.value !== null) {
-      return JSON.stringify(field.value);
-    }
-    return field.value;
-  };
-
-  const lines = [];
-  lines.push(propKeys.map(escapeCsv).join(','));
-
-  for (const rec of allRecords) {
-    lines.push(propKeys.map(key => escapeCsv(extractValue(rec, key))).join(','));
-  }
-
-  const csvStr = '\uFEFF' + lines.join('\n');
+  const csvStr = buildRecordsCsvString(allRecords, propKeys);
   const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -450,6 +571,161 @@ export async function runCsvImport() {
   showToast(`完了: ${successCount}件のレコードを登録しました。`, 'success');
   fileInput.value = '';
   getToolDocument().getElementById('u_csvImportFileName').textContent = '未選択';
+}
+
+export async function runRecordBackup() {
+  const tgtAppId = getToolDocument().getElementById('u_targetApp')?.value?.trim();
+  if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
+
+  const tgtGuestId = getToolDocument().getElementById('u_targetGuest')?.value?.trim();
+  const guestPrefix = tgtGuestId ? `/k/guest/${tgtGuestId}/v1` : '/k/v1';
+  const condition = getToolDocument().getElementById('u_recordBackupView')?.value || '';
+  const zipName = getToolDocument().getElementById('u_recordBackupZipName')?.value?.trim() || `record_backup_${tgtAppId}_${nowStamp()}.zip`;
+  const includeFiles = !!getToolDocument().getElementById('u_recordBackupIncludeFiles')?.checked;
+  const includeComments = !!getToolDocument().getElementById('u_recordBackupIncludeComments')?.checked;
+
+  setBusy(true, 'バックアップ対象のフィールドを取得中...');
+  const { propKeys } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId);
+
+  setBusy(true, 'バックアップ対象レコードを取得中...');
+  const records = await fetchAllRecordsForExport(guestPrefix, tgtAppId, condition);
+  if (!records.length) throw new Error('バックアップ対象のレコードがありません');
+
+  const JSZipCtor = await loadJSZip();
+  const zip = new JSZipCtor();
+  const generatedAt = new Date().toISOString();
+  const csvName = 'records.csv';
+  const notes = [];
+  const csvStr = buildRecordsCsvString(records, propKeys);
+  zip.file(csvName, csvStr);
+
+  let fileCount = 0;
+  const attachmentEntries = records.flatMap((record) => collectRecordFileEntries(record));
+  const attachmentManifest = {
+    generatedAt,
+    appId: tgtAppId,
+    recordCount: records.length,
+    totalEntries: attachmentEntries.length,
+    downloadedCount: 0,
+    skippedCount: 0,
+    files: []
+  };
+
+  if (includeFiles) {
+    const blobCache = new Map();
+    for (let i = 0; i < attachmentEntries.length; i++) {
+      const entry = attachmentEntries[i];
+      setStatus(`添付ファイル取得中... (${i + 1}/${attachmentEntries.length})`);
+      let blob = blobCache.get(entry.fileKey);
+      if (blob === undefined) {
+        blob = await downloadBlobWithRetry(entry.fileKey, false, tgtGuestId);
+        blobCache.set(entry.fileKey, blob || null);
+      }
+      if (blob) {
+        zip.file(buildAttachmentZipPath(entry), blob);
+        attachmentManifest.downloadedCount += 1;
+        fileCount += 1;
+      } else {
+        attachmentManifest.skippedCount += 1;
+      }
+      attachmentManifest.files.push({
+        ...entry,
+        zipPath: buildAttachmentZipPath(entry),
+        downloaded: !!blob
+      });
+    }
+    if (!attachmentEntries.length) notes.push('添付ファイルなし');
+    else if (attachmentManifest.skippedCount) notes.push(`添付 ${attachmentManifest.skippedCount}件取得失敗`);
+    zip.file('attachments_manifest.json', JSON.stringify(attachmentManifest, null, 2));
+  } else {
+    notes.push('添付ファイル未取得');
+  }
+
+  let commentCount = 0;
+  let commentRecordCount = 0;
+  const commentsPayload = {
+    generatedAt,
+    appId: tgtAppId,
+    guestId: tgtGuestId || '',
+    recordCount: records.length,
+    records: [],
+    commentCount: 0,
+    _fetchError: ''
+  };
+
+  if (includeComments) {
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      const recordId = String(record?.$id?.value || '').trim();
+      if (!recordId) continue;
+      setStatus(`コメント取得中... (${i + 1}/${records.length})`);
+      try {
+        const comments = await fetchRecordComments(guestPrefix, tgtAppId, recordId);
+        if (comments.length) {
+          commentsPayload.records.push({
+            recordId,
+            recordNumber: getRecordNumberValue(record),
+            comments
+          });
+          commentRecordCount += 1;
+          commentCount += comments.length;
+        }
+      } catch (error) {
+        commentsPayload._fetchError = error.message || String(error);
+        notes.push('コメント取得に失敗したため一部スキップ');
+        break;
+      }
+    }
+    commentsPayload.commentCount = commentCount;
+    zip.file('comments/comments.json', JSON.stringify(commentsPayload, null, 2));
+    if (!commentCount && !commentsPayload._fetchError) notes.push('コメントなし');
+  } else {
+    notes.push('コメント未取得');
+  }
+
+  const manifest = {
+    generatedAt,
+    appId: tgtAppId,
+    guestId: tgtGuestId || '',
+    query: condition,
+    csv: {
+      name: csvName,
+      recordCount: records.length
+    },
+    attachments: {
+      included: includeFiles,
+      totalEntries: attachmentEntries.length,
+      downloadedCount: attachmentManifest.downloadedCount,
+      skippedCount: attachmentManifest.skippedCount
+    },
+    comments: {
+      included: includeComments,
+      commentCount,
+      recordCount: commentRecordCount,
+      fetchError: commentsPayload._fetchError || ''
+    }
+  };
+  zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+
+  setStatus('バックアップZIPを生成中...');
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  downloadBlob(zipName, zipBlob);
+
+  if (ui.recordBackupResult) {
+    ui.recordBackupResult.innerHTML = renderRecordBackupSummary({
+      zipName,
+      recordCount: records.length,
+      csvName,
+      includeFiles,
+      fileCount,
+      includeComments,
+      commentCount,
+      commentRecordCount,
+      notes
+    });
+  }
+
+  setStatus(`データバックアップZIPを保存しました（${records.length}件 / 添付${fileCount}件 / コメント${commentCount}件）`);
 }
 
 export async function runRecordCopy() {

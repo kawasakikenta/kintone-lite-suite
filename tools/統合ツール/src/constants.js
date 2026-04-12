@@ -99,12 +99,13 @@ export const SECTION_DEFS = [
   { key: 'categories', label: 'カテゴリ設定', endpoint: '/app/categories.json', put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
 ];
 
-export const SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS.filter((s) => s.key !== 'customizeSettings');
+export const SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS;
 
 export { FEATURE_DEFS, TAB_TO_FEATURE } from './featureDefs.mjs';
 
 /** 各タブが接続パネルのどの要素を必要とするかのマッピング */
 export const TAB_CONNECTION_NEEDS = {
+  diff:           { appInputs: true,  target: true,  connectionActions: true  },
   reflect:        { appInputs: true,  target: true,  connectionActions: true  },
   field:          { appInputs: true,  target: true,  connectionActions: false },
   jsconfig:       { appInputs: true,  target: true,  connectionActions: false },
@@ -143,7 +144,7 @@ export const DEFAULT_SUBTAB_STATE = Object.freeze({
 
 export const GUIDED_TOUR_STEPS = Object.freeze([
   {
-    tab: 'reflect',
+    tab: 'diff',
     diffSubTab: 'conditions',
     path: 'ヘッダー > 比較条件',
     selector: '#u_sourceApp',
@@ -151,15 +152,15 @@ export const GUIDED_TOUR_STEPS = Object.freeze([
     body: '上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。'
   },
   {
-    tab: 'reflect',
+    tab: 'diff',
     diffSubTab: 'conditions',
     path: 'ヘッダー > 比較条件',
-    selector: '#u_diffScopes',
+    selector: '[data-act="openDiffScopePicker"]',
     title: '3. 比較対象セクションを選ぶ',
-    body: '差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。'
+    body: '「比較対象を選ぶ」からポップアップを開き、差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。'
   },
   {
-    tab: 'reflect',
+    tab: 'diff',
     diffSubTab: 'conditions',
     path: 'ヘッダー > 比較条件',
     selector: '#u_ignoreKeyInput',
@@ -167,7 +168,7 @@ export const GUIDED_TOUR_STEPS = Object.freeze([
     body: '無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。'
   },
   {
-    tab: 'reflect',
+    tab: 'diff',
     diffSubTab: 'conditions',
     path: 'ヘッダー > 比較条件',
     selector: '#u_runDiffPrimary',
@@ -175,26 +176,26 @@ export const GUIDED_TOUR_STEPS = Object.freeze([
     body: '条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。'
   },
   {
-    tab: 'reflect',
-    diffSubTab: 'view',
-    path: 'ヘッダー > 結果整理',
+    tab: 'diff',
+    diffSubTab: 'conditions',
+    path: 'ヘッダー > 差分結果の整理',
     selector: '#u_diffSearch',
     title: '6. 結果を絞り込んで確認する',
-    body: '比較結果はセクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。'
+    body: '差分比較後は「差分結果の整理・出力」を開くと、セクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。'
   },
   {
     tab: 'reflect',
     path: 'プレビュー反映',
     selector: '#u_footerPlan',
     title: '7. 反映プランを先に確認する',
-    body: '画面下の固定バーから「反映プラン確認」を押し、API リクエスト内容や対象セクションを確認します。要約はメイン欄の「プラン要約」にも表示されます。'
+    body: '画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。要約はメイン欄のプラン欄にも表示されます。'
   },
   {
     tab: 'reflect',
     path: 'プレビュー反映',
     selector: '#u_footerApply',
     title: '8. 比較先プレビューへ反映する',
-    body: '固定バーの「比較元 → 比較先(プレビュー) 反映」でプレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。'
+    body: '固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。'
   },
   {
     tab: 'design',

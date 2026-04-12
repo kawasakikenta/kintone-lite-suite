@@ -292,6 +292,18 @@ export const buildHTML = (apps, options = {}) => {
     sourceGuestId: options.source?.guestId || '',
     sourcePreview: !!options.source?.preview
   });
+  const safeApps = Array.isArray(apps) ? apps : [];
+  const densityLabelMap = { compact: 'コンパクト', standard: '標準', full: '詳細' };
+  const summary = safeApps.reduce((acc, app) => {
+    acc.relations += Array.isArray(app?.relations) ? app.relations.length : 0;
+    acc.lookups += Number(app?.lookupCount || 0);
+    acc.refs += Number(app?.refCount || 0);
+    acc.actions += (app?.relations || []).filter((rel) => rel?.kind === 'ACTION').length;
+    acc.required += Number(app?.requiredCount || 0);
+    return acc;
+  }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
+  const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || '']).filter(Boolean).join(', ');
+  const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || '-');
   return /*html*/`<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -308,16 +320,20 @@ export const buildHTML = (apps, options = {}) => {
 :root{
   --bg:#08090d;--surface:#11131a;--surface2:#181c27;--border:#262d3d;
   --text:#d8dee9;--dim:#636e83;--accent:#5eead4;--accent2:#818cf8;
-  --lookup:#60a5fa;--ref:#34d399;--pk:#fbbf24;--req:#f87171;
+  --lookup:#60a5fa;--ref:#34d399;--pk:#fbbf24;--req:#f87171;--action:#f59e0b;
   --radius:10px;
 }
 [data-theme="light"]{
   --bg:#f0f2f5;--surface:#ffffff;--surface2:#f7f8fa;--border:#d8dce6;
   --text:#1a1c23;--dim:#6b7280;--accent:#0d9488;--accent2:#6366f1;
-  --lookup:#2563eb;--ref:#059669;--pk:#d97706;--req:#dc2626;
+  --lookup:#2563eb;--ref:#059669;--pk:#d97706;--req:#dc2626;--action:#d97706;
 }
 
-body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);overflow:hidden;height:100vh;}
+body{font-family:'DM Sans',sans-serif;background:
+  radial-gradient(circle at top left, rgba(94,234,212,0.08), transparent 28%),
+  radial-gradient(circle at top right, rgba(129,140,248,0.08), transparent 26%),
+  var(--bg);
+  color:var(--text);overflow:hidden;height:100vh;}
 
 /* ── Command Palette ── */
 #cmd-overlay{display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);justify-content:center;align-items:flex-start;padding-top:15vh;}
@@ -335,6 +351,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   position:fixed;top:0;left:0;right:0;z-index:100;
   display:flex;align-items:center;gap:6px;padding:8px 14px;
   background:linear-gradient(180deg,var(--bg) 82%,rgba(8,9,13,0.92));
+  backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
   flex-wrap:wrap;overflow-x:hidden;white-space:normal;
 }
 #topbar::-webkit-scrollbar{display:none;}
@@ -351,6 +369,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 #search-box{padding:5px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;width:180px;font-family:inherit;outline:none;}
 #search-box:focus{border-color:var(--accent);}
 #search-box::placeholder{color:var(--dim);}
+#search-meta{min-width:92px;justify-content:center;}
 .spacer{flex:1 1 24px;}
 
 
@@ -358,6 +377,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   #topbar{padding-right:10px;row-gap:8px;}
   #topbar .sep{display:none;}
   #search-box{width:min(220px,100%);flex:1 1 220px;}
+  #search-meta{min-width:0;}
+}
+@media (max-width: 900px){
+  #overview{top:106px;width:calc(100vw - 24px);left:12px;}
+  .ov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+  #detail{width:min(92vw,390px);}
 }
 
 /* ── Sidebar ── */
@@ -375,14 +400,15 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 .app-list-item{padding:6px 8px;cursor:pointer;border-radius:6px;margin:2px 0;transition:.1s;}
 .app-list-item:hover{background:var(--surface2);}
 .app-list-item.highlighted{background:rgba(94,234,212,0.12);border:1px solid var(--accent);}
+.app-list-item.active-app{background:rgba(129,140,248,0.12);border:1px solid var(--accent2);}
 .filter-chip{display:inline-block;padding:3px 8px;margin:2px;border:1px solid var(--border);border-radius:20px;font-size:10px;cursor:pointer;transition:.1s;}
 .filter-chip:hover,.filter-chip.active{background:var(--accent);color:#000;border-color:var(--accent);}
 
 /* ── Detail Panel ── */
 #detail{
-  position:fixed;top:48px;right:0;width:360px;max-height:calc(100vh - 56px);
+  position:fixed;top:54px;right:0;width:390px;max-height:calc(100vh - 62px);
   overflow-y:auto;z-index:90;background:var(--surface);border-left:1px solid var(--border);
-  padding:20px;display:none;
+  padding:20px;display:none;box-shadow:-18px 0 36px rgba(0,0,0,0.18);
 }
 #detail.open{display:block;}
 #detail h2{font-size:15px;margin-bottom:4px;color:var(--accent);}
@@ -390,10 +416,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 .detail-chip-row{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px;}
 .close-btn{position:absolute;top:12px;right:14px;background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;}
 .field-group-title{font-size:11px;font-weight:600;color:var(--dim);margin:12px 0 6px;text-transform:uppercase;letter-spacing:.05em;}
-.field-row{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;font-size:11px;font-family:'DM Mono',monospace;border-bottom:1px solid var(--border);}
+.field-row{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:8px;font-size:11px;border-bottom:1px solid var(--border);}
 .field-row:hover{background:var(--surface2);}
 .field-icon{width:18px;text-align:center;flex-shrink:0;}
-.field-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.field-main{flex:1;min-width:0;}
+.field-name{display:flex;align-items:center;gap:4px;flex-wrap:wrap;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;}
+.field-sub{margin-top:2px;font-size:10px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'DM Mono',monospace;}
 .field-type{color:var(--dim);font-size:10px;flex-shrink:0;}
 .tag{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:600;margin-left:4px;}
 .tag-pk{background:rgba(251,191,36,0.15);color:var(--pk);}
@@ -456,6 +484,24 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
 }
 #banner .meta-pill{pointer-events:auto;box-shadow:0 8px 20px rgba(0,0,0,0.18);}
 
+/* ── Overview ── */
+#overview{
+  position:fixed;top:94px;left:16px;z-index:94;width:min(460px,calc(100vw - 32px));
+  background:var(--surface);
+  border:1px solid var(--border);border-radius:16px;padding:16px 16px 14px;
+  box-shadow:0 18px 40px rgba(0,0,0,0.22);backdrop-filter:blur(12px);
+}
+#overview.collapsed .ov-sub,#overview.collapsed .ov-grid,#overview.collapsed .ov-tip-row{display:none;}
+.ov-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;}
+.ov-title{font-size:14px;font-weight:700;color:var(--text);}
+.ov-sub{margin-top:4px;font-size:11px;line-height:1.6;color:var(--dim);}
+.ov-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;}
+.ov-card{padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface2);display:flex;flex-direction:column;gap:4px;min-height:72px;}
+.ov-kpi{font-size:18px;font-weight:700;line-height:1;color:var(--text);}
+.ov-label{font-size:10px;color:var(--dim);}
+.ov-tip-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
+.ov-tip-row span{padding:5px 8px;border-radius:999px;background:var(--surface2);border:1px solid var(--border);font-size:10px;color:var(--dim);}
+
 /* ── Toast ── */
 #toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%) translateY(20px);z-index:600;padding:8px 20px;background:var(--accent);color:#000;border-radius:8px;font-size:12px;font-weight:600;opacity:0;transition:.3s;pointer-events:none;}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
@@ -479,10 +525,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   <h1>⬡ kintone ER図</h1>
   <span class="meta-pill"><b>開始</b> ${esc((Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", "))}</span>
   <span class="meta-pill" id="layout-pill"><b>レイアウト</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
-  <span class="meta-pill"><b>表示密度</b> ${esc(String(options.fieldDensity || ER_DEFAULTS.fieldDensity))}</span>
+  <span class="meta-pill" id="density-pill"><b>表示密度</b> ${esc(densityLabel)}</span>
   <span class="meta-pill"><b>探索深さ</b> ${esc(String(options.maxDepth || 0))}</span>
   <div class="sep"></div>
   <button class="tb" onclick="toggleSidebar()" title="Ctrl+B">📊 統計</button>
+  <button class="tb" id="overview-toggle-btn" onclick="toggleOverview()">ガイドを隠す</button>
   <button class="tb" onclick="togglePathFinder()">🔍 経路探索</button>
   <div class="sep"></div>
   <button class="tb" data-layout-btn="dagre" onclick="setLayout('dagre')">Dagre</button>
@@ -491,8 +538,14 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   <button class="tb" data-layout-btn="circle" onclick="setLayout('circle')">円形</button>
   <button class="tb" data-layout-btn="breadthfirst" onclick="setLayout('breadthfirst')">ツリー</button>
   <button class="tb" data-layout-btn="concentric" onclick="setLayout('concentric')">同心円</button>
+  <select id="density-select" class="tb-select" onchange="setDensity(this.value)">
+    <option value="compact">密度: コンパクト</option>
+    <option value="standard">密度: 標準</option>
+    <option value="full">密度: 詳細</option>
+  </select>
   <div class="sep"></div>
   <input id="search-box" placeholder="🔎 アプリ・フィールド検索 (Ctrl+F)" oninput="searchGraph(this.value)">
+  <span class="meta-pill" id="search-meta"><b>検索</b> すべて</span>
   <button class="tb active" id="focus-toggle-btn" onclick="toggleFocusMode()">🎯 関連強調 ON</button>
   <select id="focus-depth" class="tb-select" onchange="updateFocusOptions()">
     <option value="1">深さ1</option>
@@ -508,6 +561,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   <button class="tb active" id="rel-lookup-btn" onclick="toggleRelationKind('LOOKUP')">ルックアップ線</button>
   <button class="tb active" id="rel-ref-btn" onclick="toggleRelationKind('REF')">関連線</button>
   <button class="tb active" id="rel-action-btn" onclick="toggleRelationKind('ACTION')">アクション線</button>
+  <button class="tb active" id="rel-label-btn" onclick="toggleRelationLabels()">線ラベル</button>
   <button class="tb" onclick="removeSelectedRelations()">🗑 関連削除</button>
   <button class="tb" onclick="restoreRemovedRelations()">↺ 削除復元</button>
   <button class="tb" onclick="removeSelectedApps()">🗑 アプリ削除</button>
@@ -533,6 +587,30 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);ove
   <span class="meta-pill"><b>ゲスト</b> ${esc(options.source?.guestId ? `ゲスト ${String(options.source.guestId)}` : '通常空間')}</span>
   <span class="meta-pill"><b>モード</b> ${options.source?.preview ? 'プレビュー' : '本番'}</span>
   <span class="meta-pill"><b>サブテーブル</b> ${options.includeSubtableFields ? 'ON' : 'OFF'}</span>
+</div>
+
+<div id="overview">
+  <div class="ov-head">
+    <div>
+      <div class="ov-title">見方のガイド</div>
+      <div class="ov-sub">開始アプリの周辺から追って、検索と関連強調で範囲を絞ると読みやすくなります。詳細度は上部の「密度」でその場で切り替えできます。</div>
+    </div>
+  </div>
+  <div class="ov-grid">
+    <div class="ov-card"><span class="ov-kpi">${safeApps.length}</span><span class="ov-label">アプリ</span></div>
+    <div class="ov-card"><span class="ov-kpi">${summary.relations}</span><span class="ov-label">総関連</span></div>
+    <div class="ov-card"><span class="ov-kpi">${summary.lookups}</span><span class="ov-label">Lookup</span></div>
+    <div class="ov-card"><span class="ov-kpi">${summary.refs}</span><span class="ov-label">関連レコード</span></div>
+    <div class="ov-card"><span class="ov-kpi">${summary.actions}</span><span class="ov-label">アクション</span></div>
+  </div>
+  <div class="ov-tip-row">
+    <span>開始: ${esc(startAppText || '-')}</span>
+    <span>必須項目: ${summary.required}</span>
+    <span>クリックで詳細</span>
+    <span>右クリックで固定</span>
+    <span>Alt/⌥ + 右クリックで非表示</span>
+    <span>Shift + F で関連強調</span>
+  </div>
 </div>
 
 <!-- Sidebar -->
@@ -604,6 +682,13 @@ if (window.cytoscapeDagre) cytoscape.use(window.cytoscapeDagre);
 
 // ─── Toast ───
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2000);}
+function escapeHtml(value){
+  return String(value == null ? "" : value)
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;");
+}
 
 // ─── Theme ───
 const THEME_KEY = "kintone-erd-theme";
@@ -616,15 +701,21 @@ function currentPalette(){
     text: readCssVar("--text", isDark ? "#d8dee9" : "#1a1c23"),
     dim: readCssVar("--dim", isDark ? "#636e83" : "#6b7280"),
     accent: readCssVar("--accent", isDark ? "#5eead4" : "#0d9488"),
+    accent2: readCssVar("--accent2", isDark ? "#818cf8" : "#6366f1"),
     lookup: readCssVar("--lookup", isDark ? "#60a5fa" : "#2563eb"),
     ref: readCssVar("--ref", isDark ? "#34d399" : "#059669"),
     pk: readCssVar("--pk", isDark ? "#fbbf24" : "#d97706"),
     req: readCssVar("--req", isDark ? "#f87171" : "#dc2626"),
+    action: readCssVar("--action", isDark ? "#f59e0b" : "#d97706"),
     bg: readCssVar("--bg", isDark ? "#08090d" : "#f0f2f5"),
     surface: readCssVar("--surface", isDark ? "#11131a" : "#ffffff"),
     surface2: readCssVar("--surface2", isDark ? "#181c27" : "#f7f8fa"),
     border: readCssVar("--border", isDark ? "#262d3d" : "#d8dce6")
   };
+}
+function formatFieldDensityLabel(density){
+  const map = { compact:"コンパクト", standard:"標準", full:"詳細" };
+  return map[density] || density || "-";
 }
 function fieldIconForLabel(f){
   if(f.isPK) return "🔑";
@@ -644,8 +735,33 @@ function buildFieldDisplayName(field){
   if(field.inSubtable && field.tableLabel) return field.tableLabel + " > " + (field.label || field.code || "");
   return field.label || field.code || field.path || "";
 }
+function fieldPrefixForNodeLabel(field){
+  if(field.isPK) return "KEY";
+  if(field.isLookup) return "FK";
+  if(field.isRef) return "REF";
+  if(field.required) return "REQ";
+  if(field.type === "SUBTABLE") return "SUB";
+  if(field.inSubtable) return "COL";
+  return "FLD";
+}
+function buildFieldPreviewLine(field){
+  const label = buildFieldDisplayName(field).trim();
+  const code = String(field.code || "").trim();
+  const type = String(field.type || "").trim();
+  const prefix = fieldPrefixForNodeLabel(field);
+  if(ER_OPTIONS.fieldDensity === "compact"){
+    return prefix + " " + label;
+  }
+  if(ER_OPTIONS.fieldDensity === "full"){
+    const extras = [];
+    if(code && code !== label) extras.push("[" + code + "]");
+    if(type) extras.push(type);
+    return prefix + " " + label + (extras.length ? " • " + extras.join(" • ") : "");
+  }
+  return prefix + " " + label + (code && code !== label ? " [" + code + "]" : "");
+}
 function buildNodeLabel(app){
-  const limits = { compact: 8, standard: 14, full: 24 };
+  const limits = { compact: 6, standard: 10, full: 16 };
   const maxLines = limits[ER_OPTIONS.fieldDensity] || limits.standard;
   const fields = visibleFieldsForNode(app);
   const ordered = fields.slice().sort((a,b)=>{
@@ -654,15 +770,15 @@ function buildNodeLabel(app){
     if(diff !== 0) return diff;
     return String(buildFieldDisplayName(a) || a.code || '').localeCompare(String(buildFieldDisplayName(b) || b.code || ''));
   });
-  const preview = ordered.slice(0, maxLines).map((f)=>fieldIconForLabel(f) + " " + buildFieldDisplayName(f).trim());
-  if(ordered.length > maxLines) preview.push("… +" + (ordered.length - maxLines) + " 件");
+  const preview = ordered.slice(0, maxLines).map((f)=>buildFieldPreviewLine(f));
+  if(ordered.length > maxLines) preview.push("+ " + (ordered.length - maxLines) + " 件");
   const meta = [
-    "ID:" + app.id,
-    "項目:" + fields.length,
-    "関連:" + app.relations.length,
-    "深さ:" + (app.depth || 0)
-  ].join(" • ");
-  return [app.name, meta, "─────────", ...preview].join("\\n");
+    "App " + app.id,
+    fields.length + "項目",
+    app.relations.length + "関連",
+    "深さ " + (app.depth || 0)
+  ].join(" / ");
+  return [(app.depth || 0) === 0 ? "★ " + app.name : app.name, meta, ...preview].join("\\n");
 }
 function detailFieldGroups(app){
   const groups={pk:[],lookup:[],ref:[],required:[],subtable:[],normal:[]};
@@ -691,15 +807,23 @@ function buildLayoutOptions(name, initial){
   if(name === "concentric") return Object.assign(base, { name: "concentric", concentric: n => (n.data("relCount") || 0) + 1, levelWidth: () => 2 });
   return Object.assign(base, { name: "cose", nodeRepulsion: 900000, idealEdgeLength: 280, gravity: 0.22, numIter: 1400 });
 }
+function densityNodeMetrics(){
+  if(ER_OPTIONS.fieldDensity === "compact") return { maxWidth:"230px", fontSize:"9px", padding:"12px", lineHeight:"1.22" };
+  if(ER_OPTIONS.fieldDensity === "full") return { maxWidth:"320px", fontSize:"10.5px", padding:"18px", lineHeight:"1.35" };
+  return { maxWidth:"280px", fontSize:"10px", padding:"15px", lineHeight:"1.3" };
+}
 function buildCyStyle(palette){
+  const nodeMetrics = densityNodeMetrics();
   return [
     {selector:"node",style:{
       "shape":"round-rectangle","label":"data(label)","text-valign":"center","text-halign":"center",
-      "text-wrap":"wrap","text-max-width":"250px","font-size":"9.5px","line-height":"1.25",
-      "font-family":"'DM Mono',monospace","color":palette.text,"text-outline-color":palette.surface,"text-outline-width":"1px",
-      "background-color":palette.surface,"border-width":2,"border-color":palette.border,"padding":"15px","width":"label","height":"label"
+      "text-wrap":"wrap","text-max-width":nodeMetrics.maxWidth,"font-size":nodeMetrics.fontSize,"line-height":nodeMetrics.lineHeight,
+      "font-family":"'DM Sans','Hiragino Sans','Yu Gothic UI',sans-serif","font-weight":600,"color":palette.text,
+      "text-outline-color":palette.surface,"text-outline-width":"2px",
+      "background-color":palette.surface,"border-width":2,"border-color":palette.border,"padding":nodeMetrics.padding,"width":"label","height":"label"
     }},
     {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
+    {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":4,"background-color":isDark ? "#11162d" : "#eef2ff"}},
     {selector:"node:selected",style:{"border-color":palette.accent,"border-width":4,"overlay-color":"transparent"}},
     {selector:"node.highlighted",style:{"border-color":palette.pk,"border-width":3,"background-color":isDark ? "#1a1805" : "#fffbeb"}},
     {selector:"node.path-node",style:{"border-color":"#f472b6","border-width":4,"background-color":isDark ? "#1a0a12" : "#fdf2f8"}},
@@ -725,12 +849,13 @@ function buildCyStyle(palette){
       "text-background-color":palette.bg,"text-background-opacity":0.78,"text-background-padding":"3px"
     }},
     {selector:'edge[kind="ACTION"]',style:{
-      "width":2.2,"line-color":"#f59e0b","line-style":"dotted","target-arrow-color":"#f59e0b",
+      "width":2.2,"line-color":palette.action,"line-style":"dotted","target-arrow-color":palette.action,
       "target-arrow-shape":"triangle","source-arrow-shape":"none","curve-style":"bezier",
-      "label":"data(label)","font-size":"9px","color":"#f59e0b",
+      "label":"data(label)","font-size":"9px","color":palette.action,
       "text-outline-color":palette.bg,"text-outline-width":"2px",
       "text-background-color":palette.bg,"text-background-opacity":0.78,"text-background-padding":"3px"
     }},
+    {selector:"edge.label-hidden",style:{"text-opacity":0,"text-background-opacity":0}},
     {selector:"edge.path-edge",style:{"width":4,"line-color":"#f472b6","target-arrow-color":"#f472b6","source-arrow-color":"#f472b6","z-index":999}},
     {selector:"edge.focus-edge",style:{"width":4,"line-color":palette.accent,"target-arrow-color":palette.accent,"source-arrow-color":palette.accent,"z-index":998}},
     {selector:"edge.rel-hidden",style:{"display":"none"}},
@@ -753,6 +878,7 @@ function toggleTheme(){
 applyTheme();
 
 // ─── Cytoscape Init ───
+const startAppIdSet = new Set((ER_OPTIONS.startAppIds || []).map((id)=>String(id)));
 const elements=[];
 APPS.forEach(app=>{
   elements.push({data:{
@@ -760,6 +886,7 @@ APPS.forEach(app=>{
     label:buildNodeLabel(app),
     appId:app.id,
     isError:!app.ok,
+    isStart:startAppIdSet.has(String(app.id)),
     fieldCount:visibleFieldsForNode(app).length,
     relCount:app.relations.length,
     depth:app.depth || 0
@@ -790,10 +917,52 @@ function syncLayoutButtons(name){
     btn.classList.toggle("active", btn.dataset.layoutBtn === name);
   });
 }
+function refreshNodeLabels(){
+  APPS.forEach((app)=>{
+    const node = cy.getElementById("a"+app.id);
+    if(node.length) node.data("label", buildNodeLabel(app));
+  });
+}
+function syncDensityControl(){
+  const select = document.getElementById("density-select");
+  if(select) select.value = ER_OPTIONS.fieldDensity || "standard";
+  const pill = document.getElementById("density-pill");
+  if(pill) pill.innerHTML = "<b>表示密度</b> " + formatFieldDensityLabel(ER_OPTIONS.fieldDensity);
+}
+function setDensity(value){
+  const next = ["compact","standard","full"].includes(String(value)) ? String(value) : "standard";
+  ER_OPTIONS.fieldDensity = next;
+  refreshNodeLabels();
+  applyCyTheme();
+  syncDensityControl();
+  toast("表示密度: " + formatFieldDensityLabel(next));
+}
+function toggleOverview(){
+  const panel = document.getElementById("overview");
+  const btn = document.getElementById("overview-toggle-btn");
+  if(!panel) return;
+  const nextCollapsed = !panel.classList.contains("collapsed");
+  panel.classList.toggle("collapsed", nextCollapsed);
+  if(btn) btn.textContent = nextCollapsed ? "ガイドを開く" : "ガイドを隠す";
+}
+function updateSearchMeta(query, matched){
+  const pill = document.getElementById("search-meta");
+  if(!pill) return;
+  const normalized = String(query || "").trim();
+  if(!normalized){
+    pill.innerHTML = "<b>検索</b> すべて";
+    pill.title = "";
+    return;
+  }
+  pill.innerHTML = "<b>検索</b> " + matched + "件";
+  pill.title = normalized;
+}
 
 function fit(){cy.fit(undefined,60);}
 cy.one("layoutstop",()=>setTimeout(fit,200));
 syncLayoutButtons(ER_OPTIONS.layoutName || "dagre");
+syncDensityControl();
+updateSearchMeta("", 0);
 
 // ─── Export ───
 function exportPNG(){
@@ -817,15 +986,17 @@ function setLayout(name){
   const pill = document.getElementById("layout-pill");
   if(pill) pill.innerHTML = "<b>レイアウト</b> " + layoutDisplayName(name);
   cy.layout(buildLayoutOptions(name, false)).run();
-  toast("レイアウト: "+name);
+  toast("レイアウト: " + layoutDisplayName(name));
 }
 
 const relationKindState = { LOOKUP: true, REF: true, ACTION: true };
+let relationLabelVisible = true;
 let focusMode = true;
 let focusDepth = 1;
 let focusDirection = "both";
 let currentFocusNodeId = "";
 let lastTappedNodeId = "";
+let activeAppId = 0;
 const pinnedNodeIds = new Set();
 
 function syncLegendState(){
@@ -835,6 +1006,25 @@ function syncLegendState(){
   if(lookup) lookup.classList.toggle("off", !relationKindState.LOOKUP);
   if(ref) ref.classList.toggle("off", !relationKindState.REF);
   if(action) action.classList.toggle("off", !relationKindState.ACTION);
+}
+function syncRelationLabelButton(){
+  const btn = document.getElementById("rel-label-btn");
+  if(!btn) return;
+  btn.classList.toggle("active", relationLabelVisible);
+  btn.textContent = relationLabelVisible ? "線ラベル" : "線ラベル OFF";
+}
+function applyRelationLabelVisibility(){
+  cy.edges().toggleClass("label-hidden", !relationLabelVisible);
+  syncRelationLabelButton();
+}
+function toggleRelationLabels(){
+  relationLabelVisible = !relationLabelVisible;
+  applyRelationLabelVisibility();
+  toast(relationLabelVisible ? "線ラベルを表示" : "線ラベルを非表示");
+}
+function setActiveApp(appId){
+  activeAppId = Number(appId) || 0;
+  refreshAppList();
 }
 
 function applyRelationFilter(){
@@ -1048,19 +1238,24 @@ function clearPins(){
 }
 
 applyRelationFilter();
+applyRelationLabelVisibility();
 updateFocusOptions();
 
 // ─── Search & Highlight ───
 function searchGraph(q){
   cy.elements().removeClass("highlighted dimmed");
-  if(!q.trim()) return;
+  if(!q.trim()){
+    updateSearchMeta("", 0);
+    return;
+  }
   const low=q.toLowerCase();
   const matched=cy.nodes().not(".app-manual-hidden").filter(n=>{
     const app=appMap.get(n.data("appId"));
     if(!app) return false;
-    if(app.name.toLowerCase().includes(low)) return true;
+    if(app.name.toLowerCase().includes(low) || String(app.id).includes(low)) return true;
     return visibleFieldsForNode(app).some(f=>buildFieldDisplayName(f).toLowerCase().includes(low)||(f.code||"").toLowerCase().includes(low)||String(f.path||"").toLowerCase().includes(low));
   });
+  updateSearchMeta(q, matched.length);
   if(matched.length){
     matched.addClass("highlighted");
     const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
@@ -1069,65 +1264,94 @@ function searchGraph(q){
 }
 
 // ─── Click Detail ───
+function renderAppDetail(app){
+  const visibleFields = visibleFieldsForNode(app);
+  const fieldGroups = detailFieldGroups(app);
+  const panel = document.getElementById("detail");
+  document.getElementById("detail-title").textContent = app.name;
+  document.getElementById("detail-meta").innerHTML = "ID: " + escapeHtml(app.id)
+    + (app.createdAt ? " | 作成: " + escapeHtml(new Date(app.createdAt).toLocaleDateString()) : "")
+    + (app.modifiedAt ? " | 更新: " + escapeHtml(new Date(app.modifiedAt).toLocaleDateString()) : "")
+    + '<div class="detail-chip-row">'
+    + '<span class="meta-pill"><b>項目</b> ' + visibleFields.length + '</span>'
+    + '<span class="meta-pill"><b>ルックアップ</b> ' + fieldGroups.lookup.length + '</span>'
+    + '<span class="meta-pill"><b>関連</b> ' + fieldGroups.ref.length + '</span>'
+    + '<span class="meta-pill"><b>必須</b> ' + fieldGroups.required.length + '</span>'
+    + '<span class="meta-pill"><b>深さ</b> ' + (app.depth || 0) + '</span>'
+    + '</div>';
+
+  const relationGroups = [
+    { key:"LOOKUP", label:"ルックアップ", icon:"🔗" },
+    { key:"REF", label:"関連レコード", icon:"📋" },
+    { key:"ACTION", label:"アクション", icon:"⚡" }
+  ];
+  let relHtml = "";
+  relationGroups.forEach((group)=>{
+    const items = (app.relations || []).filter((rel)=>rel.kind === group.key);
+    if(!items.length) return;
+    relHtml += '<div class="field-group-title">' + group.label + ' (' + items.length + ')</div>';
+    items
+      .slice()
+      .sort((a,b)=>String(a.fromDisplay || a.fromLabel || a.from || '').localeCompare(String(b.fromDisplay || b.fromLabel || b.from || '')))
+      .forEach((rel)=>{
+        const targetApp = appMap.get(rel.toApp);
+        const targetName = targetApp ? targetApp.name : "アプリ " + rel.toApp;
+        const relationLabel = rel.fromDisplay || rel.fromLabel || rel.from || group.label;
+        const relationMeta = [];
+        if(rel.fromPath && rel.fromPath !== rel.from) relationMeta.push("path: " + rel.fromPath);
+        if(rel.toField) relationMeta.push("to: " + rel.toField);
+        relHtml += '<div class="field-row" style="cursor:pointer" onclick="focusApp(' + rel.toApp + ')">'
+          + '<span class="field-icon">' + group.icon + '</span>'
+          + '<div class="field-main">'
+          + '<div class="field-name" title="' + escapeHtml(relationLabel + ' → ' + targetName) + '">' + escapeHtml(relationLabel) + ' → ' + escapeHtml(targetName) + '</div>'
+          + '<div class="field-sub">' + escapeHtml(relationMeta.join(' / ') || '接続先をクリックで移動') + '</div>'
+          + '</div>'
+          + '<span class="field-type">' + escapeHtml(group.key === "ACTION" ? "ACTION" : group.key) + '</span>'
+          + '</div>';
+      });
+  });
+  document.getElementById("detail-relations").innerHTML = relHtml || '<div class="field-group-title">リレーション</div><div class="field-sub">関連はありません。</div>';
+
+  let fieldHtml = "";
+  const renderGroup = (title, fields, tagClass, tagLabel) => {
+    if(!fields.length) return;
+    fieldHtml += '<div class="field-group-title">' + title + ' (' + fields.length + ')</div>';
+    fields.forEach((field)=>{
+      let tags = "";
+      if(tagLabel) tags += '<span class="tag ' + tagClass + '">' + tagLabel + '</span>';
+      if(field.required && tagLabel !== "必須") tags += '<span class="tag tag-req">必須</span>';
+      if(field.inSubtable) tags += '<span class="tag tag-sub">表</span>';
+      if(field.unique) tags += '<span class="tag tag-pk">重複不可</span>';
+      const fieldName = buildFieldDisplayName(field);
+      const meta = ["code: " + (field.code || "-")];
+      if(field.path && field.path !== field.code) meta.push("path: " + field.path);
+      if(field.tableLabel) meta.push("table: " + field.tableLabel);
+      fieldHtml += '<div class="field-row" title="' + escapeHtml(fieldName) + '">'
+        + '<span class="field-icon">' + fieldIconForLabel(field) + '</span>'
+        + '<div class="field-main">'
+        + '<div class="field-name">' + escapeHtml(fieldName) + tags + '</div>'
+        + '<div class="field-sub">' + escapeHtml(meta.join(' / ')) + '</div>'
+        + '</div>'
+        + '<span class="field-type">' + escapeHtml(field.type || "-") + '</span>'
+        + '</div>';
+    });
+  };
+  renderGroup("主キー", fieldGroups.pk, "tag-pk", "PK");
+  renderGroup("ルックアップ (FK)", fieldGroups.lookup, "tag-fk", "FK");
+  renderGroup("関連レコード", fieldGroups.ref, "tag-ref", "REF");
+  renderGroup("必須フィールド", fieldGroups.required, "tag-req", "必須");
+  renderGroup("サブテーブル", fieldGroups.subtable, "tag-sub", "Table");
+  renderGroup("その他フィールド", fieldGroups.normal, "", "");
+  document.getElementById("detail-fields").innerHTML = fieldHtml || '<div class="field-group-title">フィールド</div><div class="field-sub">表示できるフィールドはありません。</div>';
+
+  panel.classList.add("open");
+  setActiveApp(app.id);
+}
 cy.on("tap","node",e=>{
   lastTappedNodeId = e.target.id();
   const app=appMap.get(e.target.data("appId"));
   if(!app) return;
-  const visibleFields = visibleFieldsForNode(app);
-  const fieldGroups = detailFieldGroups(app);
-  const p=document.getElementById("detail");
-  document.getElementById("detail-title").textContent=app.name;
-  document.getElementById("detail-meta").innerHTML="ID: "+app.id
-    +(app.createdAt?" | 作成: "+new Date(app.createdAt).toLocaleDateString():"")
-    +(app.modifiedAt?" | 更新: "+new Date(app.modifiedAt).toLocaleDateString():"");
-
-  // Relations
-  let relHtml="";
-  if(app.relations.length){
-    relHtml='<div class="field-group-title">リレーション</div>';
-    app.relations.forEach(r=>{
-      const tgt=appMap.get(r.toApp);
-      const tName=tgt?tgt.name:"アプリ "+r.toApp;
-      const icon=r.kind==="LOOKUP"?"🔗":(r.kind==="REF"?"📋":"⚡");
-      const relationLabel = r.fromDisplay || r.fromLabel || r.from || '';
-      relHtml+='<div class="field-row" style="cursor:pointer" onclick="focusApp('+r.toApp+')"><span class="field-icon">'+icon+'</span><span class="field-name" title="'+relationLabel+' → '+tName+'">'+relationLabel+' → '+tName+'</span><span class="field-type">'+(r.kind==="ACTION"?"ACTION(アクション)":r.kind)+'</span></div>';
-    });
-  }
-  document.getElementById("detail-relations").innerHTML=relHtml;
-  document.getElementById("detail-meta").innerHTML += '<div class="detail-chip-row">'
-    + '<span class="meta-pill"><b>項目</b> '+visibleFields.length+'</span>'
-    + '<span class="meta-pill"><b>ルックアップ</b> '+fieldGroups.lookup.length+'</span>'
-    + '<span class="meta-pill"><b>関連</b> '+fieldGroups.ref.length+'</span>'
-    + '<span class="meta-pill"><b>必須</b> '+fieldGroups.required.length+'</span>'
-    + '<span class="meta-pill"><b>深さ</b> '+(app.depth || 0)+'</span>'
-    + '</div>';
-
-  // Fields grouped
-  let fHtml="";
-  const renderGroup=(title,fields,tagClass,tagLabel)=>{
-    if(!fields.length) return;
-    fHtml+='<div class="field-group-title">'+title+" ("+fields.length+")</div>";
-    fields.forEach(f=>{
-      let icon=fieldIconForLabel(f);
-      let tags="";
-      if(tagLabel) tags='<span class="tag '+tagClass+'">'+tagLabel+"</span>";
-      if(f.required&&tagLabel!=="必須") tags+='<span class="tag tag-req">必須</span>';
-      if(f.inSubtable) tags+='<span class="tag tag-sub">表</span>';
-      if(f.unique) tags+='<span class="tag tag-pk">重複不可</span>';
-      const fieldName = buildFieldDisplayName(f);
-      const title = f.path && f.path !== f.code ? fieldName+' ['+f.path+']' : fieldName;
-      fHtml+='<div class="field-row" title="'+title+'"><span class="field-icon">'+icon+'</span><span class="field-name">'+fieldName+tags+'</span><span class="field-type">'+f.type+"</span></div>";
-    });
-  };
-  renderGroup("主キー",fieldGroups.pk,"tag-pk","PK");
-  renderGroup("ルックアップ (FK)",fieldGroups.lookup,"tag-fk","FK");
-  renderGroup("関連レコード",fieldGroups.ref,"tag-ref","REF");
-  renderGroup("必須フィールド",fieldGroups.required,"tag-req","必須");
-  renderGroup("サブテーブル",fieldGroups.subtable,"tag-sub","Table");
-  renderGroup("その他フィールド",fieldGroups.normal,"","");
-  document.getElementById("detail-fields").innerHTML=fHtml;
-
-  p.classList.add("open");
+  renderAppDetail(app);
   if(focusMode) applyFocusToNode(e.target);
 });
 cy.on("cxttap","node",e=>{
@@ -1156,13 +1380,18 @@ cy.on("cxttap","edge",e=>{
 });
 cy.on("tap",e=>{if(e.target===cy){closeDetail();cy.elements().removeClass("highlighted dimmed path-node path-edge");clearFocus(true);}});
 
-function closeDetail(){document.getElementById("detail").classList.remove("open");}
+function closeDetail(){
+  document.getElementById("detail").classList.remove("open");
+  setActiveApp(0);
+}
 
 function focusApp(id){
   const n=cy.getElementById("a"+id);
   if(n.length && !n.hasClass("app-manual-hidden")){
     cy.animate({center:{eles:n},zoom:1.5},{ duration:400 });
     n.select();
+    const app = appMap.get(id);
+    if(app) renderAppDetail(app);
     if(focusMode) applyFocusToNode(n, true);
   }
 }
@@ -1201,13 +1430,24 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
 
 function refreshAppList(){
   let aHtml="";
-  APPS.forEach(a=>{
+  APPS
+    .slice()
+    .sort((a,b)=>{
+      const aStart = startAppIdSet.has(String(a.id)) ? 0 : 1;
+      const bStart = startAppIdSet.has(String(b.id)) ? 0 : 1;
+      if(aStart !== bStart) return aStart - bStart;
+      if((a.depth || 0) !== (b.depth || 0)) return (a.depth || 0) - (b.depth || 0);
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    })
+    .forEach(a=>{
     const visibleCount = visibleFieldsForNode(a).length;
     const node = cy.getElementById('a'+a.id);
     const hidden = node.length && node.hasClass('app-manual-hidden');
+    const activeCls = Number(activeAppId) === Number(a.id) ? ' active-app' : '';
     const hiddenCls = hidden ? ' highlighted' : '';
+    const startMeta = startAppIdSet.has(String(a.id)) ? ' / 開始' : '';
     const hiddenMeta = hidden ? ' / 非表示' : '';
-    aHtml+='<div class="app-list-item'+hiddenCls+'" onclick="focusApp('+a.id+')">'+a.name+' <span style="color:var(--dim);font-size:10px">('+visibleCount+' 項目 / '+a.relations.length+' 関連'+hiddenMeta+')</span></div>';
+    aHtml+='<div class="app-list-item'+activeCls+hiddenCls+'" onclick="focusApp('+a.id+')">'+escapeHtml(a.name)+' <span style="color:var(--dim);font-size:10px">('+visibleCount+' 項目 / '+a.relations.length+' 関連 / 深さ '+(a.depth || 0)+startMeta+hiddenMeta+')</span></div>';
   });
   document.getElementById("app-list").innerHTML=aHtml;
 }
@@ -1314,13 +1554,18 @@ const commands=[
   {label:"円形 レイアウト",icon:"◯",action:()=>setLayout("circle")},
   {label:"ツリー レイアウト",icon:"🌳",action:()=>setLayout("breadthfirst")},
   {label:"同心円 レイアウト",icon:"◎",action:()=>setLayout("concentric")},
+  {label:"表示密度: コンパクト",icon:"🪶",action:()=>setDensity("compact")},
+  {label:"表示密度: 標準",icon:"📄",action:()=>setDensity("standard")},
+  {label:"表示密度: 詳細",icon:"🧾",action:()=>setDensity("full")},
   {label:"統計パネル",icon:"📊",action:toggleSidebar,keys:"Ctrl+B"},
+  {label:"ガイドパネル 表示/非表示",icon:"🧭",action:toggleOverview},
   {label:"経路探索",icon:"🔍",action:togglePathFinder},
   {label:"関連強調 ON/OFF",icon:"🎯",action:toggleFocusMode,keys:"Shift+F"},
   {label:"関連強調解除",icon:"🧹",action:()=>clearFocus()},
   {label:"ルックアップ線 ON/OFF",icon:"🔗",action:()=>toggleRelationKind("LOOKUP")},
   {label:"関連線 ON/OFF",icon:"📋",action:()=>toggleRelationKind("REF")},
   {label:"アクション線 ON/OFF",icon:"⚡",action:()=>toggleRelationKind("ACTION")},
+  {label:"線ラベル ON/OFF",icon:"🏷",action:toggleRelationLabels},
   {label:"選択関連を削除",icon:"🗑",action:removeSelectedRelations},
   {label:"削除関連を復元",icon:"↺",action:restoreRemovedRelations},
   {label:"選択アプリを削除",icon:"🗑📱",action:removeSelectedApps},

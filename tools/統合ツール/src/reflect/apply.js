@@ -459,7 +459,7 @@ export function resolveBackupScopes(c) {
     return scopes;
   }
   const baseScopes = selectedScopeKeys(ui.applyScopes);
-  if (!baseScopes.length) throw new Error('反映セクションを選択してください');
+  if (!baseScopes.length) throw new Error('反映するセクションを選択してください');
   return resolveApplyScopes(baseScopes);
 }
 
@@ -540,7 +540,7 @@ async function assertTargetPreviewMatchesPlannedBaseline(prefix, app, sectionKey
     const detail = mismatches
       .map((item) => `${item.label} (plan ${item.plannedRevision} / current ${item.currentRevision})`)
       .join(', ');
-    throw new Error(`プラン確認後に比較先プレビューが更新されています。再度「反映プラン確認」を実行してください。対象: ${detail}`);
+    throw new Error(`プラン確認後に比較先プレビューが更新されています。再度「実行前プラン確認」を実行してください。対象: ${detail}`);
   }
 
   return { checked, skipped };
@@ -1025,7 +1025,7 @@ export async function runApplyPreview() {
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
   const lookupMap = parseLookupMapInput(ui.lookupMap.value);
   const baseScopes = selectedScopeKeys(ui.applyScopes);
-  if (!baseScopes.length) throw new Error('反映セクションを選択してください');
+  if (!baseScopes.length) throw new Error('反映するセクションを選択してください');
   const scopes = resolveApplyScopes(baseScopes);
   const planSignature = makeApplyPlanSignature('section', {
     targetApp: c.target.appId,

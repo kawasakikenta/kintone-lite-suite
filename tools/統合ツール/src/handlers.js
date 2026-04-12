@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS, DEFAULT_APP_ID, DIFF_ONBOARDING_DISMISSED_KEY } from './constants.js';
+import { SECTION_DEFS, DEFAULT_APP_ID, DIFF_ONBOARDING_DISMISSED_KEY, TOOL_ID, TOOL_VERSION } from './constants.js';
 import { state, ui } from './state.js';
 import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast } from './utils.js';
 import { buildApiPrefix } from './api.js';
@@ -31,11 +31,14 @@ import {
   renderReflectAssistPanel,
   renderReflectNodeDetail,
   renderScopeChips,
+  renderScopePickerSummaries,
   renderLookupMapRows,
   syncLookupMapFromRows,
   setSettingsExportScopeSelection,
   syncApplyScopesFromSidebar,
   updateConnectionStepIndicators,
+  openScopePicker,
+  closeScopePicker,
   openFeatureScreen,
   showLauncherScreen
 } from './ui/components.js';
@@ -65,7 +68,8 @@ import {
   addIgnoreKeyFromInput,
   applyIgnorePresetKeysToInput,
   currentDiffSignature,
-  ensureDiffPreparedForReflect
+  ensureDiffPreparedForReflect,
+  openDiffReviewFold
 } from './tabs/diff.js';
 import { initReflectPreviewPlayground } from './tabs/reflect-preview-playground.js';
 import { initSectionPreviewEditor } from './tabs/reflect-section-preview.js';
@@ -183,9 +187,9 @@ export function setupEventHandlers(injected = {}) {
     if (!el) return;
     const dismissed = !!localStorage.getItem(DIFF_ONBOARDING_DISMISSED_KEY);
     const rootEl = getRoot();
-    const onDiffView = state.activeSubTabs.diff === 'view'
-      && rootEl?.classList.contains('tab-needs-connection-actions');
-    el.style.display = !dismissed && onDiffView ? 'block' : 'none';
+    const onDiffArea = rootEl?.classList.contains('tab-is-diff');
+    const hasDiffState = !!state.lastDiffAt || !!state.lastDiffRows.length || !!state.lastFetchIssues.length;
+    el.style.display = !dismissed && onDiffArea && hasDiffState ? 'block' : 'none';
   }
 
   const {
@@ -207,6 +211,7 @@ export function setupEventHandlers(injected = {}) {
     loadViewsForSelect,
     runCsvExport,
     runCsvImport,
+    runRecordBackup,
     runRecordCopy,
     saveTemplate,
     loadTemplate,
@@ -214,6 +219,7 @@ export function setupEventHandlers(injected = {}) {
     runSimStart,
     runSimExecuteAction,
     runApiTester,
+    clearApiTesterHistory,
     runPreviewApplyPlan,
     runBackupTargetPreview,
     runRestoreTargetPreviewBackup,
@@ -237,6 +243,72 @@ export function setupEventHandlers(injected = {}) {
     ui.diffFavoritesOnlyBtn.classList.toggle('dark', !!state.diffFavoritesOnly);
   }
 
+  function updateLauncherToggleButton() {
+    if (!ui.launcherToggleMore) return;
+    const expanded = root.classList.contains('launcher-show-advanced');
+    const hiddenCount = ui.launcherMenu?.querySelectorAll('.feature-card[data-launcher-tier="secondary"]').length || 0;
+    ui.launcherToggleMore.textContent = expanded
+      ? 'よく使う作業だけ表示'
+      : `その他の ${hiddenCount} 機能を表示`;
+    ui.launcherToggleMore.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  }
+
+  function syncMainResultForFeature(featureKey) {
+    if (!ui.result) return;
+    const key = String(featureKey || state.activeFeatureKey || state.activeTab || '').trim();
+    if (key === 'diff') {
+      renderResultRows(state.lastDiffRows || []);
+      return;
+    }
+    ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
+  }
+
+  async function copyToClipboard(text, successMessage, errorMessage) {
+    const copier = ui.copyTextToClipboard;
+    if (typeof copier !== 'function') {
+      setStatus(errorMessage || 'コピー機能を利用できません', true);
+      return false;
+    }
+    const ok = await copier(text);
+    setStatus(ok ? successMessage : (errorMessage || 'コピーに失敗しました'), !ok);
+    return ok;
+  }
+
+  function resolveSectionPreviewTarget(sectionKey) {
+    const requested = String(sectionKey || '').trim();
+    if (requested && requested !== 'fieldSettings') return requested;
+    const active = String(state.reflectActiveSidebarSection || '').trim();
+    if (active && active !== 'fieldSettings') return active;
+    const selected = selectedScopeKeys(ui.applyScopes).find((key) => key && key !== 'fieldSettings');
+    return selected || 'viewSettings';
+  }
+
+  function openSectionPreviewEditor(sectionKey) {
+    const nextSectionKey = resolveSectionPreviewTarget(sectionKey);
+    const label = SECTION_DEFS.find((def) => def.key === nextSectionKey)?.label || nextSectionKey;
+    switchTab('reflect', { persist: false });
+    switchSubTab('reflect', 'sectionPreview');
+    const focusEditor = () => {
+      const pane = root.querySelector('[data-subpane-parent="reflect"][data-subpane="sectionPreview"]');
+      pane?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+      const editorApi = ui.sectionPreviewEditor?.__sectionPreviewApi;
+      if (editorApi?.setSection) {
+        editorApi.setSection(nextSectionKey, { silent: true, force: true });
+        return;
+      }
+      const select = ui.sectionPreviewEditor?.querySelector?.('[data-spe-act="changeSection"]');
+      if (select && nextSectionKey) {
+        const ToolEvent = getToolWindow()?.Event || Event;
+        select.value = nextSectionKey;
+        select.dispatchEvent(new ToolEvent('change', { bubbles: true }));
+      }
+    };
+    const view = getToolWindow();
+    if (view?.requestAnimationFrame) view.requestAnimationFrame(focusEditor);
+    else focusEditor();
+    setStatus(`${label} の差分エディタへ移動しました`);
+  }
+
   // -------------------------------------------------------------------
   // Initialization
   // -------------------------------------------------------------------
@@ -258,6 +330,7 @@ export function setupEventHandlers(injected = {}) {
   renderBundleState();
   renderReflectSidebar();
   renderReflectMainPanel();
+  updateLauncherToggleButton();
   renderReflectNodeList();
   initReflectPreviewPlayground(ui, setStatus);
   initSectionPreviewEditor(ui, setStatus);
@@ -463,6 +536,12 @@ export function setupEventHandlers(injected = {}) {
       || e.target.isContentEditable
     );
 
+    if (!ui.scopePickerModal?.hidden && e.key === 'Escape') {
+      e.preventDefault();
+      closeScopePicker();
+      return;
+    }
+
     if (state.guidedTourActive && !editable) {
       if (e.key === 'Escape') { e.preventDefault(); closeGuidedTour(); return; }
       if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); moveGuidedTour(1); return; }
@@ -482,7 +561,7 @@ export function setupEventHandlers(injected = {}) {
       return;
     }
 
-    if (state.activeSubTabs.diff !== 'view' || !getRoot()?.classList.contains('tab-needs-connection-actions')) return;
+    if (!getRoot()?.classList.contains('tab-is-diff')) return;
     const resKb = getToolDocument().getElementById('u_result');
     const tKb = e.target;
     if (tKb?.matches?.('input[type=checkbox][data-diff-row-id]') && resKb?.contains(tKb) && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
@@ -494,6 +573,7 @@ export function setupEventHandlers(injected = {}) {
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
       e.preventDefault();
+      openDiffReviewFold();
       ui.diffSearch?.focus();
       ui.diffSearch?.select();
       return;
@@ -566,12 +646,14 @@ export function setupEventHandlers(injected = {}) {
     if (e.target?.closest('#u_diffScopes') || e.target?.closest('#u_applyScopes') || e.target?.closest('#u_settingsExportScopes')) {
       saveCurrentDialogState();
       renderBundleState();
+      renderScopePickerSummaries();
     }
     if (e.target?.closest('[data-apply-scope]')) {
       syncApplyScopesFromSidebar();
       saveCurrentDialogState();
       renderBundleState();
       renderReflectMainPanel();
+      renderScopePickerSummaries();
       const putSections = SECTION_DEFS.filter((d) => d.put);
       const sidebarCount = getToolDocument().getElementById('u_sidebarCount');
       const checkedCount = [...getToolDocument().querySelectorAll('#u_reflectSidebarSections [data-apply-scope]:checked')].length;
@@ -703,6 +785,7 @@ export function setupEventHandlers(injected = {}) {
       state.reflectActiveSidebarSection = (state.reflectActiveSidebarSection === secKey) ? null : secKey;
       renderReflectSidebar();
       renderReflectMainPanel();
+      if (ui.scopePickerModal?.dataset?.scopePickerKind === 'reflect') closeScopePicker();
       return;
     }
 
@@ -714,6 +797,7 @@ export function setupEventHandlers(injected = {}) {
         state.reflectActiveSidebarSection = secKey;
         renderReflectSidebar();
         renderReflectMainPanel();
+        if (ui.scopePickerModal?.dataset?.scopePickerKind === 'reflect') closeScopePicker();
       }
       return;
     }
@@ -846,13 +930,10 @@ export function setupEventHandlers(injected = {}) {
     // Tab switching
     const tab = e.target.closest('.tab');
     if (tab) {
-      switchTab(tab.dataset.tab);
+      const nextTab = tab.dataset.tab || '';
+      switchTab(nextTab);
       syncDiffOnboardingVisibility();
-      const needsConn = root.classList.contains('tab-needs-connection-actions');
-      if (ui.result) {
-        if (needsConn && state.activeSubTabs.diff === 'view') renderResultRows(state.lastDiffRows || []);
-        else ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
-      }
+      syncMainResultForFeature(nextTab);
       return;
     }
 
@@ -865,19 +946,42 @@ export function setupEventHandlers(injected = {}) {
       const featureKey = actEl.dataset.feature || '';
       const def = openFeatureScreen(featureKey, { persist: false });
       if (!def) return;
-      const needsConnOpen = root.classList.contains('tab-needs-connection-actions');
-      if (ui.result) {
-        if (needsConnOpen && state.activeSubTabs.diff === 'view') renderResultRows(state.lastDiffRows || []);
-        else ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
-      }
+      syncMainResultForFeature(def.key);
       saveCurrentDialogState();
       setStatus(`${def.label} を開きました`);
       return;
     }
+    if (act === 'toggleLauncherMore') {
+      root.classList.toggle('launcher-show-advanced');
+      updateLauncherToggleButton();
+      saveCurrentDialogState();
+      setStatus(root.classList.contains('launcher-show-advanced') ? '補助メニューも表示しました' : 'よく使う作業だけに絞りました');
+      return;
+    }
     if (act === 'backToLauncher') {
       showLauncherScreen({ persist: false });
+      updateLauncherToggleButton();
       saveCurrentDialogState();
       setStatus('機能を選んでください');
+      return;
+    }
+    if (act === 'copyToolInfo') {
+      const infoText = [
+        `tool=${TOOL_ID}`,
+        `build=${TOOL_VERSION}`,
+        `feature=${state.activeFeatureKey || '-'}`,
+        `tab=${state.activeTab || '-'}`
+      ].join(' / ');
+      copyToClipboard(infoText, 'ツール識別情報をコピーしました', 'ツール識別情報のコピーに失敗しました');
+      return;
+    }
+    if (act === 'copyStatusMessage') {
+      const message = String(ui.status?.textContent || '').trim();
+      if (!message) {
+        setStatus('コピーするステータスがありません', true);
+        return;
+      }
+      copyToClipboard(message, 'ステータスメッセージをコピーしました', 'ステータスメッセージのコピーに失敗しました');
       return;
     }
 
@@ -923,16 +1027,24 @@ export function setupEventHandlers(injected = {}) {
 
     // ----- Navigation -----
     if (act === 'goDiffReview') {
-      switchTab('reflect');
-      switchSubTab('diff', (state.lastDiffRows.length || state.lastFetchIssues.length) ? 'view' : 'conditions');
+      switchTab('diff');
+      if (state.lastDiffRows.length || state.lastFetchIssues.length) {
+        openDiffReviewFold({ scroll: true });
+      }
       if (ui.result) renderResultRows(state.lastDiffRows || []);
-      setStatus('ヘッダーの差分エリアへ移動しました');
+      setStatus('差分一覧へ移動しました');
       return;
     }
     if (act === 'openReflectPreviewEditor') {
+      switchTab('reflect', { persist: false });
+      switchSubTab('reflect', 'editor');
       const fold = root.querySelector('#u_reflectPreviewEditorFold');
       fold?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-      setStatus('フィールド差分プレビューエディタへ移動しました');
+      setStatus('フィールド確認へ移動しました');
+      return;
+    }
+    if (act === 'openSectionPreviewEditor') {
+      openSectionPreviewEditor(actEl.dataset.section || '');
       return;
     }
 
@@ -1039,8 +1151,22 @@ export function setupEventHandlers(injected = {}) {
     }
 
     // ----- Diff scope selection -----
-    if (act === 'diffScopeAll') { setScopeSelection(ui.diffScopes, true); setStatus('比較セクションを全選択しました'); return; }
-    if (act === 'diffScopeNone') { setScopeSelection(ui.diffScopes, false); setStatus('比較セクションを全解除しました'); return; }
+    if (act === 'openDiffScopePicker') { openScopePicker('diff'); return; }
+    if (act === 'openReflectScopePicker') { renderReflectSidebar(); openScopePicker('reflect'); return; }
+    if (act === 'openSettingsExportScopePicker') { openScopePicker('settingsExport'); return; }
+    if (act === 'closeScopePicker') { closeScopePicker(); return; }
+    if (act === 'diffScopeAll') {
+      setScopeSelection(ui.diffScopes, true);
+      renderScopePickerSummaries();
+      setStatus('比較セクションを全選択しました');
+      return;
+    }
+    if (act === 'diffScopeNone') {
+      setScopeSelection(ui.diffScopes, false);
+      renderScopePickerSummaries();
+      setStatus('比較セクションを全解除しました');
+      return;
+    }
 
     // ----- Diff selection -----
     if (act === 'selectVisibleDiffs') {
@@ -1262,14 +1388,14 @@ export function setupEventHandlers(injected = {}) {
       setScopeSelection(ui.applyScopes, true);
       renderReflectSidebar();
       renderReflectMainPanel();
-      setStatus('反映セクションを全選択しました');
+      setStatus('反映するセクションを全選択しました');
       return;
     }
     if (act === 'applyScopeNone') {
       setScopeSelection(ui.applyScopes, false);
       renderReflectSidebar();
       renderReflectMainPanel();
-      setStatus('反映セクションを全解除しました');
+      setStatus('反映するセクションを全解除しました');
       return;
     }
     if (act === 'applyScopeDiffOnly') {
@@ -1306,7 +1432,7 @@ export function setupEventHandlers(injected = {}) {
       state.reflectActiveSidebarSection = null;
       renderReflectSidebar();
       renderReflectMainPanel();
-      setStatus('反映概要を表示しました');
+      setStatus('いまの反映内容を表示しました');
       return;
     }
 
@@ -1316,7 +1442,7 @@ export function setupEventHandlers(injected = {}) {
       switchSubTab('reflect', 'section');
       renderReflectModeUi();
       renderReflectMainPanel();
-      setStatus('セクション反映モードに切り替えました');
+      setStatus('まとめて反映モードに切り替えました');
       return;
     }
     if (act === 'reflectModeNode') {
@@ -1476,13 +1602,13 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'focusActiveReflectNodeDiff') {
       const row = getActiveReflectRow();
       if (!row) { setStatus('表示対象のノードがありません'); return; }
-      switchTab('reflect');
-      switchSubTab('diff', 'view');
+      switchTab('diff');
+      openDiffReviewFold({ scroll: true });
       if (ui.diffFilterSection) ui.diffFilterSection.value = row.sectionKey || '';
       state.diffFilterSection = row.sectionKey || '';
       if (ui.diffSearch) ui.diffSearch.value = row.path || '';
       renderResultRows(state.lastDiffRows);
-      setStatus('ヘッダーの結果整理で該当ノードを表示しました');
+      setStatus('ヘッダーの差分一覧で該当ノードを表示しました');
       return;
     }
 
@@ -1587,8 +1713,10 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'loadViewsForProc' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_batchProcViewSelect', 'u_batchProcView'));
     if (act === 'loadViewsForDl' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_batchDlViewSelect', 'u_batchDlView'));
     if (act === 'loadViewsForCsv' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_csvExportViewSelect', 'u_csvExportView'));
+    if (act === 'loadViewsForBackup' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_recordBackupViewSelect', 'u_recordBackupView'));
     if (act === 'runCsvExport' && typeof runCsvExport === 'function') return withGuard(runCsvExport);
     if (act === 'runCsvImport' && typeof runCsvImport === 'function') return withGuard(runCsvImport);
+    if (act === 'runRecordBackup' && typeof runRecordBackup === 'function') return withGuard(runRecordBackup);
     if (act === 'runRecordCopy' && typeof runRecordCopy === 'function') return withGuard(runRecordCopy);
 
     // ----- Templates -----
@@ -1601,6 +1729,11 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'simExecuteAction' && typeof runSimExecuteAction === 'function') return withGuard(runSimExecuteAction);
 
     // ----- API tester -----
+    if (act === 'clearApiTesterHistory' && typeof clearApiTesterHistory === 'function') {
+      clearApiTesterHistory();
+      setStatus('APIテスターの履歴をクリアしました');
+      return;
+    }
     if (act === 'runApiTester' && typeof runApiTester === 'function') return runApiTester();
   });
 

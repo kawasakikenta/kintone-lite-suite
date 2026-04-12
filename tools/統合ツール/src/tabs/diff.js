@@ -38,6 +38,7 @@ import {
   renderReflectNodeList,
   renderReflectSidebar,
   renderReflectMainPanel,
+  renderScopePickerSummaries,
   setStatus,
   switchTab,
   switchSubTab,
@@ -145,6 +146,16 @@ export function currentDiffSignature() {
   });
 }
 
+export function openDiffReviewFold(options = {}) {
+  const fold = getToolDocument().getElementById('u_diffReviewFold');
+  if (!fold) return null;
+  fold.open = true;
+  if (options.scroll) {
+    fold.scrollIntoView({ behavior: options.behavior || 'smooth', block: 'start' });
+  }
+  return fold;
+}
+
 export async function ensureDiffPreparedForReflect() {
   const sig = currentDiffSignature();
   if (state.lastDiffAt && state.lastDiffSignature === sig) return;
@@ -232,7 +243,7 @@ export async function runDiff() {
 
   state.diffIgnoreSuggestions = buildIgnoreKeySuggestions(rows, ui.ignoreKeys.value);
   renderDiffFilterOptions();
-  switchSubTab('diff', 'view');
+  openDiffReviewFold();
   renderResultRows(rows);
   const { loadReflectRowsFromLastDiff } = await import('./reflect.js');
   if (isReflectNodeModeEffective() || state.reflectRows.length) {
@@ -261,7 +272,7 @@ export async function runDiffAndPreviewPlan() {
   if (ui.result) ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
   const { runPreviewApplyPlan } = await import('../reflect/plan.js');
   await runPreviewApplyPlan();
-  setStatus('差分比較→反映プラン確認 完了');
+  setStatus('差分比較→実行前プラン確認 が完了しました');
 }
 
 // ---------------------------------------------------------------------------
@@ -425,7 +436,12 @@ export function saveCurrentDialogState() {
     settingsExportSearchKeyword: ui.settingsExportSearchKeyword.value.trim(),
     settingsExportGuest: ui.settingsExportGuest.value.trim(),
     settingsExportPreview: ui.settingsExportPreview.checked,
-    settingsExportScopes: selectedScopeKeys(ui.settingsExportScopes)
+    settingsExportIncludePluginConfig: !!ui.settingsExportIncludePluginConfig?.checked,
+    settingsExportScopes: selectedScopeKeys(ui.settingsExportScopes),
+    recordBackupView: ui.recordBackupView?.value?.trim?.() || '',
+    recordBackupZipName: ui.recordBackupZipName?.value?.trim?.() || 'record_backup.zip',
+    recordBackupIncludeFiles: !!ui.recordBackupIncludeFiles?.checked,
+    recordBackupIncludeComments: !!ui.recordBackupIncludeComments?.checked
   });
 }
 
@@ -500,6 +516,11 @@ export function restoreDialogState() {
   if (saved.settingsExportSearchKeyword != null) ui.settingsExportSearchKeyword.value = String(saved.settingsExportSearchKeyword);
   if (saved.settingsExportGuest != null) ui.settingsExportGuest.value = String(saved.settingsExportGuest);
   if (saved.settingsExportPreview != null) ui.settingsExportPreview.checked = !!saved.settingsExportPreview;
+  if (saved.settingsExportIncludePluginConfig != null && ui.settingsExportIncludePluginConfig) ui.settingsExportIncludePluginConfig.checked = !!saved.settingsExportIncludePluginConfig;
+  if (saved.recordBackupView != null && ui.recordBackupView) ui.recordBackupView.value = String(saved.recordBackupView || '');
+  if (saved.recordBackupZipName != null && ui.recordBackupZipName) ui.recordBackupZipName.value = String(saved.recordBackupZipName || 'record_backup.zip');
+  if (saved.recordBackupIncludeFiles != null && ui.recordBackupIncludeFiles) ui.recordBackupIncludeFiles.checked = !!saved.recordBackupIncludeFiles;
+  if (saved.recordBackupIncludeComments != null && ui.recordBackupIncludeComments) ui.recordBackupIncludeComments.checked = !!saved.recordBackupIncludeComments;
   if (saved.launcherSortMode != null) {
     state.launcherSortMode = String(saved.launcherSortMode) === 'usage' ? 'usage' : 'onboarding';
     if (ui.featureSortMode) ui.featureSortMode.value = state.launcherSortMode;
@@ -515,6 +536,7 @@ export function restoreDialogState() {
   markChecks(ui.diffScopes, saved.diffScopes);
   markChecks(ui.applyScopes, saved.applyScopes);
   markChecks(ui.settingsExportScopes, saved.settingsExportScopes);
+  renderScopePickerSummaries();
   Object.entries(DEFAULT_SUBTAB_STATE).forEach(([parentKey, defaultKey]) => {
     const nextKey = (saved.activeSubTabs && typeof saved.activeSubTabs === 'object')
       ? String(saved.activeSubTabs[parentKey] || defaultKey)
@@ -522,7 +544,7 @@ export function restoreDialogState() {
     switchSubTab(parentKey, nextKey, { persist: false });
   });
   let nextActive = saved.activeTab;
-  if (nextActive === 'common' || nextActive === 'diff') nextActive = 'reflect';
+  if (nextActive === 'common') nextActive = 'reflect';
   if (nextActive && ui.tabs.some((t) => t.dataset.tab === nextActive)) {
     switchTab(nextActive, { persist: false });
   }
@@ -535,7 +557,7 @@ export function restoreDialogState() {
   renderIgnoreKeyChips();
   renderLookupMapRows();
   const rootEl = getRoot();
-  if (rootEl?.classList.contains('tab-needs-connection-actions') && state.activeSubTabs.diff === 'view') {
+  if (rootEl?.classList.contains('tab-is-diff')) {
     renderResultRows(state.lastDiffRows || []);
   }
 }

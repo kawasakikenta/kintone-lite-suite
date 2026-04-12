@@ -36,12 +36,18 @@ const cssPlugin = {
   }
 };
 
-function createStandaloneSource(tab, label) {
-  const displayLabel = label || 'ツール';
+function createStandaloneSource(item) {
+  const tab = item.tab;
+  const displayLabel = item.label || 'ツール';
+  const subTab = item.subTab || '';
+  const subTabParent = item.subTabParent || item.tab || '';
   return `(function (global) {
   'use strict';
 
   const LABEL = ${JSON.stringify(displayLabel)};
+  const TAB = ${JSON.stringify(tab)};
+  const SUBTAB = ${JSON.stringify(subTab)};
+  const SUBTAB_PARENT = ${JSON.stringify(subTabParent)};
 
   function showLoader() {
     if (global.document.getElementById('kus-standalone-loader')) return;
@@ -72,26 +78,28 @@ function createStandaloneSource(tab, label) {
     './tools/統合ツール.js'
   ];
 
-  function タブを開く() {
+  function 切替対象を開く() {
     const 別ウィンドウ = global.__KUS_TOOL_WINDOW__;
     const rootDoc = (別ウィンドウ && !別ウィンドウ.closed && 別ウィンドウ.document) ? 別ウィンドウ.document : document;
-    const ランチャー = rootDoc.querySelector('[data-launch-feature][data-launch-tab="${tab}"]');
+    const ランチャー = rootDoc.querySelector('[data-launch-feature][data-launch-tab="' + TAB + '"]');
     if (ランチャー) {
       ランチャー.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      return true;
-    }
-    const タブ = rootDoc.querySelector('.tab[data-tab="${tab}"]');
-    if (タブ) {
+    } else {
+      const タブ = rootDoc.querySelector('.tab[data-tab="' + TAB + '"]');
+      if (!タブ) return false;
       タブ.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      return true;
     }
-    return false;
+    if (!SUBTAB) return true;
+    const サブタブ = rootDoc.querySelector('.subtab[data-subtab-parent="' + SUBTAB_PARENT + '"][data-subtab="' + SUBTAB + '"]');
+    if (!サブタブ) return false;
+    サブタブ.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    return true;
   }
 
   function タブ起動待機(retries) {
-    if (タブを開く()) return;
+    if (切替対象を開く()) return;
     if (retries <= 0) {
-      console.warn('[統合ツール] タブ切り替えに失敗しました:', '${tab}');
+      console.warn('[統合ツール] 画面切り替えに失敗しました:', TAB, SUBTAB);
       return;
     }
     setTimeout(() => タブ起動待機(retries - 1), 200);
@@ -273,7 +281,7 @@ async function writeThinStandaloneTools(entries) {
   for (const item of entries) {
     if (item.bundleEntry) continue;
     const target = path.resolve(toolsDir, item.file);
-    await fs.promises.writeFile(target, createStandaloneSource(item.tab, item.label), 'utf8');
+    await fs.promises.writeFile(target, createStandaloneSource(item), 'utf8');
     written += 1;
   }
   await fs.promises.writeFile(inventoryFile, createInventorySource(entries), 'utf8');

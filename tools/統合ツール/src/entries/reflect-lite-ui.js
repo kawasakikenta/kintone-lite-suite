@@ -60,7 +60,7 @@ export function mountReflectLitePanel() {
 
   const scopeLabel = document.createElement('div');
   scopeLabel.style.cssText = 'font-size:12px;font-weight:600;color:#334155;margin-bottom:6px';
-  scopeLabel.textContent = '反映セクション:';
+  scopeLabel.textContent = '反映するセクション:';
   bodySlot.appendChild(scopeLabel);
   bodySlot.appendChild(scopeBox);
 

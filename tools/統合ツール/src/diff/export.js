@@ -1017,6 +1017,26 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const KUC_SEMVER = '${KUC_REPORT_VERSION}';
   const FIELD_PROPS_SRC = ${safeJsonForScript(srcFieldProps)};
   const FIELD_PROPS_TGT = ${safeJsonForScript(tgtFieldProps)};
+  const LAYOUT_ROWS_SRC = ${safeJsonForScript(sourceBundle?.sections?.layoutSettings?.layout || [])};
+  const LAYOUT_ROWS_TGT = ${safeJsonForScript(targetBundle?.sections?.layoutSettings?.layout || [])};
+  const FLAT_FIELD_PROPS_SRC = collectFlatFieldMap(FIELD_PROPS_SRC);
+  const FLAT_FIELD_PROPS_TGT = collectFlatFieldMap(FIELD_PROPS_TGT);
+  let activeFieldCode = '';
+  let detailModalOpen = false;
+
+  function safeStorageGet(key) {
+    try {
+      return window.localStorage ? localStorage.getItem(key) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function safeStorageSet(key, value) {
+    try {
+      if (window.localStorage) localStorage.setItem(key, value);
+    } catch (e) {}
+  }
 
   function escHtml(v) {
     return String(v == null ? '' : v)
@@ -1414,10 +1434,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return '<span class="sl-val-mono">' + escHtml(j) + '</span>';
   }
 
-  function getKuc() {
-    return window.Kucs && window.Kucs[KUC_SEMVER] ? window.Kucs[KUC_SEMVER] : null;
-  }
-
   function formatFieldValuePlain(val, maxLen) {
     const n = maxLen == null ? 8000 : maxLen;
     if (val === undefined) return '（なし）';
@@ -1436,48 +1452,965 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return j.length > n ? j.slice(0, n) + '…' : j;
   }
 
+  const FIELD_TYPE_LABELS = {
+    SINGLE_LINE_TEXT: '文字列（1行）',
+    MULTI_LINE_TEXT: '文字列（複数行）',
+    RICH_TEXT: 'リッチテキスト',
+    NUMBER: '数値',
+    CALC: '計算',
+    CHECK_BOX: 'チェックボックス',
+    RADIO_BUTTON: 'ラジオボタン',
+    DROP_DOWN: 'ドロップダウン',
+    MULTI_SELECT: '複数選択',
+    DATE: '日付',
+    TIME: '時刻',
+    DATETIME: '日時',
+    LINK: 'リンク',
+    FILE: '添付ファイル',
+    USER_SELECT: 'ユーザー選択',
+    ORGANIZATION_SELECT: '組織選択',
+    GROUP_SELECT: 'グループ選択',
+    CATEGORY: 'カテゴリー',
+    STATUS: 'ステータス',
+    STATUS_ASSIGNEE: '作業者',
+    SUBTABLE: 'テーブル',
+    REFERENCE_TABLE: '関連レコード一覧',
+    RECORD_NUMBER: 'レコード番号',
+    CREATOR: '作成者',
+    CREATED_TIME: '作成日時',
+    MODIFIER: '更新者',
+    UPDATED_TIME: '更新日時',
+    SPACER: 'スペース',
+    HR: '罫線',
+    LABEL: 'ラベル'
+  };
+
+  const FIELD_SETTING_LABELS = {
+    label: 'フィールド名',
+    name: 'フィールド名',
+    code: 'フィールドコード',
+    noLabel: 'フィールド名を表示しない',
+    required: '必須項目にする',
+    unique: '重複禁止にする',
+    defaultValue: '初期値',
+    defaultNowValue: '現在日時を初期値にする',
+    description: '説明',
+    minLength: '最小文字数',
+    maxLength: '最大文字数',
+    minValue: '最小値',
+    maxValue: '最大値',
+    expression: '計算式',
+    hideExpression: '計算式を表示しない',
+    options: '項目と順番',
+    protocol: 'プロトコル',
+    displayScale: '小数点以下の表示桁数',
+    digit: '桁区切りを表示する',
+    unit: '単位記号',
+    unitPosition: '単位記号の位置',
+    align: '並び',
+    format: '表示形式',
+    entities: '選択候補',
+    fields: 'テーブル内の項目',
+    referenceTable: '関連レコード一覧設定',
+    lookup: 'ルックアップ設定'
+  };
+
+  const FIELD_ALIGN_LABELS = Object.freeze({
+    horizontal: '横',
+    vertical: '縦',
+    HORIZONTAL: '横',
+    VERTICAL: '縦'
+  });
+
+  const FIELD_UNIT_POSITION_LABELS = Object.freeze({
+    BEFORE: '前に付ける',
+    AFTER: '後ろに付ける'
+  });
+
+  const CALC_FORMAT_LABELS = Object.freeze({
+    NUMBER: '数値（例: 1000）',
+    NUMBER_DIGIT: '数値（例: 1,000）',
+    DATETIME: '日時（例: 2012-08-06 2:03）',
+    DATE: '日付（例: 2012-08-06）',
+    TIME: '時刻（例: 2:03）',
+    HOUR_MINUTE: '時間（例: 26時間3分）',
+    DAY_HOUR_MINUTE: '時間（例: 1日2時間3分）'
+  });
+
+  function fieldTypeDisplayLabel(type) {
+    const key = String(type || '').trim();
+    return FIELD_TYPE_LABELS[key] || key || 'フィールド';
+  }
+
+  function fieldAlignDisplayLabel(align) {
+    const key = String(align || '').trim();
+    return FIELD_ALIGN_LABELS[key] || (key || '（未設定）');
+  }
+
+  function fieldUnitPositionDisplayLabel(unitPosition) {
+    const key = String(unitPosition || '').trim() || 'BEFORE';
+    return FIELD_UNIT_POSITION_LABELS[key] || key;
+  }
+
+  function calcFormatDisplayLabel(format) {
+    const key = String(format || '').trim() || 'NUMBER';
+    return CALC_FORMAT_LABELS[key] || key;
+  }
+
+  function hasMeaningfulFieldValue(value) {
+    if (value === undefined || value === null) return false;
+    if (typeof value === 'string') return value !== '';
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'object') return Object.keys(value).length > 0;
+    return true;
+  }
+
+  function collectFieldOptionLabels(options) {
+    if (!options || typeof options !== 'object') return '';
+    return Object.keys(options).map((key) => {
+      const option = options[key];
+      if (!option || typeof option !== 'object') return String(key);
+      return String(option.label || key);
+    }).join(' / ');
+  }
+
+  function collectSortedFieldOptions(options) {
+    if (!options || typeof options !== 'object') return [];
+    return Object.keys(options)
+      .map((key) => {
+        const option = options[key];
+        return {
+          label: String(option?.label || key),
+          index: Number(option?.index ?? Number.MAX_SAFE_INTEGER)
+        };
+      })
+      .sort((a, b) => a.index - b.index || a.label.localeCompare(b.label))
+      .map((item) => item.label);
+  }
+
+  function formatFieldOptionLines(options) {
+    const items = collectSortedFieldOptions(options);
+    if (!items.length) return '（なし）';
+    return items.map((label, idx) => String(idx + 1) + '. ' + label).join('\\\\n');
+  }
+
+  function formatSubtableFieldLines(fields) {
+    if (!fields || typeof fields !== 'object') return '（なし）';
+    const lines = Object.values(fields).map((child, idx) => {
+      const label = String(child?.label || child?.name || child?.code || '（未設定）');
+      const typeLabel = fieldTypeDisplayLabel(child?.type);
+      const code = String(child?.code || '-');
+      return String(idx + 1) + '. ' + label + ' / ' + typeLabel + ' / ' + code;
+    });
+    return lines.length ? lines.join('\\\\n') : '（なし）';
+  }
+
+  function formatFieldSettingValue(value, options = {}) {
+    if (options.boolLabel) return value ? 'ON' : 'OFF';
+    if (Array.isArray(value) || (value && typeof value === 'object')) return formatFieldValueBrief(value, options.maxLen || 240);
+    if (value === undefined || value === null || value === '') return '（なし）';
+    const text = String(value);
+    const maxLen = options.maxLen || 240;
+    return escHtml(text.length > maxLen ? text.slice(0, maxLen) + '…' : text);
+  }
+
+  function renderFieldToggleRow(label, checked) {
+    return '<div class="kf-toggle' + (checked ? ' is-on' : '') + '">' +
+      '<span class="kf-toggle-box" aria-hidden="true"></span>' +
+      '<span class="kf-toggle-label">' + escHtml(label) + '</span>' +
+    '</div>';
+  }
+
+  function renderFieldFormRow(label, value, options = {}) {
+    return '<section class="kf-row' + (options.full ? ' kf-row--full' : '') + '">' +
+      '<div class="kf-label">' + escHtml(label) + (options.required ? ' <span class="kf-required">*</span>' : '') + '</div>' +
+      '<div class="kf-value' + (options.textarea ? ' kf-value--textarea' : '') + '">' + formatFieldSettingValue(value, options) + '</div>' +
+    '</section>';
+  }
+
+  function renderFieldBlock(title, innerHtml) {
+    return '<div class="kf-extra">' +
+      '<div class="kf-extra-title">' + escHtml(title) + '</div>' +
+      innerHtml +
+    '</div>';
+  }
+
+  function renderFieldUnitBlock(field) {
+    return renderFieldBlock(
+      '単位記号',
+      '<div class="kf-extra-grid">' +
+        renderFieldFormRow('記号', field.unit || '') +
+        renderFieldFormRow('位置', fieldUnitPositionDisplayLabel(field.unitPosition)) +
+      '</div>'
+    );
+  }
+
+  function renderFieldLimitsBlock(field) {
+    return renderFieldBlock(
+      '値の制限（整数で指定）',
+      '<div class="kf-extra-grid">' +
+        renderFieldFormRow('最小', field.minValue) +
+        renderFieldFormRow('最大', field.maxValue) +
+      '</div>'
+    );
+  }
+
+  function buildFieldExtraRows(field) {
+    const rows = [];
+    const push = (label, value, options = {}) => {
+      if (!hasMeaningfulFieldValue(value)) return;
+      rows.push({ label, value, options });
+    };
+    push('タイプ', fieldTypeDisplayLabel(field.type));
+    push('説明', field.description, { textarea: true, maxLen: 600 });
+    push('最小文字数', field.minLength);
+    push('最大文字数', field.maxLength);
+    push('最小値', field.minValue);
+    push('最大値', field.maxValue);
+    push('プロトコル', field.protocol);
+    if (field.digit !== undefined) push('桁区切りを表示する', field.digit, { boolLabel: true });
+    push('小数点以下の表示桁数', field.displayScale);
+    push('単位記号', field.unit);
+    if (field.unitPosition) push('単位記号の位置', fieldUnitPositionDisplayLabel(field.unitPosition));
+    if (field.align) push('並び', fieldAlignDisplayLabel(field.align));
+    if (field.format) push('表示形式', calcFormatDisplayLabel(field.format));
+    if (field.hideExpression !== undefined) push('計算式を表示しない', field.hideExpression, { boolLabel: true });
+    if (field.options) push('項目と順番', formatFieldOptionLines(field.options), { textarea: true, maxLen: 600 });
+    if (field.entities) push('選択候補', Array.isArray(field.entities) ? field.entities.join(' / ') : field.entities, { textarea: true, maxLen: 600 });
+    if (field.expression) push('計算式', field.expression, { textarea: true, maxLen: 600 });
+    if (field.lookup) push('ルックアップ設定', field.lookup, { textarea: true, maxLen: 600 });
+    if (field.referenceTable) push('関連レコード一覧設定', field.referenceTable, { textarea: true, maxLen: 600 });
+    if (field.fields) push('テーブル内の項目', formatSubtableFieldLines(field.fields), { textarea: true, maxLen: 600 });
+    if (field.__parentTableCode) push('テーブル', field.__parentTableLabel || field.__parentTableCode);
+    return rows;
+  }
+
+  function renderGenericFieldSnapshotBody(field) {
+    const extras = buildFieldExtraRows(field);
+    const toggleRows = [
+      renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel),
+      renderFieldToggleRow('必須項目にする', !!field.required)
+    ];
+    if (field.unique !== undefined) toggleRows.push(renderFieldToggleRow('重複禁止にする', !!field.unique));
+    if (field.defaultNowValue !== undefined) toggleRows.push(renderFieldToggleRow('現在日時を初期値にする', !!field.defaultNowValue));
+    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true }) +
+      '<div class="kf-toggle-list">' + toggleRows.join('') + '</div>' +
+      renderFieldFormRow('初期値', field.defaultNowValue ? '現在日時を使用' : field.defaultValue, { textarea: true, full: true, maxLen: 600 }) +
+      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true }) +
+      (extras.length ? '<div class="kf-extra"><div class="kf-extra-title">その他の設定</div><div class="kf-extra-grid">' + extras.map((item) => renderFieldFormRow(item.label, item.value, item.options)).join('') + '</div></div>' : '');
+  }
+
+  function renderRadioFieldSnapshotBody(field) {
+    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true }) +
+      '<div class="kf-toggle-list">' +
+        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel) +
+      '</div>' +
+      renderFieldFormRow('項目と順番', formatFieldOptionLines(field.options), { textarea: true, full: true, maxLen: 1200 }) +
+      renderFieldFormRow('並び', fieldAlignDisplayLabel(field.align), { full: true }) +
+      renderFieldFormRow('初期値', field.defaultValue, { full: true }) +
+      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true });
+  }
+
+  function renderNumberFieldSnapshotBody(field) {
+    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true }) +
+      '<div class="kf-toggle-list">' +
+        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel) +
+        renderFieldToggleRow('桁区切りを表示する', !!field.digit) +
+        renderFieldToggleRow('必須項目にする', !!field.required) +
+        renderFieldToggleRow('値の重複を禁止する', !!field.unique) +
+      '</div>' +
+      renderFieldLimitsBlock(field) +
+      renderFieldFormRow('初期値', field.defaultValue, { full: true }) +
+      renderFieldFormRow('小数点以下の表示桁数', field.displayScale, { full: true }) +
+      renderFieldUnitBlock(field) +
+      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true });
+  }
+
+  function renderCalcFieldSnapshotBody(field) {
+    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true }) +
+      '<div class="kf-toggle-list">' +
+        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel) +
+      '</div>' +
+      renderFieldFormRow('計算式', field.expression, { required: true, textarea: true, full: true, maxLen: 1200 }) +
+      '<div class="kf-toggle-list">' +
+        renderFieldToggleRow('計算式を表示しない', !!field.hideExpression) +
+      '</div>' +
+      renderFieldFormRow('表示形式', calcFormatDisplayLabel(field.format), { full: true }) +
+      renderFieldFormRow('小数点以下の表示桁数', field.displayScale, { full: true }) +
+      renderFieldUnitBlock(field) +
+      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true });
+  }
+
+  function renderSubtableFieldSnapshotBody(field) {
+    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true }) +
+      '<div class="kf-toggle-list">' +
+        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel) +
+      '</div>' +
+      renderFieldFormRow('テーブル内の項目', formatSubtableFieldLines(field.fields), { textarea: true, full: true, maxLen: 1200 }) +
+      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true });
+  }
+
+  function renderFieldSnapshotCard(sideLabel, field, tone) {
+    if (!field) {
+      return '<section class="fd-snapshot fd-snapshot--' + tone + '"><div class="fd-pane-label">' + escHtml(sideLabel) + '</div><div class="fd-empty">この側にはフィールドがありません。</div></section>';
+    }
+    const typeLabel = fieldTypeDisplayLabel(field.type);
+    const bodyHtml =
+      field.type === 'RADIO_BUTTON' ? renderRadioFieldSnapshotBody(field)
+      : field.type === 'NUMBER' ? renderNumberFieldSnapshotBody(field)
+      : field.type === 'CALC' ? renderCalcFieldSnapshotBody(field)
+      : field.type === 'SUBTABLE' ? renderSubtableFieldSnapshotBody(field)
+      : renderGenericFieldSnapshotBody(field);
+    return '<section class="fd-snapshot fd-snapshot--' + tone + '">' +
+      '<div class="kf-modal">' +
+        '<div class="kf-modal-head">' +
+          '<div class="kf-modal-title"><span class="kf-type-icon" aria-hidden="true"></span><strong>' + escHtml(typeLabel) + ' の設定</strong></div>' +
+          '<span class="kf-side kf-side--' + tone + '">' + escHtml(sideLabel) + '</span>' +
+        '</div>' +
+        '<div class="kf-modal-body">' +
+          bodyHtml +
+        '</div>' +
+      '</div>' +
+    '</section>';
+  }
+
   function fieldChangePropTitle(info, row) {
     if (!info) return row.path || '-';
     if (info.isFieldRoot || info.isSubFieldRoot) return 'フィールド定義（全体）';
     if (!info.tailTokens.length) return row.path || '-';
+    if (FIELD_SETTING_LABELS[info.leafKey]) return FIELD_SETTING_LABELS[info.leafKey];
+    if (String(row?.path || '').includes('.lookup.')) return 'ルックアップ設定';
+    if (String(row?.path || '').includes('.referenceTable.')) return '関連レコード一覧設定';
+    if (String(row?.path || '').includes('.options.')) return '項目と順番';
+    if (String(row?.path || '').includes('.fields.')) return 'テーブル内の項目';
     return info.tailTokens.map((t) => (typeof t === 'number' ? '[' + t + ']' : String(t))).join('.');
   }
 
-  function summarizeFieldGroupHeader(rows, infoSample) {
-    const code = infoSample ? infoSample.activeCode : '';
-    let ftype = '';
-    let label = '';
-    for (let i = 0; i < rows.length; i++) {
-      const p = getFieldRowPayload(rows[i]);
-      if (p && typeof p === 'object' && !Array.isArray(p) && p.type) {
-        ftype = String(p.type || '');
-        label = String(p.label != null ? p.label : (p.name != null ? p.name : ''));
-        break;
-      }
+  function collectFlatFieldMap(properties, out) {
+    const dest = out || {};
+    function walk(props, parentMeta) {
+      Object.entries(props || {}).forEach(([code, field]) => {
+        if (!field || typeof field !== 'object' || Array.isArray(field)) return;
+        const normalizedCode = String(field.code || code);
+        const next = { ...field, code: normalizedCode };
+        if (parentMeta) {
+          next.__parentTableCode = parentMeta.code;
+          next.__parentTableLabel = parentMeta.label;
+        }
+        dest[normalizedCode] = next;
+        if (field.type === 'SUBTABLE' && field.fields && typeof field.fields === 'object') {
+          walk(field.fields, {
+            code: normalizedCode,
+            label: String(field.label || field.name || normalizedCode)
+          });
+        }
+      });
     }
-    let sub = code;
-    if (ftype) sub += ' · ' + ftype;
-    if (label) sub += ' · ' + label;
-    return sub;
+    walk(properties, null);
+    return dest;
   }
 
-  function groupFieldSettingsRows(rows) {
-    const buckets = new Map();
-    const other = [];
-    for (const row of rows) {
-      if (row.sectionKey !== FIELD_SECTION_KEY) continue;
-      const info = extractFieldPathInfo(row.path);
-      if (!info) {
-        other.push(row);
-        continue;
-      }
-      const k = info.rootPath;
-      if (!buckets.has(k)) buckets.set(k, { key: k, info, rows: [] });
-      buckets.get(k).rows.push(row);
+  function getFieldDefinition(code, side) {
+    if (!code) return null;
+    return side === 'target' ? (FLAT_FIELD_PROPS_TGT[code] || null) : (FLAT_FIELD_PROPS_SRC[code] || null);
+  }
+
+  function collectLayoutItemCodes(value, out) {
+    const bucket = out || [];
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectLayoutItemCodes(item, bucket));
+      return bucket;
     }
-    const list = [...buckets.values()].sort((a, b) => String(a.key).localeCompare(String(b.key)));
-    if (other.length) list.push({ key: FIELD_SECTION_KEY, info: null, rows: other });
-    return list;
+    if (!value || typeof value !== 'object') return bucket;
+    if (value.code) bucket.push(String(value.code));
+    if (Array.isArray(value.fields)) collectLayoutItemCodes(value.fields, bucket);
+    if (Array.isArray(value.layout)) collectLayoutItemCodes(value.layout, bucket);
+    return bucket;
+  }
+
+  function collectLayoutFieldCodes(rows, out) {
+    return collectLayoutItemCodes(rows || [], out || []);
+  }
+
+  function getValueAtTokens(root, tokens) {
+    let cur = root;
+    for (const token of tokens || []) {
+      if (cur == null) return undefined;
+      cur = cur[token];
+    }
+    return cur;
+  }
+
+  function findLayoutFieldCodeByPath(path) {
+    const rel = relativePathFromRow(path, 'layoutSettings');
+    if (rel == null) return '';
+    const tokens = tokenizePath(rel);
+    const roots = [{ layout: LAYOUT_ROWS_SRC }, { layout: LAYOUT_ROWS_TGT }];
+    for (const root of roots) {
+      for (let i = tokens.length; i > 0; i--) {
+        const value = getValueAtTokens(root, tokens.slice(0, i));
+        if (value && typeof value === 'object' && !Array.isArray(value) && value.code) {
+          return String(value.code);
+        }
+      }
+    }
+    return '';
+  }
+
+  function resolveLayoutRowCodes(row) {
+    const codes = new Set();
+    const rel = relativePathFromRow(row?.path, 'layoutSettings');
+    const tokens = tokenizePath(rel);
+    const leaf = tokens.length ? tokens[tokens.length - 1] : '';
+    if ((leaf === 'code' || leaf === 'fieldCode') && typeof row?.left === 'string') codes.add(String(row.left));
+    if ((leaf === 'code' || leaf === 'fieldCode') && typeof row?.right === 'string') codes.add(String(row.right));
+    collectLayoutItemCodes(row?.left, []).forEach((code) => codes.add(String(code)));
+    collectLayoutItemCodes(row?.right, []).forEach((code) => codes.add(String(code)));
+    const byPath = findLayoutFieldCodeByPath(row?.path || '');
+    if (byPath) codes.add(byPath);
+    return [...codes].filter(Boolean);
+  }
+
+  function fieldStatusLabel(status) {
+    if (status === 'added') return '追加';
+    if (status === 'removed') return '削除';
+    if (status === 'modified') return '変更';
+    return '同一';
+  }
+
+  function fieldStatusTone(status) {
+    if (status === 'added') return 'added';
+    if (status === 'removed') return 'removed';
+    if (status === 'modified') return 'changed';
+    return 'same';
+  }
+
+  function describeLayoutChange(row) {
+    const rel = relativePathLabel(row);
+    if (!rel || rel === '（セクション全体）') return 'レイアウト全体';
+    const compact = rel
+      .replace(/^layout\\[\\d+\\]\\.fields\\[\\d+\\]\\.?/, '')
+      .replace(/^layout\\[\\d+\\]\\.?/, '')
+      .replace(/\\.fields\\[\\d+\\]\\.?/, '.');
+    return compact || '配置設定';
+  }
+
+  function collectAllFieldCodes() {
+    const codes = new Set([...Object.keys(FLAT_FIELD_PROPS_SRC || {}), ...Object.keys(FLAT_FIELD_PROPS_TGT || {})]);
+    REPORT_ROWS.forEach((row) => {
+      if (!row) return;
+      if (row.sectionKey === FIELD_SECTION_KEY) {
+        const info = extractFieldPathInfo(row.path);
+        const code = info?.activeCode || getFieldRowPayload(row)?.code || '';
+        if (code) codes.add(String(code));
+        return;
+      }
+      if (row.sectionKey === 'layoutSettings') {
+        resolveLayoutRowCodes(row).forEach((code) => codes.add(String(code)));
+      }
+    });
+    return [...codes];
+  }
+
+  function buildFieldReviewModel() {
+    const sourceLayoutOrder = [...new Set(collectLayoutFieldCodes(LAYOUT_ROWS_SRC, []))];
+    const targetLayoutOrder = [...new Set(collectLayoutFieldCodes(LAYOUT_ROWS_TGT, []))];
+    const sourceOrderMap = new Map(sourceLayoutOrder.map((code, idx) => [code, idx]));
+    const targetOrderMap = new Map(targetLayoutOrder.map((code, idx) => [code, idx]));
+    const groupMap = new Map();
+
+    function ensureGroup(code) {
+      const safeCode = String(code || '').trim();
+      if (!safeCode) return null;
+      if (!groupMap.has(safeCode)) {
+        groupMap.set(safeCode, {
+          code: safeCode,
+          sourceField: FLAT_FIELD_PROPS_SRC[safeCode] || null,
+          targetField: FLAT_FIELD_PROPS_TGT[safeCode] || null,
+          fieldRows: [],
+          layoutRows: []
+        });
+      }
+      return groupMap.get(safeCode);
+    }
+
+    collectAllFieldCodes().forEach((code) => ensureGroup(code));
+
+    REPORT_ROWS.forEach((row) => {
+      if (!row) return;
+      if (row.sectionKey === FIELD_SECTION_KEY) {
+        const info = extractFieldPathInfo(row.path);
+        const code = info?.activeCode || getFieldRowPayload(row)?.code || '';
+        const group = ensureGroup(code);
+        if (group) group.fieldRows.push(row);
+        return;
+      }
+      if (row.sectionKey === 'layoutSettings') {
+        resolveLayoutRowCodes(row).forEach((code) => {
+          const group = ensureGroup(code);
+          if (group) group.layoutRows.push(row);
+        });
+      }
+    });
+
+    const statusOrder = { modified: 0, added: 1, removed: 2, unchanged: 3 };
+    const groups = [...groupMap.values()].map((group) => {
+      const field = group.targetField || group.sourceField || { code: group.code };
+      const label = String(field.label || field.name || group.code);
+      const type = String(field.type || group.sourceField?.type || group.targetField?.type || '-');
+      const diffFieldRows = group.fieldRows.filter((row) => row.type !== 'same');
+      const diffLayoutRows = group.layoutRows.filter((row) => row.type !== 'same');
+      const diffRows = [...diffFieldRows, ...diffLayoutRows];
+      const allRows = [...group.fieldRows, ...group.layoutRows];
+      const impactRefs = [];
+      const impactSeen = new Set();
+      allRows.forEach((row) => {
+        (row.impactRefs || []).forEach((ref) => {
+          const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join('|');
+          if (impactSeen.has(sig)) return;
+          impactSeen.add(sig);
+          impactRefs.push(ref);
+        });
+      });
+      const status = !group.sourceField && group.targetField
+        ? 'added'
+        : group.sourceField && !group.targetField
+          ? 'removed'
+          : diffRows.length
+            ? 'modified'
+            : 'unchanged';
+      const layoutIndex = sourceOrderMap.has(group.code)
+        ? sourceOrderMap.get(group.code)
+        : targetOrderMap.has(group.code)
+          ? targetOrderMap.get(group.code) + 10000
+          : 999999;
+      return {
+        ...group,
+        label,
+        type,
+        status,
+        diffCount: diffRows.length,
+        settingDiffCount: diffFieldRows.length,
+        layoutDiffCount: diffLayoutRows.length,
+        impactCount: impactRefs.length,
+        impactRefs,
+        rows: diffRows,
+        allRows,
+        parentTableCode: String(field.__parentTableCode || ''),
+        parentTableLabel: String(field.__parentTableLabel || ''),
+        layoutIndex
+      };
+    }).sort((a, b) => {
+      const ao = statusOrder[a.status] ?? 9;
+      const bo = statusOrder[b.status] ?? 9;
+      if (ao !== bo) return ao - bo;
+      if (a.layoutIndex !== b.layoutIndex) return a.layoutIndex - b.layoutIndex;
+      return String(a.code).localeCompare(String(b.code));
+    });
+
+    return {
+      groups,
+      groupMap: new Map(groups.map((group) => [group.code, group])),
+      sourceLayoutOrder,
+      targetLayoutOrder
+    };
+  }
+
+  function fieldGroupSearchText(group) {
+    return [
+      group.code,
+      group.label,
+      group.type,
+      group.parentTableCode,
+      group.parentTableLabel,
+      ...group.allRows.map((row) => row.path || ''),
+      ...group.allRows.map((row) => row.reasonSummary || ''),
+      ...group.allRows.map((row) => safeText(row.left)),
+      ...group.allRows.map((row) => safeText(row.right))
+    ].join('\\n').toLowerCase();
+  }
+
+  function fieldGroupMatchesKeyword(group, keyword) {
+    if (!keyword) return true;
+    return fieldGroupSearchText(group).includes(keyword);
+  }
+
+  function ensureActiveFieldCode(groups, options) {
+    const preserveMissing = !!options?.preserveMissing;
+    if (!groups.length) {
+      if (!preserveMissing) activeFieldCode = '';
+      return activeFieldCode;
+    }
+    if (activeFieldCode && groups.some((group) => group.code === activeFieldCode)) return activeFieldCode;
+    if (preserveMissing && activeFieldCode) return activeFieldCode;
+    const preferred = groups.find((group) => group.diffCount > 0) || groups[0];
+    activeFieldCode = preferred.code;
+    return activeFieldCode;
+  }
+
+  function updateStatsFromCounts(counts) {
+    document.getElementById('stat-total').textContent = String(counts.total || 0);
+    document.getElementById('stat-added').textContent = String(counts.added || 0);
+    document.getElementById('stat-removed').textContent = String(counts.removed || 0);
+    document.getElementById('stat-changed').textContent = String(counts.changed || 0);
+    document.getElementById('stat-moved').textContent = String(counts.moved || 0);
+    document.getElementById('stat-same').textContent = String(counts.same || 0);
+  }
+
+  function updateStatsFromFieldGroups(groups) {
+    const counts = { total: groups.length, added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
+    groups.forEach((group) => {
+      if (group.status === 'added') counts.added += 1;
+      else if (group.status === 'removed') counts.removed += 1;
+      else if (group.status === 'modified') counts.changed += 1;
+      else counts.same += 1;
+      if (group.allRows.some((row) => !!row.moved)) counts.moved += 1;
+    });
+    updateStatsFromCounts(counts);
+  }
+
+  function renderFieldSummaryChips(group) {
+    const chips = [];
+    if (group.settingDiffCount) chips.push('<span class="fc-chip">設定 ' + group.settingDiffCount + '</span>');
+    if (group.layoutDiffCount) chips.push('<span class="fc-chip">配置 ' + group.layoutDiffCount + '</span>');
+    if (group.impactCount) chips.push('<span class="fc-chip">影響 ' + group.impactCount + '</span>');
+    if (group.parentTableCode) chips.push('<span class="fc-chip fc-chip--muted">テーブル ' + escHtml(group.parentTableLabel || group.parentTableCode) + '</span>');
+    if (!chips.length) chips.push('<span class="fc-chip fc-chip--muted">差分なし</span>');
+    return chips.join('');
+  }
+
+  function buildFieldDetailEntries(group, hideSame) {
+    const entries = [];
+    group.fieldRows.forEach((row) => {
+      if (hideSame && row.type === 'same') return;
+      entries.push({
+        area: 'フィールド設定',
+        title: fieldChangePropTitle(extractFieldPathInfo(row.path), row),
+        row
+      });
+    });
+    group.layoutRows.forEach((row) => {
+      if (hideSame && row.type === 'same') return;
+      entries.push({
+        area: 'レイアウト',
+        title: describeLayoutChange(row),
+        row
+      });
+    });
+    const typeOrder = { removed: 0, added: 1, changed: 2, same: 3 };
+    return entries.sort((a, b) => {
+      if (a.area !== b.area) return a.area === 'フィールド設定' ? -1 : 1;
+      const ao = typeOrder[a.row.type] ?? 9;
+      const bo = typeOrder[b.row.type] ?? 9;
+      if (ao !== bo) return ao - bo;
+      return String(a.row.path || '').localeCompare(String(b.row.path || ''));
+    });
+  }
+
+  function renderFieldDetailPanel(code, model, options) {
+    const group = model.groupMap.get(code || '');
+    if (!group) {
+      return '<section class="fd-panel"><div class="fd-empty">対象のフィールドが現在の表示条件に含まれていません。検索条件か「同一項目を隠す」を見直してから、もう一度「設定差分を開く」を押してください。</div></section>';
+    }
+    const entries = buildFieldDetailEntries(group, !!options?.hideSame);
+    const tone = fieldStatusTone(group.status);
+    return '<section class="fd-panel">' +
+      '<div class="fd-head">' +
+        '<div>' +
+          '<div class="fd-title">' + escHtml(group.label) + '</div>' +
+          '<div class="fd-sub">code: <code>' + escHtml(group.code) + '</code> / type: ' + escHtml(group.type || '-') + (group.parentTableCode ? ' / テーブル: ' + escHtml(group.parentTableLabel || group.parentTableCode) : '') + '</div>' +
+        '</div>' +
+        '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' +
+      '</div>' +
+      '<div class="fc-chip-row">' + renderFieldSummaryChips(group) + '</div>' +
+      '<div class="fd-snapshots">' +
+        renderFieldSnapshotCard('比較元', group.sourceField, 'src') +
+        renderFieldSnapshotCard('比較先', group.targetField, 'tgt') +
+      '</div>' +
+      (entries.length ? (
+        '<div class="fd-section">' +
+          '<h3>設定差分</h3>' +
+          '<div class="fd-entry-list">' +
+            entries.map((entry) => {
+              const row = entry.row;
+              const rowTone = row.type === 'added' ? 'added' : row.type === 'removed' ? 'removed' : row.type === 'same' ? 'same' : 'changed';
+              return '<article class="fd-entry fd-entry--' + rowTone + '">' +
+                '<div class="fd-entry-top">' +
+                  '<span class="fd-entry-area">' + escHtml(entry.area) + '</span>' +
+                  '<span class="fd-entry-type">' + escHtml(diffTypeLabel(row.type, row.moved)) + '</span>' +
+                  '<strong>' + escHtml(entry.title || relativePathLabel(row)) + '</strong>' +
+                '</div>' +
+                '<div class="fd-path">' + escHtml(row.path || '-') + '</div>' +
+                renderRowMeta(row) +
+                '<div class="fd-entry-grid">' +
+                  '<div class="fd-entry-col"><div class="fd-pane-label">比較元</div><div class="fd-entry-body">' + formatFieldValueBrief(row.left, 280) + '</div></div>' +
+                  '<div class="fd-entry-col"><div class="fd-pane-label">比較先</div><div class="fd-entry-body">' + formatFieldValueBrief(row.right, 280) + '</div></div>' +
+                '</div>' +
+              '</article>';
+            }).join('') +
+          '</div>' +
+        '</div>'
+      ) : '<div class="fd-empty">このフィールドに表示対象の差分はありません。</div>') +
+    '</section>';
+  }
+
+  function closeFieldDetailModal() {
+    detailModalOpen = false;
+    const modal = document.getElementById('fieldDetailModal');
+    const body = document.getElementById('fieldDetailModalBody');
+    if (modal) modal.hidden = true;
+    if (body) body.innerHTML = '';
+    document.body.classList.remove('has-modal-open');
+  }
+
+  function syncFieldDetailModal(model, options) {
+    const modal = document.getElementById('fieldDetailModal');
+    const body = document.getElementById('fieldDetailModalBody');
+    const title = document.getElementById('fieldDetailModalTitle');
+    const sub = document.getElementById('fieldDetailModalSub');
+    if (!modal || !body || !title || !sub) return;
+    if (!detailModalOpen) {
+      closeFieldDetailModal();
+      return;
+    }
+    const group = model?.groupMap?.get(activeFieldCode || '');
+    if (!group) {
+      closeFieldDetailModal();
+      return;
+    }
+    title.textContent = group.label || group.code || 'フィールド詳細';
+    sub.textContent = 'code: ' + (group.code || '-') + ' / type: ' + (group.type || '-') + (group.parentTableCode ? ' / テーブル: ' + (group.parentTableLabel || group.parentTableCode) : '');
+    body.innerHTML = renderFieldDetailPanel(activeFieldCode, model, options);
+    modal.hidden = false;
+    document.body.classList.add('has-modal-open');
+  }
+
+  function openFieldDetail(code, rerender) {
+    const safeCode = String(code || '').trim();
+    if (!safeCode) return;
+    activeFieldCode = safeCode;
+    detailModalOpen = true;
+    if (typeof rerender === 'function') rerender();
+  }
+
+  function bindFieldSelectionButtons(root, rerender) {
+    if (!root) return;
+    root.querySelectorAll('[data-field-select]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const code = String(btn.getAttribute('data-field-select') || '').trim();
+        if (!code) return;
+        openFieldDetail(code, rerender);
+      });
+    });
+  }
+
+  function renderSettingsLikeView() {
+    const root = document.getElementById('settingsLikeRoot');
+    if (!root) return;
+    const nav = document.getElementById('nav');
+    if (nav) nav.innerHTML = '';
+    const hideSame = !!document.getElementById('hideSame').checked;
+    const keyword = String(document.getElementById('search').value || '').trim().toLowerCase();
+    const model = buildFieldReviewModel();
+    const groups = model.groups.filter((group) => {
+      if (hideSame && group.status === 'unchanged') return false;
+      if (!fieldGroupMatchesKeyword(group, keyword)) return false;
+      return true;
+    });
+    updateStatsFromFieldGroups(groups);
+    if (!groups.length) {
+      closeFieldDetailModal();
+      root.innerHTML = '<div class="no-diff">表示対象のフィールドがありません。検索条件か「同一項目を隠す」を見直してください。</div>';
+      return;
+    }
+    ensureActiveFieldCode(groups, { preserveMissing: detailModalOpen });
+    const modelForView = { groupMap: new Map(groups.map((group) => [group.code, group])) };
+    root.innerHTML = '<div class="sl-board">' +
+      '<div class="sl-legend" role="note">' +
+        '<span><strong>フィールド単位</strong>で、設定差分とレイアウト差分を同じ項目にまとめて確認できます。</span>' +
+        '<span><i class="sl-dot sl-dot--src"></i> 比較元のみ</span>' +
+        '<span><i class="sl-dot sl-dot--tgt"></i> 比較先のみ</span>' +
+        '<span><i class="sl-dot sl-dot--chg"></i> 差分あり</span>' +
+        '<span>「設定差分を開く」でポップアップ表示</span>' +
+        (!hideSame ? '<span><i class="sl-dot sl-dot--same"></i> 同一</span>' : '') +
+      '</div>' +
+      '<div class="fc-shell">' +
+        '<div class="fc-list">' +
+          groups.map((group, idx) => {
+            const tone = fieldStatusTone(group.status);
+            const isActive = group.code === activeFieldCode;
+            return '<article class="fc-card fc-card--' + tone + (isActive ? ' is-active' : '') + '" id="field_card_' + idx + '">' +
+              '<div class="fc-card-head">' +
+                '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' +
+                '<span class="fc-code">' + escHtml(group.code) + '</span>' +
+              '</div>' +
+              '<div class="fc-title">' + escHtml(group.label) + '</div>' +
+              '<div class="fc-sub">' + escHtml(group.type || '-') + (group.parentTableCode ? ' / サブテーブル: ' + escHtml(group.parentTableLabel || group.parentTableCode) : '') + '</div>' +
+              '<div class="fc-chip-row">' + renderFieldSummaryChips(group) + '</div>' +
+              '<button type="button" class="btn' + (isActive ? ' primary' : '') + '" data-field-select="' + escHtml(group.code) + '">' + escHtml(group.diffCount ? '設定差分を開く' : '設定を開く') + '</button>' +
+            '</article>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+    if (nav) {
+      groups.forEach((group, idx) => {
+        const navItem = document.createElement('div');
+        navItem.className = 'nav-item' + (group.code === activeFieldCode ? ' active' : '');
+        navItem.innerHTML = '<span>' + escHtml(group.code) + '</span><span class="badge">' + String(group.diffCount || 0) + '</span>';
+        navItem.onclick = () => {
+          activeFieldCode = group.code;
+          renderSettingsLikeView();
+          const el = document.getElementById('field_card_' + idx);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        };
+        nav.appendChild(navItem);
+      });
+    }
+    bindFieldSelectionButtons(root, renderSettingsLikeView);
+    syncFieldDetailModal(modelForView, { hideSame });
+  }
+
+  function renderLayoutFieldCard(item, side, groupMap, usedCodes) {
+    const code = String(item?.code || '').trim();
+    const group = code ? groupMap.get(code) : null;
+    if (code) usedCodes.add(code);
+    const field = code ? getFieldDefinition(code, side) : null;
+    const label = String(field?.label || field?.name || item?.label || code || item?.type || '項目');
+    const type = String(field?.type || item?.type || '-');
+    const tone = group ? fieldStatusTone(group.status) : 'same';
+    const hasDiff = !!group && group.diffCount > 0;
+    return '<article class="lp-field lp-field--' + tone + (code && code === activeFieldCode ? ' is-active' : '') + '">' +
+      '<div class="lp-field-top">' +
+        '<strong class="lp-field-title">' + escHtml(label) + '</strong>' +
+        (group ? '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' : '') +
+      '</div>' +
+      '<div class="lp-field-meta"><code>' + escHtml(code || '-') + '</code><span>' + escHtml(type) + '</span></div>' +
+      (group ? '<div class="fc-chip-row fc-chip-row--compact">' + renderFieldSummaryChips(group) + '</div>' : '') +
+      (code ? '<div class="lp-field-actions"><button type="button" class="btn' + (hasDiff ? ' primary' : '') + '" data-field-select="' + escHtml(code) + '">' + escHtml(hasDiff ? '設定差分を開く' : '設定を開く') + '</button></div>' : '') +
+    '</article>';
+  }
+
+  function renderLayoutStaticItem(item) {
+    if (item?.type === 'SPACER') return '<div class="lp-static lp-static--spacer" aria-hidden="true"></div>';
+    if (item?.type === 'HR') return '<div class="lp-static lp-static--hr" aria-hidden="true"></div>';
+    return '<div class="lp-static lp-static--label">' + escHtml(item?.label || item?.text || item?.type || '要素') + '</div>';
+  }
+
+  function renderLayoutItem(item, opts) {
+    if (!item || typeof item !== 'object') return '';
+    if (item.type === 'GROUP' && Array.isArray(item.layout)) {
+      return '<section class="lp-groupbox">' +
+        '<div class="lp-groupbox-head">' + escHtml(item.label || item.code || 'グループ') + '</div>' +
+        '<div class="lp-groupbox-body">' + renderLayoutRows(item.layout, opts) + '</div>' +
+      '</section>';
+    }
+    if (item.type === 'SUBTABLE' || Array.isArray(item.fields)) {
+      const code = String(item.code || '').trim();
+      const group = code ? opts.groupMap.get(code) : null;
+      if (code) opts.usedCodes.add(code);
+      const headerField = code ? getFieldDefinition(code, opts.side) : null;
+      const label = String(headerField?.label || headerField?.name || item.label || code || 'テーブル');
+      return '<section class="lp-subtable lp-field--' + (group ? fieldStatusTone(group.status) : 'same') + '">' +
+        '<div class="lp-subtable-head">' +
+          '<strong>' + escHtml(label) + '</strong>' +
+          (code ? '<button type="button" class="btn' + (group?.diffCount ? ' primary' : '') + '" data-field-select="' + escHtml(code) + '">' + escHtml(group?.diffCount ? '設定差分を開く' : '設定を開く') + '</button>' : '') +
+        '</div>' +
+        '<div class="lp-subtable-grid">' + (Array.isArray(item.fields) && item.fields.length ? item.fields.map((child) => renderLayoutFieldCard(child, opts.side, opts.groupMap, opts.usedCodes)).join('') : '<div class="lp-empty">子フィールドがありません。</div>') + '</div>' +
+      '</section>';
+    }
+    if (item.code) return renderLayoutFieldCard(item, opts.side, opts.groupMap, opts.usedCodes);
+    return renderLayoutStaticItem(item);
+  }
+
+  function renderLayoutRows(rows, opts) {
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) return '<div class="lp-empty">この側のレイアウトはありません。</div>';
+    return list.map((row) => {
+      if (!row || typeof row !== 'object') return '';
+      if (row.type === 'GROUP' && Array.isArray(row.layout)) {
+        return '<section class="lp-groupbox">' +
+          '<div class="lp-groupbox-head">' + escHtml(row.label || row.code || 'グループ') + '</div>' +
+          '<div class="lp-groupbox-body">' + renderLayoutRows(row.layout, opts) + '</div>' +
+        '</section>';
+      }
+      const fields = Array.isArray(row.fields) ? row.fields : [];
+      if (!fields.length) return '';
+      return '<div class="lp-row">' + fields.map((item) => renderLayoutItem(item, opts)).join('') + '</div>';
+    }).join('');
+  }
+
+  function renderLayoutlessPane(side, groups, usedCodes) {
+    const visible = groups.filter((group) => side === 'source' ? !!group.sourceField : !!group.targetField);
+    if (!visible.length) return '<div class="lp-empty">この側に表示できるフィールドはありません。</div>';
+    return '<div class="lp-fallback-grid">' + visible.map((group) => renderLayoutFieldCard({ code: group.code, label: group.label, type: group.type }, side, new Map(groups.map((item) => [item.code, item])), usedCodes)).join('') + '</div>';
+  }
+
+  function renderLayoutPane(side, groups) {
+    const sideLabel = side === 'source' ? '比較元レイアウト' : '比較先レイアウト';
+    const rows = side === 'source' ? LAYOUT_ROWS_SRC : LAYOUT_ROWS_TGT;
+    const usedCodes = new Set();
+    const groupMap = new Map(groups.map((group) => [group.code, group]));
+    const body = rows.length ? renderLayoutRows(rows, { side, groupMap, usedCodes }) : renderLayoutlessPane(side, groups, usedCodes);
+    const leftovers = groups.filter((group) => {
+      if (usedCodes.has(group.code)) return false;
+      return side === 'source' ? !!group.sourceField : !!group.targetField;
+    });
+    return '<section class="lp-pane">' +
+      '<div class="lp-pane-head">' + escHtml(sideLabel) + '</div>' +
+      '<div class="lp-pane-body">' +
+        body +
+        (leftovers.length ? '<div class="lp-leftovers"><div class="lp-pane-sub">レイアウト外 / 非表示</div><div class="lp-fallback-grid">' + leftovers.map((group) => renderLayoutFieldCard({ code: group.code, label: group.label, type: group.type }, side, groupMap, usedCodes)).join('') + '</div></div>' : '') +
+      '</div>' +
+    '</section>';
+  }
+
+  function renderFormPreview() {
+    const root = document.getElementById('formPreviewRoot');
+    if (!root) return;
+    const hideSame = !!document.getElementById('hideSame').checked;
+    const keyword = String(document.getElementById('search').value || '').trim().toLowerCase();
+    const nav = document.getElementById('nav');
+    if (nav) nav.innerHTML = '';
+    const model = buildFieldReviewModel();
+    const groups = model.groups.filter((group) => {
+      if (hideSame && group.status === 'unchanged') return false;
+      if (!fieldGroupMatchesKeyword(group, keyword)) return false;
+      return true;
+    });
+    updateStatsFromFieldGroups(groups);
+    if (!groups.length) {
+      closeFieldDetailModal();
+      root.innerHTML = '<div class="no-diff">表示対象のフィールドがありません。検索条件か「同一項目を隠す」を見直してください。</div>';
+      return;
+    }
+    ensureActiveFieldCode(groups, { preserveMissing: detailModalOpen });
+    const modelForView = { groupMap: new Map(groups.map((group) => [group.code, group])) };
+    root.innerHTML = '<div class="lp-shell">' +
+      '<div class="sl-legend" role="note">' +
+        '<span><strong>レイアウト比較</strong>で左右の配置を見比べつつ、差分がある項目は「設定差分」から詳細を確認できます。</span>' +
+        '<span><i class="sl-dot sl-dot--chg"></i> ボタン付きカードは設定差分あり</span>' +
+        '<span>「設定差分を開く」でポップアップ表示</span>' +
+      '</div>' +
+      '<div class="lp-main">' +
+        renderLayoutPane('source', groups) +
+        renderLayoutPane('target', groups) +
+      '</div>' +
+    '</div>';
+    if (nav) {
+      groups.forEach((group) => {
+        const navItem = document.createElement('div');
+        navItem.className = 'nav-item' + (group.code === activeFieldCode ? ' active' : '');
+        navItem.innerHTML = '<span>' + escHtml(group.code) + '</span><span class="badge">' + String(group.diffCount || 0) + '</span>';
+        navItem.onclick = () => {
+          activeFieldCode = group.code;
+          renderFormPreview();
+        };
+        nav.appendChild(navItem);
+      });
+    }
+    bindFieldSelectionButtons(root, renderFormPreview);
+    syncFieldDetailModal(modelForView, { hideSame });
   }
 
   function getActiveReportTab() {
@@ -1485,7 +2418,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return btn ? btn.getAttribute('data-report-tab') : 'summary';
   }
 
-  function renderSettingsLikeView() {
+  function renderSettingsLikeViewLegacy() {
     const root = document.getElementById('settingsLikeRoot');
     if (!root) return;
     const hideSame = !!document.getElementById('hideSame').checked;
@@ -1679,7 +2612,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return rows;
   }
 
-  function renderFormPreview() {
+  function renderFormPreviewLegacy() {
     const root = document.getElementById('formPreviewRoot');
     if (!root) return;
     const srcKeys = Object.keys(FIELD_PROPS_SRC || {});
@@ -1749,8 +2682,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       pane.hidden = pane.getAttribute('data-report-pane') !== nextTab;
     });
     const navWrap = document.getElementById('navWrap');
-    if (navWrap) navWrap.hidden = (nextTab !== 'diff' && nextTab !== 'settingsLike');
-    try { localStorage.setItem(ACTIVE_TAB_KEY, nextTab); } catch (e) {}
+    if (navWrap) navWrap.hidden = (nextTab !== 'diff' && nextTab !== 'settingsLike' && nextTab !== 'formPreview');
+    if (nextTab !== 'settingsLike' && nextTab !== 'formPreview') closeFieldDetailModal();
+    safeStorageSet(ACTIVE_TAB_KEY, nextTab);
     if (nextTab === 'settingsLike') renderSettingsLikeView();
     else if (nextTab === 'formPreview') renderFormPreview();
     else if (nextTab === 'diff') render();
@@ -1855,9 +2789,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function toggleTheme() {
     document.body.classList.toggle('dark');
-    localStorage.setItem(THEME_KEY, document.body.classList.contains('dark') ? 'dark' : 'light');
+    safeStorageSet(THEME_KEY, document.body.classList.contains('dark') ? 'dark' : 'light');
     syncThemeButtonLabel();
     if (getActiveReportTab() === 'settingsLike') renderSettingsLikeView();
+    else if (getActiveReportTab() === 'formPreview') renderFormPreview();
   }
 
   function collapseAll() {
@@ -1931,14 +2866,28 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       document.getElementById('search').focus();
     }
     if (e.key === 'Escape') {
+      if (detailModalOpen) {
+        e.preventDefault();
+        closeFieldDetailModal();
+        return;
+      }
       document.getElementById('search').value = '';
       onReportFilterChange();
     }
   });
 
-  if (localStorage.getItem(THEME_KEY) === 'dark') document.body.classList.add('dark');
+  const detailModal = document.getElementById('fieldDetailModal');
+  if (detailModal) {
+    detailModal.addEventListener('click', (e) => {
+      if (e.target === detailModal || e.target?.closest('[data-modal-close]')) {
+        closeFieldDetailModal();
+      }
+    });
+  }
+
+  if (safeStorageGet(THEME_KEY) === 'dark') document.body.classList.add('dark');
   syncThemeButtonLabel();
-  setActiveTab(localStorage.getItem(ACTIVE_TAB_KEY) || 'summary');
+  setActiveTab(safeStorageGet(ACTIVE_TAB_KEY) || 'summary');
   render();
   if (getActiveReportTab() === 'settingsLike') renderSettingsLikeView();
   else if (getActiveReportTab() === 'formPreview') renderFormPreview();
@@ -1951,7 +2900,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>kintone差分レポート</title>
-  <script src="https://cdn.jsdelivr.net/npm/kintone-ui-component@${KUC_REPORT_VERSION}/umd/kuc.min.js" crossorigin="anonymous"></script>
   <style>
     :root{
       --bg:#f1f5f9;--fg:#0f172a;--card:#ffffff;--card-soft:#f8fafc;--border:#e2e8f0;--sidebar:#eef2f7;--sidebar-fg:#334155;
@@ -2159,6 +3107,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .compare-pre{margin:0;padding:12px;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.5}
     .no-diff{text-align:center;font-size:14px;font-weight:600;padding:36px 24px;color:#0d9488;background:linear-gradient(180deg,var(--card-soft),var(--card));border:1px dashed var(--border);border-radius:16px}
     body.dark .no-diff{color:#5eead4}
+    body.has-modal-open{overflow:hidden}
     .sl-root{padding:16px 18px 28px;background:var(--card-soft);min-height:320px}
     .sl-board{display:flex;flex-direction:column;gap:18px;max-width:1280px;margin:0 auto}
     .sl-legend{display:flex;flex-wrap:wrap;gap:12px 18px;margin-bottom:4px;padding:12px 14px;border-radius:12px;background:var(--card);border:1px solid var(--border);font-size:11px;font-weight:600;color:var(--fg);box-shadow:var(--shadow)}
@@ -2248,6 +3197,142 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .fp-meta{margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
     .fp-req-chip{display:inline-block;background:#dc2626;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px}
     @media (max-width:900px){.fp-preview-grid{grid-template-columns:1fr}}
+    .nav-item.active{background:var(--card);border-color:var(--accent-soft);box-shadow:var(--shadow)}
+    .fc-shell{display:flex;flex-direction:column;gap:16px}
+    .fc-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+    .fc-card{border:1px solid var(--border);border-radius:16px;padding:14px 16px;background:var(--card);box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px}
+    .fc-card.is-active{border-color:var(--accent);box-shadow:0 0 0 1px rgba(37,99,235,.18),var(--shadow)}
+    .fc-card--added{border-left:5px solid #16a34a}
+    .fc-card--removed{border-left:5px solid #dc2626}
+    .fc-card--changed{border-left:5px solid #ca8a04}
+    .fc-card--same{border-left:5px solid #94a3b8}
+    .fc-card-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .fc-code{font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}
+    .fc-title{font-size:15px;font-weight:800;line-height:1.4;color:var(--fg)}
+    .fc-sub{font-size:11px;color:var(--muted);line-height:1.6}
+    .fc-chip-row{display:flex;flex-wrap:wrap;gap:8px}
+    .fc-chip-row--compact{margin-top:2px}
+    .fc-chip{display:inline-flex;align-items:center;padding:4px 9px;border-radius:999px;background:var(--card-soft);border:1px solid var(--border);font-size:10px;font-weight:700;color:var(--fg)}
+    .fc-chip--muted{color:var(--muted)}
+    .fd-overlay{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(15,23,42,.48);backdrop-filter:blur(6px)}
+    .fd-overlay[hidden]{display:none!important}
+    .fd-overlay-dialog{width:min(1240px,100%);max-height:calc(100vh - 48px);display:flex;flex-direction:column;border:1px solid var(--border);border-radius:24px;background:var(--card);box-shadow:0 24px 64px rgba(15,23,42,.28);overflow:hidden}
+    .fd-overlay-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 20px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card-soft) 0%,var(--card) 100%)}
+    .fd-overlay-title{font-size:20px;font-weight:800;line-height:1.35;color:var(--fg)}
+    .fd-overlay-sub{margin-top:6px;font-size:11px;line-height:1.7;color:var(--muted);word-break:break-word}
+    .fd-overlay-actions{display:flex;align-items:center;gap:10px}
+    .fd-overlay-hint{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+    .fd-overlay-body{padding:18px;background:var(--card-soft);overflow:auto}
+    .fd-overlay-body .fd-panel{border:none;box-shadow:none;padding:0;background:transparent}
+    .fd-overlay-body .fd-empty{background:var(--card)}
+    .fd-panel{border:1px solid var(--border);border-radius:18px;background:var(--card);box-shadow:var(--shadow);padding:18px}
+    .fd-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
+    .fd-title{font-size:18px;font-weight:800;line-height:1.35;color:var(--fg)}
+    .fd-sub{margin-top:4px;font-size:11px;color:var(--muted);line-height:1.7}
+    .fd-sub code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    .fd-status{display:inline-flex;align-items:center;justify-content:center;padding:5px 10px;border-radius:999px;font-size:10px;font-weight:800;border:1px solid transparent;white-space:nowrap}
+    .fd-status--added{background:#dcfce7;color:#166534;border-color:#86efac}
+    .fd-status--removed{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+    .fd-status--changed{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+    .fd-status--same{background:#e2e8f0;color:#475569;border-color:#cbd5e1}
+    body.dark .fd-status--added{background:#14532d;color:#bbf7d0;border-color:#166534}
+    body.dark .fd-status--removed{background:#450a0a;color:#fecaca;border-color:#991b1b}
+    body.dark .fd-status--changed{background:#78350f;color:#fde68a;border-color:#b45309}
+    body.dark .fd-status--same{background:#334155;color:#cbd5e1;border-color:#475569}
+    .fd-snapshots{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0 18px}
+    .fd-snapshot{border:1px solid var(--border);border-radius:18px;padding:0;background:#fff;overflow:hidden}
+    .fd-snapshot--src{box-shadow:0 10px 24px -18px rgba(37,99,235,.4)}
+    .fd-snapshot--tgt{box-shadow:0 10px 24px -18px rgba(22,163,74,.4)}
+    body.dark .fd-snapshot{background:#0f172a}
+    .fd-pane-label{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+    .fd-mini-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+    .fd-mini-cell{padding:9px 10px;border-radius:10px;background:var(--card);border:1px solid var(--border);min-width:0}
+    .fd-mini-cell span{display:block;font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+    .fd-mini-value{font-size:11px;line-height:1.5;color:var(--fg);word-break:break-word}
+    .fd-section h3{margin:0 0 12px;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--fg)}
+    .fd-entry-list{display:flex;flex-direction:column;gap:12px}
+    .fd-entry{border:1px solid var(--border);border-radius:14px;padding:12px 14px;background:var(--card-soft)}
+    .fd-entry--added{border-left:5px solid #16a34a}
+    .fd-entry--removed{border-left:5px solid #dc2626}
+    .fd-entry--changed{border-left:5px solid #ca8a04}
+    .fd-entry--same{border-left:5px solid #94a3b8}
+    .fd-entry-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-bottom:6px}
+    .fd-entry-area,.fd-entry-type{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:700;border:1px solid var(--border);background:var(--card)}
+    .fd-entry-top strong{font-size:13px;color:var(--fg)}
+    .fd-path{font-size:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);margin-bottom:8px;word-break:break-all}
+    .fd-entry-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .fd-entry-col{min-width:0}
+    .fd-entry-body{padding:10px 11px;border-radius:10px;border:1px solid var(--border);background:var(--card);font-size:11px;line-height:1.55;word-break:break-word}
+    .fd-empty{padding:18px;border:1px dashed var(--border);border-radius:12px;background:var(--card-soft);font-size:12px;line-height:1.7;color:var(--muted)}
+    .kf-modal{display:flex;flex-direction:column;background:#fff}
+    body.dark .kf-modal{background:#0f172a}
+    .kf-modal-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid #d7dde6;background:#fbfcfd}
+    body.dark .kf-modal-head{border-bottom-color:#243245;background:#162032}
+    .kf-modal-title{display:flex;align-items:center;gap:10px;min-width:0;color:#1f2a44}
+    body.dark .kf-modal-title{color:#e5eefb}
+    .kf-modal-title strong{font-size:15px;line-height:1.4;font-weight:700}
+    .kf-type-icon{width:20px;height:24px;border:2px solid #8d99ae;border-radius:3px;display:inline-block;position:relative;background:linear-gradient(180deg,#fff,#f2f5f9);flex-shrink:0}
+    .kf-type-icon::before,.kf-type-icon::after{content:"";position:absolute;left:4px;right:4px;height:2px;background:#8d99ae;border-radius:999px}
+    .kf-type-icon::before{top:6px}
+    .kf-type-icon::after{top:12px}
+    body.dark .kf-type-icon{border-color:#8fb3e0;background:linear-gradient(180deg,#20314a,#162032)}
+    body.dark .kf-type-icon::before,body.dark .kf-type-icon::after{background:#8fb3e0}
+    .kf-side{display:inline-flex;align-items:center;padding:5px 10px;border-radius:999px;font-size:10px;font-weight:800;border:1px solid transparent;white-space:nowrap}
+    .kf-side--src{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+    .kf-side--tgt{background:#ecfdf5;color:#15803d;border-color:#bbf7d0}
+    body.dark .kf-side--src{background:#172554;color:#bfdbfe;border-color:#1d4ed8}
+    body.dark .kf-side--tgt{background:#052e16;color:#bbf7d0;border-color:#15803d}
+    .kf-modal-body{display:flex;flex-direction:column;gap:16px;padding:18px}
+    .kf-row{display:flex;flex-direction:column;gap:8px}
+    .kf-row--full{grid-column:1 / -1}
+    .kf-label{font-size:11px;font-weight:700;color:#24324a}
+    body.dark .kf-label{color:#dbe7f6}
+    .kf-required{color:#dc2626;font-weight:800}
+    .kf-value{border:1px solid #d5dce5;border-radius:10px;background:#fff;min-height:46px;padding:12px 14px;font-size:13px;line-height:1.6;color:#1f2937;display:flex;align-items:flex-start;word-break:break-word;box-shadow:inset 0 1px 2px rgba(15,23,42,.04)}
+    .kf-value--textarea{min-height:96px;white-space:pre-wrap}
+    body.dark .kf-value{border-color:#31435b;background:#0b1320;color:#e2e8f0;box-shadow:none}
+    .kf-toggle-list{display:flex;flex-direction:column;gap:10px}
+    .kf-toggle{display:flex;align-items:center;gap:12px;font-size:13px;color:#1f2937}
+    body.dark .kf-toggle{color:#e2e8f0}
+    .kf-toggle-box{width:22px;height:22px;border-radius:4px;border:2px solid #d5dce5;background:#fff;position:relative;flex-shrink:0}
+    .kf-toggle.is-on .kf-toggle-box{border-color:#4c97d2;background:#4c97d2}
+    .kf-toggle.is-on .kf-toggle-box::after{content:"";position:absolute;left:6px;top:1px;width:6px;height:12px;border-right:3px solid #fff;border-bottom:3px solid #fff;transform:rotate(45deg)}
+    body.dark .kf-toggle-box{border-color:#31435b;background:#0b1320}
+    .kf-extra{display:flex;flex-direction:column;gap:10px}
+    .kf-extra-title{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
+    .kf-extra-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .lp-shell{display:flex;flex-direction:column;gap:16px}
+    .lp-main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+    .lp-pane{border:1px solid var(--border);border-radius:18px;background:var(--card);box-shadow:var(--shadow);overflow:hidden}
+    .lp-pane-head{padding:14px 16px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card-soft) 0%,var(--card) 100%);font-size:13px;font-weight:800;color:var(--fg)}
+    .lp-pane-body{padding:14px;display:flex;flex-direction:column;gap:14px}
+    .lp-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .lp-groupbox,.lp-subtable,.lp-leftovers{border:1px solid var(--border);border-radius:14px;background:var(--card-soft);padding:12px}
+    .lp-groupbox-head,.lp-subtable-head,.lp-pane-sub{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;font-size:12px;font-weight:800;color:var(--fg)}
+    .lp-groupbox-body{display:flex;flex-direction:column;gap:10px}
+    .lp-field{border:1px solid var(--border);border-radius:12px;padding:11px 12px;background:var(--card);display:flex;flex-direction:column;gap:8px;min-width:0}
+    .lp-field.is-active{border-color:var(--accent);box-shadow:0 0 0 1px rgba(37,99,235,.18)}
+    .lp-field--added{background:rgba(22,163,74,.06)}
+    .lp-field--removed{background:rgba(220,38,38,.06)}
+    .lp-field--changed{background:rgba(202,138,4,.08)}
+    .lp-field-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+    .lp-field-title{font-size:13px;line-height:1.45;color:var(--fg)}
+    .lp-field-meta{display:flex;flex-wrap:wrap;gap:8px 10px;font-size:10px;color:var(--muted)}
+    .lp-field-meta code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    .lp-field-actions{margin-top:auto}
+    .lp-static{min-height:58px;border:1px dashed var(--border);border-radius:12px;background:var(--card-soft);display:flex;align-items:center;justify-content:center;padding:10px;font-size:11px;color:var(--muted);text-align:center}
+    .lp-static--hr{min-height:16px}
+    .lp-static--spacer{background:transparent}
+    .lp-subtable-grid,.lp-fallback-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    @media (max-width:1280px){
+      .lp-main{grid-template-columns:1fr}
+    }
+    @media (max-width:900px){
+      .fd-overlay{padding:12px}
+      .fd-overlay-head,.kf-modal-head{flex-direction:column;align-items:flex-start}
+      .fd-overlay-actions{width:100%;justify-content:space-between}
+      .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid,.lp-row,.lp-subtable-grid,.lp-fallback-grid{grid-template-columns:1fr}
+    }
     @media print{
       aside,.header-actions,.sb-panel .btn,.settings-tabs,.search-hint{display:none!important}
       body{display:block;background:#fff}
@@ -2283,7 +3368,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       <label class="chk"><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
       <label class="chk"><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
       <span class="field-label">検索</span>
-      <input type="text" id="search" placeholder="パス・値・理由で絞り込み" aria-label="差分の検索" autocomplete="off">
+      <input type="text" id="search" placeholder="パス・値・理由・フィールド名で絞り込み" aria-label="差分の検索" autocomplete="off">
       <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> でフォーカス · <kbd class="kbd">Esc</kbd> でクリア</p>
       <div class="sb-btns">
         <button type="button" class="btn" id="collapseBtn">全折畳</button>
@@ -2300,9 +3385,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   <main>
     <div class="topbar">
       <div class="topbar-main">
-        <div class="sb-kicker">kintone-like Visual Compare</div>
-        <div class="topbar-title">アプリ設定の差分を、設定画面に近い見た目でレビュー</div>
-        <div class="topbar-desc">比較元・比較先のメタ情報、差分件数、比較対象セクションを一画面に集約し、各セクションは変更種別ごとのハイライト付きで確認できます。</div>
+        <div class="sb-kicker">Field / Layout Diff Review</div>
+        <div class="topbar-title">フィールド単位とレイアウト上で、設定差分を行き来しながらレビュー</div>
+        <div class="topbar-desc">フィールドごとの差分を1項目ずつ整理しつつ、レイアウト比較では差分があるフィールドの「設定差分を開く」からポップアップ表示できます。値の差分一覧とフォーム配置の両方を、一覧領域を広く使いながら確認できます。</div>
       </div>
       <div class="header-actions">
         <span class="header-badge">セクション ${esc(String((scopes || []).length || 0))}</span>
@@ -2315,8 +3400,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       <div class="settings-tabs" role="tablist" aria-label="レポート表示切替">
         <button type="button" role="tab" class="settings-tab" data-report-tab="summary" aria-selected="true">サマリー</button>
         <button type="button" role="tab" class="settings-tab passive" data-report-tab="diff" aria-selected="false">差分一覧</button>
-        <button type="button" role="tab" class="settings-tab passive" data-report-tab="settingsLike" aria-selected="false">フィールド比較</button>
-        <button type="button" role="tab" class="settings-tab passive" data-report-tab="formPreview" aria-selected="false">フォームプレビュー</button>
+        <button type="button" role="tab" class="settings-tab passive" data-report-tab="settingsLike" aria-selected="false">フィールド単位</button>
+        <button type="button" role="tab" class="settings-tab passive" data-report-tab="formPreview" aria-selected="false">レイアウト比較</button>
         <button type="button" role="tab" class="settings-tab passive" data-report-tab="compare" aria-selected="false">比較対象設定</button>
       </div>
 
@@ -2370,9 +3455,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
             <h3>レビュー補助</h3>
             <div class="detail-list">
               <div class="detail-row"><span class="detail-key">文字差分</span><span>行内ハイライト対応</span></div>
-              <div class="detail-row"><span class="detail-key">検索</span><span>パス / 値 / 理由</span></div>
-              <div class="detail-row"><span class="detail-key">ナビゲーション</span><span>左ペインからセクション移動</span></div>
-              <div class="detail-row"><span class="detail-key">出力</span><span>Patch JSON / コピー</span></div>
+              <div class="detail-row"><span class="detail-key">検索</span><span>パス / 値 / 理由 / フィールド名</span></div>
+              <div class="detail-row"><span class="detail-key">ナビゲーション</span><span>左ペインからセクション / フィールド移動</span></div>
+              <div class="detail-row"><span class="detail-key">出力</span><span>Patch JSON / フィールド詳細レビュー</span></div>
             </div>
           </section>
         </div>
@@ -2399,14 +3484,14 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
       <section class="tab-pane" data-report-pane="settingsLike" hidden>
         <div class="content" style="padding:0">
-          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6"><strong>フィールド設定</strong>の差分のみ。ライト表示時は <strong>kintone UI Component（KUC ${KUC_REPORT_VERSION}）</strong> の FieldGroup・TextArea で管理画面に近いフォーム表示にします（先頭で jsDelivr から読み込み）。ダークテーマ・オフライン時は従来のカード表示に切り替わります。左の「同一を隠す」「検索」も連動します。</p>
+          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6"><strong>フィールド単位</strong>で、設定差分・レイアウト差分・影響範囲を1つの項目にまとめて確認します。左の検索と「同一項目を隠す」が連動し、カードのボタンから詳細をポップアップ表示できます。</p>
           <div id="settingsLikeRoot" class="sl-root"></div>
         </div>
       </section>
 
       <section class="tab-pane" data-report-pane="formPreview" hidden>
         <div class="content" style="padding:0">
-          <p style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6;color:var(--muted)"><strong>フィールド設定</strong>の比較元／比較先を、プレビュー反映タブのプレビューエディターに近いカード表示で並べます。左の「同一を隠す」「検索」が連動します。</p>
+          <p style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6;color:var(--muted)"><strong>レイアウト比較</strong>では、比較元 / 比較先の配置を並べて確認します。差分があるフィールドはカード内の「設定差分を開く」から詳細をポップアップ表示できます。左の検索と「同一項目を隠す」も連動します。</p>
           <div id="formPreviewRoot" class="fp-root"></div>
         </div>
       </section>
@@ -2414,6 +3499,23 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       <section class="tab-pane" data-report-pane="compare" hidden>
         ${compareHtml || '<div class="content"><div class="no-diff">比較対象設定の出力はありません。</div></div>'}
       </section>
+    </div>
+
+    <div id="fieldDetailModal" class="fd-overlay" hidden>
+      <div class="fd-overlay-dialog" role="dialog" aria-modal="true" aria-labelledby="fieldDetailModalTitle">
+        <div class="fd-overlay-head">
+          <div>
+            <div class="sb-kicker">Field Detail Popup</div>
+            <div id="fieldDetailModalTitle" class="fd-overlay-title">フィールド詳細</div>
+            <div id="fieldDetailModalSub" class="fd-overlay-sub">code: - / type: -</div>
+          </div>
+          <div class="fd-overlay-actions">
+            <span class="fd-overlay-hint">Esc で閉じる</span>
+            <button type="button" class="btn" data-modal-close>閉じる</button>
+          </div>
+        </div>
+        <div id="fieldDetailModalBody" class="fd-overlay-body"></div>
+      </div>
     </div>
   </main>
   <script>${logicScript}</script>
@@ -2565,10 +3667,10 @@ function paintDiffOffViewPlaceholder(rows) {
   const n = list.length;
   const m = (state.lastFetchIssues || []).length;
   if (!n && !m) {
-    ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア（ヘッダー差分）</p><p class="main-result-placeholder-body">ここに出す詳細テーブルは<strong>ヘッダー内の結果整理</strong>を開いたときだけ表示します。比較条件では一覧を出しません。</p></div>`;
+    ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア（ヘッダー差分）</p><p class="main-result-placeholder-body">差分比較後は、比較条件の下にある<strong>差分結果の整理・出力</strong>から一覧・絞り込み・出力を確認できます。</p></div>`;
     return;
   }
-  ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${m ? `（取得失敗 ${m} 件）` : ''}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>ヘッダー内の結果整理</strong>で行ってください。</p></div>`;
+  ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${m ? `（取得失敗 ${m} 件）` : ''}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>差分結果の整理・出力</strong>で行ってください。</p></div>`;
 }
 
 /** 差分以外のタブへ移したときに、差分テーブルが残り続けないようにする */
@@ -2593,12 +3695,6 @@ export function renderResultRows(rows) {
   renderDiffSelectionState();
   renderDiffSuggestionChips();
   renderDiffWarningBox();
-
-  if (state.activeSubTabs.diff !== 'view') {
-    paintDiffOffViewPlaceholder(rows);
-    scheduleDiffPopoutSync();
-    return;
-  }
 
   const sectionNavHtml = rows.length ? buildDiffSectionNavHtml(rows) : '';
 

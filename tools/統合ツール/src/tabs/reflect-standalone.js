@@ -97,7 +97,7 @@ export async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
   if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
 
   const scopes = (opts.scopes || []).filter(Boolean);
-  if (!scopes.length) throw new Error('反映セクションを選択してください');
+  if (!scopes.length) throw new Error('反映するセクションを選択してください');
 
   const lookupMap = opts.lookupMap || {};
   const stopOnError = !!opts.stopOnError;

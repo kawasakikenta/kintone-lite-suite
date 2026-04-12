@@ -26,8 +26,8 @@ export const FEATURE_DEFS = [
     icon: ICONS.diff,
     label: '差分比較',
     desc: '2アプリの設定差分を確認します。',
-    tabs: ['reflect'],
-    tab: 'reflect',
+    tabs: ['diff'],
+    tab: 'diff',
     diffSubTab: 'conditions',
     focusSelector: '#u_headerDiffSuite',
     priority: 'high',
@@ -114,7 +114,7 @@ export const FEATURE_DEFS = [
     groupLabel: '可視化・出力',
     icon: ICONS.settingsExport,
     label: '設定一括取得',
-    desc: '複数アプリの設定をまとめて保存します。',
+    desc: '複数アプリの設定JSON、JS/CSS設定、プラグイン設定をまとめて保存します。',
     tabs: ['settingsExport'],
     tab: 'settingsExport',
     subTab: 'export',
@@ -167,7 +167,7 @@ export const FEATURE_DEFS = [
     groupLabel: 'データ・保守',
     icon: ICONS.recordMgr,
     label: 'レコード管理',
-    desc: 'CSV、添付DL、ステータス更新などを行います。',
+    desc: 'CSV、添付DL、コメント取得、ステータス更新などを行います。',
     tabs: ['recordMgr'],
     tab: 'recordMgr',
     subTab: 'status',
@@ -225,7 +225,7 @@ FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
  * tab は FEATURE_DEFS の tabs に含まれること。
  *
  * - bundleEntry あり: esbuild で IIFE 1 ファイルに同梱。`統合ツール.js` を別途読み込まない。
- *   - 全エントリが軽量 lite（`*-lite-entry.js` + standalone ロジック）
+ * - bundleEntry なし: 軽量ラッパーを生成し、`統合ツール.js` を読み込んで該当画面へ遷移する。
  */
 export const STANDALONE_LAUNCH_ENTRIES = [
   {
@@ -240,7 +240,7 @@ export const STANDALONE_LAUNCH_ENTRIES = [
     module: 'tabs/reflect.js',
     file: 'プレビュー反映.js',
     label: 'プレビュー反映',
-    bundleEntry: 'reflect-lite-entry.js'
+    subTab: 'sectionPreview'
   },
   {
     tab: 'field',

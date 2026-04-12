@@ -316,8 +316,22 @@ export function initSectionPreviewEditor(ui, setStatus) {
     diff.filter((r) => r.status !== 'unchanged').slice(0, 6).forEach((r) => st.expanded.add(r.key));
     if (!options.silent) {
       const label = SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey;
-      setStatus(`${label} を差分比較バンドルから読込しました`);
+      setStatus(`${label} の比較データを読み込みました`);
     }
+    return true;
+  }
+
+  function applySectionChange(nextSectionKey, options = {}) {
+    const fallbackKey = PUT_SECTIONS[0]?.key || '';
+    const safeSectionKey = PUT_SECTIONS.some((d) => d.key === nextSectionKey) ? nextSectionKey : fallbackKey;
+    if (!safeSectionKey) return false;
+    const force = !!options.force;
+    if (!force && st.loaded && st.sectionKey === safeSectionKey) return false;
+    st.sectionKey = safeSectionKey;
+    st.filter = 'all';
+    st.expanded = new Set();
+    loadFromDiffBundles({ silent: !!options.silent, pushUndo: !!options.pushUndo });
+    render();
     return true;
   }
 
@@ -354,7 +368,7 @@ export function initSectionPreviewEditor(ui, setStatus) {
 
   function render() {
     if (!st.loaded) {
-      root.innerHTML = `<div class="spe-empty"><p>差分比較のバンドルデータがありません。</p><p>先に「差分比較」を実行するか、下のボタンから読込してください。</p><div class="spe-empty-actions"><button type="button" class="btn ok" data-spe-act="loadDiff">差分比較から読込</button></div></div>`;
+      root.innerHTML = `<div class="spe-empty"><p>フィールド以外の差分を編集するための比較データがありません。</p><p>先に「差分比較」を実行するか、下のボタンから現在の差分を読み込んでください。</p><div class="spe-empty-actions"><button type="button" class="btn ok" data-spe-act="loadDiff">現在の差分を読込</button></div></div>`;
       return;
     }
 
@@ -364,20 +378,34 @@ export function initSectionPreviewEditor(ui, setStatus) {
     diff.forEach((d) => { stats[d.status] = (stats[d.status] || 0) + 1; });
     const sectionLabel = SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey;
     const isMap = isMapSection(st.sectionKey);
+    const changedCount = stats.added + stats.removed + stats.modified + stats.reordered;
 
     root.innerHTML = `
+      <div class="spe-hero">
+        <div class="spe-hero-main">
+          <div class="spe-hero-title">${esc(sectionLabel)} を編集</div>
+          <div class="spe-hero-sub">フィールド以外の差分をここで調整します。比較元は読み取り専用で、比較先プレビューだけを書き換えます。</div>
+        </div>
+        <div class="spe-hero-chips">
+          <span class="spe-chip">差分 ${changedCount}件</span>
+          <span class="spe-chip">追加 ${stats.added}</span>
+          <span class="spe-chip">削除 ${stats.removed}</span>
+          <span class="spe-chip">変更 ${stats.modified}</span>
+          ${stats.reordered ? `<span class="spe-chip">並び替え ${stats.reordered}</span>` : ''}
+        </div>
+      </div>
       <div class="rpp-toolbar">
         <select class="spe-section-select" data-spe-act="changeSection">
           ${PUT_SECTIONS.map((d) => `<option value="${esc(d.key)}" ${d.key === st.sectionKey ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}
         </select>
-        <button type="button" class="btn sub" data-spe-act="loadDiff">差分読込</button>
+        <button type="button" class="btn sub" data-spe-act="loadDiff">現在の差分を読込</button>
         <button type="button" class="btn sub" data-spe-act="undo" ${st.undo.length ? '' : 'disabled'}>↩ 戻す</button>
         ${isMap ? `<button type="button" class="btn sub" data-spe-act="addItem">＋ 追加</button>` : ''}
-        <button type="button" class="btn sub" data-spe-act="editFullJson">JSON編集</button>
-        <button type="button" class="btn sub" data-spe-act="export">JSON保存</button>
+        <button type="button" class="btn sub" data-spe-act="editFullJson">比較先JSONを編集</button>
+        <button type="button" class="btn sub" data-spe-act="export">比較先JSONを保存</button>
         <span class="rpp-spacer"></span>
-        <button type="button" class="btn ${st.view === 'diff' ? 'ok' : 'sub'}" data-spe-act="viewDiff">差分</button>
-        <button type="button" class="btn ${st.view === 'preview' ? 'ok' : 'sub'}" data-spe-act="viewPreview">プレビュー</button>
+        <button type="button" class="btn ${st.view === 'diff' ? 'ok' : 'sub'}" data-spe-act="viewDiff">差分一覧</button>
+        <button type="button" class="btn ${st.view === 'preview' ? 'ok' : 'sub'}" data-spe-act="viewPreview">比較プレビュー</button>
       </div>
       <div class="rpp-filters">
         ${['all', 'added', 'removed', 'modified', 'reordered', 'unchanged'].map((k) => `<button type="button" class="btn sub ${st.filter === k ? 'is-active' : ''}" data-spe-act="filter" data-filter="${k}">${k === 'all' ? `すべて` : STATUS_LABELS[k]} <span>${k === 'all' ? diff.length : stats[k]}</span></button>`).join('')}
@@ -389,8 +417,8 @@ export function initSectionPreviewEditor(ui, setStatus) {
           const canEdit = row.after != null;
           const canRestore = row.after == null && row.before != null;
           const canDelete = row.after != null && isMap;
-          return `<div class="rpp-card"><div class="rpp-head"><button type="button" class="rpp-open" data-spe-act="toggle" data-key="${esc(row.key)}">${opened ? '▾' : '▸'}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span>${row.reordered && row.status !== 'reordered' ? '<span class="rpp-badge rpp-reordered">並び替え</span>' : ''}<strong>${esc(label)}</strong><code>${esc(row.key)}</code><span class="rpp-spacer"></span>${canEdit ? `<button type="button" class="btn sub" data-spe-act="editItem" data-key="${esc(row.key)}">編集</button>` : ''}${canDelete ? `<button type="button" class="btn sub" data-spe-act="deleteItem" data-key="${esc(row.key)}">削除</button>` : ''}${canRestore ? `<button type="button" class="btn sub" data-spe-act="restoreItem" data-key="${esc(row.key)}">復元</button>` : ''}</div>${opened ? `<div class="rpp-body">${renderSectionBody(row)}</div>` : ''}</div>`;
-        }).join('') || '<div class="muted" style="padding:12px">差分がありません（同一の内容です）</div>'}
+          return `<div class="rpp-card"><div class="rpp-head"><button type="button" class="rpp-open" data-spe-act="toggle" data-key="${esc(row.key)}">${opened ? '▾' : '▸'}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span>${row.reordered && row.status !== 'reordered' ? '<span class="rpp-badge rpp-reordered">並び替え</span>' : ''}<strong>${esc(label)}</strong><code>${esc(row.key)}</code><span class="rpp-spacer"></span>${canEdit ? `<button type="button" class="btn sub" data-spe-act="editItem" data-key="${esc(row.key)}">比較先を編集</button>` : ''}${canDelete ? `<button type="button" class="btn sub" data-spe-act="deleteItem" data-key="${esc(row.key)}">比較先から削除</button>` : ''}${canRestore ? `<button type="button" class="btn sub" data-spe-act="restoreItem" data-key="${esc(row.key)}">比較元から復元</button>` : ''}</div>${opened ? `<div class="rpp-body">${renderSectionBody(row)}</div>` : ''}</div>`;
+        }).join('') || '<div class="muted" style="padding:12px">差分がありません（比較元と比較先は同一です）</div>'}
       </div>
       ${renderModal()}`;
   }
@@ -407,6 +435,12 @@ export function initSectionPreviewEditor(ui, setStatus) {
   function setAfterItems(items) {
     st.after = rewrap(items, st.sectionKey);
   }
+
+  root.__sectionPreviewApi = {
+    setSection(nextSectionKey, options = {}) {
+      return applySectionChange(nextSectionKey, options);
+    }
+  };
 
   // --- Event: click ---
   root.addEventListener('click', (ev) => {
@@ -438,7 +472,7 @@ export function initSectionPreviewEditor(ui, setStatus) {
             st.after = deepClone(parsed);
           }
           closeModal();
-          setStatus(`${st.modal.itemKey} を更新しました`);
+          setStatus(`${st.modal.itemKey} の比較先内容を更新しました`);
           render();
           return;
         }
@@ -449,7 +483,7 @@ export function initSectionPreviewEditor(ui, setStatus) {
           pushUndo();
           st.after = deepClone(parsed);
           closeModal();
-          setStatus('比較先 JSON を更新しました');
+          setStatus('比較先JSONを更新しました');
           render();
           return;
         }
@@ -484,7 +518,7 @@ export function initSectionPreviewEditor(ui, setStatus) {
         }
       } catch (e) {
         if (st.modal) { st.modal.error = e.message || String(e); render(); return; }
-        setStatus(`セクションエディタエラー: ${e.message}`, true);
+        setStatus(`他設定エディタエラー: ${e.message}`, true);
         return;
       }
     }
@@ -526,9 +560,9 @@ export function initSectionPreviewEditor(ui, setStatus) {
           item = st.after;
         }
         if (item == null) return;
-        st.modal = { kind: 'itemJson', title: `${key} の編集`, itemKey: key, text: JSON.stringify(item, null, 2), error: '' };
+        st.modal = { kind: 'itemJson', title: `${key} の比較先内容を編集`, itemKey: key, text: JSON.stringify(item, null, 2), error: '' };
       } else if (act === 'deleteItem') {
-        st.modal = { kind: 'confirm', mode: 'delete', title: '削除の確認', message: `${key} を削除しますか？`, payload: { key } };
+        st.modal = { kind: 'confirm', mode: 'delete', title: '比較先から削除', message: `${key} を比較先から削除しますか？`, payload: { key } };
       } else if (act === 'restoreItem') {
         const bItems = unwrap(st.before, st.sectionKey);
         let restoreVal;
@@ -554,11 +588,11 @@ export function initSectionPreviewEditor(ui, setStatus) {
         }
         setStatus(`${key} を復元しました`);
       } else if (act === 'addItem') {
-        st.modal = { kind: 'addItem', title: 'アイテム追加', newKey: '', text: '{}', error: '' };
+        st.modal = { kind: 'addItem', title: '比較先にアイテム追加', newKey: '', text: '{}', error: '' };
       } else if (act === 'editFullJson') {
         st.modal = {
           kind: 'fullJson',
-          title: `${SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey} - JSON編集`,
+          title: `${SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey} - 比較先JSONを編集`,
           beforeText: formatJson(st.before),
           afterText: formatJson(st.after),
           error: ''
@@ -570,7 +604,7 @@ export function initSectionPreviewEditor(ui, setStatus) {
       }
       render();
     } catch (e) {
-      setStatus(`セクションエディタエラー: ${e.message || String(e)}`, true);
+      setStatus(`他設定エディタエラー: ${e.message || String(e)}`, true);
     }
   });
 
@@ -578,14 +612,9 @@ export function initSectionPreviewEditor(ui, setStatus) {
   root.addEventListener('change', (ev) => {
     const sel = ev.target.closest('[data-spe-act="changeSection"]');
     if (!sel) return;
-    st.sectionKey = sel.value;
-    st.filter = 'all';
-    st.expanded = new Set();
-    loadFromDiffBundles({ silent: true });
-    render();
+    applySectionChange(sel.value, { silent: true, force: true });
   });
 
   // 初期ロード
-  loadFromDiffBundles({ silent: true });
-  render();
+  applySectionChange(st.sectionKey, { silent: true, force: true });
 }

@@ -243,7 +243,7 @@ export function showInlineConfirmation(plan, options) {
     const previousHtml = ui.result.innerHTML;
     const previousScrollTop = ui.result.scrollTop;
     ui.result.innerHTML = `<div class="plan-confirm-panel">
-      <div style="font-weight:700;font-size:13px;margin-bottom:8px">反映プラン確認</div>
+      <div style="font-weight:700;font-size:13px;margin-bottom:8px">実行前プラン確認</div>
       ${appIdSection}
       <div class="plan-summary">${esc(planText)}</div>
       <div class="plan-actions">
@@ -393,7 +393,7 @@ export async function runPreviewApplyPlanNodes() {
   ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(lines.join('\n'))}</pre>`;
   renderReflectAssistPanel();
   renderReflectMainPanel();
-  setStatus('ノード反映プラン確認完了');
+  setStatus('差分選択モードのプラン確認が完了しました');
 }
 
 export async function runPreviewApplyPlan() {
@@ -403,7 +403,7 @@ export async function runPreviewApplyPlan() {
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
   const lookupMap = parseLookupMapInput(ui.lookupMap.value);
   const baseScopes = selectedScopeKeys(ui.applyScopes);
-  if (!baseScopes.length) throw new Error('反映セクションを選択してください');
+  if (!baseScopes.length) throw new Error('反映するセクションを選択してください');
   const scopes = resolveApplyScopes(baseScopes);
   saveCurrentDialogState();
   const planSignature = makeApplyPlanSignature('section', {
@@ -491,5 +491,5 @@ export async function runPreviewApplyPlan() {
   ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
   renderReflectAssistPanel();
   renderReflectMainPanel();
-  setStatus('反映プラン確認完了');
+  setStatus('実行前プラン確認が完了しました');
 }
