@@ -459,6 +459,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
                 <button class="tab" data-tab="design" data-state="idle">設計書</button>
                 <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
+                <button class="tab" data-tab="analyze" data-state="idle">分析</button>
               </div>
               
               <div class="tab-group" data-group="data">
@@ -660,11 +661,11 @@ export function buildRoot(targetDocument = document, options = {}) {
                     <details class="diff-fold reflect-inline-fold reflect-inline-fold--footer">
                       <summary class="diff-fold-summary">
                         <span class="diff-fold-title">補助操作</span>
-                        <span class="diff-fold-sub">バックアップ保存や復元が必要なときだけ開きます</span>
+                        <span class="diff-fold-sub">反映セクションで選んだ項目を保存・復元します（JS/CSS含む）</span>
                       </summary>
                       <div class="diff-fold-body">
                         <div class="reflect-footer-actions__support">
-                          <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します">今の比較先を保存</button>
+                          <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します。反映セクションでチェックした項目を対象にし、JS/CSS設定も含められます">今の比較先を保存</button>
                           <button type="button" class="btn sub" data-act="restoreTargetPreviewBackup" title="このセッションで保存した直前バックアップを比較先プレビューへ戻します">直前保存を戻す</button>
                         </div>
                       </div>
@@ -758,11 +759,11 @@ export function buildRoot(targetDocument = document, options = {}) {
               <details class="diff-fold diff-fold--field-bulk" open>
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">フィールド一括操作（比較先）</span>
-                  <span class="diff-fold-sub">プレフィックス・未使用検出 → 上のJSONへ出力</span>
+                  <span class="diff-fold-sub">プレフィックス変換 → 上のJSONへ出力</span>
                 </summary>
                 <div class="diff-fold-body">
               <div class="step" style="font-size:12px;margin-bottom:6px">フィールド一括操作（比較先アプリ）</div>
-              <div class="muted" style="margin-bottom:8px;line-height:1.55">比較先アプリの現在のフィールドを元に一括操作し、上の「追加フィールドJSON」に結果を出力します。</div>
+              <div class="muted" style="margin-bottom:8px;line-height:1.55">比較先アプリの現在のフィールドを元に一括操作し、上の「追加フィールドJSON」に結果を出力します。未使用候補の調査は「分析 > 影響分析」に集約しました。</div>
               <div class="grid2" style="margin-bottom:6px">
                 <div>
                   <label title="各フィールド code の先頭に付与する文字列">プレフィックス（コード先頭に追加）</label>
@@ -774,7 +775,7 @@ export function buildRoot(targetDocument = document, options = {}) {
               </div>
               <div class="btns">
                 <button type="button" class="btn ok" data-act="runBulkFieldRename" title="比較先のフィールド定義を読み、結果をJSON欄に反映">プレフィックス追加/削除を実行</button>
-                <button type="button" class="btn sub" data-act="runDetectUnusedFields" title="式・ビュー等から参照されていないフィールドを推定">影響のない（未使用）フィールドを検出</button>
+                <button type="button" class="btn sub" data-act="openAnalyzeFieldImpactUnused" title="分析タブの未使用フィルタへ移動します">未使用候補は分析で確認</button>
               </div>
               <div id="u_bulkFieldResult" class="result" style="max-height:150px;margin-top:8px;display:none;padding:8px;font-size:11px"></div>
                 </div>
@@ -851,7 +852,7 @@ export function buildRoot(targetDocument = document, options = {}) {
               </details>
               </div>
               <div class="subpane" data-subpane-parent="jsconfig" data-subpane="batch">
-                <div class="subpane-note">比較先のスペース配下にある複数アプリの JS/CSS をまとめて取得します。</div>
+                <div class="subpane-note">比較先のスペース配下にある複数アプリの JS/CSS 実ファイルをまとめて取得します。</div>
               <details class="diff-fold diff-fold--jsconfig-batch" open>
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">全アプリ JS/CSS 一括ZIP（比較先）</span>
@@ -859,7 +860,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                 </summary>
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">全アプリのJS/CSS一括ダウンロード（比較先）</div>
-              <div class="muted" style="margin-top:8px;line-height:1.6">現在アクセスしているスペース（またはゲストスペース）内の全アプリをスキャンし、JS/CSSファイルの添付を一括でZIP化します。</div>
+              <div class="muted" style="margin-top:8px;line-height:1.6">現在アクセスしているスペース（またはゲストスペース）内の全アプリをスキャンし、JS/CSSファイルの添付そのものを一括でZIP化します。設定一括取得の <code>customize.json</code> バックアップとは用途が異なります。</div>
               <div class="btns" style="margin-top:10px">
                 <button type="button" class="btn ok" data-act="runBatchJsConfigDownload" title="時間がかかる場合があります">全アプリのJS/CSSを一括ダウンロード（ZIP）</button>
               </div>
@@ -999,15 +1000,15 @@ export function buildRoot(targetDocument = document, options = {}) {
               </details>
               </div>
               <div class="subpane" data-subpane-parent="recordMgr" data-subpane="backup">
-                <div class="subpane-note">対象レコードを CSV・添付ファイル・コメント込みで ZIP バックアップします。</div>
+                <div class="subpane-note">対象レコードを CSV・添付ファイル・コメント込みで ZIP バックアップし、必要に応じてアプリ設定JSONも同梱します。</div>
               <details class="diff-fold diff-fold--rec-backup" open>
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">データバックアップ（比較先）</span>
-                  <span class="diff-fold-sub">CSV + 添付 + コメントをまとめて保存</span>
+                  <span class="diff-fold-sub">CSV + 添付 + コメント + 任意で設定JSON</span>
                 </summary>
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">データ一括バックアップ（比較先アプリ）</div>
-              <div class="muted" style="margin-top:8px;line-height:1.6">一覧条件に合致するレコードをバックアップします。ZIP には <code>records.csv</code>、添付ファイル、コメントJSON、マニフェストをまとめて保存します。</div>
+              <div class="muted" style="margin-top:8px;line-height:1.6">一覧条件に合致するレコードをバックアップします。ZIP には <code>records.csv</code>、添付ファイル、コメントJSON、マニフェストに加えて、必要なら <code>app_settings/</code> 配下へアプリ設定JSONもまとめて保存します。設定だけを取りたい場合は「設定一括取得」を使う方が軽量です。</div>
               <div class="grid2" style="margin-top:8px">
                 <div>
                   <label>対象一覧（一覧ID / クエリ）</label>
@@ -1025,9 +1026,28 @@ export function buildRoot(targetDocument = document, options = {}) {
               <div class="chips" style="margin-top:8px">
                 <label class="chip" title="添付ファイル型フィールドとサブテーブル内の添付をまとめて保存します"><input type="checkbox" id="u_recordBackupIncludeFiles" checked> 添付ファイルを含める</label>
                 <label class="chip" title="各レコードのコメントを JSON で保存します"><input type="checkbox" id="u_recordBackupIncludeComments" checked> コメントを含める</label>
+                <label class="chip" title="同じ比較先アプリの設定JSONも ZIP に同梱します。JS/CSS設定も対象にできます"><input type="checkbox" id="u_recordBackupIncludeAppSettings" checked> アプリ設定も含める</label>
+                <label class="chip" title="APIラボのプラグイン設定取得APIも試します。アプリ設定を含める時のみ利用します"><input type="checkbox" id="u_recordBackupIncludePluginConfig"> プラグイン設定も取得</label>
+              </div>
+              <div style="margin-top:10px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc">
+                <div style="display:flex;gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap">
+                  <div>
+                    <div style="font-size:11px;color:#64748b;font-weight:700">同梱するアプリ設定JSON</div>
+                    <div class="muted" style="margin-top:2px;font-size:11px;line-height:1.5">JS/CSS設定を含めて、必要な設定セクションを選べます。アプリ設定を含める時だけ使います。</div>
+                  </div>
+                  <div class="btns" style="margin-top:0">
+                    <button type="button" class="btn sub" data-act="recordBackupScopeAll" title="同梱する設定セクションをすべてオンにします">全選択</button>
+                    <button type="button" class="btn sub" data-act="recordBackupScopeNone" title="同梱する設定セクションをすべてオフにします">全解除</button>
+                  </div>
+                </div>
+                <div class="chips diff-scope-chips" id="u_recordBackupAppScopes" style="margin-top:8px">
+                  ${SETTINGS_EXPORT_SCOPE_DEFS.map((s) =>
+                    `<label class="chip" title="${esc(s.label)} を同梱します"><input type="checkbox" value="${s.key}" checked>${s.label}</label>`
+                  ).join('')}
+                </div>
               </div>
               <div class="btns" style="margin-top:10px">
-                <button type="button" class="btn dark" data-act="runRecordBackup" title="CSV・添付・コメントをまとめたZIPを作成します">バックアップを実行</button>
+                <button type="button" class="btn dark" data-act="runRecordBackup" title="CSV・添付・コメントに加えて、必要ならアプリ設定JSONも同梱したZIPを作成します">バックアップを実行</button>
               </div>
               <div class="result" id="u_recordBackupResult" style="max-height:220px;margin-top:8px"></div>
                 </div>
@@ -1059,20 +1079,16 @@ export function buildRoot(targetDocument = document, options = {}) {
 
             
             <div class="pane" data-pane="er">
-              <div class="subtabs">
-                <button class="subtab active" data-subtab-parent="er" data-subtab="diagram">ER図</button>
-                <button class="subtab" data-subtab-parent="er" data-subtab="dependency">依存関係</button>
-              </div>
               <div class="subpane active" data-subpane-parent="er" data-subpane="diagram">
-                <div class="subpane-note">比較元アプリ起点で関連アプリをたどり、ER 図を生成します。</div>
+                <div class="subpane-note">比較元アプリ起点で関連アプリをたどり、アプリ間の ER 図を生成します。</div>
               <details class="diff-fold diff-fold--er-diag" open>
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">ER図のオプションと生成</span>
-                  <span class="diff-fold-sub">レイアウト・深さ・別タブ表示</span>
+                  <span class="diff-fold-sub">アプリ構造の把握に特化</span>
                 </summary>
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">ER図自動生成（比較元アプリ起点）</div>
-              <div class="muted" style="margin-top:8px;line-height:1.55">比較元アプリからルックアップと関連レコードを辿って、関連するアプリのスキーマ（ER図）を自動取得・描画します。</div>
+              <div class="muted" style="margin-top:8px;line-height:1.55">比較元アプリからルックアップと関連レコードを辿って、関連するアプリのスキーマ（ER図）を自動取得・描画します。フィールド単位の依存関係は「分析 > 依存グラフ」に集約しました。</div>
               <div class="grid2" style="margin-top:10px">
                 <div>
                   <label title="Cytoscape のレイアウトアルゴリズム">初期レイアウト</label>
@@ -1112,22 +1128,7 @@ export function buildRoot(targetDocument = document, options = {}) {
               <div class="btns" style="margin-top:10px">
                 <button type="button" class="btn" data-act="generateERDiagram" title="新しいタブでインタラクティブなERを開きます">ER図を生成 (別タブ表示)</button>
                 <button type="button" class="btn sub" data-act="exportERDiagramHtml" title="単体HTMLファイルとして保存">ER図HTML保存</button>
-              </div>
-                </div>
-              </details>
-              </div>
-              <div class="subpane" data-subpane-parent="er" data-subpane="dependency">
-                <div class="subpane-note">フィールド参照や依存関係をネットワーク図として可視化します。</div>
-              <details class="diff-fold diff-fold--er-dep" open>
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">フィールド依存関係マップ</span>
-                  <span class="diff-fold-sub">式・書式・プロセスなどの参照を可視化</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div class="step" style="margin-top:0">フィールド依存関係マップ（比較元アプリ）</div>
-              <div class="muted" style="margin-top:8px;line-height:1.55">計算式や条件付書式、プロセス管理など、フィールド間の参照・依存関係をネットワーク図として可視化します。</div>
-              <div class="btns" style="margin-top:10px">
-                <button type="button" class="btn" data-act="generateFieldDepMap" title="別タブでネットワーク図を表示">依存関係マップを生成 (別タブ表示)</button>
+                <button type="button" class="btn sub" data-act="openAnalyzeFieldGraph" title="フィールド依存関係は分析タブへ移動しました">フィールド依存は分析で確認</button>
               </div>
                 </div>
               </details>
@@ -1269,14 +1270,14 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <button class="subtab" data-subtab-parent="settingsExport" data-subtab="template">テンプレート</button>
               </div>
               <div class="subpane active" data-subpane-parent="settingsExport" data-subpane="export">
-                <div class="subpane-note">複数アプリの設定JSONをまとめて保存します。必要に応じてプラグイン設定も追加取得できます。</div>
+                <div class="subpane-note">複数アプリの設定JSONをまとめて保存します。レコードデータや添付のバックアップとは分けています。</div>
               <details class="diff-fold diff-fold--settings-apps" open>
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">対象アプリ・ゲスト・プレビュー</span>
                   <span class="diff-fold-sub">IDリストの編集とアプリ検索</span>
                 </summary>
                 <div class="diff-fold-body">
-              <div class="muted" style="margin-top:0;line-height:1.6">複数アプリの設定をまとめてバックアップします。必要に応じて、アプリに追加済みプラグインごとの設定JSONも一緒に保存します（JS/CSS設定は「JS/CSS設定」タブで取得）。</div>
+              <div class="muted" style="margin-top:0;line-height:1.6">複数アプリの設定をまとめてバックアップします。レコードデータや添付ファイル本体は含まず、JS/CSS は <code>customize.json</code> として保存します。必要に応じてプラグイン設定も一緒に保存できます。</div>
               <div class="grid2" style="margin-top:8px">
                 <div>
                   <label title="取得するアプリの数値IDを列挙">対象アプリID（カンマ/改行区切り）</label>
@@ -1356,6 +1357,85 @@ export function buildRoot(targetDocument = document, options = {}) {
               </details>
               </div>
             </div>
+
+            <div class="pane" data-pane="analyze">
+              <div class="subtabs">
+                <button class="subtab active" data-subtab-parent="analyze" data-subtab="fieldImpact">影響分析</button>
+                <button class="subtab" data-subtab-parent="analyze" data-subtab="notifications">通知設定</button>
+                <button class="subtab" data-subtab-parent="analyze" data-subtab="permissions">権限</button>
+                <button class="subtab" data-subtab-parent="analyze" data-subtab="layoutPreview">レイアウト</button>
+                <button class="subtab" data-subtab-parent="analyze" data-subtab="fieldGraph">依存グラフ</button>
+              </div>
+
+              <!-- サブペイン: 影響分析 -->
+              <div class="subpane active" data-subpane-parent="analyze" data-subpane="fieldImpact">
+                <div class="subpane-note">フィールドコードがビュー・計算式・プロセス等でどこから参照されているかを横断検索します。未使用候補の確認もここに集約しました。</div>
+                <section class="opt-card" style="margin:12px">
+                  <div class="opt-title">フィールドコード影響分析</div>
+                  <div class="btns" style="margin-top:8px">
+                    <input type="text" id="u_analyzeFieldSearch" placeholder="コード/ラベルで検索..." style="flex:1;min-width:120px">
+                    <select id="u_analyzeFieldFilter">
+                      <option value="">全フィールド</option>
+                      <option value="unused">未使用のみ</option>
+                      <option value="used">使用中のみ</option>
+                    </select>
+                    <button type="button" class="btn" data-act="runFieldImpactAnalysis">影響分析を実行</button>
+                    <button type="button" class="btn sub" data-act="exportFieldImpactCsv">CSV出力</button>
+                  </div>
+                  <div id="u_analyzeFieldImpactResult" class="result" style="margin-top:10px;max-height:500px"></div>
+                </section>
+              </div>
+
+              <!-- サブペイン: 通知設定 -->
+              <div class="subpane" data-subpane-parent="analyze" data-subpane="notifications">
+                <div class="subpane-note">一般通知・レコード条件通知・リマインダーの3種を統合して可視化します。</div>
+                <section class="opt-card" style="margin:12px">
+                  <div class="opt-title">通知設定の可視化</div>
+                  <div class="btns" style="margin-top:8px">
+                    <button type="button" class="btn" data-act="runNotificationVisualizer">通知設定を取得・表示</button>
+                  </div>
+                  <div id="u_analyzeNotificationResult" class="result" style="margin-top:10px;max-height:500px"></div>
+                </section>
+              </div>
+
+              <!-- サブペイン: 権限 -->
+              <div class="subpane" data-subpane-parent="analyze" data-subpane="permissions">
+                <div class="subpane-note">アプリ権限・フィールド権限・レコード権限をマトリクス表で表示します。</div>
+                <section class="opt-card" style="margin:12px">
+                  <div class="opt-title">権限マトリクスビュー</div>
+                  <div class="btns" style="margin-top:8px">
+                    <button type="button" class="btn" data-act="runPermissionMatrix">権限情報を取得・表示</button>
+                  </div>
+                  <div id="u_analyzePermissionResult" class="result" style="margin-top:10px;max-height:500px"></div>
+                </section>
+              </div>
+
+              <!-- サブペイン: レイアウト -->
+              <div class="subpane" data-subpane-parent="analyze" data-subpane="layoutPreview">
+                <div class="subpane-note">layout.json を解析して kintone フォームレイアウトを擬似的に再現します。</div>
+                <section class="opt-card" style="margin:12px">
+                  <div class="opt-title">レイアウトプレビューア</div>
+                  <div class="btns" style="margin-top:8px">
+                    <button type="button" class="btn" data-act="runLayoutPreview">レイアウトを取得・表示</button>
+                    <label class="chip"><input type="checkbox" id="u_analyzeLayoutDiff"> 差分比較モード（比較先と並べて表示）</label>
+                  </div>
+                  <div id="u_analyzeLayoutResult" class="result" style="margin-top:10px;max-height:600px;overflow:auto"></div>
+                </section>
+              </div>
+
+              <!-- サブペイン: 依存グラフ -->
+              <div class="subpane" data-subpane-parent="analyze" data-subpane="fieldGraph">
+                <div class="subpane-note">フィールド間の依存関係（計算式・ルックアップ等）を Cytoscape で可視化します。ERタブの旧依存マップ機能はここに集約しました。</div>
+                <section class="opt-card" style="margin:12px">
+                  <div class="opt-title">フィールド依存関係グラフ</div>
+                  <div class="btns" style="margin-top:8px">
+                    <button type="button" class="btn" data-act="runFieldDependencyGraph">依存グラフを生成</button>
+                  </div>
+                  <div id="u_analyzeFieldGraphResult" style="margin-top:10px"></div>
+                </section>
+              </div>
+            </div>
+
           </div>
 
           <div class="kus-host-hidden" aria-hidden="true">

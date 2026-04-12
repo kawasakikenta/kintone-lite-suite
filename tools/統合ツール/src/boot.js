@@ -10,7 +10,7 @@ import { setRootElement, setUiRefs } from './ui/dialog.js';
 import { setComponentUi, setComponentDeps, setStatus, switchTab, openFeatureScreen } from './ui/components.js';
 import { stringifyForDiff, renderRowColumns, buildDiffWarningInfo, renderResultRows, renderDiffFilterOptions, renderDiffSelectionState, renderDiffWarningBox, syncDiffThemeButton } from './diff/export.js';
 import { commonParams, currentDiffSignature, saveCurrentDialogState } from './tabs/diff.js';
-import { parseLookupMapInput, runBulkFieldRename, runDetectUnusedFields } from './tabs/field.js';
+import { parseLookupMapInput, runBulkFieldRename } from './tabs/field.js';
 import { reflectRowModeById, reflectRowDesiredValue } from './reflect/rowMode.js';
 import {
   runBackupTargetPreview,
@@ -38,7 +38,7 @@ import {
   runDesignExportXlsx,
   runDesignDiffMd
 } from './tabs/design.js';
-import { runFieldDependencyMap, runGenerateERDiagram, runExportERDiagramHtml } from './tabs/er.js';
+import { runGenerateERDiagram, runExportERDiagramHtml } from './tabs/er.js';
 import {
   runFetchJsConfig,
   runExportJsConfig,
@@ -62,6 +62,16 @@ import {
   renderTemplateOptions
 } from './tabs/record.js';
 import { runApiTester, clearApiTesterHistory, renderApiTesterHistory, initApiTesterEnhancements } from './tabs/api-tester.js';
+import {
+  runFieldImpactAnalysis,
+  exportFieldImpactCsv,
+  runPermissionMatrix,
+  runNotificationVisualizer,
+  runLayoutPreview,
+  runFieldDependencyGraph,
+  fieldGraphRelayout,
+  fieldGraphExportPng
+} from './tabs/analyze.js';
 
 /**
  * @param {{ initialTab?: string }} [options]
@@ -277,7 +287,6 @@ export function runKintoneUnifiedSuite(options = {}) {
     runDesignCopyMd,
     runDesignExportXlsx,
     runDesignDiffMd,
-    runFieldDependencyMap,
     runFetchJsConfig,
     runExportJsConfig,
     runApplyJsConfig,
@@ -312,8 +321,15 @@ export function runKintoneUnifiedSuite(options = {}) {
     populatePatchJsonFromCurrentDiff,
     renderCustomizeResult,
     runBulkFieldRename,
-    runDetectUnusedFields,
-    renderTemplateOptions
+    renderTemplateOptions,
+    runFieldImpactAnalysis,
+    exportFieldImpactCsv,
+    runPermissionMatrix,
+    runNotificationVisualizer,
+    runLayoutPreview,
+    runFieldDependencyGraph,
+    fieldGraphRelayout,
+    fieldGraphExportPng
   });
 
   renderApiTesterHistory();

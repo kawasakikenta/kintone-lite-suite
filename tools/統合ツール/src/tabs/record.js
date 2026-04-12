@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, nowStamp, downloadText, downloadBlob, showToast } from '../utils.js';
+import { esc, nowStamp, downloadBlob, showToast, selectedScopeKeys } from '../utils.js';
 import { apiGet, apiPut, apiPost, buildApiPrefix, fetchBundle } from '../api.js';
 import { setStatus, setBusy, renderBundleState } from '../ui/components.js';
 import { commonParams } from './diff.js';
@@ -417,6 +417,13 @@ async function fetchRecordComments(prefix, appId, recordId) {
 
 function renderRecordBackupSummary(summary) {
   const notes = Array.isArray(summary?.notes) ? summary.notes : [];
+  const appScopeLabels = Array.isArray(summary?.appScopeLabels) ? summary.appScopeLabels : [];
+  const appSettingsLabel = summary?.includeAppSettings
+    ? `${String(summary?.appOkCount || 0)}/${String(summary?.appTotalCount || 0)}セクション OK${appScopeLabels.length ? ` / ${appScopeLabels.join(', ')}` : ''}`
+    : '未取得';
+  const pluginConfigLabel = summary?.includeAppSettings
+    ? (summary?.includePluginConfig ? String(summary?.pluginConfigLabel || '-') : '未取得')
+    : '未取得';
   return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">
       ZIP: ${esc(summary?.zipName || '-')} / レコード: ${esc(String(summary?.recordCount || 0))}
@@ -426,10 +433,79 @@ function renderRecordBackupSummary(summary) {
         <tr><th style="width:140px">CSV</th><td>${esc(summary?.csvName || '-')}</td></tr>
         <tr><th>添付ファイル</th><td>${esc(String(summary?.fileCount || 0))}件 ${summary?.includeFiles ? '' : '(未取得)'}</td></tr>
         <tr><th>コメント</th><td>${esc(String(summary?.commentCount || 0))}件 / コメントあり ${esc(String(summary?.commentRecordCount || 0))}レコード ${summary?.includeComments ? '' : '(未取得)'}</td></tr>
+        <tr><th>アプリ設定JSON</th><td>${esc(appSettingsLabel)}</td></tr>
+        <tr><th>プラグイン設定</th><td>${esc(pluginConfigLabel)}</td></tr>
         <tr><th>注意</th><td>${esc(notes.length ? notes.join(' / ') : 'なし')}</td></tr>
       </tbody>
     </table>
   `;
+}
+
+function formatPluginConfigSummary(backup) {
+  if (!backup || !backup.requested) return '-';
+  if (backup._fetchError) return '一覧取得NG';
+  if (!backup.totalPlugins) return '0件';
+  return `OK ${backup.okCount} / NG ${backup.ngCount}`;
+}
+
+async function fetchPluginConfigBackupForRecord({ appId, guestId, existingPluginList, onProgress }) {
+  const prefix = buildApiPrefix(guestId, false);
+  const result = {
+    requested: true,
+    endpoint: '/app/plugin/config.json',
+    source: 'api-lab',
+    experimental: true,
+    totalPlugins: 0,
+    okCount: 0,
+    ngCount: 0,
+    plugins: []
+  };
+
+  let plugins = Array.isArray(existingPluginList) ? existingPluginList : null;
+  if (!plugins) {
+    try {
+      const res = await apiGet(prefix, '/app/plugins.json', { app: appId });
+      plugins = Array.isArray(res?.plugins) ? res.plugins : [];
+    } catch (error) {
+      result._fetchError = error.message || String(error);
+      return result;
+    }
+  }
+
+  result.totalPlugins = plugins.length;
+  if (!plugins.length) return result;
+
+  for (let i = 0; i < plugins.length; i++) {
+    const plugin = plugins[i] || {};
+    const pluginId = String(plugin.id || '').trim();
+    if (!pluginId) continue;
+    if (typeof onProgress === 'function') onProgress(i, plugins.length, plugin);
+    try {
+      const res = await apiGet(prefix, '/app/plugin/config.json', { app: appId, id: pluginId });
+      result.plugins.push({
+        ...plugin,
+        id: pluginId,
+        config: res?.config || {},
+        revision: res?.revision != null ? String(res.revision) : ''
+      });
+      result.okCount += 1;
+    } catch (error) {
+      result.plugins.push({
+        ...plugin,
+        id: pluginId,
+        _fetchError: error.message || String(error)
+      });
+      result.ngCount += 1;
+    }
+  }
+
+  return result;
+}
+
+function collectRecordBackupAppScopeKeys() {
+  const container = getToolDocument().getElementById('u_recordBackupAppScopes');
+  if (!container) return [];
+  return [...new Set(selectedScopeKeys(container).filter(Boolean))];
 }
 
 export async function runCsvExport() {
@@ -583,6 +659,10 @@ export async function runRecordBackup() {
   const zipName = getToolDocument().getElementById('u_recordBackupZipName')?.value?.trim() || `record_backup_${tgtAppId}_${nowStamp()}.zip`;
   const includeFiles = !!getToolDocument().getElementById('u_recordBackupIncludeFiles')?.checked;
   const includeComments = !!getToolDocument().getElementById('u_recordBackupIncludeComments')?.checked;
+  const includeAppSettings = !!getToolDocument().getElementById('u_recordBackupIncludeAppSettings')?.checked;
+  const includePluginConfig = includeAppSettings && !!getToolDocument().getElementById('u_recordBackupIncludePluginConfig')?.checked;
+  const appScopes = includeAppSettings ? collectRecordBackupAppScopeKeys() : [];
+  if (includeAppSettings && !appScopes.length) throw new Error('同梱するアプリ設定セクションを1つ以上選択してください');
 
   setBusy(true, 'バックアップ対象のフィールドを取得中...');
   const { propKeys } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId);
@@ -683,6 +763,77 @@ export async function runRecordBackup() {
     notes.push('コメント未取得');
   }
 
+  let appOkCount = 0;
+  let appNgCount = 0;
+  let appScopeLabels = [];
+  let pluginConfigLabel = '未取得';
+  if (includeAppSettings) {
+    appScopeLabels = appScopes.map((key) => SECTION_DEFS.find((section) => section.key === key)?.label || key);
+    setStatus(`アプリ設定取得中... (0/${appScopes.length})`);
+    const settingsBundle = await fetchBundle({
+      appId: tgtAppId,
+      guestId: tgtGuestId || '',
+      preview: false,
+      sections: appScopes,
+      onProgress: (p, label) => setStatus(`アプリ設定取得中 ${Math.round(p * 100)}% (${label})`)
+    });
+
+    for (const key of appScopes) {
+      const sec = settingsBundle.sections[key];
+      if (sec && sec._fetchError) appNgCount += 1;
+      else appOkCount += 1;
+    }
+
+    const appSettingsPayload = {
+      generatedAt,
+      appId: tgtAppId,
+      guestId: tgtGuestId || '',
+      preview: false,
+      scopes: appScopes,
+      scopeLabels: appScopeLabels,
+      bundle: settingsBundle
+    };
+    zip.file(`app_settings/app_${tgtAppId}.json`, JSON.stringify(appSettingsPayload, null, 2));
+
+    let pluginConfigBackup = null;
+    if (includePluginConfig) {
+      pluginConfigBackup = await fetchPluginConfigBackupForRecord({
+        appId: tgtAppId,
+        guestId: tgtGuestId || '',
+        existingPluginList: settingsBundle?.sections?.pluginSettings?.plugins,
+        onProgress: (pluginIndex, pluginTotal, plugin) => {
+          const pluginName = String(plugin?.name || plugin?.id || '');
+          setStatus(`プラグイン設定取得中 ${pluginIndex + 1}/${pluginTotal}${pluginName ? ` (${pluginName})` : ''}`);
+        }
+      });
+      pluginConfigLabel = formatPluginConfigSummary(pluginConfigBackup);
+      zip.file('app_settings/plugin_config.json', JSON.stringify(pluginConfigBackup, null, 2));
+      if (pluginConfigBackup?._fetchError) notes.push('プラグイン一覧取得失敗');
+      else if (pluginConfigBackup?.ngCount) notes.push('プラグイン設定一部取得失敗');
+    }
+
+    zip.file('app_settings/manifest.json', JSON.stringify({
+      generatedAt,
+      appId: tgtAppId,
+      guestId: tgtGuestId || '',
+      preview: false,
+      scopes: appScopes,
+      scopeLabels: appScopeLabels,
+      okCount: appOkCount,
+      ngCount: appNgCount,
+      pluginConfig: {
+        included: includePluginConfig,
+        label: pluginConfigLabel,
+        totalPlugins: pluginConfigBackup?.totalPlugins || 0,
+        okCount: pluginConfigBackup?.okCount || 0,
+        ngCount: pluginConfigBackup?.ngCount || 0,
+        fetchError: pluginConfigBackup?._fetchError || ''
+      }
+    }, null, 2));
+
+    if (appNgCount) notes.push('アプリ設定一部取得失敗');
+  }
+
   const manifest = {
     generatedAt,
     appId: tgtAppId,
@@ -703,6 +854,17 @@ export async function runRecordBackup() {
       commentCount,
       recordCount: commentRecordCount,
       fetchError: commentsPayload._fetchError || ''
+    },
+    appSettings: {
+      included: includeAppSettings,
+      scopes: appScopes,
+      scopeLabels: appScopeLabels,
+      okCount: appOkCount,
+      ngCount: appNgCount,
+      pluginConfig: {
+        included: includePluginConfig,
+        label: pluginConfigLabel
+      }
     }
   };
   zip.file('manifest.json', JSON.stringify(manifest, null, 2));
@@ -721,11 +883,17 @@ export async function runRecordBackup() {
       includeComments,
       commentCount,
       commentRecordCount,
+      includeAppSettings,
+      appOkCount,
+      appTotalCount: appScopes.length,
+      appScopeLabels,
+      includePluginConfig,
+      pluginConfigLabel,
       notes
     });
   }
 
-  setStatus(`データバックアップZIPを保存しました（${records.length}件 / 添付${fileCount}件 / コメント${commentCount}件）`);
+  setStatus(`データバックアップZIPを保存しました（${records.length}件 / 添付${fileCount}件 / コメント${commentCount}件${includeAppSettings ? ` / 設定${appOkCount}/${appScopes.length}セクション` : ''}）`);
 }
 
 export async function runRecordCopy() {

@@ -111,7 +111,7 @@ import {
 //     For now, they are expected to be injected or available in scope. ---
 //
 //   runDesignExport, runDesignCopyMd, runDesignExportXlsx, runDesignDiffMd,
-//   runFieldDependencyMap, runFetchJsConfig, runExportJsConfig, runApplyJsConfig,
+//   runFetchJsConfig, runExportJsConfig, runApplyJsConfig,
 //   runRenderProcessFlow, launchKintoneSql, runGenerateERDiagram,
 //   runExportERDiagramHtml, runBatchProcess, runBatchFileDownload,
 //   runBatchJsConfigDownload, loadViewsForSelect, runCsvExport, runCsvImport,
@@ -120,7 +120,7 @@ import {
 //   runPreviewApplyPlan, runBackupTargetPreview, runApplyPreview, runDeployOnly,
 //   runApplyPatchJson, importPatchJsonFromFile, parsePatchJsonPayload,
 //   renderPatchJsonSummary, renderCustomizeResult,
-//   runBulkFieldRename, runDetectUnusedFields,
+//   runBulkFieldRename,
 //   normalizeDiffFavoritePath,
 //   renderDiffFavoritesOnlyButton, renderTemplateOptions
 
@@ -197,7 +197,6 @@ export function setupEventHandlers(injected = {}) {
     runDesignCopyMd,
     runDesignExportXlsx,
     runDesignDiffMd,
-    runFieldDependencyMap,
     runFetchJsConfig,
     runExportJsConfig,
     runApplyJsConfig,
@@ -232,9 +231,16 @@ export function setupEventHandlers(injected = {}) {
     populatePatchJsonFromCurrentDiff,
     renderCustomizeResult,
     runBulkFieldRename,
-    runDetectUnusedFields,
     renderDiffFavoritesOnlyButton,
-    renderTemplateOptions
+    renderTemplateOptions,
+    runFieldImpactAnalysis,
+    exportFieldImpactCsv,
+    runPermissionMatrix,
+    runNotificationVisualizer,
+    runLayoutPreview,
+    runFieldDependencyGraph,
+    fieldGraphRelayout,
+    fieldGraphExportPng
   } = injected;
 
   function updateDiffFavoritesOnlyButton() {
@@ -643,7 +649,7 @@ export function setupEventHandlers(injected = {}) {
       return;
     }
 
-    if (e.target?.closest('#u_diffScopes') || e.target?.closest('#u_applyScopes') || e.target?.closest('#u_settingsExportScopes')) {
+    if (e.target?.closest('#u_diffScopes') || e.target?.closest('#u_applyScopes') || e.target?.closest('#u_settingsExportScopes') || e.target?.closest('#u_recordBackupAppScopes')) {
       saveCurrentDialogState();
       renderBundleState();
       renderScopePickerSummaries();
@@ -1047,6 +1053,36 @@ export function setupEventHandlers(injected = {}) {
       openSectionPreviewEditor(actEl.dataset.section || '');
       return;
     }
+    if (act === 'openAnalyzeFieldImpact' || act === 'openAnalyzeFieldImpactUnused' || act === 'openAnalyzeFieldGraph') {
+      const doc = getToolDocument();
+      const toolWindow = getToolWindow();
+      const nextSubTab = act === 'openAnalyzeFieldGraph' ? 'fieldGraph' : 'fieldImpact';
+      switchTab('analyze', { persist: false });
+      switchSubTab('analyze', nextSubTab, { persist: false });
+
+      if (act === 'openAnalyzeFieldImpactUnused') {
+        const filterEl = doc.getElementById('u_analyzeFieldFilter');
+        if (filterEl) {
+          const changed = filterEl.value !== 'unused';
+          filterEl.value = 'unused';
+          if (changed) filterEl.dispatchEvent(new toolWindow.Event('change', { bubbles: true }));
+        }
+      }
+
+      const focusTarget = act === 'openAnalyzeFieldGraph'
+        ? doc.querySelector('[data-act="runFieldDependencyGraph"]')
+        : doc.querySelector('[data-act="runFieldImpactAnalysis"]');
+      focusTarget?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      saveCurrentDialogState();
+      if (act === 'openAnalyzeFieldGraph') {
+        setStatus('分析 > 依存グラフへ移動しました');
+      } else if (act === 'openAnalyzeFieldImpactUnused') {
+        setStatus('分析 > 影響分析（未使用のみ）へ移動しました');
+      } else {
+        setStatus('分析 > 影響分析へ移動しました');
+      }
+      return;
+    }
 
     // ----- Source / Target quick actions -----
     if (act === 'setSourceCurrent') {
@@ -1115,6 +1151,18 @@ export function setupEventHandlers(injected = {}) {
     }
     if (act === 'settingsExportScopeAll') { setSettingsExportScopeSelection(true); setStatus('設定取得セクションを全選択しました'); return; }
     if (act === 'settingsExportScopeNone') { setSettingsExportScopeSelection(false); setStatus('設定取得セクションを全解除しました'); return; }
+    if (act === 'recordBackupScopeAll' || act === 'recordBackupScopeNone') {
+      const checked = act === 'recordBackupScopeAll';
+      const container = getToolDocument().getElementById('u_recordBackupAppScopes');
+      if (container) {
+        [...container.querySelectorAll('input[type="checkbox"]')].forEach((checkbox) => {
+          checkbox.checked = checked;
+        });
+      }
+      saveCurrentDialogState();
+      setStatus(`レコードバックアップに同梱する設定を${checked ? '全選択' : '全解除'}しました`);
+      return;
+    }
     if (act === 'runSettingsExportJson') return withGuard(async () => runSettingsExport('json'));
     if (act === 'runSettingsExportZip') return withGuard(async () => runSettingsExport('zip'));
     if (act === 'settingsExportSearchApps') return withGuard(runSettingsExportSearchApps);
@@ -1686,7 +1734,6 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'insertSelectedSourceFields') return runInsertSelectedSourceFields();
     if (act === 'closeSourceFieldsList') { ui.sourceFieldListContainer.style.display = 'none'; return; }
     if (act === 'runBulkFieldRename' && typeof runBulkFieldRename === 'function') return withGuard(runBulkFieldRename);
-    if (act === 'runDetectUnusedFields' && typeof runDetectUnusedFields === 'function') return withGuard(runDetectUnusedFields);
 
     // ----- Design export -----
     if (act === 'exportDesignJson' && typeof runDesignExport === 'function') return withGuard(() => runDesignExport('json'));
@@ -1694,7 +1741,6 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'copyDesignMd' && typeof runDesignCopyMd === 'function') return withGuard(runDesignCopyMd);
     if (act === 'exportDesignXlsx' && typeof runDesignExportXlsx === 'function') return withGuard(runDesignExportXlsx);
     if (act === 'exportDesignDiffMd' && typeof runDesignDiffMd === 'function') return withGuard(runDesignDiffMd);
-    if (act === 'generateFieldDepMap' && typeof runFieldDependencyMap === 'function') return withGuard(runFieldDependencyMap);
 
     // ----- JS/CSS config -----
     if (act === 'fetchJsConfig' && typeof runFetchJsConfig === 'function') return withGuard(runFetchJsConfig);
@@ -1723,6 +1769,16 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'saveTemplate' && typeof saveTemplate === 'function') return withGuard(saveTemplate);
     if (act === 'loadTemplate' && typeof loadTemplate === 'function') return loadTemplate();
     if (act === 'deleteTemplate' && typeof deleteTemplate === 'function') return deleteTemplate();
+
+    // ----- Analyze Tab -----
+    if (act === 'runFieldImpactAnalysis' && typeof runFieldImpactAnalysis === 'function') return withGuard(runFieldImpactAnalysis);
+    if (act === 'exportFieldImpactCsv' && typeof exportFieldImpactCsv === 'function') return exportFieldImpactCsv();
+    if (act === 'runPermissionMatrix' && typeof runPermissionMatrix === 'function') return withGuard(runPermissionMatrix);
+    if (act === 'runNotificationVisualizer' && typeof runNotificationVisualizer === 'function') return withGuard(runNotificationVisualizer);
+    if (act === 'runLayoutPreview' && typeof runLayoutPreview === 'function') return withGuard(runLayoutPreview);
+    if (act === 'runFieldDependencyGraph' && typeof runFieldDependencyGraph === 'function') return withGuard(runFieldDependencyGraph);
+    if (act === 'fieldGraphRelayout' && typeof fieldGraphRelayout === 'function') return fieldGraphRelayout();
+    if (act === 'fieldGraphExportPng' && typeof fieldGraphExportPng === 'function') return fieldGraphExportPng();
 
     // ----- Simulation -----
     if (act === 'simStart' && typeof runSimStart === 'function') return withGuard(runSimStart);

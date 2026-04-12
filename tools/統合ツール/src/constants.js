@@ -115,7 +115,8 @@ export const TAB_CONNECTION_NEEDS = {
   processFlow:    { appInputs: true,  target: false, connectionActions: false },
   sql:            { appInputs: true,  target: false, connectionActions: false },
   apiTester:      { appInputs: false, target: false, connectionActions: false },
-  settingsExport: { appInputs: false, target: false, connectionActions: false }
+  settingsExport: { appInputs: false, target: false, connectionActions: false },
+  analyze:        { appInputs: true,  target: true,  connectionActions: false }
 };
 
 
@@ -139,7 +140,8 @@ export const DEFAULT_SUBTAB_STATE = Object.freeze({
   jsconfig: 'editor',
   recordMgr: 'status',
   er: 'diagram',
-  settingsExport: 'export'
+  settingsExport: 'export',
+  analyze: 'fieldImpact'
 });
 
 export const GUIDED_TOUR_STEPS = Object.freeze([

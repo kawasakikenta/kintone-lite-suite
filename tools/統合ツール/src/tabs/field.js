@@ -1,13 +1,12 @@
 'use strict';
 
-import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
-import { state, ui } from '../state.js';
-import { esc, deepClone, downloadText, readTextFile, selectedScopeKeys } from '../utils.js';
-import { apiGet, apiPut, apiPost, buildApiPrefix, fetchBundle, ensureBundleShape } from '../api.js';
+import { SYSTEM_FIELD_TYPES } from '../constants.js';
+import { ui } from '../state.js';
+import { esc, deepClone } from '../utils.js';
+import { apiGet, apiPut, apiPost, buildApiPrefix } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { commonParams } from './diff.js';
 import { getToolDocument } from '../ui/dialog.js';
-import { buildCombinedFieldImpactIndex } from '../diff/enrich.js';
 
 export function parseFieldInput(text) {
   const obj = JSON.parse(text);
@@ -316,50 +315,5 @@ export async function runBulkFieldRename() {
   const resEl = getToolDocument().getElementById('u_bulkFieldResult');
   resEl.style.display = 'block';
   resEl.innerHTML = `<strong>完了:</strong> ${modifiedCount} 個のフィールドコードを変更し、上のテキストエリアにセットしました。`;
-  setBusy(false);
-}
-
-export async function runDetectUnusedFields() {
-  const tgtAppId = getToolDocument().getElementById('u_targetApp')?.value?.trim();
-  if (!tgtAppId) throw new Error('比較先アプリIDが指定されていません');
-  const guestId = getToolDocument().getElementById('u_targetGuest')?.value?.trim() || null;
-
-  setBusy(true, '比較先アプリの全設定を取得中...');
-  const bundle = await fetchBundle({
-    appId: tgtAppId,
-    guestId,
-    preview: true,
-    sections: SECTION_DEFS.map(s => s.key),
-    onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
-  });
-  ensureBundleShape(bundle);
-
-  const index = buildCombinedFieldImpactIndex(bundle);
-  const usedCodes = new Set(index.keys());
-
-  const fieldsResp = bundle.sections.fieldSettings;
-  const props = fieldsResp ? fieldsResp.properties : {};
-
-  const unused = [];
-  for (const [code, field] of Object.entries(props)) {
-    if (['RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME', 'STATUS', 'STATUS_ASSIGNEE', 'CATEGORY'].includes(field.type)) continue;
-    if (!usedCodes.has(code)) {
-      unused.push(code);
-    }
-  }
-
-  const resEl = getToolDocument().getElementById('u_bulkFieldResult');
-  resEl.style.display = 'block';
-  if (unused.length === 0) {
-    resEl.innerHTML = '<span style="color:#15803d">全てのフィールドがビューや計算式、プロセスなどで使用されています（または影響判定範囲外です）。</span>';
-  } else {
-    resEl.innerHTML = `
-      <strong style="color:#b45309">影響のない（未使用の可能性が高い）フィールド ${unused.length}件:</strong>
-      <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
-        ${unused.map(c => `<span class="chip" style="font-family:monospace">${esc(c)}</span>`).join('')}
-      </div>
-      <div class="muted" style="margin-top:6px">※JavaScriptカスタマイズや外部API連携での使用は検知できません。</div>
-    `;
-  }
   setBusy(false);
 }

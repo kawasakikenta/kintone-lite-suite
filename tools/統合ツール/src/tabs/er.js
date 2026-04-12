@@ -3,11 +3,10 @@
 import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, safeJsonForScript, nowStamp, downloadText, showToast } from '../utils.js';
-import { apiGet, buildApiPrefix, fetchBundle, ensureBundleShape } from '../api.js';
+import { apiGet, buildApiPrefix } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { getToolWindow } from '../ui/dialog.js';
 import { commonParams } from './diff.js';
-import { buildCombinedFieldImpactIndex } from '../diff/enrich.js';
 
 const ER_DEFAULTS = {
   maxFields: 220,
@@ -1848,141 +1847,4 @@ export async function runExportERDiagramHtml() {
     progressUi.error(e.message || String(e));
     throw e;
   }
-}
-
-export async function runFieldDependencyMap() {
-  const srcAppId = ui.sourceApp?.value?.trim();
-  if (!srcAppId) throw new Error('比較元アプリIDが指定されていません');
-  const guestId = ui.sourceGuest?.value?.trim() || null;
-  const popup = getToolWindow().open('', '_blank');
-  if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
-  popup.document.write('<title>フィールド依存関係マップ</title><body style="font-family:sans-serif;padding:24px">依存関係マップを生成中...</body>');
-
-  setBusy(true, '比較元アプリの全設定を取得中...');
-  const sections = SECTION_DEFS.map(s => s.key);
-  const bundle = await fetchBundle({ appId: srcAppId, guestId, preview: true, sections, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
-  ensureBundleShape(bundle);
-
-  setBusy(true, '依存関係を解析中...');
-  const index = buildCombinedFieldImpactIndex(bundle);
-  const refs = index.refs || {};
-
-  const elements = [];
-  const nodeSet = new Set();
-
-  const addNode = (id, label) => {
-    if (!nodeSet.has(id)) {
-      elements.push({ data: { id, label } });
-      nodeSet.add(id);
-    }
-  };
-
-  let edgeCount = 0;
-  for (const [targetCode, usages] of Object.entries(refs)) {
-    addNode(targetCode, targetCode);
-    for (const usage of usages) {
-      const srcCode = usage.sourceCode || usage.sourceSection;
-      const reason = usage.reason || usage.sourceSection;
-      addNode(srcCode, srcCode);
-
-      elements.push({
-        data: {
-          id: `edge_${edgeCount++}`,
-          source: srcCode,
-          target: targetCode,
-          label: reason
-        }
-      });
-    }
-  }
-
-  if (elements.length === 0) {
-    try { popup.close(); } catch (e) { /* noop */ }
-    showToast('フィールド間の依存関係（計算式等）は見つかりませんでした。', 'warn');
-    setBusy(false);
-    return;
-  }
-
-  setStatus(`マップ生成準備完了 (ノード=${nodeSet.size}, エッジ=${edgeCount})`);
-
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>フィールド依存関係マップ - App ${srcAppId}</title>
-  <script src="${EXTERNAL_LIBRARIES.cytoscape.altCdnUrl}"><\/script>
-  <script src="${EXTERNAL_LIBRARIES.dagre.cdnUrl}"><\/script>
-  <script src="${EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl}"><\/script>
-  <style>
-    body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; background: #f8fafc; }
-    #header { padding: 12px 20px; background: #fff; border-bottom: 1px solid #cbd5e1; display: flex; align-items: center; justify-content: space-between; }
-    h1 { margin: 0; font-size: 16px; color: #1e293b; }
-    #cy { flex: 1; position: relative; }
-    .btn { padding: 6px 12px; font-size: 13px; background: #0ea5e9; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-    .btn:hover { background: #0284c7; }
-  </style>
-</head>
-<body>
-  <div id="header">
-    <h1>フィールド依存関係マップ (App: ${srcAppId})</h1>
-    <button class="btn" onclick="cy.layout({name:'dagre', rankDir:'LR'}).run()">再レイアウト</button>
-  </div>
-  <div id="cy"></div>
-  <script>
-    const elements = ${JSON.stringify(elements)};
-    const cy = cytoscape({
-      container: document.getElementById('cy'),
-      elements: elements,
-      style: [
-        {
-          selector: 'node',
-          style: {
-            'label': 'data(label)',
-            'font-size': '12px',
-            'text-valign': 'center',
-            'text-halign': 'center',
-            'background-color': '#e2e8f0',
-            'border-width': 1,
-            'border-color': '#94a3b8',
-            'color': '#0f172a',
-            'padding': '10px',
-            'shape': 'round-rectangle',
-            'width': 'label',
-            'height': 'label'
-          }
-        },
-        {
-          selector: 'edge',
-          style: {
-            'width': 2,
-            'line-color': '#94a3b8',
-            'target-arrow-color': '#94a3b8',
-            'target-arrow-shape': 'triangle',
-            'curve-style': 'bezier',
-            'label': 'data(label)',
-            'font-size': '10px',
-            'color': '#64748b',
-            'text-background-opacity': 1,
-            'text-background-color': '#f8fafc',
-            'text-background-padding': '2px',
-          }
-        }
-      ],
-      layout: {
-        name: 'dagre',
-        rankDir: 'LR',
-        nodeSep: 60,
-        rankSep: 100
-      }
-    });
-  <\/script>
-</body>
-</html>`;
-
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  popup.location.href = url;
-  setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
-  setBusy(false);
 }

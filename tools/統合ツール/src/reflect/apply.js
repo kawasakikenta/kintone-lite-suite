@@ -460,12 +460,13 @@ export function resolveBackupScopes(c) {
   }
   const baseScopes = selectedScopeKeys(ui.applyScopes);
   if (!baseScopes.length) throw new Error('反映するセクションを選択してください');
-  return resolveApplyScopes(baseScopes);
+  return [...new Set(baseScopes.filter(Boolean))];
 }
 
 export async function backupTargetPreviewSettings(c, scopes, options = {}) {
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
   const actualScopes = Array.isArray(scopes) && scopes.length ? scopes : resolveBackupScopes(c);
+  const scopeSummary = formatSectionList(actualScopes);
   const target = { ...c.target, preview: true };
   setStatus(`バックアップ取得中... (${actualScopes.length}セクション)`);
   const bundle = await fetchBundle({
@@ -488,9 +489,9 @@ export async function backupTargetPreviewSettings(c, scopes, options = {}) {
   state.lastPreviewBackupPayload = deepClone(payload);
   state.lastPreviewBackupFilename = filename;
   downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
-  if (!options?.silentStatus) setStatus(`比較先(プレビュー)バックアップ保存: ${filename}`);
+  if (!options?.silentStatus) setStatus(`比較先(プレビュー)バックアップ保存: ${filename} (${scopeSummary || '-'})`);
   if (ui.backupStatus) {
-    ui.backupStatus.textContent = `\u2705 バックアップ保存済: ${filename} (${actualScopes.length}セクション, ${new Date().toLocaleTimeString()})`;
+    ui.backupStatus.textContent = `\u2705 バックアップ保存済: ${filename} (${actualScopes.length}セクション: ${scopeSummary || '-'}, ${new Date().toLocaleTimeString()})`;
     ui.backupStatus.style.display = 'block';
   }
   return { filename, payload };

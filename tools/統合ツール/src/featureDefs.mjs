@@ -11,7 +11,8 @@ const ICONS = Object.freeze({
   settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
   recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
   sql: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h10"/><path d="M4 19h7"/><path d="M17 15l3 4 3-4"/></svg>',
-  apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>'
+  apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>',
+  analyze: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>'
 });
 
 /**
@@ -61,7 +62,7 @@ export const FEATURE_DEFS = [
     groupLabel: '変更・反映',
     icon: ICONS.field,
     label: 'フィールド追加',
-    desc: 'フィールド定義を追加・編集します。',
+    desc: 'フィールド定義の追加・編集とコード変換用JSONの作成を行います。',
     tabs: ['field'],
     tab: 'field',
     subTab: 'json',
@@ -79,7 +80,7 @@ export const FEATURE_DEFS = [
     groupLabel: '変更・反映',
     icon: ICONS.jsconfig,
     label: 'JS/CSS設定',
-    desc: 'カスタマイズ設定の取得・反映を行います。',
+    desc: '単一アプリの customize.json 編集と JS/CSS 実ファイル取得を行います。',
     tabs: ['jsconfig'],
     tab: 'jsconfig',
     subTab: 'editor',
@@ -114,7 +115,7 @@ export const FEATURE_DEFS = [
     groupLabel: '可視化・出力',
     icon: ICONS.settingsExport,
     label: '設定一括取得',
-    desc: '複数アプリの設定JSON、JS/CSS設定、プラグイン設定をまとめて保存します。',
+    desc: '複数アプリの設定JSONをまとめて保存します（データ・添付は除く）。',
     tabs: ['settingsExport'],
     tab: 'settingsExport',
     subTab: 'export',
@@ -132,7 +133,7 @@ export const FEATURE_DEFS = [
     groupLabel: '可視化・出力',
     icon: ICONS.er,
     label: 'ER図',
-    desc: '関連アプリや参照関係を図で確認します。',
+    desc: '関連アプリの構造を ER 図で確認します。',
     tabs: ['er'],
     tab: 'er',
     subTab: 'diagram',
@@ -167,7 +168,7 @@ export const FEATURE_DEFS = [
     groupLabel: 'データ・保守',
     icon: ICONS.recordMgr,
     label: 'レコード管理',
-    desc: 'CSV、添付DL、コメント取得、ステータス更新などを行います。',
+    desc: 'レコードデータのCSV・添付・コメント・状態更新を扱います。',
     tabs: ['recordMgr'],
     tab: 'recordMgr',
     subTab: 'status',
@@ -212,6 +213,24 @@ export const FEATURE_DEFS = [
     usageOrder: 11,
     onboardingOrder: 11,
     badge: { tone: 'caution', label: '上級者向け', icon: '!' }
+  },
+  {
+    key: 'analyze',
+    group: 'vis',
+    groupLabel: '可視化・出力',
+    icon: ICONS.analyze,
+    label: '分析',
+    desc: '影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。',
+    tabs: ['analyze'],
+    tab: 'analyze',
+    subTab: 'fieldImpact',
+    focusSelector: '[data-act="runFieldImpactAnalysis"]',
+    priority: 'medium',
+    riskLevel: 'safe',
+    recommendedFor: ['影響調査', '依存確認', 'セキュリティ監査'],
+    usageOrder: 7.5,
+    onboardingOrder: 7.5,
+    badge: { tone: 'safe', label: '安全', icon: 'OK' }
   }
 ];
 

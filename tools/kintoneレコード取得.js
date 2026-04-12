@@ -32,7 +32,8 @@
         settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
         recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
         sql: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h10"/><path d="M4 19h7"/><path d="M17 15l3 4 3-4"/></svg>',
-        apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>'
+        apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>',
+        analyze: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>'
       });
       FEATURE_DEFS = [
         {
@@ -42,8 +43,8 @@
           icon: ICONS.diff,
           label: "差分比較",
           desc: "2アプリの設定差分を確認します。",
-          tabs: ["reflect"],
-          tab: "reflect",
+          tabs: ["diff"],
+          tab: "diff",
           diffSubTab: "conditions",
           focusSelector: "#u_headerDiffSuite",
           priority: "high",
@@ -130,7 +131,7 @@
           groupLabel: "可視化・出力",
           icon: ICONS.settingsExport,
           label: "設定一括取得",
-          desc: "複数アプリの設定をまとめて保存します。",
+          desc: "複数アプリの設定JSON、JS/CSS設定、プラグイン設定をまとめて保存します。",
           tabs: ["settingsExport"],
           tab: "settingsExport",
           subTab: "export",
@@ -183,7 +184,7 @@
           groupLabel: "データ・保守",
           icon: ICONS.recordMgr,
           label: "レコード管理",
-          desc: "CSV、添付DL、ステータス更新などを行います。",
+          desc: "CSV、添付DL、コメント取得、ステータス更新などを行います。",
           tabs: ["recordMgr"],
           tab: "recordMgr",
           subTab: "status",
@@ -228,6 +229,24 @@
           usageOrder: 11,
           onboardingOrder: 11,
           badge: { tone: "caution", label: "上級者向け", icon: "!" }
+        },
+        {
+          key: "analyze",
+          group: "vis",
+          groupLabel: "可視化・出力",
+          icon: ICONS.analyze,
+          label: "分析",
+          desc: "フィールド影響分析、通知/権限の可視化、レイアウトプレビュー、依存グラフなど。",
+          tabs: ["analyze"],
+          tab: "analyze",
+          subTab: "fieldImpact",
+          focusSelector: '[data-act="runFieldImpactAnalysis"]',
+          priority: "medium",
+          riskLevel: "safe",
+          recommendedFor: ["影響調査", "セキュリティ監査", "設定確認"],
+          usageOrder: 7.5,
+          onboardingOrder: 7.5,
+          badge: { tone: "safe", label: "安全", icon: "OK" }
         }
       ];
       TAB_TO_FEATURE = {};
@@ -238,7 +257,7 @@
   });
 
   // src/constants.js
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.js"() {
       "use strict";
@@ -295,26 +314,6 @@
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
       DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
-      SECTION_DEFS = [
-        { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
-        { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
-        { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
-        { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
-        { key: "viewSettings", label: "ビュー設定", endpoint: "/app/views.json", put: true, putBuilder: (d) => ({ views: d.views || d }) },
-        { key: "reportSettings", label: "レポート設定", endpoint: "/app/reports.json", put: true, putBuilder: (d) => ({ reports: d.reports || d }) },
-        { key: "processSettings", label: "プロセス管理", endpoint: "/app/status.json", put: true, putBuilder: (d) => ({ enable: !!d.enable, states: d.states || {}, actions: d.actions || [] }) },
-        { key: "pluginSettings", label: "プラグイン(※)", endpoint: "/app/plugins.json", put: true, putBuilder: (d) => ({ pluginIds: (d.plugins || []).map((p) => p.id) }) },
-        { key: "customizeSettings", label: "JS/CSS設定", endpoint: "/app/customize.json", put: true, putBuilder: (d) => ({ desktop: d.desktop || {}, mobile: d.mobile || {} }) },
-        { key: "actionSettings", label: "アクション設定", endpoint: "/app/actions.json", put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
-        { key: "appAcl", label: "アプリ権限", endpoint: "/app/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "fieldAcl", label: "フィールド権限", endpoint: "/field/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
-      ];
-      SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS.filter((s) => s.key !== "customizeSettings");
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
         reflect: "section",
@@ -322,11 +321,12 @@
         jsconfig: "editor",
         recordMgr: "status",
         er: "diagram",
-        settingsExport: "export"
+        settingsExport: "export",
+        analyze: "fieldImpact"
       });
       GUIDED_TOUR_STEPS = Object.freeze([
         {
-          tab: "reflect",
+          tab: "diff",
           diffSubTab: "conditions",
           path: "ヘッダー > 比較条件",
           selector: "#u_sourceApp",
@@ -334,15 +334,15 @@
           body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
         },
         {
-          tab: "reflect",
+          tab: "diff",
           diffSubTab: "conditions",
           path: "ヘッダー > 比較条件",
-          selector: "#u_diffScopes",
+          selector: '[data-act="openDiffScopePicker"]',
           title: "3. 比較対象セクションを選ぶ",
-          body: "差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。"
+          body: "「比較対象を選ぶ」からポップアップを開き、差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。"
         },
         {
-          tab: "reflect",
+          tab: "diff",
           diffSubTab: "conditions",
           path: "ヘッダー > 比較条件",
           selector: "#u_ignoreKeyInput",
@@ -350,7 +350,7 @@
           body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
         },
         {
-          tab: "reflect",
+          tab: "diff",
           diffSubTab: "conditions",
           path: "ヘッダー > 比較条件",
           selector: "#u_runDiffPrimary",
@@ -358,26 +358,26 @@
           body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
         },
         {
-          tab: "reflect",
-          diffSubTab: "view",
-          path: "ヘッダー > 結果整理",
+          tab: "diff",
+          diffSubTab: "conditions",
+          path: "ヘッダー > 差分結果の整理",
           selector: "#u_diffSearch",
           title: "6. 結果を絞り込んで確認する",
-          body: "比較結果はセクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。"
+          body: "差分比較後は「差分結果の整理・出力」を開くと、セクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。"
         },
         {
           tab: "reflect",
           path: "プレビュー反映",
           selector: "#u_footerPlan",
           title: "7. 反映プランを先に確認する",
-          body: "画面下の固定バーから「反映プラン確認」を押し、API リクエスト内容や対象セクションを確認します。要約はメイン欄の「プラン要約」にも表示されます。"
+          body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。要約はメイン欄のプラン欄にも表示されます。"
         },
         {
           tab: "reflect",
           path: "プレビュー反映",
           selector: "#u_footerApply",
           title: "8. 比較先プレビューへ反映する",
-          body: "固定バーの「比較元 → 比較先(プレビュー) 反映」でプレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。"
+          body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。"
         },
         {
           tab: "design",
@@ -715,6 +715,20 @@ ${contextLine}`);
     const bar = ui2.status.closest?.(".status-bar");
     if (bar) bar.classList.toggle("status-bar--error", !!isError);
   }
+  var SCOPE_PICKER_META = Object.freeze({
+    diff: Object.freeze({
+      title: "比較対象セクション",
+      sub: "差分比較で取得する API 設定を選びます。"
+    }),
+    reflect: Object.freeze({
+      title: "反映するセクション",
+      sub: "プレビュー反映でまとめて適用するセクションを選びます。"
+    }),
+    settingsExport: Object.freeze({
+      title: "取得対象セクション",
+      sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
+    })
+  });
 
   // src/tabs/record-standalone.js
   init_constants();
