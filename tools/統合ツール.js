@@ -21450,6 +21450,32 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     }
     throw lastErr || new Error("Mermaid.js の読み込みに失敗しました");
   }
+  function renderFallbackFlowHtml(states, actions, highlightState) {
+    const stateList = Object.keys(states || {});
+    const transitions = (actions || []).map((a) => {
+      const from = esc(a.from || "");
+      const to = esc(a.to || "");
+      const name = esc(a.name || "");
+      const current = highlightState && (a.from === highlightState || a.to === highlightState);
+      const style = current ? ' style="background:#dcfce7"' : "";
+      return `<tr${style}><td>${from}</td><td>${name}</td><td>${to}</td></tr>`;
+    }).join("");
+    const stateHtml = stateList.map((s) => {
+      const isCurrent = highlightState === s;
+      const style = isCurrent ? "background:#bbf7d0;border-color:#16a34a" : "background:#f8fafc;border-color:#cbd5e1";
+      return `<span style="display:inline-block;margin:2px;padding:2px 8px;border:1px solid;${style};border-radius:9999px">${esc(s)}</span>`;
+    }).join("");
+    return `
+    <div style="color:#334155;font-size:12px;line-height:1.5">
+      <div style="margin-bottom:8px;color:#b45309">Mermaid.js を読み込めなかったため、簡易表示に切り替えました。</div>
+      <div style="margin-bottom:8px">${stateHtml || '<span style="color:#94a3b8">状態なし</span>'}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">From</th><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">Action</th><th style="text-align:left;border-bottom:1px solid #cbd5e1;padding:4px">To</th></tr></thead>
+        <tbody>${transitions || '<tr><td colspan="3" style="padding:6px;color:#94a3b8">遷移なし</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+  }
   async function redrawProcessFlow(highlightState) {
     if (!pfSimStates) return;
     let md = "stateDiagram-v2\n";
@@ -21483,8 +21509,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       const { svg } = await mermaidObj.render(`mermaid-svg-generated-${Date.now()}-${mermaidRenderSeq}`, md);
       ui.mermaidView.innerHTML = svg;
     } catch (e) {
-      ui.mermaidView.innerHTML = `<div style="color:#b91c1c">エラー: ${esc(e.message || String(e))}</div>`;
-      throw e;
+      ui.mermaidView.innerHTML = renderFallbackFlowHtml(pfSimStates, pfSimActions, highlightState);
+      setStatus("Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。");
     }
   }
   function updateProcessSimulationUI() {
