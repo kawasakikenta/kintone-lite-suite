@@ -11927,18 +11927,64 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .launcher-tools{
   display:flex;
   align-items:center;
-  justify-content:flex-end;
+  justify-content:space-between;
   flex-wrap:wrap;
   gap:8px;
-  margin-top:10px;
+  margin-top:8px;
 }
 #kintone-unified-suite-v2 .launcher-more-toggle{
-  margin-left:auto;
+  margin-left:0;
   white-space:nowrap;
+}
+#kintone-unified-suite-v2 .launcher-section{
+  margin-top:12px;
+}
+#kintone-unified-suite-v2 .launcher-section--primary{
+  margin-top:0;
+}
+#kintone-unified-suite-v2 .launcher-section-head{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+}
+#kintone-unified-suite-v2 .launcher-section-title{
+  margin:0;
+  font-size:13px;
+  font-weight:800;
+  color:#0f172a;
+}
+#kintone-unified-suite-v2 .launcher-section-sub{
+  display:inline-flex;
+  align-items:center;
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:700;
+  color:#1d4ed8;
+  background:#dbeafe;
+}
+#kintone-unified-suite-v2 .launcher-section--secondary .launcher-section-sub{
+  color:#475569;
+  background:#e2e8f0;
 }
 #kintone-unified-suite-v2 .feature-grid{
   grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
   gap:12px;
+}
+#kintone-unified-suite-v2 .feature-grid--primary .feature-card{
+  border-color:#bfdbfe;
+  box-shadow:0 6px 18px rgba(37,99,235,.12);
+  background:linear-gradient(180deg,#ffffff,#f8fbff);
+}
+#kintone-unified-suite-v2 .feature-grid--primary .feature-card-label{
+  font-size:15px;
+}
+#kintone-unified-suite-v2 .feature-grid--primary .feature-card-desc{
+  color:#475569;
+}
+#kintone-unified-suite-v2 .feature-grid--secondary{
+  margin-top:8px;
 }
 #kintone-unified-suite-v2.screen-launcher:not(.launcher-show-advanced) .feature-card[data-launcher-tier="secondary"]{
   display:none;
@@ -13444,7 +13490,9 @@ ${contextLine}`);
     const primaryFeatureKeys = new Set(
       launcherFeatures.filter((feature) => Number.isFinite(feature.usageOrder) && feature.usageOrder <= 5).map((feature) => feature.key)
     );
-    const secondaryFeatureCount = launcherFeatures.filter((feature) => !primaryFeatureKeys.has(feature.key)).length;
+    const primaryFeatures = launcherFeatures.filter((feature) => primaryFeatureKeys.has(feature.key));
+    const secondaryFeatures = launcherFeatures.filter((feature) => !primaryFeatureKeys.has(feature.key));
+    const secondaryFeatureCount = secondaryFeatures.length;
     const renderFeatureCard = (f) => {
       const recommended = Array.isArray(f.recommendedFor) ? f.recommendedFor : [];
       const tier = primaryFeatureKeys.has(f.key) ? "primary" : "secondary";
@@ -13849,14 +13897,29 @@ ${contextLine}`);
           <div class="launcher-menu" id="u_launcherMenu">
             <div class="launcher-menu-head">
               <p class="launcher-lead">作業メニュー</p>
-              <p class="launcher-tagline">よく使う作業を先頭にまとめています。補助的な機能は必要なときだけ広げられます。</p>
+              <p class="launcher-tagline">メイン機能を最初に大きく表示し、細かい機能は必要なときだけ表示します。</p>
             </div>
-            <div class="launcher-tools">
-              <button type="button" class="btn sub launcher-more-toggle" id="u_launcherToggleMore" data-act="toggleLauncherMore" aria-expanded="false">その他の ${secondaryFeatureCount} 機能を表示</button>
-            </div>
-            <div class="feature-grid">
-              ${launcherFeatures.map(renderFeatureCard).join("")}
-            </div>
+            <section class="launcher-section launcher-section--primary" aria-label="メイン機能">
+              <div class="launcher-section-head">
+                <p class="launcher-section-title">よく使うメイン機能</p>
+                <span class="launcher-section-sub">まずはここから</span>
+              </div>
+              <div class="feature-grid feature-grid--primary">
+                ${primaryFeatures.map(renderFeatureCard).join("")}
+              </div>
+            </section>
+            <section class="launcher-section launcher-section--secondary" aria-label="補助機能">
+              <div class="launcher-tools">
+                <div class="launcher-section-head">
+                  <p class="launcher-section-title">補助機能</p>
+                  <span class="launcher-section-sub">詳細設定・保守向け</span>
+                </div>
+                <button type="button" class="btn sub launcher-more-toggle" id="u_launcherToggleMore" data-act="toggleLauncherMore" aria-expanded="false">その他の ${secondaryFeatureCount} 機能を表示</button>
+              </div>
+              <div class="feature-grid feature-grid--secondary">
+                ${secondaryFeatures.map(renderFeatureCard).join("")}
+              </div>
+            </section>
           </div>
 
           <div class="card tab-card">

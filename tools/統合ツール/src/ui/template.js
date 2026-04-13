@@ -28,7 +28,9 @@ export function buildRoot(targetDocument = document, options = {}) {
       .filter((feature) => Number.isFinite(feature.usageOrder) && feature.usageOrder <= 5)
       .map((feature) => feature.key)
   );
-  const secondaryFeatureCount = launcherFeatures.filter((feature) => !primaryFeatureKeys.has(feature.key)).length;
+  const primaryFeatures = launcherFeatures.filter((feature) => primaryFeatureKeys.has(feature.key));
+  const secondaryFeatures = launcherFeatures.filter((feature) => !primaryFeatureKeys.has(feature.key));
+  const secondaryFeatureCount = secondaryFeatures.length;
   const renderFeatureCard = (f) => {
     const recommended = Array.isArray(f.recommendedFor) ? f.recommendedFor : [];
     const tier = primaryFeatureKeys.has(f.key) ? 'primary' : 'secondary';
@@ -433,14 +435,29 @@ export function buildRoot(targetDocument = document, options = {}) {
           <div class="launcher-menu" id="u_launcherMenu">
             <div class="launcher-menu-head">
               <p class="launcher-lead">作業メニュー</p>
-              <p class="launcher-tagline">よく使う作業を先頭にまとめています。補助的な機能は必要なときだけ広げられます。</p>
+              <p class="launcher-tagline">メイン機能を最初に大きく表示し、細かい機能は必要なときだけ表示します。</p>
             </div>
-            <div class="launcher-tools">
-              <button type="button" class="btn sub launcher-more-toggle" id="u_launcherToggleMore" data-act="toggleLauncherMore" aria-expanded="false">その他の ${secondaryFeatureCount} 機能を表示</button>
-            </div>
-            <div class="feature-grid">
-              ${launcherFeatures.map(renderFeatureCard).join('')}
-            </div>
+            <section class="launcher-section launcher-section--primary" aria-label="メイン機能">
+              <div class="launcher-section-head">
+                <p class="launcher-section-title">よく使うメイン機能</p>
+                <span class="launcher-section-sub">まずはここから</span>
+              </div>
+              <div class="feature-grid feature-grid--primary">
+                ${primaryFeatures.map(renderFeatureCard).join('')}
+              </div>
+            </section>
+            <section class="launcher-section launcher-section--secondary" aria-label="補助機能">
+              <div class="launcher-tools">
+                <div class="launcher-section-head">
+                  <p class="launcher-section-title">補助機能</p>
+                  <span class="launcher-section-sub">詳細設定・保守向け</span>
+                </div>
+                <button type="button" class="btn sub launcher-more-toggle" id="u_launcherToggleMore" data-act="toggleLauncherMore" aria-expanded="false">その他の ${secondaryFeatureCount} 機能を表示</button>
+              </div>
+              <div class="feature-grid feature-grid--secondary">
+                ${secondaryFeatures.map(renderFeatureCard).join('')}
+              </div>
+            </section>
           </div>
 
           <div class="card tab-card">
