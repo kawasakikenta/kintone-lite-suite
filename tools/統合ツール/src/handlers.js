@@ -174,6 +174,19 @@ function getVisibleReflectNodeIds() {
     .filter(Boolean);
 }
 
+function extractAppIdFromInput(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d+$/.test(raw)) return raw;
+  let decoded = raw;
+  try { decoded = decodeURIComponent(raw); } catch (e) { /* ignore malformed URI */ }
+  const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+  if (queryMatch) return queryMatch[1];
+  const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+  if (pathMatch) return pathMatch[1];
+  return '';
+}
+
 // ---------------------------------------------------------------------------
 // Setup all event handlers
 // ---------------------------------------------------------------------------
@@ -259,6 +272,29 @@ export function setupEventHandlers(injected = {}) {
     ui.launcherToggleMore.setAttribute('aria-expanded', expanded ? 'true' : 'false');
   }
 
+  function applyLauncherFilter() {
+    const activeGroupBtn = ui.launcherGroupFilters?.querySelector('.chip.is-active[data-group]');
+    const group = activeGroupBtn?.dataset?.group || 'all';
+    const searchText = String(ui.launcherSearch?.value || '').trim().toLowerCase();
+    const cards = [...(ui.launcherMenu?.querySelectorAll('.feature-card[data-feature]') || [])];
+    let visibleCount = 0;
+    cards.forEach((card) => {
+      const cardGroup = String(card.querySelector('.feature-card-group')?.textContent || '').trim();
+      const label = String(card.querySelector('.feature-card-label')?.textContent || '').trim();
+      const desc = String(card.querySelector('.feature-card-desc')?.textContent || '').trim();
+      const cardText = `${label} ${desc} ${cardGroup}`.toLowerCase();
+      const groupMatched = group === 'all'
+        || (group === 'change' && cardGroup === '変更・反映')
+        || (group === 'vis' && cardGroup === '可視化・出力')
+        || (group === 'data' && cardGroup === 'データ・保守');
+      const searchMatched = !searchText || cardText.includes(searchText);
+      const show = groupMatched && searchMatched;
+      card.style.display = show ? '' : 'none';
+      if (show) visibleCount += 1;
+    });
+    if (ui.launcherVisibleCount) ui.launcherVisibleCount.textContent = `表示中: ${visibleCount}/${cards.length}`;
+  }
+
   function syncMainResultForFeature(featureKey) {
     if (!ui.result) return;
     const key = String(featureKey || state.activeFeatureKey || state.activeTab || '').trim();
@@ -337,6 +373,7 @@ export function setupEventHandlers(injected = {}) {
   renderReflectSidebar();
   renderReflectMainPanel();
   updateLauncherToggleButton();
+  applyLauncherFilter();
   renderReflectNodeList();
   initReflectPreviewPlayground(ui, setStatus);
   initSectionPreviewEditor(ui, setStatus);
@@ -566,6 +603,12 @@ export function setupEventHandlers(injected = {}) {
       featCard.click();
       return;
     }
+    if (!editable && root.classList.contains('screen-launcher') && e.key === '/') {
+      e.preventDefault();
+      ui.launcherSearch?.focus();
+      ui.launcherSearch?.select();
+      return;
+    }
 
     if (!getRoot()?.classList.contains('tab-is-diff')) return;
     const resKb = getToolDocument().getElementById('u_result');
@@ -610,6 +653,10 @@ export function setupEventHandlers(injected = {}) {
     }
     if (e.target === ui.diffMultiTargets) {
       saveCurrentDialogState();
+      return;
+    }
+    if (e.target === ui.launcherSearch) {
+      applyLauncherFilter();
     }
   });
 
@@ -628,6 +675,17 @@ export function setupEventHandlers(injected = {}) {
   // -------------------------------------------------------------------
 
   root.addEventListener('change', (e) => {
+    if (e.target === ui.sourceApp || e.target === ui.targetApp) {
+      const extracted = extractAppIdFromInput(e.target.value);
+      if (extracted && extracted !== e.target.value.trim()) {
+        e.target.value = extracted;
+        setStatus(`URL からアプリIDを抽出しました: ${extracted}`);
+      }
+      saveCurrentDialogState();
+      updateConnectionStepIndicators();
+      renderBundleState();
+      return;
+    }
     const diffId = e.target?.dataset?.diffRowId;
     if (diffId) {
       const res = getToolDocument().getElementById('u_result');
@@ -960,13 +1018,26 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'toggleLauncherMore') {
       root.classList.toggle('launcher-show-advanced');
       updateLauncherToggleButton();
+      applyLauncherFilter();
       saveCurrentDialogState();
       setStatus(root.classList.contains('launcher-show-advanced') ? '補助メニューも表示しました' : 'よく使う作業だけに絞りました');
+      return;
+    }
+    if (act === 'setLauncherGroup') {
+      const group = String(actEl.dataset.group || 'all');
+      [...(ui.launcherGroupFilters?.querySelectorAll('.chip[data-group]') || [])].forEach((btn) => {
+        const active = btn.dataset.group === group;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      applyLauncherFilter();
+      setStatus(group === 'all' ? '全機能を表示中です' : `機能を絞り込みました: ${actEl.textContent.trim()}`);
       return;
     }
     if (act === 'backToLauncher') {
       showLauncherScreen({ persist: false });
       updateLauncherToggleButton();
+      applyLauncherFilter();
       saveCurrentDialogState();
       setStatus('機能を選んでください');
       return;

@@ -104,6 +104,11 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
             </div>
+            <div class="btns connection-step-btns connection-quick-btns" style="margin-top:8px">
+              <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
+              <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
+              <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
+            </div>
             <details class="diff-fold diff-fold--lookup">
               <summary class="diff-fold-summary">
                 <span class="diff-fold-title">ルックアップ参照先アプリID変換（任意）</span>
@@ -451,6 +456,21 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <div class="launcher-section-head">
                   <p class="launcher-section-title">補助機能</p>
                   <span class="launcher-section-sub">詳細設定・保守向け</span>
+                </div>
+                <div class="launcher-filter-bar" aria-label="機能の絞り込み">
+                  <input
+                    type="search"
+                    id="u_launcherSearch"
+                    class="launcher-search-input"
+                    placeholder="機能名・説明で検索（例: 差分 / レコード / 設計書）"
+                    autocomplete="off">
+                  <div class="launcher-group-filters" id="u_launcherGroupFilters" role="group" aria-label="機能グループ">
+                    <button type="button" class="chip is-active" data-act="setLauncherGroup" data-group="all" aria-pressed="true">すべて</button>
+                    <button type="button" class="chip" data-act="setLauncherGroup" data-group="change" aria-pressed="false">変更・反映</button>
+                    <button type="button" class="chip" data-act="setLauncherGroup" data-group="vis" aria-pressed="false">可視化・出力</button>
+                    <button type="button" class="chip" data-act="setLauncherGroup" data-group="data" aria-pressed="false">データ・保守</button>
+                  </div>
+                  <div class="launcher-filter-meta" id="u_launcherVisibleCount">表示中: ${launcherFeatures.length}/${launcherFeatures.length}</div>
                 </div>
                 <button type="button" class="btn sub launcher-more-toggle" id="u_launcherToggleMore" data-act="toggleLauncherMore" aria-expanded="false">その他の ${secondaryFeatureCount} 機能を表示</button>
               </div>
