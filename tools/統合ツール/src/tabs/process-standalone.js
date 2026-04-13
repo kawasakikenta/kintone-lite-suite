@@ -3,20 +3,55 @@
 import { esc } from '../utils.js';
 import { buildApiPrefix, apiGet } from '../api.js';
 
+let mermaidLoadPromise = null;
+const MERMAID_CDN_URLS = [
+  'https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js',
+  'https://unpkg.com/mermaid@10.6.1/dist/mermaid.min.js'
+];
+
 function loadScript(url) {
   return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${url}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === '1') {
+        resolve();
+      } else {
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error(`スクリプト読み込み失敗: ${url}`)), { once: true });
+      }
+      return;
+    }
     const s = document.createElement('script');
     s.src = url;
     s.async = true;
-    s.onload = resolve;
+    s.onload = () => {
+      s.dataset.loaded = '1';
+      resolve();
+    };
     s.onerror = () => reject(new Error(`スクリプト読み込み失敗: ${url}`));
     document.head.appendChild(s);
   });
 }
 
+async function loadScriptWithFallback(urls) {
+  let lastErr = null;
+  for (const url of urls) {
+    try {
+      await loadScript(url);
+      return;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('Mermaid.js の読み込みに失敗しました');
+}
+
 async function ensureMermaid() {
   if (window.mermaid) return window.mermaid;
-  await loadScript('https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js');
+  if (!mermaidLoadPromise) {
+    mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS);
+  }
+  await mermaidLoadPromise;
   if (window.mermaid) {
     window.mermaid.initialize({ startOnLoad: false, theme: 'default' });
     return window.mermaid;

@@ -7,6 +7,7 @@ import {
   summarizeRows
 } from '../diff/engine.js';
 import { enrichDiffRows, summarizeSeverity } from '../diff/enrich.js';
+import { deepClone } from '../utils.js';
 
 function warningInfoForStandalone(rows, fetchIssues) {
   const diffCount = countActualDiffRows(rows || []);
@@ -73,9 +74,9 @@ export async function runDiffStandalone(opts) {
   }
 
   onStatus('比較元を取得中...');
-  const sourceBundle = await resolveSide('source');
+  const sourceBundle = deepClone(await resolveSide('source'));
   onStatus('比較先を取得中...');
-  const targetBundle = await resolveSide('target');
+  const targetBundle = deepClone(await resolveSide('target'));
 
   onStatus('差分計算中...');
   const diffResult = computeDiffRows(sourceBundle, targetBundle, scopes, ignoreKeys, {

@@ -10809,6 +10809,7 @@ ${contextLine}`);
   init_api();
   init_engine();
   init_enrich();
+  init_utils();
   function warningInfoForStandalone(rows, fetchIssues) {
     const diffCount = countActualDiffRows(rows || []);
     const issueCount = (fetchIssues || []).length;
@@ -10852,9 +10853,9 @@ ${contextLine}`);
       });
     }
     onStatus("比較元を取得中...");
-    const sourceBundle = await resolveSide("source");
+    const sourceBundle = deepClone(await resolveSide("source"));
     onStatus("比較先を取得中...");
-    const targetBundle = await resolveSide("target");
+    const targetBundle = deepClone(await resolveSide("target"));
     onStatus("差分計算中...");
     const diffResult = computeDiffRows(sourceBundle, targetBundle, scopes, ignoreKeys, {
       normalizationPresetState,
@@ -13468,8 +13469,7 @@ ${contextLine}`);
 \0
 \0}\0
 \0
-\0
-`;
+\0`;
 
   // src/ui/template.js
   init_constants();
@@ -21385,10 +21385,19 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   var pfSimStates = null;
   var pfSimActions = null;
   var pfSimCurrent = null;
+  var mermaidLoadPromise = null;
+  var mermaidRenderSeq = 0;
+  var MERMAID_CDN_URLS = [
+    "https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js",
+    "https://unpkg.com/mermaid@10.6.1/dist/mermaid.min.js"
+  ];
   async function ensureMermaid() {
     if (window.mermaid) return window.mermaid;
-    setStatus("Mermaid.js を読み込み中...");
-    await loadScript("https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js");
+    if (!mermaidLoadPromise) {
+      setStatus("Mermaid.js を読み込み中...");
+      mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS);
+    }
+    await mermaidLoadPromise;
     if (window.mermaid) {
       window.mermaid.initialize({ startOnLoad: false, theme: "default" });
       return window.mermaid;
@@ -21398,13 +21407,38 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   function loadScript(url) {
     return new Promise((resolve, reject) => {
       const doc = getToolDocument();
+      const existing = doc.querySelector(`script[src="${url}"]`);
+      if (existing) {
+        if (existing.dataset.loaded === "1") {
+          resolve();
+        } else {
+          existing.addEventListener("load", () => resolve(), { once: true });
+          existing.addEventListener("error", () => reject(new Error(`スクリプト読み込み失敗: ${url}`)), { once: true });
+        }
+        return;
+      }
       const s = doc.createElement("script");
       s.src = url;
       s.async = true;
-      s.onload = resolve;
+      s.onload = () => {
+        s.dataset.loaded = "1";
+        resolve();
+      };
       s.onerror = () => reject(new Error(`スクリプト読み込み失敗: ${url}`));
       doc.head.appendChild(s);
     });
+  }
+  async function loadScriptWithFallback(urls) {
+    let lastErr = null;
+    for (const url of urls) {
+      try {
+        await loadScript(url);
+        return;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error("Mermaid.js の読み込みに失敗しました");
   }
   async function redrawProcessFlow(highlightState) {
     if (!pfSimStates) return;
@@ -21435,7 +21469,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     ui.mermaidText.value = md;
     try {
       const mermaidObj = await ensureMermaid();
-      const { svg } = await mermaidObj.render("mermaid-svg-generated", md);
+      mermaidRenderSeq += 1;
+      const { svg } = await mermaidObj.render(`mermaid-svg-generated-${Date.now()}-${mermaidRenderSeq}`, md);
       ui.mermaidView.innerHTML = svg;
     } catch (e) {
       ui.mermaidView.innerHTML = `<div style="color:#b91c1c">エラー: ${esc(e.message || String(e))}</div>`;
