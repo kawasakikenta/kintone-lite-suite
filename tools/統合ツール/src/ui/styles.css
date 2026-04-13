@@ -1037,6 +1037,33 @@
   margin-left:0;
   white-space:nowrap;
 }
+#kintone-unified-suite-v2 .launcher-filter-bar{
+  width:100%;
+  display:grid;
+  gap:8px;
+}
+#kintone-unified-suite-v2 .launcher-search-input{
+  width:100%;
+}
+#kintone-unified-suite-v2 .launcher-group-filters{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+}
+#kintone-unified-suite-v2 .launcher-group-filters .chip{
+  border:1px solid #cbd5e1;
+  background:#fff;
+  cursor:pointer;
+}
+#kintone-unified-suite-v2 .launcher-group-filters .chip.is-active{
+  border-color:#2563eb;
+  background:#dbeafe;
+  color:#1e40af;
+}
+#kintone-unified-suite-v2 .launcher-filter-meta{
+  font-size:11px;
+  color:#64748b;
+}
 #kintone-unified-suite-v2 .launcher-section{
   margin-top:12px;
 }

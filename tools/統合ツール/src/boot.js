@@ -257,6 +257,9 @@ export function runKintoneUnifiedSuite(options = {}) {
     featureConn: $('#u_featureConn'),
     launcherMenu: $('#u_launcherMenu'),
     launcherToggleMore: $('#u_launcherToggleMore'),
+    launcherSearch: $('#u_launcherSearch'),
+    launcherGroupFilters: $('#u_launcherGroupFilters'),
+    launcherVisibleCount: $('#u_launcherVisibleCount'),
     copyTextToClipboard
   };
 
