@@ -12,6 +12,13 @@ const MERMAID_CDN_URLS = [
 
 function loadScript(url) {
   return new Promise((resolve, reject) => {
+    let cspViolation = null;
+    const onPolicyViolation = (ev) => {
+      const blocked = String(ev.blockedURI || '');
+      if (blocked === url || blocked.includes('mermaid')) {
+        cspViolation = ev;
+      }
+    };
     const existing = document.querySelector(`script[src="${url}"]`);
     if (existing) {
       if (existing.dataset.loaded === '1') {
@@ -28,12 +35,22 @@ function loadScript(url) {
     const s = document.createElement('script');
     s.src = url;
     s.async = true;
+    document.addEventListener('securitypolicyviolation', onPolicyViolation, { once: false });
+    const cleanup = () => document.removeEventListener('securitypolicyviolation', onPolicyViolation, { once: false });
     s.onload = () => {
+      cleanup();
       s.dataset.loaded = '1';
       resolve();
     };
     s.onerror = () => {
+      cleanup();
       s.dataset.failed = '1';
+      if (cspViolation) {
+        reject(new Error(
+          `スクリプト読み込み失敗(CSP): ${url} / directive=${cspViolation.effectiveDirective || 'unknown'} / blocked=${cspViolation.blockedURI || 'unknown'}`
+        ));
+        return;
+      }
       reject(new Error(`スクリプト読み込み失敗: ${url}`));
     };
     document.head.appendChild(s);
@@ -143,7 +160,7 @@ export async function runRenderProcessFlowStandalone(source, setStatus, targets)
       targets.viewEl.innerHTML = svg;
     } catch (e) {
       targets.viewEl.innerHTML = renderFallbackFlowHtml(states, actions, highlightState);
-      setStatus('Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。', true);
+      setStatus(`Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。(${e.message || e})`, true);
     }
   };
 
