@@ -10,11 +10,21 @@ import { getToolDocument } from '../ui/dialog.js';
 let pfSimStates = null;
 let pfSimActions = null;
 let pfSimCurrent = null;
+let mermaidLoadPromise = null;
+let mermaidRenderSeq = 0;
+
+const MERMAID_CDN_URLS = [
+  'https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js',
+  'https://unpkg.com/mermaid@10.6.1/dist/mermaid.min.js'
+];
 
 async function ensureMermaid() {
   if (window.mermaid) return window.mermaid;
-  setStatus('Mermaid.js を読み込み中...');
-  await loadScript('https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js');
+  if (!mermaidLoadPromise) {
+    setStatus('Mermaid.js を読み込み中...');
+    mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS);
+  }
+  await mermaidLoadPromise;
   if (window.mermaid) {
     window.mermaid.initialize({ startOnLoad: false, theme: 'default' });
     return window.mermaid;
@@ -25,13 +35,39 @@ async function ensureMermaid() {
 function loadScript(url) {
   return new Promise((resolve, reject) => {
     const doc = getToolDocument();
+    const existing = doc.querySelector(`script[src="${url}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === '1') {
+        resolve();
+      } else {
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error(`スクリプト読み込み失敗: ${url}`)), { once: true });
+      }
+      return;
+    }
     const s = doc.createElement('script');
     s.src = url;
     s.async = true;
-    s.onload = resolve;
+    s.onload = () => {
+      s.dataset.loaded = '1';
+      resolve();
+    };
     s.onerror = () => reject(new Error(`スクリプト読み込み失敗: ${url}`));
     doc.head.appendChild(s);
   });
+}
+
+async function loadScriptWithFallback(urls) {
+  let lastErr = null;
+  for (const url of urls) {
+    try {
+      await loadScript(url);
+      return;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('Mermaid.js の読み込みに失敗しました');
 }
 
 export async function redrawProcessFlow(highlightState) {
@@ -65,7 +101,8 @@ export async function redrawProcessFlow(highlightState) {
 
   try {
     const mermaidObj = await ensureMermaid();
-    const { svg } = await mermaidObj.render('mermaid-svg-generated', md);
+    mermaidRenderSeq += 1;
+    const { svg } = await mermaidObj.render(`mermaid-svg-generated-${Date.now()}-${mermaidRenderSeq}`, md);
     ui.mermaidView.innerHTML = svg;
   } catch (e) {
     ui.mermaidView.innerHTML = `<div style="color:#b91c1c">エラー: ${esc(e.message || String(e))}</div>`;
