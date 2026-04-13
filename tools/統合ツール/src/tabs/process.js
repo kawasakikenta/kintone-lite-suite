@@ -39,6 +39,13 @@ async function ensureMermaid() {
 function loadScript(url) {
   return new Promise((resolve, reject) => {
     const doc = getToolDocument();
+    let cspViolation = null;
+    const onPolicyViolation = (ev) => {
+      const blocked = String(ev.blockedURI || '');
+      if (blocked === url || blocked.includes('mermaid')) {
+        cspViolation = ev;
+      }
+    };
     const existing = doc.querySelector(`script[src="${url}"]`);
     if (existing) {
       if (existing.dataset.loaded === '1') {
@@ -55,12 +62,22 @@ function loadScript(url) {
     const s = doc.createElement('script');
     s.src = url;
     s.async = true;
+    doc.addEventListener('securitypolicyviolation', onPolicyViolation, { once: false });
+    const cleanup = () => doc.removeEventListener('securitypolicyviolation', onPolicyViolation, { once: false });
     s.onload = () => {
+      cleanup();
       s.dataset.loaded = '1';
       resolve();
     };
     s.onerror = () => {
+      cleanup();
       s.dataset.failed = '1';
+      if (cspViolation) {
+        reject(new Error(
+          `スクリプト読み込み失敗(CSP): ${url} / directive=${cspViolation.effectiveDirective || 'unknown'} / blocked=${cspViolation.blockedURI || 'unknown'}`
+        ));
+        return;
+      }
       reject(new Error(`スクリプト読み込み失敗: ${url}`));
     };
     doc.head.appendChild(s);
@@ -143,7 +160,7 @@ export async function redrawProcessFlow(highlightState) {
     ui.mermaidView.innerHTML = svg;
   } catch (e) {
     ui.mermaidView.innerHTML = renderFallbackFlowHtml(pfSimStates, pfSimActions, highlightState);
-    setStatus('Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。');
+    setStatus(`Mermaid.js の読み込みに失敗したため、簡易表示に切り替えました。(${e.message || e})`);
   }
 }
 
