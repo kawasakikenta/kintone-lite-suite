@@ -15,14 +15,18 @@ let mermaidRenderSeq = 0;
 
 const MERMAID_CDN_URLS = [
   'https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js',
-  'https://unpkg.com/mermaid@10.6.1/dist/mermaid.min.js'
+  'https://unpkg.com/mermaid@10.6.1/dist/mermaid.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js'
 ];
 
 async function ensureMermaid() {
   if (window.mermaid) return window.mermaid;
   if (!mermaidLoadPromise) {
     setStatus('Mermaid.js を読み込み中...');
-    mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS);
+    mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err) => {
+      mermaidLoadPromise = null;
+      throw err;
+    });
   }
   await mermaidLoadPromise;
   if (window.mermaid) {
@@ -39,6 +43,9 @@ function loadScript(url) {
     if (existing) {
       if (existing.dataset.loaded === '1') {
         resolve();
+      } else if (existing.dataset.failed === '1') {
+        existing.remove();
+        loadScript(url).then(resolve).catch(reject);
       } else {
         existing.addEventListener('load', () => resolve(), { once: true });
         existing.addEventListener('error', () => reject(new Error(`スクリプト読み込み失敗: ${url}`)), { once: true });
@@ -52,7 +59,10 @@ function loadScript(url) {
       s.dataset.loaded = '1';
       resolve();
     };
-    s.onerror = () => reject(new Error(`スクリプト読み込み失敗: ${url}`));
+    s.onerror = () => {
+      s.dataset.failed = '1';
+      reject(new Error(`スクリプト読み込み失敗: ${url}`));
+    };
     doc.head.appendChild(s);
   });
 }
