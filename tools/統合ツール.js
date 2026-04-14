@@ -10245,9 +10245,7 @@ ${contextLine}`);
     if (nextActive && ui.tabs.some((t) => t.dataset.tab === nextActive)) {
       switchTab(nextActive, { persist: false });
     }
-    const nextFeatureKey = String(saved.activeFeatureKey || "").trim();
-    const restoredFeature = saved.screenMode === "feature" && nextFeatureKey ? openFeatureScreen(nextFeatureKey, { persist: false, focus: false }) : null;
-    if (!restoredFeature) showLauncherScreen({ persist: false });
+    showLauncherScreen({ persist: false });
     applyIgnorePresetKeysToInput();
     renderIgnoreKeyChips();
     renderLookupMapRows();
@@ -13496,8 +13494,7 @@ ${contextLine}`);
 \0
 \0}\0
 \0
-\0
-`;
+\0`;
 
   // src/ui/template.js
   init_constants();
