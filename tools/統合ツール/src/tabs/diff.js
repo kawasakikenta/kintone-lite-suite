@@ -42,7 +42,6 @@ import {
   setStatus,
   switchTab,
   switchSubTab,
-  openFeatureScreen,
   showLauncherScreen
 } from '../ui/components.js';
 import {
@@ -548,11 +547,8 @@ export function restoreDialogState() {
   if (nextActive && ui.tabs.some((t) => t.dataset.tab === nextActive)) {
     switchTab(nextActive, { persist: false });
   }
-  const nextFeatureKey = String(saved.activeFeatureKey || '').trim();
-  const restoredFeature = saved.screenMode === 'feature' && nextFeatureKey
-    ? openFeatureScreen(nextFeatureKey, { persist: false, focus: false })
-    : null;
-  if (!restoredFeature) showLauncherScreen({ persist: false });
+  // Re-open時は前回の機能画面を復元せず、常にトップ（ランチャー）へ戻す。
+  showLauncherScreen({ persist: false });
   applyIgnorePresetKeysToInput();
   renderIgnoreKeyChips();
   renderLookupMapRows();
