@@ -66,6 +66,7 @@ export function buildRoot(targetDocument = document, options = {}) {
             <button class="h-back" data-act="backToLauncher">← 戻る</button>
             <div>
               <div class="ht" id="u_featureTitle"></div>
+              <div class="feature-breadcrumb" id="u_featureBreadcrumb" aria-live="polite">ホーム / 機能</div>
               <div class="feature-conn" id="u_featureConn"></div>
             </div>
           </div>
@@ -88,7 +89,7 @@ export function buildRoot(targetDocument = document, options = {}) {
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
               <div class="conn-source">
-                <label for="u_sourceApp">比較元アプリID</label>
+                <label for="u_sourceApp">比較元アプリID <span class="req">必須</span></label>
                 <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-source">
@@ -96,7 +97,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
               <div class="conn-target">
-                <label for="u_targetApp">比較先アプリID</label>
+                <label for="u_targetApp">比較先アプリID <span class="req">必須</span></label>
                 <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-target">
@@ -342,6 +343,10 @@ export function buildRoot(targetDocument = document, options = {}) {
                       <option value="low">低</option>
                     </select>
                   </div>
+                  <div class="diff-active-filters" id="u_diffActiveFilters" aria-live="polite"></div>
+                  <div class="btns" style="margin-top:6px">
+                    <button type="button" class="btn sub" data-act="clearDiffFilters">差分フィルタをクリア</button>
+                  </div>
                 </div>
                 <div>
                   <label title="保存やコピー時に含める範囲を選びます">出力対象（どの行を出すか）</label>
@@ -458,24 +463,34 @@ export function buildRoot(targetDocument = document, options = {}) {
                   <span class="launcher-section-sub">詳細設定・保守向け</span>
                 </div>
                 <div class="launcher-filter-bar" aria-label="機能の絞り込み">
-                  <input
-                    type="search"
-                    id="u_launcherSearch"
-                    class="launcher-search-input"
-                    placeholder="機能名・説明で検索（例: 差分 / レコード / 設計書）"
-                    autocomplete="off">
+                  <div class="launcher-command-row">
+                    <input
+                      type="search"
+                      id="u_launcherSearch"
+                      class="launcher-search-input"
+                      placeholder="機能名・説明で検索（例: 差分 / レコード / 設計書）"
+                      autocomplete="off"
+                      aria-label="機能検索">
+                    <button type="button" class="btn sub launcher-clear-btn" data-act="clearLauncherFilter">クリア</button>
+                  </div>
+                  <div class="launcher-shortcut-hint" aria-live="polite">/ または ⌘/Ctrl + K で検索にフォーカス</div>
                   <div class="launcher-group-filters" id="u_launcherGroupFilters" role="group" aria-label="機能グループ">
                     <button type="button" class="chip is-active" data-act="setLauncherGroup" data-group="all" aria-pressed="true">すべて</button>
                     <button type="button" class="chip" data-act="setLauncherGroup" data-group="change" aria-pressed="false">変更・反映</button>
                     <button type="button" class="chip" data-act="setLauncherGroup" data-group="vis" aria-pressed="false">可視化・出力</button>
                     <button type="button" class="chip" data-act="setLauncherGroup" data-group="data" aria-pressed="false">データ・保守</button>
                   </div>
+                  <div class="launcher-active-filters" id="u_launcherActiveFilters" aria-live="polite"></div>
                   <div class="launcher-filter-meta" id="u_launcherVisibleCount">表示中: ${launcherFeatures.length}/${launcherFeatures.length}</div>
                 </div>
                 <button type="button" class="btn sub launcher-more-toggle" id="u_launcherToggleMore" data-act="toggleLauncherMore" aria-expanded="false">その他の ${secondaryFeatureCount} 機能を表示</button>
               </div>
               <div class="feature-grid feature-grid--secondary">
                 ${secondaryFeatures.map(renderFeatureCard).join('')}
+              </div>
+              <div class="launcher-empty-state" id="u_launcherEmptyState" hidden>
+                <p class="launcher-empty-title">一致する機能がありません</p>
+                <p class="launcher-empty-desc">検索語やグループ絞り込みを変更するか、クリアを押して全件表示に戻してください。</p>
               </div>
             </section>
           </div>
