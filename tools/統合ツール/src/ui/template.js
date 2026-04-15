@@ -89,19 +89,19 @@ export function buildRoot(targetDocument = document, options = {}) {
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
               <div class="conn-source">
-                <label for="u_sourceApp">比較元アプリID <span class="req">必須</span></label>
+                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span></label>
                 <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-source">
-                <label for="u_sourceGuest">比較元 ゲストID</label>
+                <label for="u_sourceGuest" id="u_sourceGuestLabel">比較元 ゲストID</label>
                 <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
               <div class="conn-target">
-                <label for="u_targetApp">比較先アプリID <span class="req">必須</span></label>
+                <label for="u_targetApp" id="u_targetAppLabel">比較先アプリID <span class="req">必須</span></label>
                 <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-target">
-                <label for="u_targetGuest">比較先 ゲストID</label>
+                <label for="u_targetGuest" id="u_targetGuestLabel">比較先 ゲストID</label>
                 <input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
             </div>
@@ -110,6 +110,25 @@ export function buildRoot(targetDocument = document, options = {}) {
               <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
               <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
             </div>
+            <details class="diff-fold">
+              <summary class="diff-fold-summary">
+                <span class="diff-fold-title">アプリ名で検索してID入力（任意）</span>
+                <span class="diff-fold-sub">用途に合わせて比較元/比較先/複数比較先へ追加</span>
+              </summary>
+              <div class="diff-fold-body">
+                <div class="btns" style="align-items:center;gap:8px;flex-wrap:wrap">
+                  <input type="text" id="u_connectionSearchKeyword" placeholder="アプリ名の一部" style="min-width:200px;flex:1" autocomplete="off">
+                  <select id="u_connectionSearchAssign" style="max-width:220px">
+                    <option value="source">比較元に設定</option>
+                    <option value="target">比較先に設定</option>
+                    <option value="diffMulti">複数比較先へ追加</option>
+                    <option value="settingsExport">設定一括取得へ追加</option>
+                  </select>
+                  <button type="button" class="btn sub" data-act="connectionSearchApps">検索</button>
+                </div>
+                <div id="u_connectionSearchResult" class="result" style="margin-top:6px;max-height:220px"></div>
+              </div>
+            </details>
             <details class="diff-fold diff-fold--lookup">
               <summary class="diff-fold-summary">
                 <span class="diff-fold-title">ルックアップ参照先アプリID変換（任意）</span>
