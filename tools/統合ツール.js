@@ -6777,6 +6777,34 @@ ${contextLine}`);
           lead.textContent = "対象アプリの数値IDと、ゲストスペース利用時はゲストIDを入力します。";
         }
       }
+      if (ui3.sourceAppLabel) {
+        ui3.sourceAppLabel.innerHTML = needs.target ? '比較元アプリID <span class="req">必須</span>' : '対象アプリID <span class="req">必須</span>';
+      }
+      if (ui3.sourceGuestLabel) {
+        ui3.sourceGuestLabel.textContent = needs.target ? "比較元 ゲストID" : "対象 ゲストID";
+      }
+      if (ui3.targetAppLabel) {
+        ui3.targetAppLabel.innerHTML = '比較先アプリID <span class="req">必須</span>';
+      }
+      if (ui3.targetGuestLabel) {
+        ui3.targetGuestLabel.textContent = "比較先 ゲストID";
+      }
+      if (ui3.connectionSearchAssign) {
+        [...ui3.connectionSearchAssign.options].forEach((opt) => {
+          const val = opt.value;
+          let enabled = true;
+          if (val === "target") enabled = !!needs.target;
+          if (val === "diffMulti") enabled = key === "diff";
+          opt.disabled = !enabled;
+        });
+        const cur = ui3.connectionSearchAssign.value;
+        if (ui3.connectionSearchAssign.selectedOptions[0]?.disabled) {
+          const firstEnabled = [...ui3.connectionSearchAssign.options].find((opt) => !opt.disabled);
+          if (firstEnabled) ui3.connectionSearchAssign.value = firstEnabled.value;
+        } else if (!cur) {
+          ui3.connectionSearchAssign.value = "source";
+        }
+      }
     }
     if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
     updateConnectionStepIndicators();
@@ -6790,7 +6818,8 @@ ${contextLine}`);
     const root2 = getToolDocument().getElementById("kintone-unified-suite-v2");
     const sourceApp = (ui3.sourceApp?.value || "").trim();
     const targetApp = (ui3.targetApp?.value || "").trim();
-    const hasConnection = !!sourceApp && !!targetApp;
+    const needs = TAB_CONNECTION_NEEDS[state.activeTab] || {};
+    const hasConnection = needs.target ? !!sourceApp && !!targetApp : !!sourceApp;
     const hasCommonData = !!(state.lastSourceBundle || state.importedSourceBundle) && !!(state.lastTargetBundle || state.importedTargetBundle);
     const activeFeature = getFeatureDef(state.activeFeatureKey);
     const featureSelected = !!activeFeature && root2?.classList.contains("screen-feature");
@@ -13056,6 +13085,32 @@ ${contextLine}`);
 \0
 \0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x008\0p\0x\0;\0
 \0
+/* UI polish improvements */
+#kintone-unified-suite-v2 .h{position:sticky;top:0;z-index:30}
+#kintone-unified-suite-v2 .tabs{position:sticky;top:0;z-index:12;background:#fff;padding:8px;border:1px solid #e2e8f0;border-radius:10px}
+#kintone-unified-suite-v2 .launcher-command-row{display:flex;gap:8px;align-items:center}
+#kintone-unified-suite-v2 .launcher-clear-btn{flex-shrink:0}
+#kintone-unified-suite-v2 .launcher-shortcut-hint{margin-top:6px;font-size:11px;color:#64748b}
+#kintone-unified-suite-v2 .launcher-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;min-height:28px;align-items:center}
+#kintone-unified-suite-v2 .chip-active-filter{background:#eff6ff;border-color:#93c5fd;color:#1e40af}
+#kintone-unified-suite-v2 .launcher-empty-state{margin-top:10px;border:1px dashed #cbd5e1;background:linear-gradient(180deg,#f8fafc,#fff);border-radius:10px;padding:14px}
+#kintone-unified-suite-v2 .launcher-empty-title{margin:0 0 6px;font-size:13px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .launcher-empty-desc{margin:0;font-size:11px;line-height:1.6;color:#475569}
+#kintone-unified-suite-v2 :is(.btn,.tab,.subtab,.chip,.x,.feature-card,input,select,textarea):focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+#kintone-unified-suite-v2 table tbody tr:nth-child(even){background:rgba(148,163,184,.08)}
+#kintone-unified-suite-v2 table tbody tr:hover{background:rgba(59,130,246,.08)}
+#kintone-unified-suite-v2 .btn.warn,
+#kintone-unified-suite-v2 [data-act*="delete" i],
+#kintone-unified-suite-v2 [data-act*="clear" i],
+#kintone-unified-suite-v2 [data-act*="remove" i]{box-shadow:inset 0 0 0 1px rgba(255,255,255,.24)}
+#kintone-unified-suite-v2 .busy-chip{position:relative;overflow:hidden}
+#kintone-unified-suite-v2 .busy-chip::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent);animation:kintone-unified-suite-v2-shimmer 1.2s ease-in-out infinite}
+@keyframes kintone-unified-suite-v2-shimmer{100%{transform:translateX(100%)}}
+#kintone-unified-suite-v2 .feature-breadcrumb{font-size:10px;opacity:.9;margin-top:2px}
+#kintone-unified-suite-v2 .req{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:800;vertical-align:middle}
+#kintone-unified-suite-v2 .diff-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-height:26px;align-items:center}
+#kintone-unified-suite-v2 .input-invalid{border-color:#ef4444!important;background:#fef2f2!important}
+#kintone-unified-suite-v2 .input-invalid:focus-visible{outline-color:#ef4444!important}
 \0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
 \0
 \0}\0
@@ -13504,34 +13559,7 @@ ${contextLine}`);
 \0
 \0}\0
 \0
-\0
-/* UI polish improvements */
-#kintone-unified-suite-v2 .h{position:sticky;top:0;z-index:30}
-#kintone-unified-suite-v2 .tabs{position:sticky;top:0;z-index:12;background:#fff;padding:8px;border:1px solid #e2e8f0;border-radius:10px}
-#kintone-unified-suite-v2 .launcher-command-row{display:flex;gap:8px;align-items:center}
-#kintone-unified-suite-v2 .launcher-clear-btn{flex-shrink:0}
-#kintone-unified-suite-v2 .launcher-shortcut-hint{margin-top:6px;font-size:11px;color:#64748b}
-#kintone-unified-suite-v2 .launcher-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;min-height:28px;align-items:center}
-#kintone-unified-suite-v2 .chip-active-filter{background:#eff6ff;border-color:#93c5fd;color:#1e40af}
-#kintone-unified-suite-v2 .launcher-empty-state{margin-top:10px;border:1px dashed #cbd5e1;background:linear-gradient(180deg,#f8fafc,#fff);border-radius:10px;padding:14px}
-#kintone-unified-suite-v2 .launcher-empty-title{margin:0 0 6px;font-size:13px;font-weight:800;color:#0f172a}
-#kintone-unified-suite-v2 .launcher-empty-desc{margin:0;font-size:11px;line-height:1.6;color:#475569}
-#kintone-unified-suite-v2 :is(.btn,.tab,.subtab,.chip,.x,.feature-card,input,select,textarea):focus-visible{outline:2px solid #2563eb;outline-offset:2px}
-#kintone-unified-suite-v2 table tbody tr:nth-child(even){background:rgba(148,163,184,.08)}
-#kintone-unified-suite-v2 table tbody tr:hover{background:rgba(59,130,246,.08)}
-#kintone-unified-suite-v2 .btn.warn,
-#kintone-unified-suite-v2 [data-act*="delete" i],
-#kintone-unified-suite-v2 [data-act*="clear" i],
-#kintone-unified-suite-v2 [data-act*="remove" i]{box-shadow:inset 0 0 0 1px rgba(255,255,255,.24)}
-#kintone-unified-suite-v2 .busy-chip{position:relative;overflow:hidden}
-#kintone-unified-suite-v2 .busy-chip::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent);animation:kintone-unified-suite-v2-shimmer 1.2s ease-in-out infinite}
-@keyframes kintone-unified-suite-v2-shimmer{100%{transform:translateX(100%)}}
-#kintone-unified-suite-v2 .feature-breadcrumb{font-size:10px;opacity:.9;margin-top:2px}
-#kintone-unified-suite-v2 .req{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:800;vertical-align:middle}
-#kintone-unified-suite-v2 .diff-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-height:26px;align-items:center}
-#kintone-unified-suite-v2 .input-invalid{border-color:#ef4444!important;background:#fef2f2!important}
-#kintone-unified-suite-v2 .input-invalid:focus-visible{outline-color:#ef4444!important}
-`;
+\0`;
 
   // src/ui/template.js
   init_constants();
@@ -13613,19 +13641,19 @@ ${contextLine}`);
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
               <div class="conn-source">
-                <label for="u_sourceApp">比較元アプリID <span class="req">必須</span></label>
+                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span></label>
                 <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-source">
-                <label for="u_sourceGuest">比較元 ゲストID</label>
+                <label for="u_sourceGuest" id="u_sourceGuestLabel">比較元 ゲストID</label>
                 <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
               <div class="conn-target">
-                <label for="u_targetApp">比較先アプリID <span class="req">必須</span></label>
+                <label for="u_targetApp" id="u_targetAppLabel">比較先アプリID <span class="req">必須</span></label>
                 <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-target">
-                <label for="u_targetGuest">比較先 ゲストID</label>
+                <label for="u_targetGuest" id="u_targetGuestLabel">比較先 ゲストID</label>
                 <input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
             </div>
@@ -13634,6 +13662,25 @@ ${contextLine}`);
               <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
               <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
             </div>
+            <details class="diff-fold">
+              <summary class="diff-fold-summary">
+                <span class="diff-fold-title">アプリ名で検索してID入力（任意）</span>
+                <span class="diff-fold-sub">用途に合わせて比較元/比較先/複数比較先へ追加</span>
+              </summary>
+              <div class="diff-fold-body">
+                <div class="btns" style="align-items:center;gap:8px;flex-wrap:wrap">
+                  <input type="text" id="u_connectionSearchKeyword" placeholder="アプリ名の一部" style="min-width:200px;flex:1" autocomplete="off">
+                  <select id="u_connectionSearchAssign" style="max-width:220px">
+                    <option value="source">比較元に設定</option>
+                    <option value="target">比較先に設定</option>
+                    <option value="diffMulti">複数比較先へ追加</option>
+                    <option value="settingsExport">設定一括取得へ追加</option>
+                  </select>
+                  <button type="button" class="btn sub" data-act="connectionSearchApps">検索</button>
+                </div>
+                <div id="u_connectionSearchResult" class="result" style="margin-top:6px;max-height:220px"></div>
+              </div>
+            </details>
             <details class="diff-fold diff-fold--lookup">
               <summary class="diff-fold-summary">
                 <span class="diff-fold-title">ルックアップ参照先アプリID変換（任意）</span>
@@ -17806,6 +17853,66 @@ ${contextLine}`);
   function normalizeDiffFavoritePath2(path) {
     return String(path || "").trim();
   }
+  function parseIdSet(text) {
+    return [...new Set(String(text || "").split(/[\s,]+/).map((v) => v.trim()).filter((v) => /^\d+$/.test(v)))];
+  }
+  function renderConnectionSearchResults(apps) {
+    if (!ui.connectionSearchResult) return;
+    const rows = Array.isArray(apps) ? apps : [];
+    if (!rows.length) {
+      ui.connectionSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
+      return;
+    }
+    ui.connectionSearchResult.innerHTML = `<table>
+    <thead><tr><th style="width:90px">アプリID</th><th>アプリ名</th><th style="width:84px">操作</th></tr></thead>
+    <tbody>${rows.map((app) => `<tr>
+      <td>${esc(app.appId)}</td>
+      <td title="${esc(app.name)}">${esc(app.name)}</td>
+      <td style="text-align:right"><button type="button" class="btn sub" style="padding:4px 8px;font-size:10px" data-act="addConnectionSearchApp" data-app-id="${esc(app.appId)}" data-app-name="${esc(app.name)}">追加</button></td>
+    </tr>`).join("")}</tbody>
+  </table>`;
+  }
+  async function runConnectionSearchApps() {
+    const keyword = ui.connectionSearchKeyword?.value.trim() || "";
+    const guestId = ui.sourceGuest?.value.trim() || ui.targetGuest?.value.trim() || "";
+    const prefix = buildApiPrefix(guestId, false);
+    const params = { limit: 100 };
+    if (keyword) params.name = keyword;
+    setStatus("アプリ検索中...");
+    const res = await apiGet(prefix, "/apps.json", params);
+    const apps = (res.apps || []).map((a) => ({ appId: String(a.appId || "").trim(), name: String(a.name || "") })).filter((a) => /^\d+$/.test(a.appId)).sort((a, b) => Number(a.appId) - Number(b.appId));
+    renderConnectionSearchResults(apps);
+    setStatus(`アプリ検索完了: ${apps.length}件`);
+  }
+  function addConnectionSearchApp(appId, appName) {
+    const id = String(appId || "").trim();
+    if (!/^\d+$/.test(id)) {
+      setStatus("追加対象のアプリIDが不正です", true);
+      return;
+    }
+    const assign = ui.connectionSearchAssign?.value || "source";
+    if (assign === "source") {
+      ui.sourceApp.value = id;
+      setStatus(`比較元に App ${id}${appName ? ` (${appName})` : ""} を設定しました`);
+    } else if (assign === "target") {
+      ui.targetApp.value = id;
+      setStatus(`比較先に App ${id}${appName ? ` (${appName})` : ""} を設定しました`);
+    } else if (assign === "diffMulti") {
+      if (!ui.diffMultiTargets) {
+        setStatus("複数比較先リストが見つかりません", true);
+        return;
+      }
+      const ids = new Set(parseIdSet(ui.diffMultiTargets.value));
+      ids.add(id);
+      ui.diffMultiTargets.value = [...ids].join("\n");
+      setStatus(`複数比較先へ App ${id}${appName ? ` (${appName})` : ""} を追加しました`);
+    } else if (assign === "settingsExport") {
+      addAppIdToSettingsExport(id, appName);
+      return;
+    }
+    saveCurrentDialogState2();
+    updateConnectionStepIndicators();
+  }
   function getVisibleReflectNodeIds() {
     return [...ui.reflectNodeList?.querySelectorAll("[data-node-open]") || []].map((el) => el.dataset.nodeOpen).filter(Boolean);
   }
@@ -18862,6 +18969,13 @@ ${contextLine}`);
       if (act === "runSettingsExportJson") return withGuard(async () => runSettingsExport("json"));
       if (act === "runSettingsExportZip") return withGuard(async () => runSettingsExport("zip"));
       if (act === "settingsExportSearchApps") return withGuard(runSettingsExportSearchApps);
+      if (act === "connectionSearchApps") return withGuard(runConnectionSearchApps);
+      if (act === "addConnectionSearchApp") {
+        const appId = actEl.dataset.appId || "";
+        const appName = actEl.dataset.appName || "";
+        addConnectionSearchApp(appId, appName);
+        return;
+      }
       if (act === "prefetchCommonData") return withGuard(runPrefetchCommonData);
       if (act === "runDiffAndPlan") return withGuard(runDiffAndPreviewPlan);
       if (act === "runDiff") return withGuard(runDiff);
@@ -24635,11 +24749,18 @@ ${field.label}` : code,
       status: $("#u_status"),
       result: $("#u_result"),
       sourceApp: $("#u_sourceApp"),
+      sourceAppLabel: $("#u_sourceAppLabel"),
       sourceGuest: $("#u_sourceGuest"),
+      sourceGuestLabel: $("#u_sourceGuestLabel"),
       sourcePreview: $("#u_sourcePreview"),
       targetApp: $("#u_targetApp"),
+      targetAppLabel: $("#u_targetAppLabel"),
       targetGuest: $("#u_targetGuest"),
+      targetGuestLabel: $("#u_targetGuestLabel"),
       targetPreview: $("#u_targetPreview"),
+      connectionSearchKeyword: $("#u_connectionSearchKeyword"),
+      connectionSearchAssign: $("#u_connectionSearchAssign"),
+      connectionSearchResult: $("#u_connectionSearchResult"),
       lookupMap: $("#u_lookupMap"),
       ignoreKeys: $("#u_ignoreKeys"),
       ignorePresetFieldOrder: $("#u_ignorePresetFieldOrder"),

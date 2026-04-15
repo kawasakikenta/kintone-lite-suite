@@ -225,6 +225,34 @@ export function switchTab(tabKey, options) {
         lead.textContent = '対象アプリの数値IDと、ゲストスペース利用時はゲストIDを入力します。';
       }
     }
+    if (ui.sourceAppLabel) {
+      ui.sourceAppLabel.innerHTML = needs.target ? '比較元アプリID <span class="req">必須</span>' : '対象アプリID <span class="req">必須</span>';
+    }
+    if (ui.sourceGuestLabel) {
+      ui.sourceGuestLabel.textContent = needs.target ? '比較元 ゲストID' : '対象 ゲストID';
+    }
+    if (ui.targetAppLabel) {
+      ui.targetAppLabel.innerHTML = '比較先アプリID <span class="req">必須</span>';
+    }
+    if (ui.targetGuestLabel) {
+      ui.targetGuestLabel.textContent = '比較先 ゲストID';
+    }
+    if (ui.connectionSearchAssign) {
+      [...ui.connectionSearchAssign.options].forEach((opt) => {
+        const val = opt.value;
+        let enabled = true;
+        if (val === 'target') enabled = !!needs.target;
+        if (val === 'diffMulti') enabled = key === 'diff';
+        opt.disabled = !enabled;
+      });
+      const cur = ui.connectionSearchAssign.value;
+      if (ui.connectionSearchAssign.selectedOptions[0]?.disabled) {
+        const firstEnabled = [...ui.connectionSearchAssign.options].find((opt) => !opt.disabled);
+        if (firstEnabled) ui.connectionSearchAssign.value = firstEnabled.value;
+      } else if (!cur) {
+        ui.connectionSearchAssign.value = 'source';
+      }
+    }
   }
 
   if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
@@ -241,7 +269,8 @@ export function updateConnectionStepIndicators() {
   const root = getToolDocument().getElementById('kintone-unified-suite-v2');
   const sourceApp = (ui.sourceApp?.value || '').trim();
   const targetApp = (ui.targetApp?.value || '').trim();
-  const hasConnection = !!sourceApp && !!targetApp;
+  const needs = TAB_CONNECTION_NEEDS[state.activeTab] || {};
+  const hasConnection = needs.target ? (!!sourceApp && !!targetApp) : !!sourceApp;
   const hasCommonData = !!(state.lastSourceBundle || state.importedSourceBundle) && !!(state.lastTargetBundle || state.importedTargetBundle);
   const activeFeature = getFeatureDef(state.activeFeatureKey);
   const featureSelected = !!activeFeature && root?.classList.contains('screen-feature');

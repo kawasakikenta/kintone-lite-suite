@@ -3,7 +3,7 @@
 import { SECTION_DEFS, DEFAULT_APP_ID, DIFF_ONBOARDING_DISMISSED_KEY, TOOL_ID, TOOL_VERSION } from './constants.js';
 import { state, ui } from './state.js';
 import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast } from './utils.js';
-import { buildApiPrefix } from './api.js';
+import { buildApiPrefix, apiGet } from './api.js';
 import { countActualDiffRows, summarizeRows } from './diff/engine.js';
 import { getRenderedDiffRows } from './diff/filter.js';
 import {
@@ -166,6 +166,73 @@ function setScopeSelection(container, checked) {
 
 function normalizeDiffFavoritePath(path) {
   return String(path || '').trim();
+}
+
+function parseIdSet(text) {
+  return [...new Set(String(text || '').split(/[\s,]+/).map((v) => v.trim()).filter((v) => /^\d+$/.test(v)))];
+}
+
+function renderConnectionSearchResults(apps) {
+  if (!ui.connectionSearchResult) return;
+  const rows = Array.isArray(apps) ? apps : [];
+  if (!rows.length) {
+    ui.connectionSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
+    return;
+  }
+  ui.connectionSearchResult.innerHTML = `<table>
+    <thead><tr><th style="width:90px">アプリID</th><th>アプリ名</th><th style="width:84px">操作</th></tr></thead>
+    <tbody>${rows.map((app) => `<tr>
+      <td>${esc(app.appId)}</td>
+      <td title="${esc(app.name)}">${esc(app.name)}</td>
+      <td style="text-align:right"><button type="button" class="btn sub" style="padding:4px 8px;font-size:10px" data-act="addConnectionSearchApp" data-app-id="${esc(app.appId)}" data-app-name="${esc(app.name)}">追加</button></td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+async function runConnectionSearchApps() {
+  const keyword = ui.connectionSearchKeyword?.value.trim() || '';
+  const guestId = ui.sourceGuest?.value.trim() || ui.targetGuest?.value.trim() || '';
+  const prefix = buildApiPrefix(guestId, false);
+  const params = { limit: 100 };
+  if (keyword) params.name = keyword;
+  setStatus('アプリ検索中...');
+  const res = await apiGet(prefix, '/apps.json', params);
+  const apps = (res.apps || [])
+    .map((a) => ({ appId: String(a.appId || '').trim(), name: String(a.name || '') }))
+    .filter((a) => /^\d+$/.test(a.appId))
+    .sort((a, b) => Number(a.appId) - Number(b.appId));
+  renderConnectionSearchResults(apps);
+  setStatus(`アプリ検索完了: ${apps.length}件`);
+}
+
+function addConnectionSearchApp(appId, appName) {
+  const id = String(appId || '').trim();
+  if (!/^\d+$/.test(id)) {
+    setStatus('追加対象のアプリIDが不正です', true);
+    return;
+  }
+  const assign = ui.connectionSearchAssign?.value || 'source';
+  if (assign === 'source') {
+    ui.sourceApp.value = id;
+    setStatus(`比較元に App ${id}${appName ? ` (${appName})` : ''} を設定しました`);
+  } else if (assign === 'target') {
+    ui.targetApp.value = id;
+    setStatus(`比較先に App ${id}${appName ? ` (${appName})` : ''} を設定しました`);
+  } else if (assign === 'diffMulti') {
+    if (!ui.diffMultiTargets) {
+      setStatus('複数比較先リストが見つかりません', true);
+      return;
+    }
+    const ids = new Set(parseIdSet(ui.diffMultiTargets.value));
+    ids.add(id);
+    ui.diffMultiTargets.value = [...ids].join('\n');
+    setStatus(`複数比較先へ App ${id}${appName ? ` (${appName})` : ''} を追加しました`);
+  } else if (assign === 'settingsExport') {
+    addAppIdToSettingsExport(id, appName);
+    return;
+  }
+  saveCurrentDialogState();
+  updateConnectionStepIndicators();
 }
 
 function getVisibleReflectNodeIds() {
@@ -1315,6 +1382,13 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'runSettingsExportJson') return withGuard(async () => runSettingsExport('json'));
     if (act === 'runSettingsExportZip') return withGuard(async () => runSettingsExport('zip'));
     if (act === 'settingsExportSearchApps') return withGuard(runSettingsExportSearchApps);
+    if (act === 'connectionSearchApps') return withGuard(runConnectionSearchApps);
+    if (act === 'addConnectionSearchApp') {
+      const appId = actEl.dataset.appId || '';
+      const appName = actEl.dataset.appName || '';
+      addConnectionSearchApp(appId, appName);
+      return;
+    }
 
     // ----- Diff actions -----
     if (act === 'prefetchCommonData') return withGuard(runPrefetchCommonData);
