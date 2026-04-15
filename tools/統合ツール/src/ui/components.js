@@ -96,6 +96,14 @@ function buildFeatureSummary(def) {
   return parts.filter(Boolean).join(' ・ ');
 }
 
+function setFeatureBreadcrumb(def, tabKey) {
+  if (!ui.featureBreadcrumb) return;
+  const tab = String(tabKey || def?.tab || '').trim();
+  const tabLabel = ui.tabs.find((item) => item.dataset.tab === tab)?.textContent?.trim() || '機能';
+  const featureLabel = def?.label ? ` / ${def.label}` : '';
+  ui.featureBreadcrumb.textContent = `ホーム / ${tabLabel}${featureLabel}`;
+}
+
 function applyFeatureGroupClass(root, group) {
   if (!root) return;
   root.classList.remove('feat-vis', 'feat-data', 'feat-change');
@@ -112,6 +120,7 @@ export function showLauncherScreen(options = {}) {
   root.classList.add('screen-launcher');
   if (ui.featureTitle) ui.featureTitle.textContent = '';
   if (ui.featureConn) ui.featureConn.textContent = '';
+  if (ui.featureBreadcrumb) ui.featureBreadcrumb.textContent = 'ホーム / 機能';
   updateConnectionStepIndicators();
   if (options.persist !== false) saveCurrentDialogState();
 }
@@ -132,6 +141,7 @@ export function openFeatureScreen(featureKey, options = {}) {
 
   if (ui.featureTitle) ui.featureTitle.textContent = def.label;
   if (ui.featureConn) ui.featureConn.textContent = buildFeatureSummary(def);
+  setFeatureBreadcrumb(def, def.tab || def.tabs?.[0]);
 
   updateConnectionStepIndicators();
 
@@ -195,6 +205,7 @@ export function switchTab(tabKey, options) {
         applyFeatureGroupClass(root, activeFeature.group);
         if (ui.featureTitle) ui.featureTitle.textContent = activeFeature.label;
         if (ui.featureConn) ui.featureConn.textContent = buildFeatureSummary(activeFeature);
+        setFeatureBreadcrumb(activeFeature, key);
       }
     }
     const needs = TAB_CONNECTION_NEEDS[key] || {};

@@ -144,6 +144,7 @@ export function runKintoneUnifiedSuite(options = {}) {
     diffFilterSection: $('#u_diffFilterSection'),
     diffFilterType: $('#u_diffFilterType'),
     diffFilterSeverity: $('#u_diffFilterSeverity'),
+    diffActiveFilters: $('#u_diffActiveFilters'),
     diffExportMode: $('#u_diffExportMode'),
     diffExportContent: $('#u_diffExportContent'),
     diffFavoritesOnlyBtn: $('#u_diffFavoritesOnlyBtn'),
@@ -254,12 +255,15 @@ export function runKintoneUnifiedSuite(options = {}) {
     tourPrev: $('#u_tourPrev'),
     tourNext: $('#u_tourNext'),
     featureTitle: $('#u_featureTitle'),
+    featureBreadcrumb: $('#u_featureBreadcrumb'),
     featureConn: $('#u_featureConn'),
     launcherMenu: $('#u_launcherMenu'),
     launcherToggleMore: $('#u_launcherToggleMore'),
     launcherSearch: $('#u_launcherSearch'),
     launcherGroupFilters: $('#u_launcherGroupFilters'),
+    launcherActiveFilters: $('#u_launcherActiveFilters'),
     launcherVisibleCount: $('#u_launcherVisibleCount'),
+    launcherEmptyState: $('#u_launcherEmptyState'),
     copyTextToClipboard
   };
 

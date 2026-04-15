@@ -272,10 +272,24 @@ export function setupEventHandlers(injected = {}) {
     ui.launcherToggleMore.setAttribute('aria-expanded', expanded ? 'true' : 'false');
   }
 
+  function renderLauncherActiveFilters(group, searchText) {
+    if (!ui.launcherActiveFilters) return;
+    const chips = [];
+    if (group && group !== 'all') {
+      const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim() || group;
+      chips.push(`<span class="chip chip-active-filter">グループ: ${esc(groupLabel)}</span>`);
+    }
+    if (searchText) {
+      chips.push(`<span class="chip chip-active-filter">検索: ${esc(searchText)}</span>`);
+    }
+    ui.launcherActiveFilters.innerHTML = chips.length ? chips.join('') : '<span class="muted">現在フィルタは未適用です</span>';
+  }
+
   function applyLauncherFilter() {
     const activeGroupBtn = ui.launcherGroupFilters?.querySelector('.chip.is-active[data-group]');
     const group = activeGroupBtn?.dataset?.group || 'all';
-    const searchText = String(ui.launcherSearch?.value || '').trim().toLowerCase();
+    const searchText = String(ui.launcherSearch?.value || '').trim();
+    const normalizedSearch = searchText.toLowerCase();
     const cards = [...(ui.launcherMenu?.querySelectorAll('.feature-card[data-feature]') || [])];
     let visibleCount = 0;
     cards.forEach((card) => {
@@ -287,12 +301,28 @@ export function setupEventHandlers(injected = {}) {
         || (group === 'change' && cardGroup === '変更・反映')
         || (group === 'vis' && cardGroup === '可視化・出力')
         || (group === 'data' && cardGroup === 'データ・保守');
-      const searchMatched = !searchText || cardText.includes(searchText);
+      const searchMatched = !normalizedSearch || cardText.includes(normalizedSearch);
       const show = groupMatched && searchMatched;
       card.style.display = show ? '' : 'none';
       if (show) visibleCount += 1;
     });
     if (ui.launcherVisibleCount) ui.launcherVisibleCount.textContent = `表示中: ${visibleCount}/${cards.length}`;
+    if (ui.launcherEmptyState) ui.launcherEmptyState.hidden = visibleCount !== 0;
+    renderLauncherActiveFilters(group, searchText);
+  }
+
+  function renderDiffActiveFilters() {
+    if (!ui.diffActiveFilters) return;
+    const chips = [];
+    const section = String(ui.diffFilterSection?.selectedOptions?.[0]?.textContent || '').trim();
+    const type = String(ui.diffFilterType?.selectedOptions?.[0]?.textContent || '').trim();
+    const severity = String(ui.diffFilterSeverity?.selectedOptions?.[0]?.textContent || '').trim();
+    const search = String(ui.diffSearch?.value || '').trim();
+    if (ui.diffFilterSection?.value) chips.push(`<span class="chip chip-active-filter">セクション: ${esc(section)}</span>`);
+    if (ui.diffFilterType?.value) chips.push(`<span class="chip chip-active-filter">種別: ${esc(type)}</span>`);
+    if (ui.diffFilterSeverity?.value) chips.push(`<span class="chip chip-active-filter">重要度: ${esc(severity)}</span>`);
+    if (search) chips.push(`<span class="chip chip-active-filter">検索: ${esc(search)}</span>`);
+    ui.diffActiveFilters.innerHTML = chips.length ? chips.join('') : '<span class="muted">差分フィルタは未適用です</span>';
   }
 
   function syncMainResultForFeature(featureKey) {
@@ -374,6 +404,7 @@ export function setupEventHandlers(injected = {}) {
   renderReflectMainPanel();
   updateLauncherToggleButton();
   applyLauncherFilter();
+  renderDiffActiveFilters();
   renderReflectNodeList();
   initReflectPreviewPlayground(ui, setStatus);
   initSectionPreviewEditor(ui, setStatus);
@@ -507,6 +538,7 @@ export function setupEventHandlers(injected = {}) {
   if (ui.diffSearch) {
     ui.diffSearch.addEventListener('input', () => {
       saveCurrentDialogState();
+      renderDiffActiveFilters();
       if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
     });
   }
@@ -530,6 +562,7 @@ export function setupEventHandlers(injected = {}) {
       state.diffFilterType = ui.diffFilterType?.value || '';
       state.diffFilterSeverity = ui.diffFilterSeverity?.value || '';
       saveCurrentDialogState();
+      renderDiffActiveFilters();
       if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
       else renderDiffSelectionState();
     });
@@ -603,10 +636,19 @@ export function setupEventHandlers(injected = {}) {
       featCard.click();
       return;
     }
-    if (!editable && root.classList.contains('screen-launcher') && e.key === '/') {
+    if (!editable && (e.key === '/' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'))) {
       e.preventDefault();
+      showLauncherScreen({ persist: false });
       ui.launcherSearch?.focus();
       ui.launcherSearch?.select();
+      return;
+    }
+    if (e.key === 'Escape' && e.target === ui.launcherSearch) {
+      e.preventDefault();
+      if (ui.launcherSearch.value) {
+        ui.launcherSearch.value = '';
+        applyLauncherFilter();
+      }
       return;
     }
 
@@ -630,6 +672,7 @@ export function setupEventHandlers(injected = {}) {
     if (e.key === 'Escape' && getToolDocument().activeElement === ui.diffSearch) {
       e.preventDefault();
       ui.diffSearch.value = '';
+      renderDiffActiveFilters();
       saveCurrentDialogState();
       renderResultRows(state.lastDiffRows);
       return;
@@ -680,6 +723,13 @@ export function setupEventHandlers(injected = {}) {
       if (extracted && extracted !== e.target.value.trim()) {
         e.target.value = extracted;
         setStatus(`URL からアプリIDを抽出しました: ${extracted}`);
+      }
+      const sanitized = String(e.target.value || '').trim();
+      const valid = /^\d+$/.test(sanitized);
+      e.target.classList.toggle('input-invalid', !valid);
+      e.target.setAttribute('aria-invalid', valid ? 'false' : 'true');
+      if (!valid) {
+        setStatus('アプリIDは数値のみで入力してください（例: 123）', true);
       }
       saveCurrentDialogState();
       updateConnectionStepIndicators();
@@ -1023,6 +1073,19 @@ export function setupEventHandlers(injected = {}) {
       setStatus(root.classList.contains('launcher-show-advanced') ? '補助メニューも表示しました' : 'よく使う作業だけに絞りました');
       return;
     }
+    if (act === 'clearLauncherFilter') {
+      if (ui.launcherSearch) ui.launcherSearch.value = '';
+      [...(ui.launcherGroupFilters?.querySelectorAll('.chip[data-group]') || [])].forEach((btn) => {
+        const active = btn.dataset.group === 'all';
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      applyLauncherFilter();
+      ui.launcherSearch?.focus();
+      setStatus('機能検索とグループ絞り込みを解除しました');
+      return;
+    }
+
     if (act === 'setLauncherGroup') {
       const group = String(actEl.dataset.group || 'all');
       [...(ui.launcherGroupFilters?.querySelectorAll('.chip[data-group]') || [])].forEach((btn) => {
@@ -1034,6 +1097,21 @@ export function setupEventHandlers(injected = {}) {
       setStatus(group === 'all' ? '全機能を表示中です' : `機能を絞り込みました: ${actEl.textContent.trim()}`);
       return;
     }
+    if (act === 'clearDiffFilters') {
+      if (ui.diffFilterSection) ui.diffFilterSection.value = '';
+      if (ui.diffFilterType) ui.diffFilterType.value = '';
+      if (ui.diffFilterSeverity) ui.diffFilterSeverity.value = '';
+      if (ui.diffSearch) ui.diffSearch.value = '';
+      state.diffFilterSection = '';
+      state.diffFilterType = '';
+      state.diffFilterSeverity = '';
+      if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+      renderDiffActiveFilters();
+      saveCurrentDialogState();
+      setStatus('差分フィルタをクリアしました');
+      return;
+    }
+
     if (act === 'backToLauncher') {
       showLauncherScreen({ persist: false });
       updateLauncherToggleButton();
@@ -1726,6 +1804,7 @@ export function setupEventHandlers(injected = {}) {
       if (ui.diffFilterSection) ui.diffFilterSection.value = row.sectionKey || '';
       state.diffFilterSection = row.sectionKey || '';
       if (ui.diffSearch) ui.diffSearch.value = row.path || '';
+      renderDiffActiveFilters();
       renderResultRows(state.lastDiffRows);
       setStatus('ヘッダーの差分一覧で該当ノードを表示しました');
       return;

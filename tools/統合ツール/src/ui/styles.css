@@ -1948,6 +1948,32 @@
      a l i g n - i t e m s : c e n t e r ;  
      c o l o r : # 9 4 a 3 b 8 ;  
      f o n t - s i z e : 1 8 p x ;  
+/* UI polish improvements */
+#kintone-unified-suite-v2 .h{position:sticky;top:0;z-index:30}
+#kintone-unified-suite-v2 .tabs{position:sticky;top:0;z-index:12;background:#fff;padding:8px;border:1px solid #e2e8f0;border-radius:10px}
+#kintone-unified-suite-v2 .launcher-command-row{display:flex;gap:8px;align-items:center}
+#kintone-unified-suite-v2 .launcher-clear-btn{flex-shrink:0}
+#kintone-unified-suite-v2 .launcher-shortcut-hint{margin-top:6px;font-size:11px;color:#64748b}
+#kintone-unified-suite-v2 .launcher-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;min-height:28px;align-items:center}
+#kintone-unified-suite-v2 .chip-active-filter{background:#eff6ff;border-color:#93c5fd;color:#1e40af}
+#kintone-unified-suite-v2 .launcher-empty-state{margin-top:10px;border:1px dashed #cbd5e1;background:linear-gradient(180deg,#f8fafc,#fff);border-radius:10px;padding:14px}
+#kintone-unified-suite-v2 .launcher-empty-title{margin:0 0 6px;font-size:13px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .launcher-empty-desc{margin:0;font-size:11px;line-height:1.6;color:#475569}
+#kintone-unified-suite-v2 :is(.btn,.tab,.subtab,.chip,.x,.feature-card,input,select,textarea):focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+#kintone-unified-suite-v2 table tbody tr:nth-child(even){background:rgba(148,163,184,.08)}
+#kintone-unified-suite-v2 table tbody tr:hover{background:rgba(59,130,246,.08)}
+#kintone-unified-suite-v2 .btn.warn,
+#kintone-unified-suite-v2 [data-act*="delete" i],
+#kintone-unified-suite-v2 [data-act*="clear" i],
+#kintone-unified-suite-v2 [data-act*="remove" i]{box-shadow:inset 0 0 0 1px rgba(255,255,255,.24)}
+#kintone-unified-suite-v2 .busy-chip{position:relative;overflow:hidden}
+#kintone-unified-suite-v2 .busy-chip::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent);animation:kintone-unified-suite-v2-shimmer 1.2s ease-in-out infinite}
+@keyframes kintone-unified-suite-v2-shimmer{100%{transform:translateX(100%)}}
+#kintone-unified-suite-v2 .feature-breadcrumb{font-size:10px;opacity:.9;margin-top:2px}
+#kintone-unified-suite-v2 .req{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:800;vertical-align:middle}
+#kintone-unified-suite-v2 .diff-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-height:26px;align-items:center}
+#kintone-unified-suite-v2 .input-invalid{border-color:#ef4444!important;background:#fef2f2!important}
+#kintone-unified-suite-v2 .input-invalid:focus-visible{outline-color:#ef4444!important}
      f o n t - w e i g h t : 8 0 0 ;  
  }  
  # k i n t o n e - u n i f i e d - s u i t e - v 2   . n o t i f - f l o w - t a r g e t s {  

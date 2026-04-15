@@ -6662,6 +6662,13 @@ ${contextLine}`);
     }
     return parts.filter(Boolean).join(" ・ ");
   }
+  function setFeatureBreadcrumb(def, tabKey) {
+    if (!ui3.featureBreadcrumb) return;
+    const tab = String(tabKey || def?.tab || "").trim();
+    const tabLabel = ui3.tabs.find((item) => item.dataset.tab === tab)?.textContent?.trim() || "機能";
+    const featureLabel = def?.label ? ` / ${def.label}` : "";
+    ui3.featureBreadcrumb.textContent = `ホーム / ${tabLabel}${featureLabel}`;
+  }
   function applyFeatureGroupClass(root2, group) {
     if (!root2) return;
     root2.classList.remove("feat-vis", "feat-data", "feat-change");
@@ -6677,6 +6684,7 @@ ${contextLine}`);
     root2.classList.add("screen-launcher");
     if (ui3.featureTitle) ui3.featureTitle.textContent = "";
     if (ui3.featureConn) ui3.featureConn.textContent = "";
+    if (ui3.featureBreadcrumb) ui3.featureBreadcrumb.textContent = "ホーム / 機能";
     updateConnectionStepIndicators();
     if (options.persist !== false) saveCurrentDialogState();
   }
@@ -6693,6 +6701,7 @@ ${contextLine}`);
     if (def.diffSubTab) switchSubTab("diff", def.diffSubTab, { persist: false });
     if (ui3.featureTitle) ui3.featureTitle.textContent = def.label;
     if (ui3.featureConn) ui3.featureConn.textContent = buildFeatureSummary(def);
+    setFeatureBreadcrumb(def, def.tab || def.tabs?.[0]);
     updateConnectionStepIndicators();
     if (options.persist !== false) saveCurrentDialogState();
     if (def.focusSelector && options.focus !== false) {
@@ -6749,6 +6758,7 @@ ${contextLine}`);
           applyFeatureGroupClass(root2, activeFeature.group);
           if (ui3.featureTitle) ui3.featureTitle.textContent = activeFeature.label;
           if (ui3.featureConn) ui3.featureConn.textContent = buildFeatureSummary(activeFeature);
+          setFeatureBreadcrumb(activeFeature, key);
         }
       }
       const needs = TAB_CONNECTION_NEEDS[key] || {};
@@ -13494,7 +13504,34 @@ ${contextLine}`);
 \0
 \0}\0
 \0
-\0`;
+\0
+/* UI polish improvements */
+#kintone-unified-suite-v2 .h{position:sticky;top:0;z-index:30}
+#kintone-unified-suite-v2 .tabs{position:sticky;top:0;z-index:12;background:#fff;padding:8px;border:1px solid #e2e8f0;border-radius:10px}
+#kintone-unified-suite-v2 .launcher-command-row{display:flex;gap:8px;align-items:center}
+#kintone-unified-suite-v2 .launcher-clear-btn{flex-shrink:0}
+#kintone-unified-suite-v2 .launcher-shortcut-hint{margin-top:6px;font-size:11px;color:#64748b}
+#kintone-unified-suite-v2 .launcher-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;min-height:28px;align-items:center}
+#kintone-unified-suite-v2 .chip-active-filter{background:#eff6ff;border-color:#93c5fd;color:#1e40af}
+#kintone-unified-suite-v2 .launcher-empty-state{margin-top:10px;border:1px dashed #cbd5e1;background:linear-gradient(180deg,#f8fafc,#fff);border-radius:10px;padding:14px}
+#kintone-unified-suite-v2 .launcher-empty-title{margin:0 0 6px;font-size:13px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .launcher-empty-desc{margin:0;font-size:11px;line-height:1.6;color:#475569}
+#kintone-unified-suite-v2 :is(.btn,.tab,.subtab,.chip,.x,.feature-card,input,select,textarea):focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+#kintone-unified-suite-v2 table tbody tr:nth-child(even){background:rgba(148,163,184,.08)}
+#kintone-unified-suite-v2 table tbody tr:hover{background:rgba(59,130,246,.08)}
+#kintone-unified-suite-v2 .btn.warn,
+#kintone-unified-suite-v2 [data-act*="delete" i],
+#kintone-unified-suite-v2 [data-act*="clear" i],
+#kintone-unified-suite-v2 [data-act*="remove" i]{box-shadow:inset 0 0 0 1px rgba(255,255,255,.24)}
+#kintone-unified-suite-v2 .busy-chip{position:relative;overflow:hidden}
+#kintone-unified-suite-v2 .busy-chip::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent);animation:kintone-unified-suite-v2-shimmer 1.2s ease-in-out infinite}
+@keyframes kintone-unified-suite-v2-shimmer{100%{transform:translateX(100%)}}
+#kintone-unified-suite-v2 .feature-breadcrumb{font-size:10px;opacity:.9;margin-top:2px}
+#kintone-unified-suite-v2 .req{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:800;vertical-align:middle}
+#kintone-unified-suite-v2 .diff-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-height:26px;align-items:center}
+#kintone-unified-suite-v2 .input-invalid{border-color:#ef4444!important;background:#fef2f2!important}
+#kintone-unified-suite-v2 .input-invalid:focus-visible{outline-color:#ef4444!important}
+`;
 
   // src/ui/template.js
   init_constants();
@@ -13553,6 +13590,7 @@ ${contextLine}`);
             <button class="h-back" data-act="backToLauncher">← 戻る</button>
             <div>
               <div class="ht" id="u_featureTitle"></div>
+              <div class="feature-breadcrumb" id="u_featureBreadcrumb" aria-live="polite">ホーム / 機能</div>
               <div class="feature-conn" id="u_featureConn"></div>
             </div>
           </div>
@@ -13575,7 +13613,7 @@ ${contextLine}`);
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
               <div class="conn-source">
-                <label for="u_sourceApp">比較元アプリID</label>
+                <label for="u_sourceApp">比較元アプリID <span class="req">必須</span></label>
                 <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-source">
@@ -13583,7 +13621,7 @@ ${contextLine}`);
                 <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
               <div class="conn-target">
-                <label for="u_targetApp">比較先アプリID</label>
+                <label for="u_targetApp">比較先アプリID <span class="req">必須</span></label>
                 <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-target">
@@ -13829,6 +13867,10 @@ ${contextLine}`);
                       <option value="low">低</option>
                     </select>
                   </div>
+                  <div class="diff-active-filters" id="u_diffActiveFilters" aria-live="polite"></div>
+                  <div class="btns" style="margin-top:6px">
+                    <button type="button" class="btn sub" data-act="clearDiffFilters">差分フィルタをクリア</button>
+                  </div>
                 </div>
                 <div>
                   <label title="保存やコピー時に含める範囲を選びます">出力対象（どの行を出すか）</label>
@@ -13945,24 +13987,34 @@ ${contextLine}`);
                   <span class="launcher-section-sub">詳細設定・保守向け</span>
                 </div>
                 <div class="launcher-filter-bar" aria-label="機能の絞り込み">
-                  <input
-                    type="search"
-                    id="u_launcherSearch"
-                    class="launcher-search-input"
-                    placeholder="機能名・説明で検索（例: 差分 / レコード / 設計書）"
-                    autocomplete="off">
+                  <div class="launcher-command-row">
+                    <input
+                      type="search"
+                      id="u_launcherSearch"
+                      class="launcher-search-input"
+                      placeholder="機能名・説明で検索（例: 差分 / レコード / 設計書）"
+                      autocomplete="off"
+                      aria-label="機能検索">
+                    <button type="button" class="btn sub launcher-clear-btn" data-act="clearLauncherFilter">クリア</button>
+                  </div>
+                  <div class="launcher-shortcut-hint" aria-live="polite">/ または ⌘/Ctrl + K で検索にフォーカス</div>
                   <div class="launcher-group-filters" id="u_launcherGroupFilters" role="group" aria-label="機能グループ">
                     <button type="button" class="chip is-active" data-act="setLauncherGroup" data-group="all" aria-pressed="true">すべて</button>
                     <button type="button" class="chip" data-act="setLauncherGroup" data-group="change" aria-pressed="false">変更・反映</button>
                     <button type="button" class="chip" data-act="setLauncherGroup" data-group="vis" aria-pressed="false">可視化・出力</button>
                     <button type="button" class="chip" data-act="setLauncherGroup" data-group="data" aria-pressed="false">データ・保守</button>
                   </div>
+                  <div class="launcher-active-filters" id="u_launcherActiveFilters" aria-live="polite"></div>
                   <div class="launcher-filter-meta" id="u_launcherVisibleCount">表示中: ${launcherFeatures.length}/${launcherFeatures.length}</div>
                 </div>
                 <button type="button" class="btn sub launcher-more-toggle" id="u_launcherToggleMore" data-act="toggleLauncherMore" aria-expanded="false">その他の ${secondaryFeatureCount} 機能を表示</button>
               </div>
               <div class="feature-grid feature-grid--secondary">
                 ${secondaryFeatures.map(renderFeatureCard).join("")}
+              </div>
+              <div class="launcher-empty-state" id="u_launcherEmptyState" hidden>
+                <p class="launcher-empty-title">一致する機能がありません</p>
+                <p class="launcher-empty-desc">検索語やグループ絞り込みを変更するか、クリアを押して全件表示に戻してください。</p>
               </div>
             </section>
           </div>
@@ -17846,10 +17898,23 @@ ${contextLine}`);
       ui.launcherToggleMore.textContent = expanded ? "よく使う作業だけ表示" : `その他の ${hiddenCount} 機能を表示`;
       ui.launcherToggleMore.setAttribute("aria-expanded", expanded ? "true" : "false");
     }
+    function renderLauncherActiveFilters(group, searchText) {
+      if (!ui.launcherActiveFilters) return;
+      const chips = [];
+      if (group && group !== "all") {
+        const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim() || group;
+        chips.push(`<span class="chip chip-active-filter">グループ: ${esc(groupLabel)}</span>`);
+      }
+      if (searchText) {
+        chips.push(`<span class="chip chip-active-filter">検索: ${esc(searchText)}</span>`);
+      }
+      ui.launcherActiveFilters.innerHTML = chips.length ? chips.join("") : '<span class="muted">現在フィルタは未適用です</span>';
+    }
     function applyLauncherFilter() {
       const activeGroupBtn = ui.launcherGroupFilters?.querySelector(".chip.is-active[data-group]");
       const group = activeGroupBtn?.dataset?.group || "all";
-      const searchText = String(ui.launcherSearch?.value || "").trim().toLowerCase();
+      const searchText = String(ui.launcherSearch?.value || "").trim();
+      const normalizedSearch = searchText.toLowerCase();
       const cards = [...ui.launcherMenu?.querySelectorAll(".feature-card[data-feature]") || []];
       let visibleCount = 0;
       cards.forEach((card) => {
@@ -17858,12 +17923,27 @@ ${contextLine}`);
         const desc = String(card.querySelector(".feature-card-desc")?.textContent || "").trim();
         const cardText = `${label} ${desc} ${cardGroup}`.toLowerCase();
         const groupMatched = group === "all" || group === "change" && cardGroup === "変更・反映" || group === "vis" && cardGroup === "可視化・出力" || group === "data" && cardGroup === "データ・保守";
-        const searchMatched = !searchText || cardText.includes(searchText);
+        const searchMatched = !normalizedSearch || cardText.includes(normalizedSearch);
         const show = groupMatched && searchMatched;
         card.style.display = show ? "" : "none";
         if (show) visibleCount += 1;
       });
       if (ui.launcherVisibleCount) ui.launcherVisibleCount.textContent = `表示中: ${visibleCount}/${cards.length}`;
+      if (ui.launcherEmptyState) ui.launcherEmptyState.hidden = visibleCount !== 0;
+      renderLauncherActiveFilters(group, searchText);
+    }
+    function renderDiffActiveFilters() {
+      if (!ui.diffActiveFilters) return;
+      const chips = [];
+      const section = String(ui.diffFilterSection?.selectedOptions?.[0]?.textContent || "").trim();
+      const type = String(ui.diffFilterType?.selectedOptions?.[0]?.textContent || "").trim();
+      const severity = String(ui.diffFilterSeverity?.selectedOptions?.[0]?.textContent || "").trim();
+      const search = String(ui.diffSearch?.value || "").trim();
+      if (ui.diffFilterSection?.value) chips.push(`<span class="chip chip-active-filter">セクション: ${esc(section)}</span>`);
+      if (ui.diffFilterType?.value) chips.push(`<span class="chip chip-active-filter">種別: ${esc(type)}</span>`);
+      if (ui.diffFilterSeverity?.value) chips.push(`<span class="chip chip-active-filter">重要度: ${esc(severity)}</span>`);
+      if (search) chips.push(`<span class="chip chip-active-filter">検索: ${esc(search)}</span>`);
+      ui.diffActiveFilters.innerHTML = chips.length ? chips.join("") : '<span class="muted">差分フィルタは未適用です</span>';
     }
     function syncMainResultForFeature(featureKey) {
       if (!ui.result) return;
@@ -17936,6 +18016,7 @@ ${contextLine}`);
     renderReflectMainPanel();
     updateLauncherToggleButton();
     applyLauncherFilter();
+    renderDiffActiveFilters();
     renderReflectNodeList();
     initReflectPreviewPlayground(ui, setStatus);
     initSectionPreviewEditor(ui, setStatus);
@@ -18058,6 +18139,7 @@ ${contextLine}`);
     if (ui.diffSearch) {
       ui.diffSearch.addEventListener("input", () => {
         saveCurrentDialogState2();
+        renderDiffActiveFilters();
         if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
       });
     }
@@ -18078,6 +18160,7 @@ ${contextLine}`);
         state.diffFilterType = ui.diffFilterType?.value || "";
         state.diffFilterSeverity = ui.diffFilterSeverity?.value || "";
         saveCurrentDialogState2();
+        renderDiffActiveFilters();
         if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
         else renderDiffSelectionState();
       });
@@ -18145,10 +18228,19 @@ ${contextLine}`);
         featCard.click();
         return;
       }
-      if (!editable && root2.classList.contains("screen-launcher") && e.key === "/") {
+      if (!editable && (e.key === "/" || (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k")) {
         e.preventDefault();
+        showLauncherScreen({ persist: false });
         ui.launcherSearch?.focus();
         ui.launcherSearch?.select();
+        return;
+      }
+      if (e.key === "Escape" && e.target === ui.launcherSearch) {
+        e.preventDefault();
+        if (ui.launcherSearch.value) {
+          ui.launcherSearch.value = "";
+          applyLauncherFilter();
+        }
         return;
       }
       if (!getRoot()?.classList.contains("tab-is-diff")) return;
@@ -18174,6 +18266,7 @@ ${contextLine}`);
       if (e.key === "Escape" && getToolDocument().activeElement === ui.diffSearch) {
         e.preventDefault();
         ui.diffSearch.value = "";
+        renderDiffActiveFilters();
         saveCurrentDialogState2();
         renderResultRows(state.lastDiffRows);
         return;
@@ -18209,6 +18302,13 @@ ${contextLine}`);
         if (extracted && extracted !== e.target.value.trim()) {
           e.target.value = extracted;
           setStatus(`URL からアプリIDを抽出しました: ${extracted}`);
+        }
+        const sanitized = String(e.target.value || "").trim();
+        const valid = /^\d+$/.test(sanitized);
+        e.target.classList.toggle("input-invalid", !valid);
+        e.target.setAttribute("aria-invalid", valid ? "false" : "true");
+        if (!valid) {
+          setStatus("アプリIDは数値のみで入力してください（例: 123）", true);
         }
         saveCurrentDialogState2();
         updateConnectionStepIndicators();
@@ -18502,6 +18602,18 @@ ${contextLine}`);
         setStatus(root2.classList.contains("launcher-show-advanced") ? "補助メニューも表示しました" : "よく使う作業だけに絞りました");
         return;
       }
+      if (act === "clearLauncherFilter") {
+        if (ui.launcherSearch) ui.launcherSearch.value = "";
+        [...ui.launcherGroupFilters?.querySelectorAll(".chip[data-group]") || []].forEach((btn) => {
+          const active = btn.dataset.group === "all";
+          btn.classList.toggle("is-active", active);
+          btn.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+        applyLauncherFilter();
+        ui.launcherSearch?.focus();
+        setStatus("機能検索とグループ絞り込みを解除しました");
+        return;
+      }
       if (act === "setLauncherGroup") {
         const group = String(actEl.dataset.group || "all");
         [...ui.launcherGroupFilters?.querySelectorAll(".chip[data-group]") || []].forEach((btn) => {
@@ -18511,6 +18623,20 @@ ${contextLine}`);
         });
         applyLauncherFilter();
         setStatus(group === "all" ? "全機能を表示中です" : `機能を絞り込みました: ${actEl.textContent.trim()}`);
+        return;
+      }
+      if (act === "clearDiffFilters") {
+        if (ui.diffFilterSection) ui.diffFilterSection.value = "";
+        if (ui.diffFilterType) ui.diffFilterType.value = "";
+        if (ui.diffFilterSeverity) ui.diffFilterSeverity.value = "";
+        if (ui.diffSearch) ui.diffSearch.value = "";
+        state.diffFilterSection = "";
+        state.diffFilterType = "";
+        state.diffFilterSeverity = "";
+        if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+        renderDiffActiveFilters();
+        saveCurrentDialogState2();
+        setStatus("差分フィルタをクリアしました");
         return;
       }
       if (act === "backToLauncher") {
@@ -19223,6 +19349,7 @@ ${contextLine}`);
         if (ui.diffFilterSection) ui.diffFilterSection.value = row.sectionKey || "";
         state.diffFilterSection = row.sectionKey || "";
         if (ui.diffSearch) ui.diffSearch.value = row.path || "";
+        renderDiffActiveFilters();
         renderResultRows(state.lastDiffRows);
         setStatus("ヘッダーの差分一覧で該当ノードを表示しました");
         return;
@@ -24526,6 +24653,7 @@ ${field.label}` : code,
       diffFilterSection: $("#u_diffFilterSection"),
       diffFilterType: $("#u_diffFilterType"),
       diffFilterSeverity: $("#u_diffFilterSeverity"),
+      diffActiveFilters: $("#u_diffActiveFilters"),
       diffExportMode: $("#u_diffExportMode"),
       diffExportContent: $("#u_diffExportContent"),
       diffFavoritesOnlyBtn: $("#u_diffFavoritesOnlyBtn"),
@@ -24636,12 +24764,15 @@ ${field.label}` : code,
       tourPrev: $("#u_tourPrev"),
       tourNext: $("#u_tourNext"),
       featureTitle: $("#u_featureTitle"),
+      featureBreadcrumb: $("#u_featureBreadcrumb"),
       featureConn: $("#u_featureConn"),
       launcherMenu: $("#u_launcherMenu"),
       launcherToggleMore: $("#u_launcherToggleMore"),
       launcherSearch: $("#u_launcherSearch"),
       launcherGroupFilters: $("#u_launcherGroupFilters"),
+      launcherActiveFilters: $("#u_launcherActiveFilters"),
       launcherVisibleCount: $("#u_launcherVisibleCount"),
+      launcherEmptyState: $("#u_launcherEmptyState"),
       copyTextToClipboard
     };
     Object.assign(ui, ui4);
