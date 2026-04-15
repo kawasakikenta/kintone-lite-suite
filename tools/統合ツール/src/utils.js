@@ -296,10 +296,15 @@ export function loadExternalStyle(url) {
 export async function loadExternalLibrary(name) {
   const lib = EXTERNAL_LIBRARIES[name];
   if (!lib) throw new Error(`Unknown external library: ${name}`);
-  const promises = [];
-  if (lib.cssUrl) promises.push(loadExternalStyle(lib.cssUrl));
-  if (lib.cdnUrl) promises.push(loadExternalScript(lib.cdnUrl));
-  await Promise.all(promises);
+  const stylePromise = lib.cssUrl ? loadExternalStyle(lib.cssUrl) : Promise.resolve();
+  let scriptPromise = Promise.resolve();
+  if (lib.cdnUrl) {
+    scriptPromise = loadExternalScript(lib.cdnUrl).catch((err) => {
+      if (lib.altCdnUrl) return loadExternalScript(lib.altCdnUrl);
+      throw err;
+    });
+  }
+  await Promise.all([stylePromise, scriptPromise]);
 }
 
 export async function showToast(message, type = 'info') {

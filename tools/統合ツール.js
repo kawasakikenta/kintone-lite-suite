@@ -795,10 +795,15 @@ ${contextLine}`);
   async function loadExternalLibrary(name) {
     const lib = EXTERNAL_LIBRARIES[name];
     if (!lib) throw new Error(`Unknown external library: ${name}`);
-    const promises = [];
-    if (lib.cssUrl) promises.push(loadExternalStyle(lib.cssUrl));
-    if (lib.cdnUrl) promises.push(loadExternalScript(lib.cdnUrl));
-    await Promise.all(promises);
+    const stylePromise = lib.cssUrl ? loadExternalStyle(lib.cssUrl) : Promise.resolve();
+    let scriptPromise = Promise.resolve();
+    if (lib.cdnUrl) {
+      scriptPromise = loadExternalScript(lib.cdnUrl).catch((err) => {
+        if (lib.altCdnUrl) return loadExternalScript(lib.altCdnUrl);
+        throw err;
+      });
+    }
+    await Promise.all([stylePromise, scriptPromise]);
   }
   async function showToast(message, type = "info") {
     try {
@@ -23292,6 +23297,7 @@ ${safety.hash}`, "");
   init_dialog();
   init_enrich();
   init_utils();
+  var cytoscapeDagreRegistered = false;
   var NOTIFICATION_CATEGORIES = Object.freeze([
     { key: "notifications", label: "一般通知", icon: "🔔" },
     { key: "perRecordNotifications", label: "レコード条件通知", icon: "📋" },
@@ -24637,11 +24643,11 @@ ${field.label}` : code,
       setBusy(false);
       return;
     }
-    const win = doc.defaultView || window;
-    if (win.cytoscapeDagre && win.cytoscape) {
-      win.cytoscape.use(win.cytoscapeDagre);
+    if (!cytoscapeDagreRegistered && window.cytoscapeDagre && window.cytoscape) {
+      window.cytoscape.use(window.cytoscapeDagre);
+      cytoscapeDagreRegistered = true;
     }
-    const cy = win.cytoscape({
+    const cy = window.cytoscape({
       container,
       elements: data.elements,
       style: [

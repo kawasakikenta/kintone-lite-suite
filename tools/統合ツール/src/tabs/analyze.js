@@ -13,6 +13,8 @@ import {
 } from '../diff/enrich.js';
 import { loadExternalLibrary } from '../utils.js';
 
+let cytoscapeDagreRegistered = false;
+
 const NOTIFICATION_CATEGORIES = Object.freeze([
   { key: 'notifications', label: '一般通知', icon: '🔔' },
   { key: 'perRecordNotifications', label: 'レコード条件通知', icon: '📋' },
@@ -1500,12 +1502,14 @@ export async function runFieldDependencyGraph() {
     return;
   }
 
-  const win = doc.defaultView || window;
-  if (win.cytoscapeDagre && win.cytoscape) {
-    win.cytoscape.use(win.cytoscapeDagre);
+  // スクリプトは loadExternalScript によりメインページの window にロードされるため、
+  // ツールがポップアップウィンドウで動作している場合でも window を直接参照する。
+  if (!cytoscapeDagreRegistered && window.cytoscapeDagre && window.cytoscape) {
+    window.cytoscape.use(window.cytoscapeDagre);
+    cytoscapeDagreRegistered = true;
   }
 
-  const cy = win.cytoscape({
+  const cy = window.cytoscape({
     container,
     elements: data.elements,
     style: [
