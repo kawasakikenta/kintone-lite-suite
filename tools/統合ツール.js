@@ -679,42 +679,118 @@ ${contextLine}`);
       r.readAsText(file, "utf-8");
     });
   }
-  function loadExternalScript(url) {
-    if (!url) return Promise.resolve();
-    if (loadedScripts.has(url)) return Promise.resolve();
-    if (document.querySelector(`script[src="${url}"]`)) {
+  function waitForScriptLoad(existingScript, url) {
+    if (existingScript.dataset.kusLoaded === "true") {
       loadedScripts.add(url);
       return Promise.resolve();
     }
+    if (existingScript.readyState === "loaded" || existingScript.readyState === "complete") {
+      loadedScripts.add(url);
+      existingScript.dataset.kusLoaded = "true";
+      return Promise.resolve();
+    }
     return new Promise((resolve, reject) => {
+      const onLoad = () => {
+        cleanup();
+        loadedScripts.add(url);
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error(`Failed to load script: ${url}`));
+      };
+      const cleanup = () => {
+        existingScript.removeEventListener("load", onLoad);
+        existingScript.removeEventListener("error", onError);
+      };
+      existingScript.addEventListener("load", onLoad, { once: true });
+      existingScript.addEventListener("error", onError, { once: true });
+    });
+  }
+  function waitForStyleLoad(existingLink, url) {
+    if (existingLink.dataset.kusLoaded === "true") {
+      loadedStyles.add(url);
+      return Promise.resolve();
+    }
+    if (existingLink.sheet) {
+      loadedStyles.add(url);
+      existingLink.dataset.kusLoaded = "true";
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const onLoad = () => {
+        cleanup();
+        loadedStyles.add(url);
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error(`Failed to load style: ${url}`));
+      };
+      const cleanup = () => {
+        existingLink.removeEventListener("load", onLoad);
+        existingLink.removeEventListener("error", onError);
+      };
+      existingLink.addEventListener("load", onLoad, { once: true });
+      existingLink.addEventListener("error", onError, { once: true });
+    });
+  }
+  function loadExternalScript(url) {
+    if (!url) return Promise.resolve();
+    if (loadedScripts.has(url)) return Promise.resolve();
+    if (loadingScripts.has(url)) return loadingScripts.get(url);
+    const existingScript = document.querySelector(`script[src="${url}"]`);
+    if (existingScript) {
+      const promise2 = waitForScriptLoad(existingScript, url).finally(() => {
+        loadingScripts.delete(url);
+      });
+      loadingScripts.set(url, promise2);
+      return promise2;
+    }
+    const promise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
       script.src = url;
       script.onload = () => {
         loadedScripts.add(url);
+        script.dataset.kusLoaded = "true";
         resolve();
       };
       script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
       document.head.appendChild(script);
+    }).finally(() => {
+      loadingScripts.delete(url);
     });
+    loadingScripts.set(url, promise);
+    return promise;
   }
   function loadExternalStyle(url) {
     if (!url) return Promise.resolve();
     if (loadedStyles.has(url)) return Promise.resolve();
-    if (document.querySelector(`link[href="${url}"]`)) {
-      loadedStyles.add(url);
-      return Promise.resolve();
+    if (loadingStyles.has(url)) return loadingStyles.get(url);
+    const existingLink = document.querySelector(`link[href="${url}"]`);
+    if (existingLink) {
+      const promise2 = waitForStyleLoad(existingLink, url).finally(() => {
+        loadingStyles.delete(url);
+      });
+      loadingStyles.set(url, promise2);
+      return promise2;
     }
-    return new Promise((resolve, reject) => {
+    const promise = new Promise((resolve, reject) => {
       const link = document.createElement("link");
       link.rel = "stylesheet";
       link.href = url;
       link.onload = () => {
         loadedStyles.add(url);
+        link.dataset.kusLoaded = "true";
         resolve();
       };
       link.onerror = () => reject(new Error(`Failed to load style: ${url}`));
       document.head.appendChild(link);
+    }).finally(() => {
+      loadingStyles.delete(url);
     });
+    loadingStyles.set(url, promise);
+    return promise;
   }
   async function loadExternalLibrary(name) {
     const lib = EXTERNAL_LIBRARIES[name];
@@ -753,13 +829,15 @@ ${contextLine}`);
       }
     }
   }
-  var loadedScripts, loadedStyles;
+  var loadedScripts, loadedStyles, loadingScripts, loadingStyles;
   var init_utils = __esm({
     "src/utils.js"() {
       "use strict";
       init_constants();
       loadedScripts = /* @__PURE__ */ new Set();
       loadedStyles = /* @__PURE__ */ new Set();
+      loadingScripts = /* @__PURE__ */ new Map();
+      loadingStyles = /* @__PURE__ */ new Map();
     }
   });
 
