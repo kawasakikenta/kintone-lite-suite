@@ -2711,10 +2711,8 @@ ${contextLine}`);
   }
   function renderRowColumns(row, useCharDiff) {
     if (row.type === "same") {
-      const text = stringifyForDiff(row.left);
-      const preview = text.length > 200 ? text.slice(0, 200) + "..." : text;
       return {
-        left: `<pre class="diff-pre" style="color:var(--dv-sub);font-style:italic">${esc(preview)}</pre>`,
+        left: `<pre class="diff-pre" style="color:var(--dv-sub);font-style:italic">${esc(stringifyForDiff(row.left))}</pre>`,
         right: '<pre class="diff-pre" style="color:var(--dv-sub);font-style:italic">（同一）</pre>'
       };
     }
@@ -2739,15 +2737,17 @@ ${contextLine}`);
       tags.push(`<span class="diff-meta-tag reason">${esc(row.reasonSummary)}</span>`);
     }
     if (row.renameCandidate) {
-      tags.push(`<span class="diff-meta-tag rename">名称変更候補 ${esc(row.renameCandidate.fromCode || "-")} → ${esc(row.renameCandidate.toCode || "-")}</span>`);
+      const renameTip = `名称変更候補: ${String(row.renameCandidate.fromCode || "-")} → ${String(row.renameCandidate.toCode || "-")}` + (row.renameCandidate.matchedBy ? ` / 判定: ${String(row.renameCandidate.matchedBy)}` : "");
+      tags.push(`<span class="diff-meta-tag rename" title="${esc(renameTip)}">名称変更候補</span>`);
       if (row.renameCandidate.matchedBy) {
         lines.push(`<div class="diff-meta-line"><strong>判定:</strong> ${esc(row.renameCandidate.matchedBy)}</div>`);
       }
     }
     if (row.impactCount) {
-      tags.push(`<span class="diff-meta-tag impact">影響 ${row.impactCount}件</span>`);
+      tags.push(`<span class="diff-meta-tag impact" title="${esc(String(row.impactCount))}件">影響</span>`);
       const impactText = (row.impactRefs || []).map((ref) => `${ref.section || ref.sectionKey || "-"}:${ref.kind || "-"}${ref.label ? `(${ref.label})` : ""}`).join(" / ");
-      lines.push(`<div class="diff-meta-line"><strong>影響:</strong> ${esc(impactText || row.impactSummary || "")}${row.impactCount > (row.impactRefs || []).length ? ` ... +${row.impactCount - (row.impactRefs || []).length}` : ""}</div>`);
+      const detail = impactText || row.impactSummary || "";
+      lines.push(`<div class="diff-meta-line"><strong>影響:</strong> ${esc(detail)}</div>`);
     }
     if (!tags.length && !lines.length) return "";
     return `<div class="diff-meta">
@@ -3644,10 +3644,8 @@ ${contextLine}`);
 
   function renderRowCells(row, useCharDiff) {
     if (row.type === 'same') {
-      const text = safeText(row.left);
-      const preview = text.length > 200 ? text.slice(0, 200) + '...' : text;
       return {
-        left: '<pre class="blk same">' + escHtml(preview) + '</pre>',
+        left: '<pre class="blk same">' + escHtml(safeText(row.left)) + '</pre>',
         right: '<pre class="blk same-note">（同一）</pre>'
       };
     }
@@ -3672,13 +3670,13 @@ ${contextLine}`);
     if (row.renameCandidate) {
       const renameTip = '名称変更候補: ' + String(row.renameCandidate.fromCode || '-') + ' → ' + String(row.renameCandidate.toCode || '-')
         + (row.renameCandidate.matchedBy ? ' / 判定: ' + String(row.renameCandidate.matchedBy) : '');
-      tags.push('<span class="meta-tag rename" title="' + escHtml(renameTip) + '">名称変更候補 ' + escHtml(row.renameCandidate.fromCode || '-') + ' → ' + escHtml(row.renameCandidate.toCode || '-') + '</span>');
+      tags.push('<span class="meta-tag rename" title="' + escHtml(renameTip) + '">名称変更候補</span>');
     }
     if (row.impactCount) {
       const impactText = (row.impactRefs || [])
         .map((ref) => (ref.section || ref.sectionKey || '-') + ':' + (ref.kind || '-'))
         .join(' / ');
-      tags.push('<span class="meta-tag impact" title="' + escHtml(impactText || row.impactSummary || '') + '">影響 ' + escHtml(String(row.impactCount)) + '件</span>');
+      tags.push('<span class="meta-tag impact" title="' + escHtml(String(row.impactCount)) + '件">影響</span>');
     }
     if (!tags.length) return '';
     return '<div class="meta-wrap">' +
@@ -3810,11 +3808,11 @@ ${contextLine}`);
         const field = getFieldRowPayload(row) || getFieldDefinition(code, 'source') || getFieldDefinition(code, 'target') || {};
         const fieldLabel = String(field.label || field.name || code || 'フィールド');
         const propTitle = fieldChangePropTitle(info, row);
-        pathMain = fieldLabel + (code ? ' (' + code + ')' : '') + ' / ' + propTitle;
+        pathMain = fieldLabel + (code ? ' (' + code + ')' : '') + (propTitle ? ' / ' + propTitle : '');
       }
     }
     let html = '<div class="path-main">' + escHtml(pathMain) + '</div>';
-    if (relPath && relPath !== fullPath) {
+    if (relPath && relPath !== fullPath && row?.sectionKey !== FIELD_SECTION_KEY) {
       html += '<div class="path-sub">' + escHtml(fullPath) + '</div>';
     }
     return html + renderRowMeta(row);
@@ -4092,9 +4090,7 @@ ${contextLine}`);
     if (options.boolLabel) return value ? 'ON' : 'OFF';
     if (Array.isArray(value) || (value && typeof value === 'object')) return formatFieldValueBrief(value, options.maxLen || 240);
     if (value === undefined || value === null || value === '') return '（なし）';
-    const text = String(value);
-    const maxLen = options.maxLen || 240;
-    return escHtml(text.length > maxLen ? text.slice(0, maxLen) + '…' : text);
+    return escHtml(String(value));
   }
 
   function renderFieldToggleRow(label, checked) {
@@ -4259,7 +4255,7 @@ ${contextLine}`);
 
   function fieldChangePropTitle(info, row) {
     if (!info) return row.path || '-';
-    if (info.isFieldRoot || info.isSubFieldRoot) return 'フィールド定義（全体）';
+    if (info.isFieldRoot || info.isSubFieldRoot) return '';
     if (!info.tailTokens.length) return row.path || '-';
     if (FIELD_SETTING_LABELS[info.leafKey]) return FIELD_SETTING_LABELS[info.leafKey];
     if (String(row?.path || '').includes('.lookup.')) return 'ルックアップ設定';
@@ -6077,17 +6073,13 @@ ${contextLine}`);
     if (p === "-") return esc(p);
     const fieldInfo = extractFieldPathInfo(row?.path);
     if (fieldInfo) {
-      const fieldLabel = fieldInfo.isSubField ? `テーブル ${fieldInfo.rootCode} / フィールド ${fieldInfo.subFieldCode}` : `フィールド ${fieldInfo.activeCode}`;
-      const propLabel = fieldInfo.isFieldRoot || fieldInfo.isSubFieldRoot ? "定義全体" : fieldInfo.tailTokens.length ? fieldInfo.tailTokens.map((t) => typeof t === "number" ? `[${t}]` : String(t)).join(".") : "設定";
-      return `<span class="diff-path-line"><strong>${esc(fieldLabel)}</strong> · ${esc(propLabel)}</span><span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(fieldInfo.rootPath)}</span><span class="diff-path-sep">…</span><span class="diff-path-tail">${esc(propLabel)}</span></span>`;
+      const fieldLabel = fieldInfo.isSubField ? `テーブル: ${fieldInfo.rootCode} / フィールド: ${fieldInfo.subFieldCode}` : `フィールド: ${fieldInfo.activeCode}`;
+      const propLabel = fieldChangePropTitle(fieldInfo, row);
+      const propHtml = propLabel ? ` · ${esc(propLabel)}` : "";
+      const rel = p.startsWith("fieldSettings.") ? p.slice("fieldSettings.".length) : p;
+      return `<span class="diff-path-line"><strong>${esc(fieldLabel)}</strong>${propHtml}</span><span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(rel)}</span></span>`;
     }
-    const parts = p.split(".").filter(Boolean);
-    if (parts.length <= 2) {
-      return `<span class="diff-path-line">${esc(p)}</span>`;
-    }
-    const head = parts.slice(0, -2).join(".");
-    const tail = parts.slice(-2).join(".");
-    return `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(head)}</span><span class="diff-path-sep">…</span><span class="diff-path-tail">${esc(tail)}</span></span>`;
+    return `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(p)}</span></span>`;
   }
   function buildDiffSummaryBars(summary) {
     const seg = [
