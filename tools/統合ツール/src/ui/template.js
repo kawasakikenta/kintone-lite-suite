@@ -64,10 +64,10 @@ export function buildRoot(targetDocument = document, options = {}) {
           </div>
           <div class="h-title-feature">
             <button class="h-back" data-act="backToLauncher">← 戻る</button>
-            <div>
+            <div class="h-title-feature-main">
               <div class="ht" id="u_featureTitle"></div>
               <div class="feature-breadcrumb" id="u_featureBreadcrumb" aria-live="polite">ホーム / 機能</div>
-              <div class="feature-conn" id="u_featureConn"></div>
+              <div class="feature-conn" id="u_featureConn" hidden></div>
             </div>
           </div>
           <div class="h-actions">
@@ -81,10 +81,15 @@ export function buildRoot(targetDocument = document, options = {}) {
         <div class="body">
           <div class="card common-card" id="u_connectionPanel">
             <section class="connection-section connection-section--step1 connection-section--app-inputs" aria-labelledby="conn-app-heading">
-              <div class="connection-step-banner">
-                <span class="connection-step-title" id="conn-app-heading">Step 1 接続設定</span>
-                <span class="connection-step-indicator" id="u_step1Indicator" data-step-state="pending">未入力</span>
+              <div class="connection-step-banner connection-step-banner--step1">
+                <div class="connection-step-banner-main">
+                  <span class="connection-step-title" id="conn-app-heading">接続設定</span>
+                  <span class="connection-step-indicator" id="u_step1Indicator" data-step-state="pending">未入力</span>
+                  <span class="connection-summary-inline" id="u_connectionSummaryInline" aria-live="polite"></span>
+                </div>
+                <button type="button" class="connection-toggle-btn" data-act="toggleConnectionPanel" id="u_connectionToggleBtn" aria-expanded="true" aria-controls="u_connectionStep1Body" title="接続設定の表示/非表示を切り替え">設定を折りたたむ</button>
               </div>
+              <div class="connection-step1-body" id="u_connectionStep1Body">
               <p class="connection-section-lead" id="u_connectionLead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
@@ -143,6 +148,7 @@ export function buildRoot(targetDocument = document, options = {}) {
               <input type="hidden" id="u_lookupMap">
               </div>
             </details>
+            </div>
             </section>
             <input type="checkbox" id="u_sourcePreview" style="display:none">
             <input type="checkbox" id="u_targetPreview" checked style="display:none">
@@ -453,7 +459,7 @@ export function buildRoot(targetDocument = document, options = {}) {
             </div>
             <section class="connection-section connection-section--step3 connection-section--actions" aria-labelledby="conn-feature-heading">
               <div class="connection-step-banner">
-                <span class="connection-step-title" id="conn-feature-heading">Step 3 機能選択</span>
+                <span class="connection-step-title" id="conn-feature-heading">機能選択</span>
                 <span class="connection-step-indicator" id="u_step3Indicator" data-step-state="pending">未選択</span>
               </div>
               <p class="muted connection-step-desc">下のカードからやりたい作業を選びます。カードには「用途」と「安全性」を表示しているので、迷ったらまず「差分比較」から進めてください。</p>

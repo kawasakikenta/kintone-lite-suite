@@ -6904,6 +6904,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     setBusy: () => setBusy,
     setComponentDeps: () => setComponentDeps,
     setComponentUi: () => setComponentUi,
+    setConnectionPanelCollapsed: () => setConnectionPanelCollapsed,
     setSettingsExportScopeSelection: () => setSettingsExportScopeSelection,
     setStatus: () => setStatus,
     showLauncherScreen: () => showLauncherScreen,
@@ -6974,6 +6975,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     if (ui3.featureTitle) ui3.featureTitle.textContent = "";
     if (ui3.featureConn) ui3.featureConn.textContent = "";
     if (ui3.featureBreadcrumb) ui3.featureBreadcrumb.textContent = "ホーム / 機能";
+    setConnectionPanelCollapsed(false);
     updateConnectionStepIndicators();
     if (options.persist !== false) saveCurrentDialogState();
   }
@@ -6991,6 +6993,11 @@ ${tableContext.tableLabel}`.toLowerCase();
     if (ui3.featureTitle) ui3.featureTitle.textContent = def.label;
     if (ui3.featureConn) ui3.featureConn.textContent = buildFeatureSummary(def);
     setFeatureBreadcrumb(def, def.tab || def.tabs?.[0]);
+    const sourceAppFilled = !!(ui3.sourceApp?.value || "").trim();
+    const targetAppFilled = !!(ui3.targetApp?.value || "").trim();
+    const needs = TAB_CONNECTION_NEEDS[def.tab || def.tabs?.[0] || "reflect"] || {};
+    const connReady = needs.target ? sourceAppFilled && targetAppFilled : sourceAppFilled;
+    setConnectionPanelCollapsed(!!connReady);
     updateConnectionStepIndicators();
     if (options.persist !== false) saveCurrentDialogState();
     if (def.focusSelector && options.focus !== false) {
@@ -7103,10 +7110,13 @@ ${tableContext.tableLabel}`.toLowerCase();
     const step1 = ui3.step1Indicator;
     const step2 = ui3.step2Indicator;
     const step3 = ui3.step3Indicator;
-    if (!step1 && !step2 && !step3) return;
+    const summaryInline = ui3.connectionSummaryInline;
+    if (!step1 && !step2 && !step3 && !summaryInline) return;
     const root2 = getToolDocument().getElementById("kintone-unified-suite-v2");
     const sourceApp = (ui3.sourceApp?.value || "").trim();
+    const sourceGuest = (ui3.sourceGuest?.value || "").trim();
     const targetApp = (ui3.targetApp?.value || "").trim();
+    const targetGuest = (ui3.targetGuest?.value || "").trim();
     const needs = TAB_CONNECTION_NEEDS[state.activeTab] || {};
     const hasConnection = needs.target ? !!sourceApp && !!targetApp : !!sourceApp;
     const hasCommonData = !!(state.lastSourceBundle || state.importedSourceBundle) && !!(state.lastTargetBundle || state.importedTargetBundle);
@@ -7125,6 +7135,30 @@ ${tableContext.tableLabel}`.toLowerCase();
       const step3Active = hasConnection && featureSelected;
       step3.textContent = featureSelected ? activeFeature.label : "未選択";
       step3.dataset.stepState = step3Active ? "current" : "pending";
+    }
+    if (summaryInline) {
+      const fmt = (id, guest) => {
+        if (!id) return '<span class="cs-empty">未設定</span>';
+        const g = guest ? `<span class="cs-guest">(ゲスト ${esc(guest)})</span>` : "";
+        return `<span class="cs-id">#${esc(id)}</span>${g}`;
+      };
+      if (!needs.appInputs) {
+        summaryInline.innerHTML = "";
+      } else if (needs.target) {
+        summaryInline.innerHTML = `<span class="cs-label">比較元</span> ${fmt(sourceApp, sourceGuest)} <span class="cs-arrow" aria-hidden="true">→</span> <span class="cs-label">比較先</span> ${fmt(targetApp, targetGuest)}`;
+      } else {
+        summaryInline.innerHTML = `<span class="cs-label">対象</span> ${fmt(sourceApp, sourceGuest)}`;
+      }
+    }
+  }
+  function setConnectionPanelCollapsed(collapsed) {
+    const panel = ui3.connectionPanel;
+    const btn = ui3.connectionToggleBtn;
+    if (!panel) return;
+    panel.classList.toggle("is-collapsed", !!collapsed);
+    if (btn) {
+      btn.textContent = collapsed ? "設定を開く" : "設定を折りたたむ";
+      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
     }
   }
   function diffScopeTooltip(s) {
@@ -13408,6 +13442,67 @@ ${tableContext.tableLabel}`.toLowerCase();
 #kintone-unified-suite-v2 .req{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:800;vertical-align:middle}
 #kintone-unified-suite-v2 .diff-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-height:26px;align-items:center}
 #kintone-unified-suite-v2 .input-invalid{border-color:#ef4444!important;background:#fef2f2!important}
+
+/* ========== Feature screen: compact header + collapsible connection panel ========== */
+#kintone-unified-suite-v2 .h-title-feature{gap:12px}
+#kintone-unified-suite-v2 .h-title-feature-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+#kintone-unified-suite-v2.screen-feature .h{padding:10px 16px}
+#kintone-unified-suite-v2.screen-feature .ht{font-size:14px;line-height:1.25}
+#kintone-unified-suite-v2.screen-feature .feature-breadcrumb{font-size:11px;opacity:.75;margin-top:0}
+#kintone-unified-suite-v2 .feature-conn[hidden]{display:none !important}
+
+/* Banner: layout with summary + toggle */
+#kintone-unified-suite-v2 .connection-step-banner--step1{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+}
+#kintone-unified-suite-v2 .connection-step-banner-main{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;flex:1;
+}
+#kintone-unified-suite-v2 .connection-toggle-btn{
+  border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:999px;
+  padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;
+  transition:background .15s,border-color .15s;
+}
+#kintone-unified-suite-v2 .connection-toggle-btn:hover{background:#f1f5f9;border-color:#94a3b8}
+#kintone-unified-suite-v2 .connection-toggle-btn:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+
+/* Inline connection summary (shown next to Step 1 banner) */
+#kintone-unified-suite-v2 .connection-summary-inline{
+  display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;
+  font-size:12px;color:#334155;line-height:1.55;
+}
+#kintone-unified-suite-v2 .connection-summary-inline .cs-label{
+  font-size:10px;font-weight:700;color:#64748b;letter-spacing:.04em;
+  padding:1px 6px;border-radius:4px;background:#e2e8f0;
+}
+#kintone-unified-suite-v2 .connection-summary-inline .cs-id{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;color:#0f172a;
+}
+#kintone-unified-suite-v2 .connection-summary-inline .cs-guest{
+  font-size:10px;color:#64748b;margin-left:2px;
+}
+#kintone-unified-suite-v2 .connection-summary-inline .cs-arrow{
+  color:#94a3b8;font-weight:700;padding:0 2px;
+}
+#kintone-unified-suite-v2 .connection-summary-inline .cs-empty{
+  font-size:11px;color:#b91c1c;font-style:italic;
+}
+
+/* Show/hide the body & summary based on collapsed state (feature screen) */
+#kintone-unified-suite-v2.screen-launcher .connection-summary-inline{display:none}
+#kintone-unified-suite-v2.screen-launcher .connection-toggle-btn{display:none}
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel.is-collapsed .connection-step1-body{display:none}
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel.is-collapsed .connection-section--step1{
+  padding-bottom:2px;
+}
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel .connection-section--step1{
+  margin-top:0;padding-top:0;border-top:none;
+}
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel{padding:10px 14px}
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel.is-collapsed{padding:8px 14px}
+#kintone-unified-suite-v2.screen-feature .common-card{
+  position:sticky;top:0;z-index:20;
+}
 \0
 \0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
 \0
@@ -13914,10 +14009,10 @@ ${tableContext.tableLabel}`.toLowerCase();
           </div>
           <div class="h-title-feature">
             <button class="h-back" data-act="backToLauncher">← 戻る</button>
-            <div>
+            <div class="h-title-feature-main">
               <div class="ht" id="u_featureTitle"></div>
               <div class="feature-breadcrumb" id="u_featureBreadcrumb" aria-live="polite">ホーム / 機能</div>
-              <div class="feature-conn" id="u_featureConn"></div>
+              <div class="feature-conn" id="u_featureConn" hidden></div>
             </div>
           </div>
           <div class="h-actions">
@@ -13931,10 +14026,15 @@ ${tableContext.tableLabel}`.toLowerCase();
         <div class="body">
           <div class="card common-card" id="u_connectionPanel">
             <section class="connection-section connection-section--step1 connection-section--app-inputs" aria-labelledby="conn-app-heading">
-              <div class="connection-step-banner">
-                <span class="connection-step-title" id="conn-app-heading">Step 1 接続設定</span>
-                <span class="connection-step-indicator" id="u_step1Indicator" data-step-state="pending">未入力</span>
+              <div class="connection-step-banner connection-step-banner--step1">
+                <div class="connection-step-banner-main">
+                  <span class="connection-step-title" id="conn-app-heading">接続設定</span>
+                  <span class="connection-step-indicator" id="u_step1Indicator" data-step-state="pending">未入力</span>
+                  <span class="connection-summary-inline" id="u_connectionSummaryInline" aria-live="polite"></span>
+                </div>
+                <button type="button" class="connection-toggle-btn" data-act="toggleConnectionPanel" id="u_connectionToggleBtn" aria-expanded="true" aria-controls="u_connectionStep1Body" title="接続設定の表示/非表示を切り替え">設定を折りたたむ</button>
               </div>
+              <div class="connection-step1-body" id="u_connectionStep1Body">
               <p class="connection-section-lead" id="u_connectionLead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
@@ -13993,6 +14093,7 @@ ${tableContext.tableLabel}`.toLowerCase();
               <input type="hidden" id="u_lookupMap">
               </div>
             </details>
+            </div>
             </section>
             <input type="checkbox" id="u_sourcePreview" style="display:none">
             <input type="checkbox" id="u_targetPreview" checked style="display:none">
@@ -14303,7 +14404,7 @@ ${tableContext.tableLabel}`.toLowerCase();
             </div>
             <section class="connection-section connection-section--step3 connection-section--actions" aria-labelledby="conn-feature-heading">
               <div class="connection-step-banner">
-                <span class="connection-step-title" id="conn-feature-heading">Step 3 機能選択</span>
+                <span class="connection-step-title" id="conn-feature-heading">機能選択</span>
                 <span class="connection-step-indicator" id="u_step3Indicator" data-step-state="pending">未選択</span>
               </div>
               <p class="muted connection-step-desc">下のカードからやりたい作業を選びます。カードには「用途」と「安全性」を表示しているので、迷ったらまず「差分比較」から進めてください。</p>
@@ -19073,6 +19174,12 @@ ${tableContext.tableLabel}`.toLowerCase();
         applyLauncherFilter();
         saveCurrentDialogState2();
         setStatus("機能を選んでください");
+        return;
+      }
+      if (act === "toggleConnectionPanel") {
+        const panel = ui.connectionPanel;
+        if (!panel) return;
+        setConnectionPanelCollapsed(!panel.classList.contains("is-collapsed"));
         return;
       }
       if (act === "copyToolInfo") {
@@ -25115,6 +25222,10 @@ ${field.label}` : code,
       step1Indicator: $("#u_step1Indicator"),
       step2Indicator: $("#u_step2Indicator"),
       step3Indicator: $("#u_step3Indicator"),
+      connectionSummaryInline: $("#u_connectionSummaryInline"),
+      connectionToggleBtn: $("#u_connectionToggleBtn"),
+      connectionStep1Body: $("#u_connectionStep1Body"),
+      connectionPanel: $("#u_connectionPanel"),
       charDiff: $("#u_charDiff"),
       diffIncludeSame: $("#u_diffIncludeSame"),
       diffThemeBtn: $("#u_diffThemeBtn"),

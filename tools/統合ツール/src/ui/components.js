@@ -121,6 +121,7 @@ export function showLauncherScreen(options = {}) {
   if (ui.featureTitle) ui.featureTitle.textContent = '';
   if (ui.featureConn) ui.featureConn.textContent = '';
   if (ui.featureBreadcrumb) ui.featureBreadcrumb.textContent = 'ホーム / 機能';
+  setConnectionPanelCollapsed(false);
   updateConnectionStepIndicators();
   if (options.persist !== false) saveCurrentDialogState();
 }
@@ -142,6 +143,12 @@ export function openFeatureScreen(featureKey, options = {}) {
   if (ui.featureTitle) ui.featureTitle.textContent = def.label;
   if (ui.featureConn) ui.featureConn.textContent = buildFeatureSummary(def);
   setFeatureBreadcrumb(def, def.tab || def.tabs?.[0]);
+
+  const sourceAppFilled = !!(ui.sourceApp?.value || '').trim();
+  const targetAppFilled = !!(ui.targetApp?.value || '').trim();
+  const needs = TAB_CONNECTION_NEEDS[def.tab || def.tabs?.[0] || 'reflect'] || {};
+  const connReady = needs.target ? (sourceAppFilled && targetAppFilled) : sourceAppFilled;
+  setConnectionPanelCollapsed(!!connReady);
 
   updateConnectionStepIndicators();
 
@@ -264,11 +271,14 @@ export function updateConnectionStepIndicators() {
   const step1 = ui.step1Indicator;
   const step2 = ui.step2Indicator;
   const step3 = ui.step3Indicator;
-  if (!step1 && !step2 && !step3) return;
+  const summaryInline = ui.connectionSummaryInline;
+  if (!step1 && !step2 && !step3 && !summaryInline) return;
 
   const root = getToolDocument().getElementById('kintone-unified-suite-v2');
   const sourceApp = (ui.sourceApp?.value || '').trim();
+  const sourceGuest = (ui.sourceGuest?.value || '').trim();
   const targetApp = (ui.targetApp?.value || '').trim();
+  const targetGuest = (ui.targetGuest?.value || '').trim();
   const needs = TAB_CONNECTION_NEEDS[state.activeTab] || {};
   const hasConnection = needs.target ? (!!sourceApp && !!targetApp) : !!sourceApp;
   const hasCommonData = !!(state.lastSourceBundle || state.importedSourceBundle) && !!(state.lastTargetBundle || state.importedTargetBundle);
@@ -288,6 +298,31 @@ export function updateConnectionStepIndicators() {
     const step3Active = hasConnection && featureSelected;
     step3.textContent = featureSelected ? activeFeature.label : '未選択';
     step3.dataset.stepState = step3Active ? 'current' : 'pending';
+  }
+  if (summaryInline) {
+    const fmt = (id, guest) => {
+      if (!id) return '<span class="cs-empty">未設定</span>';
+      const g = guest ? `<span class="cs-guest">(ゲスト ${esc(guest)})</span>` : '';
+      return `<span class="cs-id">#${esc(id)}</span>${g}`;
+    };
+    if (!needs.appInputs) {
+      summaryInline.innerHTML = '';
+    } else if (needs.target) {
+      summaryInline.innerHTML = `<span class="cs-label">比較元</span> ${fmt(sourceApp, sourceGuest)} <span class="cs-arrow" aria-hidden="true">→</span> <span class="cs-label">比較先</span> ${fmt(targetApp, targetGuest)}`;
+    } else {
+      summaryInline.innerHTML = `<span class="cs-label">対象</span> ${fmt(sourceApp, sourceGuest)}`;
+    }
+  }
+}
+
+export function setConnectionPanelCollapsed(collapsed) {
+  const panel = ui.connectionPanel;
+  const btn = ui.connectionToggleBtn;
+  if (!panel) return;
+  panel.classList.toggle('is-collapsed', !!collapsed);
+  if (btn) {
+    btn.textContent = collapsed ? '設定を開く' : '設定を折りたたむ';
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
   }
 }
 
