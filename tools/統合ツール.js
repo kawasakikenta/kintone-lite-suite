@@ -6014,9 +6014,15 @@ ${contextLine}`);
     ui.diffWarnBox.style.display = "block";
     ui.diffWarnBox.textContent = `差分 ${warning.diffCount}件 + API取得失敗 ${warning.issueCount}件 = ${warning.total}件 が警告しきい値 ${warning.threshold}件以上です。`;
   }
-  function formatDiffPathRich(path) {
-    const p = String(path || "-");
+  function formatDiffPathRich(row) {
+    const p = String(row?.path || "-");
     if (p === "-") return esc(p);
+    const fieldInfo = extractFieldPathInfo(row?.path);
+    if (fieldInfo) {
+      const fieldLabel = fieldInfo.isSubField ? `テーブル ${fieldInfo.rootCode} / フィールド ${fieldInfo.subFieldCode}` : `フィールド ${fieldInfo.activeCode}`;
+      const propLabel = fieldInfo.isFieldRoot || fieldInfo.isSubFieldRoot ? "定義全体" : fieldInfo.tailTokens.length ? fieldInfo.tailTokens.map((t) => typeof t === "number" ? `[${t}]` : String(t)).join(".") : "設定";
+      return `<span class="diff-path-line"><strong>${esc(fieldLabel)}</strong> · ${esc(propLabel)}</span><span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(fieldInfo.rootPath)}</span><span class="diff-path-sep">…</span><span class="diff-path-tail">${esc(propLabel)}</span></span>`;
+    }
     const parts = p.split(".").filter(Boolean);
     if (parts.length <= 2) {
       return `<span class="diff-path-line">${esc(p)}</span>`;
@@ -6163,7 +6169,7 @@ ${contextLine}`);
             <div class="diff-tools">
               <button type="button" class="diff-mini-btn" data-copy-val="${esc(r.path || "")}">パス</button>
             </div>
-            <div class="diff-path diff-path-cell" title="${esc(r.path || "-")}">${formatDiffPathRich(r.path)}</div>
+            <div class="diff-path diff-path-cell" title="${esc(r.path || "-")}">${formatDiffPathRich(r)}</div>
             ${renderDiffRowMeta(r)}
           </td>
           <td class="diff-cell">${cols.left}</td>
