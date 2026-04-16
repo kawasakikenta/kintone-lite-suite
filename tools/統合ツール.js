@@ -3668,23 +3668,21 @@ ${contextLine}`);
 
   function renderRowMeta(row) {
     const tags = [];
-    const lines = [];
     if (row.reasonSummary) tags.push('<span class="meta-tag reason">' + escHtml(row.reasonSummary) + '</span>');
     if (row.renameCandidate) {
-      tags.push('<span class="meta-tag rename">名称変更候補 ' + escHtml(row.renameCandidate.fromCode || '-') + ' → ' + escHtml(row.renameCandidate.toCode || '-') + '</span>');
-      if (row.renameCandidate.matchedBy) {
-        lines.push('<div class="meta-line"><strong>判定:</strong> ' + escHtml(row.renameCandidate.matchedBy) + '</div>');
-      }
+      const renameTip = '名称変更候補: ' + String(row.renameCandidate.fromCode || '-') + ' → ' + String(row.renameCandidate.toCode || '-')
+        + (row.renameCandidate.matchedBy ? ' / 判定: ' + String(row.renameCandidate.matchedBy) : '');
+      tags.push('<span class="meta-tag rename" title="' + escHtml(renameTip) + '">名称変更候補 ' + escHtml(row.renameCandidate.fromCode || '-') + ' → ' + escHtml(row.renameCandidate.toCode || '-') + '</span>');
     }
     if (row.impactCount) {
-      tags.push('<span class="meta-tag impact">影響 ' + escHtml(String(row.impactCount)) + '件</span>');
-      const impactText = (row.impactRefs || []).map((ref) => (ref.section || ref.sectionKey || '-') + ':' + (ref.kind || '-')).join(' / ');
-      lines.push('<div class="meta-line"><strong>影響:</strong> ' + escHtml(impactText || row.impactSummary || '') + '</div>');
+      const impactText = (row.impactRefs || [])
+        .map((ref) => (ref.section || ref.sectionKey || '-') + ':' + (ref.kind || '-'))
+        .join(' / ');
+      tags.push('<span class="meta-tag impact" title="' + escHtml(impactText || row.impactSummary || '') + '">影響 ' + escHtml(String(row.impactCount)) + '件</span>');
     }
-    if (!tags.length && !lines.length) return '';
+    if (!tags.length) return '';
     return '<div class="meta-wrap">' +
       (tags.length ? '<div class="meta-tags">' + tags.join('') + '</div>' : '') +
-      lines.join('') +
       '</div>';
   }
 
@@ -3748,7 +3746,18 @@ ${contextLine}`);
   function renderPathCell(row) {
     const fullPath = String(row?.path || '-');
     const relPath = relativePathLabel(row);
-    let html = '<div class="path-main">' + escHtml(relPath || fullPath) + '</div>';
+    let pathMain = relPath || fullPath;
+    if (row?.sectionKey === FIELD_SECTION_KEY) {
+      const info = extractFieldPathInfo(fullPath);
+      if (info) {
+        const code = info.activeCode || '';
+        const field = getFieldRowPayload(row) || getFieldDefinition(code, 'source') || getFieldDefinition(code, 'target') || {};
+        const fieldLabel = String(field.label || field.name || code || 'フィールド');
+        const propTitle = fieldChangePropTitle(info, row);
+        pathMain = fieldLabel + (code ? ' (' + code + ')' : '') + ' / ' + propTitle;
+      }
+    }
+    let html = '<div class="path-main">' + escHtml(pathMain) + '</div>';
     if (relPath && relPath !== fullPath) {
       html += '<div class="path-sub">' + escHtml(fullPath) + '</div>';
     }
@@ -3817,20 +3826,16 @@ ${contextLine}`);
     return row.right != null ? row.right : row.left;
   }
 
-  function formatFieldValueBrief(val, maxLen) {
-    const n = maxLen == null ? 320 : maxLen;
+  function formatFieldValueBrief(val, _maxLen) {
     if (val === undefined) return '<span class="sl-empty">（なし）</span>';
     if (val === null) return escHtml('null');
     const t = typeof val;
     if (t === 'string' || t === 'number' || t === 'boolean') {
-      let s = String(val);
-      if (s.length > n) s = s.slice(0, n) + '…';
-      return escHtml(s);
+      return escHtml(String(val));
     }
     if (Array.isArray(val)) {
       let j;
       try { j = JSON.stringify(val); } catch (e) { j = String(val); }
-      if (j.length > n) j = j.slice(0, n) + '…';
       return '<span class="sl-val-mono">' + escHtml(j) + '</span>';
     }
     if (t === 'object') {
@@ -3844,7 +3849,6 @@ ${contextLine}`);
           } else {
             let j;
             try { j = JSON.stringify(v); } catch (e) { j = String(v); }
-            if (j.length > 120) j = j.slice(0, 120) + '…';
             cell = escHtml(j);
           }
           return '<tr><th>' + escHtml(k) + '</th><td>' + cell + '</td></tr>';
@@ -3854,7 +3858,6 @@ ${contextLine}`);
     }
     let j;
     try { j = JSON.stringify(val); } catch (e) { j = String(val); }
-    if (j.length > n) j = j.slice(0, n) + '…';
     return '<span class="sl-val-mono">' + escHtml(j) + '</span>';
   }
 
@@ -4384,7 +4387,7 @@ ${contextLine}`);
       const type = String(field.type || group.sourceField?.type || group.targetField?.type || '-');
       const diffFieldRows = group.fieldRows.filter((row) => row.type !== 'same');
       const diffLayoutRows = group.layoutRows.filter((row) => row.type !== 'same');
-      const diffRows = [...diffFieldRows, ...diffLayoutRows];
+      const diffRows = [...diffFieldRows];
       const allRows = [...group.fieldRows, ...group.layoutRows];
       const impactRefs = [];
       const impactSeen = new Set();
@@ -4400,7 +4403,7 @@ ${contextLine}`);
         ? 'added'
         : group.sourceField && !group.targetField
           ? 'removed'
-          : diffRows.length
+          : diffFieldRows.length
             ? 'modified'
             : 'unchanged';
       const layoutIndex = sourceOrderMap.has(group.code)
@@ -4493,10 +4496,11 @@ ${contextLine}`);
     updateStatsFromCounts(counts);
   }
 
-  function renderFieldSummaryChips(group) {
+  function renderFieldSummaryChips(group, options) {
+    const includeLayout = !!options?.includeLayout;
     const chips = [];
     if (group.settingDiffCount) chips.push('<span class="fc-chip">設定 ' + group.settingDiffCount + '</span>');
-    if (group.layoutDiffCount) chips.push('<span class="fc-chip">配置 ' + group.layoutDiffCount + '</span>');
+    if (includeLayout && group.layoutDiffCount) chips.push('<span class="fc-chip">配置 ' + group.layoutDiffCount + '</span>');
     if (group.impactCount) chips.push('<span class="fc-chip">影響 ' + group.impactCount + '</span>');
     if (group.parentTableCode) chips.push('<span class="fc-chip fc-chip--muted">テーブル ' + escHtml(group.parentTableLabel || group.parentTableCode) + '</span>');
     if (!chips.length) chips.push('<span class="fc-chip fc-chip--muted">差分なし</span>');
@@ -4510,14 +4514,6 @@ ${contextLine}`);
       entries.push({
         area: 'フィールド設定',
         title: fieldChangePropTitle(extractFieldPathInfo(row.path), row),
-        row
-      });
-    });
-    group.layoutRows.forEach((row) => {
-      if (hideSame && row.type === 'same') return;
-      entries.push({
-        area: 'レイアウト',
-        title: describeLayoutChange(row),
         row
       });
     });
@@ -4637,6 +4633,7 @@ ${contextLine}`);
     const keyword = String(document.getElementById('search').value || '').trim().toLowerCase();
     const model = buildFieldReviewModel();
     const groups = model.groups.filter((group) => {
+      if (!group.fieldRows.length && group.layoutDiffCount > 0) return false;
       if (hideSame && group.status === 'unchanged') return false;
       if (!fieldGroupMatchesKeyword(group, keyword)) return false;
       return true;
@@ -4702,15 +4699,18 @@ ${contextLine}`);
     const field = code ? getFieldDefinition(code, side) : null;
     const label = String(field?.label || field?.name || item?.label || code || item?.type || '項目');
     const type = String(field?.type || item?.type || '-');
-    const tone = group ? fieldStatusTone(group.status) : 'same';
+    const tone = group
+      ? (group.layoutDiffCount > 0 && group.status === 'unchanged' ? 'changed' : fieldStatusTone(group.status))
+      : 'same';
     const hasDiff = !!group && group.diffCount > 0;
-    return '<article class="lp-field lp-field--' + tone + (code && code === activeFieldCode ? ' is-active' : '') + '">' +
+    const hasLayoutDiff = !!group && group.layoutDiffCount > 0;
+    return '<article class="lp-field lp-field--' + tone + (hasLayoutDiff ? ' lp-field--layout-diff' : '') + (code && code === activeFieldCode ? ' is-active' : '') + '">' +
       '<div class="lp-field-top">' +
         '<strong class="lp-field-title">' + escHtml(label) + '</strong>' +
         (group ? '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' : '') +
       '</div>' +
       '<div class="lp-field-meta"><code>' + escHtml(code || '-') + '</code><span>' + escHtml(type) + '</span></div>' +
-      (group ? '<div class="fc-chip-row fc-chip-row--compact">' + renderFieldSummaryChips(group) + '</div>' : '') +
+      (group ? '<div class="fc-chip-row fc-chip-row--compact">' + renderFieldSummaryChips(group, { includeLayout: true }) + '</div>' : '') +
       (code ? '<div class="lp-field-actions"><button type="button" class="btn' + (hasDiff ? ' primary' : '') + '" data-field-select="' + escHtml(code) + '">' + escHtml(hasDiff ? '設定差分を開く' : '設定を開く') + '</button></div>' : '') +
     '</article>';
   }
@@ -5738,6 +5738,7 @@ ${contextLine}`);
     .lp-field--added{background:rgba(22,163,74,.06)}
     .lp-field--removed{background:rgba(220,38,38,.06)}
     .lp-field--changed{background:rgba(202,138,4,.08)}
+    .lp-field--layout-diff{box-shadow:inset 0 0 0 2px rgba(217,119,6,.28)}
     .lp-field-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
     .lp-field-title{font-size:13px;line-height:1.45;color:var(--fg)}
     .lp-field-meta{display:flex;flex-wrap:wrap;gap:8px 10px;font-size:10px;color:var(--muted)}
