@@ -3705,6 +3705,62 @@ ${contextLine}`);
     });
   }
 
+  function collapseFieldRowsForDiffTable(rows) {
+    const groups = new Map();
+    const passthrough = [];
+    (rows || []).forEach((row) => {
+      if (row.sectionKey !== FIELD_SECTION_KEY) {
+        passthrough.push(row);
+        return;
+      }
+      const info = extractFieldPathInfo(row.path);
+      if (!info?.rootPath) {
+        passthrough.push(row);
+        return;
+      }
+      if (!groups.has(info.rootPath)) groups.set(info.rootPath, []);
+      groups.get(info.rootPath).push(row);
+    });
+
+    const collapsed = [];
+    groups.forEach((bucket, rootPath) => {
+      if (!bucket.length) return;
+      const rootRow = bucket.find((row) => {
+        const info = extractFieldPathInfo(row.path);
+        return !!info && (info.isFieldRoot || info.isSubFieldRoot);
+      }) || bucket[0];
+      if (bucket.length === 1) {
+        collapsed.push(rootRow);
+        return;
+      }
+      const impactRefMap = new Map();
+      let impactCount = 0;
+      bucket.forEach((row) => {
+        impactCount = Math.max(impactCount, Number(row.impactCount || 0));
+        (row.impactRefs || []).forEach((ref) => {
+          const key = [ref.sectionKey || ref.section || '', ref.kind || '', ref.path || '', ref.label || ''].join('|');
+          if (!impactRefMap.has(key)) impactRefMap.set(key, ref);
+        });
+      });
+      const impactRefs = [...impactRefMap.values()];
+      impactCount = Math.max(impactCount, impactRefs.length);
+      const reasonSummary = 'フィールド単位に集約（設定差分 ' + bucket.length + '件）';
+      collapsed.push({
+        ...rootRow,
+        path: rootPath,
+        left: rootRow.left,
+        right: rootRow.right,
+        reasonSummary,
+        renameCandidate: bucket.find((row) => row.renameCandidate)?.renameCandidate || rootRow.renameCandidate || null,
+        impactCount,
+        impactRefs,
+        impactSummary: bucket.find((row) => row.impactSummary)?.impactSummary || rootRow.impactSummary || '',
+        __fieldRowCount: bucket.length
+      });
+    });
+    return [...passthrough, ...collapsed];
+  }
+
   function relativePathLabel(row) {
     const path = String(row?.path || '');
     const secKey = String(row?.sectionKey || '');
@@ -5182,11 +5238,12 @@ ${contextLine}`);
       sec.appendChild(head);
 
       if (!collapsedNow) {
+        const displayRows = g.key === FIELD_SECTION_KEY ? collapseFieldRowsForDiffTable(g.rows) : g.rows;
         const table = document.createElement('table');
         table.className = 'diff-table';
         table.innerHTML = '<thead><tr><th style="width:110px">種別</th><th style="width:260px">パス</th><th>比較元</th><th>比較先</th></tr></thead>';
         const tbody = document.createElement('tbody');
-        g.rows.forEach((row) => {
+        displayRows.forEach((row) => {
           const tr = document.createElement('tr');
           const typeLabel = diffTypeLabel(row.type, row.moved);
           const cells = renderRowCells(row, useCharDiff);
