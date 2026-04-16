@@ -363,6 +363,23 @@ function resolveDiffRowFieldTerms(row, sourceBundle, targetBundle) {
   return [...terms].filter(Boolean);
 }
 
+function resolveDiffRowTableContext(row, sourceBundle, targetBundle) {
+  const empty = { isTableField: false, tableCode: '', tableLabel: '' };
+  if (!row || row.sectionKey !== 'fieldSettings') return empty;
+  const info = extractFieldPathInfo(row.path);
+  if (!info || !info.isSubField) return empty;
+  const tableCode = String(info.rootCode || '').trim();
+  if (!tableCode) return empty;
+  const src = sourceBundle?.fieldSettings?.properties?.[tableCode];
+  const tgt = targetBundle?.fieldSettings?.properties?.[tableCode];
+  const tableLabel = String(tgt?.label || tgt?.name || src?.label || src?.name || tableCode).trim();
+  return {
+    isTableField: true,
+    tableCode,
+    tableLabel
+  };
+}
+
 export function diffRowMatchesFieldNameKeyword(row, keyword, sourceBundle, targetBundle) {
   if (!keyword) return true;
   const terms = resolveDiffRowFieldTerms(row, sourceBundle, targetBundle).join('\n').toLowerCase();
@@ -398,6 +415,13 @@ export function diffRowMatchesFilters(row, filters) {
     return false;
   }
   if (filters.severity && String(row.severity || 'low') !== filters.severity) return false;
+  const tableContext = resolveDiffRowTableContext(row, filters.sourceBundle, filters.targetBundle);
+  if (filters.tableFieldsOnly && !tableContext.isTableField) return false;
+  if (filters.tableKeyword) {
+    if (!tableContext.isTableField) return false;
+    const tableText = `${tableContext.tableCode}\n${tableContext.tableLabel}`.toLowerCase();
+    if (!tableText.includes(filters.tableKeyword)) return false;
+  }
   if (filters.favoritesOnly) {
     const p = String(row.path || '').trim();
     if (!state.diffFavoritePaths.has(p)) return false;
@@ -411,6 +435,8 @@ export function getCurrentDiffFilterState() {
     section: ui.diffFilterSection?.value || state.diffFilterSection || '',
     type: ui.diffFilterType?.value || state.diffFilterType || '',
     severity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || '',
+    tableFieldsOnly: !!ui.diffFilterTableOnly?.checked || !!state.diffFilterTableOnly,
+    tableKeyword: String(ui.diffFilterTableKeyword?.value || state.diffFilterTableKeyword || '').trim().toLowerCase(),
     searchByFieldName: !!ui.diffSearchFieldName?.checked || !!state.diffSearchFieldName,
     sourceBundle: state.lastSourceBundle,
     targetBundle: state.lastTargetBundle,
@@ -3738,12 +3764,13 @@ function formatDiffPathRich(row) {
       return label ? `${label} (${code})` : code;
     };
     const fieldLabel = fieldInfo.isSubField
-      ? `テーブル: ${formatFieldName(fieldInfo.rootCode, 'target') || formatFieldName(fieldInfo.rootCode, 'source') || fieldInfo.rootCode} / フィールド: ${formatFieldName(fieldInfo.subFieldCode, 'target') || formatFieldName(fieldInfo.subFieldCode, 'source') || fieldInfo.subFieldCode}`
-      : `フィールド: ${formatFieldName(fieldInfo.activeCode, 'target') || formatFieldName(fieldInfo.activeCode, 'source') || fieldInfo.activeCode}`;
+      ? `${formatFieldName(fieldInfo.rootCode, 'target') || formatFieldName(fieldInfo.rootCode, 'source') || fieldInfo.rootCode} > ${formatFieldName(fieldInfo.subFieldCode, 'target') || formatFieldName(fieldInfo.subFieldCode, 'source') || fieldInfo.subFieldCode}`
+      : `${formatFieldName(fieldInfo.activeCode, 'target') || formatFieldName(fieldInfo.activeCode, 'source') || fieldInfo.activeCode}`;
     const propLabel = fieldChangePropTitleFromInfo(fieldInfo, row);
     const propHtml = propLabel ? ` · ${esc(propLabel)}` : '';
     const rel = p.startsWith('fieldSettings.') ? p.slice('fieldSettings.'.length) : p;
-    return `<span class="diff-path-line"><strong>${esc(fieldLabel)}</strong>${propHtml}</span>` +
+    const prefix = fieldInfo.isSubField ? 'テーブル内フィールド' : 'フィールド';
+    return `<span class="diff-path-line diff-path-context"><strong>${esc(prefix)}: ${esc(fieldLabel)}</strong>${propHtml}</span>` +
       `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(rel)}</span></span>`;
   }
   return `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(p)}</span></span>`;

@@ -407,6 +407,8 @@ export function saveCurrentDialogState() {
     diffSearchFieldName: !!ui.diffSearchFieldName?.checked,
     diffFilterSection: ui.diffFilterSection?.value || state.diffFilterSection || '',
     diffFilterType: ui.diffFilterType?.value || '',
+    diffFilterTableOnly: !!ui.diffFilterTableOnly?.checked,
+    diffFilterTableKeyword: ui.diffFilterTableKeyword?.value?.trim?.() || '',
     diffIncludeSame: !!ui.diffIncludeSame?.checked,
     diffFilterSeverity: ui.diffFilterSeverity?.value || '',
     diffExportMode: ui.diffExportMode?.value || state.diffExportMode || 'all',
@@ -487,6 +489,10 @@ export function restoreDialogState() {
   if (saved.diffFilterSection != null) state.diffFilterSection = String(saved.diffFilterSection);
   if (saved.diffFilterType != null && ui.diffFilterType) ui.diffFilterType.value = String(saved.diffFilterType || '');
   if (saved.diffFilterSeverity != null && ui.diffFilterSeverity) ui.diffFilterSeverity.value = String(saved.diffFilterSeverity || '');
+  if (saved.diffFilterTableOnly != null && ui.diffFilterTableOnly) ui.diffFilterTableOnly.checked = !!saved.diffFilterTableOnly;
+  if (saved.diffFilterTableKeyword != null && ui.diffFilterTableKeyword) ui.diffFilterTableKeyword.value = String(saved.diffFilterTableKeyword || '');
+  state.diffFilterTableOnly = !!ui.diffFilterTableOnly?.checked;
+  state.diffFilterTableKeyword = String(ui.diffFilterTableKeyword?.value || '').trim();
   if (saved.diffExportMode != null && ui.diffExportMode) ui.diffExportMode.value = String(saved.diffExportMode || 'all');
   state.diffExportMode = ui.diffExportMode?.value || String(saved.diffExportMode || 'all');
   if (saved.diffExportContent != null && ui.diffExportContent) ui.diffExportContent.value = String(saved.diffExportContent || 'diffOnly');

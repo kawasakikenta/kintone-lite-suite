@@ -28,6 +28,8 @@ export const state = {
   diffFilterSection: '',
   diffFilterType: '',
   diffFilterSeverity: '',
+  diffFilterTableOnly: false,
+  diffFilterTableKeyword: '',
   diffSearchFieldName: false,
   diffExportMode: 'all',
   diffExportContent: 'diffOnly',

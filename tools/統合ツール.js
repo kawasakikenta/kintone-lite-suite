@@ -891,6 +891,8 @@ ${contextLine}`);
         diffFilterSection: "",
         diffFilterType: "",
         diffFilterSeverity: "",
+        diffFilterTableOnly: false,
+        diffFilterTableKeyword: "",
         diffSearchFieldName: false,
         diffExportMode: "all",
         diffExportContent: "diffOnly",
@@ -2838,6 +2840,22 @@ ${contextLine}`);
     });
     return [...terms].filter(Boolean);
   }
+  function resolveDiffRowTableContext(row, sourceBundle, targetBundle) {
+    const empty = { isTableField: false, tableCode: "", tableLabel: "" };
+    if (!row || row.sectionKey !== "fieldSettings") return empty;
+    const info = extractFieldPathInfo(row.path);
+    if (!info || !info.isSubField) return empty;
+    const tableCode = String(info.rootCode || "").trim();
+    if (!tableCode) return empty;
+    const src = sourceBundle?.fieldSettings?.properties?.[tableCode];
+    const tgt = targetBundle?.fieldSettings?.properties?.[tableCode];
+    const tableLabel = String(tgt?.label || tgt?.name || src?.label || src?.name || tableCode).trim();
+    return {
+      isTableField: true,
+      tableCode,
+      tableLabel
+    };
+  }
   function diffRowMatchesFieldNameKeyword(row, keyword, sourceBundle, targetBundle) {
     if (!keyword) return true;
     const terms = resolveDiffRowFieldTerms(row, sourceBundle, targetBundle).join("\n").toLowerCase();
@@ -2871,6 +2889,14 @@ ${contextLine}`);
       return false;
     }
     if (filters.severity && String(row.severity || "low") !== filters.severity) return false;
+    const tableContext = resolveDiffRowTableContext(row, filters.sourceBundle, filters.targetBundle);
+    if (filters.tableFieldsOnly && !tableContext.isTableField) return false;
+    if (filters.tableKeyword) {
+      if (!tableContext.isTableField) return false;
+      const tableText = `${tableContext.tableCode}
+${tableContext.tableLabel}`.toLowerCase();
+      if (!tableText.includes(filters.tableKeyword)) return false;
+    }
     if (filters.favoritesOnly) {
       const p = String(row.path || "").trim();
       if (!state.diffFavoritePaths.has(p)) return false;
@@ -2883,6 +2909,8 @@ ${contextLine}`);
       section: ui.diffFilterSection?.value || state.diffFilterSection || "",
       type: ui.diffFilterType?.value || state.diffFilterType || "",
       severity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || "",
+      tableFieldsOnly: !!ui.diffFilterTableOnly?.checked || !!state.diffFilterTableOnly,
+      tableKeyword: String(ui.diffFilterTableKeyword?.value || state.diffFilterTableKeyword || "").trim().toLowerCase(),
       searchByFieldName: !!ui.diffSearchFieldName?.checked || !!state.diffSearchFieldName,
       sourceBundle: state.lastSourceBundle,
       targetBundle: state.lastTargetBundle,
@@ -6114,11 +6142,12 @@ ${contextLine}`);
         const label = String(field?.label || field?.name || "").trim();
         return label ? `${label} (${code})` : code;
       };
-      const fieldLabel = fieldInfo.isSubField ? `テーブル: ${formatFieldName(fieldInfo.rootCode, "target") || formatFieldName(fieldInfo.rootCode, "source") || fieldInfo.rootCode} / フィールド: ${formatFieldName(fieldInfo.subFieldCode, "target") || formatFieldName(fieldInfo.subFieldCode, "source") || fieldInfo.subFieldCode}` : `フィールド: ${formatFieldName(fieldInfo.activeCode, "target") || formatFieldName(fieldInfo.activeCode, "source") || fieldInfo.activeCode}`;
+      const fieldLabel = fieldInfo.isSubField ? `${formatFieldName(fieldInfo.rootCode, "target") || formatFieldName(fieldInfo.rootCode, "source") || fieldInfo.rootCode} > ${formatFieldName(fieldInfo.subFieldCode, "target") || formatFieldName(fieldInfo.subFieldCode, "source") || fieldInfo.subFieldCode}` : `${formatFieldName(fieldInfo.activeCode, "target") || formatFieldName(fieldInfo.activeCode, "source") || fieldInfo.activeCode}`;
       const propLabel = fieldChangePropTitleFromInfo(fieldInfo, row);
       const propHtml = propLabel ? ` · ${esc(propLabel)}` : "";
       const rel = p.startsWith("fieldSettings.") ? p.slice("fieldSettings.".length) : p;
-      return `<span class="diff-path-line"><strong>${esc(fieldLabel)}</strong>${propHtml}</span><span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(rel)}</span></span>`;
+      const prefix = fieldInfo.isSubField ? "テーブル内フィールド" : "フィールド";
+      return `<span class="diff-path-line diff-path-context"><strong>${esc(prefix)}: ${esc(fieldLabel)}</strong>${propHtml}</span><span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(rel)}</span></span>`;
     }
     return `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(p)}</span></span>`;
   }
@@ -10351,6 +10380,8 @@ ${contextLine}`);
       diffSearchFieldName: !!ui.diffSearchFieldName?.checked,
       diffFilterSection: ui.diffFilterSection?.value || state.diffFilterSection || "",
       diffFilterType: ui.diffFilterType?.value || "",
+      diffFilterTableOnly: !!ui.diffFilterTableOnly?.checked,
+      diffFilterTableKeyword: ui.diffFilterTableKeyword?.value?.trim?.() || "",
       diffIncludeSame: !!ui.diffIncludeSame?.checked,
       diffFilterSeverity: ui.diffFilterSeverity?.value || "",
       diffExportMode: ui.diffExportMode?.value || state.diffExportMode || "all",
@@ -10430,6 +10461,10 @@ ${contextLine}`);
     if (saved.diffFilterSection != null) state.diffFilterSection = String(saved.diffFilterSection);
     if (saved.diffFilterType != null && ui.diffFilterType) ui.diffFilterType.value = String(saved.diffFilterType || "");
     if (saved.diffFilterSeverity != null && ui.diffFilterSeverity) ui.diffFilterSeverity.value = String(saved.diffFilterSeverity || "");
+    if (saved.diffFilterTableOnly != null && ui.diffFilterTableOnly) ui.diffFilterTableOnly.checked = !!saved.diffFilterTableOnly;
+    if (saved.diffFilterTableKeyword != null && ui.diffFilterTableKeyword) ui.diffFilterTableKeyword.value = String(saved.diffFilterTableKeyword || "");
+    state.diffFilterTableOnly = !!ui.diffFilterTableOnly?.checked;
+    state.diffFilterTableKeyword = String(ui.diffFilterTableKeyword?.value || "").trim();
     if (saved.diffExportMode != null && ui.diffExportMode) ui.diffExportMode.value = String(saved.diffExportMode || "all");
     state.diffExportMode = ui.diffExportMode?.value || String(saved.diffExportMode || "all");
     if (saved.diffExportContent != null && ui.diffExportContent) ui.diffExportContent.value = String(saved.diffExportContent || "diffOnly");
@@ -11302,6 +11337,7 @@ ${contextLine}`);
 #kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-title,#kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-side-title{color:#dbeafe}
 #kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-side-body{color:#94a3b8}
 #kintone-unified-suite-v2 .diff-view .diff-path-cell .diff-path-line{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+#kintone-unified-suite-v2 .diff-view .diff-path-cell .diff-path-line.diff-path-context{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-weight:600;word-break:break-word}
 #kintone-unified-suite-v2 .diff-view .diff-path-prefix{opacity:.75}
 #kintone-unified-suite-v2 .diff-view .diff-path-sep{margin:0 2px;opacity:.55}
 #kintone-unified-suite-v2 .diff-view .diff-path-tail{font-weight:600}
@@ -13765,7 +13801,8 @@ ${contextLine}`);
 \0
 \0}\0
 \0
-\0`;
+\0
+`;
 
   // src/ui/template.js
   init_constants();
@@ -14119,6 +14156,10 @@ ${contextLine}`);
                       <option value="medium">中</option>
                       <option value="low">低</option>
                     </select>
+                  </div>
+                  <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:6px">
+                    <label class="chip" title="テーブル内フィールドの差分のみ表示します"><input type="checkbox" id="u_diffFilterTableOnly"> テーブル内フィールドのみ</label>
+                    <input type="text" id="u_diffFilterTableKeyword" placeholder="テーブル名 / コードで絞り込み" title="フィールド設定のうちテーブル内フィールドを、親テーブル名またはコードで絞り込みます">
                   </div>
                   <div class="diff-active-filters" id="u_diffActiveFilters" aria-live="polite"></div>
                   <div class="btns" style="margin-top:6px">
@@ -18252,9 +18293,12 @@ ${contextLine}`);
       const type = String(ui.diffFilterType?.selectedOptions?.[0]?.textContent || "").trim();
       const severity = String(ui.diffFilterSeverity?.selectedOptions?.[0]?.textContent || "").trim();
       const search = String(ui.diffSearch?.value || "").trim();
+      const tableKeyword = String(ui.diffFilterTableKeyword?.value || "").trim();
       if (ui.diffFilterSection?.value) chips.push(`<span class="chip chip-active-filter">セクション: ${esc(section)}</span>`);
       if (ui.diffFilterType?.value) chips.push(`<span class="chip chip-active-filter">種別: ${esc(type)}</span>`);
       if (ui.diffFilterSeverity?.value) chips.push(`<span class="chip chip-active-filter">重要度: ${esc(severity)}</span>`);
+      if (ui.diffFilterTableOnly?.checked) chips.push('<span class="chip chip-active-filter">テーブル内フィールドのみ</span>');
+      if (tableKeyword) chips.push(`<span class="chip chip-active-filter">テーブル: ${esc(tableKeyword)}</span>`);
       if (search) chips.push(`<span class="chip chip-active-filter">検索: ${esc(search)}</span>`);
       ui.diffActiveFilters.innerHTML = chips.length ? chips.join("") : '<span class="muted">差分フィルタは未適用です</span>';
     }
@@ -18466,18 +18510,30 @@ ${contextLine}`);
     if (ui.diffMultiTargets) {
       ui.diffMultiTargets.addEventListener("input", saveCurrentDialogState2);
     }
-    [ui.diffFilterSection, ui.diffFilterType, ui.diffFilterSeverity].forEach((el) => {
+    [ui.diffFilterSection, ui.diffFilterType, ui.diffFilterSeverity, ui.diffFilterTableOnly].forEach((el) => {
       if (!el) return;
       el.addEventListener("change", () => {
         state.diffFilterSection = ui.diffFilterSection?.value || "";
         state.diffFilterType = ui.diffFilterType?.value || "";
         state.diffFilterSeverity = ui.diffFilterSeverity?.value || "";
+        state.diffFilterTableOnly = !!ui.diffFilterTableOnly?.checked;
+        state.diffFilterTableKeyword = String(ui.diffFilterTableKeyword?.value || "").trim();
         saveCurrentDialogState2();
         renderDiffActiveFilters();
         if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
         else renderDiffSelectionState();
       });
     });
+    if (ui.diffFilterTableKeyword) {
+      ui.diffFilterTableKeyword.addEventListener("input", () => {
+        state.diffFilterTableOnly = !!ui.diffFilterTableOnly?.checked;
+        state.diffFilterTableKeyword = String(ui.diffFilterTableKeyword.value || "").trim();
+        saveCurrentDialogState2();
+        renderDiffActiveFilters();
+        if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+        else renderDiffSelectionState();
+      });
+    }
     if (ui.diffExportMode) {
       ui.diffExportMode.addEventListener("change", () => {
         state.diffExportMode = ui.diffExportMode.value || "all";
@@ -18942,10 +18998,14 @@ ${contextLine}`);
         if (ui.diffFilterSection) ui.diffFilterSection.value = "";
         if (ui.diffFilterType) ui.diffFilterType.value = "";
         if (ui.diffFilterSeverity) ui.diffFilterSeverity.value = "";
+        if (ui.diffFilterTableOnly) ui.diffFilterTableOnly.checked = false;
+        if (ui.diffFilterTableKeyword) ui.diffFilterTableKeyword.value = "";
         if (ui.diffSearch) ui.diffSearch.value = "";
         state.diffFilterSection = "";
         state.diffFilterType = "";
         state.diffFilterSeverity = "";
+        state.diffFilterTableOnly = false;
+        state.diffFilterTableKeyword = "";
         if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
         renderDiffActiveFilters();
         saveCurrentDialogState2();
@@ -24981,6 +25041,8 @@ ${field.label}` : code,
       diffFilterSection: $("#u_diffFilterSection"),
       diffFilterType: $("#u_diffFilterType"),
       diffFilterSeverity: $("#u_diffFilterSeverity"),
+      diffFilterTableOnly: $("#u_diffFilterTableOnly"),
+      diffFilterTableKeyword: $("#u_diffFilterTableKeyword"),
       diffActiveFilters: $("#u_diffActiveFilters"),
       diffExportMode: $("#u_diffExportMode"),
       diffExportContent: $("#u_diffExportContent"),

@@ -385,9 +385,12 @@ export function setupEventHandlers(injected = {}) {
     const type = String(ui.diffFilterType?.selectedOptions?.[0]?.textContent || '').trim();
     const severity = String(ui.diffFilterSeverity?.selectedOptions?.[0]?.textContent || '').trim();
     const search = String(ui.diffSearch?.value || '').trim();
+    const tableKeyword = String(ui.diffFilterTableKeyword?.value || '').trim();
     if (ui.diffFilterSection?.value) chips.push(`<span class="chip chip-active-filter">セクション: ${esc(section)}</span>`);
     if (ui.diffFilterType?.value) chips.push(`<span class="chip chip-active-filter">種別: ${esc(type)}</span>`);
     if (ui.diffFilterSeverity?.value) chips.push(`<span class="chip chip-active-filter">重要度: ${esc(severity)}</span>`);
+    if (ui.diffFilterTableOnly?.checked) chips.push('<span class="chip chip-active-filter">テーブル内フィールドのみ</span>');
+    if (tableKeyword) chips.push(`<span class="chip chip-active-filter">テーブル: ${esc(tableKeyword)}</span>`);
     if (search) chips.push(`<span class="chip chip-active-filter">検索: ${esc(search)}</span>`);
     ui.diffActiveFilters.innerHTML = chips.length ? chips.join('') : '<span class="muted">差分フィルタは未適用です</span>';
   }
@@ -622,18 +625,31 @@ export function setupEventHandlers(injected = {}) {
     ui.diffMultiTargets.addEventListener('input', saveCurrentDialogState);
   }
 
-  [ui.diffFilterSection, ui.diffFilterType, ui.diffFilterSeverity].forEach((el) => {
+  [ui.diffFilterSection, ui.diffFilterType, ui.diffFilterSeverity, ui.diffFilterTableOnly].forEach((el) => {
     if (!el) return;
     el.addEventListener('change', () => {
       state.diffFilterSection = ui.diffFilterSection?.value || '';
       state.diffFilterType = ui.diffFilterType?.value || '';
       state.diffFilterSeverity = ui.diffFilterSeverity?.value || '';
+      state.diffFilterTableOnly = !!ui.diffFilterTableOnly?.checked;
+      state.diffFilterTableKeyword = String(ui.diffFilterTableKeyword?.value || '').trim();
       saveCurrentDialogState();
       renderDiffActiveFilters();
       if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
       else renderDiffSelectionState();
     });
   });
+
+  if (ui.diffFilterTableKeyword) {
+    ui.diffFilterTableKeyword.addEventListener('input', () => {
+      state.diffFilterTableOnly = !!ui.diffFilterTableOnly?.checked;
+      state.diffFilterTableKeyword = String(ui.diffFilterTableKeyword.value || '').trim();
+      saveCurrentDialogState();
+      renderDiffActiveFilters();
+      if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+      else renderDiffSelectionState();
+    });
+  }
 
   if (ui.diffExportMode) {
     ui.diffExportMode.addEventListener('change', () => {
@@ -1168,10 +1184,14 @@ export function setupEventHandlers(injected = {}) {
       if (ui.diffFilterSection) ui.diffFilterSection.value = '';
       if (ui.diffFilterType) ui.diffFilterType.value = '';
       if (ui.diffFilterSeverity) ui.diffFilterSeverity.value = '';
+      if (ui.diffFilterTableOnly) ui.diffFilterTableOnly.checked = false;
+      if (ui.diffFilterTableKeyword) ui.diffFilterTableKeyword.value = '';
       if (ui.diffSearch) ui.diffSearch.value = '';
       state.diffFilterSection = '';
       state.diffFilterType = '';
       state.diffFilterSeverity = '';
+      state.diffFilterTableOnly = false;
+      state.diffFilterTableKeyword = '';
       if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
       renderDiffActiveFilters();
       saveCurrentDialogState();
