@@ -37,6 +37,45 @@ export function shouldIncludeComparedContent(mode) {
   return mode === 'withCompared';
 }
 
+const FIELD_CHANGE_PROP_LABELS = {
+  label: 'フィールド名',
+  noLabel: 'フィールド名を表示しない',
+  required: '必須項目にする',
+  unique: '値の重複を禁止する',
+  hideExpression: '計算式を表示しない',
+  maxLength: '文字数の上限',
+  minLength: '文字数の下限',
+  maxValue: '入力値の上限',
+  minValue: '入力値の下限',
+  defaultValue: '初期値',
+  defaultNowValue: '現在日時を初期値にする',
+  code: 'フィールドコード',
+  options: '項目と順番',
+  align: '並び',
+  displayScale: '小数点以下の表示桁数',
+  digit: '桁区切りを表示する',
+  unit: '単位',
+  unitPosition: '単位の位置',
+  protocol: 'リンクの種類',
+  expression: '計算式',
+  thumbnailSize: '画像サイズ',
+  referenceTable: '関連レコード一覧設定',
+  lookup: 'ルックアップ設定',
+  fields: 'テーブル内の項目'
+};
+
+function fieldChangePropTitleFromInfo(info, row) {
+  if (!info) return row.path || '-';
+  if (info.isFieldRoot || info.isSubFieldRoot) return '';
+  if (!info.tailTokens.length) return row.path || '-';
+  if (FIELD_CHANGE_PROP_LABELS[info.leafKey]) return FIELD_CHANGE_PROP_LABELS[info.leafKey];
+  if (String(row?.path || '').includes('.lookup.')) return 'ルックアップ設定';
+  if (String(row?.path || '').includes('.referenceTable.')) return '関連レコード一覧設定';
+  if (String(row?.path || '').includes('.options.')) return '項目と順番';
+  if (String(row?.path || '').includes('.fields.')) return 'テーブル内の項目';
+  return info.tailTokens.map((t) => (typeof t === 'number' ? '[' + t + ']' : String(t))).join('.');
+}
+
 // ---------------------------------------------------------------------------
 // Line-level & char-level diff algorithms (in-panel rendering)
 // ---------------------------------------------------------------------------
@@ -3701,7 +3740,7 @@ function formatDiffPathRich(row) {
     const fieldLabel = fieldInfo.isSubField
       ? `テーブル: ${formatFieldName(fieldInfo.rootCode, 'target') || formatFieldName(fieldInfo.rootCode, 'source') || fieldInfo.rootCode} / フィールド: ${formatFieldName(fieldInfo.subFieldCode, 'target') || formatFieldName(fieldInfo.subFieldCode, 'source') || fieldInfo.subFieldCode}`
       : `フィールド: ${formatFieldName(fieldInfo.activeCode, 'target') || formatFieldName(fieldInfo.activeCode, 'source') || fieldInfo.activeCode}`;
-    const propLabel = fieldChangePropTitle(fieldInfo, row);
+    const propLabel = fieldChangePropTitleFromInfo(fieldInfo, row);
     const propHtml = propLabel ? ` · ${esc(propLabel)}` : '';
     const rel = p.startsWith('fieldSettings.') ? p.slice('fieldSettings.'.length) : p;
     return `<span class="diff-path-line"><strong>${esc(fieldLabel)}</strong>${propHtml}</span>` +
