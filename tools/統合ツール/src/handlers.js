@@ -37,6 +37,7 @@ import {
   setSettingsExportScopeSelection,
   syncApplyScopesFromSidebar,
   updateConnectionStepIndicators,
+  setConnectionPanelCollapsed,
   openScopePicker,
   closeScopePicker,
   openFeatureScreen,
@@ -1205,6 +1206,12 @@ export function setupEventHandlers(injected = {}) {
       applyLauncherFilter();
       saveCurrentDialogState();
       setStatus('機能を選んでください');
+      return;
+    }
+    if (act === 'toggleConnectionPanel') {
+      const panel = ui.connectionPanel;
+      if (!panel) return;
+      setConnectionPanelCollapsed(!panel.classList.contains('is-collapsed'));
       return;
     }
     if (act === 'copyToolInfo') {

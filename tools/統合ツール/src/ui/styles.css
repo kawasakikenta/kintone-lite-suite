@@ -1976,6 +1976,67 @@
 #kintone-unified-suite-v2 .req{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:800;vertical-align:middle}
 #kintone-unified-suite-v2 .diff-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-height:26px;align-items:center}
 #kintone-unified-suite-v2 .input-invalid{border-color:#ef4444!important;background:#fef2f2!important}
+
+/* ========== Feature screen: compact header + collapsible connection panel ========== */
+#kintone-unified-suite-v2 .h-title-feature{gap:12px}
+#kintone-unified-suite-v2 .h-title-feature-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+#kintone-unified-suite-v2.screen-feature .h{padding:10px 16px}
+#kintone-unified-suite-v2.screen-feature .ht{font-size:14px;line-height:1.25}
+#kintone-unified-suite-v2.screen-feature .feature-breadcrumb{font-size:11px;opacity:.75;margin-top:0}
+#kintone-unified-suite-v2 .feature-conn[hidden]{display:none !important}
+
+/* Banner: layout with summary + toggle */
+#kintone-unified-suite-v2 .connection-step-banner--step1{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+}
+#kintone-unified-suite-v2 .connection-step-banner-main{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;flex:1;
+}
+#kintone-unified-suite-v2 .connection-toggle-btn{
+  border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:999px;
+  padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;
+  transition:background .15s,border-color .15s;
+}
+#kintone-unified-suite-v2 .connection-toggle-btn:hover{background:#f1f5f9;border-color:#94a3b8}
+#kintone-unified-suite-v2 .connection-toggle-btn:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+
+/* Inline connection summary (shown next to Step 1 banner) */
+#kintone-unified-suite-v2 .connection-summary-inline{
+  display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;
+  font-size:12px;color:#334155;line-height:1.55;
+}
+#kintone-unified-suite-v2 .connection-summary-inline .cs-label{
+  font-size:10px;font-weight:700;color:#64748b;letter-spacing:.04em;
+  padding:1px 6px;border-radius:4px;background:#e2e8f0;
+}
+#kintone-unified-suite-v2 .connection-summary-inline .cs-id{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;color:#0f172a;
+}
+#kintone-unified-suite-v2 .connection-summary-inline .cs-guest{
+  font-size:10px;color:#64748b;margin-left:2px;
+}
+#kintone-unified-suite-v2 .connection-summary-inline .cs-arrow{
+  color:#94a3b8;font-weight:700;padding:0 2px;
+}
+#kintone-unified-suite-v2 .connection-summary-inline .cs-empty{
+  font-size:11px;color:#b91c1c;font-style:italic;
+}
+
+/* Show/hide the body & summary based on collapsed state (feature screen) */
+#kintone-unified-suite-v2.screen-launcher .connection-summary-inline{display:none}
+#kintone-unified-suite-v2.screen-launcher .connection-toggle-btn{display:none}
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel.is-collapsed .connection-step1-body{display:none}
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel.is-collapsed .connection-section--step1{
+  padding-bottom:2px;
+}
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel .connection-section--step1{
+  margin-top:0;padding-top:0;border-top:none;
+}
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel{padding:10px 14px}
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel.is-collapsed{padding:8px 14px}
+#kintone-unified-suite-v2.screen-feature .common-card{
+  position:sticky;top:0;z-index:20;
+}
  
      f o n t - w e i g h t : 8 0 0 ;  
  }  
