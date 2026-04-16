@@ -2618,8 +2618,20 @@ ${contextLine}`);
     return ops;
   }
   function buildCharDiffHtml(leftText, rightText) {
-    const a = [...String(leftText || "")];
-    const b = [...String(rightText || "")];
+    const segmentGraphemes = (text) => {
+      const normalized = String(text ?? "");
+      if (!normalized) return [];
+      if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+        try {
+          const segmenter = new Intl.Segmenter("ja", { granularity: "grapheme" });
+          return Array.from(segmenter.segment(normalized), (seg) => seg.segment);
+        } catch (_) {
+        }
+      }
+      return Array.from(normalized);
+    };
+    const a = segmentGraphemes(leftText);
+    const b = segmentGraphemes(rightText);
     if (!a.length || !b.length) return null;
     if (a.length * b.length > CHAR_DIFF_MAX_CELLS) return null;
     const dp = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
@@ -6073,7 +6085,25 @@ ${contextLine}`);
     if (p === "-") return esc(p);
     const fieldInfo = extractFieldPathInfo(row?.path);
     if (fieldInfo) {
-      const fieldLabel = fieldInfo.isSubField ? `テーブル: ${fieldInfo.rootCode} / フィールド: ${fieldInfo.subFieldCode}` : `フィールド: ${fieldInfo.activeCode}`;
+      const readFieldDef = (code, side) => {
+        if (!code) return null;
+        const bundle = side === "target" ? state.lastTargetBundle : state.lastSourceBundle;
+        return bundle?.fieldSettings?.properties?.[code] || null;
+      };
+      const readSubFieldDef = (tableCode, subFieldCode, side) => {
+        const table = readFieldDef(tableCode, side);
+        return table?.fields?.[subFieldCode] || null;
+      };
+      const pickRowFieldDef = (side) => {
+        if (!fieldInfo.isSubField) return readFieldDef(fieldInfo.rootCode, side);
+        return readSubFieldDef(fieldInfo.rootCode, fieldInfo.subFieldCode, side);
+      };
+      const formatFieldName = (code, side) => {
+        const field = pickRowFieldDef(side);
+        const label = String(field?.label || field?.name || "").trim();
+        return label ? `${label} (${code})` : code;
+      };
+      const fieldLabel = fieldInfo.isSubField ? `テーブル: ${formatFieldName(fieldInfo.rootCode, "target") || formatFieldName(fieldInfo.rootCode, "source") || fieldInfo.rootCode} / フィールド: ${formatFieldName(fieldInfo.subFieldCode, "target") || formatFieldName(fieldInfo.subFieldCode, "source") || fieldInfo.subFieldCode}` : `フィールド: ${formatFieldName(fieldInfo.activeCode, "target") || formatFieldName(fieldInfo.activeCode, "source") || fieldInfo.activeCode}`;
       const propLabel = fieldChangePropTitle(fieldInfo, row);
       const propHtml = propLabel ? ` · ${esc(propLabel)}` : "";
       const rel = p.startsWith("fieldSettings.") ? p.slice("fieldSettings.".length) : p;
