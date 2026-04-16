@@ -151,6 +151,8 @@ export function runKintoneUnifiedSuite(options = {}) {
     diffFilterSection: $('#u_diffFilterSection'),
     diffFilterType: $('#u_diffFilterType'),
     diffFilterSeverity: $('#u_diffFilterSeverity'),
+    diffFilterTableOnly: $('#u_diffFilterTableOnly'),
+    diffFilterTableKeyword: $('#u_diffFilterTableKeyword'),
     diffActiveFilters: $('#u_diffActiveFilters'),
     diffExportMode: $('#u_diffExportMode'),
     diffExportContent: $('#u_diffExportContent'),

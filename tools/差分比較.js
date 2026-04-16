@@ -593,6 +593,8 @@ ${contextLine}`);
         diffFilterSection: "",
         diffFilterType: "",
         diffFilterSeverity: "",
+        diffFilterTableOnly: false,
+        diffFilterTableKeyword: "",
         diffSearchFieldName: false,
         diffExportMode: "all",
         diffExportContent: "diffOnly",

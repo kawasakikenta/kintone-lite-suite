@@ -159,6 +159,7 @@
 #kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-title,#kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-side-title{color:#dbeafe}
 #kintone-unified-suite-v2 .diff-view.dark .diff-view-overview-side-body{color:#94a3b8}
 #kintone-unified-suite-v2 .diff-view .diff-path-cell .diff-path-line{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+#kintone-unified-suite-v2 .diff-view .diff-path-cell .diff-path-line.diff-path-context{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-weight:600;word-break:break-word}
 #kintone-unified-suite-v2 .diff-view .diff-path-prefix{opacity:.75}
 #kintone-unified-suite-v2 .diff-view .diff-path-sep{margin:0 2px;opacity:.55}
 #kintone-unified-suite-v2 .diff-view .diff-path-tail{font-weight:600}
@@ -1973,7 +1974,7 @@
 #kintone-unified-suite-v2 .req{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:800;vertical-align:middle}
 #kintone-unified-suite-v2 .diff-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-height:26px;align-items:center}
 #kintone-unified-suite-v2 .input-invalid{border-color:#ef4444!important;background:#fef2f2!important}
-#kintone-unified-suite-v2 .input-invalid:focus-visible{outline-color:#ef4444!important}
+ 
      f o n t - w e i g h t : 8 0 0 ;  
  }  
  # k i n t o n e - u n i f i e d - s u i t e - v 2   . n o t i f - f l o w - t a r g e t s {  

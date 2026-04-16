@@ -362,6 +362,10 @@ export function buildRoot(targetDocument = document, options = {}) {
                       <option value="low">低</option>
                     </select>
                   </div>
+                  <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:6px">
+                    <label class="chip" title="テーブル内フィールドの差分のみ表示します"><input type="checkbox" id="u_diffFilterTableOnly"> テーブル内フィールドのみ</label>
+                    <input type="text" id="u_diffFilterTableKeyword" placeholder="テーブル名 / コードで絞り込み" title="フィールド設定のうちテーブル内フィールドを、親テーブル名またはコードで絞り込みます">
+                  </div>
                   <div class="diff-active-filters" id="u_diffActiveFilters" aria-live="polite"></div>
                   <div class="btns" style="margin-top:6px">
                     <button type="button" class="btn sub" data-act="clearDiffFilters">差分フィルタをクリア</button>
