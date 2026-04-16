@@ -2572,6 +2572,60 @@ ${contextLine}`);
     const out = JSON.stringify(value, null, 2);
     return out == null ? String(value) : out;
   }
+  function isSubtableFieldMap(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const entries = Object.values(value);
+    if (!entries.length) return false;
+    return entries.every((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+      return "code" in item || "type" in item || "label" in item;
+    });
+  }
+  function formatSubtableChildLine(child, idx) {
+    const label = child?.label ?? child?.name ?? child?.code ?? "（未設定）";
+    const typeLabel = child?.type ? String(child.type) : "フィールド";
+    const code = child?.code ?? "-";
+    return `${idx + 1}. ${label} / ${typeLabel} / ${code}`;
+  }
+  function formatSubtableChildrenText(fields) {
+    const entries = Object.values(fields || {});
+    if (!entries.length) return "（項目なし）";
+    return entries.map(formatSubtableChildLine).join("\n");
+  }
+  function formatSubtableSnapshotText(value) {
+    const head = [
+      `フィールド名: ${value.label ?? value.name ?? "（未設定）"}`,
+      `フィールドコード: ${value.code ?? "-"}`,
+      "フィールド型: テーブル (SUBTABLE)"
+    ];
+    return `${head.join("\n")}
+----
+テーブル内の項目:
+${formatSubtableChildrenText(value.fields)}`;
+  }
+  function isSubtableFieldsPath(path) {
+    return typeof path === "string" && /^fieldSettings\.properties\.[^.[\]]+\.fields(?:\.[^.[\]]+)?$/.test(path);
+  }
+  function isSubtableFieldRootPath(path) {
+    return typeof path === "string" && /^fieldSettings\.properties\.[^.[\]]+$/.test(path);
+  }
+  function stringifyRowValueForDiff(value, path) {
+    if (value === void 0) return "（未定義）";
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      if (value.type === "SUBTABLE" && value.fields && typeof value.fields === "object") {
+        return formatSubtableSnapshotText(value);
+      }
+      if (isSubtableFieldsPath(path) && isSubtableFieldMap(value)) {
+        return `テーブル内の項目:
+${formatSubtableChildrenText(value)}`;
+      }
+      if (isSubtableFieldRootPath(path) && isSubtableFieldMap(value)) {
+        return `テーブル内の項目:
+${formatSubtableChildrenText(value)}`;
+      }
+    }
+    return stringifyForDiff(value);
+  }
   function getDiffExportContentLabel(mode) {
     return mode === "withCompared" ? "差分 + 比較設定" : "差分のみ";
   }
@@ -2688,8 +2742,8 @@ ${contextLine}`);
     return { left, right };
   }
   function renderChangedColumns(row, useCharDiff) {
-    const leftText = stringifyForDiff(row.left);
-    const rightText = stringifyForDiff(row.right);
+    const leftText = stringifyRowValueForDiff(row.left, row.path);
+    const rightText = stringifyRowValueForDiff(row.right, row.path);
     const leftLines = leftText.split("\n");
     const rightLines = rightText.split("\n");
     const ops = buildLineDiffOps(leftLines, rightLines);
@@ -2737,19 +2791,19 @@ ${contextLine}`);
   function renderRowColumns(row, useCharDiff) {
     if (row.type === "same") {
       return {
-        left: `<pre class="diff-pre" style="color:var(--dv-sub);font-style:italic">${esc(stringifyForDiff(row.left))}</pre>`,
+        left: `<pre class="diff-pre" style="color:var(--dv-sub);font-style:italic">${esc(stringifyRowValueForDiff(row.left, row.path))}</pre>`,
         right: '<pre class="diff-pre" style="color:var(--dv-sub);font-style:italic">（同一）</pre>'
       };
     }
     if (row.type === "added") {
       return {
         left: '<pre class="diff-pre empty">（なし）</pre>',
-        right: `<pre class="diff-pre add">${esc(stringifyForDiff(row.right))}</pre>`
+        right: `<pre class="diff-pre add">${esc(stringifyRowValueForDiff(row.right, row.path))}</pre>`
       };
     }
     if (row.type === "removed") {
       return {
-        left: `<pre class="diff-pre del">${esc(stringifyForDiff(row.left))}</pre>`,
+        left: `<pre class="diff-pre del">${esc(stringifyRowValueForDiff(row.left, row.path))}</pre>`,
         right: '<pre class="diff-pre empty">（なし）</pre>'
       };
     }
@@ -13803,8 +13857,7 @@ ${tableContext.tableLabel}`.toLowerCase();
 \0
 \0}\0
 \0
-\0
-`;
+\0`;
 
   // src/ui/template.js
   init_constants();
