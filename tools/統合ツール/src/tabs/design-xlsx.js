@@ -164,7 +164,7 @@ export async function runAdvancedDesignExporter(params = {}) {
         { key: 'fields', label: '項目定義', default: true },
         { key: 'layout', label: 'フォームレイアウト', default: true },
         { key: 'views', label: '一覧', default: true },
-        { key: 'reports', label: 'レポート', default: true },
+        { key: 'reports', label: 'グラフ', default: true },
         { key: 'status', label: 'プロセス管理', default: true },
         { key: 'statusMatrix', label: '遷移マトリクス', default: true },
         { key: 'appAcl', label: 'アプリ権限', default: true },

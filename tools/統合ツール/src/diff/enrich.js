@@ -482,8 +482,8 @@ export function buildDiffReasonSummary(row) {
     return row.type === 'added' ? 'ビュー追加' : (row.type === 'removed' ? 'ビュー削除' : 'ビュー設定変更');
   }
   if (sectionKey === 'reportSettings') {
-    if (String(row.path || '').includes('filterCond')) return 'レポート条件変更';
-    return row.type === 'added' ? 'レポート追加' : (row.type === 'removed' ? 'レポート削除' : 'レポート設定変更');
+    if (String(row.path || '').includes('filterCond')) return 'グラフ条件変更';
+    return row.type === 'added' ? 'グラフ追加' : (row.type === 'removed' ? 'グラフ削除' : 'グラフ設定変更');
   }
   if (sectionKey === 'processSettings') {
     if (String(row.path || '').includes('.states.')) return row.type === 'added' ? 'ステータス追加' : (row.type === 'removed' ? 'ステータス削除' : 'ステータス設定変更');
