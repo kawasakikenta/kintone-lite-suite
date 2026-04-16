@@ -11,7 +11,7 @@ const SCOPE_OPTS = [
   ['fieldSettings', 'フィールド', true],
   ['layoutSettings', 'レイアウト', true],
   ['viewSettings', 'ビュー', true],
-  ['reportSettings', 'レポート', false],
+  ['reportSettings', 'グラフ', false],
   ['processSettings', 'プロセス', true],
   ['appSettings', 'アプリ設定', false],
   ['formSettings', 'フォーム', false],
