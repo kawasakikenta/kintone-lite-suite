@@ -491,7 +491,7 @@ export function summarizeRows(rows) {
 }
 
 export function getActualDiffRows(rows) {
-  return (rows || []).filter((row) => row && row.type !== 'same');
+  return (rows || []).filter((row) => row && row.type !== 'same' && !row._displayOnly);
 }
 
 export function countActualDiffRows(rows) {
@@ -571,4 +571,64 @@ export function getActiveDiffNormalizationLabels(presetState) {
   return Object.keys(DIFF_NORMALIZATION_PRESETS)
     .filter((key) => !!stateMap[key])
     .map((key) => DIFF_NORMALIZATION_PRESETS[key].label);
+}
+
+// ---------------------------------------------------------------------------
+// Subtable row expansion (display-only)
+// テーブル（SUBTABLE）がまるごと追加/削除された場合、エンジンは親1行だけを
+// 出力する。差分一覧の見通しを良くするため、表示前に「テーブル内フィールド」
+// 単位の行に展開する。展開された行には _displayOnly フラグを付与し、
+// 反映・適用系の処理（getActualDiffRows 等）からは除外する運用とする。
+// ---------------------------------------------------------------------------
+const SUBTABLE_ROOT_PATH_RE = /^fieldSettings\.properties\.([^.[\]]+)$/;
+
+export function expandSubtableRowsForDisplay(rows) {
+  if (!Array.isArray(rows) || !rows.length) return rows || [];
+  const out = [];
+  rows.forEach((row, idx) => {
+    out.push(row);
+    if (!row || row._displayOnly) return;
+    if (row.sectionKey !== 'fieldSettings') return;
+    const isAdded = row.type === 'added';
+    const isRemoved = row.type === 'removed';
+    if (!isAdded && !isRemoved) return;
+    const pathMatch = SUBTABLE_ROOT_PATH_RE.exec(String(row.path || ''));
+    if (!pathMatch) return;
+    const payload = isAdded ? row.right : row.left;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+    if (payload.type !== 'SUBTABLE') return;
+    const inner = payload.fields;
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) return;
+    const tableLabel = String(payload.label || payload.name || pathMatch[1]);
+    const parentId = row._id || `d${idx}`;
+    let childIdx = 0;
+    Object.keys(inner).forEach((code) => {
+      const field = inner[code];
+      if (!field || typeof field !== 'object' || Array.isArray(field)) return;
+      const childPath = `${row.path}.fields.${code}`;
+      const childLabel = String(field.label || field.name || field.code || code);
+      const reason = isAdded
+        ? `テーブル「${tableLabel}」内のフィールド追加 (${childLabel})`
+        : `テーブル「${tableLabel}」内のフィールド削除 (${childLabel})`;
+      out.push({
+        ...row,
+        _id: `${parentId}::tchild::${code}::${childIdx++}`,
+        _parentRowId: parentId,
+        _expandedFromTable: true,
+        _displayOnly: true,
+        path: childPath,
+        left: isRemoved ? field : undefined,
+        right: isAdded ? field : undefined,
+        type: row.type,
+        moved: false,
+        reasonSummary: reason,
+        severity: row.severity || 'medium',
+        renameCandidate: null,
+        impactCount: 0,
+        impactRefs: [],
+        impactSummary: ''
+      });
+    });
+  });
+  return out;
 }

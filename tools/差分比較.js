@@ -1195,7 +1195,7 @@ ${contextLine}`);
     return s;
   }
   function getActualDiffRows(rows) {
-    return (rows || []).filter((row) => row && row.type !== "same");
+    return (rows || []).filter((row) => row && row.type !== "same" && !row._displayOnly);
   }
   function countActualDiffRows(rows) {
     return getActualDiffRows(rows).length;
@@ -1257,7 +1257,55 @@ ${contextLine}`);
     const stateMap = presetState || getDiffNormalizationPresetState();
     return Object.keys(DIFF_NORMALIZATION_PRESETS).filter((key) => !!stateMap[key]).map((key) => DIFF_NORMALIZATION_PRESETS[key].label);
   }
-  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES;
+  function expandSubtableRowsForDisplay(rows) {
+    if (!Array.isArray(rows) || !rows.length) return rows || [];
+    const out = [];
+    rows.forEach((row, idx) => {
+      out.push(row);
+      if (!row || row._displayOnly) return;
+      if (row.sectionKey !== "fieldSettings") return;
+      const isAdded = row.type === "added";
+      const isRemoved = row.type === "removed";
+      if (!isAdded && !isRemoved) return;
+      const pathMatch = SUBTABLE_ROOT_PATH_RE.exec(String(row.path || ""));
+      if (!pathMatch) return;
+      const payload = isAdded ? row.right : row.left;
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+      if (payload.type !== "SUBTABLE") return;
+      const inner = payload.fields;
+      if (!inner || typeof inner !== "object" || Array.isArray(inner)) return;
+      const tableLabel = String(payload.label || payload.name || pathMatch[1]);
+      const parentId = row._id || `d${idx}`;
+      let childIdx = 0;
+      Object.keys(inner).forEach((code) => {
+        const field = inner[code];
+        if (!field || typeof field !== "object" || Array.isArray(field)) return;
+        const childPath = `${row.path}.fields.${code}`;
+        const childLabel = String(field.label || field.name || field.code || code);
+        const reason = isAdded ? `テーブル「${tableLabel}」内のフィールド追加 (${childLabel})` : `テーブル「${tableLabel}」内のフィールド削除 (${childLabel})`;
+        out.push({
+          ...row,
+          _id: `${parentId}::tchild::${code}::${childIdx++}`,
+          _parentRowId: parentId,
+          _expandedFromTable: true,
+          _displayOnly: true,
+          path: childPath,
+          left: isRemoved ? field : void 0,
+          right: isAdded ? field : void 0,
+          type: row.type,
+          moved: false,
+          reasonSummary: reason,
+          severity: row.severity || "medium",
+          renameCandidate: null,
+          impactCount: 0,
+          impactRefs: [],
+          impactSummary: ""
+        });
+      });
+    });
+    return out;
+  }
+  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, SUBTABLE_ROOT_PATH_RE;
   var init_engine = __esm({
     "src/diff/engine.js"() {
       "use strict";
@@ -1298,6 +1346,7 @@ ${contextLine}`);
         "to",
         "key"
       ];
+      SUBTABLE_ROOT_PATH_RE = /^fieldSettings\.properties\.([^.[\]]+)$/;
     }
   });
 
@@ -2124,7 +2173,8 @@ ${contextLine}`);
     const sectionText = (scopes || []).map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ");
     const sectionLabelMap = Object.fromEntries(SECTION_DEFS.map((d) => [d.key, d.label]));
     const MAX_EXPORT_ROWS = 2e3;
-    const exportRows = withSameSections.slice(0, MAX_EXPORT_ROWS);
+    const displayRows = expandSubtableRowsForDisplay(withSameSections);
+    const exportRows = displayRows.slice(0, MAX_EXPORT_ROWS);
     const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
     const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
     const exportContentMode = options.exportContentMode || "diffOnly";
@@ -2705,6 +2755,59 @@ ${contextLine}`);
     return row.right != null ? row.right : row.left;
   }
 
+  function isSubtableFieldsMap(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const entries = Object.values(value);
+    if (!entries.length) return false;
+    return entries.every((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      return ('code' in item) || ('type' in item) || ('label' in item);
+    });
+  }
+
+  function renderSubtableFieldsTableHtml(fields) {
+    if (!fields || typeof fields !== 'object') {
+      return '<div class="sl-empty">（なし）</div>';
+    }
+    const entries = Object.values(fields);
+    if (!entries.length) return '<div class="sl-empty">（項目なし）</div>';
+    const headerHtml = '<thead><tr>' +
+      '<th class="st-col-no">#</th>' +
+      '<th class="st-col-label">フィールド名</th>' +
+      '<th class="st-col-type">フィールド型</th>' +
+      '<th class="st-col-code">フィールドコード</th>' +
+      '<th class="st-col-req">必須</th>' +
+      '</tr></thead>';
+    const bodyHtml = '<tbody>' + entries.map((child, idx) => {
+      const label = String(child?.label || child?.name || child?.code || '（未設定）');
+      const typeCode = String(child?.type || '').trim();
+      const typeLabel = fieldTypeDisplayLabel(typeCode);
+      const code = String(child?.code || '-');
+      const required = !!child?.required;
+      return '<tr>' +
+        '<td class="st-col-no">' + String(idx + 1) + '</td>' +
+        '<td class="st-col-label">' + escHtml(label) + '</td>' +
+        '<td class="st-col-type"><span class="st-type-chip" data-type="' + escHtml(typeCode) + '">' + escHtml(typeLabel) + '</span></td>' +
+        '<td class="st-col-code"><code>' + escHtml(code) + '</code></td>' +
+        '<td class="st-col-req">' + (required ? '<span class="st-req">必須</span>' : '') + '</td>' +
+      '</tr>';
+    }).join('') + '</tbody>';
+    return '<div class="st-wrap"><table class="st-fields">' + headerHtml + bodyHtml + '</table></div>';
+  }
+
+  function renderSubtableFieldCardHtml(field) {
+    const typeLabel = fieldTypeDisplayLabel(field?.type);
+    const label = String(field?.label || field?.name || field?.code || '（未設定）');
+    const code = String(field?.code || '-');
+    const head = '<div class="st-card-head">' +
+      '<span class="st-card-kind">' + escHtml(typeLabel) + '</span>' +
+      '<span class="st-card-title">' + escHtml(label) + '</span>' +
+      '<code class="st-card-code">' + escHtml(code) + '</code>' +
+    '</div>';
+    const body = renderSubtableFieldsTableHtml(field?.fields);
+    return '<div class="st-card">' + head + body + '</div>';
+  }
+
   function formatFieldValueBrief(val, _maxLen) {
     if (val === undefined) return '<span class="sl-empty">（なし）</span>';
     if (val === null) return escHtml('null');
@@ -2718,6 +2821,14 @@ ${contextLine}`);
       return '<span class="sl-val-mono">' + escHtml(j) + '</span>';
     }
     if (t === 'object') {
+      // SUBTABLE 全体: テーブル情報 + 内部フィールドを表形式でレンダリング
+      if (val.type === 'SUBTABLE' && val.fields && typeof val.fields === 'object') {
+        return renderSubtableFieldCardHtml(val);
+      }
+      // テーブルの fields マップ: 直接表形式でレンダリング
+      if (isSubtableFieldsMap(val)) {
+        return renderSubtableFieldsTableHtml(val);
+      }
       const keys = Object.keys(val);
       if (keys.length && keys.length <= 10) {
         const rows = keys.slice(0, 10).map((k) => {
@@ -2725,6 +2836,8 @@ ${contextLine}`);
           let cell;
           if (v === null || v === undefined || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
             cell = escHtml(v === undefined ? '（未定義）' : JSON.stringify(v));
+          } else if (k === 'fields' && isSubtableFieldsMap(v)) {
+            cell = renderSubtableFieldsTableHtml(v);
           } else {
             let j;
             try { j = JSON.stringify(v); } catch (e) { j = String(v); }
@@ -2912,6 +3025,14 @@ ${contextLine}`);
   }
 
   function formatFieldSettingValue(value, options = {}) {
+    if (options.html) {
+      return (value == null || value === '')
+        ? '<span class="sl-empty">（なし）</span>'
+        : String(value);
+    }
+    if (options.subtableFields) {
+      return renderSubtableFieldsTableHtml(value);
+    }
     if (options.boolLabel) return value ? 'ON' : 'OFF';
     if (Array.isArray(value) || (value && typeof value === 'object')) return formatFieldValueBrief(value, options.maxLen || 240);
     if (value === undefined || value === null || value === '') return '（なし）';
@@ -2926,9 +3047,12 @@ ${contextLine}`);
   }
 
   function renderFieldFormRow(label, value, options = {}) {
+    const valueCls = 'kf-value'
+      + (options.textarea ? ' kf-value--textarea' : '')
+      + ((options.html || options.subtableFields) ? ' kf-value--rich' : '');
     return '<section class="kf-row' + (options.full ? ' kf-row--full' : '') + '">' +
       '<div class="kf-label">' + escHtml(label) + (options.required ? ' <span class="kf-required">*</span>' : '') + '</div>' +
-      '<div class="kf-value' + (options.textarea ? ' kf-value--textarea' : '') + '">' + formatFieldSettingValue(value, options) + '</div>' +
+      '<div class="' + valueCls + '">' + formatFieldSettingValue(value, options) + '</div>' +
     '</section>';
   }
 
@@ -2984,7 +3108,7 @@ ${contextLine}`);
     if (field.expression) push('計算式', field.expression, { textarea: true, maxLen: 600 });
     if (field.lookup) push('ルックアップ設定', field.lookup, { textarea: true, maxLen: 600 });
     if (field.referenceTable) push('関連レコード一覧設定', field.referenceTable, { textarea: true, maxLen: 600 });
-    if (field.fields) push('テーブル内の項目', formatSubtableFieldLines(field.fields), { textarea: true, maxLen: 600 });
+    if (field.fields) push('テーブル内の項目', field.fields, { subtableFields: true, full: true });
     if (field.__parentTableCode) push('テーブル', field.__parentTableLabel || field.__parentTableCode);
     return rows;
   }
@@ -3050,7 +3174,7 @@ ${contextLine}`);
       '<div class="kf-toggle-list">' +
         renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel) +
       '</div>' +
-      renderFieldFormRow('テーブル内の項目', formatSubtableFieldLines(field.fields), { textarea: true, full: true, maxLen: 1200 }) +
+      renderFieldFormRow('テーブル内の項目', field.fields, { subtableFields: true, full: true }) +
       renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true });
   }
 
@@ -4456,6 +4580,35 @@ ${contextLine}`);
     .sl-mini-table{width:100%;border-collapse:collapse;font-size:10px;margin:0}
     .sl-mini-table th,.sl-mini-table td{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}
     .sl-mini-table th{width:38%;font-weight:700;color:var(--muted);background:var(--card-soft)}
+    .st-wrap{width:100%;overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card)}
+    .st-fields{width:100%;border-collapse:collapse;font-size:11px;margin:0;table-layout:fixed}
+    .st-fields thead{background:var(--card-soft)}
+    .st-fields th{font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}
+    .st-fields td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle;word-break:break-word}
+    .st-fields tbody tr:last-child td{border-bottom:none}
+    .st-fields tbody tr:hover{background:var(--card-soft)}
+    .st-fields .st-col-no{width:38px;font-variant-numeric:tabular-nums;color:var(--muted);text-align:right}
+    .st-fields .st-col-label{font-weight:600;color:var(--fg)}
+    .st-fields .st-col-type{width:120px}
+    .st-fields .st-col-code{width:180px}
+    .st-fields .st-col-code code{font-size:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--card-soft);border:1px solid var(--border);padding:2px 6px;border-radius:6px;color:var(--fg);word-break:break-all}
+    .st-fields .st-col-req{width:60px;text-align:center}
+    .st-type-chip{display:inline-block;padding:2px 8px;border-radius:999px;background:#e0e7ff;color:#3730a3;font-size:10px;font-weight:700;border:1px solid #c7d2fe}
+    body.dark .st-type-chip{background:#1e293b;color:#a5b4fc;border-color:#334155}
+    .st-req{display:inline-block;background:#dc2626;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px}
+    .st-card{border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden;box-shadow:var(--shadow)}
+    .st-card-head{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card-soft);border-bottom:1px solid var(--border);flex-wrap:wrap}
+    .st-card-kind{display:inline-block;padding:3px 9px;border-radius:999px;background:#e0e7ff;color:#3730a3;font-size:10px;font-weight:800;border:1px solid #c7d2fe;flex-shrink:0}
+    body.dark .st-card-kind{background:#1e293b;color:#a5b4fc;border-color:#334155}
+    .st-card-title{font-size:13px;font-weight:700;color:var(--fg);flex:1;min-width:0;word-break:break-word}
+    .st-card-code{font-size:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--card);border:1px solid var(--border);padding:2px 6px;border-radius:6px;color:var(--muted);flex-shrink:0}
+    .st-card .st-wrap{border:none;border-radius:0;background:transparent}
+    .kf-value--rich{padding:10px;min-height:0;display:block}
+    body.dark .kf-value--rich{background:#0b1320}
+    @media (max-width:720px){
+      .st-fields .st-col-type{width:auto}
+      .st-fields .st-col-code{width:auto}
+    }
     .sl-item--prop{padding-bottom:12px}
     .sl-board--kuc .sl-legend{margin-bottom:8px}
     #settingsLikeRoot:has(.sl-board--kuc){background:#f7f9fa}
