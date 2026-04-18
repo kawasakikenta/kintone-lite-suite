@@ -1,8 +1,8 @@
 'use strict';
 
-import { SECTION_DEFS } from '../constants.js';
+import { SECTION_DEFS, REFLECT_PRESETS_KEY } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, deepClone, normalize } from '../utils.js';
+import { esc, deepClone, normalize, downloadText, nowStamp, readTextFile } from '../utils.js';
 import { apiGet, fetchBundle, buildApiPrefix } from '../api.js';
 import {
   getActualDiffRows,
@@ -135,6 +135,36 @@ export function loadReflectRowsFromLastDiff() {
 }
 
 // ---------------------------------------------------------------------------
+// Send a single diff row to the reflect queue
+// ---------------------------------------------------------------------------
+
+export function queueDiffRowForReflect(diffRowId, options = {}) {
+  if (!diffRowId) throw new Error('対象の差分行が指定されていません');
+  const diffRow = (state.lastDiffRows || []).find((r) => r && r._id === diffRowId);
+  if (!diffRow) throw new Error('対応する差分行が見つかりませんでした（差分比較を再実行してください）');
+  const putKeys = new Set(SECTION_DEFS.filter((d) => d.put).map((d) => d.key));
+  if (!putKeys.has(diffRow.sectionKey)) {
+    throw new Error(`このセクション「${SECTION_DEFS.find((d) => d.key === diffRow.sectionKey)?.label || diffRow.sectionKey || '-'}」は反映に対応していません`);
+  }
+  if (!state.reflectRows || !state.reflectRows.length) {
+    loadReflectRowsFromLastDiff();
+  }
+  const match = (state.reflectRows || []).find((row) =>
+    row && row.sectionKey === diffRow.sectionKey
+    && String(row.path || '') === String(diffRow.path || '')
+    && row.type === diffRow.type
+  );
+  if (!match) {
+    throw new Error('反映候補に同じノードが見つかりませんでした。差分の再実行後にもう一度お試しください');
+  }
+  pushReflectUndo();
+  state.reflectSelectedIds.add(match._id);
+  state.reflectNodeModes[match._id] = options.mode === 'tgt' ? 'tgt' : 'src';
+  state.reflectActiveNodeId = match._id;
+  return { reflectRowId: match._id, section: diffRow.sectionKey };
+}
+
+// ---------------------------------------------------------------------------
 // Get selected reflect rows
 // ---------------------------------------------------------------------------
 
@@ -147,6 +177,30 @@ export function getSelectedReflectRows() {
 // Reflect mode all
 // ---------------------------------------------------------------------------
 
+const BULK_MODE_CONFIRM_THRESHOLD = 5;
+
+function sectionBreakdownForRows(rows) {
+  const counts = new Map();
+  for (const r of rows) {
+    const key = r?.sectionKey || '';
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, n]) => {
+      const label = SECTION_DEFS.find((d) => d.key === key)?.label || key || '(未分類)';
+      return `${label}: ${n}件`;
+    });
+}
+
+function confirmBulkModeChange({ mode, scopeLabel, rows, changeCount }) {
+  if (changeCount < BULK_MODE_CONFIRM_THRESHOLD) return true;
+  const modeLabel = mode === 'src' ? '比較元を採用' : '比較先を残す';
+  const breakdown = sectionBreakdownForRows(rows).slice(0, 8).join('\n  - ');
+  const msg = `【一括モード変更の確認】\n\n対象: ${scopeLabel}（${rows.length}件 / 変更予定 ${changeCount}件）\n操作: ${modeLabel}\n\n影響セクション:\n  - ${breakdown}\n\nこの操作はUndo（元に戻す）で取り消せます。実行しますか？`;
+  return window.confirm(msg);
+}
+
 export function runReflectModeAll(mode) {
   if (!state.reflectRows.length) {
     setStatus('反映ノードが読込されていません');
@@ -155,6 +209,16 @@ export function runReflectModeAll(mode) {
   const selected = getSelectedReflectRows();
   if (!selected.length) {
     setStatus('ノードが選択されていません');
+    return;
+  }
+  const changeCandidates = selected.filter((r) => state.reflectNodeModes[r._id] !== mode);
+  if (!confirmBulkModeChange({
+    mode,
+    scopeLabel: '選択中ノード',
+    rows: selected,
+    changeCount: changeCandidates.length
+  })) {
+    setStatus('一括モード変更をキャンセルしました');
     return;
   }
   pushReflectUndo();
@@ -166,7 +230,7 @@ export function runReflectModeAll(mode) {
     }
   }
   renderReflectNodeList();
-  setStatus(`選択中ノード(${selected.length}件)のうち、${count}件を ${mode === 'src' ? '比較元' : '比較先'} に一括変更しました`);
+  setStatus(`選択中ノード(${selected.length}件)のうち、${count}件を ${mode === 'src' ? '比較元' : '比較先'} に一括変更しました（元に戻すで取消可）`);
 }
 
 export function runReflectModeVisible(mode) {
@@ -181,6 +245,19 @@ export function runReflectModeVisible(mode) {
     setStatus('表示中ノードがありません（絞り込み条件を見直してください）');
     return;
   }
+  const visibleRows = visibleIds
+    .map((id) => getReflectRowById(id))
+    .filter(Boolean);
+  const changeCandidates = visibleRows.filter((r) => state.reflectNodeModes[r._id] !== mode);
+  if (!confirmBulkModeChange({
+    mode,
+    scopeLabel: '表示中ノード',
+    rows: visibleRows,
+    changeCount: changeCandidates.length
+  })) {
+    setStatus('一括モード変更をキャンセルしました');
+    return;
+  }
   pushReflectUndo();
   let count = 0;
   visibleIds.forEach((id) => {
@@ -190,7 +267,7 @@ export function runReflectModeVisible(mode) {
     }
   });
   renderReflectNodeList();
-  setStatus(`表示中ノード(${visibleIds.length}件)のうち、${count}件を ${mode === 'src' ? '比較元' : '比較先'} に変更しました`);
+  setStatus(`表示中ノード(${visibleIds.length}件)のうち、${count}件を ${mode === 'src' ? '比較元' : '比較先'} に変更しました（元に戻すで取消可）`);
 }
 
 // ---------------------------------------------------------------------------
@@ -287,4 +364,148 @@ export async function runPrefetchCommonData() {
   const sourceErr = Object.values(source.sections || {}).filter((x) => x && x._fetchError).length;
   const targetErr = Object.values(target.sections || {}).filter((x) => x && x._fetchError).length;
   setStatus(`共通データ取得完了: 比較元 ${sections.length}セクション(NG ${sourceErr}) / 比較先 ${sections.length}セクション(NG ${targetErr})`);
+}
+
+// ---------------------------------------------------------------------------
+// Reflect presets (environment profile x section scope)
+// ---------------------------------------------------------------------------
+
+export function loadReflectPresets() {
+  try {
+    const raw = localStorage.getItem(REFLECT_PRESETS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function persistReflectPresets(presets) {
+  try {
+    localStorage.setItem(REFLECT_PRESETS_KEY, JSON.stringify(presets || []));
+  } catch (e) {
+    /* localStorage full */
+  }
+}
+
+export function saveReflectPreset(name) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) throw new Error('プリセット名を入力してください');
+  const scopes = [...(ui.applyScopes?.querySelectorAll('input[type=checkbox]:checked') || [])]
+    .map((el) => el.value)
+    .filter(Boolean);
+  const preset = {
+    name: trimmed,
+    createdAt: new Date().toISOString(),
+    source: {
+      appId: String(ui.sourceApp?.value || '').trim(),
+      guestId: String(ui.sourceGuest?.value || '').trim(),
+      preview: !!ui.sourcePreview?.checked
+    },
+    target: {
+      appId: String(ui.targetApp?.value || '').trim(),
+      guestId: String(ui.targetGuest?.value || '').trim(),
+      preview: !!ui.targetPreview?.checked
+    },
+    scopes,
+    applyDiffOnly: !!ui.applyDiffOnly?.checked,
+    lookupMap: String(ui.lookupMap?.value || '').trim()
+  };
+  const presets = loadReflectPresets().filter((p) => p && p.name !== trimmed);
+  presets.unshift(preset);
+  persistReflectPresets(presets.slice(0, 30));
+  return preset;
+}
+
+export function applyReflectPreset(name) {
+  const preset = loadReflectPresets().find((p) => p && p.name === name);
+  if (!preset) throw new Error(`プリセット「${name}」が見つかりません`);
+  if (ui.sourceApp) ui.sourceApp.value = preset.source?.appId || '';
+  if (ui.sourceGuest) ui.sourceGuest.value = preset.source?.guestId || '';
+  if (ui.sourcePreview) ui.sourcePreview.checked = !!preset.source?.preview;
+  if (ui.targetApp) ui.targetApp.value = preset.target?.appId || '';
+  if (ui.targetGuest) ui.targetGuest.value = preset.target?.guestId || '';
+  if (ui.targetPreview) ui.targetPreview.checked = !!preset.target?.preview;
+  if (ui.applyDiffOnly) ui.applyDiffOnly.checked = !!preset.applyDiffOnly;
+  if (ui.lookupMap) ui.lookupMap.value = preset.lookupMap || '';
+  const wantedScopes = new Set(preset.scopes || []);
+  (ui.applyScopes?.querySelectorAll('input[type=checkbox]') || []).forEach((el) => {
+    el.checked = wantedScopes.has(el.value);
+  });
+  saveCurrentDialogState();
+  return preset;
+}
+
+export function deleteReflectPreset(name) {
+  const presets = loadReflectPresets().filter((p) => p && p.name !== name);
+  persistReflectPresets(presets);
+}
+
+// ---------------------------------------------------------------------------
+// Reflect selection export / import
+// ---------------------------------------------------------------------------
+
+export function exportReflectSelectionJson() {
+  const rows = state.reflectRows || [];
+  if (!rows.length) throw new Error('反映候補がありません。先に「差分候補を読込」を実行してください');
+  const selected = rows.filter((r) => state.reflectSelectedIds.has(r._id));
+  if (!selected.length) throw new Error('選択中のノードがありません');
+  const payload = {
+    kind: 'reflect-selection',
+    exportedAt: new Date().toISOString(),
+    target: {
+      appId: String(ui.targetApp?.value || '').trim(),
+      guestId: String(ui.targetGuest?.value || '').trim()
+    },
+    source: {
+      appId: String(ui.sourceApp?.value || '').trim(),
+      guestId: String(ui.sourceGuest?.value || '').trim()
+    },
+    total: rows.length,
+    selectedCount: selected.length,
+    items: selected.map((r) => ({
+      sectionKey: r.sectionKey || '',
+      path: r.path || '',
+      type: r.type || '',
+      mode: state.reflectNodeModes[r._id] || 'src'
+    }))
+  };
+  const filename = `reflect_selection_${nowStamp()}.json`;
+  downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
+  return { filename, selectedCount: selected.length };
+}
+
+export async function importReflectSelectionFromFile(file) {
+  if (!file) throw new Error('ファイルが選択されていません');
+  const text = await readTextFile(file);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error('選択JSONの読み込みに失敗しました（JSON形式が不正です）');
+  }
+  if (!parsed || parsed.kind !== 'reflect-selection' || !Array.isArray(parsed.items)) {
+    throw new Error('この形式は選択JSONとして認識できません（kind="reflect-selection" を想定）');
+  }
+  if (!state.reflectRows || !state.reflectRows.length) {
+    loadReflectRowsFromLastDiff();
+  }
+  const indexMap = new Map();
+  for (const row of state.reflectRows || []) {
+    const key = `${row.sectionKey || ''}\t${row.path || ''}\t${row.type || ''}`;
+    indexMap.set(key, row);
+  }
+  pushReflectUndo();
+  let matched = 0;
+  let missed = 0;
+  for (const item of parsed.items || []) {
+    const key = `${item.sectionKey || ''}\t${item.path || ''}\t${item.type || ''}`;
+    const row = indexMap.get(key);
+    if (!row) { missed += 1; continue; }
+    state.reflectSelectedIds.add(row._id);
+    state.reflectNodeModes[row._id] = item.mode === 'tgt' ? 'tgt' : 'src';
+    matched += 1;
+  }
+  return { matched, missed, total: (parsed.items || []).length };
 }

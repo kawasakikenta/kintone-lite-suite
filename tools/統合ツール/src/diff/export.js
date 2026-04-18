@@ -4140,6 +4140,10 @@ export function renderResultRows(rows) {
       const hierarchyClass = isSubfieldRow
         ? ' diff-row-subfield'
         : (isTableRootRow ? ' diff-row-table-root' : '');
+      const canReflect = !r._displayOnly && !!r.sectionKey;
+      const reflectBtn = canReflect
+        ? `<button type="button" class="diff-mini-btn diff-mini-btn--reflect" data-send-to-reflect="${esc(r._id || '')}" title="この差分ノードだけを反映対象に追加し、反映タブへ移動します">反映へ送る</button>`
+        : '';
       return `<tr class="${rowAccent}${selected ? ' diff-row-selected' : ''}${hierarchyClass}">
           <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" ${selected}></td>
           <td><span class="sev-badge ${sevClass}">${esc(getSeverityDisplayLabel(sev))}</span></td>
@@ -4147,6 +4151,7 @@ export function renderResultRows(rows) {
           <td>
             <div class="diff-tools">
               <button type="button" class="diff-mini-btn" data-copy-val="${esc(r.path || '')}">パス</button>
+              ${reflectBtn}
             </div>
             <div class="diff-path diff-path-cell" title="${esc(r.path || '-')}">${formatDiffPathRich(r)}</div>
             ${renderDiffRowMeta(r)}

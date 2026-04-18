@@ -1,7 +1,7 @@
 'use strict';
 
 import { SECTION_DEFS } from '../constants.js';
-import { deepClone, stableStringify, esc, normalize } from '../utils.js';
+import { deepClone, stableStringify, esc, normalize, downloadText, nowStamp } from '../utils.js';
 import { state, ui } from '../state.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { isReflectNodeModeEffective } from './nodeModeUi.js';
@@ -140,6 +140,60 @@ export function splitMapSectionDiff(beforeMap, afterMap) {
   return { add, update, del };
 }
 
+const PREVIEW_MAX_ENTRIES = 40;
+const PREVIEW_SNIPPET_MAX = 600;
+
+function truncateForPreview(value) {
+  try {
+    const json = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    if (json == null) return '';
+    return json.length > PREVIEW_SNIPPET_MAX
+      ? `${json.slice(0, PREVIEW_SNIPPET_MAX)}\n… （省略: 全${json.length}文字）`
+      : json;
+  } catch (e) {
+    return String(value);
+  }
+}
+
+export function buildMapSectionPreview(beforeMap, afterMap, options = {}) {
+  const before = (beforeMap && typeof beforeMap === 'object' && !Array.isArray(beforeMap)) ? beforeMap : {};
+  const after = (afterMap && typeof afterMap === 'object' && !Array.isArray(afterMap)) ? afterMap : {};
+  const added = [];
+  const updated = [];
+  const removed = [];
+  for (const [k, v] of Object.entries(after)) {
+    if (!Object.prototype.hasOwnProperty.call(before, k)) {
+      added.push({ key: k, after: truncateForPreview(v) });
+    } else if (stableStringify(before[k]) !== stableStringify(v)) {
+      updated.push({ key: k, before: truncateForPreview(before[k]), after: truncateForPreview(v) });
+    }
+  }
+  for (const k of Object.keys(before)) {
+    if (!Object.prototype.hasOwnProperty.call(after, k)) {
+      removed.push({ key: k, before: truncateForPreview(before[k]) });
+    }
+  }
+  const totalKey = added.length + updated.length + removed.length;
+  const cap = (options.maxEntries ?? PREVIEW_MAX_ENTRIES);
+  return {
+    addedKeys: added.slice(0, cap),
+    updatedKeys: updated.slice(0, cap),
+    removedKeys: removed.slice(0, cap),
+    addedCount: added.length,
+    updatedCount: updated.length,
+    removedCount: removed.length,
+    totalCount: totalKey,
+    truncated: totalKey > cap
+  };
+}
+
+export function buildWholeSectionPreview(before, after) {
+  const beforeText = truncateForPreview(before);
+  const afterText = truncateForPreview(after);
+  const changed = stableStringify(before) !== stableStringify(after);
+  return { beforeText, afterText, changed };
+}
+
 export function planFieldSectionDiffRequests(app, beforeProps, afterProps, lookupMap, sourceModeCodes) {
   const beforeMap = filterWritableFieldProps(beforeProps, true);
   const afterMap = filterWritableFieldProps(afterProps, true);
@@ -167,7 +221,11 @@ export function planFieldSectionDiffRequests(app, beforeProps, afterProps, looku
   if (Object.keys(add).length) requests.push({ method: 'POST', path: '/app/form/fields.json', body: { app, properties: add }, note: `fields add:${Object.keys(add).length}` });
   if (Object.keys(update).length) requests.push({ method: 'PUT', path: '/app/form/fields.json', body: { app, properties: update }, note: `fields update:${Object.keys(update).length}` });
   if (del.length) requests.push({ method: 'DELETE', path: '/app/form/fields.json', body: { app, fields: del }, note: `fields delete:${del.length}` });
-  return { requests, addCount: Object.keys(add).length, updateCount: Object.keys(update).length, deleteCount: del.length, lookupChanged };
+  const preview = buildMapSectionPreview(beforeMap, { ...add, ...update });
+  preview.removedKeys = del.slice(0, PREVIEW_MAX_ENTRIES).map((key) => ({ key, before: truncateForPreview(beforeMap[key]) }));
+  preview.removedCount = del.length;
+  preview.totalCount = preview.addedCount + preview.updatedCount + preview.removedCount;
+  return { requests, addCount: Object.keys(add).length, updateCount: Object.keys(update).length, deleteCount: del.length, lookupChanged, preview };
 }
 
 export function planViewsSectionDiffRequests(app, beforeViews, afterViews) {
@@ -175,7 +233,8 @@ export function planViewsSectionDiffRequests(app, beforeViews, afterViews) {
   const up = { ...split.add, ...split.update };
   const requests = [];
   if (Object.keys(up).length) requests.push({ method: 'PUT', path: '/app/views.json', body: { app, views: up }, note: `views upsert:${Object.keys(up).length}` });
-  return { requests, upsertCount: Object.keys(up).length, deleteSkipCount: split.del.length };
+  const preview = buildMapSectionPreview(beforeViews, afterViews);
+  return { requests, upsertCount: Object.keys(up).length, deleteSkipCount: split.del.length, preview };
 }
 
 export function planReportsSectionDiffRequests(app, beforeReports, afterReports) {
@@ -184,7 +243,8 @@ export function planReportsSectionDiffRequests(app, beforeReports, afterReports)
   const requests = [];
   if (Object.keys(up).length) requests.push({ method: 'PUT', path: '/app/reports.json', body: { app, reports: up }, note: `reports upsert:${Object.keys(up).length}` });
   if (split.del.length) requests.push({ method: 'DELETE', path: '/app/reports.json', body: { app, reports: split.del }, note: `reports delete:${split.del.length}` });
-  return { requests, upsertCount: Object.keys(up).length, deleteCount: split.del.length };
+  const preview = buildMapSectionPreview(beforeReports, afterReports);
+  return { requests, upsertCount: Object.keys(up).length, deleteCount: split.del.length, preview };
 }
 
 export function planActionsSectionDiffRequests(app, beforeActions, afterActions) {
@@ -192,7 +252,8 @@ export function planActionsSectionDiffRequests(app, beforeActions, afterActions)
   const up = { ...split.add, ...split.update };
   const requests = [];
   if (Object.keys(up).length) requests.push({ method: 'PUT', path: '/app/actions.json', body: { app, actions: up }, note: `actions upsert:${Object.keys(up).length}` });
-  return { requests, upsertCount: Object.keys(up).length, deleteSkipCount: split.del.length };
+  const preview = buildMapSectionPreview(beforeActions, afterActions);
+  return { requests, upsertCount: Object.keys(up).length, deleteSkipCount: split.del.length, preview };
 }
 
 export function appendRequestPlanLogs(logs, plan) {
@@ -340,6 +401,8 @@ export async function runPreviewApplyPlanNodes() {
 
   let totalReq = 0;
   const targetSectionBaselines = {};
+  const sectionPreviews = {};
+  const plannedRequests = [];
   const sectionKeys = Object.keys(bySection);
   for (let i = 0; i < sectionKeys.length; i++) {
     const secKey = sectionKeys[i];
@@ -374,7 +437,23 @@ export async function runPreviewApplyPlanNodes() {
       } else if (secKey === 'actionSettings') {
         plan = planActionsSectionDiffRequests(app, before.actions || before || {}, patched.actions || patched || {});
       } else {
-        plan = { requests: [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(patched) }, note: `${def.label} put` }] };
+        plan = {
+          requests: [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(patched) }, note: `${def.label} put` }],
+          wholePreview: buildWholeSectionPreview(before, patched)
+        };
+      }
+
+      if (plan.preview || plan.wholePreview) {
+        sectionPreviews[secKey] = {
+          label: def.label,
+          shape: plan.preview ? 'map' : 'whole',
+          preview: plan.preview || null,
+          wholePreview: plan.wholePreview || null,
+          requestCount: (plan.requests || []).length
+        };
+      }
+      for (const req of plan.requests || []) {
+        plannedRequests.push({ sectionKey: secKey, sectionLabel: def.label, ...req });
       }
 
       totalReq += (plan.requests || []).length;
@@ -388,7 +467,7 @@ export async function runPreviewApplyPlanNodes() {
   lines.push('');
   lines.push(`合計予定リクエスト数: ${totalReq}`);
   lines.push('※ ノードモードは差分パスをもとに比較先プレビューへ反映します。');
-  markApplyPlan(planSignature, 'nodes', totalReq, lines, { targetSectionBaselines });
+  markApplyPlan(planSignature, 'nodes', totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests });
 
   ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(lines.join('\n'))}</pre>`;
   renderReflectAssistPanel();
@@ -420,11 +499,36 @@ export async function runPreviewApplyPlan() {
   const app = c.target.appId;
   const logs = [];
   const targetSectionBaselines = {};
+  const sectionPreviews = {};
+  const plannedRequests = [];
   logs.push('=== 反映プラン（ドライラン）===');
   logs.push(`比較先アプリ: ${app}`);
   logs.push(`対象セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
   logs.push('');
   let totalReq = 0;
+
+  const capturePreview = (secKey, label, plan, wholeBefore, wholeAfter) => {
+    if (plan && plan.preview) {
+      sectionPreviews[secKey] = {
+        label,
+        shape: 'map',
+        preview: plan.preview,
+        wholePreview: null,
+        requestCount: (plan.requests || []).length
+      };
+    } else {
+      sectionPreviews[secKey] = {
+        label,
+        shape: 'whole',
+        preview: null,
+        wholePreview: buildWholeSectionPreview(wholeBefore, wholeAfter),
+        requestCount: (plan.requests || []).length
+      };
+    }
+    for (const req of plan.requests || []) {
+      plannedRequests.push({ sectionKey: secKey, sectionLabel: label, ...req });
+    }
+  };
 
   for (let i = 0; i < scopes.length; i++) {
     const secKey = scopes[i];
@@ -443,6 +547,7 @@ export async function runPreviewApplyPlan() {
       const current = await apiGet(prefix, '/app/form/fields.json', { app });
       targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
       const plan = planFieldSectionDiffRequests(app, current.properties || {}, sourceSec.properties || sourceSec || {}, lookupMap);
+      capturePreview(secKey, def.label, plan);
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
       appendRequestPlanLogs(logs, plan);
       if (plan.lookupChanged) logs.push(`  - lookup appId 変換: ${plan.lookupChanged}`);
@@ -453,6 +558,7 @@ export async function runPreviewApplyPlan() {
       const current = await apiGet(prefix, '/app/views.json', { app });
       targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
       const plan = planViewsSectionDiffRequests(app, current.views || {}, sourceSec.views || sourceSec || {});
+      capturePreview(secKey, def.label, plan);
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
       appendRequestPlanLogs(logs, plan);
       if (plan.deleteSkipCount) logs.push(`  - views delete(skip): ${plan.deleteSkipCount} (互換モード: 削除は行いません)`);
@@ -463,6 +569,7 @@ export async function runPreviewApplyPlan() {
       const current = await apiGet(prefix, '/app/reports.json', { app });
       targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
       const plan = planReportsSectionDiffRequests(app, current.reports || {}, sourceSec.reports || sourceSec || {});
+      capturePreview(secKey, def.label, plan);
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
       appendRequestPlanLogs(logs, plan);
       totalReq += plan.requests.length;
@@ -472,6 +579,7 @@ export async function runPreviewApplyPlan() {
       const current = await apiGet(prefix, '/app/actions.json', { app });
       targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
       const plan = planActionsSectionDiffRequests(app, current.actions || {}, sourceSec.actions || sourceSec || {});
+      capturePreview(secKey, def.label, plan);
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
       appendRequestPlanLogs(logs, plan);
       if (plan.deleteSkipCount) logs.push(`  - actions delete(skip): ${plan.deleteSkipCount} (互換モード: 削除は行いません)`);
@@ -480,16 +588,58 @@ export async function runPreviewApplyPlan() {
     }
     const current = await apiGet(prefix, def.endpoint, { app });
     targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
-    const plan = { requests: [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(sourceSec) }, note: `${def.label} put` }] };
+    const afterWhole = def.putBuilder(sourceSec);
+    const plan = { requests: [{ method: 'PUT', path: def.endpoint, body: { app, ...afterWhole }, note: `${def.label} put` }] };
+    capturePreview(secKey, def.label, plan, current, afterWhole);
     logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
     appendRequestPlanLogs(logs, plan);
     totalReq += plan.requests.length;
   }
   logs.push('');
   logs.push(`合計予定リクエスト数: ${totalReq}`);
-  markApplyPlan(planSignature, 'section', totalReq, logs, { targetSectionBaselines });
+  markApplyPlan(planSignature, 'section', totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests });
   ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
   renderReflectAssistPanel();
   renderReflectMainPanel();
   setStatus('実行前プラン確認が完了しました');
+}
+
+export async function runExportDryRunPlan() {
+  const plan = state.lastApplyPlan;
+  if (!plan || !Array.isArray(plan.plannedRequests) || !plan.plannedRequests.length) {
+    await runPreviewApplyPlan();
+  }
+  const latest = state.lastApplyPlan;
+  if (!latest || !Array.isArray(latest.plannedRequests) || !latest.plannedRequests.length) {
+    throw new Error('ドライランに出力できる計画がありません。先に「実行前プラン確認」を実行してください。');
+  }
+  const c = commonParams();
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    kind: 'reflect-dry-run',
+    mode: latest.mode,
+    target: {
+      appId: c.target.appId,
+      guestId: c.target.guestId || '',
+      preview: true
+    },
+    source: {
+      appId: c.source.appId,
+      guestId: c.source.guestId || ''
+    },
+    totalRequests: latest.totalReq || latest.plannedRequests.length,
+    plannedRequests: latest.plannedRequests.map((r) => ({
+      sectionKey: r.sectionKey,
+      sectionLabel: r.sectionLabel,
+      method: r.method,
+      path: r.path,
+      note: r.note || '',
+      body: r.body
+    })),
+    sectionPreviews: latest.sectionPreviews || {},
+    logs: latest.logs || []
+  };
+  const filename = `reflect_dry_run_app${c.target.appId || 'unknown'}_${nowStamp()}.json`;
+  downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
+  setStatus(`ドライランJSONを保存しました: ${filename}（APIは送信していません）`);
 }

@@ -88,7 +88,14 @@ import {
   redoReflectState,
   reflectRowModeById,
   getActiveReflectRow,
-  setActiveReflectNode
+  setActiveReflectNode,
+  queueDiffRowForReflect,
+  loadReflectPresets,
+  saveReflectPreset,
+  applyReflectPreset,
+  deleteReflectPreset,
+  exportReflectSelectionJson,
+  importReflectSelectionFromFile
 } from './tabs/reflect.js';
 
 import {
@@ -236,6 +243,21 @@ function addConnectionSearchApp(appId, appName) {
   updateConnectionStepIndicators();
 }
 
+function renderReflectPresetSelect(preferName) {
+  const sel = getToolDocument().getElementById('u_reflectPresetSelect');
+  if (!sel) return;
+  const presets = loadReflectPresets();
+  const currentValue = preferName != null ? preferName : sel.value;
+  sel.innerHTML = presets.length
+    ? ['<option value="">-- プリセットを選択 --</option>']
+      .concat(presets.map((p) => `<option value="${String(p.name).replace(/"/g, '&quot;')}">${String(p.name)}</option>`))
+      .join('')
+    : '<option value="">（保存済みプリセットなし）</option>';
+  if (currentValue && presets.some((p) => p.name === currentValue)) {
+    sel.value = currentValue;
+  }
+}
+
 function getVisibleReflectNodeIds() {
   return [...(ui.reflectNodeList?.querySelectorAll('[data-node-open]') || [])]
     .map((el) => el.dataset.nodeOpen)
@@ -321,6 +343,7 @@ export function setupEventHandlers(injected = {}) {
     runApiTester,
     clearApiTesterHistory,
     runPreviewApplyPlan,
+    runExportDryRunPlan,
     runBackupTargetPreview,
     runRestoreTargetPreviewBackup,
     runApplyPreview,
@@ -965,6 +988,28 @@ export function setupEventHandlers(injected = {}) {
     });
   }
 
+  const reflectSelectionFileInput = getToolDocument().getElementById('u_reflectSelectionFileInput');
+  if (reflectSelectionFileInput) {
+    reflectSelectionFileInput.addEventListener('change', () => {
+      const f = reflectSelectionFileInput.files && reflectSelectionFileInput.files[0];
+      reflectSelectionFileInput.value = '';
+      if (!f) return;
+      withGuard(async () => {
+        try {
+          const r = await importReflectSelectionFromFile(f);
+          renderReflectNodeList();
+          const missed = r && r.missed ? r.missed : 0;
+          const matched = r && r.matched ? r.matched : 0;
+          const total = r && r.total ? r.total : 0;
+          const msg = `選択JSONを読込: ${matched}/${total}件を復元${missed ? ` (未一致 ${missed}件)` : ''}`;
+          setStatus(msg, missed > 0 && matched === 0);
+        } catch (err) {
+          setStatus(err && err.message ? err.message : String(err), true);
+        }
+      });
+    });
+  }
+
 // Legacy textarea input handling removed – JSONEditor now manages changes.
 // The previous code that listened for 'input' events on the textarea has been deprecated.
 // JSONEditor instance will invoke its onChange callback defined during initialization.
@@ -1083,6 +1128,25 @@ export function setupEventHandlers(injected = {}) {
       saveCurrentDialogState();
       renderReflectNodeDetail();
       return;
+    }
+
+    // Send a diff row to the reflect queue
+    const sendToReflectBtn = e.target.closest('[data-send-to-reflect]');
+    if (sendToReflectBtn) {
+      const diffRowId = sendToReflectBtn.dataset.sendToReflect || '';
+      try {
+        const result = queueDiffRowForReflect(diffRowId);
+        switchTab('reflect', { persist: false });
+        switchSubTab('reflect', 'diff');
+        renderReflectModeUi();
+        renderReflectNodeList();
+        renderReflectMainPanel();
+        setStatus('この差分を反映対象に追加しました（差分選択モードで確認できます）');
+        return;
+      } catch (err) {
+        setStatus(err.message || String(err), true);
+        return;
+      }
     }
 
     // Copy button
@@ -1479,7 +1543,7 @@ export function setupEventHandlers(injected = {}) {
 
     // ----- Diff scope selection -----
     if (act === 'openDiffScopePicker') { openScopePicker('diff'); return; }
-    if (act === 'openReflectScopePicker') { renderReflectSidebar(); openScopePicker('reflect'); return; }
+    if (act === 'openReflectScopePicker') { renderReflectSidebar(); renderReflectPresetSelect(); openScopePicker('reflect'); return; }
     if (act === 'openSettingsExportScopePicker') { openScopePicker('settingsExport'); return; }
     if (act === 'closeScopePicker') { closeScopePicker(); return; }
     if (act === 'diffScopeAll') {
@@ -1788,6 +1852,51 @@ export function setupEventHandlers(injected = {}) {
       return;
     }
 
+    // ----- Reflect preset actions -----
+    if (act === 'saveReflectPreset') {
+      const name = (window.prompt('プリセット名を入力してください（例: 開発→検証 権限以外）', '') || '').trim();
+      if (!name) return;
+      try {
+        saveReflectPreset(name);
+        renderReflectPresetSelect(name);
+        setStatus(`プリセット「${name}」を保存しました`);
+      } catch (err) {
+        setStatus(err.message || String(err), true);
+      }
+      return;
+    }
+    if (act === 'applyReflectPreset') {
+      const sel = getToolDocument().getElementById('u_reflectPresetSelect');
+      const name = sel ? sel.value : '';
+      if (!name) {
+        setStatus('読み込むプリセットを選んでください');
+        return;
+      }
+      try {
+        applyReflectPreset(name);
+        renderReflectSidebar();
+        renderReflectMainPanel();
+        renderReflectAssistPanel();
+        setStatus(`プリセット「${name}」を読み込みました`);
+      } catch (err) {
+        setStatus(err.message || String(err), true);
+      }
+      return;
+    }
+    if (act === 'deleteReflectPreset') {
+      const sel = getToolDocument().getElementById('u_reflectPresetSelect');
+      const name = sel ? sel.value : '';
+      if (!name) {
+        setStatus('削除するプリセットを選んでください');
+        return;
+      }
+      if (!window.confirm(`プリセット「${name}」を削除しますか？`)) return;
+      deleteReflectPreset(name);
+      renderReflectPresetSelect('');
+      setStatus(`プリセット「${name}」を削除しました`);
+      return;
+    }
+
     // ----- Reflect node actions -----
     if (act === 'loadReflectNodes') return withGuard(async () => { loadReflectRowsFromLastDiff(); });
     if (act === 'selectVisibleReflectNodes') {
@@ -1858,6 +1967,21 @@ export function setupEventHandlers(injected = {}) {
       setStatus('ノード操作をRedoしました');
       return;
     }
+    if (act === 'exportReflectSelection') {
+      try {
+        const r = exportReflectSelectionJson();
+        setStatus(`選択をJSONに保存しました: ${r.filename} (${r.selectedCount}件)`);
+      } catch (err) {
+        setStatus(err && err.message ? err.message : String(err), true);
+      }
+      return;
+    }
+    if (act === 'importReflectSelection') {
+      const doc = getToolDocument();
+      const input = doc && doc.getElementById('u_reflectSelectionFileInput');
+      if (input) { input.value = ''; input.click(); }
+      return;
+    }
     if (act === 'reflectModeAllSrc') return runReflectModeAll('src');
     if (act === 'reflectModeAllTgt') return runReflectModeAll('tgt');
     if (act === 'reflectModeVisibleSrc') return runReflectModeVisible('src');
@@ -1908,6 +2032,26 @@ export function setupEventHandlers(injected = {}) {
       setStatus(`プロパティ選択を解除しました: ${key}`);
       return;
     }
+    if (act === 'removeActiveFilter') {
+      const kind = actEl.dataset.filterKind || '';
+      if (kind === 'keyword') {
+        if (ui.nodeSearch) ui.nodeSearch.value = '';
+        setStatus('キーワード絞り込みを解除しました');
+      } else if (kind === 'section') {
+        if (ui.nodeFilterSection) ui.nodeFilterSection.value = '';
+        setStatus('セクション絞り込みを解除しました');
+      } else if (kind === 'type') {
+        if (ui.nodeFilterType) ui.nodeFilterType.value = '';
+        setStatus('種別絞り込みを解除しました');
+      } else if (kind === 'severity') {
+        if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.value = '';
+        setStatus('重要度絞り込みを解除しました');
+      } else {
+        return;
+      }
+      renderReflectNodeList();
+      return;
+    }
     if (act === 'toggleActiveReflectNodeSelection') {
       const row = getActiveReflectRow();
       if (!row) { setStatus('操作対象のノードがありません'); return; }
@@ -1943,10 +2087,25 @@ export function setupEventHandlers(injected = {}) {
 
     // ----- Reflect apply actions -----
     if (act === 'previewApplyPlan' && typeof runPreviewApplyPlan === 'function') return withGuard(runPreviewApplyPlan);
+    if (act === 'exportDryRunPlan' && typeof runExportDryRunPlan === 'function') return withGuard(runExportDryRunPlan);
     if (act === 'backupTargetPreview' && typeof runBackupTargetPreview === 'function') return withGuard(runBackupTargetPreview);
     if (act === 'restoreTargetPreviewBackup' && typeof runRestoreTargetPreviewBackup === 'function') return withGuard(runRestoreTargetPreviewBackup);
     if (act === 'applyPreview' && typeof runApplyPreview === 'function') return withGuard(runApplyPreview);
     if (act === 'deployOnly' && typeof runDeployOnly === 'function') return withGuard(runDeployOnly);
+    if (act === 'postApplyRecompare' && typeof runDiff === 'function') {
+      withGuard(async () => {
+        setStatus('反映後の再比較を実行中...');
+        await runDiff();
+        renderReflectAssistPanel();
+        setStatus('反映後の再比較を完了しました');
+      });
+      return;
+    }
+    if (act === 'dismissPostApplyCard') {
+      state.lastApplyCompletedAt = null;
+      renderReflectAssistPanel();
+      return;
+    }
 
     // ----- Patch JSON panel -----
     if (act === 'togglePatchJsonPanel') {

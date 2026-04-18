@@ -622,6 +622,8 @@ export function buildRoot(targetDocument = document, options = {}) {
                           <div id="u_reflectAssist"></div>
                           <div id="u_reflectHowto" style="margin-bottom:10px"></div>
                           <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
+                          <div class="reflect-plan-preview" id="u_reflectPlanPreview" aria-live="polite"></div>
+                          <div class="reflect-post-apply-host" id="u_reflectPostApply" aria-live="polite" style="display:none"></div>
                           <div id="u_reflectOverview"></div>
                         </div>
                       </div>
@@ -712,6 +714,9 @@ export function buildRoot(targetDocument = document, options = {}) {
                               <button class="btn ok" data-act="reflectModeAllTgt">すべて比較先にする</button>
                               <button class="btn sub" data-act="reflectUndo">元に戻す</button>
                               <button class="btn sub" data-act="reflectRedo">やり直す</button>
+                              <button class="btn sub" data-act="exportReflectSelection" title="選択ノード・モードをJSONで保存してレビュアーに共有">選択をJSONで保存</button>
+                              <button class="btn sub" data-act="importReflectSelection" title="保存した選択JSONを読み込み、同じノード・モードを復元">選択JSONを読込</button>
+                              <input type="file" id="u_reflectSelectionFileInput" accept="application/json" style="display:none">
                             </div>
                           </div>
                         </details>
@@ -740,6 +745,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                           <div id="u_nodePropertyChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
                           <div id="u_nodePropertyList" style="max-height:160px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:6px"></div>
                         </div>
+                        <div id="u_activeFilterChips" class="reflect-active-chips" aria-live="polite"></div>
                       </div>
                       <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none;">
                         <div class="reflect-node-pane">
@@ -772,6 +778,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                     <span class="reflect-footer-zone-label">プレビュー反映</span>
                     <div class="reflect-footer-actions__primary">
                       <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">実行前プラン確認</button>
+                      <button type="button" class="btn sub" data-act="exportDryRunPlan" id="u_footerDryRun" title="APIを叩かずに、予定されているリクエスト一式をJSONファイルとして保存します（ドライラン）">ドライランJSONを保存</button>
                       <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択した内容を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">プレビューへ反映</button>
                     </div>
                     <details class="diff-fold reflect-inline-fold reflect-inline-fold--footer">
@@ -1626,6 +1633,13 @@ export function buildRoot(targetDocument = document, options = {}) {
                     <button class="btn sub" data-act="applyScopeNone">全解除</button>
                     <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn">差分のみ</button>
                     <button class="btn sub" data-act="applyScopeHighRisk">高重要度</button>
+                  </div>
+                  <div class="reflect-preset-row" title="接続先とセクション選択をまとめてプリセットに保存/復元します">
+                    <span class="reflect-preset-row__label">反映プリセット</span>
+                    <select id="u_reflectPresetSelect" class="reflect-preset-row__select" aria-label="プリセット選択"></select>
+                    <button type="button" class="btn sub" data-act="applyReflectPreset">読込</button>
+                    <button type="button" class="btn sub" data-act="saveReflectPreset">現在の内容で保存</button>
+                    <button type="button" class="btn sub" data-act="deleteReflectPreset">削除</button>
                   </div>
                 </div>
               </div>
