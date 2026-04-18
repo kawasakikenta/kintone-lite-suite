@@ -825,16 +825,150 @@ export function renderReflectPlanInline() {
   </div>`;
 }
 
+function buildSectionPreviewCardHtml(secKey, info) {
+  const label = esc(info?.label || secKey);
+  const shape = info?.shape;
+  if (shape === 'map' && info.preview) {
+    const p = info.preview;
+    const counter = `<span class="reflect-preview-counter reflect-preview-counter--add">追加 ${p.addedCount}</span>` +
+      `<span class="reflect-preview-counter reflect-preview-counter--upd">更新 ${p.updatedCount}</span>` +
+      `<span class="reflect-preview-counter reflect-preview-counter--rm">削除 ${p.removedCount}</span>`;
+    if (!p.totalCount) {
+      return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span>${counter}<span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
+    }
+    const renderKey = (title, className, item, bothCols) => {
+      if (bothCols) {
+        return `<div class="reflect-preview-row reflect-preview-row--${className}">
+          <div class="reflect-preview-row__key">${esc(item.key)}</div>
+          <div class="reflect-preview-row__grid">
+            <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更前</div><pre class="reflect-preview-col__pre">${esc(item.before ?? '(なし)')}</pre></div>
+            <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更後</div><pre class="reflect-preview-col__pre">${esc(item.after ?? '(なし)')}</pre></div>
+          </div>
+        </div>`;
+      }
+      return `<div class="reflect-preview-row reflect-preview-row--${className}">
+        <div class="reflect-preview-row__key">${esc(title)}: ${esc(item.key)}</div>
+        <pre class="reflect-preview-row__pre">${esc(item.after ?? item.before ?? '')}</pre>
+      </div>`;
+    };
+    const added = (p.addedKeys || []).map((item) => renderKey('追加', 'add', item, false)).join('');
+    const updated = (p.updatedKeys || []).map((item) => renderKey('更新', 'upd', item, true)).join('');
+    const removed = (p.removedKeys || []).map((item) => renderKey('削除', 'rm', item, false)).join('');
+    const truncated = p.truncated ? `<div class="reflect-preview-card__muted">…一部省略（全${p.totalCount}件のうち先頭のみ表示）</div>` : '';
+    return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span>${counter}</summary>
+      <div class="reflect-preview-card__body">
+        ${added}${updated}${removed}${truncated}
+      </div>
+    </details>`;
+  }
+  if (shape === 'whole' && info.wholePreview) {
+    const w = info.wholePreview;
+    if (!w.changed) {
+      return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span><span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
+    }
+    return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span><span class="reflect-preview-counter reflect-preview-counter--upd">セクション全体更新</span></summary>
+      <div class="reflect-preview-card__body">
+        <div class="reflect-preview-row__grid">
+          <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更前</div><pre class="reflect-preview-col__pre">${esc(w.beforeText)}</pre></div>
+          <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更後</div><pre class="reflect-preview-col__pre">${esc(w.afterText)}</pre></div>
+        </div>
+      </div>
+    </details>`;
+  }
+  return '';
+}
+
+export function renderReflectPlanPreview() {
+  const el = getToolDocument().getElementById('u_reflectPlanPreview');
+  if (!el) return;
+  const planSig = getCurrentReflectPlanSignature();
+  const plan = state.lastApplyPlan;
+  const planReady = !!(plan && planSig && plan.signature === planSig);
+  if (!planReady) {
+    el.innerHTML = '';
+    return;
+  }
+  const previews = plan.sectionPreviews || {};
+  const entries = Object.entries(previews);
+  if (!entries.length) {
+    el.innerHTML = '';
+    return;
+  }
+  const changedEntries = entries.filter(([, info]) => {
+    if (info?.shape === 'map') return (info.preview?.totalCount || 0) > 0;
+    if (info?.shape === 'whole') return !!info.wholePreview?.changed;
+    return false;
+  });
+  const totalChanges = changedEntries.reduce((acc, [, info]) => {
+    if (info?.shape === 'map') return acc + (info.preview?.totalCount || 0);
+    return acc + 1;
+  }, 0);
+  const cards = entries.map(([key, info]) => buildSectionPreviewCardHtml(key, info)).filter(Boolean).join('');
+  el.innerHTML = `<div class="reflect-plan-preview__wrap">
+    <div class="reflect-plan-preview__head">
+      <span class="reflect-plan-preview__title">反映後プレビュー（ビフォー / アフター）</span>
+      <span class="reflect-plan-preview__meta">変更 ${totalChanges}件 / ${changedEntries.length}セクション</span>
+    </div>
+    <p class="reflect-plan-preview__hint">各セクションのカードをクリックすると、反映前後のJSONを並べて確認できます。</p>
+    <div class="reflect-plan-preview__list">${cards}</div>
+  </div>`;
+}
+
 export function renderReflectFooterBadges() {
   const el = getToolDocument().getElementById('u_reflectFooterBadges');
   if (!el) return;
   const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
+  const diffRowCount = getActualDiffRows(state.lastDiffRows || []).length;
   const planSig = getCurrentReflectPlanSignature();
   const plan = state.lastApplyPlan;
   const planReady = !!(plan && planSig && plan.signature === planSig);
+  const isNode = isReflectNodeModeEffective();
+  const scopeCount = (deps.selectedScopeKeys?.(ui.applyScopes) || []).length;
+  const selectedNodeCount = deps.getSelectedReflectRows ? deps.getSelectedReflectRows().length : 0;
+  const blockReasons = [];
+  if (!diffReady) blockReasons.push('差分比較を最新化してください');
+  else if (diffRowCount === 0) blockReasons.push('差分が 0 件のため反映は不要です');
+  if (isNode) {
+    if (!(state.reflectRows || []).length) blockReasons.push('差分候補をまず読込してください');
+    else if (selectedNodeCount === 0) blockReasons.push('反映する差分ノードを選択してください');
+  } else {
+    if (scopeCount === 0) blockReasons.push('反映セクションを 1 つ以上選択してください');
+  }
+  const canApply = blockReasons.length === 0;
+  const blockHtml = blockReasons.length
+    ? `<span class="reflect-footer-badge reflect-footer-badge--warn" title="${esc(blockReasons.join(' / '))}">反映不可: ${esc(blockReasons[0])}</span>`
+    : '<span class="reflect-footer-badge reflect-footer-badge--ok">反映可能</span>';
   el.innerHTML = `
-    <span class="reflect-footer-badge${diffReady ? ' reflect-footer-badge--ok' : ' reflect-footer-badge--warn'}">差分 ${diffReady ? '最新' : '要再実行'}</span>
-    <span class="reflect-footer-badge${planReady ? ' reflect-footer-badge--ok' : ' reflect-footer-badge--warn'}">プラン ${planReady ? '確認済み' : '未確認'}</span>`;
+    <span class="reflect-footer-badge${diffReady ? ' reflect-footer-badge--ok' : ' reflect-footer-badge--warn'}">差分 ${diffReady ? `最新 (${diffRowCount}件)` : '要再実行'}</span>
+    <span class="reflect-footer-badge${planReady ? ' reflect-footer-badge--ok' : ' reflect-footer-badge--warn'}">プラン ${planReady ? '確認済み' : '未確認'}</span>
+    ${blockHtml}`;
+  const doc = getToolDocument();
+  const applyBtn = doc.getElementById('u_footerApply');
+  const planBtn = doc.getElementById('u_footerPlan');
+  const dryBtn = doc.getElementById('u_footerDryRun');
+  const applyDisabled = !canApply;
+  const planDisabled = !(diffReady && diffRowCount > 0 && (isNode ? (state.reflectRows || []).length > 0 : scopeCount > 0));
+  if (applyBtn) {
+    applyBtn.disabled = applyDisabled;
+    applyBtn.classList.toggle('is-disabled', applyDisabled);
+    applyBtn.title = applyDisabled
+      ? `反映できない状態です: ${blockReasons.join(' / ')}`
+      : '選択した内容を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます';
+  }
+  if (planBtn) {
+    planBtn.disabled = planDisabled;
+    planBtn.classList.toggle('is-disabled', planDisabled);
+    planBtn.title = planDisabled
+      ? 'プラン確認する前に差分比較と反映対象の選択を行ってください'
+      : '比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）';
+  }
+  if (dryBtn) {
+    dryBtn.disabled = planDisabled;
+    dryBtn.classList.toggle('is-disabled', planDisabled);
+    dryBtn.title = planDisabled
+      ? 'ドライラン前に差分比較と反映対象の選択を行ってください'
+      : 'APIを叩かずに、予定されているリクエスト一式をJSONファイルとして保存します（ドライラン）';
+  }
 }
 
 export function renderReflectAssistPanel() {
@@ -842,7 +976,38 @@ export function renderReflectAssistPanel() {
   ui.reflectAssist.innerHTML = buildReflectAssistHtml();
   renderReflectHowto();
   renderReflectPlanInline();
+  renderReflectPlanPreview();
+  renderReflectPostApplyCard();
   renderReflectFooterBadges();
+}
+
+export function renderReflectPostApplyCard() {
+  const host = getToolDocument().getElementById('u_reflectPostApply');
+  if (!host) return;
+  const appliedAt = state.lastApplyCompletedAt;
+  if (!appliedAt) { host.innerHTML = ''; host.style.display = 'none'; return; }
+  const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
+  const diffStale = !diffReady || (state.lastDiffAt && appliedAt > state.lastDiffAt);
+  const minutesAgo = Math.max(0, Math.round((Date.now() - appliedAt) / 60000));
+  const ageLabel = minutesAgo === 0 ? 'たった今' : `${minutesAgo}分前`;
+  const modeLabel = state.lastApplyCompletedMode === 'nodes' ? '差分選択モード' : 'まとめて反映モード';
+  const hadError = !!state.lastApplyCompletedHadError;
+  const statusCls = hadError ? 'reflect-post-apply--warn' : 'reflect-post-apply--ok';
+  const statusLabel = hadError ? '一部エラーあり' : '正常完了';
+  const staleNote = diffStale
+    ? '<span class="reflect-post-apply__hint">反映後の実機状態はまだ比較されていません。「今すぐ再比較」で差分が 0 件になったか確認できます。</span>'
+    : '<span class="reflect-post-apply__hint">現在表示中の差分は反映後の最新状態と同期済みです。</span>';
+  host.style.display = 'block';
+  host.innerHTML = `<div class="reflect-post-apply ${statusCls}">
+    <div class="reflect-post-apply__head">
+      <span class="reflect-post-apply__title">反映${ageLabel}に完了しました（${esc(modeLabel)} / ${esc(statusLabel)}）</span>
+      <div class="reflect-post-apply__actions">
+        <button type="button" class="btn ok" data-act="postApplyRecompare" title="反映後の比較先プレビューを再取得して差分比較を実行します"${diffStale ? '' : ' disabled'}>今すぐ再比較</button>
+        <button type="button" class="btn sub" data-act="dismissPostApplyCard" title="このお知らせを閉じます">閉じる</button>
+      </div>
+    </div>
+    ${staleNote}
+  </div>`;
 }
 
 function renderReflectHowto() {
@@ -1029,6 +1194,37 @@ export function renderReflectMainPanel() {
   }
 }
 
+export function renderReflectActiveFilterChips() {
+  const host = ui.activeFilterChips;
+  if (!host) return;
+  const keyword = (ui.nodeSearch?.value || '').trim();
+  const filterSec = ui.nodeFilterSection?.value || '';
+  const filterType = ui.nodeFilterType?.value || '';
+  const filterSev = ui.nodeFilterSeverity?.value || '';
+  const propFilters = state.reflectPropertyFilters instanceof Set ? [...state.reflectPropertyFilters] : [];
+  const chips = [];
+  if (keyword) {
+    chips.push(`<button type="button" class="reflect-active-chip reflect-active-chip--kw" data-act="removeActiveFilter" data-filter-kind="keyword" title="キーワード絞り込みを解除">キーワード: ${esc(keyword)} <span class="reflect-active-chip__x">×</span></button>`);
+  }
+  if (filterSec) {
+    const label = SECTION_DEFS.find((d) => d.key === filterSec)?.label || filterSec;
+    chips.push(`<button type="button" class="reflect-active-chip" data-act="removeActiveFilter" data-filter-kind="section" title="セクション絞り込みを解除">セクション: ${esc(label)} <span class="reflect-active-chip__x">×</span></button>`);
+  }
+  if (filterType) {
+    const label = getDiffTypeDisplayLabel(filterType) || filterType;
+    chips.push(`<button type="button" class="reflect-active-chip reflect-active-chip--type" data-act="removeActiveFilter" data-filter-kind="type" title="種別絞り込みを解除">種別: ${esc(label)} <span class="reflect-active-chip__x">×</span></button>`);
+  }
+  if (filterSev) {
+    const label = getSeverityDisplayLabel(filterSev.toLowerCase()) || filterSev;
+    chips.push(`<button type="button" class="reflect-active-chip reflect-active-chip--sev" data-act="removeActiveFilter" data-filter-kind="severity" title="重要度絞り込みを解除">重要度: ${esc(label)} <span class="reflect-active-chip__x">×</span></button>`);
+  }
+  propFilters.forEach((key) => {
+    chips.push(`<button type="button" class="reflect-active-chip reflect-active-chip--prop" data-act="removeReflectPropertyFilter" data-prop="${esc(key)}" title="プロパティ「${esc(key)}」の絞り込みを解除">プロパティ: ${esc(key)} <span class="reflect-active-chip__x">×</span></button>`);
+  });
+  if (!chips.length) { host.innerHTML = ''; return; }
+  host.innerHTML = `<span class="reflect-active-chips__label">適用中の絞り込み</span>${chips.join('')}<button type="button" class="reflect-active-chip-clear" data-act="clearReflectNodeFilters" title="すべての絞り込み条件を解除">すべて解除</button>`;
+}
+
 export function renderReflectNodeList() {
   const extractPropertyKeyFromPath = (path) => {
     const text = String(path || '');
@@ -1047,6 +1243,7 @@ export function renderReflectNodeList() {
     if (ui.nodePropertyList) ui.nodePropertyList.innerHTML = '<div class="muted" style="padding:6px">差分候補を読み込むと表示されます</div>';
     if (ui.nodePropertyChips) ui.nodePropertyChips.innerHTML = '<span class="muted" style="font-size:10px">未選択（すべて対象）</span>';
     state.reflectActiveNodeId = '';
+    renderReflectActiveFilterChips();
     renderReflectNodeDetail();
     renderBundleState();
     renderReflectModeUi();
@@ -1111,6 +1308,7 @@ export function renderReflectNodeList() {
   const tgtCount = selectedRows.length - srcCount;
   const sev = summarizeSeverity(selectedRows);
   const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">候補 ${rows.length}件 / 表示 ${filtered.length}件 / 選択 ${selectedCount}件 / 比較元採用 ${srcCount} / 比較先維持 ${tgtCount} / 高:${sev.high} 中:${sev.medium} 低:${sev.low}</div>`;
+  renderReflectActiveFilterChips();
   if (!filtered.length) {
     ui.reflectNodeList.innerHTML = `${header}<div style="padding:12px;font-size:12px;color:#64748b">条件に一致するノードがありません。検索または絞り込み条件を見直してください。</div>`;
     renderReflectNodeDetail();

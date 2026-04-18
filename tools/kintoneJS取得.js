@@ -257,7 +257,7 @@
   });
 
   // src/constants.js
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, META_KEYS, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, META_KEYS, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.js"() {
       "use strict";
@@ -314,6 +314,7 @@
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
       DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
+      REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
       META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
@@ -410,6 +411,10 @@
         lastDiffAt: null,
         lastDiffSignature: "",
         lastApplyPlan: null,
+        lastApplyCompletedAt: null,
+        lastApplyCompletedMode: "",
+        lastApplyCompletedHadError: false,
+        lastApplyCompletedAppId: "",
         lastPreviewBackupPayload: null,
         lastPreviewBackupFilename: "",
         diffViewTheme: "light",

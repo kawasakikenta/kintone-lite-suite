@@ -25,7 +25,7 @@ import {
 } from './reflect/apply.js';
 import { getActiveReflectRow, getSelectedReflectRows } from './tabs/reflect.js';
 import { resolveApplyScopes } from './reflect/helpers.js';
-import { makeApplyPlanSignature, runPreviewApplyPlan } from './reflect/plan.js';
+import { makeApplyPlanSignature, runPreviewApplyPlan, runExportDryRunPlan } from './reflect/plan.js';
 import { scheduleGuidedTourLayout } from './ui/tour.js';
 import { setupEventHandlers } from './handlers.js';
 import { initJsonEditor, getJsonEditorInstance, startGuidedTour } from './oss_integrations.js';
@@ -202,6 +202,7 @@ export function runKintoneUnifiedSuite(options = {}) {
     nodePropertyPanel: $('#u_nodePropertyPanel'),
     nodePropertyList: $('#u_nodePropertyList'),
     nodePropertyChips: $('#u_nodePropertyChips'),
+    activeFilterChips: $('#u_activeFilterChips'),
     nodeWarn: $('#u_nodeWarn'),
     nodeControls: $('#u_nodeControls'),
     reflectNodeWorkbench: $('#u_reflectNodeWorkbench'),
@@ -330,6 +331,7 @@ export function runKintoneUnifiedSuite(options = {}) {
     runApiTester,
     clearApiTesterHistory,
     runPreviewApplyPlan,
+    runExportDryRunPlan,
     runBackupTargetPreview,
     runRestoreTargetPreviewBackup,
     runApplyPreview,

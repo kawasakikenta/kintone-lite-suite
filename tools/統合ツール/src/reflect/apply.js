@@ -1014,6 +1014,10 @@ export async function runApplyPreviewByNodes() {
 
   appendProgressSummary(logs);
   renderProgressLog(logs, { phase: 'ノード反映完了' });
+  state.lastApplyCompletedAt = Date.now();
+  state.lastApplyCompletedMode = 'nodes';
+  state.lastApplyCompletedHadError = hadError;
+  state.lastApplyCompletedAppId = app;
   renderReflectAssistPanel();
   renderReflectMainPanel();
   setStatus('ノード反映処理完了');
@@ -1070,6 +1074,10 @@ export async function runApplyPreview() {
 
   appendProgressSummary(logs);
   renderProgressLog(logs, { phase: 'プレビュー反映完了' });
+  state.lastApplyCompletedAt = Date.now();
+  state.lastApplyCompletedMode = 'section';
+  state.lastApplyCompletedHadError = hadError;
+  state.lastApplyCompletedAppId = app;
   renderReflectAssistPanel();
   renderReflectMainPanel();
   setStatus('プレビュー反映処理完了');
