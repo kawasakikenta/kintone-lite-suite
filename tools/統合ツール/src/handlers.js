@@ -12,7 +12,9 @@ import {
   syncDiffThemeButton,
   renderDiffWarningBox,
   renderDiffSelectionState,
-  MAIN_RESULT_IDLE_HTML
+  MAIN_RESULT_IDLE_HTML,
+  diffViewedKey,
+  isDiffRowViewed
 } from './diff/export.js';
 import { applyDiffUiPreset, applyDiffSectionNav } from './diff/presets.js';
 import { saveDiffSelectionSet, loadDiffSelectionSet, deleteDiffSelectionSet, refreshDiffSelectionSetDropdown } from './diff/selection-sets.js';
@@ -174,6 +176,85 @@ function setScopeSelection(container, checked) {
 
 function normalizeDiffFavoritePath(path) {
   return String(path || '').trim();
+}
+
+// ---------------------------------------------------------------------------
+// Viewed (レビュー済み) ヘルパー
+// ---------------------------------------------------------------------------
+
+function getDiffRowByIdFromState(rowId) {
+  if (!rowId) return null;
+  return (state.lastDiffRows || []).find((r) => r && r._id === rowId) || null;
+}
+
+function toggleDiffViewedById(rowId, forced) {
+  const row = getDiffRowByIdFromState(rowId);
+  if (!row) return false;
+  const key = diffViewedKey(row);
+  if (!key) return false;
+  const currentlyViewed = state.diffViewedKeys.has(key);
+  const next = typeof forced === 'boolean' ? forced : !currentlyViewed;
+  if (next) state.diffViewedKeys.add(key);
+  else state.diffViewedKeys.delete(key);
+  return next;
+}
+
+function markVisibleDiffRowsViewed() {
+  const rendered = getRenderedDiffRows();
+  let marked = 0;
+  for (const row of rendered) {
+    if (!row || row.type === 'same') continue;
+    const key = diffViewedKey(row);
+    if (!key || state.diffViewedKeys.has(key)) continue;
+    state.diffViewedKeys.add(key);
+    marked += 1;
+  }
+  return { marked, total: rendered.length };
+}
+
+function clearAllDiffViewed() {
+  const n = state.diffViewedKeys.size;
+  state.diffViewedKeys = new Set();
+  return n;
+}
+
+function focusDiffRow(rowId, options = {}) {
+  if (!rowId) return false;
+  state.diffFocusedRowId = rowId;
+  const res = getToolDocument().getElementById('u_result');
+  if (!res) return false;
+  const tr = res.querySelector(`[data-diff-row-tr="${rowId.replace(/"/g, '\\"')}"]`);
+  if (!tr) return false;
+  // move focus to selection checkbox inside the row for keyboard continuity
+  const selectBox = tr.querySelector('input[type=checkbox][data-diff-row-id]');
+  try {
+    if (selectBox && options.focus !== false) selectBox.focus({ preventScroll: true });
+  } catch (e) { /* ignore */ }
+  if (options.scroll !== false) {
+    try { tr.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) { /* ignore */ }
+  }
+  // paint focused class without re-rendering entire diff
+  res.querySelectorAll('.diff-row-focused').forEach((el) => { if (el !== tr) el.classList.remove('diff-row-focused'); });
+  tr.classList.add('diff-row-focused');
+  return true;
+}
+
+function focusNextDiffRow(direction) {
+  const res = getToolDocument().getElementById('u_result');
+  if (!res) return false;
+  const trs = [...res.querySelectorAll('[data-diff-row-tr]')];
+  if (!trs.length) return false;
+  const ids = trs.map((el) => el.getAttribute('data-diff-row-tr'));
+  const curIdx = state.diffFocusedRowId ? ids.indexOf(state.diffFocusedRowId) : -1;
+  let nextIdx;
+  if (curIdx === -1) {
+    nextIdx = direction > 0 ? 0 : ids.length - 1;
+  } else {
+    nextIdx = curIdx + direction;
+    if (nextIdx < 0) nextIdx = 0;
+    if (nextIdx >= ids.length) nextIdx = ids.length - 1;
+  }
+  return focusDiffRow(ids[nextIdx]);
 }
 
 function parseIdSet(text) {
@@ -787,7 +868,12 @@ export function setupEventHandlers(injected = {}) {
       const boxes = [...resKb.querySelectorAll('tbody input[type=checkbox][data-diff-row-id]')];
       const idx = boxes.indexOf(tKb);
       const next = e.key === 'ArrowDown' ? boxes[idx + 1] : boxes[idx - 1];
-      if (idx >= 0 && next) { e.preventDefault(); next.focus(); }
+      if (idx >= 0 && next) {
+        e.preventDefault();
+        next.focus();
+        const tr = next.closest('[data-diff-row-tr]');
+        if (tr) state.diffFocusedRowId = tr.getAttribute('data-diff-row-tr') || '';
+      }
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
@@ -809,6 +895,47 @@ export function setupEventHandlers(injected = {}) {
       e.preventDefault();
       state.diffSelectedIds = new Set((state.lastDiffRows || []).map((row) => row._id));
       renderResultRows(state.lastDiffRows);
+      return;
+    }
+
+    // j/k でフォーカス移動、v でレビュー済みトグル、x で選択トグル（GitHub PR 風）
+    if (!editable && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const key = e.key;
+      if (key === 'j' || key === 'k') {
+        if (!(state.lastDiffRows && state.lastDiffRows.length)) return;
+        e.preventDefault();
+        const moved = focusNextDiffRow(key === 'j' ? 1 : -1);
+        if (!moved) setStatus('表示中の差分がありません');
+        return;
+      }
+      if (key === 'v' || key === 'V') {
+        if (!state.diffFocusedRowId) {
+          if (!focusNextDiffRow(1)) return;
+        }
+        e.preventDefault();
+        const next = toggleDiffViewedById(state.diffFocusedRowId);
+        if (next === false && !getDiffRowByIdFromState(state.diffFocusedRowId)) return;
+        saveCurrentDialogState();
+        renderResultRows(state.lastDiffRows);
+        // 再レンダー後もフォーカスを維持
+        focusDiffRow(state.diffFocusedRowId, { scroll: false });
+        setStatus(next ? 'レビュー済みにマークしました (v)' : 'レビュー済みを解除しました (v)');
+        return;
+      }
+      if (key === 'x' || key === 'X') {
+        if (!state.diffFocusedRowId) {
+          if (!focusNextDiffRow(1)) return;
+        }
+        e.preventDefault();
+        const id = state.diffFocusedRowId;
+        if (state.diffSelectedIds.has(id)) state.diffSelectedIds.delete(id);
+        else state.diffSelectedIds.add(id);
+        state.diffSelectionAnchorId = id;
+        renderResultRows(state.lastDiffRows);
+        focusDiffRow(id, { scroll: false });
+        saveCurrentDialogState();
+        return;
+      }
     }
   });
 
@@ -872,6 +999,14 @@ export function setupEventHandlers(injected = {}) {
       else state.diffSelectedIds.delete(diffId);
       renderResultRows(state.lastDiffRows);
       saveCurrentDialogState();
+      return;
+    }
+
+    const viewedId = e.target?.dataset?.diffViewedId;
+    if (viewedId) {
+      toggleDiffViewedById(viewedId, !!e.target.checked);
+      saveCurrentDialogState();
+      renderResultRows(state.lastDiffRows);
       return;
     }
 
@@ -1289,6 +1424,31 @@ export function setupEventHandlers(injected = {}) {
       renderDiffActiveFilters();
       saveCurrentDialogState();
       setStatus('差分フィルタをクリアしました');
+      return;
+    }
+
+    if (act === 'toggleHideViewed') {
+      state.diffHideViewed = !state.diffHideViewed;
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      saveCurrentDialogState();
+      setStatus(state.diffHideViewed ? 'レビュー済みの差分を隠しています' : 'レビュー済みの差分も表示します');
+      return;
+    }
+    if (act === 'markVisibleViewed') {
+      if (!state.lastDiffRows.length) { setStatus('差分がありません'); return; }
+      const { marked } = markVisibleDiffRowsViewed();
+      if (!marked) { setStatus('レビュー済みに追加する差分はありません（表示中はすべて済）'); return; }
+      renderResultRows(state.lastDiffRows);
+      saveCurrentDialogState();
+      setStatus(`表示中の ${marked} 件をレビュー済みにしました`);
+      return;
+    }
+    if (act === 'clearViewed') {
+      const n = clearAllDiffViewed();
+      if (!n) { setStatus('レビュー済みの記録はありません'); return; }
+      if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+      saveCurrentDialogState();
+      setStatus(`レビュー済み ${n} 件をすべて解除しました`);
       return;
     }
 

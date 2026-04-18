@@ -492,6 +492,7 @@ export function diffRowMatchesFilters(row, filters) {
     const p = String(row.path || '').trim();
     if (!state.diffFavoritePaths.has(p)) return false;
   }
+  if (filters.hideViewed && row.type !== 'same' && isDiffRowViewed(row)) return false;
   return true;
 }
 
@@ -506,8 +507,38 @@ export function getCurrentDiffFilterState() {
     searchByFieldName: !!ui.diffSearchFieldName?.checked || !!state.diffSearchFieldName,
     sourceBundle: state.lastSourceBundle,
     targetBundle: state.lastTargetBundle,
-    favoritesOnly: !!state.diffFavoritesOnly
+    favoritesOnly: !!state.diffFavoritesOnly,
+    hideViewed: !!state.diffHideViewed
   };
+}
+
+// ---------------------------------------------------------------------------
+// Viewed (レビュー済み) helpers — パスベースで永続化
+// ---------------------------------------------------------------------------
+
+export function diffViewedKey(row) {
+  if (!row) return '';
+  const section = String(row.sectionKey || '');
+  const path = String(row.path || '');
+  const type = String(row.type || '');
+  if (!path && !section) return '';
+  return `${section}\t${path}\t${type}`;
+}
+
+export function isDiffRowViewed(row) {
+  const key = diffViewedKey(row);
+  if (!key) return false;
+  return state.diffViewedKeys.has(key);
+}
+
+export function countViewedInRows(rows) {
+  if (!rows || !rows.length) return 0;
+  let n = 0;
+  for (const row of rows) {
+    if (!row || row.type === 'same') continue;
+    if (isDiffRowViewed(row)) n += 1;
+  }
+  return n;
 }
 
 export function getFilteredDiffRows(rows) {
@@ -3993,6 +4024,60 @@ function buildDiffSummaryBars(summary) {
   return `<div class="diff-summary-bars" role="presentation" aria-hidden="true">${inner}</div>`;
 }
 
+function buildDiffImpactCardsHtml(rows) {
+  const actual = getActualDiffRows(rows);
+  if (!actual.length) return '';
+  const bySection = new Map();
+  for (const row of actual) {
+    const key = row.sectionKey || '';
+    if (!key) continue;
+    const slot = bySection.get(key) || { key, label: '', total: 0, added: 0, removed: 0, changed: 0, moved: 0, high: 0, medium: 0, low: 0, viewed: 0 };
+    slot.label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
+    slot.total += 1;
+    if (row.type === 'added') slot.added += 1;
+    else if (row.type === 'removed') slot.removed += 1;
+    else if (row.type === 'changed') slot.changed += 1;
+    if (row.moved) slot.moved += 1;
+    const sev = row.severity || 'low';
+    if (sev === 'high') slot.high += 1;
+    else if (sev === 'medium') slot.medium += 1;
+    else slot.low += 1;
+    if (isDiffRowViewed(row)) slot.viewed += 1;
+    bySection.set(key, slot);
+  }
+  const items = [...bySection.values()].sort((a, b) => (b.high - a.high) || (b.total - a.total));
+  if (!items.length) return '';
+  const curSec = ui.diffFilterSection?.value || state.diffFilterSection || '';
+  const cards = items.map((item) => {
+    const progress = item.total > 0 ? Math.min(1, item.viewed / item.total) : 0;
+    const progressPct = Math.round(progress * 100);
+    const warnIcon = item.high > 0
+      ? `<span class="diff-impact-card-warn" title="高重要度 ${item.high}件">⚠ 高 ${item.high}</span>`
+      : '';
+    const stats = [
+      item.added ? `<span class="diff-impact-stat added" title="追加">+${item.added}</span>` : '',
+      item.removed ? `<span class="diff-impact-stat removed" title="削除">-${item.removed}</span>` : '',
+      item.changed ? `<span class="diff-impact-stat changed" title="変更">~${item.changed}</span>` : '',
+      item.moved ? `<span class="diff-impact-stat moved" title="移動">↕${item.moved}</span>` : ''
+    ].filter(Boolean).join('');
+    const activeClass = curSec === item.key ? ' is-active' : '';
+    const reviewed = item.total === item.viewed ? ' is-complete' : '';
+    return `<button type="button" class="diff-impact-card${activeClass}${reviewed}" data-diff-sec-nav="${esc(item.key)}" title="${esc(item.label)} へジャンプ">
+        <div class="diff-impact-card-head">
+          <span class="diff-impact-card-title">${esc(item.label)}</span>
+          ${warnIcon}
+        </div>
+        <div class="diff-impact-card-total">${item.total}<span class="diff-impact-card-unit">件</span></div>
+        <div class="diff-impact-stats">${stats}</div>
+        <div class="diff-impact-progress" title="レビュー済み ${item.viewed}/${item.total}">
+          <div class="diff-impact-progress-bar" style="width:${progressPct}%"></div>
+          <span class="diff-impact-progress-label">レビュー ${item.viewed}/${item.total}</span>
+        </div>
+      </button>`;
+  }).join('');
+  return `<div class="diff-impact-cards" role="region" aria-label="セクション別インパクト">${cards}</div>`;
+}
+
 function buildDiffSectionNavHtml(rows) {
   const cur = ui.diffFilterSection?.value || state.diffFilterSection || '';
   const baseRows = getFilteredDiffRowsWithoutSectionFilter(rows);
@@ -4059,7 +4144,23 @@ export function renderResultRows(rows) {
   renderDiffSuggestionChips();
   renderDiffWarningBox();
 
+  const impactCardsHtml = rows.length ? buildDiffImpactCardsHtml(rows) : '';
   const sectionNavHtml = rows.length ? buildDiffSectionNavHtml(rows) : '';
+  const viewedCount = countViewedInRows(rows);
+  const actualTotal = summary.total - summary.same;
+  const viewedPct = actualTotal > 0 ? Math.round((viewedCount / actualTotal) * 100) : 0;
+  const hideViewedActive = !!state.diffHideViewed;
+  const viewedControlsHtml = actualTotal > 0 ? `
+      <div class="diff-viewed-controls" role="group" aria-label="レビュー進捗">
+        <span class="diff-viewed-progress" title="差分 ${actualTotal}件中 ${viewedCount}件をレビュー済みにしています">
+          <span class="diff-viewed-progress-bar"><span class="diff-viewed-progress-fill" style="width:${viewedPct}%"></span></span>
+          <span class="diff-viewed-progress-text">レビュー ${viewedCount}/${actualTotal} (${viewedPct}%)</span>
+        </span>
+        <button type="button" class="diff-viewed-btn${hideViewedActive ? ' is-active' : ''}" data-act="toggleHideViewed" title="レビュー済みの行を一覧から隠します">${hideViewedActive ? '✓ 済みを隠す（ON）' : '済みを隠す'}</button>
+        <button type="button" class="diff-viewed-btn" data-act="markVisibleViewed" title="現在表示中の差分すべてをレビュー済みにします">表示中をレビュー済みに</button>
+        <button type="button" class="diff-viewed-btn" data-act="clearViewed" title="すべてのレビュー済みフラグを外します">すべて未レビューへ</button>
+      </div>
+    ` : '';
 
   const summaryHtml = `
       <div class="diff-summary-head" role="region" aria-label="差分サマリー">
@@ -4076,12 +4177,15 @@ export function renderResultRows(rows) {
         <span class="diff-pill">低 ${severitySummary.low}</span>
         <span class="diff-pill">取得失敗 ${fetchSummary.total}</span>
         <span class="diff-pill">選択 ${selectedRows.length}</span>
+        <span class="diff-pill">レビュー済 ${viewedCount}</span>
         <span class="diff-pill">名称変更候補 ${renameCount}</span>
         <span class="diff-pill">影響情報あり ${impactCount}</span>
         <span class="diff-info">表示 ${renderedRows.length}/${filteredRows.length}/${rows.length}</span>
         ${filteredRows.length !== rows.length ? `<span class="diff-info">絞込重要度 高:${filteredSeverity.high} / 中:${filteredSeverity.medium} / 低:${filteredSeverity.low}</span>` : ''}
         ${rawKeyword ? `<span class="diff-info">検索: ${esc(rawKeyword)}</span>` : ''}
         </div>
+        ${impactCardsHtml}
+        ${viewedControlsHtml}
         ${sectionNavHtml}
       </div>
     `;
@@ -4145,8 +4249,18 @@ export function renderResultRows(rows) {
       const reflectBtn = canReflect
         ? `<button type="button" class="diff-mini-btn diff-mini-btn--reflect" data-send-to-reflect="${esc(r._id || '')}" title="この差分ノードだけを反映対象に追加し、反映タブへ移動します">反映へ送る</button>`
         : '';
-      return `<tr class="${rowAccent}${selected ? ' diff-row-selected' : ''}${hierarchyClass}">
-          <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" ${selected}></td>
+      const viewed = isDiffRowViewed(r);
+      const viewedChecked = viewed ? 'checked' : '';
+      const viewedClass = viewed ? ' diff-row-viewed' : '';
+      const focusClass = state.diffFocusedRowId === r._id ? ' diff-row-focused' : '';
+      return `<tr class="${rowAccent}${selected ? ' diff-row-selected' : ''}${hierarchyClass}${viewedClass}${focusClass}" data-diff-row-tr="${esc(r._id)}">
+          <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" aria-label="この差分を選択" ${selected}></td>
+          <td class="diff-viewed-cell">
+            <label class="diff-viewed-toggle" title="レビュー済みとしてマーク（キー: v）">
+              <input type="checkbox" data-diff-viewed-id="${esc(r._id)}" aria-label="レビュー済み" ${viewedChecked}>
+              <span class="diff-viewed-mark" aria-hidden="true">${viewed ? '✓' : ''}</span>
+            </label>
+          </td>
           <td><span class="sev-badge ${sevClass}">${esc(getSeverityDisplayLabel(sev))}</span></td>
           <td class="diff-type ${typeClass}">${esc(typeLabel || '-')}</td>
           <td>
@@ -4169,7 +4283,7 @@ export function renderResultRows(rows) {
     return `<section class="diff-sec">
         ${head}
         <table class="diff-table">
-          <thead><tr><th style="width:56px">選択</th><th style="width:90px">重要度</th><th style="width:120px">種別</th><th style="width:260px">パス</th><th>比較元</th><th>比較先</th></tr></thead>
+          <thead><tr><th style="width:56px">選択</th><th style="width:48px" title="レビュー済みチェック（キー: v）">済</th><th style="width:90px">重要度</th><th style="width:120px">種別</th><th style="width:260px">パス</th><th>比較元</th><th>比較先</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
         ${moreHtml}
