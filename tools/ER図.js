@@ -1076,11 +1076,16 @@ ${contextLine}`);
   --text:#d8dee9;--dim:#636e83;--accent:#5eead4;--accent2:#818cf8;
   --lookup:#60a5fa;--ref:#34d399;--pk:#fbbf24;--req:#f87171;--action:#f59e0b;
   --radius:10px;
+  --topbar-h:52px;
+  --shadow-sm:0 2px 6px rgba(0,0,0,0.18);
+  --shadow-md:0 10px 28px rgba(0,0,0,0.28);
 }
 [data-theme="light"]{
   --bg:#f0f2f5;--surface:#ffffff;--surface2:#f7f8fa;--border:#d8dce6;
   --text:#1a1c23;--dim:#6b7280;--accent:#0d9488;--accent2:#6366f1;
   --lookup:#2563eb;--ref:#059669;--pk:#d97706;--req:#dc2626;--action:#d97706;
+  --shadow-sm:0 1px 3px rgba(15,23,42,0.08);
+  --shadow-md:0 12px 28px rgba(15,23,42,0.14);
 }
 
 body{font-family:'DM Sans',sans-serif;background:
@@ -1090,12 +1095,12 @@ body{font-family:'DM Sans',sans-serif;background:
   color:var(--text);overflow:hidden;height:100vh;}
 
 /* ── Command Palette ── */
-#cmd-overlay{display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);justify-content:center;align-items:flex-start;padding-top:15vh;}
+#cmd-overlay{display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);justify-content:center;align-items:flex-start;padding-top:12vh;}
 #cmd-overlay.open{display:flex;}
-#cmd-box{width:520px;background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);}
+#cmd-box{width:min(540px,92vw);background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-md);}
 #cmd-input{width:100%;padding:16px 20px;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;outline:none;border-bottom:1px solid var(--border);}
 #cmd-input::placeholder{color:var(--dim);}
-#cmd-results{max-height:340px;overflow-y:auto;}
+#cmd-results{max-height:min(340px,60vh);overflow-y:auto;}
 .cmd-item{padding:10px 20px;cursor:pointer;display:flex;align-items:center;gap:10px;font-size:13px;border-bottom:1px solid var(--border);}
 .cmd-item:hover,.cmd-item.active{background:var(--surface2);}
 .cmd-item .kbd{margin-left:auto;font-size:10px;padding:2px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;font-family:'DM Mono',monospace;color:var(--dim);}
@@ -1104,6 +1109,7 @@ body{font-family:'DM Sans',sans-serif;background:
 #topbar{
   position:fixed;top:0;left:0;right:0;z-index:100;
   display:flex;align-items:center;gap:6px;padding:8px 14px;
+  min-height:var(--topbar-h);
   background:linear-gradient(180deg,var(--bg) 82%,rgba(8,9,13,0.92));
   backdrop-filter:blur(12px);
   border-bottom:1px solid var(--border);
@@ -1112,32 +1118,102 @@ body{font-family:'DM Sans',sans-serif;background:
 #topbar::-webkit-scrollbar{display:none;}
 #topbar h1{font-size:14px;font-weight:700;margin-right:6px;white-space:nowrap;
   background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-.tb{padding:5px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:11px;cursor:pointer;transition:.15s;font-family:inherit;white-space:nowrap;flex:0 0 auto;}
+.tb{padding:6px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:11px;cursor:pointer;transition:.15s;font-family:inherit;white-space:nowrap;flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;min-height:30px;}
 .tb:hover{border-color:var(--accent);color:var(--accent);}
 .tb.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
-.meta-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:10px;color:var(--dim);max-width:100%;flex-wrap:wrap;}
+.tb-icon{padding:6px 9px;font-size:13px;}
+.tb-group{display:inline-flex;align-items:center;gap:4px;padding:2px 4px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);flex-wrap:nowrap;}
+.tb-group .tb{border:1px solid transparent;background:transparent;padding:4px 8px;}
+.tb-group .tb:hover{background:var(--surface);border-color:var(--border);color:var(--accent);}
+.tb-group .tb.active{background:var(--accent);color:#000;border-color:var(--accent);}
+.tb-group-label{font-size:10px;color:var(--dim);padding:0 4px;font-weight:600;letter-spacing:0.02em;}
+.meta-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:10px;color:var(--dim);max-width:100%;}
 .meta-pill b{color:var(--text);font-weight:700;}
-#topbar select.tb-select{padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;outline:none;flex:0 0 auto;}
+#topbar select.tb-select{padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;outline:none;flex:0 0 auto;min-height:30px;}
 #topbar select.tb-select:focus{border-color:var(--accent);}
 .sep{width:1px;height:20px;background:var(--border);margin:0 4px;}
-#search-box{padding:5px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;width:180px;font-family:inherit;outline:none;}
+#search-box{padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;width:200px;font-family:inherit;outline:none;min-height:30px;}
 #search-box:focus{border-color:var(--accent);}
 #search-box::placeholder{color:var(--dim);}
-#search-meta{min-width:92px;justify-content:center;}
-.spacer{flex:1 1 24px;}
+#search-meta{min-width:84px;justify-content:center;}
+.spacer{flex:1 1 16px;}
 
+/* ── Dropdown menu ── */
+.tb-menu{position:relative;}
+.tb-menu > .tb-menu-btn::after{content:"▾";margin-left:4px;font-size:9px;opacity:0.7;}
+.tb-menu-panel{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:200px;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);padding:6px;z-index:120;}
+.tb-menu.open .tb-menu-panel{display:flex;flex-direction:column;gap:2px;}
+.tb-menu-panel .tb{background:transparent;border:1px solid transparent;justify-content:flex-start;width:100%;padding:7px 10px;font-size:12px;}
+.tb-menu-panel .tb:hover{background:var(--surface2);border-color:var(--border);}
+.tb-menu-panel hr{border:none;border-top:1px solid var(--border);margin:4px 2px;}
+
+/* mobile menu button (hidden on desktop) */
+#mobile-menu-btn{display:none;}
 
 @media (max-width: 1280px){
-  #topbar{padding-right:10px;row-gap:8px;}
+  #topbar{padding:6px 10px;row-gap:6px;}
   #topbar .sep{display:none;}
-  #search-box{width:min(220px,100%);flex:1 1 220px;}
+  #search-box{width:min(220px,100%);flex:1 1 200px;}
   #search-meta{min-width:0;}
+  .tb-group-label{display:none;}
 }
 @media (max-width: 900px){
-  #overview{top:106px;width:calc(100vw - 24px);left:12px;}
+  :root{--topbar-h:auto;}
+  #overview{top:calc(var(--topbar-h, 52px) + 58px);width:calc(100vw - 24px);left:12px;}
   .ov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
-  #detail{width:min(92vw,390px);}
+  #detail{width:min(96vw,420px);top:calc(var(--topbar-h, 52px) + 6px);}
+  #banner{top:calc(var(--topbar-h, 52px) + 6px);}
+  #sidebar{top:calc(var(--topbar-h, 52px) + 2px);width:min(300px,92vw);}
+  #legend{font-size:9px;padding:6px 10px;gap:8px;flex-wrap:wrap;max-width:calc(100vw - 92px);}
 }
+@media (max-width: 640px){
+  #topbar{padding:6px 8px;gap:4px;}
+  #topbar h1{font-size:12px;margin-right:2px;}
+  #mobile-menu-btn{display:inline-flex;}
+  #topbar > .meta-group,
+  #topbar > .tb-group[data-group="view"],
+  #topbar > .tb-group[data-group="layout"],
+  #topbar > .tb-group[data-group="focus"],
+  #topbar > .tb-group[data-group="edit"],
+  #topbar > #density-select,
+  #topbar > #overview-toggle-btn,
+  #topbar > .tb[data-mobile="hide"]{display:none;}
+  #topbar.mobile-open > .meta-group,
+  #topbar.mobile-open > .tb-group,
+  #topbar.mobile-open > #density-select,
+  #topbar.mobile-open > #overview-toggle-btn,
+  #topbar.mobile-open > .tb[data-mobile="hide"]{display:inline-flex;}
+  #topbar.mobile-open{padding-bottom:10px;}
+  #search-box{flex:1 1 120px;width:100%;}
+  #detail{width:100vw;right:0;top:0;max-height:100vh;border-radius:0;}
+  #detail.open{top:0;}
+  #sidebar{width:100vw;top:0;padding-top:22px;}
+  #overview{top:calc(var(--topbar-h, 52px) + 40px);}
+  .ov-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;}
+  .ov-card{padding:8px;min-height:58px;}
+  .ov-kpi{font-size:16px;}
+  #legend{bottom:8px;right:8px;font-size:9px;padding:5px 8px;gap:6px;max-width:calc(100vw - 16px);}
+  #minimap{display:none !important;}
+  #pathfinder{left:8px;right:8px;transform:none;padding:8px 10px;flex-wrap:wrap;}
+  #path-result{max-width:100%;white-space:normal;}
+  #toast{bottom:80px;font-size:11px;padding:7px 14px;}
+  #banner{top:calc(var(--topbar-h, 52px) + 4px);left:8px;max-width:calc(100vw - 16px);}
+  .meta-pill{font-size:9px;padding:3px 7px;}
+  #zoom-ctrl{bottom:56px;right:8px;}
+  #fab-mobile{display:flex;}
+}
+
+/* Floating action button for mobile */
+#fab-mobile{display:none;position:fixed;bottom:16px;left:16px;z-index:110;flex-direction:column;gap:8px;}
+#fab-mobile button{width:44px;height:44px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:16px;cursor:pointer;box-shadow:var(--shadow-md);}
+#fab-mobile button:hover{color:var(--accent);border-color:var(--accent);}
+
+/* ── Zoom controls ── */
+#zoom-ctrl{position:fixed;bottom:52px;right:210px;z-index:100;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow-sm);}
+#zoom-ctrl button{width:34px;height:30px;border:none;background:transparent;color:var(--text);cursor:pointer;font-size:13px;font-family:inherit;border-bottom:1px solid var(--border);transition:.12s;}
+#zoom-ctrl button:last-child{border-bottom:none;}
+#zoom-ctrl button:hover{background:var(--surface2);color:var(--accent);}
+#zoom-level{font-size:9px;color:var(--dim);text-align:center;padding:3px 0;border-bottom:1px solid var(--border);font-family:'DM Mono',monospace;}
 
 /* ── Sidebar ── */
 #sidebar{
@@ -1201,13 +1277,28 @@ body{font-family:'DM Sans',sans-serif;background:
   position:fixed;bottom:16px;right:16px;z-index:100;
   display:flex;gap:14px;padding:8px 14px;
   background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--radius);font-size:10px;
+  border-radius:var(--radius);font-size:10px;box-shadow:var(--shadow-sm);
 }
 #legend span{display:flex;align-items:center;gap:4px;}
 #legend i{display:inline-block;width:9px;height:9px;border-radius:2px;}
 #legend .legend-toggle{cursor:pointer;padding:2px 6px;border:1px solid transparent;border-radius:8px;transition:.12s;}
 #legend .legend-toggle:hover{background:var(--surface2);border-color:var(--border);}
 #legend .legend-toggle.off{opacity:0.35;text-decoration:line-through;}
+
+/* ── Help / Shortcut modal ── */
+#help-overlay{display:none;position:fixed;inset:0;z-index:320;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);justify-content:center;align-items:center;padding:16px;}
+#help-overlay.open{display:flex;}
+#help-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;width:min(640px,100%);max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-md);}
+#help-box h2{font-size:16px;margin-bottom:4px;color:var(--accent);}
+#help-box .help-sub{font-size:11px;color:var(--dim);margin-bottom:14px;}
+.help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;}
+.help-section h3{font-size:12px;font-weight:700;margin-bottom:6px;color:var(--text);text-transform:uppercase;letter-spacing:0.04em;}
+.help-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px dashed var(--border);gap:10px;}
+.help-row:last-child{border-bottom:none;}
+.help-row span:first-child{font-size:11px;color:var(--text);}
+.help-row kbd{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:10px;color:var(--accent2);font-family:'DM Mono',monospace;white-space:nowrap;}
+#help-box .close-row{margin-top:16px;display:flex;justify-content:flex-end;}
+#help-box .close-row button{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;}
 
 /* ── Minimap ── */
 #minimap{
@@ -1276,64 +1367,129 @@ body{font-family:'DM Sans',sans-serif;background:
 
 <!-- Top Bar -->
 <div id="topbar">
+  <button class="tb tb-icon" id="mobile-menu-btn" onclick="toggleMobileMenu()" title="メニュー" aria-label="メニュー">☰</button>
   <h1>⬡ kintone ER図</h1>
-  <span class="meta-pill"><b>開始</b> ${esc((Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", "))}</span>
-  <span class="meta-pill" id="layout-pill"><b>レイアウト</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
-  <span class="meta-pill" id="density-pill"><b>表示密度</b> ${esc(densityLabel)}</span>
-  <span class="meta-pill"><b>探索深さ</b> ${esc(String(options.maxDepth || 0))}</span>
+
+  <div class="meta-group" style="display:inline-flex;gap:4px;flex-wrap:wrap;">
+    <span class="meta-pill"><b>開始</b> ${esc((Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", "))}</span>
+    <span class="meta-pill" id="layout-pill"><b>配置</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
+    <span class="meta-pill" id="density-pill"><b>密度</b> ${esc(densityLabel)}</span>
+    <span class="meta-pill"><b>深さ</b> ${esc(String(options.maxDepth || 0))}</span>
+  </div>
+
   <div class="sep"></div>
-  <button class="tb" onclick="toggleSidebar()" title="Ctrl+B">📊 統計</button>
-  <button class="tb" id="overview-toggle-btn" onclick="toggleOverview()">ガイドを隠す</button>
-  <button class="tb" onclick="togglePathFinder()">🔍 経路探索</button>
-  <div class="sep"></div>
-  <button class="tb" data-layout-btn="dagre" onclick="setLayout('dagre')">Dagre</button>
-  <button class="tb" data-layout-btn="cose" onclick="setLayout('cose')">自動配置</button>
-  <button class="tb" data-layout-btn="grid" onclick="setLayout('grid')">グリッド</button>
-  <button class="tb" data-layout-btn="circle" onclick="setLayout('circle')">円形</button>
-  <button class="tb" data-layout-btn="breadthfirst" onclick="setLayout('breadthfirst')">ツリー</button>
-  <button class="tb" data-layout-btn="concentric" onclick="setLayout('concentric')">同心円</button>
-  <select id="density-select" class="tb-select" onchange="setDensity(this.value)">
-    <option value="compact">密度: コンパクト</option>
-    <option value="standard">密度: 標準</option>
-    <option value="full">密度: 詳細</option>
+
+  <div class="tb-group" data-group="view">
+    <span class="tb-group-label">表示</span>
+    <button class="tb" onclick="toggleSidebar()" title="統計パネル (Ctrl+B)">📊</button>
+    <button class="tb" id="overview-toggle-btn" onclick="toggleOverview()" title="ガイドパネル">🧭</button>
+    <button class="tb" onclick="togglePathFinder()" title="経路探索">🛣</button>
+    <button class="tb" onclick="toggleMinimap()" title="ミニマップ">🗺</button>
+    <button class="tb" onclick="toggleFullscreen()" id="fs-btn" title="フルスクリーン (F11)">⛶</button>
+  </div>
+
+  <div class="tb-group" data-group="layout">
+    <span class="tb-group-label">配置</span>
+    <button class="tb" data-layout-btn="dagre" onclick="setLayout('dagre')" title="Dagre (推奨)">Dagre</button>
+    <button class="tb" data-layout-btn="cose" onclick="setLayout('cose')" title="自動配置">自動</button>
+    <button class="tb" data-layout-btn="breadthfirst" onclick="setLayout('breadthfirst')" title="ツリー">🌳</button>
+    <button class="tb" data-layout-btn="concentric" onclick="setLayout('concentric')" title="同心円">◎</button>
+    <button class="tb" data-layout-btn="grid" onclick="setLayout('grid')" title="グリッド">⊞</button>
+    <button class="tb" data-layout-btn="circle" onclick="setLayout('circle')" title="円形">◯</button>
+  </div>
+
+  <select id="density-select" class="tb-select" onchange="setDensity(this.value)" title="表示密度">
+    <option value="compact">🪶 コンパクト</option>
+    <option value="standard">📄 標準</option>
+    <option value="full">🧾 詳細</option>
   </select>
+
   <div class="sep"></div>
+
   <input id="search-box" placeholder="🔎 アプリ・フィールド検索 (Ctrl+F)" oninput="searchGraph(this.value)">
   <span class="meta-pill" id="search-meta"><b>検索</b> すべて</span>
-  <button class="tb active" id="focus-toggle-btn" onclick="toggleFocusMode()">🎯 関連強調 ON</button>
-  <select id="focus-depth" class="tb-select" onchange="updateFocusOptions()">
-    <option value="1">深さ1</option>
-    <option value="2">深さ2</option>
-    <option value="3">深さ3</option>
-  </select>
-  <select id="focus-direction" class="tb-select" onchange="updateFocusOptions()">
-    <option value="both">双方向</option>
-    <option value="out">出方向</option>
-    <option value="in">入方向</option>
-  </select>
-  <button class="tb" onclick="clearFocus()">強調解除</button>
-  <button class="tb active" id="rel-lookup-btn" onclick="toggleRelationKind('LOOKUP')">ルックアップ線</button>
-  <button class="tb active" id="rel-ref-btn" onclick="toggleRelationKind('REF')">関連線</button>
-  <button class="tb active" id="rel-action-btn" onclick="toggleRelationKind('ACTION')">アクション線</button>
-  <button class="tb active" id="rel-label-btn" onclick="toggleRelationLabels()">線ラベル</button>
-  <button class="tb" onclick="removeSelectedRelations()">🗑 関連削除</button>
-  <button class="tb" onclick="restoreRemovedRelations()">↺ 削除復元</button>
-  <button class="tb" onclick="removeSelectedApps()">🗑 アプリ削除</button>
-  <button class="tb" onclick="restoreRemovedApps()">↺ アプリ復元</button>
-  <button class="tb" id="pin-btn" onclick="togglePinFromSelection()">📌 固定</button>
-  <button class="tb" onclick="clearPins()">📍 固定解除</button>
+
+  <div class="tb-group" data-group="focus">
+    <span class="tb-group-label">強調</span>
+    <button class="tb active" id="focus-toggle-btn" onclick="toggleFocusMode()" title="関連強調 (Shift+F)">🎯 ON</button>
+    <select id="focus-depth" class="tb-select" onchange="updateFocusOptions()" title="強調する深さ">
+      <option value="1">深さ1</option>
+      <option value="2">深さ2</option>
+      <option value="3">深さ3</option>
+    </select>
+    <select id="focus-direction" class="tb-select" onchange="updateFocusOptions()" title="強調の方向">
+      <option value="both">双方向</option>
+      <option value="out">出方向</option>
+      <option value="in">入方向</option>
+    </select>
+    <button class="tb" onclick="clearFocus()" title="強調解除">✕</button>
+  </div>
+
+  <div class="tb-group" data-group="edit">
+    <span class="tb-group-label">線</span>
+    <button class="tb active" id="rel-lookup-btn" onclick="toggleRelationKind('LOOKUP')" title="ルックアップ線">🔗</button>
+    <button class="tb active" id="rel-ref-btn" onclick="toggleRelationKind('REF')" title="関連レコード線">📋</button>
+    <button class="tb active" id="rel-action-btn" onclick="toggleRelationKind('ACTION')" title="アクション線">⚡</button>
+    <button class="tb active" id="rel-label-btn" onclick="toggleRelationLabels()" title="線ラベル">🏷</button>
+  </div>
+
+  <div class="tb-menu" id="edit-menu" data-mobile="hide">
+    <button class="tb tb-menu-btn" onclick="toggleMenu('edit-menu')" title="編集">✏</button>
+    <div class="tb-menu-panel">
+      <button class="tb" onclick="removeSelectedRelations();closeAllMenus()">🗑 選択した関連線を削除</button>
+      <button class="tb" onclick="restoreRemovedRelations();closeAllMenus()">↺ 削除した関連線を復元</button>
+      <hr>
+      <button class="tb" onclick="removeSelectedApps();closeAllMenus()">🗑 選択したアプリを削除</button>
+      <button class="tb" onclick="restoreRemovedApps();closeAllMenus()">↺ 削除したアプリを復元</button>
+      <hr>
+      <button class="tb" onclick="togglePinFromSelection();closeAllMenus()">📌 選択ノードを固定/解除 (Shift+P)</button>
+      <button class="tb" onclick="clearPins();closeAllMenus()">📍 固定を全解除</button>
+    </div>
+  </div>
+
   <div class="spacer"></div>
-  <button class="tb" onclick="toggleMinimap()">🗺</button>
-  <button class="tb" id="theme-btn" onclick="toggleTheme()">🌙</button>
-  <button class="tb" onclick="openCmd()" title="Ctrl+K">⌘K</button>
-  <div class="sep"></div>
-  <button class="tb" onclick="fit()">📐 全体表示</button>
-  <button class="tb" onclick="exportPNG()">PNG画像</button>
-  <button class="tb" onclick="showMermaid()">Mermaid</button>
-  <button class="tb" onclick="showDrawio()">draw.io</button>
-  <button class="tb" onclick="showSQL()">SQL</button>
-  <button class="tb" onclick="showPlantUML()">PlantUML</button>
-  <button class="tb" onclick="showJSON()">JSON</button>
+
+  <button class="tb" onclick="fit()" title="全体表示 (Ctrl+0)">📐</button>
+
+  <div class="tb-menu" id="export-menu">
+    <button class="tb tb-menu-btn" onclick="toggleMenu('export-menu')">💾 出力</button>
+    <div class="tb-menu-panel">
+      <button class="tb" onclick="exportPNG();closeAllMenus()">🖼 PNG 画像</button>
+      <button class="tb" onclick="exportSVG();closeAllMenus()">📄 SVG 画像</button>
+      <hr>
+      <button class="tb" onclick="showMermaid();closeAllMenus()">🧜 Mermaid</button>
+      <button class="tb" onclick="showDrawio();closeAllMenus()">📊 draw.io XML</button>
+      <button class="tb" onclick="showPlantUML();closeAllMenus()">🌱 PlantUML</button>
+      <button class="tb" onclick="showSQL();closeAllMenus()">🗄 SQL DDL</button>
+      <hr>
+      <button class="tb" onclick="showJSON();closeAllMenus()">{} JSON スキーマ</button>
+      <button class="tb" onclick="showMarkdown();closeAllMenus()">📝 Markdown 仕様書</button>
+      <button class="tb" onclick="showCSVApps();closeAllMenus()">📑 CSV (アプリ一覧)</button>
+      <button class="tb" onclick="showCSVFields();closeAllMenus()">📑 CSV (フィールド)</button>
+      <button class="tb" onclick="showCSVRelations();closeAllMenus()">📑 CSV (関連)</button>
+      <hr>
+      <button class="tb" onclick="copyShareUrl();closeAllMenus()">🔗 表示状態のURLをコピー</button>
+      <button class="tb" onclick="printDiagram();closeAllMenus()">🖨 印刷</button>
+    </div>
+  </div>
+
+  <button class="tb tb-icon" id="theme-btn" onclick="toggleTheme()" title="テーマ切替">🌙</button>
+  <button class="tb tb-icon" onclick="openHelp()" title="ヘルプ (?)">❓</button>
+  <button class="tb tb-icon" onclick="openCmd()" title="コマンド (Ctrl+K)">⌘K</button>
+</div>
+
+<!-- Floating action buttons for mobile -->
+<div id="fab-mobile">
+  <button onclick="fit()" title="全体表示">📐</button>
+  <button onclick="toggleSidebar()" title="統計">📊</button>
+</div>
+
+<!-- Zoom controls -->
+<div id="zoom-ctrl">
+  <button onclick="zoomIn()" title="拡大 (+)">＋</button>
+  <div id="zoom-level">100%</div>
+  <button onclick="zoomReset()" title="リセット (0)">◎</button>
+  <button onclick="zoomOut()" title="縮小 (-)">－</button>
 </div>
 
 <div id="banner">
@@ -1423,6 +1579,37 @@ body{font-family:'DM Sans',sans-serif;background:
       <button onclick="downloadModal()">💾 ダウンロード</button>
       <button onclick="closeModal()">閉じる</button>
     </div>
+  </div>
+</div>
+
+<!-- Help / Shortcut modal -->
+<div id="help-overlay" onclick="if(event.target===this)closeHelp()">
+  <div id="help-box">
+    <h2>❓ キーボードショートカット ＆ 使い方</h2>
+    <div class="help-sub">クリック: 詳細表示 / 右クリック: 固定 / Alt+右クリック: 非表示 / ドラッグ: 移動</div>
+    <div class="help-grid">
+      <div class="help-section">
+        <h3>表示・ナビゲーション</h3>
+        <div class="help-row"><span>コマンドパレット</span><kbd>Ctrl/⌘ + K</kbd></div>
+        <div class="help-row"><span>アプリ・項目を検索</span><kbd>Ctrl/⌘ + F</kbd></div>
+        <div class="help-row"><span>全体表示 (フィット)</span><kbd>Ctrl/⌘ + 0</kbd></div>
+        <div class="help-row"><span>拡大 / 縮小</span><kbd>+ / -</kbd></div>
+        <div class="help-row"><span>統計パネル</span><kbd>Ctrl/⌘ + B</kbd></div>
+        <div class="help-row"><span>ヘルプを開閉</span><kbd>?</kbd></div>
+        <div class="help-row"><span>閉じる / 強調解除</span><kbd>Esc</kbd></div>
+      </div>
+      <div class="help-section">
+        <h3>操作・編集</h3>
+        <div class="help-row"><span>関連強調 ON/OFF</span><kbd>Shift + F</kbd></div>
+        <div class="help-row"><span>固定 / 固定解除</span><kbd>Shift + P</kbd></div>
+        <div class="help-row"><span>フルスクリーン</span><kbd>F11</kbd></div>
+        <div class="help-row"><span>背景をクリック</span><kbd>強調解除</kbd></div>
+        <div class="help-row"><span>ノードをダブルクリック</span><kbd>近隣のみ表示</kbd></div>
+        <div class="help-row"><span>右クリック (ノード)</span><kbd>固定/解除</kbd></div>
+        <div class="help-row"><span>Alt + 右クリック</span><kbd>非表示</kbd></div>
+      </div>
+    </div>
+    <div class="close-row"><button onclick="closeHelp()">閉じる</button></div>
   </div>
 </div>
 
@@ -1697,7 +1884,10 @@ function toggleOverview(){
   if(!panel) return;
   const nextCollapsed = !panel.classList.contains("collapsed");
   panel.classList.toggle("collapsed", nextCollapsed);
-  if(btn) btn.textContent = nextCollapsed ? "ガイドを開く" : "ガイドを隠す";
+  if(btn){
+    btn.classList.toggle("active", !nextCollapsed);
+    btn.title = nextCollapsed ? "ガイドを開く" : "ガイドを隠す";
+  }
 }
 function updateSearchMeta(query, matched){
   const pill = document.getElementById("search-meta");
@@ -2335,6 +2525,17 @@ const commands=[
   {label:"SQL DDL エクスポート",icon:"🗄",action:showSQL},
   {label:"PlantUML エクスポート",icon:"🌱",action:showPlantUML},
   {label:"JSON スキーマ エクスポート",icon:"{}",action:showJSON},
+  {label:"Markdown 仕様書エクスポート",icon:"📝",action:showMarkdown},
+  {label:"CSV (アプリ一覧) エクスポート",icon:"📑",action:showCSVApps},
+  {label:"CSV (フィールド) エクスポート",icon:"📑",action:showCSVFields},
+  {label:"CSV (リレーション) エクスポート",icon:"📑",action:showCSVRelations},
+  {label:"印刷プレビュー",icon:"🖨",action:printDiagram},
+  {label:"表示状態のURLをコピー",icon:"🔗",action:copyShareUrl},
+  {label:"フルスクリーン",icon:"⛶",action:toggleFullscreen,keys:"F11"},
+  {label:"ズームイン",icon:"➕",action:zoomIn,keys:"+"},
+  {label:"ズームアウト",icon:"➖",action:zoomOut,keys:"-"},
+  {label:"ズームリセット",icon:"◎",action:zoomReset,keys:"0"},
+  {label:"ヘルプ",icon:"❓",action:openHelp,keys:"?"},
   {label:"ハイライト解除",icon:"✨",action:()=>{cy.elements().removeClass("highlighted dimmed path-node path-edge");document.getElementById("search-box").value="";clearFocus(true);}},
 ];
 
@@ -2362,6 +2563,11 @@ function filterCmd(q){
 function runCmd(idx){commands[idx].action();closeCmd();}
 
 // ─── Keyboard Shortcuts ───
+function isTypingTarget(el){
+  if(!el) return false;
+  const tag=(el.tagName||"").toUpperCase();
+  return tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT"||el.isContentEditable;
+}
 document.addEventListener("keydown",e=>{
   if(e.key==="k"&&(e.ctrlKey||e.metaKey)){e.preventDefault();openCmd();}
   if(e.key==="b"&&(e.ctrlKey||e.metaKey)){e.preventDefault();toggleSidebar();}
@@ -2369,7 +2575,14 @@ document.addEventListener("keydown",e=>{
   if(e.key==="F"&&e.shiftKey){e.preventDefault();toggleFocusMode();}
   if(e.key==="P"&&e.shiftKey){e.preventDefault();togglePinFromSelection();}
   if(e.key==="0"&&(e.ctrlKey||e.metaKey)){e.preventDefault();fit();}
-  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();clearFocus(true);}
+  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();closeHelp();closeAllMenus();clearFocus(true);document.getElementById("topbar").classList.remove("mobile-open");}
+  if(!isTypingTarget(e.target)){
+    if(e.key==="?"||(e.key==="/"&&e.shiftKey)){e.preventDefault();openHelp();}
+    if(e.key==="+"||e.key==="="){e.preventDefault();zoomIn();}
+    if(e.key==="-"||e.key==="_"){e.preventDefault();zoomOut();}
+    if(e.key==="0"&&!e.ctrlKey&&!e.metaKey){e.preventDefault();zoomReset();}
+    if(e.key==="F11"){e.preventDefault();toggleFullscreen();}
+  }
   // cmd palette navigation
   if(document.getElementById("cmd-overlay").classList.contains("open")){
     const items=[...document.querySelectorAll(".cmd-item")];
@@ -2523,6 +2736,196 @@ function showJSON(){
     })),
   };
   openModal("JSON スキーマ",JSON.stringify(schema,null,2),"kintone_erd_schema.json");
+}
+
+// ─── CSV exports ───
+function csvCell(v){
+  const s=String(v==null?"":v);
+  return /[",\\n\\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+function csvLine(arr){return arr.map(csvCell).join(",");}
+function showCSVApps(){
+  const rows=[["アプリID","アプリ名","項目数","リレーション数","Lookup数","関連レコード数","アクション数","必須項目数","深さ","開始点","取得状態"]];
+  APPS.forEach(a=>{
+    const lookups=(a.relations||[]).filter(r=>r.kind==="LOOKUP").length;
+    const refs=(a.relations||[]).filter(r=>r.kind==="REF").length;
+    const acts=(a.relations||[]).filter(r=>r.kind==="ACTION").length;
+    rows.push([a.id,a.name,visibleFieldsForNode(a).length,a.relations.length,lookups,refs,acts,a.requiredCount||0,a.depth||0,startAppIdSet.has(String(a.id))?"1":"0",a.ok?"OK":"ERROR"]);
+  });
+  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_apps.csv");
+}
+function showCSVFields(){
+  const rows=[["アプリID","アプリ名","フィールドコード","フィールド名","種類","必須","重複禁止","主キー","ルックアップ","関連","サブテーブル内","テーブル名"]];
+  APPS.forEach(a=>{
+    visibleFieldsForNode(a).forEach(f=>{
+      rows.push([a.id,a.name,f.code||"",buildFieldDisplayName(f),f.type||"",f.required?"1":"0",f.unique?"1":"0",f.isPK?"1":"0",f.isLookup?"1":"0",f.isRef?"1":"0",f.inSubtable?"1":"0",f.tableLabel||""]);
+    });
+  });
+  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_fields.csv");
+}
+function showCSVRelations(){
+  const rows=[["種類","起点アプリID","起点アプリ名","起点フィールド","宛先アプリID","宛先アプリ名","宛先フィールド"]];
+  APPS.forEach(a=>{
+    a.relations.forEach(r=>{
+      const t=appMap.get(r.toApp);
+      rows.push([r.kind,a.id,a.name,r.fromDisplay||r.fromLabel||r.from||"",r.toApp,t?t.name:"(不明)",r.toField||""]);
+    });
+  });
+  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_relations.csv");
+}
+
+// ─── Markdown spec ───
+function mdEsc(s){return String(s==null?"":s).replace(/\\|/g,"\\\\|").replace(/\\n/g," ");}
+function showMarkdown(){
+  const lines=[];
+  lines.push("# kintone ER図 仕様書");
+  lines.push("");
+  lines.push("- 生成日時: " + new Date().toLocaleString("ja-JP"));
+  lines.push("- 起点アプリ: " + ((ER_OPTIONS.startAppIds||[]).join(", ") || "-"));
+  lines.push("- アプリ数: " + APPS.length);
+  lines.push("- 総リレーション: " + APPS.reduce((s,a)=>s+a.relations.length,0));
+  lines.push("");
+  lines.push("## アプリ一覧");
+  lines.push("");
+  lines.push("| アプリID | アプリ名 | 項目数 | 関連数 | 深さ | 状態 |");
+  lines.push("|---:|---|---:|---:|---:|---|");
+  APPS.forEach(a=>{
+    lines.push("| "+a.id+" | "+mdEsc(a.name)+" | "+visibleFieldsForNode(a).length+" | "+a.relations.length+" | "+(a.depth||0)+" | "+(a.ok?"OK":"取得失敗")+" |");
+  });
+  lines.push("");
+  APPS.forEach(a=>{
+    lines.push("## "+mdEsc(a.name)+" (App "+a.id+")");
+    lines.push("");
+    const vf=visibleFieldsForNode(a);
+    if(vf.length){
+      lines.push("### フィールド");
+      lines.push("");
+      lines.push("| コード | 名称 | 種類 | 必須 | 主キー | Lookup | 関連 | サブテーブル |");
+      lines.push("|---|---|---|:---:|:---:|:---:|:---:|:---:|");
+      vf.forEach(f=>{
+        lines.push("| "+mdEsc(f.code||"")+" | "+mdEsc(buildFieldDisplayName(f))+" | "+mdEsc(f.type||"")+" | "+(f.required?"✓":"")+" | "+(f.isPK?"✓":"")+" | "+(f.isLookup?"✓":"")+" | "+(f.isRef?"✓":"")+" | "+(f.inSubtable?"✓":"")+" |");
+      });
+      lines.push("");
+    }
+    if(a.relations && a.relations.length){
+      lines.push("### リレーション");
+      lines.push("");
+      lines.push("| 種類 | 起点フィールド | 宛先アプリ | 宛先フィールド |");
+      lines.push("|---|---|---|---|");
+      a.relations.forEach(r=>{
+        const t=appMap.get(r.toApp);
+        lines.push("| "+r.kind+" | "+mdEsc(r.fromDisplay||r.fromLabel||r.from||"")+" | "+mdEsc(t?t.name+" (App "+r.toApp+")":"App "+r.toApp)+" | "+mdEsc(r.toField||"")+" |");
+      });
+      lines.push("");
+    }
+  });
+  openModal("Markdown 仕様書",lines.join("\\n"),"kintone_erd_spec.md");
+}
+
+// ─── Zoom controls ───
+function updateZoomLabel(){
+  const lab=document.getElementById("zoom-level");
+  if(lab) lab.textContent = Math.round(cy.zoom()*100)+"%";
+}
+function zoomIn(){ cy.zoom({level: Math.min(cy.zoom()*1.25, cy.maxZoom()), renderedPosition:{x:cy.width()/2,y:cy.height()/2}}); updateZoomLabel(); }
+function zoomOut(){ cy.zoom({level: Math.max(cy.zoom()/1.25, cy.minZoom()), renderedPosition:{x:cy.width()/2,y:cy.height()/2}}); updateZoomLabel(); }
+function zoomReset(){ cy.zoom(1); cy.center(); updateZoomLabel(); }
+cy.on("zoom", updateZoomLabel);
+setTimeout(updateZoomLabel, 300);
+
+// ─── Fullscreen ───
+function toggleFullscreen(){
+  const doc=document;
+  const el=doc.documentElement;
+  try{
+    if(!doc.fullscreenElement){
+      (el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen).call(el);
+    }else{
+      (doc.exitFullscreen||doc.webkitExitFullscreen||doc.msExitFullscreen).call(doc);
+    }
+  }catch(_){ toast("フルスクリーンに対応していません"); }
+}
+document.addEventListener("fullscreenchange",()=>{
+  const btn=document.getElementById("fs-btn");
+  if(btn) btn.textContent = document.fullscreenElement ? "⛔" : "⛶";
+});
+
+// ─── Dropdown menus ───
+function toggleMenu(id){
+  const m=document.getElementById(id);
+  if(!m) return;
+  const willOpen=!m.classList.contains("open");
+  closeAllMenus();
+  if(willOpen) m.classList.add("open");
+}
+function closeAllMenus(){ document.querySelectorAll(".tb-menu.open").forEach(x=>x.classList.remove("open")); }
+document.addEventListener("click",(e)=>{
+  const inside=e.target.closest(".tb-menu");
+  if(!inside) closeAllMenus();
+});
+
+// ─── Mobile menu toggle ───
+function toggleMobileMenu(){
+  document.getElementById("topbar").classList.toggle("mobile-open");
+}
+
+// ─── Help modal ───
+function openHelp(){ document.getElementById("help-overlay").classList.add("open"); }
+function closeHelp(){ document.getElementById("help-overlay").classList.remove("open"); }
+
+// ─── Share URL (encodes current state in hash) ───
+function encodeState(){
+  const state={
+    l: ER_OPTIONS.layoutName,
+    d: ER_OPTIONS.fieldDensity,
+    f: focusMode ? 1 : 0,
+    fd: focusDepth,
+    fdir: focusDirection,
+    rl: relationLabelVisible ? 1 : 0,
+    rk: (relationKindState.LOOKUP?"L":"") + (relationKindState.REF?"R":"") + (relationKindState.ACTION?"A":""),
+    t: isDark ? "d" : "l"
+  };
+  return btoa(unescape(encodeURIComponent(JSON.stringify(state))));
+}
+function applyStateFromHash(){
+  try{
+    const h=location.hash.replace(/^#/,"");
+    if(!h) return;
+    const state=JSON.parse(decodeURIComponent(escape(atob(h))));
+    if(state.l) setLayout(state.l);
+    if(state.d) setDensity(state.d);
+    if(typeof state.f === "number"){ if(!!state.f !== focusMode) toggleFocusMode(); }
+    if(state.fd){ const sel=document.getElementById("focus-depth"); if(sel) sel.value=String(state.fd); }
+    if(state.fdir){ const sel=document.getElementById("focus-direction"); if(sel) sel.value=state.fdir; }
+    if(state.rk){
+      if(relationKindState.LOOKUP !== state.rk.includes("L")) toggleRelationKind("LOOKUP");
+      if(relationKindState.REF !== state.rk.includes("R")) toggleRelationKind("REF");
+      if(relationKindState.ACTION !== state.rk.includes("A")) toggleRelationKind("ACTION");
+    }
+    if(typeof state.rl === "number" && !!state.rl !== relationLabelVisible) toggleRelationLabels();
+    if(state.t === "l" && isDark) toggleTheme();
+    if(state.t === "d" && !isDark) toggleTheme();
+    updateFocusOptions();
+  }catch(_){ /* ignore */ }
+}
+function copyShareUrl(){
+  const url=location.origin+location.pathname+"#"+encodeState();
+  try{
+    navigator.clipboard.writeText(url).then(()=>toast("表示状態のURLをコピーしました"));
+  }catch(_){
+    prompt("URLをコピーしてください", url);
+  }
+}
+setTimeout(applyStateFromHash, 350);
+
+// ─── Print ───
+function printDiagram(){
+  const data=cy.png({ full:true, scale:2, bg: currentPalette().bg });
+  const w=window.open("","_blank");
+  if(!w){ toast("別タブを開けませんでした"); return; }
+  w.document.write('<title>kintone ER図 印刷</title><body style="margin:0;padding:0;text-align:center;"><img src="'+data+'" style="max-width:100%;height:auto"/></body>');
+  w.document.close();
+  setTimeout(()=>{ try{ w.focus(); w.print(); }catch(_){} }, 500);
 }
 
 // ─── Double-click to isolate ───
