@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, nowStamp, downloadBlob, showToast, selectedScopeKeys } from '../utils.js';
+import { esc, nowStamp, downloadBlob, showToast, selectedScopeKeys, kusConfirm } from '../utils.js';
 import { apiGet, apiPut, apiPost, buildApiPrefix, fetchBundle } from '../api.js';
 import { setStatus, setBusy, renderBundleState } from '../ui/components.js';
 import { commonParams } from './diff.js';
@@ -96,7 +96,7 @@ export async function runBatchProcess() {
   const ids = await getRecordIdsByQuery(tApp, query, false);
   if (ids.length === 0) throw new Error('処理対象のレコードが0件です。');
 
-  if (!confirm(`${ids.length}件のレコードにアクション「${action}」を実行します。よろしいですか？`)) return;
+  if (!kusConfirm(`${ids.length}件のレコードにアクション「${action}」を実行します。よろしいですか？`)) return;
 
   setStatus('ステータス一括更新を開始...');
   const prefix = getSideApiPrefix(false, false);
@@ -623,7 +623,7 @@ export async function runCsvImport() {
   }
 
   if (!records.length) throw new Error('登録するデータが見つかりませんでした');
-  if (!confirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) {
+  if (!kusConfirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) {
     setBusy(false);
     return;
   }
@@ -907,7 +907,7 @@ export async function runRecordCopy() {
   const tgtGuest = tgtGuestStr ? `/k/guest/${tgtGuestStr}/v1` : '/k/v1';
   const query = getToolDocument().getElementById('u_recordCopyQuery')?.value || '';
 
-  if (!confirm(`比較元(${srcApp}) から 比較先(${tgtApp}) へレコードをコピーします。よろしいですか？`)) return;
+  if (!kusConfirm(`比較元(${srcApp}) から 比較先(${tgtApp}) へレコードをコピーします。よろしいですか？`)) return;
 
   setBusy(true, '比較元のレコードを取得中...');
   let totalFetched = 0;
@@ -951,7 +951,7 @@ export async function runRecordCopy() {
     return clean;
   });
 
-  if (!confirm(`${records.length}件のレコードを比較先(AppID: ${tgtApp})へ登録します。実行しますか？`)) {
+  if (!kusConfirm(`${records.length}件のレコードを比較先(AppID: ${tgtApp})へ登録します。実行しますか？`)) {
     setBusy(false);
     return;
   }
@@ -1038,7 +1038,7 @@ export function loadTemplate() {
 export function deleteTemplate() {
   const name = getToolDocument().getElementById('u_templateSelect')?.value;
   if (!name) return;
-  if (!confirm(`テンプレート「${name}」を削除しますか？`)) return;
+  if (!kusConfirm(`テンプレート「${name}」を削除しますか？`)) return;
   const tpls = getTemplates();
   delete tpls[name];
   localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));

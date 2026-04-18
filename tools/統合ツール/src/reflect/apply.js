@@ -3,7 +3,7 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import {
   deepClone, normalize, stableStringify, nowStamp, downloadText, apiErrorWithContext, esc, readTextFile,
-  relativePathFromRow, tokenizePath
+  relativePathFromRow, tokenizePath, kusConfirm
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import {
@@ -799,7 +799,7 @@ export async function runApplyPatchJson() {
   const sectionKeys = Object.keys(payload.sections).filter((key) => SECTION_DEFS.find((item) => item.key === key)?.put);
   if (!sectionKeys.length) throw new Error('適用可能なパッチセクションがありません');
   renderPatchJsonSummary(payload);
-  if (!window.confirm(`JSONパッチを比較先(プレビュー)へ反映しますか？\n比較先アプリ: ${c.target.appId}\n対象セクション: ${sectionKeys.length}件`)) {
+  if (!kusConfirm(`JSONパッチを比較先(プレビュー)へ反映しますか？\n比較先アプリ: ${c.target.appId}\n対象セクション: ${sectionKeys.length}件`)) {
     setStatus('JSONパッチ反映をキャンセルしました');
     return;
   }
@@ -1114,7 +1114,7 @@ export async function runRestoreTargetPreviewBackup() {
   if (!scopes.length) throw new Error('復元対象セクションがありません');
 
   const labels = formatSectionList(scopes);
-  if (!window.confirm(`直前バックアップを比較先(プレビュー)へ復元しますか？\n比較先アプリ: ${c.target.appId}\n対象セクション: ${labels || '-'}`)) {
+  if (!kusConfirm(`直前バックアップを比較先(プレビュー)へ復元しますか？\n比較先アプリ: ${c.target.appId}\n対象セクション: ${labels || '-'}`)) {
     setStatus('バックアップ復元をキャンセルしました');
     return;
   }

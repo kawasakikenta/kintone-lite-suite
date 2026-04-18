@@ -1,7 +1,7 @@
 'use strict';
 
 import { ui } from '../state.js';
-import { esc, normalize, nowStamp, downloadText } from '../utils.js';
+import { esc, normalize, nowStamp, downloadText, kusConfirm } from '../utils.js';
 import { apiGet, apiPut, buildApiPrefix } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { getToolDocument } from '../ui/dialog.js';
@@ -84,7 +84,7 @@ export async function runApplyJsConfig() {
     desktop: parsed.desktop || {},
     mobile: parsed.mobile || {}
   };
-  if (!window.confirm(`JS/CSS設定を比較先(プレビュー)へ反映しますか？\n比較先アプリ: ${c.target.appId}`)) {
+  if (!kusConfirm(`JS/CSS設定を比較先(プレビュー)へ反映しますか？\n比較先アプリ: ${c.target.appId}`)) {
     setStatus('JS/CSS設定反映をキャンセルしました');
     return;
   }

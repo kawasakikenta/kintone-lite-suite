@@ -779,6 +779,20 @@
 }
 #kintone-unified-suite-v2 .diff-scope-chips::-webkit-scrollbar{width:6px}
 #kintone-unified-suite-v2 .diff-scope-chips::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px}
+
+/* ===== トースト（ツールダイアログ内に表示） ===== */
+#kintone-unified-suite-v2 .kus-toast-container{position:absolute;right:16px;bottom:16px;z-index:140;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:min(420px,calc(100% - 32px))}
+#kintone-unified-suite-v2 .kus-toast{pointer-events:auto;display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;font-size:13px;line-height:1.5;color:#fff;box-shadow:0 10px 24px rgba(15,23,42,.22),0 2px 6px rgba(15,23,42,.12);background:#3b82f6;animation:kus-toast-in .22s ease-out}
+#kintone-unified-suite-v2 .kus-toast--success{background:#10b981}
+#kintone-unified-suite-v2 .kus-toast--error{background:#ef4444}
+#kintone-unified-suite-v2 .kus-toast--warn{background:#f59e0b;color:#1f2937}
+#kintone-unified-suite-v2 .kus-toast--warn .kus-toast-close{color:#1f2937}
+#kintone-unified-suite-v2 .kus-toast-msg{flex:1;word-break:break-word;white-space:pre-wrap}
+#kintone-unified-suite-v2 .kus-toast-close{flex-shrink:0;background:transparent;border:0;color:inherit;font-size:16px;line-height:1;cursor:pointer;padding:2px 4px;opacity:.8}
+#kintone-unified-suite-v2 .kus-toast-close:hover{opacity:1}
+#kintone-unified-suite-v2 .kus-toast--leaving{animation:kus-toast-out .2s ease-in forwards}
+@keyframes kus-toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes kus-toast-out{to{opacity:0;transform:translateY(8px)}}
 #kintone-unified-suite-v2 .scope-launcher-card{
   display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
   padding:12px 14px;border:1px solid #dbe3ed;border-radius:12px;background:linear-gradient(135deg,#f8fbff,#fff)

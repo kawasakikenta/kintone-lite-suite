@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, REFLECT_PRESETS_KEY } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, deepClone, normalize, downloadText, nowStamp, readTextFile } from '../utils.js';
+import { esc, deepClone, normalize, downloadText, nowStamp, readTextFile, kusConfirm } from '../utils.js';
 import { apiGet, fetchBundle, buildApiPrefix } from '../api.js';
 import {
   getActualDiffRows,
@@ -198,7 +198,7 @@ function confirmBulkModeChange({ mode, scopeLabel, rows, changeCount }) {
   const modeLabel = mode === 'src' ? '比較元を採用' : '比較先を残す';
   const breakdown = sectionBreakdownForRows(rows).slice(0, 8).join('\n  - ');
   const msg = `【一括モード変更の確認】\n\n対象: ${scopeLabel}（${rows.length}件 / 変更予定 ${changeCount}件）\n操作: ${modeLabel}\n\n影響セクション:\n  - ${breakdown}\n\nこの操作はUndo（元に戻す）で取り消せます。実行しますか？`;
-  return window.confirm(msg);
+  return kusConfirm(msg);
 }
 
 export function runReflectModeAll(mode) {

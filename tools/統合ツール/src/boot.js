@@ -29,7 +29,6 @@ import { makeApplyPlanSignature, runPreviewApplyPlan, runExportDryRunPlan } from
 import { scheduleGuidedTourLayout } from './ui/tour.js';
 import { setupEventHandlers } from './handlers.js';
 import { initJsonEditor, getJsonEditorInstance, startGuidedTour } from './oss_integrations.js';
-import { loadExternalLibrary, showToast } from './utils.js';
 import { GUIDED_TOUR_STEPS } from './constants.js';
 
 import {
@@ -371,12 +370,7 @@ export function runKintoneUnifiedSuite(options = {}) {
 }
 
 async function initOssIntegrations() {
-  try {
-    // Load Toastify early for notification usage
-    await loadExternalLibrary('toastify');
-  } catch (e) {
-    console.warn('Toastify load skipped:', e.message);
-  }
+  // Toastify の事前読み込みは不要（トーストは自前実装でツール内に描画する）
 
   // Initialize JSONEditor for patchJsonEditor container
   try {

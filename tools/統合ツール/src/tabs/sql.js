@@ -1,7 +1,7 @@
 'use strict';
 
 import { ui } from '../state.js';
-import { esc } from '../utils.js';
+import { esc, kusConfirm, kusPrompt } from '../utils.js';
 import { apiGet, buildApiPrefix } from '../api.js';
 import { setStatus } from '../ui/components.js';
 import { EXTERNAL_LIBRARIES } from '../constants.js';
@@ -684,7 +684,7 @@ export async function launchKintoneSql(liteOpts) {
       }
       const safety = Utils.analyzeSqlSafety(sql);
       if (safety.issues.length) {
-        const ok1 = window.confirm(
+        const ok1 = kusConfirm(
           `⚠ 危険な更新系SQLの可能性があります。\n` +
           `${safety.issues.map((x, i) => `${i + 1}. ${x}`).join('\n')}\n\n` +
           `SQL Hash: ${safety.hash}\n` +
@@ -694,7 +694,7 @@ export async function launchKintoneSql(liteOpts) {
           setStatus(`Canceled by safety guard (${safety.hash})`);
           return;
         }
-        const typed = window.prompt(`安全確認: SQL Hash を入力してください\n${safety.hash}`, '');
+        const typed = kusPrompt(`安全確認: SQL Hash を入力してください\n${safety.hash}`, '');
         if ((typed || '').trim() !== safety.hash) {
           setStatus('安全性チェックに失敗したため、クエリを中止しました。');
           return;
