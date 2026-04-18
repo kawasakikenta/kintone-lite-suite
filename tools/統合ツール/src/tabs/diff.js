@@ -442,7 +442,9 @@ export function saveCurrentDialogState() {
     recordBackupView: ui.recordBackupView?.value?.trim?.() || '',
     recordBackupZipName: ui.recordBackupZipName?.value?.trim?.() || 'record_backup.zip',
     recordBackupIncludeFiles: !!ui.recordBackupIncludeFiles?.checked,
-    recordBackupIncludeComments: !!ui.recordBackupIncludeComments?.checked
+    recordBackupIncludeComments: !!ui.recordBackupIncludeComments?.checked,
+    diffHideViewed: !!state.diffHideViewed,
+    diffViewedKeys: [...(state.diffViewedKeys || new Set())].slice(0, 2000)
   });
 }
 
@@ -526,6 +528,10 @@ export function restoreDialogState() {
   if (saved.recordBackupZipName != null && ui.recordBackupZipName) ui.recordBackupZipName.value = String(saved.recordBackupZipName || 'record_backup.zip');
   if (saved.recordBackupIncludeFiles != null && ui.recordBackupIncludeFiles) ui.recordBackupIncludeFiles.checked = !!saved.recordBackupIncludeFiles;
   if (saved.recordBackupIncludeComments != null && ui.recordBackupIncludeComments) ui.recordBackupIncludeComments.checked = !!saved.recordBackupIncludeComments;
+  if (saved.diffHideViewed != null) state.diffHideViewed = !!saved.diffHideViewed;
+  if (Array.isArray(saved.diffViewedKeys)) {
+    state.diffViewedKeys = new Set(saved.diffViewedKeys.filter((k) => typeof k === 'string' && k.length));
+  }
   if (saved.launcherSortMode != null) {
     state.launcherSortMode = String(saved.launcherSortMode) === 'usage' ? 'usage' : 'onboarding';
     if (ui.featureSortMode) ui.featureSortMode.value = state.launcherSortMode;

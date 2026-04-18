@@ -973,6 +973,9 @@ ${contextLine}`);
         diffSelectedIds: /* @__PURE__ */ new Set(),
         diffFavoritePaths: /* @__PURE__ */ new Set(),
         diffFavoritesOnly: false,
+        diffViewedKeys: /* @__PURE__ */ new Set(),
+        diffHideViewed: false,
+        diffFocusedRowId: "",
         diffExcludeSections: null,
         diffSelectionAnchorId: "",
         diffIncludeSame: true,
@@ -3092,6 +3095,7 @@ ${tableContext.tableLabel}`.toLowerCase();
       const p = String(row.path || "").trim();
       if (!state.diffFavoritePaths.has(p)) return false;
     }
+    if (filters.hideViewed && row.type !== "same" && isDiffRowViewed(row)) return false;
     return true;
   }
   function getCurrentDiffFilterState() {
@@ -3105,8 +3109,31 @@ ${tableContext.tableLabel}`.toLowerCase();
       searchByFieldName: !!ui.diffSearchFieldName?.checked || !!state.diffSearchFieldName,
       sourceBundle: state.lastSourceBundle,
       targetBundle: state.lastTargetBundle,
-      favoritesOnly: !!state.diffFavoritesOnly
+      favoritesOnly: !!state.diffFavoritesOnly,
+      hideViewed: !!state.diffHideViewed
     };
+  }
+  function diffViewedKey(row) {
+    if (!row) return "";
+    const section = String(row.sectionKey || "");
+    const path = String(row.path || "");
+    const type = String(row.type || "");
+    if (!path && !section) return "";
+    return `${section}	${path}	${type}`;
+  }
+  function isDiffRowViewed(row) {
+    const key = diffViewedKey(row);
+    if (!key) return false;
+    return state.diffViewedKeys.has(key);
+  }
+  function countViewedInRows(rows) {
+    if (!rows || !rows.length) return 0;
+    let n = 0;
+    for (const row of rows) {
+      if (!row || row.type === "same") continue;
+      if (isDiffRowViewed(row)) n += 1;
+    }
+    return n;
   }
   function getFilteredDiffRows(rows) {
     const list = rows || state.lastDiffRows || [];
@@ -6492,6 +6519,57 @@ ${tableContext.tableLabel}`.toLowerCase();
     ).join("");
     return `<div class="diff-summary-bars" role="presentation" aria-hidden="true">${inner}</div>`;
   }
+  function buildDiffImpactCardsHtml(rows) {
+    const actual = getActualDiffRows2(rows);
+    if (!actual.length) return "";
+    const bySection = /* @__PURE__ */ new Map();
+    for (const row of actual) {
+      const key = row.sectionKey || "";
+      if (!key) continue;
+      const slot = bySection.get(key) || { key, label: "", total: 0, added: 0, removed: 0, changed: 0, moved: 0, high: 0, medium: 0, low: 0, viewed: 0 };
+      slot.label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
+      slot.total += 1;
+      if (row.type === "added") slot.added += 1;
+      else if (row.type === "removed") slot.removed += 1;
+      else if (row.type === "changed") slot.changed += 1;
+      if (row.moved) slot.moved += 1;
+      const sev = row.severity || "low";
+      if (sev === "high") slot.high += 1;
+      else if (sev === "medium") slot.medium += 1;
+      else slot.low += 1;
+      if (isDiffRowViewed(row)) slot.viewed += 1;
+      bySection.set(key, slot);
+    }
+    const items = [...bySection.values()].sort((a, b) => b.high - a.high || b.total - a.total);
+    if (!items.length) return "";
+    const curSec = ui.diffFilterSection?.value || state.diffFilterSection || "";
+    const cards = items.map((item) => {
+      const progress = item.total > 0 ? Math.min(1, item.viewed / item.total) : 0;
+      const progressPct = Math.round(progress * 100);
+      const warnIcon = item.high > 0 ? `<span class="diff-impact-card-warn" title="高重要度 ${item.high}件">⚠ 高 ${item.high}</span>` : "";
+      const stats = [
+        item.added ? `<span class="diff-impact-stat added" title="追加">+${item.added}</span>` : "",
+        item.removed ? `<span class="diff-impact-stat removed" title="削除">-${item.removed}</span>` : "",
+        item.changed ? `<span class="diff-impact-stat changed" title="変更">~${item.changed}</span>` : "",
+        item.moved ? `<span class="diff-impact-stat moved" title="移動">↕${item.moved}</span>` : ""
+      ].filter(Boolean).join("");
+      const activeClass = curSec === item.key ? " is-active" : "";
+      const reviewed = item.total === item.viewed ? " is-complete" : "";
+      return `<button type="button" class="diff-impact-card${activeClass}${reviewed}" data-diff-sec-nav="${esc(item.key)}" title="${esc(item.label)} へジャンプ">
+        <div class="diff-impact-card-head">
+          <span class="diff-impact-card-title">${esc(item.label)}</span>
+          ${warnIcon}
+        </div>
+        <div class="diff-impact-card-total">${item.total}<span class="diff-impact-card-unit">件</span></div>
+        <div class="diff-impact-stats">${stats}</div>
+        <div class="diff-impact-progress" title="レビュー済み ${item.viewed}/${item.total}">
+          <div class="diff-impact-progress-bar" style="width:${progressPct}%"></div>
+          <span class="diff-impact-progress-label">レビュー ${item.viewed}/${item.total}</span>
+        </div>
+      </button>`;
+    }).join("");
+    return `<div class="diff-impact-cards" role="region" aria-label="セクション別インパクト">${cards}</div>`;
+  }
   function buildDiffSectionNavHtml(rows) {
     const cur = ui.diffFilterSection?.value || state.diffFilterSection || "";
     const baseRows = getFilteredDiffRowsWithoutSectionFilter(rows);
@@ -6541,7 +6619,23 @@ ${tableContext.tableLabel}`.toLowerCase();
     renderDiffSelectionState();
     renderDiffSuggestionChips();
     renderDiffWarningBox();
+    const impactCardsHtml = rows.length ? buildDiffImpactCardsHtml(rows) : "";
     const sectionNavHtml = rows.length ? buildDiffSectionNavHtml(rows) : "";
+    const viewedCount = countViewedInRows(rows);
+    const actualTotal = summary.total - summary.same;
+    const viewedPct = actualTotal > 0 ? Math.round(viewedCount / actualTotal * 100) : 0;
+    const hideViewedActive = !!state.diffHideViewed;
+    const viewedControlsHtml = actualTotal > 0 ? `
+      <div class="diff-viewed-controls" role="group" aria-label="レビュー進捗">
+        <span class="diff-viewed-progress" title="差分 ${actualTotal}件中 ${viewedCount}件をレビュー済みにしています">
+          <span class="diff-viewed-progress-bar"><span class="diff-viewed-progress-fill" style="width:${viewedPct}%"></span></span>
+          <span class="diff-viewed-progress-text">レビュー ${viewedCount}/${actualTotal} (${viewedPct}%)</span>
+        </span>
+        <button type="button" class="diff-viewed-btn${hideViewedActive ? " is-active" : ""}" data-act="toggleHideViewed" title="レビュー済みの行を一覧から隠します">${hideViewedActive ? "✓ 済みを隠す（ON）" : "済みを隠す"}</button>
+        <button type="button" class="diff-viewed-btn" data-act="markVisibleViewed" title="現在表示中の差分すべてをレビュー済みにします">表示中をレビュー済みに</button>
+        <button type="button" class="diff-viewed-btn" data-act="clearViewed" title="すべてのレビュー済みフラグを外します">すべて未レビューへ</button>
+      </div>
+    ` : "";
     const summaryHtml = `
       <div class="diff-summary-head" role="region" aria-label="差分サマリー">
         ${buildDiffSummaryBars(summary)}
@@ -6557,12 +6651,15 @@ ${tableContext.tableLabel}`.toLowerCase();
         <span class="diff-pill">低 ${severitySummary.low}</span>
         <span class="diff-pill">取得失敗 ${fetchSummary.total}</span>
         <span class="diff-pill">選択 ${selectedRows.length}</span>
+        <span class="diff-pill">レビュー済 ${viewedCount}</span>
         <span class="diff-pill">名称変更候補 ${renameCount}</span>
         <span class="diff-pill">影響情報あり ${impactCount}</span>
         <span class="diff-info">表示 ${renderedRows.length}/${filteredRows.length}/${rows.length}</span>
         ${filteredRows.length !== rows.length ? `<span class="diff-info">絞込重要度 高:${filteredSeverity.high} / 中:${filteredSeverity.medium} / 低:${filteredSeverity.low}</span>` : ""}
         ${rawKeyword ? `<span class="diff-info">検索: ${esc(rawKeyword)}</span>` : ""}
         </div>
+        ${impactCardsHtml}
+        ${viewedControlsHtml}
         ${sectionNavHtml}
       </div>
     `;
@@ -6616,8 +6713,18 @@ ${tableContext.tableLabel}`.toLowerCase();
         const hierarchyClass = isSubfieldRow ? " diff-row-subfield" : isTableRootRow ? " diff-row-table-root" : "";
         const canReflect = !r._displayOnly && !!r.sectionKey;
         const reflectBtn = canReflect ? `<button type="button" class="diff-mini-btn diff-mini-btn--reflect" data-send-to-reflect="${esc(r._id || "")}" title="この差分ノードだけを反映対象に追加し、反映タブへ移動します">反映へ送る</button>` : "";
-        return `<tr class="${rowAccent}${selected ? " diff-row-selected" : ""}${hierarchyClass}">
-          <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" ${selected}></td>
+        const viewed = isDiffRowViewed(r);
+        const viewedChecked = viewed ? "checked" : "";
+        const viewedClass = viewed ? " diff-row-viewed" : "";
+        const focusClass = state.diffFocusedRowId === r._id ? " diff-row-focused" : "";
+        return `<tr class="${rowAccent}${selected ? " diff-row-selected" : ""}${hierarchyClass}${viewedClass}${focusClass}" data-diff-row-tr="${esc(r._id)}">
+          <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" aria-label="この差分を選択" ${selected}></td>
+          <td class="diff-viewed-cell">
+            <label class="diff-viewed-toggle" title="レビュー済みとしてマーク（キー: v）">
+              <input type="checkbox" data-diff-viewed-id="${esc(r._id)}" aria-label="レビュー済み" ${viewedChecked}>
+              <span class="diff-viewed-mark" aria-hidden="true">${viewed ? "✓" : ""}</span>
+            </label>
+          </td>
           <td><span class="sev-badge ${sevClass}">${esc(getSeverityDisplayLabel(sev))}</span></td>
           <td class="diff-type ${typeClass}">${esc(typeLabel || "-")}</td>
           <td>
@@ -6637,7 +6744,7 @@ ${tableContext.tableLabel}`.toLowerCase();
       return `<section class="diff-sec">
         ${head}
         <table class="diff-table">
-          <thead><tr><th style="width:56px">選択</th><th style="width:90px">重要度</th><th style="width:120px">種別</th><th style="width:260px">パス</th><th>比較元</th><th>比較先</th></tr></thead>
+          <thead><tr><th style="width:56px">選択</th><th style="width:48px" title="レビュー済みチェック（キー: v）">済</th><th style="width:90px">重要度</th><th style="width:120px">種別</th><th style="width:260px">パス</th><th>比較元</th><th>比較先</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
         ${moreHtml}
@@ -11339,7 +11446,9 @@ ${tableContext.tableLabel}`.toLowerCase();
       recordBackupView: ui.recordBackupView?.value?.trim?.() || "",
       recordBackupZipName: ui.recordBackupZipName?.value?.trim?.() || "record_backup.zip",
       recordBackupIncludeFiles: !!ui.recordBackupIncludeFiles?.checked,
-      recordBackupIncludeComments: !!ui.recordBackupIncludeComments?.checked
+      recordBackupIncludeComments: !!ui.recordBackupIncludeComments?.checked,
+      diffHideViewed: !!state.diffHideViewed,
+      diffViewedKeys: [...state.diffViewedKeys || /* @__PURE__ */ new Set()].slice(0, 2e3)
     });
   }
   function restoreDialogState() {
@@ -11425,6 +11534,10 @@ ${tableContext.tableLabel}`.toLowerCase();
     if (saved.recordBackupZipName != null && ui.recordBackupZipName) ui.recordBackupZipName.value = String(saved.recordBackupZipName || "record_backup.zip");
     if (saved.recordBackupIncludeFiles != null && ui.recordBackupIncludeFiles) ui.recordBackupIncludeFiles.checked = !!saved.recordBackupIncludeFiles;
     if (saved.recordBackupIncludeComments != null && ui.recordBackupIncludeComments) ui.recordBackupIncludeComments.checked = !!saved.recordBackupIncludeComments;
+    if (saved.diffHideViewed != null) state.diffHideViewed = !!saved.diffHideViewed;
+    if (Array.isArray(saved.diffViewedKeys)) {
+      state.diffViewedKeys = new Set(saved.diffViewedKeys.filter((k) => typeof k === "string" && k.length));
+    }
     if (saved.launcherSortMode != null) {
       state.launcherSortMode = String(saved.launcherSortMode) === "usage" ? "usage" : "onboarding";
       if (ui.featureSortMode) ui.featureSortMode.value = state.launcherSortMode;
@@ -12292,6 +12405,56 @@ ${tableContext.tableLabel}`.toLowerCase();
 #kintone-unified-suite-v2 .diff-view.dark .diff-sec-pill.is-active{background:#1e3a5f;border-color:#3b82f6;color:#bfdbfe}
 #kintone-unified-suite-v2 .diff-view .diff-sec-pill-n{opacity:.85;font-weight:700}
 #kintone-unified-suite-v2 .diff-view .diff-sec-pill-sel{margin-left:4px;font-size:10px;color:var(--dv-sub);font-weight:600}
+
+/* --- Impact summary cards (Terraform plan / dbt 風) --- */
+#kintone-unified-suite-v2 .diff-view .diff-impact-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(156px,1fr));gap:8px;padding:10px;border-top:1px dashed var(--dv-border);background:var(--dv-card)}
+#kintone-unified-suite-v2 .diff-view .diff-impact-card{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:10px;border:1px solid var(--dv-border);background:var(--dv-bg);cursor:pointer;text-align:left;transition:box-shadow .15s ease,transform .15s ease,border-color .15s ease;font:inherit;color:inherit}
+#kintone-unified-suite-v2 .diff-view .diff-impact-card:hover{box-shadow:0 2px 8px rgba(15,23,42,.08);transform:translateY(-1px);border-color:#93c5fd}
+#kintone-unified-suite-v2 .diff-view .diff-impact-card.is-active{border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.2)}
+#kintone-unified-suite-v2 .diff-view .diff-impact-card.is-complete{opacity:.75}
+#kintone-unified-suite-v2 .diff-view .diff-impact-card-head{display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:18px}
+#kintone-unified-suite-v2 .diff-view .diff-impact-card-title{font-size:12px;font-weight:700;color:var(--dv-text);word-break:break-word;line-height:1.3}
+#kintone-unified-suite-v2 .diff-view .diff-impact-card-warn{font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-view.dark .diff-impact-card-warn{background:#3f1d1d;color:#fca5a5;border-color:#7f1d1d}
+#kintone-unified-suite-v2 .diff-view .diff-impact-card-total{font-size:22px;font-weight:800;color:var(--dv-text);line-height:1}
+#kintone-unified-suite-v2 .diff-view .diff-impact-card-unit{font-size:11px;font-weight:600;opacity:.7;margin-left:3px}
+#kintone-unified-suite-v2 .diff-view .diff-impact-stats{display:flex;flex-wrap:wrap;gap:4px}
+#kintone-unified-suite-v2 .diff-view .diff-impact-stat{font-size:11px;font-weight:700;padding:2px 6px;border-radius:999px}
+#kintone-unified-suite-v2 .diff-view .diff-impact-stat.added{background:#dcfce7;color:#166534}
+#kintone-unified-suite-v2 .diff-view .diff-impact-stat.removed{background:#fee2e2;color:#991b1b}
+#kintone-unified-suite-v2 .diff-view .diff-impact-stat.changed{background:#fef9c3;color:#854d0e}
+#kintone-unified-suite-v2 .diff-view .diff-impact-stat.moved{background:#f3e8ff;color:#6b21a8}
+#kintone-unified-suite-v2 .diff-view.dark .diff-impact-stat.added{background:#14321f;color:#86efac}
+#kintone-unified-suite-v2 .diff-view.dark .diff-impact-stat.removed{background:#3f1d1d;color:#fca5a5}
+#kintone-unified-suite-v2 .diff-view.dark .diff-impact-stat.changed{background:#3d2f0a;color:#fde047}
+#kintone-unified-suite-v2 .diff-view.dark .diff-impact-stat.moved{background:#2d1b44;color:#d8b4fe}
+#kintone-unified-suite-v2 .diff-view .diff-impact-progress{position:relative;display:block;height:14px;border-radius:999px;background:rgba(148,163,184,.25);overflow:hidden}
+#kintone-unified-suite-v2 .diff-view .diff-impact-progress-bar{position:absolute;inset:0;width:0;background:linear-gradient(90deg,#22c55e,#16a34a);transition:width .25s ease;border-radius:inherit}
+#kintone-unified-suite-v2 .diff-view .diff-impact-progress-label{position:relative;display:block;text-align:center;font-size:10px;font-weight:700;line-height:14px;color:var(--dv-text);mix-blend-mode:luminosity}
+#kintone-unified-suite-v2 .diff-view.dark .diff-impact-progress-label{color:#e2e8f0}
+
+/* --- Viewed (レビュー済み) 表示 --- */
+#kintone-unified-suite-v2 .diff-view .diff-viewed-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 10px;border-top:1px dashed var(--dv-border);background:var(--dv-card)}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-progress{display:inline-flex;align-items:center;gap:8px;flex:1;min-width:200px}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-progress-bar{position:relative;flex:1;max-width:260px;height:8px;background:rgba(148,163,184,.25);border-radius:999px;overflow:hidden}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-progress-fill{position:absolute;inset:0;width:0;background:linear-gradient(90deg,#3b82f6,#22c55e);border-radius:inherit;transition:width .25s ease}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-progress-text{font-size:11px;font-weight:700;color:var(--dv-sub)}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-btn{font-size:11px;font-weight:600;padding:4px 10px;border:1px solid var(--dv-border);border-radius:999px;background:var(--dv-bg);color:var(--dv-text);cursor:pointer}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-btn:hover{background:var(--dv-pad)}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-btn.is-active{background:#dbeafe;border-color:#93c5fd;color:#1e40af}
+#kintone-unified-suite-v2 .diff-view.dark .diff-viewed-btn.is-active{background:#1e3a5f;border-color:#3b82f6;color:#bfdbfe}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-cell{text-align:center}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-toggle{display:inline-flex;align-items:center;justify-content:center;position:relative;cursor:pointer;width:22px;height:22px;border-radius:6px;border:1px solid var(--dv-border);background:var(--dv-bg)}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-toggle:hover{border-color:#93c5fd;background:var(--dv-pad)}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-toggle input[type=checkbox]{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer;width:100%;height:100%}
+#kintone-unified-suite-v2 .diff-view .diff-viewed-mark{font-size:12px;font-weight:700;color:#16a34a;line-height:1}
+#kintone-unified-suite-v2 .diff-view .diff-row-viewed td{opacity:.55}
+#kintone-unified-suite-v2 .diff-view .diff-row-viewed td.diff-viewed-cell{opacity:1}
+#kintone-unified-suite-v2 .diff-view .diff-row-viewed .diff-viewed-toggle{background:#dcfce7;border-color:#86efac}
+#kintone-unified-suite-v2 .diff-view.dark .diff-row-viewed .diff-viewed-toggle{background:#14321f;border-color:#166534}
+#kintone-unified-suite-v2 .diff-view .diff-row-focused td{outline:2px solid #3b82f6;outline-offset:-2px;background:rgba(59,130,246,.05)}
+#kintone-unified-suite-v2 .diff-view.dark .diff-row-focused td{background:rgba(59,130,246,.12)}
+
 #kintone-unified-suite-v2 .diff-view-overview{display:grid;grid-template-columns:1.3fr 1fr;gap:10px;margin:8px 0 10px}
 #kintone-unified-suite-v2 .diff-view-overview-main,#kintone-unified-suite-v2 .diff-view-overview-side{border:1px solid #dbe3ed;border-radius:10px;background:linear-gradient(180deg,#f8fafc,#fff);padding:10px}
 #kintone-unified-suite-v2 .diff-view-overview-title,#kintone-unified-suite-v2 .diff-view-overview-side-title{font-size:11px;font-weight:800;color:#1e293b}
@@ -19268,6 +19431,79 @@ ${tableContext.tableLabel}`.toLowerCase();
   function normalizeDiffFavoritePath2(path) {
     return String(path || "").trim();
   }
+  function getDiffRowByIdFromState(rowId) {
+    if (!rowId) return null;
+    return (state.lastDiffRows || []).find((r) => r && r._id === rowId) || null;
+  }
+  function toggleDiffViewedById(rowId, forced) {
+    const row = getDiffRowByIdFromState(rowId);
+    if (!row) return false;
+    const key = diffViewedKey(row);
+    if (!key) return false;
+    const currentlyViewed = state.diffViewedKeys.has(key);
+    const next = typeof forced === "boolean" ? forced : !currentlyViewed;
+    if (next) state.diffViewedKeys.add(key);
+    else state.diffViewedKeys.delete(key);
+    return next;
+  }
+  function markVisibleDiffRowsViewed() {
+    const rendered = getRenderedDiffRows2();
+    let marked = 0;
+    for (const row of rendered) {
+      if (!row || row.type === "same") continue;
+      const key = diffViewedKey(row);
+      if (!key || state.diffViewedKeys.has(key)) continue;
+      state.diffViewedKeys.add(key);
+      marked += 1;
+    }
+    return { marked, total: rendered.length };
+  }
+  function clearAllDiffViewed() {
+    const n = state.diffViewedKeys.size;
+    state.diffViewedKeys = /* @__PURE__ */ new Set();
+    return n;
+  }
+  function focusDiffRow(rowId, options = {}) {
+    if (!rowId) return false;
+    state.diffFocusedRowId = rowId;
+    const res = getToolDocument().getElementById("u_result");
+    if (!res) return false;
+    const tr = res.querySelector(`[data-diff-row-tr="${rowId.replace(/"/g, '\\"')}"]`);
+    if (!tr) return false;
+    const selectBox = tr.querySelector("input[type=checkbox][data-diff-row-id]");
+    try {
+      if (selectBox && options.focus !== false) selectBox.focus({ preventScroll: true });
+    } catch (e) {
+    }
+    if (options.scroll !== false) {
+      try {
+        tr.scrollIntoView({ block: "nearest", inline: "nearest" });
+      } catch (e) {
+      }
+    }
+    res.querySelectorAll(".diff-row-focused").forEach((el) => {
+      if (el !== tr) el.classList.remove("diff-row-focused");
+    });
+    tr.classList.add("diff-row-focused");
+    return true;
+  }
+  function focusNextDiffRow(direction) {
+    const res = getToolDocument().getElementById("u_result");
+    if (!res) return false;
+    const trs = [...res.querySelectorAll("[data-diff-row-tr]")];
+    if (!trs.length) return false;
+    const ids = trs.map((el) => el.getAttribute("data-diff-row-tr"));
+    const curIdx = state.diffFocusedRowId ? ids.indexOf(state.diffFocusedRowId) : -1;
+    let nextIdx;
+    if (curIdx === -1) {
+      nextIdx = direction > 0 ? 0 : ids.length - 1;
+    } else {
+      nextIdx = curIdx + direction;
+      if (nextIdx < 0) nextIdx = 0;
+      if (nextIdx >= ids.length) nextIdx = ids.length - 1;
+    }
+    return focusDiffRow(ids[nextIdx]);
+  }
   function parseIdSet(text) {
     return [...new Set(String(text || "").split(/[\s,]+/).map((v) => v.trim()).filter((v) => /^\d+$/.test(v)))];
   }
@@ -19818,6 +20054,8 @@ ${tableContext.tableLabel}`.toLowerCase();
         if (idx >= 0 && next) {
           e.preventDefault();
           next.focus();
+          const tr = next.closest("[data-diff-row-tr]");
+          if (tr) state.diffFocusedRowId = tr.getAttribute("data-diff-row-tr") || "";
         }
         return;
       }
@@ -19840,6 +20078,44 @@ ${tableContext.tableLabel}`.toLowerCase();
         e.preventDefault();
         state.diffSelectedIds = new Set((state.lastDiffRows || []).map((row) => row._id));
         renderResultRows(state.lastDiffRows);
+        return;
+      }
+      if (!editable && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const key = e.key;
+        if (key === "j" || key === "k") {
+          if (!(state.lastDiffRows && state.lastDiffRows.length)) return;
+          e.preventDefault();
+          const moved = focusNextDiffRow(key === "j" ? 1 : -1);
+          if (!moved) setStatus("表示中の差分がありません");
+          return;
+        }
+        if (key === "v" || key === "V") {
+          if (!state.diffFocusedRowId) {
+            if (!focusNextDiffRow(1)) return;
+          }
+          e.preventDefault();
+          const next = toggleDiffViewedById(state.diffFocusedRowId);
+          if (next === false && !getDiffRowByIdFromState(state.diffFocusedRowId)) return;
+          saveCurrentDialogState2();
+          renderResultRows(state.lastDiffRows);
+          focusDiffRow(state.diffFocusedRowId, { scroll: false });
+          setStatus(next ? "レビュー済みにマークしました (v)" : "レビュー済みを解除しました (v)");
+          return;
+        }
+        if (key === "x" || key === "X") {
+          if (!state.diffFocusedRowId) {
+            if (!focusNextDiffRow(1)) return;
+          }
+          e.preventDefault();
+          const id = state.diffFocusedRowId;
+          if (state.diffSelectedIds.has(id)) state.diffSelectedIds.delete(id);
+          else state.diffSelectedIds.add(id);
+          state.diffSelectionAnchorId = id;
+          renderResultRows(state.lastDiffRows);
+          focusDiffRow(id, { scroll: false });
+          saveCurrentDialogState2();
+          return;
+        }
       }
     });
     root2.addEventListener("input", (e) => {
@@ -19888,6 +20164,13 @@ ${tableContext.tableLabel}`.toLowerCase();
         else state.diffSelectedIds.delete(diffId);
         renderResultRows(state.lastDiffRows);
         saveCurrentDialogState2();
+        return;
+      }
+      const viewedId = e.target?.dataset?.diffViewedId;
+      if (viewedId) {
+        toggleDiffViewedById(viewedId, !!e.target.checked);
+        saveCurrentDialogState2();
+        renderResultRows(state.lastDiffRows);
         return;
       }
       const id = e.target?.dataset?.nodeId;
@@ -20249,6 +20532,39 @@ ${tableContext.tableLabel}`.toLowerCase();
         renderDiffActiveFilters();
         saveCurrentDialogState2();
         setStatus("差分フィルタをクリアしました");
+        return;
+      }
+      if (act === "toggleHideViewed") {
+        state.diffHideViewed = !state.diffHideViewed;
+        if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+        saveCurrentDialogState2();
+        setStatus(state.diffHideViewed ? "レビュー済みの差分を隠しています" : "レビュー済みの差分も表示します");
+        return;
+      }
+      if (act === "markVisibleViewed") {
+        if (!state.lastDiffRows.length) {
+          setStatus("差分がありません");
+          return;
+        }
+        const { marked } = markVisibleDiffRowsViewed();
+        if (!marked) {
+          setStatus("レビュー済みに追加する差分はありません（表示中はすべて済）");
+          return;
+        }
+        renderResultRows(state.lastDiffRows);
+        saveCurrentDialogState2();
+        setStatus(`表示中の ${marked} 件をレビュー済みにしました`);
+        return;
+      }
+      if (act === "clearViewed") {
+        const n = clearAllDiffViewed();
+        if (!n) {
+          setStatus("レビュー済みの記録はありません");
+          return;
+        }
+        if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
+        saveCurrentDialogState2();
+        setStatus(`レビュー済み ${n} 件をすべて解除しました`);
         return;
       }
       if (act === "backToLauncher") {
