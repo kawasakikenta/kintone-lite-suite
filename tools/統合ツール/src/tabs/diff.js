@@ -421,7 +421,7 @@ export function saveCurrentDialogState() {
     applyDiffOnly: ui.applyDiffOnly.checked,
     autoBackupPreview: ui.autoBackupPreview.checked,
     stopOnError: ui.stopOnError.checked,
-    nodeMode: state.activeSubTabs.reflect === 'node',
+    nodeMode: state.activeSubTabs.reflect === 'diff',
     reflectSimpleMode: !!ui.reflectSimpleMode?.checked,
     reflectDetailTab: state.reflectDetailTab,
     doDeploy: ui.doDeploy.checked,
@@ -542,10 +542,20 @@ export function restoreDialogState() {
   markChecks(ui.applyScopes, saved.applyScopes);
   markChecks(ui.settingsExportScopes, saved.settingsExportScopes);
   renderScopePickerSummaries();
+  const REFLECT_SUBTAB_MIGRATION = {
+    section: 'settings',
+    editor: 'settings',
+    sectionPreview: 'settings',
+    patch: 'json',
+    node: 'diff'
+  };
   Object.entries(DEFAULT_SUBTAB_STATE).forEach(([parentKey, defaultKey]) => {
-    const nextKey = (saved.activeSubTabs && typeof saved.activeSubTabs === 'object')
+    let nextKey = (saved.activeSubTabs && typeof saved.activeSubTabs === 'object')
       ? String(saved.activeSubTabs[parentKey] || defaultKey)
       : defaultKey;
+    if (parentKey === 'reflect' && REFLECT_SUBTAB_MIGRATION[nextKey]) {
+      nextKey = REFLECT_SUBTAB_MIGRATION[nextKey];
+    }
     switchSubTab(parentKey, nextKey, { persist: false });
   });
   let nextActive = saved.activeTab;

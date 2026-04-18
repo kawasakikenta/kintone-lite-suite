@@ -63,7 +63,7 @@
           desc: "差分を見ながら比較先プレビューへ反映します。",
           tabs: ["reflect"],
           tab: "reflect",
-          subTab: "section",
+          subTab: "settings",
           focusSelector: "#u_reflectAssist",
           priority: "high",
           riskLevel: "warning",
@@ -336,7 +336,7 @@
       META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
-        reflect: "section",
+        reflect: "settings",
         field: "json",
         jsconfig: "editor",
         recordMgr: "status",

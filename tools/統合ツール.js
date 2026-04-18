@@ -78,7 +78,7 @@
           desc: "差分を見ながら比較先プレビューへ反映します。",
           tabs: ["reflect"],
           tab: "reflect",
-          subTab: "section",
+          subTab: "settings",
           focusSelector: "#u_reflectAssist",
           priority: "high",
           riskLevel: "warning",
@@ -384,7 +384,7 @@
       ]);
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
-        reflect: "section",
+        reflect: "settings",
         field: "json",
         jsconfig: "editor",
         recordMgr: "status",
@@ -6340,21 +6340,54 @@ ${tableContext.tableLabel}`.toLowerCase();
         const table = readFieldDef(tableCode, side);
         return table?.fields?.[subFieldCode] || null;
       };
-      const pickRowFieldDef = (side) => {
-        if (!fieldInfo.isSubField) return readFieldDef(fieldInfo.rootCode, side);
-        return readSubFieldDef(fieldInfo.rootCode, fieldInfo.subFieldCode, side);
-      };
-      const formatFieldName = (code, side) => {
-        const field = pickRowFieldDef(side);
+      const formatCodeName = (field, code) => {
         const label = String(field?.label || field?.name || "").trim();
-        return label ? `${label} (${code})` : code;
+        return label ? `${label} (${code})` : String(code || "");
       };
-      const fieldLabel = fieldInfo.isSubField ? `${formatFieldName(fieldInfo.rootCode, "target") || formatFieldName(fieldInfo.rootCode, "source") || fieldInfo.rootCode} > ${formatFieldName(fieldInfo.subFieldCode, "target") || formatFieldName(fieldInfo.subFieldCode, "source") || fieldInfo.subFieldCode}` : `${formatFieldName(fieldInfo.activeCode, "target") || formatFieldName(fieldInfo.activeCode, "source") || fieldInfo.activeCode}`;
+      const resolveFieldName = (code, tableCode) => {
+        if (!code) return "";
+        if (tableCode) {
+          const sub = readSubFieldDef(tableCode, code, "target") || readSubFieldDef(tableCode, code, "source");
+          return formatCodeName(sub, code);
+        }
+        const f = readFieldDef(code, "target") || readFieldDef(code, "source");
+        return formatCodeName(f, code);
+      };
+      const isTableRoot = fieldInfo.isFieldRoot && (row?.left?.type === "SUBTABLE" || row?.right?.type === "SUBTABLE");
       const propLabel = fieldChangePropTitleFromInfo(fieldInfo, row);
-      const propHtml = propLabel ? ` · ${esc(propLabel)}` : "";
+      const propHtml = propLabel ? `<span class="diff-path-prop"> · ${esc(propLabel)}</span>` : "";
       const rel = p.startsWith("fieldSettings.") ? p.slice("fieldSettings.".length) : p;
-      const prefix = fieldInfo.isSubField ? "テーブル内フィールド" : "フィールド";
-      return `<span class="diff-path-line diff-path-context"><strong>${esc(prefix)}: ${esc(fieldLabel)}</strong>${propHtml}</span><span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(rel)}</span></span>`;
+      let contextHtml;
+      if (fieldInfo.isSubField) {
+        const tableName = resolveFieldName(fieldInfo.rootCode) || fieldInfo.rootCode;
+        const subName = resolveFieldName(fieldInfo.subFieldCode, fieldInfo.rootCode) || fieldInfo.subFieldCode;
+        contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--table" title="テーブル">⊞ テーブル</span>
+          <span class="diff-path-name">${esc(tableName)}</span>
+          <span class="diff-path-arrow" aria-hidden="true">▸</span>
+          <span class="diff-path-chip diff-path-chip--subfield" title="テーブル内フィールド">↳ テーブル内</span>
+          <span class="diff-path-name diff-path-name--child"><strong>${esc(subName)}</strong></span>
+          ${propHtml}
+        </span>`;
+      } else if (isTableRoot) {
+        const tableName = resolveFieldName(fieldInfo.activeCode) || fieldInfo.activeCode;
+        contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--table" title="テーブル">⊞ テーブル</span>
+          <span class="diff-path-name"><strong>${esc(tableName)}</strong></span>
+          ${propHtml}
+        </span>`;
+      } else {
+        const fieldName = resolveFieldName(fieldInfo.activeCode) || fieldInfo.activeCode;
+        contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--field" title="フィールド">▣ フィールド</span>
+          <span class="diff-path-name"><strong>${esc(fieldName)}</strong></span>
+          ${propHtml}
+        </span>`;
+      }
+      return contextHtml + `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(rel)}</span></span>`;
     }
     return `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(p)}</span></span>`;
   }
@@ -6489,7 +6522,11 @@ ${tableContext.tableLabel}`.toLowerCase();
         const cols = renderRowColumns(r, useCharDiff);
         const selected = state.diffSelectedIds.has(r._id) ? "checked" : "";
         const rowAccent = `diff-row-t-${typeClass}`;
-        return `<tr class="${rowAccent}${selected ? " diff-row-selected" : ""}">
+        const rowFieldInfo = extractFieldPathInfo(r?.path);
+        const isSubfieldRow = !!rowFieldInfo?.isSubField || !!r._expandedFromTable;
+        const isTableRootRow = !!rowFieldInfo?.isFieldRoot && (r?.left?.type === "SUBTABLE" || r?.right?.type === "SUBTABLE");
+        const hierarchyClass = isSubfieldRow ? " diff-row-subfield" : isTableRootRow ? " diff-row-table-root" : "";
+        return `<tr class="${rowAccent}${selected ? " diff-row-selected" : ""}${hierarchyClass}">
           <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" ${selected}></td>
           <td><span class="sev-badge ${sevClass}">${esc(getSeverityDisplayLabel(sev))}</span></td>
           <td class="diff-type ${typeClass}">${esc(typeLabel || "-")}</td>
@@ -6672,7 +6709,7 @@ ${tableContext.tableLabel}`.toLowerCase();
 
   // src/reflect/nodeModeUi.js
   function isReflectNodeModeEffective() {
-    return state.activeSubTabs["reflect"] === "node";
+    return state.activeSubTabs["reflect"] === "diff";
   }
   var init_nodeModeUi = __esm({
     "src/reflect/nodeModeUi.js"() {
@@ -7172,7 +7209,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     const key = tabs.some((tab) => tab.dataset.subtab === subKey) ? subKey : fallback;
     state.activeSubTabs[parentKey] = key;
     if (parentKey === "reflect" && ui3.nodeMode) {
-      ui3.nodeMode.checked = key === "node";
+      ui3.nodeMode.checked = key === "diff";
     }
     tabs.forEach((tab) => {
       const active = tab.dataset.subtab === key;
@@ -10636,7 +10673,7 @@ ${tableContext.tableLabel}`.toLowerCase();
       applyDiffOnly: ui.applyDiffOnly.checked,
       autoBackupPreview: ui.autoBackupPreview.checked,
       stopOnError: ui.stopOnError.checked,
-      nodeMode: state.activeSubTabs.reflect === "node",
+      nodeMode: state.activeSubTabs.reflect === "diff",
       reflectSimpleMode: !!ui.reflectSimpleMode?.checked,
       reflectDetailTab: state.reflectDetailTab,
       doDeploy: ui.doDeploy.checked,
@@ -10758,8 +10795,18 @@ ${tableContext.tableLabel}`.toLowerCase();
     markChecks(ui.applyScopes, saved.applyScopes);
     markChecks(ui.settingsExportScopes, saved.settingsExportScopes);
     renderScopePickerSummaries();
+    const REFLECT_SUBTAB_MIGRATION = {
+      section: "settings",
+      editor: "settings",
+      sectionPreview: "settings",
+      patch: "json",
+      node: "diff"
+    };
     Object.entries(DEFAULT_SUBTAB_STATE).forEach(([parentKey, defaultKey]) => {
-      const nextKey = saved.activeSubTabs && typeof saved.activeSubTabs === "object" ? String(saved.activeSubTabs[parentKey] || defaultKey) : defaultKey;
+      let nextKey = saved.activeSubTabs && typeof saved.activeSubTabs === "object" ? String(saved.activeSubTabs[parentKey] || defaultKey) : defaultKey;
+      if (parentKey === "reflect" && REFLECT_SUBTAB_MIGRATION[nextKey]) {
+        nextKey = REFLECT_SUBTAB_MIGRATION[nextKey];
+      }
       switchSubTab(parentKey, nextKey, { persist: false });
     });
     let nextActive = saved.activeTab;
@@ -11590,6 +11637,33 @@ ${tableContext.tableLabel}`.toLowerCase();
 #kintone-unified-suite-v2 .diff-view .diff-row-t-changed{border-left:3px solid #ca8a04}
 #kintone-unified-suite-v2 .diff-view .diff-row-t-moved{border-left:3px solid #a855f7}
 #kintone-unified-suite-v2 .diff-view .diff-row-t-same{border-left:3px solid #94a3b8}
+/* 差分テーブル：フィールド階層を一目でわかる表示（テーブル / テーブル内フィールド） */
+#kintone-unified-suite-v2 .diff-view .diff-path-cell .diff-path-line.diff-path-context{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+#kintone-unified-suite-v2 .diff-view .diff-path-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.02em;border:1px solid transparent;line-height:1.4;white-space:nowrap;flex-shrink:0}
+#kintone-unified-suite-v2 .diff-view .diff-path-chip--field{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
+#kintone-unified-suite-v2 .diff-view .diff-path-chip--table{background:#f3e8ff;color:#6b21a8;border-color:#d8b4fe}
+#kintone-unified-suite-v2 .diff-view .diff-path-chip--subfield{background:#ecfeff;color:#155e75;border-color:#67e8f9}
+#kintone-unified-suite-v2 .diff-view .diff-path-name{font-size:12px;color:var(--dv-text);word-break:break-word}
+#kintone-unified-suite-v2 .diff-view .diff-path-name--child{color:var(--dv-text)}
+#kintone-unified-suite-v2 .diff-view .diff-path-arrow{color:#94a3b8;font-weight:700;padding:0 1px}
+#kintone-unified-suite-v2 .diff-view .diff-path-prop{color:var(--dv-sub);font-weight:600;font-size:11px}
+/* テーブル本体の行 */
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-table-root > td{background:color-mix(in srgb, #f3e8ff 38%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-table-root:hover > td{background:color-mix(in srgb, #f3e8ff 55%, var(--dv-card))}
+/* テーブル内フィールド行：左に階層ガイド線＋インデント */
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-subfield > td{background:color-mix(in srgb, #ecfeff 35%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-subfield:hover > td{background:color-mix(in srgb, #ecfeff 55%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-subfield > td:nth-child(4){position:relative;padding-left:26px}
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-subfield > td:nth-child(4)::before{content:"";position:absolute;left:10px;top:10px;bottom:10px;width:3px;border-radius:2px;background:linear-gradient(180deg,#67e8f9,#22d3ee)}
+/* ダーク対応 */
+#kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--field{background:#1e1b4b;color:#c7d2fe;border-color:#3730a3}
+#kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--table{background:#3b0764;color:#e9d5ff;border-color:#7e22ce}
+#kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--subfield{background:#083344;color:#a5f3fc;border-color:#0e7490}
+#kintone-unified-suite-v2 .diff-view.dark .diff-path-arrow{color:#64748b}
+#kintone-unified-suite-v2 .diff-view.dark .diff-table tr.diff-row-table-root > td{background:color-mix(in srgb, #3b0764 22%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view.dark .diff-table tr.diff-row-table-root:hover > td{background:color-mix(in srgb, #3b0764 38%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view.dark .diff-table tr.diff-row-subfield > td{background:color-mix(in srgb, #083344 25%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view.dark .diff-table tr.diff-row-subfield:hover > td{background:color-mix(in srgb, #083344 42%, var(--dv-card))}
 #kintone-unified-suite-v2 .diff-onboarding{margin:8px 0;padding:10px 12px;border-radius:8px;border:1px solid #c7d2fe;background:linear-gradient(135deg,#eef2ff,#f8fafc)}
 #kintone-unified-suite-v2 .diff-onboarding-text{margin:0 0 8px;font-size:12px;line-height:1.55;color:#334155}
 #kintone-unified-suite-v2 .diff-ext-toolbar{margin:8px 0 4px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#fafafa}
@@ -11781,6 +11855,39 @@ ${tableContext.tableLabel}`.toLowerCase();
 #kintone-unified-suite-v2 .btn-deploy-foot:hover{background:#fef2f2;border-color:#b91c1c}
 #kintone-unified-suite-v2 .reflect-main .reflect-footer-actions.main-footer{padding:10px 14px;border-top:1px solid #e2e8f0;background:#f1f5f9}
 #kintone-unified-suite-v2 .reflect-main .reflect-footer-actions .btn{padding:7px 12px}
+#kintone-unified-suite-v2 .subtabs--reflect-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:10px;background:linear-gradient(180deg,#f8fafc,#eef2ff);border:1px solid #c7d2fe;border-radius:14px;margin:6px 0 14px}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:12px 14px;font-size:12px;font-weight:700;border:1px solid #e2e8f0;border-radius:12px;background:#fff;color:#0f172a;line-height:1.35;text-align:left;cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s,transform .08s}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab:hover{border-color:#818cf8;box-shadow:0 4px 14px rgba(99,102,241,.18);transform:translateY(-1px)}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab .subtab-icon{font-size:20px;line-height:1}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab .subtab-label{font-size:13px;font-weight:800;letter-spacing:-0.01em}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab .subtab-sub{font-size:10px;font-weight:500;color:#64748b}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab.active{background:linear-gradient(180deg,#312e81,#1e1b4b);border-color:#312e81;color:#fff;box-shadow:0 6px 18px rgba(49,46,129,.35);text-decoration:none}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab.active .subtab-sub{color:#c7d2fe}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab[data-subtab="json"].active{background:linear-gradient(180deg,#0f766e,#115e59);border-color:#115e59;box-shadow:0 6px 18px rgba(15,118,110,.35)}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab[data-subtab="json"].active .subtab-sub{color:#99f6e4}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab[data-subtab="diff"].active{background:linear-gradient(180deg,#b45309,#92400e);border-color:#92400e;box-shadow:0 6px 18px rgba(180,83,9,.35)}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab[data-subtab="diff"].active .subtab-sub{color:#fde68a}
+#kintone-unified-suite-v2 .reflect-mode-hero{display:flex;align-items:flex-start;gap:14px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:12px;background:linear-gradient(180deg,#fafbff,#fff);margin-bottom:12px;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+#kintone-unified-suite-v2 .reflect-mode-hero__icon{flex-shrink:0;width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:10px;background:#eef2ff;font-size:22px;line-height:1}
+#kintone-unified-suite-v2 .reflect-mode-hero__copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+#kintone-unified-suite-v2 .reflect-mode-hero__title{font-size:14px;font-weight:800;color:#1e1b4b;letter-spacing:-0.01em}
+#kintone-unified-suite-v2 .reflect-mode-hero__desc{font-size:12px;line-height:1.65;color:#475569}
+#kintone-unified-suite-v2 .reflect-mode-hero--settings{border-color:#c7d2fe;background:linear-gradient(180deg,#eef2ff,#fff)}
+#kintone-unified-suite-v2 .reflect-mode-hero--settings .reflect-mode-hero__icon{background:#c7d2fe;color:#312e81}
+#kintone-unified-suite-v2 .reflect-mode-hero--settings .reflect-mode-hero__title{color:#312e81}
+#kintone-unified-suite-v2 .reflect-mode-hero--json{border-color:#5eead4;background:linear-gradient(180deg,#f0fdfa,#fff)}
+#kintone-unified-suite-v2 .reflect-mode-hero--json .reflect-mode-hero__icon{background:#99f6e4;color:#115e59;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800;font-size:18px}
+#kintone-unified-suite-v2 .reflect-mode-hero--json .reflect-mode-hero__title{color:#115e59}
+#kintone-unified-suite-v2 .reflect-mode-hero--diff{border-color:#fcd34d;background:linear-gradient(180deg,#fffbeb,#fff)}
+#kintone-unified-suite-v2 .reflect-mode-hero--diff .reflect-mode-hero__icon{background:#fde68a;color:#92400e}
+#kintone-unified-suite-v2 .reflect-mode-hero--diff .reflect-mode-hero__title{color:#92400e}
+#kintone-unified-suite-v2 .reflect-settings-inner{display:flex;flex-direction:column;gap:10px}
+#kintone-unified-suite-v2 .reflect-inner-tabs{display:flex;gap:4px;padding:4px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-inner-tab{border:1px solid transparent;background:transparent;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;color:#475569;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+#kintone-unified-suite-v2 .reflect-inner-tab:hover{background:#e0e7ff;color:#312e81}
+#kintone-unified-suite-v2 .reflect-inner-tab.active{background:#fff;border-color:#c7d2fe;color:#312e81;box-shadow:0 1px 3px rgba(49,46,129,.12);font-weight:800}
+#kintone-unified-suite-v2 .reflect-inner-pane{display:none}
+#kintone-unified-suite-v2 .reflect-inner-pane.active{display:flex;flex-direction:column;gap:12px}
 #kintone-unified-suite-v2 .opt-card{border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#fff}
 #kintone-unified-suite-v2 .opt-card .opt-title{font-size:11px;font-weight:700;color:#334155;margin-bottom:6px;display:flex;align-items:center;gap:6px}
 #kintone-unified-suite-v2 .reflect-preview-editor-card{border:1px solid #93c5fd;border-radius:12px;padding:14px 16px 16px;margin-top:12px;background:linear-gradient(180deg,#f8fbff,#fff);box-shadow:0 1px 3px rgba(37,99,235,.08)}
@@ -14663,49 +14770,127 @@ ${tableContext.tableLabel}`.toLowerCase();
             </div>
 
             <div class="pane active" data-pane="reflect">
-              <div class="subtabs">
-                <button class="subtab active" data-subtab-parent="reflect" data-subtab="section">まとめて反映</button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="node">差分を選んで反映</button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="patch">JSONで反映</button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="editor">フィールド確認</button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="sectionPreview">他設定を編集</button>
+              <div class="subtabs subtabs--reflect-modes">
+                <button class="subtab active" data-subtab-parent="reflect" data-subtab="settings" title="kintoneの設定画面風UIで反映（一般ユーザー向け）">
+                  <span class="subtab-icon" aria-hidden="true">🧩</span>
+                  <span class="subtab-label">設定画面で反映</span>
+                  <span class="subtab-sub">一般ユーザー向け</span>
+                </button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="json" title="JSONを直接編集して反映（開発者向け）">
+                  <span class="subtab-icon" aria-hidden="true">&lt;/&gt;</span>
+                  <span class="subtab-label">JSONで反映</span>
+                  <span class="subtab-sub">開発者向け</span>
+                </button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="diff" title="差分比較結果から反映フィールドを調整">
+                  <span class="subtab-icon" aria-hidden="true">🎯</span>
+                  <span class="subtab-label">差分から調整</span>
+                  <span class="subtab-sub">差分比較と連動</span>
+                </button>
               </div>
 
-              <!-- ===== Subpane: section ===== -->
-              <div class="subpane active" data-subpane-parent="reflect" data-subpane="section">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">まずはここを使います。反映したい設定セクションだけを選び、比較元の内容を比較先プレビューへまとめて反映します。</div>
+              <!-- ===== Subpane: settings (kintone設定画面風 / 一般ユーザー向け) ===== -->
+              <div class="subpane active" data-subpane-parent="reflect" data-subpane="settings">
+                <section class="reflect-mode-hero reflect-mode-hero--settings">
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">🧩</div>
+                  <div class="reflect-mode-hero__copy">
+                    <div class="reflect-mode-hero__title">設定画面で反映</div>
+                    <div class="reflect-mode-hero__desc">kintoneの設定画面に近いUIで、フィールドや各種設定を比較元から比較先プレビューへ反映します。一般ユーザー向けの操作モードです。</div>
+                  </div>
+                </section>
                 <div id="u_applyScopeBlock" style="display:none"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
-                <div class="reflect-layout" id="u_reflectLayout">
-                  <div class="reflect-main">
-                    <div class="main-header reflect-main-header">
-                      <div class="reflect-main-header__text">
-                        <div class="main-title" id="u_reflectMainTitle">いまの反映内容</div>
-                        <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
+                <div class="reflect-settings-inner">
+                  <div class="reflect-inner-tabs" role="tablist" aria-label="反映対象の切替">
+                    <button type="button" class="reflect-inner-tab active" data-reflect-inner="overview" role="tab" aria-selected="true">概要・対象セクション</button>
+                    <button type="button" class="reflect-inner-tab" data-reflect-inner="field" role="tab" aria-selected="false">フィールド設定画面</button>
+                    <button type="button" class="reflect-inner-tab" data-reflect-inner="other" role="tab" aria-selected="false">ビュー・権限など他設定</button>
+                  </div>
+
+                  <div class="reflect-inner-pane active" data-reflect-inner-pane="overview">
+                    <div class="reflect-layout" id="u_reflectLayout">
+                      <div class="reflect-main">
+                        <div class="main-header reflect-main-header">
+                          <div class="reflect-main-header__text">
+                            <div class="main-title" id="u_reflectMainTitle">いまの反映内容</div>
+                            <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
+                          </div>
+                        </div>
+                        <div class="main-body" id="u_reflectMainBody">
+                          <div class="scope-launcher-card scope-launcher-card--reflect">
+                            <div class="scope-launcher-copy">
+                              <div class="scope-launcher-kicker">ステップ1</div>
+                              <div class="scope-launcher-title">反映するセクションを絞ります</div>
+                              <div class="scope-launcher-summary" id="u_reflectScopeSummary">読み込み中...</div>
+                            </div>
+                            <div class="scope-launcher-actions">
+                              <button type="button" class="btn sub" data-act="openReflectScopePicker">反映セクションを選ぶ</button>
+                            </div>
+                          </div>
+                          <div id="u_reflectAssist"></div>
+                          <div id="u_reflectHowto" style="margin-bottom:10px"></div>
+                          <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
+                          <div id="u_reflectOverview"></div>
+                        </div>
                       </div>
                     </div>
-                    <div class="main-body" id="u_reflectMainBody">
-                      <div class="scope-launcher-card scope-launcher-card--reflect">
-                        <div class="scope-launcher-copy">
-                          <div class="scope-launcher-kicker">ポップアップ選択</div>
-                          <div class="scope-launcher-title">反映するセクションを先に絞ります</div>
-                          <div class="scope-launcher-summary" id="u_reflectScopeSummary">読み込み中...</div>
-                        </div>
-                        <div class="scope-launcher-actions">
-                          <button type="button" class="btn sub" data-act="openReflectScopePicker">反映セクションを選ぶ</button>
-                        </div>
-                      </div>
-                      <div id="u_reflectAssist"></div>
-                      <div id="u_reflectHowto" style="margin-bottom:10px"></div>
-                      <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
-                      <div id="u_reflectOverview"></div>
+                  </div>
+
+                  <div class="reflect-inner-pane" data-reflect-inner-pane="field">
+                    <section class="opt-card reflect-preview-editor-card" id="u_reflectPreviewEditorFold" style="margin:12px">
+                      <div class="opt-title">フィールド設定画面（プレビューエディタ）</div>
+                      <p class="reflect-preview-editor-lead">kintoneの「フォーム設定」画面のように、フィールドを並べ替えたり、比較元カードから比較先カードへドラッグ＆ドロップで設定上書き（code/typeは保持）できます。JSON編集とUndoにも対応します。</p>
+                      <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
+                    </section>
+                  </div>
+
+                  <div class="reflect-inner-pane" data-reflect-inner-pane="other">
+                    <section class="opt-card" style="margin:12px">
+                      <div class="opt-title">他設定の差分エディタ</div>
+                      <p class="muted" style="margin:0 0 8px;font-size:12px">セクション（ビュー・レイアウト・プロセス管理・通知・権限など）を選び、比較元と比較先を見比べながら比較先JSONを調整できます。</p>
+                      <div id="u_sectionPreviewEditor" class="section-preview-editor"></div>
+                    </section>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ===== Subpane: json (開発者向け) ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="json">
+                <section class="reflect-mode-hero reflect-mode-hero--json">
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">&lt;/&gt;</div>
+                  <div class="reflect-mode-hero__copy">
+                    <div class="reflect-mode-hero__title">JSONで反映</div>
+                    <div class="reflect-mode-hero__desc">パッチJSONを直接編集して反映できます。開発者向けモードです。差分比較結果を取り込んで調整し、比較先プレビューに書き込みます。</div>
+                  </div>
+                </section>
+                <div id="u_patchJsonPanel" style="display:block">
+                  <div class="opt-card" style="margin:12px">
+                    <div class="opt-title">パッチJSON編集</div>
+                    <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、差分比較結果から生成した内容をそのまま使って、比較先プレビューに反映します。</div>
+                    <div class="btns" style="margin-bottom:6px">
+                      <button class="btn sub" data-act="patchJsonUseCurrentDiff">差分比較結果を読込</button>
+                      <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
+                      <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
+                      <button class="btn sub" data-act="patchJsonClear">クリア</button>
+                    </div>
+                    <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
+                    <div id="u_patchJsonEditor" style="width:100%;height:400px;border-radius:6px;"></div>
+                    <div style="margin-top:10px;font-size:11px;font-weight:700;color:#334155">JSON差分比較</div>
+                    <div id="u_patchJsonDiff" style="margin-top:6px;min-height:120px;max-height:420px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
+                    <div class="btns" style="margin-top:6px">
+                      <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <!-- ===== Subpane: node ===== -->
-              <div class="subpane" data-subpane-parent="reflect" data-subpane="node">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">一部だけ反映したいときに使います。差分ごとに、比較元を採用するか比較先を残すかを選んで部分反映します。</div>
+              <!-- ===== Subpane: diff (差分から反映フィールドを調整) ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="diff">
+                <section class="reflect-mode-hero reflect-mode-hero--diff">
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">🎯</div>
+                  <div class="reflect-mode-hero__copy">
+                    <div class="reflect-mode-hero__title">差分から反映対象を調整</div>
+                    <div class="reflect-mode-hero__desc">差分比較の結果を使って、フィールドやセクション単位で「比較元を採用」「比較先を残す」を調整しながら部分反映します。先に差分比較タブで比較を実行してから「差分候補を読込」を押します。</div>
+                  </div>
+                </section>
                 <div class="reflect-layout">
                   <div class="reflect-main" style="width:100%">
                     <div class="main-body" style="padding:12px">
@@ -14775,49 +14960,6 @@ ${tableContext.tableLabel}`.toLowerCase();
                 </div>
               </div>
 
-              <!-- ===== Subpane: patch ===== -->
-              <div class="subpane" data-subpane-parent="reflect" data-subpane="patch">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">差分比較結果をJSONとして調整して反映したいときに使います。比較先プレビューだけを書き換えます。</div>
-                <div id="u_patchJsonPanel" style="display:block">
-                  <div class="opt-card" style="margin:12px">
-                    <div class="opt-title">JSON差分反映</div>
-                    <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、差分比較結果から生成した内容をそのまま使って、比較先プレビューに反映します。</div>
-                    <div class="btns" style="margin-bottom:6px">
-                      <button class="btn sub" data-act="patchJsonUseCurrentDiff">差分比較結果を読込</button>
-                      <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
-                      <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
-                      <button class="btn sub" data-act="patchJsonClear">クリア</button>
-                    </div>
-                    <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
-                    <div id="u_patchJsonEditor" style="width:100%;height:400px;border-radius:6px;"></div>
-                    <div style="margin-top:10px;font-size:11px;font-weight:700;color:#334155">JSON差分比較</div>
-                    <div id="u_patchJsonDiff" style="margin-top:6px;min-height:120px;max-height:420px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
-                    <div class="btns" style="margin-top:6px">
-                      <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- ===== Subpane: editor ===== -->
-              <div class="subpane" data-subpane-parent="reflect" data-subpane="editor">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">フィールドの見た目を確認しながら、比較先プレビュー用の値を試せる事前確認エディタです。</div>
-                <section class="opt-card reflect-preview-editor-card" id="u_reflectPreviewEditorFold" style="display:block;margin:12px">
-                  <div class="opt-title">フィールドプレビューエディタ（試験）</div>
-                  <p class="reflect-preview-editor-lead">ドラッグ＆ドロップで別カードへ設定上書き（code/typeは保持）、JSON編集とUndoにも対応します。</p>
-                  <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
-                </section>
-              </div>
-
-              <!-- ===== Subpane: sectionPreview ===== -->
-              <div class="subpane" data-subpane-parent="reflect" data-subpane="sectionPreview">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">フィールド以外の差分を直したいときはここです。ビュー・レイアウト・プロセス管理・通知・権限などを、比較元を見ながら比較先プレビュー側だけ編集できます。</div>
-                <section class="opt-card" style="display:block;margin:12px">
-                  <div class="opt-title">他設定の差分エディタ</div>
-                  <p class="muted" style="margin:0 0 8px;font-size:12px">セクションを選び、比較元と比較先を見比べながら比較先JSONを調整できます。フィールド設定は「フィールド確認」、それ以外はここを使うイメージです。</p>
-                  <div id="u_sectionPreviewEditor" class="section-preview-editor"></div>
-                </section>
-              </div>
 
               <div class="reflect-footer-stack" style="margin-top:auto">
                 <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>
@@ -18473,6 +18615,22 @@ ${tableContext.tableLabel}`.toLowerCase();
   function getVisibleReflectNodeIds() {
     return [...ui.reflectNodeList?.querySelectorAll("[data-node-open]") || []].map((el) => el.dataset.nodeOpen).filter(Boolean);
   }
+  function activateReflectInnerTab(inner) {
+    const root2 = getRoot();
+    if (!root2) return;
+    const key = ["overview", "field", "other"].includes(inner) ? inner : "overview";
+    const tabs = root2.querySelectorAll("[data-reflect-inner]");
+    tabs.forEach((btn) => {
+      const on = btn.getAttribute("data-reflect-inner") === key;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    const panes = root2.querySelectorAll("[data-reflect-inner-pane]");
+    panes.forEach((p) => {
+      const on = p.getAttribute("data-reflect-inner-pane") === key;
+      p.classList.toggle("active", on);
+    });
+  }
   function extractAppIdFromInput(value) {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -18643,9 +18801,10 @@ ${tableContext.tableLabel}`.toLowerCase();
       const nextSectionKey = resolveSectionPreviewTarget(sectionKey);
       const label = SECTION_DEFS.find((def) => def.key === nextSectionKey)?.label || nextSectionKey;
       switchTab("reflect", { persist: false });
-      switchSubTab("reflect", "sectionPreview");
+      switchSubTab("reflect", "settings");
+      activateReflectInnerTab("other");
       const focusEditor = () => {
-        const pane = root2.querySelector('[data-subpane-parent="reflect"][data-subpane="sectionPreview"]');
+        const pane = root2.querySelector('[data-subpane-parent="reflect"][data-subpane="settings"]');
         pane?.scrollIntoView?.({ behavior: "smooth", block: "start" });
         const editorApi = ui.sectionPreviewEditor?.__sectionPreviewApi;
         if (editorApi?.setSection) {
@@ -19106,6 +19265,11 @@ ${tableContext.tableLabel}`.toLowerCase();
       });
     }
     root2.addEventListener("click", (e) => {
+      const innerTab = e.target.closest("[data-reflect-inner]");
+      if (innerTab) {
+        activateReflectInnerTab(innerTab.getAttribute("data-reflect-inner") || "overview");
+        return;
+      }
       const favBtn = e.target.closest("[data-diff-fav-path]");
       if (favBtn) {
         const path = normalizeDiffFavoritePath2(favBtn.dataset.diffFavPath || "");
@@ -19418,10 +19582,11 @@ ${tableContext.tableLabel}`.toLowerCase();
       }
       if (act === "openReflectPreviewEditor") {
         switchTab("reflect", { persist: false });
-        switchSubTab("reflect", "editor");
+        switchSubTab("reflect", "settings");
+        activateReflectInnerTab("field");
         const fold = root2.querySelector("#u_reflectPreviewEditorFold");
         fold?.scrollIntoView?.({ behavior: "smooth", block: "start" });
-        setStatus("フィールド確認へ移動しました");
+        setStatus("フィールド設定画面へ移動しました");
         return;
       }
       if (act === "openSectionPreviewEditor") {
@@ -19867,10 +20032,11 @@ ${tableContext.tableLabel}`.toLowerCase();
       }
       if (act === "reflectModeSection") {
         state.reflectActiveSidebarSection = null;
-        switchSubTab("reflect", "section");
+        switchSubTab("reflect", "settings");
+        activateReflectInnerTab("overview");
         renderReflectModeUi();
         renderReflectMainPanel();
-        setStatus("まとめて反映モードに切り替えました");
+        setStatus("設定画面で反映モードに切り替えました");
         return;
       }
       if (act === "reflectModeNode") {
@@ -19879,12 +20045,12 @@ ${tableContext.tableLabel}`.toLowerCase();
           return;
         }
         state.reflectActiveSidebarSection = null;
-        switchSubTab("reflect", "node");
+        switchSubTab("reflect", "diff");
         renderReflectModeUi();
         if (state.lastDiffRows && state.lastDiffRows.length > 0 && !state.reflectRows.length) {
           loadReflectRowsFromLastDiff();
         }
-        setStatus("ノード反映モードに切り替えました");
+        setStatus("差分から調整モードに切り替えました");
         return;
       }
       if (act === "loadReflectNodes") return withGuard(async () => {

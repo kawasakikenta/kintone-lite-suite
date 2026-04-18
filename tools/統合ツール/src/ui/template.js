@@ -564,49 +564,127 @@ export function buildRoot(targetDocument = document, options = {}) {
             </div>
 
             <div class="pane active" data-pane="reflect">
-              <div class="subtabs">
-                <button class="subtab active" data-subtab-parent="reflect" data-subtab="section">まとめて反映</button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="node">差分を選んで反映</button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="patch">JSONで反映</button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="editor">フィールド確認</button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="sectionPreview">他設定を編集</button>
+              <div class="subtabs subtabs--reflect-modes">
+                <button class="subtab active" data-subtab-parent="reflect" data-subtab="settings" title="kintoneの設定画面風UIで反映（一般ユーザー向け）">
+                  <span class="subtab-icon" aria-hidden="true">🧩</span>
+                  <span class="subtab-label">設定画面で反映</span>
+                  <span class="subtab-sub">一般ユーザー向け</span>
+                </button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="json" title="JSONを直接編集して反映（開発者向け）">
+                  <span class="subtab-icon" aria-hidden="true">&lt;/&gt;</span>
+                  <span class="subtab-label">JSONで反映</span>
+                  <span class="subtab-sub">開発者向け</span>
+                </button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="diff" title="差分比較結果から反映フィールドを調整">
+                  <span class="subtab-icon" aria-hidden="true">🎯</span>
+                  <span class="subtab-label">差分から調整</span>
+                  <span class="subtab-sub">差分比較と連動</span>
+                </button>
               </div>
 
-              <!-- ===== Subpane: section ===== -->
-              <div class="subpane active" data-subpane-parent="reflect" data-subpane="section">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">まずはここを使います。反映したい設定セクションだけを選び、比較元の内容を比較先プレビューへまとめて反映します。</div>
+              <!-- ===== Subpane: settings (kintone設定画面風 / 一般ユーザー向け) ===== -->
+              <div class="subpane active" data-subpane-parent="reflect" data-subpane="settings">
+                <section class="reflect-mode-hero reflect-mode-hero--settings">
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">🧩</div>
+                  <div class="reflect-mode-hero__copy">
+                    <div class="reflect-mode-hero__title">設定画面で反映</div>
+                    <div class="reflect-mode-hero__desc">kintoneの設定画面に近いUIで、フィールドや各種設定を比較元から比較先プレビューへ反映します。一般ユーザー向けの操作モードです。</div>
+                  </div>
+                </section>
                 <div id="u_applyScopeBlock" style="display:none"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
-                <div class="reflect-layout" id="u_reflectLayout">
-                  <div class="reflect-main">
-                    <div class="main-header reflect-main-header">
-                      <div class="reflect-main-header__text">
-                        <div class="main-title" id="u_reflectMainTitle">いまの反映内容</div>
-                        <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
+                <div class="reflect-settings-inner">
+                  <div class="reflect-inner-tabs" role="tablist" aria-label="反映対象の切替">
+                    <button type="button" class="reflect-inner-tab active" data-reflect-inner="overview" role="tab" aria-selected="true">概要・対象セクション</button>
+                    <button type="button" class="reflect-inner-tab" data-reflect-inner="field" role="tab" aria-selected="false">フィールド設定画面</button>
+                    <button type="button" class="reflect-inner-tab" data-reflect-inner="other" role="tab" aria-selected="false">ビュー・権限など他設定</button>
+                  </div>
+
+                  <div class="reflect-inner-pane active" data-reflect-inner-pane="overview">
+                    <div class="reflect-layout" id="u_reflectLayout">
+                      <div class="reflect-main">
+                        <div class="main-header reflect-main-header">
+                          <div class="reflect-main-header__text">
+                            <div class="main-title" id="u_reflectMainTitle">いまの反映内容</div>
+                            <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
+                          </div>
+                        </div>
+                        <div class="main-body" id="u_reflectMainBody">
+                          <div class="scope-launcher-card scope-launcher-card--reflect">
+                            <div class="scope-launcher-copy">
+                              <div class="scope-launcher-kicker">ステップ1</div>
+                              <div class="scope-launcher-title">反映するセクションを絞ります</div>
+                              <div class="scope-launcher-summary" id="u_reflectScopeSummary">読み込み中...</div>
+                            </div>
+                            <div class="scope-launcher-actions">
+                              <button type="button" class="btn sub" data-act="openReflectScopePicker">反映セクションを選ぶ</button>
+                            </div>
+                          </div>
+                          <div id="u_reflectAssist"></div>
+                          <div id="u_reflectHowto" style="margin-bottom:10px"></div>
+                          <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
+                          <div id="u_reflectOverview"></div>
+                        </div>
                       </div>
                     </div>
-                    <div class="main-body" id="u_reflectMainBody">
-                      <div class="scope-launcher-card scope-launcher-card--reflect">
-                        <div class="scope-launcher-copy">
-                          <div class="scope-launcher-kicker">ポップアップ選択</div>
-                          <div class="scope-launcher-title">反映するセクションを先に絞ります</div>
-                          <div class="scope-launcher-summary" id="u_reflectScopeSummary">読み込み中...</div>
-                        </div>
-                        <div class="scope-launcher-actions">
-                          <button type="button" class="btn sub" data-act="openReflectScopePicker">反映セクションを選ぶ</button>
-                        </div>
-                      </div>
-                      <div id="u_reflectAssist"></div>
-                      <div id="u_reflectHowto" style="margin-bottom:10px"></div>
-                      <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
-                      <div id="u_reflectOverview"></div>
+                  </div>
+
+                  <div class="reflect-inner-pane" data-reflect-inner-pane="field">
+                    <section class="opt-card reflect-preview-editor-card" id="u_reflectPreviewEditorFold" style="margin:12px">
+                      <div class="opt-title">フィールド設定画面（プレビューエディタ）</div>
+                      <p class="reflect-preview-editor-lead">kintoneの「フォーム設定」画面のように、フィールドを並べ替えたり、比較元カードから比較先カードへドラッグ＆ドロップで設定上書き（code/typeは保持）できます。JSON編集とUndoにも対応します。</p>
+                      <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
+                    </section>
+                  </div>
+
+                  <div class="reflect-inner-pane" data-reflect-inner-pane="other">
+                    <section class="opt-card" style="margin:12px">
+                      <div class="opt-title">他設定の差分エディタ</div>
+                      <p class="muted" style="margin:0 0 8px;font-size:12px">セクション（ビュー・レイアウト・プロセス管理・通知・権限など）を選び、比較元と比較先を見比べながら比較先JSONを調整できます。</p>
+                      <div id="u_sectionPreviewEditor" class="section-preview-editor"></div>
+                    </section>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ===== Subpane: json (開発者向け) ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="json">
+                <section class="reflect-mode-hero reflect-mode-hero--json">
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">&lt;/&gt;</div>
+                  <div class="reflect-mode-hero__copy">
+                    <div class="reflect-mode-hero__title">JSONで反映</div>
+                    <div class="reflect-mode-hero__desc">パッチJSONを直接編集して反映できます。開発者向けモードです。差分比較結果を取り込んで調整し、比較先プレビューに書き込みます。</div>
+                  </div>
+                </section>
+                <div id="u_patchJsonPanel" style="display:block">
+                  <div class="opt-card" style="margin:12px">
+                    <div class="opt-title">パッチJSON編集</div>
+                    <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、差分比較結果から生成した内容をそのまま使って、比較先プレビューに反映します。</div>
+                    <div class="btns" style="margin-bottom:6px">
+                      <button class="btn sub" data-act="patchJsonUseCurrentDiff">差分比較結果を読込</button>
+                      <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
+                      <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
+                      <button class="btn sub" data-act="patchJsonClear">クリア</button>
+                    </div>
+                    <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
+                    <div id="u_patchJsonEditor" style="width:100%;height:400px;border-radius:6px;"></div>
+                    <div style="margin-top:10px;font-size:11px;font-weight:700;color:#334155">JSON差分比較</div>
+                    <div id="u_patchJsonDiff" style="margin-top:6px;min-height:120px;max-height:420px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
+                    <div class="btns" style="margin-top:6px">
+                      <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <!-- ===== Subpane: node ===== -->
-              <div class="subpane" data-subpane-parent="reflect" data-subpane="node">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">一部だけ反映したいときに使います。差分ごとに、比較元を採用するか比較先を残すかを選んで部分反映します。</div>
+              <!-- ===== Subpane: diff (差分から反映フィールドを調整) ===== -->
+              <div class="subpane" data-subpane-parent="reflect" data-subpane="diff">
+                <section class="reflect-mode-hero reflect-mode-hero--diff">
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">🎯</div>
+                  <div class="reflect-mode-hero__copy">
+                    <div class="reflect-mode-hero__title">差分から反映対象を調整</div>
+                    <div class="reflect-mode-hero__desc">差分比較の結果を使って、フィールドやセクション単位で「比較元を採用」「比較先を残す」を調整しながら部分反映します。先に差分比較タブで比較を実行してから「差分候補を読込」を押します。</div>
+                  </div>
+                </section>
                 <div class="reflect-layout">
                   <div class="reflect-main" style="width:100%">
                     <div class="main-body" style="padding:12px">
@@ -676,49 +754,6 @@ export function buildRoot(targetDocument = document, options = {}) {
                 </div>
               </div>
 
-              <!-- ===== Subpane: patch ===== -->
-              <div class="subpane" data-subpane-parent="reflect" data-subpane="patch">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">差分比較結果をJSONとして調整して反映したいときに使います。比較先プレビューだけを書き換えます。</div>
-                <div id="u_patchJsonPanel" style="display:block">
-                  <div class="opt-card" style="margin:12px">
-                    <div class="opt-title">JSON差分反映</div>
-                    <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、差分比較結果から生成した内容をそのまま使って、比較先プレビューに反映します。</div>
-                    <div class="btns" style="margin-bottom:6px">
-                      <button class="btn sub" data-act="patchJsonUseCurrentDiff">差分比較結果を読込</button>
-                      <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
-                      <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
-                      <button class="btn sub" data-act="patchJsonClear">クリア</button>
-                    </div>
-                    <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
-                    <div id="u_patchJsonEditor" style="width:100%;height:400px;border-radius:6px;"></div>
-                    <div style="margin-top:10px;font-size:11px;font-weight:700;color:#334155">JSON差分比較</div>
-                    <div id="u_patchJsonDiff" style="margin-top:6px;min-height:120px;max-height:420px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
-                    <div class="btns" style="margin-top:6px">
-                      <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- ===== Subpane: editor ===== -->
-              <div class="subpane" data-subpane-parent="reflect" data-subpane="editor">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">フィールドの見た目を確認しながら、比較先プレビュー用の値を試せる事前確認エディタです。</div>
-                <section class="opt-card reflect-preview-editor-card" id="u_reflectPreviewEditorFold" style="display:block;margin:12px">
-                  <div class="opt-title">フィールドプレビューエディタ（試験）</div>
-                  <p class="reflect-preview-editor-lead">ドラッグ＆ドロップで別カードへ設定上書き（code/typeは保持）、JSON編集とUndoにも対応します。</p>
-                  <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
-                </section>
-              </div>
-
-              <!-- ===== Subpane: sectionPreview ===== -->
-              <div class="subpane" data-subpane-parent="reflect" data-subpane="sectionPreview">
-                <div class="subpane-note" style="padding:12px;color:#475569;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:12px;">フィールド以外の差分を直したいときはここです。ビュー・レイアウト・プロセス管理・通知・権限などを、比較元を見ながら比較先プレビュー側だけ編集できます。</div>
-                <section class="opt-card" style="display:block;margin:12px">
-                  <div class="opt-title">他設定の差分エディタ</div>
-                  <p class="muted" style="margin:0 0 8px;font-size:12px">セクションを選び、比較元と比較先を見比べながら比較先JSONを調整できます。フィールド設定は「フィールド確認」、それ以外はここを使うイメージです。</p>
-                  <div id="u_sectionPreviewEditor" class="section-preview-editor"></div>
-                </section>
-              </div>
 
               <div class="reflect-footer-stack" style="margin-top:auto">
                 <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>

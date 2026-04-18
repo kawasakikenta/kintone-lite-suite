@@ -47,7 +47,7 @@ export const FEATURE_DEFS = [
     desc: '差分を見ながら比較先プレビューへ反映します。',
     tabs: ['reflect'],
     tab: 'reflect',
-    subTab: 'section',
+    subTab: 'settings',
     focusSelector: '#u_reflectAssist',
     priority: 'high',
     riskLevel: 'warning',
@@ -259,7 +259,7 @@ export const STANDALONE_LAUNCH_ENTRIES = [
     module: 'tabs/reflect.js',
     file: 'プレビュー反映.js',
     label: 'プレビュー反映',
-    subTab: 'sectionPreview'
+    subTab: 'settings'
   },
   {
     tab: 'field',

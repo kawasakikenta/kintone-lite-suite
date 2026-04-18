@@ -3924,23 +3924,55 @@ function formatDiffPathRich(row) {
       const table = readFieldDef(tableCode, side);
       return table?.fields?.[subFieldCode] || null;
     };
-    const pickRowFieldDef = (side) => {
-      if (!fieldInfo.isSubField) return readFieldDef(fieldInfo.rootCode, side);
-      return readSubFieldDef(fieldInfo.rootCode, fieldInfo.subFieldCode, side);
-    };
-    const formatFieldName = (code, side) => {
-      const field = pickRowFieldDef(side);
+    const formatCodeName = (field, code) => {
       const label = String(field?.label || field?.name || '').trim();
-      return label ? `${label} (${code})` : code;
+      return label ? `${label} (${code})` : String(code || '');
     };
-    const fieldLabel = fieldInfo.isSubField
-      ? `${formatFieldName(fieldInfo.rootCode, 'target') || formatFieldName(fieldInfo.rootCode, 'source') || fieldInfo.rootCode} > ${formatFieldName(fieldInfo.subFieldCode, 'target') || formatFieldName(fieldInfo.subFieldCode, 'source') || fieldInfo.subFieldCode}`
-      : `${formatFieldName(fieldInfo.activeCode, 'target') || formatFieldName(fieldInfo.activeCode, 'source') || fieldInfo.activeCode}`;
+    const resolveFieldName = (code, tableCode) => {
+      if (!code) return '';
+      if (tableCode) {
+        const sub = readSubFieldDef(tableCode, code, 'target') || readSubFieldDef(tableCode, code, 'source');
+        return formatCodeName(sub, code);
+      }
+      const f = readFieldDef(code, 'target') || readFieldDef(code, 'source');
+      return formatCodeName(f, code);
+    };
+    const isTableRoot = fieldInfo.isFieldRoot
+      && (row?.left?.type === 'SUBTABLE' || row?.right?.type === 'SUBTABLE');
     const propLabel = fieldChangePropTitleFromInfo(fieldInfo, row);
-    const propHtml = propLabel ? ` · ${esc(propLabel)}` : '';
+    const propHtml = propLabel ? `<span class="diff-path-prop"> · ${esc(propLabel)}</span>` : '';
     const rel = p.startsWith('fieldSettings.') ? p.slice('fieldSettings.'.length) : p;
-    const prefix = fieldInfo.isSubField ? 'テーブル内フィールド' : 'フィールド';
-    return `<span class="diff-path-line diff-path-context"><strong>${esc(prefix)}: ${esc(fieldLabel)}</strong>${propHtml}</span>` +
+    let contextHtml;
+    if (fieldInfo.isSubField) {
+      const tableName = resolveFieldName(fieldInfo.rootCode) || fieldInfo.rootCode;
+      const subName = resolveFieldName(fieldInfo.subFieldCode, fieldInfo.rootCode) || fieldInfo.subFieldCode;
+      contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--table" title="テーブル">⊞ テーブル</span>
+          <span class="diff-path-name">${esc(tableName)}</span>
+          <span class="diff-path-arrow" aria-hidden="true">▸</span>
+          <span class="diff-path-chip diff-path-chip--subfield" title="テーブル内フィールド">↳ テーブル内</span>
+          <span class="diff-path-name diff-path-name--child"><strong>${esc(subName)}</strong></span>
+          ${propHtml}
+        </span>`;
+    } else if (isTableRoot) {
+      const tableName = resolveFieldName(fieldInfo.activeCode) || fieldInfo.activeCode;
+      contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--table" title="テーブル">⊞ テーブル</span>
+          <span class="diff-path-name"><strong>${esc(tableName)}</strong></span>
+          ${propHtml}
+        </span>`;
+    } else {
+      const fieldName = resolveFieldName(fieldInfo.activeCode) || fieldInfo.activeCode;
+      contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--field" title="フィールド">▣ フィールド</span>
+          <span class="diff-path-name"><strong>${esc(fieldName)}</strong></span>
+          ${propHtml}
+        </span>`;
+    }
+    return contextHtml +
       `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(rel)}</span></span>`;
   }
   return `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(p)}</span></span>`;
@@ -4101,7 +4133,14 @@ export function renderResultRows(rows) {
       const cols = renderRowColumns(r, useCharDiff);
       const selected = state.diffSelectedIds.has(r._id) ? 'checked' : '';
       const rowAccent = `diff-row-t-${typeClass}`;
-      return `<tr class="${rowAccent}${selected ? ' diff-row-selected' : ''}">
+      const rowFieldInfo = extractFieldPathInfo(r?.path);
+      const isSubfieldRow = !!(rowFieldInfo?.isSubField) || !!r._expandedFromTable;
+      const isTableRootRow = !!(rowFieldInfo?.isFieldRoot)
+        && (r?.left?.type === 'SUBTABLE' || r?.right?.type === 'SUBTABLE');
+      const hierarchyClass = isSubfieldRow
+        ? ' diff-row-subfield'
+        : (isTableRootRow ? ' diff-row-table-root' : '');
+      return `<tr class="${rowAccent}${selected ? ' diff-row-selected' : ''}${hierarchyClass}">
           <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" ${selected}></td>
           <td><span class="sev-badge ${sevClass}">${esc(getSeverityDisplayLabel(sev))}</span></td>
           <td class="diff-type ${typeClass}">${esc(typeLabel || '-')}</td>
