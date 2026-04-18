@@ -174,7 +174,7 @@ export function switchSubTab(parentKey, subKey, options = {}) {
   const key = tabs.some((tab) => tab.dataset.subtab === subKey) ? subKey : fallback;
   state.activeSubTabs[parentKey] = key;
   if (parentKey === 'reflect' && ui.nodeMode) {
-    ui.nodeMode.checked = key === 'node';
+    ui.nodeMode.checked = key === 'diff';
   }
   tabs.forEach((tab) => {
     const active = tab.dataset.subtab === key;

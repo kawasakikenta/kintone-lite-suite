@@ -135,7 +135,7 @@ export const SYSTEM_FIELD_TYPES = new Set([
 
 export const DEFAULT_SUBTAB_STATE = Object.freeze({
   diff: 'conditions',
-  reflect: 'section',
+  reflect: 'settings',
   field: 'json',
   jsconfig: 'editor',
   recordMgr: 'status',

@@ -3,7 +3,7 @@
 
   const LABEL = "プレビュー反映";
   const TAB = "reflect";
-  const SUBTAB = "sectionPreview";
+  const SUBTAB = "settings";
   const SUBTAB_PARENT = "reflect";
 
   function showLoader() {

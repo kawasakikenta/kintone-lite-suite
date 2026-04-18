@@ -242,6 +242,26 @@ function getVisibleReflectNodeIds() {
     .filter(Boolean);
 }
 
+/**
+ * 「設定画面で反映」内の内部タブ（概要 / フィールド / 他設定）を切り替える。
+ */
+function activateReflectInnerTab(inner) {
+  const root = getRoot();
+  if (!root) return;
+  const key = ['overview', 'field', 'other'].includes(inner) ? inner : 'overview';
+  const tabs = root.querySelectorAll('[data-reflect-inner]');
+  tabs.forEach((btn) => {
+    const on = btn.getAttribute('data-reflect-inner') === key;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  const panes = root.querySelectorAll('[data-reflect-inner-pane]');
+  panes.forEach((p) => {
+    const on = p.getAttribute('data-reflect-inner-pane') === key;
+    p.classList.toggle('active', on);
+  });
+}
+
 function extractAppIdFromInput(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -430,9 +450,10 @@ export function setupEventHandlers(injected = {}) {
     const nextSectionKey = resolveSectionPreviewTarget(sectionKey);
     const label = SECTION_DEFS.find((def) => def.key === nextSectionKey)?.label || nextSectionKey;
     switchTab('reflect', { persist: false });
-    switchSubTab('reflect', 'sectionPreview');
+    switchSubTab('reflect', 'settings');
+    activateReflectInnerTab('other');
     const focusEditor = () => {
-      const pane = root.querySelector('[data-subpane-parent="reflect"][data-subpane="sectionPreview"]');
+      const pane = root.querySelector('[data-subpane-parent="reflect"][data-subpane="settings"]');
       pane?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
       const editorApi = ui.sectionPreviewEditor?.__sectionPreviewApi;
       if (editorApi?.setSection) {
@@ -954,6 +975,13 @@ export function setupEventHandlers(injected = {}) {
   // -------------------------------------------------------------------
 
   root.addEventListener('click', (e) => {
+    // Reflect inner tab (概要 / フィールド / 他設定)
+    const innerTab = e.target.closest('[data-reflect-inner]');
+    if (innerTab) {
+      activateReflectInnerTab(innerTab.getAttribute('data-reflect-inner') || 'overview');
+      return;
+    }
+
     // Favorite toggle
     const favBtn = e.target.closest('[data-diff-fav-path]');
     if (favBtn) {
@@ -1286,10 +1314,11 @@ export function setupEventHandlers(injected = {}) {
     }
     if (act === 'openReflectPreviewEditor') {
       switchTab('reflect', { persist: false });
-      switchSubTab('reflect', 'editor');
+      switchSubTab('reflect', 'settings');
+      activateReflectInnerTab('field');
       const fold = root.querySelector('#u_reflectPreviewEditorFold');
       fold?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-      setStatus('フィールド確認へ移動しました');
+      setStatus('フィールド設定画面へ移動しました');
       return;
     }
     if (act === 'openSectionPreviewEditor') {
@@ -1737,10 +1766,11 @@ export function setupEventHandlers(injected = {}) {
     // ----- Reflect mode switching -----
     if (act === 'reflectModeSection') {
       state.reflectActiveSidebarSection = null;
-      switchSubTab('reflect', 'section');
+      switchSubTab('reflect', 'settings');
+      activateReflectInnerTab('overview');
       renderReflectModeUi();
       renderReflectMainPanel();
-      setStatus('まとめて反映モードに切り替えました');
+      setStatus('設定画面で反映モードに切り替えました');
       return;
     }
     if (act === 'reflectModeNode') {
@@ -1749,12 +1779,12 @@ export function setupEventHandlers(injected = {}) {
         return;
       }
       state.reflectActiveSidebarSection = null;
-      switchSubTab('reflect', 'node');
+      switchSubTab('reflect', 'diff');
       renderReflectModeUi();
       if (state.lastDiffRows && state.lastDiffRows.length > 0 && !state.reflectRows.length) {
         loadReflectRowsFromLastDiff();
       }
-      setStatus('ノード反映モードに切り替えました');
+      setStatus('差分から調整モードに切り替えました');
       return;
     }
 
