@@ -6340,21 +6340,54 @@ ${tableContext.tableLabel}`.toLowerCase();
         const table = readFieldDef(tableCode, side);
         return table?.fields?.[subFieldCode] || null;
       };
-      const pickRowFieldDef = (side) => {
-        if (!fieldInfo.isSubField) return readFieldDef(fieldInfo.rootCode, side);
-        return readSubFieldDef(fieldInfo.rootCode, fieldInfo.subFieldCode, side);
-      };
-      const formatFieldName = (code, side) => {
-        const field = pickRowFieldDef(side);
+      const formatCodeName = (field, code) => {
         const label = String(field?.label || field?.name || "").trim();
-        return label ? `${label} (${code})` : code;
+        return label ? `${label} (${code})` : String(code || "");
       };
-      const fieldLabel = fieldInfo.isSubField ? `${formatFieldName(fieldInfo.rootCode, "target") || formatFieldName(fieldInfo.rootCode, "source") || fieldInfo.rootCode} > ${formatFieldName(fieldInfo.subFieldCode, "target") || formatFieldName(fieldInfo.subFieldCode, "source") || fieldInfo.subFieldCode}` : `${formatFieldName(fieldInfo.activeCode, "target") || formatFieldName(fieldInfo.activeCode, "source") || fieldInfo.activeCode}`;
+      const resolveFieldName = (code, tableCode) => {
+        if (!code) return "";
+        if (tableCode) {
+          const sub = readSubFieldDef(tableCode, code, "target") || readSubFieldDef(tableCode, code, "source");
+          return formatCodeName(sub, code);
+        }
+        const f = readFieldDef(code, "target") || readFieldDef(code, "source");
+        return formatCodeName(f, code);
+      };
+      const isTableRoot = fieldInfo.isFieldRoot && (row?.left?.type === "SUBTABLE" || row?.right?.type === "SUBTABLE");
       const propLabel = fieldChangePropTitleFromInfo(fieldInfo, row);
-      const propHtml = propLabel ? ` · ${esc(propLabel)}` : "";
+      const propHtml = propLabel ? `<span class="diff-path-prop"> · ${esc(propLabel)}</span>` : "";
       const rel = p.startsWith("fieldSettings.") ? p.slice("fieldSettings.".length) : p;
-      const prefix = fieldInfo.isSubField ? "テーブル内フィールド" : "フィールド";
-      return `<span class="diff-path-line diff-path-context"><strong>${esc(prefix)}: ${esc(fieldLabel)}</strong>${propHtml}</span><span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(rel)}</span></span>`;
+      let contextHtml;
+      if (fieldInfo.isSubField) {
+        const tableName = resolveFieldName(fieldInfo.rootCode) || fieldInfo.rootCode;
+        const subName = resolveFieldName(fieldInfo.subFieldCode, fieldInfo.rootCode) || fieldInfo.subFieldCode;
+        contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--table" title="テーブル">⊞ テーブル</span>
+          <span class="diff-path-name">${esc(tableName)}</span>
+          <span class="diff-path-arrow" aria-hidden="true">▸</span>
+          <span class="diff-path-chip diff-path-chip--subfield" title="テーブル内フィールド">↳ テーブル内</span>
+          <span class="diff-path-name diff-path-name--child"><strong>${esc(subName)}</strong></span>
+          ${propHtml}
+        </span>`;
+      } else if (isTableRoot) {
+        const tableName = resolveFieldName(fieldInfo.activeCode) || fieldInfo.activeCode;
+        contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--table" title="テーブル">⊞ テーブル</span>
+          <span class="diff-path-name"><strong>${esc(tableName)}</strong></span>
+          ${propHtml}
+        </span>`;
+      } else {
+        const fieldName = resolveFieldName(fieldInfo.activeCode) || fieldInfo.activeCode;
+        contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--field" title="フィールド">▣ フィールド</span>
+          <span class="diff-path-name"><strong>${esc(fieldName)}</strong></span>
+          ${propHtml}
+        </span>`;
+      }
+      return contextHtml + `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(rel)}</span></span>`;
     }
     return `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(p)}</span></span>`;
   }
@@ -6489,7 +6522,11 @@ ${tableContext.tableLabel}`.toLowerCase();
         const cols = renderRowColumns(r, useCharDiff);
         const selected = state.diffSelectedIds.has(r._id) ? "checked" : "";
         const rowAccent = `diff-row-t-${typeClass}`;
-        return `<tr class="${rowAccent}${selected ? " diff-row-selected" : ""}">
+        const rowFieldInfo = extractFieldPathInfo(r?.path);
+        const isSubfieldRow = !!rowFieldInfo?.isSubField || !!r._expandedFromTable;
+        const isTableRootRow = !!rowFieldInfo?.isFieldRoot && (r?.left?.type === "SUBTABLE" || r?.right?.type === "SUBTABLE");
+        const hierarchyClass = isSubfieldRow ? " diff-row-subfield" : isTableRootRow ? " diff-row-table-root" : "";
+        return `<tr class="${rowAccent}${selected ? " diff-row-selected" : ""}${hierarchyClass}">
           <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" ${selected}></td>
           <td><span class="sev-badge ${sevClass}">${esc(getSeverityDisplayLabel(sev))}</span></td>
           <td class="diff-type ${typeClass}">${esc(typeLabel || "-")}</td>
@@ -11590,6 +11627,33 @@ ${tableContext.tableLabel}`.toLowerCase();
 #kintone-unified-suite-v2 .diff-view .diff-row-t-changed{border-left:3px solid #ca8a04}
 #kintone-unified-suite-v2 .diff-view .diff-row-t-moved{border-left:3px solid #a855f7}
 #kintone-unified-suite-v2 .diff-view .diff-row-t-same{border-left:3px solid #94a3b8}
+/* 差分テーブル：フィールド階層を一目でわかる表示（テーブル / テーブル内フィールド） */
+#kintone-unified-suite-v2 .diff-view .diff-path-cell .diff-path-line.diff-path-context{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+#kintone-unified-suite-v2 .diff-view .diff-path-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.02em;border:1px solid transparent;line-height:1.4;white-space:nowrap;flex-shrink:0}
+#kintone-unified-suite-v2 .diff-view .diff-path-chip--field{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
+#kintone-unified-suite-v2 .diff-view .diff-path-chip--table{background:#f3e8ff;color:#6b21a8;border-color:#d8b4fe}
+#kintone-unified-suite-v2 .diff-view .diff-path-chip--subfield{background:#ecfeff;color:#155e75;border-color:#67e8f9}
+#kintone-unified-suite-v2 .diff-view .diff-path-name{font-size:12px;color:var(--dv-text);word-break:break-word}
+#kintone-unified-suite-v2 .diff-view .diff-path-name--child{color:var(--dv-text)}
+#kintone-unified-suite-v2 .diff-view .diff-path-arrow{color:#94a3b8;font-weight:700;padding:0 1px}
+#kintone-unified-suite-v2 .diff-view .diff-path-prop{color:var(--dv-sub);font-weight:600;font-size:11px}
+/* テーブル本体の行 */
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-table-root > td{background:color-mix(in srgb, #f3e8ff 38%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-table-root:hover > td{background:color-mix(in srgb, #f3e8ff 55%, var(--dv-card))}
+/* テーブル内フィールド行：左に階層ガイド線＋インデント */
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-subfield > td{background:color-mix(in srgb, #ecfeff 35%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-subfield:hover > td{background:color-mix(in srgb, #ecfeff 55%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-subfield > td:nth-child(4){position:relative;padding-left:26px}
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-subfield > td:nth-child(4)::before{content:"";position:absolute;left:10px;top:10px;bottom:10px;width:3px;border-radius:2px;background:linear-gradient(180deg,#67e8f9,#22d3ee)}
+/* ダーク対応 */
+#kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--field{background:#1e1b4b;color:#c7d2fe;border-color:#3730a3}
+#kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--table{background:#3b0764;color:#e9d5ff;border-color:#7e22ce}
+#kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--subfield{background:#083344;color:#a5f3fc;border-color:#0e7490}
+#kintone-unified-suite-v2 .diff-view.dark .diff-path-arrow{color:#64748b}
+#kintone-unified-suite-v2 .diff-view.dark .diff-table tr.diff-row-table-root > td{background:color-mix(in srgb, #3b0764 22%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view.dark .diff-table tr.diff-row-table-root:hover > td{background:color-mix(in srgb, #3b0764 38%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view.dark .diff-table tr.diff-row-subfield > td{background:color-mix(in srgb, #083344 25%, var(--dv-card))}
+#kintone-unified-suite-v2 .diff-view.dark .diff-table tr.diff-row-subfield:hover > td{background:color-mix(in srgb, #083344 42%, var(--dv-card))}
 #kintone-unified-suite-v2 .diff-onboarding{margin:8px 0;padding:10px 12px;border-radius:8px;border:1px solid #c7d2fe;background:linear-gradient(135deg,#eef2ff,#f8fafc)}
 #kintone-unified-suite-v2 .diff-onboarding-text{margin:0 0 8px;font-size:12px;line-height:1.55;color:#334155}
 #kintone-unified-suite-v2 .diff-ext-toolbar{margin:8px 0 4px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#fafafa}
