@@ -59,7 +59,7 @@ export function buildRoot(targetDocument = document, options = {}) {
           </div>
           <div class="h-title-launcher">
             <div class="ht">kintone 統合変更ツール</div>
-            <div class="hs">通常は<strong>新しいタブ</strong>で開きます。進め方を確認したいときは右上の<strong>操作ガイド</strong>を開いてください。</div>
+            <div class="hs">使う機能カードを選んでください。進め方は右上の<strong>操作ガイド</strong>から。</div>
             <div><span class="tool-ver hs" data-act="copyToolInfo" title="クリックでツール識別情報をクリップボードにコピー（問い合わせ・再現調査用）">ビルド ${TOOL_VERSION}</span></div>
           </div>
           <div class="h-title-feature">
@@ -153,10 +153,6 @@ export function buildRoot(targetDocument = document, options = {}) {
             <input type="checkbox" id="u_sourcePreview" style="display:none">
             <input type="checkbox" id="u_targetPreview" checked style="display:none">
             <div class="kus-header-diff-suite" id="u_headerDiffSuite">
-            <div class="feature-guide-inline">
-              <span>差分比較はこのエリアで条件設定と実行を行い、下の結果欄で確認します。</span>
-              <button type="button" class="btn sub" data-act="startGuidedTour">操作手順</button>
-            </div>
             <section class="connection-section connection-section--step2 connection-section--actions diff-pane-step2" aria-labelledby="conn-diff-pane-heading">
                 <div class="connection-step-banner">
                   <span class="connection-step-title" id="conn-diff-pane-heading">比較データ取得・一括フロー</span>
@@ -168,14 +164,9 @@ export function buildRoot(targetDocument = document, options = {}) {
                   <button class="btn sub connection-secondary-cta" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
                 </div>
                 <div class="kv" id="u_commonDataState">共通データ未取得</div>
-                <div class="muted connection-footnote">接続パネルの設定は全タブで共有されます。おすすめ順: ヘッダーで差分確認 → 下の固定バーでプラン確認 → プレビューへ反映。</div>
               </section>
               <section class="diff-pane-embed" aria-label="差分の条件・一覧">
               <div class="subpane active">
-                <div class="feature-guide-inline feature-guide-inline--soft">
-                  <span>比較対象、無視キー、保存系の操作はこの機能内だけで完結します。</span>
-                  <button type="button" class="btn sub" data-act="startGuidedTour">操作手順</button>
-                </div>
               <div class="step">比較条件を調整して差分を取得</div>
 
               <details class="diff-fold diff-fold--scopes" open>
@@ -286,10 +277,6 @@ export function buildRoot(targetDocument = document, options = {}) {
                   <span class="diff-fold-sub">差分比較後に、絞り込み・選択・各種出力をまとめて行います</span>
                 </summary>
                 <div class="diff-fold-body">
-                <div class="feature-guide-inline feature-guide-inline--soft">
-                  <span>ここでは差分の絞り込み、選択、各種出力をまとめて行います。</span>
-                  <button type="button" class="btn sub" data-act="startGuidedTour">操作手順</button>
-                </div>
                 <div class="diff-view-overview">
                   <div class="diff-view-overview-main">
                     <div class="diff-view-overview-title">現在の比較結果</div>
@@ -502,7 +489,6 @@ export function buildRoot(targetDocument = document, options = {}) {
                       aria-label="機能検索">
                     <button type="button" class="btn sub launcher-clear-btn" data-act="clearLauncherFilter">クリア</button>
                   </div>
-                  <div class="launcher-shortcut-hint" aria-live="polite">/ または ⌘/Ctrl + K で検索にフォーカス</div>
                   <div class="launcher-group-filters" id="u_launcherGroupFilters" role="group" aria-label="機能グループ">
                     <button type="button" class="chip is-active" data-act="setLauncherGroup" data-group="all" aria-pressed="true">すべて</button>
                     <button type="button" class="chip" data-act="setLauncherGroup" data-group="change" aria-pressed="false">変更・反映</button>
@@ -554,11 +540,10 @@ export function buildRoot(targetDocument = document, options = {}) {
             <div class="pane" data-pane="diff">
               <section class="opt-card feature-pane-card feature-pane-card--diff" style="display:block;margin:12px">
                 <div class="opt-title">差分比較</div>
-                <p class="muted" style="margin:0 0 10px;font-size:12px;line-height:1.6">比較条件は上のエリア、結果の確認は下の結果欄を使います。進め方は「操作手順」から必要なときだけ開けます。</p>
+                <p class="muted" style="margin:0 0 10px;font-size:12px;line-height:1.6">比較条件は上のエリア、結果の確認は下の結果欄で確認します。</p>
                 <div class="btns">
                   <button type="button" class="btn" data-act="runDiff">差分比較を実行</button>
                   <button type="button" class="btn sub" data-act="goDiffReview">結果の整理へ移動</button>
-                  <button type="button" class="btn sub" data-act="startGuidedTour">操作手順</button>
                 </div>
               </section>
             </div>

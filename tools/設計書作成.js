@@ -478,6 +478,29 @@
   });
 
   // src/utils.js
+  function getToolWindowSafe() {
+    try {
+      const popWin = window.__KUS_TOOL_WINDOW__;
+      if (popWin && !popWin.closed && popWin.document) return popWin;
+    } catch (e) {
+    }
+    return window;
+  }
+  function getToolDocumentSafe() {
+    try {
+      return getToolWindowSafe().document || document;
+    } catch (e) {
+      return document;
+    }
+  }
+  function getToolRootSafe() {
+    try {
+      const doc = getToolDocumentSafe();
+      return doc.getElementById(TOOL_ID) || null;
+    } catch (e) {
+      return null;
+    }
+  }
   function normalize(v) {
     if (Array.isArray(v)) return v.map(normalize);
     if (v && typeof v === "object") {
@@ -533,170 +556,74 @@ ${contextLine}`);
     a.click();
     URL.revokeObjectURL(a.href);
   }
-  function waitForScriptLoad(existingScript, url) {
-    if (existingScript.dataset.kusLoaded === "true") {
-      loadedScripts.add(url);
-      return Promise.resolve();
-    }
-    if (existingScript.readyState === "loaded" || existingScript.readyState === "complete") {
-      loadedScripts.add(url);
-      existingScript.dataset.kusLoaded = "true";
-      return Promise.resolve();
-    }
-    return new Promise((resolve, reject) => {
-      const onLoad = () => {
-        cleanup();
-        loadedScripts.add(url);
-        resolve();
-      };
-      const onError = () => {
-        cleanup();
-        reject(new Error(`Failed to load script: ${url}`));
-      };
-      const cleanup = () => {
-        existingScript.removeEventListener("load", onLoad);
-        existingScript.removeEventListener("error", onError);
-      };
-      existingScript.addEventListener("load", onLoad, { once: true });
-      existingScript.addEventListener("error", onError, { once: true });
-    });
-  }
-  function waitForStyleLoad(existingLink, url) {
-    if (existingLink.dataset.kusLoaded === "true") {
-      loadedStyles.add(url);
-      return Promise.resolve();
-    }
-    if (existingLink.sheet) {
-      loadedStyles.add(url);
-      existingLink.dataset.kusLoaded = "true";
-      return Promise.resolve();
-    }
-    return new Promise((resolve, reject) => {
-      const onLoad = () => {
-        cleanup();
-        loadedStyles.add(url);
-        resolve();
-      };
-      const onError = () => {
-        cleanup();
-        reject(new Error(`Failed to load style: ${url}`));
-      };
-      const cleanup = () => {
-        existingLink.removeEventListener("load", onLoad);
-        existingLink.removeEventListener("error", onError);
-      };
-      existingLink.addEventListener("load", onLoad, { once: true });
-      existingLink.addEventListener("error", onError, { once: true });
-    });
-  }
-  function loadExternalScript(url) {
-    if (!url) return Promise.resolve();
-    if (loadedScripts.has(url)) return Promise.resolve();
-    if (loadingScripts.has(url)) return loadingScripts.get(url);
-    const existingScript = document.querySelector(`script[src="${url}"]`);
-    if (existingScript) {
-      const promise2 = waitForScriptLoad(existingScript, url).finally(() => {
-        loadingScripts.delete(url);
-      });
-      loadingScripts.set(url, promise2);
-      return promise2;
-    }
-    const promise = new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = url;
-      script.onload = () => {
-        loadedScripts.add(url);
-        script.dataset.kusLoaded = "true";
-        resolve();
-      };
-      script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
-      document.head.appendChild(script);
-    }).finally(() => {
-      loadingScripts.delete(url);
-    });
-    loadingScripts.set(url, promise);
-    return promise;
-  }
-  function loadExternalStyle(url) {
-    if (!url) return Promise.resolve();
-    if (loadedStyles.has(url)) return Promise.resolve();
-    if (loadingStyles.has(url)) return loadingStyles.get(url);
-    const existingLink = document.querySelector(`link[href="${url}"]`);
-    if (existingLink) {
-      const promise2 = waitForStyleLoad(existingLink, url).finally(() => {
-        loadingStyles.delete(url);
-      });
-      loadingStyles.set(url, promise2);
-      return promise2;
-    }
-    const promise = new Promise((resolve, reject) => {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = url;
-      link.onload = () => {
-        loadedStyles.add(url);
-        link.dataset.kusLoaded = "true";
-        resolve();
-      };
-      link.onerror = () => reject(new Error(`Failed to load style: ${url}`));
-      document.head.appendChild(link);
-    }).finally(() => {
-      loadingStyles.delete(url);
-    });
-    loadingStyles.set(url, promise);
-    return promise;
-  }
-  async function loadExternalLibrary(name) {
-    const lib = EXTERNAL_LIBRARIES[name];
-    if (!lib) throw new Error(`Unknown external library: ${name}`);
-    const stylePromise = lib.cssUrl ? loadExternalStyle(lib.cssUrl) : Promise.resolve();
-    let scriptPromise = Promise.resolve();
-    if (lib.cdnUrl) {
-      scriptPromise = loadExternalScript(lib.cdnUrl).catch((err) => {
-        if (lib.altCdnUrl) return loadExternalScript(lib.altCdnUrl);
-        throw err;
-      });
-    }
-    await Promise.all([stylePromise, scriptPromise]);
-  }
   async function showToast(message, type = "info") {
     try {
-      await loadExternalLibrary("toastify");
-      let bg = "#3b82f6";
-      if (type === "success") bg = "#10b981";
-      if (type === "error") bg = "#ef4444";
-      if (type === "warn") bg = "#f59e0b";
-      window.Toastify({
-        text: message,
-        duration: type === "error" ? 5e3 : 3e3,
-        close: true,
-        gravity: "bottom",
-        position: "right",
-        style: {
-          background: bg,
-          borderRadius: "6px",
-          fontSize: "13px",
-          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)"
-        }
-      }).showToast();
-    } catch (err) {
-      if (type === "error") {
-        console.error(message);
-        alert(message);
-      } else {
-        console.log(`[Toast] ${message}`);
+      const doc = getToolDocumentSafe();
+      const win = getToolWindowSafe();
+      const root2 = getToolRootSafe() || doc.body;
+      if (!root2) {
+        console.log(`[Toast ${type}] ${message}`);
+        return;
       }
+      let container = doc.getElementById("u_toastContainer");
+      if (!container) {
+        container = doc.createElement("div");
+        container.id = "u_toastContainer";
+        container.className = "kus-toast-container";
+        root2.appendChild(container);
+      }
+      const toast = doc.createElement("div");
+      toast.className = `kus-toast kus-toast--${type}`;
+      toast.setAttribute("role", type === "error" || type === "warn" ? "alert" : "status");
+      const msg = doc.createElement("span");
+      msg.className = "kus-toast-msg";
+      msg.textContent = String(message ?? "");
+      toast.appendChild(msg);
+      const closeBtn = doc.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.className = "kus-toast-close";
+      closeBtn.setAttribute("aria-label", "閉じる");
+      closeBtn.textContent = "×";
+      toast.appendChild(closeBtn);
+      container.appendChild(toast);
+      const duration = type === "error" ? 5e3 : 3e3;
+      let dismissTimer = 0;
+      const dismiss = () => {
+        if (dismissTimer) {
+          try {
+            win.clearTimeout(dismissTimer);
+          } catch (e) {
+          }
+          dismissTimer = 0;
+        }
+        toast.classList.add("kus-toast--leaving");
+        try {
+          win.setTimeout(() => {
+            try {
+              toast.remove();
+            } catch (e) {
+            }
+          }, 220);
+        } catch (e) {
+          try {
+            toast.remove();
+          } catch (e2) {
+          }
+        }
+      };
+      closeBtn.addEventListener("click", dismiss);
+      try {
+        dismissTimer = win.setTimeout(dismiss, duration);
+      } catch (e) {
+      }
+    } catch (err) {
+      console.log(`[Toast ${type}] ${message}`);
     }
   }
-  var loadedScripts, loadedStyles, loadingScripts, loadingStyles;
   var init_utils = __esm({
     "src/utils.js"() {
       "use strict";
       init_constants();
-      loadedScripts = /* @__PURE__ */ new Set();
-      loadedStyles = /* @__PURE__ */ new Set();
-      loadingScripts = /* @__PURE__ */ new Map();
-      loadingStyles = /* @__PURE__ */ new Map();
     }
   });
 

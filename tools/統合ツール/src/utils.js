@@ -1,6 +1,44 @@
 'use strict';
 
-import { META_KEYS, EXTERNAL_LIBRARIES } from './constants.js';
+import { META_KEYS, EXTERNAL_LIBRARIES, TOOL_ID } from './constants.js';
+
+/** ツールの UI が載っているウィンドウ（ポップアウト先があればそちら、無ければ現在の window） */
+export function getToolWindowSafe() {
+  try {
+    const popWin = window.__KUS_TOOL_WINDOW__;
+    if (popWin && !popWin.closed && popWin.document) return popWin;
+  } catch (e) { /* ignore */ }
+  return window;
+}
+
+function getToolDocumentSafe() {
+  try { return getToolWindowSafe().document || document; } catch (e) { return document; }
+}
+
+function getToolRootSafe() {
+  try {
+    const doc = getToolDocumentSafe();
+    return doc.getElementById(TOOL_ID) || null;
+  } catch (e) { return null; }
+}
+
+/** alert をツールウィンドウ（ポップアウト）で実行する */
+export function kusAlert(message) {
+  try { return getToolWindowSafe().alert(message); }
+  catch (e) { return window.alert(message); }
+}
+
+/** confirm をツールウィンドウ（ポップアウト）で実行する */
+export function kusConfirm(message) {
+  try { return getToolWindowSafe().confirm(message); }
+  catch (e) { return window.confirm(message); }
+}
+
+/** prompt をツールウィンドウ（ポップアウト）で実行する */
+export function kusPrompt(message, defaultValue = '') {
+  try { return getToolWindowSafe().prompt(message, defaultValue); }
+  catch (e) { return window.prompt(message, defaultValue); }
+}
 
 export function esc(s) {
   return String(s ?? '')
@@ -307,33 +345,60 @@ export async function loadExternalLibrary(name) {
   await Promise.all([stylePromise, scriptPromise]);
 }
 
+/**
+ * ツールダイアログ内に表示される軽量トースト。
+ * Toastify を使わず、ポップアウト先のウィンドウに追従するよう自前で描画する。
+ * （以前の実装では Toastify が元ウィンドウの document.body に追加され、元画面側に通知が出てしまっていた）
+ */
 export async function showToast(message, type = 'info') {
   try {
-    await loadExternalLibrary('toastify');
-    let bg = '#3b82f6'; // blue
-    if (type === 'success') bg = '#10b981'; // green
-    if (type === 'error') bg = '#ef4444'; // red
-    if (type === 'warn') bg = '#f59e0b'; // yellow
-
-    window.Toastify({
-      text: message,
-      duration: type === 'error' ? 5000 : 3000,
-      close: true,
-      gravity: 'bottom',
-      position: 'right',
-      style: {
-        background: bg,
-        borderRadius: '6px',
-        fontSize: '13px',
-        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
-      }
-    }).showToast();
-  } catch (err) {
-    if (type === 'error') {
-      console.error(message);
-      alert(message);
-    } else {
-      console.log(`[Toast] ${message}`);
+    const doc = getToolDocumentSafe();
+    const win = getToolWindowSafe();
+    const root = getToolRootSafe() || doc.body;
+    if (!root) {
+      console.log(`[Toast ${type}] ${message}`);
+      return;
     }
+    let container = doc.getElementById('u_toastContainer');
+    if (!container) {
+      container = doc.createElement('div');
+      container.id = 'u_toastContainer';
+      container.className = 'kus-toast-container';
+      root.appendChild(container);
+    }
+
+    const toast = doc.createElement('div');
+    toast.className = `kus-toast kus-toast--${type}`;
+    toast.setAttribute('role', type === 'error' || type === 'warn' ? 'alert' : 'status');
+
+    const msg = doc.createElement('span');
+    msg.className = 'kus-toast-msg';
+    msg.textContent = String(message ?? '');
+    toast.appendChild(msg);
+
+    const closeBtn = doc.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'kus-toast-close';
+    closeBtn.setAttribute('aria-label', '閉じる');
+    closeBtn.textContent = '×';
+    toast.appendChild(closeBtn);
+
+    container.appendChild(toast);
+
+    const duration = type === 'error' ? 5000 : 3000;
+    let dismissTimer = 0;
+    const dismiss = () => {
+      if (dismissTimer) { try { win.clearTimeout(dismissTimer); } catch (e) { /* ignore */ } dismissTimer = 0; }
+      toast.classList.add('kus-toast--leaving');
+      try {
+        win.setTimeout(() => { try { toast.remove(); } catch (e) { /* ignore */ } }, 220);
+      } catch (e) {
+        try { toast.remove(); } catch (e2) { /* ignore */ }
+      }
+    };
+    closeBtn.addEventListener('click', dismiss);
+    try { dismissTimer = win.setTimeout(dismiss, duration); } catch (e) { /* ignore */ }
+  } catch (err) {
+    console.log(`[Toast ${type}] ${message}`);
   }
 }

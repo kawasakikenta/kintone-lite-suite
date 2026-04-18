@@ -532,6 +532,10 @@
     getPreviewStateLabel: () => getPreviewStateLabel,
     getSeverityDisplayLabel: () => getSeverityDisplayLabel,
     getThemeDisplayLabel: () => getThemeDisplayLabel,
+    getToolWindowSafe: () => getToolWindowSafe,
+    kusAlert: () => kusAlert,
+    kusConfirm: () => kusConfirm,
+    kusPrompt: () => kusPrompt,
     loadExternalLibrary: () => loadExternalLibrary,
     loadExternalScript: () => loadExternalScript,
     loadExternalStyle: () => loadExternalStyle,
@@ -545,6 +549,50 @@
     stableStringify: () => stableStringify,
     tokenizePath: () => tokenizePath
   });
+  function getToolWindowSafe() {
+    try {
+      const popWin = window.__KUS_TOOL_WINDOW__;
+      if (popWin && !popWin.closed && popWin.document) return popWin;
+    } catch (e) {
+    }
+    return window;
+  }
+  function getToolDocumentSafe() {
+    try {
+      return getToolWindowSafe().document || document;
+    } catch (e) {
+      return document;
+    }
+  }
+  function getToolRootSafe() {
+    try {
+      const doc = getToolDocumentSafe();
+      return doc.getElementById(TOOL_ID) || null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function kusAlert(message) {
+    try {
+      return getToolWindowSafe().alert(message);
+    } catch (e) {
+      return window.alert(message);
+    }
+  }
+  function kusConfirm(message) {
+    try {
+      return getToolWindowSafe().confirm(message);
+    } catch (e) {
+      return window.confirm(message);
+    }
+  }
+  function kusPrompt(message, defaultValue = "") {
+    try {
+      return getToolWindowSafe().prompt(message, defaultValue);
+    } catch (e) {
+      return window.prompt(message, defaultValue);
+    }
+  }
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -808,31 +856,66 @@ ${contextLine}`);
   }
   async function showToast(message, type = "info") {
     try {
-      await loadExternalLibrary("toastify");
-      let bg = "#3b82f6";
-      if (type === "success") bg = "#10b981";
-      if (type === "error") bg = "#ef4444";
-      if (type === "warn") bg = "#f59e0b";
-      window.Toastify({
-        text: message,
-        duration: type === "error" ? 5e3 : 3e3,
-        close: true,
-        gravity: "bottom",
-        position: "right",
-        style: {
-          background: bg,
-          borderRadius: "6px",
-          fontSize: "13px",
-          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)"
-        }
-      }).showToast();
-    } catch (err) {
-      if (type === "error") {
-        console.error(message);
-        alert(message);
-      } else {
-        console.log(`[Toast] ${message}`);
+      const doc = getToolDocumentSafe();
+      const win = getToolWindowSafe();
+      const root2 = getToolRootSafe() || doc.body;
+      if (!root2) {
+        console.log(`[Toast ${type}] ${message}`);
+        return;
       }
+      let container = doc.getElementById("u_toastContainer");
+      if (!container) {
+        container = doc.createElement("div");
+        container.id = "u_toastContainer";
+        container.className = "kus-toast-container";
+        root2.appendChild(container);
+      }
+      const toast = doc.createElement("div");
+      toast.className = `kus-toast kus-toast--${type}`;
+      toast.setAttribute("role", type === "error" || type === "warn" ? "alert" : "status");
+      const msg = doc.createElement("span");
+      msg.className = "kus-toast-msg";
+      msg.textContent = String(message ?? "");
+      toast.appendChild(msg);
+      const closeBtn = doc.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.className = "kus-toast-close";
+      closeBtn.setAttribute("aria-label", "閉じる");
+      closeBtn.textContent = "×";
+      toast.appendChild(closeBtn);
+      container.appendChild(toast);
+      const duration = type === "error" ? 5e3 : 3e3;
+      let dismissTimer = 0;
+      const dismiss = () => {
+        if (dismissTimer) {
+          try {
+            win.clearTimeout(dismissTimer);
+          } catch (e) {
+          }
+          dismissTimer = 0;
+        }
+        toast.classList.add("kus-toast--leaving");
+        try {
+          win.setTimeout(() => {
+            try {
+              toast.remove();
+            } catch (e) {
+            }
+          }, 220);
+        } catch (e) {
+          try {
+            toast.remove();
+          } catch (e2) {
+          }
+        }
+      };
+      closeBtn.addEventListener("click", dismiss);
+      try {
+        dismissTimer = win.setTimeout(dismiss, duration);
+      } catch (e) {
+      }
+    } catch (err) {
+      console.log(`[Toast ${type}] ${message}`);
     }
   }
   var loadedScripts, loadedStyles, loadingScripts, loadingStyles;
@@ -5521,7 +5604,7 @@ ${tableContext.tableLabel}`.toLowerCase();
   function exportPatch() {
     const patchRows = REPORT_ROWS.filter((row) => row.type !== 'same');
     if (!patchRows.length) {
-      alert('出力できる差分がありません');
+      kusAlert('出力できる差分がありません');
       return;
     }
     const grouped = {};
@@ -8656,7 +8739,7 @@ ${tableContext.tableLabel}`.toLowerCase();
   - ${breakdown}
 
 この操作はUndo（元に戻す）で取り消せます。実行しますか？`;
-    return window.confirm(msg);
+    return kusConfirm(msg);
   }
   function runReflectModeAll(mode) {
     if (!state.reflectRows.length) {
@@ -9150,7 +9233,7 @@ ${tableContext.tableLabel}`.toLowerCase();
         if (!currentObj.properties) currentObj = { properties: currentObj };
       }
     } catch (e) {
-      if (!window.confirm("現在のJSONテキストが不正です。上書きして良いですか？")) return;
+      if (!kusConfirm("現在のJSONテキストが不正です。上書きして良いですか？")) return;
     }
     let mergedCount = 0;
     for (const c of checks) {
@@ -9981,7 +10064,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     const sectionKeys = Object.keys(payload.sections).filter((key) => SECTION_DEFS.find((item) => item.key === key)?.put);
     if (!sectionKeys.length) throw new Error("適用可能なパッチセクションがありません");
     renderPatchJsonSummary(payload);
-    if (!window.confirm(`JSONパッチを比較先(プレビュー)へ反映しますか？
+    if (!kusConfirm(`JSONパッチを比較先(プレビュー)へ反映しますか？
 比較先アプリ: ${c.target.appId}
 対象セクション: ${sectionKeys.length}件`)) {
       setStatus("JSONパッチ反映をキャンセルしました");
@@ -10247,7 +10330,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     const scopes = Array.isArray(restorePayload.scopes) && restorePayload.scopes.length ? restorePayload.scopes.filter(Boolean) : Object.keys(backupBundle.sections || {});
     if (!scopes.length) throw new Error("復元対象セクションがありません");
     const labels = formatSectionList(scopes);
-    if (!window.confirm(`直前バックアップを比較先(プレビュー)へ復元しますか？
+    if (!kusConfirm(`直前バックアップを比較先(プレビュー)へ復元しますか？
 比較先アプリ: ${c.target.appId}
 対象セクション: ${labels || "-"}`)) {
       setStatus("バックアップ復元をキャンセルしました");
@@ -12808,6 +12891,20 @@ ${tableContext.tableLabel}`.toLowerCase();
 }
 #kintone-unified-suite-v2 .diff-scope-chips::-webkit-scrollbar{width:6px}
 #kintone-unified-suite-v2 .diff-scope-chips::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px}
+
+/* ===== トースト（ツールダイアログ内に表示） ===== */
+#kintone-unified-suite-v2 .kus-toast-container{position:absolute;right:16px;bottom:16px;z-index:140;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:min(420px,calc(100% - 32px))}
+#kintone-unified-suite-v2 .kus-toast{pointer-events:auto;display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;font-size:13px;line-height:1.5;color:#fff;box-shadow:0 10px 24px rgba(15,23,42,.22),0 2px 6px rgba(15,23,42,.12);background:#3b82f6;animation:kus-toast-in .22s ease-out}
+#kintone-unified-suite-v2 .kus-toast--success{background:#10b981}
+#kintone-unified-suite-v2 .kus-toast--error{background:#ef4444}
+#kintone-unified-suite-v2 .kus-toast--warn{background:#f59e0b;color:#1f2937}
+#kintone-unified-suite-v2 .kus-toast--warn .kus-toast-close{color:#1f2937}
+#kintone-unified-suite-v2 .kus-toast-msg{flex:1;word-break:break-word;white-space:pre-wrap}
+#kintone-unified-suite-v2 .kus-toast-close{flex-shrink:0;background:transparent;border:0;color:inherit;font-size:16px;line-height:1;cursor:pointer;padding:2px 4px;opacity:.8}
+#kintone-unified-suite-v2 .kus-toast-close:hover{opacity:1}
+#kintone-unified-suite-v2 .kus-toast--leaving{animation:kus-toast-out .2s ease-in forwards}
+@keyframes kus-toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes kus-toast-out{to{opacity:0;transform:translateY(8px)}}
 #kintone-unified-suite-v2 .scope-launcher-card{
   display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
   padding:12px 14px;border:1px solid #dbe3ed;border-radius:12px;background:linear-gradient(135deg,#f8fbff,#fff)
@@ -14885,7 +14982,7 @@ ${tableContext.tableLabel}`.toLowerCase();
           </div>
           <div class="h-title-launcher">
             <div class="ht">kintone 統合変更ツール</div>
-            <div class="hs">通常は<strong>新しいタブ</strong>で開きます。進め方を確認したいときは右上の<strong>操作ガイド</strong>を開いてください。</div>
+            <div class="hs">使う機能カードを選んでください。進め方は右上の<strong>操作ガイド</strong>から。</div>
             <div><span class="tool-ver hs" data-act="copyToolInfo" title="クリックでツール識別情報をクリップボードにコピー（問い合わせ・再現調査用）">ビルド ${TOOL_VERSION}</span></div>
           </div>
           <div class="h-title-feature">
@@ -14979,10 +15076,6 @@ ${tableContext.tableLabel}`.toLowerCase();
             <input type="checkbox" id="u_sourcePreview" style="display:none">
             <input type="checkbox" id="u_targetPreview" checked style="display:none">
             <div class="kus-header-diff-suite" id="u_headerDiffSuite">
-            <div class="feature-guide-inline">
-              <span>差分比較はこのエリアで条件設定と実行を行い、下の結果欄で確認します。</span>
-              <button type="button" class="btn sub" data-act="startGuidedTour">操作手順</button>
-            </div>
             <section class="connection-section connection-section--step2 connection-section--actions diff-pane-step2" aria-labelledby="conn-diff-pane-heading">
                 <div class="connection-step-banner">
                   <span class="connection-step-title" id="conn-diff-pane-heading">比較データ取得・一括フロー</span>
@@ -14994,14 +15087,9 @@ ${tableContext.tableLabel}`.toLowerCase();
                   <button class="btn sub connection-secondary-cta" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
                 </div>
                 <div class="kv" id="u_commonDataState">共通データ未取得</div>
-                <div class="muted connection-footnote">接続パネルの設定は全タブで共有されます。おすすめ順: ヘッダーで差分確認 → 下の固定バーでプラン確認 → プレビューへ反映。</div>
               </section>
               <section class="diff-pane-embed" aria-label="差分の条件・一覧">
               <div class="subpane active">
-                <div class="feature-guide-inline feature-guide-inline--soft">
-                  <span>比較対象、無視キー、保存系の操作はこの機能内だけで完結します。</span>
-                  <button type="button" class="btn sub" data-act="startGuidedTour">操作手順</button>
-                </div>
               <div class="step">比較条件を調整して差分を取得</div>
 
               <details class="diff-fold diff-fold--scopes" open>
@@ -15112,10 +15200,6 @@ ${tableContext.tableLabel}`.toLowerCase();
                   <span class="diff-fold-sub">差分比較後に、絞り込み・選択・各種出力をまとめて行います</span>
                 </summary>
                 <div class="diff-fold-body">
-                <div class="feature-guide-inline feature-guide-inline--soft">
-                  <span>ここでは差分の絞り込み、選択、各種出力をまとめて行います。</span>
-                  <button type="button" class="btn sub" data-act="startGuidedTour">操作手順</button>
-                </div>
                 <div class="diff-view-overview">
                   <div class="diff-view-overview-main">
                     <div class="diff-view-overview-title">現在の比較結果</div>
@@ -15328,7 +15412,6 @@ ${tableContext.tableLabel}`.toLowerCase();
                       aria-label="機能検索">
                     <button type="button" class="btn sub launcher-clear-btn" data-act="clearLauncherFilter">クリア</button>
                   </div>
-                  <div class="launcher-shortcut-hint" aria-live="polite">/ または ⌘/Ctrl + K で検索にフォーカス</div>
                   <div class="launcher-group-filters" id="u_launcherGroupFilters" role="group" aria-label="機能グループ">
                     <button type="button" class="chip is-active" data-act="setLauncherGroup" data-group="all" aria-pressed="true">すべて</button>
                     <button type="button" class="chip" data-act="setLauncherGroup" data-group="change" aria-pressed="false">変更・反映</button>
@@ -15380,11 +15463,10 @@ ${tableContext.tableLabel}`.toLowerCase();
             <div class="pane" data-pane="diff">
               <section class="opt-card feature-pane-card feature-pane-card--diff" style="display:block;margin:12px">
                 <div class="opt-title">差分比較</div>
-                <p class="muted" style="margin:0 0 10px;font-size:12px;line-height:1.6">比較条件は上のエリア、結果の確認は下の結果欄を使います。進め方は「操作手順」から必要なときだけ開けます。</p>
+                <p class="muted" style="margin:0 0 10px;font-size:12px;line-height:1.6">比較条件は上のエリア、結果の確認は下の結果欄で確認します。</p>
                 <div class="btns">
                   <button type="button" class="btn" data-act="runDiff">差分比較を実行</button>
                   <button type="button" class="btn sub" data-act="goDiffReview">結果の整理へ移動</button>
-                  <button type="button" class="btn sub" data-act="startGuidedTour">操作手順</button>
                 </div>
               </section>
             </div>
@@ -18088,7 +18170,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     setStatus("対象レコードを取得中...");
     const ids = await getRecordIdsByQuery(tApp, query, false);
     if (ids.length === 0) throw new Error("処理対象のレコードが0件です。");
-    if (!confirm(`${ids.length}件のレコードにアクション「${action}」を実行します。よろしいですか？`)) return;
+    if (!kusConfirm(`${ids.length}件のレコードにアクション「${action}」を実行します。よろしいですか？`)) return;
     setStatus("ステータス一括更新を開始...");
     const prefix = getSideApiPrefix(false, false);
     const batches = chunkArray(ids, 100);
@@ -18567,7 +18649,7 @@ ${tableContext.tableLabel}`.toLowerCase();
       records.push(rec);
     }
     if (!records.length) throw new Error("登録するデータが見つかりませんでした");
-    if (!confirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) {
+    if (!kusConfirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) {
       setBusy(false);
       return;
     }
@@ -18826,7 +18908,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     const srcGuest = srcGuestStr ? `/k/guest/${srcGuestStr}/v1` : "/k/v1";
     const tgtGuest = tgtGuestStr ? `/k/guest/${tgtGuestStr}/v1` : "/k/v1";
     const query = getToolDocument().getElementById("u_recordCopyQuery")?.value || "";
-    if (!confirm(`比較元(${srcApp}) から 比較先(${tgtApp}) へレコードをコピーします。よろしいですか？`)) return;
+    if (!kusConfirm(`比較元(${srcApp}) から 比較先(${tgtApp}) へレコードをコピーします。よろしいですか？`)) return;
     setBusy(true, "比較元のレコードを取得中...");
     let totalFetched = 0;
     const records = [];
@@ -18866,7 +18948,7 @@ ${tableContext.tableLabel}`.toLowerCase();
       }
       return clean;
     });
-    if (!confirm(`${records.length}件のレコードを比較先(AppID: ${tgtApp})へ登録します。実行しますか？`)) {
+    if (!kusConfirm(`${records.length}件のレコードを比較先(AppID: ${tgtApp})へ登録します。実行しますか？`)) {
       setBusy(false);
       return;
     }
@@ -18942,7 +19024,7 @@ ${tableContext.tableLabel}`.toLowerCase();
   function deleteTemplate() {
     const name = getToolDocument().getElementById("u_templateSelect")?.value;
     if (!name) return;
-    if (!confirm(`テンプレート「${name}」を削除しますか？`)) return;
+    if (!kusConfirm(`テンプレート「${name}」を削除しますか？`)) return;
     const tpls = getTemplates();
     delete tpls[name];
     localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
@@ -20738,7 +20820,7 @@ ${tableContext.tableLabel}`.toLowerCase();
         return;
       }
       if (act === "saveReflectPreset") {
-        const name = (window.prompt("プリセット名を入力してください（例: 開発→検証 権限以外）", "") || "").trim();
+        const name = (kusPrompt("プリセット名を入力してください（例: 開発→検証 権限以外）", "") || "").trim();
         if (!name) return;
         try {
           saveReflectPreset(name);
@@ -20774,7 +20856,7 @@ ${tableContext.tableLabel}`.toLowerCase();
           setStatus("削除するプリセットを選んでください");
           return;
         }
-        if (!window.confirm(`プリセット「${name}」を削除しますか？`)) return;
+        if (!kusConfirm(`プリセット「${name}」を削除しますか？`)) return;
         deleteReflectPreset(name);
         renderReflectPresetSelect("");
         setStatus(`プリセット「${name}」を削除しました`);
@@ -21121,7 +21203,6 @@ ${tableContext.tableLabel}`.toLowerCase();
 
   // src/boot.js
   init_oss_integrations();
-  init_utils();
   init_constants();
 
   // src/tabs/design.js
@@ -23178,7 +23259,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       desktop: parsed.desktop || {},
       mobile: parsed.mobile || {}
     };
-    if (!window.confirm(`JS/CSS設定を比較先(プレビュー)へ反映しますか？
+    if (!kusConfirm(`JS/CSS設定を比較先(プレビュー)へ反映しますか？
 比較先アプリ: ${c.target.appId}`)) {
       setStatus("JS/CSS設定反映をキャンセルしました");
       return;
@@ -24180,7 +24261,7 @@ ${e.stack.split("\n").slice(0, 3).join("\n")}` : "";
         }
         const safety = Utils.analyzeSqlSafety(sql);
         if (safety.issues.length) {
-          const ok1 = window.confirm(
+          const ok1 = kusConfirm(
             `⚠ 危険な更新系SQLの可能性があります。
 ${safety.issues.map((x, i) => `${i + 1}. ${x}`).join("\n")}
 
@@ -24191,7 +24272,7 @@ SQL Hash: ${safety.hash}
             setStatus2(`Canceled by safety guard (${safety.hash})`);
             return;
           }
-          const typed = window.prompt(`安全確認: SQL Hash を入力してください
+          const typed = kusPrompt(`安全確認: SQL Hash を入力してください
 ${safety.hash}`, "");
           if ((typed || "").trim() !== safety.hash) {
             setStatus2("安全性チェックに失敗したため、クエリを中止しました。");
@@ -26514,11 +26595,6 @@ ${field.label}` : code,
     initOssIntegrations();
   }
   async function initOssIntegrations() {
-    try {
-      await loadExternalLibrary("toastify");
-    } catch (e) {
-      console.warn("Toastify load skipped:", e.message);
-    }
     try {
       const patchContainer = document.getElementById("u_patchJsonEditor") || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document.getElementById("u_patchJsonEditor") : null);
       if (patchContainer && patchContainer.tagName === "DIV") {

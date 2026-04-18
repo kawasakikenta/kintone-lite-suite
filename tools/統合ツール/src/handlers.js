@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, DEFAULT_APP_ID, DIFF_ONBOARDING_DISMISSED_KEY, TOOL_ID, TOOL_VERSION } from './constants.js';
 import { state, ui } from './state.js';
-import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast } from './utils.js';
+import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast, kusConfirm, kusPrompt } from './utils.js';
 import { buildApiPrefix, apiGet } from './api.js';
 import { countActualDiffRows, summarizeRows } from './diff/engine.js';
 import { getRenderedDiffRows } from './diff/filter.js';
@@ -1854,7 +1854,7 @@ export function setupEventHandlers(injected = {}) {
 
     // ----- Reflect preset actions -----
     if (act === 'saveReflectPreset') {
-      const name = (window.prompt('プリセット名を入力してください（例: 開発→検証 権限以外）', '') || '').trim();
+      const name = (kusPrompt('プリセット名を入力してください（例: 開発→検証 権限以外）', '') || '').trim();
       if (!name) return;
       try {
         saveReflectPreset(name);
@@ -1890,7 +1890,7 @@ export function setupEventHandlers(injected = {}) {
         setStatus('削除するプリセットを選んでください');
         return;
       }
-      if (!window.confirm(`プリセット「${name}」を削除しますか？`)) return;
+      if (!kusConfirm(`プリセット「${name}」を削除しますか？`)) return;
       deleteReflectPreset(name);
       renderReflectPresetSelect('');
       setStatus(`プリセット「${name}」を削除しました`);

@@ -2,7 +2,7 @@
 
 import { SYSTEM_FIELD_TYPES } from '../constants.js';
 import { ui } from '../state.js';
-import { esc, deepClone } from '../utils.js';
+import { esc, deepClone, kusConfirm } from '../utils.js';
 import { apiGet, apiPut, apiPost, buildApiPrefix } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { commonParams } from './diff.js';
@@ -261,7 +261,7 @@ export function runInsertSelectedSourceFields() {
       if (!currentObj.properties) currentObj = { properties: currentObj };
     }
   } catch (e) {
-    if (!window.confirm('現在のJSONテキストが不正です。上書きして良いですか？')) return;
+    if (!kusConfirm('現在のJSONテキストが不正です。上書きして良いですか？')) return;
   }
 
   let mergedCount = 0;
