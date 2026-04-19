@@ -53,7 +53,7 @@ function renderLayoutCard(layout) {
     const names = fields.map((f) => f?.code || f?.type || '-');
     return `<tr><td>${idx + 1}</td><td>${esc(line?.type || 'ROW')}</td><td>${esc(names.join(' / ') || '—')}</td></tr>`;
   }).join('');
-  return `<section class="rpp-k-like-card"><h4 class="rpp-k-like-card-title">レイアウト行</h4><table class="rpp-k-like-table"><thead><tr><th>#</th><th>type</th><th>配置フィールド</th></tr></thead><tbody>${body || '<tr><td colspan="3">設定なし</td></tr>'}</tbody></table></section>`;
+  return `<section class="rpp-k-like-card"><h4 class="rpp-k-like-card-title">レイアウト行</h4><table class="rpp-k-like-table"><thead><tr><th>#</th><th>種別</th><th>配置フィールド</th></tr></thead><tbody>${body || '<tr><td colspan="3">設定なし</td></tr>'}</tbody></table></section>`;
 }
 
 function renderProcessCard(process) {

@@ -53,6 +53,39 @@ const DEFAULT_PROPS = {
   FILE: { noLabel: false, required: false }
 };
 
+const FIELD_PROP_LABELS = {
+  type: 'フィールド種別',
+  code: 'フィールドコード',
+  label: 'ラベル',
+  noLabel: 'ラベルを表示しない',
+  required: '必須',
+  unique: '値の重複を禁止',
+  maxLength: '最大文字数',
+  minLength: '最小文字数',
+  defaultValue: '初期値',
+  expression: '計算式',
+  hideExpression: '計算式を隠す',
+  maxValue: '最大値',
+  minValue: '最小値',
+  digit: '3桁区切り',
+  unit: '単位',
+  unitPosition: '単位の位置',
+  options: '選択肢',
+  defaultNowValue: '現在日時を初期値にする',
+  protocol: 'プロトコル',
+  entities: '選択可能なエンティティ'
+};
+
+function formatFieldPropLabel(key) {
+  return FIELD_PROP_LABELS[key] || key;
+}
+
+function formatUnitPosition(value) {
+  if (value === 'BEFORE') return '前';
+  if (value === 'AFTER') return '後';
+  return value;
+}
+
 function deepEqual(a, b) {
   if (a === b) return true;
   if (a == null || b == null) return a === b;
@@ -128,7 +161,7 @@ function collectFieldFromForm(form, fallback) {
   const type = form.querySelector('[data-rpp-field="type"]')?.value || fallback?.type || 'SINGLE_LINE_TEXT';
   const code = (form.querySelector('[data-rpp-field="code"]')?.value || fallback?.code || '').trim();
   const label = (form.querySelector('[data-rpp-field="label"]')?.value || fallback?.label || '').trim();
-  if (!code || !type || !label) throw new Error('code/type/label は必須です');
+  if (!code || !type || !label) throw new Error('フィールド種別 / フィールドコード / ラベルは必須です');
   const next = { type, code, label };
   const rows = form.querySelectorAll('[data-rpp-key]');
   rows.forEach((row) => {
@@ -147,18 +180,20 @@ function renderFieldFormRows(draft) {
   const keys = Object.keys(draft).filter((k) => !['type', 'code', 'label'].includes(k));
   return keys.map((key) => {
     const value = draft[key];
+    const propLabel = formatFieldPropLabel(key);
     if (typeof value === 'boolean') {
-      return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(key)}</span><input data-rpp-input type="checkbox" ${value ? 'checked' : ''}></label>`;
+      return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(propLabel)}</span><input data-rpp-input type="checkbox" ${value ? 'checked' : ''}></label>`;
     }
     if (key === 'unitPosition') {
-      return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(key)}</span><select data-rpp-input><option value="BEFORE" ${value === 'BEFORE' ? 'selected' : ''}>BEFORE</option><option value="AFTER" ${value === 'AFTER' ? 'selected' : ''}>AFTER</option></select></label>`;
+      return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(propLabel)}</span><select data-rpp-input><option value="BEFORE" ${value === 'BEFORE' ? 'selected' : ''}>前</option><option value="AFTER" ${value === 'AFTER' ? 'selected' : ''}>後</option></select></label>`;
     }
     if (key === 'options' && value && typeof value === 'object') {
       const lines = Object.values(value).sort((a, b) => a.index - b.index).map((o) => o.label).join('\n');
-      return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(key)}（1行1候補）</span><textarea data-rpp-input class="rpp-modal-textarea rpp-modal-textarea-mini">${esc(lines)}</textarea></label>`;
+      return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(propLabel)}（1行1候補）</span><textarea data-rpp-input class="rpp-modal-textarea rpp-modal-textarea-mini">${esc(lines)}</textarea></label>`;
     }
-    const text = typeof value === 'string' ? value : JSON.stringify(value);
-    return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(key)}</span><input data-rpp-input type="text" value="${esc(text || '')}"></label>`;
+    const displayValue = key === 'unitPosition' ? formatUnitPosition(value) : value;
+    const text = typeof displayValue === 'string' ? displayValue : JSON.stringify(displayValue);
+    return `<label class="rpp-field-row" data-rpp-key="${esc(key)}"><span>${esc(propLabel)}</span><input data-rpp-input type="text" value="${esc(text || '')}"></label>`;
   }).join('');
 }
 
@@ -211,7 +246,7 @@ export function initReflectPreviewPlayground(ui, setStatus) {
   const parseFieldInput = (v) => {
     const obj = JSON.parse(v);
     if (!obj || typeof obj !== 'object') throw new Error('JSONオブジェクトを入力してください');
-    if (!obj.code || !obj.type || !obj.label) throw new Error('code/type/label が必要です');
+    if (!obj.code || !obj.type || !obj.label) throw new Error('フィールドコード / フィールド種別 / ラベルが必要です');
     return obj;
   };
 
@@ -230,7 +265,7 @@ export function initReflectPreviewPlayground(ui, setStatus) {
       return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><p class="rpp-modal-confirm">${esc(st.modal.message)}</p></div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn ok" data-rpp-modal-act="confirmAction">実行</button></div></div></div>`;
     }
     if (st.modal.kind === 'fieldForm') {
-      return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><div class="rpp-field-grid"><label class="rpp-field-row"><span>type</span>${st.modal.mode === 'edit' ? `<input data-rpp-field="type" type="text" value="${esc(st.modal.draft.type)}" readonly>` : `<select data-rpp-field="type">${FIELD_TYPES.map((t) => `<option value="${esc(t.value)}" ${st.modal.draft.type === t.value ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select>`}</label><label class="rpp-field-row"><span>code</span><input data-rpp-field="code" type="text" value="${esc(st.modal.draft.code || '')}" ${st.modal.mode === 'edit' ? 'readonly' : ''}></label><label class="rpp-field-row"><span>label</span><input data-rpp-field="label" type="text" value="${esc(st.modal.draft.label || '')}"></label>${renderFieldFormRows(st.modal.draft)}</div><div class="rpp-modal-hint">詳細JSONでの編集が必要な場合は「JSON編集」を利用してください。</div>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ''}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn sub" data-rpp-modal-act="switchFieldJson">JSON編集</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldForm">保存</button></div></div></div>`;
+      return `<div class="rpp-modal-backdrop" data-rpp-modal-act="cancel"><div class="rpp-modal"><div class="rpp-modal-head">${esc(st.modal.title)}</div><div class="rpp-modal-body"><div class="rpp-field-grid"><label class="rpp-field-row"><span>フィールド種別</span>${st.modal.mode === 'edit' ? `<input data-rpp-field="type" type="text" value="${esc(st.modal.draft.type)}" readonly>` : `<select data-rpp-field="type">${FIELD_TYPES.map((t) => `<option value="${esc(t.value)}" ${st.modal.draft.type === t.value ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select>`}</label><label class="rpp-field-row"><span>フィールドコード</span><input data-rpp-field="code" type="text" value="${esc(st.modal.draft.code || '')}" ${st.modal.mode === 'edit' ? 'readonly' : ''}></label><label class="rpp-field-row"><span>ラベル</span><input data-rpp-field="label" type="text" value="${esc(st.modal.draft.label || '')}"></label>${renderFieldFormRows(st.modal.draft)}</div><div class="rpp-modal-hint">詳細JSONでの編集が必要な場合は「JSON編集」を利用してください。</div>${st.modal.error ? `<div class="rpp-modal-error">${esc(st.modal.error)}</div>` : ''}</div><div class="rpp-modal-actions"><button type="button" class="btn sub" data-rpp-modal-act="cancel">キャンセル</button><button type="button" class="btn sub" data-rpp-modal-act="switchFieldJson">JSON編集</button><button type="button" class="btn ok" data-rpp-modal-act="saveFieldForm">保存</button></div></div></div>`;
     }
     return '';
   };
@@ -262,7 +297,7 @@ export function initReflectPreviewPlayground(ui, setStatus) {
             const label = row.after?.label || row.before?.label || row.code;
             const body = st.view === 'diff'
               ? (row.status === 'modified'
-                ? `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>変更前</th><th>変更後</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatValue(ch.before))}</pre></td><td><pre>${esc(formatValue(ch.after))}</pre></td></tr>`).join('')}</tbody></table>`
+                ? `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>変更前</th><th>変更後</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(formatFieldPropLabel(ch.prop))}</td><td><pre>${esc(formatValue(ch.before))}</pre></td><td><pre>${esc(formatValue(ch.after))}</pre></td></tr>`).join('')}</tbody></table>`
                 : `<pre class="rpp-pre">${esc(formatValue(row.after || row.before))}</pre>`)
               : `<div class="rpp-preview-grid"><div><div class="rpp-preview-head">比較元</div><div class="rpp-preview-body">${row.before ? esc(row.before.label || row.before.code || '-') : 'なし'}</div></div><div><div class="rpp-preview-head">比較先</div><div class="rpp-preview-body">${row.after ? esc(row.after.label || row.after.code || '-') : 'なし'}</div></div></div>`;
             return `<div class="rpp-card" draggable="true" data-rpp-code="${esc(row.code)}"><div class="rpp-head"><button type="button" class="rpp-open" data-rpp-act="toggle" data-code="${esc(row.code)}">${opened ? '▾' : '▸'}</button><span class="rpp-badge rpp-${row.status}">${STATUS_LABELS[row.status]}</span><strong>${esc(label)}</strong><code>${esc(row.code)}</code><span class="rpp-spacer"></span>${row.after ? `<button type="button" class="btn sub" data-rpp-act="edit" data-code="${esc(row.code)}">編集</button><button type="button" class="btn sub" data-rpp-act="delete" data-code="${esc(row.code)}">削除</button>` : `<button type="button" class="btn sub" data-rpp-act="restore" data-code="${esc(row.code)}">復元</button>`}</div>${opened ? `<div class="rpp-body">${body}</div>` : ''}</div>`;
