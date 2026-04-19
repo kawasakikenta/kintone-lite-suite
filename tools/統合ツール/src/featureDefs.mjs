@@ -248,7 +248,7 @@ FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
  */
 export const STANDALONE_LAUNCH_ENTRIES = [
   {
-    tab: 'reflect',
+    tab: 'diff',
     module: 'tabs/diff.js',
     file: '差分比較.js',
     label: '差分比較',
