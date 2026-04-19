@@ -257,9 +257,9 @@ function computeDiff(before, after, sectionKey) {
   }
   // オブジェクト全体を1アイテムとして比較
   if (!deepEqual(bData, aData)) {
-    return [{ key: '(root)', status: 'modified', before: bData, after: aData, changes: [] }];
+    return [{ key: '（ルート）', status: 'modified', before: bData, after: aData, changes: [] }];
   }
-  return [{ key: '(root)', status: 'unchanged', before: bData, after: aData, changes: [] }];
+  return [{ key: '（ルート）', status: 'unchanged', before: bData, after: aData, changes: [] }];
 }
 
 /** アイテムの表示ラベル */

@@ -725,7 +725,7 @@ export function renderPatchJsonSummary(payload) {
     return `${def?.label || key}:${Array.isArray(rows) ? rows.length : 0}件`;
   });
   const totalRows = Object.values(payload.sections).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
-  el.textContent = `生成日時 ${payload.generatedAt || '-'} / source ${payload.source?.appId || '-'} → target ${payload.target?.appId || '-'} / ${sectionLabels.join(' / ')} / 合計 ${totalRows} 行`;
+  el.textContent = `生成日時 ${payload.generatedAt || '-'} / 比較元 ${payload.source?.appId || '-'} → 比較先 ${payload.target?.appId || '-'} / ${sectionLabels.join(' / ')} / 合計 ${totalRows} 行`;
   el.style.display = 'block';
   renderPatchJsonDiff(payload);
 }
