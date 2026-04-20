@@ -609,6 +609,8 @@ export function buildRoot(targetDocument = document, options = {}) {
                           <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
                           <div class="reflect-plan-preview" id="u_reflectPlanPreview" aria-live="polite"></div>
                           <div class="reflect-post-apply-host" id="u_reflectPostApply" aria-live="polite" style="display:none"></div>
+                          <div id="u_reflectApplyReport" class="reflect-apply-report" aria-live="polite"></div>
+                          <div id="u_reflectApplyHistory" class="reflect-apply-history" aria-live="polite"></div>
                           <div id="u_reflectOverview"></div>
                         </div>
                       </div>
@@ -685,6 +687,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                           <button class="btn ok" data-act="reflectModeVisibleSrc">表示中を比較元にする</button>
                           <button class="btn ok" data-act="reflectModeVisibleTgt">表示中を比較先にする</button>
                         </div>
+                        <div class="reflect-quick-presets" id="u_reflectQuickPresets" aria-label="差分選択クイックプリセット"></div>
                         <details class="diff-fold reflect-inline-fold reflect-inline-fold--node">
                           <summary class="diff-fold-summary">
                             <span class="diff-fold-title">一括選択・一括モード・履歴</span>

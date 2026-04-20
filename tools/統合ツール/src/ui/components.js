@@ -29,6 +29,7 @@ import {
 } from '../diff/engine.js';
 import { summarizeSeverity } from '../diff/enrich.js';
 import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
+import { REFLECT_QUICK_PRESETS } from '../constants.js';
 import { saveCurrentDialogState, getToolDocument } from './dialog.js';
 import { renderRichDiff } from '../oss_integrations.js';
 
@@ -903,15 +904,61 @@ export function renderReflectPlanPreview() {
     if (info?.shape === 'map') return acc + (info.preview?.totalCount || 0);
     return acc + 1;
   }, 0);
-  const cards = entries.map(([key, info]) => buildSectionPreviewCardHtml(key, info)).filter(Boolean).join('');
+  const keyword = String(state.reflectPlanPreviewKeyword || '').toLowerCase();
+  const visibleEntries = keyword
+    ? entries.filter(([key, info]) => {
+        const label = String(info?.label || key || '').toLowerCase();
+        return label.includes(keyword) || key.toLowerCase().includes(keyword);
+      })
+    : entries;
+  const changedOnly = !!state.reflectPlanPreviewChangedOnly;
+  const filteredEntries = changedOnly
+    ? visibleEntries.filter(([, info]) => {
+        if (info?.shape === 'map') return (info.preview?.totalCount || 0) > 0;
+        if (info?.shape === 'whole') return !!info.wholePreview?.changed;
+        return false;
+      })
+    : visibleEntries;
+  const cards = filteredEntries.map(([key, info]) => buildSectionPreviewCardHtml(key, info)).filter(Boolean).join('');
+  const emptyMsg = !cards
+    ? `<div class="muted" style="padding:8px;font-size:11px">該当セクションはありません${keyword ? `（キーワード「${esc(keyword)}」）` : ''}</div>`
+    : '';
+  const keywordVal = esc(state.reflectPlanPreviewKeyword || '');
   el.innerHTML = `<div class="reflect-plan-preview__wrap">
     <div class="reflect-plan-preview__head">
       <span class="reflect-plan-preview__title">反映後プレビュー（ビフォー / アフター）</span>
-      <span class="reflect-plan-preview__meta">変更 ${totalChanges}件 / ${changedEntries.length}セクション</span>
+      <span class="reflect-plan-preview__meta">変更 ${totalChanges}件 / ${changedEntries.length}セクション（表示 ${filteredEntries.length}/${entries.length}）</span>
+    </div>
+    <div class="reflect-plan-preview__toolbar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0 8px">
+      <input type="text" id="u_reflectPlanPreviewSearch" placeholder="セクション名で絞り込み" value="${keywordVal}" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:11px">
+      <label class="chip" style="font-size:10px" title="変更があるセクションだけ表示"><input type="checkbox" id="u_reflectPlanPreviewChangedOnly" ${changedOnly ? 'checked' : ''}> 変更ありのみ</label>
+      <button type="button" class="btn sub" data-act="reflectPlanPreviewExpandAll" style="padding:3px 8px;font-size:10px" title="全セクションを展開">全て開く</button>
+      <button type="button" class="btn sub" data-act="reflectPlanPreviewCollapseAll" style="padding:3px 8px;font-size:10px" title="全セクションを畳む">全て閉じる</button>
     </div>
     <p class="reflect-plan-preview__hint">各セクションのカードをクリックすると、反映前後のJSONを並べて確認できます。</p>
-    <div class="reflect-plan-preview__list">${cards}</div>
+    <div class="reflect-plan-preview__list">${cards}${emptyMsg}</div>
   </div>`;
+
+  const search = el.querySelector('#u_reflectPlanPreviewSearch');
+  if (search && !search._kusBound) {
+    search._kusBound = true;
+    let timer = 0;
+    search.addEventListener('input', (e) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        state.reflectPlanPreviewKeyword = e.target.value || '';
+        renderReflectPlanPreview();
+      }, 150);
+    });
+  }
+  const changedToggle = el.querySelector('#u_reflectPlanPreviewChangedOnly');
+  if (changedToggle && !changedToggle._kusBound) {
+    changedToggle._kusBound = true;
+    changedToggle.addEventListener('change', (e) => {
+      state.reflectPlanPreviewChangedOnly = !!e.target.checked;
+      renderReflectPlanPreview();
+    });
+  }
 }
 
 export function renderReflectFooterBadges() {
@@ -978,7 +1025,129 @@ export function renderReflectAssistPanel() {
   renderReflectPlanInline();
   renderReflectPlanPreview();
   renderReflectPostApplyCard();
+  renderReflectApplyReport();
+  renderReflectApplyHistory();
+  renderReflectQuickPresets();
   renderReflectFooterBadges();
+}
+
+/**
+ * 直近の反映結果レポート（セクションごとの成功/失敗/スキップ）を描画します。
+ */
+export function renderReflectApplyReport() {
+  const host = getToolDocument().getElementById('u_reflectApplyReport');
+  if (!host) return;
+  const report = state.lastApplyReport;
+  if (!report || !Array.isArray(report.sections) || !report.sections.length) {
+    host.innerHTML = '';
+    return;
+  }
+  const cls = report.hadError ? 'reflect-apply-report--warn' : 'reflect-apply-report--ok';
+  const modeLabel = {
+    section: 'セクションまとめ反映',
+    nodes: '差分選択モード',
+    patch: 'JSONパッチ反映',
+    retry: '失敗セクション再反映',
+    restore: 'バックアップ復元'
+  }[report.mode] || report.mode || '反映';
+  const stamp = new Date(report.completedAt).toLocaleString();
+  const sectionHtml = report.sections.map((s) => {
+    const statusCls = s.status === 'ok' ? 'ok' : s.status === 'ng' ? 'ng' : 'skipped';
+    const statusLabel = s.status === 'ok' ? '成功' : s.status === 'ng' ? '失敗' : 'スキップ';
+    const msg = s.message ? `<span class="reflect-apply-section__msg" title="${esc(s.message)}">${esc(s.message)}</span>` : '';
+    return `<div class="reflect-apply-section">
+      <span class="reflect-apply-section__label">${esc(s.label || s.sectionKey)}</span>
+      <span class="reflect-apply-section__status ${statusCls}">${statusLabel}</span>
+      ${msg}
+    </div>`;
+  }).join('');
+  const retryBtn = report.ngCount > 0
+    ? '<button type="button" class="btn ok" data-act="retryFailedSections" title="直近の反映で失敗したセクションだけを再送信します">失敗セクションだけ再反映</button>'
+    : '';
+  host.className = `reflect-apply-report ${cls}`;
+  host.innerHTML = `<div class="reflect-apply-report__head">
+      <span class="reflect-apply-report__title">直近の反映結果 — ${esc(modeLabel)}</span>
+      <span class="reflect-apply-report__meta">比較先 ${esc(report.appId || '-')} / ${esc(stamp)}</span>
+    </div>
+    <div class="reflect-apply-report__counters">
+      <span class="reflect-apply-counter reflect-apply-counter--ok">成功 ${report.okCount}</span>
+      <span class="reflect-apply-counter reflect-apply-counter--ng">失敗 ${report.ngCount}</span>
+      <span class="reflect-apply-counter reflect-apply-counter--skip">スキップ ${report.skipCount}</span>
+    </div>
+    <div class="reflect-apply-report__sections">${sectionHtml}</div>
+    <div class="reflect-apply-report__actions">
+      ${retryBtn}
+      <button type="button" class="btn sub" data-act="copyApplyReport" title="レポート内容をクリップボードへコピーします">テキストでコピー</button>
+      <button type="button" class="btn sub" data-act="dismissApplyReport" title="このレポートを閉じます">閉じる</button>
+    </div>`;
+}
+
+/**
+ * 反映履歴（セッション保存）を描画します。デフォルトは折り畳み。
+ */
+export function renderReflectApplyHistory() {
+  const host = getToolDocument().getElementById('u_reflectApplyHistory');
+  if (!host) return;
+  const history = Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [];
+  if (!history.length) {
+    host.innerHTML = '';
+    return;
+  }
+  const open = state.reflectApplyHistoryOpen ? ' open' : '';
+  const items = history.map((entry) => {
+    const hasErr = entry.hadError || (entry.ngCount || 0) > 0;
+    const modeLabel = {
+      section: 'まとめ反映',
+      nodes: '差分選択',
+      patch: 'JSONパッチ',
+      retry: '再反映',
+      restore: '復元'
+    }[entry.mode] || entry.mode || '反映';
+    const time = new Date(entry.at).toLocaleString();
+    const scopeLabel = (entry.scopes || []).slice(0, 4).join(', ') + ((entry.scopes || []).length > 4 ? ` 他${entry.scopes.length - 4}` : '');
+    return `<div class="reflect-apply-history__item${hasErr ? ' has-error' : ''}" title="${esc(scopeLabel)}">
+      <span class="reflect-apply-history__time">${esc(time)}</span>
+      <span class="reflect-apply-history__summary">[${esc(modeLabel)}] 比較先 ${esc(entry.appId || '-')} / ${esc(scopeLabel || '-')}</span>
+      <span class="reflect-apply-history__stats" style="color:${hasErr ? '#991b1b' : '#166534'}">OK ${entry.okCount || 0} / NG ${entry.ngCount || 0}</span>
+    </div>`;
+  }).join('');
+  host.innerHTML = `<details${open} data-act-host="reflectApplyHistory">
+      <summary>
+        <span>反映履歴（このセッション ${history.length}件）</span>
+        <button type="button" class="btn sub" data-act="clearApplyHistory" style="padding:2px 8px;font-size:10px" title="履歴を消去">クリア</button>
+      </summary>
+      <div class="reflect-apply-history__list">${items}</div>
+    </details>`;
+  // Bind toggle persistence
+  const details = host.querySelector('details');
+  if (details && !details._kusBound) {
+    details._kusBound = true;
+    details.addEventListener('toggle', () => {
+      state.reflectApplyHistoryOpen = details.open;
+    });
+  }
+}
+
+/**
+ * 差分ノードモード用のクイックプリセット（ワンクリックでまとめて選択）を描画します。
+ */
+export function renderReflectQuickPresets() {
+  const host = getToolDocument().getElementById('u_reflectQuickPresets');
+  if (!host) return;
+  if (!isReflectNodeModeEffective()) {
+    host.innerHTML = '';
+    return;
+  }
+  const rowCount = (state.reflectRows || []).length;
+  const disabled = rowCount === 0;
+  const disabledAttr = disabled ? 'disabled aria-disabled="true" style="opacity:.55;cursor:not-allowed"' : '';
+  const label = '<span class="reflect-quick-presets__label">クイック選択:</span>';
+  const buttons = REFLECT_QUICK_PRESETS.map((p) => {
+    const modeAttr = `data-mode="${esc(p.mode || 'src')}"`;
+    const hint = p.hint ? ` title="${esc(p.hint)}"` : '';
+    return `<button type="button" class="reflect-quick-preset" data-act="applyReflectQuickPreset" data-preset="${esc(p.id)}" ${modeAttr}${hint} ${disabledAttr}>${esc(p.label)}</button>`;
+  }).join('');
+  host.innerHTML = `${label}${buttons}${disabled ? '<span class="muted" style="font-size:10px;align-self:center">差分候補を読込後に利用可</span>' : ''}`;
 }
 
 export function renderReflectPostApplyCard() {
@@ -1366,10 +1535,11 @@ export function renderReflectNodeDetail() {
   const selected = state.reflectSelectedIds.has(row._id);
   const mode = deps.reflectRowModeById(row._id);
   const severity = String(row.severity || 'low').toLowerCase();
-  const activeTab = ['diff', 'src', 'tgt', 'apply'].includes(state.reflectDetailTab) ? state.reflectDetailTab : 'diff';
+  const activeTab = ['diff', 'sbs', 'src', 'tgt', 'apply'].includes(state.reflectDetailTab) ? state.reflectDetailTab : 'diff';
   const useCharDiff = !!ui.charDiff?.checked;
   const tabs = [
     { key: 'diff', label: '差分' },
+    { key: 'sbs', label: '並列ビュー' },
     { key: 'src', label: '比較元' },
     { key: 'tgt', label: '比較先' },
     { key: 'apply', label: '反映値' }
@@ -1394,6 +1564,25 @@ export function renderReflectNodeDetail() {
           </div>
         </div>
       </details>`;
+  } else if (activeTab === 'sbs') {
+    const leftJson = deps.stringifyForDiff(row.left);
+    const rightJson = deps.stringifyForDiff(row.right);
+    const applyJson = deps.stringifyForDiff(deps.reflectRowDesiredValue(row));
+    bodyHtml = `<div class="reflect-node-detail-note">比較元 / 比較先 / 反映値の 3 面同時表示です。現在の反映モードは<strong>${mode === 'src' ? '比較元' : '比較先'}採用</strong>。ボタンでワンクリック切替できます。</div>
+      <div class="reflect-node-sbs" style="grid-template-columns:1fr 1fr 1fr">
+        <div class="reflect-node-sbs__col">
+          <div class="reflect-node-sbs__label">比較元 (src)</div>
+          <pre class="reflect-node-sbs__pre">${esc(leftJson)}</pre>
+        </div>
+        <div class="reflect-node-sbs__col">
+          <div class="reflect-node-sbs__label">比較先 (tgt)</div>
+          <pre class="reflect-node-sbs__pre">${esc(rightJson)}</pre>
+        </div>
+        <div class="reflect-node-sbs__col" style="border-color:${mode === 'src' ? '#c7d2fe' : '#a7f3d0'};background:${mode === 'src' ? '#eef2ff' : '#ecfdf5'}">
+          <div class="reflect-node-sbs__label" style="background:${mode === 'src' ? '#e0e7ff' : '#d1fae5'}">反映値 — ${mode === 'src' ? '比較元採用' : '比較先維持'}</div>
+          <pre class="reflect-node-sbs__pre">${esc(applyJson)}</pre>
+        </div>
+      </div>`;
   } else {
     const value = activeTab === 'src'
       ? row.left

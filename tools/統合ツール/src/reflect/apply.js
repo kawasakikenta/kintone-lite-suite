@@ -5,7 +5,7 @@ import {
   deepClone, normalize, stableStringify, downloadText, apiErrorWithContext, esc, readTextFile,
   relativePathFromRow, tokenizePath, kusConfirm, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle
 } from '../utils.js';
-import { state, ui } from '../state.js';
+import { state, ui, pushReflectApplyHistoryEntry } from '../state.js';
 import {
   apiGet,
   assertAllowsMutatingRestCall,
@@ -392,7 +392,7 @@ export async function applyActionsSectionDiff(prefix, app, beforeActions, afterA
   if (plan.deleteSkipCount) logs.push(`  - actions delete(skip): ${plan.deleteSkipCount} (互換モード: 削除は行いません)`);
 }
 
-export async function applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, { phaseLabel = '反映', onProgress } = {}) {
+export async function applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, { phaseLabel = '反映', onProgress, sectionResults } = {}) {
   let hadError = false;
   for (let i = 0; i < scopes.length; i++) {
     const secKey = scopes[i];
@@ -401,6 +401,7 @@ export async function applySectionsLoop(prefix, app, sourceBundle, scopes, logs,
     const sourceSec = deepClone(sourceBundle.sections[secKey]);
     if (!sourceSec || sourceSec._fetchError) {
       logs.push(`SKIP ${def.label}: source未取得`);
+      recordSectionResult(sectionResults, secKey, def.label, 'skipped', 'source未取得');
       if (onProgress) onProgress(i, scopes.length);
       continue;
     }
@@ -413,33 +414,40 @@ export async function applySectionsLoop(prefix, app, sourceBundle, scopes, logs,
         const afterProps = filterWritableFieldProps(sourceSec.properties || sourceSec, true);
         await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, null, stopOnError);
         logs.push(`OK ${def.label}`);
+        recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
         continue;
       }
       if (secKey === 'viewSettings') {
         const current = await apiGet(prefix, '/app/views.json', { app });
         await applyViewsSectionDiff(prefix, app, current.views || {}, sourceSec.views || sourceSec || {}, logs, stopOnError);
         logs.push(`OK ${def.label}`);
+        recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
         continue;
       }
       if (secKey === 'reportSettings') {
         const current = await apiGet(prefix, '/app/reports.json', { app });
         await applyReportsSectionDiff(prefix, app, current.reports || {}, sourceSec.reports || sourceSec || {}, logs, stopOnError);
         logs.push(`OK ${def.label}`);
+        recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
         continue;
       }
       if (secKey === 'actionSettings') {
         const current = await apiGet(prefix, '/app/actions.json', { app });
         await applyActionsSectionDiff(prefix, app, current.actions || {}, sourceSec.actions || sourceSec || {}, logs, stopOnError);
         logs.push(`OK ${def.label}`);
+        recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
         continue;
       }
       const reqs = [{ method: 'PUT', path: def.endpoint, body: { app, ...def.putBuilder(sourceSec) }, note: `${def.label} put` }];
       appendRequestPlanLogs(logs, { requests: reqs });
       await executeRequestPlan(prefix, reqs, logs, stopOnError);
       logs.push(`OK ${def.label}`);
+      recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
     } catch (e) {
       hadError = true;
-      logs.push(`NG ${def.label}: ${e.message || String(e)}`);
+      const msg = e.message || String(e);
+      logs.push(`NG ${def.label}: ${msg}`);
+      recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
       if (stopOnError) {
         logs.push('中断: エラーが発生したため処理を停止しました');
         break;
@@ -447,6 +455,63 @@ export async function applySectionsLoop(prefix, app, sourceBundle, scopes, logs,
     }
   }
   return hadError;
+}
+
+function recordSectionResult(results, sectionKey, label, status, message) {
+  if (!Array.isArray(results)) return;
+  const existing = results.find((r) => r && r.sectionKey === sectionKey);
+  if (existing) {
+    existing.status = status;
+    existing.label = label || existing.label;
+    if (message) existing.message = message;
+    return;
+  }
+  results.push({
+    sectionKey,
+    label: label || sectionKey,
+    status,
+    message: message || ''
+  });
+}
+
+function commitApplyReport({ mode, appId, scopes, sectionResults, hadError, sourceAppId, sourceGuestId, targetGuestId }) {
+  const now = Date.now();
+  const okSections = sectionResults.filter((r) => r.status === 'ok').map((r) => r.sectionKey);
+  const ngSections = sectionResults.filter((r) => r.status === 'ng').map((r) => r.sectionKey);
+  const skipSections = sectionResults.filter((r) => r.status === 'skipped').map((r) => r.sectionKey);
+  const report = {
+    completedAt: now,
+    mode,
+    appId: appId || '',
+    sourceAppId: sourceAppId || '',
+    sourceGuestId: sourceGuestId || '',
+    targetGuestId: targetGuestId || '',
+    scopes: [...scopes],
+    sections: sectionResults.map((r) => ({ ...r })),
+    okCount: okSections.length,
+    ngCount: ngSections.length,
+    skipCount: skipSections.length,
+    failedSectionKeys: ngSections,
+    hadError: !!hadError
+  };
+  state.lastApplyReport = report;
+  state.lastApplyCompletedAt = now;
+  state.lastApplyCompletedMode = mode;
+  state.lastApplyCompletedHadError = !!hadError;
+  state.lastApplyCompletedAppId = appId || '';
+  pushReflectApplyHistoryEntry({
+    id: `apply_${now}`,
+    at: now,
+    mode,
+    appId: appId || '',
+    scopes: [...scopes],
+    okCount: okSections.length,
+    ngCount: ngSections.length,
+    skipCount: skipSections.length,
+    failedSectionKeys: ngSections,
+    hadError: !!hadError
+  });
+  return report;
 }
 
 export function resolveBackupScopes(c) {
@@ -822,6 +887,7 @@ export async function runApplyPatchJson() {
   }
   logs.push('');
 
+  const sectionResults = [];
   for (let i = 0; i < sectionKeys.length; i++) {
     const secKey = sectionKeys[i];
     const def = SECTION_DEFS.find((item) => item.key === secKey);
@@ -851,9 +917,12 @@ export async function runApplyPatchJson() {
         await executeRequestPlan(prefix, reqs, logs, stopOnError);
       }
       logs.push(`OK ${def.label}: patch ${appliedCount}/${sortedRows.length}`);
+      recordSectionResult(sectionResults, secKey, def.label, 'ok', `${appliedCount}/${sortedRows.length}`);
     } catch (e) {
       hadError = true;
-      logs.push(`NG ${def.label}: ${e.message || String(e)}`);
+      const msg = e.message || String(e);
+      logs.push(`NG ${def.label}: ${msg}`);
+      recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
       if (stopOnError) {
         logs.push('中断: エラーが発生したため処理を停止しました');
         break;
@@ -863,6 +932,16 @@ export async function runApplyPatchJson() {
 
   appendProgressSummary(logs);
   renderProgressLog(logs, { phase: 'JSONパッチ反映完了' });
+  commitApplyReport({
+    mode: 'patch',
+    appId: app,
+    scopes: sectionKeys,
+    sectionResults,
+    hadError,
+    sourceAppId: c.source.appId,
+    sourceGuestId: c.source.guestId,
+    targetGuestId: c.target.guestId
+  });
   renderReflectAssistPanel();
   renderReflectMainPanel();
   setStatus(hadError ? 'JSONパッチ反映完了（一部エラーあり）' : 'JSONパッチ反映完了');
@@ -948,11 +1027,13 @@ export async function runApplyPreviewByNodes() {
   }
 
   const sectionKeys = Object.keys(bySection);
+  const sectionResults = [];
   for (let i = 0; i < sectionKeys.length; i++) {
     const secKey = sectionKeys[i];
     const def = SECTION_DEFS.find((d) => d.key === secKey);
     if (!def || !def.put) {
       logs.push(`SKIP ${def?.label || secKey}: PUT非対応`);
+      recordSectionResult(sectionResults, secKey, def?.label || secKey, 'skipped', 'PUT非対応');
       renderProgressLog(logs, { phase: 'ノード反映実行中', current: i, total: sectionKeys.length });
       continue;
     }
@@ -1004,9 +1085,12 @@ export async function runApplyPreviewByNodes() {
         await executeRequestPlan(prefix, reqs, logs, stopOnError);
         logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
       }
+      recordSectionResult(sectionResults, secKey, def.label, 'ok', `${appliedCount}/${rowsInSection.length}`);
     } catch (e) {
       hadError = true;
-      logs.push(`NG ${def.label}: ${e.message || String(e)}`);
+      const msg = e.message || String(e);
+      logs.push(`NG ${def.label}: ${msg}`);
+      recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
       if (stopOnError) {
         logs.push('中断: エラーが発生したため処理を停止しました');
         break;
@@ -1016,10 +1100,16 @@ export async function runApplyPreviewByNodes() {
 
   appendProgressSummary(logs);
   renderProgressLog(logs, { phase: 'ノード反映完了' });
-  state.lastApplyCompletedAt = Date.now();
-  state.lastApplyCompletedMode = 'nodes';
-  state.lastApplyCompletedHadError = hadError;
-  state.lastApplyCompletedAppId = app;
+  commitApplyReport({
+    mode: 'nodes',
+    appId: app,
+    scopes: sectionKeys,
+    sectionResults,
+    hadError,
+    sourceAppId: c.source.appId,
+    sourceGuestId: c.source.guestId,
+    targetGuestId: c.target.guestId
+  });
   renderReflectAssistPanel();
   renderReflectMainPanel();
   setStatus('ノード反映処理完了');
@@ -1069,17 +1159,25 @@ export async function runApplyPreview() {
   }
   logs.push('');
 
+  const sectionResults = [];
   hadError = await applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, {
     phaseLabel: '反映',
-    onProgress: (i, total) => renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total })
+    onProgress: (i, total) => renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total }),
+    sectionResults
   });
 
   appendProgressSummary(logs);
   renderProgressLog(logs, { phase: 'プレビュー反映完了' });
-  state.lastApplyCompletedAt = Date.now();
-  state.lastApplyCompletedMode = 'section';
-  state.lastApplyCompletedHadError = hadError;
-  state.lastApplyCompletedAppId = app;
+  commitApplyReport({
+    mode: 'section',
+    appId: app,
+    scopes,
+    sectionResults,
+    hadError,
+    sourceAppId: c.source.appId,
+    sourceGuestId: c.source.guestId,
+    targetGuestId: c.target.guestId
+  });
   renderReflectAssistPanel();
   renderReflectMainPanel();
   setStatus('プレビュー反映処理完了');
@@ -1135,13 +1233,25 @@ export async function runRestoreTargetPreviewBackup() {
   }
   logs.push('');
 
+  const sectionResults = [];
   const hadError = await applySectionsLoop(prefix, app, backupBundle, scopes, logs, {}, stopOnError, {
     phaseLabel: 'バックアップ復元',
-    onProgress: (i, total) => renderProgressLog(logs, { phase: 'バックアップ復元中', current: i, total })
+    onProgress: (i, total) => renderProgressLog(logs, { phase: 'バックアップ復元中', current: i, total }),
+    sectionResults
   });
 
   appendProgressSummary(logs);
   renderProgressLog(logs, { phase: 'バックアップ復元完了' });
+  commitApplyReport({
+    mode: 'restore',
+    appId: app,
+    scopes,
+    sectionResults,
+    hadError,
+    sourceAppId: c.source?.appId,
+    sourceGuestId: c.source?.guestId,
+    targetGuestId: c.target?.guestId
+  });
   renderReflectAssistPanel();
   renderReflectMainPanel();
   setStatus(hadError ? 'バックアップ復元で一部エラーが発生しました' : '直前バックアップから復元しました');
@@ -1153,4 +1263,66 @@ export async function runDeployOnly() {
   if (ui.result) {
     ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(msg)}</pre>`;
   }
+}
+
+/**
+ * 直前の反映結果で失敗したセクションだけを再反映します。
+ * セクション単位モードで実行した直近の結果に失敗があった場合に、
+ * 対応する `fieldSettings` / `viewSettings` 等だけを再取得・再送信します。
+ */
+export async function runRetryFailedSections() {
+  const report = state.lastApplyReport;
+  if (!report) throw new Error('直近の反映結果がありません。まず反映を実行してください');
+  const failed = (report.failedSectionKeys || []).filter(Boolean);
+  if (!failed.length) {
+    setStatus('失敗セクションはありません（再実行不要）');
+    return;
+  }
+  const c = commonParams();
+  if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
+  if (String(c.target.appId) !== String(report.appId || '')) {
+    throw new Error(`現在の比較先アプリIDが直近の反映時と異なります（今: ${c.target.appId} / 前回: ${report.appId}）。同じアプリで再実行してください`);
+  }
+  const failedLabels = failed.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ');
+  if (!kusConfirm(`直前に失敗したセクションだけ再反映します。\n対象: ${failedLabels}\n比較先アプリ: ${c.target.appId}\n\n実行しますか？`)) {
+    setStatus('失敗セクション再実行をキャンセルしました');
+    return;
+  }
+
+  const sourceBundle = await getSourceBundleForApply(c, failed);
+  const prefix = buildApiPrefix(c.target.guestId, true);
+  const app = c.target.appId;
+  const stopOnError = !!ui.stopOnError?.checked;
+  const lookupMap = parseLookupMapInput(ui.lookupMap?.value || '');
+  const logs = [];
+  logs.push(`比較先アプリ: ${app}`);
+  logs.push(`再反映セクション（前回NG）: ${failedLabels}`);
+  logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+  if (ui.autoBackupPreview?.checked) {
+    const backup = await backupTargetPreviewSettings(c, failed, { silentStatus: true });
+    logs.push(`バックアップ保存: ${backup.filename}`);
+  }
+  logs.push('');
+
+  const sectionResults = [];
+  const hadError = await applySectionsLoop(prefix, app, sourceBundle, failed, logs, lookupMap, stopOnError, {
+    phaseLabel: '再反映',
+    onProgress: (i, total) => renderProgressLog(logs, { phase: '失敗セクション再反映中', current: i, total }),
+    sectionResults
+  });
+  appendProgressSummary(logs);
+  renderProgressLog(logs, { phase: '失敗セクション再反映完了' });
+  commitApplyReport({
+    mode: 'retry',
+    appId: app,
+    scopes: failed,
+    sectionResults,
+    hadError,
+    sourceAppId: c.source.appId,
+    sourceGuestId: c.source.guestId,
+    targetGuestId: c.target.guestId
+  });
+  renderReflectAssistPanel();
+  renderReflectMainPanel();
+  setStatus(hadError ? '失敗セクション再反映: 一部エラーあり' : '失敗セクション再反映: 完了');
 }

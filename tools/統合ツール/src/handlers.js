@@ -1,7 +1,7 @@
 'use strict';
 
 import { SECTION_DEFS, DEFAULT_APP_ID, DIFF_ONBOARDING_DISMISSED_KEY, TOOL_ID, TOOL_VERSION } from './constants.js';
-import { state, ui } from './state.js';
+import { state, ui, clearReflectApplyHistory } from './state.js';
 import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast, kusConfirm, kusPrompt } from './utils.js';
 import { buildApiPrefix, apiGet } from './api.js';
 import { countActualDiffRows, summarizeRows } from './diff/engine.js';
@@ -97,7 +97,8 @@ import {
   applyReflectPreset,
   deleteReflectPreset,
   exportReflectSelectionJson,
-  importReflectSelectionFromFile
+  importReflectSelectionFromFile,
+  applyReflectQuickPreset
 } from './tabs/reflect.js';
 
 import {
@@ -436,6 +437,7 @@ export function setupEventHandlers(injected = {}) {
     runApplyPreview,
     runDeployOnly,
     runApplyPatchJson,
+    runRetryFailedSections,
     importPatchJsonFromFile,
     parsePatchJsonPayload,
     renderPatchJsonSummary,
@@ -2273,6 +2275,60 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'dismissPostApplyCard') {
       state.lastApplyCompletedAt = null;
       renderReflectAssistPanel();
+      return;
+    }
+
+    // ----- Apply report / history / quick presets -----
+    if (act === 'retryFailedSections' && typeof runRetryFailedSections === 'function') {
+      return withGuard(runRetryFailedSections);
+    }
+    if (act === 'copyApplyReport') {
+      const report = state.lastApplyReport;
+      if (!report) { setStatus('コピー対象のレポートがありません', true); return; }
+      const lines = [
+        `反映レポート (${new Date(report.completedAt).toLocaleString()})`,
+        `モード: ${report.mode} / 比較先アプリ: ${report.appId || '-'}`,
+        `成功 ${report.okCount} / 失敗 ${report.ngCount} / スキップ ${report.skipCount}`,
+        '',
+        ...(report.sections || []).map((s) => {
+          const st = s.status === 'ok' ? 'OK' : s.status === 'ng' ? 'NG' : 'SKIP';
+          return `[${st}] ${s.label || s.sectionKey}${s.message ? ' : ' + s.message : ''}`;
+        })
+      ];
+      copyToClipboard(lines.join('\n'), '反映レポートをコピーしました');
+      return;
+    }
+    if (act === 'dismissApplyReport') {
+      state.lastApplyReport = null;
+      renderReflectAssistPanel();
+      setStatus('反映レポートを閉じました');
+      return;
+    }
+    if (act === 'reflectPlanPreviewExpandAll' || act === 'reflectPlanPreviewCollapseAll') {
+      const root = getToolDocument().getElementById('u_reflectPlanPreview');
+      if (!root) return;
+      const open = act === 'reflectPlanPreviewExpandAll';
+      root.querySelectorAll('details.reflect-preview-card').forEach((d) => { d.open = open; });
+      setStatus(open ? 'プラン プレビューを全て展開しました' : 'プラン プレビューを全て畳みました');
+      return;
+    }
+    if (act === 'clearApplyHistory') {
+      if (!kusConfirm('反映履歴を全て削除しますか？（このセッションに保存された履歴のみ）')) return;
+      if (typeof clearReflectApplyHistory === 'function') clearReflectApplyHistory();
+      renderReflectAssistPanel();
+      setStatus('反映履歴をクリアしました');
+      return;
+    }
+    if (act === 'applyReflectQuickPreset') {
+      const presetId = actEl.dataset.preset;
+      if (!presetId) return;
+      try {
+        const result = applyReflectQuickPreset(presetId);
+        renderReflectNodeList();
+        setStatus(`クイックプリセット「${result.label}」を適用しました（選択 ${result.selectedCount}件 / 反映元: ${result.mode === 'src' ? '比較元' : '比較先'}）`);
+      } catch (err) {
+        setStatus(err && err.message ? err.message : String(err), true);
+      }
       return;
     }
 

@@ -563,7 +563,17 @@ ${contextLine}`);
   });
 
   // src/state.js
-  var state, ui;
+  function loadReflectApplyHistory() {
+    try {
+      const raw = sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  var state, REFLECT_APPLY_HISTORY_KEY, ui;
   var init_state = __esm({
     "src/state.js"() {
       "use strict";
@@ -584,6 +594,11 @@ ${contextLine}`);
         lastApplyCompletedMode: "",
         lastApplyCompletedHadError: false,
         lastApplyCompletedAppId: "",
+        lastApplyReport: null,
+        reflectApplyHistory: [],
+        reflectApplyHistoryOpen: false,
+        reflectPlanPreviewKeyword: "",
+        reflectPlanPreviewChangedOnly: false,
         lastPreviewBackupPayload: null,
         lastPreviewBackupFilename: "",
         diffViewTheme: "light",
@@ -627,6 +642,8 @@ ${contextLine}`);
         guidedTourIndex: 0,
         running: false
       };
+      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
+      state.reflectApplyHistory = loadReflectApplyHistory();
       ui = {};
     }
   });

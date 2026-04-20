@@ -1,6 +1,6 @@
 'use strict';
 
-import { DIALOG_STATE_KEY, DEFAULT_SUBTAB_STATE } from './constants.js';
+import { DIALOG_STATE_KEY, DEFAULT_SUBTAB_STATE, TOOL_ID } from './constants.js';
 
 export const state = {
   activeTab: 'reflect',
@@ -18,6 +18,11 @@ export const state = {
   lastApplyCompletedMode: '',
   lastApplyCompletedHadError: false,
   lastApplyCompletedAppId: '',
+  lastApplyReport: null,
+  reflectApplyHistory: [],
+  reflectApplyHistoryOpen: false,
+  reflectPlanPreviewKeyword: '',
+  reflectPlanPreviewChangedOnly: false,
   lastPreviewBackupPayload: null,
   lastPreviewBackupFilename: '',
   diffViewTheme: 'light',
@@ -71,5 +76,42 @@ export function saveDialogState(dialogState) {
   try { localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(dialogState || {})); }
   catch { /* noop */ }
 }
+
+const REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
+const REFLECT_APPLY_HISTORY_LIMIT = 30;
+
+export function loadReflectApplyHistory() {
+  try {
+    const raw = sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function persistReflectApplyHistory(entries) {
+  try {
+    const list = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
+    sessionStorage.setItem(REFLECT_APPLY_HISTORY_KEY, JSON.stringify(list));
+  } catch { /* noop */ }
+}
+
+export function pushReflectApplyHistoryEntry(entry) {
+  if (!entry || typeof entry !== 'object') return;
+  const list = Array.isArray(state.reflectApplyHistory) ? [...state.reflectApplyHistory] : [];
+  list.unshift(entry);
+  const trimmed = list.slice(0, REFLECT_APPLY_HISTORY_LIMIT);
+  state.reflectApplyHistory = trimmed;
+  persistReflectApplyHistory(trimmed);
+}
+
+export function clearReflectApplyHistory() {
+  state.reflectApplyHistory = [];
+  persistReflectApplyHistory([]);
+}
+
+state.reflectApplyHistory = loadReflectApplyHistory();
 
 export const ui = {};

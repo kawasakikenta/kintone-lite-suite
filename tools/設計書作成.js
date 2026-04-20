@@ -413,7 +413,17 @@
   });
 
   // src/state.js
-  var state;
+  function loadReflectApplyHistory() {
+    try {
+      const raw = sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  var state, REFLECT_APPLY_HISTORY_KEY;
   var init_state = __esm({
     "src/state.js"() {
       "use strict";
@@ -434,6 +444,11 @@
         lastApplyCompletedMode: "",
         lastApplyCompletedHadError: false,
         lastApplyCompletedAppId: "",
+        lastApplyReport: null,
+        reflectApplyHistory: [],
+        reflectApplyHistoryOpen: false,
+        reflectPlanPreviewKeyword: "",
+        reflectPlanPreviewChangedOnly: false,
         lastPreviewBackupPayload: null,
         lastPreviewBackupFilename: "",
         diffViewTheme: "light",
@@ -477,6 +492,8 @@
         guidedTourIndex: 0,
         running: false
       };
+      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
+      state.reflectApplyHistory = loadReflectApplyHistory();
     }
   });
 
@@ -864,6 +881,7 @@ ${contextLine}`);
   init_state();
 
   // src/ui/components.js
+  init_constants();
   init_dialog();
 
   // src/oss_integrations.js
