@@ -714,6 +714,8 @@
 
 /* アプリID入力が不要なタブ（apiTester, settingsExport）では接続パネル全体を隠す */
 #kintone-unified-suite-v2:not(.tab-needs-app-inputs) .connection-section--app-inputs { display: none !important; }
+/* ただしランチャー初期画面では常に接続設定を表示する */
+#kintone-unified-suite-v2.screen-launcher .connection-section--app-inputs { display: block !important; }
 
 /* 比較先が不要なタブ（er, processFlow, sql）では比較先入力欄を隠す */
 #kintone-unified-suite-v2:not(.tab-needs-target) .conn-target { display: none !important; }
