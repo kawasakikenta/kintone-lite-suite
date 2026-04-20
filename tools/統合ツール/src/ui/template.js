@@ -763,6 +763,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                     <span class="reflect-footer-zone-label">プレビュー反映</span>
                     <div class="reflect-footer-actions__primary">
                       <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">実行前プラン確認</button>
+                      <button type="button" class="btn sub" data-act="runPreviewProdDiff" id="u_footerPreviewProdDiff" title="比較先アプリのプレビューと本番の差分を比較します。デプロイ待ちの変更を確認できます">プレビュー⇔本番を比較</button>
                       <button type="button" class="btn sub" data-act="exportDryRunPlan" id="u_footerDryRun" title="APIを叩かずに、予定されているリクエスト一式をJSONファイルとして保存します（ドライラン）">ドライランJSONを保存</button>
                       <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択した内容を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">プレビューへ反映</button>
                     </div>

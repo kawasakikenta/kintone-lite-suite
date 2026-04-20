@@ -101,6 +101,12 @@ import {
 } from './tabs/reflect.js';
 
 import {
+  runPreviewProductionDiff,
+  exportPreviewProdDiffJson,
+  closePreviewProdDiff
+} from './reflect/previewProdDiff.js';
+
+import {
   runFieldApply,
   runLoadTargetFields,
   runLoadSourceFieldsList,
@@ -2252,6 +2258,9 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'restoreTargetPreviewBackup' && typeof runRestoreTargetPreviewBackup === 'function') return withGuard(runRestoreTargetPreviewBackup);
     if (act === 'applyPreview' && typeof runApplyPreview === 'function') return withGuard(runApplyPreview);
     if (act === 'deployOnly' && typeof runDeployOnly === 'function') return withGuard(runDeployOnly);
+    if (act === 'runPreviewProdDiff') return withGuard(runPreviewProductionDiff);
+    if (act === 'exportPreviewProdDiffJson') { exportPreviewProdDiffJson(); return; }
+    if (act === 'closePreviewProdDiff') { closePreviewProdDiff(); return; }
     if (act === 'postApplyRecompare' && typeof runDiff === 'function') {
       withGuard(async () => {
         setStatus('反映後の再比較を実行中...');
