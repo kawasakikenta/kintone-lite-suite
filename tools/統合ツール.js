@@ -521,11 +521,14 @@
   var utils_exports = {};
   __export(utils_exports, {
     apiErrorWithContext: () => apiErrorWithContext,
+    buildAppFilenameLabel: () => buildAppFilenameLabel,
+    buildExportFilename: () => buildExportFilename,
     compactForLog: () => compactForLog,
     deepClone: () => deepClone,
     downloadBlob: () => downloadBlob,
     downloadText: () => downloadText,
     esc: () => esc,
+    extractAppNameFromBundle: () => extractAppNameFromBundle,
     getDiffTypeDisplayLabel: () => getDiffTypeDisplayLabel,
     getIssueSideLabel: () => getIssueSideLabel,
     getOnOffDisplayLabel: () => getOnOffDisplayLabel,
@@ -544,6 +547,7 @@
     readTextFile: () => readTextFile,
     relativePathFromRow: () => relativePathFromRow,
     safeJsonForScript: () => safeJsonForScript,
+    sanitizeFilenamePart: () => sanitizeFilenamePart,
     selectedScopeKeys: () => selectedScopeKeys,
     showToast: () => showToast,
     stableStringify: () => stableStringify,
@@ -669,6 +673,43 @@ ${contextLine}`);
     const d = /* @__PURE__ */ new Date();
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+  }
+  function sanitizeFilenamePart(value, fallback = "不明") {
+    const text = String(value || "").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    return cleaned || fallback;
+  }
+  function extractAppNameFromBundle(bundle) {
+    const appSettings = bundle?.sections?.appSettings;
+    const candidates = [
+      appSettings?.name,
+      appSettings?.app?.name,
+      appSettings?.general?.name,
+      bundle?.meta?.appName,
+      bundle?.appName
+    ];
+    const found = candidates.find((item) => String(item || "").trim());
+    return found ? String(found).trim() : "";
+  }
+  function buildAppFilenameLabel(appId, appName) {
+    const id = String(appId || "").trim();
+    const name = String(appName || "").trim();
+    if (name && id) return `${sanitizeFilenamePart(name)}(app${sanitizeFilenamePart(id)})`;
+    if (name) return sanitizeFilenamePart(name);
+    if (id) return `app${sanitizeFilenamePart(id)}`;
+    return "";
+  }
+  function buildExportFilename(baseLabel, ext, options = {}) {
+    const normalizedExt = String(ext || "").replace(/^\./, "").trim() || "txt";
+    const base = sanitizeFilenamePart(baseLabel, "出力");
+    const stamp = options.timestamp || nowStamp();
+    const appLabel = String(options.appLabel || "").trim();
+    const suffix = String(options.suffix || "").trim();
+    const parts = [base];
+    if (appLabel) parts.push(sanitizeFilenamePart(appLabel));
+    if (suffix) parts.push(sanitizeFilenamePart(suffix));
+    parts.push(sanitizeFilenamePart(stamp, nowStamp()));
+    return `${parts.join("_")}.${normalizedExt}`;
   }
   function getIssueSideLabel(side) {
     if (side === "source") return "比較元";
@@ -9878,7 +9919,9 @@ ${tableContext.tableLabel}`.toLowerCase();
       },
       bundle
     };
-    const filename = `target_preview_backup_app${target.appId}_${nowStamp()}.json`;
+    const filename = buildExportFilename("比較先プレビュー_バックアップ", "json", {
+      appLabel: buildAppFilenameLabel(target.appId, extractAppNameFromBundle(bundle))
+    });
     state.lastPreviewBackupPayload = deepClone(payload);
     state.lastPreviewBackupFilename = filename;
     downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
@@ -11077,7 +11120,9 @@ ${tableContext.tableLabel}`.toLowerCase();
       sectionPreviews: latest.sectionPreviews || {},
       logs: latest.logs || []
     };
-    const filename = `reflect_dry_run_app${c.target.appId || "unknown"}_${nowStamp()}.json`;
+    const filename = buildExportFilename("プレビュー反映ドライラン", "json", {
+      appLabel: buildAppFilenameLabel(c.target.appId || "unknown", "")
+    });
     downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
     setStatus(`ドライランJSONを保存しました: ${filename}（APIは送信していません）`);
   }
@@ -11299,12 +11344,18 @@ ${tableContext.tableLabel}`.toLowerCase();
   }
   async function exportBundleJson() {
     if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error("先に差分比較を実行してください");
+    const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
+    const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
     const payload = {
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       source: state.lastSourceBundle,
       target: state.lastTargetBundle
     };
-    downloadText(`bundle_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    downloadText(
+      buildExportFilename("比較バンドル", "json", { appLabel: `${sourceLabel}_vs_${targetLabel}` }),
+      JSON.stringify(payload, null, 2),
+      "application/json"
+    );
     setStatus("バンドルJSONを保存しました");
   }
   async function exportDiffJson() {
@@ -11335,7 +11386,13 @@ ${tableContext.tableLabel}`.toLowerCase();
       compareSourceBundle: compareInfo?.sourceBundle || null,
       compareTargetBundle: compareInfo?.targetBundle || null
     });
-    downloadText(`diff_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
+    const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
+    downloadText(
+      buildExportFilename("差分", "json", { appLabel: `${sourceLabel}_vs_${targetLabel}` }),
+      JSON.stringify(payload, null, 2),
+      "application/json"
+    );
     setStatus(`差分JSONを保存しました (${exportInfo.label} / ${getDiffExportContentLabel(exportContentMode)})`);
   }
   async function exportDiffHtml() {
@@ -11368,7 +11425,9 @@ ${tableContext.tableLabel}`.toLowerCase();
       normalizationState: getDiffNormalizationPresetState(),
       warning: buildDiffWarningInfo(rows, state.lastFetchIssues)
     });
-    downloadText(`diff_${nowStamp()}.html`, html, "text/html");
+    const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
+    const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
+    downloadText(buildExportFilename("差分", "html", { appLabel: `${sourceLabel}_vs_${targetLabel}` }), html, "text/html");
     setStatus(`差分HTMLを保存しました (${exportInfo.label} / ${getDiffExportContentLabel(exportContentMode)})`);
   }
   async function exportPatchJson() {
@@ -11376,7 +11435,13 @@ ${tableContext.tableLabel}`.toLowerCase();
     const exportInfo = resolveDiffExportRows();
     if (!countActualDiffRows(exportInfo.rows)) throw new Error("出力できる差分がありません");
     const payload = buildPatchPayload(exportInfo.rows, state.lastSourceBundle, state.lastTargetBundle);
-    downloadText(`patch_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
+    const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
+    downloadText(
+      buildExportFilename("差分パッチ", "json", { appLabel: `${sourceLabel}_vs_${targetLabel}` }),
+      JSON.stringify(payload, null, 2),
+      "application/json"
+    );
     setStatus(`パッチJSONを保存しました (${exportInfo.label})`);
   }
   function saveCurrentDialogState2() {
@@ -21571,10 +21636,11 @@ ${tableContext.tableLabel}`.toLowerCase();
     setStatus("設計情報を取得中...");
     const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
     state.lastSourceBundle = bundle;
+    const appLabel = buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle));
     if (kind === "json") {
-      downloadText(`design_${bundle.appId}_${nowStamp()}.json`, JSON.stringify(bundle, null, 2), "application/json");
+      downloadText(buildExportFilename("設計書", "json", { appLabel }), JSON.stringify(bundle, null, 2), "application/json");
     } else {
-      downloadText(`design_${bundle.appId}_${nowStamp()}.md`, bundleToMarkdown(bundle), "text/markdown");
+      downloadText(buildExportFilename("設計書", "md", { appLabel }), bundleToMarkdown(bundle), "text/markdown");
     }
     setStatus(`設計書出力完了（App ${bundle.appId}）`);
   }
@@ -21654,7 +21720,15 @@ ${tableContext.tableLabel}`.toLowerCase();
 ${diffMd}
 \`\`\`
 `;
-    downloadText(`design_diff_report_${nowStamp()}.md`, finalMd, "text/markdown");
+    const sourceLabel = buildAppFilenameLabel(srcBundle.appId, extractAppNameFromBundle(srcBundle));
+    const targetLabel = buildAppFilenameLabel(tgtBundle.appId, extractAppNameFromBundle(tgtBundle));
+    downloadText(
+      buildExportFilename("設計書差分レポート", "md", {
+        appLabel: sourceLabel && targetLabel ? `${sourceLabel}_vs_${targetLabel}` : `${sourceLabel || targetLabel || ""}`
+      }),
+      finalMd,
+      "text/markdown"
+    );
     setStatus("設計書差分レポートを出力しました");
   }
   async function runDesignExportXlsx() {
@@ -23977,6 +24051,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     <tbody>${rows.join("")}</tbody>
   </table>`;
   }
+  var lastFetchedSourceAppName = "";
   async function runFetchJsConfig() {
     const c = commonParams();
     if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
@@ -23985,17 +24060,23 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setStatus("JS/CSS設定を取得中...");
     const res = await apiGet(prefix, "/app/customize.json", { app: c.source.appId });
     const data = normalize(res);
+    try {
+      const appInfo = await apiGet(prefix, "/app.json", { id: c.source.appId });
+      lastFetchedSourceAppName = String(appInfo?.name || "").trim();
+    } catch (_e) {
+      lastFetchedSourceAppName = "";
+    }
     ui.jsconfigJson.value = JSON.stringify(data, null, 2);
     renderCustomizeResult(data);
-    setStatus(`JS/CSS設定を取得しました（アプリ: ${c.source.appId}${isPreview ? " / プレビュー" : ""}）`);
+    setStatus(`JS/CSS設定を取得しました（アプリ: ${c.source.appId}${lastFetchedSourceAppName ? ` / ${lastFetchedSourceAppName}` : ""}${isPreview ? " / プレビュー" : ""}）`);
   }
   async function runExportJsConfig() {
     const text = ui.jsconfigJson.value.trim();
     if (!text) throw new Error("先にJS/CSS設定を取得してください");
     const parsed = JSON.parse(text);
     const c = commonParams();
-    const appId = c.source.appId || "unknown";
-    downloadText(`customize_${appId}_${nowStamp()}.json`, JSON.stringify(parsed, null, 2), "application/json");
+    const appLabel = buildAppFilenameLabel(c.source.appId || "unknown", lastFetchedSourceAppName);
+    downloadText(buildExportFilename("JS_CSS設定", "json", { appLabel }), JSON.stringify(parsed, null, 2), "application/json");
     setStatus("JS/CSS設定JSONを保存しました");
   }
   async function runApplyJsConfig() {

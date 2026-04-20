@@ -2,7 +2,17 @@
 
 import { SECTION_DEFS, TOOL_ID, ARRAY_KEY_CANDIDATES } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, stableStringify, deepClone, nowStamp, downloadText, safeJsonForScript } from '../utils.js';
+import {
+  esc,
+  stableStringify,
+  deepClone,
+  nowStamp,
+  downloadText,
+  safeJsonForScript,
+  buildAppFilenameLabel,
+  buildExportFilename,
+  extractAppNameFromBundle
+} from '../utils.js';
 import { apiGet, buildApiPrefix, fetchBundle } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { commonParams } from './diff.js';
@@ -28,11 +38,12 @@ export async function runDesignExport(kind) {
   setStatus('設計情報を取得中...');
   const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
   state.lastSourceBundle = bundle;
+  const appLabel = buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle));
 
   if (kind === 'json') {
-    downloadText(`design_${bundle.appId}_${nowStamp()}.json`, JSON.stringify(bundle, null, 2), 'application/json');
+    downloadText(buildExportFilename('設計書', 'json', { appLabel }), JSON.stringify(bundle, null, 2), 'application/json');
   } else {
-    downloadText(`design_${bundle.appId}_${nowStamp()}.md`, bundleToMarkdown(bundle), 'text/markdown');
+    downloadText(buildExportFilename('設計書', 'md', { appLabel }), bundleToMarkdown(bundle), 'text/markdown');
   }
   setStatus(`設計書出力完了（App ${bundle.appId}）`);
 }
@@ -113,7 +124,15 @@ export async function runDesignDiffMd() {
 ${diffMd}
 \`\`\`
 `;
-  downloadText(`design_diff_report_${nowStamp()}.md`, finalMd, 'text/markdown');
+  const sourceLabel = buildAppFilenameLabel(srcBundle.appId, extractAppNameFromBundle(srcBundle));
+  const targetLabel = buildAppFilenameLabel(tgtBundle.appId, extractAppNameFromBundle(tgtBundle));
+  downloadText(
+    buildExportFilename('設計書差分レポート', 'md', {
+      appLabel: sourceLabel && targetLabel ? `${sourceLabel}_vs_${targetLabel}` : `${sourceLabel || targetLabel || ''}`
+    }),
+    finalMd,
+    'text/markdown'
+  );
   setStatus('設計書差分レポートを出力しました');
 }
 

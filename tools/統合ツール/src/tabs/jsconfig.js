@@ -1,7 +1,14 @@
 'use strict';
 
 import { ui } from '../state.js';
-import { esc, normalize, nowStamp, downloadText, kusConfirm } from '../utils.js';
+import {
+  esc,
+  normalize,
+  downloadText,
+  kusConfirm,
+  buildAppFilenameLabel,
+  buildExportFilename
+} from '../utils.js';
 import { apiGet, apiPut, buildApiPrefix } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { getToolDocument } from '../ui/dialog.js';
@@ -49,6 +56,8 @@ export function renderCustomizeResult(data) {
   </table>`;
 }
 
+let lastFetchedSourceAppName = '';
+
 export async function runFetchJsConfig() {
   const c = commonParams();
   if (!c.source.appId) throw new Error('比較元アプリIDを入力してください');
@@ -57,9 +66,15 @@ export async function runFetchJsConfig() {
   setStatus('JS/CSS設定を取得中...');
   const res = await apiGet(prefix, '/app/customize.json', { app: c.source.appId });
   const data = normalize(res);
+  try {
+    const appInfo = await apiGet(prefix, '/app.json', { id: c.source.appId });
+    lastFetchedSourceAppName = String(appInfo?.name || '').trim();
+  } catch (_e) {
+    lastFetchedSourceAppName = '';
+  }
   ui.jsconfigJson.value = JSON.stringify(data, null, 2);
   renderCustomizeResult(data);
-  setStatus(`JS/CSS設定を取得しました（アプリ: ${c.source.appId}${isPreview ? ' / プレビュー' : ''}）`);
+  setStatus(`JS/CSS設定を取得しました（アプリ: ${c.source.appId}${lastFetchedSourceAppName ? ` / ${lastFetchedSourceAppName}` : ''}${isPreview ? ' / プレビュー' : ''}）`);
 }
 
 export async function runExportJsConfig() {
@@ -67,8 +82,8 @@ export async function runExportJsConfig() {
   if (!text) throw new Error('先にJS/CSS設定を取得してください');
   const parsed = JSON.parse(text);
   const c = commonParams();
-  const appId = c.source.appId || 'unknown';
-  downloadText(`customize_${appId}_${nowStamp()}.json`, JSON.stringify(parsed, null, 2), 'application/json');
+  const appLabel = buildAppFilenameLabel(c.source.appId || 'unknown', lastFetchedSourceAppName);
+  downloadText(buildExportFilename('JS_CSS設定', 'json', { appLabel }), JSON.stringify(parsed, null, 2), 'application/json');
   setStatus('JS/CSS設定JSONを保存しました');
 }
 
