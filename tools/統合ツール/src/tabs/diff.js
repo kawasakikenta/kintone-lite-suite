@@ -2,7 +2,17 @@
 
 import { SECTION_DEFS, IGNORE_PRESET_KEYS, DEFAULT_SUBTAB_STATE, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT } from '../constants.js';
 import { state, ui, saveDialogState, loadDialogState } from '../state.js';
-import { esc, stableStringify, deepClone, nowStamp, downloadText, readTextFile, selectedScopeKeys } from '../utils.js';
+import {
+  esc,
+  stableStringify,
+  deepClone,
+  downloadText,
+  readTextFile,
+  selectedScopeKeys,
+  buildExportFilename,
+  buildAppFilenameLabel,
+  extractAppNameFromBundle
+} from '../utils.js';
 import { buildApiPrefix, fetchBundle, ensureBundleShape } from '../api.js';
 import {
   computeDiffRows,
@@ -280,12 +290,18 @@ export async function runDiffAndPreviewPlan() {
 
 export async function exportBundleJson() {
   if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error('先に差分比較を実行してください');
+  const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
+  const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
   const payload = {
     generatedAt: new Date().toISOString(),
     source: state.lastSourceBundle,
     target: state.lastTargetBundle
   };
-  downloadText(`bundle_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  downloadText(
+    buildExportFilename('比較バンドル', 'json', { appLabel: `${sourceLabel}_vs_${targetLabel}` }),
+    JSON.stringify(payload, null, 2),
+    'application/json'
+  );
   setStatus('バンドルJSONを保存しました');
 }
 
@@ -319,7 +335,13 @@ export async function exportDiffJson() {
     compareSourceBundle: compareInfo?.sourceBundle || null,
     compareTargetBundle: compareInfo?.targetBundle || null
   });
-  downloadText(`diff_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
+  const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
+  downloadText(
+    buildExportFilename('差分', 'json', { appLabel: `${sourceLabel}_vs_${targetLabel}` }),
+    JSON.stringify(payload, null, 2),
+    'application/json'
+  );
   setStatus(`差分JSONを保存しました (${exportInfo.label} / ${getDiffExportContentLabel(exportContentMode)})`);
 }
 
@@ -358,7 +380,9 @@ export async function exportDiffHtml() {
     normalizationState: getDiffNormalizationPresetState(),
     warning: buildDiffWarningInfo(rows, state.lastFetchIssues)
   });
-  downloadText(`diff_${nowStamp()}.html`, html, 'text/html');
+  const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
+  const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
+  downloadText(buildExportFilename('差分', 'html', { appLabel: `${sourceLabel}_vs_${targetLabel}` }), html, 'text/html');
   setStatus(`差分HTMLを保存しました (${exportInfo.label} / ${getDiffExportContentLabel(exportContentMode)})`);
 }
 
@@ -367,7 +391,13 @@ export async function exportPatchJson() {
   const exportInfo = resolveDiffExportRows();
   if (!countActualDiffRows(exportInfo.rows)) throw new Error('出力できる差分がありません');
   const payload = buildPatchPayload(exportInfo.rows, state.lastSourceBundle, state.lastTargetBundle);
-  downloadText(`patch_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
+  const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
+  downloadText(
+    buildExportFilename('差分パッチ', 'json', { appLabel: `${sourceLabel}_vs_${targetLabel}` }),
+    JSON.stringify(payload, null, 2),
+    'application/json'
+  );
   setStatus(`パッチJSONを保存しました (${exportInfo.label})`);
 }
 

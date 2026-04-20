@@ -134,6 +134,50 @@ export function nowStamp() {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
 }
 
+export function sanitizeFilenamePart(value, fallback = '不明') {
+  const text = String(value || '').trim();
+  const cleaned = text
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || fallback;
+}
+
+export function extractAppNameFromBundle(bundle) {
+  const appSettings = bundle?.sections?.appSettings;
+  const candidates = [
+    appSettings?.name,
+    appSettings?.app?.name,
+    appSettings?.general?.name,
+    bundle?.meta?.appName,
+    bundle?.appName
+  ];
+  const found = candidates.find((item) => String(item || '').trim());
+  return found ? String(found).trim() : '';
+}
+
+export function buildAppFilenameLabel(appId, appName) {
+  const id = String(appId || '').trim();
+  const name = String(appName || '').trim();
+  if (name && id) return `${sanitizeFilenamePart(name)}(app${sanitizeFilenamePart(id)})`;
+  if (name) return sanitizeFilenamePart(name);
+  if (id) return `app${sanitizeFilenamePart(id)}`;
+  return '';
+}
+
+export function buildExportFilename(baseLabel, ext, options = {}) {
+  const normalizedExt = String(ext || '').replace(/^\./, '').trim() || 'txt';
+  const base = sanitizeFilenamePart(baseLabel, '出力');
+  const stamp = options.timestamp || nowStamp();
+  const appLabel = String(options.appLabel || '').trim();
+  const suffix = String(options.suffix || '').trim();
+  const parts = [base];
+  if (appLabel) parts.push(sanitizeFilenamePart(appLabel));
+  if (suffix) parts.push(sanitizeFilenamePart(suffix));
+  parts.push(sanitizeFilenamePart(stamp, nowStamp()));
+  return `${parts.join('_')}.${normalizedExt}`;
+}
+
 export function getIssueSideLabel(side) {
   if (side === 'source') return '比較元';
   if (side === 'target') return '比較先';

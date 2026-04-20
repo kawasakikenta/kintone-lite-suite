@@ -1,7 +1,15 @@
 'use strict';
 
 import { SECTION_DEFS } from '../constants.js';
-import { deepClone, stableStringify, esc, normalize, downloadText, nowStamp } from '../utils.js';
+import {
+  deepClone,
+  stableStringify,
+  esc,
+  normalize,
+  downloadText,
+  buildExportFilename,
+  buildAppFilenameLabel
+} from '../utils.js';
 import { state, ui } from '../state.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { isReflectNodeModeEffective } from './nodeModeUi.js';
@@ -639,7 +647,9 @@ export async function runExportDryRunPlan() {
     sectionPreviews: latest.sectionPreviews || {},
     logs: latest.logs || []
   };
-  const filename = `reflect_dry_run_app${c.target.appId || 'unknown'}_${nowStamp()}.json`;
+  const filename = buildExportFilename('プレビュー反映ドライラン', 'json', {
+    appLabel: buildAppFilenameLabel(c.target.appId || 'unknown', '')
+  });
   downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
   setStatus(`ドライランJSONを保存しました: ${filename}（APIは送信していません）`);
 }

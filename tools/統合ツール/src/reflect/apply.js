@@ -2,8 +2,8 @@
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import {
-  deepClone, normalize, stableStringify, nowStamp, downloadText, apiErrorWithContext, esc, readTextFile,
-  relativePathFromRow, tokenizePath, kusConfirm
+  deepClone, normalize, stableStringify, downloadText, apiErrorWithContext, esc, readTextFile,
+  relativePathFromRow, tokenizePath, kusConfirm, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import {
@@ -485,7 +485,9 @@ export async function backupTargetPreviewSettings(c, scopes, options = {}) {
     },
     bundle
   };
-  const filename = `target_preview_backup_app${target.appId}_${nowStamp()}.json`;
+  const filename = buildExportFilename('比較先プレビュー_バックアップ', 'json', {
+    appLabel: buildAppFilenameLabel(target.appId, extractAppNameFromBundle(bundle))
+  });
   state.lastPreviewBackupPayload = deepClone(payload);
   state.lastPreviewBackupFilename = filename;
   downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
