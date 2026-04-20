@@ -12420,6 +12420,34 @@ ${tableContext.tableLabel}`.toLowerCase();
 #kintone-unified-suite-v2 .reflect-post-apply--warn .reflect-post-apply__title{color:#92400e}
 #kintone-unified-suite-v2 .reflect-post-apply__actions{display:flex;gap:6px;flex-wrap:wrap}
 #kintone-unified-suite-v2 .reflect-post-apply__hint{display:block;font-size:11px;color:#475569;line-height:1.55}
+#kintone-unified-suite-v2 .reflect-preview-prod-diff{margin:10px 0}
+#kintone-unified-suite-v2 .reflect-preview-prod-diff:empty{display:none}
+#kintone-unified-suite-v2 .pvd-card{border:1px solid #c7d2fe;border-radius:12px;padding:12px 14px;background:linear-gradient(180deg,#eef2ff,#fff);box-shadow:0 1px 0 rgba(30,58,138,.05)}
+#kintone-unified-suite-v2 .pvd-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+#kintone-unified-suite-v2 .pvd-title{font-size:13px;font-weight:800;color:#3730a3}
+#kintone-unified-suite-v2 .pvd-meta{font-size:11px;color:#475569}
+#kintone-unified-suite-v2 .pvd-summary{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+#kintone-unified-suite-v2 .pvd-pill{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;border:1px solid #c7d2fe;background:#eef2ff;color:#3730a3;font-size:11px;font-weight:600}
+#kintone-unified-suite-v2 .pvd-pill--total{border-color:#6366f1;background:#4338ca;color:#fff}
+#kintone-unified-suite-v2 .pvd-pill--sev{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+#kintone-unified-suite-v2 .pvd-pill--scope{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
+#kintone-unified-suite-v2 .pvd-section-head{margin-top:8px;font-size:11px;font-weight:700;color:#334155}
+#kintone-unified-suite-v2 .pvd-section-list{list-style:none;margin:4px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 10px}
+#kintone-unified-suite-v2 .pvd-section-list li{display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:3px 0;font-size:11px;color:#334155}
+#kintone-unified-suite-v2 .pvd-section-list .sec-count{font-weight:700;color:#3730a3}
+#kintone-unified-suite-v2 .pvd-row-list{list-style:none;margin:4px 0 0;padding:0;max-height:220px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;background:#fff}
+#kintone-unified-suite-v2 .pvd-row-list li{display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:11px;border-bottom:1px solid #f1f5f9}
+#kintone-unified-suite-v2 .pvd-row-list li:last-child{border-bottom:none}
+#kintone-unified-suite-v2 .pvd-row-list li.pvd-more{justify-content:center;color:#64748b;font-style:italic}
+#kintone-unified-suite-v2 .pvd-type{display:inline-block;padding:1px 6px;border-radius:4px;font-weight:700;font-size:10px;min-width:28px;text-align:center}
+#kintone-unified-suite-v2 .pvd-type--added{background:#dcfce7;color:#166534;border:1px solid #86efac}
+#kintone-unified-suite-v2 .pvd-type--removed{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
+#kintone-unified-suite-v2 .pvd-type--changed{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}
+#kintone-unified-suite-v2 .pvd-section{color:#334155;font-weight:600}
+#kintone-unified-suite-v2 .pvd-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569;background:#f8fafc;padding:1px 6px;border-radius:4px;border:1px solid #e2e8f0;font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:11px}
+#kintone-unified-suite-v2 .pvd-issues{margin-top:4px;font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:4px 8px}
+#kintone-unified-suite-v2 .pvd-actions{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .pvd-hint{margin:8px 0 0;font-size:11px;line-height:1.55}
 #kintone-unified-suite-v2 .reflect-active-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;min-height:0}
 #kintone-unified-suite-v2 .reflect-active-chips:empty{display:none}
 #kintone-unified-suite-v2 .reflect-active-chips__label{font-size:10px;font-weight:700;color:#475569;margin-right:2px}
@@ -15493,6 +15521,7 @@ ${tableContext.tableLabel}`.toLowerCase();
                     <span class="reflect-footer-zone-label">プレビュー反映</span>
                     <div class="reflect-footer-actions__primary">
                       <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">実行前プラン確認</button>
+                      <button type="button" class="btn sub" data-act="runPreviewProdDiff" id="u_footerPreviewProdDiff" title="比較先アプリのプレビューと本番の差分を比較します。デプロイ待ちの変更を確認できます">プレビュー⇔本番を比較</button>
                       <button type="button" class="btn sub" data-act="exportDryRunPlan" id="u_footerDryRun" title="APIを叩かずに、予定されているリクエスト一式をJSONファイルとして保存します（ドライラン）">ドライランJSONを保存</button>
                       <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択した内容を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">プレビューへ反映</button>
                     </div>
@@ -17912,6 +17941,219 @@ ${tableContext.tableLabel}`.toLowerCase();
 
   // src/handlers.js
   init_reflect();
+
+  // src/reflect/previewProdDiff.js
+  init_constants();
+  init_state();
+  init_utils();
+  init_api();
+  init_engine();
+  init_enrich();
+  init_components();
+  init_dialog();
+  var RESULT_HOST_ID = "u_reflectPreviewProdDiff";
+  var PREVIEW_PROD_STATE_KEY = Symbol.for("kus.reflect.previewProdDiff");
+  function getPreviewProdState() {
+    if (!state[PREVIEW_PROD_STATE_KEY]) {
+      state[PREVIEW_PROD_STATE_KEY] = {
+        lastResult: null,
+        appId: "",
+        guestId: "",
+        runAt: null
+      };
+    }
+    return state[PREVIEW_PROD_STATE_KEY];
+  }
+  function resolveReflectScopes() {
+    const selected = selectedScopeKeys(ui.applyScopes);
+    if (selected && selected.length) return selected;
+    return SECTION_DEFS.filter((d) => d.put).map((d) => d.key);
+  }
+  function ensureResultHost() {
+    const doc = getToolDocument();
+    let host = doc.getElementById(RESULT_HOST_ID);
+    if (host) return host;
+    const planPreview = doc.getElementById("u_reflectPlanPreview");
+    const overview = doc.getElementById("u_reflectOverview");
+    const anchor = planPreview || overview;
+    if (!anchor || !anchor.parentNode) return null;
+    host = doc.createElement("div");
+    host.id = RESULT_HOST_ID;
+    host.className = "reflect-preview-prod-diff";
+    host.setAttribute("aria-live", "polite");
+    anchor.parentNode.insertBefore(host, anchor.nextSibling);
+    return host;
+  }
+  function formatCounts(summary) {
+    return `追加 ${summary.added} / 削除 ${summary.removed} / 変更 ${summary.changed}${summary.moved ? ` / 移動 ${summary.moved}` : ""}`;
+  }
+  function formatSectionBreakdown(rows) {
+    const counts = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const key = row?.sectionKey || "";
+      if (!key) continue;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    if (!counts.size) return "";
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([key, n]) => {
+      const label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
+      return `<li><span class="sec-name">${esc(label)}</span><span class="sec-count">${n}件</span></li>`;
+    }).join("");
+  }
+  function formatRowsPreview(rows, limit) {
+    const shown = rows.slice(0, limit);
+    if (!shown.length) return "";
+    const items = shown.map((row) => {
+      const typeLabel = row.type === "added" ? "追加" : row.type === "removed" ? "削除" : row.type === "changed" ? "変更" : row.type || "";
+      const cls = `pvd-type pvd-type--${esc(row.type || "")}`;
+      const section = SECTION_DEFS.find((d) => d.key === row.sectionKey)?.label || row.sectionKey || "";
+      return `<li><span class="${cls}">${esc(typeLabel)}</span> <span class="pvd-section">${esc(section)}</span> <code class="pvd-path">${esc(row.path || "")}</code></li>`;
+    }).join("");
+    const more = rows.length > limit ? `<li class="pvd-more">…ほか ${rows.length - limit} 件</li>` : "";
+    return `<ul class="pvd-row-list">${items}${more}</ul>`;
+  }
+  function renderResult(host, payload) {
+    if (!host) return;
+    if (!payload) {
+      host.innerHTML = "";
+      host.style.display = "none";
+      return;
+    }
+    const { runAt, appId, guestId, scopes, summary, severity, totalActual, fetchIssues, previewBundle, productionBundle } = payload;
+    const actualRows = getActualDiffRows2(payload.rows || []);
+    const sections = formatSectionBreakdown(actualRows);
+    const breakdownHtml = sections ? `<ul class="pvd-section-list">${sections}</ul>` : '<div class="muted" style="margin:6px 0 0">プレビューと本番は一致しています（差分 0件）</div>';
+    const issueHtml = fetchIssues && fetchIssues.length ? `<div class="pvd-issues">取得失敗 ${fetchIssues.length}件: ${esc(fetchIssues.map((x) => x.section || x.sectionKey).filter(Boolean).join(", "))}</div>` : "";
+    const previewApp = extractAppNameFromBundle(previewBundle) || "";
+    const prodApp = extractAppNameFromBundle(productionBundle) || "";
+    const appLabel = previewApp || prodApp ? ` / ${esc(previewApp || prodApp)}` : "";
+    const rowsPreview = formatRowsPreview(actualRows, 10);
+    const stamp = runAt ? new Date(runAt).toLocaleString() : "";
+    host.style.display = "block";
+    host.innerHTML = `
+    <div class="pvd-card">
+      <div class="pvd-head">
+        <div class="pvd-title">プレビュー ⇔ 本番 差分比較</div>
+        <div class="pvd-meta">App ${esc(appId)}${guestId ? ` / guest ${esc(guestId)}` : ""}${appLabel}${stamp ? ` ・ ${esc(stamp)}` : ""}</div>
+      </div>
+      <div class="pvd-summary">
+        <span class="pvd-pill pvd-pill--total">差分 ${totalActual}件</span>
+        <span class="pvd-pill">${esc(formatCounts(summary))}</span>
+        <span class="pvd-pill pvd-pill--sev">重要度 高:${severity.high} / 中:${severity.medium} / 低:${severity.low}</span>
+        <span class="pvd-pill pvd-pill--scope">対象 ${scopes.length}セクション</span>
+      </div>
+      ${issueHtml}
+      <div class="pvd-section-head">セクション別の差分件数</div>
+      ${breakdownHtml}
+      ${rowsPreview ? `<div class="pvd-section-head">差分の先頭 10 件</div>${rowsPreview}` : ""}
+      <div class="pvd-actions">
+        <button type="button" class="btn sub" data-act="exportPreviewProdDiffJson">JSONで保存</button>
+        <button type="button" class="btn sub" data-act="closePreviewProdDiff">閉じる</button>
+      </div>
+      <p class="pvd-hint muted">デプロイ待ちの変更（＝プレビューにあって本番に無い変更）を一覧できます。反映セクションの選択に合わせて対象を絞り込みます。</p>
+    </div>`;
+  }
+  async function runPreviewProductionDiff() {
+    const appId = String(ui.targetApp?.value || "").trim();
+    if (!appId) {
+      setStatus("比較先アプリIDを入力してください", true);
+      return;
+    }
+    const guestId = String(ui.targetGuest?.value || "").trim();
+    const scopes = resolveReflectScopes();
+    if (!scopes.length) {
+      setStatus("反映セクションを 1 つ以上選択してください", true);
+      return;
+    }
+    const host = ensureResultHost();
+    const label = `App ${appId}${guestId ? `/guest ${guestId}` : ""}`;
+    setStatus(`プレビュー⇔本番 差分比較: ${label} プレビューを取得中...`);
+    const previewBundle = await fetchBundle({
+      appId,
+      guestId,
+      preview: true,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`プレビュー⇔本番 差分比較: プレビュー取得 ${Math.round(p * 100)}% (${l})`)
+    });
+    setStatus(`プレビュー⇔本番 差分比較: ${label} 本番を取得中...`);
+    const productionBundle = await fetchBundle({
+      appId,
+      guestId,
+      preview: false,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`プレビュー⇔本番 差分比較: 本番取得 ${Math.round(p * 100)}% (${l})`)
+    });
+    setStatus("プレビュー⇔本番 差分比較: 差分計算中...");
+    const ignoreKeysText = String(ui.ignoreKeys?.value || "");
+    const diffResult = computeDiffRows(previewBundle, productionBundle, scopes, ignoreKeysText, {
+      normalizationPresetState: getDiffNormalizationPresetState(),
+      includeSame: false
+    });
+    const rows = enrichDiffRows(diffResult.rows, previewBundle, productionBundle);
+    const summary = summarizeRows(rows);
+    const severity = summarizeSeverity(rows);
+    const totalActual = countActualDiffRows(rows);
+    const payload = {
+      appId,
+      guestId,
+      scopes,
+      runAt: (/* @__PURE__ */ new Date()).toISOString(),
+      previewBundle,
+      productionBundle,
+      rows,
+      summary,
+      severity,
+      totalActual,
+      fetchIssues: diffResult.fetchIssues || []
+    };
+    const bucket = getPreviewProdState();
+    bucket.lastResult = payload;
+    bucket.appId = appId;
+    bucket.guestId = guestId;
+    bucket.runAt = payload.runAt;
+    renderResult(host, payload);
+    const direction = "比較元=プレビュー / 比較先=本番";
+    setStatus(`プレビュー⇔本番 差分比較 完了 (${direction}): 差分 ${totalActual}件 / 取得失敗 ${diffResult.fetchIssues?.length || 0}件 / ${formatCounts(summary)} / 高:${severity.high} 中:${severity.medium} 低:${severity.low}`);
+  }
+  function exportPreviewProdDiffJson() {
+    const bucket = getPreviewProdState();
+    const payload = bucket.lastResult;
+    if (!payload) {
+      setStatus("先に「プレビュー⇔本番を比較」を実行してください", true);
+      return;
+    }
+    const appName = extractAppNameFromBundle(payload.previewBundle) || extractAppNameFromBundle(payload.productionBundle) || "";
+    const appLabel = buildAppFilenameLabel(payload.appId, appName);
+    const filename = `preview_prod_diff_${appLabel}_${nowStamp()}.json`;
+    const body = {
+      kind: "preview-production-diff",
+      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      target: { appId: payload.appId, guestId: payload.guestId },
+      scopes: payload.scopes,
+      direction: { source: "preview", target: "production" },
+      summary: payload.summary,
+      severity: payload.severity,
+      totalActual: payload.totalActual,
+      fetchIssues: payload.fetchIssues,
+      rows: payload.rows,
+      preview: payload.previewBundle,
+      production: payload.productionBundle
+    };
+    downloadText(filename, JSON.stringify(body, null, 2), "application/json");
+    setStatus(`プレビュー⇔本番 差分をJSONに保存しました: ${filename}`);
+  }
+  function closePreviewProdDiff() {
+    const bucket = getPreviewProdState();
+    bucket.lastResult = null;
+    const host = getToolDocument().getElementById(RESULT_HOST_ID);
+    if (host) {
+      host.innerHTML = "";
+      host.style.display = "none";
+    }
+    setStatus("プレビュー⇔本番 差分の表示を閉じました");
+  }
+
+  // src/handlers.js
   init_field();
 
   // src/tabs/settings-export.js
@@ -21061,6 +21303,15 @@ ${tableContext.tableLabel}`.toLowerCase();
       if (act === "restoreTargetPreviewBackup" && typeof runRestoreTargetPreviewBackup2 === "function") return withGuard(runRestoreTargetPreviewBackup2);
       if (act === "applyPreview" && typeof runApplyPreview2 === "function") return withGuard(runApplyPreview2);
       if (act === "deployOnly" && typeof runDeployOnly2 === "function") return withGuard(runDeployOnly2);
+      if (act === "runPreviewProdDiff") return withGuard(runPreviewProductionDiff);
+      if (act === "exportPreviewProdDiffJson") {
+        exportPreviewProdDiffJson();
+        return;
+      }
+      if (act === "closePreviewProdDiff") {
+        closePreviewProdDiff();
+        return;
+      }
       if (act === "postApplyRecompare" && typeof runDiff === "function") {
         withGuard(async () => {
           setStatus("反映後の再比較を実行中...");
