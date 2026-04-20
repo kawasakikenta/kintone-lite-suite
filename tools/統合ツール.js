@@ -14223,406 +14223,432 @@ ${tableContext.tableLabel}`.toLowerCase();
 #kintone-unified-suite-v2 .jsoneditor-menu > button {
   background-color: transparent;
 }
-/\0*\0 \0=\0=\0=\0=\0=\0=\0=\0=\0=\0=\0 \0A\0n\0a\0l\0y\0z\0e\0 \0T\0a\0b\0 \0S\0t\0y\0l\0e\0s\0 \0=\0=\0=\0=\0=\0=\0=\0=\0=\0=\0 \0*\0/\0
-\0
-\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0s\0u\0m\0m\0a\0r\0y\0{\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\x000\0p\0x\0 \x001\x004\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x001\0f\x005\0f\x009\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0l\0e\0f\0t\0:\x004\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\x000\0e\0a\x005\0e\x009\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x006\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x007\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x003\x003\x004\x001\x005\x005\0;\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x001\x006\0p\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0t\0a\0b\0l\0e\0-\0w\0r\0a\0p\0{\0
-\0
-\0 \0 \0m\0a\0x\0-\0w\0i\0d\0t\0h\0:\x001\x000\x000\0%\0;\0
-\0
-\0 \0 \0o\0v\0e\0r\0f\0l\0o\0w\0-\0x\0:\0a\0u\0t\0o\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\0f\0f\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0t\0a\0b\0l\0e\0{\0
-\0
-\0 \0 \0w\0i\0d\0t\0h\0:\x001\x000\x000\0%\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0c\0o\0l\0l\0a\0p\0s\0e\0:\0c\0o\0l\0l\0a\0p\0s\0e\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0t\0e\0x\0t\0-\0a\0l\0i\0g\0n\0:\0l\0e\0f\0t\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0t\0a\0b\0l\0e\0 \0t\0h\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x008\0f\0a\0f\0c\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x004\x007\x005\x005\x006\x009\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\x000\0p\0x\0 \x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0b\0o\0t\0t\0o\0m\0:\x002\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0w\0h\0i\0t\0e\0-\0s\0p\0a\0c\0e\0:\0n\0o\0w\0r\0a\0p\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0t\0a\0b\0l\0e\0 \0t\0d\0{\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x008\0p\0x\0 \x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0b\0o\0t\0t\0o\0m\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0f\x001\0f\x005\0f\x009\0;\0
-\0
-\0 \0 \0v\0e\0r\0t\0i\0c\0a\0l\0-\0a\0l\0i\0g\0n\0:\0t\0o\0p\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x003\x003\x004\x001\x005\x005\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0t\0a\0b\0l\0e\0 \0t\0r\0:\0h\0o\0v\0e\0r\0 \0t\0d\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x008\0f\0a\0f\0c\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0t\0a\0b\0l\0e\0 \0t\0r\0.\0a\0n\0a\0l\0y\0z\0e\0-\0r\0o\0w\0-\0-\0u\0n\0u\0s\0e\0d\0 \0t\0d\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\0f\0f\x001\0f\x002\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0t\0a\0b\0l\0e\0 \0t\0r\0.\0a\0n\0a\0l\0y\0z\0e\0-\0r\0o\0w\0-\0-\0u\0n\0u\0s\0e\0d\0:\0h\0o\0v\0e\0r\0 \0t\0d\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\0f\0e\x004\0e\x006\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0t\0d\0-\0c\0o\0d\0e\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x000\0f\x001\x007\x002\0a\0;\0
-\0
-\0 \0 \0w\0h\0i\0t\0e\0-\0s\0p\0a\0c\0e\0:\0n\0o\0w\0r\0a\0p\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0t\0d\0-\0c\0o\0u\0n\0t\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x007\x000\x000\0;\0
-\0
-\0 \0 \0t\0e\0x\0t\0-\0a\0l\0i\0g\0n\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0t\0y\0p\0e\0-\0b\0a\0d\0g\0e\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0i\0n\0l\0i\0n\0e\0-\0b\0l\0o\0c\0k\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x002\0p\0x\0 \x008\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x009\x009\x009\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x004\x007\x005\x005\x006\x009\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0w\0h\0i\0t\0e\0-\0s\0p\0a\0c\0e\0:\0n\0o\0w\0r\0a\0p\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0r\0e\0f\0-\0c\0h\0i\0p\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0i\0n\0l\0i\0n\0e\0-\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0:\x002\0p\0x\0 \x004\0p\0x\0 \x002\0p\0x\0 \x000\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x002\0p\0x\0 \x008\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0e\0f\0f\x006\0f\0f\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0b\0f\0d\0b\0f\0e\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x001\0e\x004\x000\0a\0f\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x009\x009\x009\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x007\x000\x000\0;\0
-\0
-\0 \0 \0w\0h\0i\0t\0e\0-\0s\0p\0a\0c\0e\0:\0n\0o\0w\0r\0a\0p\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0a\0n\0a\0l\0y\0z\0e\0-\0r\0e\0f\0-\0m\0o\0r\0e\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x006\x004\x007\x004\x008\0b\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0l\0e\0f\0t\0:\x004\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0
-\0
-\0/\0*\0 \0F\0e\0a\0t\0u\0r\0e\0 \x009\0 \0P\0e\0r\0m\0i\0s\0s\0i\0o\0n\0s\0 \0*\0/\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0p\0e\0r\0m\0-\0s\0e\0c\0t\0i\0o\0n\0{\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x002\x000\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0p\0e\0r\0m\0-\0s\0e\0c\0t\0i\0o\0n\0-\0t\0i\0t\0l\0e\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x004\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x000\0f\x001\x007\x002\0a\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x001\x000\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0p\0e\0r\0m\0-\0e\0n\0t\0i\0t\0y\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x007\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x001\0e\x002\x009\x003\0b\0;\0
-\0
-\0 \0 \0w\0h\0i\0t\0e\0-\0s\0p\0a\0c\0e\0:\0n\0o\0w\0r\0a\0p\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0p\0e\0r\0m\0-\0c\0e\0l\0l\0{\0
-\0
-\0 \0 \0t\0e\0x\0t\0-\0a\0l\0i\0g\0n\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x004\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0p\0e\0r\0m\0-\0c\0e\0l\0l\0-\0-\0a\0l\0l\0o\0w\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0-\0c\0o\0l\0o\0r\0:\0#\0f\x000\0f\0d\0f\x004\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0p\0e\0r\0m\0-\0c\0e\0l\0l\0-\0-\0d\0e\0n\0y\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0-\0c\0o\0l\0o\0r\0:\0#\0f\0e\0f\x002\0f\x002\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0p\0e\0r\0m\0-\0t\0h\0{\0
-\0
-\0 \0 \0t\0e\0x\0t\0-\0a\0l\0i\0g\0n\0:\0c\0e\0n\0t\0e\0r\0!\0i\0m\0p\0o\0r\0t\0a\0n\0t\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0p\0e\0r\0m\0-\0e\0n\0t\0i\0t\0y\0-\0b\0a\0d\0g\0e\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0i\0n\0l\0i\0n\0e\0-\0b\0l\0o\0c\0k\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0:\x002\0p\0x\0 \x004\0p\0x\0 \x002\0p\0x\0 \x000\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x003\0p\0x\0 \x008\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x008\0f\0a\0f\0c\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0c\0b\0d\x005\0e\x001\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x006\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x001\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0
-\0
-\0/\0*\0 \0F\0e\0a\0t\0u\0r\0e\0 \x008\0 \0N\0o\0t\0i\0f\0i\0c\0a\0t\0i\0o\0n\0s\0 \0*\0/\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0n\0o\0t\0i\0f\0-\0c\0a\0t\0e\0g\0o\0r\0y\0-\0b\0a\0d\0g\0e\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0i\0n\0l\0i\0n\0e\0-\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x003\0p\0x\0 \x008\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x009\x009\x009\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\0d\0f\x002\0f\x008\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\0b\0e\x001\x008\x005\0d\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x001\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0w\0h\0i\0t\0e\0-\0s\0p\0a\0c\0e\0:\0n\0o\0w\0r\0a\0p\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0n\0o\0t\0i\0f\0-\0t\0a\0r\0g\0e\0t\0-\0b\0a\0d\0g\0e\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0i\0n\0l\0i\0n\0e\0-\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0:\x002\0p\0x\0 \x004\0p\0x\0 \x002\0p\0x\0 \x000\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x002\0p\0x\0 \x008\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x008\0f\0a\0f\0c\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x003\x003\x004\x001\x005\x005\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x006\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x001\0p\0x\0;\0
-\0
-\0 \0 \0w\0h\0i\0t\0e\0-\0s\0p\0a\0c\0e\0:\0n\0o\0w\0r\0a\0p\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0n\0o\0t\0i\0f\0-\0f\0l\0o\0w\0-\0l\0i\0s\0t\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0g\0r\0i\0d\0;\0
-\0
-\0 \0 \0g\0r\0i\0d\0-\0t\0e\0m\0p\0l\0a\0t\0e\0-\0c\0o\0l\0u\0m\0n\0s\0:\0m\0i\0n\0m\0a\0x\0(\x000\0,\x001\0f\0r\0)\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0-\0b\0o\0t\0t\0o\0m\0:\x001\x002\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0n\0o\0t\0i\0f\0-\0f\0l\0o\0w\0-\0c\0a\0r\0d\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\0f\0f\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\x004\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0x\0-\0s\0h\0a\0d\0o\0w\0:\x000\0 \x001\0p\0x\0 \x003\0p\0x\0 \0r\0g\0b\0a\0(\x001\x005\0,\x002\x003\0,\x004\x002\0,\0.\x000\x004\0)\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0n\0o\0t\0i\0f\0-\0f\0l\0o\0w\0-\0c\0a\0t\0e\0g\0o\0r\0y\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x001\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x006\x004\x007\x004\x008\0b\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x008\0p\0x\0;\0
-\0
-\0 \0 \0t\0e\0x\0t\0-\0t\0r\0a\0n\0s\0f\0o\0r\0m\0:\0u\0p\0p\0e\0r\0c\0a\0s\0e\0;\0
-\0
-\0 \0 \0l\0e\0t\0t\0e\0r\0-\0s\0p\0a\0c\0i\0n\0g\0:\x000\0.\x000\x005\0e\0m\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0n\0o\0t\0i\0f\0-\0f\0l\0o\0w\0-\0t\0i\0t\0l\0e\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x004\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x000\0f\x001\x007\x002\0a\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x001\x000\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0n\0o\0t\0i\0f\0-\0f\0l\0o\0w\0-\0r\0o\0w\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0s\0t\0r\0e\0t\0c\0h\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x001\x002\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0n\0o\0t\0i\0f\0-\0f\0l\0o\0w\0-\0c\0o\0n\0d\0{\0
-\0
-\0 \0 \0f\0l\0e\0x\0:\x001\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x008\0f\0a\0f\0c\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0d\0a\0s\0h\0e\0d\0 \0#\0c\0b\0d\x005\0e\x001\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x008\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0f\0a\0m\0i\0l\0y\0:\0u\0i\0-\0m\0o\0n\0o\0s\0p\0a\0c\0e\0,\0S\0F\0M\0o\0n\0o\0-\0R\0e\0g\0u\0l\0a\0r\0,\0M\0e\0n\0l\0o\0,\0m\0o\0n\0o\0s\0p\0a\0c\0e\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x001\0p\0x\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x004\x007\x005\x005\x006\x009\0;\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0n\0o\0t\0i\0f\0-\0f\0l\0o\0w\0-\0a\0r\0r\0o\0w\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x009\x004\0a\x003\0b\x008\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x008\0p\0x\0;\0
-\0
+/* ========== Analyze Tab Styles ========== */
+
+#kintone-unified-suite-v2 .analyze-summary{
+  margin-bottom:12px;
+  padding:10px 14px;
+  background:#f1f5f9;
+  border-left:4px solid #0ea5e9;
+  border-radius:6px;
+  font-size:12px;
+  font-weight:700;
+  color:#334155;
+  display:flex;
+  gap:16px;
+  align-items:center;
+}
+#kintone-unified-suite-v2 .analyze-table-wrap{
+  max-width:100%;
+  overflow-x:auto;
+  border:1px solid #e2e8f0;
+  border-radius:10px;
+  background:#fff;
+}
+#kintone-unified-suite-v2 .analyze-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+  text-align:left;
+}
+#kintone-unified-suite-v2 .analyze-table th{
+  background:#f8fafc;
+  font-weight:800;
+  color:#475569;
+  padding:10px 12px;
+  border-bottom:2px solid #e2e8f0;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2 .analyze-table td{
+  padding:8px 12px;
+  border-bottom:1px solid #f1f5f9;
+  vertical-align:top;
+  color:#334155;
+}
+#kintone-unified-suite-v2 .analyze-table tr:hover td{
+  background:#f8fafc;
+}
+#kintone-unified-suite-v2 .analyze-table tr.analyze-row--unused td{
+  background:#fff1f2;
+}
+#kintone-unified-suite-v2 .analyze-table tr.analyze-row--unused:hover td{
+  background:#ffe4e6;
+}
+#kintone-unified-suite-v2 .analyze-td-code{
+  font-weight:800;
+  color:#0f172a;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2 .analyze-td-count{
+  font-weight:700;
+  text-align:center;
+}
+#kintone-unified-suite-v2 .analyze-type-badge{
+  display:inline-block;
+  padding:2px 8px;
+  border-radius:999px;
+  background:#e2e8f0;
+  color:#475569;
+  font-size:10px;
+  font-weight:800;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2 .analyze-ref-chip{
+  display:inline-flex;
+  align-items:center;
+  margin:2px 4px 2px 0;
+  padding:2px 8px;
+  background:#eff6ff;
+  border:1px solid #bfdbfe;
+  color:#1e40af;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:700;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2 .analyze-ref-more{
+  font-size:10px;
+  color:#64748b;
+  margin-left:4px;
+}
+
+/* Feature 9 Permissions */
+#kintone-unified-suite-v2 .perm-section{
+  margin-bottom:20px;
+}
+#kintone-unified-suite-v2 .perm-section-title{
+  font-size:14px;
+  font-weight:800;
+  color:#0f172a;
+  margin-bottom:10px;
+}
+#kintone-unified-suite-v2 .perm-entity{
+  font-weight:700;
+  color:#1e293b;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2 .perm-cell{
+  text-align:center;
+  font-size:14px;
+}
+#kintone-unified-suite-v2 .perm-cell--allow{
+  background-color:#f0fdf4;
+}
+#kintone-unified-suite-v2 .perm-cell--deny{
+  background-color:#fef2f2;
+}
+#kintone-unified-suite-v2 .perm-th{
+  text-align:center!important;
+}
+#kintone-unified-suite-v2 .perm-entity-badge{
+  display:inline-block;
+  margin:2px 4px 2px 0;
+  padding:3px 8px;
+  background:#f8fafc;
+  border:1px solid #cbd5e1;
+  border-radius:6px;
+  font-size:11px;
+}
+
+/* Feature 8 Notifications */
+#kintone-unified-suite-v2 .notif-category-badge{
+  display:inline-flex;
+  align-items:center;
+  padding:3px 8px;
+  border-radius:999px;
+  background:#fdf2f8;
+  color:#be185d;
+  font-size:11px;
+  font-weight:800;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2 .notif-target-badge{
+  display:inline-flex;
+  align-items:center;
+  margin:2px 4px 2px 0;
+  padding:2px 8px;
+  background:#f8fafc;
+  border:1px solid #e2e8f0;
+  color:#334155;
+  border-radius:6px;
+  font-size:11px;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2 .notif-flow-list{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:12px;
+  padding-bottom:12px;
+}
+#kintone-unified-suite-v2 .notif-flow-card{
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:10px;
+  padding:14px;
+  box-shadow:0 1px 3px rgba(15,23,42,.04);
+}
+#kintone-unified-suite-v2 .notif-flow-category{
+  font-size:11px;
+  font-weight:800;
+  color:#64748b;
+  margin-bottom:8px;
+  text-transform:uppercase;
+  letter-spacing:0.05em;
+}
+#kintone-unified-suite-v2 .notif-flow-title{
+  font-size:14px;
+  font-weight:800;
+  color:#0f172a;
+  margin-bottom:10px;
+}
+#kintone-unified-suite-v2 .notif-flow-row{
+  display:flex;
+  align-items:stretch;
+  gap:12px;
+}
+#kintone-unified-suite-v2 .notif-flow-cond{
+  flex:1;
+  background:#f8fafc;
+  border:1px dashed #cbd5e1;
+  padding:10px;
+  border-radius:8px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:11px;
+  color:#475569;
+  display:flex;
+  align-items:center;
+}
+#kintone-unified-suite-v2 .notif-flow-arrow{
+  display:flex;
+  align-items:center;
+  color:#94a3b8;
+  font-size:18px;
+
+  font-weight:800;
+}
+#kintone-unified-suite-v2 .notif-flow-targets{
+  flex:1;
+  background:#eff6ff;
+  border:1px solid #bfdbfe;
+  padding:10px;
+  border-radius:8px;
+  font-size:12px;
+  color:#1e40af;
+  display:flex;
+  align-items:center;
+}
+
+/* Feature 11 Layout Preview */
+#kintone-unified-suite-v2 .layout-diff-container{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:20px;
+}
+#kintone-unified-suite-v2 .layout-diff-container.layout-diff-mode{
+  grid-template-columns:1fr 1fr;
+}
+#kintone-unified-suite-v2 .layout-diff-pane{
+  min-width:0;
+}
+#kintone-unified-suite-v2 .layout-diff-label{
+  font-size:13px;
+  font-weight:800;
+  color:#0f172a;
+  margin-bottom:10px;
+  padding-bottom:6px;
+  border-bottom:2px solid #e2e8f0;
+}
+#kintone-unified-suite-v2 .layout-preview-container{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  padding:16px;
+  background:#f8fafc;
+  border:1px solid #cbd5e1;
+  border-radius:12px;
+  min-height:200px;
+}
+#kintone-unified-suite-v2 .layout-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  align-items:flex-start;
+}
+#kintone-unified-suite-v2 .layout-item{
+  min-width:40px;
+  flex-shrink:0;
+  box-sizing:border-box;
+}
+#kintone-unified-suite-v2 .layout-field{
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:6px;
+  padding:8px 10px;
+  box-shadow:0 1px 2px rgba(15,23,42,.02);
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+#kintone-unified-suite-v2 .layout-field-label{
+  font-size:12px;
+  font-weight:800;
+  color:#1e293b;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2 .layout-field-meta{
+  font-size:10px;
+  color:#64748b;
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
+#kintone-unified-suite-v2 .layout-type-badge{
+  display:inline-block;
+  padding:1px 6px;
+  background:#f1f5f9;
+  border:1px solid #cbd5e1;
+  border-radius:4px;
+  font-size:9px;
+  font-weight:800;
+  color:#475569;
+}
+#kintone-unified-suite-v2 .layout-required{
+  color:#ef4444;
+  margin-left:2px;
+}
+#kintone-unified-suite-v2 .layout-label{
+  display:flex;
+  align-items:center;
+}
+#kintone-unified-suite-v2 .layout-label-text{
+  font-size:13px;
+  font-weight:800;
+  color:#0f172a;
+}
+#kintone-unified-suite-v2 .layout-spacer{
+  background:url('data:image/svg+xml;utf8,<svg width="4" height="4" viewBox="0 0 4 4" xmlns="http://www.w3.org/2000/svg"><circle cx="2" cy="2" r="1" fill="%23cbd5e1"/></svg>') repeat;
+  border-radius:4px;
+}
+#kintone-unified-suite-v2 .layout-hr hr{
+  margin:10px 0;
+  border:none;
+  border-top:2px solid #cbd5e1;
+}
+#kintone-unified-suite-v2 .layout-subtable{
+  width:100%;
+  border:2px solid #cbd5e1;
+  border-radius:8px;
+  background:#fff;
+  padding:12px;
+}
+#kintone-unified-suite-v2 .layout-subtable-header{
+  margin-bottom:12px;
+  font-size:13px;
+  font-weight:800;
+  color:#0f172a;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+#kintone-unified-suite-v2 .layout-group{
+  width:100%;
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:8px;
+  overflow:hidden;
+}
+#kintone-unified-suite-v2 .layout-group-summary{
+  background:#f8fafc;
+  padding:10px 12px;
+  font-size:13px;
+  font-weight:800;
+  color:#0f172a;
+  cursor:pointer;
+  border-bottom:1px solid #e2e8f0;
+}
+#kintone-unified-suite-v2 .layout-group-body{
+  padding:12px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+/* Feature 12 Field Dependency Graph */
+#kintone-unified-suite-v2 .field-graph-toolbar{
+  display:flex;
+  gap:8px;
+  margin-bottom:12px;
+  flex-wrap:wrap;
+}
+#kintone-unified-suite-v2 .field-graph-search{
+  flex:1;
+  min-width:200px;
+  border:1px solid #cbd5e1;
+  border-radius:8px;
+  padding:8px 12px;
+  font-size:12px;
+}
+#kintone-unified-suite-v2 .field-graph-layout-select{
+  border:1px solid #cbd5e1;
+  border-radius:8px;
+  padding:8px;
+  font-size:12px;
+}
+#kintone-unified-suite-v2 .field-graph-wrapper{
+  display:grid;
+  grid-template-columns:1fr 280px;
+  gap:16px;
+  height:min(600px,70vh);
+}
+#kintone-unified-suite-v2 .field-graph-cy{
+  background:#f8fafc;
+  border:1px solid #e2e8f0;
+  border-radius:12px;
+  overflow:hidden;
+}
+#kintone-unified-suite-v2 .field-graph-detail{
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:12px;
+  padding:14px;
+  overflow-y:auto;
+  box-shadow:0 2px 8px rgba(15,23,42,.04);
+}
+#kintone-unified-suite-v2 .field-graph-detail-head{
+  padding-bottom:12px;
+  border-bottom:1px solid #e2e8f0;
+  margin-bottom:12px;
+}
+#kintone-unified-suite-v2 .field-graph-detail-code{
+  font-size:16px;
+  font-weight:800;
+  color:#0f172a;
+  word-break:break-all;
+}
+#kintone-unified-suite-v2 .field-graph-detail-label{
+  font-size:12px;
+  color:#475569;
+  margin:4px 0 8px;
+  line-height:1.4;
+}
+#kintone-unified-suite-v2 .field-graph-detail-section-title{
+  font-size:12px;
+  font-weight:800;
+  color:#334155;
+  margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .field-graph-detail-ref{
+  padding:8px;
+  background:#f8fafc;
+  border:1px solid #e2e8f0;
+  border-radius:6px;
+  margin-bottom:6px;
+  font-size:11px;
+  line-height:1.5;
+}
+
 /* UI polish improvements */
 #kintone-unified-suite-v2 .h{position:sticky;top:0;z-index:30}
 #kintone-unified-suite-v2 .tabs{position:sticky;top:0;z-index:12;background:#fff;padding:8px;border:1px solid #e2e8f0;border-radius:10px}
@@ -14709,456 +14735,7 @@ ${tableContext.tableLabel}`.toLowerCase();
 #kintone-unified-suite-v2.screen-feature .common-card{
   position:sticky;top:0;z-index:20;
 }
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0n\0o\0t\0i\0f\0-\0f\0l\0o\0w\0-\0t\0a\0r\0g\0e\0t\0s\0{\0
-\0
-\0 \0 \0f\0l\0e\0x\0:\x001\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0e\0f\0f\x006\0f\0f\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0b\0f\0d\0b\0f\0e\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x008\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x001\0e\x004\x000\0a\0f\0;\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0}\0
-\0
-\0
-\0
-\0/\0*\0 \0F\0e\0a\0t\0u\0r\0e\0 \x001\x001\0 \0L\0a\0y\0o\0u\0t\0 \0P\0r\0e\0v\0i\0e\0w\0 \0*\0/\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0d\0i\0f\0f\0-\0c\0o\0n\0t\0a\0i\0n\0e\0r\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0g\0r\0i\0d\0;\0
-\0
-\0 \0 \0g\0r\0i\0d\0-\0t\0e\0m\0p\0l\0a\0t\0e\0-\0c\0o\0l\0u\0m\0n\0s\0:\x001\0f\0r\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x002\x000\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0d\0i\0f\0f\0-\0c\0o\0n\0t\0a\0i\0n\0e\0r\0.\0l\0a\0y\0o\0u\0t\0-\0d\0i\0f\0f\0-\0m\0o\0d\0e\0{\0
-\0
-\0 \0 \0g\0r\0i\0d\0-\0t\0e\0m\0p\0l\0a\0t\0e\0-\0c\0o\0l\0u\0m\0n\0s\0:\x001\0f\0r\0 \x001\0f\0r\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0d\0i\0f\0f\0-\0p\0a\0n\0e\0{\0
-\0
-\0 \0 \0m\0i\0n\0-\0w\0i\0d\0t\0h\0:\x000\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0d\0i\0f\0f\0-\0l\0a\0b\0e\0l\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x003\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x000\0f\x001\x007\x002\0a\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0-\0b\0o\0t\0t\0o\0m\0:\x006\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0b\0o\0t\0t\0o\0m\0:\x002\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0p\0r\0e\0v\0i\0e\0w\0-\0c\0o\0n\0t\0a\0i\0n\0e\0r\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0f\0l\0e\0x\0-\0d\0i\0r\0e\0c\0t\0i\0o\0n\0:\0c\0o\0l\0u\0m\0n\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\x006\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x008\0f\0a\0f\0c\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0c\0b\0d\x005\0e\x001\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0m\0i\0n\0-\0h\0e\0i\0g\0h\0t\0:\x002\x000\x000\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0r\0o\0w\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0f\0l\0e\0x\0-\0w\0r\0a\0p\0:\0w\0r\0a\0p\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0f\0l\0e\0x\0-\0s\0t\0a\0r\0t\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0i\0t\0e\0m\0{\0
-\0
-\0 \0 \0m\0i\0n\0-\0w\0i\0d\0t\0h\0:\x004\x000\0p\0x\0;\0
-\0
-\0 \0 \0f\0l\0e\0x\0-\0s\0h\0r\0i\0n\0k\0:\x000\0;\0
-\0
-\0 \0 \0b\0o\0x\0-\0s\0i\0z\0i\0n\0g\0:\0b\0o\0r\0d\0e\0r\0-\0b\0o\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0f\0i\0e\0l\0d\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\0f\0f\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x006\0p\0x\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x008\0p\0x\0 \x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0x\0-\0s\0h\0a\0d\0o\0w\0:\x000\0 \x001\0p\0x\0 \x002\0p\0x\0 \0r\0g\0b\0a\0(\x001\x005\0,\x002\x003\0,\x004\x002\0,\0.\x000\x002\0)\0;\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0f\0l\0e\0x\0-\0d\0i\0r\0e\0c\0t\0i\0o\0n\0:\0c\0o\0l\0u\0m\0n\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x004\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0f\0i\0e\0l\0d\0-\0l\0a\0b\0e\0l\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x001\0e\x002\x009\x003\0b\0;\0
-\0
-\0 \0 \0o\0v\0e\0r\0f\0l\0o\0w\0:\0h\0i\0d\0d\0e\0n\0;\0
-\0
-\0 \0 \0t\0e\0x\0t\0-\0o\0v\0e\0r\0f\0l\0o\0w\0:\0e\0l\0l\0i\0p\0s\0i\0s\0;\0
-\0
-\0 \0 \0w\0h\0i\0t\0e\0-\0s\0p\0a\0c\0e\0:\0n\0o\0w\0r\0a\0p\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0f\0i\0e\0l\0d\0-\0m\0e\0t\0a\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x000\0p\0x\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x006\x004\x007\x004\x008\0b\0;\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x004\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0t\0y\0p\0e\0-\0b\0a\0d\0g\0e\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0i\0n\0l\0i\0n\0e\0-\0b\0l\0o\0c\0k\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\0p\0x\0 \x006\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x001\0f\x005\0f\x009\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0c\0b\0d\x005\0e\x001\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x004\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x009\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x004\x007\x005\x005\x006\x009\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0r\0e\0q\0u\0i\0r\0e\0d\0{\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\0e\0f\x004\x004\x004\x004\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0l\0e\0f\0t\0:\x002\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0l\0a\0b\0e\0l\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0l\0a\0b\0e\0l\0-\0t\0e\0x\0t\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x003\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x000\0f\x001\x007\x002\0a\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0s\0p\0a\0c\0e\0r\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0u\0r\0l\0(\0'\0d\0a\0t\0a\0:\0i\0m\0a\0g\0e\0/\0s\0v\0g\0+\0x\0m\0l\0;\0u\0t\0f\x008\0,\0<\0s\0v\0g\0 \0w\0i\0d\0t\0h\0=\0"\x004\0"\0 \0h\0e\0i\0g\0h\0t\0=\0"\x004\0"\0 \0v\0i\0e\0w\0B\0o\0x\0=\0"\x000\0 \x000\0 \x004\0 \x004\0"\0 \0x\0m\0l\0n\0s\0=\0"\0h\0t\0t\0p\0:\0/\0/\0w\0w\0w\0.\0w\x003\0.\0o\0r\0g\0/\x002\x000\x000\x000\0/\0s\0v\0g\0"\0>\0<\0c\0i\0r\0c\0l\0e\0 \0c\0x\0=\0"\x002\0"\0 \0c\0y\0=\0"\x002\0"\0 \0r\0=\0"\x001\0"\0 \0f\0i\0l\0l\0=\0"\0%\x002\x003\0c\0b\0d\x005\0e\x001\0"\0/\0>\0<\0/\0s\0v\0g\0>\0'\0)\0 \0r\0e\0p\0e\0a\0t\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x004\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0h\0r\0 \0h\0r\0{\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0:\x001\x000\0p\0x\0 \x000\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\0n\0o\0n\0e\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0t\0o\0p\0:\x002\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0c\0b\0d\x005\0e\x001\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0s\0u\0b\0t\0a\0b\0l\0e\0{\0
-\0
-\0 \0 \0w\0i\0d\0t\0h\0:\x001\x000\x000\0%\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x002\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0c\0b\0d\x005\0e\x001\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x008\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\0f\0f\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\x002\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0s\0u\0b\0t\0a\0b\0l\0e\0-\0h\0e\0a\0d\0e\0r\0{\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x003\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x000\0f\x001\x007\x002\0a\0;\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0a\0l\0i\0g\0n\0-\0i\0t\0e\0m\0s\0:\0c\0e\0n\0t\0e\0r\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x008\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0g\0r\0o\0u\0p\0{\0
-\0
-\0 \0 \0w\0i\0d\0t\0h\0:\x001\x000\x000\0%\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\0f\0f\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x008\0p\0x\0;\0
-\0
-\0 \0 \0o\0v\0e\0r\0f\0l\0o\0w\0:\0h\0i\0d\0d\0e\0n\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0g\0r\0o\0u\0p\0-\0s\0u\0m\0m\0a\0r\0y\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x008\0f\0a\0f\0c\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\x000\0p\0x\0 \x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x003\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x000\0f\x001\x007\x002\0a\0;\0
-\0
-\0 \0 \0c\0u\0r\0s\0o\0r\0:\0p\0o\0i\0n\0t\0e\0r\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0b\0o\0t\0t\0o\0m\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0l\0a\0y\0o\0u\0t\0-\0g\0r\0o\0u\0p\0-\0b\0o\0d\0y\0{\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0f\0l\0e\0x\0-\0d\0i\0r\0e\0c\0t\0i\0o\0n\0:\0c\0o\0l\0u\0m\0n\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x001\x000\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0
-\0
-\0/\0*\0 \0F\0e\0a\0t\0u\0r\0e\0 \x001\x002\0 \0F\0i\0e\0l\0d\0 \0D\0e\0p\0e\0n\0d\0e\0n\0c\0y\0 \0G\0r\0a\0p\0h\0 \0*\0/\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0t\0o\0o\0l\0b\0a\0r\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0f\0l\0e\0x\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x008\0p\0x\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0f\0l\0e\0x\0-\0w\0r\0a\0p\0:\0w\0r\0a\0p\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0s\0e\0a\0r\0c\0h\0{\0
-\0
-\0 \0 \0f\0l\0e\0x\0:\x001\0;\0
-\0
-\0 \0 \0m\0i\0n\0-\0w\0i\0d\0t\0h\0:\x002\x000\x000\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0c\0b\0d\x005\0e\x001\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x008\0p\0x\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x008\0p\0x\0 \x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x002\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0l\0a\0y\0o\0u\0t\0-\0s\0e\0l\0e\0c\0t\0{\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0c\0b\0d\x005\0e\x001\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x008\0p\0x\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x008\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x002\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0w\0r\0a\0p\0p\0e\0r\0{\0
-\0
-\0 \0 \0d\0i\0s\0p\0l\0a\0y\0:\0g\0r\0i\0d\0;\0
-\0
-\0 \0 \0g\0r\0i\0d\0-\0t\0e\0m\0p\0l\0a\0t\0e\0-\0c\0o\0l\0u\0m\0n\0s\0:\x001\0f\0r\0 \x002\x008\x000\0p\0x\0;\0
-\0
-\0 \0 \0g\0a\0p\0:\x001\x006\0p\0x\0;\0
-\0
-\0 \0 \0h\0e\0i\0g\0h\0t\0:\0m\0i\0n\0(\x006\x000\x000\0p\0x\0,\x007\x000\0v\0h\0)\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0c\0y\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x008\0f\0a\0f\0c\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0o\0v\0e\0r\0f\0l\0o\0w\0:\0h\0i\0d\0d\0e\0n\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0d\0e\0t\0a\0i\0l\0{\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\0f\0f\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x001\x004\0p\0x\0;\0
-\0
-\0 \0 \0o\0v\0e\0r\0f\0l\0o\0w\0-\0y\0:\0a\0u\0t\0o\0;\0
-\0
-\0 \0 \0b\0o\0x\0-\0s\0h\0a\0d\0o\0w\0:\x000\0 \x002\0p\0x\0 \x008\0p\0x\0 \0r\0g\0b\0a\0(\x001\x005\0,\x002\x003\0,\x004\x002\0,\0.\x000\x004\0)\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0d\0e\0t\0a\0i\0l\0-\0h\0e\0a\0d\0{\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0-\0b\0o\0t\0t\0o\0m\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0b\0o\0t\0t\0o\0m\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x001\x002\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0d\0e\0t\0a\0i\0l\0-\0c\0o\0d\0e\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x006\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x000\0f\x001\x007\x002\0a\0;\0
-\0
-\0 \0 \0w\0o\0r\0d\0-\0b\0r\0e\0a\0k\0:\0b\0r\0e\0a\0k\0-\0a\0l\0l\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0d\0e\0t\0a\0i\0l\0-\0l\0a\0b\0e\0l\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x004\x007\x005\x005\x006\x009\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0:\x004\0p\0x\0 \x000\0 \x008\0p\0x\0;\0
-\0
-\0 \0 \0l\0i\0n\0e\0-\0h\0e\0i\0g\0h\0t\0:\x001\0.\x004\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0d\0e\0t\0a\0i\0l\0-\0s\0e\0c\0t\0i\0o\0n\0-\0t\0i\0t\0l\0e\0{\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x002\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0w\0e\0i\0g\0h\0t\0:\x008\x000\x000\0;\0
-\0
-\0 \0 \0c\0o\0l\0o\0r\0:\0#\x003\x003\x004\x001\x005\x005\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x008\0p\0x\0;\0
-\0
-\0}\0
-\0
-\0#\0k\0i\0n\0t\0o\0n\0e\0-\0u\0n\0i\0f\0i\0e\0d\0-\0s\0u\0i\0t\0e\0-\0v\x002\0 \0.\0f\0i\0e\0l\0d\0-\0g\0r\0a\0p\0h\0-\0d\0e\0t\0a\0i\0l\0-\0r\0e\0f\0{\0
-\0
-\0 \0 \0p\0a\0d\0d\0i\0n\0g\0:\x008\0p\0x\0;\0
-\0
-\0 \0 \0b\0a\0c\0k\0g\0r\0o\0u\0n\0d\0:\0#\0f\x008\0f\0a\0f\0c\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0:\x001\0p\0x\0 \0s\0o\0l\0i\0d\0 \0#\0e\x002\0e\x008\0f\x000\0;\0
-\0
-\0 \0 \0b\0o\0r\0d\0e\0r\0-\0r\0a\0d\0i\0u\0s\0:\x006\0p\0x\0;\0
-\0
-\0 \0 \0m\0a\0r\0g\0i\0n\0-\0b\0o\0t\0t\0o\0m\0:\x006\0p\0x\0;\0
-\0
-\0 \0 \0f\0o\0n\0t\0-\0s\0i\0z\0e\0:\x001\x001\0p\0x\0;\0
-\0
-\0 \0 \0l\0i\0n\0e\0-\0h\0e\0i\0g\0h\0t\0:\x001\0.\x005\0;\0
-\0
-\0}\0
-\0
-\0`;
+`;
 
   // src/ui/template.js
   init_constants();
