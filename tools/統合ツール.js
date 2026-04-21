@@ -12621,15 +12621,75 @@ ${tableContext.tableLabel}`.toLowerCase();
           i++;
         }
       };
+      const Sty = {
+        borderThin: () => {
+          const b = { style: "thin", color: { rgb: CONFIG.COLORS.BORDER } };
+          return { border: { top: b, bottom: b, left: b, right: b } };
+        },
+        title: () => ({
+          font: { name: CONFIG.FONT_NAME, bold: true, sz: 12, color: { rgb: CONFIG.COLORS.TITLE_TEXT } },
+          alignment: { vertical: "center", horizontal: "left", wrapText: true },
+          fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.TITLE_BG } },
+          ...Sty.borderThin()
+        }),
+        header: () => ({
+          font: { name: CONFIG.FONT_NAME, bold: true, sz: 10, color: { rgb: CONFIG.COLORS.HEADER_TEXT } },
+          alignment: { vertical: "center", horizontal: "center", wrapText: true },
+          fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.HEADER_BG } },
+          ...Sty.borderThin()
+        }),
+        cell: (align = "left") => ({
+          font: { name: CONFIG.FONT_NAME, sz: 10 },
+          alignment: { vertical: "center", horizontal: align, wrapText: true },
+          ...Sty.borderThin()
+        })
+      };
+      const autosizeCols = (ws, aoa) => {
+        const widths = [];
+        for (const row of aoa) {
+          (row || []).forEach((v, i) => {
+            const w = UtilsX.calculateCellWidth(v);
+            widths[i] = Math.max(widths[i] || CONFIG.MIN_COL_WIDTH, w);
+          });
+        }
+        ws["!cols"] = widths.map((w) => ({ wch: w || CONFIG.DEFAULT_COL_WIDTH }));
+      };
+      const applyStyles = (ws, aoa, options = {}) => {
+        if (!styled) return;
+        const titleRows = options.titleRows || [];
+        const headerRowIndex = options.headerRowIndex ?? null;
+        let maxCols = 0;
+        aoa.forEach((r) => {
+          maxCols = Math.max(maxCols, (r || []).length);
+        });
+        for (let r = 0; r < aoa.length; r++) {
+          for (let c = 0; c < maxCols; c++) {
+            const addr = UtilsX.a1(r + 1, c + 1);
+            const cell = ws[addr];
+            if (!cell) continue;
+            if (titleRows.includes(r)) cell.s = Sty.title();
+            else if (headerRowIndex === r) cell.s = Sty.header();
+            else cell.s = Sty.cell(c === 0 ? "center" : "left");
+          }
+        }
+        if (CONFIG.STYLES.FREEZE_HEADER) {
+          ws["!freeze"] = { xSplit: options.freezeCols || 0, ySplit: options.freezeRows || 1 };
+        }
+        if (CONFIG.STYLES.ENABLE_AUTOFILTER && headerRowIndex != null) {
+          ws["!autofilter"] = { ref: `${UtilsX.a1(headerRowIndex + 1, 1)}:${UtilsX.a1(aoa.length, maxCols)}` };
+        }
+      };
       const appendSheet = (name, data) => {
         if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return;
         const ws = XLSX.utils.aoa_to_sheet(data.aoa);
+        autosizeCols(ws, data.aoa);
+        applyStyles(ws, data.aoa, data.options || {});
         const safeName = makeSafeSheetName(name, new Set(wb.SheetNames));
         XLSX.utils.book_append_sheet(wb, ws, safeName);
       };
       const buildSimpleAOA = (title, headers, rows) => ({
         aoa: [title ? [title] : [], headers, ...rows],
-        options: { headerRowIndex: title ? 1 : 0, titleRows: title ? [0] : [] }
+        options: { headerRowIndex: title ? 1 : 0, titleRows: title ? [0] : [], freezeRows: 2 }
       });
       if (selectedSheets.has("summary")) {
         const summaryRows = [
