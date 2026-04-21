@@ -1201,8 +1201,7 @@ ${contextLine}`);
     async function loadSheetLib() {
       if (typeof window.XLSX !== "undefined") return { styled: true };
       const loadScriptLocal = (src, timeout = 15e3) => new Promise((resolve, reject) => {
-        const doc = getToolDocument();
-        const s = doc.createElement("script");
+        const s = document.createElement("script");
         s.src = src;
         s.async = true;
         let done = false;
@@ -1226,7 +1225,7 @@ ${contextLine}`);
             reject(new Error(`Failed: ${src}`));
           }
         };
-        doc.head.appendChild(s);
+        document.head.appendChild(s);
       });
       try {
         await loadScriptLocal(CONFIG.SHEETLIB_PRIMARY_URL);
