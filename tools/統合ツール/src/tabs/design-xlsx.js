@@ -138,7 +138,10 @@ export async function runAdvancedDesignExporter(params = {}) {
 
   async function loadSheetLib() {
     if (typeof window.XLSX !== 'undefined') return { styled: true };
-    const loadScriptLocal = (src, timeout = 15000) => new Promise((resolve, reject) => { const doc = getToolDocument(); const s = doc.createElement('script'); s.src = src; s.async = true; let done = false; const timer = setTimeout(() => { if (!done) { done = true; reject(new Error(`Timeout: ${src}`)); } }, timeout); s.onload = () => { if (!done) { done = true; clearTimeout(timer); resolve(true); } }; s.onerror = () => { if (!done) { done = true; clearTimeout(timer); reject(new Error(`Failed: ${src}`)); } }; doc.head.appendChild(s); });
+    // XLSX は本コードと同じ realm（main window）に読み込む必要があるため
+    // getToolDocument() ではなく main の document を使う（popout 時に XLSX が
+    // popout window 側へ登録され「XLSX is not defined」となるのを防ぐ）。
+    const loadScriptLocal = (src, timeout = 15000) => new Promise((resolve, reject) => { const s = document.createElement('script'); s.src = src; s.async = true; let done = false; const timer = setTimeout(() => { if (!done) { done = true; reject(new Error(`Timeout: ${src}`)); } }, timeout); s.onload = () => { if (!done) { done = true; clearTimeout(timer); resolve(true); } }; s.onerror = () => { if (!done) { done = true; clearTimeout(timer); reject(new Error(`Failed: ${src}`)); } }; document.head.appendChild(s); });
     try { await loadScriptLocal(CONFIG.SHEETLIB_PRIMARY_URL); return { styled: true }; }
     catch { await loadScriptLocal(CONFIG.SHEETLIB_FALLBACK_URL); return { styled: false }; }
   }
