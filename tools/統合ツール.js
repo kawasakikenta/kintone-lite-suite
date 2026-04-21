@@ -272,7 +272,7 @@
   });
 
   // src/constants.js
-  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.js"() {
       "use strict";
@@ -478,6 +478,57 @@
         "formula",
         "sort"
       ]);
+      REFLECT_QUICK_PRESETS = [
+        {
+          id: "all",
+          label: "すべての候補",
+          hint: "全ノードを選択し、反映元は比較元に揃えます",
+          mode: "src"
+        },
+        {
+          id: "fieldsOnly",
+          label: "フィールドのみ",
+          hint: "フィールド設定の差分だけ選択します",
+          sections: ["fieldSettings"],
+          excludeSystemFields: true,
+          mode: "src"
+        },
+        {
+          id: "viewsAndReports",
+          label: "ビュー+グラフ",
+          hint: "ビュー設定・グラフ設定だけ選択",
+          sections: ["viewSettings", "reportSettings"],
+          mode: "src"
+        },
+        {
+          id: "highOnly",
+          label: "高重要度のみ",
+          hint: "重要度「高」の差分だけを選択",
+          severities: ["high"],
+          mode: "src"
+        },
+        {
+          id: "addedOnly",
+          label: "追加のみ",
+          hint: "追加差分だけ選択（既存設定は残す）",
+          types: ["added"],
+          mode: "src"
+        },
+        {
+          id: "excludeAcl",
+          label: "権限を除外",
+          hint: "アプリ/フィールド/レコード権限を除外して選択",
+          excludeSections: ["appAcl", "fieldAcl", "recordPermissions"],
+          mode: "src"
+        },
+        {
+          id: "keepTarget",
+          label: "比較先を維持",
+          hint: "選択はそのまま、反映元を全て「比較先」に変更",
+          keepSelection: true,
+          mode: "tgt"
+        }
+      ];
       IGNORE_PRESET_KEYS = {
         fieldOrder: ["index", "no", "order"],
         meta: ["revision", "createdAt", "creator", "modifiedAt", "modifier", "updatedAt", "updatedBy"],
@@ -985,7 +1036,36 @@ ${contextLine}`);
     } catch {
     }
   }
-  var state, ui;
+  function loadReflectApplyHistory() {
+    try {
+      const raw = sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  function persistReflectApplyHistory(entries) {
+    try {
+      const list = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
+      sessionStorage.setItem(REFLECT_APPLY_HISTORY_KEY, JSON.stringify(list));
+    } catch {
+    }
+  }
+  function pushReflectApplyHistoryEntry(entry) {
+    if (!entry || typeof entry !== "object") return;
+    const list = Array.isArray(state.reflectApplyHistory) ? [...state.reflectApplyHistory] : [];
+    list.unshift(entry);
+    const trimmed = list.slice(0, REFLECT_APPLY_HISTORY_LIMIT);
+    state.reflectApplyHistory = trimmed;
+    persistReflectApplyHistory(trimmed);
+  }
+  function clearReflectApplyHistory() {
+    state.reflectApplyHistory = [];
+    persistReflectApplyHistory([]);
+  }
+  var state, REFLECT_APPLY_HISTORY_KEY, REFLECT_APPLY_HISTORY_LIMIT, ui;
   var init_state = __esm({
     "src/state.js"() {
       "use strict";
@@ -1006,6 +1086,11 @@ ${contextLine}`);
         lastApplyCompletedMode: "",
         lastApplyCompletedHadError: false,
         lastApplyCompletedAppId: "",
+        lastApplyReport: null,
+        reflectApplyHistory: [],
+        reflectApplyHistoryOpen: false,
+        reflectPlanPreviewKeyword: "",
+        reflectPlanPreviewChangedOnly: false,
         lastPreviewBackupPayload: null,
         lastPreviewBackupFilename: "",
         diffViewTheme: "light",
@@ -1049,6 +1134,9 @@ ${contextLine}`);
         guidedTourIndex: 0,
         running: false
       };
+      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
+      REFLECT_APPLY_HISTORY_LIMIT = 30;
+      state.reflectApplyHistory = loadReflectApplyHistory();
       ui = {};
     }
   });
@@ -7322,6 +7410,8 @@ ${tableContext.tableLabel}`.toLowerCase();
     renderIgnoreKeyChips: () => renderIgnoreKeyChips,
     renderLookupMapRows: () => renderLookupMapRows,
     renderReflectActiveFilterChips: () => renderReflectActiveFilterChips,
+    renderReflectApplyHistory: () => renderReflectApplyHistory,
+    renderReflectApplyReport: () => renderReflectApplyReport,
     renderReflectAssistPanel: () => renderReflectAssistPanel,
     renderReflectFooterBadges: () => renderReflectFooterBadges,
     renderReflectMainPanel: () => renderReflectMainPanel,
@@ -7331,6 +7421,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     renderReflectPlanInline: () => renderReflectPlanInline,
     renderReflectPlanPreview: () => renderReflectPlanPreview,
     renderReflectPostApplyCard: () => renderReflectPostApplyCard,
+    renderReflectQuickPresets: () => renderReflectQuickPresets,
     renderReflectSidebar: () => renderReflectSidebar,
     renderScopeChips: () => renderScopeChips,
     renderScopePickerSummaries: () => renderScopePickerSummaries,
@@ -8106,15 +8197,54 @@ ${tableContext.tableLabel}`.toLowerCase();
       if (info?.shape === "map") return acc + (info.preview?.totalCount || 0);
       return acc + 1;
     }, 0);
-    const cards = entries.map(([key, info]) => buildSectionPreviewCardHtml(key, info)).filter(Boolean).join("");
+    const keyword = String(state.reflectPlanPreviewKeyword || "").toLowerCase();
+    const visibleEntries = keyword ? entries.filter(([key, info]) => {
+      const label = String(info?.label || key || "").toLowerCase();
+      return label.includes(keyword) || key.toLowerCase().includes(keyword);
+    }) : entries;
+    const changedOnly = !!state.reflectPlanPreviewChangedOnly;
+    const filteredEntries = changedOnly ? visibleEntries.filter(([, info]) => {
+      if (info?.shape === "map") return (info.preview?.totalCount || 0) > 0;
+      if (info?.shape === "whole") return !!info.wholePreview?.changed;
+      return false;
+    }) : visibleEntries;
+    const cards = filteredEntries.map(([key, info]) => buildSectionPreviewCardHtml(key, info)).filter(Boolean).join("");
+    const emptyMsg = !cards ? `<div class="muted" style="padding:8px;font-size:11px">該当セクションはありません${keyword ? `（キーワード「${esc(keyword)}」）` : ""}</div>` : "";
+    const keywordVal = esc(state.reflectPlanPreviewKeyword || "");
     el.innerHTML = `<div class="reflect-plan-preview__wrap">
     <div class="reflect-plan-preview__head">
       <span class="reflect-plan-preview__title">反映後プレビュー（ビフォー / アフター）</span>
-      <span class="reflect-plan-preview__meta">変更 ${totalChanges}件 / ${changedEntries.length}セクション</span>
+      <span class="reflect-plan-preview__meta">変更 ${totalChanges}件 / ${changedEntries.length}セクション（表示 ${filteredEntries.length}/${entries.length}）</span>
+    </div>
+    <div class="reflect-plan-preview__toolbar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0 8px">
+      <input type="text" id="u_reflectPlanPreviewSearch" placeholder="セクション名で絞り込み" value="${keywordVal}" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:11px">
+      <label class="chip" style="font-size:10px" title="変更があるセクションだけ表示"><input type="checkbox" id="u_reflectPlanPreviewChangedOnly" ${changedOnly ? "checked" : ""}> 変更ありのみ</label>
+      <button type="button" class="btn sub" data-act="reflectPlanPreviewExpandAll" style="padding:3px 8px;font-size:10px" title="全セクションを展開">全て開く</button>
+      <button type="button" class="btn sub" data-act="reflectPlanPreviewCollapseAll" style="padding:3px 8px;font-size:10px" title="全セクションを畳む">全て閉じる</button>
     </div>
     <p class="reflect-plan-preview__hint">各セクションのカードをクリックすると、反映前後のJSONを並べて確認できます。</p>
-    <div class="reflect-plan-preview__list">${cards}</div>
+    <div class="reflect-plan-preview__list">${cards}${emptyMsg}</div>
   </div>`;
+    const search = el.querySelector("#u_reflectPlanPreviewSearch");
+    if (search && !search._kusBound) {
+      search._kusBound = true;
+      let timer = 0;
+      search.addEventListener("input", (e) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          state.reflectPlanPreviewKeyword = e.target.value || "";
+          renderReflectPlanPreview();
+        }, 150);
+      });
+    }
+    const changedToggle = el.querySelector("#u_reflectPlanPreviewChangedOnly");
+    if (changedToggle && !changedToggle._kusBound) {
+      changedToggle._kusBound = true;
+      changedToggle.addEventListener("change", (e) => {
+        state.reflectPlanPreviewChangedOnly = !!e.target.checked;
+        renderReflectPlanPreview();
+      });
+    }
   }
   function renderReflectFooterBadges() {
     const el = getToolDocument().getElementById("u_reflectFooterBadges");
@@ -8171,7 +8301,114 @@ ${tableContext.tableLabel}`.toLowerCase();
     renderReflectPlanInline();
     renderReflectPlanPreview();
     renderReflectPostApplyCard();
+    renderReflectApplyReport();
+    renderReflectApplyHistory();
+    renderReflectQuickPresets();
     renderReflectFooterBadges();
+  }
+  function renderReflectApplyReport() {
+    const host = getToolDocument().getElementById("u_reflectApplyReport");
+    if (!host) return;
+    const report = state.lastApplyReport;
+    if (!report || !Array.isArray(report.sections) || !report.sections.length) {
+      host.innerHTML = "";
+      return;
+    }
+    const cls = report.hadError ? "reflect-apply-report--warn" : "reflect-apply-report--ok";
+    const modeLabel = {
+      section: "セクションまとめ反映",
+      nodes: "差分選択モード",
+      patch: "JSONパッチ反映",
+      retry: "失敗セクション再反映",
+      restore: "バックアップ復元"
+    }[report.mode] || report.mode || "反映";
+    const stamp = new Date(report.completedAt).toLocaleString();
+    const sectionHtml = report.sections.map((s) => {
+      const statusCls = s.status === "ok" ? "ok" : s.status === "ng" ? "ng" : "skipped";
+      const statusLabel = s.status === "ok" ? "成功" : s.status === "ng" ? "失敗" : "スキップ";
+      const msg = s.message ? `<span class="reflect-apply-section__msg" title="${esc(s.message)}">${esc(s.message)}</span>` : "";
+      return `<div class="reflect-apply-section">
+      <span class="reflect-apply-section__label">${esc(s.label || s.sectionKey)}</span>
+      <span class="reflect-apply-section__status ${statusCls}">${statusLabel}</span>
+      ${msg}
+    </div>`;
+    }).join("");
+    const retryBtn = report.ngCount > 0 ? '<button type="button" class="btn ok" data-act="retryFailedSections" title="直近の反映で失敗したセクションだけを再送信します">失敗セクションだけ再反映</button>' : "";
+    host.className = `reflect-apply-report ${cls}`;
+    host.innerHTML = `<div class="reflect-apply-report__head">
+      <span class="reflect-apply-report__title">直近の反映結果 — ${esc(modeLabel)}</span>
+      <span class="reflect-apply-report__meta">比較先 ${esc(report.appId || "-")} / ${esc(stamp)}</span>
+    </div>
+    <div class="reflect-apply-report__counters">
+      <span class="reflect-apply-counter reflect-apply-counter--ok">成功 ${report.okCount}</span>
+      <span class="reflect-apply-counter reflect-apply-counter--ng">失敗 ${report.ngCount}</span>
+      <span class="reflect-apply-counter reflect-apply-counter--skip">スキップ ${report.skipCount}</span>
+    </div>
+    <div class="reflect-apply-report__sections">${sectionHtml}</div>
+    <div class="reflect-apply-report__actions">
+      ${retryBtn}
+      <button type="button" class="btn sub" data-act="copyApplyReport" title="レポート内容をクリップボードへコピーします">テキストでコピー</button>
+      <button type="button" class="btn sub" data-act="dismissApplyReport" title="このレポートを閉じます">閉じる</button>
+    </div>`;
+  }
+  function renderReflectApplyHistory() {
+    const host = getToolDocument().getElementById("u_reflectApplyHistory");
+    if (!host) return;
+    const history = Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [];
+    if (!history.length) {
+      host.innerHTML = "";
+      return;
+    }
+    const open = state.reflectApplyHistoryOpen ? " open" : "";
+    const items = history.map((entry) => {
+      const hasErr = entry.hadError || (entry.ngCount || 0) > 0;
+      const modeLabel = {
+        section: "まとめ反映",
+        nodes: "差分選択",
+        patch: "JSONパッチ",
+        retry: "再反映",
+        restore: "復元"
+      }[entry.mode] || entry.mode || "反映";
+      const time = new Date(entry.at).toLocaleString();
+      const scopeLabel = (entry.scopes || []).slice(0, 4).join(", ") + ((entry.scopes || []).length > 4 ? ` 他${entry.scopes.length - 4}` : "");
+      return `<div class="reflect-apply-history__item${hasErr ? " has-error" : ""}" title="${esc(scopeLabel)}">
+      <span class="reflect-apply-history__time">${esc(time)}</span>
+      <span class="reflect-apply-history__summary">[${esc(modeLabel)}] 比較先 ${esc(entry.appId || "-")} / ${esc(scopeLabel || "-")}</span>
+      <span class="reflect-apply-history__stats" style="color:${hasErr ? "#991b1b" : "#166534"}">OK ${entry.okCount || 0} / NG ${entry.ngCount || 0}</span>
+    </div>`;
+    }).join("");
+    host.innerHTML = `<details${open} data-act-host="reflectApplyHistory">
+      <summary>
+        <span>反映履歴（このセッション ${history.length}件）</span>
+        <button type="button" class="btn sub" data-act="clearApplyHistory" style="padding:2px 8px;font-size:10px" title="履歴を消去">クリア</button>
+      </summary>
+      <div class="reflect-apply-history__list">${items}</div>
+    </details>`;
+    const details = host.querySelector("details");
+    if (details && !details._kusBound) {
+      details._kusBound = true;
+      details.addEventListener("toggle", () => {
+        state.reflectApplyHistoryOpen = details.open;
+      });
+    }
+  }
+  function renderReflectQuickPresets() {
+    const host = getToolDocument().getElementById("u_reflectQuickPresets");
+    if (!host) return;
+    if (!isReflectNodeModeEffective()) {
+      host.innerHTML = "";
+      return;
+    }
+    const rowCount = (state.reflectRows || []).length;
+    const disabled = rowCount === 0;
+    const disabledAttr = disabled ? 'disabled aria-disabled="true" style="opacity:.55;cursor:not-allowed"' : "";
+    const label = '<span class="reflect-quick-presets__label">クイック選択:</span>';
+    const buttons = REFLECT_QUICK_PRESETS.map((p) => {
+      const modeAttr = `data-mode="${esc(p.mode || "src")}"`;
+      const hint = p.hint ? ` title="${esc(p.hint)}"` : "";
+      return `<button type="button" class="reflect-quick-preset" data-act="applyReflectQuickPreset" data-preset="${esc(p.id)}" ${modeAttr}${hint} ${disabledAttr}>${esc(p.label)}</button>`;
+    }).join("");
+    host.innerHTML = `${label}${buttons}${disabled ? '<span class="muted" style="font-size:10px;align-self:center">差分候補を読込後に利用可</span>' : ""}`;
   }
   function renderReflectPostApplyCard() {
     const host = getToolDocument().getElementById("u_reflectPostApply");
@@ -8541,10 +8778,11 @@ ${tableContext.tableLabel}`.toLowerCase();
     const selected = state.reflectSelectedIds.has(row._id);
     const mode = deps.reflectRowModeById(row._id);
     const severity = String(row.severity || "low").toLowerCase();
-    const activeTab = ["diff", "src", "tgt", "apply"].includes(state.reflectDetailTab) ? state.reflectDetailTab : "diff";
+    const activeTab = ["diff", "sbs", "src", "tgt", "apply"].includes(state.reflectDetailTab) ? state.reflectDetailTab : "diff";
     const useCharDiff = !!ui3.charDiff?.checked;
     const tabs = [
       { key: "diff", label: "差分" },
+      { key: "sbs", label: "並列ビュー" },
       { key: "src", label: "比較元" },
       { key: "tgt", label: "比較先" },
       { key: "apply", label: "反映値" }
@@ -8569,6 +8807,25 @@ ${tableContext.tableLabel}`.toLowerCase();
           </div>
         </div>
       </details>`;
+    } else if (activeTab === "sbs") {
+      const leftJson = deps.stringifyForDiff(row.left);
+      const rightJson = deps.stringifyForDiff(row.right);
+      const applyJson = deps.stringifyForDiff(deps.reflectRowDesiredValue(row));
+      bodyHtml = `<div class="reflect-node-detail-note">比較元 / 比較先 / 反映値の 3 面同時表示です。現在の反映モードは<strong>${mode === "src" ? "比較元" : "比較先"}採用</strong>。ボタンでワンクリック切替できます。</div>
+      <div class="reflect-node-sbs" style="grid-template-columns:1fr 1fr 1fr">
+        <div class="reflect-node-sbs__col">
+          <div class="reflect-node-sbs__label">比較元 (src)</div>
+          <pre class="reflect-node-sbs__pre">${esc(leftJson)}</pre>
+        </div>
+        <div class="reflect-node-sbs__col">
+          <div class="reflect-node-sbs__label">比較先 (tgt)</div>
+          <pre class="reflect-node-sbs__pre">${esc(rightJson)}</pre>
+        </div>
+        <div class="reflect-node-sbs__col" style="border-color:${mode === "src" ? "#c7d2fe" : "#a7f3d0"};background:${mode === "src" ? "#eef2ff" : "#ecfdf5"}">
+          <div class="reflect-node-sbs__label" style="background:${mode === "src" ? "#e0e7ff" : "#d1fae5"}">反映値 — ${mode === "src" ? "比較元採用" : "比較先維持"}</div>
+          <pre class="reflect-node-sbs__pre">${esc(applyJson)}</pre>
+        </div>
+      </div>`;
     } else {
       const value = activeTab === "src" ? row.left : activeTab === "tgt" ? row.right : deps.reflectRowDesiredValue(row);
       const title = activeTab === "src" ? "比較元JSON" : activeTab === "tgt" ? "比較先JSON" : `反映値JSON (${mode === "src" ? "比較元" : "比較先"}を採用)`;
@@ -8658,6 +8915,7 @@ ${tableContext.tableLabel}`.toLowerCase();
       init_engine();
       init_enrich();
       init_nodeModeUi();
+      init_constants();
       init_dialog();
       init_oss_integrations();
       ui3 = {};
@@ -8729,12 +8987,14 @@ ${tableContext.tableLabel}`.toLowerCase();
   var reflect_exports = {};
   __export(reflect_exports, {
     applyReflectPreset: () => applyReflectPreset,
+    applyReflectQuickPreset: () => applyReflectQuickPreset,
     deleteReflectPreset: () => deleteReflectPreset,
     ensureActiveReflectNodeId: () => ensureActiveReflectNodeId,
     exportReflectSelectionJson: () => exportReflectSelectionJson,
     getActiveReflectRow: () => getActiveReflectRow,
     getDiffCountsBySection: () => getDiffCountsBySection2,
     getEffectiveReflectScopeInfo: () => getEffectiveReflectScopeInfo2,
+    getReflectQuickPresets: () => getReflectQuickPresets,
     getReflectRowById: () => getReflectRowById,
     getSelectedReflectRows: () => getSelectedReflectRows,
     importReflectSelectionFromFile: () => importReflectSelectionFromFile,
@@ -9157,6 +9417,63 @@ ${tableContext.tableLabel}`.toLowerCase();
       matched += 1;
     }
     return { matched, missed, total: (parsed.items || []).length };
+  }
+  function getReflectQuickPresets() {
+    return REFLECT_QUICK_PRESETS.map((p) => ({ ...p }));
+  }
+  function isSystemFieldRow(row) {
+    if (!row || row.sectionKey !== "fieldSettings") return false;
+    const candidates = [row.right, row.left];
+    for (const v of candidates) {
+      if (v && typeof v === "object" && typeof v.type === "string" && SYSTEM_FIELD_TYPES.has(v.type)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function applyReflectQuickPreset(presetId) {
+    const preset = REFLECT_QUICK_PRESETS.find((p) => p.id === presetId);
+    if (!preset) throw new Error(`クイックプリセット「${presetId}」が見つかりません`);
+    if (!state.reflectRows.length) loadReflectRowsFromLastDiff();
+    if (!state.reflectRows.length) throw new Error("差分候補が空のためプリセットを適用できません");
+    pushReflectUndo();
+    const rows = state.reflectRows;
+    const includeSections = preset.sections ? new Set(preset.sections) : null;
+    const excludeSections = preset.excludeSections ? new Set(preset.excludeSections) : null;
+    const severities = preset.severities ? new Set(preset.severities.map((s) => String(s).toLowerCase())) : null;
+    const types = preset.types ? new Set(preset.types) : null;
+    const matchedIds = /* @__PURE__ */ new Set();
+    let keptSelection = false;
+    if (preset.keepSelection) {
+      keptSelection = true;
+      for (const id of state.reflectSelectedIds) matchedIds.add(id);
+    } else {
+      for (const row of rows) {
+        if (!row || !row._id) continue;
+        if (includeSections && !includeSections.has(row.sectionKey)) continue;
+        if (excludeSections && excludeSections.has(row.sectionKey)) continue;
+        if (severities && !severities.has(String(row.severity || "low").toLowerCase())) continue;
+        if (types && !types.has(row.type)) continue;
+        if (preset.excludeSystemFields && isSystemFieldRow(row)) continue;
+        matchedIds.add(row._id);
+      }
+    }
+    if (!keptSelection) {
+      state.reflectSelectedIds = matchedIds;
+    }
+    const mode = preset.mode === "tgt" ? "tgt" : "src";
+    const modeTarget = preset.keepSelection ? state.reflectSelectedIds : matchedIds;
+    for (const id of modeTarget) {
+      state.reflectNodeModes[id] = mode;
+    }
+    return {
+      id: preset.id,
+      label: preset.label,
+      mode,
+      selectedCount: state.reflectSelectedIds.size,
+      matchedCount: matchedIds.size,
+      total: rows.length
+    };
   }
   var BULK_MODE_CONFIRM_THRESHOLD;
   var init_reflect = __esm({
@@ -9828,7 +10145,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
     if (plan.deleteSkipCount) logs.push(`  - actions delete(skip): ${plan.deleteSkipCount} (互換モード: 削除は行いません)`);
   }
-  async function applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, { phaseLabel = "反映", onProgress } = {}) {
+  async function applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, { phaseLabel = "反映", onProgress, sectionResults } = {}) {
     let hadError = false;
     for (let i = 0; i < scopes.length; i++) {
       const secKey = scopes[i];
@@ -9837,6 +10154,7 @@ ${tableContext.tableLabel}`.toLowerCase();
       const sourceSec = deepClone(sourceBundle.sections[secKey]);
       if (!sourceSec || sourceSec._fetchError) {
         logs.push(`SKIP ${def.label}: source未取得`);
+        recordSectionResult(sectionResults, secKey, def.label, "skipped", "source未取得");
         if (onProgress) onProgress(i, scopes.length);
         continue;
       }
@@ -9849,33 +10167,40 @@ ${tableContext.tableLabel}`.toLowerCase();
           const afterProps = filterWritableFieldProps2(sourceSec.properties || sourceSec, true);
           await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, null, stopOnError);
           logs.push(`OK ${def.label}`);
+          recordSectionResult(sectionResults, secKey, def.label, "ok", "");
           continue;
         }
         if (secKey === "viewSettings") {
           const current = await apiGet(prefix, "/app/views.json", { app });
           await applyViewsSectionDiff(prefix, app, current.views || {}, sourceSec.views || sourceSec || {}, logs, stopOnError);
           logs.push(`OK ${def.label}`);
+          recordSectionResult(sectionResults, secKey, def.label, "ok", "");
           continue;
         }
         if (secKey === "reportSettings") {
           const current = await apiGet(prefix, "/app/reports.json", { app });
           await applyReportsSectionDiff(prefix, app, current.reports || {}, sourceSec.reports || sourceSec || {}, logs, stopOnError);
           logs.push(`OK ${def.label}`);
+          recordSectionResult(sectionResults, secKey, def.label, "ok", "");
           continue;
         }
         if (secKey === "actionSettings") {
           const current = await apiGet(prefix, "/app/actions.json", { app });
           await applyActionsSectionDiff(prefix, app, current.actions || {}, sourceSec.actions || sourceSec || {}, logs, stopOnError);
           logs.push(`OK ${def.label}`);
+          recordSectionResult(sectionResults, secKey, def.label, "ok", "");
           continue;
         }
         const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder(sourceSec) }, note: `${def.label} put` }];
         appendRequestPlanLogs(logs, { requests: reqs });
         await executeRequestPlan(prefix, reqs, logs, stopOnError);
         logs.push(`OK ${def.label}`);
+        recordSectionResult(sectionResults, secKey, def.label, "ok", "");
       } catch (e) {
         hadError = true;
-        logs.push(`NG ${def.label}: ${e.message || String(e)}`);
+        const msg = e.message || String(e);
+        logs.push(`NG ${def.label}: ${msg}`);
+        recordSectionResult(sectionResults, secKey, def.label, "ng", msg);
         if (stopOnError) {
           logs.push("中断: エラーが発生したため処理を停止しました");
           break;
@@ -9883,6 +10208,61 @@ ${tableContext.tableLabel}`.toLowerCase();
       }
     }
     return hadError;
+  }
+  function recordSectionResult(results, sectionKey, label, status, message) {
+    if (!Array.isArray(results)) return;
+    const existing = results.find((r) => r && r.sectionKey === sectionKey);
+    if (existing) {
+      existing.status = status;
+      existing.label = label || existing.label;
+      if (message) existing.message = message;
+      return;
+    }
+    results.push({
+      sectionKey,
+      label: label || sectionKey,
+      status,
+      message: message || ""
+    });
+  }
+  function commitApplyReport({ mode, appId, scopes, sectionResults, hadError, sourceAppId, sourceGuestId, targetGuestId }) {
+    const now = Date.now();
+    const okSections = sectionResults.filter((r) => r.status === "ok").map((r) => r.sectionKey);
+    const ngSections = sectionResults.filter((r) => r.status === "ng").map((r) => r.sectionKey);
+    const skipSections = sectionResults.filter((r) => r.status === "skipped").map((r) => r.sectionKey);
+    const report = {
+      completedAt: now,
+      mode,
+      appId: appId || "",
+      sourceAppId: sourceAppId || "",
+      sourceGuestId: sourceGuestId || "",
+      targetGuestId: targetGuestId || "",
+      scopes: [...scopes],
+      sections: sectionResults.map((r) => ({ ...r })),
+      okCount: okSections.length,
+      ngCount: ngSections.length,
+      skipCount: skipSections.length,
+      failedSectionKeys: ngSections,
+      hadError: !!hadError
+    };
+    state.lastApplyReport = report;
+    state.lastApplyCompletedAt = now;
+    state.lastApplyCompletedMode = mode;
+    state.lastApplyCompletedHadError = !!hadError;
+    state.lastApplyCompletedAppId = appId || "";
+    pushReflectApplyHistoryEntry({
+      id: `apply_${now}`,
+      at: now,
+      mode,
+      appId: appId || "",
+      scopes: [...scopes],
+      okCount: okSections.length,
+      ngCount: ngSections.length,
+      skipCount: skipSections.length,
+      failedSectionKeys: ngSections,
+      hadError: !!hadError
+    });
+    return report;
   }
   function resolveBackupScopes(c) {
     if (isReflectNodeModeEffective()) {
@@ -10234,6 +10614,7 @@ ${tableContext.tableLabel}`.toLowerCase();
       logs.push(`バックアップ保存: ${backup.filename}`);
     }
     logs.push("");
+    const sectionResults = [];
     for (let i = 0; i < sectionKeys.length; i++) {
       const secKey = sectionKeys[i];
       const def = SECTION_DEFS.find((item) => item.key === secKey);
@@ -10262,9 +10643,12 @@ ${tableContext.tableLabel}`.toLowerCase();
           await executeRequestPlan(prefix, reqs, logs, stopOnError);
         }
         logs.push(`OK ${def.label}: patch ${appliedCount}/${sortedRows.length}`);
+        recordSectionResult(sectionResults, secKey, def.label, "ok", `${appliedCount}/${sortedRows.length}`);
       } catch (e) {
         hadError = true;
-        logs.push(`NG ${def.label}: ${e.message || String(e)}`);
+        const msg = e.message || String(e);
+        logs.push(`NG ${def.label}: ${msg}`);
+        recordSectionResult(sectionResults, secKey, def.label, "ng", msg);
         if (stopOnError) {
           logs.push("中断: エラーが発生したため処理を停止しました");
           break;
@@ -10273,6 +10657,16 @@ ${tableContext.tableLabel}`.toLowerCase();
     }
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: "JSONパッチ反映完了" });
+    commitApplyReport({
+      mode: "patch",
+      appId: app,
+      scopes: sectionKeys,
+      sectionResults,
+      hadError,
+      sourceAppId: c.source.appId,
+      sourceGuestId: c.source.guestId,
+      targetGuestId: c.target.guestId
+    });
     renderReflectAssistPanel();
     renderReflectMainPanel();
     setStatus(hadError ? "JSONパッチ反映完了（一部エラーあり）" : "JSONパッチ反映完了");
@@ -10330,11 +10724,13 @@ ${tableContext.tableLabel}`.toLowerCase();
       bySection[row.sectionKey].push(row);
     }
     const sectionKeys = Object.keys(bySection);
+    const sectionResults = [];
     for (let i = 0; i < sectionKeys.length; i++) {
       const secKey = sectionKeys[i];
       const def = SECTION_DEFS.find((d) => d.key === secKey);
       if (!def || !def.put) {
         logs.push(`SKIP ${def?.label || secKey}: PUT非対応`);
+        recordSectionResult(sectionResults, secKey, def?.label || secKey, "skipped", "PUT非対応");
         renderProgressLog(logs, { phase: "ノード反映実行中", current: i, total: sectionKeys.length });
         continue;
       }
@@ -10380,9 +10776,12 @@ ${tableContext.tableLabel}`.toLowerCase();
           await executeRequestPlan(prefix, reqs, logs, stopOnError);
           logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
         }
+        recordSectionResult(sectionResults, secKey, def.label, "ok", `${appliedCount}/${rowsInSection.length}`);
       } catch (e) {
         hadError = true;
-        logs.push(`NG ${def.label}: ${e.message || String(e)}`);
+        const msg = e.message || String(e);
+        logs.push(`NG ${def.label}: ${msg}`);
+        recordSectionResult(sectionResults, secKey, def.label, "ng", msg);
         if (stopOnError) {
           logs.push("中断: エラーが発生したため処理を停止しました");
           break;
@@ -10391,10 +10790,16 @@ ${tableContext.tableLabel}`.toLowerCase();
     }
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: "ノード反映完了" });
-    state.lastApplyCompletedAt = Date.now();
-    state.lastApplyCompletedMode = "nodes";
-    state.lastApplyCompletedHadError = hadError;
-    state.lastApplyCompletedAppId = app;
+    commitApplyReport({
+      mode: "nodes",
+      appId: app,
+      scopes: sectionKeys,
+      sectionResults,
+      hadError,
+      sourceAppId: c.source.appId,
+      sourceGuestId: c.source.guestId,
+      targetGuestId: c.target.guestId
+    });
     renderReflectAssistPanel();
     renderReflectMainPanel();
     setStatus("ノード反映処理完了");
@@ -10441,16 +10846,24 @@ ${tableContext.tableLabel}`.toLowerCase();
       logs.push(`バックアップ保存: ${backup.filename}`);
     }
     logs.push("");
+    const sectionResults = [];
     hadError = await applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, {
       phaseLabel: "反映",
-      onProgress: (i, total) => renderProgressLog(logs, { phase: "プレビュー反映実行中", current: i, total })
+      onProgress: (i, total) => renderProgressLog(logs, { phase: "プレビュー反映実行中", current: i, total }),
+      sectionResults
     });
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: "プレビュー反映完了" });
-    state.lastApplyCompletedAt = Date.now();
-    state.lastApplyCompletedMode = "section";
-    state.lastApplyCompletedHadError = hadError;
-    state.lastApplyCompletedAppId = app;
+    commitApplyReport({
+      mode: "section",
+      appId: app,
+      scopes,
+      sectionResults,
+      hadError,
+      sourceAppId: c.source.appId,
+      sourceGuestId: c.source.guestId,
+      targetGuestId: c.target.guestId
+    });
     renderReflectAssistPanel();
     renderReflectMainPanel();
     setStatus("プレビュー反映処理完了");
@@ -10499,12 +10912,24 @@ ${tableContext.tableLabel}`.toLowerCase();
       logs.push(`復元前バックアップ保存: ${beforeRestoreBackup.filename}`);
     }
     logs.push("");
+    const sectionResults = [];
     const hadError = await applySectionsLoop(prefix, app, backupBundle, scopes, logs, {}, stopOnError, {
       phaseLabel: "バックアップ復元",
-      onProgress: (i, total) => renderProgressLog(logs, { phase: "バックアップ復元中", current: i, total })
+      onProgress: (i, total) => renderProgressLog(logs, { phase: "バックアップ復元中", current: i, total }),
+      sectionResults
     });
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: "バックアップ復元完了" });
+    commitApplyReport({
+      mode: "restore",
+      appId: app,
+      scopes,
+      sectionResults,
+      hadError,
+      sourceAppId: c.source?.appId,
+      sourceGuestId: c.source?.guestId,
+      targetGuestId: c.target?.guestId
+    });
     renderReflectAssistPanel();
     renderReflectMainPanel();
     setStatus(hadError ? "バックアップ復元で一部エラーが発生しました" : "直前バックアップから復元しました");
@@ -10515,6 +10940,64 @@ ${tableContext.tableLabel}`.toLowerCase();
     if (ui.result) {
       ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(msg)}</pre>`;
     }
+  }
+  async function runRetryFailedSections() {
+    const report = state.lastApplyReport;
+    if (!report) throw new Error("直近の反映結果がありません。まず反映を実行してください");
+    const failed = (report.failedSectionKeys || []).filter(Boolean);
+    if (!failed.length) {
+      setStatus("失敗セクションはありません（再実行不要）");
+      return;
+    }
+    const c = commonParams();
+    if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
+    if (String(c.target.appId) !== String(report.appId || "")) {
+      throw new Error(`現在の比較先アプリIDが直近の反映時と異なります（今: ${c.target.appId} / 前回: ${report.appId}）。同じアプリで再実行してください`);
+    }
+    const failedLabels = failed.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ");
+    if (!kusConfirm(`直前に失敗したセクションだけ再反映します。
+対象: ${failedLabels}
+比較先アプリ: ${c.target.appId}
+
+実行しますか？`)) {
+      setStatus("失敗セクション再実行をキャンセルしました");
+      return;
+    }
+    const sourceBundle = await getSourceBundleForApply(c, failed);
+    const prefix = buildApiPrefix(c.target.guestId, true);
+    const app = c.target.appId;
+    const stopOnError = !!ui.stopOnError?.checked;
+    const lookupMap = parseLookupMapInput(ui.lookupMap?.value || "");
+    const logs = [];
+    logs.push(`比較先アプリ: ${app}`);
+    logs.push(`再反映セクション（前回NG）: ${failedLabels}`);
+    logs.push(`エラー時動作: ${stopOnError ? "中断" : "継続"}`);
+    if (ui.autoBackupPreview?.checked) {
+      const backup = await backupTargetPreviewSettings(c, failed, { silentStatus: true });
+      logs.push(`バックアップ保存: ${backup.filename}`);
+    }
+    logs.push("");
+    const sectionResults = [];
+    const hadError = await applySectionsLoop(prefix, app, sourceBundle, failed, logs, lookupMap, stopOnError, {
+      phaseLabel: "再反映",
+      onProgress: (i, total) => renderProgressLog(logs, { phase: "失敗セクション再反映中", current: i, total }),
+      sectionResults
+    });
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: "失敗セクション再反映完了" });
+    commitApplyReport({
+      mode: "retry",
+      appId: app,
+      scopes: failed,
+      sectionResults,
+      hadError,
+      sourceAppId: c.source.appId,
+      sourceGuestId: c.source.guestId,
+      targetGuestId: c.target.guestId
+    });
+    renderReflectAssistPanel();
+    renderReflectMainPanel();
+    setStatus(hadError ? "失敗セクション再反映: 一部エラーあり" : "失敗セクション再反映: 完了");
   }
   var patchJsonDiffTimer, patchJsonDiffSeq, ARRAY_KEY_FALLBACK_CANDIDATES;
   var init_apply = __esm({
@@ -14765,6 +15248,52 @@ ${tableContext.tableLabel}`.toLowerCase();
 #kintone-unified-suite-v2.screen-feature .common-card{
   position:sticky;top:0;z-index:20;
 }
+
+/* ---------- Phase 1 additions: apply report, history, quick presets ---------- */
+#kintone-unified-suite-v2 .reflect-apply-report:empty,
+#kintone-unified-suite-v2 .reflect-apply-history:empty{display:none}
+#kintone-unified-suite-v2 .reflect-apply-report{margin-top:8px;border:1px solid #dbe3ed;border-radius:12px;background:#fff;padding:10px 12px}
+#kintone-unified-suite-v2 .reflect-apply-report--warn{border-color:#fcd34d;background:linear-gradient(180deg,#fffbeb,#fff)}
+#kintone-unified-suite-v2 .reflect-apply-report--ok{border-color:#bbf7d0;background:linear-gradient(180deg,#f0fdf4,#fff)}
+#kintone-unified-suite-v2 .reflect-apply-report__head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+#kintone-unified-suite-v2 .reflect-apply-report__title{font-size:12px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .reflect-apply-report__meta{font-size:10px;color:#64748b}
+#kintone-unified-suite-v2 .reflect-apply-report__counters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+#kintone-unified-suite-v2 .reflect-apply-counter{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;border:1px solid transparent}
+#kintone-unified-suite-v2 .reflect-apply-counter--ok{background:#dcfce7;color:#166534;border-color:#86efac}
+#kintone-unified-suite-v2 .reflect-apply-counter--ng{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+#kintone-unified-suite-v2 .reflect-apply-counter--skip{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+#kintone-unified-suite-v2 .reflect-apply-report__sections{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+#kintone-unified-suite-v2 .reflect-apply-section{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 8px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;font-size:11px}
+#kintone-unified-suite-v2 .reflect-apply-section__label{font-weight:700;color:#0f172a}
+#kintone-unified-suite-v2 .reflect-apply-section__status{font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700}
+#kintone-unified-suite-v2 .reflect-apply-section__status.ok{background:#dcfce7;color:#166534}
+#kintone-unified-suite-v2 .reflect-apply-section__status.ng{background:#fee2e2;color:#991b1b}
+#kintone-unified-suite-v2 .reflect-apply-section__status.skipped{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .reflect-apply-section__msg{color:#64748b;font-size:10px;margin-left:auto;max-width:60%;word-break:break-all}
+#kintone-unified-suite-v2 .reflect-apply-report__actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+#kintone-unified-suite-v2 .reflect-apply-history{margin-top:8px}
+#kintone-unified-suite-v2 .reflect-apply-history details{border:1px solid #dbe3ed;border-radius:12px;background:#fff;padding:6px 10px}
+#kintone-unified-suite-v2 .reflect-apply-history summary{cursor:pointer;font-size:12px;font-weight:700;color:#1e293b;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:2px 0}
+#kintone-unified-suite-v2 .reflect-apply-history__list{margin-top:8px;display:flex;flex-direction:column;gap:4px;max-height:240px;overflow:auto}
+#kintone-unified-suite-v2 .reflect-apply-history__item{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .reflect-apply-history__item.has-error{background:#fef2f2;border-color:#fecaca}
+#kintone-unified-suite-v2 .reflect-apply-history__time{font-size:10px;color:#64748b;font-variant-numeric:tabular-nums}
+#kintone-unified-suite-v2 .reflect-apply-history__summary{color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .reflect-apply-history__stats{font-size:10px;font-weight:700}
+
+#kintone-unified-suite-v2 .reflect-quick-presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;padding:6px 8px;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc}
+#kintone-unified-suite-v2 .reflect-quick-presets__label{font-size:11px;font-weight:700;color:#334155;align-self:center;margin-right:4px}
+#kintone-unified-suite-v2 .reflect-quick-preset{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;border:1px solid #c7d2fe;background:#eff6ff;color:#1e3a8a;font-size:11px;font-weight:700;cursor:pointer;transition:background .15s}
+#kintone-unified-suite-v2 .reflect-quick-preset:hover{background:#dbeafe}
+#kintone-unified-suite-v2 .reflect-quick-preset[data-mode="tgt"]{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}
+#kintone-unified-suite-v2 .reflect-quick-preset[data-mode="tgt"]:hover{background:#d1fae5}
+
+/* ---------- Phase 2 additions: node detail side-by-side JSON ---------- */
+#kintone-unified-suite-v2 .reflect-node-sbs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#kintone-unified-suite-v2 .reflect-node-sbs__col{border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;display:flex;flex-direction:column;min-height:0}
+#kintone-unified-suite-v2 .reflect-node-sbs__label{font-size:10px;font-weight:700;padding:4px 8px;border-bottom:1px solid #e2e8f0;background:#fff;color:#334155}
+#kintone-unified-suite-v2 .reflect-node-sbs__pre{margin:0;padding:6px 8px;font-size:11px;line-height:1.5;overflow:auto;max-height:240px;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#1e293b}
 `;
 
   // src/ui/template.js
@@ -15367,6 +15896,8 @@ ${tableContext.tableLabel}`.toLowerCase();
                           <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
                           <div class="reflect-plan-preview" id="u_reflectPlanPreview" aria-live="polite"></div>
                           <div class="reflect-post-apply-host" id="u_reflectPostApply" aria-live="polite" style="display:none"></div>
+                          <div id="u_reflectApplyReport" class="reflect-apply-report" aria-live="polite"></div>
+                          <div id="u_reflectApplyHistory" class="reflect-apply-history" aria-live="polite"></div>
                           <div id="u_reflectOverview"></div>
                         </div>
                       </div>
@@ -15443,6 +15974,7 @@ ${tableContext.tableLabel}`.toLowerCase();
                           <button class="btn ok" data-act="reflectModeVisibleSrc">表示中を比較元にする</button>
                           <button class="btn ok" data-act="reflectModeVisibleTgt">表示中を比較先にする</button>
                         </div>
+                        <div class="reflect-quick-presets" id="u_reflectQuickPresets" aria-label="差分選択クイックプリセット"></div>
                         <details class="diff-fold reflect-inline-fold reflect-inline-fold--node">
                           <summary class="diff-fold-summary">
                             <span class="diff-fold-title">一括選択・一括モード・履歴</span>
@@ -19572,6 +20104,7 @@ ${tableContext.tableLabel}`.toLowerCase();
       runApplyPreview: runApplyPreview2,
       runDeployOnly: runDeployOnly2,
       runApplyPatchJson: runApplyPatchJson2,
+      runRetryFailedSections: runRetryFailedSections2,
       importPatchJsonFromFile: importPatchJsonFromFile2,
       parsePatchJsonPayload: parsePatchJsonPayload2,
       renderPatchJsonSummary: renderPatchJsonSummary2,
@@ -21324,6 +21857,63 @@ ${tableContext.tableLabel}`.toLowerCase();
       if (act === "dismissPostApplyCard") {
         state.lastApplyCompletedAt = null;
         renderReflectAssistPanel();
+        return;
+      }
+      if (act === "retryFailedSections" && typeof runRetryFailedSections2 === "function") {
+        return withGuard(runRetryFailedSections2);
+      }
+      if (act === "copyApplyReport") {
+        const report = state.lastApplyReport;
+        if (!report) {
+          setStatus("コピー対象のレポートがありません", true);
+          return;
+        }
+        const lines = [
+          `反映レポート (${new Date(report.completedAt).toLocaleString()})`,
+          `モード: ${report.mode} / 比較先アプリ: ${report.appId || "-"}`,
+          `成功 ${report.okCount} / 失敗 ${report.ngCount} / スキップ ${report.skipCount}`,
+          "",
+          ...(report.sections || []).map((s) => {
+            const st = s.status === "ok" ? "OK" : s.status === "ng" ? "NG" : "SKIP";
+            return `[${st}] ${s.label || s.sectionKey}${s.message ? " : " + s.message : ""}`;
+          })
+        ];
+        copyToClipboard(lines.join("\n"), "反映レポートをコピーしました");
+        return;
+      }
+      if (act === "dismissApplyReport") {
+        state.lastApplyReport = null;
+        renderReflectAssistPanel();
+        setStatus("反映レポートを閉じました");
+        return;
+      }
+      if (act === "reflectPlanPreviewExpandAll" || act === "reflectPlanPreviewCollapseAll") {
+        const root3 = getToolDocument().getElementById("u_reflectPlanPreview");
+        if (!root3) return;
+        const open = act === "reflectPlanPreviewExpandAll";
+        root3.querySelectorAll("details.reflect-preview-card").forEach((d) => {
+          d.open = open;
+        });
+        setStatus(open ? "プラン プレビューを全て展開しました" : "プラン プレビューを全て畳みました");
+        return;
+      }
+      if (act === "clearApplyHistory") {
+        if (!kusConfirm("反映履歴を全て削除しますか？（このセッションに保存された履歴のみ）")) return;
+        if (typeof clearReflectApplyHistory === "function") clearReflectApplyHistory();
+        renderReflectAssistPanel();
+        setStatus("反映履歴をクリアしました");
+        return;
+      }
+      if (act === "applyReflectQuickPreset") {
+        const presetId = actEl.dataset.preset;
+        if (!presetId) return;
+        try {
+          const result = applyReflectQuickPreset(presetId);
+          renderReflectNodeList();
+          setStatus(`クイックプリセット「${result.label}」を適用しました（選択 ${result.selectedCount}件 / 反映元: ${result.mode === "src" ? "比較元" : "比較先"}）`);
+        } catch (err) {
+          setStatus(err && err.message ? err.message : String(err), true);
+        }
         return;
       }
       if (act === "togglePatchJsonPanel") {
@@ -27231,6 +27821,7 @@ ${field.label}` : code,
       runApplyPreview,
       runDeployOnly,
       runApplyPatchJson,
+      runRetryFailedSections,
       importPatchJsonFromFile,
       parsePatchJsonPayload,
       renderPatchJsonSummary,

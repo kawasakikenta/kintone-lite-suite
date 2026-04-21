@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS, REFLECT_PRESETS_KEY } from '../constants.js';
+import { SECTION_DEFS, REFLECT_PRESETS_KEY, REFLECT_QUICK_PRESETS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, deepClone, normalize, downloadText, nowStamp, readTextFile, kusConfirm } from '../utils.js';
 import { apiGet, fetchBundle, buildApiPrefix } from '../api.js';
@@ -508,4 +508,73 @@ export async function importReflectSelectionFromFile(file) {
     matched += 1;
   }
   return { matched, missed, total: (parsed.items || []).length };
+}
+
+// ---------------------------------------------------------------------------
+// Quick selection presets (差分ノードモード向け、ワンクリックでまとめて選択)
+// ---------------------------------------------------------------------------
+
+export function getReflectQuickPresets() {
+  return REFLECT_QUICK_PRESETS.map((p) => ({ ...p }));
+}
+
+function isSystemFieldRow(row) {
+  if (!row || row.sectionKey !== 'fieldSettings') return false;
+  const candidates = [row.right, row.left];
+  for (const v of candidates) {
+    if (v && typeof v === 'object' && typeof v.type === 'string' && SYSTEM_FIELD_TYPES.has(v.type)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function applyReflectQuickPreset(presetId) {
+  const preset = REFLECT_QUICK_PRESETS.find((p) => p.id === presetId);
+  if (!preset) throw new Error(`クイックプリセット「${presetId}」が見つかりません`);
+  if (!state.reflectRows.length) loadReflectRowsFromLastDiff();
+  if (!state.reflectRows.length) throw new Error('差分候補が空のためプリセットを適用できません');
+  pushReflectUndo();
+  const rows = state.reflectRows;
+  const includeSections = preset.sections ? new Set(preset.sections) : null;
+  const excludeSections = preset.excludeSections ? new Set(preset.excludeSections) : null;
+  const severities = preset.severities ? new Set(preset.severities.map((s) => String(s).toLowerCase())) : null;
+  const types = preset.types ? new Set(preset.types) : null;
+
+  const matchedIds = new Set();
+  let keptSelection = false;
+
+  if (preset.keepSelection) {
+    // Keep current selection as-is, only switch mode.
+    keptSelection = true;
+    for (const id of state.reflectSelectedIds) matchedIds.add(id);
+  } else {
+    for (const row of rows) {
+      if (!row || !row._id) continue;
+      if (includeSections && !includeSections.has(row.sectionKey)) continue;
+      if (excludeSections && excludeSections.has(row.sectionKey)) continue;
+      if (severities && !severities.has(String(row.severity || 'low').toLowerCase())) continue;
+      if (types && !types.has(row.type)) continue;
+      if (preset.excludeSystemFields && isSystemFieldRow(row)) continue;
+      matchedIds.add(row._id);
+    }
+  }
+
+  if (!keptSelection) {
+    state.reflectSelectedIds = matchedIds;
+  }
+  const mode = preset.mode === 'tgt' ? 'tgt' : 'src';
+  const modeTarget = preset.keepSelection ? state.reflectSelectedIds : matchedIds;
+  for (const id of modeTarget) {
+    state.reflectNodeModes[id] = mode;
+  }
+
+  return {
+    id: preset.id,
+    label: preset.label,
+    mode,
+    selectedCount: state.reflectSelectedIds.size,
+    matchedCount: matchedIds.size,
+    total: rows.length
+  };
 }

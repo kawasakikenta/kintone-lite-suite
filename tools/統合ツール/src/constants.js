@@ -255,6 +255,67 @@ export const FIELD_REF_TOKEN_KEYS = new Set([
   'sort'
 ]);
 
+/**
+ * 差分選択ノードのクイックプリセット（反映タブの「差分から調整」モード用）
+ * - sections: 含めるセクションキーの集合（undefined=全セクション）
+ * - excludeSections: 除外するセクションキー
+ * - severities: 採用する重要度（undefined=全重要度）
+ * - types: 採用する差分種別
+ * - excludeSystemFields: true の場合、システムフィールド差分を対象外（fieldSettings専用）
+ * - mode: 既定のノードモード（'src' / 'tgt'）
+ */
+export const REFLECT_QUICK_PRESETS = [
+  {
+    id: 'all',
+    label: 'すべての候補',
+    hint: '全ノードを選択し、反映元は比較元に揃えます',
+    mode: 'src'
+  },
+  {
+    id: 'fieldsOnly',
+    label: 'フィールドのみ',
+    hint: 'フィールド設定の差分だけ選択します',
+    sections: ['fieldSettings'],
+    excludeSystemFields: true,
+    mode: 'src'
+  },
+  {
+    id: 'viewsAndReports',
+    label: 'ビュー+グラフ',
+    hint: 'ビュー設定・グラフ設定だけ選択',
+    sections: ['viewSettings', 'reportSettings'],
+    mode: 'src'
+  },
+  {
+    id: 'highOnly',
+    label: '高重要度のみ',
+    hint: '重要度「高」の差分だけを選択',
+    severities: ['high'],
+    mode: 'src'
+  },
+  {
+    id: 'addedOnly',
+    label: '追加のみ',
+    hint: '追加差分だけ選択（既存設定は残す）',
+    types: ['added'],
+    mode: 'src'
+  },
+  {
+    id: 'excludeAcl',
+    label: '権限を除外',
+    hint: 'アプリ/フィールド/レコード権限を除外して選択',
+    excludeSections: ['appAcl', 'fieldAcl', 'recordPermissions'],
+    mode: 'src'
+  },
+  {
+    id: 'keepTarget',
+    label: '比較先を維持',
+    hint: '選択はそのまま、反映元を全て「比較先」に変更',
+    keepSelection: true,
+    mode: 'tgt'
+  }
+];
+
 export const IGNORE_PRESET_KEYS = {
   fieldOrder: ['index', 'no', 'order'],
   meta: ['revision', 'createdAt', 'creator', 'modifiedAt', 'modifier', 'updatedAt', 'updatedBy'],
