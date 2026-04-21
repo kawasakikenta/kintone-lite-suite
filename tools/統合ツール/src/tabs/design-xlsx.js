@@ -130,10 +130,139 @@ export async function runAdvancedDesignExporter(params = {}) {
     formatEntity: (entity) => { if (!entity) return '-'; if (Array.isArray(entity)) return entity.map(e => UtilsX.formatEntity(e)).join('\n'); const e = entity.entity || entity; const t = (e.type || '').toString().toUpperCase(); const typeMap = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド値', CREATOR: '作成者', MODIFIER: '更新者', LOGIN_USER: 'ログインユーザー', ALL: '全員' }; const typeJP = typeMap[t] || e.type || '不明'; if (e.name) return `${typeJP}:${e.name}`; if (e.code) return `${typeJP}:${e.code}`; return typeJP; },
     formatEntityDetailed: (entity) => { if (!entity) return '-'; if (Array.isArray(entity)) return entity.map(e => UtilsX.formatEntityDetailed(e)).join('\n'); const e = entity.entity || entity; const t = (e.type || '').toString().toUpperCase(); const typeMap = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド値', CREATOR: '作成者', MODIFIER: '更新者', LOGIN_USER: 'ログインユーザー', ALL: '全員' }; const typeJP = typeMap[t] || e.type || '不明'; const parts = [typeJP]; if (e.name) parts.push(e.name); else if (e.code) parts.push(`コード:${e.code}`); if (entity.includeSubs) parts.push('(サブ組織含)'); return parts.join(': '); },
     formatSort: (sortStr) => { if (!sortStr) return '-'; return String(sortStr).replace(/\basc\b/gi, '昇順').replace(/\bdesc\b/gi, '降順'); },
-    formatFilterCond: (condStr) => { if (!condStr) return '-'; let r = String(condStr); r = r.replace(/\s*,\s*/g, ', '); return r; },
-    formatFieldFormat: (f) => { if (!f || typeof f !== 'object') return ''; const parts = []; if (f.digit !== undefined) parts.push(`桁区切り: ${f.digit ? 'あり' : 'なし'}`); if (f.displayScale !== undefined) parts.push(`小数点: ${f.displayScale}桁`); if (f.unit) parts.push(`単位: ${f.unit}`); return parts.join('、'); },
+    formatFilterCond: (condStr) => {
+      if (!condStr) return '-';
+      let r = String(condStr);
+      r = r.replace(/\s*,\s*/g, ', ');
+      const funcMap = {
+        'TODAY()': '今日', 'TOMORROW()': '明日', 'YESTERDAY()': '昨日',
+        'THIS_WEEK()': '今週', 'LAST_WEEK()': '先週', 'NEXT_WEEK()': '来週',
+        'THIS_MONTH()': '今月', 'LAST_MONTH()': '先月', 'NEXT_MONTH()': '来月',
+        'THIS_YEAR()': '今年', 'LAST_YEAR()': '昨年', 'NEXT_YEAR()': '来年'
+      };
+      for (const [eng, jpn] of Object.entries(funcMap)) {
+        r = r.replace(new RegExp(UtilsX.escapeRegExp(eng), 'g'), jpn);
+      }
+      r = r.replace(
+        /\bFROM_TODAY\(\s*([-+]?\d+)\s*,\s*(DAYS|WEEKS|MONTHS|YEARS)\s*\)/g,
+        (_, numStr, unit) => {
+          const n = parseInt(numStr, 10);
+          const unitMap = { DAYS: '日', WEEKS: '週間', MONTHS: 'か月', YEARS: '年' };
+          const u = unitMap[unit] || unit;
+          if (n === 0) return '今日';
+          return `今日から${Math.abs(n)}${u}${n > 0 ? '後' : '前'}`;
+        }
+      );
+      r = r
+        .replace(/\bNOT\s+LIKE\b/gi, '不一致')
+        .replace(/\bNOT\s+IN\b/gi, 'に含まない')
+        .replace(/\bLIKE\b/gi, '部分一致')
+        .replace(/\bIN\b/gi, 'に含む')
+        .replace(/\bAND\b/gi, 'かつ')
+        .replace(/\bOR\b/gi, 'または')
+        .replace(/!=/g, '≠').replace(/>=/g, '≥').replace(/<=/g, '≤').replace(/=/g, '＝');
+      return r;
+    },
+    formatFieldFormat: (f) => {
+      if (!f || typeof f !== 'object') return '';
+      const labelMap = {
+        NUMBER: '数値', NUMBER_DIGIT: '数値（桁区切り）', PERCENT: 'パーセント',
+        CURRENCY: '通貨', DATE: '日付', TIME: '時刻', DATETIME: '日時',
+        HOUR_MINUTE: '時:分', HOUR_MINUTE_SECOND: '時:分:秒'
+      };
+      const parts = [];
+      if (f.format && labelMap[f.format]) parts.push(labelMap[f.format]);
+      if (f.digit !== undefined) parts.push(`桁区切り: ${f.digit ? 'あり' : 'なし'}`);
+      if (f.displayScale !== undefined) parts.push(`小数点: ${f.displayScale}桁`);
+      if (f.unit) {
+        const pos = f.unitPosition === 'BEFORE' ? '前置' : (f.unitPosition === 'AFTER' ? '後置' : '');
+        parts.push(`単位: ${f.unit}${pos ? `(${pos})` : ''}`);
+      }
+      return parts.join('、');
+    },
     formatDefaultValue: (dv) => { if (dv == null) return ''; if (Array.isArray(dv)) { if (dv.length > 0 && typeof dv[0] === 'object') return dv.map(i => i.name || i.code || JSON.stringify(i)).join('、'); return dv.join('、'); } if (typeof dv === 'object') { if (dv.type === 'NUMBER') return String(dv.value || ''); return dv.name || dv.code || JSON.stringify(dv); } return String(dv); },
     safeJSONStringify: (obj) => { try { return JSON.stringify(obj, null, 2); } catch (e) { return String(obj); } }
+  };
+
+  function traverseRows(rows, visitor, depth = 0) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    for (const row of safeRows) {
+      const items = Array.isArray(row?.fields) ? row.fields : [];
+      if (row?.type === 'GROUP') {
+        visitor({ kind: 'GROUP', item: row, depth });
+        if (Array.isArray(row.layout)) traverseRows(row.layout, visitor, depth + 1);
+        continue;
+      }
+      if (row?.type === 'SUBTABLE') {
+        visitor({ kind: 'SUBTABLE_ROW', row, depth });
+        continue;
+      }
+      for (const item of items) {
+        if (!item) continue;
+        if (item.type === 'GROUP') {
+          visitor({ kind: 'GROUP', item, depth });
+          if (Array.isArray(item.layout)) traverseRows(item.layout, visitor, depth + 1);
+          continue;
+        }
+        if (item.type === 'SUBTABLE') { visitor({ kind: 'SUBTABLE', item, depth }); continue; }
+        if (item.type === 'LABEL') { visitor({ kind: 'LABEL', item, depth }); continue; }
+        if (item.type === 'HR') { visitor({ kind: 'HR', item, depth }); continue; }
+        if (item.type === 'SPACER') { visitor({ kind: 'SPACER', item, depth }); continue; }
+        visitor({ kind: 'FIELD', item, depth });
+      }
+    }
+  }
+
+  function collectLayoutInfo(layout) {
+    const fieldOrder = [];
+    const subtableFieldOrder = new Map();
+    const addedFields = new Set();
+    const addedGroups = new Set();
+    traverseRows(Array.isArray(layout?.layout) ? layout.layout : [], ({ kind, item, row }) => {
+      if (kind === 'GROUP') {
+        if (item.code && !addedGroups.has(item.code)) {
+          fieldOrder.push({ code: item.code, isGroup: true, groupInfo: item });
+          addedGroups.add(item.code);
+        }
+      } else if (kind === 'SUBTABLE' || kind === 'SUBTABLE_ROW') {
+        const target = kind === 'SUBTABLE' ? item : row;
+        if (target?.code && !addedFields.has(target.code)) {
+          fieldOrder.push({ code: target.code, isGroup: false });
+          addedFields.add(target.code);
+        }
+        const codes = UtilsX.ensureArray(target?.fields).map((f) => f?.code).filter(Boolean);
+        if (target?.code) {
+          subtableFieldOrder.set(target.code, [...(subtableFieldOrder.get(target.code) || []), ...codes]);
+        }
+      } else if (kind === 'FIELD' && item.code && !addedFields.has(item.code)) {
+        fieldOrder.push({ code: item.code, isGroup: false });
+        addedFields.add(item.code);
+      }
+    });
+    return { fieldOrder, subtableFieldOrder };
+  }
+
+  function buildFieldLabelMap(fields) {
+    const map = {};
+    for (const [code, f] of Object.entries(fields || {})) {
+      map[code] = f.label || code;
+      if (f.type === 'SUBTABLE' && f.fields) {
+        for (const [sc, sf] of Object.entries(f.fields)) {
+          map[sc] = sf.label || sc;
+        }
+      }
+    }
+    return map;
+  }
+
+  const filterUserFields = (fields) => {
+    const filtered = {};
+    for (const [code, field] of Object.entries(fields || {})) {
+      if (SYSTEM_FIELDS.has(code) || SYSTEM_FIELDS.has(field.code)) continue;
+      if (['STATUS', 'CATEGORY', 'STATUS_ASSIGNEE'].includes(field.type)) continue;
+      filtered[code] = field;
+    }
+    return filtered;
   };
 
   async function loadSheetLib() {
@@ -222,15 +351,6 @@ export async function runAdvancedDesignExporter(params = {}) {
     let layout = await fetchJob('LayoutPrev', () => api(apiUrl('/k/v1/preview/app/form/layout.json'), 'GET', { app: APP_ID }));
     if (!layout) layout = await fetchJob('LayoutProd', () => api(apiUrl('/k/v1/app/form/layout.json'), 'GET', { app: APP_ID }));
 
-    const filterUserFields = (fields) => {
-      const filtered = {};
-      for (const [code, field] of Object.entries(fields)) {
-        if (SYSTEM_FIELDS.has(code) || SYSTEM_FIELDS.has(field.code)) continue;
-        if (['STATUS', 'CATEGORY', 'STATUS_ASSIGNEE'].includes(field.type)) continue;
-        filtered[code] = field;
-      }
-      return filtered;
-    };
     const fields = filterUserFields(fieldResp?.properties || {});
 
     UI.update('レコード件数を取得中...');
@@ -293,27 +413,36 @@ export async function runAdvancedDesignExporter(params = {}) {
     };
 
     const Sty = {
+      baseFont: (opts = {}) => ({ name: CONFIG.FONT_NAME, sz: 10, ...opts }),
       borderThin: () => {
         const b = { style: 'thin', color: { rgb: CONFIG.COLORS.BORDER } };
         return { border: { top: b, bottom: b, left: b, right: b } };
       },
       title: () => ({
-        font: { name: CONFIG.FONT_NAME, bold: true, sz: 12, color: { rgb: CONFIG.COLORS.TITLE_TEXT } },
+        font: { ...Sty.baseFont({ bold: true, sz: 12 }), color: { rgb: CONFIG.COLORS.TITLE_TEXT } },
         alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
         fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.TITLE_BG } },
         ...Sty.borderThin()
       }),
       header: () => ({
-        font: { name: CONFIG.FONT_NAME, bold: true, sz: 10, color: { rgb: CONFIG.COLORS.HEADER_TEXT } },
+        font: { ...Sty.baseFont({ bold: true }), color: { rgb: CONFIG.COLORS.HEADER_TEXT } },
         alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
         fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.HEADER_BG } },
         ...Sty.borderThin()
       }),
       cell: (align = 'left') => ({
-        font: { name: CONFIG.FONT_NAME, sz: 10 },
+        font: { ...Sty.baseFont() },
         alignment: { vertical: 'center', horizontal: align, wrapText: true },
         ...Sty.borderThin()
-      })
+      }),
+      sectionCell: (align = 'left') => ({
+        font: { ...Sty.baseFont({ bold: true }) },
+        alignment: { vertical: 'center', horizontal: align, wrapText: true },
+        fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.SECTION_BG } },
+        ...Sty.borderThin()
+      }),
+      zebraEven: () => ({ fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.ZEBRA_EVEN } } }),
+      zebraOdd: () => ({ fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.ZEBRA_ODD } } })
     };
 
     const autosizeCols = (ws, aoa) => {
@@ -329,25 +458,79 @@ export async function runAdvancedDesignExporter(params = {}) {
 
     const applyStyles = (ws, aoa, options = {}) => {
       if (!styled) return;
-      const titleRows = options.titleRows || [];
-      const headerRowIndex = options.headerRowIndex ?? null;
+      const {
+        headerRowIndex = null,
+        titleRows = [],
+        sectionRows = [],
+        headerInfoRows = [],
+        emptyRows = [],
+        specialCells = {},
+        freezeRows = 1,
+        freezeCols = 0,
+        centerCols = []
+      } = options;
+
+      const rows = aoa.length;
       let maxCols = 0;
-      aoa.forEach((r) => { maxCols = Math.max(maxCols, (r || []).length); });
-      for (let r = 0; r < aoa.length; r++) {
+      for (const r of aoa) maxCols = Math.max(maxCols, (Array.isArray(r) ? r.length : 0));
+      if (!rows || !maxCols) return;
+
+      const dataStart = (headerRowIndex != null) ? headerRowIndex + 1 : null;
+
+      for (let r = 0; r < rows; r++) {
+        const isTitle = titleRows.includes(r);
+        const isHeader = (headerRowIndex != null && r === headerRowIndex);
+        const isSection = sectionRows.includes(r);
+        const isHeaderInfo = headerInfoRows.includes(r);
+        const isEmpty = emptyRows.includes(r);
+        const isDataRow = dataStart != null && r >= dataStart && !isSection && !isEmpty && !isHeaderInfo;
+        const zebraIndex = isDataRow ? (r - dataStart) : null;
+
         for (let c = 0; c < maxCols; c++) {
           const addr = UtilsX.a1(r + 1, c + 1);
-          const cell = ws[addr];
-          if (!cell) continue;
-          if (titleRows.includes(r)) cell.s = Sty.title();
-          else if (headerRowIndex === r) cell.s = Sty.header();
-          else cell.s = Sty.cell(c === 0 ? 'center' : 'left');
+          const cellVal = aoa[r] && aoa[r][c] != null ? String(aoa[r][c]) : '';
+          const cell = ws[addr] || (ws[addr] = { t: 's', v: cellVal });
+          cell.s = cell.s || {};
+
+          if (specialCells[`${r},${c}`]) {
+            Object.assign(cell.s, specialCells[`${r},${c}`]);
+            continue;
+          }
+          const align = (c === 0) ? 'center' : 'left';
+
+          if (isTitle) Object.assign(cell.s, Sty.title());
+          else if (isHeader || isHeaderInfo) Object.assign(cell.s, Sty.header());
+          else if (isSection) Object.assign(cell.s, Sty.sectionCell(align));
+          else if (isEmpty) Object.assign(cell.s, { font: Sty.baseFont() });
+          else {
+            Object.assign(cell.s, Sty.cell(align));
+            if (isDataRow && Array.isArray(centerCols) && centerCols.includes(c)) {
+              cell.s.alignment = { ...cell.s.alignment, horizontal: 'center' };
+            }
+            if (CONFIG.STYLES.ENABLE_ZEBRA && zebraIndex != null) {
+              Object.assign(cell.s, zebraIndex % 2 === 0 ? Sty.zebraEven() : Sty.zebraOdd());
+            }
+          }
         }
       }
-      if (CONFIG.STYLES.FREEZE_HEADER) {
-        ws['!freeze'] = { xSplit: options.freezeCols || 0, ySplit: options.freezeRows || 1 };
+
+      if (CONFIG.STYLES.FREEZE_HEADER && (freezeRows > 0 || freezeCols > 0)) {
+        ws['!freeze'] = { xSplit: freezeCols, ySplit: freezeRows };
       }
-      if (CONFIG.STYLES.ENABLE_AUTOFILTER && headerRowIndex != null) {
-        ws['!autofilter'] = { ref: `${UtilsX.a1(headerRowIndex + 1, 1)}:${UtilsX.a1(aoa.length, maxCols)}` };
+      if (CONFIG.STYLES.ENABLE_AUTOFILTER && headerRowIndex != null && options.enableAutoFilter !== false) {
+        ws['!autofilter'] = { ref: `${UtilsX.a1(headerRowIndex + 1, 1)}:${UtilsX.a1(rows, maxCols)}` };
+      }
+      ws['!margins'] = { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 };
+    };
+
+    const applyCellMerges = (ws, mergeRanges) => {
+      if (!mergeRanges?.length) return;
+      ws['!merges'] = ws['!merges'] || [];
+      for (const range of mergeRanges) {
+        ws['!merges'].push({ s: { r: range.startRow, c: range.col }, e: { r: range.endRow, c: range.col } });
+        const firstCellAddr = UtilsX.a1(range.startRow + 1, range.col + 1);
+        const firstCell = ws[firstCellAddr];
+        if (firstCell?.s) firstCell.s.alignment = { ...firstCell.s.alignment, vertical: 'center' };
       }
     };
 
@@ -356,6 +539,7 @@ export async function runAdvancedDesignExporter(params = {}) {
       const ws = XLSX.utils.aoa_to_sheet(data.aoa);
       autosizeCols(ws, data.aoa);
       applyStyles(ws, data.aoa, data.options || {});
+      if (data.mergeRanges) applyCellMerges(ws, data.mergeRanges);
       const safeName = makeSafeSheetName(name, new Set(wb.SheetNames));
       XLSX.utils.book_append_sheet(wb, ws, safeName);
     };
@@ -366,27 +550,68 @@ export async function runAdvancedDesignExporter(params = {}) {
     });
 
     if (selectedSheets.has('summary')) {
-      const summaryRows = [
-        ['アプリID', APP_ID],
-        ['アプリ名', appSettings?.name || ''],
-        ['説明', UtilsX.stripHtml(appSettings?.description || generalSettings?.description || '')],
-        ['アイコン', appSettings?.icon?.key || appSettings?.icon?.type || ''],
-        ['テーマ', generalSettings?.theme || ''],
-        ['スペースID', appSettings?.spaceId || ''],
-        ['スレッドID', appSettings?.threadId || ''],
-        ['作成日時', UtilsX.toJST(appSettings?.createdAt)],
-        ['作成者', appSettings?.creator?.name || ''],
-        ['更新日時', UtilsX.toJST(appSettings?.modifiedAt)],
-        ['更新者', appSettings?.modifier?.name || ''],
-        ['出力日時', UtilsX.dt()],
-        ['フィールド数', Object.keys(fields).length],
-        ['ビュー数', Object.keys(views?.views || {}).length],
-        ['グラフ数', Object.keys(reports?.reports || {}).length],
-        ['プロセス管理', status?.enable ? '有効' : '無効'],
-        ['プラグイン数', (pluginsResp?.plugins || []).length],
-        ['レコード件数', recordCount != null ? recordCount : '-']
-      ];
-      appendSheet('サマリー', buildSimpleAOA('kintone アプリ設計書', ['項目', '値'], summaryRows));
+      const sAoa = [];
+      const sectionRows = [];
+      const headerInfoRows = [];
+
+      sAoa.push(['kintone アプリ設計書']);
+      sAoa.push([]);
+
+      sAoa.push(['基本情報']); sectionRows.push(sAoa.length - 1);
+      sAoa.push(['項目', '値']); headerInfoRows.push(sAoa.length - 1);
+      sAoa.push(['アプリID', APP_ID]);
+      sAoa.push(['アプリ名', appSettings?.name || '']);
+      sAoa.push(['説明', UtilsX.stripHtml(appSettings?.description || generalSettings?.description || '-')]);
+      sAoa.push(['作成者', appSettings?.creator?.name || '-']);
+      sAoa.push(['作成日時', UtilsX.toJST(appSettings?.createdAt)]);
+      sAoa.push(['更新者', appSettings?.modifier?.name || '-']);
+      sAoa.push(['更新日時', UtilsX.toJST(appSettings?.modifiedAt)]);
+      if (generalSettings) {
+        sAoa.push(['テーマ', generalSettings.theme || '-']);
+        sAoa.push(['アイコン種類', generalSettings.icon?.type || '-']);
+        sAoa.push(['リビジョン', generalSettings.revision || '-']);
+      }
+      if (appSettings?.spaceId) sAoa.push(['スペースID', appSettings.spaceId]);
+      if (appSettings?.threadId) sAoa.push(['スレッドID', appSettings.threadId]);
+      sAoa.push([]);
+
+      sAoa.push(['設定統計']); sectionRows.push(sAoa.length - 1);
+      sAoa.push(['項目', '件数']); headerInfoRows.push(sAoa.length - 1);
+      sAoa.push(['総レコード数', recordCount != null ? recordCount : '(取得不可)']);
+      sAoa.push(['フィールド数', Object.keys(fields).length]);
+      sAoa.push(['ビュー数', Object.keys(views?.views || {}).length]);
+      sAoa.push(['グラフ数', Object.keys(reports?.reports || {}).length]);
+      sAoa.push(['プロセス管理', status?.enable ? '有効' : '無効']);
+      sAoa.push(['ステータス数', Object.keys(status?.states || {}).length]);
+      sAoa.push(['アクション数', Object.keys(actions || {}).length]);
+      sAoa.push(['プラグイン数', (pluginsResp?.plugins || []).length]);
+      sAoa.push([]);
+
+      sAoa.push(['出力情報']); sectionRows.push(sAoa.length - 1);
+      sAoa.push(['項目', '値']); headerInfoRows.push(sAoa.length - 1);
+      sAoa.push(['出力日時', UtilsX.dt()]);
+      try { sAoa.push(['出力者', (typeof kintone !== 'undefined' && kintone.getLoginUser && kintone.getLoginUser()?.name) || '-']); }
+      catch { sAoa.push(['出力者', '-']); }
+      sAoa.push(['エクスポーターVer', 'v2.0']);
+
+      if (UI.failedAPIs && UI.failedAPIs.length > 0) {
+        sAoa.push([]);
+        sAoa.push(['⚠ API取得失敗レポート']); sectionRows.push(sAoa.length - 1);
+        sAoa.push(['API名', 'エラー内容']); headerInfoRows.push(sAoa.length - 1);
+        for (const { name, error } of UI.failedAPIs) sAoa.push([name, error]);
+      }
+
+      appendSheet('サマリー', {
+        aoa: sAoa,
+        options: {
+          headerRowIndex: headerInfoRows[0] ?? 3,
+          titleRows: [0],
+          sectionRows,
+          headerInfoRows,
+          freezeRows: 1,
+          enableAutoFilter: false
+        }
+      });
     }
 
     const resolveAppName = (appRef) => {
@@ -447,75 +672,197 @@ export async function runAdvancedDesignExporter(params = {}) {
     ];
 
     if (selectedSheets.has('fields')) {
-      const fieldHeaders = ['テーブル', 'フィールド名', 'コード', 'タイプ', '必須', '重複禁止', 'ラベル非表示', '初期値', '書式', '選択肢', '計算式', 'ルックアップ', '関連レコード', '説明'];
-      const fieldRows = [];
-      Object.values(fields).forEach((f) => {
-        fieldRows.push(buildFieldRow(f, ''));
+      const fieldHeaders = [
+        'No.', 'フィールド名', 'フィールドコード', 'タイプ',
+        '必須', '重複禁止', '初期値', '最小値', '最大値',
+        '選択肢', '入力制約', 'ラベル非表示', '書式設定',
+        'ルックアップ設定', '関連レコード設定', '計算式', '依存/参照', '説明'
+      ];
+      const fAoa = [['項目定義'], fieldHeaders];
+      const specialCells = {};
+      const { fieldOrder, subtableFieldOrder } = collectLayoutInfo(layout || {});
+
+      const sortedEntries = [];
+      const added = new Set();
+      for (const item of fieldOrder) {
+        if (item.isGroup) { added.add(item.code); continue; }
+        if (fields[item.code]) { sortedEntries.push([item.code, fields[item.code]]); added.add(item.code); }
+      }
+      Object.entries(fields).forEach(([c, f]) => {
+        if (!added.has(c) && f.type !== 'GROUP') sortedEntries.push([c, f]);
+      });
+
+      let no = 1;
+      const pushRow = (label, code, f, parentLabel, isSubtableField) => {
+        const typeJ = f?.lookup ? `ルックアップ(${FIELD_TYPE[f?.type] || f?.type})` : (FIELD_TYPE[f?.type] || f?.type || '');
+
+        let optionsStr = '-';
+        if (f.options) {
+          const optEntries = Object.entries(f.options);
+          optEntries.sort((a, b) => (a[1].index ?? 999) - (b[1].index ?? 999));
+          optionsStr = optEntries.map(([k, v]) => v.label || v.name || k).join('\n') || '-';
+        }
+
+        const constraints = [];
+        if (f.minLength) constraints.push(`最小文字数: ${f.minLength}`);
+        if (f.maxLength) constraints.push(`最大文字数: ${f.maxLength}`);
+        if (f.regex) constraints.push(`正規表現: ${f.regex}`);
+        if (f.protocol) constraints.push(`プロトコル: ${f.protocol}`);
+
+        let lookupStr = '-';
+        if (f.lookup) {
+          const lu = f.lookup;
+          const refAppName = appNames[lu.relatedApp?.app] || `(ID:${lu.relatedApp?.app})`;
+          const parts = [`参照アプリ: ${refAppName}`, `キーフィールド: ${lu.relatedKeyField || '-'}`];
+          if (Array.isArray(lu.fieldMappings) && lu.fieldMappings.length) {
+            parts.push('コピー先:');
+            lu.fieldMappings.forEach((m) => parts.push(`  ${m.field} ← ${m.relatedField}`));
+          }
+          if (Array.isArray(lu.lookupPickerFields) && lu.lookupPickerFields.length) parts.push(`絞り込み表示: ${lu.lookupPickerFields.join(', ')}`);
+          if (lu.filterCond) parts.push(`絞り込み条件: ${UtilsX.formatFilterCond(lu.filterCond)}`);
+          if (lu.sort) parts.push(`ソート: ${UtilsX.formatSort(lu.sort)}`);
+          lookupStr = parts.join('\n');
+        }
+
+        let refTableStr = '-';
+        if (f.referenceTable) {
+          const rt = f.referenceTable;
+          const refAppName = appNames[rt.relatedApp?.app] || `(ID:${rt.relatedApp?.app})`;
+          const parts = [`参照アプリ: ${refAppName}`];
+          if (rt.condition) parts.push(`条件: ${rt.condition?.field || '-'} = ${rt.condition?.relatedField || '-'}`);
+          if (Array.isArray(rt.displayFields) && rt.displayFields.length) parts.push(`表示フィールド: ${rt.displayFields.join(', ')}`);
+          if (rt.filterCond) parts.push(`絞り込み: ${UtilsX.formatFilterCond(rt.filterCond)}`);
+          if (rt.sort) parts.push(`ソート: ${UtilsX.formatSort(rt.sort)}`);
+          if (rt.size != null) parts.push(`表示件数: ${rt.size}`);
+          refTableStr = parts.join('\n');
+        }
+
+        const calcStr = f.expression || f.formula || '-';
+
+        const deps = [];
+        if (f.type === 'SUBTABLE') deps.push('[テーブル]');
+        if (f.fields) deps.push(`サブフィールド数: ${Object.keys(f.fields).length}`);
+
+        const rowData = [
+          no++,
+          parentLabel ? `  ${parentLabel} > ${label}` : label,
+          code,
+          typeJ,
+          UtilsX.formatBoolean(f.required),
+          UtilsX.formatBoolean(f.unique),
+          UtilsX.formatDefaultValue(f.defaultValue),
+          UtilsX.safeGet(f, 'minValue', UtilsX.safeGet(f, 'min', '')),
+          UtilsX.safeGet(f, 'maxValue', UtilsX.safeGet(f, 'max', '')),
+          optionsStr,
+          constraints.join('\n') || '-',
+          f.noLabel ? 'はい' : '-',
+          UtilsX.formatFieldFormat(f) || '-',
+          lookupStr,
+          refTableStr,
+          calcStr,
+          deps.join('\n') || '-',
+          UtilsX.stripHtml(f.description || '')
+        ];
+        const rowIdx = fAoa.length;
+        fAoa.push(rowData);
+
+        if (f.required) {
+          specialCells[`${rowIdx},4`] = {
+            ...Sty.cell('center'),
+            fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.REQUIRED_BG } }
+          };
+        }
+        if (isSubtableField) {
+          for (let c = 1; c <= 3; c++) {
+            specialCells[`${rowIdx},${c}`] = {
+              ...Sty.cell('left'),
+              fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.SUBTABLE_BG } }
+            };
+          }
+        }
+      };
+
+      for (const [code, f] of sortedEntries) {
+        if (f.type === 'GROUP') continue;
+        pushRow(f.label || '', code, f, null, false);
         if (f.type === 'SUBTABLE' && f.fields) {
-          Object.values(f.fields).forEach((sub) => fieldRows.push(buildFieldRow(sub, f.code || f.label || '')));
+          const subCodes = subtableFieldOrder.get(code) || Object.keys(f.fields);
+          for (const sc of subCodes) {
+            if (f.fields[sc]) pushRow(f.fields[sc].label || '', sc, f.fields[sc], f.label || code, true);
+          }
+        }
+      }
+
+      appendSheet('項目定義', {
+        aoa: fAoa,
+        options: {
+          headerRowIndex: 1, titleRows: [0], freezeRows: 2, freezeCols: 2,
+          centerCols: [0, 4, 5, 11], specialCells
         }
       });
-      appendSheet('項目定義', buildSimpleAOA('項目定義', fieldHeaders, fieldRows));
     }
 
     if (selectedSheets.has('layout') && Array.isArray(layout?.layout)) {
-      const layoutRows = [];
-      const pushLayoutRow = (section, idx, type, code, label, extra) => {
-        layoutRows.push([section, idx, type, code || '', label || '', extra || '']);
-      };
-      const describeLayoutField = (item) => {
-        if (!item) return { code: '', label: '', extra: '' };
-        const code = item.code || '';
-        const def = code ? (fields[code] || null) : null;
-        const label = def?.label || item.label || (item.elementId || '');
-        const extras = [];
-        if (item.size?.width) extras.push(`幅:${item.size.width}`);
-        if (item.size?.height) extras.push(`高:${item.size.height}`);
-        if (item.elementId) extras.push(`elementId:${item.elementId}`);
-        return { code, label, extra: extras.join(', ') };
-      };
-      layout.layout.forEach((section, i) => {
-        const sectionName = section.type === 'GROUP'
-          ? `GROUP:${section.code || ''}`
-          : (section.type || 'ROW') + (section.code ? `:${section.code}` : '');
-        if (section.type === 'GROUP') {
-          pushLayoutRow(sectionName, i + 1, 'GROUP', section.code || '', fields[section.code]?.label || '', '');
-          const gLayout = Array.isArray(section.layout) ? section.layout : [];
-          gLayout.forEach((row, ri) => {
-            (row.fields || []).forEach((fld, fi) => {
-              const info = describeLayoutField(fld);
-              pushLayoutRow(sectionName, `${i + 1}-${ri + 1}-${fi + 1}`, fld.type || '', info.code, info.label, info.extra);
-            });
-          });
-        } else {
-          const rowFields = Array.isArray(section.fields) ? section.fields : [];
-          if (rowFields.length === 0) {
-            pushLayoutRow(sectionName, i + 1, section.type || 'ROW', '', '', '');
-          } else {
-            rowFields.forEach((fld, fi) => {
-              const info = describeLayoutField(fld);
-              pushLayoutRow(sectionName, `${i + 1}-${fi + 1}`, fld.type || '', info.code, info.label, info.extra);
-            });
+      const lAoa = [['フォームレイアウト'], ['No.', '区分', '階層', '表示', 'フィールドコード', 'タイプ', '必須', '備考']];
+      let lno = 1;
+      const sanitize = (label) => CONFIG.SANITIZE_LABEL_HTML_IN_LAYOUT ? UtilsX.stripHtml(label) : (label || '');
+
+      traverseRows(layout.layout, ({ kind, item, row, depth }) => {
+        const indent = '  '.repeat(depth);
+        if (kind === 'GROUP') {
+          const label = sanitize(item.label || fields[item.code]?.label);
+          lAoa.push([lno++, 'グループ', depth, `${indent}${label || '-'}`, item.code || '-', 'GROUP', '-', item.open === false ? '初期非表示' : '-']);
+        } else if (kind === 'SUBTABLE') {
+          lAoa.push([lno++, 'テーブル', depth, `${indent}${fields[item.code]?.label || item.code || '-'}`, item.code || '-', 'テーブル', '-', '-']);
+          for (const c of UtilsX.ensureArray(item.fields)) {
+            const cf = fields?.[item.code]?.fields?.[c.code] || fields?.[c.code];
+            const label = sanitize(c.label || cf?.label);
+            lAoa.push([lno++, 'テーブル列', depth + 1, `${indent}  ${label || '-'}`, c.code || '-', FIELD_TYPE[c.type] || c.type || '-', UtilsX.formatBoolean(!!cf?.required), `親:${item.code}`]);
           }
+        } else if (kind === 'SUBTABLE_ROW') {
+          lAoa.push([lno++, 'テーブル行', depth, `${indent}-`, row?.code || '-', 'SUBTABLE_ROW', '-', '-']);
+        } else if (kind === 'LABEL') {
+          const label = sanitize(item.label);
+          lAoa.push([lno++, 'ラベル', depth, `${indent}${label || '-'}`, '-', 'LABEL', '-', '-']);
+        } else if (kind === 'HR') {
+          lAoa.push([lno++, '罫線', depth, `${indent}───`, '-', 'HR', '-', '-']);
+        } else if (kind === 'SPACER') {
+          lAoa.push([lno++, 'スペース', depth, `${indent}(空白)`, item.elementId || '-', 'SPACER', '-', '-']);
+        } else if (kind === 'FIELD') {
+          const f = fields?.[item.code];
+          const label = f?.label || sanitize(item.label) || item.code || '-';
+          const type = FIELD_TYPE[f?.type] || FIELD_TYPE[item.type] || f?.type || item.type || '-';
+          lAoa.push([lno++, 'フィールド', depth, `${indent}${label}`, item.code || '-', type, UtilsX.formatBoolean(!!f?.required), '-']);
         }
       });
-      appendSheet('フォームレイアウト', buildSimpleAOA('フォームレイアウト', ['セクション', '位置', 'タイプ', 'コード', 'ラベル', '補足'], layoutRows));
+
+      appendSheet('フォームレイアウト', {
+        aoa: lAoa,
+        options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 2, 6] }
+      });
     }
 
     if (selectedSheets.has('views') && views?.views) {
-      const headers = ['ビュー名', '種別', 'インデックス', 'フィルター条件', 'ソート', '表示フィールド', 'ページング', 'メモ'];
+      const fieldLabelMap = buildFieldLabelMap(fields);
+      const typeMap = { 'LIST': '一覧', 'CALENDAR': 'カレンダー', 'CUSTOM': 'カスタマイズ' };
+      const headers = ['ビュー名', '種別', '表示順', '表示フィールド', '表示フィールド（ラベル）', 'フィルター条件', 'ソート', 'ページング', 'メモ'];
       const rows = Object.entries(views.views)
         .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0))
-        .map(([name, v]) => [
-          name,
-          v.type || '',
-          v.index || '',
-          UtilsX.formatFilterCond(v.filterCond),
-          UtilsX.formatSort(v.sort),
-          Array.isArray(v.fields) ? v.fields.join(', ') : '',
-          v.paginationType || '',
-          UtilsX.stripHtml(v.customView || v.html || v.builtinType || '')
-        ]);
+        .map(([name, v]) => {
+          const fieldCodes = UtilsX.ensureArray(v.fields);
+          const fieldLabels = fieldCodes.map((c) => fieldLabelMap[c] || c);
+          return [
+            name,
+            typeMap[v.type] || v.type || '',
+            v.index || '',
+            fieldCodes.join('\n') || '-',
+            fieldLabels.join('\n') || '-',
+            UtilsX.formatFilterCond(v.filterCond),
+            UtilsX.formatSort(v.sort),
+            v.paginationType || (v.pagination === false ? '無効' : '既定'),
+            UtilsX.stripHtml(v.customView || v.html || v.builtinType || '')
+          ];
+        });
       appendSheet('一覧', buildSimpleAOA('一覧(ビュー)', headers, rows));
     }
 
@@ -551,19 +898,44 @@ export async function runAdvancedDesignExporter(params = {}) {
       appendSheet('プロセス管理', buildSimpleAOA('プロセス管理', headers, rows));
     }
 
-    if (selectedSheets.has('statusMatrix') && status?.states && Array.isArray(status?.actions)) {
+    if (selectedSheets.has('statusMatrix') && status?.enable && status?.states && Array.isArray(status?.actions)) {
       const stateNames = Object.entries(status.states || {})
         .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0))
-        .map(([n]) => n);
-      const headers = ['From \\ To', ...stateNames];
-      const rows = stateNames.map((from) => {
-        const cells = stateNames.map((to) => {
-          const found = status.actions.filter((a) => a.from === from && a.to === to).map((a) => a.name || '●');
-          return found.join(' / ');
+        .map(([, s]) => s.name || '');
+      if (stateNames.length) {
+        const mAoa = [['遷移マトリクス'], ['遷移元 \\ 遷移先', ...stateNames]];
+        for (const from of stateNames) {
+          const row = [from];
+          for (const to of stateNames) {
+            const matched = status.actions.filter((a) => a.from === from && a.to === to).map((a) => a.name || '●');
+            row.push(matched.join('\n'));
+          }
+          mAoa.push(row);
+        }
+        const specialCells = {};
+        // 対角線（自遷移）
+        for (let i = 0; i < stateNames.length; i++) {
+          specialCells[`${i + 2},${i + 1}`] = {
+            ...Sty.cell('center'),
+            fill: { patternType: 'solid', fgColor: { rgb: 'FFD5D5D5' } }
+          };
+        }
+        // 遷移ありセル
+        for (let r = 2; r < mAoa.length; r++) {
+          for (let c = 1; c < mAoa[r].length; c++) {
+            if (mAoa[r][c] && !specialCells[`${r},${c}`]) {
+              specialCells[`${r},${c}`] = {
+                ...Sty.cell('center'),
+                fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.SUCCESS_BG } }
+              };
+            }
+          }
+        }
+        appendSheet('遷移マトリクス', {
+          aoa: mAoa,
+          options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, freezeCols: 1, specialCells, enableAutoFilter: false }
         });
-        return [from, ...cells];
-      });
-      appendSheet('遷移マトリクス', buildSimpleAOA('遷移マトリクス', headers, rows));
+      }
     }
 
     const renderAclRights = (title, name, rights) => {
@@ -709,31 +1081,77 @@ export async function runAdvancedDesignExporter(params = {}) {
     }
 
     if (selectedSheets.has('dependencies')) {
-      const headers = ['フィールドコード', 'フィールド名', '種別', '参照先アプリ', '詳細'];
-      const rows = [];
-      const pushDeps = (f, parent) => {
-        const label = `${parent ? parent + ' > ' : ''}${f.label || ''}`;
-        if (f.lookup?.relatedApp?.app) {
-          rows.push([f.code || '', label, 'ルックアップ', resolveAppName(f.lookup.relatedApp), describeLookup(f)]);
-        }
-        if (f.referenceTable?.relatedApp?.app) {
-          rows.push([f.code || '', label, '関連レコード一覧', resolveAppName(f.referenceTable.relatedApp), describeReference(f)]);
+      const dAoa = [['フィールド依存関係マップ'], ['No.', 'フィールド名', 'フィールドコード', '依存種別', '参照先', '詳細']];
+      const specialCells = {};
+      let dno = 1;
+
+      const addDep = (label, code, depType, target, detail, color) => {
+        const rowIdx = dAoa.length;
+        dAoa.push([dno++, label, code, depType, target, detail]);
+        if (color) {
+          specialCells[`${rowIdx},3`] = {
+            ...Sty.cell('left'),
+            fill: { patternType: 'solid', fgColor: { rgb: color } }
+          };
         }
       };
-      Object.values(fields).forEach((f) => {
-        pushDeps(f, '');
-        if (f.type === 'SUBTABLE' && f.fields) {
-          Object.values(f.fields).forEach((sub) => pushDeps(sub, f.code || f.label || ''));
+
+      const processField = (code, f, parent) => {
+        const label = parent ? `${parent} > ${f.label || code}` : (f.label || code);
+        if (f.lookup?.relatedApp?.app) {
+          const appId = f.lookup.relatedApp.app;
+          const appName = appNames[appId] || `(ID:${appId})`;
+          addDep(label, code, 'ルックアップ', appName, `キー: ${f.lookup.relatedKeyField || '-'}`, CONFIG.COLORS.INFO_BG);
+          for (const m of UtilsX.ensureArray(f.lookup.fieldMappings)) {
+            addDep(label, code, 'ルックアップコピー', `${m.field} ← ${m.relatedField}`, `コピー元アプリ: ${appName}`, CONFIG.COLORS.INFO_BG);
+          }
         }
-      });
+        if (f.referenceTable?.relatedApp?.app) {
+          const appId = f.referenceTable.relatedApp.app;
+          const appName = appNames[appId] || `(ID:${appId})`;
+          addDep(label, code, '関連レコード', appName, `表示: ${UtilsX.ensureArray(f.referenceTable.displayFields).join(',')}`, CONFIG.COLORS.DEPENDENCY_BG);
+        }
+        const expr = f.expression || f.formula;
+        if (expr) {
+          const refs = [];
+          const re = /[A-Za-z_]\w*/g;
+          let m;
+          while ((m = re.exec(expr)) !== null) {
+            if (fields[m[0]] || Object.values(fields).some((ff) => ff.fields?.[m[0]])) {
+              refs.push(m[0]);
+            }
+          }
+          const uniqueRefs = [...new Set(refs)];
+          if (uniqueRefs.length) {
+            addDep(label, code, '計算参照', uniqueRefs.join(', '), `式: ${expr}`, CONFIG.COLORS.WARNING_BG);
+          }
+        }
+      };
+
+      for (const [code, f] of Object.entries(fields)) {
+        if (f.type === 'GROUP') continue;
+        processField(code, f, null);
+        if (f.type === 'SUBTABLE' && f.fields) {
+          for (const [sc, sf] of Object.entries(f.fields)) {
+            processField(sc, sf, f.label || code);
+          }
+        }
+      }
+
       Object.values(actions || {}).forEach((a) => {
         if (a?.destApp?.app) {
-          rows.push(['(アクション)', a.name || '', 'アクション', resolveAppName(a.destApp), '']);
+          const appId = a.destApp.app;
+          const appName = appNames[appId] || `(ID:${appId})`;
+          addDep('(アクション)', a.name || '', 'アクション', appName, UtilsX.formatFilterCond(a.filterCond), CONFIG.COLORS.DANGER_BG);
         }
       });
-      if (rows.length) {
-        appendSheet('フィールド依存関係', buildSimpleAOA('フィールド依存関係', headers, rows));
-      }
+
+      if (dAoa.length === 2) dAoa.push(['', '依存関係なし', '-', '-', '-', '-']);
+
+      appendSheet('フィールド依存関係', {
+        aoa: dAoa,
+        options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0], specialCells }
+      });
     }
 
     UI.update('ダウンロード中...', 12);
