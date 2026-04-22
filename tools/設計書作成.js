@@ -803,27 +803,461 @@ ${contextLine}`);
   });
 
   // src/diff/export.js
-  function bundleToMarkdown(bundle) {
+  function mdEsc(value) {
+    return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+  }
+  function mdFieldTypeLabel(type) {
+    const key = String(type || "").trim();
+    return MD_FIELD_TYPE_LABELS[key] || key || "";
+  }
+  function mdEntityList(entities) {
+    if (!Array.isArray(entities) || entities.length === 0) return "";
+    return entities.map((e) => {
+      const entity = e?.entity || e;
+      if (!entity) return "";
+      const typeLabel = MD_ENTITY_TYPE_LABELS[entity.type] || entity.type || "";
+      const code = entity.code ? `\`${entity.code}\`` : "";
+      const parts = [typeLabel, code].filter(Boolean);
+      const subs = e?.includeSubs ? "（配下含む）" : "";
+      return parts.join(": ") + subs;
+    }).filter(Boolean).join(" / ");
+  }
+  function mdBoolMark(value) {
+    if (value === true) return "○";
+    return "";
+  }
+  function mdTable(headers, rows) {
+    if (!rows || rows.length === 0) return "";
+    const head = `| ${headers.join(" | ")} |`;
+    const sep = `| ${headers.map(() => "---").join(" | ")} |`;
+    const body = rows.map((r) => `| ${r.map(mdEsc).join(" | ")} |`).join("\n");
+    return `${head}
+${sep}
+${body}`;
+  }
+  function mdRawJson(sec) {
+    return [
+      "<details><summary>Raw JSON</summary>",
+      "",
+      "```json",
+      JSON.stringify(sec, null, 2),
+      "```",
+      "",
+      "</details>"
+    ].join("\n");
+  }
+  function mdFormatDefaultValue(value) {
+    if (value == null) return "";
+    if (Array.isArray(value)) {
+      return value.map((v) => v && typeof v === "object" ? JSON.stringify(v) : String(v)).join(" / ");
+    }
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  }
+  function mdFieldOptions(options) {
+    if (!options || typeof options !== "object") return "";
+    const entries = Object.values(options).map((opt) => ({
+      label: opt?.label ?? "",
+      index: Number(opt?.index ?? 0)
+    }));
+    entries.sort((a, b) => a.index - b.index);
+    return entries.map((o) => o.label).filter(Boolean).join(" / ");
+  }
+  function mdRenderAppSettings(sec) {
+    const rows = [
+      ["アプリ名", sec.name || ""],
+      ["説明", sec.description || ""],
+      ["アイコン", sec.icon?.type ? `${sec.icon.type}${sec.icon.key ? ` (${sec.icon.key})` : ""}` : ""],
+      ["テーマ", sec.theme || ""],
+      ["タイトルフィールド", sec.titleField?.selectFieldCode || (sec.titleField?.isDefaultTitleField ? "（既定）" : "")],
+      ["サムネイル", sec.enableThumbnails ? "有効" : "無効"],
+      ["コメント", sec.enableComments ? "有効" : "無効"],
+      ["一括削除", sec.enableBulkDeletion ? "有効" : "無効"],
+      ["レコード複製", sec.enableDuplicateRecord ? "有効" : "無効"],
+      ["インライン編集", sec.enableInlineRecordEditing ? "有効" : "無効"],
+      ["会計年度開始月", sec.firstMonthOfFiscalYear != null ? String(sec.firstMonthOfFiscalYear) : ""],
+      ["リビジョン", sec.revision != null ? String(sec.revision) : ""]
+    ].filter((r) => r[1] !== "");
+    return mdTable(["項目", "値"], rows);
+  }
+  function mdRenderFieldSettings(sec) {
+    const props = sec?.properties || {};
+    const rows = [];
+    const subtables = [];
+    Object.values(props).forEach((f) => {
+      if (!f) return;
+      rows.push([
+        f.code || "",
+        f.label || "",
+        mdFieldTypeLabel(f.type),
+        f.required ? "○" : "",
+        f.unique ? "○" : "",
+        mdFormatDefaultValue(f.defaultValue),
+        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : "")
+      ]);
+      if (f.type === "SUBTABLE" && f.fields) {
+        subtables.push(f);
+      }
+    });
+    rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    const parts = [];
+    parts.push(`- フィールド数: ${rows.length}`);
+    parts.push("");
+    parts.push(mdTable(
+      ["コード", "フィールド名", "種別", "必須", "重複禁止", "初期値", "選択肢/式"],
+      rows
+    ));
+    subtables.forEach((tbl) => {
+      parts.push("");
+      parts.push(`#### テーブル: \`${tbl.code}\` — ${tbl.label || ""}`);
+      parts.push("");
+      const subRows = Object.values(tbl.fields || {}).map((f) => [
+        f.code || "",
+        f.label || "",
+        mdFieldTypeLabel(f.type),
+        f.required ? "○" : "",
+        mdFormatDefaultValue(f.defaultValue),
+        mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : "")
+      ]);
+      subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+      parts.push(mdTable(["コード", "フィールド名", "種別", "必須", "初期値", "選択肢/式"], subRows));
+    });
+    return parts.join("\n");
+  }
+  function mdRenderLayoutItem(item, depth = 0) {
+    const indent = "  ".repeat(depth);
+    const out = [];
+    if (!item) return out;
+    if (item.type === "ROW") {
+      const codes = (item.fields || []).map((f) => {
+        if (f.type === "LABEL") return `[ラベル]${f.label || ""}`;
+        if (f.type === "SPACER") return `[スペース${f.elementId ? `:${f.elementId}` : ""}]`;
+        if (f.type === "HR") return "[罫線]";
+        const width = f.size?.width;
+        const widthLabel = width != null ? ` (${width}${typeof width === "number" ? "px" : ""})` : "";
+        return `\`${f.code || ""}\`${widthLabel}`;
+      }).join(" | ");
+      out.push(`${indent}- 行: ${codes || "（空）"}`);
+    } else if (item.type === "SUBTABLE") {
+      out.push(`${indent}- テーブル: \`${item.code}\``);
+    } else if (item.type === "GROUP") {
+      out.push(`${indent}- グループ: \`${item.code}\` — ${item.label || ""}`);
+      (item.layout || []).forEach((child) => {
+        out.push(...mdRenderLayoutItem(child, depth + 1));
+      });
+    }
+    return out;
+  }
+  function mdRenderLayoutSettings(sec) {
+    const layout = sec?.layout || [];
     const lines = [];
-    lines.push("# kintone 設計書");
+    layout.forEach((item) => lines.push(...mdRenderLayoutItem(item)));
+    return lines.join("\n");
+  }
+  function mdRenderViewSettings(sec) {
+    const views = sec?.views || {};
+    const entries = Object.entries(views).map(([name, v]) => ({ name, ...v }));
+    entries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
+    const rows = entries.map((v) => [
+      v.name || "",
+      MD_VIEW_TYPE_LABELS[v.type] || v.type || "",
+      v.index ?? "",
+      v.builtinType || "",
+      Array.isArray(v.fields) ? v.fields.join(" / ") : "",
+      v.filterCond || "",
+      v.sort || ""
+    ]);
+    return mdTable(["ビュー名", "種別", "表示順", "ビルトイン", "表示フィールド", "絞り込み条件", "ソート"], rows);
+  }
+  function mdRenderReportSettings(sec) {
+    const reports = sec?.reports || {};
+    const entries = Object.entries(reports).map(([name, r]) => ({ name, ...r }));
+    entries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
+    const rows = entries.map((r) => [
+      r.name || "",
+      MD_REPORT_CHART_LABELS[r.chartType] || r.chartType || "",
+      r.chartMode || "",
+      (r.groups || []).map((g) => g.code).filter(Boolean).join(" / "),
+      (r.aggregations || []).map((a) => `${a.type || ""}(${a.code || ""})`).join(" / "),
+      r.filterCond || "",
+      r.periodicReport?.active ? "定期" : ""
+    ]);
+    return mdTable(["レポート名", "チャート", "モード", "分類", "集計", "絞り込み", "定期"], rows);
+  }
+  function mdRenderProcessSettings(sec) {
+    const parts = [];
+    parts.push(`- プロセス管理: ${sec?.enable ? "有効" : "無効"}`);
+    parts.push("");
+    const states = sec?.states || {};
+    const stateEntries = Object.entries(states).map(([name, s]) => ({ name, ...s }));
+    stateEntries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
+    if (stateEntries.length) {
+      parts.push("#### ステータス");
+      parts.push("");
+      parts.push(mdTable(
+        ["ステータス名", "表示順", "作業者タイプ", "作業者"],
+        stateEntries.map((s) => [
+          s.name || "",
+          s.index ?? "",
+          s.assignee?.type || "",
+          mdEntityList(s.assignee?.entities)
+        ])
+      ));
+      parts.push("");
+    }
+    const actions = Array.isArray(sec?.actions) ? sec.actions : [];
+    if (actions.length) {
+      parts.push("#### アクション");
+      parts.push("");
+      parts.push(mdTable(
+        ["アクション名", "From", "To", "絞り込み条件"],
+        actions.map((a) => [
+          a.name || "",
+          Array.isArray(a.from) ? a.from.join(" / ") : a.from || "",
+          a.to || "",
+          a.filterCond || ""
+        ])
+      ));
+    }
+    return parts.join("\n");
+  }
+  function mdRenderPluginSettings(sec) {
+    const plugins = sec?.plugins || [];
+    const rows = plugins.map((p) => [
+      p.id || "",
+      p.name || "",
+      p.version || "",
+      p.description || ""
+    ]);
+    return mdTable(["プラグインID", "名称", "バージョン", "説明"], rows);
+  }
+  function mdRenderCustomizeSettings(sec) {
+    const parts = [];
+    parts.push(`- スコープ: ${sec?.scope || ""}`);
+    parts.push("");
+    ["desktop", "mobile"].forEach((area) => {
+      const zone = sec?.[area];
+      if (!zone) return;
+      parts.push(`#### ${area === "desktop" ? "PC" : "モバイル"}`);
+      parts.push("");
+      ["js", "css"].forEach((kind) => {
+        const list = zone[kind];
+        if (!Array.isArray(list) || list.length === 0) return;
+        parts.push(`- ${kind.toUpperCase()}:`);
+        list.forEach((item) => {
+          let src = "";
+          if (item.type === "URL") src = item.url || "";
+          else if (item.file) src = `(ファイル: ${item.file.name || item.file.fileKey || ""})`;
+          parts.push(`  - ${item.type || ""}: ${src}`);
+        });
+      });
+      parts.push("");
+    });
+    return parts.join("\n").trimEnd();
+  }
+  function mdRenderActionSettings(sec) {
+    const actions = sec?.actions || [];
+    const list = Array.isArray(actions) ? actions : Object.values(actions);
+    const rows = list.map((a) => [
+      a.name || "",
+      a.index ?? "",
+      a.app?.code || a.app?.id || "",
+      a.entity?.type || "",
+      (a.mappings || []).length
+    ]);
+    return mdTable(["アクション名", "表示順", "連携先アプリ", "エンティティ種別", "マッピング数"], rows);
+  }
+  function mdRenderAclRights(rights, columns) {
+    if (!Array.isArray(rights) || rights.length === 0) return "";
+    return mdTable(
+      ["対象", ...columns.map((c) => c.label)],
+      rights.map((r) => [
+        mdEntityList([{ entity: r.entity, includeSubs: r.includeSubs }]) || r.code || r.filterCond || "",
+        ...columns.map((c) => mdBoolMark(r[c.key]))
+      ])
+    );
+  }
+  function mdRenderAppAcl(sec) {
+    return mdRenderAclRights(sec?.rights, [
+      { key: "appEditable", label: "アプリ管理" },
+      { key: "recordAddable", label: "追加" },
+      { key: "recordEditable", label: "編集" },
+      { key: "recordDeletable", label: "削除" },
+      { key: "recordImportable", label: "読込" },
+      { key: "recordExportable", label: "書出" }
+    ]);
+  }
+  function mdRenderFieldAcl(sec) {
+    const rights = sec?.rights || [];
+    const parts = [];
+    rights.forEach((r) => {
+      parts.push(`#### \`${r.code || ""}\``);
+      parts.push("");
+      parts.push(mdTable(
+        ["対象", "閲覧", "編集"],
+        (r.entities || []).map((e) => [
+          mdEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
+          mdBoolMark(e.viewable),
+          mdBoolMark(e.editable)
+        ])
+      ));
+      parts.push("");
+    });
+    return parts.join("\n").trimEnd();
+  }
+  function mdRenderRecordPermissions(sec) {
+    const rights = sec?.rights || [];
+    const parts = [];
+    rights.forEach((r, idx) => {
+      parts.push(`#### 条件 ${idx + 1}${r.filterCond ? `: \`${r.filterCond}\`` : ""}`);
+      parts.push("");
+      parts.push(mdTable(
+        ["対象", "閲覧", "編集", "削除"],
+        (r.entities || []).map((e) => [
+          mdEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
+          mdBoolMark(e.viewable),
+          mdBoolMark(e.editable),
+          mdBoolMark(e.deletable)
+        ])
+      ));
+      parts.push("");
+    });
+    return parts.join("\n").trimEnd();
+  }
+  function mdRenderNotifications(sec) {
+    const list = sec?.notifications || [];
+    const rows = list.map((n) => [
+      mdEntityList([{ entity: n.entity, includeSubs: n.includeSubs }]),
+      mdBoolMark(n.recordAdded),
+      mdBoolMark(n.recordEdited),
+      mdBoolMark(n.commentAdded),
+      mdBoolMark(n.statusChanged),
+      mdBoolMark(n.fileImported)
+    ]);
+    const parts = [];
+    if (sec?.notifyToCommenter != null) {
+      parts.push(`- コメント投稿者へ通知: ${sec.notifyToCommenter ? "有効" : "無効"}`);
+      parts.push("");
+    }
+    parts.push(mdTable(
+      ["対象", "レコード追加", "レコード編集", "コメント", "ステータス変更", "ファイル取込"],
+      rows
+    ));
+    return parts.join("\n");
+  }
+  function mdRenderPerRecordNotifications(sec) {
+    const list = sec?.notifications || [];
+    return mdTable(
+      ["タイトル", "絞り込み条件", "通知先"],
+      list.map((n) => [n.title || "", n.filterCond || "", mdEntityList(n.targets)])
+    );
+  }
+  function mdRenderReminderNotifications(sec) {
+    const list = sec?.notifications || [];
+    const parts = [];
+    if (sec?.timezone) {
+      parts.push(`- タイムゾーン: ${sec.timezone}`);
+      parts.push("");
+    }
+    parts.push(mdTable(
+      ["タイトル", "タイミング", "絞り込み条件", "通知先"],
+      list.map((n) => {
+        const t = n.timing || {};
+        const timingParts = [];
+        if (t.code) timingParts.push(t.code);
+        if (t.daysLater != null) timingParts.push(`${t.daysLater}日後`);
+        if (t.hoursLater != null) timingParts.push(`${t.hoursLater}時間後`);
+        if (t.time) timingParts.push(t.time);
+        return [n.title || "", timingParts.join(" "), n.filterCond || "", mdEntityList(n.targets)];
+      })
+    ));
+    return parts.join("\n");
+  }
+  function mdRenderCategories(sec) {
+    const parts = [];
+    parts.push(`- カテゴリー機能: ${sec?.enabled ? "有効" : "無効"}`);
+    parts.push("");
+    const list = sec?.categories || [];
+    parts.push(mdTable(
+      ["コード", "名称", "表示順"],
+      list.map((c) => [c.code || "", c.name || "", c.index ?? ""])
+    ));
+    return parts.join("\n");
+  }
+  function mdBundleSummary(bundle) {
+    const sections = bundle?.sections || {};
+    const rows = [];
+    const fieldCount = Object.keys(sections.fieldSettings?.properties || {}).length;
+    const viewCount = Object.keys(sections.viewSettings?.views || {}).length;
+    const reportCount = Object.keys(sections.reportSettings?.reports || {}).length;
+    const stateCount = Object.keys(sections.processSettings?.states || {}).length;
+    const actionCount = Array.isArray(sections.processSettings?.actions) ? sections.processSettings.actions.length : 0;
+    const pluginCount = (sections.pluginSettings?.plugins || []).length;
+    const notifCount = (sections.notifications?.notifications || []).length;
+    if (fieldCount) rows.push(["フィールド数", String(fieldCount)]);
+    if (viewCount) rows.push(["ビュー数", String(viewCount)]);
+    if (reportCount) rows.push(["レポート数", String(reportCount)]);
+    if (stateCount) rows.push(["ステータス数", String(stateCount)]);
+    if (actionCount) rows.push(["プロセスアクション数", String(actionCount)]);
+    if (pluginCount) rows.push(["プラグイン数", String(pluginCount)]);
+    if (notifCount) rows.push(["一般通知宛先数", String(notifCount)]);
+    return rows.length ? mdTable(["項目", "件数"], rows) : "";
+  }
+  function bundleToMarkdown(bundle) {
+    const sections = bundle?.sections || {};
+    const appName = sections.appSettings?.name || "";
+    const lines = [];
+    lines.push(`# kintone 設計書${appName ? ` — ${appName}` : ""}`);
     lines.push("");
     lines.push(`- アプリID: ${bundle.appId}`);
     lines.push(`- ゲストスペースID: ${bundle.guestId || "(通常空間)"}`);
     lines.push(`- プレビュー取得: ${bundle.preview ? "はい" : "いいえ"}`);
     lines.push(`- 取得日時: ${bundle.fetchedAt}`);
     lines.push("");
+    const available = SECTION_DEFS.filter((def) => sections[def.key]);
+    if (available.length) {
+      lines.push("## 目次");
+      lines.push("");
+      available.forEach((def) => {
+        const slug = def.label.replace(/\s+/g, "-");
+        lines.push(`- [${def.label}](#${slug})`);
+      });
+      lines.push("");
+    }
+    const summary = mdBundleSummary(bundle);
+    if (summary) {
+      lines.push("## 概要");
+      lines.push("");
+      lines.push(summary);
+      lines.push("");
+    }
     for (const def of SECTION_DEFS) {
-      const sec = bundle.sections[def.key];
+      const sec = sections[def.key];
       if (!sec) continue;
       lines.push(`## ${def.label}`);
       lines.push("");
-      lines.push("```json");
-      lines.push(JSON.stringify(sec, null, 2));
-      lines.push("```");
+      const renderer = MD_SECTION_RENDERERS[def.key];
+      let rendered = "";
+      if (renderer) {
+        try {
+          rendered = renderer(sec) || "";
+        } catch (e) {
+          rendered = "";
+        }
+      }
+      if (rendered.trim()) {
+        lines.push(rendered);
+        lines.push("");
+      } else {
+        lines.push("（データなし）");
+        lines.push("");
+      }
+      lines.push(mdRawJson(sec));
       lines.push("");
     }
     return lines.join("\n");
   }
+  var MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_SECTION_RENDERERS;
   var init_export = __esm({
     "src/diff/export.js"() {
       init_constants();
@@ -833,6 +1267,82 @@ ${contextLine}`);
       init_enrich();
       init_filter();
       init_api();
+      MD_FIELD_TYPE_LABELS = {
+        SINGLE_LINE_TEXT: "文字列（1行）",
+        MULTI_LINE_TEXT: "文字列（複数行）",
+        RICH_TEXT: "リッチテキスト",
+        NUMBER: "数値",
+        CALC: "計算",
+        CHECK_BOX: "チェックボックス",
+        RADIO_BUTTON: "ラジオボタン",
+        DROP_DOWN: "ドロップダウン",
+        MULTI_SELECT: "複数選択",
+        DATE: "日付",
+        TIME: "時刻",
+        DATETIME: "日時",
+        LINK: "リンク",
+        FILE: "添付ファイル",
+        USER_SELECT: "ユーザー選択",
+        ORGANIZATION_SELECT: "組織選択",
+        GROUP_SELECT: "グループ選択",
+        CATEGORY: "カテゴリー",
+        STATUS: "ステータス",
+        STATUS_ASSIGNEE: "作業者",
+        SUBTABLE: "テーブル",
+        REFERENCE_TABLE: "関連レコード一覧",
+        RECORD_NUMBER: "レコード番号",
+        CREATOR: "作成者",
+        CREATED_TIME: "作成日時",
+        MODIFIER: "更新者",
+        UPDATED_TIME: "更新日時",
+        SPACER: "スペース",
+        HR: "罫線",
+        LABEL: "ラベル",
+        GROUP: "グループ"
+      };
+      MD_VIEW_TYPE_LABELS = {
+        LIST: "一覧",
+        CALENDAR: "カレンダー",
+        CUSTOM: "カスタマイズ"
+      };
+      MD_REPORT_CHART_LABELS = {
+        BAR: "棒グラフ",
+        COLUMN: "縦棒グラフ",
+        LINE: "折れ線グラフ",
+        PIE: "円グラフ",
+        PIVOT_TABLE: "クロス集計表",
+        TABLE: "表",
+        AREA: "面グラフ",
+        SPLINE: "スプライン",
+        SPLINE_AREA: "スプライン面",
+        SCATTER: "散布図"
+      };
+      MD_ENTITY_TYPE_LABELS = {
+        USER: "ユーザー",
+        GROUP: "グループ",
+        ORGANIZATION: "組織",
+        FIELD_ENTITY: "フィールド",
+        CREATOR: "レコード作成者",
+        CUSTOM_FIELD: "カスタムフィールド"
+      };
+      MD_SECTION_RENDERERS = {
+        appSettings: mdRenderAppSettings,
+        fieldSettings: mdRenderFieldSettings,
+        layoutSettings: mdRenderLayoutSettings,
+        viewSettings: mdRenderViewSettings,
+        reportSettings: mdRenderReportSettings,
+        processSettings: mdRenderProcessSettings,
+        pluginSettings: mdRenderPluginSettings,
+        customizeSettings: mdRenderCustomizeSettings,
+        actionSettings: mdRenderActionSettings,
+        appAcl: mdRenderAppAcl,
+        fieldAcl: mdRenderFieldAcl,
+        recordPermissions: mdRenderRecordPermissions,
+        notifications: mdRenderNotifications,
+        perRecordNotifications: mdRenderPerRecordNotifications,
+        reminderNotifications: mdRenderReminderNotifications,
+        categories: mdRenderCategories
+      };
     }
   });
 
