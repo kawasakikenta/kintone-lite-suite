@@ -340,6 +340,7 @@
       DIALOG_LARGE_HEIGHT = 940;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
+        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, paramBuilder: (app) => ({ id: app }) },
         { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
         { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
         { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
@@ -1339,7 +1340,8 @@ ${contextLine}`);
       const def = SECTION_DEFS.find((x) => x.key === sec);
       if (!def) continue;
       try {
-        const res = await apiGet(prefix, def.endpoint, { app });
+        const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
+        const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
         if (revision) bundle.meta.sectionRevisions[sec] = revision;
         bundle.sections[sec] = normalize(res);
