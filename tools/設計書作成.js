@@ -1515,6 +1515,43 @@ ${body}`;
       "CATEGORY": "カテゴリー",
       "STATUS_ASSIGNEE": "作業者"
     };
+    const VIEW_TYPE_JP = { "LIST": "一覧", "CALENDAR": "カレンダー", "CUSTOM": "カスタマイズ" };
+    const PAGINATION_TYPE_JP = { "PRESENTATION": "ページ送り", "NONE": "なし", "CURSOR": "カーソル" };
+    const CHART_TYPE_JP = {
+      "BAR": "横棒グラフ", "COLUMN": "縦棒グラフ", "PIE": "円グラフ",
+      "LINE": "折れ線グラフ", "PIE_CHART": "円グラフ", "AREA": "面グラフ",
+      "SPLINE": "曲線グラフ", "SPLINE_AREA": "曲線面グラフ", "LINE_AREA": "複合(面)",
+      "BAR_CHART": "横棒グラフ", "COLUMN_CHART": "縦棒グラフ",
+      "PIVOT_TABLE": "クロス集計表", "TABLE": "表"
+    };
+    const CHART_MODE_JP = {
+      "NORMAL": "通常", "STACKED": "積み上げ", "100_STACKED": "100%積み上げ"
+    };
+    const AGG_TYPE_JP = {
+      "COUNT": "件数", "SUM": "合計", "AVERAGE": "平均",
+      "MAX": "最大", "MIN": "最小", "MAXIMUM": "最大", "MINIMUM": "最小"
+    };
+    const PERIOD_JP = {
+      "YEAR": "年", "QUARTER": "四半期", "MONTH": "月",
+      "WEEK": "週", "DAY": "日", "HOUR": "時", "MINUTE": "分",
+      "DAY_OF_WEEK": "曜日", "DAY_OF_MONTH": "日(月内)", "HOUR_OF_DAY": "時(時間帯)"
+    };
+    const SORT_BY_JP = { "TOTAL": "集計値", "ASC": "昇順", "DESC": "降順" };
+    const WEBHOOK_EVENT_JP = {
+      "ADD_RECORD": "レコード追加",
+      "UPDATE_RECORD": "レコード編集",
+      "DELETE_RECORD": "レコード削除",
+      "COMMENT_RECORD": "コメント追加",
+      "UPDATE_STATUS": "ステータス変更"
+    };
+    const CUSTOMIZE_REF_JP = { "URL": "URL指定", "FILE": "アップロード", "JS_URL": "URL指定(JS)", "CSS_URL": "URL指定(CSS)" };
+    const REMINDER_TIMING_JP = {
+      "CREATION": "レコード作成時",
+      "UPDATE": "レコード更新時",
+      "STATUS_CHANGE": "ステータス変更時",
+      "DATETIME_FIELD": "日時フィールド基準",
+      "DATE_FIELD": "日付フィールド基準"
+    };
     const SYSTEM_FIELDS = /* @__PURE__ */ new Set(["$id", "$revision", "status", "category", "assignee"]);
     class Semaphore {
       constructor(max) {
@@ -2157,6 +2194,24 @@ ${body}`;
         const sAoa = [];
         const sectionRows = [];
         const headerInfoRows = [];
+        const THEME_JP = {
+          "WHITE": "ホワイト", "CLIPBOARD": "クリップボード",
+          "BINDER": "バインダー", "PENCIL": "ペンシル", "BELIZEHOLE": "ベリーズホール"
+        };
+        const ICON_TYPE_JP = { "PRESET": "プリセット", "FILE": "アップロード画像" };
+        const countFields = (fs) => {
+          let normal = 0, sub = 0, subFields = 0;
+          Object.values(fs || {}).forEach((f) => {
+            if (f.type === "SUBTABLE") {
+              sub++;
+              subFields += Object.keys(f.fields || {}).length;
+            } else if (f.type !== "GROUP") {
+              normal++;
+            }
+          });
+          return { normal, sub, subFields, total: normal + sub };
+        };
+        const fc = countFields(fields);
         sAoa.push(["kintone アプリ設計書"]);
         sAoa.push([]);
         sAoa.push(["基本情報"]);
@@ -2165,14 +2220,15 @@ ${body}`;
         headerInfoRows.push(sAoa.length - 1);
         sAoa.push(["アプリID", APP_ID]);
         sAoa.push(["アプリ名", appSettings?.name || ""]);
+        sAoa.push(["アプリコード", appSettings?.code || "-"]);
         sAoa.push(["説明", UtilsX.stripHtml(appSettings?.description || generalSettings?.description || "-")]);
         sAoa.push(["作成者", appSettings?.creator?.name || "-"]);
         sAoa.push(["作成日時", UtilsX.toJST(appSettings?.createdAt)]);
         sAoa.push(["更新者", appSettings?.modifier?.name || "-"]);
         sAoa.push(["更新日時", UtilsX.toJST(appSettings?.modifiedAt)]);
         if (generalSettings) {
-          sAoa.push(["テーマ", generalSettings.theme || "-"]);
-          sAoa.push(["アイコン種類", generalSettings.icon?.type || "-"]);
+          sAoa.push(["テーマ", THEME_JP[generalSettings.theme] || generalSettings.theme || "-"]);
+          sAoa.push(["アイコン種類", ICON_TYPE_JP[generalSettings.icon?.type] || generalSettings.icon?.type || "-"]);
           sAoa.push(["リビジョン", generalSettings.revision || "-"]);
         }
         if (appSettings?.spaceId) sAoa.push(["スペースID", appSettings.spaceId]);
@@ -2183,13 +2239,27 @@ ${body}`;
         sAoa.push(["項目", "件数"]);
         headerInfoRows.push(sAoa.length - 1);
         sAoa.push(["総レコード数", recordCount != null ? recordCount : "(取得不可)"]);
-        sAoa.push(["フィールド数", Object.keys(fields).length]);
+        sAoa.push(["フィールド数（通常）", fc.normal]);
+        sAoa.push(["フィールド数（テーブル）", fc.sub]);
+        sAoa.push(["テーブル内フィールド数", fc.subFields]);
         sAoa.push(["ビュー数", Object.keys(views?.views || {}).length]);
         sAoa.push(["グラフ数", Object.keys(reports?.reports || {}).length]);
         sAoa.push(["プロセス管理", status?.enable ? "有効" : "無効"]);
         sAoa.push(["ステータス数", Object.keys(status?.states || {}).length]);
-        sAoa.push(["アクション数", Object.keys(actions || {}).length]);
+        sAoa.push(["アクション数（プロセス）", Array.isArray(status?.actions) ? status.actions.length : 0]);
+        sAoa.push(["アクション数（アプリ）", Array.isArray(actions) ? actions.length : Object.keys(actions || {}).length]);
         sAoa.push(["プラグイン数", (pluginsResp?.plugins || []).length]);
+        sAoa.push(["Webhook数", (webhooksResp?.webhooks || []).length]);
+        sAoa.push(["通知（一般）件数", (genNotif?.notifications || []).length]);
+        sAoa.push(["通知（レコード条件）件数", (recNotif?.notifications || []).length]);
+        sAoa.push(["通知（リマインダー）件数", (remNotif?.notifications || []).length]);
+        sAoa.push(["アプリ権限（対象数）", (appAcl?.rights || []).length]);
+        sAoa.push(["レコード権限（グループ数）", (recordAcl?.rights || []).length]);
+        sAoa.push(["フィールド権限（対象フィールド数）", (fieldAcl?.rights || []).length]);
+        const cjs = (customize?.desktop?.js || []).length + (customize?.mobile?.js || []).length;
+        const ccss = (customize?.desktop?.css || []).length + (customize?.mobile?.css || []).length;
+        sAoa.push(["カスタマイズ JS数", cjs]);
+        sAoa.push(["カスタマイズ CSS数", ccss]);
         sAoa.push([]);
         sAoa.push(["出力情報"]);
         sectionRows.push(sAoa.length - 1);
@@ -2451,50 +2521,152 @@ ${body}`;
       }
       if (selectedSheets.has("views") && views?.views) {
         const fieldLabelMap = buildFieldLabelMap(fields);
-        const typeMap = { "LIST": "一覧", "CALENDAR": "カレンダー", "CUSTOM": "カスタマイズ" };
-        const headers = ["ビュー名", "種別", "表示順", "表示フィールド", "表示フィールド（ラベル）", "フィルター条件", "ソート", "ページング", "メモ"];
-        const rows = Object.entries(views.views).sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0)).map(([name, v]) => {
-          const fieldCodes = UtilsX.ensureArray(v.fields);
-          const fieldLabels = fieldCodes.map((c) => fieldLabelMap[c] || c);
-          return [
-            name,
-            typeMap[v.type] || v.type || "",
-            v.index || "",
-            fieldCodes.join("\n") || "-",
-            fieldLabels.join("\n") || "-",
-            UtilsX.formatFilterCond(v.filterCond),
-            UtilsX.formatSort(v.sort),
-            v.paginationType || (v.pagination === false ? "無効" : "既定"),
-            UtilsX.stripHtml(v.customView || v.html || v.builtinType || "")
-          ];
-        });
-        appendSheet("一覧", buildSimpleAOA("一覧(ビュー)", headers, rows));
+        const headers = [
+          "表示順", "ビュー名", "種別", "ID",
+          "表示フィールド(コード)", "表示フィールド(ラベル)",
+          "絞り込み条件", "ソート", "ページング",
+          "カレンダー日付フィールド", "カレンダータイトルフィールド",
+          "組込タイプ", "カスタムHTML", "PC用URL", "備考"
+        ];
+        const rows = Object.entries(views.views)
+          .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0))
+          .map(([name, v]) => {
+            const fieldCodes = UtilsX.ensureArray(v.fields);
+            const fieldLabels = fieldCodes.map((c) => fieldLabelMap[c] || c);
+            const dateField = v.date || v.dateField || "";
+            const titleField = v.title || v.titleField || "";
+            const customHtml = v.customView || v.html || "";
+            const pcUrl = v.pcUrl || v.customViewUrl || "";
+            const htmlSummary = customHtml ? UtilsX.stripHtml(customHtml).slice(0, 200) + (customHtml.length > 200 ? "…" : "") : "-";
+            return [
+              v.index || "",
+              name,
+              VIEW_TYPE_JP[v.type] || v.type || "",
+              v.id || "-",
+              fieldCodes.join("\n") || "-",
+              fieldLabels.join("\n") || "-",
+              UtilsX.formatFilterCond(v.filterCond),
+              UtilsX.formatSort(v.sort),
+              PAGINATION_TYPE_JP[v.paginationType] || v.paginationType || (v.pagination === false ? "無効" : "既定"),
+              v.type === "CALENDAR" ? (fieldLabelMap[dateField] ? `${fieldLabelMap[dateField]} (${dateField})` : dateField || "-") : "-",
+              v.type === "CALENDAR" ? (fieldLabelMap[titleField] ? `${fieldLabelMap[titleField]} (${titleField})` : titleField || "-") : "-",
+              v.builtinType || "-",
+              v.type === "CUSTOM" ? htmlSummary : "-",
+              pcUrl || "-",
+              UtilsX.stripHtml(v.description || v.memo || "")
+            ];
+          });
+        appendSheet("一覧", buildSimpleAOA("一覧（ビュー）", headers, rows));
       }
       if (selectedSheets.has("reports") && reports?.reports) {
-        const headers = ["グラフ名", "種別", "集計対象", "集計方法", "グループ化", "ソート", "フィルター"];
-        const rows = Object.entries(reports.reports).sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0)).map(([name, r]) => [
-          name,
-          r.chartType || r.type || "",
-          Array.isArray(r.aggregations) ? r.aggregations.map((a) => `${a.type || ""}:${a.code || ""}`).join("\n") : "",
-          r.chartMode || "",
-          Array.isArray(r.groups) ? r.groups.map((g) => `${g.code || ""}${g.per ? `(${g.per})` : ""}`).join("、") : "",
-          UtilsX.formatSort(Array.isArray(r.sorts) ? r.sorts.map((s) => `${s.by || ""} ${s.order || ""}`).join(", ") : ""),
-          UtilsX.formatFilterCond(r.filterCond)
-        ]);
+        const fieldLabelMap = buildFieldLabelMap(fields);
+        const labelOfCode = (code) => code ? (fieldLabelMap[code] ? `${fieldLabelMap[code]} (${code})` : code) : "-";
+        const formatAgg = (a) => {
+          const type = AGG_TYPE_JP[a.type] || a.type || "";
+          if (!a.code) return type;
+          return `${type}: ${labelOfCode(a.code)}`;
+        };
+        const formatGroup = (g) => {
+          const lbl = labelOfCode(g.code);
+          const per = g.per ? `（${PERIOD_JP[g.per] || g.per}単位）` : "";
+          return `${lbl}${per}`;
+        };
+        const formatReportSort = (sorts) => {
+          if (!Array.isArray(sorts) || !sorts.length) return "-";
+          return sorts.map((s) => {
+            const by = SORT_BY_JP[s.by] || s.by || "-";
+            const ord = s.order === "ASC" ? "昇順" : s.order === "DESC" ? "降順" : s.order || "";
+            return `${by} ${ord}`.trim();
+          }).join("\n");
+        };
+        const headers = [
+          "表示順", "グラフ名", "ID", "種別", "積み上げ方式",
+          "集計方法", "グループ化", "ソート", "絞り込み条件",
+          "定期レポート", "共有"
+        ];
+        const rows = Object.entries(reports.reports)
+          .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0))
+          .map(([name, r]) => [
+            r.index || "",
+            name,
+            r.id || "-",
+            CHART_TYPE_JP[r.chartType] || CHART_TYPE_JP[r.type] || r.chartType || r.type || "",
+            CHART_MODE_JP[r.chartMode] || (r.chartMode || "-"),
+            Array.isArray(r.aggregations) ? r.aggregations.map(formatAgg).join("\n") : "-",
+            Array.isArray(r.groups) && r.groups.length ? r.groups.map(formatGroup).join("\n") : "-",
+            formatReportSort(r.sorts),
+            UtilsX.formatFilterCond(r.filterCond),
+            r.periodicReport?.active ? `有効（${r.periodicReport.period?.pattern || ""}）` : "-",
+            r.shareWithOthers ? "共有" : "非共有"
+          ]);
         appendSheet("グラフ", buildSimpleAOA("グラフ", headers, rows));
       }
       if (selectedSheets.has("status") && status) {
-        const headers = ["種別", "名前", "番号/From", "To", "作業者", "条件"];
-        const rows = [];
-        rows.push(["有効/無効", status.enable ? "有効" : "無効", "", "", "", ""]);
-        Object.entries(status.states || {}).forEach(([name, st]) => {
-          const asgn = st.assignee ? `${st.assignee.type || ""}${Array.isArray(st.assignee.entities) ? ":" + st.assignee.entities.map(UtilsX.formatEntityDetailed).join(" / ") : ""}` : "";
-          rows.push(["ステータス", name, st.index || "", "", asgn, ""]);
+        const ASSIGNEE_TYPE_JP = {
+          "ONE": "1人選択",
+          "ANY": "誰でも",
+          "ALL": "全員",
+          "FIELD_ENTITY": "フィールド値"
+        };
+        const sAoa2 = [["プロセス管理"]];
+        const sectionRows2 = [];
+        const headerInfoRows2 = [];
+        sAoa2.push([]);
+        sAoa2.push(["基本情報"]);
+        sectionRows2.push(sAoa2.length - 1);
+        sAoa2.push(["項目", "値"]);
+        headerInfoRows2.push(sAoa2.length - 1);
+        sAoa2.push(["プロセス管理", status.enable ? "有効" : "無効"]);
+        sAoa2.push(["ステータス数", Object.keys(status.states || {}).length]);
+        sAoa2.push(["アクション数", Array.isArray(status.actions) ? status.actions.length : 0]);
+        sAoa2.push(["リビジョン", status.revision || "-"]);
+        sAoa2.push([]);
+        sAoa2.push(["ステータス一覧"]);
+        sectionRows2.push(sAoa2.length - 1);
+        sAoa2.push(["表示順", "ステータス名", "作業者種別", "作業者", "備考"]);
+        headerInfoRows2.push(sAoa2.length - 1);
+        const stateEntries = Object.entries(status.states || {})
+          .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0));
+        if (stateEntries.length === 0) {
+          sAoa2.push(["-", "(ステータス未設定)", "-", "-", "-"]);
+        } else {
+          stateEntries.forEach(([name, st]) => {
+            const asgnType = ASSIGNEE_TYPE_JP[st.assignee?.type] || st.assignee?.type || "-";
+            const asgnEntities = Array.isArray(st.assignee?.entities) && st.assignee.entities.length
+              ? st.assignee.entities.map(UtilsX.formatEntityDetailed).join("\n")
+              : "-";
+            sAoa2.push([st.index || "", st.name || name, asgnType, asgnEntities, UtilsX.stripHtml(st.description || "")]);
+          });
+        }
+        sAoa2.push([]);
+        sAoa2.push(["アクション一覧"]);
+        sectionRows2.push(sAoa2.length - 1);
+        sAoa2.push(["アクション名", "遷移元", "遷移先", "実行可能な作業者", "絞り込み条件"]);
+        headerInfoRows2.push(sAoa2.length - 1);
+        const actionList = Array.isArray(status.actions) ? status.actions : [];
+        if (actionList.length === 0) {
+          sAoa2.push(["(アクション未設定)", "-", "-", "-", "-"]);
+        } else {
+          actionList.forEach((a) => {
+            const asgnType = ASSIGNEE_TYPE_JP[a.assignee?.type] || a.assignee?.type || "";
+            const asgnEntities = Array.isArray(a.assignee?.entities) && a.assignee.entities.length
+              ? a.assignee.entities.map(UtilsX.formatEntityDetailed).join("\n")
+              : "";
+            const asgn = [asgnType, asgnEntities].filter(Boolean).join("\n") || "-";
+            sAoa2.push([a.name || "-", a.from || "-", a.to || "-", asgn, UtilsX.formatFilterCond(a.filterCond)]);
+          });
+        }
+        appendSheet("プロセス管理", {
+          aoa: sAoa2,
+          options: {
+            headerRowIndex: headerInfoRows2[0] ?? 3,
+            titleRows: [0],
+            sectionRows: sectionRows2,
+            headerInfoRows: headerInfoRows2,
+            freezeRows: 1,
+            enableAutoFilter: false
+          }
         });
-        (status.actions || []).forEach((a) => {
-          rows.push(["アクション", a.name || "", a.from || "", a.to || "", "", a.filterCond || ""]);
-        });
-        appendSheet("プロセス管理", buildSimpleAOA("プロセス管理", headers, rows));
       }
       if (selectedSheets.has("statusMatrix") && status?.enable && status?.states && Array.isArray(status?.actions)) {
         const stateNames = Object.entries(status.states || {}).sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0)).map(([, s]) => s.name || "");
@@ -2595,74 +2767,239 @@ ${body}`;
           const list = [];
           ["js", "css"].forEach((kind) => {
             (obj?.[kind] || []).forEach((entry, i) => {
-              list.push([scope, kind.toUpperCase(), i + 1, entry.type || "", entry.file?.name || entry.url || "", entry.file?.fileKey || ""]);
+              list.push([
+                scope,
+                kind.toUpperCase(),
+                i + 1,
+                CUSTOMIZE_REF_JP[entry.type] || entry.type || "-",
+                entry.file?.name || entry.url || "-",
+                entry.file?.contentType || "-",
+                entry.file?.fileKey || "-"
+              ]);
             });
           });
           return list;
         };
+        const scopeLabel = customize.scope === "ALL" ? "すべてのユーザー" :
+          customize.scope === "ADMIN" ? "管理者のみ" :
+          customize.scope === "NONE" ? "無効" :
+          customize.scope || "-";
+        const headers = ["適用範囲", "種別", "番号", "参照方法", "ファイル名/URL", "Content-Type", "fileKey"];
         const rows = [
           ...renderScope("PC", customize.desktop),
           ...renderScope("モバイル", customize.mobile)
         ];
-        if (rows.length) {
-          appendSheet("JS/CSSカスタマイズ", buildSimpleAOA("JS/CSSカスタマイズ", ["スコープ", "種別", "No", "参照方法", "名前/URL", "fileKey"], rows));
+        if (rows.length === 0) {
+          rows.push(["-", "-", "-", "-", "(カスタマイズ未設定)", "-", "-"]);
         }
+        const aoa = [
+          ["JS/CSSカスタマイズ"],
+          [],
+          ["基本情報"],
+          ["項目", "値"],
+          ["適用対象", scopeLabel],
+          ["リビジョン", customize.revision || "-"],
+          [],
+          ["カスタマイズファイル一覧"],
+          headers,
+          ...rows
+        ];
+        appendSheet("JS/CSSカスタマイズ", {
+          aoa,
+          options: {
+            headerRowIndex: 8,
+            titleRows: [0],
+            sectionRows: [2, 7],
+            headerInfoRows: [3, 8],
+            freezeRows: 1,
+            enableAutoFilter: false
+          }
+        });
       }
       if (selectedSheets.has("actions") && actions) {
         const entries = Array.isArray(actions) ? actions : Object.values(actions);
-        const headers = ["アクション名", "実行先アプリ", "フィルター条件", "ソート", "フィールドマッピング"];
-        const rows = entries.map((a) => [
-          a.name || "",
-          resolveAppName(a.destApp),
-          UtilsX.formatFilterCond(a.filterCond),
-          UtilsX.formatSort(a.sort),
-          Array.isArray(a.mappings) ? a.mappings.map((m) => `${m.srcField || m.sourceField || "-"}→${m.destField || "-"}`).join("\n") : ""
-        ]);
-        if (rows.length) appendSheet("アクション", buildSimpleAOA("アクション", headers, rows));
+        const fieldLabelMap = buildFieldLabelMap(fields);
+        const labelOfCode = (code) => code ? (fieldLabelMap[code] ? `${fieldLabelMap[code]} (${code})` : code) : "-";
+        const headers = ["No.", "アクション名", "実行先アプリ", "絞り込み条件", "ソート", "フィールドマッピング", "有効"];
+        const rows = entries.length
+          ? entries.map((a, i) => [
+              i + 1,
+              a.name || "-",
+              resolveAppName(a.destApp),
+              UtilsX.formatFilterCond(a.filterCond),
+              UtilsX.formatSort(a.sort),
+              Array.isArray(a.mappings) && a.mappings.length
+                ? a.mappings.map((m) => `${labelOfCode(m.srcField || m.sourceField)} → ${m.destField || "-"}`).join("\n")
+                : "-",
+              a.enabled === false ? "無効" : "有効"
+            ])
+          : [[1, "(アクション未設定)", "-", "-", "-", "-", "-"]];
+        appendSheet("アクション", buildSimpleAOA("アクション", headers, rows));
       }
       if (selectedSheets.has("plugins") && pluginsResp?.plugins) {
-        const headers = ["プラグインID", "名前", "状態"];
-        const rows = pluginsResp.plugins.map((p) => [p.id || "", p.name || "", p.enabled === false ? "無効" : "有効"]);
-        if (rows.length) appendSheet("プラグイン", buildSimpleAOA("プラグイン", headers, rows));
+        const headers = ["No.", "プラグイン名", "プラグインID", "バージョン", "状態", "説明", "提供元"];
+        const list = Array.isArray(pluginsResp.plugins) ? pluginsResp.plugins : [];
+        const rows = list.length
+          ? list.map((p, i) => [
+              i + 1,
+              p.name || "-",
+              p.id || "-",
+              p.version || "-",
+              p.enabled === false ? "無効" : "有効",
+              UtilsX.stripHtml(p.description || ""),
+              p.vendor || p.homepage || "-"
+            ])
+          : [[1, "(プラグイン未設定)", "-", "-", "-", "-", "-"]];
+        appendSheet("プラグイン", buildSimpleAOA("プラグイン", headers, rows));
       }
-      const renderNotifSheet = (title, payload) => {
+      const renderGeneralNotifSheet = (title, payload) => {
         const list = Array.isArray(payload?.notifications) ? payload.notifications : [];
-        if (!list.length) return;
-        const headers = ["対象", "条件/タイミング", "レコード作成", "編集", "コメント", "ステータス", "本文/備考"];
-        const rows = list.map((n) => [
-          UtilsX.formatEntityDetailed(n.entity || n),
-          UtilsX.formatFilterCond(n.filterCond || n.timing || ""),
-          UtilsX.formatBoolean(n.recordAdded ?? n.notifyOnCreate),
-          UtilsX.formatBoolean(n.recordEdited ?? n.notifyOnEdit),
-          UtilsX.formatBoolean(n.commentAdded ?? n.notifyOnComment),
-          UtilsX.formatBoolean(n.statusChanged ?? n.notifyOnStatusChange),
-          UtilsX.stripHtml(n.title || n.body || "")
-        ]);
+        const headers = ["No.", "対象", "レコード追加時", "レコード編集時", "コメント時", "ステータス変更時", "ファイルインポート時"];
+        const rows = list.length
+          ? list.map((n, i) => [
+              i + 1,
+              UtilsX.formatEntityDetailed(n.entity || n),
+              UtilsX.formatBoolean(n.recordAdded ?? n.notifyOnCreate),
+              UtilsX.formatBoolean(n.recordEdited ?? n.notifyOnEdit),
+              UtilsX.formatBoolean(n.commentAdded ?? n.notifyOnComment),
+              UtilsX.formatBoolean(n.statusChanged ?? n.notifyOnStatusChange),
+              UtilsX.formatBoolean(n.fileImported)
+            ])
+          : [[1, "(通知対象なし)", "-", "-", "-", "-", "-"]];
+        const aoa = [[title], [], ["基本情報"], ["項目", "値"],
+          ["コメント投稿者への通知", UtilsX.formatBoolean(payload?.notifyToCommenter)],
+          [],
+          ["通知対象"], headers, ...rows];
+        appendSheet(title, {
+          aoa,
+          options: {
+            headerRowIndex: 7,
+            titleRows: [0],
+            sectionRows: [2, 6],
+            headerInfoRows: [3, 7],
+            freezeRows: 1,
+            enableAutoFilter: false
+          }
+        });
+      };
+      const renderPerRecordNotifSheet = (title, payload) => {
+        const list = Array.isArray(payload?.notifications) ? payload.notifications : [];
+        const headers = ["No.", "タイトル", "絞り込み条件", "通知対象"];
+        const rows = [];
+        if (list.length === 0) {
+          rows.push([1, "(通知設定なし)", "-", "-"]);
+        } else {
+          list.forEach((n, i) => {
+            const targets = Array.isArray(n.targets) ? n.targets : [];
+            const targetStr = targets.length
+              ? targets.map((t) => UtilsX.formatEntityDetailed(t.entity || t) + (t.includeSubs ? "（サブ組織含）" : "")).join("\n")
+              : UtilsX.formatEntityDetailed(n.entity || "");
+            rows.push([
+              i + 1,
+              UtilsX.stripHtml(n.title || "-"),
+              UtilsX.formatFilterCond(n.filterCond),
+              targetStr || "-"
+            ]);
+          });
+        }
         appendSheet(title, buildSimpleAOA(title, headers, rows));
       };
-      if (selectedSheets.has("genNotif")) renderNotifSheet("通知(一般)", genNotif);
-      if (selectedSheets.has("recNotif")) renderNotifSheet("通知(レコード)", recNotif);
-      if (selectedSheets.has("remNotif")) renderNotifSheet("通知(リマインダー)", remNotif);
+      const renderReminderNotifSheet = (title, payload) => {
+        const list = Array.isArray(payload?.notifications) ? payload.notifications : [];
+        const headers = ["No.", "タイトル", "絞り込み条件", "通知タイミング", "基準フィールド", "通知対象"];
+        const rows = [];
+        if (list.length === 0) {
+          rows.push([1, "(通知設定なし)", "-", "-", "-", "-"]);
+        } else {
+          list.forEach((n, i) => {
+            const timing = n.timing || {};
+            const timingParts = [];
+            if (timing.code) timingParts.push(REMINDER_TIMING_JP[timing.code] || timing.code);
+            if (timing.daysLater !== undefined && timing.daysLater !== null) timingParts.push(`${timing.daysLater}日後`);
+            if (timing.hoursLater !== undefined && timing.hoursLater !== null) timingParts.push(`${timing.hoursLater}時間後`);
+            if (timing.time) timingParts.push(`時刻: ${timing.time}`);
+            if (timing.weekday) timingParts.push(`曜日: ${timing.weekday}`);
+            if (!timingParts.length && typeof n.timing === "string") timingParts.push(n.timing);
+            const targets = Array.isArray(n.targets) ? n.targets : [];
+            const targetStr = targets.length
+              ? targets.map((t) => UtilsX.formatEntityDetailed(t.entity || t)).join("\n")
+              : "-";
+            const baseField = timing.baseDate || timing.baseDateField || timing.dateField || "-";
+            rows.push([
+              i + 1,
+              UtilsX.stripHtml(n.title || "-"),
+              UtilsX.formatFilterCond(n.filterCond),
+              timingParts.join(" / ") || "-",
+              baseField,
+              targetStr
+            ]);
+          });
+        }
+        const tzRow = payload?.timezone ? [["タイムゾーン", payload.timezone]] : [];
+        if (tzRow.length) {
+          const aoa = [[title], [], ["基本情報"], ["項目", "値"], ...tzRow, [], ["通知設定"], headers, ...rows];
+          appendSheet(title, {
+            aoa,
+            options: {
+              headerRowIndex: 7,
+              titleRows: [0],
+              sectionRows: [2, 6],
+              headerInfoRows: [3, 7],
+              freezeRows: 1,
+              enableAutoFilter: false
+            }
+          });
+        } else {
+          appendSheet(title, buildSimpleAOA(title, headers, rows));
+        }
+      };
+      if (selectedSheets.has("genNotif")) renderGeneralNotifSheet("通知（一般）", genNotif);
+      if (selectedSheets.has("recNotif")) renderPerRecordNotifSheet("通知（レコード条件）", recNotif);
+      if (selectedSheets.has("remNotif")) renderReminderNotifSheet("通知（リマインダー）", remNotif);
       if (selectedSheets.has("webhook")) {
         const list = Array.isArray(webhooksResp?.webhooks) ? webhooksResp.webhooks : [];
-        if (list.length) {
-          const headers = ["ID", "URL", "イベント", "説明", "有効"];
-          const rows = list.map((w) => [
-            w.id || "",
-            w.url || w.notifyUrl || "",
-            Array.isArray(w.notificationEvents || w.events) ? (w.notificationEvents || w.events).join(", ") : "",
-            UtilsX.stripHtml(w.description || ""),
-            UtilsX.formatBoolean(w.enabled !== false)
-          ]);
-          appendSheet("Webhook", buildSimpleAOA("Webhook", headers, rows));
-        }
+        const headers = ["No.", "Webhook ID", "通知先URL", "通知タイミング", "説明", "有効"];
+        const rows = list.length
+          ? list.map((w, i) => {
+              const events = Array.isArray(w.notificationEvents || w.events) ? (w.notificationEvents || w.events) : [];
+              const eventsJp = events.map((e) => WEBHOOK_EVENT_JP[e] || e);
+              return [
+                i + 1,
+                w.id || "-",
+                w.url || w.notifyUrl || "-",
+                eventsJp.length ? eventsJp.join("\n") : "-",
+                UtilsX.stripHtml(w.description || ""),
+                UtilsX.formatBoolean(w.enabled !== false)
+              ];
+            })
+          : [[1, "-", "(Webhook未設定)", "-", "-", "-"]];
+        appendSheet("Webhook", buildSimpleAOA("Webhook", headers, rows));
       }
-      if (selectedSheets.has("adminNotes") && adminNotes) {
-        const content = UtilsX.stripHtml(adminNotes.content || adminNotes.note || "");
+      if (selectedSheets.has("adminNotes")) {
+        const raw = adminNotes?.content || adminNotes?.note || "";
+        const content = UtilsX.stripHtml(raw);
+        const aoa = [["管理者メモ"], []];
         if (content) {
-          const rows = content.split("\n").map((line, i) => [i + 1, line]);
-          appendSheet("管理者メモ", buildSimpleAOA("管理者メモ", ["行", "内容"], rows));
+          aoa.push(["項目", "値"]);
+          aoa.push(["文字数", content.length]);
+          aoa.push(["行数", content.split(/\r?\n/).length]);
+          aoa.push(["更新日時", UtilsX.toJST(adminNotes?.modifiedAt) || "-"]);
+          aoa.push([]);
+          aoa.push(["本文"]);
+          aoa.push([content]);
+        } else {
+          aoa.push(["(管理者メモ未設定)"]);
         }
+        appendSheet("管理者メモ", {
+          aoa,
+          options: {
+            titleRows: [0],
+            sectionRows: content ? [7] : [],
+            headerInfoRows: content ? [2] : [],
+            freezeRows: 1,
+            enableAutoFilter: false
+          }
+        });
       }
       if (selectedSheets.has("dependencies")) {
         const dAoa = [["フィールド依存関係マップ"], ["No.", "フィールド名", "フィールドコード", "依存種別", "参照先", "詳細"]];
