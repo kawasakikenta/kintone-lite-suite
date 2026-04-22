@@ -249,7 +249,8 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
     const def = SECTION_DEFS.find((x) => x.key === sec);
     if (!def) continue;
     try {
-      const res = await apiGet(prefix, def.endpoint, { app });
+      const params = typeof def.paramBuilder === 'function' ? def.paramBuilder(app) : { app };
+      const res = await apiGet(prefix, def.endpoint, params);
       const revision = extractSectionRevision(res);
       if (revision) bundle.meta.sectionRevisions[sec] = revision;
       bundle.sections[sec] = normalize(res);
