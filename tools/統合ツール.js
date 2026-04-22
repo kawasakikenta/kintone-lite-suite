@@ -12795,7 +12795,7 @@ ${body}`;
           doc.body.appendChild(el);
         }
         el.style.zIndex = getExporterOverlayZIndex();
-        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:400px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.0</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div></div>`;
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:400px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div></div>`;
       },
       update(msg, step) {
         if (step !== void 0) UI.currentStep = step;
@@ -13055,6 +13055,109 @@ ${body}`;
       }
       return map;
     }
+    function buildFieldGroupMap(layout) {
+      const groupByCode = /* @__PURE__ */ new Map();
+      const walk = (rows, currentGroup) => {
+        const safeRows = Array.isArray(rows) ? rows : [];
+        for (const row of safeRows) {
+          if (row?.type === "GROUP") {
+            walk(Array.isArray(row.layout) ? row.layout : [], row.label || row.code || currentGroup);
+            continue;
+          }
+          const items = Array.isArray(row?.fields) ? row.fields : [];
+          for (const item of items) {
+            if (!item) continue;
+            if (item.type === "GROUP") {
+              walk(Array.isArray(item.layout) ? item.layout : [], item.label || item.code || currentGroup);
+              continue;
+            }
+            if (item.code && currentGroup) groupByCode.set(item.code, currentGroup);
+          }
+        }
+      };
+      walk(Array.isArray(layout?.layout) ? layout.layout : [], "");
+      return groupByCode;
+    }
+    function extractCodesFromExpr(expr, fields) {
+      if (!expr) return [];
+      const re = /[A-Za-z_぀-ゟ゠-ヿ一-龯][\w぀-ゟ゠-ヿ一-龯]*/g;
+      const found = /* @__PURE__ */ new Set();
+      let m;
+      while ((m = re.exec(String(expr))) !== null) {
+        const code = m[0];
+        if (fields[code]) {
+          found.add(code);
+          continue;
+        }
+        for (const parent of Object.values(fields)) {
+          if (parent.type === "SUBTABLE" && parent.fields?.[code]) {
+            found.add(code);
+            break;
+          }
+        }
+      }
+      return [...found];
+    }
+    function buildFieldUsageMap(ctx) {
+      const { fields, views, reports, status, genNotif, recNotif, remNotif, recordAcl, fieldAcl, actions } = ctx;
+      const usage = /* @__PURE__ */ new Map();
+      const add = (code, where) => {
+        if (!code) return;
+        if (!usage.has(code)) usage.set(code, /* @__PURE__ */ new Set());
+        usage.get(code).add(where);
+      };
+      const scanFilterCond = (cond, tag) => {
+        if (!cond) return;
+        for (const code of Object.keys(fields)) {
+          const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(code)}([^A-Za-z0-9_]|$)`);
+          if (re.test(String(cond))) add(code, tag);
+        }
+      };
+      Object.entries(fields).forEach(([code, f]) => {
+        const expr = f.expression || f.formula;
+        if (expr) extractCodesFromExpr(expr, fields).forEach((c) => {
+          if (c !== code) add(c, `計算式「${f.label || code}」`);
+        });
+        if (f.lookup?.fieldMappings) {
+          for (const m of f.lookup.fieldMappings) add(m.field, `ルックアップ「${f.label || code}」`);
+        }
+        if (f.type === "SUBTABLE" && f.fields) {
+          for (const [sc, sf] of Object.entries(f.fields)) {
+            const se = sf.expression || sf.formula;
+            if (se) extractCodesFromExpr(se, fields).forEach((c) => {
+              if (c !== sc) add(c, `計算式「${sf.label || sc}」`);
+            });
+          }
+        }
+      });
+      Object.entries(views?.views || {}).forEach(([name, v]) => {
+        UtilsX.ensureArray(v.fields).forEach((c) => add(c, `一覧「${name}」表示`));
+        scanFilterCond(v.filterCond, `一覧「${name}」絞込`);
+        if (v.sort) extractCodesFromExpr(v.sort, fields).forEach((c) => add(c, `一覧「${name}」ソート`));
+      });
+      Object.entries(reports?.reports || {}).forEach(([name, r]) => {
+        UtilsX.ensureArray(r.groups).forEach((g) => add(g?.code, `グラフ「${name}」グループ化`));
+        UtilsX.ensureArray(r.aggregations).forEach((a) => add(a?.code, `グラフ「${name}」集計`));
+        scanFilterCond(r.filterCond, `グラフ「${name}」絞込`);
+      });
+      (status?.actions || []).forEach((a) => scanFilterCond(a.filterCond, `プロセス遷移「${a.name || ""}」条件`));
+      const scanNotif = (payload, label) => {
+        UtilsX.ensureArray(payload?.notifications).forEach((n, i) => {
+          scanFilterCond(n.filterCond, `${label}#${i + 1}条件`);
+          if (n.targetField) add(n.targetField, `${label}#${i + 1}対象`);
+        });
+      };
+      scanNotif(genNotif, "通知(一般)");
+      scanNotif(recNotif, "通知(レコード)");
+      scanNotif(remNotif, "通知(リマインダー)");
+      UtilsX.ensureArray(recordAcl?.rights).forEach((g, i) => scanFilterCond(g.filterCond, `レコード権限#${i + 1}`));
+      UtilsX.ensureArray(fieldAcl?.rights).forEach((r) => add(r.code || r.field, "フィールド権限"));
+      UtilsX.ensureArray(Array.isArray(actions) ? actions : Object.values(actions || {})).forEach((a) => {
+        scanFilterCond(a.filterCond, `アクション「${a.name || ""}」条件`);
+        UtilsX.ensureArray(a.mappings).forEach((m) => add(m.srcField || m.sourceField, `アクション「${a.name || ""}」マッピング`));
+      });
+      return usage;
+    }
     const filterUserFields = (fields) => {
       const filtered = {};
       for (const [code, field] of Object.entries(fields || {})) {
@@ -13236,7 +13339,22 @@ ${body}`;
       );
       await Promise.all(refPromises);
       UI.update("Excelファイルを生成中...", 10);
+      const fieldGroupMap = buildFieldGroupMap(layout || {});
+      const fieldUsageMap = buildFieldUsageMap({
+        fields,
+        views,
+        reports,
+        status,
+        genNotif,
+        recNotif,
+        remNotif,
+        recordAcl,
+        fieldAcl,
+        actions
+      });
       const wb = XLSX.utils.book_new();
+      const sheetMetadata = [];
+      const printTitleConfigs = [];
       const makeSafeSheetName = (raw, existingNames) => {
         let name = String(raw ?? "").trim() || "Sheet";
         name = name.replace(/[:\\/\?\*\[\]]/g, "_").replace(/[\u0000-\u001F]/g, "").replace(/^'+|'+$/g, "");
@@ -13364,14 +13482,57 @@ ${body}`;
           if (firstCell?.s) firstCell.s.alignment = { ...firstCell.s.alignment, vertical: "center" };
         }
       };
-      const appendSheet = (name, data) => {
-        if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return;
+      const applyRowHeights = (ws, aoa, options = {}) => {
+        const rowHeights = [];
+        const baseLine = 18;
+        const skipRows = /* @__PURE__ */ new Set([...options.titleRows || [], ...options.emptyRows || []]);
+        for (let r = 0; r < aoa.length; r++) {
+          if (skipRows.has(r)) {
+            rowHeights[r] = { hpt: 22 };
+            continue;
+          }
+          const row = aoa[r] || [];
+          let maxLines = 1;
+          for (const v of row) {
+            if (v == null) continue;
+            const lines = String(v).split("\n").length;
+            if (lines > maxLines) maxLines = lines;
+          }
+          if (maxLines > 1) rowHeights[r] = { hpt: Math.min(baseLine * maxLines + 4, 400) };
+        }
+        const existing = ws["!rows"] || [];
+        ws["!rows"] = rowHeights.map((r, i) => r || existing[i] || void 0);
+      };
+      const applyPageSetup = (ws, pageSetup = {}) => {
+        ws["!pageSetup"] = {
+          orientation: pageSetup.orientation || "landscape",
+          fitToWidth: pageSetup.fitToWidth != null ? pageSetup.fitToWidth : 1,
+          fitToHeight: pageSetup.fitToHeight != null ? pageSetup.fitToHeight : 0,
+          paperSize: pageSetup.paperSize || 9,
+          scale: pageSetup.scale || void 0
+        };
+        if (!ws["!margins"]) {
+          ws["!margins"] = { left: 0.5, right: 0.5, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 };
+        }
+      };
+      const appendSheet = (name, data, meta = {}) => {
+        if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return null;
         const ws = XLSX.utils.aoa_to_sheet(data.aoa);
         autosizeCols(ws, data.aoa);
         applyStyles(ws, data.aoa, data.options || {});
         if (data.mergeRanges) applyCellMerges(ws, data.mergeRanges);
+        applyRowHeights(ws, data.aoa, data.options || {});
+        applyPageSetup(ws, data.pageSetup || {});
         const safeName = makeSafeSheetName(name, new Set(wb.SheetNames));
         XLSX.utils.book_append_sheet(wb, ws, safeName);
+        const titleRepeat = data.pageSetup?.printTitleRows != null ? data.pageSetup.printTitleRows : (data.options?.headerRowIndex ?? -1) + 1;
+        if (titleRepeat > 0) printTitleConfigs.push({ sheetName: safeName, rows: titleRepeat });
+        sheetMetadata.push({
+          name: safeName,
+          description: meta.description || "",
+          recordCount: meta.recordCount != null ? meta.recordCount : Math.max(0, data.aoa.length - ((data.options?.headerRowIndex ?? -1) + 1))
+        });
+        return safeName;
       };
       const buildSimpleAOA = (title, headers, rows) => ({
         aoa: [title ? [title] : [], headers, ...rows],
@@ -13408,12 +13569,64 @@ ${body}`;
         headerInfoRows.push(sAoa.length - 1);
         sAoa.push(["総レコード数", recordCount != null ? recordCount : "(取得不可)"]);
         sAoa.push(["フィールド数", Object.keys(fields).length]);
+        let subFieldTotal = 0;
+        Object.values(fields).forEach((f) => {
+          if (f.type === "SUBTABLE" && f.fields) subFieldTotal += Object.keys(f.fields).length;
+        });
+        sAoa.push(["サブテーブル内フィールド数", subFieldTotal]);
         sAoa.push(["ビュー数", Object.keys(views?.views || {}).length]);
         sAoa.push(["グラフ数", Object.keys(reports?.reports || {}).length]);
         sAoa.push(["プロセス管理", status?.enable ? "有効" : "無効"]);
         sAoa.push(["ステータス数", Object.keys(status?.states || {}).length]);
-        sAoa.push(["アクション数", Object.keys(actions || {}).length]);
+        sAoa.push(["アクション数(プロセス)", (status?.actions || []).length]);
+        sAoa.push(["アクション数(レコード)", Object.keys(actions || {}).length]);
         sAoa.push(["プラグイン数", (pluginsResp?.plugins || []).length]);
+        sAoa.push(["Webhook数", (webhooksResp?.webhooks || []).length]);
+        sAoa.push(["通知(一般)件数", (genNotif?.notifications || []).length]);
+        sAoa.push(["通知(レコード)件数", (recNotif?.notifications || []).length]);
+        sAoa.push(["通知(リマインダー)件数", (remNotif?.notifications || []).length]);
+        sAoa.push(["アプリ権限エントリ数", (appAcl?.rights || []).length]);
+        sAoa.push(["レコード権限エントリ数", (recordAcl?.rights || []).length]);
+        sAoa.push(["フィールド権限エントリ数", (fieldAcl?.rights || []).length]);
+        sAoa.push(["JSカスタマイズ(PC)件数", (customize?.desktop?.js || []).length]);
+        sAoa.push(["CSSカスタマイズ(PC)件数", (customize?.desktop?.css || []).length]);
+        sAoa.push(["JSカスタマイズ(モバイル)件数", (customize?.mobile?.js || []).length]);
+        sAoa.push(["CSSカスタマイズ(モバイル)件数", (customize?.mobile?.css || []).length]);
+        sAoa.push([]);
+        sAoa.push(["フィールドタイプ別集計"]);
+        sectionRows.push(sAoa.length - 1);
+        sAoa.push(["タイプ", "件数"]);
+        headerInfoRows.push(sAoa.length - 1);
+        const typeCounts = /* @__PURE__ */ new Map();
+        Object.values(fields).forEach((f) => {
+          const key = FIELD_TYPE[f.type] || f.type || "(不明)";
+          typeCounts.set(key, (typeCounts.get(key) || 0) + 1);
+        });
+        [...typeCounts.entries()].sort((a, b) => b[1] - a[1]).forEach(([type, count]) => sAoa.push([type, count]));
+        sAoa.push([]);
+        sAoa.push(["項目属性サマリー"]);
+        sectionRows.push(sAoa.length - 1);
+        sAoa.push(["属性", "件数"]);
+        headerInfoRows.push(sAoa.length - 1);
+        const attrCounts = { required: 0, unique: 0, lookup: 0, calc: 0, reference: 0, subtable: 0, noLabel: 0, hasDefault: 0 };
+        Object.values(fields).forEach((f) => {
+          if (f.required) attrCounts.required++;
+          if (f.unique) attrCounts.unique++;
+          if (f.lookup) attrCounts.lookup++;
+          if (f.expression || f.formula) attrCounts.calc++;
+          if (f.referenceTable) attrCounts.reference++;
+          if (f.type === "SUBTABLE") attrCounts.subtable++;
+          if (f.noLabel) attrCounts.noLabel++;
+          if (f.defaultValue != null && f.defaultValue !== "" && !(Array.isArray(f.defaultValue) && f.defaultValue.length === 0)) attrCounts.hasDefault++;
+        });
+        sAoa.push(["必須", attrCounts.required]);
+        sAoa.push(["重複禁止", attrCounts.unique]);
+        sAoa.push(["ルックアップ", attrCounts.lookup]);
+        sAoa.push(["計算式あり", attrCounts.calc]);
+        sAoa.push(["関連レコード一覧", attrCounts.reference]);
+        sAoa.push(["サブテーブル", attrCounts.subtable]);
+        sAoa.push(["ラベル非表示", attrCounts.noLabel]);
+        sAoa.push(["初期値設定あり", attrCounts.hasDefault]);
         sAoa.push([]);
         sAoa.push(["出力情報"]);
         sectionRows.push(sAoa.length - 1);
@@ -13425,7 +13638,7 @@ ${body}`;
         } catch {
           sAoa.push(["出力者", "-"]);
         }
-        sAoa.push(["エクスポーターVer", "v2.0"]);
+        sAoa.push(["エクスポーターVer", "v2.1"]);
         if (UI.failedAPIs && UI.failedAPIs.length > 0) {
           sAoa.push([]);
           sAoa.push(["⚠ API取得失敗レポート"]);
@@ -13443,8 +13656,9 @@ ${body}`;
             headerInfoRows,
             freezeRows: 1,
             enableAutoFilter: false
-          }
-        });
+          },
+          pageSetup: { orientation: "portrait", printTitleRows: 1 }
+        }, { description: "アプリ基本情報・統計・項目属性サマリー" });
       }
       const resolveAppName = (appRef) => {
         if (!appRef) return "";
@@ -13497,6 +13711,7 @@ ${body}`;
       if (selectedSheets.has("fields")) {
         const fieldHeaders = [
           "No.",
+          "所属グループ",
           "フィールド名",
           "フィールドコード",
           "タイプ",
@@ -13513,6 +13728,7 @@ ${body}`;
           "関連レコード設定",
           "計算式",
           "依存/参照",
+          "使用箇所",
           "説明"
         ];
         const fAoa = [["項目定義"], fieldHeaders];
@@ -13577,8 +13793,12 @@ ${body}`;
           const deps2 = [];
           if (f.type === "SUBTABLE") deps2.push("[テーブル]");
           if (f.fields) deps2.push(`サブフィールド数: ${Object.keys(f.fields).length}`);
+          const groupLabel = isSubtableField ? `(${parentLabel || "親"})` : fieldGroupMap.get(code) || "-";
+          const usageSet = fieldUsageMap.get(code);
+          const usageStr = usageSet && usageSet.size ? [...usageSet].join("\n") : "-";
           const rowData = [
             no++,
+            groupLabel,
             parentLabel ? `  ${parentLabel} > ${label}` : label,
             code,
             typeJ,
@@ -13595,18 +13815,19 @@ ${body}`;
             refTableStr,
             calcStr,
             deps2.join("\n") || "-",
+            usageStr,
             UtilsX.stripHtml(f.description || "")
           ];
           const rowIdx = fAoa.length;
           fAoa.push(rowData);
           if (f.required) {
-            specialCells[`${rowIdx},4`] = {
+            specialCells[`${rowIdx},5`] = {
               ...Sty.cell("center"),
               fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.REQUIRED_BG } }
             };
           }
           if (isSubtableField) {
-            for (let c = 1; c <= 3; c++) {
+            for (let c = 1; c <= 4; c++) {
               specialCells[`${rowIdx},${c}`] = {
                 ...Sty.cell("left"),
                 fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.SUBTABLE_BG } }
@@ -13614,11 +13835,16 @@ ${body}`;
             }
           }
         };
+        const sectionRowsFields = [];
         for (const [code, f] of sortedEntries) {
           if (f.type === "GROUP") continue;
           pushRow(f.label || "", code, f, null, false);
           if (f.type === "SUBTABLE" && f.fields) {
             const subCodes = subtableFieldOrder.get(code) || Object.keys(f.fields);
+            const subHeaderRow = fAoa.length;
+            const subCount = subCodes.filter((sc) => f.fields[sc]).length;
+            fAoa.push([`▼ テーブル「${f.label || code}」(${subCount}列)`, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+            sectionRowsFields.push(subHeaderRow);
             for (const sc of subCodes) {
               if (f.fields[sc]) pushRow(f.fields[sc].label || "", sc, f.fields[sc], f.label || code, true);
             }
@@ -13630,48 +13856,106 @@ ${body}`;
             headerRowIndex: 1,
             titleRows: [0],
             freezeRows: 2,
-            freezeCols: 2,
-            centerCols: [0, 4, 5, 11],
+            freezeCols: 3,
+            centerCols: [0, 5, 6, 12],
+            sectionRows: sectionRowsFields,
             specialCells
-          }
-        });
+          },
+          pageSetup: { orientation: "landscape", printTitleRows: 2 }
+        }, { description: "フィールド別詳細定義・制約・依存・使用箇所", recordCount: no - 1 });
       }
       if (selectedSheets.has("layout") && Array.isArray(layout?.layout)) {
-        const lAoa = [["フォームレイアウト"], ["No.", "区分", "階層", "表示", "フィールドコード", "タイプ", "必須", "備考"]];
+        const lAoa = [["フォームレイアウト"], ["No.", "行", "列", "区分", "階層", "表示", "フィールドコード", "タイプ", "必須", "幅", "備考"]];
         let lno = 1;
         const sanitize = (label) => CONFIG.SANITIZE_LABEL_HTML_IN_LAYOUT ? UtilsX.stripHtml(label) : label || "";
-        traverseRows(layout.layout, ({ kind, item, row, depth }) => {
-          const indent = "  ".repeat(depth);
-          if (kind === "GROUP") {
-            const label = sanitize(item.label || fields[item.code]?.label);
-            lAoa.push([lno++, "グループ", depth, `${indent}${label || "-"}`, item.code || "-", "GROUP", "-", item.open === false ? "初期非表示" : "-"]);
-          } else if (kind === "SUBTABLE") {
-            lAoa.push([lno++, "テーブル", depth, `${indent}${fields[item.code]?.label || item.code || "-"}`, item.code || "-", "テーブル", "-", "-"]);
-            for (const c of UtilsX.ensureArray(item.fields)) {
-              const cf = fields?.[item.code]?.fields?.[c.code] || fields?.[c.code];
-              const label = sanitize(c.label || cf?.label);
-              lAoa.push([lno++, "テーブル列", depth + 1, `${indent}  ${label || "-"}`, c.code || "-", FIELD_TYPE[c.type] || c.type || "-", UtilsX.formatBoolean(!!cf?.required), `親:${item.code}`]);
+        const outlineRows = [];
+        const getWidth = (item) => {
+          const sz = item?.size?.width;
+          return sz ? String(sz) : "-";
+        };
+        const walkRows = (rows, depth, rowOffset) => {
+          let rowNo = rowOffset;
+          const safeRows = Array.isArray(rows) ? rows : [];
+          for (const row of safeRows) {
+            rowNo++;
+            const indent = "  ".repeat(depth);
+            if (row?.type === "GROUP") {
+              const label = sanitize(row.label || fields[row.code]?.label);
+              const rowIdx = lAoa.length;
+              lAoa.push([lno++, rowNo, "-", "グループ", depth, `${indent}${label || "-"}`, row.code || "-", "GROUP", "-", "-", row.open === false ? "初期非表示" : "-"]);
+              outlineRows.push({ idx: rowIdx, level: depth });
+              walkRows(Array.isArray(row.layout) ? row.layout : [], depth + 1, 0);
+              continue;
             }
-          } else if (kind === "SUBTABLE_ROW") {
-            lAoa.push([lno++, "テーブル行", depth, `${indent}-`, row?.code || "-", "SUBTABLE_ROW", "-", "-"]);
-          } else if (kind === "LABEL") {
-            const label = sanitize(item.label);
-            lAoa.push([lno++, "ラベル", depth, `${indent}${label || "-"}`, "-", "LABEL", "-", "-"]);
-          } else if (kind === "HR") {
-            lAoa.push([lno++, "罫線", depth, `${indent}───`, "-", "HR", "-", "-"]);
-          } else if (kind === "SPACER") {
-            lAoa.push([lno++, "スペース", depth, `${indent}(空白)`, item.elementId || "-", "SPACER", "-", "-"]);
-          } else if (kind === "FIELD") {
-            const f = fields?.[item.code];
-            const label = f?.label || sanitize(item.label) || item.code || "-";
-            const type = FIELD_TYPE[f?.type] || FIELD_TYPE[item.type] || f?.type || item.type || "-";
-            lAoa.push([lno++, "フィールド", depth, `${indent}${label}`, item.code || "-", type, UtilsX.formatBoolean(!!f?.required), "-"]);
+            if (row?.type === "SUBTABLE") {
+              const rowIdx = lAoa.length;
+              lAoa.push([lno++, rowNo, "-", "テーブル", depth, `${indent}${fields[row.code]?.label || row.code || "-"}`, row.code || "-", "テーブル", "-", "-", "-"]);
+              outlineRows.push({ idx: rowIdx, level: depth });
+              UtilsX.ensureArray(row.fields).forEach((c, ci) => {
+                const cf = fields?.[row.code]?.fields?.[c.code] || fields?.[c.code];
+                const label = sanitize(c.label || cf?.label);
+                const ridx = lAoa.length;
+                lAoa.push([lno++, rowNo, ci + 1, "テーブル列", depth + 1, `${indent}  ${label || "-"}`, c.code || "-", FIELD_TYPE[c.type] || c.type || "-", UtilsX.formatBoolean(!!cf?.required), getWidth(c), `親:${row.code}`]);
+                outlineRows.push({ idx: ridx, level: depth + 1 });
+              });
+              continue;
+            }
+            const items = Array.isArray(row?.fields) ? row.fields : [];
+            items.forEach((item, ci) => {
+              if (!item) return;
+              const rowIdx = lAoa.length;
+              if (item.type === "GROUP") {
+                const label2 = sanitize(item.label || fields[item.code]?.label);
+                lAoa.push([lno++, rowNo, ci + 1, "グループ", depth, `${indent}${label2 || "-"}`, item.code || "-", "GROUP", "-", getWidth(item), item.open === false ? "初期非表示" : "-"]);
+                outlineRows.push({ idx: rowIdx, level: depth });
+                walkRows(Array.isArray(item.layout) ? item.layout : [], depth + 1, 0);
+                return;
+              }
+              if (item.type === "SUBTABLE") {
+                lAoa.push([lno++, rowNo, ci + 1, "テーブル", depth, `${indent}${fields[item.code]?.label || item.code || "-"}`, item.code || "-", "テーブル", "-", getWidth(item), "-"]);
+                outlineRows.push({ idx: rowIdx, level: depth });
+                return;
+              }
+              if (item.type === "LABEL") {
+                const label2 = sanitize(item.label);
+                lAoa.push([lno++, rowNo, ci + 1, "ラベル", depth, `${indent}${label2 || "-"}`, "-", "LABEL", "-", getWidth(item), "-"]);
+                outlineRows.push({ idx: rowIdx, level: depth });
+                return;
+              }
+              if (item.type === "HR") {
+                lAoa.push([lno++, rowNo, ci + 1, "罫線", depth, `${indent}───`, "-", "HR", "-", getWidth(item), "-"]);
+                outlineRows.push({ idx: rowIdx, level: depth });
+                return;
+              }
+              if (item.type === "SPACER") {
+                lAoa.push([lno++, rowNo, ci + 1, "スペース", depth, `${indent}(空白)`, item.elementId || "-", "SPACER", "-", getWidth(item), "-"]);
+                outlineRows.push({ idx: rowIdx, level: depth });
+                return;
+              }
+              const f = fields?.[item.code];
+              const label = f?.label || sanitize(item.label) || item.code || "-";
+              const type = FIELD_TYPE[f?.type] || FIELD_TYPE[item.type] || f?.type || item.type || "-";
+              lAoa.push([lno++, rowNo, ci + 1, "フィールド", depth, `${indent}${label}`, item.code || "-", type, UtilsX.formatBoolean(!!f?.required), getWidth(item), "-"]);
+              outlineRows.push({ idx: rowIdx, level: depth });
+            });
           }
-        });
-        appendSheet("フォームレイアウト", {
+        };
+        walkRows(layout.layout, 0, 0);
+        const sheetName = appendSheet("フォームレイアウト", {
           aoa: lAoa,
-          options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 2, 6] }
-        });
+          options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0, 1, 2, 4, 8] },
+          pageSetup: { orientation: "landscape", printTitleRows: 2 }
+        }, { description: "フォーム配置順・行列位置・階層構造" });
+        if (sheetName && CONFIG.STYLES.ENABLE_OUTLINE && styled) {
+          const ws = wb.Sheets[sheetName];
+          const existingRows = ws["!rows"] || [];
+          outlineRows.forEach(({ idx, level }) => {
+            if (level > 0) {
+              existingRows[idx] = { ...existingRows[idx] || {}, level: Math.min(level, 7) };
+            }
+          });
+          ws["!rows"] = existingRows;
+        }
       }
       if (selectedSheets.has("views") && views?.views) {
         const fieldLabelMap = buildFieldLabelMap(fields);
@@ -13692,7 +13976,7 @@ ${body}`;
             UtilsX.stripHtml(v.customView || v.html || v.builtinType || "")
           ];
         });
-        appendSheet("一覧", buildSimpleAOA("一覧(ビュー)", headers, rows));
+        appendSheet("一覧", { ...buildSimpleAOA("一覧(ビュー)", headers, rows), pageSetup: { orientation: "landscape", printTitleRows: 2 } }, { description: "ビュー(一覧/カレンダー/カスタム)の設定" });
       }
       if (selectedSheets.has("reports") && reports?.reports) {
         const headers = ["グラフ名", "種別", "集計対象", "集計方法", "グループ化", "ソート", "フィルター"];
@@ -13705,20 +13989,58 @@ ${body}`;
           UtilsX.formatSort(Array.isArray(r.sorts) ? r.sorts.map((s) => `${s.by || ""} ${s.order || ""}`).join(", ") : ""),
           UtilsX.formatFilterCond(r.filterCond)
         ]);
-        appendSheet("グラフ", buildSimpleAOA("グラフ", headers, rows));
+        appendSheet("グラフ", { ...buildSimpleAOA("グラフ", headers, rows), pageSetup: { orientation: "landscape", printTitleRows: 2 } }, { description: "グラフ/集計レポートの定義" });
       }
       if (selectedSheets.has("status") && status) {
-        const headers = ["種別", "名前", "番号/From", "To", "作業者", "条件"];
-        const rows = [];
-        rows.push(["有効/無効", status.enable ? "有効" : "無効", "", "", "", ""]);
-        Object.entries(status.states || {}).forEach(([name, st]) => {
-          const asgn = st.assignee ? `${st.assignee.type || ""}${Array.isArray(st.assignee.entities) ? ":" + st.assignee.entities.map(UtilsX.formatEntityDetailed).join(" / ") : ""}` : "";
-          rows.push(["ステータス", name, st.index || "", "", asgn, ""]);
+        const pAoa = [["プロセス管理"]];
+        const pSectionRows = [];
+        const pHeaderInfoRows = [];
+        const pEmptyRows = [];
+        pAoa.push([]);
+        pEmptyRows.push(pAoa.length - 1);
+        pAoa.push(["■ 基本情報"]);
+        pSectionRows.push(pAoa.length - 1);
+        pAoa.push(["項目", "値"]);
+        pHeaderInfoRows.push(pAoa.length - 1);
+        pAoa.push(["プロセス管理", status.enable ? "有効" : "無効"]);
+        pAoa.push(["ステータス数", Object.keys(status.states || {}).length]);
+        pAoa.push(["アクション(遷移)数", (status.actions || []).length]);
+        pAoa.push([]);
+        pEmptyRows.push(pAoa.length - 1);
+        pAoa.push(["■ ステータス一覧"]);
+        pSectionRows.push(pAoa.length - 1);
+        pAoa.push(["順序", "ステータス名", "作業者タイプ", "作業者", "入ってくる遷移数", "出て行く遷移数"]);
+        pHeaderInfoRows.push(pAoa.length - 1);
+        const stateEntries = Object.entries(status.states || {}).sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0));
+        stateEntries.forEach(([name, st]) => {
+          const asgnType = st.assignee?.type || "-";
+          const asgnList = Array.isArray(st.assignee?.entities) ? st.assignee.entities.map(UtilsX.formatEntityDetailed).join("\n") : "-";
+          const inCount = (status.actions || []).filter((a) => a.to === name).length;
+          const outCount = (status.actions || []).filter((a) => a.from === name).length;
+          pAoa.push([st.index || "-", name, asgnType, asgnList, inCount, outCount]);
         });
-        (status.actions || []).forEach((a) => {
-          rows.push(["アクション", a.name || "", a.from || "", a.to || "", "", a.filterCond || ""]);
+        pAoa.push([]);
+        pEmptyRows.push(pAoa.length - 1);
+        pAoa.push(["■ アクション(遷移)一覧"]);
+        pSectionRows.push(pAoa.length - 1);
+        pAoa.push(["No.", "アクション名", "遷移元", "遷移先", "遷移条件"]);
+        pHeaderInfoRows.push(pAoa.length - 1);
+        (status.actions || []).forEach((a, i) => {
+          pAoa.push([i + 1, a.name || "-", a.from || "-", a.to || "-", UtilsX.formatFilterCond(a.filterCond)]);
         });
-        appendSheet("プロセス管理", buildSimpleAOA("プロセス管理", headers, rows));
+        appendSheet("プロセス管理", {
+          aoa: pAoa,
+          options: {
+            headerRowIndex: pHeaderInfoRows[0] ?? 3,
+            titleRows: [0],
+            sectionRows: pSectionRows,
+            headerInfoRows: pHeaderInfoRows,
+            emptyRows: pEmptyRows,
+            freezeRows: 1,
+            enableAutoFilter: false
+          },
+          pageSetup: { orientation: "landscape", printTitleRows: 1 }
+        }, { description: "ワークフロー設定・ステータス・遷移アクション" });
       }
       if (selectedSheets.has("statusMatrix") && status?.enable && status?.states && Array.isArray(status?.actions)) {
         const stateNames = Object.entries(status.states || {}).sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0)).map(([, s]) => s.name || "");
@@ -13751,8 +14073,9 @@ ${body}`;
           }
           appendSheet("遷移マトリクス", {
             aoa: mAoa,
-            options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, freezeCols: 1, specialCells, enableAutoFilter: false }
-          });
+            options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, freezeCols: 1, specialCells, enableAutoFilter: false },
+            pageSetup: { orientation: "landscape", printTitleRows: 2 }
+          }, { description: "遷移元×遷移先のアクション対応マトリクス" });
         }
       }
       const renderAclRights = (title, name, rights) => {
@@ -13773,7 +14096,7 @@ ${body}`;
       };
       if (selectedSheets.has("appAcl")) {
         const data = renderAclRights("アプリ権限", "", appAcl?.rights);
-        if (data) appendSheet("アプリ権限", data);
+        if (data) appendSheet("アプリ権限", { ...data, pageSetup: { orientation: "landscape", printTitleRows: 2 } }, { description: "アプリ全体の閲覧/編集/削除等の権限" });
       }
       if (selectedSheets.has("recordAcl")) {
         const list = Array.isArray(recordAcl?.rights) ? recordAcl.rights : [];
@@ -13792,7 +14115,7 @@ ${body}`;
           });
         });
         if (rows.length) {
-          appendSheet("レコード権限", buildSimpleAOA("レコード権限", ["フィルター条件", "対象", "閲覧", "編集", "削除", "サブ組織含"], rows));
+          appendSheet("レコード権限", { ...buildSimpleAOA("レコード権限", ["フィルター条件", "対象", "閲覧", "編集", "削除", "サブ組織含"], rows), pageSetup: { orientation: "landscape", printTitleRows: 2 } }, { description: "条件付きレコード単位権限" });
         }
       }
       if (selectedSheets.has("fieldAcl")) {
@@ -13811,7 +14134,7 @@ ${body}`;
           });
         });
         if (rows.length) {
-          appendSheet("フィールド権限", buildSimpleAOA("フィールド権限", ["フィールドコード", "フィールド名", "対象", "閲覧", "編集"], rows));
+          appendSheet("フィールド権限", { ...buildSimpleAOA("フィールド権限", ["フィールドコード", "フィールド名", "対象", "閲覧", "編集"], rows), pageSetup: { orientation: "landscape", printTitleRows: 2 } }, { description: "フィールド単位の閲覧/編集制限" });
         }
       }
       if (selectedSheets.has("customize") && customize) {
@@ -13829,7 +14152,7 @@ ${body}`;
           ...renderScope("モバイル", customize.mobile)
         ];
         if (rows.length) {
-          appendSheet("JS/CSSカスタマイズ", buildSimpleAOA("JS/CSSカスタマイズ", ["スコープ", "種別", "No", "参照方法", "名前/URL", "fileKey"], rows));
+          appendSheet("JS/CSSカスタマイズ", { ...buildSimpleAOA("JS/CSSカスタマイズ", ["スコープ", "種別", "No", "参照方法", "名前/URL", "fileKey"], rows), pageSetup: { orientation: "landscape", printTitleRows: 2 } }, { description: "JS/CSSファイル適用設定" });
         }
       }
       if (selectedSheets.has("actions") && actions) {
@@ -13842,31 +14165,82 @@ ${body}`;
           UtilsX.formatSort(a.sort),
           Array.isArray(a.mappings) ? a.mappings.map((m) => `${m.srcField || m.sourceField || "-"}→${m.destField || "-"}`).join("\n") : ""
         ]);
-        if (rows.length) appendSheet("アクション", buildSimpleAOA("アクション", headers, rows));
+        if (rows.length) appendSheet("アクション", { ...buildSimpleAOA("アクション", headers, rows), pageSetup: { orientation: "landscape", printTitleRows: 2 } }, { description: "レコード再利用アクションの定義" });
       }
       if (selectedSheets.has("plugins") && pluginsResp?.plugins) {
         const headers = ["プラグインID", "名前", "状態"];
         const rows = pluginsResp.plugins.map((p) => [p.id || "", p.name || "", p.enabled === false ? "無効" : "有効"]);
-        if (rows.length) appendSheet("プラグイン", buildSimpleAOA("プラグイン", headers, rows));
+        if (rows.length) appendSheet("プラグイン", { ...buildSimpleAOA("プラグイン", headers, rows), pageSetup: { orientation: "portrait", printTitleRows: 2 } }, { description: "アプリに追加されたプラグイン一覧" });
       }
-      const renderNotifSheet = (title, payload) => {
+      const renderNotifSheet = (title, payload, kind) => {
         const list = Array.isArray(payload?.notifications) ? payload.notifications : [];
         if (!list.length) return;
-        const headers = ["対象", "条件/タイミング", "レコード作成", "編集", "コメント", "ステータス", "本文/備考"];
-        const rows = list.map((n) => [
+        const fieldLabelMap = buildFieldLabelMap(fields);
+        if (kind === "reminder") {
+          const headers2 = ["No.", "対象", "タイミング", "基準日フィールド", "基準日時フィールド", "曜日", "時刻", "絞込条件", "件名/本文"];
+          const rows2 = list.map((n, i) => {
+            const base = n.targetField || n.dateField || "";
+            const baseLabel = base ? fieldLabelMap[base] || base : "-";
+            return [
+              i + 1,
+              UtilsX.formatEntityDetailed(n.entity || n),
+              n.timing || "-",
+              baseLabel,
+              n.daysLater != null || n.daysBefore != null ? `${n.daysLater != null ? `+${n.daysLater}` : ""}${n.daysBefore != null ? `-${n.daysBefore}` : ""}日` : "-",
+              Array.isArray(n.weekdays) ? n.weekdays.join("、") : "-",
+              n.time || "-",
+              UtilsX.formatFilterCond(n.filterCond || ""),
+              UtilsX.stripHtml(n.title || n.body || n.content || "-")
+            ];
+          });
+          appendSheet(
+            title,
+            { ...buildSimpleAOA(title, headers2, rows2), pageSetup: { orientation: "landscape", printTitleRows: 2 } },
+            { description: "リマインダー通知の設定一覧" }
+          );
+          return;
+        }
+        if (kind === "perRecord") {
+          const headers2 = ["No.", "対象", "フィルター条件", "レコード作成", "編集", "コメント", "ステータス", "ファイル添付", "本文/備考"];
+          const rows2 = list.map((n, i) => [
+            i + 1,
+            UtilsX.formatEntityDetailed(n.entity || n),
+            UtilsX.formatFilterCond(n.filterCond || ""),
+            UtilsX.formatBoolean(n.recordAdded ?? n.notifyOnCreate),
+            UtilsX.formatBoolean(n.recordEdited ?? n.notifyOnEdit),
+            UtilsX.formatBoolean(n.commentAdded ?? n.notifyOnComment),
+            UtilsX.formatBoolean(n.statusChanged ?? n.notifyOnStatusChange),
+            UtilsX.formatBoolean(n.fileImported),
+            UtilsX.stripHtml(n.title || n.body || "-")
+          ]);
+          appendSheet(
+            title,
+            { ...buildSimpleAOA(title, headers2, rows2), pageSetup: { orientation: "landscape", printTitleRows: 2 } },
+            { description: "レコード単位で指定された通知" }
+          );
+          return;
+        }
+        const headers = ["No.", "対象", "レコード追加", "編集", "コメント", "ステータス", "ファイル添付", "タイミング/条件", "本文/備考"];
+        const rows = list.map((n, i) => [
+          i + 1,
           UtilsX.formatEntityDetailed(n.entity || n),
-          UtilsX.formatFilterCond(n.filterCond || n.timing || ""),
           UtilsX.formatBoolean(n.recordAdded ?? n.notifyOnCreate),
           UtilsX.formatBoolean(n.recordEdited ?? n.notifyOnEdit),
           UtilsX.formatBoolean(n.commentAdded ?? n.notifyOnComment),
           UtilsX.formatBoolean(n.statusChanged ?? n.notifyOnStatusChange),
-          UtilsX.stripHtml(n.title || n.body || "")
+          UtilsX.formatBoolean(n.fileImported),
+          UtilsX.formatFilterCond(n.filterCond || n.timing || "-"),
+          UtilsX.stripHtml(n.title || n.body || "-")
         ]);
-        appendSheet(title, buildSimpleAOA(title, headers, rows));
+        appendSheet(
+          title,
+          { ...buildSimpleAOA(title, headers, rows), pageSetup: { orientation: "landscape", printTitleRows: 2 } },
+          { description: "アプリ共通の通知設定" }
+        );
       };
-      if (selectedSheets.has("genNotif")) renderNotifSheet("通知(一般)", genNotif);
-      if (selectedSheets.has("recNotif")) renderNotifSheet("通知(レコード)", recNotif);
-      if (selectedSheets.has("remNotif")) renderNotifSheet("通知(リマインダー)", remNotif);
+      if (selectedSheets.has("genNotif")) renderNotifSheet("通知(一般)", genNotif, "general");
+      if (selectedSheets.has("recNotif")) renderNotifSheet("通知(レコード)", recNotif, "perRecord");
+      if (selectedSheets.has("remNotif")) renderNotifSheet("通知(リマインダー)", remNotif, "reminder");
       if (selectedSheets.has("webhook")) {
         const list = Array.isArray(webhooksResp?.webhooks) ? webhooksResp.webhooks : [];
         if (list.length) {
@@ -13878,14 +14252,14 @@ ${body}`;
             UtilsX.stripHtml(w.description || ""),
             UtilsX.formatBoolean(w.enabled !== false)
           ]);
-          appendSheet("Webhook", buildSimpleAOA("Webhook", headers, rows));
+          appendSheet("Webhook", { ...buildSimpleAOA("Webhook", headers, rows), pageSetup: { orientation: "landscape", printTitleRows: 2 } }, { description: "外部システム連携用 Webhook" });
         }
       }
       if (selectedSheets.has("adminNotes") && adminNotes) {
         const content = UtilsX.stripHtml(adminNotes.content || adminNotes.note || "");
         if (content) {
           const rows = content.split("\n").map((line, i) => [i + 1, line]);
-          appendSheet("管理者メモ", buildSimpleAOA("管理者メモ", ["行", "内容"], rows));
+          appendSheet("管理者メモ", { ...buildSimpleAOA("管理者メモ", ["行", "内容"], rows), pageSetup: { orientation: "portrait", printTitleRows: 2 } }, { description: "管理者用メモ/申し送り事項" });
         }
       }
       if (selectedSheets.has("dependencies")) {
@@ -13919,18 +14293,14 @@ ${body}`;
           }
           const expr = f.expression || f.formula;
           if (expr) {
-            const refs = [];
-            const re = /[A-Za-z_]\w*/g;
-            let m;
-            while ((m = re.exec(expr)) !== null) {
-              if (fields[m[0]] || Object.values(fields).some((ff) => ff.fields?.[m[0]])) {
-                refs.push(m[0]);
-              }
-            }
-            const uniqueRefs = [...new Set(refs)];
+            const uniqueRefs = extractCodesFromExpr(expr, fields).filter((r) => r !== code);
             if (uniqueRefs.length) {
               addDep(label, code, "計算参照", uniqueRefs.join(", "), `式: ${expr}`, CONFIG.COLORS.WARNING_BG);
             }
+          }
+          const usedBy = fieldUsageMap.get(code);
+          if (usedBy && usedBy.size) {
+            addDep(label, code, "被参照", `${usedBy.size}箇所`, [...usedBy].join("\n"), CONFIG.COLORS.SUCCESS_BG);
           }
         };
         for (const [code, f] of Object.entries(fields)) {
@@ -13949,11 +14319,96 @@ ${body}`;
             addDep("(アクション)", a.name || "", "アクション", appName, UtilsX.formatFilterCond(a.filterCond), CONFIG.COLORS.DANGER_BG);
           }
         });
+        Object.entries(views?.views || {}).forEach(([name, v]) => {
+          if (v.filterCond) {
+            const refs = Object.keys(fields).filter((c) => {
+              const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
+              return re.test(String(v.filterCond));
+            });
+            if (refs.length) addDep("(一覧)", name, "一覧絞込", refs.join(", "), UtilsX.formatFilterCond(v.filterCond), CONFIG.COLORS.INFO_BG);
+          }
+        });
+        (status?.actions || []).forEach((a) => {
+          if (a.filterCond) {
+            const refs = Object.keys(fields).filter((c) => {
+              const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
+              return re.test(String(a.filterCond));
+            });
+            if (refs.length) addDep("(プロセス遷移)", a.name || "", "プロセス条件", refs.join(", "), UtilsX.formatFilterCond(a.filterCond), CONFIG.COLORS.DEPENDENCY_BG);
+          }
+        });
+        const scanNotifRefs = (payload, tag) => {
+          UtilsX.ensureArray(payload?.notifications).forEach((n, i) => {
+            if (n.filterCond) {
+              const refs = Object.keys(fields).filter((c) => {
+                const re = new RegExp(`(^|[^A-Za-z0-9_])${UtilsX.escapeRegExp(c)}([^A-Za-z0-9_]|$)`);
+                return re.test(String(n.filterCond));
+              });
+              if (refs.length) addDep(`(${tag}#${i + 1})`, "", `${tag}条件`, refs.join(", "), UtilsX.formatFilterCond(n.filterCond), CONFIG.COLORS.SUBTABLE_BG);
+            }
+          });
+        };
+        scanNotifRefs(genNotif, "通知一般");
+        scanNotifRefs(recNotif, "通知レコード");
+        scanNotifRefs(remNotif, "通知リマインダー");
         if (dAoa.length === 2) dAoa.push(["", "依存関係なし", "-", "-", "-", "-"]);
         appendSheet("フィールド依存関係", {
           aoa: dAoa,
-          options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0], specialCells }
+          options: { headerRowIndex: 1, titleRows: [0], freezeRows: 2, centerCols: [0], specialCells },
+          pageSetup: { orientation: "landscape", printTitleRows: 2 }
+        }, { description: "ルックアップ・計算・一覧・通知・プロセスの参照関係" });
+      }
+      {
+        const tocAoa = [["目次 / Table of Contents"]];
+        tocAoa.push([`出力: ${UtilsX.dt()}　${appSettings?.name || ""}　(App ID: ${APP_ID})`]);
+        tocAoa.push([]);
+        tocAoa.push(["No.", "シート名", "内容", "件数"]);
+        sheetMetadata.forEach((m, i) => {
+          tocAoa.push([i + 1, m.name, m.description || "-", m.recordCount]);
         });
+        const tocWs = XLSX.utils.aoa_to_sheet(tocAoa);
+        autosizeCols(tocWs, tocAoa);
+        applyStyles(tocWs, tocAoa, {
+          headerRowIndex: 3,
+          titleRows: [0],
+          headerInfoRows: [1],
+          emptyRows: [2],
+          freezeRows: 4,
+          centerCols: [0, 3],
+          enableAutoFilter: false
+        });
+        applyRowHeights(tocWs, tocAoa, { titleRows: [0], emptyRows: [2] });
+        applyPageSetup(tocWs, { orientation: "portrait", printTitleRows: 4 });
+        sheetMetadata.forEach((m, i) => {
+          const row = i + 5;
+          const nameAddr = UtilsX.a1(row, 2);
+          if (tocWs[nameAddr]) {
+            tocWs[nameAddr].l = { Target: `#'${m.name.replace(/'/g, "''")}'!A1`, Tooltip: `${m.name}へ移動` };
+            if (tocWs[nameAddr].s) {
+              tocWs[nameAddr].s = {
+                ...tocWs[nameAddr].s,
+                font: { ...tocWs[nameAddr].s.font || Sty.baseFont(), color: { rgb: "FF0563C1" }, underline: true }
+              };
+            }
+          }
+        });
+        const tocName = makeSafeSheetName("目次", new Set(wb.SheetNames));
+        wb.Sheets[tocName] = tocWs;
+        wb.SheetNames.unshift(tocName);
+        printTitleConfigs.push({ sheetName: tocName, rows: 4 });
+      }
+      if (printTitleConfigs.length) {
+        wb.Workbook = wb.Workbook || {};
+        wb.Workbook.Names = wb.Workbook.Names || [];
+        for (const cfg of printTitleConfigs) {
+          const idx = wb.SheetNames.indexOf(cfg.sheetName);
+          if (idx < 0) continue;
+          wb.Workbook.Names.push({
+            Name: "_xlnm.Print_Titles",
+            Ref: `'${cfg.sheetName.replace(/'/g, "''")}'!$1:$${cfg.rows}`,
+            Sheet: idx
+          });
+        }
       }
       UI.update("ダウンロード中...", 12);
       const safeAppName = String(appSettings?.name || `App${APP_ID}`).replace(/[\\/:*?"<>|]/g, "_");
@@ -13969,7 +14424,7 @@ ${body}`;
         getToolDocument().body.removeChild(a);
         URL.revokeObjectURL(url);
       };
-      downloadExcel(wb, `${safeAppName}_設計書_v2.xlsx`);
+      downloadExcel(wb, `${safeAppName}_設計書_v2.1.xlsx`);
       UI.hide();
       const errorMsg = UI.failedAPIs.length > 0 ? `
 ⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : "";
