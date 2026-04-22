@@ -1994,38 +1994,55 @@ ${body}`;
         }
         return kintone.api.url(p, true);
       };
+      const needsSummary = selectedSheets.has("summary");
+      const needAny = (...keys) => needsSummary || keys.some((k) => selectedSheets.has(k));
       UI.update("基本情報を取得中...");
       const appSettings = await fetchJob("App", () => api(apiUrl("/k/v1/app.json"), "GET", { id: APP_ID }));
-      const generalSettings = await fetchJob("Settings", () => api(apiUrl("/k/v1/app/settings.json"), "GET", { app: APP_ID }));
-      UI.update("フィールド・レイアウトを取得中...");
-      let fieldResp = await fetchJob("FieldsPrev", () => api(apiUrl("/k/v1/preview/app/form/fields.json"), "GET", { app: APP_ID }));
-      if (!fieldResp) fieldResp = await fetchJob("FieldsProd", () => api(apiUrl("/k/v1/app/form/fields.json"), "GET", { app: APP_ID }));
-      let layout = await fetchJob("LayoutPrev", () => api(apiUrl("/k/v1/preview/app/form/layout.json"), "GET", { app: APP_ID }));
-      if (!layout) layout = await fetchJob("LayoutProd", () => api(apiUrl("/k/v1/app/form/layout.json"), "GET", { app: APP_ID }));
-      const fields = filterUserFields(fieldResp?.properties || {});
-      UI.update("レコード件数を取得中...");
-      let recordCount = null;
-      try {
-        const countResp = await fetchJob("RecordCount", () => api(apiUrl("/k/v1/records.json"), "GET", { app: APP_ID, query: "limit 1", totalCount: true }));
-        recordCount = countResp?.totalCount ?? null;
-      } catch (e) {
+      const generalSettings = needsSummary
+        ? await fetchJob("Settings", () => api(apiUrl("/k/v1/app/settings.json"), "GET", { app: APP_ID }))
+        : null;
+      const needsFields = needAny("fields", "layout", "views", "reports", "fieldAcl", "actions", "dependencies");
+      const needsLayout = needAny("fields", "layout");
+      let fieldResp = null;
+      let layout = null;
+      if (needsFields || needsLayout) {
+        UI.update("フィールド・レイアウトを取得中...");
+        if (needsFields) {
+          fieldResp = await fetchJob("FieldsPrev", () => api(apiUrl("/k/v1/preview/app/form/fields.json"), "GET", { app: APP_ID }));
+          if (!fieldResp) fieldResp = await fetchJob("FieldsProd", () => api(apiUrl("/k/v1/app/form/fields.json"), "GET", { app: APP_ID }));
+        }
+        if (needsLayout) {
+          layout = await fetchJob("LayoutPrev", () => api(apiUrl("/k/v1/preview/app/form/layout.json"), "GET", { app: APP_ID }));
+          if (!layout) layout = await fetchJob("LayoutProd", () => api(apiUrl("/k/v1/app/form/layout.json"), "GET", { app: APP_ID }));
+        }
       }
-      UI.update("一覧・権限・通知設定を取得中...");
+      const fields = filterUserFields(fieldResp?.properties || {});
+      let recordCount = null;
+      if (needsSummary) {
+        UI.update("レコード件数を取得中...");
+        try {
+          const countResp = await fetchJob("RecordCount", () => api(apiUrl("/k/v1/records.json"), "GET", { app: APP_ID, query: "limit 1", totalCount: true }));
+          recordCount = countResp?.totalCount ?? null;
+        } catch (e) {
+        }
+      }
+      UI.update("各種設定を取得中...");
+      const pick = (cond, runner) => cond ? runner() : Promise.resolve(null);
       const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif] = await Promise.all([
-        fetchJob("Views", () => api(apiUrl("/k/v1/app/views.json"), "GET", { app: APP_ID })),
-        fetchJob("Reports", () => api(apiUrl("/k/v1/app/reports.json"), "GET", { app: APP_ID })),
-        fetchJob("Status", () => api(apiUrl("/k/v1/app/status.json"), "GET", { app: APP_ID })),
-        fetchJob("アプリ権限", () => api(apiUrl("/k/v1/app/acl.json"), "GET", { app: APP_ID })),
-        fetchJob("レコード権限", () => api(apiUrl("/k/v1/record/acl.json"), "GET", { app: APP_ID })),
-        fetchJob("フィールド権限", () => api(apiUrl("/k/v1/field/acl.json"), "GET", { app: APP_ID })),
-        fetchJob("Customize", () => api(apiUrl("/k/v1/app/customize.json"), "GET", { app: APP_ID })),
-        fetchJob("Actions", () => api(apiUrl("/k/v1/preview/app/actions.json"), "GET", { app: APP_ID })),
-        fetchJob("Plugins", () => api(apiUrl("/k/v1/app/plugins.json"), "GET", { app: APP_ID })),
-        fetchJob("AdminNotes", () => api(apiUrl("/k/v1/app/adminNotes.json"), "GET", { app: APP_ID })),
-        fetchJob("Webhooks", () => api(apiUrl("/k/v1/app/webhook.json"), "GET", { app: APP_ID })),
-        fetchJob("GenNotif", () => api(apiUrl("/k/v1/app/notifications/general.json"), "GET", { app: APP_ID })),
-        fetchJob("RecNotif", () => api(apiUrl("/k/v1/app/notifications/perRecord.json"), "GET", { app: APP_ID })),
-        fetchJob("RemNotif", () => api(apiUrl("/k/v1/app/notifications/reminder.json"), "GET", { app: APP_ID }))
+        pick(needAny("views"), () => fetchJob("Views", () => api(apiUrl("/k/v1/app/views.json"), "GET", { app: APP_ID }))),
+        pick(needAny("reports"), () => fetchJob("Reports", () => api(apiUrl("/k/v1/app/reports.json"), "GET", { app: APP_ID }))),
+        pick(needAny("status", "statusMatrix"), () => fetchJob("Status", () => api(apiUrl("/k/v1/app/status.json"), "GET", { app: APP_ID }))),
+        pick(needAny("appAcl"), () => fetchJob("アプリ権限", () => api(apiUrl("/k/v1/app/acl.json"), "GET", { app: APP_ID }))),
+        pick(needAny("recordAcl"), () => fetchJob("レコード権限", () => api(apiUrl("/k/v1/record/acl.json"), "GET", { app: APP_ID }))),
+        pick(needAny("fieldAcl"), () => fetchJob("フィールド権限", () => api(apiUrl("/k/v1/field/acl.json"), "GET", { app: APP_ID }))),
+        pick(needAny("customize"), () => fetchJob("Customize", () => api(apiUrl("/k/v1/app/customize.json"), "GET", { app: APP_ID }))),
+        pick(needAny("actions", "dependencies"), () => fetchJob("Actions", () => api(apiUrl("/k/v1/preview/app/actions.json"), "GET", { app: APP_ID }))),
+        pick(needAny("plugins"), () => fetchJob("Plugins", () => api(apiUrl("/k/v1/app/plugins.json"), "GET", { app: APP_ID }))),
+        pick(selectedSheets.has("adminNotes"), () => fetchJob("AdminNotes", () => api(apiUrl("/k/v1/app/adminNotes.json"), "GET", { app: APP_ID }))),
+        pick(needAny("webhook"), () => fetchJob("Webhooks", () => api(apiUrl("/k/v1/app/webhook.json"), "GET", { app: APP_ID }))),
+        pick(needAny("genNotif"), () => fetchJob("GenNotif", () => api(apiUrl("/k/v1/app/notifications/general.json"), "GET", { app: APP_ID }))),
+        pick(needAny("recNotif"), () => fetchJob("RecNotif", () => api(apiUrl("/k/v1/app/notifications/perRecord.json"), "GET", { app: APP_ID }))),
+        pick(needAny("remNotif"), () => fetchJob("RemNotif", () => api(apiUrl("/k/v1/app/notifications/reminder.json"), "GET", { app: APP_ID })))
       ]);
       const actions = UtilsX.safeGet(actionsResp, "actions", {});
       UI.update("関連アプリ名を解決中...");
@@ -2772,9 +2789,7 @@ ${body}`;
                 kind.toUpperCase(),
                 i + 1,
                 CUSTOMIZE_REF_JP[entry.type] || entry.type || "-",
-                entry.file?.name || entry.url || "-",
-                entry.file?.contentType || "-",
-                entry.file?.fileKey || "-"
+                entry.file?.name || entry.url || "-"
               ]);
             });
           });
@@ -2784,13 +2799,13 @@ ${body}`;
           customize.scope === "ADMIN" ? "管理者のみ" :
           customize.scope === "NONE" ? "無効" :
           customize.scope || "-";
-        const headers = ["適用範囲", "種別", "番号", "参照方法", "ファイル名/URL", "Content-Type", "fileKey"];
+        const headers = ["適用範囲", "種別", "番号", "参照方法", "ファイル名/URL"];
         const rows = [
           ...renderScope("PC", customize.desktop),
           ...renderScope("モバイル", customize.mobile)
         ];
         if (rows.length === 0) {
-          rows.push(["-", "-", "-", "-", "(カスタマイズ未設定)", "-", "-"]);
+          rows.push(["-", "-", "-", "-", "(カスタマイズ未設定)"]);
         }
         const aoa = [
           ["JS/CSSカスタマイズ"],
