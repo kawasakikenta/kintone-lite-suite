@@ -2006,7 +2006,7 @@ ${body}`;
         const overlay = getToolDocument().createElement("div");
         Object.assign(overlay.style, { position: "fixed", top: "0", left: "0", width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.6)", zIndex: getExporterOverlayZIndex(), display: "flex", justifyContent: "center", alignItems: "center", fontFamily: '"Meiryo", sans-serif' });
         const sheets = [
-          { key: "summary", label: "サマリー", default: true, required: true },
+          { key: "summary", label: "サマリー", default: true },
           { key: "fields", label: "項目定義", default: true },
           { key: "layout", label: "フォームレイアウト", default: true },
           { key: "views", label: "一覧", default: true },
@@ -2505,30 +2505,66 @@ ${body}`;
           "ルックアップ設定",
           "関連レコード設定",
           "計算式",
-          "依存/参照",
-          "使用箇所",
-          "説明"
+          "依存/参照"
         ];
+        const COL_COUNT = fieldHeaders.length;
         const fAoa = [["項目定義"], fieldHeaders];
         const specialCells = {};
-        const { fieldOrder, subtableFieldOrder } = collectLayoutInfo(layout || {});
-        const sortedEntries = [];
-        const added = /* @__PURE__ */ new Set();
-        for (const item of fieldOrder) {
-          if (item.isGroup) {
-            added.add(item.code);
-            continue;
+        const { subtableFieldOrder } = collectLayoutInfo(layout || {});
+        const orderedItems = [];
+        const seenFieldCodes = /* @__PURE__ */ new Set();
+        const walkForFields = (rows, groupLabel) => {
+          const safeRows = Array.isArray(rows) ? rows : [];
+          for (const row2 of safeRows) {
+            if (row2?.type === "GROUP") {
+              orderedItems.push({ kind: "GROUP", item: row2, groupLabel });
+              walkForFields(Array.isArray(row2.layout) ? row2.layout : [], row2.label || row2.code || groupLabel || "");
+              continue;
+            }
+            if (row2?.type === "SUBTABLE") {
+              if (row2.code) {
+                orderedItems.push({ kind: "FIELD", code: row2.code, groupLabel });
+                seenFieldCodes.add(row2.code);
+              }
+              continue;
+            }
+            const items = Array.isArray(row2?.fields) ? row2.fields : [];
+            for (const item of items) {
+              if (!item) continue;
+              if (item.type === "GROUP") {
+                orderedItems.push({ kind: "GROUP", item, groupLabel });
+                walkForFields(Array.isArray(item.layout) ? item.layout : [], item.label || item.code || groupLabel || "");
+                continue;
+              }
+              if (item.type === "SUBTABLE") {
+                if (item.code) {
+                  orderedItems.push({ kind: "FIELD", code: item.code, groupLabel });
+                  seenFieldCodes.add(item.code);
+                }
+                continue;
+              }
+              if (item.type === "LABEL" || item.type === "HR" || item.type === "SPACER") {
+                orderedItems.push({ kind: item.type, item, groupLabel });
+                continue;
+              }
+              if (item.code) {
+                orderedItems.push({ kind: "FIELD", code: item.code, groupLabel });
+                seenFieldCodes.add(item.code);
+              }
+            }
           }
-          if (fields[item.code]) {
-            sortedEntries.push([item.code, fields[item.code]]);
-            added.add(item.code);
-          }
-        }
+        };
+        walkForFields(Array.isArray(layout?.layout) ? layout.layout : [], "");
         Object.entries(fields).forEach(([c, f]) => {
-          if (!added.has(c) && f.type !== "GROUP") sortedEntries.push([c, f]);
+          if (!seenFieldCodes.has(c) && f.type !== "GROUP") orderedItems.push({ kind: "FIELD", code: c, groupLabel: "" });
         });
         let no = 1;
-        const pushRow = (label, code, f, parentLabel, isSubtableField) => {
+        const padRow = (arr) => {
+          const r = arr.slice();
+          while (r.length < COL_COUNT) r.push("");
+          return r;
+        };
+        const pushRow = (label, code, f, parentLabel, isSubtableField, groupLabelOverride) => {
           const typeJ = f?.lookup ? `ルックアップ(${FIELD_TYPE[f?.type] || f?.type})` : FIELD_TYPE[f?.type] || f?.type || "";
           let optionsStr = "-";
           if (f.options) {
@@ -2571,9 +2607,7 @@ ${body}`;
           const deps = [];
           if (f.type === "SUBTABLE") deps.push("[テーブル]");
           if (f.fields) deps.push(`サブフィールド数: ${Object.keys(f.fields).length}`);
-          const groupLabel = isSubtableField ? `(${parentLabel || "親"})` : fieldGroupMap.get(code) || "-";
-          const usageSet = fieldUsageMap.get(code);
-          const usageStr = usageSet && usageSet.size ? [...usageSet].join("\n") : "-";
+          const groupLabel = isSubtableField ? `(${parentLabel || "親"})` : groupLabelOverride || fieldGroupMap.get(code) || "-";
           const rowData = [
             no++,
             groupLabel,
@@ -2592,9 +2626,7 @@ ${body}`;
             lookupStr,
             refTableStr,
             calcStr,
-            deps.join("\n") || "-",
-            usageStr,
-            UtilsX.stripHtml(f.description || "")
+            deps.join("\n") || "-"
           ];
           const rowIdx = fAoa.length;
           fAoa.push(rowData);
@@ -2613,15 +2645,53 @@ ${body}`;
             }
           }
         };
+        const pushGroupRow = (item, groupLabel) => {
+          const rowIdx = fAoa.length;
+          fAoa.push(padRow([
+            no++,
+            groupLabel || "-",
+            item.label || item.code || "",
+            item.code || "-",
+            FIELD_TYPE["GROUP"] || "グループ"
+          ]));
+          for (let c = 1; c <= 4; c++) {
+            specialCells[`${rowIdx},${c}`] = {
+              ...Sty.cell("left"),
+              fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.SECTION_BG } }
+            };
+          }
+        };
+        const pushDecorationRow = (kind, item, groupLabel) => {
+          const typeJ = FIELD_TYPE[kind] || kind;
+          const labelText = kind === "LABEL" ? UtilsX.stripHtml(item.label || "").trim() : "-";
+          const code = kind === "SPACER" ? item.elementId || "-" : "-";
+          fAoa.push(padRow([
+            no++,
+            groupLabel || "-",
+            labelText || "-",
+            code,
+            typeJ
+          ]));
+        };
         const sectionRowsFields = [];
-        for (const [code, f] of sortedEntries) {
-          if (f.type === "GROUP") continue;
-          pushRow(f.label || "", code, f, null, false);
+        for (const entry of orderedItems) {
+          if (entry.kind === "GROUP") {
+            pushGroupRow(entry.item, entry.groupLabel);
+            continue;
+          }
+          if (entry.kind === "LABEL" || entry.kind === "HR" || entry.kind === "SPACER") {
+            pushDecorationRow(entry.kind, entry.item, entry.groupLabel);
+            continue;
+          }
+          const code = entry.code;
+          const f = fields[code];
+          if (!f || f.type === "GROUP") continue;
+          pushRow(f.label || "", code, f, null, false, entry.groupLabel);
           if (f.type === "SUBTABLE" && f.fields) {
             const subCodes = subtableFieldOrder.get(code) || Object.keys(f.fields);
             const subHeaderRow = fAoa.length;
             const subCount = subCodes.filter((sc) => f.fields[sc]).length;
-            fAoa.push([`▼ テーブル「${f.label || code}」(${subCount}列)`, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+            fAoa.push(padRow([`▼ テーブル「${f.label || code}」(${subCount}列)`]));
             sectionRowsFields.push(subHeaderRow);
             for (const sc of subCodes) {
               if (f.fields[sc]) pushRow(f.fields[sc].label || "", sc, f.fields[sc], f.label || code, true);
@@ -2640,7 +2710,7 @@ ${body}`;
             specialCells
           },
           pageSetup: { orientation: "landscape", printTitleRows: 2 }
-        }, { description: "フィールド別詳細定義・制約・依存・使用箇所", recordCount: no - 1 });
+        }, { description: "フィールド別詳細定義・制約・依存関係", recordCount: no - 1 });
       }
       if (selectedSheets.has("layout") && Array.isArray(layout?.layout)) {
         const lAoa = [["フォームレイアウト"], ["No.", "行", "列", "区分", "階層", "表示", "フィールドコード", "タイプ", "必須", "幅", "備考"]];
