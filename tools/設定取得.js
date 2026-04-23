@@ -550,20 +550,30 @@ ${contextLine}`);
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
   }
-  function downloadText(filename, text, type) {
-    const blob = new Blob([text], { type: type || "text/plain" });
+  function triggerDownload(filename, blob) {
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    a.href = url;
     a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
+    window.setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (e) {
+      }
+      try {
+        a.remove();
+      } catch (e) {
+      }
+    }, 0);
+  }
+  function downloadText(filename, text, type) {
+    triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
   }
   function downloadBlob(filename, blob) {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    triggerDownload(filename, blob);
   }
   function selectedScopeKeys(container) {
     return [...container.querySelectorAll('input[type="checkbox"]:checked')].map((x) => x.value);
