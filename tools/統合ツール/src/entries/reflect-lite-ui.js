@@ -5,6 +5,8 @@ import { setStatus } from '../ui/components.js';
 import { runApplyPreviewStandalone } from '../tabs/reflect-standalone.js';
 import { mountKusLitePanel } from './liteMount.js';
 
+const REFLECT_LITE_STATE_KEY = 'kus_reflect_lite_state_v1';
+
 function row(labelHtml, child) {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px';
@@ -32,15 +34,38 @@ export function mountReflectLitePanel() {
     return inp;
   };
 
-  const srcApp = mkInput('比較元アプリID', DEFAULT_APP_ID || '');
-  const srcGuest = mkInput('ゲストID（任意）');
-  const tgtApp = mkInput('比較先アプリID');
-  const tgtGuest = mkInput('ゲストID（任意）');
+  let savedState = {};
+  try {
+    const raw = localStorage.getItem(REFLECT_LITE_STATE_KEY) || '';
+    savedState = raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    savedState = {};
+  }
+
+  const srcApp = mkInput('比較元アプリID', savedState.sourceAppId || DEFAULT_APP_ID || '');
+  const srcGuest = mkInput('ゲストID（任意）', savedState.sourceGuestId || '');
+  const tgtApp = mkInput('比較先アプリID', savedState.targetAppId || DEFAULT_APP_ID || '');
+  const tgtGuest = mkInput('ゲストID（任意）', savedState.targetGuestId || '');
 
   bodySlot.appendChild(row('比較元ID', srcApp));
   bodySlot.appendChild(row('元ゲスト', srcGuest));
   bodySlot.appendChild(row('比較先ID', tgtApp));
   bodySlot.appendChild(row('先ゲスト', tgtGuest));
+
+  const quickRow = document.createElement('div');
+  quickRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin:-2px 0 10px';
+  const mkQuickBtn = (text) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = text;
+    btn.style.cssText =
+      'padding:5px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;color:#334155;cursor:pointer';
+    quickRow.appendChild(btn);
+    return btn;
+  };
+  const copySrcToTgtBtn = mkQuickBtn('比較元→比較先をコピー');
+  const setCurrentToTgtBtn = mkQuickBtn('現在のアプリを比較先にセット');
+  bodySlot.appendChild(quickRow);
 
   const scopeBox = document.createElement('div');
   scopeBox.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px';
@@ -62,6 +87,21 @@ export function mountReflectLitePanel() {
   scopeLabel.style.cssText = 'font-size:12px;font-weight:600;color:#334155;margin-bottom:6px';
   scopeLabel.textContent = '反映するセクション:';
   bodySlot.appendChild(scopeLabel);
+  const scopeActionRow = document.createElement('div');
+  scopeActionRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin:0 0 6px';
+  const selectAllBtn = document.createElement('button');
+  selectAllBtn.type = 'button';
+  selectAllBtn.textContent = '全選択';
+  selectAllBtn.style.cssText =
+    'padding:5px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer';
+  const clearAllBtn = document.createElement('button');
+  clearAllBtn.type = 'button';
+  clearAllBtn.textContent = '全解除';
+  clearAllBtn.style.cssText =
+    'padding:5px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer';
+  scopeActionRow.appendChild(selectAllBtn);
+  scopeActionRow.appendChild(clearAllBtn);
+  bodySlot.appendChild(scopeActionRow);
   bodySlot.appendChild(scopeBox);
 
   const optRow = document.createElement('div');
@@ -78,7 +118,10 @@ export function mountReflectLitePanel() {
   };
   const backupCb = mkOpt('バックアップ保存');
   backupCb.checked = true;
+  const srcPreviewCb = mkOpt('比較元をプレビューから取得');
+  srcPreviewCb.checked = savedState.sourcePreview !== false;
   const stopCb = mkOpt('エラー時中断');
+  stopCb.checked = !!savedState.stopOnError;
   bodySlot.appendChild(optRow);
   const deployNote = document.createElement('div');
   deployNote.style.cssText = 'font-size:11px;color:#64748b;margin:-4px 0 10px;line-height:1.45';
@@ -95,16 +138,53 @@ export function mountReflectLitePanel() {
   runBtn.style.cssText =
     'padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:linear-gradient(180deg,#dc2626,#b91c1c);color:#fff;cursor:pointer;margin-top:4px';
 
+  const saveState = () => {
+    const payload = {
+      sourceAppId: srcApp.value.trim(),
+      sourceGuestId: srcGuest.value.trim(),
+      targetAppId: tgtApp.value.trim(),
+      targetGuestId: tgtGuest.value.trim(),
+      sourcePreview: srcPreviewCb.checked,
+      stopOnError: stopCb.checked
+    };
+    try {
+      localStorage.setItem(REFLECT_LITE_STATE_KEY, JSON.stringify(payload));
+    } catch (_) {
+      // ignore quota / private browsing errors
+    }
+  };
+
+  copySrcToTgtBtn.addEventListener('click', () => {
+    tgtApp.value = srcApp.value.trim();
+    tgtGuest.value = srcGuest.value.trim();
+    saveState();
+    setStatus('比較元IDを比較先へコピーしました');
+  });
+
+  setCurrentToTgtBtn.addEventListener('click', () => {
+    tgtApp.value = DEFAULT_APP_ID || '';
+    saveState();
+    setStatus('現在のアプリIDを比較先にセットしました');
+  });
+
+  selectAllBtn.addEventListener('click', () => {
+    scopeChecks.forEach((cb) => { cb.checked = true; });
+  });
+  clearAllBtn.addEventListener('click', () => {
+    scopeChecks.forEach((cb) => { cb.checked = false; });
+  });
+
   runBtn.addEventListener('click', async () => {
     const scopes = scopeChecks.filter((cb) => cb.checked).map((cb) => cb.dataset.key);
     logArea.style.display = 'block';
     logArea.textContent = '';
+    saveState();
     try {
       await runApplyPreviewStandalone(
         {
           sourceAppId: srcApp.value.trim(),
           sourceGuestId: srcGuest.value.trim(),
-          sourcePreview: true,
+          sourcePreview: srcPreviewCb.checked,
           targetAppId: tgtApp.value.trim(),
           targetGuestId: tgtGuest.value.trim(),
           scopes,
