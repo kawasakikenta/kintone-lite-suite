@@ -6,7 +6,7 @@ const TOOL_POPOUT_NAME = 'kintone-unified-suite-v2';
 import { ui as sharedUi, state } from './state.js';
 import { stableStringify, selectedScopeKeys } from './utils.js';
 import { buildRoot, copyTextToClipboard } from './ui/template.js';
-import { setRootElement, setUiRefs } from './ui/dialog.js';
+import { getToolDocument, setRootElement, setUiRefs } from './ui/dialog.js';
 import { setComponentUi, setComponentDeps, setStatus, switchTab, openFeatureScreen } from './ui/components.js';
 import { stringifyForDiff, renderRowColumns, buildDiffWarningInfo, renderResultRows, renderDiffFilterOptions, renderDiffSelectionState, renderDiffWarningBox, syncDiffThemeButton } from './diff/export.js';
 import { commonParams, currentDiffSignature, saveCurrentDialogState } from './tabs/diff.js';
@@ -379,7 +379,68 @@ export function runKintoneUnifiedSuite(options = {}) {
   }
 
   // --- OSS Integrations: Init JSONEditors + Enhanced Tour ---
-  initOssIntegrations();
+  initOssIntegrations().catch((e) => {
+    console.warn('OSS integrations init skipped:', e.message || e);
+  });
+}
+
+function stringifyEditorFallbackValue(value) {
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value || {}, null, 2); }
+  catch (e) { return String(value ?? ''); }
+}
+
+function installPlainJsonValueShim(container) {
+  if (!container || typeof container.value === 'string') return;
+  let fallbackText = '';
+  Object.defineProperty(container, 'value', {
+    get() {
+      return fallbackText;
+    },
+    set(v) {
+      fallbackText = stringifyEditorFallbackValue(v);
+    },
+    configurable: true
+  });
+}
+
+function bindJsonEditorValue(container, editor) {
+  if (!container || !editor) return;
+  let fallbackText = typeof container.value === 'string' ? container.value : '';
+  Object.defineProperty(container, 'value', {
+    get() {
+      try {
+        fallbackText = editor.getText();
+        return fallbackText;
+      } catch (e) {
+        return fallbackText;
+      }
+    },
+    set(v) {
+      fallbackText = stringifyEditorFallbackValue(v);
+      try {
+        if (typeof v === 'string') {
+          if (!v.trim()) { editor.set({}); return; }
+          editor.set(JSON.parse(v));
+        } else {
+          editor.set(v || {});
+        }
+      } catch (e) {
+        try { editor.setText(fallbackText); } catch (e2) { /* ignore */ }
+      }
+    },
+    configurable: true
+  });
+  if (fallbackText.trim()) container.value = fallbackText;
+}
+
+function findJsonEditorContainer(id) {
+  const toolD = getToolDocument();
+  return toolD.getElementById(id)
+    || document.getElementById(id)
+    || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed
+      ? window.__KUS_TOOL_WINDOW__.document.getElementById(id)
+      : null);
 }
 
 async function initOssIntegrations() {
@@ -387,10 +448,12 @@ async function initOssIntegrations() {
 
   // Initialize JSONEditor for patchJsonEditor container
   try {
-    const patchContainer = document.getElementById('u_patchJsonEditor')
-      || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document.getElementById('u_patchJsonEditor') : null);
+    const patchContainer = findJsonEditorContainer('u_patchJsonEditor');
     if (patchContainer && patchContainer.tagName === 'DIV') {
+      installPlainJsonValueShim(patchContainer);
       const editor = await initJsonEditor('u_patchJsonEditor', {
+        container: patchContainer,
+        document: patchContainer.ownerDocument,
         mode: 'code',
         modes: ['code', 'tree'],
         initialValue: {},
@@ -409,26 +472,7 @@ async function initOssIntegrations() {
         }
       });
       // Add .value compatibility shim for existing code
-      if (editor && patchContainer) {
-        Object.defineProperty(patchContainer, 'value', {
-          get() {
-            try { return editor.getText(); } catch (e) { return ''; }
-          },
-          set(v) {
-            try {
-              if (typeof v === 'string') {
-                if (!v.trim()) { editor.set({}); return; }
-                editor.set(JSON.parse(v));
-              } else {
-                editor.set(v || {});
-              }
-            } catch (e) {
-              try { editor.setText(String(v)); } catch (e2) { /* */ }
-            }
-          },
-          configurable: true
-        });
-      }
+      if (editor && patchContainer) bindJsonEditorValue(patchContainer, editor);
     }
   } catch (e) {
     console.warn('JSONEditor (patch) init skipped:', e.message);
@@ -436,35 +480,18 @@ async function initOssIntegrations() {
 
   // Initialize JSONEditor for fieldJson container
   try {
-    const fieldContainer = document.getElementById('u_fieldJson')
-      || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document.getElementById('u_fieldJson') : null);
+    const fieldContainer = findJsonEditorContainer('u_fieldJson');
     if (fieldContainer && fieldContainer.tagName === 'DIV') {
+      installPlainJsonValueShim(fieldContainer);
       const editor = await initJsonEditor('u_fieldJson', {
+        container: fieldContainer,
+        document: fieldContainer.ownerDocument,
         mode: 'code',
         modes: ['code', 'tree'],
         initialValue: {}
       });
       // Add .value compatibility shim
-      if (editor && fieldContainer) {
-        Object.defineProperty(fieldContainer, 'value', {
-          get() {
-            try { return editor.getText(); } catch (e) { return ''; }
-          },
-          set(v) {
-            try {
-              if (typeof v === 'string') {
-                if (!v.trim()) { editor.set({}); return; }
-                editor.set(JSON.parse(v));
-              } else {
-                editor.set(v || {});
-              }
-            } catch (e) {
-              try { editor.setText(String(v)); } catch (e2) { /* */ }
-            }
-          },
-          configurable: true
-        });
-      }
+      if (editor && fieldContainer) bindJsonEditorValue(fieldContainer, editor);
     }
   } catch (e) {
     console.warn('JSONEditor (field) init skipped:', e.message);

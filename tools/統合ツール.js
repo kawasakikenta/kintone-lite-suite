@@ -272,6 +272,15 @@
   });
 
   // src/constants.js
+  function resolveDefaultAppId() {
+    try {
+      if (typeof kintone !== "undefined" && kintone?.app?.getId) {
+        return String(kintone.app.getId() || "");
+      }
+    } catch (e) {
+    }
+    return "";
+  }
   var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.js"() {
@@ -326,7 +335,7 @@
           cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
         })
       });
-      DEFAULT_APP_ID = String(kintone.app.getId() || "");
+      DEFAULT_APP_ID = resolveDefaultAppId();
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
       DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
@@ -831,20 +840,41 @@ ${contextLine}`);
       r.readAsText(file, "utf-8");
     });
   }
+  function normalizeResourceDocument(doc) {
+    return doc && typeof doc.createElement === "function" ? doc : document;
+  }
+  function getWeakSet(map, doc) {
+    let set = map.get(doc);
+    if (!set) {
+      set = /* @__PURE__ */ new Set();
+      map.set(doc, set);
+    }
+    return set;
+  }
+  function getWeakMap(map, doc) {
+    let inner = map.get(doc);
+    if (!inner) {
+      inner = /* @__PURE__ */ new Map();
+      map.set(doc, inner);
+    }
+    return inner;
+  }
   function waitForScriptLoad(existingScript, url) {
+    const doc = normalizeResourceDocument(existingScript?.ownerDocument);
+    const docLoadedScripts = getWeakSet(loadedScripts, doc);
     if (existingScript.dataset.kusLoaded === "true") {
-      loadedScripts.add(url);
+      docLoadedScripts.add(url);
       return Promise.resolve();
     }
     if (existingScript.readyState === "loaded" || existingScript.readyState === "complete") {
-      loadedScripts.add(url);
+      docLoadedScripts.add(url);
       existingScript.dataset.kusLoaded = "true";
       return Promise.resolve();
     }
     return new Promise((resolve, reject) => {
       const onLoad = () => {
         cleanup();
-        loadedScripts.add(url);
+        docLoadedScripts.add(url);
         resolve();
       };
       const onError = () => {
@@ -860,19 +890,21 @@ ${contextLine}`);
     });
   }
   function waitForStyleLoad(existingLink, url) {
+    const doc = normalizeResourceDocument(existingLink?.ownerDocument);
+    const docLoadedStyles = getWeakSet(loadedStyles, doc);
     if (existingLink.dataset.kusLoaded === "true") {
-      loadedStyles.add(url);
+      docLoadedStyles.add(url);
       return Promise.resolve();
     }
     if (existingLink.sheet) {
-      loadedStyles.add(url);
+      docLoadedStyles.add(url);
       existingLink.dataset.kusLoaded = "true";
       return Promise.resolve();
     }
     return new Promise((resolve, reject) => {
       const onLoad = () => {
         cleanup();
-        loadedStyles.add(url);
+        docLoadedStyles.add(url);
         resolve();
       };
       const onError = () => {
@@ -887,71 +919,78 @@ ${contextLine}`);
       existingLink.addEventListener("error", onError, { once: true });
     });
   }
-  function loadExternalScript(url) {
+  function loadExternalScript(url, options = {}) {
     if (!url) return Promise.resolve();
-    if (loadedScripts.has(url)) return Promise.resolve();
-    if (loadingScripts.has(url)) return loadingScripts.get(url);
-    const existingScript = document.querySelector(`script[src="${url}"]`);
+    const doc = normalizeResourceDocument(options.document || options.doc);
+    const docLoadedScripts = getWeakSet(loadedScripts, doc);
+    const docLoadingScripts = getWeakMap(loadingScripts, doc);
+    if (docLoadedScripts.has(url)) return Promise.resolve();
+    if (docLoadingScripts.has(url)) return docLoadingScripts.get(url);
+    const existingScript = doc.querySelector(`script[src="${url}"]`);
     if (existingScript) {
       const promise2 = waitForScriptLoad(existingScript, url).finally(() => {
-        loadingScripts.delete(url);
+        docLoadingScripts.delete(url);
       });
-      loadingScripts.set(url, promise2);
+      docLoadingScripts.set(url, promise2);
       return promise2;
     }
     const promise = new Promise((resolve, reject) => {
-      const script = document.createElement("script");
+      const script = doc.createElement("script");
       script.src = url;
       script.onload = () => {
-        loadedScripts.add(url);
+        docLoadedScripts.add(url);
         script.dataset.kusLoaded = "true";
         resolve();
       };
       script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
-      document.head.appendChild(script);
+      doc.head.appendChild(script);
     }).finally(() => {
-      loadingScripts.delete(url);
+      docLoadingScripts.delete(url);
     });
-    loadingScripts.set(url, promise);
+    docLoadingScripts.set(url, promise);
     return promise;
   }
-  function loadExternalStyle(url) {
+  function loadExternalStyle(url, options = {}) {
     if (!url) return Promise.resolve();
-    if (loadedStyles.has(url)) return Promise.resolve();
-    if (loadingStyles.has(url)) return loadingStyles.get(url);
-    const existingLink = document.querySelector(`link[href="${url}"]`);
+    const doc = normalizeResourceDocument(options.document || options.doc);
+    const docLoadedStyles = getWeakSet(loadedStyles, doc);
+    const docLoadingStyles = getWeakMap(loadingStyles, doc);
+    if (docLoadedStyles.has(url)) return Promise.resolve();
+    if (docLoadingStyles.has(url)) return docLoadingStyles.get(url);
+    const existingLink = doc.querySelector(`link[href="${url}"]`);
     if (existingLink) {
       const promise2 = waitForStyleLoad(existingLink, url).finally(() => {
-        loadingStyles.delete(url);
+        docLoadingStyles.delete(url);
       });
-      loadingStyles.set(url, promise2);
+      docLoadingStyles.set(url, promise2);
       return promise2;
     }
     const promise = new Promise((resolve, reject) => {
-      const link = document.createElement("link");
+      const link = doc.createElement("link");
       link.rel = "stylesheet";
       link.href = url;
       link.onload = () => {
-        loadedStyles.add(url);
+        docLoadedStyles.add(url);
         link.dataset.kusLoaded = "true";
         resolve();
       };
       link.onerror = () => reject(new Error(`Failed to load style: ${url}`));
-      document.head.appendChild(link);
+      doc.head.appendChild(link);
     }).finally(() => {
-      loadingStyles.delete(url);
+      docLoadingStyles.delete(url);
     });
-    loadingStyles.set(url, promise);
+    docLoadingStyles.set(url, promise);
     return promise;
   }
-  async function loadExternalLibrary(name) {
+  async function loadExternalLibrary(name, options = {}) {
     const lib = EXTERNAL_LIBRARIES[name];
     if (!lib) throw new Error(`Unknown external library: ${name}`);
-    const stylePromise = lib.cssUrl ? loadExternalStyle(lib.cssUrl) : Promise.resolve();
+    const doc = normalizeResourceDocument(options.document || options.doc);
+    const stylePromise = lib.cssUrl ? loadExternalStyle(lib.cssUrl, { document: doc }) : Promise.resolve();
     let scriptPromise = Promise.resolve();
     if (lib.cdnUrl) {
-      scriptPromise = loadExternalScript(lib.cdnUrl).catch((err) => {
-        if (lib.altCdnUrl) return loadExternalScript(lib.altCdnUrl);
+      scriptPromise = loadExternalScript(lib.cdnUrl, { document: doc }).catch((err) => {
+        if (lib.altCdnUrl) return loadExternalScript(lib.altCdnUrl, { document: doc });
         throw err;
       });
     }
@@ -1026,10 +1065,10 @@ ${contextLine}`);
     "src/utils.js"() {
       "use strict";
       init_constants();
-      loadedScripts = /* @__PURE__ */ new Set();
-      loadedStyles = /* @__PURE__ */ new Set();
-      loadingScripts = /* @__PURE__ */ new Map();
-      loadingStyles = /* @__PURE__ */ new Map();
+      loadedScripts = /* @__PURE__ */ new WeakMap();
+      loadedStyles = /* @__PURE__ */ new WeakMap();
+      loadingScripts = /* @__PURE__ */ new WeakMap();
+      loadingStyles = /* @__PURE__ */ new WeakMap();
     }
   });
 
@@ -7825,16 +7864,18 @@ ${body}`;
     startGuidedTour: () => startGuidedTour
   });
   async function initJsonEditor(containerId, options = {}) {
-    await loadExternalLibrary("jsoneditor");
-    const container = document.getElementById(containerId);
+    const doc = options.document || options.doc || options.container?.ownerDocument || getToolDocument();
+    const win = doc?.defaultView || window;
+    const container = options.container || doc.getElementById(containerId);
     if (!container) return null;
+    await loadExternalLibrary("jsoneditor", { document: doc });
     if (editorInstances[containerId]) {
       try {
         editorInstances[containerId].destroy();
       } catch (e) {
       }
     }
-    const JSONEditor = window.JSONEditor;
+    const JSONEditor = win.JSONEditor || window.JSONEditor;
     if (!JSONEditor) {
       console.warn("JSONEditor not loaded");
       return null;
@@ -8103,8 +8144,10 @@ ${body}`;
     }
   }
   async function startGuidedTour(steps, options = {}) {
-    await loadExternalLibrary("driver");
-    const driverModule = window.driver;
+    const doc = options.document || options.doc || getToolDocument();
+    const win = doc?.defaultView || window;
+    await loadExternalLibrary("driver", { document: doc });
+    const driverModule = win.driver || window.driver;
     if (!driverModule) {
       console.warn("driver.js not loaded");
       return;
@@ -8157,6 +8200,7 @@ ${body}`;
     "src/oss_integrations.js"() {
       "use strict";
       init_utils();
+      init_dialog();
       editorInstances = {};
       driverInstance = null;
     }
@@ -32600,13 +32644,78 @@ ${field.label}` : code,
       if (initialFeature) openFeatureScreen(initialFeature.key, { persist: false, focus: false });
       else switchTab(options.initialTab, { persist: false });
     }
-    initOssIntegrations();
+    initOssIntegrations().catch((e) => {
+      console.warn("OSS integrations init skipped:", e.message || e);
+    });
+  }
+  function stringifyEditorFallbackValue(value) {
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value || {}, null, 2);
+    } catch (e) {
+      return String(value ?? "");
+    }
+  }
+  function installPlainJsonValueShim(container) {
+    if (!container || typeof container.value === "string") return;
+    let fallbackText = "";
+    Object.defineProperty(container, "value", {
+      get() {
+        return fallbackText;
+      },
+      set(v) {
+        fallbackText = stringifyEditorFallbackValue(v);
+      },
+      configurable: true
+    });
+  }
+  function bindJsonEditorValue(container, editor) {
+    if (!container || !editor) return;
+    let fallbackText = typeof container.value === "string" ? container.value : "";
+    Object.defineProperty(container, "value", {
+      get() {
+        try {
+          fallbackText = editor.getText();
+          return fallbackText;
+        } catch (e) {
+          return fallbackText;
+        }
+      },
+      set(v) {
+        fallbackText = stringifyEditorFallbackValue(v);
+        try {
+          if (typeof v === "string") {
+            if (!v.trim()) {
+              editor.set({});
+              return;
+            }
+            editor.set(JSON.parse(v));
+          } else {
+            editor.set(v || {});
+          }
+        } catch (e) {
+          try {
+            editor.setText(fallbackText);
+          } catch (e2) {
+          }
+        }
+      },
+      configurable: true
+    });
+    if (fallbackText.trim()) container.value = fallbackText;
+  }
+  function findJsonEditorContainer(id) {
+    const toolD = getToolDocument();
+    return toolD.getElementById(id) || document.getElementById(id) || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document.getElementById(id) : null);
   }
   async function initOssIntegrations() {
     try {
-      const patchContainer = document.getElementById("u_patchJsonEditor") || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document.getElementById("u_patchJsonEditor") : null);
+      const patchContainer = findJsonEditorContainer("u_patchJsonEditor");
       if (patchContainer && patchContainer.tagName === "DIV") {
+        installPlainJsonValueShim(patchContainer);
         const editor = await initJsonEditor("u_patchJsonEditor", {
+          container: patchContainer,
+          document: patchContainer.ownerDocument,
           mode: "code",
           modes: ["code", "tree"],
           initialValue: {},
@@ -32624,78 +32733,23 @@ ${field.label}` : code,
             }
           }
         });
-        if (editor && patchContainer) {
-          Object.defineProperty(patchContainer, "value", {
-            get() {
-              try {
-                return editor.getText();
-              } catch (e) {
-                return "";
-              }
-            },
-            set(v) {
-              try {
-                if (typeof v === "string") {
-                  if (!v.trim()) {
-                    editor.set({});
-                    return;
-                  }
-                  editor.set(JSON.parse(v));
-                } else {
-                  editor.set(v || {});
-                }
-              } catch (e) {
-                try {
-                  editor.setText(String(v));
-                } catch (e2) {
-                }
-              }
-            },
-            configurable: true
-          });
-        }
+        if (editor && patchContainer) bindJsonEditorValue(patchContainer, editor);
       }
     } catch (e) {
       console.warn("JSONEditor (patch) init skipped:", e.message);
     }
     try {
-      const fieldContainer = document.getElementById("u_fieldJson") || (window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document.getElementById("u_fieldJson") : null);
+      const fieldContainer = findJsonEditorContainer("u_fieldJson");
       if (fieldContainer && fieldContainer.tagName === "DIV") {
+        installPlainJsonValueShim(fieldContainer);
         const editor = await initJsonEditor("u_fieldJson", {
+          container: fieldContainer,
+          document: fieldContainer.ownerDocument,
           mode: "code",
           modes: ["code", "tree"],
           initialValue: {}
         });
-        if (editor && fieldContainer) {
-          Object.defineProperty(fieldContainer, "value", {
-            get() {
-              try {
-                return editor.getText();
-              } catch (e) {
-                return "";
-              }
-            },
-            set(v) {
-              try {
-                if (typeof v === "string") {
-                  if (!v.trim()) {
-                    editor.set({});
-                    return;
-                  }
-                  editor.set(JSON.parse(v));
-                } else {
-                  editor.set(v || {});
-                }
-              } catch (e) {
-                try {
-                  editor.setText(String(v));
-                } catch (e2) {
-                }
-              }
-            },
-            configurable: true
-          });
-        }
+        if (editor && fieldContainer) bindJsonEditorValue(fieldContainer, editor);
       }
     } catch (e) {
       console.warn("JSONEditor (field) init skipped:", e.message);

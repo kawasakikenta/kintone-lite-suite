@@ -52,7 +52,16 @@ export const EXTERNAL_LIBRARIES = Object.freeze({
   })
 });
 
-export const DEFAULT_APP_ID = String(kintone.app.getId() || '');
+function resolveDefaultAppId() {
+  try {
+    if (typeof kintone !== 'undefined' && kintone?.app?.getId) {
+      return String(kintone.app.getId() || '');
+    }
+  } catch (e) { /* ignore */ }
+  return '';
+}
+
+export const DEFAULT_APP_ID = resolveDefaultAppId();
 export const DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
 export const DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
 export const DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;

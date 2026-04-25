@@ -1,6 +1,7 @@
 'use strict';
 
 import { loadExternalLibrary } from './utils.js';
+import { getToolDocument } from './ui/dialog.js';
 
 // ============================================================
 // JSONEditor wrapper
@@ -8,14 +9,16 @@ import { loadExternalLibrary } from './utils.js';
 const editorInstances = {};
 
 export async function initJsonEditor(containerId, options = {}) {
-  await loadExternalLibrary('jsoneditor');
-  const container = document.getElementById(containerId);
+  const doc = options.document || options.doc || options.container?.ownerDocument || getToolDocument();
+  const win = doc?.defaultView || window;
+  const container = options.container || doc.getElementById(containerId);
   if (!container) return null;
+  await loadExternalLibrary('jsoneditor', { document: doc });
   // Destroy previous instance if exists
   if (editorInstances[containerId]) {
     try { editorInstances[containerId].destroy(); } catch (e) { /* ignore */ }
   }
-  const JSONEditor = window.JSONEditor;
+  const JSONEditor = win.JSONEditor || window.JSONEditor;
   if (!JSONEditor) {
     console.warn('JSONEditor not loaded');
     return null;
@@ -321,9 +324,11 @@ export async function renderRichDiff(leftText, rightText, outputElement, options
 let driverInstance = null;
 
 export async function startGuidedTour(steps, options = {}) {
-  await loadExternalLibrary('driver');
+  const doc = options.document || options.doc || getToolDocument();
+  const win = doc?.defaultView || window;
+  await loadExternalLibrary('driver', { document: doc });
 
-  const driverModule = window.driver;
+  const driverModule = win.driver || window.driver;
   if (!driverModule) {
     console.warn('driver.js not loaded');
     return;

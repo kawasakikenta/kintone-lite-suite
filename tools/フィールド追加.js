@@ -257,6 +257,15 @@
   });
 
   // src/constants.js
+  function resolveDefaultAppId() {
+    try {
+      if (typeof kintone !== "undefined" && kintone?.app?.getId) {
+        return String(kintone.app.getId() || "");
+      }
+    } catch (e) {
+    }
+    return "";
+  }
   var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.js"() {
@@ -310,7 +319,7 @@
           cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
         })
       });
-      DEFAULT_APP_ID = String(kintone.app.getId() || "");
+      DEFAULT_APP_ID = resolveDefaultAppId();
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
       DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
@@ -790,6 +799,7 @@ ${contextLine}`);
 
   // src/oss_integrations.js
   init_utils();
+  init_dialog();
 
   // src/ui/components.js
   var ui2 = {};

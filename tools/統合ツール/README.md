@@ -18,7 +18,7 @@ npm run build
 `tools/統合ツール.js` に単一 IIFE として出力されます。
 
 
-> `npm run build` 実行時に、単機能スタンドアロン実行スクリプト（`tools/*.js`）も esbuild で自動生成されます。各ファイルは kintone 上で**単体実行**でき、`統合ツール.js` を別途読み込む必要はありません。差分・設計書・設定一括・JS/CSS・SQL は軽量バンドル、プレビュー反映・フィールド・ER・プロセス・レコードは `boot.js` 同梱のフル UI バンドル（ファイルサイズ大）です。エントリは `src/featureDefs.mjs` の `STANDALONE_LAUNCH_ENTRIES` で管理します。
+> `npm run build` 実行時に、単機能スタンドアロン実行スクリプト（`tools/*.js`）も esbuild で自動生成されます。各ファイルは kintone 上で**単体実行**でき、`統合ツール.js` を別途読み込む必要はありません。エントリは `src/featureDefs.mjs` の `STANDALONE_LAUNCH_ENTRIES` で管理します。
 
 
 開発時はファイル変更を監視して自動ビルドできます。
@@ -165,17 +165,17 @@ tools/統合ツール/
 
 ## 正規実装と単機能スクリプト
 
-統合後の運用では、機能ロジックは `src/tabs/*.js` を正規実装とし、`tools/*.js` は単機能用の出力として管理します。**差分比較**だけ `diff-lite-entry.js` を esbuild した単一ファイル（カード型パネル＋差分＋ JSON/HTML 等の出力）。`統合ツール.js` は不要です。それ以外の `tools/*.js` は**数 KB 級の薄いラッパー**のみで、実行時に `統合ツール.js` を読み込み、**該当タブだけ**を前面に出します（全機能のバンドルは `統合ツール.js` に1本化し、個別スクリプトへ重複同梱しません）。先に `統合ツール.js` を同じオリジンに置いておくか、ラッパーが自動読み込みします。
+統合後の運用では、機能ロジックは `src/tabs/*.js` を正規実装とし、`tools/*.js` は単機能用の出力として管理します。単機能スクリプトは `src/entries/*-lite-entry.js` を esbuild した自己完結バンドルで、`統合ツール.js` を別途読み込む必要はありません。
 
 プログラムから差分 API を使う場合: `統合ツール.js` 実行後に `window.__KUS__.runDiffStandalone`（`register-api.js`）。差分専用ブックマーク `差分比較.js` を使う場合も同 API が同梱されます。
 
 | 機能名 | 正規モジュール | 単機能スクリプト |
 |---|---|---|
-| 差分比較 | `src/tabs/diff.js` | `../差分比較.js`（esbuild・差分のみ同梱） |
-| プレビュー反映 | `src/tabs/reflect.js` | `../プレビュー反映.js`（薄いラッパー → `統合ツール.js`） |
-| フィールド追加 | `src/tabs/field.js` | `../フィールド追加.js`（同上） |
-| JS/CSS設定 | `src/tabs/jsconfig.js` | `../kintoneJS取得.js`（同上） |
-| 設定一括取得 | `src/tabs/settings-export.js` | `../設定取得.js`（同上） |
+| 差分比較 | `src/tabs/diff.js` | `../差分比較.js`（lite バンドル） |
+| プレビュー反映 | `src/tabs/reflect.js` | `../プレビュー反映.js`（lite バンドル） |
+| フィールド追加 | `src/tabs/field.js` | `../フィールド追加.js`（lite バンドル） |
+| JS/CSS設定 | `src/tabs/jsconfig.js` | `../kintoneJS取得.js`（lite バンドル） |
+| 設定一括取得 | `src/tabs/settings-export.js` | `../設定取得.js`（lite バンドル） |
 | 設計書 | `src/tabs/design.js` | `../設計書作成.js`（同上） |
 | ER図 | `src/tabs/er.js` | `../ER図.js`（同上） |
 | プロセス図 | `src/tabs/process.js` | `../プロセス実行.js`（同上） |

@@ -259,7 +259,8 @@ export const STANDALONE_LAUNCH_ENTRIES = [
     module: 'tabs/reflect.js',
     file: 'プレビュー反映.js',
     label: 'プレビュー反映',
-    subTab: 'settings'
+    subTab: 'settings',
+    bundleEntry: 'reflect-lite-entry.js'
   },
   {
     tab: 'field',

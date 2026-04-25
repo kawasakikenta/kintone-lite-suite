@@ -255,25 +255,49 @@ export function readTextFile(file) {
 
 
 
-const loadedScripts = new Set();
-const loadedStyles = new Set();
-const loadingScripts = new Map();
-const loadingStyles = new Map();
+const loadedScripts = new WeakMap();
+const loadedStyles = new WeakMap();
+const loadingScripts = new WeakMap();
+const loadingStyles = new WeakMap();
+
+function normalizeResourceDocument(doc) {
+  return doc && typeof doc.createElement === 'function' ? doc : document;
+}
+
+function getWeakSet(map, doc) {
+  let set = map.get(doc);
+  if (!set) {
+    set = new Set();
+    map.set(doc, set);
+  }
+  return set;
+}
+
+function getWeakMap(map, doc) {
+  let inner = map.get(doc);
+  if (!inner) {
+    inner = new Map();
+    map.set(doc, inner);
+  }
+  return inner;
+}
 
 function waitForScriptLoad(existingScript, url) {
+  const doc = normalizeResourceDocument(existingScript?.ownerDocument);
+  const docLoadedScripts = getWeakSet(loadedScripts, doc);
   if (existingScript.dataset.kusLoaded === 'true') {
-    loadedScripts.add(url);
+    docLoadedScripts.add(url);
     return Promise.resolve();
   }
   if (existingScript.readyState === 'loaded' || existingScript.readyState === 'complete') {
-    loadedScripts.add(url);
+    docLoadedScripts.add(url);
     existingScript.dataset.kusLoaded = 'true';
     return Promise.resolve();
   }
   return new Promise((resolve, reject) => {
     const onLoad = () => {
       cleanup();
-      loadedScripts.add(url);
+      docLoadedScripts.add(url);
       resolve();
     };
     const onError = () => {
@@ -290,19 +314,21 @@ function waitForScriptLoad(existingScript, url) {
 }
 
 function waitForStyleLoad(existingLink, url) {
+  const doc = normalizeResourceDocument(existingLink?.ownerDocument);
+  const docLoadedStyles = getWeakSet(loadedStyles, doc);
   if (existingLink.dataset.kusLoaded === 'true') {
-    loadedStyles.add(url);
+    docLoadedStyles.add(url);
     return Promise.resolve();
   }
   if (existingLink.sheet) {
-    loadedStyles.add(url);
+    docLoadedStyles.add(url);
     existingLink.dataset.kusLoaded = 'true';
     return Promise.resolve();
   }
   return new Promise((resolve, reject) => {
     const onLoad = () => {
       cleanup();
-      loadedStyles.add(url);
+      docLoadedStyles.add(url);
       resolve();
     };
     const onError = () => {
@@ -318,77 +344,84 @@ function waitForStyleLoad(existingLink, url) {
   });
 }
 
-export function loadExternalScript(url) {
+export function loadExternalScript(url, options = {}) {
   if (!url) return Promise.resolve();
-  if (loadedScripts.has(url)) return Promise.resolve();
-  if (loadingScripts.has(url)) return loadingScripts.get(url);
+  const doc = normalizeResourceDocument(options.document || options.doc);
+  const docLoadedScripts = getWeakSet(loadedScripts, doc);
+  const docLoadingScripts = getWeakMap(loadingScripts, doc);
+  if (docLoadedScripts.has(url)) return Promise.resolve();
+  if (docLoadingScripts.has(url)) return docLoadingScripts.get(url);
 
-  const existingScript = document.querySelector(`script[src="${url}"]`);
+  const existingScript = doc.querySelector(`script[src="${url}"]`);
   if (existingScript) {
     const promise = waitForScriptLoad(existingScript, url).finally(() => {
-      loadingScripts.delete(url);
+      docLoadingScripts.delete(url);
     });
-    loadingScripts.set(url, promise);
+    docLoadingScripts.set(url, promise);
     return promise;
   }
 
   const promise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
+    const script = doc.createElement('script');
     script.src = url;
     script.onload = () => {
-      loadedScripts.add(url);
+      docLoadedScripts.add(url);
       script.dataset.kusLoaded = 'true';
       resolve();
     };
     script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
-    document.head.appendChild(script);
+    doc.head.appendChild(script);
   }).finally(() => {
-    loadingScripts.delete(url);
+    docLoadingScripts.delete(url);
   });
-  loadingScripts.set(url, promise);
+  docLoadingScripts.set(url, promise);
   return promise;
 }
 
-export function loadExternalStyle(url) {
+export function loadExternalStyle(url, options = {}) {
   if (!url) return Promise.resolve();
-  if (loadedStyles.has(url)) return Promise.resolve();
-  if (loadingStyles.has(url)) return loadingStyles.get(url);
+  const doc = normalizeResourceDocument(options.document || options.doc);
+  const docLoadedStyles = getWeakSet(loadedStyles, doc);
+  const docLoadingStyles = getWeakMap(loadingStyles, doc);
+  if (docLoadedStyles.has(url)) return Promise.resolve();
+  if (docLoadingStyles.has(url)) return docLoadingStyles.get(url);
 
-  const existingLink = document.querySelector(`link[href="${url}"]`);
+  const existingLink = doc.querySelector(`link[href="${url}"]`);
   if (existingLink) {
     const promise = waitForStyleLoad(existingLink, url).finally(() => {
-      loadingStyles.delete(url);
+      docLoadingStyles.delete(url);
     });
-    loadingStyles.set(url, promise);
+    docLoadingStyles.set(url, promise);
     return promise;
   }
 
   const promise = new Promise((resolve, reject) => {
-    const link = document.createElement('link');
+    const link = doc.createElement('link');
     link.rel = 'stylesheet';
     link.href = url;
     link.onload = () => {
-      loadedStyles.add(url);
+      docLoadedStyles.add(url);
       link.dataset.kusLoaded = 'true';
       resolve();
     };
     link.onerror = () => reject(new Error(`Failed to load style: ${url}`));
-    document.head.appendChild(link);
+    doc.head.appendChild(link);
   }).finally(() => {
-    loadingStyles.delete(url);
+    docLoadingStyles.delete(url);
   });
-  loadingStyles.set(url, promise);
+  docLoadingStyles.set(url, promise);
   return promise;
 }
 
-export async function loadExternalLibrary(name) {
+export async function loadExternalLibrary(name, options = {}) {
   const lib = EXTERNAL_LIBRARIES[name];
   if (!lib) throw new Error(`Unknown external library: ${name}`);
-  const stylePromise = lib.cssUrl ? loadExternalStyle(lib.cssUrl) : Promise.resolve();
+  const doc = normalizeResourceDocument(options.document || options.doc);
+  const stylePromise = lib.cssUrl ? loadExternalStyle(lib.cssUrl, { document: doc }) : Promise.resolve();
   let scriptPromise = Promise.resolve();
   if (lib.cdnUrl) {
-    scriptPromise = loadExternalScript(lib.cdnUrl).catch((err) => {
-      if (lib.altCdnUrl) return loadExternalScript(lib.altCdnUrl);
+    scriptPromise = loadExternalScript(lib.cdnUrl, { document: doc }).catch((err) => {
+      if (lib.altCdnUrl) return loadExternalScript(lib.altCdnUrl, { document: doc });
       throw err;
     });
   }
