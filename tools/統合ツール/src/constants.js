@@ -143,7 +143,7 @@ export const DEFAULT_SUBTAB_STATE = Object.freeze({
   recordMgr: 'status',
   er: 'diagram',
   settingsExport: 'export',
-  analyze: 'fieldImpact'
+  analyze: 'dashboard'
 });
 
 export const GUIDED_TOUR_STEPS = Object.freeze([

@@ -718,16 +718,21 @@ export function buildReflectAssistHtml() {
   const backupState = ui.backupStatus && ui.backupStatus.style.display !== 'none'
     ? String(ui.backupStatus.textContent || '').trim()
     : '';
+  const checklist = state.reflectApplyChecklist && typeof state.reflectApplyChecklist === 'object'
+    ? state.reflectApplyChecklist
+    : {};
+  const checklistDone = ['diff', 'plan', 'target'].filter((key) => !!checklist[key]).length;
   const targetCountLabel = isNode ? '選んだ差分' : '選んだセクション';
   const targetCountValue = isNode ? selectedNodeRows.length : scopeInfo.effectiveScopes.length;
   const nonFieldScopes = scopeInfo.effectiveScopes.filter((key) => key && key !== 'fieldSettings');
   const firstNonFieldScope = nonFieldScopes[0] || '';
-  const safetyLabel = (backupReady && stopOnError) ? '準備OK' : '要見直し';
+  const safetyLabel = (checklistDone === 3 && backupReady && stopOnError) ? '準備OK' : '要見直し';
   const warnings = [];
   if (!diffReady) warnings.push('差分比較がまだ最新ではありません。先にヘッダーで差分比較をやり直してください。');
   if (!scopeInfo.baseScopes.length && !isNode) warnings.push('「反映セクションを選ぶ」から、今回まとめて反映するセクションを選んでください。');
   if (scopeInfo.warning) warnings.push(scopeInfo.warning);
   if (isNode && !state.reflectRows.length) warnings.push('差分を選んで反映モードです。まず「差分候補を読込」で候補を出してください。');
+  if (checklistDone < 3) warnings.push('画面下の反映前チェックを完了してください。');
   if (!backupReady) warnings.push('バックアップ自動保存がOFFです。反映前に「今の比較先を保存」をおすすめします。');
 
   const nodeLoadAction = isNode && !state.reflectRows.length
@@ -777,7 +782,7 @@ export function buildReflectAssistHtml() {
       <div class="reflect-summary-card">
         <div class="reflect-summary-label">反映前チェック</div>
         <div class="reflect-summary-value">${esc(safetyLabel)}</div>
-        <div class="reflect-summary-meta">バックアップ ${backupReady ? 'ON' : 'OFF'} / エラー時 ${stopOnError ? '中断' : '継続'} / 本番デプロイは管理画面で手動</div>
+        <div class="reflect-summary-meta">チェック ${checklistDone}/3 / バックアップ ${backupReady ? 'ON' : 'OFF'} / エラー時 ${stopOnError ? '中断' : '継続'}</div>
       </div>
       <div class="reflect-summary-card">
         <div class="reflect-summary-label">プラン確認</div>

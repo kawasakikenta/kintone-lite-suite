@@ -1,7 +1,16 @@
 'use strict';
 
 import { SECTION_DEFS, DEFAULT_APP_ID, DIFF_ONBOARDING_DISMISSED_KEY, TOOL_ID, TOOL_VERSION } from './constants.js';
-import { state, ui, clearReflectApplyHistory } from './state.js';
+import {
+  state,
+  ui,
+  clearReflectApplyHistory,
+  pushWorkHistoryEntry,
+  deleteWorkHistoryEntry,
+  clearWorkHistory,
+  upsertConnectionPreset,
+  deleteConnectionPreset
+} from './state.js';
 import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast, kusConfirm, kusPrompt } from './utils.js';
 import { buildApiPrefix, apiGet } from './api.js';
 import { countActualDiffRows, summarizeRows } from './diff/engine.js';
@@ -177,6 +186,353 @@ function setScopeSelection(container, checked) {
   saveCurrentDialogState();
 }
 
+const REFLECT_APPLY_CHECKS = [
+  { key: 'diff', label: '差分比較済み' },
+  { key: 'plan', label: '実行前プラン確認済み' },
+  { key: 'target', label: '反映先は比較先プレビュー' }
+];
+
+function normalizeReflectApplyChecklist() {
+  if (!state.reflectApplyChecklist || typeof state.reflectApplyChecklist !== 'object' || Array.isArray(state.reflectApplyChecklist)) {
+    state.reflectApplyChecklist = {};
+  }
+  REFLECT_APPLY_CHECKS.forEach((item) => {
+    state.reflectApplyChecklist[item.key] = !!state.reflectApplyChecklist[item.key];
+  });
+  return state.reflectApplyChecklist;
+}
+
+function renderReflectApplyChecklistStatus() {
+  const store = normalizeReflectApplyChecklist();
+  const doc = getToolDocument();
+  const boxes = [...doc.querySelectorAll('[data-reflect-apply-check]')];
+  boxes.forEach((box) => {
+    const key = box.dataset.reflectApplyCheck || '';
+    const checked = !!store[key];
+    box.checked = checked;
+    box.closest('.reflect-apply-check')?.classList.toggle('is-checked', checked);
+  });
+  const done = REFLECT_APPLY_CHECKS.filter((item) => !!store[item.key]).length;
+  if (ui.reflectChecklistStatus) ui.reflectChecklistStatus.textContent = `${done} / ${REFLECT_APPLY_CHECKS.length}`;
+  if (ui.reflectApplyChecklist) ui.reflectApplyChecklist.classList.toggle('is-complete', done === REFLECT_APPLY_CHECKS.length);
+}
+
+function setReflectApplyCheck(key, checked, options = {}) {
+  const item = REFLECT_APPLY_CHECKS.find((entry) => entry.key === key);
+  if (!item) return false;
+  normalizeReflectApplyChecklist()[item.key] = !!checked;
+  renderReflectApplyChecklistStatus();
+  renderReflectAssistPanel();
+  if (options.persist !== false) saveCurrentDialogState();
+  return true;
+}
+
+function markReflectApplyChecks(keys) {
+  const list = Array.isArray(keys) ? keys : [keys];
+  let changed = false;
+  list.forEach((key) => {
+    const item = REFLECT_APPLY_CHECKS.find((entry) => entry.key === key);
+    if (!item) return;
+    normalizeReflectApplyChecklist()[item.key] = true;
+    changed = true;
+  });
+  if (!changed) return;
+  renderReflectApplyChecklistStatus();
+  renderReflectAssistPanel();
+  saveCurrentDialogState();
+}
+
+function resetReflectApplyChecks(keys) {
+  const list = Array.isArray(keys) && keys.length ? keys : REFLECT_APPLY_CHECKS.map((item) => item.key);
+  let changed = false;
+  list.forEach((key) => {
+    const item = REFLECT_APPLY_CHECKS.find((entry) => entry.key === key);
+    if (!item) return;
+    if (normalizeReflectApplyChecklist()[item.key]) changed = true;
+    normalizeReflectApplyChecklist()[item.key] = false;
+  });
+  if (!changed) return;
+  renderReflectApplyChecklistStatus();
+  renderReflectAssistPanel();
+  saveCurrentDialogState();
+}
+
+function getMissingReflectApplyChecks() {
+  const store = normalizeReflectApplyChecklist();
+  return REFLECT_APPLY_CHECKS.filter((item) => !store[item.key]);
+}
+
+function ensureReflectApplyChecklistReady() {
+  const missing = getMissingReflectApplyChecks();
+  if (!missing.length) return true;
+  renderReflectApplyChecklistStatus();
+  const firstKey = missing[0]?.key || '';
+  const first = firstKey ? getToolDocument().querySelector(`[data-reflect-apply-check="${firstKey}"]`) : null;
+  first?.focus?.();
+  ui.reflectApplyChecklist?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+  setStatus(`反映前チェックが未完了です: ${missing.map((item) => item.label).join(' / ')}`, true);
+  return false;
+}
+
+function selectedScopeValues(container) {
+  if (!container) return [];
+  try { return selectedScopeKeys(container); }
+  catch { return []; }
+}
+
+function setScopeValues(container, values) {
+  if (!container) return;
+  const set = new Set((Array.isArray(values) ? values : []).map(String));
+  [...container.querySelectorAll('input[type="checkbox"]')].forEach((checkbox) => {
+    checkbox.checked = set.has(String(checkbox.value || ''));
+  });
+}
+
+function sanitizeDiffReviewMetaForHistory() {
+  return Object.fromEntries(
+    Object.entries(state.diffReviewMeta || {})
+      .filter(([key, value]) => key && value && typeof value === 'object')
+      .slice(0, 2000)
+      .map(([key, value]) => [
+        key,
+        {
+          status: value.status === 'todo' || value.status === 'ignored' ? value.status : '',
+          note: String(value.note || '').trim().slice(0, 500)
+        }
+      ])
+      .filter(([, value]) => value.status || value.note)
+  );
+}
+
+function getWorkHistoryKindLabel(kind) {
+  const map = {
+    manual: '手動保存',
+    diff: '差分比較後',
+    plan: 'プラン確認後',
+    apply: '反映直前',
+    restore: '復元前'
+  };
+  return map[kind] || '作業保存';
+}
+
+function buildWorkHistorySnapshot() {
+  return {
+    sourceAppId: ui.sourceApp?.value?.trim?.() || '',
+    sourceGuestId: ui.sourceGuest?.value?.trim?.() || '',
+    sourcePreview: !!ui.sourcePreview?.checked,
+    targetAppId: ui.targetApp?.value?.trim?.() || '',
+    targetGuestId: ui.targetGuest?.value?.trim?.() || '',
+    targetPreview: !!ui.targetPreview?.checked,
+    lookupMap: ui.lookupMap?.value?.trim?.() || '',
+    ignoreKeys: ui.ignoreKeys?.value?.trim?.() || '',
+    ignorePresetFieldOrder: !!ui.ignorePresetFieldOrder?.checked,
+    ignorePresetMeta: !!ui.ignorePresetMeta?.checked,
+    ignorePresetLabelName: !!ui.ignorePresetLabelName?.checked,
+    diffNormalizeViewOrder: !!ui.diffNormalizeViewOrder?.checked,
+    diffNormalizePermissionOrder: !!ui.diffNormalizePermissionOrder?.checked,
+    diffNormalizeGeneralArrayOrder: !!ui.diffNormalizeGeneralArrayOrder?.checked,
+    diffSearch: ui.diffSearch?.value?.trim?.() || '',
+    diffSearchFieldName: !!ui.diffSearchFieldName?.checked,
+    diffFilterSection: ui.diffFilterSection?.value || state.diffFilterSection || '',
+    diffFilterType: ui.diffFilterType?.value || state.diffFilterType || '',
+    diffFilterSeverity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || '',
+    diffFilterTableOnly: !!ui.diffFilterTableOnly?.checked,
+    diffFilterTableKeyword: ui.diffFilterTableKeyword?.value?.trim?.() || '',
+    diffIncludeSame: !!ui.diffIncludeSame?.checked,
+    diffWarnThreshold: ui.diffWarnThreshold?.value?.trim?.() || '',
+    diffExportMode: ui.diffExportMode?.value || state.diffExportMode || 'all',
+    diffExportContent: ui.diffExportContent?.value || state.diffExportContent || 'diffOnly',
+    charDiff: !!ui.charDiff?.checked,
+    diffTheme: state.diffViewTheme,
+    diffScopes: selectedScopeValues(ui.diffScopes),
+    applyScopes: selectedScopeValues(ui.applyScopes),
+    applyDiffOnly: !!ui.applyDiffOnly?.checked,
+    autoBackupPreview: !!ui.autoBackupPreview?.checked,
+    stopOnError: !!ui.stopOnError?.checked,
+    reflectApplyChecklist: {
+      diff: !!state.reflectApplyChecklist?.diff,
+      plan: !!state.reflectApplyChecklist?.plan,
+      target: !!state.reflectApplyChecklist?.target
+    },
+    reflectDetailTab: state.reflectDetailTab,
+    reflectSelectedIds: [...(state.reflectSelectedIds || new Set())].slice(0, 2000),
+    reflectNodeModes: { ...(state.reflectNodeModes || {}) },
+    reflectPropertyFilters: [...(state.reflectPropertyFilters || new Set())].slice(0, 500),
+    diffViewedKeys: [...(state.diffViewedKeys || new Set())].slice(0, 2000),
+    diffReviewMeta: sanitizeDiffReviewMetaForHistory(),
+    diffFavoritePaths: [...(state.diffFavoritePaths || new Set())].slice(0, 500),
+    diffFavoritesOnly: !!state.diffFavoritesOnly,
+    diffHideViewed: !!state.diffHideViewed,
+    activeFeatureKey: state.activeFeatureKey || '',
+    activeTab: state.activeTab || '',
+    activeSubTabs: { ...(state.activeSubTabs || {}) },
+    launcherSortMode: ui.featureSortMode?.value || state.launcherSortMode || 'onboarding'
+  };
+}
+
+function getWorkHistorySummary(snapshot) {
+  const src = snapshot?.sourceAppId || '-';
+  const tgt = snapshot?.targetAppId || '-';
+  const diffScopes = Array.isArray(snapshot?.diffScopes) ? snapshot.diffScopes.length : 0;
+  const applyScopes = Array.isArray(snapshot?.applyScopes) ? snapshot.applyScopes.length : 0;
+  const checks = snapshot?.reflectApplyChecklist || {};
+  const checked = ['diff', 'plan', 'target'].filter((key) => !!checks[key]).length;
+  return `比較元 ${src} / 比較先 ${tgt} / 差分 ${diffScopes}項目 / 反映 ${applyScopes}項目 / チェック ${checked}/3`;
+}
+
+function renderWorkHistoryPanel() {
+  if (!ui.workHistoryList) return;
+  const history = Array.isArray(state.workHistory) ? state.workHistory : [];
+  if (ui.workHistorySummary) ui.workHistorySummary.textContent = history.length ? `${history.length}件保存` : '履歴なし';
+  if (!history.length) {
+    ui.workHistoryList.innerHTML = '<div class="work-history-empty">まだ保存された作業はありません</div>';
+    return;
+  }
+  ui.workHistoryList.innerHTML = history.map((entry) => {
+    const stamp = entry.createdAt ? new Date(entry.createdAt).toLocaleString() : '-';
+    const title = entry.label || getWorkHistoryKindLabel(entry.kind);
+    const summary = entry.summary || getWorkHistorySummary(entry.snapshot || {});
+    return `<div class="work-history-item" data-work-history-id="${esc(entry.id || '')}">
+      <div class="work-history-item-main">
+        <div class="work-history-item-title">${esc(title)}</div>
+        <div class="work-history-item-meta">${esc(stamp)} / ${esc(summary)}</div>
+      </div>
+      <div class="work-history-item-actions">
+        <button type="button" class="btn ok" data-act="restoreWorkHistory" data-history-id="${esc(entry.id || '')}">復元</button>
+        <button type="button" class="btn sub" data-act="deleteWorkHistory" data-history-id="${esc(entry.id || '')}">削除</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function saveWorkHistorySnapshot(kind = 'manual', options = {}) {
+  const snapshot = buildWorkHistorySnapshot();
+  const defaultLabel = options.label || `${getWorkHistoryKindLabel(kind)}: ${snapshot.sourceAppId || '-'} → ${snapshot.targetAppId || '-'}`;
+  let label = defaultLabel;
+  if (!options.silent) {
+    const next = kusPrompt('保存する作業名を入力してください', defaultLabel);
+    if (next === null) return null;
+    label = String(next || defaultLabel).trim() || defaultLabel;
+  }
+  const entry = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind,
+    label,
+    createdAt: new Date().toISOString(),
+    summary: getWorkHistorySummary(snapshot),
+    snapshot
+  };
+  pushWorkHistoryEntry(entry);
+  renderWorkHistoryPanel();
+  if (options.persist !== false) saveCurrentDialogState();
+  return entry;
+}
+
+function restoreWorkHistorySnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  if (ui.sourceApp && snapshot.sourceAppId != null) ui.sourceApp.value = String(snapshot.sourceAppId);
+  if (ui.sourceGuest && snapshot.sourceGuestId != null) ui.sourceGuest.value = String(snapshot.sourceGuestId);
+  if (ui.sourcePreview && snapshot.sourcePreview != null) ui.sourcePreview.checked = !!snapshot.sourcePreview;
+  if (ui.targetApp && snapshot.targetAppId != null) ui.targetApp.value = String(snapshot.targetAppId);
+  if (ui.targetGuest && snapshot.targetGuestId != null) ui.targetGuest.value = String(snapshot.targetGuestId);
+  if (ui.targetPreview && snapshot.targetPreview != null) ui.targetPreview.checked = !!snapshot.targetPreview;
+  if (ui.lookupMap && snapshot.lookupMap != null) ui.lookupMap.value = String(snapshot.lookupMap);
+  if (ui.ignoreKeys && snapshot.ignoreKeys != null) ui.ignoreKeys.value = String(snapshot.ignoreKeys);
+  if (ui.ignorePresetFieldOrder && snapshot.ignorePresetFieldOrder != null) ui.ignorePresetFieldOrder.checked = !!snapshot.ignorePresetFieldOrder;
+  if (ui.ignorePresetMeta && snapshot.ignorePresetMeta != null) ui.ignorePresetMeta.checked = !!snapshot.ignorePresetMeta;
+  if (ui.ignorePresetLabelName && snapshot.ignorePresetLabelName != null) ui.ignorePresetLabelName.checked = !!snapshot.ignorePresetLabelName;
+  if (ui.diffNormalizeViewOrder && snapshot.diffNormalizeViewOrder != null) ui.diffNormalizeViewOrder.checked = !!snapshot.diffNormalizeViewOrder;
+  if (ui.diffNormalizePermissionOrder && snapshot.diffNormalizePermissionOrder != null) ui.diffNormalizePermissionOrder.checked = !!snapshot.diffNormalizePermissionOrder;
+  if (ui.diffNormalizeGeneralArrayOrder && snapshot.diffNormalizeGeneralArrayOrder != null) ui.diffNormalizeGeneralArrayOrder.checked = !!snapshot.diffNormalizeGeneralArrayOrder;
+  if (ui.diffSearch && snapshot.diffSearch != null) ui.diffSearch.value = String(snapshot.diffSearch);
+  if (ui.diffSearchFieldName && snapshot.diffSearchFieldName != null) {
+    ui.diffSearchFieldName.checked = !!snapshot.diffSearchFieldName;
+    state.diffSearchFieldName = !!snapshot.diffSearchFieldName;
+  }
+  if (ui.diffFilterSection && snapshot.diffFilterSection != null) ui.diffFilterSection.value = String(snapshot.diffFilterSection || '');
+  if (ui.diffFilterType && snapshot.diffFilterType != null) ui.diffFilterType.value = String(snapshot.diffFilterType || '');
+  if (ui.diffFilterSeverity && snapshot.diffFilterSeverity != null) ui.diffFilterSeverity.value = String(snapshot.diffFilterSeverity || '');
+  if (ui.diffFilterTableOnly && snapshot.diffFilterTableOnly != null) ui.diffFilterTableOnly.checked = !!snapshot.diffFilterTableOnly;
+  if (ui.diffFilterTableKeyword && snapshot.diffFilterTableKeyword != null) ui.diffFilterTableKeyword.value = String(snapshot.diffFilterTableKeyword || '');
+  state.diffFilterSection = ui.diffFilterSection?.value || String(snapshot.diffFilterSection || '');
+  state.diffFilterType = ui.diffFilterType?.value || String(snapshot.diffFilterType || '');
+  state.diffFilterSeverity = ui.diffFilterSeverity?.value || String(snapshot.diffFilterSeverity || '');
+  state.diffFilterTableOnly = !!ui.diffFilterTableOnly?.checked;
+  state.diffFilterTableKeyword = String(ui.diffFilterTableKeyword?.value || '').trim();
+  if (ui.diffIncludeSame && snapshot.diffIncludeSame != null) {
+    ui.diffIncludeSame.checked = !!snapshot.diffIncludeSame;
+    state.diffIncludeSame = !!snapshot.diffIncludeSame;
+  }
+  if (ui.diffWarnThreshold && snapshot.diffWarnThreshold != null) ui.diffWarnThreshold.value = String(snapshot.diffWarnThreshold || '');
+  if (ui.diffExportMode && snapshot.diffExportMode != null) ui.diffExportMode.value = String(snapshot.diffExportMode || 'all');
+  if (ui.diffExportContent && snapshot.diffExportContent != null) ui.diffExportContent.value = String(snapshot.diffExportContent || 'diffOnly');
+  state.diffExportMode = ui.diffExportMode?.value || String(snapshot.diffExportMode || 'all');
+  state.diffExportContent = ui.diffExportContent?.value || String(snapshot.diffExportContent || 'diffOnly');
+  if (ui.charDiff && snapshot.charDiff != null) ui.charDiff.checked = !!snapshot.charDiff;
+  if (snapshot.diffTheme === 'dark' || snapshot.diffTheme === 'light') state.diffViewTheme = snapshot.diffTheme;
+  setScopeValues(ui.diffScopes, snapshot.diffScopes);
+  setScopeValues(ui.applyScopes, snapshot.applyScopes);
+  if (ui.applyDiffOnly && snapshot.applyDiffOnly != null) ui.applyDiffOnly.checked = !!snapshot.applyDiffOnly;
+  if (ui.autoBackupPreview && snapshot.autoBackupPreview != null) ui.autoBackupPreview.checked = !!snapshot.autoBackupPreview;
+  if (ui.stopOnError && snapshot.stopOnError != null) ui.stopOnError.checked = !!snapshot.stopOnError;
+  state.reflectApplyChecklist = {
+    diff: !!snapshot.reflectApplyChecklist?.diff,
+    plan: !!snapshot.reflectApplyChecklist?.plan,
+    target: !!snapshot.reflectApplyChecklist?.target
+  };
+  state.reflectDetailTab = String(snapshot.reflectDetailTab || 'diff');
+  state.reflectSelectedIds = new Set(Array.isArray(snapshot.reflectSelectedIds) ? snapshot.reflectSelectedIds : []);
+  state.reflectNodeModes = snapshot.reflectNodeModes && typeof snapshot.reflectNodeModes === 'object' ? { ...snapshot.reflectNodeModes } : {};
+  state.reflectPropertyFilters = new Set(Array.isArray(snapshot.reflectPropertyFilters) ? snapshot.reflectPropertyFilters : []);
+  state.diffViewedKeys = new Set(Array.isArray(snapshot.diffViewedKeys) ? snapshot.diffViewedKeys : []);
+  state.diffReviewMeta = snapshot.diffReviewMeta && typeof snapshot.diffReviewMeta === 'object' ? { ...snapshot.diffReviewMeta } : {};
+  state.diffFavoritePaths = new Set(Array.isArray(snapshot.diffFavoritePaths) ? snapshot.diffFavoritePaths : []);
+  state.diffFavoritesOnly = !!snapshot.diffFavoritesOnly;
+  state.diffHideViewed = !!snapshot.diffHideViewed;
+  state.launcherSortMode = String(snapshot.launcherSortMode) === 'usage' ? 'usage' : 'onboarding';
+  if (ui.featureSortMode) ui.featureSortMode.value = state.launcherSortMode;
+  if (snapshot.activeSubTabs && typeof snapshot.activeSubTabs === 'object') {
+    Object.entries(snapshot.activeSubTabs).forEach(([parent, sub]) => {
+      if (parent && sub) switchSubTab(parent, String(sub), { persist: false });
+    });
+  }
+  const featureKey = String(snapshot.activeFeatureKey || '');
+  if (featureKey) {
+    openFeatureScreen(featureKey, { persist: false, focus: false });
+  }
+  updateConnectionStepIndicators();
+  renderScopePickerSummaries();
+  renderScopeChips();
+  renderIgnoreKeyChips();
+  renderLookupMapRows();
+  renderBundleState();
+  syncDiffThemeButton();
+  renderDiffFilterOptions();
+  renderReflectApplyChecklistStatus();
+  renderReflectSidebar();
+  renderReflectMainPanel();
+  renderReflectNodeList();
+  if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows || []);
+  saveCurrentDialogState();
+  return true;
+}
+
+function restoreWorkHistoryById(id) {
+  const entry = (state.workHistory || []).find((item) => item?.id === id);
+  if (!entry) {
+    setStatus('復元する作業履歴が見つかりません', true);
+    return;
+  }
+  if (!kusConfirm(`作業履歴「${entry.label || getWorkHistoryKindLabel(entry.kind)}」を復元しますか？現在の入力内容は上書きされます。`)) return;
+  saveWorkHistorySnapshot('restore', { label: '復元前の自動保存', silent: true });
+  if (!restoreWorkHistorySnapshot(entry.snapshot)) {
+    setStatus('作業履歴を復元できませんでした', true);
+    return;
+  }
+  renderWorkHistoryPanel();
+  setStatus(`作業履歴を復元しました: ${entry.label || getWorkHistoryKindLabel(entry.kind)}`);
+}
+
 // ---------------------------------------------------------------------------
 // normalizeDiffFavoritePath (local copy - may be extracted later)
 // ---------------------------------------------------------------------------
@@ -225,6 +581,41 @@ function clearAllDiffViewed() {
   return n;
 }
 
+function normalizeDiffReviewMetaStore() {
+  if (!state.diffReviewMeta || typeof state.diffReviewMeta !== 'object' || Array.isArray(state.diffReviewMeta)) {
+    state.diffReviewMeta = {};
+  }
+  return state.diffReviewMeta;
+}
+
+function setDiffReviewMeta(rowId, action) {
+  const row = getDiffRowByIdFromState(rowId);
+  if (!row) return false;
+  const key = diffViewedKey(row);
+  if (!key) return false;
+  const store = normalizeDiffReviewMetaStore();
+  const cur = store[key] && typeof store[key] === 'object' ? { ...store[key] } : {};
+  if (action === 'todo') {
+    cur.status = cur.status === 'todo' ? '' : 'todo';
+  } else if (action === 'ignored') {
+    cur.status = cur.status === 'ignored' ? '' : 'ignored';
+  } else if (action === 'note') {
+    const next = kusPrompt('この差分に残すメモを入力してください', String(cur.note || ''));
+    if (next === null) return false;
+    cur.note = String(next || '').trim().slice(0, 500);
+  } else if (action === 'clear') {
+    delete store[key];
+    return true;
+  } else {
+    return false;
+  }
+  cur.status = cur.status === 'todo' || cur.status === 'ignored' ? cur.status : '';
+  cur.note = String(cur.note || '').trim();
+  if (!cur.status && !cur.note) delete store[key];
+  else store[key] = { status: cur.status, note: cur.note };
+  return true;
+}
+
 function focusDiffRow(rowId, options = {}) {
   if (!rowId) return false;
   state.diffFocusedRowId = rowId;
@@ -268,6 +659,106 @@ function parseIdSet(text) {
   return [...new Set(String(text || '').split(/[\s,]+/).map((v) => v.trim()).filter((v) => /^\d+$/.test(v)))];
 }
 
+function formatConnectionPresetLabel(preset) {
+  if (!preset) return '';
+  const src = preset.sourceAppId || '-';
+  const tgt = preset.targetAppId || '-';
+  const guestParts = [
+    preset.sourceGuestId ? `元G:${preset.sourceGuestId}` : '',
+    preset.targetGuestId ? `先G:${preset.targetGuestId}` : ''
+  ].filter(Boolean);
+  return `${preset.name || '接続プリセット'} (${src} -> ${tgt}${guestParts.length ? ` / ${guestParts.join(' ')}` : ''})`;
+}
+
+function renderConnectionPresetSelect(preferId) {
+  const sel = ui.connectionPresetSelect;
+  if (!sel) return;
+  const presets = Array.isArray(state.connectionPresets) ? state.connectionPresets : [];
+  const current = preferId != null ? String(preferId) : String(sel.value || '');
+  sel.innerHTML = presets.length
+    ? ['<option value="">-- プリセットを選択 --</option>']
+      .concat(presets.map((preset) => `<option value="${esc(preset.id || '')}">${esc(formatConnectionPresetLabel(preset))}</option>`))
+      .join('')
+    : '<option value="">（保存済みプリセットなし）</option>';
+  if (current && presets.some((preset) => preset.id === current)) sel.value = current;
+  if (ui.connectionPresetSummary) {
+    ui.connectionPresetSummary.textContent = presets.length ? `${presets.length}件保存` : '保存なし';
+  }
+}
+
+function getSelectedConnectionPreset() {
+  const id = String(ui.connectionPresetSelect?.value || '').trim();
+  if (!id) return null;
+  return (Array.isArray(state.connectionPresets) ? state.connectionPresets : []).find((preset) => preset.id === id) || null;
+}
+
+function buildCurrentConnectionPreset() {
+  const sourceAppId = String(ui.sourceApp?.value || '').trim();
+  const targetAppId = String(ui.targetApp?.value || '').trim();
+  if (!sourceAppId && !targetAppId) return null;
+  const customName = String(ui.connectionPresetName?.value || '').trim();
+  const name = customName || `接続 ${sourceAppId || '-'} -> ${targetAppId || '-'}`;
+  return {
+    id: `conn-${Date.now()}`,
+    name,
+    sourceAppId,
+    sourceGuestId: String(ui.sourceGuest?.value || '').trim(),
+    sourcePreview: !!ui.sourcePreview?.checked,
+    targetAppId,
+    targetGuestId: String(ui.targetGuest?.value || '').trim(),
+    targetPreview: !!ui.targetPreview?.checked
+  };
+}
+
+function saveConnectionPresetFromCurrent() {
+  const preset = buildCurrentConnectionPreset();
+  if (!preset) {
+    setStatus('保存するアプリIDがありません', true);
+    return;
+  }
+  const saved = upsertConnectionPreset(preset);
+  if (!saved) {
+    setStatus('接続プリセットを保存できませんでした', true);
+    return;
+  }
+  if (ui.connectionPresetName) ui.connectionPresetName.value = '';
+  renderConnectionPresetSelect(saved.id);
+  setStatus(`接続プリセット「${saved.name}」を保存しました`);
+}
+
+function applyConnectionPresetById(id) {
+  const presetId = String(id || '').trim();
+  const preset = (Array.isArray(state.connectionPresets) ? state.connectionPresets : [])
+    .find((item) => item.id === presetId);
+  if (!preset) {
+    setStatus('読み込む接続プリセットを選択してください', true);
+    return;
+  }
+  if (ui.sourceApp) ui.sourceApp.value = preset.sourceAppId || '';
+  if (ui.sourceGuest) ui.sourceGuest.value = preset.sourceGuestId || '';
+  if (ui.sourcePreview) ui.sourcePreview.checked = !!preset.sourcePreview;
+  if (ui.targetApp) ui.targetApp.value = preset.targetAppId || '';
+  if (ui.targetGuest) ui.targetGuest.value = preset.targetGuestId || '';
+  if (ui.targetPreview) ui.targetPreview.checked = preset.targetPreview == null ? true : !!preset.targetPreview;
+  resetReflectApplyChecks(['diff', 'plan']);
+  saveCurrentDialogState();
+  renderBundleState();
+  updateConnectionStepIndicators();
+  setStatus(`接続プリセット「${preset.name}」を読み込みました`);
+}
+
+function deleteSelectedConnectionPreset() {
+  const preset = getSelectedConnectionPreset();
+  if (!preset) {
+    setStatus('削除する接続プリセットを選択してください', true);
+    return;
+  }
+  if (!kusConfirm(`接続プリセット「${preset.name}」を削除しますか？`)) return;
+  deleteConnectionPreset(preset.id);
+  renderConnectionPresetSelect();
+  setStatus('接続プリセットを削除しました');
+}
+
 function renderConnectionSearchResults(apps) {
   if (!ui.connectionSearchResult) return;
   const rows = Array.isArray(apps) ? apps : [];
@@ -275,7 +766,7 @@ function renderConnectionSearchResults(apps) {
     ui.connectionSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
     return;
   }
-  ui.connectionSearchResult.innerHTML = `<table>
+  ui.connectionSearchResult.innerHTML = `<div class="connection-search-result-head">${rows.length}件の候補</div><table>
     <thead><tr><th style="width:90px">アプリID</th><th>アプリ名</th><th style="width:84px">操作</th></tr></thead>
     <tbody>${rows.map((app) => `<tr>
       <td>${esc(app.appId)}</td>
@@ -287,8 +778,27 @@ function renderConnectionSearchResults(apps) {
 
 async function runConnectionSearchApps() {
   const keyword = ui.connectionSearchKeyword?.value.trim() || '';
-  const guestId = ui.sourceGuest?.value.trim() || ui.targetGuest?.value.trim() || '';
+  const urlGuestId = extractGuestIdFromInput(keyword);
+  if (urlGuestId && ui.connectionSearchGuest && !ui.connectionSearchGuest.value.trim()) {
+    ui.connectionSearchGuest.value = urlGuestId;
+  }
+  const guestId = ui.connectionSearchGuest?.value.trim() || urlGuestId || ui.sourceGuest?.value.trim() || ui.targetGuest?.value.trim() || '';
   const prefix = buildApiPrefix(guestId, false);
+  const directAppId = extractAppIdFromInput(keyword);
+  if (directAppId) {
+    setStatus('アプリIDを確認中...');
+    let appName = '';
+    try {
+      const appInfo = await apiGet(prefix, '/app.json', { id: directAppId });
+      appName = String(appInfo?.name || '').trim();
+    } catch (err) {
+      appName = 'ID指定（名称未取得）';
+    }
+    renderConnectionSearchResults([{ appId: directAppId, name: appName || 'ID指定' }]);
+    saveCurrentDialogState();
+    setStatus(`アプリID ${directAppId}${guestId ? ` / ゲスト ${guestId}` : ''} を候補に表示しました`);
+    return;
+  }
   const params = { limit: 100 };
   if (keyword) params.name = keyword;
   setStatus('アプリ検索中...');
@@ -308,11 +818,14 @@ function addConnectionSearchApp(appId, appName) {
     return;
   }
   const assign = ui.connectionSearchAssign?.value || 'source';
+  const searchGuestId = ui.connectionSearchGuest?.value.trim() || '';
   if (assign === 'source') {
     ui.sourceApp.value = id;
+    if (searchGuestId && !ui.sourceGuest.value.trim()) ui.sourceGuest.value = searchGuestId;
     setStatus(`比較元に App ${id}${appName ? ` (${appName})` : ''} を設定しました`);
   } else if (assign === 'target') {
     ui.targetApp.value = id;
+    if (searchGuestId && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
     setStatus(`比較先に App ${id}${appName ? ` (${appName})` : ''} を設定しました`);
   } else if (assign === 'diffMulti') {
     if (!ui.diffMultiTargets) {
@@ -322,8 +835,10 @@ function addConnectionSearchApp(appId, appName) {
     const ids = new Set(parseIdSet(ui.diffMultiTargets.value));
     ids.add(id);
     ui.diffMultiTargets.value = [...ids].join('\n');
+    if (searchGuestId && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
     setStatus(`複数比較先へ App ${id}${appName ? ` (${appName})` : ''} を追加しました`);
   } else if (assign === 'settingsExport') {
+    if (searchGuestId && ui.settingsExportGuest && !ui.settingsExportGuest.value.trim()) ui.settingsExportGuest.value = searchGuestId;
     addAppIdToSettingsExport(id, appName);
     return;
   }
@@ -380,9 +895,20 @@ function extractAppIdFromInput(value) {
   try { decoded = decodeURIComponent(raw); } catch (e) { /* ignore malformed URI */ }
   const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
   if (queryMatch) return queryMatch[1];
+  const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+  if (guestPathMatch) return guestPathMatch[1];
   const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
   if (pathMatch) return pathMatch[1];
   return '';
+}
+
+function extractGuestIdFromInput(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  let decoded = raw;
+  try { decoded = decodeURIComponent(raw); } catch (e) { /* ignore malformed URI */ }
+  const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+  return guestPathMatch ? guestPathMatch[1] : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +972,7 @@ export function setupEventHandlers(injected = {}) {
     runBulkFieldRename,
     renderDiffFavoritesOnlyButton,
     renderTemplateOptions,
+    runAnalyzeDashboard,
     runFieldImpactAnalysis,
     exportFieldImpactCsv,
     runPermissionMatrix,
@@ -493,14 +1020,12 @@ export function setupEventHandlers(injected = {}) {
     const cards = [...(ui.launcherMenu?.querySelectorAll('.feature-card[data-feature]') || [])];
     let visibleCount = 0;
     cards.forEach((card) => {
-      const cardGroup = String(card.querySelector('.feature-card-group')?.textContent || '').trim();
+      const groupKey = String(card.dataset.group || '').trim();
       const label = String(card.querySelector('.feature-card-label')?.textContent || '').trim();
       const desc = String(card.querySelector('.feature-card-desc')?.textContent || '').trim();
+      const cardGroup = String(card.querySelector('.feature-card-group')?.textContent || '').trim();
       const cardText = `${label} ${desc} ${cardGroup}`.toLowerCase();
-      const groupMatched = group === 'all'
-        || (group === 'change' && cardGroup === '変更・反映')
-        || (group === 'vis' && cardGroup === '可視化・出力')
-        || (group === 'data' && cardGroup === 'データ・保守');
+      const groupMatched = group === 'all' || groupKey === group;
       const searchMatched = !normalizedSearch || cardText.includes(normalizedSearch);
       const show = groupMatched && searchMatched;
       card.style.display = show ? '' : 'none';
@@ -509,6 +1034,69 @@ export function setupEventHandlers(injected = {}) {
     if (ui.launcherVisibleCount) ui.launcherVisibleCount.textContent = `表示中: ${visibleCount}/${cards.length}`;
     if (ui.launcherEmptyState) ui.launcherEmptyState.hidden = visibleCount !== 0;
     renderLauncherActiveFilters(group, searchText);
+  }
+
+  function focusWizardTarget(selector, options = {}) {
+    if (!selector) return;
+    const doc = getToolDocument();
+    const targetWindow = getToolWindow();
+    targetWindow.requestAnimationFrame(() => {
+      const target = doc.querySelector(selector);
+      target?.scrollIntoView?.({ block: options.block || 'center', inline: 'nearest' });
+      if (options.focus !== false && typeof target?.focus === 'function') {
+        try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+      }
+    });
+  }
+
+  function openWizardStep(stepKey) {
+    const step = String(stepKey || 'connection');
+    const steps = {
+      connection: {
+        title: '接続確認',
+        run() {
+          showLauncherScreen({ persist: false });
+          setConnectionPanelCollapsed(false);
+          focusWizardTarget('#u_sourceApp');
+        }
+      },
+      diff: {
+        title: '差分比較',
+        run() {
+          openFeatureScreen('diff', { persist: false, focus: false });
+          focusWizardTarget('#u_runDiffPrimary');
+        }
+      },
+      plan: {
+        title: 'プラン確認',
+        run() {
+          openFeatureScreen('reflect', { persist: false, focus: false });
+          switchSubTab('reflect', 'settings', { persist: false });
+          focusWizardTarget('#u_footerPlan');
+        }
+      },
+      apply: {
+        title: 'プレビュー反映',
+        run() {
+          openFeatureScreen('reflect', { persist: false, focus: false });
+          switchSubTab('reflect', 'settings', { persist: false });
+          focusWizardTarget('#u_footerApply');
+        }
+      },
+      design: {
+        title: '記録出力',
+        run() {
+          openFeatureScreen('design', { persist: false, focus: false });
+          focusWizardTarget('[data-act="exportDesignXlsx"]');
+        }
+      }
+    };
+    const config = steps[step] || steps.connection;
+    config.run();
+    updateLauncherToggleButton();
+    applyLauncherFilter();
+    saveCurrentDialogState();
+    setStatus(`ウィザード: ${config.title} に移動しました`);
   }
 
   function renderDiffActiveFilters() {
@@ -595,6 +1183,7 @@ export function setupEventHandlers(injected = {}) {
   initDialogResizeHandling();
   initDialogDragHandling();
   syncDiffThemeButton();
+  renderReflectApplyChecklistStatus();
   renderIgnoreKeyChips();
   renderDiffFilterOptions();
   if (typeof renderDiffFavoritesOnlyButton === 'function') renderDiffFavoritesOnlyButton();
@@ -606,6 +1195,8 @@ export function setupEventHandlers(injected = {}) {
   renderBundleState();
   renderReflectSidebar();
   renderReflectMainPanel();
+  renderWorkHistoryPanel();
+  renderConnectionPresetSelect();
   updateLauncherToggleButton();
   applyLauncherFilter();
   renderDiffActiveFilters();
@@ -614,6 +1205,9 @@ export function setupEventHandlers(injected = {}) {
   initSectionPreviewEditor(ui, setStatus);
   if (ui.settingsExportSearchResult && !ui.settingsExportSearchResult.innerHTML) {
     ui.settingsExportSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
+  }
+  if (ui.connectionSearchResult && !ui.connectionSearchResult.innerHTML) {
+    ui.connectionSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
   }
 
   // -------------------------------------------------------------------
@@ -641,9 +1235,17 @@ export function setupEventHandlers(injected = {}) {
 
   ui.applyDiffOnly.addEventListener('change', () => {
     saveCurrentDialogState();
+    resetReflectApplyChecks(['plan']);
     renderBundleState();
     renderReflectModeUi();
   });
+
+  if (ui.lookupMap) {
+    ui.lookupMap.addEventListener('change', () => {
+      saveCurrentDialogState();
+      resetReflectApplyChecks(['plan']);
+    });
+  }
 
   [ui.ignorePresetFieldOrder, ui.ignorePresetMeta, ui.ignorePresetLabelName].forEach((el) => {
     if (!el) return;
@@ -716,6 +1318,7 @@ export function setupEventHandlers(injected = {}) {
     if (!el) return;
     el.addEventListener('change', () => {
       saveCurrentDialogState();
+      resetReflectApplyChecks(['diff', 'plan']);
       updateConnectionStepIndicators();
     });
   });
@@ -732,7 +1335,12 @@ export function setupEventHandlers(injected = {}) {
       state.diffIncludeSame = !!ui.diffIncludeSame.checked;
       saveCurrentDialogState();
       if (state.lastDiffAt && state.lastSourceBundle && state.lastTargetBundle) {
-        withGuard(async () => runDiff(), '差分比較を更新中...');
+        withGuard(async () => {
+          await runDiff();
+          markReflectApplyChecks(['diff']);
+          resetReflectApplyChecks(['plan']);
+          saveWorkHistorySnapshot('diff', { label: '差分比較後', silent: true });
+        }, '差分比較を更新中...');
         return;
       }
       setStatus(`差分なし表示を${state.diffIncludeSame ? 'ON' : 'OFF'}にしました。次回の差分比較から反映されます`);
@@ -844,6 +1452,11 @@ export function setupEventHandlers(injected = {}) {
     if (e.target.id === 'u_ignoreKeyInput' && e.key === 'Enter') {
       e.preventDefault();
       addIgnoreKeyFromInput();
+      return;
+    }
+    if ((e.target === ui.connectionSearchKeyword || e.target === ui.connectionSearchGuest) && e.key === 'Enter') {
+      e.preventDefault();
+      withGuard(runConnectionSearchApps);
       return;
     }
 
@@ -964,6 +1577,9 @@ export function setupEventHandlers(injected = {}) {
     if (e.target === ui.launcherSearch) {
       applyLauncherFilter();
     }
+    if (e.target === ui.connectionSearchKeyword || e.target === ui.connectionSearchGuest) {
+      saveCurrentDialogState();
+    }
   });
 
   // -------------------------------------------------------------------
@@ -982,10 +1598,15 @@ export function setupEventHandlers(injected = {}) {
 
   root.addEventListener('change', (e) => {
     if (e.target === ui.sourceApp || e.target === ui.targetApp) {
+      const pastedGuestId = extractGuestIdFromInput(e.target.value);
       const extracted = extractAppIdFromInput(e.target.value);
       if (extracted && extracted !== e.target.value.trim()) {
         e.target.value = extracted;
         setStatus(`URL からアプリIDを抽出しました: ${extracted}`);
+      }
+      if (pastedGuestId) {
+        const guestInput = e.target === ui.sourceApp ? ui.sourceGuest : ui.targetGuest;
+        if (guestInput && !guestInput.value.trim()) guestInput.value = pastedGuestId;
       }
       const sanitized = String(e.target.value || '').trim();
       const valid = /^\d+$/.test(sanitized);
@@ -997,6 +1618,18 @@ export function setupEventHandlers(injected = {}) {
       saveCurrentDialogState();
       updateConnectionStepIndicators();
       renderBundleState();
+      resetReflectApplyChecks(['diff', 'plan']);
+      return;
+    }
+    if (e.target === ui.connectionSearchAssign || e.target === ui.connectionPresetSelect) {
+      saveCurrentDialogState();
+      return;
+    }
+    const reflectApplyCheckKey = e.target?.dataset?.reflectApplyCheck;
+    if (reflectApplyCheckKey) {
+      if (setReflectApplyCheck(reflectApplyCheckKey, !!e.target.checked)) {
+        setStatus('反映前チェックを更新しました');
+      }
       return;
     }
     const diffId = e.target?.dataset?.diffRowId;
@@ -1039,6 +1672,7 @@ export function setupEventHandlers(injected = {}) {
       renderBundleState();
       renderReflectMainPanel();
       renderScopePickerSummaries();
+      resetReflectApplyChecks(['plan']);
       const putSections = SECTION_DEFS.filter((d) => d.put);
       const sidebarCount = getToolDocument().getElementById('u_sidebarCount');
       const checkedCount = [...getToolDocument().querySelectorAll('#u_reflectSidebarSections [data-apply-scope]:checked')].length;
@@ -1179,6 +1813,20 @@ export function setupEventHandlers(injected = {}) {
       else state.diffFavoritePaths.add(path);
       saveCurrentDialogState();
       renderResultRows(state.lastDiffRows);
+      return;
+    }
+
+    // Review state toggle
+    const reviewBtn = e.target.closest('[data-diff-review-action]');
+    if (reviewBtn) {
+      const rowId = reviewBtn.dataset.diffReviewId || '';
+      const action = reviewBtn.dataset.diffReviewAction || '';
+      const changed = setDiffReviewMeta(rowId, action);
+      if (!changed) return;
+      saveCurrentDialogState();
+      renderResultRows(state.lastDiffRows);
+      const label = action === 'todo' ? '要対応' : (action === 'ignored' ? '無視' : (action === 'note' ? 'メモ' : 'レビュー状態'));
+      setStatus(`${label}を更新しました`);
       return;
     }
 
@@ -1374,6 +2022,40 @@ export function setupEventHandlers(injected = {}) {
     const actEl = e.target.closest('[data-act]');
     const act = actEl?.dataset.act;
     if (!act) return;
+
+    if (act === 'startChangeWizard') {
+      openWizardStep('connection');
+      return;
+    }
+    if (act === 'openWizardStep') {
+      openWizardStep(actEl.dataset.wizardStep || 'connection');
+      return;
+    }
+    if (act === 'saveWorkHistory') {
+      const entry = saveWorkHistorySnapshot('manual');
+      if (entry) setStatus(`作業履歴を保存しました: ${entry.label}`);
+      return;
+    }
+    if (act === 'restoreWorkHistory') {
+      restoreWorkHistoryById(actEl.dataset.historyId || '');
+      return;
+    }
+    if (act === 'deleteWorkHistory') {
+      const id = actEl.dataset.historyId || '';
+      if (!id) return;
+      deleteWorkHistoryEntry(id);
+      renderWorkHistoryPanel();
+      setStatus('作業履歴を削除しました');
+      return;
+    }
+    if (act === 'clearWorkHistory') {
+      if (!(state.workHistory || []).length) { setStatus('削除する作業履歴はありません'); return; }
+      if (!kusConfirm('作業履歴をすべて削除しますか？')) return;
+      clearWorkHistory();
+      renderWorkHistoryPanel();
+      setStatus('作業履歴をクリアしました');
+      return;
+    }
 
     if (act === 'openFeature') {
       const featureKey = actEl.dataset.feature || '';
@@ -1587,6 +2269,23 @@ export function setupEventHandlers(injected = {}) {
       }
       return;
     }
+    if (act === 'openAnalyzeSubtab') {
+      const doc = getToolDocument();
+      const toolWindow = getToolWindow();
+      const nextSubTab = actEl.dataset.analyzeSubtab || 'dashboard';
+      switchTab('analyze', { persist: false });
+      switchSubTab('analyze', nextSubTab, { persist: false });
+      if (nextSubTab === 'fieldImpact' && actEl.dataset.analyzeFilter) {
+        const filterEl = doc.getElementById('u_analyzeFieldFilter');
+        if (filterEl) {
+          filterEl.value = actEl.dataset.analyzeFilter;
+          filterEl.dispatchEvent(new toolWindow.Event('change', { bubbles: true }));
+        }
+      }
+      saveCurrentDialogState();
+      setStatus(`分析 > ${actEl.textContent.trim() || '詳細'}へ移動しました`);
+      return;
+    }
 
     // ----- Source / Target quick actions -----
     if (act === 'setSourceCurrent') {
@@ -1677,11 +2376,36 @@ export function setupEventHandlers(injected = {}) {
       addConnectionSearchApp(appId, appName);
       return;
     }
+    if (act === 'saveConnectionPreset') {
+      saveConnectionPresetFromCurrent();
+      return;
+    }
+    if (act === 'applyConnectionPreset') {
+      applyConnectionPresetById(ui.connectionPresetSelect?.value || '');
+      return;
+    }
+    if (act === 'deleteConnectionPreset') {
+      deleteSelectedConnectionPreset();
+      return;
+    }
 
     // ----- Diff actions -----
     if (act === 'prefetchCommonData') return withGuard(runPrefetchCommonData);
-    if (act === 'runDiffAndPlan') return withGuard(runDiffAndPreviewPlan);
-    if (act === 'runDiff') return withGuard(runDiff);
+    if (act === 'runDiffAndPlan') {
+      return withGuard(async () => {
+        await runDiffAndPreviewPlan();
+        markReflectApplyChecks(['diff', 'plan']);
+        saveWorkHistorySnapshot('plan', { label: '差分比較・プラン確認後', silent: true });
+      });
+    }
+    if (act === 'runDiff') {
+      return withGuard(async () => {
+        await runDiff();
+        markReflectApplyChecks(['diff']);
+        resetReflectApplyChecks(['plan']);
+        saveWorkHistorySnapshot('diff', { label: '差分比較後', silent: true });
+      });
+    }
     if (act === 'exportDiffJson') return withGuard(exportDiffJson);
     if (act === 'exportDiffHtml') return withGuard(exportDiffHtml);
     if (act === 'exportPatchJson') return withGuard(exportPatchJson);
@@ -2254,11 +2978,21 @@ export function setupEventHandlers(injected = {}) {
     }
 
     // ----- Reflect apply actions -----
-    if (act === 'previewApplyPlan' && typeof runPreviewApplyPlan === 'function') return withGuard(runPreviewApplyPlan);
+    if (act === 'previewApplyPlan' && typeof runPreviewApplyPlan === 'function') {
+      return withGuard(async () => {
+        await runPreviewApplyPlan();
+        markReflectApplyChecks(['plan']);
+        saveWorkHistorySnapshot('plan', { label: 'プラン確認後', silent: true });
+      });
+    }
     if (act === 'exportDryRunPlan' && typeof runExportDryRunPlan === 'function') return withGuard(runExportDryRunPlan);
     if (act === 'backupTargetPreview' && typeof runBackupTargetPreview === 'function') return withGuard(runBackupTargetPreview);
     if (act === 'restoreTargetPreviewBackup' && typeof runRestoreTargetPreviewBackup === 'function') return withGuard(runRestoreTargetPreviewBackup);
-    if (act === 'applyPreview' && typeof runApplyPreview === 'function') return withGuard(runApplyPreview);
+    if (act === 'applyPreview' && typeof runApplyPreview === 'function') {
+      if (!ensureReflectApplyChecklistReady()) return;
+      saveWorkHistorySnapshot('apply', { label: '反映直前', silent: true });
+      return withGuard(runApplyPreview);
+    }
     if (act === 'deployOnly' && typeof runDeployOnly === 'function') return withGuard(runDeployOnly);
     if (act === 'runPreviewProdDiff') return withGuard(runPreviewProductionDiff);
     if (act === 'exportPreviewProdDiffJson') { exportPreviewProdDiffJson(); return; }
@@ -2436,6 +3170,7 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'deleteTemplate' && typeof deleteTemplate === 'function') return deleteTemplate();
 
     // ----- Analyze Tab -----
+    if (act === 'runAnalyzeDashboard' && typeof runAnalyzeDashboard === 'function') return withGuard(runAnalyzeDashboard);
     if (act === 'runFieldImpactAnalysis' && typeof runFieldImpactAnalysis === 'function') return withGuard(runFieldImpactAnalysis);
     if (act === 'exportFieldImpactCsv' && typeof exportFieldImpactCsv === 'function') return exportFieldImpactCsv();
     if (act === 'runPermissionMatrix' && typeof runPermissionMatrix === 'function') return withGuard(runPermissionMatrix);

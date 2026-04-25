@@ -531,6 +531,33 @@ export function isDiffRowViewed(row) {
   return state.diffViewedKeys.has(key);
 }
 
+export function getDiffReviewMeta(row) {
+  const key = diffViewedKey(row);
+  if (!key || !state.diffReviewMeta || typeof state.diffReviewMeta !== 'object') {
+    return { key: '', status: '', note: '' };
+  }
+  const raw = state.diffReviewMeta[key];
+  if (!raw || typeof raw !== 'object') return { key, status: '', note: '' };
+  const status = raw.status === 'todo' || raw.status === 'ignored' ? raw.status : '';
+  const note = String(raw.note || '').trim();
+  return { key, status, note };
+}
+
+function renderDiffReviewControls(row) {
+  if (!row || row.type === 'same') return '';
+  const meta = getDiffReviewMeta(row);
+  const hasMeta = !!(meta.status || meta.note);
+  const todoActive = meta.status === 'todo' ? ' is-active' : '';
+  const ignoredActive = meta.status === 'ignored' ? ' is-active' : '';
+  const noteActive = meta.note ? ' is-active' : '';
+  return `<div class="diff-review-tools" aria-label="レビュー状態">
+      <button type="button" class="diff-review-btn diff-review-btn--todo${todoActive}" data-diff-review-action="todo" data-diff-review-id="${esc(row._id || '')}" title="要対応としてマーク">要対応</button>
+      <button type="button" class="diff-review-btn diff-review-btn--ignored${ignoredActive}" data-diff-review-action="ignored" data-diff-review-id="${esc(row._id || '')}" title="無視してよい差分としてマーク">無視</button>
+      <button type="button" class="diff-review-btn diff-review-btn--note${noteActive}" data-diff-review-action="note" data-diff-review-id="${esc(row._id || '')}" title="この差分にメモを残す">${meta.note ? 'メモあり' : 'メモ'}</button>
+      ${hasMeta ? `<button type="button" class="diff-review-btn diff-review-btn--clear" data-diff-review-action="clear" data-diff-review-id="${esc(row._id || '')}" title="レビュー状態を解除">解除</button>` : ''}
+    </div>${meta.note ? `<div class="diff-review-note" title="${esc(meta.note)}">メモ: ${esc(meta.note)}</div>` : ''}`;
+}
+
 export function countViewedInRows(rows) {
   if (!rows || !rows.length) return 0;
   let n = 0;
@@ -1404,33 +1431,97 @@ const MD_SECTION_RENDERERS = {
 function mdBundleSummary(bundle) {
   const sections = bundle?.sections || {};
   const rows = [];
-  const fieldCount = Object.keys(sections.fieldSettings?.properties || {}).length;
+  const fields = sections.fieldSettings?.properties || {};
+  const fieldValues = Object.values(fields);
+  const fieldCount = Object.keys(fields).length;
+  const subtableFieldCount = fieldValues.reduce((sum, field) => {
+    if (!field || field.type !== 'SUBTABLE' || !field.fields) return sum;
+    return sum + Object.keys(field.fields).length;
+  }, 0);
+  const requiredCount = fieldValues.filter((field) => !!field?.required).length;
+  const lookupCount = fieldValues.filter((field) => !!field?.lookup).length;
+  const referenceCount = fieldValues.filter((field) => !!field?.referenceTable).length;
   const viewCount = Object.keys(sections.viewSettings?.views || {}).length;
   const reportCount = Object.keys(sections.reportSettings?.reports || {}).length;
   const stateCount = Object.keys(sections.processSettings?.states || {}).length;
   const actionCount = Array.isArray(sections.processSettings?.actions) ? sections.processSettings.actions.length : 0;
   const pluginCount = (sections.pluginSettings?.plugins || []).length;
   const notifCount = (sections.notifications?.notifications || []).length;
+  const customizeCount = ['desktop', 'mobile'].reduce((sum, area) => {
+    const zone = sections.customizeSettings?.[area] || {};
+    return sum + (zone.js || []).length + (zone.css || []).length;
+  }, 0);
   if (fieldCount) rows.push(['フィールド数', String(fieldCount)]);
+  if (subtableFieldCount) rows.push(['テーブル内フィールド数', String(subtableFieldCount)]);
+  if (requiredCount) rows.push(['必須フィールド数', String(requiredCount)]);
+  if (lookupCount) rows.push(['ルックアップ数', String(lookupCount)]);
+  if (referenceCount) rows.push(['関連レコード一覧数', String(referenceCount)]);
   if (viewCount) rows.push(['ビュー数', String(viewCount)]);
   if (reportCount) rows.push(['レポート数', String(reportCount)]);
   if (stateCount) rows.push(['ステータス数', String(stateCount)]);
   if (actionCount) rows.push(['プロセスアクション数', String(actionCount)]);
   if (pluginCount) rows.push(['プラグイン数', String(pluginCount)]);
   if (notifCount) rows.push(['一般通知宛先数', String(notifCount)]);
+  if (customizeCount) rows.push(['JS/CSSカスタマイズ数', String(customizeCount)]);
   return rows.length ? mdTable(['項目', '件数'], rows) : '';
+}
+
+function mdDesignReviewPoints(bundle) {
+  const sections = bundle?.sections || {};
+  const fields = Object.values(sections.fieldSettings?.properties || {});
+  const points = [];
+  const lookupCount = fields.filter((field) => !!field?.lookup).length;
+  const calcCount = fields.filter((field) => !!(field?.expression || field?.formula)).length;
+  const permissionCount = (sections.appAcl?.rights || []).length
+    + (sections.recordPermissions?.rights || []).length
+    + (sections.fieldAcl?.rights || []).length;
+  const customizeCount = ['desktop', 'mobile'].reduce((sum, area) => {
+    const zone = sections.customizeSettings?.[area] || {};
+    return sum + (zone.js || []).length + (zone.css || []).length;
+  }, 0);
+  if (lookupCount) points.push(`- ルックアップ設定が ${lookupCount} 件あります。参照先アプリIDとフィールドマッピングを確認してください。`);
+  if (calcCount) points.push(`- 計算式フィールドが ${calcCount} 件あります。参照フィールド変更時の影響を確認してください。`);
+  if (permissionCount) points.push(`- 権限設定エントリが ${permissionCount} 件あります。移行前後でユーザー/組織/グループの差異を確認してください。`);
+  if (customizeCount) points.push(`- JS/CSSカスタマイズが ${customizeCount} 件あります。URL・ファイル参照・読み込み順を確認してください。`);
+  if (sections.processSettings?.enable) points.push('- プロセス管理が有効です。ステータス、作業者、アクション条件を確認してください。');
+  return points.length ? points.join('\n') : '- 特に目立つ確認ポイントはありません。';
+}
+
+function mdDesignSectionRows(bundle) {
+  const sections = bundle?.sections || {};
+  return SECTION_DEFS
+    .filter((def) => sections[def.key])
+    .map((def) => {
+      const sec = sections[def.key];
+      let count = '';
+      if (def.key === 'fieldSettings') count = Object.keys(sec?.properties || {}).length;
+      else if (def.key === 'viewSettings') count = Object.keys(sec?.views || {}).length;
+      else if (def.key === 'reportSettings') count = Object.keys(sec?.reports || {}).length;
+      else if (def.key === 'processSettings') count = Object.keys(sec?.states || {}).length;
+      else if (def.key === 'pluginSettings') count = (sec?.plugins || []).length;
+      else if (Array.isArray(sec?.rights)) count = sec.rights.length;
+      else if (Array.isArray(sec?.notifications)) count = sec.notifications.length;
+      else count = sec && typeof sec === 'object' ? Object.keys(sec).length : '';
+      return [def.label, def.key, count === '' ? '-' : String(count)];
+    });
 }
 
 export function bundleToMarkdown(bundle) {
   const sections = bundle?.sections || {};
   const appName = sections.appSettings?.name || '';
   const lines = [];
-  lines.push(`# kintone 設計書${appName ? ` — ${appName}` : ''}`);
+  lines.push('# kintone アプリ設計書');
   lines.push('');
-  lines.push(`- アプリID: ${bundle.appId}`);
-  lines.push(`- ゲストスペースID: ${bundle.guestId || '(通常空間)'}`);
-  lines.push(`- プレビュー取得: ${bundle.preview ? 'はい' : 'いいえ'}`);
-  lines.push(`- 取得日時: ${bundle.fetchedAt}`);
+  if (appName) {
+    lines.push(`> ${appName}`);
+    lines.push('');
+  }
+  lines.push(mdTable(['項目', '値'], [
+    ['アプリID', bundle.appId],
+    ['ゲストスペースID', bundle.guestId || '(通常空間)'],
+    ['プレビュー取得', bundle.preview ? 'はい' : 'いいえ'],
+    ['取得日時', bundle.fetchedAt]
+  ]));
   lines.push('');
 
   const available = SECTION_DEFS.filter((def) => sections[def.key]);
@@ -1446,9 +1537,22 @@ export function bundleToMarkdown(bundle) {
 
   const summary = mdBundleSummary(bundle);
   if (summary) {
-    lines.push('## 概要');
+    lines.push('## サマリー');
     lines.push('');
     lines.push(summary);
+    lines.push('');
+  }
+
+  lines.push('## 確認ポイント');
+  lines.push('');
+  lines.push(mdDesignReviewPoints(bundle));
+  lines.push('');
+
+  const sectionRows = mdDesignSectionRows(bundle);
+  if (sectionRows.length) {
+    lines.push('## 出力セクション');
+    lines.push('');
+    lines.push(mdTable(['セクション', 'キー', '件数'], sectionRows));
     lines.push('');
   }
 
@@ -4448,6 +4552,17 @@ export function renderDiffSelectionState() {
   const rendered = getRenderedDiffRows().length;
   const issues = (state.lastFetchIssues || []).length;
   const normalization = getActiveDiffNormalizationLabels();
+  let reviewTodo = 0;
+  let reviewIgnored = 0;
+  let reviewNotes = 0;
+  for (const row of (state.lastDiffRows || [])) {
+    if (!row || row.type === 'same') continue;
+    const meta = getDiffReviewMeta(row);
+    if (meta.status === 'todo') reviewTodo += 1;
+    if (meta.status === 'ignored') reviewIgnored += 1;
+    if (meta.note) reviewNotes += 1;
+  }
+  const reviewSummary = `レビュー 要対応 ${reviewTodo}件 / 無視 ${reviewIgnored}件 / メモ ${reviewNotes}件`;
   const exportModeLabelMap = {
     all: '全件（比較結果）',
     selected: '選択済み行のみ',
@@ -4459,7 +4574,7 @@ export function renderDiffSelectionState() {
     return;
   }
   ui.diffSelectionState.textContent =
-    `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || '全件（比較結果）'} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(', ') || '-'}`;
+    `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / ${reviewSummary} / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || '全件（比較結果）'} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(', ') || '-'}`;
 }
 
 export function renderDiffWarningBox() {
@@ -4811,6 +4926,7 @@ export function renderResultRows(rows) {
             </div>
             <div class="diff-path diff-path-cell" title="${esc(r.path || '-')}">${formatDiffPathRich(r)}</div>
             ${renderDiffRowMeta(r)}
+            ${renderDiffReviewControls(r)}
           </td>
           <td class="diff-cell">${cols.left}</td>
           <td class="diff-cell">${cols.right}</td>

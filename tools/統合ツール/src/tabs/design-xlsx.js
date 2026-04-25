@@ -30,10 +30,10 @@ export async function runAdvancedDesignExporter(params = {}) {
     MAX_COL_WIDTH: 80,
     MIN_COL_WIDTH: 8,
     COLORS: {
-      HEADER_BG: 'FF4A90E2', HEADER_TEXT: 'FFFFFFFF',
-      TITLE_BG: 'FF2E5C8A', TITLE_TEXT: 'FFFFFFFF',
-      ZEBRA_EVEN: 'FFF8F9FA', ZEBRA_ODD: 'FFFFFFFF',
-      BORDER: 'FF666666', SECTION_BG: 'FFECF0F1',
+      HEADER_BG: 'FF0F766E', HEADER_TEXT: 'FFFFFFFF',
+      TITLE_BG: 'FF0F172A', TITLE_TEXT: 'FFFFFFFF',
+      ZEBRA_EVEN: 'FFF8FAFC', ZEBRA_ODD: 'FFFFFFFF',
+      BORDER: 'FFCBD5E1', SECTION_BG: 'FFE0F2FE',
       REQUIRED_BG: 'FFFFF2CC', WARNING_BG: 'FFFFC000',
       SUCCESS_BG: 'FFC6EFCE', DANGER_BG: 'FFF8CBAD',
       INFO_BG: 'FFD9E1F2', SUBTABLE_BG: 'FFE8EAF6',
@@ -503,6 +503,21 @@ export async function runAdvancedDesignExporter(params = {}) {
 
     UI.update('Excelファイルを生成中...', 10);
 
+    const fieldCount = Object.keys(fields).length;
+    const viewCount = Object.keys(views?.views || {}).length;
+    const reportCount = Object.keys(reports?.reports || {}).length;
+    const processStateCount = Object.keys(status?.states || {}).length;
+    const processActionCount = (status?.actions || []).length;
+    const pluginCount = (pluginsResp?.plugins || []).length;
+    const webhookCount = (webhooksResp?.webhooks || []).length;
+    const appAclCount = (appAcl?.rights || []).length;
+    const recordAclCount = (recordAcl?.rights || []).length;
+    const fieldAclCount = (fieldAcl?.rights || []).length;
+    const customizeCount = (customize?.desktop?.js || []).length
+      + (customize?.desktop?.css || []).length
+      + (customize?.mobile?.js || []).length
+      + (customize?.mobile?.css || []).length;
+
     const fieldGroupMap = buildFieldGroupMap(layout || {});
     const fieldUsageMap = buildFieldUsageMap({
       fields, views, reports, status, genNotif, recNotif, remNotif, recordAcl, fieldAcl, actions
@@ -639,8 +654,10 @@ export async function runAdvancedDesignExporter(params = {}) {
       if (!mergeRanges?.length) return;
       ws['!merges'] = ws['!merges'] || [];
       for (const range of mergeRanges) {
-        ws['!merges'].push({ s: { r: range.startRow, c: range.col }, e: { r: range.endRow, c: range.col } });
-        const firstCellAddr = UtilsX.a1(range.startRow + 1, range.col + 1);
+        const startCol = range.startCol ?? range.col ?? 0;
+        const endCol = range.endCol ?? range.col ?? startCol;
+        ws['!merges'].push({ s: { r: range.startRow, c: startCol }, e: { r: range.endRow, c: endCol } });
+        const firstCellAddr = UtilsX.a1(range.startRow + 1, startCol + 1);
         const firstCell = ws[firstCellAddr];
         if (firstCell?.s) firstCell.s.alignment = { ...firstCell.s.alignment, vertical: 'center' };
       }
@@ -715,6 +732,8 @@ export async function runAdvancedDesignExporter(params = {}) {
       const headerInfoRows = [];
 
       sAoa.push(['kintone アプリ設計書']);
+      sAoa.push([appSettings?.name || `App ${APP_ID}`]);
+      sAoa.push([`App ID: ${APP_ID} / 出力日時: ${UtilsX.dt()} / ゲストスペース: ${sourceGuestId || '通常空間'}`]);
       sAoa.push([]);
 
       sAoa.push(['基本情報']); sectionRows.push(sAoa.length - 1);
@@ -738,26 +757,26 @@ export async function runAdvancedDesignExporter(params = {}) {
       sAoa.push(['設定統計']); sectionRows.push(sAoa.length - 1);
       sAoa.push(['項目', '件数']); headerInfoRows.push(sAoa.length - 1);
       sAoa.push(['総レコード数', recordCount != null ? recordCount : '(取得不可)']);
-      sAoa.push(['フィールド数', Object.keys(fields).length]);
+      sAoa.push(['フィールド数', fieldCount]);
       let subFieldTotal = 0;
       Object.values(fields).forEach((f) => {
         if (f.type === 'SUBTABLE' && f.fields) subFieldTotal += Object.keys(f.fields).length;
       });
       sAoa.push(['サブテーブル内フィールド数', subFieldTotal]);
-      sAoa.push(['ビュー数', Object.keys(views?.views || {}).length]);
-      sAoa.push(['グラフ数', Object.keys(reports?.reports || {}).length]);
+      sAoa.push(['ビュー数', viewCount]);
+      sAoa.push(['グラフ数', reportCount]);
       sAoa.push(['プロセス管理', status?.enable ? '有効' : '無効']);
-      sAoa.push(['ステータス数', Object.keys(status?.states || {}).length]);
-      sAoa.push(['アクション数(プロセス)', (status?.actions || []).length]);
+      sAoa.push(['ステータス数', processStateCount]);
+      sAoa.push(['アクション数(プロセス)', processActionCount]);
       sAoa.push(['アクション数(レコード)', Object.keys(actions || {}).length]);
-      sAoa.push(['プラグイン数', (pluginsResp?.plugins || []).length]);
-      sAoa.push(['Webhook数', (webhooksResp?.webhooks || []).length]);
+      sAoa.push(['プラグイン数', pluginCount]);
+      sAoa.push(['Webhook数', webhookCount]);
       sAoa.push(['通知(一般)件数', (genNotif?.notifications || []).length]);
       sAoa.push(['通知(レコード)件数', (recNotif?.notifications || []).length]);
       sAoa.push(['通知(リマインダー)件数', (remNotif?.notifications || []).length]);
-      sAoa.push(['アプリ権限エントリ数', (appAcl?.rights || []).length]);
-      sAoa.push(['レコード権限エントリ数', (recordAcl?.rights || []).length]);
-      sAoa.push(['フィールド権限エントリ数', (fieldAcl?.rights || []).length]);
+      sAoa.push(['アプリ権限エントリ数', appAclCount]);
+      sAoa.push(['レコード権限エントリ数', recordAclCount]);
+      sAoa.push(['フィールド権限エントリ数', fieldAclCount]);
       sAoa.push(['JSカスタマイズ(PC)件数', (customize?.desktop?.js || []).length]);
       sAoa.push(['CSSカスタマイズ(PC)件数', (customize?.desktop?.css || []).length]);
       sAoa.push(['JSカスタマイズ(モバイル)件数', (customize?.mobile?.js || []).length]);
@@ -799,6 +818,14 @@ export async function runAdvancedDesignExporter(params = {}) {
       sAoa.push(['初期値設定あり', attrCounts.hasDefault]);
       sAoa.push([]);
 
+      sAoa.push(['レビュー観点']); sectionRows.push(sAoa.length - 1);
+      sAoa.push(['観点', '確認内容']); headerInfoRows.push(sAoa.length - 1);
+      sAoa.push(['参照関係', `ルックアップ ${attrCounts.lookup}件 / 関連レコード ${attrCounts.reference}件 / 計算式 ${attrCounts.calc}件`]);
+      sAoa.push(['権限', `アプリ ${appAclCount}件 / レコード ${recordAclCount}件 / フィールド ${fieldAclCount}件`]);
+      sAoa.push(['カスタマイズ', `JS/CSS ${customizeCount}件 / プラグイン ${pluginCount}件 / Webhook ${webhookCount}件`]);
+      sAoa.push(['プロセス', status?.enable ? `有効: ステータス ${processStateCount}件 / アクション ${processActionCount}件` : '無効']);
+      sAoa.push([]);
+
       sAoa.push(['出力情報']); sectionRows.push(sAoa.length - 1);
       sAoa.push(['項目', '値']); headerInfoRows.push(sAoa.length - 1);
       sAoa.push(['出力日時', UtilsX.dt()]);
@@ -817,12 +844,18 @@ export async function runAdvancedDesignExporter(params = {}) {
         aoa: sAoa,
         options: {
           headerRowIndex: headerInfoRows[0] ?? 3,
-          titleRows: [0],
-          sectionRows,
+          titleRows: [0, 1],
+          sectionRows: [2, ...sectionRows],
           headerInfoRows,
+          emptyRows: [3],
           freezeRows: 1,
           enableAutoFilter: false
         },
+        mergeRanges: [
+          { startRow: 0, endRow: 0, startCol: 0, endCol: 3 },
+          { startRow: 1, endRow: 1, startCol: 0, endCol: 3 },
+          { startRow: 2, endRow: 2, startCol: 0, endCol: 3 }
+        ],
         pageSetup: { orientation: 'portrait', printTitleRows: 1 }
       }, { description: 'アプリ基本情報・統計・項目属性サマリー' });
     }
@@ -1617,7 +1650,13 @@ export async function runAdvancedDesignExporter(params = {}) {
     // 目次シートを最後に構築し、先頭に挿入する
     {
       const tocAoa = [['目次 / Table of Contents']];
-      tocAoa.push([`出力: ${UtilsX.dt()}　${appSettings?.name || ''}　(App ID: ${APP_ID})`]);
+      tocAoa.push([appSettings?.name || `App ${APP_ID}`]);
+      tocAoa.push([`App ID: ${APP_ID} / 出力: ${UtilsX.dt()} / 取得失敗: ${UI.failedAPIs.length}件`]);
+      tocAoa.push([]);
+      tocAoa.push(['キーメトリクス', '件数', 'キーメトリクス', '件数']);
+      tocAoa.push(['フィールド', fieldCount, 'ビュー', viewCount]);
+      tocAoa.push(['プロセスステータス', processStateCount, 'プロセスアクション', processActionCount]);
+      tocAoa.push(['権限エントリ', appAclCount + recordAclCount + fieldAclCount, 'JS/CSSカスタマイズ', customizeCount]);
       tocAoa.push([]);
       tocAoa.push(['No.', 'シート名', '内容', '件数']);
       sheetMetadata.forEach((m, i) => {
@@ -1626,18 +1665,24 @@ export async function runAdvancedDesignExporter(params = {}) {
       const tocWs = XLSX.utils.aoa_to_sheet(tocAoa);
       autosizeCols(tocWs, tocAoa);
       applyStyles(tocWs, tocAoa, {
-        headerRowIndex: 3,
-        titleRows: [0],
-        headerInfoRows: [1],
-        emptyRows: [2],
-        freezeRows: 4,
+        headerRowIndex: 8,
+        titleRows: [0, 1],
+        sectionRows: [2],
+        headerInfoRows: [4, 8],
+        emptyRows: [3, 7],
+        freezeRows: 9,
         centerCols: [0, 3],
         enableAutoFilter: false
       });
-      applyRowHeights(tocWs, tocAoa, { titleRows: [0], emptyRows: [2] });
-      applyPageSetup(tocWs, { orientation: 'portrait', printTitleRows: 4 });
+      applyCellMerges(tocWs, [
+        { startRow: 0, endRow: 0, startCol: 0, endCol: 3 },
+        { startRow: 1, endRow: 1, startCol: 0, endCol: 3 },
+        { startRow: 2, endRow: 2, startCol: 0, endCol: 3 }
+      ]);
+      applyRowHeights(tocWs, tocAoa, { titleRows: [0, 1], emptyRows: [3, 7] });
+      applyPageSetup(tocWs, { orientation: 'portrait', printTitleRows: 9 });
       sheetMetadata.forEach((m, i) => {
-        const row = i + 5;
+        const row = i + 10;
         const nameAddr = UtilsX.a1(row, 2);
         if (tocWs[nameAddr]) {
           tocWs[nameAddr].l = { Target: `#'${m.name.replace(/'/g, "''")}'!A1`, Tooltip: `${m.name}へ移動` };
@@ -1652,7 +1697,7 @@ export async function runAdvancedDesignExporter(params = {}) {
       const tocName = makeSafeSheetName('目次', new Set(wb.SheetNames));
       wb.Sheets[tocName] = tocWs;
       wb.SheetNames.unshift(tocName);
-      printTitleConfigs.push({ sheetName: tocName, rows: 4 });
+      printTitleConfigs.push({ sheetName: tocName, rows: 9 });
     }
 
     // 全シートの印刷タイトル(繰り返し行)を定義済み名前として登録

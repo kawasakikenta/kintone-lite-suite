@@ -239,8 +239,8 @@
           desc: "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。",
           tabs: ["analyze"],
           tab: "analyze",
-          subTab: "fieldImpact",
-          focusSelector: '[data-act="runFieldImpactAnalysis"]',
+          subTab: "dashboard",
+          focusSelector: '[data-act="runAnalyzeDashboard"]',
           priority: "medium",
           riskLevel: "safe",
           recommendedFor: ["影響調査", "依存確認", "セキュリティ監査"],
@@ -344,7 +344,7 @@
         recordMgr: "status",
         er: "diagram",
         settingsExport: "export",
-        analyze: "fieldImpact"
+        analyze: "dashboard"
       });
       GUIDED_TOUR_STEPS = Object.freeze([
         {
@@ -424,7 +424,47 @@
       return [];
     }
   }
-  var state, REFLECT_APPLY_HISTORY_KEY;
+  function loadWorkHistory() {
+    try {
+      const raw = localStorage.getItem(WORK_HISTORY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  function normalizeConnectionPreset(entry) {
+    if (!entry || typeof entry !== "object") return null;
+    const sourceAppId = String(entry.sourceAppId || "").trim();
+    const targetAppId = String(entry.targetAppId || "").trim();
+    if (!sourceAppId && !targetAppId) return null;
+    const id = String(entry.id || "").trim() || `conn-${Date.now()}`;
+    const name = String(entry.name || "").trim() || `${sourceAppId || "-"} -> ${targetAppId || "-"}`;
+    return {
+      id,
+      name,
+      sourceAppId,
+      sourceGuestId: String(entry.sourceGuestId || "").trim(),
+      sourcePreview: !!entry.sourcePreview,
+      targetAppId,
+      targetGuestId: String(entry.targetGuestId || "").trim(),
+      targetPreview: entry.targetPreview == null ? true : !!entry.targetPreview,
+      savedAt: Number(entry.savedAt || Date.now()) || Date.now()
+    };
+  }
+  function loadConnectionPresets() {
+    try {
+      const raw = localStorage.getItem(CONNECTION_PRESETS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map(normalizeConnectionPreset).filter(Boolean).slice(0, CONNECTION_PRESETS_LIMIT);
+    } catch {
+      return [];
+    }
+  }
+  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY, CONNECTION_PRESETS_LIMIT;
   var init_state = __esm({
     "src/state.js"() {
       "use strict";
@@ -448,8 +488,12 @@
         lastApplyReport: null,
         reflectApplyHistory: [],
         reflectApplyHistoryOpen: false,
+        workHistory: [],
+        workHistoryOpen: true,
+        connectionPresets: [],
         reflectPlanPreviewKeyword: "",
         reflectPlanPreviewChangedOnly: false,
+        reflectApplyChecklist: { diff: false, plan: false, target: false },
         lastPreviewBackupPayload: null,
         lastPreviewBackupFilename: "",
         diffViewTheme: "light",
@@ -459,6 +503,7 @@
         diffFavoritePaths: /* @__PURE__ */ new Set(),
         diffFavoritesOnly: false,
         diffViewedKeys: /* @__PURE__ */ new Set(),
+        diffReviewMeta: {},
         diffHideViewed: false,
         diffFocusedRowId: "",
         diffExcludeSections: null,
@@ -494,7 +539,12 @@
         running: false
       };
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
+      WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
+      CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
+      CONNECTION_PRESETS_LIMIT = 30;
       state.reflectApplyHistory = loadReflectApplyHistory();
+      state.workHistory = loadWorkHistory();
+      state.connectionPresets = loadConnectionPresets();
     }
   });
 
@@ -1203,32 +1253,90 @@ ${body}`;
   function mdBundleSummary(bundle) {
     const sections = bundle?.sections || {};
     const rows = [];
-    const fieldCount = Object.keys(sections.fieldSettings?.properties || {}).length;
+    const fields = sections.fieldSettings?.properties || {};
+    const fieldValues = Object.values(fields);
+    const fieldCount = Object.keys(fields).length;
+    const subtableFieldCount = fieldValues.reduce((sum, field) => {
+      if (!field || field.type !== "SUBTABLE" || !field.fields) return sum;
+      return sum + Object.keys(field.fields).length;
+    }, 0);
+    const requiredCount = fieldValues.filter((field) => !!field?.required).length;
+    const lookupCount = fieldValues.filter((field) => !!field?.lookup).length;
+    const referenceCount = fieldValues.filter((field) => !!field?.referenceTable).length;
     const viewCount = Object.keys(sections.viewSettings?.views || {}).length;
     const reportCount = Object.keys(sections.reportSettings?.reports || {}).length;
     const stateCount = Object.keys(sections.processSettings?.states || {}).length;
     const actionCount = Array.isArray(sections.processSettings?.actions) ? sections.processSettings.actions.length : 0;
     const pluginCount = (sections.pluginSettings?.plugins || []).length;
     const notifCount = (sections.notifications?.notifications || []).length;
+    const customizeCount = ["desktop", "mobile"].reduce((sum, area) => {
+      const zone = sections.customizeSettings?.[area] || {};
+      return sum + (zone.js || []).length + (zone.css || []).length;
+    }, 0);
     if (fieldCount) rows.push(["フィールド数", String(fieldCount)]);
+    if (subtableFieldCount) rows.push(["テーブル内フィールド数", String(subtableFieldCount)]);
+    if (requiredCount) rows.push(["必須フィールド数", String(requiredCount)]);
+    if (lookupCount) rows.push(["ルックアップ数", String(lookupCount)]);
+    if (referenceCount) rows.push(["関連レコード一覧数", String(referenceCount)]);
     if (viewCount) rows.push(["ビュー数", String(viewCount)]);
     if (reportCount) rows.push(["レポート数", String(reportCount)]);
     if (stateCount) rows.push(["ステータス数", String(stateCount)]);
     if (actionCount) rows.push(["プロセスアクション数", String(actionCount)]);
     if (pluginCount) rows.push(["プラグイン数", String(pluginCount)]);
     if (notifCount) rows.push(["一般通知宛先数", String(notifCount)]);
+    if (customizeCount) rows.push(["JS/CSSカスタマイズ数", String(customizeCount)]);
     return rows.length ? mdTable(["項目", "件数"], rows) : "";
+  }
+  function mdDesignReviewPoints(bundle) {
+    const sections = bundle?.sections || {};
+    const fields = Object.values(sections.fieldSettings?.properties || {});
+    const points = [];
+    const lookupCount = fields.filter((field) => !!field?.lookup).length;
+    const calcCount = fields.filter((field) => !!(field?.expression || field?.formula)).length;
+    const permissionCount = (sections.appAcl?.rights || []).length + (sections.recordPermissions?.rights || []).length + (sections.fieldAcl?.rights || []).length;
+    const customizeCount = ["desktop", "mobile"].reduce((sum, area) => {
+      const zone = sections.customizeSettings?.[area] || {};
+      return sum + (zone.js || []).length + (zone.css || []).length;
+    }, 0);
+    if (lookupCount) points.push(`- ルックアップ設定が ${lookupCount} 件あります。参照先アプリIDとフィールドマッピングを確認してください。`);
+    if (calcCount) points.push(`- 計算式フィールドが ${calcCount} 件あります。参照フィールド変更時の影響を確認してください。`);
+    if (permissionCount) points.push(`- 権限設定エントリが ${permissionCount} 件あります。移行前後でユーザー/組織/グループの差異を確認してください。`);
+    if (customizeCount) points.push(`- JS/CSSカスタマイズが ${customizeCount} 件あります。URL・ファイル参照・読み込み順を確認してください。`);
+    if (sections.processSettings?.enable) points.push("- プロセス管理が有効です。ステータス、作業者、アクション条件を確認してください。");
+    return points.length ? points.join("\n") : "- 特に目立つ確認ポイントはありません。";
+  }
+  function mdDesignSectionRows(bundle) {
+    const sections = bundle?.sections || {};
+    return SECTION_DEFS.filter((def) => sections[def.key]).map((def) => {
+      const sec = sections[def.key];
+      let count = "";
+      if (def.key === "fieldSettings") count = Object.keys(sec?.properties || {}).length;
+      else if (def.key === "viewSettings") count = Object.keys(sec?.views || {}).length;
+      else if (def.key === "reportSettings") count = Object.keys(sec?.reports || {}).length;
+      else if (def.key === "processSettings") count = Object.keys(sec?.states || {}).length;
+      else if (def.key === "pluginSettings") count = (sec?.plugins || []).length;
+      else if (Array.isArray(sec?.rights)) count = sec.rights.length;
+      else if (Array.isArray(sec?.notifications)) count = sec.notifications.length;
+      else count = sec && typeof sec === "object" ? Object.keys(sec).length : "";
+      return [def.label, def.key, count === "" ? "-" : String(count)];
+    });
   }
   function bundleToMarkdown(bundle) {
     const sections = bundle?.sections || {};
     const appName = sections.appSettings?.name || "";
     const lines = [];
-    lines.push(`# kintone 設計書${appName ? ` — ${appName}` : ""}`);
+    lines.push("# kintone アプリ設計書");
     lines.push("");
-    lines.push(`- アプリID: ${bundle.appId}`);
-    lines.push(`- ゲストスペースID: ${bundle.guestId || "(通常空間)"}`);
-    lines.push(`- プレビュー取得: ${bundle.preview ? "はい" : "いいえ"}`);
-    lines.push(`- 取得日時: ${bundle.fetchedAt}`);
+    if (appName) {
+      lines.push(`> ${appName}`);
+      lines.push("");
+    }
+    lines.push(mdTable(["項目", "値"], [
+      ["アプリID", bundle.appId],
+      ["ゲストスペースID", bundle.guestId || "(通常空間)"],
+      ["プレビュー取得", bundle.preview ? "はい" : "いいえ"],
+      ["取得日時", bundle.fetchedAt]
+    ]));
     lines.push("");
     const available = SECTION_DEFS.filter((def) => sections[def.key]);
     if (available.length) {
@@ -1242,9 +1350,20 @@ ${body}`;
     }
     const summary = mdBundleSummary(bundle);
     if (summary) {
-      lines.push("## 概要");
+      lines.push("## サマリー");
       lines.push("");
       lines.push(summary);
+      lines.push("");
+    }
+    lines.push("## 確認ポイント");
+    lines.push("");
+    lines.push(mdDesignReviewPoints(bundle));
+    lines.push("");
+    const sectionRows = mdDesignSectionRows(bundle);
+    if (sectionRows.length) {
+      lines.push("## 出力セクション");
+      lines.push("");
+      lines.push(mdTable(["セクション", "キー", "件数"], sectionRows));
       lines.push("");
     }
     for (const def of SECTION_DEFS) {
@@ -1479,14 +1598,14 @@ ${body}`;
       MAX_COL_WIDTH: 80,
       MIN_COL_WIDTH: 8,
       COLORS: {
-        HEADER_BG: "FF4A90E2",
+        HEADER_BG: "FF0F766E",
         HEADER_TEXT: "FFFFFFFF",
-        TITLE_BG: "FF2E5C8A",
+        TITLE_BG: "FF0F172A",
         TITLE_TEXT: "FFFFFFFF",
-        ZEBRA_EVEN: "FFF8F9FA",
+        ZEBRA_EVEN: "FFF8FAFC",
         ZEBRA_ODD: "FFFFFFFF",
-        BORDER: "FF666666",
-        SECTION_BG: "FFECF0F1",
+        BORDER: "FFCBD5E1",
+        SECTION_BG: "FFE0F2FE",
         REQUIRED_BG: "FFFFF2CC",
         WARNING_BG: "FFFFC000",
         SUCCESS_BG: "FFC6EFCE",
@@ -2131,6 +2250,17 @@ ${body}`;
       );
       await Promise.all(refPromises);
       UI.update("Excelファイルを生成中...", 10);
+      const fieldCount = Object.keys(fields).length;
+      const viewCount = Object.keys(views?.views || {}).length;
+      const reportCount = Object.keys(reports?.reports || {}).length;
+      const processStateCount = Object.keys(status?.states || {}).length;
+      const processActionCount = (status?.actions || []).length;
+      const pluginCount = (pluginsResp?.plugins || []).length;
+      const webhookCount = (webhooksResp?.webhooks || []).length;
+      const appAclCount = (appAcl?.rights || []).length;
+      const recordAclCount = (recordAcl?.rights || []).length;
+      const fieldAclCount = (fieldAcl?.rights || []).length;
+      const customizeCount = (customize?.desktop?.js || []).length + (customize?.desktop?.css || []).length + (customize?.mobile?.js || []).length + (customize?.mobile?.css || []).length;
       const fieldGroupMap = buildFieldGroupMap(layout || {});
       const fieldUsageMap = buildFieldUsageMap({
         fields,
@@ -2268,8 +2398,10 @@ ${body}`;
         if (!mergeRanges?.length) return;
         ws["!merges"] = ws["!merges"] || [];
         for (const range of mergeRanges) {
-          ws["!merges"].push({ s: { r: range.startRow, c: range.col }, e: { r: range.endRow, c: range.col } });
-          const firstCellAddr = UtilsX.a1(range.startRow + 1, range.col + 1);
+          const startCol = range.startCol ?? range.col ?? 0;
+          const endCol = range.endCol ?? range.col ?? startCol;
+          ws["!merges"].push({ s: { r: range.startRow, c: startCol }, e: { r: range.endRow, c: endCol } });
+          const firstCellAddr = UtilsX.a1(range.startRow + 1, startCol + 1);
           const firstCell = ws[firstCellAddr];
           if (firstCell?.s) firstCell.s.alignment = { ...firstCell.s.alignment, vertical: "center" };
         }
@@ -2335,6 +2467,8 @@ ${body}`;
         const sectionRows = [];
         const headerInfoRows = [];
         sAoa.push(["kintone アプリ設計書"]);
+        sAoa.push([appSettings?.name || `App ${APP_ID}`]);
+        sAoa.push([`App ID: ${APP_ID} / 出力日時: ${UtilsX.dt()} / ゲストスペース: ${sourceGuestId || "通常空間"}`]);
         sAoa.push([]);
         sAoa.push(["基本情報"]);
         sectionRows.push(sAoa.length - 1);
@@ -2360,26 +2494,26 @@ ${body}`;
         sAoa.push(["項目", "件数"]);
         headerInfoRows.push(sAoa.length - 1);
         sAoa.push(["総レコード数", recordCount != null ? recordCount : "(取得不可)"]);
-        sAoa.push(["フィールド数", Object.keys(fields).length]);
+        sAoa.push(["フィールド数", fieldCount]);
         let subFieldTotal = 0;
         Object.values(fields).forEach((f) => {
           if (f.type === "SUBTABLE" && f.fields) subFieldTotal += Object.keys(f.fields).length;
         });
         sAoa.push(["サブテーブル内フィールド数", subFieldTotal]);
-        sAoa.push(["ビュー数", Object.keys(views?.views || {}).length]);
-        sAoa.push(["グラフ数", Object.keys(reports?.reports || {}).length]);
+        sAoa.push(["ビュー数", viewCount]);
+        sAoa.push(["グラフ数", reportCount]);
         sAoa.push(["プロセス管理", status?.enable ? "有効" : "無効"]);
-        sAoa.push(["ステータス数", Object.keys(status?.states || {}).length]);
-        sAoa.push(["アクション数(プロセス)", (status?.actions || []).length]);
+        sAoa.push(["ステータス数", processStateCount]);
+        sAoa.push(["アクション数(プロセス)", processActionCount]);
         sAoa.push(["アクション数(レコード)", Object.keys(actions || {}).length]);
-        sAoa.push(["プラグイン数", (pluginsResp?.plugins || []).length]);
-        sAoa.push(["Webhook数", (webhooksResp?.webhooks || []).length]);
+        sAoa.push(["プラグイン数", pluginCount]);
+        sAoa.push(["Webhook数", webhookCount]);
         sAoa.push(["通知(一般)件数", (genNotif?.notifications || []).length]);
         sAoa.push(["通知(レコード)件数", (recNotif?.notifications || []).length]);
         sAoa.push(["通知(リマインダー)件数", (remNotif?.notifications || []).length]);
-        sAoa.push(["アプリ権限エントリ数", (appAcl?.rights || []).length]);
-        sAoa.push(["レコード権限エントリ数", (recordAcl?.rights || []).length]);
-        sAoa.push(["フィールド権限エントリ数", (fieldAcl?.rights || []).length]);
+        sAoa.push(["アプリ権限エントリ数", appAclCount]);
+        sAoa.push(["レコード権限エントリ数", recordAclCount]);
+        sAoa.push(["フィールド権限エントリ数", fieldAclCount]);
         sAoa.push(["JSカスタマイズ(PC)件数", (customize?.desktop?.js || []).length]);
         sAoa.push(["CSSカスタマイズ(PC)件数", (customize?.desktop?.css || []).length]);
         sAoa.push(["JSカスタマイズ(モバイル)件数", (customize?.mobile?.js || []).length]);
@@ -2420,6 +2554,15 @@ ${body}`;
         sAoa.push(["ラベル非表示", attrCounts.noLabel]);
         sAoa.push(["初期値設定あり", attrCounts.hasDefault]);
         sAoa.push([]);
+        sAoa.push(["レビュー観点"]);
+        sectionRows.push(sAoa.length - 1);
+        sAoa.push(["観点", "確認内容"]);
+        headerInfoRows.push(sAoa.length - 1);
+        sAoa.push(["参照関係", `ルックアップ ${attrCounts.lookup}件 / 関連レコード ${attrCounts.reference}件 / 計算式 ${attrCounts.calc}件`]);
+        sAoa.push(["権限", `アプリ ${appAclCount}件 / レコード ${recordAclCount}件 / フィールド ${fieldAclCount}件`]);
+        sAoa.push(["カスタマイズ", `JS/CSS ${customizeCount}件 / プラグイン ${pluginCount}件 / Webhook ${webhookCount}件`]);
+        sAoa.push(["プロセス", status?.enable ? `有効: ステータス ${processStateCount}件 / アクション ${processActionCount}件` : "無効"]);
+        sAoa.push([]);
         sAoa.push(["出力情報"]);
         sectionRows.push(sAoa.length - 1);
         sAoa.push(["項目", "値"]);
@@ -2443,12 +2586,18 @@ ${body}`;
           aoa: sAoa,
           options: {
             headerRowIndex: headerInfoRows[0] ?? 3,
-            titleRows: [0],
-            sectionRows,
+            titleRows: [0, 1],
+            sectionRows: [2, ...sectionRows],
             headerInfoRows,
+            emptyRows: [3],
             freezeRows: 1,
             enableAutoFilter: false
           },
+          mergeRanges: [
+            { startRow: 0, endRow: 0, startCol: 0, endCol: 3 },
+            { startRow: 1, endRow: 1, startCol: 0, endCol: 3 },
+            { startRow: 2, endRow: 2, startCol: 0, endCol: 3 }
+          ],
           pageSetup: { orientation: "portrait", printTitleRows: 1 }
         }, { description: "アプリ基本情報・統計・項目属性サマリー" });
       }
@@ -3222,7 +3371,13 @@ ${body}`;
       }
       {
         const tocAoa = [["目次 / Table of Contents"]];
-        tocAoa.push([`出力: ${UtilsX.dt()}　${appSettings?.name || ""}　(App ID: ${APP_ID})`]);
+        tocAoa.push([appSettings?.name || `App ${APP_ID}`]);
+        tocAoa.push([`App ID: ${APP_ID} / 出力: ${UtilsX.dt()} / 取得失敗: ${UI.failedAPIs.length}件`]);
+        tocAoa.push([]);
+        tocAoa.push(["キーメトリクス", "件数", "キーメトリクス", "件数"]);
+        tocAoa.push(["フィールド", fieldCount, "ビュー", viewCount]);
+        tocAoa.push(["プロセスステータス", processStateCount, "プロセスアクション", processActionCount]);
+        tocAoa.push(["権限エントリ", appAclCount + recordAclCount + fieldAclCount, "JS/CSSカスタマイズ", customizeCount]);
         tocAoa.push([]);
         tocAoa.push(["No.", "シート名", "内容", "件数"]);
         sheetMetadata.forEach((m, i) => {
@@ -3231,18 +3386,24 @@ ${body}`;
         const tocWs = XLSX.utils.aoa_to_sheet(tocAoa);
         autosizeCols(tocWs, tocAoa);
         applyStyles(tocWs, tocAoa, {
-          headerRowIndex: 3,
-          titleRows: [0],
-          headerInfoRows: [1],
-          emptyRows: [2],
-          freezeRows: 4,
+          headerRowIndex: 8,
+          titleRows: [0, 1],
+          sectionRows: [2],
+          headerInfoRows: [4, 8],
+          emptyRows: [3, 7],
+          freezeRows: 9,
           centerCols: [0, 3],
           enableAutoFilter: false
         });
-        applyRowHeights(tocWs, tocAoa, { titleRows: [0], emptyRows: [2] });
-        applyPageSetup(tocWs, { orientation: "portrait", printTitleRows: 4 });
+        applyCellMerges(tocWs, [
+          { startRow: 0, endRow: 0, startCol: 0, endCol: 3 },
+          { startRow: 1, endRow: 1, startCol: 0, endCol: 3 },
+          { startRow: 2, endRow: 2, startCol: 0, endCol: 3 }
+        ]);
+        applyRowHeights(tocWs, tocAoa, { titleRows: [0, 1], emptyRows: [3, 7] });
+        applyPageSetup(tocWs, { orientation: "portrait", printTitleRows: 9 });
         sheetMetadata.forEach((m, i) => {
-          const row2 = i + 5;
+          const row2 = i + 10;
           const nameAddr = UtilsX.a1(row2, 2);
           if (tocWs[nameAddr]) {
             tocWs[nameAddr].l = { Target: `#'${m.name.replace(/'/g, "''")}'!A1`, Tooltip: `${m.name}へ移動` };
@@ -3257,7 +3418,7 @@ ${body}`;
         const tocName = makeSafeSheetName("目次", new Set(wb.SheetNames));
         wb.Sheets[tocName] = tocWs;
         wb.SheetNames.unshift(tocName);
-        printTitleConfigs.push({ sheetName: tocName, rows: 4 });
+        printTitleConfigs.push({ sheetName: tocName, rows: 9 });
       }
       if (printTitleConfigs.length) {
         wb.Workbook = wb.Workbook || {};

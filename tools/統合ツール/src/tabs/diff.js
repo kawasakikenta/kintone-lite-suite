@@ -426,6 +426,9 @@ export function saveCurrentDialogState() {
     targetAppId: ui.targetApp.value.trim(),
     targetGuestId: ui.targetGuest.value.trim(),
     targetPreview: ui.targetPreview.checked,
+    connectionSearchKeyword: ui.connectionSearchKeyword?.value?.trim?.() || '',
+    connectionSearchGuest: ui.connectionSearchGuest?.value?.trim?.() || '',
+    connectionSearchAssign: ui.connectionSearchAssign?.value || 'source',
     lookupMap: ui.lookupMap.value.trim(),
     ignoreKeys: ui.ignoreKeys.value.trim(),
     ignorePresetFieldOrder: !!ui.ignorePresetFieldOrder?.checked,
@@ -454,6 +457,11 @@ export function saveCurrentDialogState() {
     nodeMode: state.activeSubTabs.reflect === 'diff',
     reflectSimpleMode: !!ui.reflectSimpleMode?.checked,
     reflectDetailTab: state.reflectDetailTab,
+    reflectApplyChecklist: {
+      diff: !!state.reflectApplyChecklist?.diff,
+      plan: !!state.reflectApplyChecklist?.plan,
+      target: !!state.reflectApplyChecklist?.target
+    },
     doDeploy: ui.doDeploy.checked,
     overwriteField: ui.overwriteField.checked,
     deployField: ui.deployField.checked,
@@ -474,7 +482,20 @@ export function saveCurrentDialogState() {
     recordBackupIncludeFiles: !!ui.recordBackupIncludeFiles?.checked,
     recordBackupIncludeComments: !!ui.recordBackupIncludeComments?.checked,
     diffHideViewed: !!state.diffHideViewed,
-    diffViewedKeys: [...(state.diffViewedKeys || new Set())].slice(0, 2000)
+    diffViewedKeys: [...(state.diffViewedKeys || new Set())].slice(0, 2000),
+    diffReviewMeta: Object.fromEntries(
+      Object.entries(state.diffReviewMeta || {})
+        .filter(([key, value]) => key && value && typeof value === 'object')
+        .slice(0, 2000)
+        .map(([key, value]) => [
+          key,
+          {
+            status: value.status === 'todo' || value.status === 'ignored' ? value.status : '',
+            note: String(value.note || '').trim().slice(0, 500)
+          }
+        ])
+        .filter(([, value]) => value.status || value.note)
+    )
   });
 }
 
@@ -506,6 +527,9 @@ export function restoreDialogState() {
   if (saved.targetAppId != null) ui.targetApp.value = String(saved.targetAppId);
   if (saved.targetGuestId != null) ui.targetGuest.value = String(saved.targetGuestId);
   if (saved.targetPreview != null) ui.targetPreview.checked = !!saved.targetPreview;
+  if (saved.connectionSearchKeyword != null && ui.connectionSearchKeyword) ui.connectionSearchKeyword.value = String(saved.connectionSearchKeyword);
+  if (saved.connectionSearchGuest != null && ui.connectionSearchGuest) ui.connectionSearchGuest.value = String(saved.connectionSearchGuest);
+  if (saved.connectionSearchAssign != null && ui.connectionSearchAssign) ui.connectionSearchAssign.value = String(saved.connectionSearchAssign || 'source');
   if (saved.lookupMap != null) ui.lookupMap.value = String(saved.lookupMap);
   if (saved.ignoreKeys != null) ui.ignoreKeys.value = String(saved.ignoreKeys);
   if (saved.ignorePresetFieldOrder != null && ui.ignorePresetFieldOrder) ui.ignorePresetFieldOrder.checked = !!saved.ignorePresetFieldOrder;
@@ -540,6 +564,13 @@ export function restoreDialogState() {
   if (saved.reflectSimpleMode != null && ui.reflectSimpleMode) ui.reflectSimpleMode.checked = !!saved.reflectSimpleMode;
   if (ui.reflectSimpleMode?.checked) ui.nodeMode.checked = false;
   if (saved.reflectDetailTab != null) state.reflectDetailTab = String(saved.reflectDetailTab || 'diff');
+  if (saved.reflectApplyChecklist && typeof saved.reflectApplyChecklist === 'object') {
+    state.reflectApplyChecklist = {
+      diff: !!saved.reflectApplyChecklist.diff,
+      plan: !!saved.reflectApplyChecklist.plan,
+      target: !!saved.reflectApplyChecklist.target
+    };
+  }
   if (saved.doDeploy != null) ui.doDeploy.checked = !!saved.doDeploy;
   if (saved.overwriteField != null) ui.overwriteField.checked = !!saved.overwriteField;
   if (saved.deployField != null) ui.deployField.checked = !!saved.deployField;
@@ -561,6 +592,15 @@ export function restoreDialogState() {
   if (saved.diffHideViewed != null) state.diffHideViewed = !!saved.diffHideViewed;
   if (Array.isArray(saved.diffViewedKeys)) {
     state.diffViewedKeys = new Set(saved.diffViewedKeys.filter((k) => typeof k === 'string' && k.length));
+  }
+  if (saved.diffReviewMeta && typeof saved.diffReviewMeta === 'object') {
+    state.diffReviewMeta = {};
+    Object.entries(saved.diffReviewMeta).slice(0, 2000).forEach(([key, value]) => {
+      if (!key || !value || typeof value !== 'object') return;
+      const status = value.status === 'todo' || value.status === 'ignored' ? value.status : '';
+      const note = String(value.note || '').trim().slice(0, 500);
+      if (status || note) state.diffReviewMeta[key] = { status, note };
+    });
   }
   if (saved.launcherSortMode != null) {
     state.launcherSortMode = String(saved.launcherSortMode) === 'usage' ? 'usage' : 'onboarding';

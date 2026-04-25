@@ -34,10 +34,14 @@ export function buildRoot(targetDocument = document, options = {}) {
   const renderFeatureCard = (f) => {
     const recommended = Array.isArray(f.recommendedFor) ? f.recommendedFor : [];
     const tier = primaryFeatureKeys.has(f.key) ? 'primary' : 'secondary';
-    return `<div class="feature-card feature-card--${tier}" data-act="openFeature" data-feature="${f.key}" data-launcher-tier="${tier}" role="button" tabindex="0">
+    const orderLabel = Number.isFinite(f.usageOrder) ? String(f.usageOrder).padStart(2, '0') : '--';
+    return `<div class="feature-card feature-card--${tier}" data-act="openFeature" data-feature="${f.key}" data-group="${f.group || ''}" data-launcher-tier="${tier}" role="button" tabindex="0" aria-label="${esc(f.label)} を開く">
       <div class="feature-card-top">
         <div class="feature-card-icon">${f.icon || ''}</div>
-        <div class="feature-card-group">${esc(f.groupLabel || '')}</div>
+        <div class="feature-card-meta">
+          <div class="feature-card-order">${orderLabel}</div>
+          <div class="feature-card-group">${esc(f.groupLabel || '')}</div>
+        </div>
       </div>
       <div class="feature-card-badges">
         ${f.badge ? `<span class="feature-badge feature-badge--${f.badge.tone || 'recommended'}" aria-label="バッジ: ${esc(f.badge.label || '')}">
@@ -115,14 +119,35 @@ export function buildRoot(targetDocument = document, options = {}) {
               <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
               <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
             </div>
-            <details class="diff-fold">
+            <div class="connection-preset-panel" aria-labelledby="conn-preset-heading">
+              <div class="connection-preset-head">
+                <div>
+                  <div class="connection-preset-title" id="conn-preset-heading">接続プリセット</div>
+                  <div class="connection-preset-desc">よく使う比較元・比較先・ゲスト設定を保存して、次回すぐ呼び出せます。</div>
+                </div>
+                <div class="connection-preset-count" id="u_connectionPresetSummary">保存なし</div>
+              </div>
+              <div class="connection-preset-controls">
+                <select id="u_connectionPresetSelect" class="connection-preset-select" aria-label="接続プリセットを選択">
+                  <option value="">（保存済みプリセットなし）</option>
+                </select>
+                <button type="button" class="btn sub" data-act="applyConnectionPreset">読み込み</button>
+                <button type="button" class="btn sub" data-act="deleteConnectionPreset">削除</button>
+              </div>
+              <div class="connection-preset-save">
+                <input type="text" id="u_connectionPresetName" placeholder="プリセット名（任意）" autocomplete="off">
+                <button type="button" class="btn sub" data-act="saveConnectionPreset">現在の接続を保存</button>
+              </div>
+            </div>
+            <details class="diff-fold connection-app-search" open>
               <summary class="diff-fold-summary">
-                <span class="diff-fold-title">アプリ名で検索してID入力（任意）</span>
-                <span class="diff-fold-sub">用途に合わせて比較元/比較先/複数比較先へ追加</span>
+                <span class="diff-fold-title">アプリID検索・入力支援</span>
+                <span class="diff-fold-sub">アプリ名、ID、URLから比較元/比較先/複数比較先へ追加</span>
               </summary>
               <div class="diff-fold-body">
-                <div class="btns" style="align-items:center;gap:8px;flex-wrap:wrap">
-                  <input type="text" id="u_connectionSearchKeyword" placeholder="アプリ名の一部" style="min-width:200px;flex:1" autocomplete="off">
+                <div class="connection-search-grid">
+                  <input type="text" id="u_connectionSearchKeyword" placeholder="アプリ名 / アプリID / URL" autocomplete="off">
+                  <input type="text" id="u_connectionSearchGuest" placeholder="検索用ゲストID（任意）" autocomplete="off">
                   <select id="u_connectionSearchAssign" style="max-width:220px">
                     <option value="source">比較元に設定</option>
                     <option value="target">比較先に設定</option>
@@ -131,7 +156,7 @@ export function buildRoot(targetDocument = document, options = {}) {
                   </select>
                   <button type="button" class="btn sub" data-act="connectionSearchApps">検索</button>
                 </div>
-                <div id="u_connectionSearchResult" class="result" style="margin-top:6px;max-height:220px"></div>
+                <div id="u_connectionSearchResult" class="result connection-search-result"></div>
               </div>
             </details>
             <details class="diff-fold diff-fold--lookup">
@@ -459,10 +484,82 @@ export function buildRoot(targetDocument = document, options = {}) {
             </div>
 
           <div class="launcher-menu" id="u_launcherMenu">
-            <div class="launcher-menu-head">
-              <p class="launcher-lead">作業メニュー</p>
-              <p class="launcher-tagline">メイン機能を最初に大きく表示し、細かい機能は必要なときだけ表示します。</p>
+            <div class="launcher-menu-head launcher-hero">
+              <div class="launcher-hero-copy">
+                <p class="launcher-kicker">Unified Operations</p>
+                <p class="launcher-lead">変更作業ダッシュボード</p>
+                <p class="launcher-tagline">差分確認、反映、記録、保守をこの画面から開始します。</p>
+              </div>
+              <div class="launcher-metrics" aria-label="機能数">
+                <span><strong>${primaryFeatures.length}</strong> 主要</span>
+                <span><strong>${secondaryFeatureCount}</strong> 補助</span>
+                <span><strong>${launcherFeatures.length}</strong> 全機能</span>
+              </div>
             </div>
+            <div class="change-wizard" aria-label="変更作業ウィザード">
+              <div class="change-wizard-head">
+                <div>
+                  <p class="change-wizard-kicker">Guided Flow</p>
+                  <p class="change-wizard-title">変更作業ウィザード</p>
+                  <p class="change-wizard-desc">接続確認から差分比較、反映前確認、プレビュー反映、記録出力まで順番に進めます。</p>
+                </div>
+                <button type="button" class="btn change-wizard-start" data-act="startChangeWizard">開始</button>
+              </div>
+              <div class="launcher-flow" aria-label="基本フロー">
+                <button type="button" class="launcher-flow-step is-primary" data-act="openWizardStep" data-wizard-step="connection">
+                  <span class="launcher-flow-no">01</span>
+                  <span class="launcher-flow-copy">
+                    <span class="launcher-flow-main">接続確認</span>
+                    <span class="launcher-flow-sub">アプリIDとゲストID</span>
+                  </span>
+                </button>
+                <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="diff">
+                  <span class="launcher-flow-no">02</span>
+                  <span class="launcher-flow-copy">
+                    <span class="launcher-flow-main">差分比較</span>
+                    <span class="launcher-flow-sub">設定差分を取得</span>
+                  </span>
+                </button>
+                <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="plan">
+                  <span class="launcher-flow-no">03</span>
+                  <span class="launcher-flow-copy">
+                    <span class="launcher-flow-main">プラン確認</span>
+                    <span class="launcher-flow-sub">反映内容を確認</span>
+                  </span>
+                </button>
+                <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="apply">
+                  <span class="launcher-flow-no">04</span>
+                  <span class="launcher-flow-copy">
+                    <span class="launcher-flow-main">プレビュー反映</span>
+                    <span class="launcher-flow-sub">比較先へ書き込み</span>
+                  </span>
+                </button>
+                <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="design">
+                  <span class="launcher-flow-no">05</span>
+                  <span class="launcher-flow-copy">
+                    <span class="launcher-flow-main">記録出力</span>
+                    <span class="launcher-flow-sub">設計書・差分資料</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <section class="work-history-panel" id="u_workHistoryPanel" aria-label="作業履歴・復元">
+              <div class="work-history-head">
+                <div>
+                  <p class="work-history-kicker">Restore Point</p>
+                  <p class="work-history-title">作業履歴・復元</p>
+                  <p class="work-history-desc">接続先、スコープ、フィルタ、レビュー状態を保存して、あとから同じ作業条件へ戻します。</p>
+                </div>
+                <div class="work-history-actions">
+                  <span class="work-history-summary" id="u_workHistorySummary">履歴なし</span>
+                  <button type="button" class="btn sub" data-act="saveWorkHistory">現在の作業を保存</button>
+                  <button type="button" class="btn sub" data-act="clearWorkHistory">クリア</button>
+                </div>
+              </div>
+              <div class="work-history-list" id="u_workHistoryList" aria-live="polite">
+                <div class="work-history-empty">まだ保存された作業はありません</div>
+              </div>
+            </section>
             <section class="launcher-section launcher-section--primary" aria-label="メイン機能">
               <div class="launcher-section-head">
                 <p class="launcher-section-title">よく使うメイン機能</p>
@@ -753,6 +850,17 @@ export function buildRoot(targetDocument = document, options = {}) {
                 <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>
                 <div class="reflect-footer-options" id="u_reflectOptionsCard">
                   <div class="reflect-footer-options__label">反映前の安全設定</div>
+                  <div class="reflect-apply-checklist" id="u_reflectApplyChecklist" aria-label="反映前チェックリスト">
+                    <div class="reflect-apply-checklist__head">
+                      <span>反映前チェック</span>
+                      <span id="u_reflectChecklistStatus">0 / 3</span>
+                    </div>
+                    <div class="reflect-apply-checklist__items">
+                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="diff"> 差分比較済み</label>
+                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="plan"> 実行前プラン確認済み</label>
+                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="target"> 反映先は比較先プレビュー</label>
+                    </div>
+                  </div>
                   <div class="reflect-footer-options__chips">
                     <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存</label>
                     <label class="chip" title="APIエラーが出た時点で残りの反映を止めます"><input type="checkbox" id="u_stopOnError" checked> エラー時中断</label>
@@ -1472,15 +1580,30 @@ export function buildRoot(targetDocument = document, options = {}) {
 
             <div class="pane" data-pane="analyze">
               <div class="subtabs">
-                <button class="subtab active" data-subtab-parent="analyze" data-subtab="fieldImpact">影響分析</button>
+                <button class="subtab active" data-subtab-parent="analyze" data-subtab="dashboard">ダッシュボード</button>
+                <button class="subtab" data-subtab-parent="analyze" data-subtab="fieldImpact">影響分析</button>
                 <button class="subtab" data-subtab-parent="analyze" data-subtab="notifications">通知設定</button>
                 <button class="subtab" data-subtab-parent="analyze" data-subtab="permissions">権限</button>
                 <button class="subtab" data-subtab-parent="analyze" data-subtab="layoutPreview">レイアウト</button>
                 <button class="subtab" data-subtab-parent="analyze" data-subtab="fieldGraph">依存グラフ</button>
               </div>
 
+              <!-- サブペイン: ダッシュボード -->
+              <div class="subpane active" data-subpane-parent="analyze" data-subpane="dashboard">
+                <div class="subpane-note">比較元アプリのフィールド参照、通知、権限、レイアウト、カスタマイズをまとめて確認します。詳細調査が必要な領域へすぐ移動できます。</div>
+                <section class="opt-card analyze-dashboard-card">
+                  <div class="opt-title">影響分析ダッシュボード</div>
+                  <div class="btns" style="margin-top:8px">
+                    <button type="button" class="btn" data-act="runAnalyzeDashboard">ダッシュボードを更新</button>
+                    <button type="button" class="btn sub" data-act="openAnalyzeSubtab" data-analyze-subtab="fieldImpact">フィールド詳細へ</button>
+                    <button type="button" class="btn sub" data-act="openAnalyzeSubtab" data-analyze-subtab="fieldGraph">依存グラフへ</button>
+                  </div>
+                  <div id="u_analyzeDashboardResult" class="result analyze-dashboard-result"></div>
+                </section>
+              </div>
+
               <!-- サブペイン: 影響分析 -->
-              <div class="subpane active" data-subpane-parent="analyze" data-subpane="fieldImpact">
+              <div class="subpane" data-subpane-parent="analyze" data-subpane="fieldImpact">
                 <div class="subpane-note">フィールドコードがビュー・計算式・プロセス等でどこから参照されているかを横断検索します。未使用候補の確認もここに集約しました。</div>
                 <section class="opt-card" style="margin:12px">
                   <div class="opt-title">フィールドコード影響分析</div>

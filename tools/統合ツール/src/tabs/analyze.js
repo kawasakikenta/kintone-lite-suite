@@ -157,7 +157,7 @@ function ensureAnalyzeEnhancementStyles() {
   font-size:20px;
   font-weight:900;
   color:#0f172a;
-  letter-spacing:-0.02em;
+  letter-spacing:0;
 }
 #kintone-unified-suite-v2 .analyze-stat-note{
   margin-top:4px;
@@ -359,6 +359,345 @@ async function ensureAnalyzeTargetBundle(options = {}) {
   _analyzeTargetBundle = bundle;
   _analyzeTargetBundleSig = sig;
   return bundle;
+}
+
+function countCollection(value, key) {
+  const source = key ? value?.[key] : value;
+  if (Array.isArray(source)) return source.length;
+  if (source && typeof source === 'object' && !source._fetchError) return Object.keys(source).length;
+  return 0;
+}
+
+function countCustomizeFiles(customizeSettings) {
+  if (!customizeSettings || customizeSettings._fetchError) return 0;
+  const countBucket = (bucket) => ['js', 'css'].reduce((sum, key) => {
+    const list = bucket?.[key];
+    return sum + (Array.isArray(list) ? list.length : 0);
+  }, 0);
+  return countBucket(customizeSettings.desktop || {}) + countBucket(customizeSettings.mobile || {});
+}
+
+function collectFetchIssues(bundle) {
+  return SECTION_DEFS
+    .map((section) => {
+      const payload = bundle.sections?.[section.key];
+      if (!payload?._fetchError) return null;
+      return {
+        key: section.key,
+        label: section.label,
+        message: String(payload._fetchError || '')
+      };
+    })
+    .filter(Boolean);
+}
+
+function getTopDependencyNodes(graphData, limit = 6) {
+  const codes = Object.keys(graphData?.allFields || {});
+  return codes.map((code) => {
+    const field = graphData.allFields[code] || {};
+    const incoming = graphData.incomingMap.get(code) || [];
+    const outgoing = graphData.outgoingMap.get(code) || [];
+    return {
+      code,
+      label: field.label || '',
+      type: field.type || '',
+      incoming: incoming.length,
+      outgoing: outgoing.length,
+      total: incoming.length + outgoing.length
+    };
+  })
+    .filter((row) => row.total > 0)
+    .sort((a, b) => b.total - a.total || b.incoming - a.incoming || a.code.localeCompare(b.code))
+    .slice(0, limit);
+}
+
+function buildAnalyzeDashboardData(bundle) {
+  const c = commonParams();
+  const fields = collectFieldDefinitions(
+    bundle.sections?.fieldSettings?.properties || bundle.sections?.fieldSettings || {}
+  );
+  const fieldRows = buildFieldImpactRows(bundle);
+  const usedFields = fieldRows.filter((row) => row.refCount > 0);
+  const unusedFields = fieldRows.filter((row) => row.refCount === 0);
+  const highImpactFields = fieldRows.filter((row) => row.refCount >= 3);
+  const notificationRows = buildNotificationRows(bundle);
+  const permissionData = buildPermissionMatrixData(bundle);
+  const layoutData = bundle.sections?.layoutSettings;
+  const layoutSummary = layoutData && !layoutData._fetchError
+    ? collectLayoutSummary(layoutData.layout || [], fields)
+    : null;
+  const graphData = buildFieldGraphData(bundle, { hideIsolated: false });
+  const processSettings = bundle.sections?.processSettings || {};
+  const customizeFiles = countCustomizeFiles(bundle.sections?.customizeSettings);
+  const fetchIssues = collectFetchIssues(bundle);
+  const permissionTotal = permissionData.appRows.length + permissionData.fieldRows.length + permissionData.recordRows.length;
+  const appName = String(
+    bundle.sections?.appSettings?.name
+    || bundle.sections?.appInfo?.name
+    || ''
+  ).trim();
+
+  return {
+    appId: c.source.appId || bundle.appId || '',
+    appName,
+    guestId: c.source.guestId || bundle.guestId || '',
+    preview: !!c.source.preview,
+    fetchedAt: bundle.fetchedAt || '',
+    fieldRows,
+    fieldCount: fieldRows.length,
+    usedFields,
+    unusedFields,
+    highImpactFields,
+    notificationRows,
+    permissionData,
+    permissionTotal,
+    layoutSummary,
+    graphData,
+    viewCount: countCollection(bundle.sections?.viewSettings, 'views'),
+    reportCount: countCollection(bundle.sections?.reportSettings, 'reports'),
+    processStateCount: countCollection(processSettings, 'states'),
+    processActionCount: countCollection(processSettings, 'actions'),
+    pluginCount: countCollection(bundle.sections?.pluginSettings, 'plugins'),
+    customizeFiles,
+    fetchIssues,
+    topDependencies: getTopDependencyNodes(graphData),
+    topFields: usedFields.slice(0, 8)
+  };
+}
+
+function getDashboardAttentionItems(data) {
+  const items = [];
+  if (data.fetchIssues.length) {
+    items.push({
+      tone: 'danger',
+      title: '取得失敗があります',
+      value: `${data.fetchIssues.length}件`,
+      note: data.fetchIssues.slice(0, 3).map((item) => item.label).join(' / '),
+      subtab: 'dashboard'
+    });
+  }
+  if (data.highImpactFields.length) {
+    items.push({
+      tone: 'warn',
+      title: '参照数が多いフィールド',
+      value: `${data.highImpactFields.length}件`,
+      note: '変更前にビュー・計算式・通知・権限の確認を推奨',
+      subtab: 'fieldImpact'
+    });
+  }
+  if (data.unusedFields.length) {
+    items.push({
+      tone: 'info',
+      title: '未使用候補',
+      value: `${data.unusedFields.length}件`,
+      note: '削除候補ではなく、まず運用上の利用有無を確認',
+      subtab: 'fieldImpact',
+      filter: 'unused'
+    });
+  }
+  if (data.graphData.edgeCount) {
+    items.push({
+      tone: 'info',
+      title: 'フィールド依存',
+      value: `${data.graphData.edgeCount}本`,
+      note: '計算式・ルックアップ等のフィールド間関係',
+      subtab: 'fieldGraph'
+    });
+  }
+  if (data.permissionData.fieldRows.length || data.permissionData.recordRows.length) {
+    items.push({
+      tone: 'warn',
+      title: '個別権限',
+      value: `${data.permissionData.fieldRows.length + data.permissionData.recordRows.length}件`,
+      note: 'フィールド/レコード権限は反映前に対象者を確認',
+      subtab: 'permissions'
+    });
+  }
+  if (data.notificationRows.length) {
+    items.push({
+      tone: 'info',
+      title: '通知設定',
+      value: `${data.notificationRows.length}件`,
+      note: '条件・宛先の意図確認に移動できます',
+      subtab: 'notifications'
+    });
+  }
+  if (data.layoutSummary?.unplacedCodes?.length) {
+    items.push({
+      tone: 'warn',
+      title: 'レイアウト外フィールド',
+      value: `${data.layoutSummary.unplacedCodes.length}件`,
+      note: 'フォーム配置されていない項目があります',
+      subtab: 'layoutPreview'
+    });
+  }
+  if (data.customizeFiles) {
+    items.push({
+      tone: 'info',
+      title: 'JS/CSSカスタマイズ',
+      value: `${data.customizeFiles}件`,
+      note: '画面挙動への影響を別途確認',
+      subtab: 'dashboard'
+    });
+  }
+  return items;
+}
+
+function renderDashboardAttention(items) {
+  if (!items.length) {
+    return '<div class="analyze-dashboard-empty">大きな確認ポイントは見つかりませんでした。詳細タブで個別確認できます。</div>';
+  }
+  return `<div class="analyze-dashboard-attention">${items.map((item) => `
+    <section class="analyze-dashboard-attention-item analyze-dashboard-attention-item--${esc(item.tone)}">
+      <div class="analyze-dashboard-attention-main">
+        <div class="analyze-dashboard-attention-title">${esc(item.title)}</div>
+        <div class="analyze-dashboard-attention-note">${esc(item.note || '-')}</div>
+      </div>
+      <div class="analyze-dashboard-attention-side">
+        <div class="analyze-dashboard-attention-value">${esc(item.value)}</div>
+        ${item.subtab && item.subtab !== 'dashboard'
+          ? `<button type="button" class="btn sub" data-act="openAnalyzeSubtab" data-analyze-subtab="${esc(item.subtab)}" data-analyze-filter="${esc(item.filter || '')}">詳細へ</button>`
+          : ''}
+      </div>
+    </section>
+  `).join('')}</div>`;
+}
+
+function renderDashboardList(rows, options = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return `<div class="analyze-dashboard-empty">${esc(options.empty || '該当なし')}</div>`;
+  return `<div class="analyze-dashboard-list">${list.slice(0, options.limit || 6).map((row) => `
+    <div class="analyze-dashboard-list-row">
+      <div class="analyze-dashboard-list-main">
+        <div class="analyze-dashboard-list-title">${esc(row.code || row.title || '-')}</div>
+        <div class="analyze-dashboard-list-note">${esc(row.label || row.note || row.type || '-')}</div>
+      </div>
+      <div class="analyze-dashboard-list-metric">${esc(row.metric || row.refCount || row.total || 0)}</div>
+    </div>
+  `).join('')}</div>`;
+}
+
+function renderAnalyzeDashboard(data) {
+  const attentionItems = getDashboardAttentionItems(data);
+  const riskLevel = attentionItems.filter((item) => item.tone === 'danger' || item.tone === 'warn').length;
+  const fetchedAt = data.fetchedAt ? new Date(data.fetchedAt).toLocaleString() : '-';
+  const topFields = data.topFields.map((row) => ({
+    code: row.code,
+    label: row.label || row.type,
+    metric: `${row.refCount}参照`
+  }));
+  const dependencyRows = data.topDependencies.map((row) => ({
+    code: row.code,
+    label: `${row.label || row.type || '-'} / 入:${row.incoming} 出:${row.outgoing}`,
+    metric: row.total
+  }));
+  const unusedRows = data.unusedFields.slice(0, 6).map((row) => ({
+    code: row.code,
+    label: row.label || row.type,
+    metric: '未使用'
+  }));
+
+  return `
+    <div class="analyze-dashboard-hero">
+      <div class="analyze-dashboard-hero-main">
+        <div class="analyze-dashboard-kicker">影響分析ダッシュボード</div>
+        <div class="analyze-dashboard-title">${esc(data.appName || `App ${data.appId}`)}</div>
+        <div class="analyze-dashboard-meta">
+          <span>App ${esc(data.appId || '-')}</span>
+          <span>${esc(data.preview ? 'プレビュー' : '本番')}</span>
+          <span>${data.guestId ? `Guest ${esc(data.guestId)}` : '通常スペース'}</span>
+          <span>${esc(fetchedAt)}</span>
+        </div>
+      </div>
+      <div class="analyze-dashboard-risk">
+        <div class="analyze-dashboard-risk-label">要確認</div>
+        <div class="analyze-dashboard-risk-value">${riskLevel}</div>
+      </div>
+    </div>
+    ${renderAnalyzeStatGrid([
+      { label: '総フィールド', value: data.fieldCount, note: `未使用候補 ${data.unusedFields.length}` },
+      { label: '参照あり', value: data.usedFields.length, note: `高参照 ${data.highImpactFields.length}` },
+      { label: '依存エッジ', value: data.graphData.edgeCount, note: `孤立 ${data.graphData.isolatedCount}` },
+      { label: '通知', value: data.notificationRows.length, note: '一般/条件/リマインダー' },
+      { label: '権限設定', value: data.permissionTotal, note: `対象 ${data.permissionData.uniqueEntityCount}` },
+      { label: 'レイアウト外', value: data.layoutSummary?.unplacedCodes?.length || 0, note: 'フォーム未配置' }
+    ])}
+    <section class="analyze-dashboard-section">
+      <div class="analyze-dashboard-section-head">
+        <div>
+          <div class="analyze-dashboard-section-title">確認ポイント</div>
+          <div class="analyze-dashboard-section-note">反映や整理の前に見ておきたい領域です。</div>
+        </div>
+      </div>
+      ${renderDashboardAttention(attentionItems)}
+    </section>
+    <div class="analyze-dashboard-grid">
+      <section class="analyze-dashboard-panel">
+        <div class="analyze-dashboard-panel-head">
+          <div>
+            <div class="analyze-dashboard-panel-title">参照数上位フィールド</div>
+            <div class="analyze-dashboard-panel-note">変更影響が出やすい順</div>
+          </div>
+          <button type="button" class="btn sub" data-act="openAnalyzeSubtab" data-analyze-subtab="fieldImpact">開く</button>
+        </div>
+        ${renderDashboardList(topFields, { empty: '参照ありフィールドなし' })}
+      </section>
+      <section class="analyze-dashboard-panel">
+        <div class="analyze-dashboard-panel-head">
+          <div>
+            <div class="analyze-dashboard-panel-title">依存が多いフィールド</div>
+            <div class="analyze-dashboard-panel-note">入力/出力の関係が多い順</div>
+          </div>
+          <button type="button" class="btn sub" data-act="openAnalyzeSubtab" data-analyze-subtab="fieldGraph">開く</button>
+        </div>
+        ${renderDashboardList(dependencyRows, { empty: '依存関係なし' })}
+      </section>
+      <section class="analyze-dashboard-panel">
+        <div class="analyze-dashboard-panel-head">
+          <div>
+            <div class="analyze-dashboard-panel-title">未使用候補</div>
+            <div class="analyze-dashboard-panel-note">参照なしとして検出</div>
+          </div>
+          <button type="button" class="btn sub" data-act="openAnalyzeSubtab" data-analyze-subtab="fieldImpact" data-analyze-filter="unused">開く</button>
+        </div>
+        ${renderDashboardList(unusedRows, { empty: '未使用候補なし' })}
+      </section>
+      <section class="analyze-dashboard-panel">
+        <div class="analyze-dashboard-panel-head">
+          <div>
+            <div class="analyze-dashboard-panel-title">設定ボリューム</div>
+            <div class="analyze-dashboard-panel-note">確認範囲の見積もり</div>
+          </div>
+        </div>
+        <div class="analyze-dashboard-mini-metrics">
+          <span>ビュー ${esc(data.viewCount)}</span>
+          <span>グラフ ${esc(data.reportCount)}</span>
+          <span>プロセス ${esc(data.processStateCount)}状態 / ${esc(data.processActionCount)}アクション</span>
+          <span>プラグイン ${esc(data.pluginCount)}</span>
+          <span>JS/CSS ${esc(data.customizeFiles)}</span>
+        </div>
+      </section>
+    </div>
+    ${data.fetchIssues.length ? `
+      <section class="analyze-dashboard-section">
+        <div class="analyze-dashboard-section-title">取得失敗セクション</div>
+        <div class="analyze-dashboard-fetch-issues">
+          ${data.fetchIssues.map((issue) => `<div><strong>${esc(issue.label)}</strong><span>${esc(issue.message)}</span></div>`).join('')}
+        </div>
+      </section>` : ''}`;
+}
+
+export async function runAnalyzeDashboard() {
+  const bundle = await ensureAnalyzeBundle();
+  const el = getToolDocument().getElementById('u_analyzeDashboardResult');
+  if (!el) throw new Error('結果表示エリアが見つかりません');
+  const data = buildAnalyzeDashboardData(bundle);
+  el.innerHTML = `
+    ${buildAnalyzeStaleNotice(_analyzeBundleSig, '接続条件が変わっています。再更新すると最新のダッシュボードになります。')}
+    ${renderAnalyzeDashboard(data)}
+  `;
+  setBusy(false);
+  setStatus(`影響分析ダッシュボードを更新しました (App ${data.appId})`);
 }
 
 function summarizeSectionRefs(refs) {

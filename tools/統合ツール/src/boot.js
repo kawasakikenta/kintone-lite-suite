@@ -63,6 +63,7 @@ import {
 } from './tabs/record.js';
 import { runApiTester, clearApiTesterHistory, renderApiTesterHistory, initApiTesterEnhancements } from './tabs/api-tester.js';
 import {
+  runAnalyzeDashboard,
   runFieldImpactAnalysis,
   exportFieldImpactCsv,
   runPermissionMatrix,
@@ -136,8 +137,12 @@ export function runKintoneUnifiedSuite(options = {}) {
     targetGuestLabel: $('#u_targetGuestLabel'),
     targetPreview: $('#u_targetPreview'),
     connectionSearchKeyword: $('#u_connectionSearchKeyword'),
+    connectionSearchGuest: $('#u_connectionSearchGuest'),
     connectionSearchAssign: $('#u_connectionSearchAssign'),
     connectionSearchResult: $('#u_connectionSearchResult'),
+    connectionPresetName: $('#u_connectionPresetName'),
+    connectionPresetSelect: $('#u_connectionPresetSelect'),
+    connectionPresetSummary: $('#u_connectionPresetSummary'),
     lookupMap: $('#u_lookupMap'),
     ignoreKeys: $('#u_ignoreKeys'),
     ignorePresetFieldOrder: $('#u_ignorePresetFieldOrder'),
@@ -187,6 +192,8 @@ export function runKintoneUnifiedSuite(options = {}) {
     reflectMode: $('#u_reflectMode'),
     reflectHint: $('#u_reflectHint'),
     applyDiffOnly: $('#u_applyDiffOnly'),
+    reflectApplyChecklist: $('#u_reflectApplyChecklist'),
+    reflectChecklistStatus: $('#u_reflectChecklistStatus'),
     autoBackupPreview: $('#u_autoBackupPreview'),
     backupStatus: $('#u_backupStatus'),
     stopOnError: $('#u_stopOnError'),
@@ -278,6 +285,9 @@ export function runKintoneUnifiedSuite(options = {}) {
     launcherActiveFilters: $('#u_launcherActiveFilters'),
     launcherVisibleCount: $('#u_launcherVisibleCount'),
     launcherEmptyState: $('#u_launcherEmptyState'),
+    workHistoryPanel: $('#u_workHistoryPanel'),
+    workHistorySummary: $('#u_workHistorySummary'),
+    workHistoryList: $('#u_workHistoryList'),
     copyTextToClipboard
   };
 
@@ -345,6 +355,7 @@ export function runKintoneUnifiedSuite(options = {}) {
     renderCustomizeResult,
     runBulkFieldRename,
     renderTemplateOptions,
+    runAnalyzeDashboard,
     runFieldImpactAnalysis,
     exportFieldImpactCsv,
     runPermissionMatrix,
