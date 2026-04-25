@@ -317,7 +317,7 @@
       REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
-        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, paramBuilder: (app) => ({ id: app }) },
+        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
         { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
         { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
         { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
@@ -730,7 +730,6 @@ ${contextLine}`);
     return "";
   }
   async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
-    const prefix = buildApiPrefix(guestId, preview);
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -746,6 +745,8 @@ ${contextLine}`);
       const def = SECTION_DEFS.find((x) => x.key === sec);
       if (!def) continue;
       try {
+        const sectionPreview = def.previewEndpoint === false ? false : preview;
+        const prefix = buildApiPrefix(guestId, sectionPreview);
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);

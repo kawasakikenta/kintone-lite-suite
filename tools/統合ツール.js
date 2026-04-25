@@ -340,7 +340,7 @@
       DIALOG_LARGE_HEIGHT = 940;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
-        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, paramBuilder: (app) => ({ id: app }) },
+        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
         { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
         { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
         { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
@@ -1438,7 +1438,6 @@ ${contextLine}`);
     return picked;
   }
   async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
-    const prefix = buildApiPrefix(guestId, preview);
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -1454,6 +1453,8 @@ ${contextLine}`);
       const def = SECTION_DEFS.find((x) => x.key === sec);
       if (!def) continue;
       try {
+        const sectionPreview = def.previewEndpoint === false ? false : preview;
+        const prefix = buildApiPrefix(guestId, sectionPreview);
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
@@ -4431,6 +4432,9 @@ ${body}`;
             <h3>注目差分</h3>
             <div class="highlight-list">${highlightCardsHtml}</div>
           </section>` : `<section class="panel"><h3>注目差分</h3><div class="muted-note">注目差分はありません。</div></section>`;
+    const diffTotal = summary.added + summary.removed + summary.changed;
+    const diffRate = summary.total ? Math.round(diffTotal / summary.total * 100) : 0;
+    const severitySummary = reportMeta.diffOverview?.severity || { high: 0, medium: 0, low: 0 };
     const compareSectionsHtml = shouldIncludeComparedContent(exportContentMode) && compareScopes.length ? compareScopes.map((secKey) => {
       const label = sectionLabelMap[secKey] || secKey;
       const sourceValue = compareSourceBundle?.sections?.[secKey];
@@ -6351,24 +6355,26 @@ ${body}`;
 
       if (!collapsedNow) {
         const displayRows = g.key === FIELD_SECTION_KEY ? collapseFieldRowsForDiffTable(g.rows) : g.rows;
-        const table = document.createElement('table');
-        table.className = 'diff-table';
-        table.innerHTML = '<thead><tr><th style="width:110px">種別</th><th style="width:260px">パス</th><th>比較元</th><th>比較先</th></tr></thead>';
-        const tbody = document.createElement('tbody');
+        const list = document.createElement('div');
+        list.className = 'diff-card-list';
         displayRows.forEach((row) => {
-          const tr = document.createElement('tr');
           const typeLabel = diffTypeLabel(row.type, row.moved);
           const cells = renderRowCells(row, useCharDiff);
           const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
-          tr.innerHTML =
-            '<td class="type ' + typeClass + '">' + escHtml(typeLabel) + '</td>' +
-            '<td class="path" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</td>' +
-            '<td class="cell">' + cells.left + '</td>' +
-            '<td class="cell">' + cells.right + '</td>';
-          tbody.appendChild(tr);
+          const card = document.createElement('article');
+          card.className = 'diff-card diff-card--' + typeClass;
+          card.innerHTML =
+            '<div class="diff-card-head">' +
+              '<span class="type-chip type-chip--' + typeClass + '">' + escHtml(typeLabel) + '</span>' +
+              '<div class="diff-card-path path" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</div>' +
+            '</div>' +
+            '<div class="diff-pane-grid">' +
+              '<section class="diff-pane"><div class="diff-pane-title">比較元</div><div class="cell">' + cells.left + '</div></section>' +
+              '<section class="diff-pane"><div class="diff-pane-title">比較先</div><div class="cell">' + cells.right + '</div></section>' +
+            '</div>';
+          list.appendChild(card);
         });
-        table.appendChild(tbody);
-        sec.appendChild(table);
+        sec.appendChild(list);
       }
       main.appendChild(sec);
     });
@@ -6600,7 +6606,17 @@ ${body}`;
     .meta-card:hover{border-color:var(--accent-soft)}
     .meta-card .label{display:block;font-size:10px;font-weight:700;color:var(--muted);margin-bottom:5px;letter-spacing:.02em}
     .meta-card .value{display:block;font-size:12px;font-weight:800;color:var(--fg);word-break:break-word}
-    .summary-strip{display:flex;gap:10px;flex-wrap:wrap;padding:18px;border-bottom:1px solid var(--border);background:var(--card)}
+    .summary-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:12px;padding:18px;border-bottom:1px solid var(--border);background:var(--card)}
+    .metric-card{position:relative;overflow:hidden;border:1px solid var(--border);border-radius:14px;background:linear-gradient(180deg,var(--card-soft),var(--card));padding:14px 16px;min-height:104px;box-shadow:0 8px 22px -16px rgba(15,23,42,.5)}
+    .metric-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--muted)}
+    .metric-card--total::before{background:var(--pill-total)}
+    .metric-card--diff::before,.metric-card--changed::before{background:var(--pill-chg)}
+    .metric-card--added::before{background:var(--pill-add)}
+    .metric-card--removed::before{background:var(--pill-del)}
+    .metric-card--severity::before{background:#dc2626}
+    .metric-label{font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+    .metric-value{margin-top:8px;font-size:28px;line-height:1;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums}
+    .metric-sub{margin-top:10px;font-size:11px;line-height:1.45;color:var(--muted)}
     .pill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:999px;padding:8px 14px;font-size:11px;background:var(--card-soft);font-weight:700;transition:border-color .15s,transform .1s}
     .pill:hover{border-color:var(--muted)}
     .pill .count{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
@@ -6651,6 +6667,27 @@ ${body}`;
     .sec-head:hover{filter:brightness(.985)}
     body.dark .sec-head:hover{filter:brightness(1.08)}
     .sec-meta{font-size:10px;font-weight:700;color:var(--muted)}
+    .diff-card-list{display:flex;flex-direction:column;gap:12px;padding:14px;background:var(--card-soft)}
+    .diff-card{border:1px solid var(--border);border-left:5px solid var(--border);border-radius:14px;background:var(--card);box-shadow:0 8px 20px -16px rgba(15,23,42,.45);overflow:hidden}
+    .diff-card--added{border-left-color:#16a34a}
+    .diff-card--removed{border-left-color:#dc2626}
+    .diff-card--changed{border-left-color:#ca8a04}
+    .diff-card--same{border-left-color:#0d9488}
+    .diff-card-head{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card),var(--card-soft))}
+    .type-chip{display:inline-flex;align-items:center;justify-content:center;min-width:62px;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:800;border:1px solid transparent;white-space:nowrap}
+    .type-chip--added{background:#dcfce7;color:#166534;border-color:#86efac}
+    .type-chip--removed{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+    .type-chip--changed{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+    .type-chip--same{background:#ccfbf1;color:#0f766e;border-color:#5eead4}
+    body.dark .type-chip--added{background:#14532d;color:#bbf7d0;border-color:#166534}
+    body.dark .type-chip--removed{background:#450a0a;color:#fecaca;border-color:#991b1b}
+    body.dark .type-chip--changed{background:#78350f;color:#fde68a;border-color:#b45309}
+    body.dark .type-chip--same{background:#134e4a;color:#99f6e4;border-color:#0f766e}
+    .diff-card-path{min-width:0}
+    .diff-pane-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:12px 14px 14px}
+    .diff-pane{min-width:0;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden}
+    .diff-pane-title{padding:8px 11px;border-bottom:1px solid var(--border);background:var(--pad);font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
+    .diff-pane .cell{display:block}
     .diff-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px}
     .diff-table th,.diff-table td{border-bottom:1px solid var(--border);padding:10px 12px;vertical-align:top;text-align:left}
     .diff-table th{position:sticky;top:0;background:var(--card);z-index:1;font-size:10px;font-weight:800;letter-spacing:.05em;color:var(--muted);text-transform:uppercase}
@@ -6671,7 +6708,7 @@ ${body}`;
     .meta-line{font-size:10px;line-height:1.5;color:var(--muted)}
     .meta-line strong{color:var(--fg)}
     .cell{padding:0;overflow:hidden}
-    .scroll{max-height:330px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+    .scroll{max-height:300px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
     .scroll::-webkit-scrollbar{width:6px;height:6px}
     .scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px}
     .line{display:flex;min-height:1.6em;line-height:1.6;padding:0 8px;white-space:pre-wrap;word-break:break-word}
@@ -6953,7 +6990,8 @@ ${body}`;
       .fd-overlay{padding:12px}
       .fd-overlay-head,.kf-modal-head{flex-direction:column;align-items:flex-start}
       .fd-overlay-actions{width:100%;justify-content:space-between}
-      .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid,.lp-row,.lp-subtable-grid,.lp-fallback-grid{grid-template-columns:1fr}
+      .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid,.lp-row,.lp-subtable-grid,.lp-fallback-grid,.diff-pane-grid{grid-template-columns:1fr}
+      .diff-card-head{grid-template-columns:1fr}
     }
     @media print{
       aside,.header-actions,.sb-panel .btn,.settings-tabs,.search-hint{display:none!important}
@@ -7051,14 +7089,13 @@ ${body}`;
           </section>
         </div>
 
-        <div class="summary-strip">
-          <span class="pill pill--total">総件数 <span class="count">${summary.total}</span></span>
-          <span class="pill pill--added">追加 <span class="count">${summary.added}</span></span>
-          <span class="pill pill--removed">削除 <span class="count">${summary.removed}</span></span>
-          <span class="pill pill--changed">変更 <span class="count">${summary.changed}</span></span>
-          <span class="pill pill--moved">移動 <span class="count">${summary.moved}</span></span>
-          <span class="pill pill--same">同一 <span class="count">${summary.same}</span></span>
-          <span class="pill pill--err">取得失敗 <span class="count">${fetchIssues.length}</span></span>
+        <div class="summary-strip" aria-label="差分サマリー">
+          <article class="metric-card metric-card--total"><div class="metric-label">総件数</div><div class="metric-value">${summary.total}</div><div class="metric-sub">表示対象に含まれる行数</div></article>
+          <article class="metric-card metric-card--diff"><div class="metric-label">差分</div><div class="metric-value">${diffTotal}</div><div class="metric-sub">全体の ${diffRate}% が変更対象</div></article>
+          <article class="metric-card metric-card--added"><div class="metric-label">追加</div><div class="metric-value">${summary.added}</div><div class="metric-sub">比較先に追加された設定</div></article>
+          <article class="metric-card metric-card--removed"><div class="metric-label">削除</div><div class="metric-value">${summary.removed}</div><div class="metric-sub">比較先から無くなった設定</div></article>
+          <article class="metric-card metric-card--changed"><div class="metric-label">変更 / 移動</div><div class="metric-value">${summary.changed}</div><div class="metric-sub">移動 ${summary.moved} / 同一 ${summary.same}</div></article>
+          <article class="metric-card metric-card--severity"><div class="metric-label">重要度</div><div class="metric-value">${severitySummary.high}</div><div class="metric-sub">高 / 中 ${severitySummary.medium} / 低 ${severitySummary.low} / 取得失敗 ${fetchIssues.length}</div></article>
         </div>
 
         <div class="info-grid">
@@ -8765,34 +8802,97 @@ ${body}`;
     const firstNonFieldScope = nonFieldScopes[0] || "";
     const safetyLabel = checklistDone === 3 && backupReady && stopOnError ? "準備OK" : "要見直し";
     const warnings = [];
-    if (!diffReady) warnings.push("差分比較がまだ最新ではありません。先にヘッダーで差分比較をやり直してください。");
+    if (!diffReady) warnings.push("差分比較がまだ最新ではありません。「差分比較」または「差分比較して候補作成」から最新化してください。");
     if (!scopeInfo.baseScopes.length && !isNode) warnings.push("「反映セクションを選ぶ」から、今回まとめて反映するセクションを選んでください。");
     if (scopeInfo.warning) warnings.push(scopeInfo.warning);
-    if (isNode && !state.reflectRows.length) warnings.push("差分を選んで反映モードです。まず「差分候補を読込」で候補を出してください。");
+    if (isNode && !state.reflectRows.length) warnings.push("差分を選んで反映モードです。まず「差分比較して候補作成」で候補を出してください。");
     if (checklistDone < 3) warnings.push("画面下の反映前チェックを完了してください。");
     if (!backupReady) warnings.push("バックアップ自動保存がOFFです。反映前に「今の比較先を保存」をおすすめします。");
-    const nodeLoadAction = isNode && !state.reflectRows.length ? '<button class="btn sub" data-act="loadReflectNodes">差分候補を読込</button>' : "";
+    const nodeLoadAction = isNode && !state.reflectRows.length ? `<button class="btn sub" data-act="${diffReady ? "loadReflectNodes" : "runDiffLoadReflectNodes"}">${diffReady ? "差分候補を読込" : "差分比較して候補作成"}</button>` : "";
     const scopeDiffAction = !isNode && actualDiffRows.length ? '<button class="btn sub" data-act="applyScopeDiffOnly">差分があるセクションだけ選ぶ</button>' : "";
     const fieldEditorAction = !isNode && scopeInfo.effectiveScopes.includes("fieldSettings") ? '<button class="btn sub" data-act="openReflectPreviewEditor">フィールド確認を開く</button>' : "";
     const sectionEditorAction = !isNode && firstNonFieldScope ? `<button class="btn sub" data-act="openSectionPreviewEditor" data-section="${esc(firstNonFieldScope)}">他設定を編集</button>` : "";
-    const guideActions = [
-      '<button class="btn sub" data-act="startGuidedTour">操作手順を開く</button>',
-      nodeLoadAction,
+    const selectedSrcCount = selectedNodeRows.filter((row) => deps.reflectRowModeById(row._id) === "src").length;
+    const selectedTgtCount = selectedNodeRows.length - selectedSrcCount;
+    const selectedSectionLabels = scopeInfo.effectiveScopes.map((key) => SECTION_DEFS.find((item) => item.key === key)?.label || key).slice(0, 6);
+    const selectionMeta = isNode ? `候補 ${state.reflectRows.length}件 / 選択 ${selectedNodeRows.length}件 / 比較元採用 ${selectedSrcCount}件 / 比較先維持 ${selectedTgtCount}件` : `${selectedSectionLabels.join("、") || "未選択"}${scopeInfo.effectiveScopes.length > 6 ? `、他${scopeInfo.effectiveScopes.length - 6}件` : ""}`;
+    const routeLabel = isNode ? "詳細ルート" : "標準ルート";
+    const routeTitle = isNode ? "個別差分を選んで反映" : "セクション単位で反映";
+    const routeSub = isNode ? "必要な差分だけを選び、採用元を切り替えて反映します。" : "差分があるセクションを選び、プラン確認後にまとめて反映します。";
+    const currentStep = !diffReady ? 1 : !targetCountValue ? 2 : !planReady ? 3 : 4;
+    const stepHtml = [
+      { no: 1, title: "差分を作る", meta: diffReady ? `最新差分 ${actualDiffRows.length}件` : "未実行または条件変更あり", done: diffReady },
+      { no: 2, title: "対象を選ぶ", meta: targetCountValue ? `${targetCountLabel} ${targetCountValue}件` : "反映対象が未選択", done: targetCountValue > 0 },
+      { no: 3, title: "プラン確認", meta: planReady ? `確認済み ${state.lastApplyPlan?.totalReq || 0}req` : "未確認", done: planReady },
+      { no: 4, title: "プレビュー反映", meta: checklistDone === 3 ? "チェック完了" : `チェック ${checklistDone}/3`, done: checklistDone === 3 && planReady }
+    ].map((step) => `<div class="reflect-flow-step${step.done ? " is-done" : ""}${currentStep === step.no ? " is-current" : ""}">
+      <div class="reflect-flow-step__no">${String(step.no).padStart(2, "0")}</div>
+      <div class="reflect-flow-step__body">
+        <div class="reflect-flow-step__title">${esc(step.title)}</div>
+        <div class="reflect-flow-step__meta">${esc(step.meta)}</div>
+      </div>
+    </div>`).join("");
+    const nextAction = !diffReady ? `<button class="btn btn-primary-emphasis" data-act="${isNode ? "runDiffLoadReflectNodes" : "runDiff"}">${isNode ? "差分比較して候補作成" : "差分比較を実行"}</button>` : !targetCountValue ? isNode ? state.reflectRows.length ? '<button class="btn btn-primary-emphasis" data-act="selectVisibleReflectNodes">表示中を選択</button>' : '<button class="btn btn-primary-emphasis" data-act="loadReflectNodes">差分候補を読込</button>' : '<button class="btn btn-primary-emphasis" data-act="openReflectScopePicker">反映セクションを選ぶ</button>' : !planReady ? '<button class="btn btn-primary-emphasis" data-act="previewApplyPlan">実行前プラン確認</button>' : '<button class="btn ok" data-act="applyPreview">プレビューへ反映</button>';
+    const modeSwitchAction = isNode ? '<button class="btn sub" data-act="reflectModeSection">セクション単位へ戻る</button>' : '<button class="btn sub" data-act="reflectModeNode">差分ごとに選ぶ</button>';
+    const planAction = targetCountValue ? '<button class="btn sub" data-act="previewApplyPlan">プラン確認</button>' : isNode ? state.reflectRows.length ? '<button class="btn sub" data-act="selectVisibleReflectNodes">表示中を選択</button>' : `<button class="btn sub" data-act="${diffReady ? "loadReflectNodes" : "runDiffLoadReflectNodes"}">${diffReady ? "差分候補を読込" : "差分比較して候補作成"}</button>` : '<button class="btn sub" data-act="openReflectScopePicker">対象を選ぶ</button>';
+    const jsonRouteAction = '<button class="btn sub" data-act="reflectModeJson">JSON詳細へ</button>';
+    const targetAdjustActions = [
       scopeDiffAction,
+      nodeLoadAction,
       fieldEditorAction,
       sectionEditorAction
     ].filter(Boolean).join("");
+    const routeSwitchActions = [
+      modeSwitchAction,
+      jsonRouteAction
+    ].filter(Boolean).join("");
     return `<div class="reflect-assist">
-    <div class="reflect-guide">
-      <div class="reflect-guide-head">
+    <div class="reflect-command-center">
+      <div class="reflect-command-head">
         <div>
-          <div class="reflect-guide-title">${isNode ? "一部だけ採用したい差分を選んで反映します" : "まずはここで、反映するセクションを決めます"}</div>
-          <div class="reflect-guide-sub">比較先アプリ ${esc(c.target.appId || "-")} / 反映先は常にプレビューです。差分は「差分比較」で最新化し、詳しい流れは「操作手順を開く」から確認できます。</div>
+          <div class="reflect-command-kicker">Preview Apply Route</div>
+          <div class="reflect-guide-title">${esc(routeTitle)}</div>
+          <div class="reflect-guide-sub">比較先 App ${esc(c.target.appId || "-")} / 書き込み先はプレビューAPIです。画面に出す操作は標準ルートに絞り、細かい調整は詳細ルートにまとめています。</div>
         </div>
-        <div class="reflect-guide-actions">
-          <span class="reflect-guide-badge">${esc(isNode ? "細かく選ぶモード" : "まず使うモード")}</span>
-          ${guideActions}
+        <div class="reflect-command-next">
+          <span class="reflect-guide-badge">${esc(routeLabel)}</span>
         </div>
+      </div>
+      <div class="reflect-flow">${stepHtml}</div>
+      <div class="reflect-route-panel">
+        <section class="reflect-route-primary">
+          <div class="reflect-route-primary__copy">
+            <div class="reflect-route-primary__label">${esc(routeLabel)}</div>
+            <div class="reflect-route-primary__title">${esc(routeTitle)}</div>
+            <div class="reflect-route-primary__meta">${esc(routeSub)} ${esc(selectionMeta || "未選択")}</div>
+          </div>
+          <div class="reflect-route-primary__action">${nextAction}</div>
+        </section>
+        <details class="reflect-route-details">
+          <summary>
+            <span>詳細ルート・補助操作</span>
+            <small>個別差分、JSON、本番比較、手動確認</small>
+          </summary>
+          <div class="reflect-route-detail-grid">
+            <section>
+              <div class="reflect-route-detail-title">ルート切替</div>
+              <div class="reflect-route-detail-actions">${routeSwitchActions}</div>
+            </section>
+            <section>
+              <div class="reflect-route-detail-title">対象調整</div>
+              <div class="reflect-route-detail-actions">${targetAdjustActions || '<span class="muted">現在の選択では追加調整はありません</span>'}</div>
+            </section>
+            <section>
+              <div class="reflect-route-detail-title">確認補助</div>
+              <div class="reflect-route-detail-actions">
+                ${planAction}
+                <button class="btn sub" data-act="runDiffAndPlan">差分比較してプラン</button>
+                <button class="btn sub" data-act="runPreviewProdDiff">プレビュー⇔本番を比較</button>
+                <button class="btn sub" data-act="markReflectTargetConfirmed">反映先を確認済みにする</button>
+              </div>
+            </section>
+          </div>
+        </details>
       </div>
     </div>
     <div class="reflect-summary-grid">
@@ -8817,7 +8917,7 @@ ${body}`;
       <div class="reflect-summary-meta">${esc(planReady ? `最新確認: ${planTime}` : "まだ実行前プラン確認をしていません")}</div>
       </div>
     </div>
-    <p class="reflect-action-hint">差分の再実行は<strong>上部の接続パネル（ヘッダー）</strong>から、実行前の確認と反映は<strong>画面下の固定バー</strong>から行います。フィールドは<strong>フィールド確認</strong>、それ以外は<strong>他設定を編集</strong>から比較先プレビューの内容を細かく調整できます。</p>
+    <p class="reflect-action-hint">基本は標準ルートだけで完結します。差分単位の採用元切替、JSON編集、本番との差分確認は「詳細ルート・補助操作」から開きます。</p>
     ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join("") : '<div class="reflect-good">このまま「実行前プラン確認」へ進めます。最終確認後に「プレビューへ反映」を実行してください。</div>'}
     ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? " / 必要なら「直前保存を戻す」で元に戻せます。" : ""}</div>` : ""}
   </div>`;
@@ -9176,30 +9276,7 @@ ${body}`;
   }
   function renderReflectHowto() {
     if (!ui3.reflectHowto) return;
-    const isNode = isReflectNodeModeEffective();
-    const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
-    const planSig = getCurrentReflectPlanSignature();
-    const planReady = !!(state.lastApplyPlan && planSig && state.lastApplyPlan.signature === planSig);
-    const selectedNodes = deps.getSelectedReflectRows().length;
-    const nodeRows = (state.reflectRows || []).length;
-    const modeLabel = isNode ? "差分選択モード" : "まとめて反映モード";
-    const nodeStep = isNode ? `<li style="margin:4px 0">${nodeRows > 0 ? "✅" : "⬜"} <strong>差分候補を読込</strong>して、反映したい差分だけ選ぶ（候補 ${nodeRows}件 / 選択 ${selectedNodes}件）</li>` : "";
-    const step1 = diffReady ? "✅" : "⬜";
-    const step2 = planReady ? "✅" : "⬜";
-    const step3 = planReady ? "▶" : "⬜";
-    ui3.reflectHowto.innerHTML = `
-    <details open style="border:1px solid #dbe3ed;border-radius:10px;background:#fff;padding:8px 10px">
-      <summary style="cursor:pointer;font-weight:700;color:#1e293b">進め方（${esc(modeLabel)}）</summary>
-      <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.7">
-        <ol style="margin:0;padding-left:18px">
-          <li style="margin:4px 0">${step1} <strong>差分比較</strong>を実行して最新差分を作成</li>
-          ${nodeStep}
-          <li style="margin:4px 0">${step2} 固定バーの<strong>実行前プラン確認</strong>で API 実行内容を確認</li>
-          <li style="margin:4px 0">${step3} 固定バーの<strong>プレビューへ反映</strong>を実行</li>
-        </ol>
-        <p class="muted" style="margin:8px 0 0;font-size:11px;line-height:1.6">差分比較は<strong>上部の接続パネル（ヘッダー）</strong>から、実行系は<strong>画面下の固定バー</strong>から行います。</p>
-      </div>
-    </details>`;
+    ui3.reflectHowto.innerHTML = "";
   }
   function getDiffCountsBySection() {
     const counts = {};
@@ -9440,52 +9517,86 @@ ${body}`;
       ).join("") : '<span class="muted" style="font-size:10px">未選択（すべて対象）</span>';
     }
     const filterProps = state.reflectPropertyFilters instanceof Set ? state.reflectPropertyFilters : /* @__PURE__ */ new Set();
+    const buildNodeSearchText = (r) => [
+      r.path || "",
+      r.section || "",
+      r.sectionKey || "",
+      r.type || "",
+      r.severity || "",
+      r.reasonSummary || "",
+      r.impactSummary || "",
+      r.renameCandidate ? `${r.renameCandidate.fromCode || ""} ${r.renameCandidate.toCode || ""}` : "",
+      ...(r.impactRefs || []).map((ref) => `${ref.section || ""} ${ref.kind || ""} ${ref.path || ""} ${ref.label || ""}`)
+    ].join("\n").toLowerCase();
     const filtered = rows.filter((r) => {
-      if (keyword && !(r.path || "").toLowerCase().includes(keyword) && !(r.section || "").toLowerCase().includes(keyword) && !(r.sectionKey || "").toLowerCase().includes(keyword)) return false;
+      if (keyword && !buildNodeSearchText(r).includes(keyword)) return false;
       if (filterSec && r.sectionKey !== filterSec) return false;
-      if (filterType && r.type !== filterType) return false;
+      if (filterType === "moved") {
+        if (!r.moved) return false;
+      } else if (filterType && r.type !== filterType) {
+        return false;
+      }
       if (filterSev && (r.severity || "low").toUpperCase() !== filterSev) return false;
       if (filterProps.size && !filterProps.has(extractPropertyKeyFromPath(r.path))) return false;
       return true;
     });
     const activeRow = deps.getActiveReflectRow(filtered.map((r) => r._id));
     const selected = state.reflectSelectedIds || /* @__PURE__ */ new Set();
-    const selectedCount = rows.filter((r) => selected.has(r._id)).length;
     const selectedRows = rows.filter((r) => selected.has(r._id));
+    const selectedCount = selectedRows.length;
     const srcCount = selectedRows.filter((r) => deps.reflectRowModeById(r._id) === "src").length;
     const tgtCount = selectedRows.length - srcCount;
     const sev = summarizeSeverity(selectedRows);
-    const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">候補 ${rows.length}件 / 表示 ${filtered.length}件 / 選択 ${selectedCount}件 / 比較元採用 ${srcCount} / 比較先維持 ${tgtCount} / 高:${sev.high} 中:${sev.medium} 低:${sev.low}</div>`;
+    const header = `<div class="reflect-node-list-summary">
+    <div class="reflect-node-list-summary__main">候補 ${rows.length}件 / 表示 ${filtered.length}件 / 選択 ${selectedCount}件</div>
+    <div class="reflect-node-list-summary__sub">比較元採用 ${srcCount} / 比較先維持 ${tgtCount} / 高 ${sev.high} / 中 ${sev.medium} / 低 ${sev.low}</div>
+  </div>`;
     renderReflectActiveFilterChips();
     if (!filtered.length) {
-      ui3.reflectNodeList.innerHTML = `${header}<div style="padding:12px;font-size:12px;color:#64748b">条件に一致するノードがありません。検索または絞り込み条件を見直してください。</div>`;
+      ui3.reflectNodeList.innerHTML = `${header}<div class="reflect-node-empty">条件に一致する差分候補がありません。検索または絞り込み条件を見直してください。</div>`;
       renderReflectNodeDetail();
       renderBundleState();
       renderReflectModeUi();
       renderReflectAssistPanel();
       return;
     }
-    const body = filtered.slice(0, 1200).map((r) => {
-      const cls = r.type === "added" ? "#166534" : r.type === "removed" ? "#b91c1c" : "#92400e";
+    const visibleRows = filtered.slice(0, 1200);
+    const truncatedCount = Math.max(0, filtered.length - visibleRows.length);
+    const body = visibleRows.map((r) => {
       const checked = selected.has(r._id) ? "checked" : "";
       const mode = deps.reflectRowModeById(r._id);
       const typeLabel = getDiffTypeDisplayLabel(r.type, { moved: !!r.moved });
       const severity = String(r.severity || "low").toLowerCase();
-      const sevBg = severity === "high" ? "#fee2e2" : severity === "medium" ? "#fef3c7" : "#dbeafe";
-      const sevColor = severity === "high" ? "#991b1b" : severity === "medium" ? "#92400e" : "#1d4ed8";
-      return `<tr class="reflect-node-row${activeRow?._id === r._id ? " active" : ""}" data-node-open="${esc(r._id)}">
-      <td><input type="checkbox" data-node-id="${esc(r._id)}" ${checked}></td>
-      <td><button type="button" data-node-mode="${esc(r._id)}" style="border:1px solid #cbd5e1;border-radius:6px;padding:2px 6px;font-size:10px;background:${mode === "src" ? "#dbeafe" : "#dcfce7"};color:${mode === "src" ? "#1d4ed8" : "#166534"};font-weight:700;cursor:pointer">${mode === "src" ? "比較元" : "比較先"}</button></td>
-      <td><span style="display:inline-block;padding:1px 6px;border-radius:999px;background:${sevBg};color:${sevColor};font-size:10px;font-weight:700">${esc(getSeverityDisplayLabel(severity))}</span></td>
-      <td>${esc(r.section || "-")}</td>
-      <td style="color:${cls};font-weight:700">${esc(typeLabel)}</td>
-      <td title="${esc(r.path || "-")}">${esc(r.path || "-")}</td>
-    </tr>`;
+      const typeClass = r.moved ? "moved" : r.type || "changed";
+      const reason = String(r.reasonSummary || "").trim();
+      const impact = String(r.impactSummary || "").trim() || (r.impactCount ? `影響 ${r.impactCount}件` : "");
+      const rename = r.renameCandidate ? `名称変更候補 ${r.renameCandidate.fromCode || "-"} → ${r.renameCandidate.toCode || "-"}` : "";
+      const metaItems = [reason, impact, rename].filter(Boolean);
+      const modeLabel = mode === "src" ? "比較元を採用" : "比較先を維持";
+      const selectedLabel = selected.has(r._id) ? "選択中" : "未選択";
+      return `<article class="reflect-node-card-item${activeRow?._id === r._id ? " is-active" : ""}${selected.has(r._id) ? " is-selected" : ""}" data-node-open="${esc(r._id)}">
+      <div class="reflect-node-card-headline">
+        <label class="reflect-node-card-check" title="${esc(selectedLabel)}">
+          <input type="checkbox" data-node-id="${esc(r._id)}" ${checked}>
+          <span>${esc(selectedLabel)}</span>
+        </label>
+        <div class="reflect-node-card-badges">
+          <span class="reflect-node-list-badge reflect-node-list-badge--${esc(severity)}">重要度 ${esc(getSeverityDisplayLabel(severity))}</span>
+          <span class="reflect-node-type reflect-node-type--${esc(typeClass)}">${esc(typeLabel)}</span>
+        </div>
+      </div>
+      <div class="reflect-node-card-main">
+        <div class="reflect-node-card-title">${esc(r.section || "-")}</div>
+        <div class="reflect-node-card-path" title="${esc(r.path || "-")}">${esc(r.path || "-")}</div>
+        ${metaItems.length ? `<div class="reflect-node-card-meta">${metaItems.map((item) => `<span>${esc(item)}</span>`).join("")}</div>` : ""}
+      </div>
+      <div class="reflect-node-card-actions">
+        <button type="button" class="reflect-node-mode-btn reflect-node-mode-btn--${esc(mode)}" data-node-mode="${esc(r._id)}">${esc(modeLabel)}</button>
+        <span class="reflect-node-card-hint">クリックで詳細表示</span>
+      </div>
+    </article>`;
     }).join("");
-    ui3.reflectNodeList.innerHTML = `${header}<table>
-    <thead><tr><th style="width:52px">選択</th><th style="width:66px">反映元</th><th style="width:82px">重要度</th><th>セクション</th><th>種別</th><th>パス</th></tr></thead>
-    <tbody>${body}</tbody>
-  </table>`;
+    ui3.reflectNodeList.innerHTML = `${header}<div class="reflect-node-card-list">${body}</div>${truncatedCount ? `<div class="reflect-node-list-more">他 ${truncatedCount}件は絞り込みで表示できます</div>` : ""}`;
     renderReflectNodeDetail();
     renderBundleState();
     renderReflectModeUi();
@@ -13025,7 +13136,7 @@ ${body}`;
         ENABLE_OUTLINE: true
       },
       DEFAULT_COL_WIDTH: 12,
-      MAX_COL_WIDTH: 80,
+      MAX_COL_WIDTH: 48,
       MIN_COL_WIDTH: 8,
       COLORS: {
         HEADER_BG: "FF0F766E",
@@ -13187,6 +13298,7 @@ ${body}`;
       ensureArray: (v) => Array.isArray(v) ? v : [],
       safeJoin: (arr, sep = "、") => Array.isArray(arr) ? arr.filter((v) => v !== "" && v != null).join(sep) : "",
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      clampColumnWidth: (width) => Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, Number.isFinite(Number(width)) ? Number(width) : CONFIG.DEFAULT_COL_WIDTH)),
       calculateCellWidth: (text) => {
         if (!text) return CONFIG.MIN_COL_WIDTH;
         const str = String(text);
@@ -13196,7 +13308,7 @@ ${body}`;
           for (const ch of line) lw += /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF00-\uFFEF]/.test(ch) ? 2 : 1;
           if (lw > width) width = lw;
         }
-        return Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, width + 2));
+        return UtilsX.clampColumnWidth(width + 2);
       },
       colToA1: (n) => {
         let s = "";
@@ -13763,7 +13875,7 @@ ${body}`;
             widths[i] = Math.max(widths[i] || CONFIG.MIN_COL_WIDTH, w);
           });
         }
-        ws["!cols"] = widths.map((w) => ({ wch: w || CONFIG.DEFAULT_COL_WIDTH }));
+        ws["!cols"] = widths.map((w) => ({ wch: UtilsX.clampColumnWidth(w || CONFIG.DEFAULT_COL_WIDTH) }));
       };
       const applyStyles = (ws, aoa, options = {}) => {
         if (!styled) return;
@@ -15132,32 +15244,79 @@ ${body}`;
 #kintone-unified-suite-v2 .reflect-post-apply__hint{display:block;font-size:11px;color:#475569;line-height:1.55}
 #kintone-unified-suite-v2 .reflect-preview-prod-diff{margin:10px 0}
 #kintone-unified-suite-v2 .reflect-preview-prod-diff:empty{display:none}
-#kintone-unified-suite-v2 .pvd-card{border:1px solid #c7d2fe;border-radius:12px;padding:12px 14px;background:linear-gradient(180deg,#eef2ff,#fff);box-shadow:0 1px 0 rgba(30,58,138,.05)}
-#kintone-unified-suite-v2 .pvd-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
-#kintone-unified-suite-v2 .pvd-title{font-size:13px;font-weight:800;color:#3730a3}
-#kintone-unified-suite-v2 .pvd-meta{font-size:11px;color:#475569}
-#kintone-unified-suite-v2 .pvd-summary{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
-#kintone-unified-suite-v2 .pvd-pill{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;border:1px solid #c7d2fe;background:#eef2ff;color:#3730a3;font-size:11px;font-weight:600}
-#kintone-unified-suite-v2 .pvd-pill--total{border-color:#6366f1;background:#4338ca;color:#fff}
-#kintone-unified-suite-v2 .pvd-pill--sev{border-color:#fecaca;background:#fef2f2;color:#991b1b}
-#kintone-unified-suite-v2 .pvd-pill--scope{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
-#kintone-unified-suite-v2 .pvd-section-head{margin-top:8px;font-size:11px;font-weight:700;color:#334155}
-#kintone-unified-suite-v2 .pvd-section-list{list-style:none;margin:4px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px 10px}
-#kintone-unified-suite-v2 .pvd-section-list li{display:flex;justify-content:space-between;border-bottom:1px dashed #e2e8f0;padding:3px 0;font-size:11px;color:#334155}
-#kintone-unified-suite-v2 .pvd-section-list .sec-count{font-weight:700;color:#3730a3}
-#kintone-unified-suite-v2 .pvd-row-list{list-style:none;margin:4px 0 0;padding:0;max-height:220px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;background:#fff}
-#kintone-unified-suite-v2 .pvd-row-list li{display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:11px;border-bottom:1px solid #f1f5f9}
-#kintone-unified-suite-v2 .pvd-row-list li:last-child{border-bottom:none}
-#kintone-unified-suite-v2 .pvd-row-list li.pvd-more{justify-content:center;color:#64748b;font-style:italic}
-#kintone-unified-suite-v2 .pvd-type{display:inline-block;padding:1px 6px;border-radius:4px;font-weight:700;font-size:10px;min-width:28px;text-align:center}
-#kintone-unified-suite-v2 .pvd-type--added{background:#dcfce7;color:#166534;border:1px solid #86efac}
-#kintone-unified-suite-v2 .pvd-type--removed{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
+#kintone-unified-suite-v2 .pvd-card{border:1px solid #cbd5e1;border-radius:8px;padding:12px 14px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.06)}
+#kintone-unified-suite-v2 .pvd-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+#kintone-unified-suite-v2 .pvd-title{font-size:14px;font-weight:900;color:#0f172a}
+#kintone-unified-suite-v2 .pvd-subtitle{margin-top:2px;font-size:11px;color:#64748b;line-height:1.5}
+#kintone-unified-suite-v2 .pvd-meta{font-size:11px;color:#475569;line-height:1.5;text-align:right}
+#kintone-unified-suite-v2 .pvd-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px;margin-bottom:10px}
+#kintone-unified-suite-v2 .pvd-metric{padding:9px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;min-width:0}
+#kintone-unified-suite-v2 .pvd-metric--total{background:#eef2ff;border-color:#c7d2fe}
+#kintone-unified-suite-v2 .pvd-metric--preview{background:#ecfdf5;border-color:#bbf7d0}
+#kintone-unified-suite-v2 .pvd-metric--prod{background:#f8fafc;border-color:#cbd5e1}
+#kintone-unified-suite-v2 .pvd-metric--changed{background:#fffbeb;border-color:#fde68a}
+#kintone-unified-suite-v2 .pvd-metric--severity{background:#fef2f2;border-color:#fecaca}
+#kintone-unified-suite-v2 .pvd-metric-label{font-size:10px;font-weight:800;color:#475569}
+#kintone-unified-suite-v2 .pvd-metric-value{margin-top:3px;font-size:22px;line-height:1;font-weight:900;color:#0f172a}
+#kintone-unified-suite-v2 .pvd-metric-note{margin-top:4px;font-size:10px;color:#64748b;line-height:1.35}
+#kintone-unified-suite-v2 .pvd-section-head{margin:10px 0 6px;font-size:12px;font-weight:900;color:#1e293b}
+#kintone-unified-suite-v2 .pvd-section-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-bottom:10px}
+#kintone-unified-suite-v2 .pvd-section-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;text-align:left;padding:8px 10px;border:1px solid #dbe4ef;border-radius:8px;background:#f8fafc;cursor:pointer;color:#334155}
+#kintone-unified-suite-v2 .pvd-section-card:hover,
+#kintone-unified-suite-v2 .pvd-section-card.is-active{border-color:#2563eb;background:#eff6ff}
+#kintone-unified-suite-v2 .pvd-section-card-name{font-size:12px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .pvd-section-card-count{font-size:16px;line-height:1;font-weight:900;color:#1d4ed8}
+#kintone-unified-suite-v2 .pvd-section-card-sev{grid-column:1/-1;font-size:10px;color:#64748b}
+#kintone-unified-suite-v2 .pvd-filter-panel{border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;padding:8px 10px;margin-bottom:10px}
+#kintone-unified-suite-v2 .pvd-filter-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+#kintone-unified-suite-v2 .pvd-filter-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#334155;font-size:11px;font-weight:800;padding:4px 9px;cursor:pointer}
+#kintone-unified-suite-v2 .pvd-filter-chip:hover,
+#kintone-unified-suite-v2 .pvd-filter-chip.is-active{border-color:#2563eb;background:#dbeafe;color:#1e3a8a}
+#kintone-unified-suite-v2 .pvd-filter-chip strong{font-size:10px;color:inherit}
+#kintone-unified-suite-v2 .pvd-filter-chip--sev-high{border-color:#fecaca;color:#991b1b}
+#kintone-unified-suite-v2 .pvd-filter-chip--sev-medium{border-color:#fde68a;color:#92400e}
+#kintone-unified-suite-v2 .pvd-filter-chip--sev-low{border-color:#bfdbfe;color:#1d4ed8}
+#kintone-unified-suite-v2 .pvd-search-row{display:grid;grid-template-columns:minmax(140px,1fr) auto auto;gap:6px;margin-top:4px}
+#kintone-unified-suite-v2 .pvd-search-row input{min-width:0}
+#kintone-unified-suite-v2 .pvd-filter-state{display:flex;justify-content:space-between;gap:8px;margin-top:6px;font-size:11px;color:#475569;line-height:1.4}
+#kintone-unified-suite-v2 .pvd-filter-state strong{color:#0f172a;white-space:nowrap}
+#kintone-unified-suite-v2 .pvd-type{display:inline-flex;align-items:center;justify-content:center;padding:2px 7px;border-radius:999px;font-weight:800;font-size:10px;white-space:nowrap}
+#kintone-unified-suite-v2 .pvd-type--preview-only{background:#dcfce7;color:#166534;border:1px solid #86efac}
+#kintone-unified-suite-v2 .pvd-type--production-only{background:#f1f5f9;color:#334155;border:1px solid #cbd5e1}
 #kintone-unified-suite-v2 .pvd-type--changed{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}
-#kintone-unified-suite-v2 .pvd-section{color:#334155;font-weight:600}
-#kintone-unified-suite-v2 .pvd-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569;background:#f8fafc;padding:1px 6px;border-radius:4px;border:1px solid #e2e8f0;font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:11px}
-#kintone-unified-suite-v2 .pvd-issues{margin-top:4px;font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:4px 8px}
+#kintone-unified-suite-v2 .pvd-type--moved{background:#f3e8ff;color:#6b21a8;border:1px solid #d8b4fe}
+#kintone-unified-suite-v2 .pvd-sev{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:800;white-space:nowrap}
+#kintone-unified-suite-v2 .pvd-sev--high{background:#fee2e2;color:#991b1b}
+#kintone-unified-suite-v2 .pvd-sev--medium{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .pvd-sev--low{background:#dbeafe;color:#1d4ed8}
+#kintone-unified-suite-v2 .pvd-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569;background:#f8fafc;padding:2px 6px;border-radius:4px;border:1px solid #e2e8f0;font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:11px}
+#kintone-unified-suite-v2 .pvd-row-section{margin-bottom:10px}
+#kintone-unified-suite-v2 .pvd-row-section-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:12px;font-weight:900;color:#1e293b;margin-bottom:6px}
+#kintone-unified-suite-v2 .pvd-row-cards{display:flex;flex-direction:column;gap:6px}
+#kintone-unified-suite-v2 .pvd-row-card{border:1px solid #e2e8f0;border-radius:8px;background:#fff;overflow:hidden}
+#kintone-unified-suite-v2 .pvd-row-card--preview-only{border-color:#bbf7d0}
+#kintone-unified-suite-v2 .pvd-row-card--production-only{border-color:#cbd5e1}
+#kintone-unified-suite-v2 .pvd-row-card--changed{border-color:#fde68a}
+#kintone-unified-suite-v2 .pvd-row-summary{display:flex;align-items:center;gap:6px;padding:7px 9px;cursor:pointer;list-style:revert}
+#kintone-unified-suite-v2 .pvd-row-reason{padding:0 9px 7px;font-size:11px;color:#64748b}
+#kintone-unified-suite-v2 .pvd-compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 9px 9px}
+#kintone-unified-suite-v2 .pvd-compare-col{min-width:0;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff}
+#kintone-unified-suite-v2 .pvd-compare-head{padding:5px 8px;font-size:11px;font-weight:900;color:#334155;background:#f1f5f9;border-bottom:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .pvd-compare-head--preview{background:#ecfdf5;color:#166534}
+#kintone-unified-suite-v2 .pvd-compare-head--prod{background:#f8fafc;color:#334155}
+#kintone-unified-suite-v2 .pvd-compare-pre{margin:0;padding:8px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:11px;line-height:1.5;color:#334155;background:#fff}
+#kintone-unified-suite-v2 .pvd-issues{display:grid;gap:2px;margin:8px 0;font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px}
+#kintone-unified-suite-v2 .pvd-empty{border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc;padding:14px;margin:8px 0;color:#475569}
+#kintone-unified-suite-v2 .pvd-empty--clean{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+#kintone-unified-suite-v2 .pvd-empty-title{font-size:13px;font-weight:900;color:#0f172a;margin-bottom:3px}
+#kintone-unified-suite-v2 .pvd-empty-text{font-size:12px;line-height:1.5}
 #kintone-unified-suite-v2 .pvd-actions{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
 #kintone-unified-suite-v2 .pvd-hint{margin:8px 0 0;font-size:11px;line-height:1.55}
+@media (max-width: 760px){
+  #kintone-unified-suite-v2 .pvd-meta{text-align:left}
+  #kintone-unified-suite-v2 .pvd-search-row,
+  #kintone-unified-suite-v2 .pvd-compare-grid{grid-template-columns:1fr}
+}
 #kintone-unified-suite-v2 .reflect-active-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;min-height:0}
 #kintone-unified-suite-v2 .reflect-active-chips:empty{display:none}
 #kintone-unified-suite-v2 .reflect-active-chips__label{font-size:10px;font-weight:700;color:#475569;margin-right:2px}
@@ -15531,18 +15690,17 @@ ${body}`;
 #kintone-unified-suite-v2 .btn-deploy-foot:hover{background:#fef2f2;border-color:#b91c1c}
 #kintone-unified-suite-v2 .reflect-main .reflect-footer-actions.main-footer{padding:10px 14px;border-top:1px solid #e2e8f0;background:#f1f5f9}
 #kintone-unified-suite-v2 .reflect-main .reflect-footer-actions .btn{padding:7px 12px}
-#kintone-unified-suite-v2 .subtabs--reflect-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:10px;background:linear-gradient(180deg,#f8fafc,#eef2ff);border:1px solid #c7d2fe;border-radius:14px;margin:6px 0 14px}
-#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:12px 14px;font-size:12px;font-weight:700;border:1px solid #e2e8f0;border-radius:12px;background:#fff;color:#0f172a;line-height:1.35;text-align:left;cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s,transform .08s}
-#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab:hover{border-color:#818cf8;box-shadow:0 4px 14px rgba(99,102,241,.18);transform:translateY(-1px)}
-#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab .subtab-icon{font-size:20px;line-height:1}
+#kintone-unified-suite-v2 .subtabs--reflect-modes{display:grid;grid-template-columns:1.25fr 1fr .72fr;gap:8px;padding:8px;background:#f8fafc;border:1px solid #dbe3ed;border-radius:8px;margin:6px 0 12px}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:9px 12px;font-size:12px;font-weight:700;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#0f172a;line-height:1.35;text-align:left;cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab:hover{border-color:#93c5fd;box-shadow:0 2px 8px rgba(37,99,235,.12)}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab .subtab-icon{font-size:14px;line-height:1;font-weight:900;color:#2563eb}
 #kintone-unified-suite-v2 .subtabs--reflect-modes .subtab .subtab-label{font-size:13px;font-weight:800;letter-spacing:0}
 #kintone-unified-suite-v2 .subtabs--reflect-modes .subtab .subtab-sub{font-size:10px;font-weight:500;color:#64748b}
-#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab.active{background:linear-gradient(180deg,#312e81,#1e1b4b);border-color:#312e81;color:#fff;box-shadow:0 6px 18px rgba(49,46,129,.35);text-decoration:none}
-#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab.active .subtab-sub{color:#c7d2fe}
-#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab[data-subtab="json"].active{background:linear-gradient(180deg,#0f766e,#115e59);border-color:#115e59;box-shadow:0 6px 18px rgba(15,118,110,.35)}
-#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab[data-subtab="json"].active .subtab-sub{color:#99f6e4}
-#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab[data-subtab="diff"].active{background:linear-gradient(180deg,#b45309,#92400e);border-color:#92400e;box-shadow:0 6px 18px rgba(180,83,9,.35)}
-#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab[data-subtab="diff"].active .subtab-sub{color:#fde68a}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab.active{background:#eff6ff;border-color:#2563eb;color:#1e3a8a;box-shadow:0 0 0 2px rgba(37,99,235,.1);text-decoration:none}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab.active .subtab-icon{color:#1d4ed8}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab.active .subtab-sub{color:#1d4ed8}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab[data-subtab="json"]{background:#fbfdff;color:#475569}
+#kintone-unified-suite-v2 .subtabs--reflect-modes .subtab[data-subtab="json"] .subtab-icon{color:#64748b}
 #kintone-unified-suite-v2 .reflect-mode-hero{display:flex;align-items:flex-start;gap:14px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:12px;background:linear-gradient(180deg,#fafbff,#fff);margin-bottom:12px;box-shadow:0 1px 3px rgba(15,23,42,.04)}
 #kintone-unified-suite-v2 .reflect-mode-hero__icon{flex-shrink:0;width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:10px;background:#eef2ff;font-size:22px;line-height:1}
 #kintone-unified-suite-v2 .reflect-mode-hero__copy{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
@@ -15598,6 +15756,56 @@ ${body}`;
 #kintone-unified-suite-v2 .reflect-guide-title{font-size:13px;font-weight:800;color:#1e3a8a}
 #kintone-unified-suite-v2 .reflect-guide-sub{font-size:11px;line-height:1.7;color:#475569;margin-top:4px}
 #kintone-unified-suite-v2 .reflect-guide-badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:700}
+#kintone-unified-suite-v2 .reflect-command-center{border:1px solid #bfdbfe;border-radius:8px;background:#f8fbff;padding:12px;margin-bottom:10px;box-shadow:0 1px 4px rgba(37,99,235,.08)}
+#kintone-unified-suite-v2 .reflect-command-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-command-kicker{font-size:10px;font-weight:800;color:#2563eb;text-transform:uppercase}
+#kintone-unified-suite-v2 .reflect-command-next{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+#kintone-unified-suite-v2 .reflect-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}
+#kintone-unified-suite-v2 .reflect-flow-step{display:flex;gap:8px;align-items:flex-start;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:9px 10px;min-width:0}
+#kintone-unified-suite-v2 .reflect-flow-step.is-current{border-color:#60a5fa;background:#eff6ff}
+#kintone-unified-suite-v2 .reflect-flow-step.is-done{border-color:#86efac;background:#f0fdf4}
+#kintone-unified-suite-v2 .reflect-flow-step__no{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#e2e8f0;color:#334155;font-size:10px;font-weight:800}
+#kintone-unified-suite-v2 .reflect-flow-step.is-current .reflect-flow-step__no{background:#2563eb;color:#fff}
+#kintone-unified-suite-v2 .reflect-flow-step.is-done .reflect-flow-step__no{background:#16a34a;color:#fff}
+#kintone-unified-suite-v2 .reflect-flow-step__body{min-width:0}
+#kintone-unified-suite-v2 .reflect-flow-step__title{font-size:11px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .reflect-flow-step__meta{font-size:10px;line-height:1.45;color:#64748b;margin-top:2px;word-break:break-word}
+#kintone-unified-suite-v2 .reflect-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px}
+#kintone-unified-suite-v2 .reflect-action-card{border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:10px;min-width:0}
+#kintone-unified-suite-v2 .reflect-action-card__title{font-size:12px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .reflect-action-card__meta{font-size:11px;line-height:1.55;color:#64748b;margin-top:4px;min-height:18px}
+#kintone-unified-suite-v2 .reflect-action-card__actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+#kintone-unified-suite-v2 .reflect-route-panel{display:grid;gap:8px;margin-top:10px}
+#kintone-unified-suite-v2 .reflect-route-primary{display:flex;justify-content:space-between;align-items:center;gap:12px;border:1px solid #bfdbfe;border-radius:8px;background:#fff;padding:10px 12px}
+#kintone-unified-suite-v2 .reflect-route-primary__copy{min-width:0}
+#kintone-unified-suite-v2 .reflect-route-primary__label{font-size:10px;font-weight:900;color:#2563eb;text-transform:uppercase}
+#kintone-unified-suite-v2 .reflect-route-primary__title{font-size:14px;font-weight:900;color:#0f172a;margin-top:2px}
+#kintone-unified-suite-v2 .reflect-route-primary__meta{font-size:11px;line-height:1.5;color:#64748b;margin-top:3px}
+#kintone-unified-suite-v2 .reflect-route-primary__action{display:flex;justify-content:flex-end;flex-shrink:0}
+#kintone-unified-suite-v2 .reflect-route-details{border:1px solid #e2e8f0;border-radius:8px;background:#fff}
+#kintone-unified-suite-v2 .reflect-route-details > summary{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:9px 12px;cursor:pointer;font-size:12px;font-weight:900;color:#334155;list-style:none}
+#kintone-unified-suite-v2 .reflect-route-details > summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .reflect-route-details > summary small{font-size:10px;font-weight:600;color:#64748b}
+#kintone-unified-suite-v2 .reflect-route-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;padding:0 12px 12px}
+#kintone-unified-suite-v2 .reflect-route-detail-grid section{border:1px solid #f1f5f9;border-radius:8px;background:#f8fafc;padding:8px;min-width:0}
+#kintone-unified-suite-v2 .reflect-route-detail-title{font-size:11px;font-weight:900;color:#0f172a;margin-bottom:6px}
+#kintone-unified-suite-v2 .reflect-route-detail-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+#kintone-unified-suite-v2 .er-route-panel{display:grid;gap:8px;margin-top:8px}
+#kintone-unified-suite-v2 .er-route-main{display:flex;justify-content:space-between;align-items:center;gap:12px;border:1px solid #a7f3d0;border-radius:8px;background:#fff;padding:12px}
+#kintone-unified-suite-v2 .er-route-copy{min-width:0}
+#kintone-unified-suite-v2 .er-route-badge{display:inline-flex;align-items:center;padding:2px 8px;border:1px solid #99f6e4;border-radius:999px;background:#ecfdf5;color:#0f766e;font-size:10px;font-weight:900}
+#kintone-unified-suite-v2 .er-route-title{font-size:14px;font-weight:900;color:#0f172a;margin-top:6px}
+#kintone-unified-suite-v2 .er-route-sub{font-size:11px;line-height:1.6;color:#64748b;margin-top:4px}
+#kintone-unified-suite-v2 .er-route-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+#kintone-unified-suite-v2 .er-route-meta span{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;border:1px solid #dbe3ed;background:#f8fafc;color:#475569;font-size:10px;font-weight:800}
+#kintone-unified-suite-v2 .er-route-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;flex-shrink:0}
+#kintone-unified-suite-v2 .er-route-details{border:1px solid #e2e8f0;border-radius:8px;background:#fff}
+#kintone-unified-suite-v2 .er-route-details > summary{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:9px 12px;cursor:pointer;font-size:12px;font-weight:900;color:#334155;list-style:none}
+#kintone-unified-suite-v2 .er-route-details > summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .er-route-details > summary small{font-size:10px;font-weight:600;color:#64748b}
+#kintone-unified-suite-v2 .er-option-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;padding:0 12px 10px}
+#kintone-unified-suite-v2 .er-option-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 10px}
+#kintone-unified-suite-v2 .er-support-actions{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 12px}
 #kintone-unified-suite-v2 .reflect-step-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}
 #kintone-unified-suite-v2 .reflect-step-card{border:1px solid #dbe3ed;border-radius:10px;background:#fff;padding:10px}
 #kintone-unified-suite-v2 .reflect-step-card.done{border-color:#86efac;background:#f0fdf4}
@@ -15608,7 +15816,7 @@ ${body}`;
 #kintone-unified-suite-v2 .reflect-step-title{font-size:12px;font-weight:700;color:#0f172a;margin-top:4px}
 #kintone-unified-suite-v2 .reflect-step-desc{font-size:11px;line-height:1.6;color:#64748b;margin-top:4px}
 #kintone-unified-suite-v2 .reflect-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
-#kintone-unified-suite-v2 .reflect-summary-card{border:1px solid #e2e8f0;border-radius:10px;background:#fff;padding:10px}
+#kintone-unified-suite-v2 .reflect-summary-card{border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:10px}
 #kintone-unified-suite-v2 .reflect-summary-label{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#64748b}
 #kintone-unified-suite-v2 .reflect-summary-value{font-size:18px;font-weight:800;color:#0f172a;margin-top:4px}
 #kintone-unified-suite-v2 .reflect-summary-meta{font-size:11px;line-height:1.7;color:#64748b;margin-top:4px}
@@ -15659,6 +15867,39 @@ ${body}`;
 #kintone-unified-suite-v2 .reflect-node-meta-item strong{color:#0f172a}
 #kintone-unified-suite-v2 .reflect-node-row{cursor:pointer}
 #kintone-unified-suite-v2 .reflect-node-row.active td{background:#eff6ff}
+#kintone-unified-suite-v2 .reflect-node-list-summary{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:9px 10px;border-bottom:1px solid #e2e8f0;background:#f8fafc;font-size:11px;color:#334155}
+#kintone-unified-suite-v2 .reflect-node-list-summary__main{font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .reflect-node-list-summary__sub{color:#64748b}
+#kintone-unified-suite-v2 .reflect-node-empty{padding:14px;font-size:12px;color:#64748b;line-height:1.7}
+#kintone-unified-suite-v2 .reflect-node-card-list{display:grid;gap:8px;padding:8px;background:#f8fafc}
+#kintone-unified-suite-v2 .reflect-node-card-item{border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:10px;cursor:pointer;transition:border-color .15s,box-shadow .15s,background .15s}
+#kintone-unified-suite-v2 .reflect-node-card-item:hover{border-color:#93c5fd;box-shadow:0 2px 8px rgba(37,99,235,.12)}
+#kintone-unified-suite-v2 .reflect-node-card-item.is-active{border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.12)}
+#kintone-unified-suite-v2 .reflect-node-card-item.is-selected{background:#fbfdff}
+#kintone-unified-suite-v2 .reflect-node-card-headline{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-node-card-check{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:#334155;cursor:pointer}
+#kintone-unified-suite-v2 .reflect-node-card-check input{margin:0}
+#kintone-unified-suite-v2 .reflect-node-card-badges{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-node-list-badge,
+#kintone-unified-suite-v2 .reflect-node-type{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:800;border:1px solid #dbe3ed;background:#fff}
+#kintone-unified-suite-v2 .reflect-node-list-badge--high{background:#fee2e2;border-color:#fecaca;color:#991b1b}
+#kintone-unified-suite-v2 .reflect-node-list-badge--medium{background:#fef3c7;border-color:#fde68a;color:#92400e}
+#kintone-unified-suite-v2 .reflect-node-list-badge--low{background:#dbeafe;border-color:#bfdbfe;color:#1d4ed8}
+#kintone-unified-suite-v2 .reflect-node-type--added{background:#ecfdf5;border-color:#a7f3d0;color:#166534}
+#kintone-unified-suite-v2 .reflect-node-type--removed{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+#kintone-unified-suite-v2 .reflect-node-type--changed{background:#fffbeb;border-color:#fde68a;color:#92400e}
+#kintone-unified-suite-v2 .reflect-node-type--moved{background:#f5f3ff;border-color:#c4b5fd;color:#5b21b6}
+#kintone-unified-suite-v2 .reflect-node-card-main{margin-top:8px;min-width:0}
+#kintone-unified-suite-v2 .reflect-node-card-title{font-size:12px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .reflect-node-card-path{font-size:11px;line-height:1.5;color:#475569;margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+#kintone-unified-suite-v2 .reflect-node-card-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+#kintone-unified-suite-v2 .reflect-node-card-meta span{display:inline-flex;align-items:center;max-width:100%;padding:3px 7px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:10px;font-weight:700;line-height:1.35}
+#kintone-unified-suite-v2 .reflect-node-card-actions{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px}
+#kintone-unified-suite-v2 .reflect-node-mode-btn{border:1px solid #cbd5e1;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:800;cursor:pointer;background:#fff;color:#334155}
+#kintone-unified-suite-v2 .reflect-node-mode-btn--src{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+#kintone-unified-suite-v2 .reflect-node-mode-btn--tgt{background:#ecfdf5;border-color:#a7f3d0;color:#166534}
+#kintone-unified-suite-v2 .reflect-node-card-hint{font-size:10px;color:#94a3b8}
+#kintone-unified-suite-v2 .reflect-node-list-more{padding:8px 10px;border-top:1px solid #e2e8f0;background:#fff;font-size:11px;color:#64748b;text-align:center}
 @media (max-width:820px){
   #kintone-unified-suite-v2{
     top:8px;
@@ -15689,6 +15930,20 @@ ${body}`;
 }
 @media (max-width:980px){
   #kintone-unified-suite-v2 .settings-compare-grid{grid-template-columns:1fr}
+}
+@media (max-width:820px){
+  #kintone-unified-suite-v2 .reflect-flow{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #kintone-unified-suite-v2 .reflect-command-next{justify-content:flex-start}
+  #kintone-unified-suite-v2 .subtabs--reflect-modes{grid-template-columns:1fr}
+  #kintone-unified-suite-v2 .reflect-node-card-actions{align-items:flex-start}
+}
+@media (max-width:560px){
+  #kintone-unified-suite-v2 .reflect-flow,
+  #kintone-unified-suite-v2 .reflect-action-grid{grid-template-columns:1fr}
+  #kintone-unified-suite-v2 .reflect-route-primary,
+  #kintone-unified-suite-v2 .er-route-main{align-items:flex-start;flex-direction:column}
+  #kintone-unified-suite-v2 .reflect-route-primary__action,
+  #kintone-unified-suite-v2 .er-route-actions{justify-content:flex-start}
 }
 #kintone-unified-suite-v2 .h-title-feature{display:none;align-items:center;gap:10px}
 #kintone-unified-suite-v2 .h-back{border:0;background:rgba(255,255,255,.22);color:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700;white-space:nowrap}
@@ -18974,38 +19229,38 @@ ${body}`;
 
             <div class="pane active" data-pane="reflect">
               <div class="subtabs subtabs--reflect-modes">
-                <button class="subtab active" data-subtab-parent="reflect" data-subtab="settings" title="kintoneの設定画面風UIで反映（一般ユーザー向け）">
-                  <span class="subtab-icon" aria-hidden="true">🧩</span>
-                  <span class="subtab-label">設定画面で反映</span>
-                  <span class="subtab-sub">一般ユーザー向け</span>
+                <button class="subtab active" data-subtab-parent="reflect" data-subtab="settings" title="標準ルートでプレビューへ反映">
+                  <span class="subtab-icon" aria-hidden="true">01</span>
+                  <span class="subtab-label">標準ルート</span>
+                  <span class="subtab-sub">まず使う</span>
+                </button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="diff" title="差分比較結果から反映する項目を選択">
+                  <span class="subtab-icon" aria-hidden="true">02</span>
+                  <span class="subtab-label">詳細ルート</span>
+                  <span class="subtab-sub">差分ごと</span>
                 </button>
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="json" title="JSONを直接編集して反映（開発者向け）">
-                  <span class="subtab-icon" aria-hidden="true">&lt;/&gt;</span>
-                  <span class="subtab-label">JSONで反映</span>
-                  <span class="subtab-sub">開発者向け</span>
-                </button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="diff" title="差分比較結果から反映フィールドを調整">
-                  <span class="subtab-icon" aria-hidden="true">🎯</span>
-                  <span class="subtab-label">差分から調整</span>
-                  <span class="subtab-sub">差分比較と連動</span>
+                  <span class="subtab-icon" aria-hidden="true">{ }</span>
+                  <span class="subtab-label">JSON</span>
+                  <span class="subtab-sub">必要時のみ</span>
                 </button>
               </div>
 
               <!-- ===== Subpane: settings (kintone設定画面風 / 一般ユーザー向け) ===== -->
               <div class="subpane active" data-subpane-parent="reflect" data-subpane="settings">
                 <section class="reflect-mode-hero reflect-mode-hero--settings">
-                  <div class="reflect-mode-hero__icon" aria-hidden="true">🧩</div>
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">01</div>
                   <div class="reflect-mode-hero__copy">
-                    <div class="reflect-mode-hero__title">設定画面で反映</div>
-                    <div class="reflect-mode-hero__desc">kintoneの設定画面に近いUIで、フィールドや各種設定を比較元から比較先プレビューへ反映します。一般ユーザー向けの操作モードです。</div>
+                    <div class="reflect-mode-hero__title">標準ルート</div>
+                    <div class="reflect-mode-hero__desc">セクション単位で反映対象を決め、実行前プランと安全チェックを通して比較先プレビューへ反映します。迷ったときはこの画面だけで進めます。</div>
                   </div>
                 </section>
                 <div id="u_applyScopeBlock" style="display:none"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
                 <div class="reflect-settings-inner">
                   <div class="reflect-inner-tabs" role="tablist" aria-label="反映対象の切替">
-                    <button type="button" class="reflect-inner-tab active" data-reflect-inner="overview" role="tab" aria-selected="true">概要・対象セクション</button>
-                    <button type="button" class="reflect-inner-tab" data-reflect-inner="field" role="tab" aria-selected="false">フィールド設定画面</button>
-                    <button type="button" class="reflect-inner-tab" data-reflect-inner="other" role="tab" aria-selected="false">ビュー・権限など他設定</button>
+                    <button type="button" class="reflect-inner-tab active" data-reflect-inner="overview" role="tab" aria-selected="true">概要</button>
+                    <button type="button" class="reflect-inner-tab" data-reflect-inner="field" role="tab" aria-selected="false">フィールド調整</button>
+                    <button type="button" class="reflect-inner-tab" data-reflect-inner="other" role="tab" aria-selected="false">他設定調整</button>
                   </div>
 
                   <div class="reflect-inner-pane active" data-reflect-inner-pane="overview">
@@ -19062,10 +19317,10 @@ ${body}`;
               <!-- ===== Subpane: json (開発者向け) ===== -->
               <div class="subpane" data-subpane-parent="reflect" data-subpane="json">
                 <section class="reflect-mode-hero reflect-mode-hero--json">
-                  <div class="reflect-mode-hero__icon" aria-hidden="true">&lt;/&gt;</div>
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">{ }</div>
                   <div class="reflect-mode-hero__copy">
-                    <div class="reflect-mode-hero__title">JSONで反映</div>
-                    <div class="reflect-mode-hero__desc">パッチJSONを直接編集して反映できます。開発者向けモードです。差分比較結果を取り込んで調整し、比較先プレビューに書き込みます。</div>
+                    <div class="reflect-mode-hero__title">JSON</div>
+                    <div class="reflect-mode-hero__desc">パッチJSONを直接編集して反映できます。差分比較結果を取り込んで調整し、比較先プレビューに書き込みます。</div>
                   </div>
                 </section>
                 <div id="u_patchJsonPanel" style="display:block">
@@ -19092,10 +19347,10 @@ ${body}`;
               <!-- ===== Subpane: diff (差分から反映フィールドを調整) ===== -->
               <div class="subpane" data-subpane-parent="reflect" data-subpane="diff">
                 <section class="reflect-mode-hero reflect-mode-hero--diff">
-                  <div class="reflect-mode-hero__icon" aria-hidden="true">🎯</div>
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">02</div>
                   <div class="reflect-mode-hero__copy">
-                    <div class="reflect-mode-hero__title">差分から反映対象を調整</div>
-                    <div class="reflect-mode-hero__desc">差分比較の結果を使って、フィールドやセクション単位で「比較元を採用」「比較先を残す」を調整しながら部分反映します。先に差分比較タブで比較を実行してから「差分候補を読込」を押します。</div>
+                    <div class="reflect-mode-hero__title">詳細ルート</div>
+                    <div class="reflect-mode-hero__desc">差分ごとに「比較元を採用」「比較先を維持」を切り替え、必要な変更だけをプレビューへ反映します。標準ルートで足りないときに使います。</div>
                   </div>
                 </section>
                 <div class="reflect-layout">
@@ -19105,20 +19360,21 @@ ${body}`;
                       <div id="u_reflectHint" class="kv" style="display:none"></div>
                       <div id="u_nodeControls" class="reflect-node-controls" style="display:none">
                         <div class="reflect-node-controls__primary">
-                          <button class="btn sub" data-act="loadReflectNodes">差分候補を読込</button>
+                          <button class="btn btn-primary-emphasis" data-act="runDiffLoadReflectNodes">差分比較して候補作成</button>
                           <button class="btn sub" data-act="selectVisibleReflectNodes">表示中を選択</button>
-                          <button class="btn sub" data-act="clearVisibleReflectNodes">表示中の選択解除</button>
                           <button class="btn ok" data-act="reflectModeVisibleSrc">表示中を比較元にする</button>
-                          <button class="btn ok" data-act="reflectModeVisibleTgt">表示中を比較先にする</button>
                         </div>
                         <div class="reflect-quick-presets" id="u_reflectQuickPresets" aria-label="差分選択クイックプリセット"></div>
                         <details class="diff-fold reflect-inline-fold reflect-inline-fold--node">
                           <summary class="diff-fold-summary">
-                            <span class="diff-fold-title">一括選択・一括モード・履歴</span>
-                            <span class="diff-fold-sub">全件操作や Undo / Redo が必要なときだけ開きます</span>
+                            <span class="diff-fold-title">補助操作</span>
+                            <span class="diff-fold-sub">解除、比較先維持、Undo / Redo、JSON保存が必要なときだけ開きます</span>
                           </summary>
                           <div class="diff-fold-body">
                             <div class="reflect-node-controls__secondary">
+                              <button class="btn sub" data-act="loadReflectNodes">現在の差分から候補読込</button>
+                              <button class="btn sub" data-act="clearVisibleReflectNodes">表示中の選択解除</button>
+                              <button class="btn ok" data-act="reflectModeVisibleTgt">表示中を比較先にする</button>
                               <button class="btn sub" data-act="selectHighSeverityReflectNodes">高重要度を選択</button>
                               <button class="btn sub" data-act="selectReflectNodesAll">候補を全選択</button>
                               <button class="btn sub" data-act="clearReflectNodes">候補を全解除</button>
@@ -19135,10 +19391,10 @@ ${body}`;
                       </div>
                       <div id="u_nodeFilterBlock" style="display:none;margin-bottom:8px">
                         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                          <input type="text" id="u_nodeSearch" placeholder="パス / セクション名 で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                          <input type="text" id="u_nodeSearch" placeholder="パス / セクション名 / 理由 / 影響 で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
                           <select id="u_nodeFilterSection" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px"><option value="">全セクション</option></select>
                           <select id="u_nodeFilterType" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                            <option value="">全種別</option><option value="added">追加</option><option value="removed">削除</option><option value="changed">変更</option>
+                            <option value="">全種別</option><option value="added">追加</option><option value="removed">削除</option><option value="changed">変更</option><option value="moved">移動</option>
                           </select>
                           <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
                             <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
@@ -19201,8 +19457,6 @@ ${body}`;
                     <span class="reflect-footer-zone-label">プレビュー反映</span>
                     <div class="reflect-footer-actions__primary">
                       <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">実行前プラン確認</button>
-                      <button type="button" class="btn sub" data-act="runPreviewProdDiff" id="u_footerPreviewProdDiff" title="比較先アプリのプレビューと本番の差分を比較します。デプロイ待ちの変更を確認できます">プレビュー⇔本番を比較</button>
-                      <button type="button" class="btn sub" data-act="exportDryRunPlan" id="u_footerDryRun" title="APIを叩かずに、予定されているリクエスト一式をJSONファイルとして保存します（ドライラン）">ドライランJSONを保存</button>
                       <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択した内容を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">プレビューへ反映</button>
                     </div>
                     <details class="diff-fold reflect-inline-fold reflect-inline-fold--footer">
@@ -19212,6 +19466,8 @@ ${body}`;
                       </summary>
                       <div class="diff-fold-body">
                         <div class="reflect-footer-actions__support">
+                          <button type="button" class="btn sub" data-act="runPreviewProdDiff" id="u_footerPreviewProdDiff" title="比較先アプリのプレビューと本番の差分を比較します。デプロイ待ちの変更を確認できます">プレビュー⇔本番を比較</button>
+                          <button type="button" class="btn sub" data-act="exportDryRunPlan" id="u_footerDryRun" title="APIを叩かずに、予定されているリクエスト一式をJSONファイルとして保存します（ドライラン）">ドライランJSONを保存</button>
                           <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します。反映セクションでチェックした項目を対象にし、JS/CSS設定も含められます">今の比較先を保存</button>
                           <button type="button" class="btn sub" data-act="restoreTargetPreviewBackup" title="このセッションで保存した直前バックアップを比較先プレビューへ戻します">直前保存を戻す</button>
                         </div>
@@ -19627,58 +19883,67 @@ ${body}`;
             
             <div class="pane" data-pane="er">
               <div class="subpane active" data-subpane-parent="er" data-subpane="diagram">
-                <div class="subpane-note">比較元アプリ起点で関連アプリをたどり、アプリ間の ER 図を生成します。</div>
-              <details class="diff-fold diff-fold--er-diag" open>
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">ER図のオプションと生成</span>
-                  <span class="diff-fold-sub">アプリ構造の把握に特化</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div class="step" style="margin-top:0">ER図自動生成（比較元アプリ起点）</div>
-              <div class="muted" style="margin-top:8px;line-height:1.55">比較元アプリからルックアップと関連レコードを辿って、関連するアプリのスキーマ（ER図）を自動取得・描画します。フィールド単位の依存関係は「分析 > 依存グラフ」に集約しました。</div>
-              <div class="grid2" style="margin-top:10px">
-                <div>
-                  <label title="Cytoscape のレイアウトアルゴリズム">初期レイアウト</label>
-                  <select id="u_erLayout" title="グラフの並べ方">
-                    <option value="dagre">Dagre（推奨）</option>
-                    <option value="breadthfirst">ツリー</option>
-                    <option value="cose">フォース</option>
-                    <option value="concentric">同心円</option>
-                    <option value="grid">グリッド</option>
-                    <option value="circle">円形</option>
-                  </select>
-                </div>
-                <div>
-                  <label title="フィールド表示の粒度">表示密度</label>
-                  <select id="u_erFieldDensity">
-                    <option value="compact">簡易</option>
-                    <option value="standard" selected>標準</option>
-                    <option value="full">詳細</option>
-                  </select>
-                </div>
-                <div>
-                  <label title="0 は無制限に近い挙動（実装上の上限あり）">探索深さ</label>
-                  <input type="text" id="u_erMaxDepth" value="0" placeholder="0で無制限">
-                </div>
-                <div>
-                  <label title="カンマ区切りで複数指定">追加の起点アプリID（任意）</label>
-                  <input type="text" id="u_erExtraApps" value="" placeholder="例: 123, 456, 789">
-                </div>
-                <div>
-                  <label>追加オプション</label>
-                  <div class="chips" style="margin-top:4px">
-                    <label class="chip" title="サブテーブル内フィールドもERに含めます"><input type="checkbox" id="u_erIncludeSubtable" checked> サブテーブル項目を含める</label>
-                    <label class="chip" title="参照先だけでなく、現在アプリを参照しているアプリも探索します（全アプリを走査）"><input type="checkbox" id="u_erIncludeReverseLookup"> 逆引き探索を有効化</label>
+                <div class="subpane-note">比較元アプリを起点に、ルックアップ・関連レコード・アクションでつながるアプリを図にします。</div>
+                <div class="er-route-panel">
+                  <div class="er-route-main">
+                    <div class="er-route-copy">
+                      <div class="er-route-badge">標準生成</div>
+                      <div class="er-route-title">現在の比較元アプリからER図を開く</div>
+                      <div class="er-route-sub">通常はこのまま生成できます。探索範囲を広げる場合だけ詳細オプションを調整してください。</div>
+                      <div class="er-route-meta" aria-label="標準設定">
+                        <span>Dagre</span>
+                        <span>標準密度</span>
+                        <span>サブテーブルON</span>
+                      </div>
+                    </div>
+                    <div class="er-route-actions">
+                      <button type="button" class="btn" data-act="generateERDiagram" title="新しいタブでインタラクティブなERを開きます">ER図を開く</button>
+                      <button type="button" class="btn sub" data-act="exportERDiagramHtml" title="単体HTMLファイルとして保存">HTML保存</button>
+                    </div>
                   </div>
+                  <details class="er-route-details">
+                    <summary>
+                      <span>詳細オプション</span>
+                      <small>追加起点・表示密度・逆引き探索</small>
+                    </summary>
+                    <div class="er-option-grid">
+                      <div>
+                        <label title="Cytoscape のレイアウトアルゴリズム">初期レイアウト</label>
+                        <select id="u_erLayout" title="グラフの並べ方">
+                          <option value="dagre">Dagre（推奨）</option>
+                          <option value="breadthfirst">ツリー</option>
+                          <option value="cose">フォース</option>
+                          <option value="concentric">同心円</option>
+                          <option value="grid">グリッド</option>
+                          <option value="circle">円形</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label title="フィールド表示の粒度">表示密度</label>
+                        <select id="u_erFieldDensity">
+                          <option value="compact">簡易</option>
+                          <option value="standard" selected>標準</option>
+                          <option value="full">詳細</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label title="0 は無制限に近い挙動（実装上の上限あり）">探索深さ</label>
+                        <input type="text" id="u_erMaxDepth" value="0" placeholder="0で無制限">
+                      </div>
+                      <div>
+                        <label title="カンマ区切りで複数指定">追加の起点アプリID</label>
+                        <input type="text" id="u_erExtraApps" value="" placeholder="例: 123, 456, 789">
+                      </div>
+                    </div>
+                    <div class="er-option-chips">
+                      <label class="chip" title="サブテーブル内フィールドもERに含めます"><input type="checkbox" id="u_erIncludeSubtable" checked> サブテーブル項目を含める</label>
+                      <label class="chip" title="参照先だけでなく、現在アプリを参照しているアプリも探索します（全アプリを走査）"><input type="checkbox" id="u_erIncludeReverseLookup"> 逆引き探索を有効化</label>
+                    </div>
+                    <div class="er-support-actions">
+                      <button type="button" class="btn sub" data-act="openAnalyzeFieldGraph" title="フィールド依存関係は分析タブへ移動しました">フィールド依存は分析で確認</button>
+                    </div>
+                  </details>
                 </div>
-              </div>
-              <div class="btns" style="margin-top:10px">
-                <button type="button" class="btn" data-act="generateERDiagram" title="新しいタブでインタラクティブなERを開きます">ER図を生成 (別タブ表示)</button>
-                <button type="button" class="btn sub" data-act="exportERDiagramHtml" title="単体HTMLファイルとして保存">ER図HTML保存</button>
-                <button type="button" class="btn sub" data-act="openAnalyzeFieldGraph" title="フィールド依存関係は分析タブへ移動しました">フィールド依存は分析で確認</button>
-              </div>
-                </div>
-              </details>
               </div>
             </div>
 
@@ -21644,6 +21909,7 @@ ${body}`;
   init_api();
   init_engine();
   init_enrich();
+  init_export();
   init_components();
   init_dialog();
   var RESULT_HOST_ID = "u_reflectPreviewProdDiff";
@@ -21654,7 +21920,13 @@ ${body}`;
         lastResult: null,
         appId: "",
         guestId: "",
-        runAt: null
+        runAt: null,
+        filters: {
+          section: "",
+          type: "",
+          severity: "",
+          keyword: ""
+        }
       };
     }
     return state[PREVIEW_PROD_STATE_KEY];
@@ -21679,33 +21951,204 @@ ${body}`;
     anchor.parentNode.insertBefore(host, anchor.nextSibling);
     return host;
   }
-  function formatCounts(summary) {
-    return `追加 ${summary.added} / 削除 ${summary.removed} / 変更 ${summary.changed}${summary.moved ? ` / 移動 ${summary.moved}` : ""}`;
+  function summarizePreviewProdTypes(rows) {
+    const out = { previewOnly: 0, productionOnly: 0, changed: 0, moved: 0 };
+    (rows || []).forEach((row) => {
+      const kind = getPreviewProdRowKind(row);
+      if (kind === "removed") out.previewOnly += 1;
+      else if (kind === "added") out.productionOnly += 1;
+      else if (kind === "moved") out.moved += 1;
+      else if (kind === "changed") out.changed += 1;
+    });
+    return out;
   }
-  function formatSectionBreakdown(rows) {
+  function formatPreviewProdCounts(typeSummary) {
+    return `プレビューのみ ${typeSummary.previewOnly} / 本番のみ ${typeSummary.productionOnly} / 値違い ${typeSummary.changed}${typeSummary.moved ? ` / 移動 ${typeSummary.moved}` : ""}`;
+  }
+  function buildSectionBreakdown(rows) {
     const counts = /* @__PURE__ */ new Map();
     for (const row of rows) {
       const key = row?.sectionKey || "";
       if (!key) continue;
-      counts.set(key, (counts.get(key) || 0) + 1);
+      const current = counts.get(key) || { key, total: 0, high: 0, medium: 0, low: 0 };
+      current.total += 1;
+      const severity = String(row.severity || "low");
+      if (severity === "high") current.high += 1;
+      else if (severity === "medium") current.medium += 1;
+      else current.low += 1;
+      counts.set(key, current);
     }
-    if (!counts.size) return "";
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([key, n]) => {
-      const label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
-      return `<li><span class="sec-name">${esc(label)}</span><span class="sec-count">${n}件</span></li>`;
+    return [...counts.values()].sort((a, b) => b.total - a.total || getSectionLabel2(a.key).localeCompare(getSectionLabel2(b.key)));
+  }
+  function getSectionLabel2(key) {
+    return SECTION_DEFS.find((d) => d.key === key)?.label || key || "-";
+  }
+  function getPreviewProdTypeInfo(type) {
+    if (type === "removed") {
+      return { key: "previewOnly", label: "プレビューのみ", note: "本番にまだ無い設定", className: "preview-only" };
+    }
+    if (type === "added") {
+      return { key: "productionOnly", label: "本番のみ", note: "プレビューには無い設定", className: "production-only" };
+    }
+    if (type === "changed") {
+      return { key: "changed", label: "値違い", note: "同じ項目の値が違う", className: "changed" };
+    }
+    if (type === "moved") {
+      return { key: "moved", label: "移動", note: "並び順の差分", className: "moved" };
+    }
+    return { key: String(type || ""), label: String(type || "-"), note: "", className: String(type || "") };
+  }
+  function getPreviewProdRowKind(row) {
+    if (row?.moved) return "moved";
+    return String(row?.type || "");
+  }
+  function formatPreviewValue(value, path) {
+    if (value === void 0) return "（なし）";
+    const text = stringifyRowValueForDiff(value, path);
+    if (text.length <= 4800) return text;
+    return `${text.slice(0, 4800)}
+...（長いため一部省略）`;
+  }
+  function getFilterState() {
+    const bucket = getPreviewProdState();
+    if (!bucket.filters || typeof bucket.filters !== "object") {
+      bucket.filters = { section: "", type: "", severity: "", keyword: "" };
+    }
+    return bucket.filters;
+  }
+  function rowMatchesPreviewProdFilters(row, filters) {
+    if (filters.section && row.sectionKey !== filters.section) return false;
+    if (filters.type && getPreviewProdRowKind(row) !== filters.type) return false;
+    if (filters.severity && String(row.severity || "low") !== filters.severity) return false;
+    const keyword = String(filters.keyword || "").trim().toLowerCase();
+    if (!keyword) return true;
+    const haystack = [
+      row.path,
+      row.section,
+      getSectionLabel2(row.sectionKey),
+      getPreviewProdTypeInfo(getPreviewProdRowKind(row)).label,
+      row.type,
+      row.severity,
+      row.reasonSummary,
+      formatPreviewValue(row.left, row.path),
+      formatPreviewValue(row.right, row.path)
+    ].join("\n").toLowerCase();
+    return haystack.includes(keyword);
+  }
+  function getFilteredRows(rows) {
+    const filters = getFilterState();
+    return (rows || []).filter((row) => rowMatchesPreviewProdFilters(row, filters));
+  }
+  function renderMetricCard(label, value, note, className = "") {
+    return `<section class="pvd-metric ${className}">
+    <div class="pvd-metric-label">${esc(label)}</div>
+    <div class="pvd-metric-value">${esc(String(value))}</div>
+    ${note ? `<div class="pvd-metric-note">${esc(note)}</div>` : ""}
+  </section>`;
+  }
+  function renderTypeFilters(typeSummary, activeType) {
+    const defs = [
+      { key: "", type: "", label: "すべて", value: typeSummary.previewOnly + typeSummary.productionOnly + typeSummary.changed + typeSummary.moved },
+      { key: "previewOnly", type: "removed", label: "プレビューのみ", value: typeSummary.previewOnly },
+      { key: "productionOnly", type: "added", label: "本番のみ", value: typeSummary.productionOnly },
+      { key: "changed", type: "changed", label: "値違い", value: typeSummary.changed },
+      { key: "moved", type: "moved", label: "移動", value: typeSummary.moved }
+    ];
+    return defs.map((item) => {
+      const active = String(activeType || "") === String(item.type || "");
+      return `<button type="button" class="pvd-filter-chip${active ? " is-active" : ""}" data-act="setPreviewProdDiffFilter" data-filter-kind="type" data-filter-value="${esc(item.type)}">
+      ${esc(item.label)} <strong>${esc(String(item.value))}</strong>
+    </button>`;
     }).join("");
   }
-  function formatRowsPreview(rows, limit) {
-    const shown = rows.slice(0, limit);
-    if (!shown.length) return "";
-    const items = shown.map((row) => {
-      const typeLabel = row.type === "added" ? "追加" : row.type === "removed" ? "削除" : row.type === "changed" ? "変更" : row.type || "";
-      const cls = `pvd-type pvd-type--${esc(row.type || "")}`;
-      const section = SECTION_DEFS.find((d) => d.key === row.sectionKey)?.label || row.sectionKey || "";
-      return `<li><span class="${cls}">${esc(typeLabel)}</span> <span class="pvd-section">${esc(section)}</span> <code class="pvd-path">${esc(row.path || "")}</code></li>`;
+  function renderSeverityFilters(severity, activeSeverity) {
+    const defs = [
+      { key: "", label: "すべて", value: severity.high + severity.medium + severity.low },
+      { key: "high", label: "高", value: severity.high },
+      { key: "medium", label: "中", value: severity.medium },
+      { key: "low", label: "低", value: severity.low }
+    ];
+    return defs.map((item) => {
+      const active = String(activeSeverity || "") === item.key;
+      return `<button type="button" class="pvd-filter-chip pvd-filter-chip--sev-${esc(item.key || "all")}${active ? " is-active" : ""}" data-act="setPreviewProdDiffFilter" data-filter-kind="severity" data-filter-value="${esc(item.key)}">
+      重要度 ${esc(item.label)} <strong>${esc(String(item.value))}</strong>
+    </button>`;
     }).join("");
-    const more = rows.length > limit ? `<li class="pvd-more">…ほか ${rows.length - limit} 件</li>` : "";
-    return `<ul class="pvd-row-list">${items}${more}</ul>`;
+  }
+  function renderSectionCards(sectionBreakdown, activeSection) {
+    if (!sectionBreakdown.length) return "";
+    return `<div class="pvd-section-cards">
+    ${sectionBreakdown.map((item) => {
+      const active = activeSection === item.key;
+      return `<button type="button" class="pvd-section-card${active ? " is-active" : ""}" data-act="setPreviewProdDiffFilter" data-filter-kind="section" data-filter-value="${esc(item.key)}">
+        <span class="pvd-section-card-name">${esc(getSectionLabel2(item.key))}</span>
+        <span class="pvd-section-card-count">${esc(String(item.total))}</span>
+        <span class="pvd-section-card-sev">高 ${item.high} / 中 ${item.medium} / 低 ${item.low}</span>
+      </button>`;
+    }).join("")}
+  </div>`;
+  }
+  function renderActiveFilterSummary(filters, filteredCount, totalCount) {
+    const parts = [];
+    if (filters.section) parts.push(`セクション: ${getSectionLabel2(filters.section)}`);
+    if (filters.type) parts.push(`差分: ${getPreviewProdTypeInfo(filters.type).label}`);
+    if (filters.severity) parts.push(`重要度: ${getSeverityDisplayLabel(filters.severity)}`);
+    if (filters.keyword) parts.push(`検索: ${filters.keyword}`);
+    const label = parts.length ? parts.join(" / ") : "絞り込みなし";
+    return `<div class="pvd-filter-state">
+    <span>${esc(label)}</span>
+    <strong>${filteredCount} / ${totalCount} 件表示</strong>
+  </div>`;
+  }
+  function renderDiffRows(rows) {
+    if (!rows.length) {
+      return `<div class="pvd-empty">
+      <div class="pvd-empty-title">条件に合う差分はありません</div>
+      <div class="pvd-empty-text">絞り込みを解除すると他のプレビュー差分を確認できます。</div>
+    </div>`;
+    }
+    const groups = /* @__PURE__ */ new Map();
+    rows.forEach((row) => {
+      const key = row.sectionKey || "other";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    });
+    return [...groups.entries()].map(([sectionKey, sectionRows]) => `
+    <section class="pvd-row-section">
+      <div class="pvd-row-section-head">
+        <span>${esc(getSectionLabel2(sectionKey))}</span>
+        <strong>${sectionRows.length}件</strong>
+      </div>
+      <div class="pvd-row-cards">
+        ${sectionRows.map((row, idx) => renderDiffRowCard(row, idx)).join("")}
+      </div>
+    </section>
+  `).join("");
+  }
+  function renderDiffRowCard(row, idx) {
+    const type = getPreviewProdTypeInfo(getPreviewProdRowKind(row));
+    const severity = String(row.severity || "low");
+    const previewValue = formatPreviewValue(row.left, row.path);
+    const productionValue = formatPreviewValue(row.right, row.path);
+    const open = idx < 3 ? " open" : "";
+    return `<details class="pvd-row-card pvd-row-card--${esc(type.className)}"${open}>
+    <summary class="pvd-row-summary">
+      <span class="pvd-type pvd-type--${esc(type.className)}" title="${esc(type.note)}">${esc(type.label)}</span>
+      <span class="pvd-sev pvd-sev--${esc(severity)}">重要度 ${esc(getSeverityDisplayLabel(severity))}</span>
+      <code class="pvd-path">${esc(row.path || "")}</code>
+    </summary>
+    ${row.reasonSummary ? `<div class="pvd-row-reason">${esc(row.reasonSummary)}</div>` : ""}
+    <div class="pvd-compare-grid">
+      <div class="pvd-compare-col">
+        <div class="pvd-compare-head pvd-compare-head--preview">プレビュー</div>
+        <pre class="pvd-compare-pre">${esc(previewValue)}</pre>
+      </div>
+      <div class="pvd-compare-col">
+        <div class="pvd-compare-head pvd-compare-head--prod">本番</div>
+        <pre class="pvd-compare-pre">${esc(productionValue)}</pre>
+      </div>
+    </div>
+  </details>`;
   }
   function renderResult(host, payload) {
     if (!host) return;
@@ -21714,33 +22157,56 @@ ${body}`;
       host.style.display = "none";
       return;
     }
-    const { runAt, appId, guestId, scopes, summary, severity, totalActual, fetchIssues, previewBundle, productionBundle } = payload;
+    const { runAt, appId, guestId, scopes, severity, totalActual, fetchIssues, previewBundle, productionBundle } = payload;
     const actualRows = getActualDiffRows2(payload.rows || []);
-    const sections = formatSectionBreakdown(actualRows);
-    const breakdownHtml = sections ? `<ul class="pvd-section-list">${sections}</ul>` : '<div class="muted" style="margin:6px 0 0">プレビューと本番は一致しています（差分 0件）</div>';
-    const issueHtml = fetchIssues && fetchIssues.length ? `<div class="pvd-issues">取得失敗 ${fetchIssues.length}件: ${esc(fetchIssues.map((x) => x.section || x.sectionKey).filter(Boolean).join(", "))}</div>` : "";
+    const filters = getFilterState();
+    const filteredRows = getFilteredRows(actualRows);
+    const sectionBreakdown = buildSectionBreakdown(actualRows);
+    const typeSummary = summarizePreviewProdTypes(actualRows);
+    const noDiff = totalActual === 0 && (!fetchIssues || !fetchIssues.length);
+    const issueHtml = fetchIssues && fetchIssues.length ? `<div class="pvd-issues"><strong>取得失敗 ${fetchIssues.length}件</strong><span>${esc(fetchIssues.map((x) => x.section || x.sectionKey).filter(Boolean).join(", "))}</span></div>` : "";
     const previewApp = extractAppNameFromBundle(previewBundle) || "";
     const prodApp = extractAppNameFromBundle(productionBundle) || "";
     const appLabel = previewApp || prodApp ? ` / ${esc(previewApp || prodApp)}` : "";
-    const rowsPreview = formatRowsPreview(actualRows, 10);
     const stamp = runAt ? new Date(runAt).toLocaleString() : "";
     host.style.display = "block";
     host.innerHTML = `
     <div class="pvd-card">
       <div class="pvd-head">
-        <div class="pvd-title">プレビュー ⇔ 本番 差分比較</div>
+        <div>
+          <div class="pvd-title">プレビュー ⇔ 本番 差分比較</div>
+          <div class="pvd-subtitle">デプロイ待ちの設定差分を、プレビュー側と本番側で並べて確認します。</div>
+        </div>
         <div class="pvd-meta">App ${esc(appId)}${guestId ? ` / guest ${esc(guestId)}` : ""}${appLabel}${stamp ? ` ・ ${esc(stamp)}` : ""}</div>
       </div>
-      <div class="pvd-summary">
-        <span class="pvd-pill pvd-pill--total">差分 ${totalActual}件</span>
-        <span class="pvd-pill">${esc(formatCounts(summary))}</span>
-        <span class="pvd-pill pvd-pill--sev">重要度 高:${severity.high} / 中:${severity.medium} / 低:${severity.low}</span>
-        <span class="pvd-pill pvd-pill--scope">対象 ${scopes.length}セクション</span>
+      <div class="pvd-metrics">
+        ${renderMetricCard("差分", totalActual, "プレビューと本番の差", "pvd-metric--total")}
+        ${renderMetricCard("プレビューのみ", typeSummary.previewOnly, "本番にまだ無い設定", "pvd-metric--preview")}
+        ${renderMetricCard("本番のみ", typeSummary.productionOnly, "プレビューには無い設定", "pvd-metric--prod")}
+        ${renderMetricCard("値違い", typeSummary.changed, "同じ項目の変更", "pvd-metric--changed")}
+        ${renderMetricCard("高重要度", severity.high, `中 ${severity.medium} / 低 ${severity.low}`, "pvd-metric--severity")}
       </div>
       ${issueHtml}
-      <div class="pvd-section-head">セクション別の差分件数</div>
-      ${breakdownHtml}
-      ${rowsPreview ? `<div class="pvd-section-head">差分の先頭 10 件</div>${rowsPreview}` : ""}
+      ${noDiff ? `
+        <div class="pvd-empty pvd-empty--clean">
+          <div class="pvd-empty-title">プレビューと本番は一致しています</div>
+          <div class="pvd-empty-text">反映セクション ${scopes.length} 件の範囲では、デプロイ待ちの差分はありません。</div>
+        </div>` : `
+        <div class="pvd-section-head">セクション別の差分</div>
+        ${renderSectionCards(sectionBreakdown, filters.section)}
+        <div class="pvd-filter-panel">
+          <div class="pvd-filter-row">${renderTypeFilters(typeSummary, filters.type)}</div>
+          <div class="pvd-filter-row">${renderSeverityFilters(severity, filters.severity)}</div>
+          <div class="pvd-search-row">
+            <input type="text" id="u_previewProdSearch" value="${esc(filters.keyword || "")}" placeholder="パス / 値 / セクションで検索">
+            <button type="button" class="btn sub" data-act="applyPreviewProdDiffSearch">検索</button>
+            <button type="button" class="btn sub" data-act="clearPreviewProdDiffFilters">絞り込み解除</button>
+          </div>
+          ${renderActiveFilterSummary(filters, filteredRows.length, actualRows.length)}
+        </div>
+        <div class="pvd-section-head">差分一覧</div>
+        ${renderDiffRows(filteredRows)}
+      `}
       <div class="pvd-actions">
         <button type="button" class="btn sub" data-act="exportPreviewProdDiffJson">JSONで保存</button>
         <button type="button" class="btn sub" data-act="closePreviewProdDiff">閉じる</button>
@@ -21788,6 +22254,7 @@ ${body}`;
     const summary = summarizeRows(rows);
     const severity = summarizeSeverity(rows);
     const totalActual = countActualDiffRows(rows);
+    const previewProdSummary = summarizePreviewProdTypes(getActualDiffRows2(rows));
     const payload = {
       appId,
       guestId,
@@ -21797,18 +22264,20 @@ ${body}`;
       productionBundle,
       rows,
       summary,
+      previewProdSummary,
       severity,
       totalActual,
       fetchIssues: diffResult.fetchIssues || []
     };
     const bucket = getPreviewProdState();
     bucket.lastResult = payload;
+    bucket.filters = { section: "", type: "", severity: "", keyword: "" };
     bucket.appId = appId;
     bucket.guestId = guestId;
     bucket.runAt = payload.runAt;
     renderResult(host, payload);
     const direction = "比較元=プレビュー / 比較先=本番";
-    setStatus(`プレビュー⇔本番 差分比較 完了 (${direction}): 差分 ${totalActual}件 / 取得失敗 ${diffResult.fetchIssues?.length || 0}件 / ${formatCounts(summary)} / 高:${severity.high} 中:${severity.medium} 低:${severity.low}`);
+    setStatus(`プレビュー⇔本番 差分比較 完了 (${direction}): 差分 ${totalActual}件 / 取得失敗 ${diffResult.fetchIssues?.length || 0}件 / ${formatPreviewProdCounts(previewProdSummary)} / 高:${severity.high} 中:${severity.medium} 低:${severity.low}`);
   }
   function exportPreviewProdDiffJson() {
     const bucket = getPreviewProdState();
@@ -21827,6 +22296,7 @@ ${body}`;
       scopes: payload.scopes,
       direction: { source: "preview", target: "production" },
       summary: payload.summary,
+      previewProductionSummary: payload.previewProdSummary,
       severity: payload.severity,
       totalActual: payload.totalActual,
       fetchIssues: payload.fetchIssues,
@@ -21837,9 +22307,42 @@ ${body}`;
     downloadText(filename, JSON.stringify(body, null, 2), "application/json");
     setStatus(`プレビュー⇔本番 差分をJSONに保存しました: ${filename}`);
   }
+  function rerenderLastResult() {
+    const bucket = getPreviewProdState();
+    const host = ensureResultHost();
+    if (!bucket.lastResult || !host) return false;
+    renderResult(host, bucket.lastResult);
+    return true;
+  }
+  function setPreviewProdDiffFilter(kind, value) {
+    const filters = getFilterState();
+    const key = String(kind || "");
+    if (!["section", "type", "severity"].includes(key)) return;
+    const nextValue = String(value || "");
+    filters[key] = filters[key] === nextValue ? "" : nextValue;
+    if (rerenderLastResult()) {
+      const label = key === "section" ? filters[key] ? getSectionLabel2(filters[key]) : "解除" : filters[key] || "解除";
+      setStatus(`プレビュー⇔本番 差分の絞り込みを更新しました: ${label}`);
+    }
+  }
+  function applyPreviewProdDiffSearch() {
+    const filters = getFilterState();
+    filters.keyword = String(getToolDocument().getElementById("u_previewProdSearch")?.value || "").trim();
+    if (rerenderLastResult()) {
+      setStatus(filters.keyword ? `プレビュー⇔本番 差分を検索しました: ${filters.keyword}` : "プレビュー⇔本番 差分の検索を解除しました");
+    }
+  }
+  function clearPreviewProdDiffFilters() {
+    const bucket = getPreviewProdState();
+    bucket.filters = { section: "", type: "", severity: "", keyword: "" };
+    if (rerenderLastResult()) {
+      setStatus("プレビュー⇔本番 差分の絞り込みを解除しました");
+    }
+  }
   function closePreviewProdDiff() {
     const bucket = getPreviewProdState();
     bucket.lastResult = null;
+    bucket.filters = { section: "", type: "", severity: "", keyword: "" };
     const host = getToolDocument().getElementById(RESULT_HOST_ID);
     if (host) {
       host.innerHTML = "";
@@ -24214,6 +24717,11 @@ ${body}`;
         withGuard(runConnectionSearchApps);
         return;
       }
+      if (e.target?.id === "u_previewProdSearch" && e.key === "Enter") {
+        e.preventDefault();
+        applyPreviewProdDiffSearch();
+        return;
+      }
       const featCard = e.target.closest?.(".feature-card[data-feature]");
       if (featCard && !editable && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
@@ -25109,6 +25617,20 @@ ${body}`;
           saveWorkHistorySnapshot("diff", { label: "差分比較後", silent: true });
         });
       }
+      if (act === "runDiffLoadReflectNodes") {
+        return withGuard(async () => {
+          switchTab("reflect", { persist: false });
+          switchSubTab("reflect", "diff", { persist: false });
+          await runDiff();
+          markReflectApplyChecks(["diff"]);
+          resetReflectApplyChecks(["plan"]);
+          loadReflectRowsFromLastDiff();
+          renderReflectModeUi();
+          renderReflectMainPanel();
+          saveWorkHistorySnapshot("diff", { label: "差分候補作成後", silent: true });
+          setStatus(`差分比較と候補作成が完了しました (${(state.reflectRows || []).length}件)`);
+        });
+      }
       if (act === "exportDiffJson") return withGuard(exportDiffJson);
       if (act === "exportDiffHtml") return withGuard(exportDiffHtml);
       if (act === "exportPatchJson") return withGuard(exportPatchJson);
@@ -25437,6 +25959,14 @@ ${body}`;
         setStatus("差分から調整モードに切り替えました");
         return;
       }
+      if (act === "reflectModeJson") {
+        state.reflectActiveSidebarSection = null;
+        switchSubTab("reflect", "json");
+        renderReflectModeUi();
+        renderReflectMainPanel();
+        setStatus("JSON詳細ルートに切り替えました");
+        return;
+      }
       if (act === "saveReflectPreset") {
         const name = (kusPrompt("プリセット名を入力してください（例: 開発→検証 権限以外）", "") || "").trim();
         if (!name) return;
@@ -25688,6 +26218,11 @@ ${body}`;
           saveWorkHistorySnapshot("plan", { label: "プラン確認後", silent: true });
         });
       }
+      if (act === "markReflectTargetConfirmed") {
+        markReflectApplyChecks(["target"]);
+        setStatus("反映先が比較先プレビューであることを確認済みにしました");
+        return;
+      }
       if (act === "exportDryRunPlan" && typeof runExportDryRunPlan2 === "function") return withGuard(runExportDryRunPlan2);
       if (act === "backupTargetPreview" && typeof runBackupTargetPreview2 === "function") return withGuard(runBackupTargetPreview2);
       if (act === "restoreTargetPreviewBackup" && typeof runRestoreTargetPreviewBackup2 === "function") return withGuard(runRestoreTargetPreviewBackup2);
@@ -25700,6 +26235,18 @@ ${body}`;
       if (act === "runPreviewProdDiff") return withGuard(runPreviewProductionDiff);
       if (act === "exportPreviewProdDiffJson") {
         exportPreviewProdDiffJson();
+        return;
+      }
+      if (act === "setPreviewProdDiffFilter") {
+        setPreviewProdDiffFilter(actEl.dataset.filterKind || "", actEl.dataset.filterValue || "");
+        return;
+      }
+      if (act === "applyPreviewProdDiffSearch") {
+        applyPreviewProdDiffSearch();
+        return;
+      }
+      if (act === "clearPreviewProdDiffFilters") {
+        clearPreviewProdDiffFilters();
         return;
       }
       if (act === "closePreviewProdDiff") {
@@ -26046,6 +26593,16 @@ ${diffMd}
     includeReverseLookup: false
   };
   var ER_TRAVERSE_RELATION_KINDS = /* @__PURE__ */ new Set(["LOOKUP", "REF", "ACTION"]);
+  function normalizeFieldProperties(response) {
+    const props = response?.properties;
+    return props && typeof props === "object" && !Array.isArray(props) ? props : {};
+  }
+  function buildScriptTag(src, fallbackSrc = "") {
+    const safeSrc = esc(src || "");
+    const safeFallback = esc(fallbackSrc || "");
+    const fallback = safeFallback ? ` onerror="this.onerror=null;this.src='${safeFallback}'"` : "";
+    return `<script src="${safeSrc}"${fallback}><\/script>`;
+  }
   function readErDiagramOptions() {
     const startAppId = String(ui.sourceApp?.value || "").trim();
     const layoutName = String(ui.erLayout?.value || ER_DEFAULTS.layoutName).trim() || ER_DEFAULTS.layoutName;
@@ -26126,7 +26683,7 @@ ${diffMd}
   })();
   var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   var fetchAllApps = async (options) => {
-    const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
+    const prefix = buildApiPrefix(options?.source?.guestId, false);
     const apps = [];
     const limit = 100;
     for (let offset = 0; ; offset += limit) {
@@ -26141,14 +26698,19 @@ ${diffMd}
     if (cache.has(appId)) return cache.get(appId);
     try {
       const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
+      const appInfoPrefix = buildApiPrefix(options?.source?.guestId, false);
       const [fR, aR, actionResp] = await Promise.all([
         apiGet(prefix, "/app/form/fields.json", { app: appId }),
-        apiGet(prefix, "/app.json", { id: appId }),
+        apiGet(appInfoPrefix, "/app.json", { id: appId }).catch((error) => ({
+          name: `アプリ ${appId}`,
+          _fetchError: error?.message || String(error)
+        })),
         apiGet(prefix, "/app/actions.json", { app: appId }).catch(() => ({ actions: {} }))
       ]);
       const fields = [], relations = [];
       const walk = (props, parentTable = "", parentTableLabel = "") => {
         for (const [c, f] of Object.entries(props)) {
+          if (!f || typeof f !== "object") continue;
           if (["GROUP", "SPACER", "HR", "LABEL"].includes(f.type)) continue;
           if (f.type === "SUBTABLE") {
             fields.push({
@@ -26162,7 +26724,7 @@ ${diffMd}
               path: c,
               displayPath: f.label ? `${f.label} [${c}]` : c
             });
-            if (options?.includeSubtableFields) walk(f.fields, c, f.label || c);
+            if (options?.includeSubtableFields) walk(f.fields || {}, c, f.label || c);
             continue;
           }
           const hasLookupSetting = !!(f.lookup && typeof f.lookup === "object");
@@ -26210,13 +26772,13 @@ ${diffMd}
           });
         }
       };
-      walk(fR.properties);
-      Object.values(actionResp?.actions || {}).forEach((action, index) => {
-        const toApp = Number(action?.destApp?.app || 0);
+      walk(normalizeFieldProperties(fR));
+      Object.entries(actionResp?.actions || {}).forEach(([actionName, action], index) => {
+        const toApp = Number(action?.destApp?.app || action?.app?.app || 0);
         if (!toApp) return;
         relations.push({
           from: `__ACTION__${index}`,
-          fromLabel: action?.name || `アクション${index + 1}`,
+          fromLabel: action?.name || actionName || `アクション${index + 1}`,
           toApp,
           toField: "",
           kind: "ACTION"
@@ -26234,7 +26796,7 @@ ${diffMd}
       const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
       const r = {
         id: appId,
-        name: aR.name,
+        name: aR.name || `アプリ ${appId}`,
         spaceId: aR.spaceId || null,
         threadId: aR.threadId || null,
         fields: visibleFields,
@@ -26341,6 +26903,9 @@ ${diffMd}
     }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
     const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", ");
     const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
+    const cytoscapeScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscape.cdnUrl, EXTERNAL_LIBRARIES.cytoscape.altCdnUrl);
+    const dagreScript = buildScriptTag(EXTERNAL_LIBRARIES.dagre.cdnUrl);
+    const cytoscapeDagreScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl, EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl);
     return (
       /*html*/
       `<!DOCTYPE html>
@@ -26348,9 +26913,9 @@ ${diffMd}
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>kintone ER図 v3</title>
-<script src="${EXTERNAL_LIBRARIES.cytoscape.cdnUrl}"><\/script>
-<script src="${EXTERNAL_LIBRARIES.dagre.cdnUrl}"><\/script>
-<script src="${EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl}"><\/script>
+${cytoscapeScript}
+${dagreScript}
+${cytoscapeDagreScript}
 <style>
 @import url('${EXTERNAL_LIBRARIES.googleFontsDmSansMono.cdnUrl}');
 
@@ -28340,11 +28905,12 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
     const isPreview = !!ui.jsconfigPreview.checked;
     const prefix = buildApiPrefix(c.source.guestId, isPreview);
+    const appInfoPrefix = buildApiPrefix(c.source.guestId, false);
     setStatus("JS/CSS設定を取得中...");
     const res = await apiGet(prefix, "/app/customize.json", { app: c.source.appId });
     const data = normalize(res);
     try {
-      const appInfo = await apiGet(prefix, "/app.json", { id: c.source.appId });
+      const appInfo = await apiGet(appInfoPrefix, "/app.json", { id: c.source.appId });
       lastFetchedSourceAppName = String(appInfo?.name || "").trim();
     } catch (_e) {
       lastFetchedSourceAppName = "";

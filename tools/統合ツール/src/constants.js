@@ -82,7 +82,7 @@ export const DIALOG_LARGE_HEIGHT = 940;
 
 export const SECTION_DEFS = [
   { key: 'appSettings', label: 'アプリ設定', endpoint: '/app/settings.json', put: false },
-  { key: 'appInfo', label: 'アプリ情報(ラベル)', endpoint: '/app.json', put: false, paramBuilder: (app) => ({ id: app }) },
+  { key: 'appInfo', label: 'アプリ情報(ラベル)', endpoint: '/app.json', put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
   { key: 'fieldSettings', label: 'フィールド設定', endpoint: '/app/form/fields.json', put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
   { key: 'layoutSettings', label: 'レイアウト設定', endpoint: '/app/form/layout.json', put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
   { key: 'formSettings', label: 'フォーム設定', endpoint: '/form.json', put: false },

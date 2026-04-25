@@ -96,18 +96,10 @@ export function mountErLitePanel() {
   reverseLabel.appendChild(reverseCb);
   reverseLabel.appendChild(document.createTextNode('逆引き探索'));
 
-  bodySlot.appendChild(row('アプリID', appInp));
-  bodySlot.appendChild(row('追加起点', extraInp));
-  bodySlot.appendChild(row('ゲスト', guestInp));
-  bodySlot.appendChild(row('レイアウト', layoutSel));
-  bodySlot.appendChild(row('表示密度', densitySel));
-  bodySlot.appendChild(row('探索深さ', depthInp));
-
   const optRow = document.createElement('div');
   optRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:14px;margin-bottom:12px';
   optRow.appendChild(subtableLabel);
   optRow.appendChild(reverseLabel);
-  bodySlot.appendChild(optRow);
 
   function source() {
     return {
@@ -124,18 +116,18 @@ export function mountErLitePanel() {
   }
 
   const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:4px';
+  btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px';
 
   function mkBtn(text) {
     const b = document.createElement('button');
     b.type = 'button';
     b.textContent = text;
     b.style.cssText =
-      'padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:linear-gradient(180deg,#7c3aed,#6d28d9);color:#fff;cursor:pointer';
+      'padding:9px 12px;font-size:13px;font-weight:700;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer';
     return b;
   }
 
-  const bOpen = mkBtn('ER図を別タブで開く');
+  const bOpen = mkBtn('ER図を開く');
   bOpen.addEventListener('click', async () => {
     try {
       await runGenerateERDiagramStandalone(source(), (m, e) => setStatus(m, e));
@@ -144,8 +136,8 @@ export function mountErLitePanel() {
     }
   });
 
-  const bSave = mkBtn('ER図 HTML を保存');
-  bSave.style.background = 'linear-gradient(180deg,#3b82f6,#2563eb)';
+  const bSave = mkBtn('HTML保存');
+  bSave.style.background = '#475569';
   bSave.addEventListener('click', async () => {
     try {
       await runExportERDiagramHtmlStandalone(source(), (m, e) => setStatus(m, e));
@@ -156,5 +148,37 @@ export function mountErLitePanel() {
 
   btnRow.appendChild(bOpen);
   btnRow.appendChild(bSave);
-  bodySlot.appendChild(btnRow);
+
+  const route = document.createElement('div');
+  route.style.cssText = 'border:1px solid #a7f3d0;border-radius:8px;background:#fff;padding:12px;margin-bottom:8px';
+  const badge = document.createElement('div');
+  badge.textContent = '標準生成';
+  badge.style.cssText = 'display:inline-flex;padding:2px 8px;border:1px solid #99f6e4;border-radius:999px;background:#ecfdf5;color:#0f766e;font-size:10px;font-weight:800';
+  const title = document.createElement('div');
+  title.textContent = '現在のアプリからER図を開く';
+  title.style.cssText = 'font-size:14px;font-weight:800;color:#0f172a;margin-top:6px';
+  const primaryRow = row('アプリID', appInp);
+  primaryRow.style.marginTop = '10px';
+  route.appendChild(badge);
+  route.appendChild(title);
+  route.appendChild(primaryRow);
+  route.appendChild(btnRow);
+  bodySlot.appendChild(route);
+
+  const details = document.createElement('details');
+  details.style.cssText = 'border:1px solid #e2e8f0;border-radius:8px;background:#fff;margin-top:8px';
+  const summary = document.createElement('summary');
+  summary.textContent = '詳細オプション';
+  summary.style.cssText = 'cursor:pointer;padding:9px 10px;font-size:12px;font-weight:800;color:#334155';
+  const detailBody = document.createElement('div');
+  detailBody.style.cssText = 'padding:0 10px 10px';
+  detailBody.appendChild(row('追加起点', extraInp));
+  detailBody.appendChild(row('ゲスト', guestInp));
+  detailBody.appendChild(row('レイアウト', layoutSel));
+  detailBody.appendChild(row('表示密度', densitySel));
+  detailBody.appendChild(row('探索深さ', depthInp));
+  detailBody.appendChild(optRow);
+  details.appendChild(summary);
+  details.appendChild(detailBody);
+  bodySlot.appendChild(details);
 }

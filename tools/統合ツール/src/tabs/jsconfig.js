@@ -63,11 +63,12 @@ export async function runFetchJsConfig() {
   if (!c.source.appId) throw new Error('比較元アプリIDを入力してください');
   const isPreview = !!ui.jsconfigPreview.checked;
   const prefix = buildApiPrefix(c.source.guestId, isPreview);
+  const appInfoPrefix = buildApiPrefix(c.source.guestId, false);
   setStatus('JS/CSS設定を取得中...');
   const res = await apiGet(prefix, '/app/customize.json', { app: c.source.appId });
   const data = normalize(res);
   try {
-    const appInfo = await apiGet(prefix, '/app.json', { id: c.source.appId });
+    const appInfo = await apiGet(appInfoPrefix, '/app.json', { id: c.source.appId });
     lastFetchedSourceAppName = String(appInfo?.name || '').trim();
   } catch (_e) {
     lastFetchedSourceAppName = '';

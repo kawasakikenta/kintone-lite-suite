@@ -231,7 +231,6 @@ export function pickBundleSections(bundle, sections) {
 }
 
 export async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
-  const prefix = buildApiPrefix(guestId, preview);
   const app = String(appId || '').trim();
   if (!app) throw new Error('アプリIDが必要です');
 
@@ -249,6 +248,8 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
     const def = SECTION_DEFS.find((x) => x.key === sec);
     if (!def) continue;
     try {
+      const sectionPreview = def.previewEndpoint === false ? false : preview;
+      const prefix = buildApiPrefix(guestId, sectionPreview);
       const params = typeof def.paramBuilder === 'function' ? def.paramBuilder(app) : { app };
       const res = await apiGet(prefix, def.endpoint, params);
       const revision = extractSectionRevision(res);

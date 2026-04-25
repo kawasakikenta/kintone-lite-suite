@@ -317,7 +317,7 @@
       REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
-        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, paramBuilder: (app) => ({ id: app }) },
+        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
         { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
         { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
         { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
@@ -807,7 +807,6 @@ ${contextLine}`);
     return "";
   }
   async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
-    const prefix = buildApiPrefix(guestId, preview);
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -823,6 +822,8 @@ ${contextLine}`);
       const def = SECTION_DEFS.find((x) => x.key === sec);
       if (!def) continue;
       try {
+        const sectionPreview = def.previewEndpoint === false ? false : preview;
+        const prefix = buildApiPrefix(guestId, sectionPreview);
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
@@ -1595,7 +1596,7 @@ ${body}`;
         ENABLE_OUTLINE: true
       },
       DEFAULT_COL_WIDTH: 12,
-      MAX_COL_WIDTH: 80,
+      MAX_COL_WIDTH: 48,
       MIN_COL_WIDTH: 8,
       COLORS: {
         HEADER_BG: "FF0F766E",
@@ -1757,6 +1758,7 @@ ${body}`;
       ensureArray: (v) => Array.isArray(v) ? v : [],
       safeJoin: (arr, sep = "、") => Array.isArray(arr) ? arr.filter((v) => v !== "" && v != null).join(sep) : "",
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      clampColumnWidth: (width) => Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, Number.isFinite(Number(width)) ? Number(width) : CONFIG.DEFAULT_COL_WIDTH)),
       calculateCellWidth: (text) => {
         if (!text) return CONFIG.MIN_COL_WIDTH;
         const str = String(text);
@@ -1766,7 +1768,7 @@ ${body}`;
           for (const ch of line) lw += /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF00-\uFFEF]/.test(ch) ? 2 : 1;
           if (lw > width) width = lw;
         }
-        return Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, width + 2));
+        return UtilsX.clampColumnWidth(width + 2);
       },
       colToA1: (n) => {
         let s = "";
@@ -2333,7 +2335,7 @@ ${body}`;
             widths[i] = Math.max(widths[i] || CONFIG.MIN_COL_WIDTH, w);
           });
         }
-        ws["!cols"] = widths.map((w) => ({ wch: w || CONFIG.DEFAULT_COL_WIDTH }));
+        ws["!cols"] = widths.map((w) => ({ wch: UtilsX.clampColumnWidth(w || CONFIG.DEFAULT_COL_WIDTH) }));
       };
       const applyStyles = (ws, aoa, options = {}) => {
         if (!styled) return;

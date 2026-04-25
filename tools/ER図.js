@@ -867,6 +867,16 @@ ${contextLine}`);
     includeReverseLookup: false
   };
   var ER_TRAVERSE_RELATION_KINDS = /* @__PURE__ */ new Set(["LOOKUP", "REF", "ACTION"]);
+  function normalizeFieldProperties(response) {
+    const props = response?.properties;
+    return props && typeof props === "object" && !Array.isArray(props) ? props : {};
+  }
+  function buildScriptTag(src, fallbackSrc = "") {
+    const safeSrc = esc(src || "");
+    const safeFallback = esc(fallbackSrc || "");
+    const fallback = safeFallback ? ` onerror="this.onerror=null;this.src='${safeFallback}'"` : "";
+    return `<script src="${safeSrc}"${fallback}><\/script>`;
+  }
   function formatErLayoutLabel(layoutName) {
     const map = {
       dagre: "Dagre",
@@ -926,7 +936,7 @@ ${contextLine}`);
   })();
   var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   var fetchAllApps = async (options) => {
-    const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
+    const prefix = buildApiPrefix(options?.source?.guestId, false);
     const apps = [];
     const limit = 100;
     for (let offset = 0; ; offset += limit) {
@@ -941,14 +951,19 @@ ${contextLine}`);
     if (cache.has(appId)) return cache.get(appId);
     try {
       const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
+      const appInfoPrefix = buildApiPrefix(options?.source?.guestId, false);
       const [fR, aR, actionResp] = await Promise.all([
         apiGet(prefix, "/app/form/fields.json", { app: appId }),
-        apiGet(prefix, "/app.json", { id: appId }),
+        apiGet(appInfoPrefix, "/app.json", { id: appId }).catch((error) => ({
+          name: `アプリ ${appId}`,
+          _fetchError: error?.message || String(error)
+        })),
         apiGet(prefix, "/app/actions.json", { app: appId }).catch(() => ({ actions: {} }))
       ]);
       const fields = [], relations = [];
       const walk = (props, parentTable = "", parentTableLabel = "") => {
         for (const [c, f] of Object.entries(props)) {
+          if (!f || typeof f !== "object") continue;
           if (["GROUP", "SPACER", "HR", "LABEL"].includes(f.type)) continue;
           if (f.type === "SUBTABLE") {
             fields.push({
@@ -962,7 +977,7 @@ ${contextLine}`);
               path: c,
               displayPath: f.label ? `${f.label} [${c}]` : c
             });
-            if (options?.includeSubtableFields) walk(f.fields, c, f.label || c);
+            if (options?.includeSubtableFields) walk(f.fields || {}, c, f.label || c);
             continue;
           }
           const hasLookupSetting = !!(f.lookup && typeof f.lookup === "object");
@@ -1010,13 +1025,13 @@ ${contextLine}`);
           });
         }
       };
-      walk(fR.properties);
-      Object.values(actionResp?.actions || {}).forEach((action, index) => {
-        const toApp = Number(action?.destApp?.app || 0);
+      walk(normalizeFieldProperties(fR));
+      Object.entries(actionResp?.actions || {}).forEach(([actionName, action], index) => {
+        const toApp = Number(action?.destApp?.app || action?.app?.app || 0);
         if (!toApp) return;
         relations.push({
           from: `__ACTION__${index}`,
-          fromLabel: action?.name || `アクション${index + 1}`,
+          fromLabel: action?.name || actionName || `アクション${index + 1}`,
           toApp,
           toField: "",
           kind: "ACTION"
@@ -1034,7 +1049,7 @@ ${contextLine}`);
       const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
       const r = {
         id: appId,
-        name: aR.name,
+        name: aR.name || `アプリ ${appId}`,
         spaceId: aR.spaceId || null,
         threadId: aR.threadId || null,
         fields: visibleFields,
@@ -1141,6 +1156,9 @@ ${contextLine}`);
     }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
     const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", ");
     const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
+    const cytoscapeScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscape.cdnUrl, EXTERNAL_LIBRARIES.cytoscape.altCdnUrl);
+    const dagreScript = buildScriptTag(EXTERNAL_LIBRARIES.dagre.cdnUrl);
+    const cytoscapeDagreScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl, EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl);
     return (
       /*html*/
       `<!DOCTYPE html>
@@ -1148,9 +1166,9 @@ ${contextLine}`);
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>kintone ER図 v3</title>
-<script src="${EXTERNAL_LIBRARIES.cytoscape.cdnUrl}"><\/script>
-<script src="${EXTERNAL_LIBRARIES.dagre.cdnUrl}"><\/script>
-<script src="${EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl}"><\/script>
+${cytoscapeScript}
+${dagreScript}
+${cytoscapeDagreScript}
 <style>
 @import url('${EXTERNAL_LIBRARIES.googleFontsDmSansMono.cdnUrl}');
 
@@ -3245,17 +3263,10 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     reverseLabel.style.cssText = "font-size:12px;color:#475569;display:inline-flex;align-items:center;gap:6px;cursor:pointer";
     reverseLabel.appendChild(reverseCb);
     reverseLabel.appendChild(document.createTextNode("逆引き探索"));
-    bodySlot.appendChild(row("アプリID", appInp));
-    bodySlot.appendChild(row("追加起点", extraInp));
-    bodySlot.appendChild(row("ゲスト", guestInp));
-    bodySlot.appendChild(row("レイアウト", layoutSel));
-    bodySlot.appendChild(row("表示密度", densitySel));
-    bodySlot.appendChild(row("探索深さ", depthInp));
     const optRow = document.createElement("div");
     optRow.style.cssText = "display:flex;flex-wrap:wrap;gap:14px;margin-bottom:12px";
     optRow.appendChild(subtableLabel);
     optRow.appendChild(reverseLabel);
-    bodySlot.appendChild(optRow);
     function source() {
       return {
         appId: appInp.value.trim(),
@@ -3270,15 +3281,15 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       };
     }
     const btnRow = document.createElement("div");
-    btnRow.style.cssText = "display:flex;flex-direction:column;gap:8px;margin-top:4px";
+    btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin-top:10px";
     function mkBtn(text) {
       const b = document.createElement("button");
       b.type = "button";
       b.textContent = text;
-      b.style.cssText = "padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:linear-gradient(180deg,#7c3aed,#6d28d9);color:#fff;cursor:pointer";
+      b.style.cssText = "padding:9px 12px;font-size:13px;font-weight:700;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer";
       return b;
     }
-    const bOpen = mkBtn("ER図を別タブで開く");
+    const bOpen = mkBtn("ER図を開く");
     bOpen.addEventListener("click", async () => {
       try {
         await runGenerateERDiagramStandalone(source(), (m, e) => setStatus(m, e));
@@ -3286,8 +3297,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         setStatus(e.message || String(e), true);
       }
     });
-    const bSave = mkBtn("ER図 HTML を保存");
-    bSave.style.background = "linear-gradient(180deg,#3b82f6,#2563eb)";
+    const bSave = mkBtn("HTML保存");
+    bSave.style.background = "#475569";
     bSave.addEventListener("click", async () => {
       try {
         await runExportERDiagramHtmlStandalone(source(), (m, e) => setStatus(m, e));
@@ -3297,7 +3308,37 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     });
     btnRow.appendChild(bOpen);
     btnRow.appendChild(bSave);
-    bodySlot.appendChild(btnRow);
+    const route = document.createElement("div");
+    route.style.cssText = "border:1px solid #a7f3d0;border-radius:8px;background:#fff;padding:12px;margin-bottom:8px";
+    const badge = document.createElement("div");
+    badge.textContent = "標準生成";
+    badge.style.cssText = "display:inline-flex;padding:2px 8px;border:1px solid #99f6e4;border-radius:999px;background:#ecfdf5;color:#0f766e;font-size:10px;font-weight:800";
+    const title = document.createElement("div");
+    title.textContent = "現在のアプリからER図を開く";
+    title.style.cssText = "font-size:14px;font-weight:800;color:#0f172a;margin-top:6px";
+    const primaryRow = row("アプリID", appInp);
+    primaryRow.style.marginTop = "10px";
+    route.appendChild(badge);
+    route.appendChild(title);
+    route.appendChild(primaryRow);
+    route.appendChild(btnRow);
+    bodySlot.appendChild(route);
+    const details = document.createElement("details");
+    details.style.cssText = "border:1px solid #e2e8f0;border-radius:8px;background:#fff;margin-top:8px";
+    const summary = document.createElement("summary");
+    summary.textContent = "詳細オプション";
+    summary.style.cssText = "cursor:pointer;padding:9px 10px;font-size:12px;font-weight:800;color:#334155";
+    const detailBody = document.createElement("div");
+    detailBody.style.cssText = "padding:0 10px 10px";
+    detailBody.appendChild(row("追加起点", extraInp));
+    detailBody.appendChild(row("ゲスト", guestInp));
+    detailBody.appendChild(row("レイアウト", layoutSel));
+    detailBody.appendChild(row("表示密度", densitySel));
+    detailBody.appendChild(row("探索深さ", depthInp));
+    detailBody.appendChild(optRow);
+    details.appendChild(summary);
+    details.appendChild(detailBody);
+    bodySlot.appendChild(details);
   }
 
   // src/entries/er-lite-entry.js

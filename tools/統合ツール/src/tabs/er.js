@@ -19,6 +19,18 @@ const ER_DEFAULTS = {
 };
 const ER_TRAVERSE_RELATION_KINDS = new Set(['LOOKUP', 'REF', 'ACTION']);
 
+function normalizeFieldProperties(response) {
+  const props = response?.properties;
+  return props && typeof props === 'object' && !Array.isArray(props) ? props : {};
+}
+
+function buildScriptTag(src, fallbackSrc = '') {
+  const safeSrc = esc(src || '');
+  const safeFallback = esc(fallbackSrc || '');
+  const fallback = safeFallback ? ` onerror="this.onerror=null;this.src='${safeFallback}'"` : '';
+  return `<script src="${safeSrc}"${fallback}><\/script>`;
+}
+
 export function readErDiagramOptions() {
   const startAppId = String(ui.sourceApp?.value || '').trim();
   const layoutName = String(ui.erLayout?.value || ER_DEFAULTS.layoutName).trim() || ER_DEFAULTS.layoutName;
@@ -88,7 +100,7 @@ export { progressUi, ER_DEFAULTS };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const fetchAllApps = async (options) => {
-  const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
+  const prefix = buildApiPrefix(options?.source?.guestId, false);
   const apps = [];
   const limit = 100;
   for (let offset = 0; ; offset += limit) {
@@ -104,14 +116,19 @@ const getSchema = async (appId, options, cache) => {
   if (cache.has(appId)) return cache.get(appId);
   try {
     const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
+    const appInfoPrefix = buildApiPrefix(options?.source?.guestId, false);
     const [fR, aR, actionResp] = await Promise.all([
       apiGet(prefix, '/app/form/fields.json', { app: appId }),
-      apiGet(prefix, '/app.json', { id: appId }),
+      apiGet(appInfoPrefix, '/app.json', { id: appId }).catch((error) => ({
+        name: `アプリ ${appId}`,
+        _fetchError: error?.message || String(error)
+      })),
       apiGet(prefix, '/app/actions.json', { app: appId }).catch(() => ({ actions: {} })),
     ]);
     const fields = [], relations = [];
     const walk = (props, parentTable = '', parentTableLabel = '') => {
       for (const [c, f] of Object.entries(props)) {
+        if (!f || typeof f !== 'object') continue;
         if (["GROUP", "SPACER", "HR", "LABEL"].includes(f.type)) continue;
         if (f.type === "SUBTABLE") {
           fields.push({
@@ -125,7 +142,7 @@ const getSchema = async (appId, options, cache) => {
             path: c,
             displayPath: f.label ? `${f.label} [${c}]` : c
           });
-          if (options?.includeSubtableFields) walk(f.fields, c, f.label || c);
+          if (options?.includeSubtableFields) walk(f.fields || {}, c, f.label || c);
           continue;
         }
         const hasLookupSetting = !!(f.lookup && typeof f.lookup === 'object');
@@ -173,13 +190,13 @@ const getSchema = async (appId, options, cache) => {
         });
       }
     };
-    walk(fR.properties);
-    Object.values(actionResp?.actions || {}).forEach((action, index) => {
-      const toApp = Number(action?.destApp?.app || 0);
+    walk(normalizeFieldProperties(fR));
+    Object.entries(actionResp?.actions || {}).forEach(([actionName, action], index) => {
+      const toApp = Number(action?.destApp?.app || action?.app?.app || 0);
       if (!toApp) return;
       relations.push({
         from: `__ACTION__${index}`,
-        fromLabel: action?.name || `アクション${index + 1}`,
+        fromLabel: action?.name || actionName || `アクション${index + 1}`,
         toApp,
         toField: '',
         kind: 'ACTION'
@@ -200,7 +217,7 @@ const getSchema = async (appId, options, cache) => {
     const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
     const r = {
       id: appId,
-      name: aR.name,
+      name: aR.name || `アプリ ${appId}`,
       spaceId: aR.spaceId || null,
       threadId: aR.threadId || null,
       fields: visibleFields,
@@ -303,14 +320,17 @@ export const buildHTML = (apps, options = {}) => {
   }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
   const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || '']).filter(Boolean).join(', ');
   const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || '-');
+  const cytoscapeScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscape.cdnUrl, EXTERNAL_LIBRARIES.cytoscape.altCdnUrl);
+  const dagreScript = buildScriptTag(EXTERNAL_LIBRARIES.dagre.cdnUrl);
+  const cytoscapeDagreScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl, EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl);
   return /*html*/`<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>kintone ER図 v3</title>
-<script src="${EXTERNAL_LIBRARIES.cytoscape.cdnUrl}"><\/script>
-<script src="${EXTERNAL_LIBRARIES.dagre.cdnUrl}"><\/script>
-<script src="${EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl}"><\/script>
+${cytoscapeScript}
+${dagreScript}
+${cytoscapeDagreScript}
 <style>
 @import url('${EXTERNAL_LIBRARIES.googleFontsDmSansMono.cdnUrl}');
 

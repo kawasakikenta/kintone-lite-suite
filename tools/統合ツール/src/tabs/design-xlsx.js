@@ -27,7 +27,7 @@ export async function runAdvancedDesignExporter(params = {}) {
       ENABLE_OUTLINE: true
     },
     DEFAULT_COL_WIDTH: 12,
-    MAX_COL_WIDTH: 80,
+    MAX_COL_WIDTH: 48,
     MIN_COL_WIDTH: 8,
     COLORS: {
       HEADER_BG: 'FF0F766E', HEADER_TEXT: 'FFFFFFFF',
@@ -121,7 +121,8 @@ export async function runAdvancedDesignExporter(params = {}) {
     ensureArray: v => Array.isArray(v) ? v : [],
     safeJoin: (arr, sep = '、') => Array.isArray(arr) ? arr.filter(v => v !== '' && v != null).join(sep) : '',
     sleep: ms => new Promise(r => setTimeout(r, ms)),
-    calculateCellWidth: text => { if (!text) return CONFIG.MIN_COL_WIDTH; const str = String(text); let width = 0; for (const line of str.split('\n')) { let lw = 0; for (const ch of line) lw += /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF00-\uFFEF]/.test(ch) ? 2 : 1; if (lw > width) width = lw; } return Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, width + 2)); },
+    clampColumnWidth: width => Math.max(CONFIG.MIN_COL_WIDTH, Math.min(CONFIG.MAX_COL_WIDTH, Number.isFinite(Number(width)) ? Number(width) : CONFIG.DEFAULT_COL_WIDTH)),
+    calculateCellWidth: text => { if (!text) return CONFIG.MIN_COL_WIDTH; const str = String(text); let width = 0; for (const line of str.split('\n')) { let lw = 0; for (const ch of line) lw += /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\uFF00-\uFFEF]/.test(ch) ? 2 : 1; if (lw > width) width = lw; } return UtilsX.clampColumnWidth(width + 2); },
     colToA1: (n) => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - 1) / 26 | 0; } return s; },
     a1: (r, c) => `${UtilsX.colToA1(c)}${r}`,
     escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
@@ -580,7 +581,7 @@ export async function runAdvancedDesignExporter(params = {}) {
           widths[i] = Math.max(widths[i] || CONFIG.MIN_COL_WIDTH, w);
         });
       }
-      ws['!cols'] = widths.map((w) => ({ wch: w || CONFIG.DEFAULT_COL_WIDTH }));
+      ws['!cols'] = widths.map((w) => ({ wch: UtilsX.clampColumnWidth(w || CONFIG.DEFAULT_COL_WIDTH) }));
     };
 
     const applyStyles = (ws, aoa, options = {}) => {

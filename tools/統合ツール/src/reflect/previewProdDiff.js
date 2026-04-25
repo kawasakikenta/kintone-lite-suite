@@ -8,7 +8,8 @@ import {
   downloadText,
   selectedScopeKeys,
   extractAppNameFromBundle,
-  buildAppFilenameLabel
+  buildAppFilenameLabel,
+  getSeverityDisplayLabel
 } from '../utils.js';
 import { fetchBundle } from '../api.js';
 import {
@@ -19,6 +20,7 @@ import {
   getDiffNormalizationPresetState
 } from '../diff/engine.js';
 import { enrichDiffRows, summarizeSeverity } from '../diff/enrich.js';
+import { stringifyRowValueForDiff } from '../diff/export.js';
 import { setStatus } from '../ui/components.js';
 import { getToolDocument } from '../ui/dialog.js';
 
@@ -31,7 +33,13 @@ function getPreviewProdState() {
       lastResult: null,
       appId: '',
       guestId: '',
-      runAt: null
+      runAt: null,
+      filters: {
+        section: '',
+        type: '',
+        severity: '',
+        keyword: ''
+      }
     };
   }
   return state[PREVIEW_PROD_STATE_KEY];
@@ -59,38 +67,219 @@ function ensureResultHost() {
   return host;
 }
 
-function formatCounts(summary) {
-  return `追加 ${summary.added} / 削除 ${summary.removed} / 変更 ${summary.changed}${summary.moved ? ` / 移動 ${summary.moved}` : ''}`;
+function summarizePreviewProdTypes(rows) {
+  const out = { previewOnly: 0, productionOnly: 0, changed: 0, moved: 0 };
+  (rows || []).forEach((row) => {
+    const kind = getPreviewProdRowKind(row);
+    if (kind === 'removed') out.previewOnly += 1;
+    else if (kind === 'added') out.productionOnly += 1;
+    else if (kind === 'moved') out.moved += 1;
+    else if (kind === 'changed') out.changed += 1;
+  });
+  return out;
 }
 
-function formatSectionBreakdown(rows) {
+function formatPreviewProdCounts(typeSummary) {
+  return `プレビューのみ ${typeSummary.previewOnly} / 本番のみ ${typeSummary.productionOnly} / 値違い ${typeSummary.changed}${typeSummary.moved ? ` / 移動 ${typeSummary.moved}` : ''}`;
+}
+
+function buildSectionBreakdown(rows) {
   const counts = new Map();
   for (const row of rows) {
     const key = row?.sectionKey || '';
     if (!key) continue;
-    counts.set(key, (counts.get(key) || 0) + 1);
+    const current = counts.get(key) || { key, total: 0, high: 0, medium: 0, low: 0 };
+    current.total += 1;
+    const severity = String(row.severity || 'low');
+    if (severity === 'high') current.high += 1;
+    else if (severity === 'medium') current.medium += 1;
+    else current.low += 1;
+    counts.set(key, current);
   }
-  if (!counts.size) return '';
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([key, n]) => {
-      const label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
-      return `<li><span class="sec-name">${esc(label)}</span><span class="sec-count">${n}件</span></li>`;
-    })
-    .join('');
+  return [...counts.values()].sort((a, b) => b.total - a.total || getSectionLabel(a.key).localeCompare(getSectionLabel(b.key)));
 }
 
-function formatRowsPreview(rows, limit) {
-  const shown = rows.slice(0, limit);
-  if (!shown.length) return '';
-  const items = shown.map((row) => {
-    const typeLabel = row.type === 'added' ? '追加' : row.type === 'removed' ? '削除' : row.type === 'changed' ? '変更' : row.type || '';
-    const cls = `pvd-type pvd-type--${esc(row.type || '')}`;
-    const section = SECTION_DEFS.find((d) => d.key === row.sectionKey)?.label || row.sectionKey || '';
-    return `<li><span class="${cls}">${esc(typeLabel)}</span> <span class="pvd-section">${esc(section)}</span> <code class="pvd-path">${esc(row.path || '')}</code></li>`;
+function getSectionLabel(key) {
+  return SECTION_DEFS.find((d) => d.key === key)?.label || key || '-';
+}
+
+function getPreviewProdTypeInfo(type) {
+  if (type === 'removed') {
+    return { key: 'previewOnly', label: 'プレビューのみ', note: '本番にまだ無い設定', className: 'preview-only' };
+  }
+  if (type === 'added') {
+    return { key: 'productionOnly', label: '本番のみ', note: 'プレビューには無い設定', className: 'production-only' };
+  }
+  if (type === 'changed') {
+    return { key: 'changed', label: '値違い', note: '同じ項目の値が違う', className: 'changed' };
+  }
+  if (type === 'moved') {
+    return { key: 'moved', label: '移動', note: '並び順の差分', className: 'moved' };
+  }
+  return { key: String(type || ''), label: String(type || '-'), note: '', className: String(type || '') };
+}
+
+function getPreviewProdRowKind(row) {
+  if (row?.moved) return 'moved';
+  return String(row?.type || '');
+}
+
+function formatPreviewValue(value, path) {
+  if (value === undefined) return '（なし）';
+  const text = stringifyRowValueForDiff(value, path);
+  if (text.length <= 4800) return text;
+  return `${text.slice(0, 4800)}\n...（長いため一部省略）`;
+}
+
+function getFilterState() {
+  const bucket = getPreviewProdState();
+  if (!bucket.filters || typeof bucket.filters !== 'object') {
+    bucket.filters = { section: '', type: '', severity: '', keyword: '' };
+  }
+  return bucket.filters;
+}
+
+function rowMatchesPreviewProdFilters(row, filters) {
+  if (filters.section && row.sectionKey !== filters.section) return false;
+  if (filters.type && getPreviewProdRowKind(row) !== filters.type) return false;
+  if (filters.severity && String(row.severity || 'low') !== filters.severity) return false;
+  const keyword = String(filters.keyword || '').trim().toLowerCase();
+  if (!keyword) return true;
+  const haystack = [
+    row.path,
+    row.section,
+    getSectionLabel(row.sectionKey),
+    getPreviewProdTypeInfo(getPreviewProdRowKind(row)).label,
+    row.type,
+    row.severity,
+    row.reasonSummary,
+    formatPreviewValue(row.left, row.path),
+    formatPreviewValue(row.right, row.path)
+  ].join('\n').toLowerCase();
+  return haystack.includes(keyword);
+}
+
+function getFilteredRows(rows) {
+  const filters = getFilterState();
+  return (rows || []).filter((row) => rowMatchesPreviewProdFilters(row, filters));
+}
+
+function renderMetricCard(label, value, note, className = '') {
+  return `<section class="pvd-metric ${className}">
+    <div class="pvd-metric-label">${esc(label)}</div>
+    <div class="pvd-metric-value">${esc(String(value))}</div>
+    ${note ? `<div class="pvd-metric-note">${esc(note)}</div>` : ''}
+  </section>`;
+}
+
+function renderTypeFilters(typeSummary, activeType) {
+  const defs = [
+    { key: '', type: '', label: 'すべて', value: typeSummary.previewOnly + typeSummary.productionOnly + typeSummary.changed + typeSummary.moved },
+    { key: 'previewOnly', type: 'removed', label: 'プレビューのみ', value: typeSummary.previewOnly },
+    { key: 'productionOnly', type: 'added', label: '本番のみ', value: typeSummary.productionOnly },
+    { key: 'changed', type: 'changed', label: '値違い', value: typeSummary.changed },
+    { key: 'moved', type: 'moved', label: '移動', value: typeSummary.moved }
+  ];
+  return defs.map((item) => {
+    const active = String(activeType || '') === String(item.type || '');
+    return `<button type="button" class="pvd-filter-chip${active ? ' is-active' : ''}" data-act="setPreviewProdDiffFilter" data-filter-kind="type" data-filter-value="${esc(item.type)}">
+      ${esc(item.label)} <strong>${esc(String(item.value))}</strong>
+    </button>`;
   }).join('');
-  const more = rows.length > limit ? `<li class="pvd-more">…ほか ${rows.length - limit} 件</li>` : '';
-  return `<ul class="pvd-row-list">${items}${more}</ul>`;
+}
+
+function renderSeverityFilters(severity, activeSeverity) {
+  const defs = [
+    { key: '', label: 'すべて', value: severity.high + severity.medium + severity.low },
+    { key: 'high', label: '高', value: severity.high },
+    { key: 'medium', label: '中', value: severity.medium },
+    { key: 'low', label: '低', value: severity.low }
+  ];
+  return defs.map((item) => {
+    const active = String(activeSeverity || '') === item.key;
+    return `<button type="button" class="pvd-filter-chip pvd-filter-chip--sev-${esc(item.key || 'all')}${active ? ' is-active' : ''}" data-act="setPreviewProdDiffFilter" data-filter-kind="severity" data-filter-value="${esc(item.key)}">
+      重要度 ${esc(item.label)} <strong>${esc(String(item.value))}</strong>
+    </button>`;
+  }).join('');
+}
+
+function renderSectionCards(sectionBreakdown, activeSection) {
+  if (!sectionBreakdown.length) return '';
+  return `<div class="pvd-section-cards">
+    ${sectionBreakdown.map((item) => {
+      const active = activeSection === item.key;
+      return `<button type="button" class="pvd-section-card${active ? ' is-active' : ''}" data-act="setPreviewProdDiffFilter" data-filter-kind="section" data-filter-value="${esc(item.key)}">
+        <span class="pvd-section-card-name">${esc(getSectionLabel(item.key))}</span>
+        <span class="pvd-section-card-count">${esc(String(item.total))}</span>
+        <span class="pvd-section-card-sev">高 ${item.high} / 中 ${item.medium} / 低 ${item.low}</span>
+      </button>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderActiveFilterSummary(filters, filteredCount, totalCount) {
+  const parts = [];
+  if (filters.section) parts.push(`セクション: ${getSectionLabel(filters.section)}`);
+  if (filters.type) parts.push(`差分: ${getPreviewProdTypeInfo(filters.type).label}`);
+  if (filters.severity) parts.push(`重要度: ${getSeverityDisplayLabel(filters.severity)}`);
+  if (filters.keyword) parts.push(`検索: ${filters.keyword}`);
+  const label = parts.length ? parts.join(' / ') : '絞り込みなし';
+  return `<div class="pvd-filter-state">
+    <span>${esc(label)}</span>
+    <strong>${filteredCount} / ${totalCount} 件表示</strong>
+  </div>`;
+}
+
+function renderDiffRows(rows) {
+  if (!rows.length) {
+    return `<div class="pvd-empty">
+      <div class="pvd-empty-title">条件に合う差分はありません</div>
+      <div class="pvd-empty-text">絞り込みを解除すると他のプレビュー差分を確認できます。</div>
+    </div>`;
+  }
+  const groups = new Map();
+  rows.forEach((row) => {
+    const key = row.sectionKey || 'other';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  });
+  return [...groups.entries()].map(([sectionKey, sectionRows]) => `
+    <section class="pvd-row-section">
+      <div class="pvd-row-section-head">
+        <span>${esc(getSectionLabel(sectionKey))}</span>
+        <strong>${sectionRows.length}件</strong>
+      </div>
+      <div class="pvd-row-cards">
+        ${sectionRows.map((row, idx) => renderDiffRowCard(row, idx)).join('')}
+      </div>
+    </section>
+  `).join('');
+}
+
+function renderDiffRowCard(row, idx) {
+  const type = getPreviewProdTypeInfo(getPreviewProdRowKind(row));
+  const severity = String(row.severity || 'low');
+  const previewValue = formatPreviewValue(row.left, row.path);
+  const productionValue = formatPreviewValue(row.right, row.path);
+  const open = idx < 3 ? ' open' : '';
+  return `<details class="pvd-row-card pvd-row-card--${esc(type.className)}"${open}>
+    <summary class="pvd-row-summary">
+      <span class="pvd-type pvd-type--${esc(type.className)}" title="${esc(type.note)}">${esc(type.label)}</span>
+      <span class="pvd-sev pvd-sev--${esc(severity)}">重要度 ${esc(getSeverityDisplayLabel(severity))}</span>
+      <code class="pvd-path">${esc(row.path || '')}</code>
+    </summary>
+    ${row.reasonSummary ? `<div class="pvd-row-reason">${esc(row.reasonSummary)}</div>` : ''}
+    <div class="pvd-compare-grid">
+      <div class="pvd-compare-col">
+        <div class="pvd-compare-head pvd-compare-head--preview">プレビュー</div>
+        <pre class="pvd-compare-pre">${esc(previewValue)}</pre>
+      </div>
+      <div class="pvd-compare-col">
+        <div class="pvd-compare-head pvd-compare-head--prod">本番</div>
+        <pre class="pvd-compare-pre">${esc(productionValue)}</pre>
+      </div>
+    </div>
+  </details>`;
 }
 
 function renderResult(host, payload) {
@@ -100,37 +289,58 @@ function renderResult(host, payload) {
     host.style.display = 'none';
     return;
   }
-  const { runAt, appId, guestId, scopes, summary, severity, totalActual, fetchIssues, previewBundle, productionBundle } = payload;
+  const { runAt, appId, guestId, scopes, severity, totalActual, fetchIssues, previewBundle, productionBundle } = payload;
   const actualRows = getActualDiffRows(payload.rows || []);
-  const sections = formatSectionBreakdown(actualRows);
-  const breakdownHtml = sections
-    ? `<ul class="pvd-section-list">${sections}</ul>`
-    : '<div class="muted" style="margin:6px 0 0">プレビューと本番は一致しています（差分 0件）</div>';
+  const filters = getFilterState();
+  const filteredRows = getFilteredRows(actualRows);
+  const sectionBreakdown = buildSectionBreakdown(actualRows);
+  const typeSummary = summarizePreviewProdTypes(actualRows);
+  const noDiff = totalActual === 0 && (!fetchIssues || !fetchIssues.length);
   const issueHtml = fetchIssues && fetchIssues.length
-    ? `<div class="pvd-issues">取得失敗 ${fetchIssues.length}件: ${esc(fetchIssues.map((x) => x.section || x.sectionKey).filter(Boolean).join(', '))}</div>`
+    ? `<div class="pvd-issues"><strong>取得失敗 ${fetchIssues.length}件</strong><span>${esc(fetchIssues.map((x) => x.section || x.sectionKey).filter(Boolean).join(', '))}</span></div>`
     : '';
   const previewApp = extractAppNameFromBundle(previewBundle) || '';
   const prodApp = extractAppNameFromBundle(productionBundle) || '';
   const appLabel = previewApp || prodApp ? ` / ${esc(previewApp || prodApp)}` : '';
-  const rowsPreview = formatRowsPreview(actualRows, 10);
   const stamp = runAt ? new Date(runAt).toLocaleString() : '';
   host.style.display = 'block';
   host.innerHTML = `
     <div class="pvd-card">
       <div class="pvd-head">
-        <div class="pvd-title">プレビュー ⇔ 本番 差分比較</div>
+        <div>
+          <div class="pvd-title">プレビュー ⇔ 本番 差分比較</div>
+          <div class="pvd-subtitle">デプロイ待ちの設定差分を、プレビュー側と本番側で並べて確認します。</div>
+        </div>
         <div class="pvd-meta">App ${esc(appId)}${guestId ? ` / guest ${esc(guestId)}` : ''}${appLabel}${stamp ? ` ・ ${esc(stamp)}` : ''}</div>
       </div>
-      <div class="pvd-summary">
-        <span class="pvd-pill pvd-pill--total">差分 ${totalActual}件</span>
-        <span class="pvd-pill">${esc(formatCounts(summary))}</span>
-        <span class="pvd-pill pvd-pill--sev">重要度 高:${severity.high} / 中:${severity.medium} / 低:${severity.low}</span>
-        <span class="pvd-pill pvd-pill--scope">対象 ${scopes.length}セクション</span>
+      <div class="pvd-metrics">
+        ${renderMetricCard('差分', totalActual, 'プレビューと本番の差', 'pvd-metric--total')}
+        ${renderMetricCard('プレビューのみ', typeSummary.previewOnly, '本番にまだ無い設定', 'pvd-metric--preview')}
+        ${renderMetricCard('本番のみ', typeSummary.productionOnly, 'プレビューには無い設定', 'pvd-metric--prod')}
+        ${renderMetricCard('値違い', typeSummary.changed, '同じ項目の変更', 'pvd-metric--changed')}
+        ${renderMetricCard('高重要度', severity.high, `中 ${severity.medium} / 低 ${severity.low}`, 'pvd-metric--severity')}
       </div>
       ${issueHtml}
-      <div class="pvd-section-head">セクション別の差分件数</div>
-      ${breakdownHtml}
-      ${rowsPreview ? `<div class="pvd-section-head">差分の先頭 10 件</div>${rowsPreview}` : ''}
+      ${noDiff ? `
+        <div class="pvd-empty pvd-empty--clean">
+          <div class="pvd-empty-title">プレビューと本番は一致しています</div>
+          <div class="pvd-empty-text">反映セクション ${scopes.length} 件の範囲では、デプロイ待ちの差分はありません。</div>
+        </div>` : `
+        <div class="pvd-section-head">セクション別の差分</div>
+        ${renderSectionCards(sectionBreakdown, filters.section)}
+        <div class="pvd-filter-panel">
+          <div class="pvd-filter-row">${renderTypeFilters(typeSummary, filters.type)}</div>
+          <div class="pvd-filter-row">${renderSeverityFilters(severity, filters.severity)}</div>
+          <div class="pvd-search-row">
+            <input type="text" id="u_previewProdSearch" value="${esc(filters.keyword || '')}" placeholder="パス / 値 / セクションで検索">
+            <button type="button" class="btn sub" data-act="applyPreviewProdDiffSearch">検索</button>
+            <button type="button" class="btn sub" data-act="clearPreviewProdDiffFilters">絞り込み解除</button>
+          </div>
+          ${renderActiveFilterSummary(filters, filteredRows.length, actualRows.length)}
+        </div>
+        <div class="pvd-section-head">差分一覧</div>
+        ${renderDiffRows(filteredRows)}
+      `}
       <div class="pvd-actions">
         <button type="button" class="btn sub" data-act="exportPreviewProdDiffJson">JSONで保存</button>
         <button type="button" class="btn sub" data-act="closePreviewProdDiff">閉じる</button>
@@ -181,6 +391,7 @@ export async function runPreviewProductionDiff() {
   const summary = summarizeRows(rows);
   const severity = summarizeSeverity(rows);
   const totalActual = countActualDiffRows(rows);
+  const previewProdSummary = summarizePreviewProdTypes(getActualDiffRows(rows));
 
   const payload = {
     appId,
@@ -191,19 +402,21 @@ export async function runPreviewProductionDiff() {
     productionBundle,
     rows,
     summary,
+    previewProdSummary,
     severity,
     totalActual,
     fetchIssues: diffResult.fetchIssues || []
   };
   const bucket = getPreviewProdState();
   bucket.lastResult = payload;
+  bucket.filters = { section: '', type: '', severity: '', keyword: '' };
   bucket.appId = appId;
   bucket.guestId = guestId;
   bucket.runAt = payload.runAt;
 
   renderResult(host, payload);
   const direction = '比較元=プレビュー / 比較先=本番';
-  setStatus(`プレビュー⇔本番 差分比較 完了 (${direction}): 差分 ${totalActual}件 / 取得失敗 ${diffResult.fetchIssues?.length || 0}件 / ${formatCounts(summary)} / 高:${severity.high} 中:${severity.medium} 低:${severity.low}`);
+  setStatus(`プレビュー⇔本番 差分比較 完了 (${direction}): 差分 ${totalActual}件 / 取得失敗 ${diffResult.fetchIssues?.length || 0}件 / ${formatPreviewProdCounts(previewProdSummary)} / 高:${severity.high} 中:${severity.medium} 低:${severity.low}`);
 }
 
 export function exportPreviewProdDiffJson() {
@@ -223,6 +436,7 @@ export function exportPreviewProdDiffJson() {
     scopes: payload.scopes,
     direction: { source: 'preview', target: 'production' },
     summary: payload.summary,
+    previewProductionSummary: payload.previewProdSummary,
     severity: payload.severity,
     totalActual: payload.totalActual,
     fetchIssues: payload.fetchIssues,
@@ -234,9 +448,48 @@ export function exportPreviewProdDiffJson() {
   setStatus(`プレビュー⇔本番 差分をJSONに保存しました: ${filename}`);
 }
 
+function rerenderLastResult() {
+  const bucket = getPreviewProdState();
+  const host = ensureResultHost();
+  if (!bucket.lastResult || !host) return false;
+  renderResult(host, bucket.lastResult);
+  return true;
+}
+
+export function setPreviewProdDiffFilter(kind, value) {
+  const filters = getFilterState();
+  const key = String(kind || '');
+  if (!['section', 'type', 'severity'].includes(key)) return;
+  const nextValue = String(value || '');
+  filters[key] = filters[key] === nextValue ? '' : nextValue;
+  if (rerenderLastResult()) {
+    const label = key === 'section'
+      ? (filters[key] ? getSectionLabel(filters[key]) : '解除')
+      : (filters[key] || '解除');
+    setStatus(`プレビュー⇔本番 差分の絞り込みを更新しました: ${label}`);
+  }
+}
+
+export function applyPreviewProdDiffSearch() {
+  const filters = getFilterState();
+  filters.keyword = String(getToolDocument().getElementById('u_previewProdSearch')?.value || '').trim();
+  if (rerenderLastResult()) {
+    setStatus(filters.keyword ? `プレビュー⇔本番 差分を検索しました: ${filters.keyword}` : 'プレビュー⇔本番 差分の検索を解除しました');
+  }
+}
+
+export function clearPreviewProdDiffFilters() {
+  const bucket = getPreviewProdState();
+  bucket.filters = { section: '', type: '', severity: '', keyword: '' };
+  if (rerenderLastResult()) {
+    setStatus('プレビュー⇔本番 差分の絞り込みを解除しました');
+  }
+}
+
 export function closePreviewProdDiff() {
   const bucket = getPreviewProdState();
   bucket.lastResult = null;
+  bucket.filters = { section: '', type: '', severity: '', keyword: '' };
   const host = getToolDocument().getElementById(RESULT_HOST_ID);
   if (host) {
     host.innerHTML = '';

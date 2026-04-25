@@ -647,38 +647,38 @@ export function buildRoot(targetDocument = document, options = {}) {
 
             <div class="pane active" data-pane="reflect">
               <div class="subtabs subtabs--reflect-modes">
-                <button class="subtab active" data-subtab-parent="reflect" data-subtab="settings" title="kintoneの設定画面風UIで反映（一般ユーザー向け）">
-                  <span class="subtab-icon" aria-hidden="true">🧩</span>
-                  <span class="subtab-label">設定画面で反映</span>
-                  <span class="subtab-sub">一般ユーザー向け</span>
+                <button class="subtab active" data-subtab-parent="reflect" data-subtab="settings" title="標準ルートでプレビューへ反映">
+                  <span class="subtab-icon" aria-hidden="true">01</span>
+                  <span class="subtab-label">標準ルート</span>
+                  <span class="subtab-sub">まず使う</span>
+                </button>
+                <button class="subtab" data-subtab-parent="reflect" data-subtab="diff" title="差分比較結果から反映する項目を選択">
+                  <span class="subtab-icon" aria-hidden="true">02</span>
+                  <span class="subtab-label">詳細ルート</span>
+                  <span class="subtab-sub">差分ごと</span>
                 </button>
                 <button class="subtab" data-subtab-parent="reflect" data-subtab="json" title="JSONを直接編集して反映（開発者向け）">
-                  <span class="subtab-icon" aria-hidden="true">&lt;/&gt;</span>
-                  <span class="subtab-label">JSONで反映</span>
-                  <span class="subtab-sub">開発者向け</span>
-                </button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="diff" title="差分比較結果から反映フィールドを調整">
-                  <span class="subtab-icon" aria-hidden="true">🎯</span>
-                  <span class="subtab-label">差分から調整</span>
-                  <span class="subtab-sub">差分比較と連動</span>
+                  <span class="subtab-icon" aria-hidden="true">{ }</span>
+                  <span class="subtab-label">JSON</span>
+                  <span class="subtab-sub">必要時のみ</span>
                 </button>
               </div>
 
               <!-- ===== Subpane: settings (kintone設定画面風 / 一般ユーザー向け) ===== -->
               <div class="subpane active" data-subpane-parent="reflect" data-subpane="settings">
                 <section class="reflect-mode-hero reflect-mode-hero--settings">
-                  <div class="reflect-mode-hero__icon" aria-hidden="true">🧩</div>
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">01</div>
                   <div class="reflect-mode-hero__copy">
-                    <div class="reflect-mode-hero__title">設定画面で反映</div>
-                    <div class="reflect-mode-hero__desc">kintoneの設定画面に近いUIで、フィールドや各種設定を比較元から比較先プレビューへ反映します。一般ユーザー向けの操作モードです。</div>
+                    <div class="reflect-mode-hero__title">標準ルート</div>
+                    <div class="reflect-mode-hero__desc">セクション単位で反映対象を決め、実行前プランと安全チェックを通して比較先プレビューへ反映します。迷ったときはこの画面だけで進めます。</div>
                   </div>
                 </section>
                 <div id="u_applyScopeBlock" style="display:none"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
                 <div class="reflect-settings-inner">
                   <div class="reflect-inner-tabs" role="tablist" aria-label="反映対象の切替">
-                    <button type="button" class="reflect-inner-tab active" data-reflect-inner="overview" role="tab" aria-selected="true">概要・対象セクション</button>
-                    <button type="button" class="reflect-inner-tab" data-reflect-inner="field" role="tab" aria-selected="false">フィールド設定画面</button>
-                    <button type="button" class="reflect-inner-tab" data-reflect-inner="other" role="tab" aria-selected="false">ビュー・権限など他設定</button>
+                    <button type="button" class="reflect-inner-tab active" data-reflect-inner="overview" role="tab" aria-selected="true">概要</button>
+                    <button type="button" class="reflect-inner-tab" data-reflect-inner="field" role="tab" aria-selected="false">フィールド調整</button>
+                    <button type="button" class="reflect-inner-tab" data-reflect-inner="other" role="tab" aria-selected="false">他設定調整</button>
                   </div>
 
                   <div class="reflect-inner-pane active" data-reflect-inner-pane="overview">
@@ -735,10 +735,10 @@ export function buildRoot(targetDocument = document, options = {}) {
               <!-- ===== Subpane: json (開発者向け) ===== -->
               <div class="subpane" data-subpane-parent="reflect" data-subpane="json">
                 <section class="reflect-mode-hero reflect-mode-hero--json">
-                  <div class="reflect-mode-hero__icon" aria-hidden="true">&lt;/&gt;</div>
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">{ }</div>
                   <div class="reflect-mode-hero__copy">
-                    <div class="reflect-mode-hero__title">JSONで反映</div>
-                    <div class="reflect-mode-hero__desc">パッチJSONを直接編集して反映できます。開発者向けモードです。差分比較結果を取り込んで調整し、比較先プレビューに書き込みます。</div>
+                    <div class="reflect-mode-hero__title">JSON</div>
+                    <div class="reflect-mode-hero__desc">パッチJSONを直接編集して反映できます。差分比較結果を取り込んで調整し、比較先プレビューに書き込みます。</div>
                   </div>
                 </section>
                 <div id="u_patchJsonPanel" style="display:block">
@@ -765,10 +765,10 @@ export function buildRoot(targetDocument = document, options = {}) {
               <!-- ===== Subpane: diff (差分から反映フィールドを調整) ===== -->
               <div class="subpane" data-subpane-parent="reflect" data-subpane="diff">
                 <section class="reflect-mode-hero reflect-mode-hero--diff">
-                  <div class="reflect-mode-hero__icon" aria-hidden="true">🎯</div>
+                  <div class="reflect-mode-hero__icon" aria-hidden="true">02</div>
                   <div class="reflect-mode-hero__copy">
-                    <div class="reflect-mode-hero__title">差分から反映対象を調整</div>
-                    <div class="reflect-mode-hero__desc">差分比較の結果を使って、フィールドやセクション単位で「比較元を採用」「比較先を残す」を調整しながら部分反映します。先に差分比較タブで比較を実行してから「差分候補を読込」を押します。</div>
+                    <div class="reflect-mode-hero__title">詳細ルート</div>
+                    <div class="reflect-mode-hero__desc">差分ごとに「比較元を採用」「比較先を維持」を切り替え、必要な変更だけをプレビューへ反映します。標準ルートで足りないときに使います。</div>
                   </div>
                 </section>
                 <div class="reflect-layout">
@@ -778,20 +778,21 @@ export function buildRoot(targetDocument = document, options = {}) {
                       <div id="u_reflectHint" class="kv" style="display:none"></div>
                       <div id="u_nodeControls" class="reflect-node-controls" style="display:none">
                         <div class="reflect-node-controls__primary">
-                          <button class="btn sub" data-act="loadReflectNodes">差分候補を読込</button>
+                          <button class="btn btn-primary-emphasis" data-act="runDiffLoadReflectNodes">差分比較して候補作成</button>
                           <button class="btn sub" data-act="selectVisibleReflectNodes">表示中を選択</button>
-                          <button class="btn sub" data-act="clearVisibleReflectNodes">表示中の選択解除</button>
                           <button class="btn ok" data-act="reflectModeVisibleSrc">表示中を比較元にする</button>
-                          <button class="btn ok" data-act="reflectModeVisibleTgt">表示中を比較先にする</button>
                         </div>
                         <div class="reflect-quick-presets" id="u_reflectQuickPresets" aria-label="差分選択クイックプリセット"></div>
                         <details class="diff-fold reflect-inline-fold reflect-inline-fold--node">
                           <summary class="diff-fold-summary">
-                            <span class="diff-fold-title">一括選択・一括モード・履歴</span>
-                            <span class="diff-fold-sub">全件操作や Undo / Redo が必要なときだけ開きます</span>
+                            <span class="diff-fold-title">補助操作</span>
+                            <span class="diff-fold-sub">解除、比較先維持、Undo / Redo、JSON保存が必要なときだけ開きます</span>
                           </summary>
                           <div class="diff-fold-body">
                             <div class="reflect-node-controls__secondary">
+                              <button class="btn sub" data-act="loadReflectNodes">現在の差分から候補読込</button>
+                              <button class="btn sub" data-act="clearVisibleReflectNodes">表示中の選択解除</button>
+                              <button class="btn ok" data-act="reflectModeVisibleTgt">表示中を比較先にする</button>
                               <button class="btn sub" data-act="selectHighSeverityReflectNodes">高重要度を選択</button>
                               <button class="btn sub" data-act="selectReflectNodesAll">候補を全選択</button>
                               <button class="btn sub" data-act="clearReflectNodes">候補を全解除</button>
@@ -808,10 +809,10 @@ export function buildRoot(targetDocument = document, options = {}) {
                       </div>
                       <div id="u_nodeFilterBlock" style="display:none;margin-bottom:8px">
                         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                          <input type="text" id="u_nodeSearch" placeholder="パス / セクション名 で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                          <input type="text" id="u_nodeSearch" placeholder="パス / セクション名 / 理由 / 影響 で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
                           <select id="u_nodeFilterSection" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px"><option value="">全セクション</option></select>
                           <select id="u_nodeFilterType" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                            <option value="">全種別</option><option value="added">追加</option><option value="removed">削除</option><option value="changed">変更</option>
+                            <option value="">全種別</option><option value="added">追加</option><option value="removed">削除</option><option value="changed">変更</option><option value="moved">移動</option>
                           </select>
                           <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
                             <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
@@ -874,8 +875,6 @@ export function buildRoot(targetDocument = document, options = {}) {
                     <span class="reflect-footer-zone-label">プレビュー反映</span>
                     <div class="reflect-footer-actions__primary">
                       <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">実行前プラン確認</button>
-                      <button type="button" class="btn sub" data-act="runPreviewProdDiff" id="u_footerPreviewProdDiff" title="比較先アプリのプレビューと本番の差分を比較します。デプロイ待ちの変更を確認できます">プレビュー⇔本番を比較</button>
-                      <button type="button" class="btn sub" data-act="exportDryRunPlan" id="u_footerDryRun" title="APIを叩かずに、予定されているリクエスト一式をJSONファイルとして保存します（ドライラン）">ドライランJSONを保存</button>
                       <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択した内容を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">プレビューへ反映</button>
                     </div>
                     <details class="diff-fold reflect-inline-fold reflect-inline-fold--footer">
@@ -885,6 +884,8 @@ export function buildRoot(targetDocument = document, options = {}) {
                       </summary>
                       <div class="diff-fold-body">
                         <div class="reflect-footer-actions__support">
+                          <button type="button" class="btn sub" data-act="runPreviewProdDiff" id="u_footerPreviewProdDiff" title="比較先アプリのプレビューと本番の差分を比較します。デプロイ待ちの変更を確認できます">プレビュー⇔本番を比較</button>
+                          <button type="button" class="btn sub" data-act="exportDryRunPlan" id="u_footerDryRun" title="APIを叩かずに、予定されているリクエスト一式をJSONファイルとして保存します（ドライラン）">ドライランJSONを保存</button>
                           <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します。反映セクションでチェックした項目を対象にし、JS/CSS設定も含められます">今の比較先を保存</button>
                           <button type="button" class="btn sub" data-act="restoreTargetPreviewBackup" title="このセッションで保存した直前バックアップを比較先プレビューへ戻します">直前保存を戻す</button>
                         </div>
@@ -1300,58 +1301,67 @@ export function buildRoot(targetDocument = document, options = {}) {
             
             <div class="pane" data-pane="er">
               <div class="subpane active" data-subpane-parent="er" data-subpane="diagram">
-                <div class="subpane-note">比較元アプリ起点で関連アプリをたどり、アプリ間の ER 図を生成します。</div>
-              <details class="diff-fold diff-fold--er-diag" open>
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">ER図のオプションと生成</span>
-                  <span class="diff-fold-sub">アプリ構造の把握に特化</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div class="step" style="margin-top:0">ER図自動生成（比較元アプリ起点）</div>
-              <div class="muted" style="margin-top:8px;line-height:1.55">比較元アプリからルックアップと関連レコードを辿って、関連するアプリのスキーマ（ER図）を自動取得・描画します。フィールド単位の依存関係は「分析 > 依存グラフ」に集約しました。</div>
-              <div class="grid2" style="margin-top:10px">
-                <div>
-                  <label title="Cytoscape のレイアウトアルゴリズム">初期レイアウト</label>
-                  <select id="u_erLayout" title="グラフの並べ方">
-                    <option value="dagre">Dagre（推奨）</option>
-                    <option value="breadthfirst">ツリー</option>
-                    <option value="cose">フォース</option>
-                    <option value="concentric">同心円</option>
-                    <option value="grid">グリッド</option>
-                    <option value="circle">円形</option>
-                  </select>
-                </div>
-                <div>
-                  <label title="フィールド表示の粒度">表示密度</label>
-                  <select id="u_erFieldDensity">
-                    <option value="compact">簡易</option>
-                    <option value="standard" selected>標準</option>
-                    <option value="full">詳細</option>
-                  </select>
-                </div>
-                <div>
-                  <label title="0 は無制限に近い挙動（実装上の上限あり）">探索深さ</label>
-                  <input type="text" id="u_erMaxDepth" value="0" placeholder="0で無制限">
-                </div>
-                <div>
-                  <label title="カンマ区切りで複数指定">追加の起点アプリID（任意）</label>
-                  <input type="text" id="u_erExtraApps" value="" placeholder="例: 123, 456, 789">
-                </div>
-                <div>
-                  <label>追加オプション</label>
-                  <div class="chips" style="margin-top:4px">
-                    <label class="chip" title="サブテーブル内フィールドもERに含めます"><input type="checkbox" id="u_erIncludeSubtable" checked> サブテーブル項目を含める</label>
-                    <label class="chip" title="参照先だけでなく、現在アプリを参照しているアプリも探索します（全アプリを走査）"><input type="checkbox" id="u_erIncludeReverseLookup"> 逆引き探索を有効化</label>
+                <div class="subpane-note">比較元アプリを起点に、ルックアップ・関連レコード・アクションでつながるアプリを図にします。</div>
+                <div class="er-route-panel">
+                  <div class="er-route-main">
+                    <div class="er-route-copy">
+                      <div class="er-route-badge">標準生成</div>
+                      <div class="er-route-title">現在の比較元アプリからER図を開く</div>
+                      <div class="er-route-sub">通常はこのまま生成できます。探索範囲を広げる場合だけ詳細オプションを調整してください。</div>
+                      <div class="er-route-meta" aria-label="標準設定">
+                        <span>Dagre</span>
+                        <span>標準密度</span>
+                        <span>サブテーブルON</span>
+                      </div>
+                    </div>
+                    <div class="er-route-actions">
+                      <button type="button" class="btn" data-act="generateERDiagram" title="新しいタブでインタラクティブなERを開きます">ER図を開く</button>
+                      <button type="button" class="btn sub" data-act="exportERDiagramHtml" title="単体HTMLファイルとして保存">HTML保存</button>
+                    </div>
                   </div>
+                  <details class="er-route-details">
+                    <summary>
+                      <span>詳細オプション</span>
+                      <small>追加起点・表示密度・逆引き探索</small>
+                    </summary>
+                    <div class="er-option-grid">
+                      <div>
+                        <label title="Cytoscape のレイアウトアルゴリズム">初期レイアウト</label>
+                        <select id="u_erLayout" title="グラフの並べ方">
+                          <option value="dagre">Dagre（推奨）</option>
+                          <option value="breadthfirst">ツリー</option>
+                          <option value="cose">フォース</option>
+                          <option value="concentric">同心円</option>
+                          <option value="grid">グリッド</option>
+                          <option value="circle">円形</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label title="フィールド表示の粒度">表示密度</label>
+                        <select id="u_erFieldDensity">
+                          <option value="compact">簡易</option>
+                          <option value="standard" selected>標準</option>
+                          <option value="full">詳細</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label title="0 は無制限に近い挙動（実装上の上限あり）">探索深さ</label>
+                        <input type="text" id="u_erMaxDepth" value="0" placeholder="0で無制限">
+                      </div>
+                      <div>
+                        <label title="カンマ区切りで複数指定">追加の起点アプリID</label>
+                        <input type="text" id="u_erExtraApps" value="" placeholder="例: 123, 456, 789">
+                      </div>
+                    </div>
+                    <div class="er-option-chips">
+                      <label class="chip" title="サブテーブル内フィールドもERに含めます"><input type="checkbox" id="u_erIncludeSubtable" checked> サブテーブル項目を含める</label>
+                      <label class="chip" title="参照先だけでなく、現在アプリを参照しているアプリも探索します（全アプリを走査）"><input type="checkbox" id="u_erIncludeReverseLookup"> 逆引き探索を有効化</label>
+                    </div>
+                    <div class="er-support-actions">
+                      <button type="button" class="btn sub" data-act="openAnalyzeFieldGraph" title="フィールド依存関係は分析タブへ移動しました">フィールド依存は分析で確認</button>
+                    </div>
+                  </details>
                 </div>
-              </div>
-              <div class="btns" style="margin-top:10px">
-                <button type="button" class="btn" data-act="generateERDiagram" title="新しいタブでインタラクティブなERを開きます">ER図を生成 (別タブ表示)</button>
-                <button type="button" class="btn sub" data-act="exportERDiagramHtml" title="単体HTMLファイルとして保存">ER図HTML保存</button>
-                <button type="button" class="btn sub" data-act="openAnalyzeFieldGraph" title="フィールド依存関係は分析タブへ移動しました">フィールド依存は分析で確認</button>
-              </div>
-                </div>
-              </details>
               </div>
             </div>
 

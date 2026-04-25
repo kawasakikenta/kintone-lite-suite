@@ -317,7 +317,7 @@
       REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
-        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, paramBuilder: (app) => ({ id: app }) },
+        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
         { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
         { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
         { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
@@ -818,7 +818,6 @@ ${contextLine}`);
     return picked;
   }
   async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
-    const prefix = buildApiPrefix(guestId, preview);
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
     const bundle = {
@@ -834,6 +833,8 @@ ${contextLine}`);
       const def = SECTION_DEFS.find((x) => x.key === sec);
       if (!def) continue;
       try {
+        const sectionPreview = def.previewEndpoint === false ? false : preview;
+        const prefix = buildApiPrefix(guestId, sectionPreview);
         const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
         const res = await apiGet(prefix, def.endpoint, params);
         const revision = extractSectionRevision(res);
@@ -2355,6 +2356,9 @@ ${contextLine}`);
             <h3>注目差分</h3>
             <div class="highlight-list">${highlightCardsHtml}</div>
           </section>` : `<section class="panel"><h3>注目差分</h3><div class="muted-note">注目差分はありません。</div></section>`;
+    const diffTotal = summary.added + summary.removed + summary.changed;
+    const diffRate = summary.total ? Math.round(diffTotal / summary.total * 100) : 0;
+    const severitySummary = reportMeta.diffOverview?.severity || { high: 0, medium: 0, low: 0 };
     const compareSectionsHtml = shouldIncludeComparedContent(exportContentMode) && compareScopes.length ? compareScopes.map((secKey) => {
       const label = sectionLabelMap[secKey] || secKey;
       const sourceValue = compareSourceBundle?.sections?.[secKey];
@@ -4275,24 +4279,26 @@ ${contextLine}`);
 
       if (!collapsedNow) {
         const displayRows = g.key === FIELD_SECTION_KEY ? collapseFieldRowsForDiffTable(g.rows) : g.rows;
-        const table = document.createElement('table');
-        table.className = 'diff-table';
-        table.innerHTML = '<thead><tr><th style="width:110px">種別</th><th style="width:260px">パス</th><th>比較元</th><th>比較先</th></tr></thead>';
-        const tbody = document.createElement('tbody');
+        const list = document.createElement('div');
+        list.className = 'diff-card-list';
         displayRows.forEach((row) => {
-          const tr = document.createElement('tr');
           const typeLabel = diffTypeLabel(row.type, row.moved);
           const cells = renderRowCells(row, useCharDiff);
           const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
-          tr.innerHTML =
-            '<td class="type ' + typeClass + '">' + escHtml(typeLabel) + '</td>' +
-            '<td class="path" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</td>' +
-            '<td class="cell">' + cells.left + '</td>' +
-            '<td class="cell">' + cells.right + '</td>';
-          tbody.appendChild(tr);
+          const card = document.createElement('article');
+          card.className = 'diff-card diff-card--' + typeClass;
+          card.innerHTML =
+            '<div class="diff-card-head">' +
+              '<span class="type-chip type-chip--' + typeClass + '">' + escHtml(typeLabel) + '</span>' +
+              '<div class="diff-card-path path" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</div>' +
+            '</div>' +
+            '<div class="diff-pane-grid">' +
+              '<section class="diff-pane"><div class="diff-pane-title">比較元</div><div class="cell">' + cells.left + '</div></section>' +
+              '<section class="diff-pane"><div class="diff-pane-title">比較先</div><div class="cell">' + cells.right + '</div></section>' +
+            '</div>';
+          list.appendChild(card);
         });
-        table.appendChild(tbody);
-        sec.appendChild(table);
+        sec.appendChild(list);
       }
       main.appendChild(sec);
     });
@@ -4524,7 +4530,17 @@ ${contextLine}`);
     .meta-card:hover{border-color:var(--accent-soft)}
     .meta-card .label{display:block;font-size:10px;font-weight:700;color:var(--muted);margin-bottom:5px;letter-spacing:.02em}
     .meta-card .value{display:block;font-size:12px;font-weight:800;color:var(--fg);word-break:break-word}
-    .summary-strip{display:flex;gap:10px;flex-wrap:wrap;padding:18px;border-bottom:1px solid var(--border);background:var(--card)}
+    .summary-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:12px;padding:18px;border-bottom:1px solid var(--border);background:var(--card)}
+    .metric-card{position:relative;overflow:hidden;border:1px solid var(--border);border-radius:14px;background:linear-gradient(180deg,var(--card-soft),var(--card));padding:14px 16px;min-height:104px;box-shadow:0 8px 22px -16px rgba(15,23,42,.5)}
+    .metric-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--muted)}
+    .metric-card--total::before{background:var(--pill-total)}
+    .metric-card--diff::before,.metric-card--changed::before{background:var(--pill-chg)}
+    .metric-card--added::before{background:var(--pill-add)}
+    .metric-card--removed::before{background:var(--pill-del)}
+    .metric-card--severity::before{background:#dc2626}
+    .metric-label{font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+    .metric-value{margin-top:8px;font-size:28px;line-height:1;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums}
+    .metric-sub{margin-top:10px;font-size:11px;line-height:1.45;color:var(--muted)}
     .pill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:999px;padding:8px 14px;font-size:11px;background:var(--card-soft);font-weight:700;transition:border-color .15s,transform .1s}
     .pill:hover{border-color:var(--muted)}
     .pill .count{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
@@ -4575,6 +4591,27 @@ ${contextLine}`);
     .sec-head:hover{filter:brightness(.985)}
     body.dark .sec-head:hover{filter:brightness(1.08)}
     .sec-meta{font-size:10px;font-weight:700;color:var(--muted)}
+    .diff-card-list{display:flex;flex-direction:column;gap:12px;padding:14px;background:var(--card-soft)}
+    .diff-card{border:1px solid var(--border);border-left:5px solid var(--border);border-radius:14px;background:var(--card);box-shadow:0 8px 20px -16px rgba(15,23,42,.45);overflow:hidden}
+    .diff-card--added{border-left-color:#16a34a}
+    .diff-card--removed{border-left-color:#dc2626}
+    .diff-card--changed{border-left-color:#ca8a04}
+    .diff-card--same{border-left-color:#0d9488}
+    .diff-card-head{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card),var(--card-soft))}
+    .type-chip{display:inline-flex;align-items:center;justify-content:center;min-width:62px;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:800;border:1px solid transparent;white-space:nowrap}
+    .type-chip--added{background:#dcfce7;color:#166534;border-color:#86efac}
+    .type-chip--removed{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+    .type-chip--changed{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+    .type-chip--same{background:#ccfbf1;color:#0f766e;border-color:#5eead4}
+    body.dark .type-chip--added{background:#14532d;color:#bbf7d0;border-color:#166534}
+    body.dark .type-chip--removed{background:#450a0a;color:#fecaca;border-color:#991b1b}
+    body.dark .type-chip--changed{background:#78350f;color:#fde68a;border-color:#b45309}
+    body.dark .type-chip--same{background:#134e4a;color:#99f6e4;border-color:#0f766e}
+    .diff-card-path{min-width:0}
+    .diff-pane-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:12px 14px 14px}
+    .diff-pane{min-width:0;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden}
+    .diff-pane-title{padding:8px 11px;border-bottom:1px solid var(--border);background:var(--pad);font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
+    .diff-pane .cell{display:block}
     .diff-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px}
     .diff-table th,.diff-table td{border-bottom:1px solid var(--border);padding:10px 12px;vertical-align:top;text-align:left}
     .diff-table th{position:sticky;top:0;background:var(--card);z-index:1;font-size:10px;font-weight:800;letter-spacing:.05em;color:var(--muted);text-transform:uppercase}
@@ -4595,7 +4632,7 @@ ${contextLine}`);
     .meta-line{font-size:10px;line-height:1.5;color:var(--muted)}
     .meta-line strong{color:var(--fg)}
     .cell{padding:0;overflow:hidden}
-    .scroll{max-height:330px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+    .scroll{max-height:300px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
     .scroll::-webkit-scrollbar{width:6px;height:6px}
     .scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px}
     .line{display:flex;min-height:1.6em;line-height:1.6;padding:0 8px;white-space:pre-wrap;word-break:break-word}
@@ -4877,7 +4914,8 @@ ${contextLine}`);
       .fd-overlay{padding:12px}
       .fd-overlay-head,.kf-modal-head{flex-direction:column;align-items:flex-start}
       .fd-overlay-actions{width:100%;justify-content:space-between}
-      .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid,.lp-row,.lp-subtable-grid,.lp-fallback-grid{grid-template-columns:1fr}
+      .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid,.lp-row,.lp-subtable-grid,.lp-fallback-grid,.diff-pane-grid{grid-template-columns:1fr}
+      .diff-card-head{grid-template-columns:1fr}
     }
     @media print{
       aside,.header-actions,.sb-panel .btn,.settings-tabs,.search-hint{display:none!important}
@@ -4975,14 +5013,13 @@ ${contextLine}`);
           </section>
         </div>
 
-        <div class="summary-strip">
-          <span class="pill pill--total">総件数 <span class="count">${summary.total}</span></span>
-          <span class="pill pill--added">追加 <span class="count">${summary.added}</span></span>
-          <span class="pill pill--removed">削除 <span class="count">${summary.removed}</span></span>
-          <span class="pill pill--changed">変更 <span class="count">${summary.changed}</span></span>
-          <span class="pill pill--moved">移動 <span class="count">${summary.moved}</span></span>
-          <span class="pill pill--same">同一 <span class="count">${summary.same}</span></span>
-          <span class="pill pill--err">取得失敗 <span class="count">${fetchIssues.length}</span></span>
+        <div class="summary-strip" aria-label="差分サマリー">
+          <article class="metric-card metric-card--total"><div class="metric-label">総件数</div><div class="metric-value">${summary.total}</div><div class="metric-sub">表示対象に含まれる行数</div></article>
+          <article class="metric-card metric-card--diff"><div class="metric-label">差分</div><div class="metric-value">${diffTotal}</div><div class="metric-sub">全体の ${diffRate}% が変更対象</div></article>
+          <article class="metric-card metric-card--added"><div class="metric-label">追加</div><div class="metric-value">${summary.added}</div><div class="metric-sub">比較先に追加された設定</div></article>
+          <article class="metric-card metric-card--removed"><div class="metric-label">削除</div><div class="metric-value">${summary.removed}</div><div class="metric-sub">比較先から無くなった設定</div></article>
+          <article class="metric-card metric-card--changed"><div class="metric-label">変更 / 移動</div><div class="metric-value">${summary.changed}</div><div class="metric-sub">移動 ${summary.moved} / 同一 ${summary.same}</div></article>
+          <article class="metric-card metric-card--severity"><div class="metric-label">重要度</div><div class="metric-value">${severitySummary.high}</div><div class="metric-sub">高 / 中 ${severitySummary.medium} / 低 ${severitySummary.low} / 取得失敗 ${fetchIssues.length}</div></article>
         </div>
 
         <div class="info-grid">

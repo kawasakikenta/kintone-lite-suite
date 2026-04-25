@@ -728,15 +728,15 @@ export function buildReflectAssistHtml() {
   const firstNonFieldScope = nonFieldScopes[0] || '';
   const safetyLabel = (checklistDone === 3 && backupReady && stopOnError) ? '準備OK' : '要見直し';
   const warnings = [];
-  if (!diffReady) warnings.push('差分比較がまだ最新ではありません。先にヘッダーで差分比較をやり直してください。');
+  if (!diffReady) warnings.push('差分比較がまだ最新ではありません。「差分比較」または「差分比較して候補作成」から最新化してください。');
   if (!scopeInfo.baseScopes.length && !isNode) warnings.push('「反映セクションを選ぶ」から、今回まとめて反映するセクションを選んでください。');
   if (scopeInfo.warning) warnings.push(scopeInfo.warning);
-  if (isNode && !state.reflectRows.length) warnings.push('差分を選んで反映モードです。まず「差分候補を読込」で候補を出してください。');
+  if (isNode && !state.reflectRows.length) warnings.push('差分を選んで反映モードです。まず「差分比較して候補作成」で候補を出してください。');
   if (checklistDone < 3) warnings.push('画面下の反映前チェックを完了してください。');
   if (!backupReady) warnings.push('バックアップ自動保存がOFFです。反映前に「今の比較先を保存」をおすすめします。');
 
   const nodeLoadAction = isNode && !state.reflectRows.length
-    ? '<button class="btn sub" data-act="loadReflectNodes">差分候補を読込</button>'
+    ? `<button class="btn sub" data-act="${diffReady ? 'loadReflectNodes' : 'runDiffLoadReflectNodes'}">${diffReady ? '差分候補を読込' : '差分比較して候補作成'}</button>`
     : '';
   const scopeDiffAction = !isNode && actualDiffRows.length
     ? '<button class="btn sub" data-act="applyScopeDiffOnly">差分があるセクションだけ選ぶ</button>'
@@ -747,25 +747,108 @@ export function buildReflectAssistHtml() {
   const sectionEditorAction = !isNode && firstNonFieldScope
     ? `<button class="btn sub" data-act="openSectionPreviewEditor" data-section="${esc(firstNonFieldScope)}">他設定を編集</button>`
     : '';
-  const guideActions = [
-    '<button class="btn sub" data-act="startGuidedTour">操作手順を開く</button>',
-    nodeLoadAction,
+  const selectedSrcCount = selectedNodeRows.filter((row) => deps.reflectRowModeById(row._id) === 'src').length;
+  const selectedTgtCount = selectedNodeRows.length - selectedSrcCount;
+  const selectedSectionLabels = scopeInfo.effectiveScopes
+    .map((key) => SECTION_DEFS.find((item) => item.key === key)?.label || key)
+    .slice(0, 6);
+  const selectionMeta = isNode
+    ? `候補 ${state.reflectRows.length}件 / 選択 ${selectedNodeRows.length}件 / 比較元採用 ${selectedSrcCount}件 / 比較先維持 ${selectedTgtCount}件`
+    : `${selectedSectionLabels.join('、') || '未選択'}${scopeInfo.effectiveScopes.length > 6 ? `、他${scopeInfo.effectiveScopes.length - 6}件` : ''}`;
+  const routeLabel = isNode ? '詳細ルート' : '標準ルート';
+  const routeTitle = isNode ? '個別差分を選んで反映' : 'セクション単位で反映';
+  const routeSub = isNode
+    ? '必要な差分だけを選び、採用元を切り替えて反映します。'
+    : '差分があるセクションを選び、プラン確認後にまとめて反映します。';
+  const currentStep = !diffReady ? 1 : (!targetCountValue ? 2 : (!planReady ? 3 : 4));
+  const stepHtml = [
+    { no: 1, title: '差分を作る', meta: diffReady ? `最新差分 ${actualDiffRows.length}件` : '未実行または条件変更あり', done: diffReady },
+    { no: 2, title: '対象を選ぶ', meta: targetCountValue ? `${targetCountLabel} ${targetCountValue}件` : '反映対象が未選択', done: targetCountValue > 0 },
+    { no: 3, title: 'プラン確認', meta: planReady ? `確認済み ${state.lastApplyPlan?.totalReq || 0}req` : '未確認', done: planReady },
+    { no: 4, title: 'プレビュー反映', meta: checklistDone === 3 ? 'チェック完了' : `チェック ${checklistDone}/3`, done: checklistDone === 3 && planReady }
+  ].map((step) => `<div class="reflect-flow-step${step.done ? ' is-done' : ''}${currentStep === step.no ? ' is-current' : ''}">
+      <div class="reflect-flow-step__no">${String(step.no).padStart(2, '0')}</div>
+      <div class="reflect-flow-step__body">
+        <div class="reflect-flow-step__title">${esc(step.title)}</div>
+        <div class="reflect-flow-step__meta">${esc(step.meta)}</div>
+      </div>
+    </div>`).join('');
+  const nextAction = !diffReady
+    ? `<button class="btn btn-primary-emphasis" data-act="${isNode ? 'runDiffLoadReflectNodes' : 'runDiff'}">${isNode ? '差分比較して候補作成' : '差分比較を実行'}</button>`
+    : (!targetCountValue
+      ? (isNode
+        ? (state.reflectRows.length ? '<button class="btn btn-primary-emphasis" data-act="selectVisibleReflectNodes">表示中を選択</button>' : '<button class="btn btn-primary-emphasis" data-act="loadReflectNodes">差分候補を読込</button>')
+        : '<button class="btn btn-primary-emphasis" data-act="openReflectScopePicker">反映セクションを選ぶ</button>')
+      : (!planReady
+        ? '<button class="btn btn-primary-emphasis" data-act="previewApplyPlan">実行前プラン確認</button>'
+        : '<button class="btn ok" data-act="applyPreview">プレビューへ反映</button>'));
+  const modeSwitchAction = isNode
+    ? '<button class="btn sub" data-act="reflectModeSection">セクション単位へ戻る</button>'
+    : '<button class="btn sub" data-act="reflectModeNode">差分ごとに選ぶ</button>';
+  const planAction = targetCountValue
+    ? '<button class="btn sub" data-act="previewApplyPlan">プラン確認</button>'
+    : (isNode
+      ? (state.reflectRows.length ? '<button class="btn sub" data-act="selectVisibleReflectNodes">表示中を選択</button>' : `<button class="btn sub" data-act="${diffReady ? 'loadReflectNodes' : 'runDiffLoadReflectNodes'}">${diffReady ? '差分候補を読込' : '差分比較して候補作成'}</button>`)
+      : '<button class="btn sub" data-act="openReflectScopePicker">対象を選ぶ</button>');
+  const jsonRouteAction = '<button class="btn sub" data-act="reflectModeJson">JSON詳細へ</button>';
+  const targetAdjustActions = [
     scopeDiffAction,
+    nodeLoadAction,
     fieldEditorAction,
     sectionEditorAction
   ].filter(Boolean).join('');
+  const routeSwitchActions = [
+    modeSwitchAction,
+    jsonRouteAction
+  ].filter(Boolean).join('');
 
   return `<div class="reflect-assist">
-    <div class="reflect-guide">
-      <div class="reflect-guide-head">
+    <div class="reflect-command-center">
+      <div class="reflect-command-head">
         <div>
-          <div class="reflect-guide-title">${isNode ? '一部だけ採用したい差分を選んで反映します' : 'まずはここで、反映するセクションを決めます'}</div>
-          <div class="reflect-guide-sub">比較先アプリ ${esc(c.target.appId || '-')} / 反映先は常にプレビューです。差分は「差分比較」で最新化し、詳しい流れは「操作手順を開く」から確認できます。</div>
+          <div class="reflect-command-kicker">Preview Apply Route</div>
+          <div class="reflect-guide-title">${esc(routeTitle)}</div>
+          <div class="reflect-guide-sub">比較先 App ${esc(c.target.appId || '-')} / 書き込み先はプレビューAPIです。画面に出す操作は標準ルートに絞り、細かい調整は詳細ルートにまとめています。</div>
         </div>
-        <div class="reflect-guide-actions">
-          <span class="reflect-guide-badge">${esc(isNode ? '細かく選ぶモード' : 'まず使うモード')}</span>
-          ${guideActions}
+        <div class="reflect-command-next">
+          <span class="reflect-guide-badge">${esc(routeLabel)}</span>
         </div>
+      </div>
+      <div class="reflect-flow">${stepHtml}</div>
+      <div class="reflect-route-panel">
+        <section class="reflect-route-primary">
+          <div class="reflect-route-primary__copy">
+            <div class="reflect-route-primary__label">${esc(routeLabel)}</div>
+            <div class="reflect-route-primary__title">${esc(routeTitle)}</div>
+            <div class="reflect-route-primary__meta">${esc(routeSub)} ${esc(selectionMeta || '未選択')}</div>
+          </div>
+          <div class="reflect-route-primary__action">${nextAction}</div>
+        </section>
+        <details class="reflect-route-details">
+          <summary>
+            <span>詳細ルート・補助操作</span>
+            <small>個別差分、JSON、本番比較、手動確認</small>
+          </summary>
+          <div class="reflect-route-detail-grid">
+            <section>
+              <div class="reflect-route-detail-title">ルート切替</div>
+              <div class="reflect-route-detail-actions">${routeSwitchActions}</div>
+            </section>
+            <section>
+              <div class="reflect-route-detail-title">対象調整</div>
+              <div class="reflect-route-detail-actions">${targetAdjustActions || '<span class="muted">現在の選択では追加調整はありません</span>'}</div>
+            </section>
+            <section>
+              <div class="reflect-route-detail-title">確認補助</div>
+              <div class="reflect-route-detail-actions">
+                ${planAction}
+                <button class="btn sub" data-act="runDiffAndPlan">差分比較してプラン</button>
+                <button class="btn sub" data-act="runPreviewProdDiff">プレビュー⇔本番を比較</button>
+                <button class="btn sub" data-act="markReflectTargetConfirmed">反映先を確認済みにする</button>
+              </div>
+            </section>
+          </div>
+        </details>
       </div>
     </div>
     <div class="reflect-summary-grid">
@@ -790,7 +873,7 @@ export function buildReflectAssistHtml() {
       <div class="reflect-summary-meta">${esc(planReady ? `最新確認: ${planTime}` : 'まだ実行前プラン確認をしていません')}</div>
       </div>
     </div>
-    <p class="reflect-action-hint">差分の再実行は<strong>上部の接続パネル（ヘッダー）</strong>から、実行前の確認と反映は<strong>画面下の固定バー</strong>から行います。フィールドは<strong>フィールド確認</strong>、それ以外は<strong>他設定を編集</strong>から比較先プレビューの内容を細かく調整できます。</p>
+    <p class="reflect-action-hint">基本は標準ルートだけで完結します。差分単位の採用元切替、JSON編集、本番との差分確認は「詳細ルート・補助操作」から開きます。</p>
     ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join('') : '<div class="reflect-good">このまま「実行前プラン確認」へ進めます。最終確認後に「プレビューへ反映」を実行してください。</div>'}
     ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? ' / 必要なら「直前保存を戻す」で元に戻せます。' : ''}</div>` : ''}
   </div>`;
@@ -1186,32 +1269,7 @@ export function renderReflectPostApplyCard() {
 
 function renderReflectHowto() {
   if (!ui.reflectHowto) return;
-  const isNode = isReflectNodeModeEffective();
-  const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
-  const planSig = getCurrentReflectPlanSignature();
-  const planReady = !!(state.lastApplyPlan && planSig && state.lastApplyPlan.signature === planSig);
-  const selectedNodes = deps.getSelectedReflectRows().length;
-  const nodeRows = (state.reflectRows || []).length;
-  const modeLabel = isNode ? '差分選択モード' : 'まとめて反映モード';
-  const nodeStep = isNode
-    ? `<li style="margin:4px 0">${nodeRows > 0 ? '✅' : '⬜'} <strong>差分候補を読込</strong>して、反映したい差分だけ選ぶ（候補 ${nodeRows}件 / 選択 ${selectedNodes}件）</li>`
-    : '';
-  const step1 = diffReady ? '✅' : '⬜';
-  const step2 = planReady ? '✅' : '⬜';
-  const step3 = planReady ? '▶' : '⬜';
-  ui.reflectHowto.innerHTML = `
-    <details open style="border:1px solid #dbe3ed;border-radius:10px;background:#fff;padding:8px 10px">
-      <summary style="cursor:pointer;font-weight:700;color:#1e293b">進め方（${esc(modeLabel)}）</summary>
-      <div style="margin-top:8px;font-size:12px;color:#334155;line-height:1.7">
-        <ol style="margin:0;padding-left:18px">
-          <li style="margin:4px 0">${step1} <strong>差分比較</strong>を実行して最新差分を作成</li>
-          ${nodeStep}
-          <li style="margin:4px 0">${step2} 固定バーの<strong>実行前プラン確認</strong>で API 実行内容を確認</li>
-          <li style="margin:4px 0">${step3} 固定バーの<strong>プレビューへ反映</strong>を実行</li>
-        </ol>
-        <p class="muted" style="margin:8px 0 0;font-size:11px;line-height:1.6">差分比較は<strong>上部の接続パネル（ヘッダー）</strong>から、実行系は<strong>画面下の固定バー</strong>から行います。</p>
-      </div>
-    </details>`;
+  ui.reflectHowto.innerHTML = '';
 }
 
 function getDiffCountsBySection() {
@@ -1464,54 +1522,88 @@ export function renderReflectNodeList() {
       : '<span class="muted" style="font-size:10px">未選択（すべて対象）</span>';
   }
   const filterProps = state.reflectPropertyFilters instanceof Set ? state.reflectPropertyFilters : new Set();
+  const buildNodeSearchText = (r) => [
+    r.path || '',
+    r.section || '',
+    r.sectionKey || '',
+    r.type || '',
+    r.severity || '',
+    r.reasonSummary || '',
+    r.impactSummary || '',
+    r.renameCandidate ? `${r.renameCandidate.fromCode || ''} ${r.renameCandidate.toCode || ''}` : '',
+    ...(r.impactRefs || []).map((ref) => `${ref.section || ''} ${ref.kind || ''} ${ref.path || ''} ${ref.label || ''}`)
+  ].join('\n').toLowerCase();
   const filtered = rows.filter((r) => {
-    if (keyword && !(r.path || '').toLowerCase().includes(keyword)
-      && !(r.section || '').toLowerCase().includes(keyword)
-      && !(r.sectionKey || '').toLowerCase().includes(keyword)) return false;
+    if (keyword && !buildNodeSearchText(r).includes(keyword)) return false;
     if (filterSec && r.sectionKey !== filterSec) return false;
-    if (filterType && r.type !== filterType) return false;
+    if (filterType === 'moved') {
+      if (!r.moved) return false;
+    } else if (filterType && r.type !== filterType) {
+      return false;
+    }
     if (filterSev && (r.severity || 'low').toUpperCase() !== filterSev) return false;
     if (filterProps.size && !filterProps.has(extractPropertyKeyFromPath(r.path))) return false;
     return true;
   });
   const activeRow = deps.getActiveReflectRow(filtered.map((r) => r._id));
   const selected = state.reflectSelectedIds || new Set();
-  const selectedCount = rows.filter((r) => selected.has(r._id)).length;
   const selectedRows = rows.filter((r) => selected.has(r._id));
+  const selectedCount = selectedRows.length;
   const srcCount = selectedRows.filter((r) => deps.reflectRowModeById(r._id) === 'src').length;
   const tgtCount = selectedRows.length - srcCount;
   const sev = summarizeSeverity(selectedRows);
-  const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">候補 ${rows.length}件 / 表示 ${filtered.length}件 / 選択 ${selectedCount}件 / 比較元採用 ${srcCount} / 比較先維持 ${tgtCount} / 高:${sev.high} 中:${sev.medium} 低:${sev.low}</div>`;
+  const header = `<div class="reflect-node-list-summary">
+    <div class="reflect-node-list-summary__main">候補 ${rows.length}件 / 表示 ${filtered.length}件 / 選択 ${selectedCount}件</div>
+    <div class="reflect-node-list-summary__sub">比較元採用 ${srcCount} / 比較先維持 ${tgtCount} / 高 ${sev.high} / 中 ${sev.medium} / 低 ${sev.low}</div>
+  </div>`;
   renderReflectActiveFilterChips();
   if (!filtered.length) {
-    ui.reflectNodeList.innerHTML = `${header}<div style="padding:12px;font-size:12px;color:#64748b">条件に一致するノードがありません。検索または絞り込み条件を見直してください。</div>`;
+    ui.reflectNodeList.innerHTML = `${header}<div class="reflect-node-empty">条件に一致する差分候補がありません。検索または絞り込み条件を見直してください。</div>`;
     renderReflectNodeDetail();
     renderBundleState();
     renderReflectModeUi();
     renderReflectAssistPanel();
     return;
   }
-  const body = filtered.slice(0, 1200).map((r) => {
-    const cls = r.type === 'added' ? '#166534' : (r.type === 'removed' ? '#b91c1c' : '#92400e');
+  const visibleRows = filtered.slice(0, 1200);
+  const truncatedCount = Math.max(0, filtered.length - visibleRows.length);
+  const body = visibleRows.map((r) => {
     const checked = selected.has(r._id) ? 'checked' : '';
     const mode = deps.reflectRowModeById(r._id);
     const typeLabel = getDiffTypeDisplayLabel(r.type, { moved: !!r.moved });
     const severity = String(r.severity || 'low').toLowerCase();
-    const sevBg = severity === 'high' ? '#fee2e2' : (severity === 'medium' ? '#fef3c7' : '#dbeafe');
-    const sevColor = severity === 'high' ? '#991b1b' : (severity === 'medium' ? '#92400e' : '#1d4ed8');
-    return `<tr class="reflect-node-row${activeRow?._id === r._id ? ' active' : ''}" data-node-open="${esc(r._id)}">
-      <td><input type="checkbox" data-node-id="${esc(r._id)}" ${checked}></td>
-      <td><button type="button" data-node-mode="${esc(r._id)}" style="border:1px solid #cbd5e1;border-radius:6px;padding:2px 6px;font-size:10px;background:${mode === 'src' ? '#dbeafe' : '#dcfce7'};color:${mode === 'src' ? '#1d4ed8' : '#166534'};font-weight:700;cursor:pointer">${mode === 'src' ? '比較元' : '比較先'}</button></td>
-      <td><span style="display:inline-block;padding:1px 6px;border-radius:999px;background:${sevBg};color:${sevColor};font-size:10px;font-weight:700">${esc(getSeverityDisplayLabel(severity))}</span></td>
-      <td>${esc(r.section || '-')}</td>
-      <td style="color:${cls};font-weight:700">${esc(typeLabel)}</td>
-      <td title="${esc(r.path || '-')}">${esc(r.path || '-')}</td>
-    </tr>`;
+    const typeClass = r.moved ? 'moved' : (r.type || 'changed');
+    const reason = String(r.reasonSummary || '').trim();
+    const impact = String(r.impactSummary || '').trim() || (r.impactCount ? `影響 ${r.impactCount}件` : '');
+    const rename = r.renameCandidate
+      ? `名称変更候補 ${r.renameCandidate.fromCode || '-'} → ${r.renameCandidate.toCode || '-'}`
+      : '';
+    const metaItems = [reason, impact, rename].filter(Boolean);
+    const modeLabel = mode === 'src' ? '比較元を採用' : '比較先を維持';
+    const selectedLabel = selected.has(r._id) ? '選択中' : '未選択';
+    return `<article class="reflect-node-card-item${activeRow?._id === r._id ? ' is-active' : ''}${selected.has(r._id) ? ' is-selected' : ''}" data-node-open="${esc(r._id)}">
+      <div class="reflect-node-card-headline">
+        <label class="reflect-node-card-check" title="${esc(selectedLabel)}">
+          <input type="checkbox" data-node-id="${esc(r._id)}" ${checked}>
+          <span>${esc(selectedLabel)}</span>
+        </label>
+        <div class="reflect-node-card-badges">
+          <span class="reflect-node-list-badge reflect-node-list-badge--${esc(severity)}">重要度 ${esc(getSeverityDisplayLabel(severity))}</span>
+          <span class="reflect-node-type reflect-node-type--${esc(typeClass)}">${esc(typeLabel)}</span>
+        </div>
+      </div>
+      <div class="reflect-node-card-main">
+        <div class="reflect-node-card-title">${esc(r.section || '-')}</div>
+        <div class="reflect-node-card-path" title="${esc(r.path || '-')}">${esc(r.path || '-')}</div>
+        ${metaItems.length ? `<div class="reflect-node-card-meta">${metaItems.map((item) => `<span>${esc(item)}</span>`).join('')}</div>` : ''}
+      </div>
+      <div class="reflect-node-card-actions">
+        <button type="button" class="reflect-node-mode-btn reflect-node-mode-btn--${esc(mode)}" data-node-mode="${esc(r._id)}">${esc(modeLabel)}</button>
+        <span class="reflect-node-card-hint">クリックで詳細表示</span>
+      </div>
+    </article>`;
   }).join('');
-  ui.reflectNodeList.innerHTML = `${header}<table>
-    <thead><tr><th style="width:52px">選択</th><th style="width:66px">反映元</th><th style="width:82px">重要度</th><th>セクション</th><th>種別</th><th>パス</th></tr></thead>
-    <tbody>${body}</tbody>
-  </table>`;
+  ui.reflectNodeList.innerHTML = `${header}<div class="reflect-node-card-list">${body}</div>${truncatedCount ? `<div class="reflect-node-list-more">他 ${truncatedCount}件は絞り込みで表示できます</div>` : ''}`;
   renderReflectNodeDetail();
   renderBundleState();
   renderReflectModeUi();

@@ -113,6 +113,9 @@ import {
 import {
   runPreviewProductionDiff,
   exportPreviewProdDiffJson,
+  setPreviewProdDiffFilter,
+  applyPreviewProdDiffSearch,
+  clearPreviewProdDiffFilters,
   closePreviewProdDiff
 } from './reflect/previewProdDiff.js';
 
@@ -1459,6 +1462,11 @@ export function setupEventHandlers(injected = {}) {
       withGuard(runConnectionSearchApps);
       return;
     }
+    if (e.target?.id === 'u_previewProdSearch' && e.key === 'Enter') {
+      e.preventDefault();
+      applyPreviewProdDiffSearch();
+      return;
+    }
 
     const featCard = e.target.closest?.('.feature-card[data-feature]');
     if (featCard && !editable && (e.key === 'Enter' || e.key === ' ')) {
@@ -2406,6 +2414,20 @@ export function setupEventHandlers(injected = {}) {
         saveWorkHistorySnapshot('diff', { label: '差分比較後', silent: true });
       });
     }
+    if (act === 'runDiffLoadReflectNodes') {
+      return withGuard(async () => {
+        switchTab('reflect', { persist: false });
+        switchSubTab('reflect', 'diff', { persist: false });
+        await runDiff();
+        markReflectApplyChecks(['diff']);
+        resetReflectApplyChecks(['plan']);
+        loadReflectRowsFromLastDiff();
+        renderReflectModeUi();
+        renderReflectMainPanel();
+        saveWorkHistorySnapshot('diff', { label: '差分候補作成後', silent: true });
+        setStatus(`差分比較と候補作成が完了しました (${(state.reflectRows || []).length}件)`);
+      });
+    }
     if (act === 'exportDiffJson') return withGuard(exportDiffJson);
     if (act === 'exportDiffHtml') return withGuard(exportDiffHtml);
     if (act === 'exportPatchJson') return withGuard(exportPatchJson);
@@ -2743,6 +2765,14 @@ export function setupEventHandlers(injected = {}) {
       setStatus('差分から調整モードに切り替えました');
       return;
     }
+    if (act === 'reflectModeJson') {
+      state.reflectActiveSidebarSection = null;
+      switchSubTab('reflect', 'json');
+      renderReflectModeUi();
+      renderReflectMainPanel();
+      setStatus('JSON詳細ルートに切り替えました');
+      return;
+    }
 
     // ----- Reflect preset actions -----
     if (act === 'saveReflectPreset') {
@@ -2985,6 +3015,11 @@ export function setupEventHandlers(injected = {}) {
         saveWorkHistorySnapshot('plan', { label: 'プラン確認後', silent: true });
       });
     }
+    if (act === 'markReflectTargetConfirmed') {
+      markReflectApplyChecks(['target']);
+      setStatus('反映先が比較先プレビューであることを確認済みにしました');
+      return;
+    }
     if (act === 'exportDryRunPlan' && typeof runExportDryRunPlan === 'function') return withGuard(runExportDryRunPlan);
     if (act === 'backupTargetPreview' && typeof runBackupTargetPreview === 'function') return withGuard(runBackupTargetPreview);
     if (act === 'restoreTargetPreviewBackup' && typeof runRestoreTargetPreviewBackup === 'function') return withGuard(runRestoreTargetPreviewBackup);
@@ -2996,6 +3031,18 @@ export function setupEventHandlers(injected = {}) {
     if (act === 'deployOnly' && typeof runDeployOnly === 'function') return withGuard(runDeployOnly);
     if (act === 'runPreviewProdDiff') return withGuard(runPreviewProductionDiff);
     if (act === 'exportPreviewProdDiffJson') { exportPreviewProdDiffJson(); return; }
+    if (act === 'setPreviewProdDiffFilter') {
+      setPreviewProdDiffFilter(actEl.dataset.filterKind || '', actEl.dataset.filterValue || '');
+      return;
+    }
+    if (act === 'applyPreviewProdDiffSearch') {
+      applyPreviewProdDiffSearch();
+      return;
+    }
+    if (act === 'clearPreviewProdDiffFilters') {
+      clearPreviewProdDiffFilters();
+      return;
+    }
     if (act === 'closePreviewProdDiff') { closePreviewProdDiff(); return; }
     if (act === 'postApplyRecompare' && typeof runDiff === 'function') {
       withGuard(async () => {
