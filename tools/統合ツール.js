@@ -10839,6 +10839,61 @@ ${body}`;
   function formatSectionList(sectionKeys) {
     return (sectionKeys || []).map((sectionKey) => getSectionDisplayLabel(sectionKey)).join(", ");
   }
+  function isSameConnectionPair(c) {
+    const srcApp = String(c?.source?.appId || "").trim();
+    const tgtApp = String(c?.target?.appId || "").trim();
+    const srcGuest = String(c?.source?.guestId || "").trim();
+    const tgtGuest = String(c?.target?.guestId || "").trim();
+    return !!srcApp && srcApp === tgtApp && srcGuest === tgtGuest;
+  }
+  function summarizeRowsBySeverity(rows) {
+    const out = { total: 0, high: 0, medium: 0, low: 0 };
+    for (const row of rows || []) {
+      out.total += 1;
+      const sev = String(row?.severity || "low").toLowerCase();
+      if (sev === "high") out.high += 1;
+      else if (sev === "medium") out.medium += 1;
+      else out.low += 1;
+    }
+    return out;
+  }
+  function confirmApplyRiskGuard(mode, c, options = {}) {
+    const issues = [];
+    const labels = [];
+    const diffSummary = options.diffSummary || { total: 0, high: 0, medium: 0, low: 0 };
+    const requestCount = Number(options.requestCount || 0);
+    if (isSameConnectionPair(c)) {
+      issues.push("比較元と比較先が同一接続です（同一 appId / guestId）");
+    }
+    if (diffSummary.total >= APPLY_GUARD_DIFF_THRESHOLD) {
+      issues.push(`差分件数がしきい値以上です（${diffSummary.total}件 / しきい値 ${APPLY_GUARD_DIFF_THRESHOLD}件）`);
+    }
+    if (diffSummary.high > 0) {
+      issues.push(`高重要度の差分を含みます（高 ${diffSummary.high}件）`);
+    }
+    if (requestCount >= APPLY_GUARD_REQUEST_THRESHOLD) {
+      issues.push(`APIリクエスト予定数が多いです（${requestCount}件 / しきい値 ${APPLY_GUARD_REQUEST_THRESHOLD}件）`);
+    }
+    if (!issues.length) return true;
+    if (Array.isArray(options.scopeLabels) && options.scopeLabels.length) {
+      labels.push(`対象セクション: ${options.scopeLabels.join(", ")}`);
+    }
+    labels.push(`差分件数: ${diffSummary.total}件（高 ${diffSummary.high} / 中 ${diffSummary.medium} / 低 ${diffSummary.low}）`);
+    if (requestCount > 0) labels.push(`予定リクエスト: ${requestCount}件`);
+    const modeLabel = mode === "nodes" ? "ノード反映" : mode === "patch" ? "JSONパッチ反映" : "プレビュー反映";
+    const body = [
+      `【安全確認: ${modeLabel}】`,
+      "",
+      `比較先アプリ: ${c?.target?.appId || "-"}`,
+      ...labels,
+      "",
+      "注意点:",
+      ...issues.map((line) => ` - ${line}`),
+      "",
+      "内容を確認したうえで実行しますか？"
+    ].join("\n");
+    return kusConfirm(body);
+  }
   async function assertTargetPreviewMatchesPlannedBaseline(prefix, app, sectionKeys) {
     const plan = state.lastApplyPlan;
     const baselines = plan?.targetSectionBaselines || {};
@@ -11121,6 +11176,14 @@ ${body}`;
       setStatus("JSONパッチ反映をキャンセルしました");
       return;
     }
+    const patchRows = Object.values(payload.sections || {}).flat().filter(Boolean);
+    const patchSummary = summarizeRowsBySeverity(patchRows);
+    const planReqCount = Number(state.lastApplyPlan?.totalReq || 0);
+    const scopeLabels = sectionKeys.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
+    if (!confirmApplyRiskGuard("patch", c, { diffSummary: patchSummary, requestCount: planReqCount, scopeLabels })) {
+      setStatus("JSONパッチ反映をキャンセルしました（安全確認）");
+      return;
+    }
     const prefix = buildApiPrefix(c.target.guestId, true);
     const app = c.target.appId;
     const stopOnError = !!ui.stopOnError?.checked;
@@ -11216,6 +11279,13 @@ ${body}`;
     const approved = await ensureApplyPlanApproved(planSignature, "nodes", runPreviewApplyPlanNodes, { appIdRefs });
     if (!approved) {
       setStatus("反映をキャンセルしました");
+      return;
+    }
+    const nodeSummary = summarizeRowsBySeverity(rows);
+    const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
+    const nodeScopeLabels = nodeScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
+    if (!confirmApplyRiskGuard("nodes", c, { diffSummary: nodeSummary, requestCount: plannedReq, scopeLabels: nodeScopeLabels })) {
+      setStatus("反映をキャンセルしました（安全確認）");
       return;
     }
     const prefix = buildApiPrefix(c.target.guestId, true);
@@ -11346,6 +11416,14 @@ ${body}`;
     const approved = await ensureApplyPlanApproved(planSignature, "section", runPreviewApplyPlan, { appIdRefs });
     if (!approved) {
       setStatus("反映をキャンセルしました");
+      return;
+    }
+    const actualRows = (state.lastDiffRows || []).filter((row) => row && !row._displayOnly && scopes.includes(row.sectionKey));
+    const sectionSummary = summarizeRowsBySeverity(actualRows);
+    const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
+    const scopeLabels = scopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
+    if (!confirmApplyRiskGuard("section", c, { diffSummary: sectionSummary, requestCount: plannedReq, scopeLabels })) {
+      setStatus("反映をキャンセルしました（安全確認）");
       return;
     }
     saveCurrentDialogState2();
@@ -11520,7 +11598,7 @@ ${body}`;
     renderReflectMainPanel();
     setStatus(hadError ? "失敗セクション再反映: 一部エラーあり" : "失敗セクション再反映: 完了");
   }
-  var patchJsonDiffTimer, patchJsonDiffSeq, ARRAY_KEY_FALLBACK_CANDIDATES;
+  var patchJsonDiffTimer, patchJsonDiffSeq, APPLY_GUARD_DIFF_THRESHOLD, APPLY_GUARD_REQUEST_THRESHOLD, ARRAY_KEY_FALLBACK_CANDIDATES;
   var init_apply = __esm({
     "src/reflect/apply.js"() {
       "use strict";
@@ -11538,6 +11616,8 @@ ${body}`;
       init_rowMode();
       patchJsonDiffTimer = 0;
       patchJsonDiffSeq = 0;
+      APPLY_GUARD_DIFF_THRESHOLD = 100;
+      APPLY_GUARD_REQUEST_THRESHOLD = 80;
       ARRAY_KEY_FALLBACK_CANDIDATES = ["code", "id", "name", "entity", "field", "status", "state", "app", "from", "to", "key"];
     }
   });
