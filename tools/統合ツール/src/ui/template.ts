@@ -75,7 +75,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
             </div>
           </div>
           <div class="h-actions">
-            <button class="x size" data-act="startGuidedTour">操作ガイド</button>
+            <span id="u_envBadge" class="kus-env-badge-host" aria-live="polite"></span>
+            <button class="x size" data-act="startGuidedTour" title="初回: 全工程 / 復習: 差分のみ / 反映直前: 反映まで">操作ガイド</button>
             <button class="x size" data-act="openShortcutHelp" title="キーボードショートカット一覧 (?)" aria-label="キーボードショートカット一覧">?</button>
             <button class="x size" data-act="dialogSizeDefault">標準</button>
             <button class="x size" data-act="dialogSizeLarge">大</button>
@@ -547,6 +548,16 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 </button>
               </div>
             </div>
+            <section class="work-history-panel" id="u_sessionSummaryPanel" aria-label="このセッションの操作サマリ" style="margin-bottom:8px">
+              <div class="work-history-head">
+                <div>
+                  <p class="work-history-kicker">Session Recap</p>
+                  <p class="work-history-title">このセッションの操作サマリ</p>
+                  <p class="work-history-desc">タブを閉じるとリセットされます（永続化なし）。自分の作業を俯瞰でき、ヒューマンエラーの自己点検につながります。</p>
+                </div>
+              </div>
+              <div id="u_sessionSummary" class="kus-session-summary" aria-live="polite"></div>
+            </section>
             <section class="work-history-panel" id="u_workHistoryPanel" aria-label="作業履歴・復元">
               <div class="work-history-head">
                 <div>
@@ -867,8 +878,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                     </div>
                   </div>
                   <div class="reflect-footer-options__chips">
-                    <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存</label>
-                    <label class="chip" title="APIエラーが出た時点で残りの反映を止めます"><input type="checkbox" id="u_stopOnError" checked> エラー時中断</label>
+                    <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します（推奨）"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存 <span class="kus-recommended-mark" aria-label="推奨">★</span></label>
+                    <label class="chip" title="APIエラーが出た時点で残りの反映を止めます（推奨）"><input type="checkbox" id="u_stopOnError" checked> エラー時中断 <span class="kus-recommended-mark" aria-label="推奨">★</span></label>
                     <span class="muted" style="font-size:11px;line-height:1.45;max-width:420px;display:inline-block;vertical-align:middle">本番デプロイAPIは利用できません。プレビュー反映後は管理画面から手動デプロイしてください。</span>
                     <input type="checkbox" id="u_doDeploy" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
                   </div>

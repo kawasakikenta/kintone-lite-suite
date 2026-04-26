@@ -12,6 +12,7 @@ import {
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import { getToolDocument } from '../ui/dialog.js';
+import { bumpSessionMetric } from '../ui/psychology.js';
 import { isReflectNodeModeEffective } from './nodeModeUi.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, extractSectionRevision } from '../api.js';
 import {
@@ -403,6 +404,7 @@ export async function ensureApplyPlanApproved(signature, mode, planRunner, optio
 }
 
 export async function runPreviewApplyPlanNodes() {
+  bumpSessionMetric('planRun');
   await ensureDiffPreparedForReflect();
   const c = commonParams();
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
@@ -537,6 +539,7 @@ export async function runPreviewApplyPlanNodes() {
 
 export async function runPreviewApplyPlan() {
   if (isReflectNodeModeEffective()) return runPreviewApplyPlanNodes();
+  bumpSessionMetric('planRun');
   await ensureDiffPreparedForReflect();
   const c = commonParams();
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');

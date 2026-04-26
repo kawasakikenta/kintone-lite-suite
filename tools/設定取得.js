@@ -918,6 +918,15 @@ ${contextLine}`);
     }
   });
 
+  // src/ui/psychology.ts
+  var init_psychology = __esm({
+    "src/ui/psychology.ts"() {
+      "use strict";
+      init_utils();
+      init_dialog();
+    }
+  });
+
   // src/tabs/preview-compare.ts
   var init_preview_compare = __esm({
     "src/tabs/preview-compare.ts"() {
@@ -931,6 +940,7 @@ ${contextLine}`);
       "use strict";
       init_constants();
       init_state();
+      init_psychology();
       init_utils();
       init_api();
       init_engine();
@@ -958,6 +968,7 @@ ${contextLine}`);
   init_constants();
   init_state();
   init_utils();
+  init_psychology();
   init_api();
   init_components();
   init_diff();
