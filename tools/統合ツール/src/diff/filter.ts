@@ -121,7 +121,7 @@ export function resolveDiffExportContentMode(): string {
 }
 
 export function getDiffExportContentLabel(mode: string): string {
-  return mode === 'withCompared' ? '差分 + 比較設定' : '差分のみ';
+  return mode === 'withCompared' ? '行データ + 比較設定' : '行データのみ';
 }
 
 export function shouldIncludeComparedContent(mode: string): boolean {

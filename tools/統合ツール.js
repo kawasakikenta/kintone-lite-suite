@@ -3119,7 +3119,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return stringifyForDiff(value);
   }
   function getDiffExportContentLabel(mode) {
-    return mode === "withCompared" ? "差分 + 比較設定" : "差分のみ";
+    return mode === "withCompared" ? "行データ + 比較設定" : "行データのみ";
   }
   function shouldIncludeComparedContent(mode) {
     return mode === "withCompared";
@@ -7105,7 +7105,7 @@ ${body}`;
         生成日時: ${esc(reportMeta.generatedAt)}<br>
         対象: ${esc(sectionText || "-")}<br>
         出力対象: ${esc(reportMeta.exportLabel || "全差分")}<br>
-        出力内容: ${esc(reportMeta.exportContentLabel || "差分のみ")}
+        出力内容: ${esc(reportMeta.exportContentLabel || "行データのみ")}
       </div>
     </div>
     <div class="sb-panel sb-stats">
@@ -7146,7 +7146,7 @@ ${body}`;
       </div>
       <div class="header-actions">
         <span class="header-badge">セクション ${esc(String((scopes || []).length || 0))}</span>
-        <span class="header-badge">出力 ${esc(reportMeta.exportContentLabel || "差分のみ")}</span>
+        <span class="header-badge">出力 ${esc(reportMeta.exportContentLabel || "行データのみ")}</span>
         <span class="header-badge">警告 ${warning.threshold ? esc(String(warning.total)) : "OFF"}</span>
       </div>
     </div>
@@ -7199,7 +7199,7 @@ ${body}`;
             <div class="detail-list">
               <div class="detail-row"><span class="detail-key">無視キー</span><span>${esc(reportMeta.ignoreKeys || "-")}</span></div>
               <div class="detail-row"><span class="detail-key">出力対象</span><span>${esc(reportMeta.exportLabel || "全差分")}</span></div>
-              <div class="detail-row"><span class="detail-key">出力内容</span><span>${esc(reportMeta.exportContentLabel || "差分のみ")}</span></div>
+              <div class="detail-row"><span class="detail-key">出力内容</span><span>${esc(reportMeta.exportContentLabel || "行データのみ")}</span></div>
               <div class="detail-row"><span class="detail-key">セクション</span><span>${esc(sectionText || "-")}</span></div>
             </div>
             ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? " (超過)" : ""}</div>` : ""}
@@ -7870,7 +7870,7 @@ ${body}`;
     return ui.diffExportContent?.value || state.diffExportContent || "diffOnly";
   }
   function getDiffExportContentLabel2(mode) {
-    return mode === "withCompared" ? "差分 + 比較設定" : "差分のみ";
+    return mode === "withCompared" ? "行データ + 比較設定" : "行データのみ";
   }
   function shouldIncludeComparedContent2(mode) {
     return mode === "withCompared";
@@ -19099,6 +19099,11 @@ ${lines.join("\n")}
               <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
               <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
             </div>
+            <div class="connection-preview-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+              <span class="muted" style="font-size:12px">取得環境</span>
+              <label class="chip" title="比較元をプレビューAPIから取得します"><input type="checkbox" id="u_sourcePreview"> 比較元プレビュー</label>
+              <label class="chip" title="比較先をプレビューAPIから取得します"><input type="checkbox" id="u_targetPreview" checked> 比較先プレビュー</label>
+            </div>
             <div class="connection-preset-panel" aria-labelledby="conn-preset-heading">
               <div class="connection-preset-head">
                 <div>
@@ -19155,8 +19160,6 @@ ${lines.join("\n")}
             </details>
             </div>
             </section>
-            <input type="checkbox" id="u_sourcePreview" style="display:none">
-            <input type="checkbox" id="u_targetPreview" checked style="display:none">
             <div class="kus-header-diff-suite" id="u_headerDiffSuite">
             <section class="connection-section connection-section--step2 connection-section--actions diff-pane-step2" aria-labelledby="conn-diff-pane-heading">
                 <div class="connection-step-banner">
@@ -19379,8 +19382,8 @@ ${lines.join("\n")}
                       <option value="favorites">お気に入り行のみ（★）</option>
                     </select>
                     <select id="u_diffExportContent" style="flex:1;min-width:180px" title="比較対象の生設定をレポートに含めるか">
-                      <option value="diffOnly">出力内容: 差分のみ</option>
-                      <option value="withCompared">出力内容: 差分 + 比較設定</option>
+                      <option value="diffOnly">出力内容: 行データのみ</option>
+                      <option value="withCompared">出力内容: 行データ + 比較設定</option>
                     </select>
                   </div>
                   <label title="画面上のチェック状態をまとめて変更します" style="margin-top:8px;display:block">選択操作（チェック行の操作）</label>

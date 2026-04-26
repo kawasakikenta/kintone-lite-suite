@@ -9,6 +9,8 @@
     "build:kintone-calendar": "vite build --config plugins/KintoneCalendar/vite.config.mjs",
     "check:kintone-calendar": "svelte-check --tsconfig plugins/KintoneCalendar/tsconfig.json",
     "package:kintone-calendar": "kintone-plugin-packer --ppk plugins/KintoneCalendar.ppk plugins/KintoneCalendar --out plugins/KintoneCalendar.zip",
+    "mcp:playwright": "node node_modules/@playwright/mcp/cli.js --browser=chrome --output-dir=.playwright-mcp --save-session",
+    "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs",
     "build:field-transfer": "npm --prefix plugins/FieldTransfer run build",
     "test:field-transfer": "npm --prefix plugins/FieldTransfer test",
     "package:field-transfer": "npm run build:field-transfer && kintone-plugin-packer --ppk plugins/FieldTransfer.ppk plugins/FieldTransfer --out plugins/FieldTransfer.zip"
@@ -27,6 +29,7 @@
   "homepage": "https://github.com/kawasakikenta/kintone#readme",
   "devDependencies": {
     "@kintone/plugin-packer": "^9.1.0",
+    "@playwright/mcp": "^0.0.70",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "svelte": "^5.55.5",
     "svelte-check": "^4.4.6",

@@ -339,7 +339,7 @@ function renderPanel() {
   expMode.className = 'kus-dlite__select';
   expMode.style.flex = '1';
   expMode.style.minWidth = '0';
-  [['diffOnly', '差分のみ'], ['withCompared', '差分 + 比較セクションの設定']].forEach(([v, t]) => {
+  [['diffOnly', '行データのみ'], ['withCompared', '行データ + 比較セクションの設定']].forEach(([v, t]) => {
     const o = document.createElement('option');
     o.value = v;
     o.textContent = t;

@@ -1975,7 +1975,7 @@ ${contextLine}`);
     return out == null ? String(value) : out;
   }
   function getDiffExportContentLabel(mode) {
-    return mode === "withCompared" ? "差分 + 比較設定" : "差分のみ";
+    return mode === "withCompared" ? "行データ + 比較設定" : "行データのみ";
   }
   function shouldIncludeComparedContent(mode) {
     return mode === "withCompared";
@@ -4958,7 +4958,7 @@ ${contextLine}`);
         生成日時: ${esc(reportMeta.generatedAt)}<br>
         対象: ${esc(sectionText || "-")}<br>
         出力対象: ${esc(reportMeta.exportLabel || "全差分")}<br>
-        出力内容: ${esc(reportMeta.exportContentLabel || "差分のみ")}
+        出力内容: ${esc(reportMeta.exportContentLabel || "行データのみ")}
       </div>
     </div>
     <div class="sb-panel sb-stats">
@@ -4999,7 +4999,7 @@ ${contextLine}`);
       </div>
       <div class="header-actions">
         <span class="header-badge">セクション ${esc(String((scopes || []).length || 0))}</span>
-        <span class="header-badge">出力 ${esc(reportMeta.exportContentLabel || "差分のみ")}</span>
+        <span class="header-badge">出力 ${esc(reportMeta.exportContentLabel || "行データのみ")}</span>
         <span class="header-badge">警告 ${warning.threshold ? esc(String(warning.total)) : "OFF"}</span>
       </div>
     </div>
@@ -5052,7 +5052,7 @@ ${contextLine}`);
             <div class="detail-list">
               <div class="detail-row"><span class="detail-key">無視キー</span><span>${esc(reportMeta.ignoreKeys || "-")}</span></div>
               <div class="detail-row"><span class="detail-key">出力対象</span><span>${esc(reportMeta.exportLabel || "全差分")}</span></div>
-              <div class="detail-row"><span class="detail-key">出力内容</span><span>${esc(reportMeta.exportContentLabel || "差分のみ")}</span></div>
+              <div class="detail-row"><span class="detail-key">出力内容</span><span>${esc(reportMeta.exportContentLabel || "行データのみ")}</span></div>
               <div class="detail-row"><span class="detail-key">セクション</span><span>${esc(sectionText || "-")}</span></div>
             </div>
             ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? " (超過)" : ""}</div>` : ""}
@@ -5627,7 +5627,7 @@ ${contextLine}`);
     expMode.className = "kus-dlite__select";
     expMode.style.flex = "1";
     expMode.style.minWidth = "0";
-    [["diffOnly", "差分のみ"], ["withCompared", "差分 + 比較セクションの設定"]].forEach(([v, t]) => {
+    [["diffOnly", "行データのみ"], ["withCompared", "行データ + 比較セクションの設定"]].forEach(([v, t]) => {
       const o = document.createElement("option");
       o.value = v;
       o.textContent = t;
