@@ -2,20 +2,9 @@
 
 import { DEFAULT_APP_ID } from '../constants.js';
 import { setStatus } from '../ui/components.js';
-import { esc } from '../utils.js';
 import { runFieldApplyStandalone, runLoadFieldsStandalone } from '../tabs/field-standalone.js';
 import { mountKusLitePanel } from './liteMount.js';
-
-function row(labelHtml, child) {
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px';
-  const lab = document.createElement('span');
-  lab.style.cssText = 'font-size:12px;font-weight:600;color:#334155;min-width:6em';
-  lab.innerHTML = labelHtml;
-  wrap.appendChild(lab);
-  wrap.appendChild(child);
-  return wrap;
-}
+import { row, mkInput, mkBtn, mkOption, mkNote, liteRun } from './litePanelHelpers.js';
 
 export function mountFieldLitePanel() {
   const { bodySlot } = mountKusLitePanel({
@@ -24,16 +13,7 @@ export function mountFieldLitePanel() {
     note: 'フィールド定義JSONを比較先アプリへ追加・更新します。統合ツール.js は不要です。'
   });
 
-  const mkInput = (ph: string, val: string = '') => {
-    const inp = document.createElement('input');
-    inp.type = 'text';
-    inp.placeholder = ph;
-    if (val) inp.value = val;
-    inp.style.cssText = 'width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-    return inp;
-  };
-
-  const srcApp = mkInput('比較元アプリID', DEFAULT_APP_ID || '');
+  const srcApp = mkInput('比較元アプリID', { value: DEFAULT_APP_ID || '' });
   const srcGuest = mkInput('ゲストID（任意）');
   const tgtApp = mkInput('比較先アプリID');
   const tgtGuest = mkInput('ゲストID（任意）');
@@ -57,22 +37,11 @@ export function mountFieldLitePanel() {
 
   const optRow = document.createElement('div');
   optRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px';
-  const mkOpt = (text) => {
-    const label = document.createElement('label');
-    label.style.cssText = 'font-size:11px;color:#475569;display:inline-flex;align-items:center;gap:4px;cursor:pointer';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(text));
-    optRow.appendChild(label);
-    return cb;
-  };
-  const overwriteCb = mkOpt('既存フィールドを上書き');
+  const overwriteOpt = mkOption('既存フィールドを上書き');
+  optRow.appendChild(overwriteOpt.label);
   bodySlot.appendChild(optRow);
-  const deployNote = document.createElement('div');
-  deployNote.style.cssText = 'font-size:11px;color:#64748b;margin:-4px 0 8px;line-height:1.45';
-  deployNote.textContent = '本番デプロイはツールから実行できません。';
-  bodySlot.appendChild(deployNote);
+
+  bodySlot.appendChild(mkNote('本番デプロイはツールから実行できません。'));
 
   const resultPre = document.createElement('pre');
   resultPre.style.cssText = 'margin:0;padding:10px;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;max-height:160px;overflow:auto;white-space:pre-wrap;display:none';
@@ -81,55 +50,43 @@ export function mountFieldLitePanel() {
   const btnRow = document.createElement('div');
   btnRow.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:4px';
 
-  function mkBtn(text, bg) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.textContent = text;
-    b.style.cssText = `padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:${bg};color:#fff;cursor:pointer`;
-    return b;
-  }
+  const grayBg = 'linear-gradient(180deg,#64748b,#475569)';
 
-  const bLoadSrc = mkBtn('比較元フィールドを読込', 'linear-gradient(180deg,#64748b,#475569)');
-  bLoadSrc.addEventListener('click', async () => {
-    try {
-      const props = await runLoadFieldsStandalone(
-        { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: true },
-        (m, e) => setStatus(m, e)
-      );
-      fieldJson.value = JSON.stringify({ properties: props }, null, 2);
-    } catch (e) { setStatus(e.message || String(e), true); }
-  });
+  const bLoadSrc = mkBtn('比較元フィールドを読込', { bg: grayBg });
+  bLoadSrc.addEventListener('click', () => liteRun(async () => {
+    const props = await runLoadFieldsStandalone(
+      { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: true },
+      (m, e) => setStatus(m, e)
+    );
+    fieldJson.value = JSON.stringify({ properties: props }, null, 2);
+  }));
 
-  const bLoadTgt = mkBtn('比較先フィールドを読込', 'linear-gradient(180deg,#64748b,#475569)');
-  bLoadTgt.addEventListener('click', async () => {
-    try {
-      const props = await runLoadFieldsStandalone(
-        { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), preview: true },
-        (m, e) => setStatus(m, e)
-      );
-      fieldJson.value = JSON.stringify({ properties: props }, null, 2);
-    } catch (e) { setStatus(e.message || String(e), true); }
-  });
+  const bLoadTgt = mkBtn('比較先フィールドを読込', { bg: grayBg });
+  bLoadTgt.addEventListener('click', () => liteRun(async () => {
+    const props = await runLoadFieldsStandalone(
+      { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), preview: true },
+      (m, e) => setStatus(m, e)
+    );
+    fieldJson.value = JSON.stringify({ properties: props }, null, 2);
+  }));
 
-  const bApply = mkBtn('比較先へフィールド反映', 'linear-gradient(180deg,#3b82f6,#2563eb)');
-  bApply.addEventListener('click', async () => {
+  const bApply = mkBtn('比較先へフィールド反映');
+  bApply.addEventListener('click', () => liteRun(async () => {
     resultPre.style.display = 'block';
     resultPre.textContent = '';
-    try {
-      const logs = await runFieldApplyStandalone(
-        {
-          targetAppId: tgtApp.value.trim(),
-          targetGuestId: tgtGuest.value.trim(),
-          fieldJson: fieldJson.value,
-          lookupMapJson: lookupMap.value,
-          overwrite: overwriteCb.checked,
-          deploy: false
-        },
-        (m, e) => setStatus(m, e)
-      );
-      resultPre.textContent = logs.join('\n');
-    } catch (e) { setStatus(e.message || String(e), true); }
-  });
+    const logs = await runFieldApplyStandalone(
+      {
+        targetAppId: tgtApp.value.trim(),
+        targetGuestId: tgtGuest.value.trim(),
+        fieldJson: fieldJson.value,
+        lookupMapJson: lookupMap.value,
+        overwrite: overwriteOpt.checkbox.checked,
+        deploy: false
+      },
+      (m, e) => setStatus(m, e)
+    );
+    resultPre.textContent = logs.join('\n');
+  }));
 
   btnRow.appendChild(bLoadSrc);
   btnRow.appendChild(bLoadTgt);

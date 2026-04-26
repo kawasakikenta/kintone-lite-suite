@@ -238,9 +238,9 @@ export function runReflectModeVisible(mode) {
     setStatus('反映ノードが読込されていません');
     return;
   }
-  const visibleIds = [...(ui.reflectNodeList?.querySelectorAll('[data-node-open]') || [])]
+  const visibleIds = [...(ui.reflectNodeList?.querySelectorAll<HTMLElement>('[data-node-open]') || [])]
     .map((el) => el.dataset.nodeOpen)
-    .filter(Boolean);
+    .filter((id): id is string => !!id);
   if (!visibleIds.length) {
     setStatus('表示中ノードがありません（絞り込み条件を見直してください）');
     return;
@@ -275,7 +275,7 @@ export function runReflectModeVisible(mode) {
 // ---------------------------------------------------------------------------
 
 export function getEffectiveReflectScopeInfo() {
-  const baseScopes = selectedScopeKeys(ui.applyScopes);
+  const baseScopes = ui.applyScopes ? selectedScopeKeys(ui.applyScopes) : [];
   if (isReflectNodeModeEffective()) {
     return { baseScopes, effectiveScopes: [...baseScopes], warning: '' };
   }
@@ -392,7 +392,7 @@ function persistReflectPresets(presets) {
 export function saveReflectPreset(name) {
   const trimmed = String(name || '').trim();
   if (!trimmed) throw new Error('プリセット名を入力してください');
-  const scopes = [...(ui.applyScopes?.querySelectorAll('input[type=checkbox]:checked') || [])]
+  const scopes = [...(ui.applyScopes?.querySelectorAll<HTMLInputElement>('input[type=checkbox]:checked') || [])]
     .map((el) => el.value)
     .filter(Boolean);
   const preset = {
@@ -430,7 +430,7 @@ export function applyReflectPreset(name) {
   if (ui.applyDiffOnly) ui.applyDiffOnly.checked = !!preset.applyDiffOnly;
   if (ui.lookupMap) ui.lookupMap.value = preset.lookupMap || '';
   const wantedScopes = new Set(preset.scopes || []);
-  (ui.applyScopes?.querySelectorAll('input[type=checkbox]') || []).forEach((el) => {
+  ui.applyScopes?.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach((el) => {
     el.checked = wantedScopes.has(el.value);
   });
   saveCurrentDialogState();

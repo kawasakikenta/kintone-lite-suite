@@ -3480,3 +3480,60 @@
     scroll-behavior:auto!important;
   }
 }
+
+/* ========== Keyboard shortcut help modal ========== */
+#kintone-unified-suite-v2 .shortcut-help-overlay{
+  position:absolute;inset:0;z-index:140;display:flex;align-items:center;justify-content:center;padding:18px
+}
+#kintone-unified-suite-v2 .shortcut-help-overlay[hidden]{display:none}
+#kintone-unified-suite-v2 .shortcut-help-backdrop{
+  position:absolute;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(2px)
+}
+#kintone-unified-suite-v2 .shortcut-help-card{
+  position:relative;width:min(640px,calc(100vw - 32px));max-height:min(82vh,720px);
+  display:flex;flex-direction:column;
+  background:#fff;border:1px solid rgba(148,163,184,.45);border-radius:16px;
+  box-shadow:0 30px 70px rgba(15,23,42,.28);overflow:hidden
+}
+#kintone-unified-suite-v2 .shortcut-help-head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:16px 18px;border-bottom:1px solid #e2e8f0;
+  background:linear-gradient(135deg,#f8fbff,#eef2ff)
+}
+#kintone-unified-suite-v2 .shortcut-help-title{font-size:15px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .shortcut-help-sub{font-size:12px;line-height:1.65;color:#64748b;margin-top:4px}
+#kintone-unified-suite-v2 .shortcut-help-close{
+  border:1px solid #cbd5e1;background:#fff;color:#334155;border-radius:999px;
+  width:32px;height:32px;cursor:pointer;font-size:16px;line-height:1;flex-shrink:0
+}
+#kintone-unified-suite-v2 .shortcut-help-close:hover{background:#f1f5f9}
+#kintone-unified-suite-v2 .shortcut-help-body{
+  padding:16px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:18px
+}
+#kintone-unified-suite-v2 .shortcut-help-group-title{
+  font-size:11px;font-weight:700;letter-spacing:.04em;color:#475569;
+  text-transform:uppercase;margin-bottom:8px;
+  padding-bottom:6px;border-bottom:1px dashed #e2e8f0
+}
+#kintone-unified-suite-v2 .shortcut-help-list{
+  list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px
+}
+#kintone-unified-suite-v2 .shortcut-help-list li{
+  display:grid;grid-template-columns:minmax(120px,auto) 1fr;align-items:center;
+  gap:12px;font-size:12px;color:#1e293b;line-height:1.5
+}
+#kintone-unified-suite-v2 .shortcut-help-list kbd{
+  display:inline-block;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11px;color:#0f172a;background:#f8fafc;
+  border:1px solid #cbd5e1;border-bottom-width:2px;border-radius:6px;
+  padding:2px 7px;margin-right:4px;line-height:1.35;font-weight:600
+}
+#kintone-unified-suite-v2 .shortcut-help-list span{color:#334155}
+#kintone-unified-suite-v2 .shortcut-help-actions{
+  padding:12px 18px;border-top:1px solid #e2e8f0;background:#f8fafc;
+  display:flex;justify-content:flex-end;gap:8px
+}
+@media (max-width:560px){
+  #kintone-unified-suite-v2 .shortcut-help-card{width:min(100%,calc(100vw - 12px));max-height:calc(100vh - 20px)}
+  #kintone-unified-suite-v2 .shortcut-help-list li{grid-template-columns:1fr;gap:2px}
+}

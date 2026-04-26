@@ -1059,38 +1059,66 @@ ${contextLine}`);
     return { root: root2, status, bodySlot, result };
   }
 
-  // src/entries/process-lite-ui.ts
-  function row(labelHtml, child) {
+  // src/entries/litePanelHelpers.ts
+  var INPUT_BASE = "padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
+  var BTN_BASE = "padding:8px 14px;font-size:12px;font-weight:700;border:none;border-radius:10px;color:#fff;cursor:pointer";
+  var ROW_BASE = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px";
+  var ROW_LABEL_BASE = "font-size:12px;font-weight:600;color:#334155;min-width:6em";
+  function row(labelHtml, child, options = {}) {
     const wrap = document.createElement("div");
-    wrap.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px";
+    wrap.style.cssText = ROW_BASE;
     const lab = document.createElement("span");
-    lab.style.cssText = "font-size:12px;font-weight:600;color:#334155;min-width:5em";
+    const minWidth = options.labelMinWidth ? `min-width:${options.labelMinWidth}` : ROW_LABEL_BASE.split(";").slice(-1)[0];
+    lab.style.cssText = `${ROW_LABEL_BASE.split(";").slice(0, -1).join(";")};${minWidth}`;
     lab.innerHTML = labelHtml;
     wrap.appendChild(lab);
     wrap.appendChild(child);
     return wrap;
   }
+  function mkInput(placeholder, options = {}) {
+    const inp = document.createElement("input");
+    inp.type = options.type || "text";
+    inp.placeholder = placeholder;
+    if (options.value) inp.value = options.value;
+    let widthCss;
+    if (options.width === "wide") widthCss = "width:min(260px,80vw)";
+    else if (options.width === "full") widthCss = "width:100%;box-sizing:border-box";
+    else widthCss = "width:min(120px,40vw)";
+    inp.style.cssText = `${widthCss};${INPUT_BASE}`;
+    return inp;
+  }
+  function mkBtn(text, options = {}) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    const bg = options.bg || "linear-gradient(180deg,#3b82f6,#2563eb)";
+    const mt = options.marginTop || "6px";
+    b.style.cssText = `${BTN_BASE};background:${bg};margin-top:${mt}`;
+    return b;
+  }
+  async function liteRun(fn, busyMessage) {
+    if (busyMessage) setStatus(busyMessage);
+    try {
+      return await fn();
+    } catch (e) {
+      setStatus(e?.message || String(e), true);
+      return void 0;
+    }
+  }
+
+  // src/entries/process-lite-ui.ts
   function mountProcessLitePanel() {
     const { bodySlot } = mountKusLitePanel({
       id: "kus-process-lite",
       title: "プロセス実行",
       note: "プロセス管理のフロー図を Mermaid で描画し、シミュレーションも可能です。統合ツール.js は不要です。"
     });
-    const appInp = document.createElement("input");
-    appInp.type = "text";
-    appInp.placeholder = "アプリID";
-    appInp.value = DEFAULT_APP_ID || "";
-    appInp.style.cssText = "width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-    const guestInp = document.createElement("input");
-    guestInp.type = "text";
-    guestInp.placeholder = "ゲストID（任意）";
-    guestInp.style.cssText = "width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
+    const appInp = mkInput("アプリID", { value: DEFAULT_APP_ID || "" });
+    const guestInp = mkInput("ゲストID（任意）");
     bodySlot.appendChild(row("アプリID", appInp));
     bodySlot.appendChild(row("ゲスト", guestInp));
-    const runBtn = document.createElement("button");
-    runBtn.type = "button";
-    runBtn.textContent = "フロー図を描画";
-    runBtn.style.cssText = "padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:linear-gradient(180deg,#f97316,#ea580c);color:#fff;cursor:pointer;margin-bottom:14px";
+    const runBtn = mkBtn("フロー図を描画", { bg: "linear-gradient(180deg,#f97316,#ea580c)", marginTop: "0" });
+    runBtn.style.cssText += ";padding:10px 14px;font-size:13px;margin-bottom:14px";
     bodySlot.appendChild(runBtn);
     const viewEl = document.createElement("div");
     viewEl.style.cssText = "min-height:60px;border:1px solid #e2e8f0;border-radius:8px;background:#fafafa;padding:8px;overflow:auto;max-height:320px;margin-bottom:8px";
@@ -1130,27 +1158,23 @@ ${contextLine}`);
     simBtnRow.appendChild(simExecBtn);
     simContainer.appendChild(simBtnRow);
     bodySlot.appendChild(simContainer);
-    runBtn.addEventListener("click", async () => {
-      try {
-        await runRenderProcessFlowStandalone(
-          { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
-          (m, e) => setStatus(m, e),
-          {
-            textEl,
-            viewEl,
-            simUi: {
-              container: simContainer,
-              current: simCurEl,
-              select: simSelect,
-              startBtn: simStartBtn,
-              execBtn: simExecBtn
-            }
+    runBtn.addEventListener("click", () => liteRun(async () => {
+      await runRenderProcessFlowStandalone(
+        { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
+        (m, e) => setStatus(m, e),
+        {
+          textEl,
+          viewEl,
+          simUi: {
+            container: simContainer,
+            current: simCurEl,
+            select: simSelect,
+            startBtn: simStartBtn,
+            execBtn: simExecBtn
           }
-        );
-      } catch (e) {
-        setStatus(e.message || String(e), true);
-      }
-    });
+        }
+      );
+    }));
   }
 
   // src/entries/process-lite-entry.ts

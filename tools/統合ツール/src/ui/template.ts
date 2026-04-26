@@ -76,6 +76,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
           </div>
           <div class="h-actions">
             <button class="x size" data-act="startGuidedTour">操作ガイド</button>
+            <button class="x size" data-act="openShortcutHelp" title="キーボードショートカット一覧 (?)" aria-label="キーボードショートカット一覧">?</button>
             <button class="x size" data-act="dialogSizeDefault">標準</button>
             <button class="x size" data-act="dialogSizeLarge">大</button>
             <button class="x size" data-act="dialogSizeMax">最大</button>
@@ -1775,6 +1776,52 @@ export function buildRoot(targetDocument = document, options: any = {}) {
             </div>
             <div class="scope-picker-actions">
               <button type="button" class="btn ok" data-act="closeScopePicker">閉じる</button>
+            </div>
+          </div>
+        </div>
+        <div class="shortcut-help-overlay" id="u_shortcutHelpModal" hidden>
+          <div class="shortcut-help-backdrop" data-act="closeShortcutHelp"></div>
+          <div class="shortcut-help-card" role="dialog" aria-modal="true" aria-labelledby="u_shortcutHelpTitle">
+            <div class="shortcut-help-head">
+              <div>
+                <div class="shortcut-help-title" id="u_shortcutHelpTitle">キーボードショートカット</div>
+                <div class="shortcut-help-sub">入力欄以外でキーを押すと反応します。Esc で閉じる。</div>
+              </div>
+              <button type="button" class="shortcut-help-close" data-act="closeShortcutHelp" aria-label="閉じる" title="閉じる">×</button>
+            </div>
+            <div class="shortcut-help-body">
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">全画面共通</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>?</kbd><span>このヘルプを開く / 閉じる</span></li>
+                  <li><kbd>Esc</kbd><span>モーダル・検索クリアなどを閉じる</span></li>
+                  <li><kbd>/</kbd> / <kbd>Ctrl</kbd>+<kbd>K</kbd><span>ランチャーを開いて機能検索にフォーカス</span></li>
+                  <li><kbd>Enter</kbd> / <kbd>Space</kbd><span>機能カードを開く（フォーカス時）</span></li>
+                </ul>
+              </div>
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">差分比較タブ</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>Ctrl</kbd>+<kbd>F</kbd><span>差分内検索にフォーカス</span></li>
+                  <li><kbd>Ctrl</kbd>+<kbd>A</kbd><span>表示中の差分行を全選択</span></li>
+                  <li><kbd>j</kbd> / <kbd>k</kbd><span>差分行のフォーカスを次/前へ移動</span></li>
+                  <li><kbd>v</kbd><span>フォーカス中の行のレビュー済みをトグル</span></li>
+                  <li><kbd>x</kbd><span>フォーカス中の行の選択をトグル</span></li>
+                  <li><kbd>↑</kbd> / <kbd>↓</kbd><span>チェックボックス間を移動（フォーカス時）</span></li>
+                  <li><kbd>Shift</kbd>+クリック<span>チェック範囲を一括選択</span></li>
+                </ul>
+              </div>
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">操作ガイド表示中</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>→</kbd> / <kbd>Enter</kbd><span>次のステップへ進む</span></li>
+                  <li><kbd>←</kbd><span>前のステップへ戻る</span></li>
+                  <li><kbd>Esc</kbd><span>ガイドを終了</span></li>
+                </ul>
+              </div>
+            </div>
+            <div class="shortcut-help-actions">
+              <button type="button" class="btn ok" data-act="closeShortcutHelp">閉じる</button>
             </div>
           </div>
         </div>

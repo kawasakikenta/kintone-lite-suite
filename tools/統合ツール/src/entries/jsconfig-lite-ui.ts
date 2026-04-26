@@ -8,6 +8,7 @@ import {
   runFetchJsConfigStandalone
 } from '../tabs/jsconfig-standalone.js';
 import { mountKusLitePanel } from './liteMount.js';
+import { mkInput, mkOption, liteRun } from './litePanelHelpers.js';
 
 export function mountJsconfigLitePanel() {
   const { bodySlot, result } = mountKusLitePanel({
@@ -16,31 +17,16 @@ export function mountJsconfigLitePanel() {
     note: 'カスタマイズの取得・JSON保存・比較先プレビューへの反映。統合ツール.js は不要です。'
   });
 
-  const srcApp = document.createElement('input');
-  srcApp.type = 'text';
-  srcApp.placeholder = '取得元アプリID';
-  srcApp.value = DEFAULT_APP_ID || '';
-  srcApp.style.cssText =
-    'width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-
-  const srcGuest = document.createElement('input');
-  srcGuest.type = 'text';
-  srcGuest.placeholder = 'ゲスト（任意）';
-  srcGuest.style.cssText =
-    'width:min(100px,36vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-
-  const srcPrev = document.createElement('label');
-  srcPrev.style.cssText = 'font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer';
-  const srcPrevCb = document.createElement('input');
-  srcPrevCb.type = 'checkbox';
-  srcPrev.appendChild(srcPrevCb);
-  srcPrev.appendChild(document.createTextNode('プレビューで取得'));
+  const srcApp = mkInput('取得元アプリID', { value: DEFAULT_APP_ID || '' });
+  const srcGuest = mkInput('ゲスト（任意）');
+  srcGuest.style.cssText = 'width:min(100px,36vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
+  const srcPrev = mkOption('プレビューで取得');
 
   const row1 = document.createElement('div');
   row1.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px';
   row1.appendChild(srcApp);
   row1.appendChild(srcGuest);
-  row1.appendChild(srcPrev);
+  row1.appendChild(srcPrev.label);
 
   const fetchBtn = document.createElement('button');
   fetchBtn.type = 'button';
@@ -64,17 +50,10 @@ export function mountJsconfigLitePanel() {
   exportBtn.style.cssText =
     'margin-top:8px;padding:8px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer';
 
-  const tgtApp = document.createElement('input');
-  tgtApp.type = 'text';
-  tgtApp.placeholder = '反映先アプリID（プレビュー）';
-  tgtApp.style.cssText =
-    'width:min(140px,44vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-
-  const tgtGuest = document.createElement('input');
-  tgtGuest.type = 'text';
-  tgtGuest.placeholder = 'ゲスト（任意）';
-  tgtGuest.style.cssText =
-    'width:min(100px,36vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
+  const tgtApp = mkInput('反映先アプリID（プレビュー）');
+  tgtApp.style.cssText = 'width:min(140px,44vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
+  const tgtGuest = mkInput('ゲスト（任意）');
+  tgtGuest.style.cssText = 'width:min(100px,36vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
 
   const applyBtn = document.createElement('button');
   applyBtn.type = 'button';
@@ -105,49 +84,37 @@ export function mountJsconfigLitePanel() {
   bodySlot.appendChild(applyBtn);
 
   const uiApi = {
-    setJson: (t) => { jsonTa.value = t; },
-    setCustomizeHtml: (h) => { previewBox.innerHTML = h; }
+    setJson: (t: string) => { jsonTa.value = t; },
+    setCustomizeHtml: (h: string) => { previewBox.innerHTML = h; }
   };
 
-  fetchBtn.addEventListener('click', async () => {
-    try {
-      await runFetchJsConfigStandalone(
-        {
-          sourceAppId: srcApp.value.trim(),
-          sourceGuestId: srcGuest.value.trim(),
-          preview: srcPrevCb.checked
-        },
-        (m, e) => setStatus(m, e),
-        uiApi
-      );
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    }
-  });
+  fetchBtn.addEventListener('click', () => liteRun(async () => {
+    await runFetchJsConfigStandalone(
+      {
+        sourceAppId: srcApp.value.trim(),
+        sourceGuestId: srcGuest.value.trim(),
+        preview: srcPrev.checkbox.checked
+      },
+      (m, e) => setStatus(m, e),
+      uiApi
+    );
+  }));
 
-  exportBtn.addEventListener('click', () => {
-    try {
-      runExportJsConfigStandalone(jsonTa.value, srcApp.value.trim(), (m, e) => setStatus(m, e));
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    }
-  });
+  exportBtn.addEventListener('click', () => liteRun(async () => {
+    runExportJsConfigStandalone(jsonTa.value, srcApp.value.trim(), (m, e) => setStatus(m, e));
+  }));
 
-  applyBtn.addEventListener('click', async () => {
-    try {
-      result.style.display = 'block';
-      await runApplyJsConfigStandalone(
-        {
-          targetAppId: tgtApp.value.trim(),
-          targetGuestId: tgtGuest.value.trim(),
-          jsonText: jsonTa.value,
-          deployAfter: false
-        },
-        (m, e) => setStatus(m, e),
-        (html) => { result.innerHTML = html; }
-      );
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    }
-  });
+  applyBtn.addEventListener('click', () => liteRun(async () => {
+    result.style.display = 'block';
+    await runApplyJsConfigStandalone(
+      {
+        targetAppId: tgtApp.value.trim(),
+        targetGuestId: tgtGuest.value.trim(),
+        jsonText: jsonTa.value,
+        deployAfter: false
+      },
+      (m, e) => setStatus(m, e),
+      (html: string) => { result.innerHTML = html; }
+    );
+  }));
 }

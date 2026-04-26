@@ -8,8 +8,10 @@ import {
   renderSettingsExportSearchResultsHtml
 } from '../tabs/settings-export-standalone.js';
 import { mountKusLitePanel } from './liteMount.js';
+import { mkInput, mkOption, liteRun } from './litePanelHelpers.js';
 
-function row(labelText, child) {
+// 設定一括取得タブ専用の縦積みラベル row（litePanelHelpers の row は横並び）。
+function row(labelText: string, child: HTMLElement): HTMLElement {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'margin-bottom:10px';
   if (labelText) {
@@ -35,11 +37,8 @@ export function mountSettingsExportLitePanel() {
   appTa.style.cssText =
     'width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;resize:vertical';
 
-  const searchKw = document.createElement('input');
-  searchKw.type = 'text';
-  searchKw.placeholder = 'アプリ名の一部';
-  searchKw.style.cssText =
-    'flex:1;min-width:120px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
+  const searchKw = mkInput('アプリ名の一部');
+  searchKw.style.cssText = 'flex:1;min-width:120px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
 
   const searchRow = document.createElement('div');
   searchRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center';
@@ -55,18 +54,10 @@ export function mountSettingsExportLitePanel() {
   searchOut.style.cssText =
     'max-height:140px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;margin-top:6px;background:#fff';
 
-  const guestInp = document.createElement('input');
-  guestInp.type = 'text';
-  guestInp.placeholder = 'ゲストID（任意）';
-  guestInp.style.cssText =
-    'width:min(140px,44vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-
-  const prev = document.createElement('label');
-  prev.style.cssText = 'font-size:12px;color:#475569;display:inline-flex;align-items:center;gap:6px;cursor:pointer';
-  const prevCb = document.createElement('input');
-  prevCb.type = 'checkbox';
-  prev.appendChild(prevCb);
-  prev.appendChild(document.createTextNode('プレビュー'));
+  const guestInp = mkInput('ゲストID（任意）');
+  guestInp.style.cssText = 'width:min(140px,44vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
+  const prev = mkOption('プレビュー');
+  const prevCb = prev.checkbox;
 
   const scopeRoot = document.createElement('div');
   scopeRoot.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px 10px;padding:8px 0';
@@ -116,7 +107,7 @@ export function mountSettingsExportLitePanel() {
     const w = document.createElement('div');
     w.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;align-items:center';
     w.appendChild(guestInp);
-    w.appendChild(prev);
+    w.appendChild(prev.label);
     return w;
   })()));
   bodySlot.appendChild(row('取得セクション', (() => {
@@ -137,18 +128,14 @@ export function mountSettingsExportLitePanel() {
     };
   }
 
-  searchBtn.addEventListener('click', async () => {
-    try {
-      const apps = await runSettingsExportSearchStandalone(
-        searchKw.value,
-        guestInp.value.trim(),
-        (m, e) => setStatus(m, e)
-      );
-      searchOut.innerHTML = renderSettingsExportSearchResultsHtml(apps);
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    }
-  });
+  searchBtn.addEventListener('click', () => liteRun(async () => {
+    const apps = await runSettingsExportSearchStandalone(
+      searchKw.value,
+      guestInp.value.trim(),
+      (m, e) => setStatus(m, e)
+    );
+    searchOut.innerHTML = renderSettingsExportSearchResultsHtml(apps);
+  }));
 
   searchOut.addEventListener('click', (ev) => {
     const t = ev.target;
@@ -170,23 +157,15 @@ export function mountSettingsExportLitePanel() {
     scopeRoot.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((cb) => { cb.checked = false; });
   });
 
-  btnJson.addEventListener('click', async () => {
-    try {
-      result.style.display = 'block';
-      const { summaryHtml } = await runSettingsExportStandalone('json', opts(), (m, e) => setStatus(m, e));
-      result.innerHTML = summaryHtml;
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    }
-  });
+  btnJson.addEventListener('click', () => liteRun(async () => {
+    result.style.display = 'block';
+    const { summaryHtml } = await runSettingsExportStandalone('json', opts(), (m, e) => setStatus(m, e));
+    result.innerHTML = summaryHtml;
+  }));
 
-  btnZip.addEventListener('click', async () => {
-    try {
-      result.style.display = 'block';
-      const { summaryHtml } = await runSettingsExportStandalone('zip', opts(), (m, e) => setStatus(m, e));
-      result.innerHTML = summaryHtml;
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    }
-  });
+  btnZip.addEventListener('click', () => liteRun(async () => {
+    result.style.display = 'block';
+    const { summaryHtml } = await runSettingsExportStandalone('zip', opts(), (m, e) => setStatus(m, e));
+    result.innerHTML = summaryHtml;
+  }));
 }

@@ -1164,6 +1164,40 @@ ${contextLine}`);
     return { root: root2, status, bodySlot, result };
   }
 
+  // src/entries/litePanelHelpers.ts
+  init_components();
+  var INPUT_BASE = "padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
+  function mkInput(placeholder, options = {}) {
+    const inp = document.createElement("input");
+    inp.type = options.type || "text";
+    inp.placeholder = placeholder;
+    if (options.value) inp.value = options.value;
+    let widthCss;
+    if (options.width === "wide") widthCss = "width:min(260px,80vw)";
+    else if (options.width === "full") widthCss = "width:100%;box-sizing:border-box";
+    else widthCss = "width:min(120px,40vw)";
+    inp.style.cssText = `${widthCss};${INPUT_BASE}`;
+    return inp;
+  }
+  function mkOption(text) {
+    const label = document.createElement("label");
+    label.style.cssText = "font-size:11px;color:#475569;display:inline-flex;align-items:center;gap:4px;cursor:pointer";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(text));
+    return { label, checkbox };
+  }
+  async function liteRun(fn, busyMessage) {
+    if (busyMessage) setStatus(busyMessage);
+    try {
+      return await fn();
+    } catch (e) {
+      setStatus(e?.message || String(e), true);
+      return void 0;
+    }
+  }
+
   // src/entries/settings-export-lite-ui.ts
   function row(labelText, child) {
     const wrap = document.createElement("div");
@@ -1187,9 +1221,7 @@ ${contextLine}`);
     appTa.rows = 3;
     appTa.placeholder = "アプリID（カンマ・改行区切り）";
     appTa.style.cssText = "width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;resize:vertical";
-    const searchKw = document.createElement("input");
-    searchKw.type = "text";
-    searchKw.placeholder = "アプリ名の一部";
+    const searchKw = mkInput("アプリ名の一部");
     searchKw.style.cssText = "flex:1;min-width:120px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
     const searchRow = document.createElement("div");
     searchRow.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center";
@@ -1201,16 +1233,10 @@ ${contextLine}`);
     searchRow.appendChild(searchBtn);
     const searchOut = document.createElement("div");
     searchOut.style.cssText = "max-height:140px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;margin-top:6px;background:#fff";
-    const guestInp = document.createElement("input");
-    guestInp.type = "text";
-    guestInp.placeholder = "ゲストID（任意）";
+    const guestInp = mkInput("ゲストID（任意）");
     guestInp.style.cssText = "width:min(140px,44vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-    const prev = document.createElement("label");
-    prev.style.cssText = "font-size:12px;color:#475569;display:inline-flex;align-items:center;gap:6px;cursor:pointer";
-    const prevCb = document.createElement("input");
-    prevCb.type = "checkbox";
-    prev.appendChild(prevCb);
-    prev.appendChild(document.createTextNode("プレビュー"));
+    const prev = mkOption("プレビュー");
+    const prevCb = prev.checkbox;
     const scopeRoot = document.createElement("div");
     scopeRoot.style.cssText = "display:flex;flex-wrap:wrap;gap:6px 10px;padding:8px 0";
     for (const s of SETTINGS_EXPORT_SCOPE_DEFS) {
@@ -1251,7 +1277,7 @@ ${contextLine}`);
       const w = document.createElement("div");
       w.style.cssText = "display:flex;flex-wrap:wrap;gap:10px;align-items:center";
       w.appendChild(guestInp);
-      w.appendChild(prev);
+      w.appendChild(prev.label);
       return w;
     })()));
     bodySlot.appendChild(row("取得セクション", (() => {
@@ -1270,18 +1296,14 @@ ${contextLine}`);
         scopeRoot
       };
     }
-    searchBtn.addEventListener("click", async () => {
-      try {
-        const apps = await runSettingsExportSearchStandalone(
-          searchKw.value,
-          guestInp.value.trim(),
-          (m, e) => setStatus(m, e)
-        );
-        searchOut.innerHTML = renderSettingsExportSearchResultsHtml(apps);
-      } catch (e) {
-        setStatus(e.message || String(e), true);
-      }
-    });
+    searchBtn.addEventListener("click", () => liteRun(async () => {
+      const apps = await runSettingsExportSearchStandalone(
+        searchKw.value,
+        guestInp.value.trim(),
+        (m, e) => setStatus(m, e)
+      );
+      searchOut.innerHTML = renderSettingsExportSearchResultsHtml(apps);
+    }));
     searchOut.addEventListener("click", (ev) => {
       const t = ev.target;
       if (!(t instanceof HTMLElement)) return;
@@ -1304,24 +1326,16 @@ ${id}` : id;
         cb.checked = false;
       });
     });
-    btnJson.addEventListener("click", async () => {
-      try {
-        result.style.display = "block";
-        const { summaryHtml } = await runSettingsExportStandalone("json", opts(), (m, e) => setStatus(m, e));
-        result.innerHTML = summaryHtml;
-      } catch (e) {
-        setStatus(e.message || String(e), true);
-      }
-    });
-    btnZip.addEventListener("click", async () => {
-      try {
-        result.style.display = "block";
-        const { summaryHtml } = await runSettingsExportStandalone("zip", opts(), (m, e) => setStatus(m, e));
-        result.innerHTML = summaryHtml;
-      } catch (e) {
-        setStatus(e.message || String(e), true);
-      }
-    });
+    btnJson.addEventListener("click", () => liteRun(async () => {
+      result.style.display = "block";
+      const { summaryHtml } = await runSettingsExportStandalone("json", opts(), (m, e) => setStatus(m, e));
+      result.innerHTML = summaryHtml;
+    }));
+    btnZip.addEventListener("click", () => liteRun(async () => {
+      result.style.display = "block";
+      const { summaryHtml } = await runSettingsExportStandalone("zip", opts(), (m, e) => setStatus(m, e));
+      result.innerHTML = summaryHtml;
+    }));
   }
 
   // src/entries/settings-export-lite-entry.ts

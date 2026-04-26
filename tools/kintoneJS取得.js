@@ -1000,6 +1000,39 @@ ${contextLine}`);
     return { root: root2, status, bodySlot, result };
   }
 
+  // src/entries/litePanelHelpers.ts
+  var INPUT_BASE = "padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
+  function mkInput(placeholder, options = {}) {
+    const inp = document.createElement("input");
+    inp.type = options.type || "text";
+    inp.placeholder = placeholder;
+    if (options.value) inp.value = options.value;
+    let widthCss;
+    if (options.width === "wide") widthCss = "width:min(260px,80vw)";
+    else if (options.width === "full") widthCss = "width:100%;box-sizing:border-box";
+    else widthCss = "width:min(120px,40vw)";
+    inp.style.cssText = `${widthCss};${INPUT_BASE}`;
+    return inp;
+  }
+  function mkOption(text) {
+    const label = document.createElement("label");
+    label.style.cssText = "font-size:11px;color:#475569;display:inline-flex;align-items:center;gap:4px;cursor:pointer";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(text));
+    return { label, checkbox };
+  }
+  async function liteRun(fn, busyMessage) {
+    if (busyMessage) setStatus(busyMessage);
+    try {
+      return await fn();
+    } catch (e) {
+      setStatus(e?.message || String(e), true);
+      return void 0;
+    }
+  }
+
   // src/entries/jsconfig-lite-ui.ts
   function mountJsconfigLitePanel() {
     const { bodySlot, result } = mountKusLitePanel({
@@ -1007,26 +1040,15 @@ ${contextLine}`);
       title: "JS/CSS設定",
       note: "カスタマイズの取得・JSON保存・比較先プレビューへの反映。統合ツール.js は不要です。"
     });
-    const srcApp = document.createElement("input");
-    srcApp.type = "text";
-    srcApp.placeholder = "取得元アプリID";
-    srcApp.value = DEFAULT_APP_ID || "";
-    srcApp.style.cssText = "width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-    const srcGuest = document.createElement("input");
-    srcGuest.type = "text";
-    srcGuest.placeholder = "ゲスト（任意）";
+    const srcApp = mkInput("取得元アプリID", { value: DEFAULT_APP_ID || "" });
+    const srcGuest = mkInput("ゲスト（任意）");
     srcGuest.style.cssText = "width:min(100px,36vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-    const srcPrev = document.createElement("label");
-    srcPrev.style.cssText = "font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer";
-    const srcPrevCb = document.createElement("input");
-    srcPrevCb.type = "checkbox";
-    srcPrev.appendChild(srcPrevCb);
-    srcPrev.appendChild(document.createTextNode("プレビューで取得"));
+    const srcPrev = mkOption("プレビューで取得");
     const row1 = document.createElement("div");
     row1.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px";
     row1.appendChild(srcApp);
     row1.appendChild(srcGuest);
-    row1.appendChild(srcPrev);
+    row1.appendChild(srcPrev.label);
     const fetchBtn = document.createElement("button");
     fetchBtn.type = "button";
     fetchBtn.textContent = "JS/CSS を取得";
@@ -1041,13 +1063,9 @@ ${contextLine}`);
     exportBtn.type = "button";
     exportBtn.textContent = "JSON をファイル保存";
     exportBtn.style.cssText = "margin-top:8px;padding:8px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer";
-    const tgtApp = document.createElement("input");
-    tgtApp.type = "text";
-    tgtApp.placeholder = "反映先アプリID（プレビュー）";
+    const tgtApp = mkInput("反映先アプリID（プレビュー）");
     tgtApp.style.cssText = "width:min(140px,44vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-    const tgtGuest = document.createElement("input");
-    tgtGuest.type = "text";
-    tgtGuest.placeholder = "ゲスト（任意）";
+    const tgtGuest = mkInput("ゲスト（任意）");
     tgtGuest.style.cssText = "width:min(100px,36vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
     const applyBtn = document.createElement("button");
     applyBtn.type = "button";
@@ -1080,47 +1098,35 @@ ${contextLine}`);
         previewBox.innerHTML = h;
       }
     };
-    fetchBtn.addEventListener("click", async () => {
-      try {
-        await runFetchJsConfigStandalone(
-          {
-            sourceAppId: srcApp.value.trim(),
-            sourceGuestId: srcGuest.value.trim(),
-            preview: srcPrevCb.checked
-          },
-          (m, e) => setStatus(m, e),
-          uiApi
-        );
-      } catch (e) {
-        setStatus(e.message || String(e), true);
-      }
-    });
-    exportBtn.addEventListener("click", () => {
-      try {
-        runExportJsConfigStandalone(jsonTa.value, srcApp.value.trim(), (m, e) => setStatus(m, e));
-      } catch (e) {
-        setStatus(e.message || String(e), true);
-      }
-    });
-    applyBtn.addEventListener("click", async () => {
-      try {
-        result.style.display = "block";
-        await runApplyJsConfigStandalone(
-          {
-            targetAppId: tgtApp.value.trim(),
-            targetGuestId: tgtGuest.value.trim(),
-            jsonText: jsonTa.value,
-            deployAfter: false
-          },
-          (m, e) => setStatus(m, e),
-          (html) => {
-            result.innerHTML = html;
-          }
-        );
-      } catch (e) {
-        setStatus(e.message || String(e), true);
-      }
-    });
+    fetchBtn.addEventListener("click", () => liteRun(async () => {
+      await runFetchJsConfigStandalone(
+        {
+          sourceAppId: srcApp.value.trim(),
+          sourceGuestId: srcGuest.value.trim(),
+          preview: srcPrev.checkbox.checked
+        },
+        (m, e) => setStatus(m, e),
+        uiApi
+      );
+    }));
+    exportBtn.addEventListener("click", () => liteRun(async () => {
+      runExportJsConfigStandalone(jsonTa.value, srcApp.value.trim(), (m, e) => setStatus(m, e));
+    }));
+    applyBtn.addEventListener("click", () => liteRun(async () => {
+      result.style.display = "block";
+      await runApplyJsConfigStandalone(
+        {
+          targetAppId: tgtApp.value.trim(),
+          targetGuestId: tgtGuest.value.trim(),
+          jsonText: jsonTa.value,
+          deployAfter: false
+        },
+        (m, e) => setStatus(m, e),
+        (html) => {
+          result.innerHTML = html;
+        }
+      );
+    }));
   }
 
   // src/entries/jsconfig-lite-entry.ts

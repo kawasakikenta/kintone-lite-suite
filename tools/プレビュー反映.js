@@ -1122,32 +1122,60 @@ ${contextLine}`);
     return { root: root2, status, bodySlot, result };
   }
 
-  // src/entries/reflect-lite-ui.ts
-  var REFLECT_LITE_STATE_KEY = "kus_reflect_lite_state_v1";
-  function row(labelHtml, child) {
+  // src/entries/litePanelHelpers.ts
+  var INPUT_BASE = "padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
+  var ROW_BASE = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px";
+  var ROW_LABEL_BASE = "font-size:12px;font-weight:600;color:#334155;min-width:6em";
+  function row(labelHtml, child, options = {}) {
     const wrap = document.createElement("div");
-    wrap.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px";
+    wrap.style.cssText = ROW_BASE;
     const lab = document.createElement("span");
-    lab.style.cssText = "font-size:12px;font-weight:600;color:#334155;min-width:6em";
+    const minWidth = options.labelMinWidth ? `min-width:${options.labelMinWidth}` : ROW_LABEL_BASE.split(";").slice(-1)[0];
+    lab.style.cssText = `${ROW_LABEL_BASE.split(";").slice(0, -1).join(";")};${minWidth}`;
     lab.innerHTML = labelHtml;
     wrap.appendChild(lab);
     wrap.appendChild(child);
     return wrap;
   }
+  function mkInput(placeholder, options = {}) {
+    const inp = document.createElement("input");
+    inp.type = options.type || "text";
+    inp.placeholder = placeholder;
+    if (options.value) inp.value = options.value;
+    let widthCss;
+    if (options.width === "wide") widthCss = "width:min(260px,80vw)";
+    else if (options.width === "full") widthCss = "width:100%;box-sizing:border-box";
+    else widthCss = "width:min(120px,40vw)";
+    inp.style.cssText = `${widthCss};${INPUT_BASE}`;
+    return inp;
+  }
+  function mkOption(text) {
+    const label = document.createElement("label");
+    label.style.cssText = "font-size:11px;color:#475569;display:inline-flex;align-items:center;gap:4px;cursor:pointer";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(text));
+    return { label, checkbox };
+  }
+  async function liteRun(fn, busyMessage) {
+    if (busyMessage) setStatus(busyMessage);
+    try {
+      return await fn();
+    } catch (e) {
+      setStatus(e?.message || String(e), true);
+      return void 0;
+    }
+  }
+
+  // src/entries/reflect-lite-ui.ts
+  var REFLECT_LITE_STATE_KEY = "kus_reflect_lite_state_v1";
   function mountReflectLitePanel() {
     const { bodySlot } = mountKusLitePanel({
       id: "kus-reflect-lite",
       title: "プレビュー反映",
       note: "比較元アプリの設定を比較先プレビュー環境へ一括反映します。統合ツール.js は不要です。"
     });
-    const mkInput = (ph, val) => {
-      const inp = document.createElement("input");
-      inp.type = "text";
-      inp.placeholder = ph;
-      if (val) inp.value = val;
-      inp.style.cssText = "width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-      return inp;
-    };
     let savedState = {};
     try {
       const raw = localStorage.getItem(REFLECT_LITE_STATE_KEY) || "";
@@ -1155,10 +1183,10 @@ ${contextLine}`);
     } catch (_) {
       savedState = {};
     }
-    const srcApp = mkInput("比較元アプリID", savedState.sourceAppId || DEFAULT_APP_ID || "");
-    const srcGuest = mkInput("ゲストID（任意）", savedState.sourceGuestId || "");
-    const tgtApp = mkInput("比較先アプリID", savedState.targetAppId || DEFAULT_APP_ID || "");
-    const tgtGuest = mkInput("ゲストID（任意）", savedState.targetGuestId || "");
+    const srcApp = mkInput("比較元アプリID", { value: savedState.sourceAppId || DEFAULT_APP_ID || "" });
+    const srcGuest = mkInput("ゲストID（任意）", { value: savedState.sourceGuestId || "" });
+    const tgtApp = mkInput("比較先アプリID", { value: savedState.targetAppId || DEFAULT_APP_ID || "" });
+    const tgtGuest = mkInput("ゲストID（任意）", { value: savedState.targetGuestId || "" });
     bodySlot.appendChild(row("比較元ID", srcApp));
     bodySlot.appendChild(row("元ゲスト", srcGuest));
     bodySlot.appendChild(row("比較先ID", tgtApp));
@@ -1211,21 +1239,16 @@ ${contextLine}`);
     bodySlot.appendChild(scopeBox);
     const optRow = document.createElement("div");
     optRow.style.cssText = "display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px";
-    const mkOpt = (text) => {
-      const label = document.createElement("label");
-      label.style.cssText = "font-size:11px;color:#475569;display:inline-flex;align-items:center;gap:4px;cursor:pointer";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      label.appendChild(cb);
-      label.appendChild(document.createTextNode(text));
-      optRow.appendChild(label);
-      return cb;
+    const addOpt = (text) => {
+      const opt = mkOption(text);
+      optRow.appendChild(opt.label);
+      return opt.checkbox;
     };
-    const backupCb = mkOpt("バックアップ保存");
+    const backupCb = addOpt("バックアップ保存");
     backupCb.checked = true;
-    const srcPreviewCb = mkOpt("比較元をプレビューから取得");
+    const srcPreviewCb = addOpt("比較元をプレビューから取得");
     srcPreviewCb.checked = savedState.sourcePreview !== false;
-    const stopCb = mkOpt("エラー時中断");
+    const stopCb = addOpt("エラー時中断");
     stopCb.checked = !!savedState.stopOnError;
     bodySlot.appendChild(optRow);
     const deployNote = document.createElement("div");
@@ -1274,12 +1297,12 @@ ${contextLine}`);
         cb.checked = false;
       });
     });
-    runBtn.addEventListener("click", async () => {
+    runBtn.addEventListener("click", () => {
       const scopes = scopeChecks.filter((cb) => cb.checked).map((cb) => cb.dataset.key);
       logArea.style.display = "block";
       logArea.textContent = "";
       saveState();
-      try {
+      return liteRun(async () => {
         await runApplyPreviewStandalone(
           {
             sourceAppId: srcApp.value.trim(),
@@ -1298,9 +1321,7 @@ ${contextLine}`);
             logArea.scrollTop = logArea.scrollHeight;
           }
         );
-      } catch (e) {
-        setStatus(e.message || String(e), true);
-      }
+      });
     });
     bodySlot.appendChild(runBtn);
   }

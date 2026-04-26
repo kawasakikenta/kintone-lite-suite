@@ -3068,20 +3068,53 @@ ${formatSubtableChildrenText(value.fields)}`;
   function isSubtableFieldRootPath(path) {
     return typeof path === "string" && /^fieldSettings\.properties\.[^.[\]]+$/.test(path);
   }
+  function stripLabelHtmlTags(text) {
+    if (typeof text !== "string" || text.indexOf("<") === -1) return text;
+    const lineBreaks = text.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n");
+    const stripped = lineBreaks.replace(/<[^>]*>/g, "");
+    const decoded = stripped.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    return decoded.replace(/\n{3,}/g, "\n\n").trim();
+  }
+  function sanitizeHtmlBearingProps(value) {
+    if (value == null || typeof value !== "object") return value;
+    if (Array.isArray(value)) {
+      return value.map((item) => sanitizeHtmlBearingProps(item));
+    }
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (typeof v === "string" && (k === "label" || k === "name")) {
+        out[k] = stripLabelHtmlTags(v);
+      } else if (v && typeof v === "object") {
+        out[k] = sanitizeHtmlBearingProps(v);
+      } else {
+        out[k] = v;
+      }
+    }
+    return out;
+  }
   function stringifyRowValueForDiff(value, path) {
     if (value === void 0) return "（未定義）";
     if (value && typeof value === "object" && !Array.isArray(value)) {
       if (value.type === "SUBTABLE" && value.fields && typeof value.fields === "object") {
-        return formatSubtableSnapshotText(value);
+        return formatSubtableSnapshotText(sanitizeHtmlBearingProps(value));
       }
       if (isSubtableFieldsPath(path) && isSubtableFieldMap(value)) {
         return `テーブル内の項目:
-${formatSubtableChildrenText(value)}`;
+${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       }
       if (isSubtableFieldRootPath(path) && isSubtableFieldMap(value)) {
         return `テーブル内の項目:
-${formatSubtableChildrenText(value)}`;
+${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       }
+      if (typeof value.label === "string" && value.label.includes("<")) {
+        return stringifyForDiff(sanitizeHtmlBearingProps(value));
+      }
+    }
+    if (typeof path === "string" && path.startsWith("layoutSettings")) {
+      return stringifyForDiff(sanitizeHtmlBearingProps(value));
+    }
+    if (typeof value === "string" && typeof path === "string" && (/\.label$/.test(path) || /^layoutSettings\b/.test(path))) {
+      return stripLabelHtmlTags(value);
     }
     return stringifyForDiff(value);
   }
@@ -10162,7 +10195,7 @@ ${body}`;
       setStatus("反映ノードが読込されていません");
       return;
     }
-    const visibleIds = [...ui.reflectNodeList?.querySelectorAll("[data-node-open]") || []].map((el) => el.dataset.nodeOpen).filter(Boolean);
+    const visibleIds = [...ui.reflectNodeList?.querySelectorAll("[data-node-open]") || []].map((el) => el.dataset.nodeOpen).filter((id) => !!id);
     if (!visibleIds.length) {
       setStatus("表示中ノードがありません（絞り込み条件を見直してください）");
       return;
@@ -10190,7 +10223,7 @@ ${body}`;
     setStatus(`表示中ノード(${visibleIds.length}件)のうち、${count}件を ${mode === "src" ? "比較元" : "比較先"} に変更しました（元に戻すで取消可）`);
   }
   function getEffectiveReflectScopeInfo2() {
-    const baseScopes = selectedScopeKeys(ui.applyScopes);
+    const baseScopes = ui.applyScopes ? selectedScopeKeys(ui.applyScopes) : [];
     if (isReflectNodeModeEffective()) {
       return { baseScopes, effectiveScopes: [...baseScopes], warning: "" };
     }
@@ -10320,7 +10353,7 @@ ${body}`;
     if (ui.applyDiffOnly) ui.applyDiffOnly.checked = !!preset.applyDiffOnly;
     if (ui.lookupMap) ui.lookupMap.value = preset.lookupMap || "";
     const wantedScopes = new Set(preset.scopes || []);
-    (ui.applyScopes?.querySelectorAll("input[type=checkbox]") || []).forEach((el) => {
+    ui.applyScopes?.querySelectorAll("input[type=checkbox]").forEach((el) => {
       el.checked = wantedScopes.has(el.value);
     });
     saveCurrentDialogState2();
@@ -10599,31 +10632,40 @@ ${body}`;
     return split.logs;
   }
   async function runFieldApply() {
+    const fieldJson = ui.fieldJson;
+    const lookupMapEl = ui.lookupMap;
+    const overwriteEl = ui.overwriteField;
+    const resultEl = ui.result;
+    if (!fieldJson || !lookupMapEl || !overwriteEl || !resultEl) {
+      throw new Error("フィールド追加タブのUIが初期化されていません");
+    }
     const c = commonParams();
     if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
-    const input = ui.fieldJson.value.trim();
+    const input = fieldJson.value.trim();
     if (!input) throw new Error("フィールドJSONを入力してください");
     const incoming = parseFieldInput(input);
-    const lookupMap = parseLookupMapInput(ui.lookupMap.value);
+    const lookupMap = parseLookupMapInput(lookupMapEl.value);
     const prefix = buildApiPrefix(c.target.guestId, true);
     const app = c.target.appId;
     setStatus("フィールド追加/更新中...");
     const logs = await upsertFields(prefix, app, incoming, {
-      overwrite: ui.overwriteField.checked,
-      renameOnConflict: !ui.overwriteField.checked,
+      overwrite: overwriteEl.checked,
+      renameOnConflict: !overwriteEl.checked,
       lookupMap
     });
     logs.push("OK フィールド反映");
-    ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`;
+    resultEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`;
     setStatus("フィールド追加処理完了");
   }
   async function runLoadTargetFields() {
+    const fieldJson = ui.fieldJson;
+    if (!fieldJson) throw new Error("フィールドJSONエディタが初期化されていません");
     const c = commonParams();
     if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
     const prefix = buildApiPrefix(c.target.guestId, true);
     setStatus("比較先フィールド取得中...");
     const res = await apiGet(prefix, "/app/form/fields.json", { app: c.target.appId });
-    ui.fieldJson.value = JSON.stringify({ properties: res.properties || {} }, null, 2);
+    fieldJson.value = JSON.stringify({ properties: res.properties || {} }, null, 2);
     setStatus("比較先フィールドを読み込みました");
   }
   async function runLoadSourceFieldsList() {
@@ -10651,27 +10693,32 @@ ${body}`;
         </tr>
       `;
       });
-      ui.sourceFieldTbody.innerHTML = rows.join("");
-      ui.sourceFieldListContainer.style.display = "block";
-      ui.sourceFieldCheckAll.checked = false;
+      if (ui.sourceFieldTbody) ui.sourceFieldTbody.innerHTML = rows.join("");
+      if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = "block";
+      if (ui.sourceFieldCheckAll) ui.sourceFieldCheckAll.checked = false;
       setStatus(`比較元フィールド ${fields.length} 件を取得しました`);
     } catch (e) {
-      ui.sourceFieldListContainer.style.display = "none";
+      if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = "none";
       throw e;
     }
   }
   function runInsertSelectedSourceFields() {
-    const checks = [...ui.sourceFieldTbody.querySelectorAll(".src-field-sel:checked")];
+    const fieldJson = ui.fieldJson;
+    if (!fieldJson) {
+      setStatus("フィールドJSONエディタが初期化されていません", true);
+      return;
+    }
+    const checks = [...ui.sourceFieldTbody?.querySelectorAll(".src-field-sel:checked") || []];
     if (!checks.length) {
       setStatus("追加するフィールドを選択してください");
       return;
     }
     let currentObj = { properties: {} };
     try {
-      const text = ui.fieldJson.value.trim();
+      const text = fieldJson.value.trim();
       if (text) {
-        currentObj = JSON.parse(text);
-        if (!currentObj.properties) currentObj = { properties: currentObj };
+        const parsed = JSON.parse(text);
+        currentObj = parsed && parsed.properties ? parsed : { properties: parsed || {} };
       }
     } catch (e) {
       if (!kusConfirm("現在のJSONテキストが不正です。上書きして良いですか？")) return;
@@ -10679,14 +10726,16 @@ ${body}`;
     let mergedCount = 0;
     for (const c of checks) {
       try {
-        const def = JSON.parse(c.dataset.json);
-        currentObj.properties[def.code] = def;
-        mergedCount++;
+        const def = JSON.parse(c.dataset.json || "{}");
+        if (def && def.code) {
+          currentObj.properties[def.code] = def;
+          mergedCount++;
+        }
       } catch (e) {
       }
     }
-    ui.fieldJson.value = JSON.stringify(currentObj, null, 2);
-    ui.sourceFieldListContainer.style.display = "none";
+    fieldJson.value = JSON.stringify(currentObj, null, 2);
+    if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = "none";
     setStatus(`${mergedCount} 件のフィールド定義を挿入しました`);
   }
   async function runBulkFieldRename() {
@@ -10716,7 +10765,7 @@ ${body}`;
         modifiedCount++;
       }
     }
-    ui.fieldJson.value = JSON.stringify(newProps, null, 2);
+    if (ui.fieldJson) ui.fieldJson.value = JSON.stringify(newProps, null, 2);
     const resEl = getToolDocument().getElementById("u_bulkFieldResult");
     if (resEl) {
       resEl.style.display = "block";
@@ -18880,6 +18929,63 @@ ${lines.join("\n")}
     scroll-behavior:auto!important;
   }
 }
+
+/* ========== Keyboard shortcut help modal ========== */
+#kintone-unified-suite-v2 .shortcut-help-overlay{
+  position:absolute;inset:0;z-index:140;display:flex;align-items:center;justify-content:center;padding:18px
+}
+#kintone-unified-suite-v2 .shortcut-help-overlay[hidden]{display:none}
+#kintone-unified-suite-v2 .shortcut-help-backdrop{
+  position:absolute;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(2px)
+}
+#kintone-unified-suite-v2 .shortcut-help-card{
+  position:relative;width:min(640px,calc(100vw - 32px));max-height:min(82vh,720px);
+  display:flex;flex-direction:column;
+  background:#fff;border:1px solid rgba(148,163,184,.45);border-radius:16px;
+  box-shadow:0 30px 70px rgba(15,23,42,.28);overflow:hidden
+}
+#kintone-unified-suite-v2 .shortcut-help-head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:16px 18px;border-bottom:1px solid #e2e8f0;
+  background:linear-gradient(135deg,#f8fbff,#eef2ff)
+}
+#kintone-unified-suite-v2 .shortcut-help-title{font-size:15px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .shortcut-help-sub{font-size:12px;line-height:1.65;color:#64748b;margin-top:4px}
+#kintone-unified-suite-v2 .shortcut-help-close{
+  border:1px solid #cbd5e1;background:#fff;color:#334155;border-radius:999px;
+  width:32px;height:32px;cursor:pointer;font-size:16px;line-height:1;flex-shrink:0
+}
+#kintone-unified-suite-v2 .shortcut-help-close:hover{background:#f1f5f9}
+#kintone-unified-suite-v2 .shortcut-help-body{
+  padding:16px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:18px
+}
+#kintone-unified-suite-v2 .shortcut-help-group-title{
+  font-size:11px;font-weight:700;letter-spacing:.04em;color:#475569;
+  text-transform:uppercase;margin-bottom:8px;
+  padding-bottom:6px;border-bottom:1px dashed #e2e8f0
+}
+#kintone-unified-suite-v2 .shortcut-help-list{
+  list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px
+}
+#kintone-unified-suite-v2 .shortcut-help-list li{
+  display:grid;grid-template-columns:minmax(120px,auto) 1fr;align-items:center;
+  gap:12px;font-size:12px;color:#1e293b;line-height:1.5
+}
+#kintone-unified-suite-v2 .shortcut-help-list kbd{
+  display:inline-block;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11px;color:#0f172a;background:#f8fafc;
+  border:1px solid #cbd5e1;border-bottom-width:2px;border-radius:6px;
+  padding:2px 7px;margin-right:4px;line-height:1.35;font-weight:600
+}
+#kintone-unified-suite-v2 .shortcut-help-list span{color:#334155}
+#kintone-unified-suite-v2 .shortcut-help-actions{
+  padding:12px 18px;border-top:1px solid #e2e8f0;background:#f8fafc;
+  display:flex;justify-content:flex-end;gap:8px
+}
+@media (max-width:560px){
+  #kintone-unified-suite-v2 .shortcut-help-card{width:min(100%,calc(100vw - 12px));max-height:calc(100vh - 20px)}
+  #kintone-unified-suite-v2 .shortcut-help-list li{grid-template-columns:1fr;gap:2px}
+}
 `;
 
   // src/ui/template.ts
@@ -18949,6 +19055,7 @@ ${lines.join("\n")}
           </div>
           <div class="h-actions">
             <button class="x size" data-act="startGuidedTour">操作ガイド</button>
+            <button class="x size" data-act="openShortcutHelp" title="キーボードショートカット一覧 (?)" aria-label="キーボードショートカット一覧">?</button>
             <button class="x size" data-act="dialogSizeDefault">標準</button>
             <button class="x size" data-act="dialogSizeLarge">大</button>
             <button class="x size" data-act="dialogSizeMax">最大</button>
@@ -20651,6 +20758,52 @@ ${lines.join("\n")}
             </div>
           </div>
         </div>
+        <div class="shortcut-help-overlay" id="u_shortcutHelpModal" hidden>
+          <div class="shortcut-help-backdrop" data-act="closeShortcutHelp"></div>
+          <div class="shortcut-help-card" role="dialog" aria-modal="true" aria-labelledby="u_shortcutHelpTitle">
+            <div class="shortcut-help-head">
+              <div>
+                <div class="shortcut-help-title" id="u_shortcutHelpTitle">キーボードショートカット</div>
+                <div class="shortcut-help-sub">入力欄以外でキーを押すと反応します。Esc で閉じる。</div>
+              </div>
+              <button type="button" class="shortcut-help-close" data-act="closeShortcutHelp" aria-label="閉じる" title="閉じる">×</button>
+            </div>
+            <div class="shortcut-help-body">
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">全画面共通</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>?</kbd><span>このヘルプを開く / 閉じる</span></li>
+                  <li><kbd>Esc</kbd><span>モーダル・検索クリアなどを閉じる</span></li>
+                  <li><kbd>/</kbd> / <kbd>Ctrl</kbd>+<kbd>K</kbd><span>ランチャーを開いて機能検索にフォーカス</span></li>
+                  <li><kbd>Enter</kbd> / <kbd>Space</kbd><span>機能カードを開く（フォーカス時）</span></li>
+                </ul>
+              </div>
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">差分比較タブ</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>Ctrl</kbd>+<kbd>F</kbd><span>差分内検索にフォーカス</span></li>
+                  <li><kbd>Ctrl</kbd>+<kbd>A</kbd><span>表示中の差分行を全選択</span></li>
+                  <li><kbd>j</kbd> / <kbd>k</kbd><span>差分行のフォーカスを次/前へ移動</span></li>
+                  <li><kbd>v</kbd><span>フォーカス中の行のレビュー済みをトグル</span></li>
+                  <li><kbd>x</kbd><span>フォーカス中の行の選択をトグル</span></li>
+                  <li><kbd>↑</kbd> / <kbd>↓</kbd><span>チェックボックス間を移動（フォーカス時）</span></li>
+                  <li><kbd>Shift</kbd>+クリック<span>チェック範囲を一括選択</span></li>
+                </ul>
+              </div>
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">操作ガイド表示中</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>→</kbd> / <kbd>Enter</kbd><span>次のステップへ進む</span></li>
+                  <li><kbd>←</kbd><span>前のステップへ戻る</span></li>
+                  <li><kbd>Esc</kbd><span>ガイドを終了</span></li>
+                </ul>
+              </div>
+            </div>
+            <div class="shortcut-help-actions">
+              <button type="button" class="btn ok" data-act="closeShortcutHelp">閉じる</button>
+            </div>
+          </div>
+        </div>
       `;
     return root2;
   }
@@ -20925,7 +21078,6 @@ ${lines.join("\n")}
   init_constants();
   init_state();
   init_utils();
-  init_api();
   init_engine();
   init_filter();
   init_export();
@@ -23937,36 +24089,11 @@ ${lines.join("\n")}
     setStatus(`設定バックアップJSONを保存しました（${bundles.length}アプリ）`);
   }
 
-  // src/handlers.ts
-  function withGuard(fn, busyText = "") {
-    if (state.running) {
-      setStatus("別の処理を実行中です。完了までお待ちください。");
-      return;
-    }
-    state.running = true;
-    setBusy(true, busyText || "処理中...");
-    return (async () => {
-      try {
-        await fn();
-      } catch (e) {
-        console.error(e);
-        const msg = `エラー: ${e.message || String(e)}`;
-        setStatus(msg, true);
-        showToast(msg, "error").catch(() => {
-        });
-      } finally {
-        state.running = false;
-        setBusy(false);
-      }
-    })();
-  }
-  function setScopeSelection(container, checked) {
-    if (!container) return;
-    [...container.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
-      c.checked = !!checked;
-    });
-    saveCurrentDialogState2();
-  }
+  // src/handlers/checklist.ts
+  init_state();
+  init_components();
+  init_dialog();
+  init_diff();
   var REFLECT_APPLY_CHECKS = [
     { key: "diff", label: "差分比較済み" },
     { key: "plan", label: "実行前プラン確認済み" },
@@ -24047,18 +24174,21 @@ ${lines.join("\n")}
     setStatus(`反映前チェックが未完了です: ${missing.map((item) => item.label).join(" / ")}`, true);
     return false;
   }
+
+  // src/handlers/workHistory.ts
+  init_state();
+  init_utils();
+  init_components();
+  init_export();
+  init_diff();
   function selectedScopeValues(container) {
     if (!container) return [];
-    try {
-      return selectedScopeKeys(container);
-    } catch {
-      return [];
-    }
+    return [...container.querySelectorAll('input[type="checkbox"]:checked')].map((x) => x.value);
   }
   function setScopeValues(container, values) {
     if (!container) return;
     const set = new Set((Array.isArray(values) ? values : []).map(String));
-    [...container.querySelectorAll('input[type="checkbox"]')].forEach((checkbox) => {
+    container.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
       checkbox.checked = set.has(String(checkbox.value || ""));
     });
   }
@@ -24295,9 +24425,10 @@ ${lines.join("\n")}
     renderWorkHistoryPanel();
     setStatus(`作業履歴を復元しました: ${entry.label || getWorkHistoryKindLabel(entry.kind)}`);
   }
-  function normalizeDiffFavoritePath2(path) {
-    return String(path || "").trim();
-  }
+
+  // src/handlers/diffFocus.ts
+  init_state();
+  init_dialog();
   function focusDiffRow(rowId, options = {}) {
     if (!rowId) return false;
     state.diffFocusedRowId = rowId;
@@ -24327,7 +24458,7 @@ ${lines.join("\n")}
     if (!res) return false;
     const trs = [...res.querySelectorAll("[data-diff-row-tr]")];
     if (!trs.length) return false;
-    const ids = trs.map((el) => el.getAttribute("data-diff-row-tr"));
+    const ids = trs.map((el) => el.getAttribute("data-diff-row-tr") || "");
     const curIdx = state.diffFocusedRowId ? ids.indexOf(state.diffFocusedRowId) : -1;
     let nextIdx;
     if (curIdx === -1) {
@@ -24342,6 +24473,44 @@ ${lines.join("\n")}
   function parseIdSet(text) {
     return [...new Set(String(text || "").split(/[\s,]+/).map((v) => v.trim()).filter((v) => /^\d+$/.test(v)))];
   }
+  function normalizeDiffFavoritePath2(path) {
+    return String(path || "").trim();
+  }
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
+  }
+
+  // src/handlers/connectionPresets.ts
+  init_state();
+  init_utils();
+  init_api();
+  init_components();
+  init_diff();
   function formatConnectionPresetLabel(preset) {
     if (!preset) return "";
     const src = preset.sourceAppId || "-";
@@ -24485,13 +24654,13 @@ ${lines.join("\n")}
     }
     const assign = ui.connectionSearchAssign?.value || "source";
     const searchGuestId = ui.connectionSearchGuest?.value.trim() || "";
-    if (assign === "source") {
+    if (assign === "source" && ui.sourceApp) {
       ui.sourceApp.value = id;
-      if (searchGuestId && !ui.sourceGuest.value.trim()) ui.sourceGuest.value = searchGuestId;
+      if (searchGuestId && ui.sourceGuest && !ui.sourceGuest.value.trim()) ui.sourceGuest.value = searchGuestId;
       setStatus(`比較元に App ${id}${appName ? ` (${appName})` : ""} を設定しました`);
-    } else if (assign === "target") {
+    } else if (assign === "target" && ui.targetApp) {
       ui.targetApp.value = id;
-      if (searchGuestId && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
+      if (searchGuestId && ui.targetGuest && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
       setStatus(`比較先に App ${id}${appName ? ` (${appName})` : ""} を設定しました`);
     } else if (assign === "diffMulti") {
       if (!ui.diffMultiTargets) {
@@ -24501,7 +24670,7 @@ ${lines.join("\n")}
       const ids = new Set(parseIdSet(ui.diffMultiTargets.value));
       ids.add(id);
       ui.diffMultiTargets.value = [...ids].join("\n");
-      if (searchGuestId && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
+      if (searchGuestId && ui.targetGuest && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
       setStatus(`複数比較先へ App ${id}${appName ? ` (${appName})` : ""} を追加しました`);
     } else if (assign === "settingsExport") {
       if (searchGuestId && ui.settingsExportGuest && !ui.settingsExportGuest.value.trim()) ui.settingsExportGuest.value = searchGuestId;
@@ -24510,6 +24679,40 @@ ${lines.join("\n")}
     }
     saveCurrentDialogState2();
     updateConnectionStepIndicators();
+  }
+
+  // src/handlers.ts
+  function withGuard(fn, busyText = "") {
+    if (state.running) {
+      setStatus("別の処理を実行中です。完了までお待ちください。");
+      return;
+    }
+    state.running = true;
+    setBusy(true, busyText || "処理中...");
+    return (async () => {
+      try {
+        return await fn();
+      } catch (e) {
+        console.error(e);
+        const baseMessage = e && (e.message || String(e)) || "不明なエラー";
+        const firstLine = String(baseMessage).split("\n")[0] || baseMessage;
+        const userMsg = `エラー: ${firstLine}`;
+        setStatus(userMsg, true);
+        showToast(userMsg, "error").catch(() => {
+        });
+        return void 0;
+      } finally {
+        state.running = false;
+        setBusy(false);
+      }
+    })();
+  }
+  function setScopeSelection(container, checked) {
+    if (!container) return;
+    [...container.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
+      c.checked = !!checked;
+    });
+    saveCurrentDialogState2();
   }
   function renderReflectPresetSelect(preferName) {
     const sel = getToolDocument().getElementById("u_reflectPresetSelect");
@@ -24522,7 +24725,7 @@ ${lines.join("\n")}
     }
   }
   function getVisibleReflectNodeIds() {
-    return [...ui.reflectNodeList?.querySelectorAll("[data-node-open]") || []].map((el) => el.dataset.nodeOpen).filter(Boolean);
+    return [...ui.reflectNodeList?.querySelectorAll("[data-node-open]") || []].map((el) => el.dataset.nodeOpen || "").filter((id) => !!id);
   }
   function activateReflectInnerTab(inner) {
     const root2 = getRoot();
@@ -24539,34 +24742,6 @@ ${lines.join("\n")}
       const on = p.getAttribute("data-reflect-inner-pane") === key;
       p.classList.toggle("active", on);
     });
-  }
-  function extractAppIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (/^\d+$/.test(raw)) return raw;
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-    if (queryMatch) return queryMatch[1];
-    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-    if (guestPathMatch) return guestPathMatch[1];
-    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-    if (pathMatch) return pathMatch[1];
-    return "";
-  }
-  function extractGuestIdFromInput(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch (e) {
-    }
-    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-    return guestPathMatch ? guestPathMatch[1] : "";
   }
   function setupEventHandlers(injected = {}) {
     const root2 = getRoot();
@@ -25053,6 +25228,16 @@ ${lines.join("\n")}
         closeScopePicker();
         return;
       }
+      if (ui.shortcutHelpModal && !ui.shortcutHelpModal.hidden && e.key === "Escape") {
+        e.preventDefault();
+        ui.shortcutHelpModal.hidden = true;
+        return;
+      }
+      if (!editable && e.key === "?") {
+        e.preventDefault();
+        if (ui.shortcutHelpModal) ui.shortcutHelpModal.hidden = !ui.shortcutHelpModal.hidden;
+        return;
+      }
       if (state.guidedTourActive && !editable) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -25537,7 +25722,9 @@ ${lines.join("\n")}
       }
       if (e.target.id === "u_sourceFieldCheckAll") {
         const checked = e.target.checked;
-        [...ui.sourceFieldTbody.querySelectorAll(".src-field-sel")].forEach((c) => c.checked = checked);
+        ui.sourceFieldTbody?.querySelectorAll(".src-field-sel").forEach((c) => {
+          c.checked = checked;
+        });
         return;
       }
       const subTab = e.target?.closest(".subtab");
@@ -25626,7 +25813,7 @@ ${lines.join("\n")}
       }
       if (act === "clearLauncherFilter") {
         if (ui.launcherSearch) ui.launcherSearch.value = "";
-        [...ui.launcherGroupFilters?.querySelectorAll(".chip[data-group]") || []].forEach((btn) => {
+        ui.launcherGroupFilters?.querySelectorAll(".chip[data-group]").forEach((btn) => {
           const active = btn.dataset.group === "all";
           btn.classList.toggle("is-active", active);
           btn.setAttribute("aria-pressed", active ? "true" : "false");
@@ -25638,13 +25825,13 @@ ${lines.join("\n")}
       }
       if (act === "setLauncherGroup") {
         const group = String(actEl.dataset.group || "all");
-        [...ui.launcherGroupFilters?.querySelectorAll(".chip[data-group]") || []].forEach((btn) => {
+        ui.launcherGroupFilters?.querySelectorAll(".chip[data-group]").forEach((btn) => {
           const active = btn.dataset.group === group;
           btn.classList.toggle("is-active", active);
           btn.setAttribute("aria-pressed", active ? "true" : "false");
         });
         applyLauncherFilter();
-        setStatus(group === "all" ? "全機能を表示中です" : `機能を絞り込みました: ${actEl.textContent.trim()}`);
+        setStatus(group === "all" ? "全機能を表示中です" : `機能を絞り込みました: ${actEl.textContent?.trim() || ""}`);
         return;
       }
       if (act === "clearDiffFilters") {
@@ -26036,6 +26223,14 @@ ${lines.join("\n")}
         closeScopePicker();
         return;
       }
+      if (act === "openShortcutHelp") {
+        if (ui.shortcutHelpModal) ui.shortcutHelpModal.hidden = false;
+        return;
+      }
+      if (act === "closeShortcutHelp") {
+        if (ui.shortcutHelpModal) ui.shortcutHelpModal.hidden = true;
+        return;
+      }
       if (act === "diffScopeAll") {
         setScopeSelection(ui.diffScopes, true);
         renderScopePickerSummaries();
@@ -26269,7 +26464,7 @@ ${lines.join("\n")}
       }
       if (act === "applyScopeDiffOnly") {
         const diffCounts = getDiffCountsBySection2();
-        [...ui.applyScopes.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
+        ui.applyScopes?.querySelectorAll('input[type="checkbox"]').forEach((c) => {
           const dc = diffCounts[c.value];
           c.checked = !!(dc && dc.total > 0);
         });
@@ -32884,6 +33079,7 @@ ${field.label}` : code,
       workHistoryPanel: $("#u_workHistoryPanel"),
       workHistorySummary: $("#u_workHistorySummary"),
       workHistoryList: $("#u_workHistoryList"),
+      shortcutHelpModal: $("#u_shortcutHelpModal"),
       copyTextToClipboard
     };
     Object.assign(ui, ui4);

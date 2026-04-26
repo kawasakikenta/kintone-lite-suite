@@ -4,17 +4,7 @@ import { DEFAULT_APP_ID } from '../constants.js';
 import { setStatus } from '../ui/components.js';
 import { runRenderProcessFlowStandalone } from '../tabs/process-standalone.js';
 import { mountKusLitePanel } from './liteMount.js';
-
-function row(labelHtml, child) {
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px';
-  const lab = document.createElement('span');
-  lab.style.cssText = 'font-size:12px;font-weight:600;color:#334155;min-width:5em';
-  lab.innerHTML = labelHtml;
-  wrap.appendChild(lab);
-  wrap.appendChild(child);
-  return wrap;
-}
+import { row, mkInput, mkBtn, liteRun } from './litePanelHelpers.js';
 
 export function mountProcessLitePanel() {
   const { bodySlot } = mountKusLitePanel({
@@ -23,27 +13,14 @@ export function mountProcessLitePanel() {
     note: 'プロセス管理のフロー図を Mermaid で描画し、シミュレーションも可能です。統合ツール.js は不要です。'
   });
 
-  const appInp = document.createElement('input');
-  appInp.type = 'text';
-  appInp.placeholder = 'アプリID';
-  appInp.value = DEFAULT_APP_ID || '';
-  appInp.style.cssText =
-    'width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-
-  const guestInp = document.createElement('input');
-  guestInp.type = 'text';
-  guestInp.placeholder = 'ゲストID（任意）';
-  guestInp.style.cssText =
-    'width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
+  const appInp = mkInput('アプリID', { value: DEFAULT_APP_ID || '' });
+  const guestInp = mkInput('ゲストID（任意）');
 
   bodySlot.appendChild(row('アプリID', appInp));
   bodySlot.appendChild(row('ゲスト', guestInp));
 
-  const runBtn = document.createElement('button');
-  runBtn.type = 'button';
-  runBtn.textContent = 'フロー図を描画';
-  runBtn.style.cssText =
-    'padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:linear-gradient(180deg,#f97316,#ea580c);color:#fff;cursor:pointer;margin-bottom:14px';
+  const runBtn = mkBtn('フロー図を描画', { bg: 'linear-gradient(180deg,#f97316,#ea580c)', marginTop: '0' });
+  runBtn.style.cssText += ';padding:10px 14px;font-size:13px;margin-bottom:14px';
   bodySlot.appendChild(runBtn);
 
   const viewEl = document.createElement('div');
@@ -98,25 +75,21 @@ export function mountProcessLitePanel() {
   simContainer.appendChild(simBtnRow);
   bodySlot.appendChild(simContainer);
 
-  runBtn.addEventListener('click', async () => {
-    try {
-      await runRenderProcessFlowStandalone(
-        { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
-        (m, e) => setStatus(m, e),
-        {
-          textEl,
-          viewEl,
-          simUi: {
-            container: simContainer,
-            current: simCurEl,
-            select: simSelect,
-            startBtn: simStartBtn,
-            execBtn: simExecBtn
-          }
+  runBtn.addEventListener('click', () => liteRun(async () => {
+    await runRenderProcessFlowStandalone(
+      { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
+      (m, e) => setStatus(m, e),
+      {
+        textEl,
+        viewEl,
+        simUi: {
+          container: simContainer,
+          current: simCurEl,
+          select: simSelect,
+          startBtn: simStartBtn,
+          execBtn: simExecBtn
         }
-      );
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    }
-  });
+      }
+    );
+  }));
 }

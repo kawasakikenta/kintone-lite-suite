@@ -164,7 +164,20 @@ import {
 // withGuard - wraps async actions with running guard and busy indicator
 // ---------------------------------------------------------------------------
 
-export function withGuard(fn, busyText = '') {
+/**
+ * 非同期処理の二重実行ガード + ビジー表示 + エラー集約。
+ *
+ * - 既に実行中なら no-op（戻り値 undefined）し、ステータスバーで通知。
+ * - 例外発生時はステータス・トーストの両方に通知し、API エラーには
+ *   `apiErrorWithContext` のメタ（method/path/app）が `__apiDiag` で
+ *   付与済みであれば最初の行だけを表示してユーザーに過剰情報を出さない。
+ * - 戻り値は `fn` の戻り値の `Promise`。失敗時は `undefined` を解決して、
+ *   呼び出し側が UI 更新を続行できるようにする（例外を再スローしない）。
+ */
+export function withGuard<T = void>(
+  fn: () => Promise<T> | T,
+  busyText = ''
+): Promise<T | undefined> | undefined {
   if (state.running) {
     setStatus('別の処理を実行中です。完了までお待ちください。');
     return;
@@ -173,12 +186,17 @@ export function withGuard(fn, busyText = '') {
   setBusy(true, busyText || '処理中...');
   return (async () => {
     try {
-      await fn();
-    } catch (e) {
+      return await fn();
+    } catch (e: any) {
       console.error(e);
-      const msg = `エラー: ${e.message || String(e)}`;
-      setStatus(msg, true);
-      showToast(msg, 'error').catch(() => {});
+      const baseMessage = (e && (e.message || String(e))) || '不明なエラー';
+      // apiErrorWithContext で付与された行は2行目以降に展開されているため、
+      // ステータスバーには 1行目だけを出す。
+      const firstLine = String(baseMessage).split('\n')[0] || baseMessage;
+      const userMsg = `エラー: ${firstLine}`;
+      setStatus(userMsg, true);
+      showToast(userMsg, 'error').catch(() => {});
+      return undefined;
     } finally {
       state.running = false;
       setBusy(false);
@@ -196,614 +214,84 @@ function setScopeSelection(container, checked) {
   saveCurrentDialogState();
 }
 
-const REFLECT_APPLY_CHECKS = [
-  { key: 'diff', label: '差分比較済み' },
-  { key: 'plan', label: '実行前プラン確認済み' },
-  { key: 'target', label: '反映先は比較先プレビュー' }
-];
+// 反映チェックリスト関連は handlers/checklist.ts に分割済み。再エクスポートで参照を維持。
+import {
+  REFLECT_APPLY_CHECKS,
+  normalizeReflectApplyChecklist,
+  renderReflectApplyChecklistStatus,
+  setReflectApplyCheck,
+  markReflectApplyChecks,
+  resetReflectApplyChecks,
+  getMissingReflectApplyChecks,
+  ensureReflectApplyChecklistReady
+} from './handlers/checklist.js';
 
-function normalizeReflectApplyChecklist(): Record<string, boolean> {
-  if (!state.reflectApplyChecklist || typeof state.reflectApplyChecklist !== 'object' || Array.isArray(state.reflectApplyChecklist)) {
-    state.reflectApplyChecklist = { diff: false, plan: false, target: false };
-  }
-  REFLECT_APPLY_CHECKS.forEach((item) => {
-    (state.reflectApplyChecklist as any)[item.key] = !!(state.reflectApplyChecklist as any)[item.key];
-  });
-  return state.reflectApplyChecklist as any;
-}
-
-function renderReflectApplyChecklistStatus() {
-  const store = normalizeReflectApplyChecklist();
-  const doc = getToolDocument();
-  const boxes = [...doc.querySelectorAll<HTMLInputElement>('[data-reflect-apply-check]')];
-  boxes.forEach((box) => {
-    const key = box.dataset.reflectApplyCheck || '';
-    const checked = !!store[key];
-    box.checked = checked;
-    (box.closest('.reflect-apply-check') as HTMLElement | null)?.classList.toggle('is-checked', checked);
-  });
-  const done = REFLECT_APPLY_CHECKS.filter((item) => !!store[item.key]).length;
-  if (ui.reflectChecklistStatus) ui.reflectChecklistStatus.textContent = `${done} / ${REFLECT_APPLY_CHECKS.length}`;
-  if (ui.reflectApplyChecklist) ui.reflectApplyChecklist.classList.toggle('is-complete', done === REFLECT_APPLY_CHECKS.length);
-}
-
-function setReflectApplyCheck(key: string, checked: boolean, options: any = {}) {
-  const item = REFLECT_APPLY_CHECKS.find((entry) => entry.key === key);
-  if (!item) return false;
-  normalizeReflectApplyChecklist()[item.key] = !!checked;
-  renderReflectApplyChecklistStatus();
-  renderReflectAssistPanel();
-  if (options.persist !== false) saveCurrentDialogState();
-  return true;
-}
-
-function markReflectApplyChecks(keys: string | string[]) {
-  const list = Array.isArray(keys) ? keys : [keys];
-  let changed = false;
-  list.forEach((key) => {
-    const item = REFLECT_APPLY_CHECKS.find((entry) => entry.key === key);
-    if (!item) return;
-    normalizeReflectApplyChecklist()[item.key] = true;
-    changed = true;
-  });
-  if (!changed) return;
-  renderReflectApplyChecklistStatus();
-  renderReflectAssistPanel();
-  saveCurrentDialogState();
-}
-
-function resetReflectApplyChecks(keys?: string | string[]) {
-  const list = Array.isArray(keys) && keys.length ? keys : REFLECT_APPLY_CHECKS.map((item) => item.key);
-  let changed = false;
-  list.forEach((key) => {
-    const item = REFLECT_APPLY_CHECKS.find((entry) => entry.key === key);
-    if (!item) return;
-    if (normalizeReflectApplyChecklist()[item.key]) changed = true;
-    normalizeReflectApplyChecklist()[item.key] = false;
-  });
-  if (!changed) return;
-  renderReflectApplyChecklistStatus();
-  renderReflectAssistPanel();
-  saveCurrentDialogState();
-}
-
-function getMissingReflectApplyChecks() {
-  const store = normalizeReflectApplyChecklist();
-  return REFLECT_APPLY_CHECKS.filter((item) => !store[item.key]);
-}
-
-function ensureReflectApplyChecklistReady() {
-  const missing = getMissingReflectApplyChecks();
-  if (!missing.length) return true;
-  renderReflectApplyChecklistStatus();
-  const firstKey = missing[0]?.key || '';
-  const first = (firstKey ? getToolDocument().querySelector(`[data-reflect-apply-check="${firstKey}"]`) : null) as HTMLElement | null;
-  first?.focus?.();
-  ui.reflectApplyChecklist?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-  setStatus(`反映前チェックが未完了です: ${missing.map((item) => item.label).join(' / ')}`, true);
-  return false;
-}
-
-function selectedScopeValues(container: any): string[] {
+function selectedScopeValues(container: ParentNode | null | undefined): string[] {
   if (!container) return [];
   try { return selectedScopeKeys(container); }
   catch { return []; }
 }
 
-function setScopeValues(container, values) {
+function setScopeValues(container: ParentNode | null | undefined, values: string[] | undefined) {
   if (!container) return;
   const set = new Set((Array.isArray(values) ? values : []).map(String));
-  [...container.querySelectorAll('input[type="checkbox"]')].forEach((checkbox) => {
+  container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => {
     checkbox.checked = set.has(String(checkbox.value || ''));
   });
 }
 
-function sanitizeDiffReviewMetaForHistory() {
-  return Object.fromEntries(
-    (Object.entries(state.diffReviewMeta || ({} as any)) as Array<[string, any]>)
-      .filter(([key, value]) => key && value && typeof value === 'object')
-      .slice(0, 2000)
-      .map(([key, value]: [string, any]): [string, { status: string; note: string }] => [
-        key,
-        {
-          status: value.status === 'todo' || value.status === 'ignored' ? value.status : '',
-          note: String(value.note || '').trim().slice(0, 500)
-        }
-      ])
-      .filter(([, value]) => value.status || value.note)
-  );
-}
+// 作業履歴（snapshot 構築/保存/復元/パネル描画）は handlers/workHistory.ts に分割済み。
+import {
+  getWorkHistoryKindLabel,
+  buildWorkHistorySnapshot,
+  getWorkHistorySummary,
+  renderWorkHistoryPanel,
+  saveWorkHistorySnapshot,
+  restoreWorkHistorySnapshot,
+  restoreWorkHistoryById
+} from './handlers/workHistory.js';
 
-function getWorkHistoryKindLabel(kind: string) {
-  const map = {
-    manual: '手動保存',
-    diff: '差分比較後',
-    plan: 'プラン確認後',
-    apply: '反映直前',
-    restore: '復元前'
-  };
-  return map[kind] || '作業保存';
-}
+// 差分行フォーカス・ID パーサ・URL からの appId/guestId 抽出は handlers/diffFocus.ts に分割済み。
+import {
+  focusDiffRow,
+  focusNextDiffRow,
+  parseIdSet,
+  normalizeDiffFavoritePath,
+  extractAppIdFromInput,
+  extractGuestIdFromInput
+} from './handlers/diffFocus.js';
 
-function buildWorkHistorySnapshot() {
-  return {
-    sourceAppId: ui.sourceApp?.value?.trim?.() || '',
-    sourceGuestId: ui.sourceGuest?.value?.trim?.() || '',
-    sourcePreview: !!ui.sourcePreview?.checked,
-    targetAppId: ui.targetApp?.value?.trim?.() || '',
-    targetGuestId: ui.targetGuest?.value?.trim?.() || '',
-    targetPreview: !!ui.targetPreview?.checked,
-    lookupMap: ui.lookupMap?.value?.trim?.() || '',
-    ignoreKeys: ui.ignoreKeys?.value?.trim?.() || '',
-    ignorePresetFieldOrder: !!ui.ignorePresetFieldOrder?.checked,
-    ignorePresetMeta: !!ui.ignorePresetMeta?.checked,
-    ignorePresetLabelName: !!ui.ignorePresetLabelName?.checked,
-    diffNormalizeViewOrder: !!ui.diffNormalizeViewOrder?.checked,
-    diffNormalizePermissionOrder: !!ui.diffNormalizePermissionOrder?.checked,
-    diffNormalizeGeneralArrayOrder: !!ui.diffNormalizeGeneralArrayOrder?.checked,
-    diffSearch: ui.diffSearch?.value?.trim?.() || '',
-    diffSearchFieldName: !!ui.diffSearchFieldName?.checked,
-    diffFilterSection: ui.diffFilterSection?.value || state.diffFilterSection || '',
-    diffFilterType: ui.diffFilterType?.value || state.diffFilterType || '',
-    diffFilterSeverity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || '',
-    diffFilterTableOnly: !!ui.diffFilterTableOnly?.checked,
-    diffFilterTableKeyword: ui.diffFilterTableKeyword?.value?.trim?.() || '',
-    diffIncludeSame: !!ui.diffIncludeSame?.checked,
-    diffWarnThreshold: ui.diffWarnThreshold?.value?.trim?.() || '',
-    diffExportMode: ui.diffExportMode?.value || state.diffExportMode || 'all',
-    diffExportContent: ui.diffExportContent?.value || state.diffExportContent || 'diffOnly',
-    charDiff: !!ui.charDiff?.checked,
-    diffTheme: state.diffViewTheme,
-    diffScopes: selectedScopeValues(ui.diffScopes),
-    applyScopes: selectedScopeValues(ui.applyScopes),
-    applyDiffOnly: !!ui.applyDiffOnly?.checked,
-    autoBackupPreview: !!ui.autoBackupPreview?.checked,
-    stopOnError: !!ui.stopOnError?.checked,
-    reflectApplyChecklist: {
-      diff: !!state.reflectApplyChecklist?.diff,
-      plan: !!state.reflectApplyChecklist?.plan,
-      target: !!state.reflectApplyChecklist?.target
-    },
-    reflectDetailTab: state.reflectDetailTab,
-    reflectSelectedIds: [...(state.reflectSelectedIds || new Set())].slice(0, 2000),
-    reflectNodeModes: { ...(state.reflectNodeModes || ({} as any)) },
-    reflectPropertyFilters: [...(state.reflectPropertyFilters || new Set())].slice(0, 500),
-    diffViewedKeys: [...(state.diffViewedKeys || new Set())].slice(0, 2000),
-    diffReviewMeta: sanitizeDiffReviewMetaForHistory(),
-    diffFavoritePaths: [...(state.diffFavoritePaths || new Set())].slice(0, 500),
-    diffFavoritesOnly: !!state.diffFavoritesOnly,
-    diffHideViewed: !!state.diffHideViewed,
-    activeFeatureKey: state.activeFeatureKey || '',
-    activeTab: state.activeTab || '',
-    activeSubTabs: { ...(state.activeSubTabs || ({} as any)) },
-    launcherSortMode: ui.featureSortMode?.value || state.launcherSortMode || 'onboarding'
-  };
-}
+// 接続プリセット CRUD・アプリ検索・検索結果からの割当は handlers/connectionPresets.ts に分割済み。
+import {
+  renderConnectionPresetSelect,
+  saveConnectionPresetFromCurrent,
+  applyConnectionPresetById,
+  deleteSelectedConnectionPreset,
+  runConnectionSearchApps,
+  addConnectionSearchApp
+} from './handlers/connectionPresets.js';
 
-function getWorkHistorySummary(snapshot) {
-  const src = snapshot?.sourceAppId || '-';
-  const tgt = snapshot?.targetAppId || '-';
-  const diffScopes = Array.isArray(snapshot?.diffScopes) ? snapshot.diffScopes.length : 0;
-  const applyScopes = Array.isArray(snapshot?.applyScopes) ? snapshot.applyScopes.length : 0;
-  const checks = snapshot?.reflectApplyChecklist || ({} as any);
-  const checked = ['diff', 'plan', 'target'].filter((key) => !!checks[key]).length;
-  return `比較元 ${src} / 比較先 ${tgt} / 差分 ${diffScopes}項目 / 反映 ${applyScopes}項目 / チェック ${checked}/3`;
-}
-
-function renderWorkHistoryPanel() {
-  if (!ui.workHistoryList) return;
-  const history = Array.isArray(state.workHistory) ? state.workHistory : [];
-  if (ui.workHistorySummary) ui.workHistorySummary.textContent = history.length ? `${history.length}件保存` : '履歴なし';
-  if (!history.length) {
-    ui.workHistoryList.innerHTML = '<div class="work-history-empty">まだ保存された作業はありません</div>';
-    return;
-  }
-  ui.workHistoryList.innerHTML = history.map((entry) => {
-    const stamp = entry.createdAt ? new Date(entry.createdAt).toLocaleString() : '-';
-    const title = entry.label || getWorkHistoryKindLabel(entry.kind);
-    const summary = entry.summary || getWorkHistorySummary(entry.snapshot || ({} as any));
-    return `<div class="work-history-item" data-work-history-id="${esc(entry.id || '')}">
-      <div class="work-history-item-main">
-        <div class="work-history-item-title">${esc(title)}</div>
-        <div class="work-history-item-meta">${esc(stamp)} / ${esc(summary)}</div>
-      </div>
-      <div class="work-history-item-actions">
-        <button type="button" class="btn ok" data-act="restoreWorkHistory" data-history-id="${esc(entry.id || '')}">復元</button>
-        <button type="button" class="btn sub" data-act="deleteWorkHistory" data-history-id="${esc(entry.id || '')}">削除</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function saveWorkHistorySnapshot(kind = 'manual', options: any = {}) {
-  const snapshot = buildWorkHistorySnapshot();
-  const defaultLabel = options.label || `${getWorkHistoryKindLabel(kind)}: ${snapshot.sourceAppId || '-'} → ${snapshot.targetAppId || '-'}`;
-  let label = defaultLabel;
-  if (!options.silent) {
-    const next = kusPrompt('保存する作業名を入力してください', defaultLabel);
-    if (next === null) return null;
-    label = String(next || defaultLabel).trim() || defaultLabel;
-  }
-  const entry = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    kind,
-    label,
-    createdAt: new Date().toISOString(),
-    summary: getWorkHistorySummary(snapshot),
-    snapshot
-  };
-  pushWorkHistoryEntry(entry);
-  renderWorkHistoryPanel();
-  if (options.persist !== false) saveCurrentDialogState();
-  return entry;
-}
-
-function restoreWorkHistorySnapshot(snapshot) {
-  if (!snapshot || typeof snapshot !== 'object') return false;
-  if (ui.sourceApp && snapshot.sourceAppId != null) ui.sourceApp.value = String(snapshot.sourceAppId);
-  if (ui.sourceGuest && snapshot.sourceGuestId != null) ui.sourceGuest.value = String(snapshot.sourceGuestId);
-  if (ui.sourcePreview && snapshot.sourcePreview != null) ui.sourcePreview.checked = !!snapshot.sourcePreview;
-  if (ui.targetApp && snapshot.targetAppId != null) ui.targetApp.value = String(snapshot.targetAppId);
-  if (ui.targetGuest && snapshot.targetGuestId != null) ui.targetGuest.value = String(snapshot.targetGuestId);
-  if (ui.targetPreview && snapshot.targetPreview != null) ui.targetPreview.checked = !!snapshot.targetPreview;
-  if (ui.lookupMap && snapshot.lookupMap != null) ui.lookupMap.value = String(snapshot.lookupMap);
-  if (ui.ignoreKeys && snapshot.ignoreKeys != null) ui.ignoreKeys.value = String(snapshot.ignoreKeys);
-  if (ui.ignorePresetFieldOrder && snapshot.ignorePresetFieldOrder != null) ui.ignorePresetFieldOrder.checked = !!snapshot.ignorePresetFieldOrder;
-  if (ui.ignorePresetMeta && snapshot.ignorePresetMeta != null) ui.ignorePresetMeta.checked = !!snapshot.ignorePresetMeta;
-  if (ui.ignorePresetLabelName && snapshot.ignorePresetLabelName != null) ui.ignorePresetLabelName.checked = !!snapshot.ignorePresetLabelName;
-  if (ui.diffNormalizeViewOrder && snapshot.diffNormalizeViewOrder != null) ui.diffNormalizeViewOrder.checked = !!snapshot.diffNormalizeViewOrder;
-  if (ui.diffNormalizePermissionOrder && snapshot.diffNormalizePermissionOrder != null) ui.diffNormalizePermissionOrder.checked = !!snapshot.diffNormalizePermissionOrder;
-  if (ui.diffNormalizeGeneralArrayOrder && snapshot.diffNormalizeGeneralArrayOrder != null) ui.diffNormalizeGeneralArrayOrder.checked = !!snapshot.diffNormalizeGeneralArrayOrder;
-  if (ui.diffSearch && snapshot.diffSearch != null) ui.diffSearch.value = String(snapshot.diffSearch);
-  if (ui.diffSearchFieldName && snapshot.diffSearchFieldName != null) {
-    ui.diffSearchFieldName.checked = !!snapshot.diffSearchFieldName;
-    state.diffSearchFieldName = !!snapshot.diffSearchFieldName;
-  }
-  if (ui.diffFilterSection && snapshot.diffFilterSection != null) ui.diffFilterSection.value = String(snapshot.diffFilterSection || '');
-  if (ui.diffFilterType && snapshot.diffFilterType != null) ui.diffFilterType.value = String(snapshot.diffFilterType || '');
-  if (ui.diffFilterSeverity && snapshot.diffFilterSeverity != null) ui.diffFilterSeverity.value = String(snapshot.diffFilterSeverity || '');
-  if (ui.diffFilterTableOnly && snapshot.diffFilterTableOnly != null) ui.diffFilterTableOnly.checked = !!snapshot.diffFilterTableOnly;
-  if (ui.diffFilterTableKeyword && snapshot.diffFilterTableKeyword != null) ui.diffFilterTableKeyword.value = String(snapshot.diffFilterTableKeyword || '');
-  state.diffFilterSection = ui.diffFilterSection?.value || String(snapshot.diffFilterSection || '');
-  state.diffFilterType = ui.diffFilterType?.value || String(snapshot.diffFilterType || '');
-  state.diffFilterSeverity = ui.diffFilterSeverity?.value || String(snapshot.diffFilterSeverity || '');
-  state.diffFilterTableOnly = !!ui.diffFilterTableOnly?.checked;
-  state.diffFilterTableKeyword = String(ui.diffFilterTableKeyword?.value || '').trim();
-  if (ui.diffIncludeSame && snapshot.diffIncludeSame != null) {
-    ui.diffIncludeSame.checked = !!snapshot.diffIncludeSame;
-    state.diffIncludeSame = !!snapshot.diffIncludeSame;
-  }
-  if (ui.diffWarnThreshold && snapshot.diffWarnThreshold != null) ui.diffWarnThreshold.value = String(snapshot.diffWarnThreshold || '');
-  if (ui.diffExportMode && snapshot.diffExportMode != null) ui.diffExportMode.value = String(snapshot.diffExportMode || 'all');
-  if (ui.diffExportContent && snapshot.diffExportContent != null) ui.diffExportContent.value = String(snapshot.diffExportContent || 'diffOnly');
-  state.diffExportMode = ui.diffExportMode?.value || String(snapshot.diffExportMode || 'all');
-  state.diffExportContent = ui.diffExportContent?.value || String(snapshot.diffExportContent || 'diffOnly');
-  if (ui.charDiff && snapshot.charDiff != null) ui.charDiff.checked = !!snapshot.charDiff;
-  if (snapshot.diffTheme === 'dark' || snapshot.diffTheme === 'light') state.diffViewTheme = snapshot.diffTheme;
-  setScopeValues(ui.diffScopes, snapshot.diffScopes);
-  setScopeValues(ui.applyScopes, snapshot.applyScopes);
-  if (ui.applyDiffOnly && snapshot.applyDiffOnly != null) ui.applyDiffOnly.checked = !!snapshot.applyDiffOnly;
-  if (ui.autoBackupPreview && snapshot.autoBackupPreview != null) ui.autoBackupPreview.checked = !!snapshot.autoBackupPreview;
-  if (ui.stopOnError && snapshot.stopOnError != null) ui.stopOnError.checked = !!snapshot.stopOnError;
-  state.reflectApplyChecklist = {
-    diff: !!snapshot.reflectApplyChecklist?.diff,
-    plan: !!snapshot.reflectApplyChecklist?.plan,
-    target: !!snapshot.reflectApplyChecklist?.target
-  };
-  state.reflectDetailTab = String(snapshot.reflectDetailTab || 'diff');
-  state.reflectSelectedIds = new Set(Array.isArray(snapshot.reflectSelectedIds) ? snapshot.reflectSelectedIds : []);
-  state.reflectNodeModes = snapshot.reflectNodeModes && typeof snapshot.reflectNodeModes === 'object' ? { ...snapshot.reflectNodeModes } : {};
-  state.reflectPropertyFilters = new Set(Array.isArray(snapshot.reflectPropertyFilters) ? snapshot.reflectPropertyFilters : []);
-  state.diffViewedKeys = new Set(Array.isArray(snapshot.diffViewedKeys) ? snapshot.diffViewedKeys : []);
-  state.diffReviewMeta = snapshot.diffReviewMeta && typeof snapshot.diffReviewMeta === 'object' ? { ...snapshot.diffReviewMeta } : {};
-  state.diffFavoritePaths = new Set(Array.isArray(snapshot.diffFavoritePaths) ? snapshot.diffFavoritePaths : []);
-  state.diffFavoritesOnly = !!snapshot.diffFavoritesOnly;
-  state.diffHideViewed = !!snapshot.diffHideViewed;
-  state.launcherSortMode = String(snapshot.launcherSortMode) === 'usage' ? 'usage' : 'onboarding';
-  if (ui.featureSortMode) ui.featureSortMode.value = state.launcherSortMode;
-  if (snapshot.activeSubTabs && typeof snapshot.activeSubTabs === 'object') {
-    Object.entries(snapshot.activeSubTabs).forEach(([parent, sub]) => {
-      if (parent && sub) switchSubTab(parent, String(sub), { persist: false });
-    });
-  }
-  const featureKey = String(snapshot.activeFeatureKey || '');
-  if (featureKey) {
-    openFeatureScreen(featureKey, { persist: false, focus: false });
-  }
-  updateConnectionStepIndicators();
-  renderScopePickerSummaries();
-  renderScopeChips();
-  renderIgnoreKeyChips();
-  renderLookupMapRows();
-  renderBundleState();
-  syncDiffThemeButton();
-  renderDiffFilterOptions();
-  renderReflectApplyChecklistStatus();
-  renderReflectSidebar();
-  renderReflectMainPanel();
-  renderReflectNodeList();
-  if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows || []);
-  saveCurrentDialogState();
-  return true;
-}
-
-function restoreWorkHistoryById(id) {
-  const entry = (state.workHistory || []).find((item) => item?.id === id);
-  if (!entry) {
-    setStatus('復元する作業履歴が見つかりません', true);
-    return;
-  }
-  if (!kusConfirm(`作業履歴「${entry.label || getWorkHistoryKindLabel(entry.kind)}」を復元しますか？現在の入力内容は上書きされます。`)) return;
-  saveWorkHistorySnapshot('restore', { label: '復元前の自動保存', silent: true });
-  if (!restoreWorkHistorySnapshot(entry.snapshot)) {
-    setStatus('作業履歴を復元できませんでした', true);
-    return;
-  }
-  renderWorkHistoryPanel();
-  setStatus(`作業履歴を復元しました: ${entry.label || getWorkHistoryKindLabel(entry.kind)}`);
-}
-
-// ---------------------------------------------------------------------------
-// normalizeDiffFavoritePath (local copy - may be extracted later)
-// ---------------------------------------------------------------------------
-
-function normalizeDiffFavoritePath(path) {
-  return String(path || '').trim();
-}
-
-// ---------------------------------------------------------------------------
-// Viewed (レビュー済み) ヘルパー — `src/diff/review.js` に移管
-// ---------------------------------------------------------------------------
-
-function focusDiffRow(rowId, options: any = {}) {
-  if (!rowId) return false;
-  state.diffFocusedRowId = rowId;
-  const res = getToolDocument().getElementById('u_result');
-  if (!res) return false;
-  const tr = res.querySelector(`[data-diff-row-tr="${rowId.replace(/"/g, '\\"')}"]`);
-  if (!tr) return false;
-  // move focus to selection checkbox inside the row for keyboard continuity
-  const selectBox = tr.querySelector('input[type=checkbox][data-diff-row-id]') as HTMLInputElement | null;
-  try {
-    if (selectBox && options.focus !== false) selectBox.focus({ preventScroll: true });
-  } catch (e) { /* ignore */ }
-  if (options.scroll !== false) {
-    try { tr.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) { /* ignore */ }
-  }
-  // paint focused class without re-rendering entire diff
-  res.querySelectorAll('.diff-row-focused').forEach((el) => { if (el !== tr) el.classList.remove('diff-row-focused'); });
-  tr.classList.add('diff-row-focused');
-  return true;
-}
-
-function focusNextDiffRow(direction) {
-  const res = getToolDocument().getElementById('u_result');
-  if (!res) return false;
-  const trs = [...res.querySelectorAll('[data-diff-row-tr]')];
-  if (!trs.length) return false;
-  const ids = trs.map((el) => el.getAttribute('data-diff-row-tr'));
-  const curIdx = state.diffFocusedRowId ? ids.indexOf(state.diffFocusedRowId) : -1;
-  let nextIdx;
-  if (curIdx === -1) {
-    nextIdx = direction > 0 ? 0 : ids.length - 1;
-  } else {
-    nextIdx = curIdx + direction;
-    if (nextIdx < 0) nextIdx = 0;
-    if (nextIdx >= ids.length) nextIdx = ids.length - 1;
-  }
-  return focusDiffRow(ids[nextIdx]);
-}
-
-function parseIdSet(text) {
-  return [...new Set(String(text || '').split(/[\s,]+/).map((v) => v.trim()).filter((v) => /^\d+$/.test(v)))];
-}
-
-function formatConnectionPresetLabel(preset) {
-  if (!preset) return '';
-  const src = preset.sourceAppId || '-';
-  const tgt = preset.targetAppId || '-';
-  const guestParts = [
-    preset.sourceGuestId ? `元G:${preset.sourceGuestId}` : '',
-    preset.targetGuestId ? `先G:${preset.targetGuestId}` : ''
-  ].filter(Boolean);
-  return `${preset.name || '接続プリセット'} (${src} -> ${tgt}${guestParts.length ? ` / ${guestParts.join(' ')}` : ''})`;
-}
-
-function renderConnectionPresetSelect(preferId?: string) {
-  const sel = ui.connectionPresetSelect;
-  if (!sel) return;
-  const presets = Array.isArray(state.connectionPresets) ? state.connectionPresets : [];
-  const current = preferId != null ? String(preferId) : String(sel.value || '');
-  sel.innerHTML = presets.length
-    ? ['<option value="">-- プリセットを選択 --</option>']
-      .concat(presets.map((preset) => `<option value="${esc(preset.id || '')}">${esc(formatConnectionPresetLabel(preset))}</option>`))
-      .join('')
-    : '<option value="">（保存済みプリセットなし）</option>';
-  if (current && presets.some((preset) => preset.id === current)) sel.value = current;
-  if (ui.connectionPresetSummary) {
-    ui.connectionPresetSummary.textContent = presets.length ? `${presets.length}件保存` : '保存なし';
-  }
-}
-
-function getSelectedConnectionPreset() {
-  const id = String(ui.connectionPresetSelect?.value || '').trim();
-  if (!id) return null;
-  return (Array.isArray(state.connectionPresets) ? state.connectionPresets : []).find((preset) => preset.id === id) || null;
-}
-
-function buildCurrentConnectionPreset() {
-  const sourceAppId = String(ui.sourceApp?.value || '').trim();
-  const targetAppId = String(ui.targetApp?.value || '').trim();
-  if (!sourceAppId && !targetAppId) return null;
-  const customName = String(ui.connectionPresetName?.value || '').trim();
-  const name = customName || `接続 ${sourceAppId || '-'} -> ${targetAppId || '-'}`;
-  return {
-    id: `conn-${Date.now()}`,
-    name,
-    sourceAppId,
-    sourceGuestId: String(ui.sourceGuest?.value || '').trim(),
-    sourcePreview: !!ui.sourcePreview?.checked,
-    targetAppId,
-    targetGuestId: String(ui.targetGuest?.value || '').trim(),
-    targetPreview: !!ui.targetPreview?.checked
-  };
-}
-
-function saveConnectionPresetFromCurrent() {
-  const preset = buildCurrentConnectionPreset();
-  if (!preset) {
-    setStatus('保存するアプリIDがありません', true);
-    return;
-  }
-  const saved = upsertConnectionPreset(preset);
-  if (!saved) {
-    setStatus('接続プリセットを保存できませんでした', true);
-    return;
-  }
-  if (ui.connectionPresetName) ui.connectionPresetName.value = '';
-  renderConnectionPresetSelect(saved.id);
-  setStatus(`接続プリセット「${saved.name}」を保存しました`);
-}
-
-function applyConnectionPresetById(id) {
-  const presetId = String(id || '').trim();
-  const preset = (Array.isArray(state.connectionPresets) ? state.connectionPresets : [])
-    .find((item) => item.id === presetId);
-  if (!preset) {
-    setStatus('読み込む接続プリセットを選択してください', true);
-    return;
-  }
-  if (ui.sourceApp) ui.sourceApp.value = preset.sourceAppId || '';
-  if (ui.sourceGuest) ui.sourceGuest.value = preset.sourceGuestId || '';
-  if (ui.sourcePreview) ui.sourcePreview.checked = !!preset.sourcePreview;
-  if (ui.targetApp) ui.targetApp.value = preset.targetAppId || '';
-  if (ui.targetGuest) ui.targetGuest.value = preset.targetGuestId || '';
-  if (ui.targetPreview) ui.targetPreview.checked = preset.targetPreview == null ? true : !!preset.targetPreview;
-  resetReflectApplyChecks(['diff', 'plan']);
-  saveCurrentDialogState();
-  renderBundleState();
-  updateConnectionStepIndicators();
-  setStatus(`接続プリセット「${preset.name}」を読み込みました`);
-}
-
-function deleteSelectedConnectionPreset() {
-  const preset = getSelectedConnectionPreset();
-  if (!preset) {
-    setStatus('削除する接続プリセットを選択してください', true);
-    return;
-  }
-  if (!kusConfirm(`接続プリセット「${preset.name}」を削除しますか？`)) return;
-  deleteConnectionPreset(preset.id);
-  renderConnectionPresetSelect();
-  setStatus('接続プリセットを削除しました');
-}
-
-function renderConnectionSearchResults(apps: any) {
-  if (!ui.connectionSearchResult) return;
-  const rows = Array.isArray(apps) ? apps : [];
-  if (!rows.length) {
-    ui.connectionSearchResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">検索結果なし</div>';
-    return;
-  }
-  ui.connectionSearchResult.innerHTML = `<div class="connection-search-result-head">${rows.length}件の候補</div><table>
-    <thead><tr><th style="width:90px">アプリID</th><th>アプリ名</th><th style="width:84px">操作</th></tr></thead>
-    <tbody>${rows.map((app: any) => `<tr>
-      <td>${esc(app.appId)}</td>
-      <td title="${esc(app.name)}">${esc(app.name)}</td>
-      <td style="text-align:right"><button type="button" class="btn sub" style="padding:4px 8px;font-size:10px" data-act="addConnectionSearchApp" data-app-id="${esc(app.appId)}" data-app-name="${esc(app.name)}">追加</button></td>
-    </tr>`).join('')}</tbody>
-  </table>`;
-}
-
-async function runConnectionSearchApps() {
-  const keyword = ui.connectionSearchKeyword?.value.trim() || '';
-  const urlGuestId = extractGuestIdFromInput(keyword);
-  if (urlGuestId && ui.connectionSearchGuest && !ui.connectionSearchGuest.value.trim()) {
-    ui.connectionSearchGuest.value = urlGuestId;
-  }
-  const guestId = ui.connectionSearchGuest?.value.trim() || urlGuestId || ui.sourceGuest?.value.trim() || ui.targetGuest?.value.trim() || '';
-  const prefix = buildApiPrefix(guestId, false);
-  const directAppId = extractAppIdFromInput(keyword);
-  if (directAppId) {
-    setStatus('アプリIDを確認中...');
-    let appName = '';
-    try {
-      const appInfo = await apiGet(prefix, '/app.json', { id: directAppId });
-      appName = String(appInfo?.name || '').trim();
-    } catch (err) {
-      appName = 'ID指定（名称未取得）';
-    }
-    renderConnectionSearchResults([{ appId: directAppId, name: appName || 'ID指定' }]);
-    saveCurrentDialogState();
-    setStatus(`アプリID ${directAppId}${guestId ? ` / ゲスト ${guestId}` : ''} を候補に表示しました`);
-    return;
-  }
-  const params: Record<string, any> = { limit: 100 };
-  if (keyword) params.name = keyword;
-  setStatus('アプリ検索中...');
-  const res = await apiGet(prefix, '/apps.json', params);
-  const apps = (res.apps || [])
-    .map((a: any) => ({ appId: String(a.appId || '').trim(), name: String(a.name || '') }))
-    .filter((a: { appId: string }) => /^\d+$/.test(a.appId))
-    .sort((a: { appId: string }, b: { appId: string }) => Number(a.appId) - Number(b.appId));
-  renderConnectionSearchResults(apps);
-  setStatus(`アプリ検索完了: ${apps.length}件`);
-}
-
-function addConnectionSearchApp(appId, appName) {
-  const id = String(appId || '').trim();
-  if (!/^\d+$/.test(id)) {
-    setStatus('追加対象のアプリIDが不正です', true);
-    return;
-  }
-  const assign = ui.connectionSearchAssign?.value || 'source';
-  const searchGuestId = ui.connectionSearchGuest?.value.trim() || '';
-  if (assign === 'source') {
-    ui.sourceApp.value = id;
-    if (searchGuestId && !ui.sourceGuest.value.trim()) ui.sourceGuest.value = searchGuestId;
-    setStatus(`比較元に App ${id}${appName ? ` (${appName})` : ''} を設定しました`);
-  } else if (assign === 'target') {
-    ui.targetApp.value = id;
-    if (searchGuestId && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
-    setStatus(`比較先に App ${id}${appName ? ` (${appName})` : ''} を設定しました`);
-  } else if (assign === 'diffMulti') {
-    if (!ui.diffMultiTargets) {
-      setStatus('複数比較先リストが見つかりません', true);
-      return;
-    }
-    const ids = new Set(parseIdSet(ui.diffMultiTargets.value));
-    ids.add(id);
-    ui.diffMultiTargets.value = [...ids].join('\n');
-    if (searchGuestId && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
-    setStatus(`複数比較先へ App ${id}${appName ? ` (${appName})` : ''} を追加しました`);
-  } else if (assign === 'settingsExport') {
-    if (searchGuestId && ui.settingsExportGuest && !ui.settingsExportGuest.value.trim()) ui.settingsExportGuest.value = searchGuestId;
-    addAppIdToSettingsExport(id, appName);
-    return;
-  }
-  saveCurrentDialogState();
-  updateConnectionStepIndicators();
-}
+interface ReflectPresetEntry { name: string; [key: string]: unknown; }
 
 function renderReflectPresetSelect(preferName?: string) {
   const sel = getToolDocument().getElementById('u_reflectPresetSelect') as HTMLSelectElement | null;
   if (!sel) return;
-  const presets: any[] = loadReflectPresets();
+  const presets = loadReflectPresets() as ReflectPresetEntry[];
   const currentValue = preferName != null ? preferName : sel.value;
   sel.innerHTML = presets.length
     ? ['<option value="">-- プリセットを選択 --</option>']
-      .concat(presets.map((p: any) => `<option value="${String(p.name).replace(/"/g, '&quot;')}">${String(p.name)}</option>`))
+      .concat(presets.map((p) => `<option value="${String(p.name).replace(/"/g, '&quot;')}">${String(p.name)}</option>`))
       .join('')
     : '<option value="">（保存済みプリセットなし）</option>';
-  if (currentValue && presets.some((p: any) => p.name === currentValue)) {
+  if (currentValue && presets.some((p) => p.name === currentValue)) {
     sel.value = currentValue;
   }
 }
 
-function getVisibleReflectNodeIds() {
-  return [...((ui.reflectNodeList as Element | null)?.querySelectorAll<HTMLElement>('[data-node-open]') || [])]
-    .map((el) => el.dataset.nodeOpen)
-    .filter(Boolean);
+function getVisibleReflectNodeIds(): string[] {
+  return [...(ui.reflectNodeList?.querySelectorAll<HTMLElement>('[data-node-open]') || [])]
+    .map((el) => el.dataset.nodeOpen || '')
+    .filter((id): id is string => !!id);
 }
 
 /**
@@ -826,29 +314,7 @@ function activateReflectInnerTab(inner) {
   });
 }
 
-function extractAppIdFromInput(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  if (/^\d+$/.test(raw)) return raw;
-  let decoded = raw;
-  try { decoded = decodeURIComponent(raw); } catch (e) { /* ignore malformed URI */ }
-  const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
-  if (queryMatch) return queryMatch[1];
-  const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
-  if (guestPathMatch) return guestPathMatch[1];
-  const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
-  if (pathMatch) return pathMatch[1];
-  return '';
-}
-
-function extractGuestIdFromInput(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  let decoded = raw;
-  try { decoded = decodeURIComponent(raw); } catch (e) { /* ignore malformed URI */ }
-  const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
-  return guestPathMatch ? guestPathMatch[1] : '';
-}
+// extractAppIdFromInput / extractGuestIdFromInput は handlers/diffFocus.ts に分割済み。
 
 // ---------------------------------------------------------------------------
 // Setup all event handlers
@@ -952,11 +418,11 @@ export function setupEventHandlers(injected: any = {}) {
   }
 
   function applyLauncherFilter() {
-    const activeGroupBtn = ui.launcherGroupFilters?.querySelector('.chip.is-active[data-group]');
+    const activeGroupBtn = ui.launcherGroupFilters?.querySelector<HTMLElement>('.chip.is-active[data-group]');
     const group = activeGroupBtn?.dataset?.group || 'all';
     const searchText = String(ui.launcherSearch?.value || '').trim();
     const normalizedSearch = searchText.toLowerCase();
-    const cards = [...(ui.launcherMenu?.querySelectorAll('.feature-card[data-feature]') || [])];
+    const cards = [...(ui.launcherMenu?.querySelectorAll<HTMLElement>('.feature-card[data-feature]') || [])];
     let visibleCount = 0;
     cards.forEach((card) => {
       const groupKey = String(card.dataset.group || '').trim();
@@ -975,12 +441,14 @@ export function setupEventHandlers(injected: any = {}) {
     renderLauncherActiveFilters(group, searchText);
   }
 
-  function focusWizardTarget(selector, options: any = {}) {
+  interface FocusWizardOptions { block?: ScrollLogicalPosition; focus?: boolean }
+
+  function focusWizardTarget(selector: string, options: FocusWizardOptions = {}) {
     if (!selector) return;
     const doc = getToolDocument();
     const targetWindow = getToolWindow();
     targetWindow.requestAnimationFrame(() => {
-      const target = doc.querySelector(selector);
+      const target = doc.querySelector<HTMLElement>(selector);
       target?.scrollIntoView?.({ block: options.block || 'center', inline: 'nearest' });
       if (options.focus !== false && typeof target?.focus === 'function') {
         try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
@@ -1099,7 +567,7 @@ export function setupEventHandlers(injected: any = {}) {
     const focusEditor = () => {
       const pane = root.querySelector('[data-subpane-parent="reflect"][data-subpane="settings"]');
       pane?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-      const editorApi = ui.sectionPreviewEditor?.__sectionPreviewApi;
+      const editorApi = (ui.sectionPreviewEditor as any)?.__sectionPreviewApi;
       if (editorApi?.setSection) {
         editorApi.setSection(nextSectionKey, { silent: true, force: true });
         return;
@@ -1384,6 +852,18 @@ export function setupEventHandlers(injected: any = {}) {
     if (!ui.scopePickerModal?.hidden && e.key === 'Escape') {
       e.preventDefault();
       closeScopePicker();
+      return;
+    }
+
+    // ? でショートカット一覧モーダルをトグル / Esc で閉じる
+    if (ui.shortcutHelpModal && !ui.shortcutHelpModal.hidden && e.key === 'Escape') {
+      e.preventDefault();
+      ui.shortcutHelpModal.hidden = true;
+      return;
+    }
+    if (!editable && e.key === '?') {
+      e.preventDefault();
+      if (ui.shortcutHelpModal) ui.shortcutHelpModal.hidden = !ui.shortcutHelpModal.hidden;
       return;
     }
 
@@ -1932,7 +1412,7 @@ export function setupEventHandlers(injected: any = {}) {
     // Source field check-all
     if ((e.target as HTMLElement).id === 'u_sourceFieldCheckAll') {
       const checked = (e.target as HTMLInputElement).checked;
-      [...ui.sourceFieldTbody.querySelectorAll('.src-field-sel')].forEach(c => c.checked = checked);
+      ui.sourceFieldTbody?.querySelectorAll<HTMLInputElement>('.src-field-sel').forEach(c => { c.checked = checked; });
       return;
     }
 
@@ -2025,7 +1505,7 @@ export function setupEventHandlers(injected: any = {}) {
     }
     if (act === 'clearLauncherFilter') {
       if (ui.launcherSearch) ui.launcherSearch.value = '';
-      [...(ui.launcherGroupFilters?.querySelectorAll('.chip[data-group]') || [])].forEach((btn) => {
+      ui.launcherGroupFilters?.querySelectorAll<HTMLElement>('.chip[data-group]').forEach((btn) => {
         const active = btn.dataset.group === 'all';
         btn.classList.toggle('is-active', active);
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
@@ -2038,13 +1518,13 @@ export function setupEventHandlers(injected: any = {}) {
 
     if (act === 'setLauncherGroup') {
       const group = String(actEl.dataset.group || 'all');
-      [...(ui.launcherGroupFilters?.querySelectorAll('.chip[data-group]') || [])].forEach((btn) => {
+      ui.launcherGroupFilters?.querySelectorAll<HTMLElement>('.chip[data-group]').forEach((btn) => {
         const active = btn.dataset.group === group;
         btn.classList.toggle('is-active', active);
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
       });
       applyLauncherFilter();
-      setStatus(group === 'all' ? '全機能を表示中です' : `機能を絞り込みました: ${actEl.textContent.trim()}`);
+      setStatus(group === 'all' ? '全機能を表示中です' : `機能を絞り込みました: ${actEl.textContent?.trim() || ''}`);
       return;
     }
     if (act === 'clearDiffFilters') {
@@ -2401,6 +1881,16 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'openReflectScopePicker') { renderReflectSidebar(); renderReflectPresetSelect(); openScopePicker('reflect'); return; }
     if (act === 'openSettingsExportScopePicker') { openScopePicker('settingsExport'); return; }
     if (act === 'closeScopePicker') { closeScopePicker(); return; }
+
+    // ----- Shortcut help modal -----
+    if (act === 'openShortcutHelp') {
+      if (ui.shortcutHelpModal) ui.shortcutHelpModal.hidden = false;
+      return;
+    }
+    if (act === 'closeShortcutHelp') {
+      if (ui.shortcutHelpModal) ui.shortcutHelpModal.hidden = true;
+      return;
+    }
     if (act === 'diffScopeAll') {
       setScopeSelection(ui.diffScopes, true);
       renderScopePickerSummaries();
@@ -2646,7 +2136,7 @@ export function setupEventHandlers(injected: any = {}) {
     }
     if (act === 'applyScopeDiffOnly') {
       const diffCounts = getDiffCountsBySection();
-      [...ui.applyScopes.querySelectorAll('input[type="checkbox"]')].forEach((c) => {
+      ui.applyScopes?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((c) => {
         const dc = diffCounts[c.value];
         c.checked = !!(dc && dc.total > 0);
       });

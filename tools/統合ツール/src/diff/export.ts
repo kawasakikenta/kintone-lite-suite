@@ -79,18 +79,77 @@ function isSubtableFieldRootPath(path) {
     && /^fieldSettings\.properties\.[^.[\]]+$/.test(path);
 }
 
+/**
+ * kintone の LABEL フィールドや一部のテキストプロパティは任意の HTML
+ * (`<div><span style="..."><font color="..."> ... </font></span></div>` 等) を
+ * 保持できる。差分カラムへ生で出すと HTML タグが羅列されて読めないため、
+ * タグを剥がして表示用テキストに整形する。
+ */
+function stripLabelHtmlTags(text: string): string {
+  if (typeof text !== 'string' || text.indexOf('<') === -1) return text;
+  // <br>/</p>/</div> は改行に置換、その他のタグは除去。
+  const lineBreaks = text
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, '\n');
+  const stripped = lineBreaks.replace(/<[^>]*>/g, '');
+  // HTML エンティティを最小限デコード（`esc()` は出力直前に再エスケープする）。
+  const decoded = stripped
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+  return decoded.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * オブジェクト内の HTML を含みうる文字列プロパティ (`label` / `name` など) を
+ * 再帰的に整形した複製を返す。元オブジェクトは変更しない。
+ */
+function sanitizeHtmlBearingProps<T>(value: T): T {
+  if (value == null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeHtmlBearingProps(item)) as unknown as T;
+  }
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(value as Record<string, any>)) {
+    if (typeof v === 'string' && (k === 'label' || k === 'name')) {
+      out[k] = stripLabelHtmlTags(v);
+    } else if (v && typeof v === 'object') {
+      out[k] = sanitizeHtmlBearingProps(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out as T;
+}
+
 export function stringifyRowValueForDiff(value, path) {
   if (value === undefined) return '（未定義）';
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     if (value.type === 'SUBTABLE' && value.fields && typeof value.fields === 'object') {
-      return formatSubtableSnapshotText(value);
+      return formatSubtableSnapshotText(sanitizeHtmlBearingProps(value));
     }
     if (isSubtableFieldsPath(path) && isSubtableFieldMap(value)) {
-      return `テーブル内の項目:\n${formatSubtableChildrenText(value)}`;
+      return `テーブル内の項目:\n${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
     if (isSubtableFieldRootPath(path) && isSubtableFieldMap(value)) {
-      return `テーブル内の項目:\n${formatSubtableChildrenText(value)}`;
+      return `テーブル内の項目:\n${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
+    // LABEL 含むレイアウトアイテムや、label プロパティに HTML を持つ任意オブジェクトを正規化。
+    if (typeof (value as any).label === 'string' && (value as any).label.includes('<')) {
+      return stringifyForDiff(sanitizeHtmlBearingProps(value));
+    }
+  }
+  // path がレイアウト系の場合は HTML 含み得るので一律サニタイズ。
+  if (typeof path === 'string' && path.startsWith('layoutSettings')) {
+    return stringifyForDiff(sanitizeHtmlBearingProps(value));
+  }
+  // path がフィールド label 直下なら文字列もサニタイズ。
+  if (typeof value === 'string' && typeof path === 'string'
+      && (/\.label$/.test(path) || /^layoutSettings\b/.test(path))) {
+    return stripLabelHtmlTags(value);
   }
   return stringifyForDiff(value);
 }

@@ -175,35 +175,44 @@ export async function upsertFields(prefix, app, incomingProps, options) {
 }
 
 export async function runFieldApply() {
+  const fieldJson = ui.fieldJson;
+  const lookupMapEl = ui.lookupMap;
+  const overwriteEl = ui.overwriteField;
+  const resultEl = ui.result;
+  if (!fieldJson || !lookupMapEl || !overwriteEl || !resultEl) {
+    throw new Error('フィールド追加タブのUIが初期化されていません');
+  }
   const c = commonParams();
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
-  const input = ui.fieldJson.value.trim();
+  const input = fieldJson.value.trim();
   if (!input) throw new Error('フィールドJSONを入力してください');
 
   const incoming = parseFieldInput(input);
-  const lookupMap = parseLookupMapInput(ui.lookupMap.value);
+  const lookupMap = parseLookupMapInput(lookupMapEl.value);
   const prefix = buildApiPrefix(c.target.guestId, true);
   const app = c.target.appId;
 
   setStatus('フィールド追加/更新中...');
   const logs = await upsertFields(prefix, app, incoming, {
-    overwrite: ui.overwriteField.checked,
-    renameOnConflict: !ui.overwriteField.checked,
+    overwrite: overwriteEl.checked,
+    renameOnConflict: !overwriteEl.checked,
     lookupMap
   });
   logs.push('OK フィールド反映');
 
-  ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
+  resultEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
   setStatus('フィールド追加処理完了');
 }
 
 export async function runLoadTargetFields() {
+  const fieldJson = ui.fieldJson;
+  if (!fieldJson) throw new Error('フィールドJSONエディタが初期化されていません');
   const c = commonParams();
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
   const prefix = buildApiPrefix(c.target.guestId, true);
   setStatus('比較先フィールド取得中...');
   const res = await apiGet(prefix, '/app/form/fields.json', { app: c.target.appId });
-  ui.fieldJson.value = JSON.stringify({ properties: res.properties || ({} as any) }, null, 2);
+  fieldJson.value = JSON.stringify({ properties: res.properties || ({} as any) }, null, 2);
   setStatus('比較先フィールドを読み込みました');
 }
 
@@ -236,29 +245,34 @@ export async function runLoadSourceFieldsList() {
       `;
     });
 
-    ui.sourceFieldTbody.innerHTML = rows.join('');
-    ui.sourceFieldListContainer.style.display = 'block';
-    ui.sourceFieldCheckAll.checked = false;
+    if (ui.sourceFieldTbody) ui.sourceFieldTbody.innerHTML = rows.join('');
+    if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = 'block';
+    if (ui.sourceFieldCheckAll) ui.sourceFieldCheckAll.checked = false;
     setStatus(`比較元フィールド ${fields.length} 件を取得しました`);
   } catch (e) {
-    ui.sourceFieldListContainer.style.display = 'none';
+    if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = 'none';
     throw e;
   }
 }
 
 export function runInsertSelectedSourceFields() {
-  const checks = [...ui.sourceFieldTbody.querySelectorAll('.src-field-sel:checked')];
+  const fieldJson = ui.fieldJson;
+  if (!fieldJson) {
+    setStatus('フィールドJSONエディタが初期化されていません', true);
+    return;
+  }
+  const checks = [...(ui.sourceFieldTbody?.querySelectorAll<HTMLInputElement>('.src-field-sel:checked') || [])];
   if (!checks.length) {
     setStatus('追加するフィールドを選択してください');
     return;
   }
 
-  let currentObj = { properties: {} };
+  let currentObj: { properties: Record<string, any> } = { properties: {} };
   try {
-    const text = ui.fieldJson.value.trim();
+    const text = fieldJson.value.trim();
     if (text) {
-      currentObj = JSON.parse(text);
-      if (!currentObj.properties) currentObj = { properties: currentObj };
+      const parsed = JSON.parse(text);
+      currentObj = parsed && parsed.properties ? parsed : { properties: parsed || {} };
     }
   } catch (e) {
     if (!kusConfirm('現在のJSONテキストが不正です。上書きして良いですか？')) return;
@@ -267,14 +281,16 @@ export function runInsertSelectedSourceFields() {
   let mergedCount = 0;
   for (const c of checks) {
     try {
-      const def = JSON.parse(c.dataset.json);
-      currentObj.properties[def.code] = def;
-      mergedCount++;
-    } catch (e) { }
+      const def = JSON.parse(c.dataset.json || '{}');
+      if (def && def.code) {
+        currentObj.properties[def.code] = def;
+        mergedCount++;
+      }
+    } catch (e) { /* skip malformed */ }
   }
 
-  ui.fieldJson.value = JSON.stringify(currentObj, null, 2);
-  ui.sourceFieldListContainer.style.display = 'none';
+  fieldJson.value = JSON.stringify(currentObj, null, 2);
+  if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = 'none';
   setStatus(`${mergedCount} 件のフィールド定義を挿入しました`);
 }
 
@@ -311,7 +327,7 @@ export async function runBulkFieldRename() {
     }
   }
 
-  ui.fieldJson.value = JSON.stringify(newProps, null, 2);
+  if (ui.fieldJson) ui.fieldJson.value = JSON.stringify(newProps, null, 2);
   const resEl: any = getToolDocument().getElementById('u_bulkFieldResult');
   if (resEl) {
     resEl.style.display = 'block';

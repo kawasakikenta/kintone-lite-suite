@@ -288,6 +288,7 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     workHistoryPanel: $('#u_workHistoryPanel'),
     workHistorySummary: $('#u_workHistorySummary'),
     workHistoryList: $('#u_workHistoryList'),
+    shortcutHelpModal: $('#u_shortcutHelpModal'),
     copyTextToClipboard
   };
 

@@ -7,19 +7,9 @@ import {
   runExportERDiagramHtmlStandalone
 } from '../tabs/er-standalone.js';
 import { mountKusLitePanel } from './liteMount.js';
+import { row, mkInput, liteRun } from './litePanelHelpers.js';
 
-function row(labelHtml, child) {
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px';
-  const lab = document.createElement('span');
-  lab.style.cssText = 'font-size:12px;font-weight:600;color:#334155;min-width:5em';
-  lab.innerHTML = labelHtml;
-  wrap.appendChild(lab);
-  wrap.appendChild(child);
-  return wrap;
-}
-
-function mkSelect(opts) {
+function mkSelect(opts: Array<[string, string]>): HTMLSelectElement {
   const sel = document.createElement('select');
   sel.style.cssText =
     'padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;background:#fff';
@@ -39,24 +29,9 @@ export function mountErLitePanel() {
     note: '起点アプリからルックアップ/関連レコードを辿り、ER図を生成します。統合ツール.js は不要です。'
   });
 
-  const appInp = document.createElement('input');
-  appInp.type = 'text';
-  appInp.placeholder = 'アプリID';
-  appInp.value = DEFAULT_APP_ID || '';
-  appInp.style.cssText =
-    'width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-
-  const extraInp = document.createElement('input');
-  extraInp.type = 'text';
-  extraInp.placeholder = '追加起点ID (カンマ区切り)';
-  extraInp.style.cssText =
-    'width:min(200px,60vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-
-  const guestInp = document.createElement('input');
-  guestInp.type = 'text';
-  guestInp.placeholder = 'ゲストID（任意）';
-  guestInp.style.cssText =
-    'width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
+  const appInp = mkInput('アプリID', { value: DEFAULT_APP_ID || '' });
+  const extraInp = mkInput('追加起点ID (カンマ区切り)', { width: 'wide' });
+  const guestInp = mkInput('ゲストID（任意）');
 
   const layoutSel = mkSelect([
     ['dagre', 'Dagre (推奨)'],
@@ -128,23 +103,15 @@ export function mountErLitePanel() {
   }
 
   const bOpen = mkBtn('ER図を開く');
-  bOpen.addEventListener('click', async () => {
-    try {
-      await runGenerateERDiagramStandalone(source(), (m, e) => setStatus(m, e));
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    }
-  });
+  bOpen.addEventListener('click', () => liteRun(async () => {
+    await runGenerateERDiagramStandalone(source(), (m, e) => setStatus(m, e));
+  }));
 
   const bSave = mkBtn('HTML保存');
   bSave.style.background = '#475569';
-  bSave.addEventListener('click', async () => {
-    try {
-      await runExportERDiagramHtmlStandalone(source(), (m, e) => setStatus(m, e));
-    } catch (e) {
-      setStatus(e.message || String(e), true);
-    }
-  });
+  bSave.addEventListener('click', () => liteRun(async () => {
+    await runExportERDiagramHtmlStandalone(source(), (m, e) => setStatus(m, e));
+  }));
 
   btnRow.appendChild(bOpen);
   btnRow.appendChild(bSave);

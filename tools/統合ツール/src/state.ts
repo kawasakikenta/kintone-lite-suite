@@ -1,6 +1,7 @@
 'use strict';
 
 import { DIALOG_STATE_KEY, DEFAULT_SUBTAB_STATE, TOOL_ID } from './constants.js';
+import type { KusUiRegistry } from './types/uiRefs.js';
 
 export interface ConnectionPreset {
   id: string;
@@ -324,4 +325,6 @@ state.reflectApplyHistory = loadReflectApplyHistory();
 state.workHistory = loadWorkHistory();
 state.connectionPresets = loadConnectionPresets();
 
-export const ui: Record<string, any> = {};
+// 起動前の空オブジェクトを KusUiRegistry として宣言する。
+// boot.ts での Object.assign で全ての要素が埋まるため、利用側は non-null として扱える。
+export const ui: KusUiRegistry = {} as KusUiRegistry;
