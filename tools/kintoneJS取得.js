@@ -256,7 +256,7 @@
     }
   });
 
-  // src/constants.js
+  // src/constants.ts
   function resolveDefaultAppId() {
     try {
       if (typeof kintone !== "undefined" && kintone?.app?.getId) {
@@ -266,9 +266,9 @@
     }
     return "";
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, META_KEYS, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
-    "src/constants.js"() {
+    "src/constants.ts"() {
       "use strict";
       init_featureDefs();
       TOOL_ID = "kintone-unified-suite-v2";
@@ -335,74 +335,90 @@
         settingsExport: "export",
         analyze: "dashboard"
       });
-      GUIDED_TOUR_STEPS = Object.freeze([
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: "#u_sourceApp",
-          title: "1. 比較元 / 比較先を決める",
-          body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
+      TOUR_STEP_CONNECTION = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: "#u_sourceApp",
+        title: "比較元 / 比較先を決める",
+        body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。プレビュー/本番の切替もここで行います。"
+      };
+      TOUR_STEP_SCOPE = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: '[data-act="openDiffScopePicker"]',
+        title: "比較対象セクションを選ぶ",
+        body: "「比較対象を選ぶ」から、差分比較で確認したい設定だけを選びます。まずはフィールド・レイアウト・ビュー・プロセス管理あたりが見やすいです。"
+      };
+      TOUR_STEP_NOISE = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: "#u_ignoreKeyInput",
+        title: "ノイズ差分を減らす",
+        body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
+      };
+      TOUR_STEP_RUN_DIFF = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: "#u_runDiffPrimary",
+        title: "差分比較を実行する",
+        body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
+      };
+      TOUR_STEP_REVIEW = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 差分結果の整理",
+        selector: "#u_diffSearch",
+        title: "結果を絞り込んで確認する",
+        body: "差分比較後は「差分結果の整理・出力」から、セクション・種別・重要度・検索で絞り込めます。ここで反映対象を見極めます。"
+      };
+      TOUR_STEP_PLAN = {
+        tab: "reflect",
+        path: "プレビュー反映",
+        selector: "#u_footerPlan",
+        title: "反映プランを先に確認する",
+        body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。"
+      };
+      TOUR_STEP_APPLY = {
+        tab: "reflect",
+        path: "プレビュー反映",
+        selector: "#u_footerApply",
+        title: "比較先プレビューへ反映する",
+        body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番デプロイは kintone 管理画面から手動で実施します。"
+      };
+      TOUR_STEP_RECORD = {
+        tab: "design",
+        subTab: "export",
+        path: "設計書 > 設計書出力",
+        selector: '[data-act="exportDesignMd"]',
+        title: "最後に記録を残す",
+        body: "作業後は設計書や差分レポートを出力して、変更内容を記録します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
+      };
+      GUIDED_TOUR_COURSES = Object.freeze({
+        full: {
+          label: "初回（全工程）",
+          description: "接続から記録出力までを順番に案内します（推奨）",
+          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD]
         },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: '[data-act="openDiffScopePicker"]',
-          title: "3. 比較対象セクションを選ぶ",
-          body: "「比較対象を選ぶ」からポップアップを開き、差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。"
+        diff: {
+          label: "差分のみ確認",
+          description: "差分比較とレビューに絞った短縮コース",
+          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW]
         },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: "#u_ignoreKeyInput",
-          title: "4. ノイズ差分を減らす",
-          body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
-        },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: "#u_runDiffPrimary",
-          title: "5. 差分比較を実行する",
-          body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
-        },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 差分結果の整理",
-          selector: "#u_diffSearch",
-          title: "6. 結果を絞り込んで確認する",
-          body: "差分比較後は「差分結果の整理・出力」を開くと、セクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。"
-        },
-        {
-          tab: "reflect",
-          path: "プレビュー反映",
-          selector: "#u_footerPlan",
-          title: "7. 反映プランを先に確認する",
-          body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。要約はメイン欄のプラン欄にも表示されます。"
-        },
-        {
-          tab: "reflect",
-          path: "プレビュー反映",
-          selector: "#u_footerApply",
-          title: "8. 比較先プレビューへ反映する",
-          body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。"
-        },
-        {
-          tab: "design",
-          subTab: "export",
-          path: "設計書 > 設計書出力",
-          selector: '[data-act="exportDesignMd"]',
-          title: "9. 最後に記録を残す",
-          body: "作業後は設計書や差分レポートを出力して、変更内容を残します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
+        apply: {
+          label: "反映まで実施",
+          description: "差分確認からプレビュー反映までをガイド",
+          steps: [TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY]
         }
-      ]);
+      });
+      GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
     }
   });
 
-  // src/state.js
+  // src/state.ts
   function loadReflectApplyHistory() {
     try {
       const raw = sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
@@ -448,14 +464,14 @@
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
-      return parsed.map(normalizeConnectionPreset).filter(Boolean).slice(0, CONNECTION_PRESETS_LIMIT);
+      return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
     } catch {
       return [];
     }
   }
   var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY, CONNECTION_PRESETS_LIMIT;
   var init_state = __esm({
-    "src/state.js"() {
+    "src/state.ts"() {
       "use strict";
       init_constants();
       state = {
@@ -525,7 +541,8 @@
         importedPatchPayload: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
-        running: false
+        running: false,
+        lastResultByTab: {}
       };
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
       WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
@@ -537,7 +554,7 @@
     }
   });
 
-  // src/utils.js
+  // src/utils.ts
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -611,15 +628,15 @@ ${contextLine}`);
     triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
   }
   var init_utils = __esm({
-    "src/utils.js"() {
+    "src/utils.ts"() {
       "use strict";
       init_constants();
     }
   });
 
-  // src/diff/engine.js
+  // src/diff/engine.ts
   var init_engine = __esm({
-    "src/diff/engine.js"() {
+    "src/diff/engine.ts"() {
       "use strict";
       init_constants();
       init_state();
@@ -627,7 +644,7 @@ ${contextLine}`);
     }
   });
 
-  // src/api.js
+  // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
@@ -727,7 +744,7 @@ ${contextLine}`);
   }
   var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
   var init_api = __esm({
-    "src/api.js"() {
+    "src/api.ts"() {
       "use strict";
       init_constants();
       init_utils();
@@ -750,20 +767,18 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/enrich.js
+  // src/diff/enrich.ts
   var init_enrich = __esm({
-    "src/diff/enrich.js"() {
+    "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
-      init_state();
       init_utils();
-      init_engine();
     }
   });
 
-  // src/diff/export.js
+  // src/diff/export.ts
   var init_export = __esm({
-    "src/diff/export.js"() {
+    "src/diff/export.ts"() {
       init_constants();
       init_utils();
       init_state();
@@ -774,9 +789,9 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/filter.js
+  // src/diff/filter.ts
   var init_filter = __esm({
-    "src/diff/filter.js"() {
+    "src/diff/filter.ts"() {
       "use strict";
       init_constants();
       init_state();
@@ -786,25 +801,24 @@ ${contextLine}`);
     }
   });
 
-  // src/ui/dialog.js
+  // src/ui/dialog.ts
   function setRootElement(el) {
     root = el;
   }
   var root;
   var init_dialog = __esm({
-    "src/ui/dialog.js"() {
+    "src/ui/dialog.ts"() {
       "use strict";
       init_constants();
       init_state();
-      init_utils();
       root = null;
     }
   });
 
-  // src/entries/jsconfig-lite-ui.js
+  // src/entries/jsconfig-lite-ui.ts
   init_constants();
 
-  // src/ui/components.js
+  // src/ui/components.ts
   init_constants();
   init_state();
   init_utils();
@@ -812,23 +826,23 @@ ${contextLine}`);
   init_engine();
   init_enrich();
 
-  // src/reflect/nodeModeUi.js
+  // src/reflect/nodeModeUi.ts
   init_state();
 
-  // src/ui/components.js
+  // src/ui/components.ts
   init_constants();
   init_dialog();
 
-  // src/oss_integrations.js
+  // src/oss_integrations.ts
   init_utils();
   init_dialog();
 
-  // src/ui/components.js
+  // src/ui/components.ts
   var ui2 = {};
   function setComponentUi(uiRefs) {
     ui2 = uiRefs;
   }
-  function setStatus(msg, isError) {
+  function setStatus(msg, isError = false) {
     if (!ui2.status) return;
     ui2.status.textContent = msg;
     ui2.status.style.background = "";
@@ -853,7 +867,7 @@ ${contextLine}`);
     })
   });
 
-  // src/tabs/jsconfig-standalone.js
+  // src/tabs/jsconfig-standalone.ts
   init_utils();
   init_api();
   function renderCustomizeResultHtml(data) {
@@ -936,7 +950,7 @@ ${contextLine}`);
     setStatus2("JS/CSS設定反映完了");
   }
 
-  // src/entries/liteMount.js
+  // src/entries/liteMount.ts
   init_dialog();
   var PANEL_STYLE = "position:fixed;z-index:999999;top:max(16px,2vh);right:max(16px,2vw);width:min(440px,94vw);max-height:min(92vh,880px);overflow:hidden;display:flex;flex-direction:column;background:#fff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 12px 40px rgba(15,23,42,.2);font:12px/1.5 system-ui,sans-serif;";
   function mountKusLitePanel(opts) {
@@ -986,7 +1000,7 @@ ${contextLine}`);
     return { root: root2, status, bodySlot, result };
   }
 
-  // src/entries/jsconfig-lite-ui.js
+  // src/entries/jsconfig-lite-ui.ts
   function mountJsconfigLitePanel() {
     const { bodySlot, result } = mountKusLitePanel({
       id: "kus-jsconfig-lite",
@@ -1109,7 +1123,7 @@ ${contextLine}`);
     });
   }
 
-  // src/entries/jsconfig-lite-entry.js
+  // src/entries/jsconfig-lite-entry.ts
   if (!window.kintone?.api || !window.kintone?.app) {
     alert("kintone画面で実行してください");
   } else {

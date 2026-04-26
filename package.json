@@ -5,7 +5,13 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "snippet": "node scripts/build-snippet.js"
+    "snippet": "node scripts/build-snippet.js",
+    "build:kintone-calendar": "vite build --config plugins/KintoneCalendar/vite.config.mjs",
+    "check:kintone-calendar": "svelte-check --tsconfig plugins/KintoneCalendar/tsconfig.json",
+    "package:kintone-calendar": "kintone-plugin-packer --ppk plugins/KintoneCalendar.ppk plugins/KintoneCalendar --out plugins/KintoneCalendar.zip",
+    "build:field-transfer": "npm --prefix plugins/FieldTransfer run build",
+    "test:field-transfer": "npm --prefix plugins/FieldTransfer test",
+    "package:field-transfer": "npm run build:field-transfer && kintone-plugin-packer --ppk plugins/FieldTransfer.ppk plugins/FieldTransfer --out plugins/FieldTransfer.zip"
   },
   "repository": {
     "type": "git",
@@ -20,6 +26,11 @@
   },
   "homepage": "https://github.com/kawasakikenta/kintone#readme",
   "devDependencies": {
-    "@kintone/plugin-packer": "^9.1.0"
+    "@kintone/plugin-packer": "^9.1.0",
+    "@sveltejs/vite-plugin-svelte": "^7.0.0",
+    "svelte": "^5.55.5",
+    "svelte-check": "^4.4.6",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10"
   }
 }

@@ -1,1191 +1,329 @@
-// ==========================================================================
-// ER図.js  —  自動生成ファイル（手編集禁止）
-// ==========================================================================
-// このファイルは tools/統合ツール/ の npm run build (esbuild) で生成されます。
-// ソース: tools/統合ツール/src/entries/er-lite-entry.js
-//         tools/統合ツール/src/tabs/er.js  ← 機能の正規実装
-//
-// ■ 修正する場合は tools/統合ツール/src/ 配下のソースを編集し、
-//   cd tools/統合ツール && npm run build で再生成してください。
-// ■ このファイルを直接編集しても次回ビルドで上書きされます。
-// ==========================================================================
-"use strict";
-(() => {
-  var __getOwnPropNames = Object.getOwnPropertyNames;
-  var __esm = (fn, res) => function __init() {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+'use strict';
+
+import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
+import { state, ui } from '../state.js';
+import { esc, safeJsonForScript, nowStamp, downloadText, showToast } from '../utils.js';
+import { apiGet, buildApiPrefix } from '../api.js';
+import { setStatus, setBusy } from '../ui/components.js';
+import { getToolWindow } from '../ui/dialog.js';
+import { commonParams } from './diff.js';
+
+const ER_DEFAULTS = {
+  maxFields: 220,
+  sleepMs: 80,
+  layoutName: 'dagre',
+  fieldDensity: 'standard',
+  maxDepth: 0,
+  includeSubtableFields: true,
+  includeReverseLookup: false
+};
+const ER_TRAVERSE_RELATION_KINDS = new Set(['LOOKUP', 'REF', 'ACTION']);
+
+function normalizeFieldProperties(response) {
+  const props = response?.properties;
+  return props && typeof props === 'object' && !Array.isArray(props) ? props : {};
+}
+
+function buildScriptTag(src, fallbackSrc = '') {
+  const safeSrc = esc(src || '');
+  const safeFallback = esc(fallbackSrc || '');
+  const fallback = safeFallback ? ` onerror="this.onerror=null;this.src='${safeFallback}'"` : '';
+  return `<script src="${safeSrc}"${fallback}><\/script>`;
+}
+
+export function readErDiagramOptions() {
+  const startAppId = String(ui.sourceApp?.value || '').trim();
+  const layoutName = String(ui.erLayout?.value || ER_DEFAULTS.layoutName).trim() || ER_DEFAULTS.layoutName;
+  const fieldDensity = String(ui.erFieldDensity?.value || ER_DEFAULTS.fieldDensity).trim() || ER_DEFAULTS.fieldDensity;
+  const maxDepthRaw = String(ui.erMaxDepth?.value || '').trim();
+  const maxDepthNum = Number(maxDepthRaw);
+  const extraAppIds = String(ui.erExtraApps?.value || '')
+    .split(/[\s,，]+/)
+    .map((v) => v.trim())
+    .filter((v) => /^\d+$/.test(v));
+  const startAppIds = [startAppId, ...extraAppIds].filter((v, i, arr) => /^\d+$/.test(v) && arr.indexOf(v) === i);
+  return {
+    startAppId,
+    startAppIds,
+    layoutName,
+    fieldDensity: ['compact', 'standard', 'full'].includes(fieldDensity) ? fieldDensity : ER_DEFAULTS.fieldDensity,
+    maxDepth: Number.isFinite(maxDepthNum) && maxDepthNum >= 0 ? Math.floor(maxDepthNum) : ER_DEFAULTS.maxDepth,
+    includeSubtableFields: !!ui.erIncludeSubtable?.checked,
+    includeReverseLookup: !!ui.erIncludeReverseLookup?.checked,
+    maxFields: ER_DEFAULTS.maxFields,
+    sleepMs: ER_DEFAULTS.sleepMs,
+    source: commonParams().source
   };
+}
 
-  // src/featureDefs.mjs
-  var ICONS, FEATURE_DEFS, TAB_TO_FEATURE;
-  var init_featureDefs = __esm({
-    "src/featureDefs.mjs"() {
-      "use strict";
-      ICONS = Object.freeze({
-        diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
-        reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
-        field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
-        jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
-        er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
-        processFlow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M10 6.5h4"/><path d="M17.5 9v2.5h-11V9"/><path d="M12 11.5V15"/></svg>',
-        design: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
-        settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
-        recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
-        sql: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h10"/><path d="M4 19h7"/><path d="M17 15l3 4 3-4"/></svg>',
-        apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>',
-        analyze: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>'
-      });
-      FEATURE_DEFS = [
-        {
-          key: "diff",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.diff,
-          label: "差分比較",
-          desc: "2アプリの設定差分を確認します。",
-          tabs: ["diff"],
-          tab: "diff",
-          diffSubTab: "conditions",
-          focusSelector: "#u_headerDiffSuite",
-          priority: "high",
-          riskLevel: "safe",
-          recommendedFor: ["最初に確認", "変更前チェック"],
-          usageOrder: 1,
-          onboardingOrder: 1,
-          badge: { tone: "recommended", label: "初回推奨", icon: "1" }
-        },
-        {
-          key: "reflect",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.reflect,
-          label: "プレビュー反映",
-          desc: "差分を見ながら比較先プレビューへ反映します。",
-          tabs: ["reflect"],
-          tab: "reflect",
-          subTab: "settings",
-          focusSelector: "#u_reflectAssist",
-          priority: "high",
-          riskLevel: "warning",
-          recommendedFor: ["差分確認後", "本番反映前の検証"],
-          usageOrder: 2,
-          onboardingOrder: 2,
-          badge: { tone: "caution", label: "要確認", icon: "2" }
-        },
-        {
-          key: "field",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.field,
-          label: "フィールド追加",
-          desc: "フィールド定義の追加・編集とコード変換用JSONの作成を行います。",
-          tabs: ["field"],
-          tab: "field",
-          subTab: "json",
-          focusSelector: "#u_fieldJson",
-          priority: "medium",
-          riskLevel: "warning",
-          recommendedFor: ["項目追加", "定義の一括修正"],
-          usageOrder: 4,
-          onboardingOrder: 4,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "jsconfig",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.jsconfig,
-          label: "JS/CSS設定",
-          desc: "単一アプリの customize.json 編集と JS/CSS 実ファイル取得を行います。",
-          tabs: ["jsconfig"],
-          tab: "jsconfig",
-          subTab: "editor",
-          focusSelector: "#u_jsconfigJson",
-          priority: "medium",
-          riskLevel: "warning",
-          recommendedFor: ["カスタマイズ配布", "環境同期"],
-          usageOrder: 5,
-          onboardingOrder: 5,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "design",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.design,
-          label: "設計書",
-          desc: "設計書や差分レポートを出力します。",
-          tabs: ["design"],
-          tab: "design",
-          focusSelector: '[data-act="exportDesignMd"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["変更記録", "レビュー資料作成"],
-          usageOrder: 3,
-          onboardingOrder: 3,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "settingsExport",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.settingsExport,
-          label: "設定一括取得",
-          desc: "複数アプリの設定JSONをまとめて保存します（データ・添付は除く）。",
-          tabs: ["settingsExport"],
-          tab: "settingsExport",
-          subTab: "export",
-          focusSelector: "#u_settingsExportAppIds",
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["バックアップ", "棚卸し"],
-          usageOrder: 6,
-          onboardingOrder: 6,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "er",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.er,
-          label: "ER図",
-          desc: "関連アプリの構造を ER 図で確認します。",
-          tabs: ["er"],
-          tab: "er",
-          subTab: "diagram",
-          focusSelector: "#u_erLayout",
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["現状把握", "依存関係確認"],
-          usageOrder: 7,
-          onboardingOrder: 7,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "processFlow",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.processFlow,
-          label: "プロセス図",
-          desc: "プロセス管理をフロー図で確認します。",
-          tabs: ["processFlow"],
-          tab: "processFlow",
-          focusSelector: '[data-act="renderProcessFlow"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["状態遷移確認", "運用レビュー"],
-          usageOrder: 8,
-          onboardingOrder: 8,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "recordMgr",
-          group: "data",
-          groupLabel: "データ・保守",
-          icon: ICONS.recordMgr,
-          label: "レコード管理",
-          desc: "レコードデータのCSV・添付・コメント・状態更新を扱います。",
-          tabs: ["recordMgr"],
-          tab: "recordMgr",
-          subTab: "status",
-          focusSelector: '[data-act="runBatchProcess"]',
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["保守作業", "テストデータ操作"],
-          usageOrder: 9,
-          onboardingOrder: 9,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "sql",
-          group: "data",
-          groupLabel: "データ・保守",
-          icon: ICONS.sql,
-          label: "SQL実行",
-          desc: "kintoneデータをSQLライクに参照します。",
-          tabs: ["sql"],
-          tab: "sql",
-          focusSelector: '[data-act="launchKintoneSql"]',
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["調査", "データ確認"],
-          usageOrder: 10,
-          onboardingOrder: 10,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "apiTester",
-          group: "data",
-          groupLabel: "データ・保守",
-          icon: ICONS.apiTester,
-          label: "APIテスター",
-          desc: "REST APIを直接試します。",
-          tabs: ["apiTester"],
-          tab: "apiTester",
-          focusSelector: "#u_apiTesterMethod",
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["調査", "レスポンス確認"],
-          usageOrder: 11,
-          onboardingOrder: 11,
-          badge: { tone: "caution", label: "上級者向け", icon: "!" }
-        },
-        {
-          key: "analyze",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.analyze,
-          label: "分析",
-          desc: "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。",
-          tabs: ["analyze"],
-          tab: "analyze",
-          subTab: "dashboard",
-          focusSelector: '[data-act="runAnalyzeDashboard"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["影響調査", "依存確認", "セキュリティ監査"],
-          usageOrder: 7.5,
-          onboardingOrder: 7.5,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        }
-      ];
-      TAB_TO_FEATURE = {};
-      FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
-        if (!TAB_TO_FEATURE[t]) TAB_TO_FEATURE[t] = f.key;
-      }));
-    }
-  });
-
-  // src/constants.ts
-  function resolveDefaultAppId() {
-    try {
-      if (typeof kintone !== "undefined" && kintone?.app?.getId) {
-        return String(kintone.app.getId() || "");
-      }
-    } catch (e) {
-    }
-    return "";
-  }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
-  var init_constants = __esm({
-    "src/constants.ts"() {
-      "use strict";
-      init_featureDefs();
-      TOOL_ID = "kintone-unified-suite-v2";
-      EXTERNAL_LIBRARIES = Object.freeze({
-        jszip: Object.freeze({
-          version: "3.10.1",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
-        }),
-        alasql: Object.freeze({
-          version: "4",
-          cdnCandidates: Object.freeze([
-            "https://cdn.jsdelivr.net/npm/alasql@4/dist/alasql.min.js",
-            "https://unpkg.com/alasql@4/dist/alasql.min.js",
-            "https://cdn.jsdelivr.net/npm/alasql@4"
-          ])
-        }),
-        cytoscape: Object.freeze({
-          version: "3.28.1",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
-          altVersion: "3.26.0",
-          altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"
-        }),
-        dagre: Object.freeze({
-          version: "0.8.5",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
-        }),
-        cytoscapeDagre: Object.freeze({
-          version: "2.5.0",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
-          altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
-        }),
-        googleFontsDmSansMono: Object.freeze({
-          cdnUrl: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap"
-        }),
-        jsoneditor: Object.freeze({
-          version: "9.10.3",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.js",
-          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.css"
-        }),
-        toastify: Object.freeze({
-          version: "1.12.0",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/toastify-js",
-          cssUrl: "https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
-        }),
-        driver: Object.freeze({
-          version: "1.3.1",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js",
-          cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
-        })
-      });
-      DEFAULT_APP_ID = resolveDefaultAppId();
-      DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-      DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
-      DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
-      REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
-      DEFAULT_SUBTAB_STATE = Object.freeze({
-        diff: "conditions",
-        reflect: "settings",
-        field: "json",
-        jsconfig: "editor",
-        recordMgr: "status",
-        er: "diagram",
-        settingsExport: "export",
-        analyze: "dashboard"
-      });
-      TOUR_STEP_CONNECTION = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_sourceApp",
-        title: "比較元 / 比較先を決める",
-        body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。プレビュー/本番の切替もここで行います。"
-      };
-      TOUR_STEP_SCOPE = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: '[data-act="openDiffScopePicker"]',
-        title: "比較対象セクションを選ぶ",
-        body: "「比較対象を選ぶ」から、差分比較で確認したい設定だけを選びます。まずはフィールド・レイアウト・ビュー・プロセス管理あたりが見やすいです。"
-      };
-      TOUR_STEP_NOISE = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_ignoreKeyInput",
-        title: "ノイズ差分を減らす",
-        body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
-      };
-      TOUR_STEP_RUN_DIFF = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_runDiffPrimary",
-        title: "差分比較を実行する",
-        body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
-      };
-      TOUR_STEP_REVIEW = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 差分結果の整理",
-        selector: "#u_diffSearch",
-        title: "結果を絞り込んで確認する",
-        body: "差分比較後は「差分結果の整理・出力」から、セクション・種別・重要度・検索で絞り込めます。ここで反映対象を見極めます。"
-      };
-      TOUR_STEP_PLAN = {
-        tab: "reflect",
-        path: "プレビュー反映",
-        selector: "#u_footerPlan",
-        title: "反映プランを先に確認する",
-        body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。"
-      };
-      TOUR_STEP_APPLY = {
-        tab: "reflect",
-        path: "プレビュー反映",
-        selector: "#u_footerApply",
-        title: "比較先プレビューへ反映する",
-        body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番デプロイは kintone 管理画面から手動で実施します。"
-      };
-      TOUR_STEP_RECORD = {
-        tab: "design",
-        subTab: "export",
-        path: "設計書 > 設計書出力",
-        selector: '[data-act="exportDesignMd"]',
-        title: "最後に記録を残す",
-        body: "作業後は設計書や差分レポートを出力して、変更内容を記録します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
-      };
-      GUIDED_TOUR_COURSES = Object.freeze({
-        full: {
-          label: "初回（全工程）",
-          description: "接続から記録出力までを順番に案内します（推奨）",
-          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD]
-        },
-        diff: {
-          label: "差分のみ確認",
-          description: "差分比較とレビューに絞った短縮コース",
-          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW]
-        },
-        apply: {
-          label: "反映まで実施",
-          description: "差分確認からプレビュー反映までをガイド",
-          steps: [TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY]
-        }
-      });
-      GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
-    }
-  });
-
-  // src/state.ts
-  function loadReflectApplyHistory() {
-    try {
-      const raw = sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-  function loadWorkHistory() {
-    try {
-      const raw = localStorage.getItem(WORK_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-  function normalizeConnectionPreset(entry) {
-    if (!entry || typeof entry !== "object") return null;
-    const sourceAppId = String(entry.sourceAppId || "").trim();
-    const targetAppId = String(entry.targetAppId || "").trim();
-    if (!sourceAppId && !targetAppId) return null;
-    const id = String(entry.id || "").trim() || `conn-${Date.now()}`;
-    const name = String(entry.name || "").trim() || `${sourceAppId || "-"} -> ${targetAppId || "-"}`;
-    return {
-      id,
-      name,
-      sourceAppId,
-      sourceGuestId: String(entry.sourceGuestId || "").trim(),
-      sourcePreview: !!entry.sourcePreview,
-      targetAppId,
-      targetGuestId: String(entry.targetGuestId || "").trim(),
-      targetPreview: entry.targetPreview == null ? true : !!entry.targetPreview,
-      savedAt: Number(entry.savedAt || Date.now()) || Date.now()
-    };
-  }
-  function loadConnectionPresets() {
-    try {
-      const raw = localStorage.getItem(CONNECTION_PRESETS_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
-    } catch {
-      return [];
-    }
-  }
-  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY, CONNECTION_PRESETS_LIMIT;
-  var init_state = __esm({
-    "src/state.ts"() {
-      "use strict";
-      init_constants();
-      state = {
-        activeTab: "reflect",
-        activeFeatureKey: "",
-        activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
-        launcherSortMode: "onboarding",
-        lastSourceBundle: null,
-        lastTargetBundle: null,
-        lastDiffRows: [],
-        lastFetchIssues: [],
-        lastDiffAt: null,
-        lastDiffSignature: "",
-        lastApplyPlan: null,
-        lastApplyCompletedAt: null,
-        lastApplyCompletedMode: "",
-        lastApplyCompletedHadError: false,
-        lastApplyCompletedAppId: "",
-        lastApplyReport: null,
-        reflectApplyHistory: [],
-        reflectApplyHistoryOpen: false,
-        workHistory: [],
-        workHistoryOpen: true,
-        connectionPresets: [],
-        reflectPlanPreviewKeyword: "",
-        reflectPlanPreviewChangedOnly: false,
-        reflectApplyChecklist: { diff: false, plan: false, target: false },
-        lastPreviewBackupPayload: null,
-        lastPreviewBackupFilename: "",
-        diffViewTheme: "light",
-        diffCollapsedSections: /* @__PURE__ */ new Set(),
-        diffSectionVisibleCounts: {},
-        diffSelectedIds: /* @__PURE__ */ new Set(),
-        diffFavoritePaths: /* @__PURE__ */ new Set(),
-        diffFavoritesOnly: false,
-        diffViewedKeys: /* @__PURE__ */ new Set(),
-        diffReviewMeta: {},
-        diffHideViewed: false,
-        diffFocusedRowId: "",
-        diffExcludeSections: null,
-        diffSelectionAnchorId: "",
-        diffIncludeSame: true,
-        diffFilterSection: "",
-        diffFilterType: "",
-        diffFilterSeverity: "",
-        diffFilterTableOnly: false,
-        diffFilterTableKeyword: "",
-        diffSearchFieldName: false,
-        diffExportMode: "all",
-        diffExportContent: "diffOnly",
-        diffIgnoreSuggestions: [],
-        reflectRows: [],
-        reflectSelectedIds: /* @__PURE__ */ new Set(),
-        reflectNodeModes: {},
-        reflectUndoStack: [],
-        reflectRedoStack: [],
-        reflectPropertyFilters: /* @__PURE__ */ new Set(),
-        reflectPropertyPanelOpen: false,
-        reflectActiveSidebarSection: null,
-        reflectActiveNodeId: "",
-        reflectDetailTab: "diff",
-        importedSourceBundle: null,
-        importedTargetBundle: null,
-        importedSourceName: "",
-        importedTargetName: "",
-        patchJsonPanelOpen: false,
-        importedPatchPayload: null,
-        guidedTourActive: false,
-        guidedTourIndex: 0,
-        running: false,
-        lastResultByTab: {}
-      };
-      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
-      WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
-      CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
-      CONNECTION_PRESETS_LIMIT = 30;
-      state.reflectApplyHistory = loadReflectApplyHistory();
-      state.workHistory = loadWorkHistory();
-      state.connectionPresets = loadConnectionPresets();
-    }
-  });
-
-  // src/utils.ts
-  function esc(s) {
-    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-  function safeJsonForScript(v) {
-    return JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-  }
-  function compactForLog(value, max = 220) {
-    try {
-      const raw = typeof value === "string" ? value : JSON.stringify(value);
-      if (!raw) return "";
-      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
-    } catch (e) {
-      const raw = String(value ?? "");
-      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
-    }
-  }
-  function apiErrorWithContext(err, meta) {
-    if (err && err.__apiDiag) return err;
-    const method = meta?.method || "GET";
-    const prefix = meta?.prefix || "";
-    const path = meta?.path || "";
-    const bodyOrParams = meta?.payload;
-    const app = bodyOrParams?.app ?? bodyOrParams?.id ?? bodyOrParams?.apps?.[0] ?? "";
-    const bodySummary = compactForLog(bodyOrParams);
-    const endpoint = `${prefix}${path}`;
-    const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
-    const baseMessage = err?.message || String(err);
-    const wrapped = new Error(`${baseMessage}
-${contextLine}`);
-    wrapped.__apiDiag = true;
-    wrapped.original = err;
-    if (err?.code) wrapped.code = err.code;
-    if (err?.id) wrapped.id = err.id;
-    if (err?.stack) wrapped.stack = err.stack;
-    return wrapped;
-  }
-  function nowStamp() {
-    const d = /* @__PURE__ */ new Date();
-    const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
-  }
-  function triggerDownload(filename, blob) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    window.setTimeout(() => {
-      try {
-        URL.revokeObjectURL(url);
-      } catch (e) {
-      }
-      try {
-        a.remove();
-      } catch (e) {
-      }
-    }, 0);
-  }
-  function downloadText(filename, text, type) {
-    triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
-  }
-  var init_utils = __esm({
-    "src/utils.ts"() {
-      "use strict";
-      init_constants();
-    }
-  });
-
-  // src/diff/engine.ts
-  var init_engine = __esm({
-    "src/diff/engine.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_utils();
-    }
-  });
-
-  // src/api.ts
-  function buildApiPrefix(guestId, preview) {
-    const g = String(guestId || "").trim();
-    if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
-    return `/k/v1${preview ? "/preview" : ""}`;
-  }
-  function normalizeApiGetOptions(optionsOrRetries) {
-    if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
-    if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
-    return optionsOrRetries;
-  }
-  function resolveHttpStatus(error) {
-    const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
-    if (Number.isFinite(direct) && direct > 0) return direct;
-    const text = String(error?.message || "");
-    const matched = text.match(/\b([45]\d{2})\b/);
-    return matched ? Number(matched[1]) : 0;
-  }
-  function isRetriableApiError(error) {
-    if (!error) return false;
-    const status = resolveHttpStatus(error);
-    if (RETRIABLE_STATUS_CODES.has(status)) return true;
-    const code = String(error?.code || "").toUpperCase();
-    if (code && (code.includes("NETWORK") || code.includes("TIMEOUT") || code === "ECONNRESET")) return true;
-    const message = String(error?.message || "").toLowerCase();
-    return message.includes("network") || message.includes("timeout");
-  }
-  function computeRetryDelayMs(attempt, baseDelayMs, maxDelayMs) {
-    const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
-    const jitter = Math.random() * Math.min(200, baseDelayMs);
-    return Math.round(expDelay + jitter);
-  }
-  function touchApiPathMetric(path, field) {
-    const key = String(path || "");
-    const row2 = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
-    row2[field] += 1;
-    apiGetMetrics.byPath[key] = row2;
-    return row2;
-  }
-  async function apiGet(prefix, path, params, optionsOrRetries) {
-    const options = normalizeApiGetOptions(optionsOrRetries);
-    const retries = Number.isFinite(options.retries) ? Math.max(1, Number(options.retries)) : DEFAULT_API_GET_RETRIES;
-    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? Math.max(1, Number(options.baseDelayMs)) : DEFAULT_RETRY_BASE_DELAY_MS;
-    const maxDelayMs = Number.isFinite(options.maxDelayMs) ? Math.max(baseDelayMs, Number(options.maxDelayMs)) : DEFAULT_RETRY_MAX_DELAY_MS;
-    let err;
-    const startAt = Date.now();
-    apiGetMetrics.calls += 1;
-    touchApiPathMetric(path, "calls");
-    for (let i = 0; i < retries; i++) {
-      try {
-        const res = await kintone.api(`${prefix}${path}`, "GET", params);
-        apiGetMetrics.lastLatencyMs = Date.now() - startAt;
-        apiGetMetrics.lastError = "";
-        return res;
-      } catch (e) {
-        err = e;
-        const retriable = isRetriableApiError(e);
-        if (i < retries - 1 && retriable) {
-          apiGetMetrics.retries += 1;
-          touchApiPathMetric(path, "retries");
-          const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
-          await new Promise((r) => setTimeout(r, waitMs));
-          continue;
-        }
-        break;
-      }
-    }
-    apiGetMetrics.failures += 1;
-    const pathMetric = touchApiPathMetric(path, "failures");
-    const lastError = err?.message || String(err);
-    pathMetric.lastError = lastError;
-    apiGetMetrics.lastError = lastError;
-    apiGetMetrics.lastLatencyMs = Date.now() - startAt;
-    throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
-  }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
-  var init_api = __esm({
-    "src/api.ts"() {
-      "use strict";
-      init_constants();
-      init_utils();
-      init_state();
-      DEFAULT_API_GET_RETRIES = 3;
-      DEFAULT_RETRY_BASE_DELAY_MS = 500;
-      DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
-      RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
-      apiGetMetrics = {
-        calls: 0,
-        retries: 0,
-        failures: 0,
-        lastLatencyMs: 0,
-        lastError: "",
-        byPath: {}
-      };
-    }
-  });
-
-  // src/diff/enrich.ts
-  var init_enrich = __esm({
-    "src/diff/enrich.ts"() {
-      "use strict";
-      init_constants();
-      init_utils();
-    }
-  });
-
-  // src/diff/export.ts
-  var init_export = __esm({
-    "src/diff/export.ts"() {
-      init_constants();
-      init_utils();
-      init_state();
-      init_engine();
-      init_enrich();
-      init_filter();
-      init_api();
-    }
-  });
-
-  // src/diff/filter.ts
-  var init_filter = __esm({
-    "src/diff/filter.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_engine();
-      init_api();
-      init_export();
-    }
-  });
-
-  // src/reflect/nodeModeUi.ts
-  var init_nodeModeUi = __esm({
-    "src/reflect/nodeModeUi.ts"() {
-      "use strict";
-      init_state();
-    }
-  });
-
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
-    }
-  });
-
-  // src/oss_integrations.ts
-  var init_oss_integrations = __esm({
-    "src/oss_integrations.ts"() {
-      "use strict";
-      init_utils();
-      init_dialog();
-    }
-  });
-
-  // src/ui/components.ts
-  function setComponentUi(uiRefs) {
-    ui2 = uiRefs;
-  }
-  function setStatus(msg, isError = false) {
-    if (!ui2.status) return;
-    ui2.status.textContent = msg;
-    ui2.status.style.background = "";
-    ui2.status.style.color = "";
-    ui2.status.classList.remove("status--neutral", "status--error");
-    ui2.status.classList.add(isError ? "status--error" : "status--neutral");
-    const bar = ui2.status.closest?.(".status-bar");
-    if (bar) bar.classList.toggle("status-bar--error", !!isError);
-  }
-  var ui2, SCOPE_PICKER_META;
-  var init_components = __esm({
-    "src/ui/components.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_utils();
-      init_filter();
-      init_engine();
-      init_enrich();
-      init_nodeModeUi();
-      init_constants();
-      init_dialog();
-      init_oss_integrations();
-      ui2 = {};
-      SCOPE_PICKER_META = Object.freeze({
-        diff: Object.freeze({
-          title: "比較対象セクション",
-          sub: "差分比較で取得する API 設定を選びます。"
-        }),
-        reflect: Object.freeze({
-          title: "反映するセクション",
-          sub: "プレビュー反映でまとめて適用するセクションを選びます。"
-        }),
-        settingsExport: Object.freeze({
-          title: "取得対象セクション",
-          sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
-        })
-      });
-    }
-  });
-
-  // src/tabs/preview-compare.ts
-  var init_preview_compare = __esm({
-    "src/tabs/preview-compare.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/tabs/diff.ts
-  var init_diff = __esm({
-    "src/tabs/diff.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_utils();
-      init_api();
-      init_engine();
-      init_enrich();
-      init_filter();
-      init_export();
-      init_export();
-      init_components();
-      init_dialog();
-      init_preview_compare();
-      init_nodeModeUi();
-    }
-  });
-
-  // src/entries/er-lite-ui.ts
-  init_constants();
-  init_components();
-
-  // src/tabs/er.ts
-  init_constants();
-  init_state();
-  init_utils();
-  init_api();
-  init_components();
-  init_dialog();
-  init_diff();
-  var ER_DEFAULTS = {
-    maxFields: 220,
-    sleepMs: 80,
-    layoutName: "dagre",
-    fieldDensity: "standard",
-    maxDepth: 0,
-    includeSubtableFields: true,
-    includeReverseLookup: false
+export function formatErLayoutLabel(layoutName) {
+  const map = {
+    dagre: 'Dagre',
+    breadthfirst: 'ツリー',
+    cose: 'フォース',
+    concentric: '同心円',
+    grid: 'グリッド',
+    circle: '円形'
   };
-  var ER_TRAVERSE_RELATION_KINDS = /* @__PURE__ */ new Set(["LOOKUP", "REF", "ACTION"]);
-  function normalizeFieldProperties(response) {
-    const props = response?.properties;
-    return props && typeof props === "object" && !Array.isArray(props) ? props : {};
-  }
-  function buildScriptTag(src, fallbackSrc = "") {
-    const safeSrc = esc(src || "");
-    const safeFallback = esc(fallbackSrc || "");
-    const fallback = safeFallback ? ` onerror="this.onerror=null;this.src='${safeFallback}'"` : "";
-    return `<script src="${safeSrc}"${fallback}><\/script>`;
-  }
-  function formatErLayoutLabel(layoutName) {
-    const map = {
-      dagre: "Dagre",
-      breadthfirst: "ツリー",
-      cose: "フォース",
-      concentric: "同心円",
-      grid: "グリッド",
-      circle: "円形"
-    };
-    return map[layoutName] || layoutName || "-";
-  }
-  var progressUi = /* @__PURE__ */ (() => {
-    let el, bar, msg;
-    return {
-      init() {
-        if (el) el.remove();
-        el = document.createElement("div");
-        Object.assign(el.style, {
-          position: "fixed",
-          top: "20px",
-          right: "20px",
-          width: "320px",
-          padding: "16px",
-          background: "rgba(10,10,18,0.94)",
-          color: "#fff",
-          borderRadius: "12px",
-          zIndex: "999999",
-          fontFamily: "sans-serif",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.5)"
-        });
-        el.innerHTML = `
+  return map[layoutName] || layoutName || '-';
+}
+
+const progressUi = (() => {
+  let el, bar, msg;
+  return {
+    init() {
+      if (el) el.remove();
+      el = document.createElement("div");
+      Object.assign(el.style, {
+        position: "fixed", top: "20px", right: "20px", width: "320px",
+        padding: "16px", background: "rgba(10,10,18,0.94)", color: "#fff",
+        borderRadius: "12px", zIndex: "999999", fontFamily: "sans-serif",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+      });
+      el.innerHTML = `
       <div style="font-weight:700;margin-bottom:10px;font-size:14px;">📊 ER図を生成中...</div>
       <div style="background:#333;height:8px;border-radius:4px;overflow:hidden;">
         <div id="_eb" style="width:0%;height:100%;background:linear-gradient(90deg,#00d4ff,#7b61ff);transition:width .3s;border-radius:4px;"></div>
       </div>
       <div id="_em" style="font-size:12px;margin-top:8px;color:#aaa;">準備中...</div>`;
-        document.body.appendChild(el);
-        bar = el.querySelector("#_eb");
-        msg = el.querySelector("#_em");
-      },
-      update(p, t) {
-        if (bar) bar.style.width = p + "%";
-        if (msg) msg.textContent = t;
-      },
-      close() {
-        this.update(100, "完了！");
-        setTimeout(() => {
-          el.style.opacity = "0";
-          setTimeout(() => el.remove(), 600);
-        }, 2e3);
-      },
-      error(e) {
-        this.update(100, "エラー: " + e);
-        if (bar) bar.style.background = "#f44";
-      }
-    };
-  })();
-  var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  var fetchAllApps = async (options) => {
-    const prefix = buildApiPrefix(options?.source?.guestId, false);
-    const apps = [];
-    const limit = 100;
-    for (let offset = 0; ; offset += limit) {
-      const resp = await apiGet(prefix, "/apps.json", { limit, offset });
-      const chunk = Array.isArray(resp?.apps) ? resp.apps : [];
-      apps.push(...chunk);
-      if (chunk.length < limit) break;
-    }
-    return apps;
+      document.body.appendChild(el);
+      bar = el.querySelector("#_eb"); msg = el.querySelector("#_em");
+    },
+    update(p, t) { if (bar) bar.style.width = p + "%"; if (msg) msg.textContent = t; },
+    close() { this.update(100, "完了！"); setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 600); }, 2e3); },
+    error(e) { this.update(100, "エラー: " + e); if (bar) bar.style.background = "#f44"; },
   };
-  var getSchema = async (appId, options, cache) => {
-    if (cache.has(appId)) return cache.get(appId);
-    try {
-      const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
-      const appInfoPrefix = buildApiPrefix(options?.source?.guestId, false);
-      const [fR, aR, actionResp] = await Promise.all([
-        apiGet(prefix, "/app/form/fields.json", { app: appId }),
-        apiGet(appInfoPrefix, "/app.json", { id: appId }).catch((error) => ({
-          name: `アプリ ${appId}`,
-          _fetchError: error?.message || String(error)
-        })),
-        apiGet(prefix, "/app/actions.json", { app: appId }).catch(() => ({ actions: {} }))
-      ]);
-      const fields = [], relations = [];
-      const walk = (props, parentTable = "", parentTableLabel = "") => {
-        for (const [c, f] of Object.entries(props)) {
-          if (!f || typeof f !== "object") continue;
-          if (["GROUP", "SPACER", "HR", "LABEL"].includes(f.type)) continue;
-          if (f.type === "SUBTABLE") {
-            fields.push({
-              code: c,
-              label: f.label,
-              type: "SUBTABLE",
-              sub: true,
-              inSubtable: !!parentTable,
-              tableCode: parentTable || "",
-              tableLabel: parentTableLabel || "",
-              path: c,
-              displayPath: f.label ? `${f.label} [${c}]` : c
-            });
-            if (options?.includeSubtableFields) walk(f.fields || {}, c, f.label || c);
-            continue;
-          }
-          const hasLookupSetting = !!(f.lookup && typeof f.lookup === "object");
-          const isL = hasLookupSetting;
-          const isR = f.type === "REFERENCE_TABLE";
-          const isPK = /^(\$id|record_number|レコード番号)$/i.test(c);
-          const fieldPath = parentTable ? `${parentTable}.${c}` : c;
-          const displayPath = parentTableLabel ? `${parentTableLabel} > ${f.label || c}` : f.label || c;
+})();
+
+export { progressUi, ER_DEFAULTS };
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const fetchAllApps = async (options) => {
+  const prefix = buildApiPrefix(options?.source?.guestId, false);
+  const apps = [];
+  const limit = 100;
+  for (let offset = 0; ; offset += limit) {
+    const resp = await apiGet(prefix, '/apps.json', { limit, offset });
+    const chunk = Array.isArray(resp?.apps) ? resp.apps : [];
+    apps.push(...chunk);
+    if (chunk.length < limit) break;
+  }
+  return apps;
+};
+
+const getSchema = async (appId, options, cache) => {
+  if (cache.has(appId)) return cache.get(appId);
+  try {
+    const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
+    const appInfoPrefix = buildApiPrefix(options?.source?.guestId, false);
+    const [fR, aR, actionResp] = await Promise.all([
+      apiGet(prefix, '/app/form/fields.json', { app: appId }),
+      apiGet(appInfoPrefix, '/app.json', { id: appId }).catch((error) => ({
+        name: `アプリ ${appId}`,
+        _fetchError: error?.message || String(error)
+      })),
+      apiGet(prefix, '/app/actions.json', { app: appId }).catch(() => ({ actions: {} })),
+    ]);
+    const fields = [], relations = [];
+    const walk = (props, parentTable = '', parentTableLabel = '') => {
+      for (const [c, f] of Object.entries(props) as Array<[string, any]>) {
+        if (!f || typeof f !== 'object') continue;
+        if (["GROUP", "SPACER", "HR", "LABEL"].includes(f.type)) continue;
+        if (f.type === "SUBTABLE") {
           fields.push({
             code: c,
-            label: f.label || c,
-            type: f.type,
-            required: !!f.required,
-            unique: !!f.unique,
-            isPK,
-            isLookup: isL,
-            isRef: isR,
+            label: f.label,
+            type: "SUBTABLE",
+            sub: true,
             inSubtable: !!parentTable,
-            tableCode: parentTable || "",
-            tableLabel: parentTableLabel || "",
-            path: fieldPath,
-            displayPath
+            tableCode: parentTable || '',
+            tableLabel: parentTableLabel || '',
+            path: c,
+            displayPath: f.label ? `${f.label} [${c}]` : c
           });
-          if (isL && f.lookup?.relatedApp?.app) relations.push({
-            from: c,
-            fromPath: fieldPath,
-            fromLabel: f.label || c,
-            fromDisplay: displayPath,
-            fromTableCode: parentTable || "",
-            fromTableLabel: parentTableLabel || "",
-            toApp: Number(f.lookup.relatedApp.app),
-            toField: f.lookup.relatedKeyField,
-            kind: "LOOKUP"
-          });
-          if (isR && f.referenceTable?.relatedApp?.app) relations.push({
-            from: c,
-            fromPath: fieldPath,
-            fromLabel: f.label || c,
-            fromDisplay: displayPath,
-            fromTableCode: parentTable || "",
-            fromTableLabel: parentTableLabel || "",
-            toApp: Number(f.referenceTable.relatedApp.app),
-            toField: f.referenceTable.condition?.field,
-            kind: "REF"
-          });
+          if (options?.includeSubtableFields) walk(f.fields || ({} as any), c, f.label || c);
+          continue;
         }
-      };
-      walk(normalizeFieldProperties(fR));
-      Object.entries(actionResp?.actions || {}).forEach(([actionName, action], index) => {
-        const toApp = Number(action?.destApp?.app || action?.app?.app || 0);
-        if (!toApp) return;
-        relations.push({
-          from: `__ACTION__${index}`,
-          fromLabel: action?.name || actionName || `アクション${index + 1}`,
-          toApp,
-          toField: "",
-          kind: "ACTION"
+        const hasLookupSetting = !!(f.lookup && typeof f.lookup === 'object');
+        const isL = hasLookupSetting;
+        const isR = f.type === "REFERENCE_TABLE";
+        const isPK = /^(\$id|record_number|レコード番号)$/i.test(c);
+        const fieldPath = parentTable ? `${parentTable}.${c}` : c;
+        const displayPath = parentTableLabel ? `${parentTableLabel} > ${f.label || c}` : (f.label || c);
+        fields.push({
+          code: c,
+          label: f.label || c,
+          type: f.type,
+          required: !!f.required,
+          unique: !!f.unique,
+          isPK,
+          isLookup: isL,
+          isRef: isR,
+          inSubtable: !!parentTable,
+          tableCode: parentTable || '',
+          tableLabel: parentTableLabel || '',
+          path: fieldPath,
+          displayPath
         });
-      });
-      const linkedFieldPaths = new Set(
-        relations.filter((rel) => rel.kind === "LOOKUP" || rel.kind === "REF").map((rel) => String(rel.fromPath || rel.from || "").trim()).filter(Boolean)
-      );
-      const essentialFields = fields.filter((field) => {
-        if (field.type === "SUBTABLE") return false;
-        if (field.isPK || field.unique) return true;
-        return linkedFieldPaths.has(String(field.path || field.code || "").trim());
-      });
-      const visibleFieldsSource = essentialFields.length ? essentialFields : fields.filter((field) => field.type !== "SUBTABLE").slice(0, 6);
-      const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
-      const r = {
-        id: appId,
-        name: aR.name || `アプリ ${appId}`,
-        spaceId: aR.spaceId || null,
-        threadId: aR.threadId || null,
-        fields: visibleFields,
-        relations,
-        ok: true,
-        createdAt: aR.createdAt,
-        modifiedAt: aR.modifiedAt,
-        requiredCount: visibleFields.filter((field) => !!field.required).length,
-        lookupCount: relations.filter((rel) => rel.kind === "LOOKUP").length,
-        refCount: relations.filter((rel) => rel.kind === "REF").length,
-        sourceGuestId: options?.source?.guestId || ""
-      };
-      cache.set(appId, r);
-      return r;
-    } catch (e) {
-      console.error(`App ${appId}:`, e);
-      const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], relations: [], ok: false };
-      cache.set(appId, r);
-      return r;
-    }
-  };
-  var crawl = async (startIds, options) => {
-    const cache = /* @__PURE__ */ new Map();
-    const visited = /* @__PURE__ */ new Set();
-    let reverseLookupIndex = null;
-    const enqueueIfNeeded = (queue, appId, depth) => {
-      if (!Number.isFinite(appId) || appId <= 0) return;
-      if (visited.has(appId) || queue.some((item) => item.id === appId)) return;
-      queue.push({ id: appId, depth });
+        if (isL && f.lookup?.relatedApp?.app) relations.push({
+          from: c,
+          fromPath: fieldPath,
+          fromLabel: f.label || c,
+          fromDisplay: displayPath,
+          fromTableCode: parentTable || '',
+          fromTableLabel: parentTableLabel || '',
+          toApp: Number(f.lookup.relatedApp.app),
+          toField: f.lookup.relatedKeyField,
+          kind: "LOOKUP"
+        });
+        if (isR && f.referenceTable?.relatedApp?.app) relations.push({
+          from: c,
+          fromPath: fieldPath,
+          fromLabel: f.label || c,
+          fromDisplay: displayPath,
+          fromTableCode: parentTable || '',
+          fromTableLabel: parentTableLabel || '',
+          toApp: Number(f.referenceTable.relatedApp.app),
+          toField: f.referenceTable.condition?.field,
+          kind: "REF"
+        });
+      }
     };
-    const seeds = (Array.isArray(startIds) ? startIds : [startIds]).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
-    const q = seeds.map((id) => ({ id, depth: 0 }));
-    const apps = [];
-    if (options?.includeReverseLookup) {
-      progressUi.update(3, "逆引き探索用に全アプリを走査中...");
-      const allApps = await fetchAllApps(options);
-      reverseLookupIndex = /* @__PURE__ */ new Map();
-      for (let i = 0; i < allApps.length; i += 1) {
-        const appId = Number(allApps[i]?.appId);
-        if (!appId) continue;
-        const schema = await getSchema(appId, options, cache);
-        for (const rel of schema.relations || []) {
-          if (!ER_TRAVERSE_RELATION_KINDS.has(rel.kind)) continue;
-          const targetId = Number(rel.toApp);
-          if (!targetId) continue;
-          const set = reverseLookupIndex.get(targetId) || /* @__PURE__ */ new Set();
-          set.add(appId);
-          reverseLookupIndex.set(targetId, set);
-        }
-        if (i % 20 === 0) progressUi.update(3 + Math.min(20, Math.floor(i / Math.max(1, allApps.length) * 20)), `逆引き探索インデックス作成中... ${i + 1}/${allApps.length}`);
-        if (i % 25 === 0) await sleep(Math.max(10, Math.floor((options.sleepMs || ER_DEFAULTS.sleepMs) / 2)));
-      }
-    }
-    while (q.length) {
-      const current = q.shift();
-      const id = current?.id;
-      const depth = current?.depth || 0;
-      if (visited.has(id)) continue;
-      visited.add(id);
-      const a = await getSchema(id, options, cache);
-      a.depth = depth;
-      apps.push(a);
-      progressUi.update(Math.min(90, apps.length / Math.max(1, apps.length + q.length) * 100 | 0), `解析: ${a.name} / 深さ ${depth}`);
-      if (options?.maxDepth > 0 && depth >= options.maxDepth) {
-        await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
-        continue;
-      }
-      for (const r of a.relations) {
-        if (!ER_TRAVERSE_RELATION_KINDS.has(r.kind)) continue;
-        enqueueIfNeeded(q, Number(r.toApp), depth + 1);
-      }
-      if (reverseLookupIndex && reverseLookupIndex.has(id)) {
-        const reverseRefs = Array.from(reverseLookupIndex.get(id));
-        for (const srcId of reverseRefs) {
-          enqueueIfNeeded(q, Number(srcId), depth + 1);
-        }
-      }
-      await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
-    }
-    return apps;
-  };
-  var buildHTML = (apps, options = {}) => {
-    const data = safeJsonForScript(apps);
-    const diagramOptions = safeJsonForScript({
-      startAppId: options.startAppId || "",
-      startAppIds: Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""],
-      layoutName: options.layoutName || ER_DEFAULTS.layoutName,
-      fieldDensity: options.fieldDensity || ER_DEFAULTS.fieldDensity,
-      maxDepth: options.maxDepth || 0,
-      includeSubtableFields: !!options.includeSubtableFields,
-      includeReverseLookup: !!options.includeReverseLookup,
-      sourceGuestId: options.source?.guestId || "",
-      sourcePreview: !!options.source?.preview
+    walk(normalizeFieldProperties(fR));
+    Object.entries(actionResp?.actions || ({} as any)).forEach(([actionName, action]: [string, any], index) => {
+      const toApp = Number(action?.destApp?.app || action?.app?.app || 0);
+      if (!toApp) return;
+      relations.push({
+        from: `__ACTION__${index}`,
+        fromLabel: action?.name || actionName || `アクション${index + 1}`,
+        toApp,
+        toField: '',
+        kind: 'ACTION'
+      });
     });
-    const safeApps = Array.isArray(apps) ? apps : [];
-    const densityLabelMap = { compact: "コンパクト", standard: "標準", full: "詳細" };
-    const summary = safeApps.reduce((acc, app) => {
-      acc.relations += Array.isArray(app?.relations) ? app.relations.length : 0;
-      acc.lookups += Number(app?.lookupCount || 0);
-      acc.refs += Number(app?.refCount || 0);
-      acc.actions += (app?.relations || []).filter((rel) => rel?.kind === "ACTION").length;
-      acc.required += Number(app?.requiredCount || 0);
-      return acc;
-    }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
-    const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", ");
-    const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
-    const cytoscapeScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscape.cdnUrl, EXTERNAL_LIBRARIES.cytoscape.altCdnUrl);
-    const dagreScript = buildScriptTag(EXTERNAL_LIBRARIES.dagre.cdnUrl);
-    const cytoscapeDagreScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl, EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl);
-    return (
-      /*html*/
-      `<!DOCTYPE html>
+    const linkedFieldPaths = new Set(
+      relations
+        .filter((rel) => rel.kind === 'LOOKUP' || rel.kind === 'REF')
+        .map((rel) => String(rel.fromPath || rel.from || '').trim())
+        .filter(Boolean)
+    );
+    const essentialFields = fields.filter((field) => {
+      if (field.type === 'SUBTABLE') return false;
+      if (field.isPK || field.unique) return true;
+      return linkedFieldPaths.has(String(field.path || field.code || '').trim());
+    });
+    const visibleFieldsSource = essentialFields.length ? essentialFields : fields.filter((field) => field.type !== 'SUBTABLE').slice(0, 6);
+    const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
+    const r = {
+      id: appId,
+      name: aR.name || `アプリ ${appId}`,
+      spaceId: aR.spaceId || null,
+      threadId: aR.threadId || null,
+      fields: visibleFields,
+      relations,
+      ok: true,
+      createdAt: aR.createdAt,
+      modifiedAt: aR.modifiedAt,
+      requiredCount: visibleFields.filter((field) => !!field.required).length,
+      lookupCount: relations.filter((rel) => rel.kind === 'LOOKUP').length,
+      refCount: relations.filter((rel) => rel.kind === 'REF').length,
+      sourceGuestId: options?.source?.guestId || ''
+    };
+    cache.set(appId, r); return r;
+  } catch (e) { console.error(`App ${appId}:`, e); const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], relations: [], ok: false }; cache.set(appId, r); return r; }
+};
+
+export const crawl = async (startIds, options) => {
+  const cache = new Map();
+  const visited = new Set();
+  let reverseLookupIndex = null;
+  const enqueueIfNeeded = (queue, appId, depth) => {
+    if (!Number.isFinite(appId) || appId <= 0) return;
+    if (visited.has(appId) || queue.some((item) => item.id === appId)) return;
+    queue.push({ id: appId, depth });
+  };
+  const seeds = (Array.isArray(startIds) ? startIds : [startIds]).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
+  const q = seeds.map((id) => ({ id, depth: 0 }));
+  const apps = [];
+  if (options?.includeReverseLookup) {
+    progressUi.update(3, '逆引き探索用に全アプリを走査中...');
+    const allApps = await fetchAllApps(options);
+    reverseLookupIndex = new Map();
+    for (let i = 0; i < allApps.length; i += 1) {
+      const appId = Number(allApps[i]?.appId);
+      if (!appId) continue;
+      const schema = await getSchema(appId, options, cache);
+      for (const rel of schema.relations || []) {
+        if (!ER_TRAVERSE_RELATION_KINDS.has(rel.kind)) continue;
+        const targetId = Number(rel.toApp);
+        if (!targetId) continue;
+        const set = reverseLookupIndex.get(targetId) || new Set();
+        set.add(appId);
+        reverseLookupIndex.set(targetId, set);
+      }
+      if (i % 20 === 0) progressUi.update(3 + Math.min(20, Math.floor((i / Math.max(1, allApps.length)) * 20)), `逆引き探索インデックス作成中... ${i + 1}/${allApps.length}`);
+      if (i % 25 === 0) await sleep(Math.max(10, Math.floor((options.sleepMs || ER_DEFAULTS.sleepMs) / 2)));
+    }
+  }
+  while (q.length) {
+    const current = q.shift();
+    const id = current?.id;
+    const depth = current?.depth || 0;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const a = await getSchema(id, options, cache);
+    a.depth = depth;
+    apps.push(a);
+    progressUi.update(Math.min(90, (apps.length / Math.max(1, apps.length + q.length)) * 100 | 0), `解析: ${a.name} / 深さ ${depth}`);
+    if (options?.maxDepth > 0 && depth >= options.maxDepth) {
+      await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
+      continue;
+    }
+    for (const r of a.relations) {
+      if (!ER_TRAVERSE_RELATION_KINDS.has(r.kind)) continue;
+      enqueueIfNeeded(q, Number(r.toApp), depth + 1);
+    }
+    if (reverseLookupIndex && reverseLookupIndex.has(id)) {
+      const reverseRefs = Array.from(reverseLookupIndex.get(id));
+      for (const srcId of reverseRefs) {
+        enqueueIfNeeded(q, Number(srcId), depth + 1);
+      }
+    }
+    await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
+  }
+  return apps;
+};
+
+export const buildHTML = (apps, options: any = {}) => {
+  const data = safeJsonForScript(apps);
+  const diagramOptions = safeJsonForScript({
+    startAppId: options.startAppId || '',
+    startAppIds: Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ''],
+    layoutName: options.layoutName || ER_DEFAULTS.layoutName,
+    fieldDensity: options.fieldDensity || ER_DEFAULTS.fieldDensity,
+    maxDepth: options.maxDepth || 0,
+    includeSubtableFields: !!options.includeSubtableFields,
+    includeReverseLookup: !!options.includeReverseLookup,
+    sourceGuestId: options.source?.guestId || '',
+    sourcePreview: !!options.source?.preview
+  });
+  const safeApps = Array.isArray(apps) ? apps : [];
+  const densityLabelMap = { compact: 'コンパクト', standard: '標準', full: '詳細' };
+  const summary = safeApps.reduce((acc, app) => {
+    acc.relations += Array.isArray(app?.relations) ? app.relations.length : 0;
+    acc.lookups += Number(app?.lookupCount || 0);
+    acc.refs += Number(app?.refCount || 0);
+    acc.actions += (app?.relations || []).filter((rel) => rel?.kind === 'ACTION').length;
+    acc.required += Number(app?.requiredCount || 0);
+    return acc;
+  }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
+  const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || '']).filter(Boolean).join(', ');
+  const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || '-');
+  const cytoscapeScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscape.cdnUrl, EXTERNAL_LIBRARIES.cytoscape.altCdnUrl);
+  const dagreScript = buildScriptTag(EXTERNAL_LIBRARIES.dagre.cdnUrl);
+  const cytoscapeDagreScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl, EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl);
+  return /*html*/`<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1621,9 +759,9 @@ body{font-family:'DM Sans',sans-serif;background:
 
 <div id="banner">
   <span class="meta-pill"><b>アプリ数</b> ${apps.length}</span>
-  <span class="meta-pill"><b>ゲスト</b> ${esc(options.source?.guestId ? `ゲスト ${String(options.source.guestId)}` : "通常空間")}</span>
-  <span class="meta-pill"><b>モード</b> ${options.source?.preview ? "プレビュー" : "本番"}</span>
-  <span class="meta-pill"><b>サブテーブル</b> ${options.includeSubtableFields ? "ON" : "OFF"}</span>
+  <span class="meta-pill"><b>ゲスト</b> ${esc(options.source?.guestId ? `ゲスト ${String(options.source.guestId)}` : '通常空間')}</span>
+  <span class="meta-pill"><b>モード</b> ${options.source?.preview ? 'プレビュー' : '本番'}</span>
+  <span class="meta-pill"><b>サブテーブル</b> ${options.includeSubtableFields ? 'ON' : 'OFF'}</span>
 </div>
 
 <div id="overview">
@@ -1641,7 +779,7 @@ body{font-family:'DM Sans',sans-serif;background:
     <div class="ov-card"><span class="ov-kpi">${summary.actions}</span><span class="ov-label">アクション</span></div>
   </div>
   <div class="ov-tip-row">
-    <span>開始: ${esc(startAppText || "-")}</span>
+    <span>開始: ${esc(startAppText || '-')}</span>
     <span>必須項目: ${summary.required}</span>
     <span>クリックで詳細</span>
     <span>右クリックで固定</span>
@@ -3078,297 +2216,59 @@ cy.on("mouseout","node",()=>{if(tipEl) tipEl.style.display="none";});
 cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=(e.originalEvent.clientX+14)+"px";tipEl.style.top=(e.originalEvent.clientY+14)+"px";}});
 <\/script>
 </body>
-</html>`
+</html>`;
+};
+
+
+export async function runGenerateERDiagram() {
+  const options = readErDiagramOptions();
+  if (!options.startAppIds?.length) throw new Error('比較元アプリID（および追加起点ID）を入力してください');
+  const popup = getToolWindow().open('', '_blank');
+  if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
+  popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
+  setStatus(`ER図の解析を開始します... 起点 ${options.startAppIds.join(",")} / ${formatErLayoutLabel(options.layoutName)} / ${options.fieldDensity}`);
+  progressUi.init();
+  progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
+
+  try {
+    const apps = await crawl(options.startAppIds, options);
+    progressUi.update(94, 'HTML生成中...');
+    const html = buildHTML(apps, options);
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    popup.location.href = url;
+    progressUi.close();
+    setStatus(`ER図の生成完了: ${apps.length}アプリを別タブ表示しました`);
+    setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+  } catch (e) {
+    try { popup.close(); } catch (e) { /* noop */ }
+    progressUi.error(e.message || String(e));
+    throw e;
+  }
+}
+
+export async function runExportERDiagramHtml() {
+  const options = readErDiagramOptions();
+  if (!options.startAppIds?.length) throw new Error('比較元アプリID（および追加起点ID）を入力してください');
+  setStatus(`ER図HTMLを生成します... 起点 ${options.startAppIds.join(",")}`);
+  progressUi.init();
+  progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
+
+  try {
+    const apps = await crawl(options.startAppIds, options);
+    progressUi.update(94, 'HTML保存データ生成中...');
+    const html = buildHTML(apps, options);
+    const guestSuffix = options.source?.guestId ? `_guest${options.source.guestId}` : '';
+    const previewSuffix = options.source?.preview ? '_preview' : '_prod';
+    downloadText(
+      `kintone_erd_app${options.startAppId}${guestSuffix}${previewSuffix}_${nowStamp()}.html`,
+      html,
+      'text/html'
     );
-  };
-
-  // src/tabs/er-standalone.ts
-  init_utils();
-  async function runGenerateERDiagramStandalone(opts, setStatus2) {
-    const appId = String(opts.appId || "").trim();
-    if (!appId) throw new Error("アプリIDを入力してください");
-    const startAppIds = [appId, ...opts.extraAppIds || []].filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
-    const options = {
-      startAppId: appId,
-      startAppIds,
-      layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
-      fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
-      maxDepth: Number(opts.maxDepth) || 0,
-      includeSubtableFields: opts.includeSubtableFields !== false,
-      includeReverseLookup: !!opts.includeReverseLookup,
-      maxFields: ER_DEFAULTS.maxFields,
-      sleepMs: ER_DEFAULTS.sleepMs,
-      source: { guestId: opts.guestId || "", preview: !!opts.preview }
-    };
-    const popup = window.open("", "_blank");
-    if (!popup) throw new Error("別タブを開けませんでした。ポップアップブロックを確認してください");
-    popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
-    setStatus2(`ER図を生成中... 起点 ${startAppIds.join(",")}`);
-    progressUi.init();
-    progressUi.update(4, `開始: 起点 ${startAppIds.join(",")}`);
-    try {
-      const apps = await crawl(startAppIds, options);
-      progressUi.update(94, "HTML生成中...");
-      const html = buildHTML(apps, options);
-      const blob = new Blob([html], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      popup.location.href = url;
-      progressUi.close();
-      setStatus2(`ER図の生成完了: ${apps.length}アプリを別タブ表示しました`);
-      setTimeout(() => URL.revokeObjectURL(url), 60 * 1e3);
-    } catch (e) {
-      try {
-        popup.close();
-      } catch (_) {
-      }
-      progressUi.error(e.message || String(e));
-      throw e;
-    }
+    progressUi.close();
+    setStatus(`ER図HTMLを保存しました (${apps.length}アプリ)`);
+  } catch (e) {
+    progressUi.error(e.message || String(e));
+    throw e;
   }
-  async function runExportERDiagramHtmlStandalone(opts, setStatus2) {
-    const appId = String(opts.appId || "").trim();
-    if (!appId) throw new Error("アプリIDを入力してください");
-    const startAppIds = [appId, ...opts.extraAppIds || []].filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
-    const options = {
-      startAppId: appId,
-      startAppIds,
-      layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
-      fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
-      maxDepth: Number(opts.maxDepth) || 0,
-      includeSubtableFields: opts.includeSubtableFields !== false,
-      includeReverseLookup: !!opts.includeReverseLookup,
-      maxFields: ER_DEFAULTS.maxFields,
-      sleepMs: ER_DEFAULTS.sleepMs,
-      source: { guestId: opts.guestId || "", preview: !!opts.preview }
-    };
-    setStatus2(`ER図HTMLを生成中... 起点 ${startAppIds.join(",")}`);
-    progressUi.init();
-    progressUi.update(4, `開始: 起点 ${startAppIds.join(",")}`);
-    try {
-      const apps = await crawl(startAppIds, options);
-      progressUi.update(94, "HTML保存データ生成中...");
-      const html = buildHTML(apps, options);
-      const guestSuffix = opts.guestId ? `_guest${opts.guestId}` : "";
-      const previewSuffix = opts.preview ? "_preview" : "_prod";
-      downloadText(
-        `kintone_erd_app${appId}${guestSuffix}${previewSuffix}_${nowStamp()}.html`,
-        html,
-        "text/html"
-      );
-      progressUi.close();
-      setStatus2(`ER図HTMLを保存しました (${apps.length}アプリ)`);
-    } catch (e) {
-      progressUi.error(e.message || String(e));
-      throw e;
-    }
-  }
-
-  // src/entries/liteMount.ts
-  init_components();
-  init_dialog();
-  var PANEL_STYLE = "position:fixed;z-index:999999;top:max(16px,2vh);right:max(16px,2vw);width:min(440px,94vw);max-height:min(92vh,880px);overflow:hidden;display:flex;flex-direction:column;background:#fff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 12px 40px rgba(15,23,42,.2);font:12px/1.5 system-ui,sans-serif;";
-  function mountKusLitePanel(opts) {
-    const { id, title, note } = opts;
-    const old = document.getElementById(id);
-    if (old) old.remove();
-    const root2 = document.createElement("div");
-    root2.id = id;
-    root2.style.cssText = PANEL_STYLE;
-    const head = document.createElement("div");
-    head.style.cssText = "flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;background:linear-gradient(125deg,#1d4ed8,#2563eb);color:#fff";
-    const t = document.createElement("div");
-    t.textContent = title;
-    t.style.cssText = "font-weight:700;font-size:14px";
-    const close = document.createElement("button");
-    close.type = "button";
-    close.textContent = "閉じる";
-    close.style.cssText = "padding:5px 10px;font-size:11px;border:1px solid rgba(255,255,255,.5);border-radius:8px;background:rgba(255,255,255,.15);color:#fff;cursor:pointer;font-weight:600";
-    close.addEventListener("click", () => {
-      root2.remove();
-      setRootElement(null);
-    });
-    head.appendChild(t);
-    head.appendChild(close);
-    root2.appendChild(head);
-    const scroll = document.createElement("div");
-    scroll.style.cssText = "padding:12px 14px 14px;overflow-y:auto;flex:1;min-height:0";
-    if (note) {
-      const n = document.createElement("div");
-      n.style.cssText = "color:#64748b;font-size:11px;line-height:1.5;margin-bottom:10px;padding:8px 10px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0";
-      n.textContent = note;
-      scroll.appendChild(n);
-    }
-    const status = document.createElement("div");
-    status.style.cssText = "padding:8px 10px;font-size:11px;background:#f1f5f9;border-radius:8px;margin-bottom:8px;min-height:1.2em;color:#0f172a";
-    const bodySlot = document.createElement("div");
-    scroll.appendChild(status);
-    scroll.appendChild(bodySlot);
-    const result = document.createElement("div");
-    result.style.cssText = "margin-top:8px;max-height:180px;overflow:auto;font-size:11px;border:1px solid #e2e8f0;border-radius:8px;background:#fafafa;display:none";
-    scroll.appendChild(result);
-    const busyText = document.createElement("span");
-    setComponentUi({ status, result, busyText });
-    setRootElement(root2);
-    root2.appendChild(scroll);
-    document.body.appendChild(root2);
-    return { root: root2, status, bodySlot, result };
-  }
-
-  // src/entries/er-lite-ui.ts
-  function row(labelHtml, child) {
-    const wrap = document.createElement("div");
-    wrap.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px";
-    const lab = document.createElement("span");
-    lab.style.cssText = "font-size:12px;font-weight:600;color:#334155;min-width:5em";
-    lab.innerHTML = labelHtml;
-    wrap.appendChild(lab);
-    wrap.appendChild(child);
-    return wrap;
-  }
-  function mkSelect(opts) {
-    const sel = document.createElement("select");
-    sel.style.cssText = "padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;background:#fff";
-    for (const [val, label] of opts) {
-      const o = document.createElement("option");
-      o.value = val;
-      o.textContent = label;
-      sel.appendChild(o);
-    }
-    return sel;
-  }
-  function mountErLitePanel() {
-    const { bodySlot } = mountKusLitePanel({
-      id: "kus-er-lite",
-      title: "ER図",
-      note: "起点アプリからルックアップ/関連レコードを辿り、ER図を生成します。統合ツール.js は不要です。"
-    });
-    const appInp = document.createElement("input");
-    appInp.type = "text";
-    appInp.placeholder = "アプリID";
-    appInp.value = DEFAULT_APP_ID || "";
-    appInp.style.cssText = "width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-    const extraInp = document.createElement("input");
-    extraInp.type = "text";
-    extraInp.placeholder = "追加起点ID (カンマ区切り)";
-    extraInp.style.cssText = "width:min(200px,60vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-    const guestInp = document.createElement("input");
-    guestInp.type = "text";
-    guestInp.placeholder = "ゲストID（任意）";
-    guestInp.style.cssText = "width:min(120px,40vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-    const layoutSel = mkSelect([
-      ["dagre", "Dagre (推奨)"],
-      ["breadthfirst", "ツリー"],
-      ["cose", "フォース"],
-      ["concentric", "同心円"],
-      ["grid", "グリッド"],
-      ["circle", "円形"]
-    ]);
-    const densitySel = mkSelect([
-      ["standard", "標準"],
-      ["compact", "コンパクト"],
-      ["full", "詳細"]
-    ]);
-    const depthInp = document.createElement("input");
-    depthInp.type = "number";
-    depthInp.min = "0";
-    depthInp.value = "0";
-    depthInp.placeholder = "0=無制限";
-    depthInp.style.cssText = "width:min(80px,30vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-    const subtableCb = document.createElement("input");
-    subtableCb.type = "checkbox";
-    subtableCb.checked = true;
-    const subtableLabel = document.createElement("label");
-    subtableLabel.style.cssText = "font-size:12px;color:#475569;display:inline-flex;align-items:center;gap:6px;cursor:pointer";
-    subtableLabel.appendChild(subtableCb);
-    subtableLabel.appendChild(document.createTextNode("サブテーブル展開"));
-    const reverseCb = document.createElement("input");
-    reverseCb.type = "checkbox";
-    const reverseLabel = document.createElement("label");
-    reverseLabel.style.cssText = "font-size:12px;color:#475569;display:inline-flex;align-items:center;gap:6px;cursor:pointer";
-    reverseLabel.appendChild(reverseCb);
-    reverseLabel.appendChild(document.createTextNode("逆引き探索"));
-    const optRow = document.createElement("div");
-    optRow.style.cssText = "display:flex;flex-wrap:wrap;gap:14px;margin-bottom:12px";
-    optRow.appendChild(subtableLabel);
-    optRow.appendChild(reverseLabel);
-    function source() {
-      return {
-        appId: appInp.value.trim(),
-        guestId: guestInp.value.trim(),
-        preview: false,
-        layoutName: layoutSel.value,
-        fieldDensity: densitySel.value,
-        maxDepth: Number(depthInp.value) || 0,
-        includeSubtableFields: subtableCb.checked,
-        includeReverseLookup: reverseCb.checked,
-        extraAppIds: extraInp.value.split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean)
-      };
-    }
-    const btnRow = document.createElement("div");
-    btnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin-top:10px";
-    function mkBtn(text) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = text;
-      b.style.cssText = "padding:9px 12px;font-size:13px;font-weight:700;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer";
-      return b;
-    }
-    const bOpen = mkBtn("ER図を開く");
-    bOpen.addEventListener("click", async () => {
-      try {
-        await runGenerateERDiagramStandalone(source(), (m, e) => setStatus(m, e));
-      } catch (e) {
-        setStatus(e.message || String(e), true);
-      }
-    });
-    const bSave = mkBtn("HTML保存");
-    bSave.style.background = "#475569";
-    bSave.addEventListener("click", async () => {
-      try {
-        await runExportERDiagramHtmlStandalone(source(), (m, e) => setStatus(m, e));
-      } catch (e) {
-        setStatus(e.message || String(e), true);
-      }
-    });
-    btnRow.appendChild(bOpen);
-    btnRow.appendChild(bSave);
-    const route = document.createElement("div");
-    route.style.cssText = "border:1px solid #a7f3d0;border-radius:8px;background:#fff;padding:12px;margin-bottom:8px";
-    const badge = document.createElement("div");
-    badge.textContent = "標準生成";
-    badge.style.cssText = "display:inline-flex;padding:2px 8px;border:1px solid #99f6e4;border-radius:999px;background:#ecfdf5;color:#0f766e;font-size:10px;font-weight:800";
-    const title = document.createElement("div");
-    title.textContent = "現在のアプリからER図を開く";
-    title.style.cssText = "font-size:14px;font-weight:800;color:#0f172a;margin-top:6px";
-    const primaryRow = row("アプリID", appInp);
-    primaryRow.style.marginTop = "10px";
-    route.appendChild(badge);
-    route.appendChild(title);
-    route.appendChild(primaryRow);
-    route.appendChild(btnRow);
-    bodySlot.appendChild(route);
-    const details = document.createElement("details");
-    details.style.cssText = "border:1px solid #e2e8f0;border-radius:8px;background:#fff;margin-top:8px";
-    const summary = document.createElement("summary");
-    summary.textContent = "詳細オプション";
-    summary.style.cssText = "cursor:pointer;padding:9px 10px;font-size:12px;font-weight:800;color:#334155";
-    const detailBody = document.createElement("div");
-    detailBody.style.cssText = "padding:0 10px 10px";
-    detailBody.appendChild(row("追加起点", extraInp));
-    detailBody.appendChild(row("ゲスト", guestInp));
-    detailBody.appendChild(row("レイアウト", layoutSel));
-    detailBody.appendChild(row("表示密度", densitySel));
-    detailBody.appendChild(row("探索深さ", depthInp));
-    detailBody.appendChild(optRow);
-    details.appendChild(summary);
-    details.appendChild(detailBody);
-    bodySlot.appendChild(details);
-  }
-
-  // src/entries/er-lite-entry.ts
-  if (!window.kintone?.api || !window.kintone?.app) {
-    alert("kintone画面で実行してください");
-  } else {
-    mountErLitePanel();
-  }
-})();
+}

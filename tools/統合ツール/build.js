@@ -36,6 +36,35 @@ const cssPlugin = {
   }
 };
 
+// .js インポートを .ts/.tsx に解決するプラグイン (TS 段階移行用)
+// import './foo.js' と書かれていて foo.js が存在せず foo.ts/.tsx が存在する場合に
+// 自動でそちらへフォールバックする。
+const jsToTsResolver = {
+  name: 'js-to-ts',
+  setup(build) {
+    build.onResolve({ filter: /\.js$/ }, async (args) => {
+      if (args.kind !== 'import-statement' && args.kind !== 'require-call' && args.kind !== 'dynamic-import') {
+        return null;
+      }
+      if (!args.path.startsWith('./') && !args.path.startsWith('../')) return null;
+      const baseAbs = path.resolve(args.resolveDir, args.path);
+      try {
+        await fs.promises.access(baseAbs);
+        return null;
+      } catch (e) {
+        for (const ext of ['.ts', '.tsx']) {
+          const candidate = baseAbs.replace(/\.js$/, ext);
+          try {
+            await fs.promises.access(candidate);
+            return { path: candidate };
+          } catch (e2) { /* try next */ }
+        }
+        return null;
+      }
+    });
+  }
+};
+
 function createStandaloneSource(item) {
   const tab = item.tab;
   const displayLabel = item.label || 'ツール';
@@ -267,7 +296,7 @@ async function buildStandaloneBundles(entries) {
       charset: 'utf8',
       target: ['es2020'],
       minify: false,
-      plugins: [cssPlugin],
+      plugins: [jsToTsResolver, cssPlugin],
       banner: { js: buildBanner(item) },
       logLevel: 'info'
     });
@@ -302,7 +331,7 @@ async function run() {
     charset: 'utf8',
     target: ['es2020'],
     minify: false,
-    plugins: [cssPlugin],
+    plugins: [jsToTsResolver, cssPlugin],
     banner: { js: buildMainBundleBanner() },
     logLevel: 'info'
   });

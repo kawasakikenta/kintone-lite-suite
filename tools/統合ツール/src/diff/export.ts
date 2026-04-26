@@ -1,2237 +1,1651 @@
-// ==========================================================================
-// 差分比較.js  —  自動生成ファイル（手編集禁止）
-// ==========================================================================
-// このファイルは tools/統合ツール/ の npm run build (esbuild) で生成されます。
-// ソース: tools/統合ツール/src/entries/diff-lite-entry.js
-//         tools/統合ツール/src/tabs/diff.js  ← 機能の正規実装
-//
-// ■ 修正する場合は tools/統合ツール/src/ 配下のソースを編集し、
-//   cd tools/統合ツール && npm run build で再生成してください。
-// ■ このファイルを直接編集しても次回ビルドで上書きされます。
-// ==========================================================================
-"use strict";
-(() => {
-  var __getOwnPropNames = Object.getOwnPropertyNames;
-  var __esm = (fn, res) => function __init() {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+import {
+  SECTION_DEFS, TOOL_ID,
+  LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS,
+  DEFAULT_IGNORE_KEYS, DIFF_NORMALIZATION_PRESETS
+} from '../constants.js';
+import {
+  esc, deepClone, safeJsonForScript,
+  getDiffTypeDisplayLabel, getSeverityDisplayLabel,
+  getIssueSideLabel, getPreviewStateLabel, getThemeDisplayLabel,
+  kusAlert
+} from '../utils.js';
+import { state, ui } from '../state.js';
+import {
+  getActualDiffRows, countActualDiffRows, parseIgnoreRules,
+  summarizeRows, summarizeFetchIssues,
+  normalizeIgnoreToken, getPathLeafKey,
+  getActiveDiffNormalizationLabels, normalizeSectionForCompare,
+  expandSubtableRowsForDisplay
+} from './engine.js';
+import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './enrich.js';
+import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter } from './filter.js';
+import { resolveBundleRevision, pickBundleSections } from '../api.js';
+
+// ---------------------------------------------------------------------------
+// Diff display helpers
+// ---------------------------------------------------------------------------
+
+export function stringifyForDiff(value) {
+  if (value === undefined) return '（未定義）';
+  const out = JSON.stringify(value, null, 2);
+  return out == null ? String(value) : out;
+}
+
+// ---------------------------------------------------------------------------
+// Subtable (テーブル) friendly formatting for in-panel diff columns.
+// For SUBTABLE field snapshots and their `fields` maps, raw JSON is hard to
+// scan; render a compact "1. ラベル / 型 / コード" listing so a table diff
+// becomes line-comparable like plain text.
+// ---------------------------------------------------------------------------
+function isSubtableFieldMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.values(value);
+  if (!entries.length) return false;
+  return entries.every((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+    return ('code' in item) || ('type' in item) || ('label' in item);
+  });
+}
+
+function formatSubtableChildLine(child, idx) {
+  const label = child?.label ?? child?.name ?? child?.code ?? '（未設定）';
+  const typeLabel = child?.type ? String(child.type) : 'フィールド';
+  const code = child?.code ?? '-';
+  return `${idx + 1}. ${label} / ${typeLabel} / ${code}`;
+}
+
+function formatSubtableChildrenText(fields) {
+  const entries = Object.values(fields || ({} as any));
+  if (!entries.length) return '（項目なし）';
+  return entries.map(formatSubtableChildLine).join('\n');
+}
+
+function formatSubtableSnapshotText(value) {
+  const head = [
+    `フィールド名: ${value.label ?? value.name ?? '（未設定）'}`,
+    `フィールドコード: ${value.code ?? '-'}`,
+    'フィールド型: テーブル (SUBTABLE)'
+  ];
+  return `${head.join('\n')}\n----\nテーブル内の項目:\n${formatSubtableChildrenText(value.fields)}`;
+}
+
+function isSubtableFieldsPath(path) {
+  return typeof path === 'string'
+    && /^fieldSettings\.properties\.[^.[\]]+\.fields(?:\.[^.[\]]+)?$/.test(path);
+}
+
+function isSubtableFieldRootPath(path) {
+  return typeof path === 'string'
+    && /^fieldSettings\.properties\.[^.[\]]+$/.test(path);
+}
+
+export function stringifyRowValueForDiff(value, path) {
+  if (value === undefined) return '（未定義）';
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    if (value.type === 'SUBTABLE' && value.fields && typeof value.fields === 'object') {
+      return formatSubtableSnapshotText(value);
+    }
+    if (isSubtableFieldsPath(path) && isSubtableFieldMap(value)) {
+      return `テーブル内の項目:\n${formatSubtableChildrenText(value)}`;
+    }
+    if (isSubtableFieldRootPath(path) && isSubtableFieldMap(value)) {
+      return `テーブル内の項目:\n${formatSubtableChildrenText(value)}`;
+    }
+  }
+  return stringifyForDiff(value);
+}
+
+export function getDiffExportContentLabel(mode) {
+  return mode === 'withCompared' ? '差分 + 比較設定' : '差分のみ';
+}
+
+export function shouldIncludeComparedContent(mode) {
+  return mode === 'withCompared';
+}
+
+const FIELD_CHANGE_PROP_LABELS = {
+  label: 'フィールド名',
+  noLabel: 'フィールド名を表示しない',
+  required: '必須項目にする',
+  unique: '値の重複を禁止する',
+  hideExpression: '計算式を表示しない',
+  maxLength: '文字数の上限',
+  minLength: '文字数の下限',
+  maxValue: '入力値の上限',
+  minValue: '入力値の下限',
+  defaultValue: '初期値',
+  defaultNowValue: '現在日時を初期値にする',
+  code: 'フィールドコード',
+  options: '項目と順番',
+  align: '並び',
+  displayScale: '小数点以下の表示桁数',
+  digit: '桁区切りを表示する',
+  unit: '単位',
+  unitPosition: '単位の位置',
+  protocol: 'リンクの種類',
+  expression: '計算式',
+  thumbnailSize: '画像サイズ',
+  referenceTable: '関連レコード一覧設定',
+  lookup: 'ルックアップ設定',
+  fields: 'テーブル内の項目'
+};
+
+function fieldChangePropTitleFromInfo(info, row) {
+  if (!info) return row.path || '-';
+  if (info.isFieldRoot || info.isSubFieldRoot) return '';
+  if (!info.tailTokens.length) return row.path || '-';
+  if (FIELD_CHANGE_PROP_LABELS[info.leafKey]) return FIELD_CHANGE_PROP_LABELS[info.leafKey];
+  if (String(row?.path || '').includes('.lookup.')) return 'ルックアップ設定';
+  if (String(row?.path || '').includes('.referenceTable.')) return '関連レコード一覧設定';
+  if (String(row?.path || '').includes('.options.')) return '項目と順番';
+  if (String(row?.path || '').includes('.fields.')) return 'テーブル内の項目';
+  return info.tailTokens.map((t) => (typeof t === 'number' ? '[' + t + ']' : String(t))).join('.');
+}
+
+// ---------------------------------------------------------------------------
+// Line-level & char-level diff algorithms (in-panel rendering)
+// ---------------------------------------------------------------------------
+
+export function buildLineDiffOps(leftLines, rightLines) {
+  const n = leftLines.length;
+  const m = rightLines.length;
+  if (n * m > LINE_DIFF_MAX_CELLS) return null;
+
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = leftLines[i] === rightLines[j]
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  const ops: any[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && leftLines[i] === rightLines[j]) {
+      ops.push({ type: 'same', left: leftLines[i], right: rightLines[j] });
+      i += 1;
+      j += 1;
+      continue;
+    }
+
+    const down = i < n ? dp[i + 1][j] : -1;
+    const right = j < m ? dp[i][j + 1] : -1;
+    const diag = (i < n && j < m) ? dp[i + 1][j + 1] : -1;
+    if (i < n && j < m && diag >= down && diag >= right) {
+      ops.push({ type: 'replace', left: leftLines[i], right: rightLines[j] });
+      i += 1;
+      j += 1;
+      continue;
+    }
+
+    if (j < m && (i >= n || right >= down)) {
+      ops.push({ type: 'add', right: rightLines[j] });
+      j += 1;
+    } else if (i < n) {
+      ops.push({ type: 'del', left: leftLines[i] });
+      i += 1;
+    } else {
+      break;
+    }
+  }
+  return ops;
+}
+
+export function buildCharDiffHtml(leftText, rightText) {
+  const segmentGraphemes = (text: any): string[] => {
+    const normalized = String(text ?? '');
+    if (!normalized) return [];
+    const IntlAny: any = Intl as any;
+    if (typeof IntlAny !== 'undefined' && typeof IntlAny.Segmenter === 'function') {
+      try {
+        const segmenter = new IntlAny.Segmenter('ja', { granularity: 'grapheme' });
+        return Array.from(segmenter.segment(normalized), (seg: any) => seg.segment);
+      } catch (_) {
+        /* fallback */
+      }
+    }
+    return Array.from(normalized);
   };
+  const a = segmentGraphemes(leftText);
+  const b = segmentGraphemes(rightText);
+  if (!a.length || !b.length) return null;
+  if (a.length * b.length > CHAR_DIFF_MAX_CELLS) return null;
 
-  // src/featureDefs.mjs
-  var ICONS, FEATURE_DEFS, TAB_TO_FEATURE;
-  var init_featureDefs = __esm({
-    "src/featureDefs.mjs"() {
-      "use strict";
-      ICONS = Object.freeze({
-        diff: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>',
-        reflect: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
-        field: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
-        jsconfig: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
-        er: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="6" cy="6" rx="3" ry="2"/><ellipse cx="18" cy="6" rx="3" ry="2"/><ellipse cx="12" cy="18" rx="3" ry="2"/><path d="M8.5 7.5l2 7"/><path d="M15.5 7.5l-2 7"/><path d="M9 6h6"/></svg>',
-        processFlow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="8.5" y="15" width="7" height="5" rx="1"/><path d="M10 6.5h4"/><path d="M17.5 9v2.5h-11V9"/><path d="M12 11.5V15"/></svg>',
-        design: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
-        settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
-        recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
-        sql: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h10"/><path d="M4 19h7"/><path d="M17 15l3 4 3-4"/></svg>',
-        apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>',
-        analyze: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>'
-      });
-      FEATURE_DEFS = [
-        {
-          key: "diff",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.diff,
-          label: "差分比較",
-          desc: "2アプリの設定差分を確認します。",
-          tabs: ["diff"],
-          tab: "diff",
-          diffSubTab: "conditions",
-          focusSelector: "#u_headerDiffSuite",
-          priority: "high",
-          riskLevel: "safe",
-          recommendedFor: ["最初に確認", "変更前チェック"],
-          usageOrder: 1,
-          onboardingOrder: 1,
-          badge: { tone: "recommended", label: "初回推奨", icon: "1" }
-        },
-        {
-          key: "reflect",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.reflect,
-          label: "プレビュー反映",
-          desc: "差分を見ながら比較先プレビューへ反映します。",
-          tabs: ["reflect"],
-          tab: "reflect",
-          subTab: "settings",
-          focusSelector: "#u_reflectAssist",
-          priority: "high",
-          riskLevel: "warning",
-          recommendedFor: ["差分確認後", "本番反映前の検証"],
-          usageOrder: 2,
-          onboardingOrder: 2,
-          badge: { tone: "caution", label: "要確認", icon: "2" }
-        },
-        {
-          key: "field",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.field,
-          label: "フィールド追加",
-          desc: "フィールド定義の追加・編集とコード変換用JSONの作成を行います。",
-          tabs: ["field"],
-          tab: "field",
-          subTab: "json",
-          focusSelector: "#u_fieldJson",
-          priority: "medium",
-          riskLevel: "warning",
-          recommendedFor: ["項目追加", "定義の一括修正"],
-          usageOrder: 4,
-          onboardingOrder: 4,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "jsconfig",
-          group: "change",
-          groupLabel: "変更・反映",
-          icon: ICONS.jsconfig,
-          label: "JS/CSS設定",
-          desc: "単一アプリの customize.json 編集と JS/CSS 実ファイル取得を行います。",
-          tabs: ["jsconfig"],
-          tab: "jsconfig",
-          subTab: "editor",
-          focusSelector: "#u_jsconfigJson",
-          priority: "medium",
-          riskLevel: "warning",
-          recommendedFor: ["カスタマイズ配布", "環境同期"],
-          usageOrder: 5,
-          onboardingOrder: 5,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "design",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.design,
-          label: "設計書",
-          desc: "設計書や差分レポートを出力します。",
-          tabs: ["design"],
-          tab: "design",
-          focusSelector: '[data-act="exportDesignMd"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["変更記録", "レビュー資料作成"],
-          usageOrder: 3,
-          onboardingOrder: 3,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "settingsExport",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.settingsExport,
-          label: "設定一括取得",
-          desc: "複数アプリの設定JSONをまとめて保存します（データ・添付は除く）。",
-          tabs: ["settingsExport"],
-          tab: "settingsExport",
-          subTab: "export",
-          focusSelector: "#u_settingsExportAppIds",
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["バックアップ", "棚卸し"],
-          usageOrder: 6,
-          onboardingOrder: 6,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "er",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.er,
-          label: "ER図",
-          desc: "関連アプリの構造を ER 図で確認します。",
-          tabs: ["er"],
-          tab: "er",
-          subTab: "diagram",
-          focusSelector: "#u_erLayout",
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["現状把握", "依存関係確認"],
-          usageOrder: 7,
-          onboardingOrder: 7,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "processFlow",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.processFlow,
-          label: "プロセス図",
-          desc: "プロセス管理をフロー図で確認します。",
-          tabs: ["processFlow"],
-          tab: "processFlow",
-          focusSelector: '[data-act="renderProcessFlow"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["状態遷移確認", "運用レビュー"],
-          usageOrder: 8,
-          onboardingOrder: 8,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        },
-        {
-          key: "recordMgr",
-          group: "data",
-          groupLabel: "データ・保守",
-          icon: ICONS.recordMgr,
-          label: "レコード管理",
-          desc: "レコードデータのCSV・添付・コメント・状態更新を扱います。",
-          tabs: ["recordMgr"],
-          tab: "recordMgr",
-          subTab: "status",
-          focusSelector: '[data-act="runBatchProcess"]',
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["保守作業", "テストデータ操作"],
-          usageOrder: 9,
-          onboardingOrder: 9,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "sql",
-          group: "data",
-          groupLabel: "データ・保守",
-          icon: ICONS.sql,
-          label: "SQL実行",
-          desc: "kintoneデータをSQLライクに参照します。",
-          tabs: ["sql"],
-          tab: "sql",
-          focusSelector: '[data-act="launchKintoneSql"]',
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["調査", "データ確認"],
-          usageOrder: 10,
-          onboardingOrder: 10,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
-          key: "apiTester",
-          group: "data",
-          groupLabel: "データ・保守",
-          icon: ICONS.apiTester,
-          label: "APIテスター",
-          desc: "REST APIを直接試します。",
-          tabs: ["apiTester"],
-          tab: "apiTester",
-          focusSelector: "#u_apiTesterMethod",
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["調査", "レスポンス確認"],
-          usageOrder: 11,
-          onboardingOrder: 11,
-          badge: { tone: "caution", label: "上級者向け", icon: "!" }
-        },
-        {
-          key: "analyze",
-          group: "vis",
-          groupLabel: "可視化・出力",
-          icon: ICONS.analyze,
-          label: "分析",
-          desc: "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。",
-          tabs: ["analyze"],
-          tab: "analyze",
-          subTab: "dashboard",
-          focusSelector: '[data-act="runAnalyzeDashboard"]',
-          priority: "medium",
-          riskLevel: "safe",
-          recommendedFor: ["影響調査", "依存確認", "セキュリティ監査"],
-          usageOrder: 7.5,
-          onboardingOrder: 7.5,
-          badge: { tone: "safe", label: "安全", icon: "OK" }
-        }
-      ];
-      TAB_TO_FEATURE = {};
-      FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
-        if (!TAB_TO_FEATURE[t]) TAB_TO_FEATURE[t] = f.key;
-      }));
+  const dp = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
     }
-  });
+  }
 
-  // src/constants.ts
-  function resolveDefaultAppId() {
-    try {
-      if (typeof kintone !== "undefined" && kintone?.app?.getId) {
-        return String(kintone.app.getId() || "");
-      }
-    } catch (e) {
+  const ops: any[] = [];
+  let i = a.length;
+  let j = b.length;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+      ops.push({ type: 'same', ch: a[i - 1] });
+      i -= 1;
+      j -= 1;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      ops.push({ type: 'add', ch: b[j - 1] });
+      j -= 1;
+    } else if (i > 0) {
+      ops.push({ type: 'del', ch: a[i - 1] });
+      i -= 1;
+    } else {
+      break;
     }
-    return "";
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
-  var init_constants = __esm({
-    "src/constants.ts"() {
-      "use strict";
-      init_featureDefs();
-      TOOL_ID = "kintone-unified-suite-v2";
-      EXTERNAL_LIBRARIES = Object.freeze({
-        jszip: Object.freeze({
-          version: "3.10.1",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
-        }),
-        alasql: Object.freeze({
-          version: "4",
-          cdnCandidates: Object.freeze([
-            "https://cdn.jsdelivr.net/npm/alasql@4/dist/alasql.min.js",
-            "https://unpkg.com/alasql@4/dist/alasql.min.js",
-            "https://cdn.jsdelivr.net/npm/alasql@4"
-          ])
-        }),
-        cytoscape: Object.freeze({
-          version: "3.28.1",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js",
-          altVersion: "3.26.0",
-          altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.min.js"
-        }),
-        dagre: Object.freeze({
-          version: "0.8.5",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
-        }),
-        cytoscapeDagre: Object.freeze({
-          version: "2.5.0",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js",
-          altCdnUrl: "https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
-        }),
-        googleFontsDmSansMono: Object.freeze({
-          cdnUrl: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap"
-        }),
-        jsoneditor: Object.freeze({
-          version: "9.10.3",
-          cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.js",
-          cssUrl: "https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.10.3/jsoneditor.min.css"
-        }),
-        toastify: Object.freeze({
-          version: "1.12.0",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/toastify-js",
-          cssUrl: "https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
-        }),
-        driver: Object.freeze({
-          version: "1.3.1",
-          cdnUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js",
-          cssUrl: "https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css"
-        })
-      });
-      DEFAULT_APP_ID = resolveDefaultAppId();
-      DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-      DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
-      DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
-      REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
-      SECTION_DEFS = [
-        { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
-        { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
-        { key: "fieldSettings", label: "フィールド設定", endpoint: "/app/form/fields.json", put: true, putBuilder: (d) => ({ properties: d.properties || d }) },
-        { key: "layoutSettings", label: "レイアウト設定", endpoint: "/app/form/layout.json", put: true, putBuilder: (d) => ({ layout: d.layout || d }) },
-        { key: "formSettings", label: "フォーム設定", endpoint: "/form.json", put: false },
-        { key: "viewSettings", label: "ビュー設定", endpoint: "/app/views.json", put: true, putBuilder: (d) => ({ views: d.views || d }) },
-        { key: "reportSettings", label: "グラフ設定", endpoint: "/app/reports.json", put: true, putBuilder: (d) => ({ reports: d.reports || d }) },
-        { key: "processSettings", label: "プロセス管理", endpoint: "/app/status.json", put: true, putBuilder: (d) => ({ enable: !!d.enable, states: d.states || {}, actions: d.actions || [] }) },
-        { key: "pluginSettings", label: "プラグイン(※)", endpoint: "/app/plugins.json", put: true, putBuilder: (d) => ({ pluginIds: (d.plugins || []).map((p) => p.id) }) },
-        { key: "customizeSettings", label: "JS/CSS設定", endpoint: "/app/customize.json", put: true, putBuilder: (d) => ({ desktop: d.desktop || {}, mobile: d.mobile || {} }) },
-        { key: "actionSettings", label: "アクション設定", endpoint: "/app/actions.json", put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
-        { key: "appAcl", label: "アプリ権限", endpoint: "/app/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "fieldAcl", label: "フィールド権限", endpoint: "/field/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
-        { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
-      ];
-      META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
-      DEFAULT_SUBTAB_STATE = Object.freeze({
-        diff: "conditions",
-        reflect: "settings",
-        field: "json",
-        jsconfig: "editor",
-        recordMgr: "status",
-        er: "diagram",
-        settingsExport: "export",
-        analyze: "dashboard"
-      });
-      TOUR_STEP_CONNECTION = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_sourceApp",
-        title: "比較元 / 比較先を決める",
-        body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。プレビュー/本番の切替もここで行います。"
-      };
-      TOUR_STEP_SCOPE = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: '[data-act="openDiffScopePicker"]',
-        title: "比較対象セクションを選ぶ",
-        body: "「比較対象を選ぶ」から、差分比較で確認したい設定だけを選びます。まずはフィールド・レイアウト・ビュー・プロセス管理あたりが見やすいです。"
-      };
-      TOUR_STEP_NOISE = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_ignoreKeyInput",
-        title: "ノイズ差分を減らす",
-        body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
-      };
-      TOUR_STEP_RUN_DIFF = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 比較条件",
-        selector: "#u_runDiffPrimary",
-        title: "差分比較を実行する",
-        body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
-      };
-      TOUR_STEP_REVIEW = {
-        tab: "diff",
-        diffSubTab: "conditions",
-        path: "ヘッダー > 差分結果の整理",
-        selector: "#u_diffSearch",
-        title: "結果を絞り込んで確認する",
-        body: "差分比較後は「差分結果の整理・出力」から、セクション・種別・重要度・検索で絞り込めます。ここで反映対象を見極めます。"
-      };
-      TOUR_STEP_PLAN = {
-        tab: "reflect",
-        path: "プレビュー反映",
-        selector: "#u_footerPlan",
-        title: "反映プランを先に確認する",
-        body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。"
-      };
-      TOUR_STEP_APPLY = {
-        tab: "reflect",
-        path: "プレビュー反映",
-        selector: "#u_footerApply",
-        title: "比較先プレビューへ反映する",
-        body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番デプロイは kintone 管理画面から手動で実施します。"
-      };
-      TOUR_STEP_RECORD = {
-        tab: "design",
-        subTab: "export",
-        path: "設計書 > 設計書出力",
-        selector: '[data-act="exportDesignMd"]',
-        title: "最後に記録を残す",
-        body: "作業後は設計書や差分レポートを出力して、変更内容を記録します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
-      };
-      GUIDED_TOUR_COURSES = Object.freeze({
-        full: {
-          label: "初回（全工程）",
-          description: "接続から記録出力までを順番に案内します（推奨）",
-          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD]
-        },
-        diff: {
-          label: "差分のみ確認",
-          description: "差分比較とレビューに絞った短縮コース",
-          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW]
-        },
-        apply: {
-          label: "反映まで実施",
-          description: "差分確認からプレビュー反映までをガイド",
-          steps: [TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY]
-        }
-      });
-      GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
-      DIFF_IMPACT_REF_LIMIT = 6;
-      FIELD_REF_EXACT_KEYS = /* @__PURE__ */ new Set([
-        "code",
-        "field",
-        "entity",
-        "targetField",
-        "sortField",
-        "groupFieldCode"
-      ]);
-      FIELD_REF_ARRAY_KEYS = /* @__PURE__ */ new Set([
-        "fields",
-        "displayFields",
-        "columns"
-      ]);
-      FIELD_REF_TOKEN_KEYS = /* @__PURE__ */ new Set([
-        "condition",
-        "filterCond",
-        "expression",
-        "formula",
-        "sort"
-      ]);
-      DIFF_NORMALIZATION_PRESETS = {
-        viewOrder: {
-          label: "ビュー/グラフ/アクション順序",
-          sections: /* @__PURE__ */ new Set(["viewSettings", "reportSettings", "actionSettings"]),
-          ignoreKeys: /* @__PURE__ */ new Set(["index", "no", "order"]),
-          unorderedArrays: true
-        },
-        permissionOrder: {
-          label: "権限/通知/カテゴリ順序",
-          sections: /* @__PURE__ */ new Set(["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications", "categories"]),
-          ignoreKeys: /* @__PURE__ */ new Set(["index", "no", "order"]),
-          unorderedArrays: true
-        },
-        generalArrayOrder: {
-          label: "すべて（プロセス等含む）の配列順序",
-          sections: /* @__PURE__ */ new Set(["fieldSettings", "processSettings", "layoutSettings", "actionSettings", "appAcl", "fieldAcl", "recordPermissions", "viewSettings", "reportSettings", "customizeSettings", "notifications", "perRecordNotifications", "reminderNotifications", "categories"]),
-          ignoreKeys: /* @__PURE__ */ new Set(["index", "no", "order"]),
-          unorderedArrays: true
-        }
-      };
-      LINE_DIFF_MAX_CELLS = 9e4;
-      CHAR_DIFF_MAX_CELLS = 2e4;
-      DEFAULT_IGNORE_KEYS = /* @__PURE__ */ new Set([
-        "id",
-        "appid",
-        "revision",
-        "createdat",
-        "creator",
-        "modifiedat",
-        "modifier"
-      ]);
-    }
-  });
+  ops.reverse();
 
-  // src/utils.ts
-  function esc(s) {
-    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-  function safeJsonForScript(v) {
-    return JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-  }
-  function deepClone(v) {
-    return v == null ? v : JSON.parse(JSON.stringify(v));
-  }
-  function normalize(v) {
-    if (Array.isArray(v)) return v.map(normalize);
-    if (v && typeof v === "object") {
-      const o = {};
-      Object.keys(v).sort().forEach((k) => {
-        if (META_KEYS.has(k)) return;
-        o[k] = normalize(v[k]);
-      });
-      return o;
-    }
-    return v;
-  }
-  function stableStringify(v) {
-    return JSON.stringify(normalize(v));
-  }
-  function compactForLog(value, max = 220) {
-    try {
-      const raw = typeof value === "string" ? value : JSON.stringify(value);
-      if (!raw) return "";
-      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
-    } catch (e) {
-      const raw = String(value ?? "");
-      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
+  let left = '';
+  let right = '';
+  for (const op of ops) {
+    if (op.type === 'same') {
+      const ch = esc(op.ch);
+      left += ch;
+      right += ch;
+    } else if (op.type === 'del') {
+      left += `<mark class="diff-char-del">${esc(op.ch)}</mark>`;
+    } else {
+      right += `<mark class="diff-char-add">${esc(op.ch)}</mark>`;
     }
   }
-  function apiErrorWithContext(err, meta) {
-    if (err && err.__apiDiag) return err;
-    const method = meta?.method || "GET";
-    const prefix = meta?.prefix || "";
-    const path = meta?.path || "";
-    const bodyOrParams = meta?.payload;
-    const app = bodyOrParams?.app ?? bodyOrParams?.id ?? bodyOrParams?.apps?.[0] ?? "";
-    const bodySummary = compactForLog(bodyOrParams);
-    const endpoint = `${prefix}${path}`;
-    const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
-    const baseMessage = err?.message || String(err);
-    const wrapped = new Error(`${baseMessage}
-${contextLine}`);
-    wrapped.__apiDiag = true;
-    wrapped.original = err;
-    if (err?.code) wrapped.code = err.code;
-    if (err?.id) wrapped.id = err.id;
-    if (err?.stack) wrapped.stack = err.stack;
-    return wrapped;
-  }
-  function nowStamp() {
-    const d = /* @__PURE__ */ new Date();
-    const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
-  }
-  function getIssueSideLabel(side) {
-    if (side === "source") return "比較元";
-    if (side === "target") return "比較先";
-    if (side === "both") return "両方";
-    return String(side || "-");
-  }
-  function getDiffTypeDisplayLabel(type, options = {}) {
-    const map = {
-      added: "追加",
-      removed: "削除",
-      changed: "変更",
-      moved: "移動",
-      same: "同一"
-    };
-    const base = map[type] || String(type || "-");
-    return options.moved && type !== "moved" ? `${base}(移動)` : base;
-  }
-  function getSeverityDisplayLabel(severity) {
-    if (severity === "high") return "高";
-    if (severity === "medium") return "中";
-    if (severity === "low") return "低";
-    return String(severity || "-");
-  }
-  function triggerDownload(filename, blob) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    window.setTimeout(() => {
-      try {
-        URL.revokeObjectURL(url);
-      } catch (e) {
-      }
-      try {
-        a.remove();
-      } catch (e) {
-      }
-    }, 0);
-  }
-  function downloadText(filename, text, type) {
-    triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
-  }
-  var init_utils = __esm({
-    "src/utils.ts"() {
-      "use strict";
-      init_constants();
-    }
-  });
+  return { left, right };
+}
 
-  // src/state.ts
-  function loadReflectApplyHistory() {
-    try {
-      const raw = sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-  function loadWorkHistory() {
-    try {
-      const raw = localStorage.getItem(WORK_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-  function normalizeConnectionPreset(entry) {
-    if (!entry || typeof entry !== "object") return null;
-    const sourceAppId = String(entry.sourceAppId || "").trim();
-    const targetAppId = String(entry.targetAppId || "").trim();
-    if (!sourceAppId && !targetAppId) return null;
-    const id = String(entry.id || "").trim() || `conn-${Date.now()}`;
-    const name = String(entry.name || "").trim() || `${sourceAppId || "-"} -> ${targetAppId || "-"}`;
+// ---------------------------------------------------------------------------
+// Row column rendering (in-panel diff view)
+// ---------------------------------------------------------------------------
+
+export function renderChangedColumns(row, useCharDiff) {
+  const leftText = stringifyRowValueForDiff(row.left, row.path);
+  const rightText = stringifyRowValueForDiff(row.right, row.path);
+  const leftLines = leftText.split('\n');
+  const rightLines = rightText.split('\n');
+  const ops = buildLineDiffOps(leftLines, rightLines);
+  if (!ops) {
     return {
-      id,
-      name,
-      sourceAppId,
-      sourceGuestId: String(entry.sourceGuestId || "").trim(),
-      sourcePreview: !!entry.sourcePreview,
-      targetAppId,
-      targetGuestId: String(entry.targetGuestId || "").trim(),
-      targetPreview: entry.targetPreview == null ? true : !!entry.targetPreview,
-      savedAt: Number(entry.savedAt || Date.now()) || Date.now()
+      left: `<pre class="diff-pre del">${esc(leftText)}</pre>`,
+      right: `<pre class="diff-pre add">${esc(rightText)}</pre>`
     };
   }
-  function loadConnectionPresets() {
-    try {
-      const raw = localStorage.getItem(CONNECTION_PRESETS_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
-    } catch {
-      return [];
+
+  let leftHtml = '';
+  let rightHtml = '';
+  let leftNo = 0;
+  let rightNo = 0;
+  for (const op of ops) {
+    if (op.type === 'same') {
+      leftNo += 1;
+      rightNo += 1;
+      leftHtml += `<div class="diff-line"><span class="diff-ln">${leftNo}</span>${esc(op.left || '')}</div>`;
+      rightHtml += `<div class="diff-line"><span class="diff-ln">${rightNo}</span>${esc(op.right || '')}</div>`;
+      continue;
+    }
+    if (op.type === 'replace') {
+      leftNo += 1;
+      rightNo += 1;
+      const charDiff = useCharDiff ? buildCharDiffHtml(op.left, op.right) : null;
+      leftHtml += `<div class="diff-line del"><span class="diff-ln">${leftNo}</span>${charDiff ? charDiff.left : esc(op.left || '')}</div>`;
+      rightHtml += `<div class="diff-line add"><span class="diff-ln">${rightNo}</span>${charDiff ? charDiff.right : esc(op.right || '')}</div>`;
+      continue;
+    }
+    if (op.type === 'del') {
+      leftNo += 1;
+      leftHtml += `<div class="diff-line del"><span class="diff-ln">${leftNo}</span>${esc(op.left || '')}</div>`;
+      rightHtml += '<div class="diff-line pad"><span class="diff-ln"></span></div>';
+      continue;
+    }
+    rightNo += 1;
+    leftHtml += '<div class="diff-line pad"><span class="diff-ln"></span></div>';
+    rightHtml += `<div class="diff-line add"><span class="diff-ln">${rightNo}</span>${esc(op.right || '')}</div>`;
+  }
+
+  return {
+    left: `<div class="diff-scroll">${leftHtml}</div>`,
+    right: `<div class="diff-scroll">${rightHtml}</div>`
+  };
+}
+
+export function renderRowColumns(row, useCharDiff) {
+  if (row.type === 'same') {
+    return {
+      left: `<pre class="diff-pre" style="color:var(--dv-sub);font-style:italic">${esc(stringifyRowValueForDiff(row.left, row.path))}</pre>`,
+      right: '<pre class="diff-pre" style="color:var(--dv-sub);font-style:italic">（同一）</pre>'
+    };
+  }
+  if (row.type === 'added') {
+    return {
+      left: '<pre class="diff-pre empty">（なし）</pre>',
+      right: `<pre class="diff-pre add">${esc(stringifyRowValueForDiff(row.right, row.path))}</pre>`
+    };
+  }
+  if (row.type === 'removed') {
+    return {
+      left: `<pre class="diff-pre del">${esc(stringifyRowValueForDiff(row.left, row.path))}</pre>`,
+      right: '<pre class="diff-pre empty">（なし）</pre>'
+    };
+  }
+  return renderChangedColumns(row, useCharDiff);
+}
+
+export function renderDiffRowMeta(row) {
+  const tags: string[] = [];
+  const lines: string[] = [];
+  if (row.reasonSummary) {
+    tags.push(`<span class="diff-meta-tag reason">${esc(row.reasonSummary)}</span>`);
+  }
+  if (row.renameCandidate) {
+    const renameTip = `名称変更候補: ${String(row.renameCandidate.fromCode || '-')} → ${String(row.renameCandidate.toCode || '-')}`
+      + (row.renameCandidate.matchedBy ? ` / 判定: ${String(row.renameCandidate.matchedBy)}` : '');
+    tags.push(`<span class="diff-meta-tag rename" title="${esc(renameTip)}">名称変更候補</span>`);
+    if (row.renameCandidate.matchedBy) {
+      lines.push(`<div class="diff-meta-line"><strong>判定:</strong> ${esc(row.renameCandidate.matchedBy)}</div>`);
     }
   }
-  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY, CONNECTION_PRESETS_LIMIT, ui;
-  var init_state = __esm({
-    "src/state.ts"() {
-      "use strict";
-      init_constants();
-      state = {
-        activeTab: "reflect",
-        activeFeatureKey: "",
-        activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
-        launcherSortMode: "onboarding",
-        lastSourceBundle: null,
-        lastTargetBundle: null,
-        lastDiffRows: [],
-        lastFetchIssues: [],
-        lastDiffAt: null,
-        lastDiffSignature: "",
-        lastApplyPlan: null,
-        lastApplyCompletedAt: null,
-        lastApplyCompletedMode: "",
-        lastApplyCompletedHadError: false,
-        lastApplyCompletedAppId: "",
-        lastApplyReport: null,
-        reflectApplyHistory: [],
-        reflectApplyHistoryOpen: false,
-        workHistory: [],
-        workHistoryOpen: true,
-        connectionPresets: [],
-        reflectPlanPreviewKeyword: "",
-        reflectPlanPreviewChangedOnly: false,
-        reflectApplyChecklist: { diff: false, plan: false, target: false },
-        lastPreviewBackupPayload: null,
-        lastPreviewBackupFilename: "",
-        diffViewTheme: "light",
-        diffCollapsedSections: /* @__PURE__ */ new Set(),
-        diffSectionVisibleCounts: {},
-        diffSelectedIds: /* @__PURE__ */ new Set(),
-        diffFavoritePaths: /* @__PURE__ */ new Set(),
-        diffFavoritesOnly: false,
-        diffViewedKeys: /* @__PURE__ */ new Set(),
-        diffReviewMeta: {},
-        diffHideViewed: false,
-        diffFocusedRowId: "",
-        diffExcludeSections: null,
-        diffSelectionAnchorId: "",
-        diffIncludeSame: true,
-        diffFilterSection: "",
-        diffFilterType: "",
-        diffFilterSeverity: "",
-        diffFilterTableOnly: false,
-        diffFilterTableKeyword: "",
-        diffSearchFieldName: false,
-        diffExportMode: "all",
-        diffExportContent: "diffOnly",
-        diffIgnoreSuggestions: [],
-        reflectRows: [],
-        reflectSelectedIds: /* @__PURE__ */ new Set(),
-        reflectNodeModes: {},
-        reflectUndoStack: [],
-        reflectRedoStack: [],
-        reflectPropertyFilters: /* @__PURE__ */ new Set(),
-        reflectPropertyPanelOpen: false,
-        reflectActiveSidebarSection: null,
-        reflectActiveNodeId: "",
-        reflectDetailTab: "diff",
-        importedSourceBundle: null,
-        importedTargetBundle: null,
-        importedSourceName: "",
-        importedTargetName: "",
-        patchJsonPanelOpen: false,
-        importedPatchPayload: null,
-        guidedTourActive: false,
-        guidedTourIndex: 0,
-        running: false,
-        lastResultByTab: {}
-      };
-      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
-      WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
-      CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
-      CONNECTION_PRESETS_LIMIT = 30;
-      state.reflectApplyHistory = loadReflectApplyHistory();
-      state.workHistory = loadWorkHistory();
-      state.connectionPresets = loadConnectionPresets();
-      ui = {};
+  if (row.impactCount) {
+    tags.push(`<span class="diff-meta-tag impact" title="${esc(String(row.impactCount))}件">影響</span>`);
+    const impactText = (row.impactRefs || [])
+      .map((ref) => `${ref.section || ref.sectionKey || '-'}:${ref.kind || '-'}${ref.label ? `(${ref.label})` : ''}`)
+      .join(' / ');
+    const detail = impactText || row.impactSummary || '';
+    lines.push(`<div class="diff-meta-line"><strong>影響:</strong> ${esc(detail)}</div>`);
+  }
+  if (!tags.length && !lines.length) return '';
+  return `<div class="diff-meta">
+      ${tags.length ? `<div class="diff-meta-tags">${tags.join('')}</div>` : ''}
+      ${lines.join('')}
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Diff row keyword / filter matching
+// ---------------------------------------------------------------------------
+
+export function diffRowMatchesKeyword(row, keyword) {
+  if (!keyword) return true;
+  return buildDiffRowSearchText(row).includes(keyword);
+}
+
+function buildDiffRowSearchText(row) {
+  const safe = (v) => {
+    try { return v === undefined ? '' : JSON.stringify(v); }
+    catch { return String(v); }
+  };
+  return [
+    row.section || '',
+    row.sectionKey || '',
+    row.severity || '',
+    row.path || '',
+    row.reasonSummary || '',
+    row.renameCandidate ? `${row.renameCandidate.fromCode || ''} ${row.renameCandidate.toCode || ''}` : '',
+    row.impactSummary || '',
+    ...(row.impactRefs || []).map((ref) => `${ref.section || ''} ${ref.kind || ''} ${ref.path || ''}`),
+    safe(row.left),
+    safe(row.right)
+  ].join('\n').toLowerCase();
+}
+
+function collectFieldLabelMapFromProperties(properties: any, out: Map<string, Set<string>> = new Map<string, Set<string>>()) {
+  if (!properties || typeof properties !== 'object') return out;
+  (Object.entries(properties) as Array<[string, any]>).forEach(([code, field]) => {
+    if (!field || typeof field !== 'object') return;
+    const label = String(field.label || field.name || '').trim();
+    if (label) {
+      if (!out.has(code)) out.set(code, new Set<string>());
+      out.get(code)!.add(label);
+    }
+    if (field.type === 'SUBTABLE' && field.fields && typeof field.fields === 'object') {
+      collectFieldLabelMapFromProperties(field.fields, out);
     }
   });
+  return out;
+}
 
-  // src/api.ts
-  function buildApiPrefix(guestId, preview) {
-    const g = String(guestId || "").trim();
-    if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
-    return `/k/v1${preview ? "/preview" : ""}`;
-  }
-  function normalizeApiGetOptions(optionsOrRetries) {
-    if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
-    if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
-    return optionsOrRetries;
-  }
-  function resolveHttpStatus(error) {
-    const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
-    if (Number.isFinite(direct) && direct > 0) return direct;
-    const text = String(error?.message || "");
-    const matched = text.match(/\b([45]\d{2})\b/);
-    return matched ? Number(matched[1]) : 0;
-  }
-  function isRetriableApiError(error) {
-    if (!error) return false;
-    const status = resolveHttpStatus(error);
-    if (RETRIABLE_STATUS_CODES.has(status)) return true;
-    const code = String(error?.code || "").toUpperCase();
-    if (code && (code.includes("NETWORK") || code.includes("TIMEOUT") || code === "ECONNRESET")) return true;
-    const message = String(error?.message || "").toLowerCase();
-    return message.includes("network") || message.includes("timeout");
-  }
-  function computeRetryDelayMs(attempt, baseDelayMs, maxDelayMs) {
-    const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
-    const jitter = Math.random() * Math.min(200, baseDelayMs);
-    return Math.round(expDelay + jitter);
-  }
-  function touchApiPathMetric(path, field) {
-    const key = String(path || "");
-    const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
-    row[field] += 1;
-    apiGetMetrics.byPath[key] = row;
-    return row;
-  }
-  async function apiGet(prefix, path, params, optionsOrRetries) {
-    const options = normalizeApiGetOptions(optionsOrRetries);
-    const retries = Number.isFinite(options.retries) ? Math.max(1, Number(options.retries)) : DEFAULT_API_GET_RETRIES;
-    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? Math.max(1, Number(options.baseDelayMs)) : DEFAULT_RETRY_BASE_DELAY_MS;
-    const maxDelayMs = Number.isFinite(options.maxDelayMs) ? Math.max(baseDelayMs, Number(options.maxDelayMs)) : DEFAULT_RETRY_MAX_DELAY_MS;
-    let err;
-    const startAt = Date.now();
-    apiGetMetrics.calls += 1;
-    touchApiPathMetric(path, "calls");
-    for (let i = 0; i < retries; i++) {
-      try {
-        const res = await kintone.api(`${prefix}${path}`, "GET", params);
-        apiGetMetrics.lastLatencyMs = Date.now() - startAt;
-        apiGetMetrics.lastError = "";
-        return res;
-      } catch (e) {
-        err = e;
-        const retriable = isRetriableApiError(e);
-        if (i < retries - 1 && retriable) {
-          apiGetMetrics.retries += 1;
-          touchApiPathMetric(path, "retries");
-          const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
-          await new Promise((r) => setTimeout(r, waitMs));
-          continue;
-        }
-        break;
-      }
-    }
-    apiGetMetrics.failures += 1;
-    const pathMetric = touchApiPathMetric(path, "failures");
-    const lastError = err?.message || String(err);
-    pathMetric.lastError = lastError;
-    apiGetMetrics.lastError = lastError;
-    apiGetMetrics.lastLatencyMs = Date.now() - startAt;
-    throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
-  }
-  function extractSectionRevision(res) {
-    if (!res || typeof res !== "object") return "";
-    const candidates = [res.revision, res.appRevision, res.revisionNo, res.app?.revision];
-    for (const value of candidates) {
-      if (value == null || value === "") continue;
-      return String(value);
-    }
-    return "";
-  }
-  function pickBundleSections(bundle, sections) {
-    const picked = {
-      appId: String(bundle.appId || ""),
-      guestId: String(bundle.guestId || ""),
-      preview: !!bundle.preview,
-      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
-      meta: { sectionRevisions: {} },
-      sections: {}
-    };
-    for (const sec of sections) {
-      if (Object.prototype.hasOwnProperty.call(bundle.sections || {}, sec)) {
-        picked.sections[sec] = deepClone(bundle.sections[sec]);
-      } else {
-        picked.sections[sec] = { _fetchError: "bundleに該当セクションなし" };
-      }
-      const revision = bundle?.meta?.sectionRevisions?.[sec];
-      if (revision != null && revision !== "") picked.meta.sectionRevisions[sec] = String(revision);
-    }
-    return picked;
-  }
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
-    const app = String(appId || "").trim();
-    if (!app) throw new Error("アプリIDが必要です");
-    const bundle = {
-      appId: app,
-      guestId: String(guestId || "").trim(),
-      preview: !!preview,
-      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      meta: { sectionRevisions: {} },
-      sections: {}
-    };
-    for (let i = 0; i < sections.length; i++) {
-      const sec = sections[i];
-      const def = SECTION_DEFS.find((x) => x.key === sec);
-      if (!def) continue;
-      try {
-        const sectionPreview = def.previewEndpoint === false ? false : preview;
-        const prefix = buildApiPrefix(guestId, sectionPreview);
-        const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
-        const res = await apiGet(prefix, def.endpoint, params);
-        const revision = extractSectionRevision(res);
-        if (revision) bundle.meta.sectionRevisions[sec] = revision;
-        bundle.sections[sec] = normalize(res);
-      } catch (e) {
-        bundle.sections[sec] = { _fetchError: e?.message || String(e) };
-      }
-      if (onProgress) onProgress((i + 1) / sections.length, def.label);
-    }
-    return bundle;
-  }
-  function resolveBundleRevision(bundle) {
-    const revisions = bundle?.meta?.sectionRevisions || {};
-    for (const key of ["appSettings", "fieldSettings", "layoutSettings", "viewSettings", "processSettings"]) {
-      const revision = revisions[key];
-      if (revision != null && revision !== "") return String(revision);
-    }
-    const first = Object.values(revisions).find((value) => value != null && value !== "");
-    return first != null ? String(first) : "";
-  }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
-  var init_api = __esm({
-    "src/api.ts"() {
-      "use strict";
-      init_constants();
-      init_utils();
-      init_state();
-      DEFAULT_API_GET_RETRIES = 3;
-      DEFAULT_RETRY_BASE_DELAY_MS = 500;
-      DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
-      RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
-      apiGetMetrics = {
-        calls: 0,
-        retries: 0,
-        failures: 0,
-        lastLatencyMs: 0,
-        lastError: "",
-        byPath: {}
-      };
-    }
+function buildFieldLabelMapFromBundle(bundle: any): Map<string, Set<string>> {
+  const props = bundle?.fieldSettings?.properties;
+  return collectFieldLabelMapFromProperties(props, new Map<string, Set<string>>());
+}
+
+function resolveDiffRowFieldTerms(row: any, sourceBundle: any, targetBundle: any) {
+  const terms = new Set<string>();
+  const fieldInfo = extractFieldPathInfo(row?.path);
+  if (fieldInfo?.activeCode) terms.add(fieldInfo.activeCode);
+  if (row?.renameCandidate?.fromCode) terms.add(row.renameCandidate.fromCode);
+  if (row?.renameCandidate?.toCode) terms.add(row.renameCandidate.toCode);
+  const payload = getFieldRowPayload(row);
+  if (payload?.code) terms.add(String(payload.code));
+  const sourceMap = buildFieldLabelMapFromBundle(sourceBundle);
+  const targetMap = buildFieldLabelMapFromBundle(targetBundle);
+  [...terms].forEach((code: string) => {
+    (sourceMap.get(code) || new Set<string>()).forEach((label: string) => terms.add(label));
+    (targetMap.get(code) || new Set<string>()).forEach((label: string) => terms.add(label));
   });
+  return [...terms].filter(Boolean);
+}
 
-  // src/diff/engine.ts
-  function detectRowSeverity(row) {
-    const sec = row?.sectionKey || "";
-    const path = String(row?.path || "").toLowerCase();
-    if (row?.type === "removed") return "high";
-    if (HIGH_IMPACT_SECTIONS.has(sec)) return "high";
-    if (path.includes("lookup") || path.includes("relatedapp") || path.includes("condition")) return "high";
-    if (MEDIUM_IMPACT_SECTIONS.has(sec)) return "medium";
-    return "low";
-  }
-  function isPlainObject(v) {
-    return !!v && typeof v === "object" && !Array.isArray(v);
-  }
-  function getPathLeafKey(path) {
-    const m = String(path || "").match(/([^[.\]]+)(?:\[\d+\])?$/);
-    return m ? m[1] : "";
-  }
-  function normalizeIgnoreToken(token) {
-    return String(token || "").replace(/[\u200b\u200c\u200d\ufeff]/g, "").replace(/^[\s\u3000]+|[\s\u3000]+$/g, "").toLowerCase();
-  }
-  function parseIgnoreRules(text) {
-    const keySet = new Set(DEFAULT_IGNORE_KEYS);
-    const pathSet = /* @__PURE__ */ new Set();
-    String(text || "").split(/[\n\r,、，;；\s\u3000]+/).map(normalizeIgnoreToken).filter(Boolean).forEach((token) => {
-      if (token.includes(".") || token.includes("[")) pathSet.add(token.replace(/\s+/g, ""));
-      else keySet.add(token);
-    });
-    return { keySet, pathSet };
-  }
-  function isIgnoredKey(ignoreRules, key) {
-    const normalized = normalizeIgnoreToken(key);
-    return !!normalized && ignoreRules.keySet.has(normalized);
-  }
-  function isIgnoredPath(ignoreRules, path) {
-    const normalizedPath = normalizeIgnoreToken(path).replace(/\s+/g, "");
-    if (!normalizedPath) return false;
-    if (ignoreRules.pathSet.has(normalizedPath)) return true;
-    const leaf = getPathLeafKey(normalizedPath);
-    return !!leaf && ignoreRules.keySet.has(leaf);
-  }
-  function pushDiffRow(out, row, ignoreRules) {
-    if (!row) return false;
-    if (isIgnoredPath(ignoreRules, row.path)) return false;
-    if (row.type === "same") {
-      const sameCount = Number(out?.__sameCount || 0);
-      if (sameCount >= SAME_ROW_LIMIT) return false;
-      if (out) out.__sameCount = sameCount + 1;
-      out.push(row);
-      return true;
+function resolveDiffRowTableContext(row, sourceBundle, targetBundle) {
+  const empty = { isTableField: false, tableCode: '', tableLabel: '' };
+  if (!row || row.sectionKey !== 'fieldSettings') return empty;
+  const info = extractFieldPathInfo(row.path);
+  if (!info || !info.isSubField) return empty;
+  const tableCode = String(info.rootCode || '').trim();
+  if (!tableCode) return empty;
+  const src = sourceBundle?.fieldSettings?.properties?.[tableCode];
+  const tgt = targetBundle?.fieldSettings?.properties?.[tableCode];
+  const tableLabel = String(tgt?.label || tgt?.name || src?.label || src?.name || tableCode).trim();
+  return {
+    isTableField: true,
+    tableCode,
+    tableLabel
+  };
+}
+
+export function diffRowMatchesFieldNameKeyword(row, keyword, sourceBundle, targetBundle) {
+  if (!keyword) return true;
+  const terms = resolveDiffRowFieldTerms(row, sourceBundle, targetBundle).join('\n').toLowerCase();
+  if (!terms) return false;
+  return terms.includes(keyword);
+}
+
+export function diffIssueMatchesKeyword(issue, keyword) {
+  if (!keyword) return true;
+  const text = [
+    issue.section || '',
+    issue.sectionKey || '',
+    issue.side || '',
+    issue.sourceError || '',
+    issue.targetError || '',
+    issue.message || ''
+  ].join('\n').toLowerCase();
+  return text.includes(keyword);
+}
+
+export function diffRowMatchesFilters(row, filters) {
+  if (filters.keyword) {
+    if (filters.searchByFieldName) {
+      if (!diffRowMatchesFieldNameKeyword(row, filters.keyword, filters.sourceBundle, filters.targetBundle)) return false;
+    } else if (!diffRowMatchesKeyword(row, filters.keyword)) {
+      return false;
     }
-    const diffCount = Number(out?.__diffCount || 0);
-    if (diffCount >= ARRAY_DIFF_LIMIT) return false;
-    if (out) out.__diffCount = diffCount + 1;
-    out.push(row);
+  }
+  if (filters.section && row.sectionKey !== filters.section) return false;
+  if (filters.type === 'moved') {
+    if (!row.moved) return false;
+  } else if (filters.type && row.type !== filters.type) {
+    return false;
+  }
+  if (filters.severity && String(row.severity || 'low') !== filters.severity) return false;
+  const tableContext = resolveDiffRowTableContext(row, filters.sourceBundle, filters.targetBundle);
+  if (filters.tableFieldsOnly && !tableContext.isTableField) return false;
+  if (filters.tableKeyword) {
+    if (!tableContext.isTableField) return false;
+    const tableText = `${tableContext.tableCode}\n${tableContext.tableLabel}`.toLowerCase();
+    if (!tableText.includes(filters.tableKeyword)) return false;
+  }
+  if (filters.favoritesOnly) {
+    const p = String(row.path || '').trim();
+    if (!state.diffFavoritePaths.has(p)) return false;
+  }
+  if (filters.hideViewed && row.type !== 'same' && isDiffRowViewed(row)) return false;
+  return true;
+}
+
+export function getCurrentDiffFilterState() {
+  return {
+    keyword: String(ui.diffSearch?.value || '').trim().toLowerCase(),
+    section: ui.diffFilterSection?.value || state.diffFilterSection || '',
+    type: ui.diffFilterType?.value || state.diffFilterType || '',
+    severity: ui.diffFilterSeverity?.value || state.diffFilterSeverity || '',
+    tableFieldsOnly: !!ui.diffFilterTableOnly?.checked || !!state.diffFilterTableOnly,
+    tableKeyword: String(ui.diffFilterTableKeyword?.value || state.diffFilterTableKeyword || '').trim().toLowerCase(),
+    searchByFieldName: !!ui.diffSearchFieldName?.checked || !!state.diffSearchFieldName,
+    sourceBundle: state.lastSourceBundle,
+    targetBundle: state.lastTargetBundle,
+    favoritesOnly: !!state.diffFavoritesOnly,
+    hideViewed: !!state.diffHideViewed
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Viewed (レビュー済み) helpers — パスベースで永続化
+// ---------------------------------------------------------------------------
+
+// 接続単位スコープ — 同じ比較元/比較先ペアに対するレビュー状態だけを共有する
+export function getDiffReviewScope() {
+  const src = String(ui.sourceApp?.value || '').trim();
+  const srcGuest = String(ui.sourceGuest?.value || '').trim();
+  const tgt = String(ui.targetApp?.value || '').trim();
+  const tgtGuest = String(ui.targetGuest?.value || '').trim();
+  if (!src && !tgt) return '';
+  return `${src}@${srcGuest}#${tgt}@${tgtGuest}`;
+}
+
+export function diffViewedKey(row) {
+  if (!row) return '';
+  const section = String(row.sectionKey || '');
+  const path = String(row.path || '');
+  const type = String(row.type || '');
+  if (!path && !section) return '';
+  const scope = getDiffReviewScope();
+  return `${scope}\t${section}\t${path}\t${type}`;
+}
+
+function legacyDiffViewedKey(row) {
+  if (!row) return '';
+  const section = String(row.sectionKey || '');
+  const path = String(row.path || '');
+  const type = String(row.type || '');
+  if (!path && !section) return '';
+  return `\t${section}\t${path}\t${type}`;
+}
+
+export function isDiffRowViewed(row) {
+  const key = diffViewedKey(row);
+  if (!key) return false;
+  if (state.diffViewedKeys.has(key)) return true;
+  const legacy = legacyDiffViewedKey(row);
+  return !!legacy && state.diffViewedKeys.has(legacy);
+}
+
+export function getDiffReviewMeta(row) {
+  const key = diffViewedKey(row);
+  if (!key || !state.diffReviewMeta || typeof state.diffReviewMeta !== 'object') {
+    return { key: '', status: '', note: '' };
+  }
+  let raw = state.diffReviewMeta[key];
+  if (!raw || typeof raw !== 'object') {
+    const legacy = legacyDiffViewedKey(row);
+    if (legacy && state.diffReviewMeta[legacy]) raw = state.diffReviewMeta[legacy];
+  }
+  if (!raw || typeof raw !== 'object') return { key, status: '', note: '' };
+  const status = raw.status === 'todo' || raw.status === 'ignored' ? raw.status : '';
+  const note = String(raw.note || '').trim();
+  return { key, status, note };
+}
+
+function renderDiffReviewControls(row) {
+  if (!row || row.type === 'same') return '';
+  const meta = getDiffReviewMeta(row);
+  const hasMeta = !!(meta.status || meta.note);
+  const todoActive = meta.status === 'todo' ? ' is-active' : '';
+  const ignoredActive = meta.status === 'ignored' ? ' is-active' : '';
+  const noteActive = meta.note ? ' is-active' : '';
+  return `<div class="diff-review-tools" aria-label="レビュー状態">
+      <button type="button" class="diff-review-btn diff-review-btn--todo${todoActive}" data-diff-review-action="todo" data-diff-review-id="${esc(row._id || '')}" title="要対応としてマーク">要対応</button>
+      <button type="button" class="diff-review-btn diff-review-btn--ignored${ignoredActive}" data-diff-review-action="ignored" data-diff-review-id="${esc(row._id || '')}" title="無視してよい差分としてマーク">無視</button>
+      <button type="button" class="diff-review-btn diff-review-btn--note${noteActive}" data-diff-review-action="note" data-diff-review-id="${esc(row._id || '')}" title="この差分にメモを残す">${meta.note ? 'メモあり' : 'メモ'}</button>
+      ${hasMeta ? `<button type="button" class="diff-review-btn diff-review-btn--clear" data-diff-review-action="clear" data-diff-review-id="${esc(row._id || '')}" title="レビュー状態を解除">解除</button>` : ''}
+    </div>${meta.note ? `<div class="diff-review-note" title="${esc(meta.note)}">メモ: ${esc(meta.note)}</div>` : ''}`;
+}
+
+export function countViewedInRows(rows) {
+  if (!rows || !rows.length) return 0;
+  let n = 0;
+  for (const row of rows) {
+    if (!row || row.type === 'same') continue;
+    if (isDiffRowViewed(row)) n += 1;
+  }
+  return n;
+}
+
+export function getFilteredDiffRows(rows) {
+  const list = rows || state.lastDiffRows || [];
+  const filters = getCurrentDiffFilterState();
+  const ex = state.diffExcludeSections;
+  return list.filter((row) => {
+    if (Array.isArray(ex) && ex.length && ex.includes(row.sectionKey)) return false;
+    return diffRowMatchesFilters(row, filters);
+  });
+}
+
+export function getFilteredFetchIssues(issues) {
+  const list = issues || state.lastFetchIssues || [];
+  const filters = getCurrentDiffFilterState();
+  return list.filter((issue) => {
+    if (filters.section && issue.sectionKey !== filters.section) return false;
+    if (filters.keyword && !diffIssueMatchesKeyword(issue, filters.keyword)) return false;
     return true;
-  }
-  function getCollectedDiffCount(rows) {
-    if (!Array.isArray(rows)) return 0;
-    const count = Number(rows.__diffCount);
-    if (Number.isFinite(count)) return count;
-    return rows.filter((row) => row?.type !== "same").length;
-  }
-  function canCollectSameRows(rows) {
-    if (!Array.isArray(rows)) return false;
-    if (!rows.__includeSame) return false;
-    const count = Number(rows.__sameCount);
-    if (Number.isFinite(count)) return count < SAME_ROW_LIMIT;
-    return rows.filter((row) => row?.type === "same").length < SAME_ROW_LIMIT;
-  }
-  function normalizeForCompare(v, ignoreRules) {
-    if (Array.isArray(v)) return v.map((x) => normalizeForCompare(x, ignoreRules));
-    if (v && typeof v === "object") {
-      const o = {};
-      Object.keys(v).sort().forEach((k) => {
-        if (META_KEYS.has(k) || isIgnoredKey(ignoreRules, k)) return;
-        o[k] = normalizeForCompare(v[k], ignoreRules);
-      });
-      return o;
-    }
-    return v;
-  }
-  function makeArrayItemSignature(v, ignoreRules) {
-    return JSON.stringify(normalizeForCompare(v, ignoreRules));
-  }
-  function hasUniquePrimitiveKey(arr, key) {
-    const seen = /* @__PURE__ */ new Set();
-    for (const obj of arr) {
-      if (!isPlainObject(obj) || !Object.prototype.hasOwnProperty.call(obj, key)) return false;
-      const val = obj[key];
-      if (val == null || typeof val === "object") return false;
-      const sig = `${typeof val}:${String(val)}`;
-      if (seen.has(sig)) return false;
-      seen.add(sig);
-    }
-    return true;
-  }
-  function detectArrayObjectKey(a, b, ignoreRules) {
-    if (!a.length || !b.length) return null;
-    if (!a.every(isPlainObject) || !b.every(isPlainObject)) return null;
-    const firstA = a.find(isPlainObject) || {};
-    const firstB = b.find(isPlainObject) || {};
-    const fallback = Object.keys(firstA).filter((k) => Object.prototype.hasOwnProperty.call(firstB, k));
-    const candidates = [...ARRAY_KEY_CANDIDATES, ...fallback.filter((k) => !ARRAY_KEY_CANDIDATES.includes(k))];
-    for (const key of candidates) {
-      if (isIgnoredKey(ignoreRules, key)) continue;
-      if (hasUniquePrimitiveKey(a, key) && hasUniquePrimitiveKey(b, key)) return key;
-    }
-    return null;
-  }
-  function buildArrayKeyMap(arr, key) {
-    const map = /* @__PURE__ */ new Map();
-    for (let i = 0; i < arr.length; i++) {
-      const item = arr[i];
-      const val = item?.[key];
-      const sig = `${typeof val}:${String(val)}`;
-      map.set(sig, { idx: i, item });
-    }
-    return map;
-  }
-  function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
-    const key = detectArrayObjectKey(a, b, ignoreRules);
-    if (!key) return false;
-    const mapA = buildArrayKeyMap(a, key);
-    const mapB = buildArrayKeyMap(b, key);
-    const ordered = [];
-    const seen = /* @__PURE__ */ new Set();
-    for (const item of a) {
-      const sig = `${typeof item[key]}:${String(item[key])}`;
-      if (seen.has(sig)) continue;
-      seen.add(sig);
-      ordered.push(sig);
-    }
-    for (const item of b) {
-      const sig = `${typeof item[key]}:${String(item[key])}`;
-      if (seen.has(sig)) continue;
-      seen.add(sig);
-      ordered.push(sig);
-    }
-    for (const sig of ordered) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
-      const left = mapA.get(sig);
-      const right = mapB.get(sig);
-      if (!left && right) {
-        pushDiffRow(out, {
-          type: "added",
-          path: `${path}[${right.idx}]`,
-          left: void 0,
-          right: right.item,
-          arrayKey: key,
-          arrayKeyValue: right.item?.[key]
-        }, ignoreRules);
-        continue;
-      }
-      if (left && !right) {
-        pushDiffRow(out, {
-          type: "removed",
-          path: `${path}[${left.idx}]`,
-          left: left.item,
-          right: void 0,
-          arrayKey: key,
-          arrayKeyValue: left.item?.[key]
-        }, ignoreRules);
-        continue;
-      }
-      if (!left || !right) continue;
-      const leftSig = makeArrayItemSignature(left.item, ignoreRules);
-      const rightSig = makeArrayItemSignature(right.item, ignoreRules);
-      if (leftSig === rightSig) {
-        if (left.idx !== right.idx) {
-          pushDiffRow(out, {
-            type: "changed",
-            path: `${path}[${right.idx}]`,
-            left: left.item,
-            right: right.item,
-            moved: true,
-            movedFrom: left.idx,
-            movedTo: right.idx,
-            arrayKey: key,
-            arrayKeyValue: right.item?.[key]
-          }, ignoreRules);
-        } else if (canCollectSameRows(out)) {
-          pushDiffRow(out, {
-            type: "same",
-            path: `${path}[${right.idx}]`,
-            left: left.item,
-            right: right.item,
-            severity: "low",
-            arrayKey: key,
-            arrayKeyValue: right.item?.[key]
-          }, ignoreRules);
-        }
-        continue;
-      }
-      const start = out.length;
-      collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules);
-      const keyVal = right.item?.[key] != null ? right.item[key] : left.item?.[key];
-      for (let oi = start; oi < out.length; oi++) {
-        if (!out[oi].arrayKey) out[oi].arrayKey = key;
-        if (out[oi].arrayKeyValue === void 0) out[oi].arrayKeyValue = keyVal;
-      }
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
-    }
-    return true;
-  }
-  function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
-    const n = a.length;
-    const m = b.length;
-    if (!n && !m) return true;
-    if (!n) {
-      for (let j2 = 0; j2 < m; j2++) {
-        if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
-        pushDiffRow(out, { type: "added", path: `${path}[${j2}]`, left: void 0, right: b[j2] }, ignoreRules);
-      }
-      return true;
-    }
-    if (!m) {
-      for (let i2 = 0; i2 < n; i2++) {
-        if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
-        pushDiffRow(out, { type: "removed", path: `${path}[${i2}]`, left: a[i2], right: void 0 }, ignoreRules);
-      }
-      return true;
-    }
-    if (n * m > ARRAY_LCS_MAX_CELLS) return false;
-    const sigA = a.map((x) => makeArrayItemSignature(x, ignoreRules));
-    const sigB = b.map((x) => makeArrayItemSignature(x, ignoreRules));
-    const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
-    for (let i2 = n - 1; i2 >= 0; i2--) {
-      for (let j2 = m - 1; j2 >= 0; j2--) {
-        dp[i2][j2] = sigA[i2] === sigB[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
-      }
-    }
-    let i = 0;
-    let j = 0;
-    while (i < n || j < m) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
-      if (i < n && j < m && sigA[i] === sigB[j]) {
-        if (canCollectSameRows(out)) {
-          pushDiffRow(out, {
-            type: "same",
-            path: `${path}[${j}]`,
-            left: a[i],
-            right: b[j],
-            severity: "low"
-          }, ignoreRules);
-        }
-        i += 1;
-        j += 1;
-        continue;
-      }
-      if (i < n && j < m) {
-        const sameType = Object.prototype.toString.call(a[i]) === Object.prototype.toString.call(b[j]);
-        if (sameType && dp[i + 1][j + 1] >= dp[i + 1][j] && dp[i + 1][j + 1] >= dp[i][j + 1]) {
-          collectDeepDiffs(a[i], b[j], `${path}[${j}]`, out, ignoreRules);
-          i += 1;
-          j += 1;
-          continue;
-        }
-      }
-      const down = i < n ? dp[i + 1][j] : -1;
-      const right = j < m ? dp[i][j + 1] : -1;
-      if (j < m && (i >= n || right >= down)) {
-        pushDiffRow(out, { type: "added", path: `${path}[${j}]`, left: void 0, right: b[j] }, ignoreRules);
-        j += 1;
-      } else if (i < n) {
-        pushDiffRow(out, { type: "removed", path: `${path}[${i}]`, left: a[i], right: void 0 }, ignoreRules);
-        i += 1;
-      } else {
-        break;
-      }
-    }
-    return true;
-  }
-  function collectArrayDiffs(a, b, path, out, ignoreRules) {
-    if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) return;
-    if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules)) return;
-    const max = Math.max(a.length, b.length);
-    for (let i = 0; i < max; i++) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
-      const p = `${path}[${i}]`;
-      if (i >= a.length) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[i] }, ignoreRules);
-      else if (i >= b.length) pushDiffRow(out, { type: "removed", path: p, left: a[i], right: void 0 }, ignoreRules);
-      else collectDeepDiffs(a[i], b[i], p, out, ignoreRules);
-    }
-  }
-  function collectDeepDiffs(a, b, path, out, ignoreRules) {
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
-    if (isIgnoredPath(ignoreRules, path)) return;
-    if (a === b) {
-      if (canCollectSameRows(out)) {
-        pushDiffRow(out, { type: "same", path, left: a, right: b, severity: "low" }, ignoreRules);
-      }
-      return;
-    }
-    const ta = Object.prototype.toString.call(a);
-    const tb = Object.prototype.toString.call(b);
-    if (ta !== tb) {
-      pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
-      return;
-    }
-    if (a == null || b == null) {
-      pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
-      return;
-    }
-    if (Array.isArray(a)) {
-      if (makeArrayItemSignature(a, ignoreRules) === makeArrayItemSignature(b, ignoreRules)) {
-        if (canCollectSameRows(out)) {
-          pushDiffRow(out, { type: "same", path, left: a, right: b, severity: "low" }, ignoreRules);
-        }
-        return;
-      }
-      collectArrayDiffs(a, b, path, out, ignoreRules);
-      return;
-    }
-    if (typeof a === "object") {
-      if (makeArrayItemSignature(a, ignoreRules) === makeArrayItemSignature(b, ignoreRules)) {
-        if (canCollectSameRows(out)) {
-          pushDiffRow(out, { type: "same", path, left: a, right: b, severity: "low" }, ignoreRules);
-        }
-        return;
-      }
-      const keys = [.../* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)])].sort();
-      for (const k of keys) {
-        if (META_KEYS.has(k) || isIgnoredKey(ignoreRules, k)) continue;
-        const p = path ? `${path}.${k}` : k;
-        if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: "removed", path: p, left: a[k], right: void 0 }, ignoreRules);
-        else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[k] }, ignoreRules);
-        else collectDeepDiffs(a[k], b[k], p, out, ignoreRules);
-        if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
-      }
-      return;
-    }
-    pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
-  }
-  function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeysText, options = {}) {
-    const ignoreRules = parseIgnoreRules(ignoreKeysText);
-    const presetState = options.normalizationPresetState || {};
-    const includeSame = !!options.includeSame;
-    const rows = [];
-    rows.__diffCount = 0;
-    rows.__sameCount = 0;
-    rows.__includeSame = includeSame;
-    const fetchIssues = [];
-    for (const sec of sections) {
-      const label = (SECTION_DEFS.find((x) => x.key === sec) || {}).label || sec;
-      const s = sourceBundle.sections[sec];
-      const t = targetBundle.sections[sec];
-      if (s && s._fetchError || t && t._fetchError) {
-        const sourceError = s?._fetchError ? String(s._fetchError) : "";
-        const targetError = t?._fetchError ? String(t._fetchError) : "";
-        const side = sourceError && targetError ? "both" : sourceError ? "source" : "target";
-        fetchIssues.push({
-          _id: `fetch:${sec}:${side}`,
-          sectionKey: sec,
-          section: label,
-          side,
-          sourceError,
-          targetError,
-          message: side === "both" ? `比較元: ${sourceError}
-比較先: ${targetError}` : sourceError || targetError
-        });
-        continue;
-      }
-      if (!s && t) {
-        pushDiffRow(rows, { sectionKey: sec, section: label, type: "added", path: sec, left: void 0, right: t }, ignoreRules);
-        continue;
-      }
-      if (s && !t) {
-        pushDiffRow(rows, { sectionKey: sec, section: label, type: "removed", path: sec, left: s, right: void 0 }, ignoreRules);
-        continue;
-      }
-      if (!s && !t) continue;
-      const sourceForDiff = normalizeSectionForCompare(sec, s, presetState);
-      const targetForDiff = normalizeSectionForCompare(sec, t, presetState);
-      if (stableStringify(sourceForDiff) === stableStringify(targetForDiff)) {
-        if (includeSame) {
-          pushDiffRow(rows, { sectionKey: sec, section: label, type: "same", path: sec, left: sourceForDiff, right: targetForDiff, severity: "low" }, ignoreRules);
-        }
-        continue;
-      }
-      const start = rows.length;
-      collectDeepDiffs(sourceForDiff, targetForDiff, sec, rows, ignoreRules);
-      for (let i = start; i < rows.length; i++) {
-        if (!rows[i].section) rows[i].section = label;
-        if (!rows[i].sectionKey) rows[i].sectionKey = sec;
-        if (!rows[i].severity) rows[i].severity = detectRowSeverity(rows[i]);
-      }
-    }
-    for (const row of rows) {
-      if (!row.severity) row.severity = detectRowSeverity(row);
-    }
-    return {
-      rows: rows.map((row, idx) => ({ ...row, _id: `d${idx}` })),
-      fetchIssues
-    };
-  }
-  function summarizeRows(rows) {
-    const s = { total: rows.length, added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
-    for (const r of rows) {
-      if (r.type === "same") s.same += 1;
-      else if (r.type === "added") s.added += 1;
-      else if (r.type === "removed") s.removed += 1;
-      else {
-        s.changed += 1;
-        if (r.moved) s.moved += 1;
-      }
-    }
-    return s;
-  }
-  function getActualDiffRows(rows) {
-    return (rows || []).filter((row) => row && row.type !== "same" && !row._displayOnly);
-  }
-  function countActualDiffRows(rows) {
-    return getActualDiffRows(rows).length;
-  }
-  function getDiffNormalizationPresetState() {
-    return {
-      viewOrder: !!ui.diffNormalizeViewOrder?.checked,
-      permissionOrder: !!ui.diffNormalizePermissionOrder?.checked,
-      generalArrayOrder: !!ui.diffNormalizeGeneralArrayOrder?.checked
-    };
-  }
-  function getActiveDiffNormalizationConfig(sectionKey, presetState) {
-    const stateMap = presetState || getDiffNormalizationPresetState();
-    const active = [];
-    Object.keys(DIFF_NORMALIZATION_PRESETS).forEach((key) => {
-      if (!stateMap[key]) return;
-      const preset = DIFF_NORMALIZATION_PRESETS[key];
-      if (!preset?.sections?.has(sectionKey)) return;
-      active.push(preset);
-    });
-    if (!active.length) return null;
-    const ignoreKeys = /* @__PURE__ */ new Set();
-    let unorderedArrays = false;
-    active.forEach((preset) => {
-      preset.ignoreKeys?.forEach((key) => ignoreKeys.add(normalizeIgnoreToken(key)));
-      if (preset.unorderedArrays) unorderedArrays = true;
-    });
-    return { ignoreKeys, unorderedArrays };
-  }
-  function normalizeArrayForSectionCompare(arr, config) {
-    const list = arr.map((item) => normalizeSectionValueForCompare(item, config));
-    if (!config?.unorderedArrays) return list;
-    return list.slice().sort((a, b) => {
-      const sa = JSON.stringify(a);
-      const sb = JSON.stringify(b);
-      if (sa === sb) return 0;
-      return sa < sb ? -1 : 1;
-    });
-  }
-  function normalizeSectionValueForCompare(value, config) {
-    if (Array.isArray(value)) return normalizeArrayForSectionCompare(value, config);
-    if (value && typeof value === "object") {
-      const out = {};
-      Object.keys(value).sort().forEach((key) => {
-        if (META_KEYS.has(key)) return;
-        if (config?.ignoreKeys?.has(normalizeIgnoreToken(key))) return;
-        out[key] = normalizeSectionValueForCompare(value[key], config);
-      });
-      return out;
-    }
-    return value;
-  }
-  function normalizeSectionForCompare(sectionKey, value, presetState) {
-    const config = getActiveDiffNormalizationConfig(sectionKey, presetState);
-    if (!config) return value;
-    return normalizeSectionValueForCompare(value, config);
-  }
-  function getActiveDiffNormalizationLabels(presetState) {
-    const stateMap = presetState || getDiffNormalizationPresetState();
-    return Object.keys(DIFF_NORMALIZATION_PRESETS).filter((key) => !!stateMap[key]).map((key) => DIFF_NORMALIZATION_PRESETS[key].label);
-  }
-  function expandSubtableRowsForDisplay(rows) {
-    if (!Array.isArray(rows) || !rows.length) return rows || [];
-    const out = [];
-    rows.forEach((row, idx) => {
-      out.push(row);
-      if (!row || row._displayOnly) return;
-      if (row.sectionKey !== "fieldSettings") return;
-      const isAdded = row.type === "added";
-      const isRemoved = row.type === "removed";
-      if (!isAdded && !isRemoved) return;
-      const pathMatch = SUBTABLE_ROOT_PATH_RE.exec(String(row.path || ""));
-      if (!pathMatch) return;
-      const payload = isAdded ? row.right : row.left;
-      if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
-      if (payload.type !== "SUBTABLE") return;
-      const inner = payload.fields;
-      if (!inner || typeof inner !== "object" || Array.isArray(inner)) return;
-      const tableLabel = String(payload.label || payload.name || pathMatch[1]);
-      const parentId = row._id || `d${idx}`;
-      let childIdx = 0;
-      Object.keys(inner).forEach((code) => {
-        const field = inner[code];
-        if (!field || typeof field !== "object" || Array.isArray(field)) return;
-        const childPath = `${row.path}.fields.${code}`;
-        const childLabel = String(field.label || field.name || field.code || code);
-        const reason = isAdded ? `テーブル「${tableLabel}」内のフィールド追加 (${childLabel})` : `テーブル「${tableLabel}」内のフィールド削除 (${childLabel})`;
-        out.push({
-          ...row,
-          _id: `${parentId}::tchild::${code}::${childIdx++}`,
-          _parentRowId: parentId,
-          _expandedFromTable: true,
-          _displayOnly: true,
-          path: childPath,
-          left: isRemoved ? field : void 0,
-          right: isAdded ? field : void 0,
-          type: row.type,
-          moved: false,
-          reasonSummary: reason,
-          severity: row.severity || "medium",
-          renameCandidate: null,
-          impactCount: 0,
-          impactRefs: [],
-          impactSummary: ""
-        });
-      });
-    });
-    return out;
-  }
-  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, SUBTABLE_ROOT_PATH_RE;
-  var init_engine = __esm({
-    "src/diff/engine.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_utils();
-      HIGH_IMPACT_SECTIONS = /* @__PURE__ */ new Set([
-        "fieldSettings",
-        "processSettings",
-        "actionSettings",
-        "appAcl",
-        "fieldAcl",
-        "recordPermissions"
-      ]);
-      MEDIUM_IMPACT_SECTIONS = /* @__PURE__ */ new Set([
-        "layoutSettings",
-        "viewSettings",
-        "reportSettings",
-        "customizeSettings",
-        "notifications",
-        "perRecordNotifications",
-        "reminderNotifications",
-        "categories"
-      ]);
-      ARRAY_DIFF_LIMIT = 1e3;
-      SAME_ROW_LIMIT = 3e3;
-      ARRAY_LCS_MAX_CELLS = 6e4;
-      ARRAY_KEY_CANDIDATES = [
-        "code",
-        "id",
-        "name",
-        "entity",
-        "field",
-        "status",
-        "state",
-        "app",
-        "from",
-        "to",
-        "key"
-      ];
-      SUBTABLE_ROOT_PATH_RE = /^fieldSettings\.properties\.([^.[\]]+)$/;
-    }
   });
+}
 
-  // src/diff/enrich.ts
-  function relativePathFromRow(path, secKey) {
-    if (!path) return "";
-    if (path === secKey) return "";
-    if (path.startsWith(`${secKey}.`)) return path.slice(secKey.length + 1);
-    if (path.startsWith(`${secKey}[`)) return path.slice(secKey.length);
-    return null;
+export function getSelectedDiffRows(rows?: any[]): any[] {
+  const selected = state.diffSelectedIds || new Set<string>();
+  return (rows || state.lastDiffRows || []).filter((row: any) => selected.has(row._id));
+}
+
+export function getRenderedDiffRows(rows?: any[]): any[] {
+  const filtered = getFilteredDiffRows(rows);
+  const grouped: Array<{ key: string; rows: any[] }> = groupDiffRowsBySection(filtered);
+  const out: any[] = [];
+  for (const group of grouped) {
+    if (state.diffCollapsedSections.has(group.key)) continue;
+    const visible = Math.max(40, state.diffSectionVisibleCounts[group.key] || 80);
+    out.push(...group.rows.slice(0, visible));
   }
-  function tokenizePath(path) {
-    if (!path) return [];
-    const out = [];
-    const re = /([^[.\]]+)|\[(\d+)\]/g;
-    let m;
-    while ((m = re.exec(path)) !== null) {
-      if (m[1] != null) out.push(m[1]);
-      else out.push(Number(m[2]));
-    }
-    return out;
-  }
-  function getPathLeafKey2(path) {
-    const m = String(path || "").match(/([^[.\]]+)(?:\[\d+\])?$/);
-    return m ? m[1] : "";
-  }
-  function normalizeIgnoreToken2(token) {
-    return String(token || "").replace(/[\u200b\u200c\u200d\ufeff]/g, "").replace(/^[\s\u3000]+|[\s\u3000]+$/g, "").toLowerCase();
-  }
-  function summarizeSeverity(rows) {
-    const out = { high: 0, medium: 0, low: 0 };
-    (rows || []).forEach((r) => {
-      if (!r || r.type === "same") return;
-      const sev = r?.severity || "low";
-      if (sev === "high") out.high += 1;
-      else if (sev === "medium") out.medium += 1;
-      else out.low += 1;
-    });
-    return out;
-  }
-  function normalizeLooseText(value) {
-    return String(value || "").trim().toLowerCase();
-  }
-  function tokenizeLooseText(value) {
-    return normalizeLooseText(value).split(/[^a-z0-9_]+/).filter((token) => token.length >= 2);
-  }
-  function scoreTokenOverlap(a, b) {
-    const setA = new Set(tokenizeLooseText(a));
-    const setB = new Set(tokenizeLooseText(b));
-    if (!setA.size || !setB.size) return 0;
-    let common = 0;
-    setA.forEach((token) => {
-      if (setB.has(token)) common += 1;
-    });
-    return common / Math.max(setA.size, setB.size);
-  }
-  function normalizeFieldDefForRename(value, options = {}) {
-    if (Array.isArray(value)) return value.map((item) => normalizeFieldDefForRename(item, options));
-    if (!value || typeof value !== "object") return value;
-    const out = {};
-    Object.keys(value).sort().forEach((key) => {
-      if (META_KEYS.has(key)) return;
-      if (["code", "id", "appid", "index", "no", "order"].includes(key)) return;
-      if (options.dropPresentation && ["label", "name"].includes(key)) return;
-      out[key] = normalizeFieldDefForRename(value[key], options);
-    });
-    return out;
-  }
-  function extractFieldPathInfo(path) {
-    const rel = relativePathFromRow(path, "fieldSettings");
-    if (!rel) return null;
-    const tokens = tokenizePath(rel);
-    if (tokens[0] !== "properties" || typeof tokens[1] !== "string") return null;
-    const rootCode = tokens[1];
-    const isSubField = tokens[2] === "fields" && typeof tokens[3] === "string";
-    const subFieldCode = isSubField ? tokens[3] : "";
-    const tailTokens = tokens.slice(isSubField ? 4 : 2);
-    return {
-      rootCode,
-      subFieldCode,
-      activeCode: subFieldCode || rootCode,
-      isSubField,
-      tailTokens,
-      leafKey: tailTokens.length ? String(tailTokens[tailTokens.length - 1]) : "",
-      isFieldRoot: !isSubField && tailTokens.length === 0,
-      isSubFieldRoot: isSubField && tailTokens.length === 0,
-      rootPath: isSubField ? `fieldSettings.properties.${rootCode}.fields.${subFieldCode}` : `fieldSettings.properties.${rootCode}`
-    };
-  }
-  function getFieldRowPayload(row) {
-    if (!row || row.sectionKey !== "fieldSettings") return null;
-    const info = extractFieldPathInfo(row.path);
-    if (!info) return null;
-    if (row.type === "added") return row.right;
-    if (row.type === "removed") return row.left;
-    return row.right || row.left || null;
-  }
-  function scoreFieldRenameCandidate(removedRow, addedRow) {
-    const leftDef = getFieldRowPayload(removedRow);
-    const rightDef = getFieldRowPayload(addedRow);
-    if (!leftDef || !rightDef) return null;
-    if (String(leftDef.type || "") !== String(rightDef.type || "")) return null;
-    const reasons = [];
-    let score = 0;
-    const exactSigLeft = stableStringify(normalizeFieldDefForRename(leftDef));
-    const exactSigRight = stableStringify(normalizeFieldDefForRename(rightDef));
-    const coreSigLeft = stableStringify(normalizeFieldDefForRename(leftDef, { dropPresentation: true }));
-    const coreSigRight = stableStringify(normalizeFieldDefForRename(rightDef, { dropPresentation: true }));
-    const leftLabel = normalizeLooseText(leftDef.label || leftDef.name || "");
-    const rightLabel = normalizeLooseText(rightDef.label || rightDef.name || "");
-    const leftCode = normalizeLooseText(leftDef.code || extractFieldPathInfo(removedRow.path)?.activeCode || "");
-    const rightCode = normalizeLooseText(rightDef.code || extractFieldPathInfo(addedRow.path)?.activeCode || "");
-    let hasStrongMatch = false;
-    score += 3;
-    reasons.push(`type:${leftDef.type || "-"}`);
-    if (exactSigLeft === exactSigRight) {
-      score += 6;
-      reasons.push("same-structure");
-      hasStrongMatch = true;
-    } else if (coreSigLeft === coreSigRight) {
-      score += 5;
-      reasons.push("same-core");
-      hasStrongMatch = true;
-    }
-    if (leftLabel && rightLabel && leftLabel === rightLabel) {
-      score += 3;
-      reasons.push("same-label");
-      hasStrongMatch = true;
-    } else if (scoreTokenOverlap(leftLabel, rightLabel) >= 0.6) {
-      score += 1;
-      reasons.push("label-similar");
-      hasStrongMatch = true;
-    }
-    if (scoreTokenOverlap(leftCode, rightCode) >= 0.5) {
-      score += 1;
-      reasons.push("code-similar");
-    }
-    if (leftDef.required === rightDef.required) {
-      score += 1;
-      reasons.push("same-required");
-    }
-    if (!!leftDef.lookup === !!rightDef.lookup) {
-      score += 1;
-      reasons.push("same-lookup");
-    }
-    if (!hasStrongMatch) return null;
-    if (score < 6) return null;
-    return {
-      score,
-      matchedBy: reasons.join(", ")
-    };
-  }
-  function detectFieldRenameCandidates(rows) {
-    const removedRows = (rows || []).filter((row) => row.sectionKey === "fieldSettings" && row.type === "removed" && extractFieldPathInfo(row.path)?.isFieldRoot);
-    const addedRows = (rows || []).filter((row) => row.sectionKey === "fieldSettings" && row.type === "added" && extractFieldPathInfo(row.path)?.isFieldRoot);
-    const candidates = [];
-    removedRows.forEach((removedRow) => {
-      addedRows.forEach((addedRow) => {
-        const scored = scoreFieldRenameCandidate(removedRow, addedRow);
-        if (!scored) return;
-        candidates.push({
-          removedRow,
-          addedRow,
-          score: scored.score,
-          matchedBy: scored.matchedBy
-        });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Section grouping
+// ---------------------------------------------------------------------------
+
+export function groupDiffRowsBySection(rows) {
+  const labelByKey = new Map(SECTION_DEFS.map((d) => [d.key, d.label]));
+  const orderByKey = new Map(SECTION_DEFS.map((d, i) => [d.key, i]));
+  const grouped = new Map();
+
+  for (const row of rows) {
+    const key = row.sectionKey || row.section || '未分類';
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        label: labelByKey.get(key) || row.section || key,
+        rows: []
       });
-    });
-    candidates.sort((a, b) => b.score - a.score);
-    const usedRemoved = /* @__PURE__ */ new Set();
-    const usedAdded = /* @__PURE__ */ new Set();
-    const out = /* @__PURE__ */ new Map();
-    candidates.forEach((candidate) => {
-      if (usedRemoved.has(candidate.removedRow._id) || usedAdded.has(candidate.addedRow._id)) return;
-      usedRemoved.add(candidate.removedRow._id);
-      usedAdded.add(candidate.addedRow._id);
-      const fromCode = extractFieldPathInfo(candidate.removedRow.path)?.activeCode || "";
-      const toCode = extractFieldPathInfo(candidate.addedRow.path)?.activeCode || "";
-      const renameInfo = {
-        id: `rename:${fromCode}:${toCode}`,
-        fromCode,
-        toCode,
-        score: candidate.score,
-        matchedBy: candidate.matchedBy
-      };
-      out.set(candidate.removedRow._id, renameInfo);
-      out.set(candidate.addedRow._id, renameInfo);
-    });
-    return out;
-  }
-  function collectFieldDefinitions(properties, out = {}) {
-    if (!properties || typeof properties !== "object") return out;
-    Object.entries(properties).forEach(([code, field]) => {
-      if (!field || typeof field !== "object") return;
-      out[code] = field;
-      if (field.type === "SUBTABLE" && field.fields && typeof field.fields === "object") {
-        collectFieldDefinitions(field.fields, out);
-      }
-    });
-    return out;
-  }
-  function addFieldImpactRef(index, code, ref) {
-    const fieldCode = String(code || "").trim();
-    if (!fieldCode) return;
-    if (!index.has(fieldCode)) index.set(fieldCode, []);
-    const bucket = index.get(fieldCode);
-    const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join("|");
-    if (bucket.some((item) => [item.sectionKey, item.kind, item.path, item.label].join("|") === sig)) return;
-    bucket.push(ref);
-  }
-  function collectExpressionFieldRefs(text, codeSet) {
-    const matches = /* @__PURE__ */ new Set();
-    const re = /[A-Za-z_][A-Za-z0-9_]*/g;
-    let match;
-    while ((match = re.exec(String(text || ""))) !== null) {
-      if (codeSet.has(match[0])) matches.add(match[0]);
     }
-    return [...matches];
+    grouped.get(key).rows.push(row);
   }
-  function collectFieldRefsFromFieldSettings(fieldSettings, codeSet, index) {
-    const props = fieldSettings?.properties || fieldSettings || {};
-    const walk = (fields, parentPath) => {
-      Object.entries(fields || {}).forEach(([code, field]) => {
-        if (!field || typeof field !== "object") return;
-        const pathBase = `${parentPath}.${code}`;
-        const label = field.label || field.name || code;
-        if (field.lookup && Array.isArray(field.lookup.fieldMappings)) {
-          field.lookup.fieldMappings.forEach((mapping, idx) => {
-            const localField = String(mapping?.field || "").trim();
-            if (!localField || !codeSet.has(localField)) return;
-            addFieldImpactRef(index, localField, {
-              sectionKey: "fieldSettings",
-              section: SECTION_DEFS.find((item) => item.key === "fieldSettings")?.label || "fieldSettings",
-              kind: "ルックアップコピー",
-              label,
-              path: `${pathBase}.lookup.fieldMappings[${idx}].field`
-            });
-          });
-        }
-        if (field.expression) {
-          collectExpressionFieldRefs(field.expression, codeSet).forEach((refCode) => {
-            addFieldImpactRef(index, refCode, {
-              sectionKey: "fieldSettings",
-              section: SECTION_DEFS.find((item) => item.key === "fieldSettings")?.label || "fieldSettings",
-              kind: "計算式参照",
-              label,
-              path: `${pathBase}.expression`
-            });
-          });
-        }
-        if (field.type === "SUBTABLE" && field.fields && typeof field.fields === "object") {
-          walk(field.fields, `${pathBase}.fields`);
-        }
-      });
-    };
-    walk(props, "fieldSettings.properties");
-  }
-  function collectLayoutFieldRefs(layoutSettings, codeSet, index) {
-    const walkRows = (rows, path) => {
-      (Array.isArray(rows) ? rows : []).forEach((row, rowIdx) => {
-        const rowPath = `${path}[${rowIdx}]`;
-        if (row?.type === "GROUP" && Array.isArray(row.layout)) {
-          walkRows(row.layout, `${rowPath}.layout`);
-          return;
-        }
-        const items = Array.isArray(row?.fields) ? row.fields : [];
-        items.forEach((item, itemIdx) => {
-          if (!item || typeof item !== "object") return;
-          const itemPath = `${rowPath}.fields[${itemIdx}]`;
-          const fieldCode = String(item.code || "").trim();
-          if (fieldCode && codeSet.has(fieldCode)) {
-            addFieldImpactRef(index, fieldCode, {
-              sectionKey: "layoutSettings",
-              section: SECTION_DEFS.find((entry) => entry.key === "layoutSettings")?.label || "layoutSettings",
-              kind: "レイアウト配置",
-              label: item.label || fieldCode,
-              path: `${itemPath}.code`
-            });
-          }
-          if (item.type === "GROUP" && Array.isArray(item.layout)) {
-            walkRows(item.layout, `${itemPath}.layout`);
-          }
-          if (item.type === "SUBTABLE" && Array.isArray(item.fields)) {
-            item.fields.forEach((subItem, subIdx) => {
-              const subCode = String(subItem?.code || "").trim();
-              if (!subCode || !codeSet.has(subCode)) return;
-              addFieldImpactRef(index, subCode, {
-                sectionKey: "layoutSettings",
-                section: SECTION_DEFS.find((entry) => entry.key === "layoutSettings")?.label || "layoutSettings",
-                kind: "テーブル配置",
-                label: subItem.label || subCode,
-                path: `${itemPath}.fields[${subIdx}].code`
-              });
-            });
-          }
-        });
-      });
-    };
-    walkRows(layoutSettings?.layout || [], "layoutSettings.layout");
-  }
-  function scanSectionForFieldRefs(sectionKey, value, codeSet, index, path = sectionKey, parentKey = "") {
-    if (Array.isArray(value)) {
-      if (FIELD_REF_ARRAY_KEYS.has(parentKey)) {
-        value.forEach((item, idx) => {
-          const fieldCode = String(item || "").trim();
-          if (!codeSet.has(fieldCode)) return;
-          addFieldImpactRef(index, fieldCode, {
-            sectionKey,
-            section: SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey,
-            kind: "配列参照",
-            label: parentKey,
-            path: `${path}[${idx}]`
-          });
-        });
-      }
-      value.forEach((item, idx) => {
-        scanSectionForFieldRefs(sectionKey, item, codeSet, index, `${path}[${idx}]`, parentKey);
-      });
-      return;
-    }
-    if (value && typeof value === "object") {
-      Object.keys(value).forEach((key) => {
-        scanSectionForFieldRefs(sectionKey, value[key], codeSet, index, `${path}.${key}`, key);
-      });
-      return;
-    }
-    if (typeof value !== "string") return;
-    const text = value.trim();
-    if (!text) return;
-    if (FIELD_REF_EXACT_KEYS.has(parentKey) && codeSet.has(text)) {
-      addFieldImpactRef(index, text, {
-        sectionKey,
-        section: SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey,
-        kind: "フィールド参照",
-        label: parentKey,
-        path
-      });
-      return;
-    }
-    if (!FIELD_REF_TOKEN_KEYS.has(parentKey)) return;
-    collectExpressionFieldRefs(text, codeSet).forEach((fieldCode) => {
-      addFieldImpactRef(index, fieldCode, {
-        sectionKey,
-        section: SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey,
-        kind: parentKey === "expression" ? "式参照" : "条件参照",
-        label: parentKey,
-        path
-      });
-    });
-  }
-  function buildCombinedFieldImpactIndex(sourceBundle, targetBundle = null) {
-    const sourceFields = collectFieldDefinitions(sourceBundle?.sections?.fieldSettings?.properties || sourceBundle?.sections?.fieldSettings || {});
-    const targetFields = collectFieldDefinitions(targetBundle?.sections?.fieldSettings?.properties || targetBundle?.sections?.fieldSettings || {});
-    const codeSet = /* @__PURE__ */ new Set([...Object.keys(sourceFields), ...Object.keys(targetFields)]);
-    const index = /* @__PURE__ */ new Map();
-    if (!codeSet.size) return index;
-    [sourceBundle, targetBundle].forEach((bundle) => {
-      if (!bundle?.sections) return;
-      collectFieldRefsFromFieldSettings(bundle.sections.fieldSettings, codeSet, index);
-      collectLayoutFieldRefs(bundle.sections.layoutSettings, codeSet, index);
-      [
-        "viewSettings",
-        "reportSettings",
-        "processSettings",
-        "actionSettings",
-        "notifications",
-        "perRecordNotifications",
-        "reminderNotifications"
-      ].forEach((sectionKey) => {
-        scanSectionForFieldRefs(sectionKey, bundle.sections[sectionKey], codeSet, index, sectionKey, "");
-      });
-    });
-    return index;
-  }
-  function resolveRowImpactRefs(row, impactIndex) {
-    const codes = /* @__PURE__ */ new Set();
-    const fieldInfo = extractFieldPathInfo(row.path);
-    if (fieldInfo?.activeCode) codes.add(fieldInfo.activeCode);
-    if (row.renameCandidate?.fromCode) codes.add(row.renameCandidate.fromCode);
-    if (row.renameCandidate?.toCode) codes.add(row.renameCandidate.toCode);
-    if (!codes.size) return [];
-    const refs = [];
-    const seen = /* @__PURE__ */ new Set();
-    codes.forEach((code) => {
-      (impactIndex.get(code) || []).forEach((ref) => {
-        const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join("|");
-        if (seen.has(sig)) return;
-        seen.add(sig);
-        refs.push(ref);
-      });
-    });
-    const order = new Map(SECTION_DEFS.map((entry, idx) => [entry.key, idx]));
-    refs.sort((a, b) => {
-      const ao = order.has(a.sectionKey) ? order.get(a.sectionKey) ?? 999 : 999;
-      const bo = order.has(b.sectionKey) ? order.get(b.sectionKey) ?? 999 : 999;
-      if (ao !== bo) return ao - bo;
-      return String(a.path || "").localeCompare(String(b.path || ""));
-    });
-    return refs;
-  }
-  function summarizeImpactRefs(refs) {
-    if (!refs.length) return "";
-    const sectionCounts = /* @__PURE__ */ new Map();
-    refs.forEach((ref) => {
-      const key = ref.section || ref.sectionKey || "-";
-      sectionCounts.set(key, (sectionCounts.get(key) || 0) + 1);
-    });
-    const head = [...sectionCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([section, count]) => `${section}:${count}`).join(" / ");
-    return head || `影響 ${refs.length}件`;
-  }
-  function buildDiffReasonSummary(row) {
-    const sectionKey = row.sectionKey || "";
-    const sectionLabel = SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey || "差分";
-    const fieldInfo = extractFieldPathInfo(row.path);
-    const leafKey = normalizeIgnoreToken2(getPathLeafKey2(row.path));
-    if (row.moved) {
-      if (sectionKey === "layoutSettings") return "レイアウト順序変更";
-      if (sectionKey === "categories") return "カテゴリ順序変更";
-      return "順序変更";
-    }
-    if (sectionKey === "fieldSettings" && fieldInfo) {
-      const noun = fieldInfo.isSubField ? "サブフィールド" : "フィールド";
-      if (fieldInfo.isFieldRoot || fieldInfo.isSubFieldRoot) {
-        if (row.type === "added") return `${noun}追加`;
-        if (row.type === "removed") return `${noun}削除`;
-        return `${noun}定義変更`;
-      }
-      if (fieldInfo.leafKey === "label" || fieldInfo.leafKey === "name") return `${noun}名変更`;
-      if (fieldInfo.leafKey === "type") return `${noun}型変更`;
-      if (fieldInfo.leafKey === "required") return "必須設定変更";
-      if (fieldInfo.leafKey === "expression") return "計算式変更";
-      if (fieldInfo.leafKey === "unique") return "重複禁止設定変更";
-      if (String(row.path || "").includes(".lookup.")) return "ルックアップ設定変更";
-      return `${noun}設定変更`;
-    }
-    if (sectionKey === "layoutSettings") return "レイアウト変更";
-    if (sectionKey === "viewSettings") {
-      if (String(row.path || "").includes("filterCond")) return "ビュー条件変更";
-      if (String(row.path || "").includes(".fields")) return "ビュー列変更";
-      if (leafKey === "name") return "ビュー名変更";
-      return row.type === "added" ? "ビュー追加" : row.type === "removed" ? "ビュー削除" : "ビュー設定変更";
-    }
-    if (sectionKey === "reportSettings") {
-      if (String(row.path || "").includes("filterCond")) return "グラフ条件変更";
-      return row.type === "added" ? "グラフ追加" : row.type === "removed" ? "グラフ削除" : "グラフ設定変更";
-    }
-    if (sectionKey === "processSettings") {
-      if (String(row.path || "").includes(".states.")) return row.type === "added" ? "ステータス追加" : row.type === "removed" ? "ステータス削除" : "ステータス設定変更";
-      if (String(row.path || "").includes(".actions.")) return row.type === "added" ? "遷移アクション追加" : row.type === "removed" ? "遷移アクション削除" : "遷移アクション変更";
-      if (leafKey === "enable") return "プロセス有効/無効変更";
-      return "プロセス設定変更";
-    }
-    if (sectionKey === "actionSettings") return row.type === "added" ? "アクション追加" : row.type === "removed" ? "アクション削除" : "アクション設定変更";
-    if (["appAcl", "fieldAcl", "recordPermissions"].includes(sectionKey)) return row.type === "added" ? "権限追加" : row.type === "removed" ? "権限削除" : "権限変更";
-    if (["notifications", "perRecordNotifications", "reminderNotifications"].includes(sectionKey)) {
-      if (String(row.path || "").includes("condition")) return "通知条件変更";
-      return row.type === "added" ? "通知追加" : row.type === "removed" ? "通知削除" : "通知設定変更";
-    }
-    if (sectionKey === "categories") return row.type === "added" ? "カテゴリ追加" : row.type === "removed" ? "カテゴリ削除" : "カテゴリ設定変更";
-    return row.type === "added" ? `${sectionLabel}追加` : row.type === "removed" ? `${sectionLabel}削除` : `${sectionLabel}変更`;
-  }
-  function enrichDiffRows(rows, sourceBundle, targetBundle) {
-    const renameMap = detectFieldRenameCandidates(rows);
-    const impactIndex = buildCombinedFieldImpactIndex(sourceBundle, targetBundle);
-    return (rows || []).map((row) => {
-      const next = { ...row };
-      const renameCandidate = renameMap.get(row._id);
-      if (renameCandidate) next.renameCandidate = renameCandidate;
-      const reason = buildDiffReasonSummary(next);
-      if (reason) next.reasonSummary = renameCandidate ? `${reason} / コード変更候補` : reason;
-      const impactRefs = resolveRowImpactRefs(next, impactIndex);
-      if (impactRefs.length) {
-        next.impactRefs = impactRefs.slice(0, DIFF_IMPACT_REF_LIMIT);
-        next.impactCount = impactRefs.length;
-        next.impactSummary = summarizeImpactRefs(impactRefs);
-      } else {
-        next.impactRefs = [];
-        next.impactCount = 0;
-        next.impactSummary = "";
-      }
-      return next;
-    });
-  }
-  var init_enrich = __esm({
-    "src/diff/enrich.ts"() {
-      "use strict";
-      init_constants();
-      init_utils();
-    }
+
+  return [...grouped.values()].sort((a, b) => {
+    const oa = orderByKey.has(a.key) ? (orderByKey.get(a.key) ?? 9999) : 9999;
+    const ob = orderByKey.has(b.key) ? (orderByKey.get(b.key) ?? 9999) : 9999;
+    if (oa !== ob) return oa - ob;
+    return String(a.label).localeCompare(String(b.label));
   });
+}
 
-  // src/diff/filter.ts
-  var init_filter = __esm({
-    "src/diff/filter.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_engine();
-      init_api();
-      init_export();
+// ---------------------------------------------------------------------------
+// Warning / threshold helpers
+// ---------------------------------------------------------------------------
+
+export function parseDiffWarnThreshold() {
+  const raw = String(ui.diffWarnThreshold?.value || '').trim();
+  if (!raw) return 0;
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  return Math.floor(num);
+}
+
+export function buildDiffWarningInfo(rows, issues) {
+  const threshold = parseDiffWarnThreshold();
+  const diffCount = countActualDiffRows(rows || state.lastDiffRows || []);
+  const issueCount = (issues || state.lastFetchIssues || []).length;
+  const total = diffCount + issueCount;
+  const exceeded = threshold > 0 && total >= threshold;
+  return { threshold, diffCount, issueCount, total, exceeded };
+}
+
+// ---------------------------------------------------------------------------
+// Export mode resolution
+// ---------------------------------------------------------------------------
+
+export function resolveDiffExportMode() {
+  return ui.diffExportMode?.value || state.diffExportMode || 'all';
+}
+
+export function resolveDiffExportContentMode() {
+  return ui.diffExportContent?.value || state.diffExportContent || 'diffOnly';
+}
+
+export function resolveDiffExportRows(mode?: string) {
+  const exportMode = mode || resolveDiffExportMode();
+  if (exportMode === 'selected') {
+    const rows = getSelectedDiffRows();
+    if (!rows.length) throw new Error('選択差分がありません');
+    return { mode: exportMode, label: '選択差分', rows };
+  }
+  if (exportMode === 'visible') {
+    const rows = getRenderedDiffRows();
+    if (!rows.length) throw new Error('現在表示中の差分がありません');
+    return { mode: exportMode, label: '現在表示中', rows };
+  }
+  if (exportMode === 'favorites') {
+    const rows = (state.lastDiffRows || []).filter((row: any) => state.diffFavoritePaths.has(String(row.path || '').trim()));
+    if (!rows.length) throw new Error('お気に入り差分がありません');
+    return { mode: exportMode, label: 'お気に入り差分', rows };
+  }
+  return { mode: 'all', label: '全差分', rows: state.lastDiffRows || [] };
+}
+
+export function resolveDiffExportComparedScopes(exportInfo: any, scopes: readonly string[] | null | undefined) {
+  const fallbackScopes: string[] = [...new Set((scopes || []).filter(Boolean) as string[])];
+  if ((exportInfo?.mode || 'all') === 'all') return fallbackScopes;
+  const rowScopes: string[] = [...new Set((exportInfo?.rows || []).map((row: any) => row.sectionKey).filter(Boolean) as string[])];
+  if (rowScopes.length) return rowScopes;
+  const issueScopes: string[] = [...new Set((state.lastFetchIssues || []).map((issue: any) => issue.sectionKey).filter(Boolean) as string[])];
+  return issueScopes.length ? issueScopes : fallbackScopes;
+}
+
+export function buildDiffExportComparedBundles(sourceBundle: any, targetBundle: any, scopes: readonly string[] | null | undefined) {
+  const compareScopes: string[] = [...new Set((scopes || []).filter(Boolean) as string[])];
+  return {
+    scopes: compareScopes,
+    sourceBundle: pickBundleSections(sourceBundle, compareScopes),
+    targetBundle: pickBundleSections(targetBundle, compareScopes)
+  };
+}
+
+function getSectionLabel(sectionKeyOrLabel) {
+  const raw = String(sectionKeyOrLabel || '').trim();
+  if (!raw) return '-';
+  return SECTION_DEFS.find((item) => item.key === raw || item.label === raw)?.label || raw;
+}
+
+function getSectionOrder(sectionKeyOrLabel) {
+  const raw = String(sectionKeyOrLabel || '').trim();
+  const index = SECTION_DEFS.findIndex((item) => item.key === raw || item.label === raw);
+  return index >= 0 ? index : 9999;
+}
+
+function getRelativeDiffPath(row) {
+  const path = String(row?.path || '').trim();
+  const secKey = String(row?.sectionKey || '').trim();
+  if (!path) return '';
+  if (!secKey) return path;
+  if (path === secKey) return '（セクション全体）';
+  if (path.startsWith(`${secKey}.`)) return path.slice(secKey.length + 1);
+  if (path.startsWith(`${secKey}[`)) return path.slice(secKey.length);
+  return path;
+}
+
+function compactDiffValuePreview(value, maxLength = 140) {
+  const raw = stringifyForDiff(value).replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  return raw.length > maxLength ? `${raw.slice(0, maxLength)}...` : raw;
+}
+
+function getBundleExportMeta(bundle) {
+  return {
+    appId: String(bundle?.appId || ''),
+    guestId: String(bundle?.guestId || ''),
+    preview: !!bundle?.preview,
+    revision: resolveBundleRevision(bundle) || '',
+    fetchedAt: bundle?.fetchedAt || '',
+    sectionCount: Object.keys(bundle?.sections || ({} as any)).length
+  };
+}
+
+function buildDiffTypeSummary(rows) {
+  const summarized = summarizeRows(rows || []);
+  return {
+    totalRows: summarized.total,
+    diffCount: countActualDiffRows(rows || []),
+    sameCount: summarized.same,
+    added: summarized.added,
+    removed: summarized.removed,
+    changed: summarized.changed,
+    moved: summarized.moved
+  };
+}
+
+function buildCompactFetchIssue(issue) {
+  return {
+    sectionKey: String(issue?.sectionKey || ''),
+    sectionLabel: getSectionLabel(issue?.sectionKey || issue?.section),
+    side: String(issue?.side || ''),
+    message: String(issue?.message || ''),
+    sourceError: String(issue?.sourceError || ''),
+    targetError: String(issue?.targetError || '')
+  };
+}
+
+function buildCompactDiffRow(row) {
+  return {
+    sectionKey: String(row?.sectionKey || ''),
+    sectionLabel: getSectionLabel(row?.sectionKey || row?.section),
+    type: String(row?.type || ''),
+    severity: String(row?.severity || 'low'),
+    path: String(row?.path || ''),
+    relativePath: getRelativeDiffPath(row),
+    moved: !!row?.moved,
+    reasonSummary: String(row?.reasonSummary || ''),
+    impactCount: Number(row?.impactCount || 0),
+    impactSummary: String(row?.impactSummary || ''),
+    renameCandidate: row?.renameCandidate || null,
+    preview: {
+      source: compactDiffValuePreview(row?.left),
+      target: compactDiffValuePreview(row?.right)
     }
-  });
+  };
+}
 
-  // src/diff/export.ts
-  function stringifyForDiff(value) {
-    if (value === void 0) return "（未定義）";
-    const out = JSON.stringify(value, null, 2);
-    return out == null ? String(value) : out;
-  }
-  function getDiffExportContentLabel(mode) {
-    return mode === "withCompared" ? "差分 + 比較設定" : "差分のみ";
-  }
-  function shouldIncludeComparedContent(mode) {
-    return mode === "withCompared";
-  }
-  function buildDiffExportComparedBundles(sourceBundle, targetBundle, scopes) {
-    const compareScopes = [...new Set((scopes || []).filter(Boolean))];
-    return {
-      scopes: compareScopes,
-      sourceBundle: pickBundleSections(sourceBundle, compareScopes),
-      targetBundle: pickBundleSections(targetBundle, compareScopes)
-    };
-  }
-  function getSectionLabel(sectionKeyOrLabel) {
-    const raw = String(sectionKeyOrLabel || "").trim();
-    if (!raw) return "-";
-    return SECTION_DEFS.find((item) => item.key === raw || item.label === raw)?.label || raw;
-  }
-  function getSectionOrder(sectionKeyOrLabel) {
-    const raw = String(sectionKeyOrLabel || "").trim();
-    const index = SECTION_DEFS.findIndex((item) => item.key === raw || item.label === raw);
-    return index >= 0 ? index : 9999;
-  }
-  function getRelativeDiffPath(row) {
-    const path = String(row?.path || "").trim();
-    const secKey = String(row?.sectionKey || "").trim();
-    if (!path) return "";
-    if (!secKey) return path;
-    if (path === secKey) return "（セクション全体）";
-    if (path.startsWith(`${secKey}.`)) return path.slice(secKey.length + 1);
-    if (path.startsWith(`${secKey}[`)) return path.slice(secKey.length);
-    return path;
-  }
-  function compactDiffValuePreview(value, maxLength = 140) {
-    const raw = stringifyForDiff(value).replace(/\s+/g, " ").trim();
-    if (!raw) return "";
-    return raw.length > maxLength ? `${raw.slice(0, maxLength)}...` : raw;
-  }
-  function getBundleExportMeta(bundle) {
-    return {
-      appId: String(bundle?.appId || ""),
-      guestId: String(bundle?.guestId || ""),
-      preview: !!bundle?.preview,
-      revision: resolveBundleRevision(bundle) || "",
-      fetchedAt: bundle?.fetchedAt || "",
-      sectionCount: Object.keys(bundle?.sections || {}).length
-    };
-  }
-  function buildDiffTypeSummary(rows) {
-    const summarized = summarizeRows(rows || []);
-    return {
-      totalRows: summarized.total,
-      diffCount: countActualDiffRows(rows || []),
-      sameCount: summarized.same,
-      added: summarized.added,
-      removed: summarized.removed,
-      changed: summarized.changed,
-      moved: summarized.moved
-    };
-  }
-  function buildCompactFetchIssue(issue) {
-    return {
-      sectionKey: String(issue?.sectionKey || ""),
-      sectionLabel: getSectionLabel(issue?.sectionKey || issue?.section),
-      side: String(issue?.side || ""),
-      message: String(issue?.message || ""),
-      sourceError: String(issue?.sourceError || ""),
-      targetError: String(issue?.targetError || "")
-    };
-  }
-  function buildCompactDiffRow(row) {
-    return {
-      sectionKey: String(row?.sectionKey || ""),
-      sectionLabel: getSectionLabel(row?.sectionKey || row?.section),
-      type: String(row?.type || ""),
-      severity: String(row?.severity || "low"),
-      path: String(row?.path || ""),
-      relativePath: getRelativeDiffPath(row),
-      moved: !!row?.moved,
-      reasonSummary: String(row?.reasonSummary || ""),
-      impactCount: Number(row?.impactCount || 0),
-      impactSummary: String(row?.impactSummary || ""),
-      renameCandidate: row?.renameCandidate || null,
-      preview: {
-        source: compactDiffValuePreview(row?.left),
-        target: compactDiffValuePreview(row?.right)
-      }
-    };
-  }
-  function buildDiffSectionSummaries(rows, fetchIssues = []) {
-    const groupedRows = /* @__PURE__ */ new Map();
-    const issueKeys = /* @__PURE__ */ new Set();
-    (rows || []).forEach((row) => {
-      const key = String(row?.sectionKey || row?.section || "").trim() || "未分類";
-      if (!groupedRows.has(key)) groupedRows.set(key, []);
-      groupedRows.get(key).push(row);
+export function buildDiffSectionSummaries(rows, fetchIssues: any[] = []) {
+  const groupedRows = new Map();
+  const issueKeys = new Set();
+  (rows || []).forEach((row) => {
+    const key = String(row?.sectionKey || row?.section || '').trim() || '未分類';
+    if (!groupedRows.has(key)) groupedRows.set(key, []);
+    groupedRows.get(key).push(row);
+  });
+  (fetchIssues || []).forEach((issue) => {
+    const key = String(issue?.sectionKey || issue?.section || '').trim();
+    if (key) issueKeys.add(key);
+  });
+  const keys = [...new Set([...groupedRows.keys(), ...issueKeys])];
+  keys.sort((a, b) => {
+    const ao = getSectionOrder(a);
+    const bo = getSectionOrder(b);
+    if (ao !== bo) return ao - bo;
+    return String(getSectionLabel(a)).localeCompare(String(getSectionLabel(b)));
+  });
+  return keys.map((sectionKey) => {
+    const sectionRows = groupedRows.get(sectionKey) || [];
+    const diffRows = getActualDiffRows(sectionRows);
+    const typeSummary = buildDiffTypeSummary(sectionRows);
+    const severity = summarizeSeverity(sectionRows);
+    const issueCount = (fetchIssues || []).filter((issue) => String(issue?.sectionKey || issue?.section || '').trim() === sectionKey).length;
+    const reasonCounts = new Map();
+    diffRows.forEach((row) => {
+      const reason = String(row?.reasonSummary || '').trim();
+      if (!reason) return;
+      reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
     });
-    (fetchIssues || []).forEach((issue) => {
-      const key = String(issue?.sectionKey || issue?.section || "").trim();
-      if (key) issueKeys.add(key);
-    });
-    const keys = [.../* @__PURE__ */ new Set([...groupedRows.keys(), ...issueKeys])];
-    keys.sort((a, b) => {
-      const ao = getSectionOrder(a);
-      const bo = getSectionOrder(b);
-      if (ao !== bo) return ao - bo;
-      return String(getSectionLabel(a)).localeCompare(String(getSectionLabel(b)));
-    });
-    return keys.map((sectionKey) => {
-      const sectionRows = groupedRows.get(sectionKey) || [];
-      const diffRows = getActualDiffRows(sectionRows);
-      const typeSummary = buildDiffTypeSummary(sectionRows);
-      const severity = summarizeSeverity(sectionRows);
-      const issueCount = (fetchIssues || []).filter((issue) => String(issue?.sectionKey || issue?.section || "").trim() === sectionKey).length;
-      const reasonCounts = /* @__PURE__ */ new Map();
-      diffRows.forEach((row) => {
-        const reason = String(row?.reasonSummary || "").trim();
-        if (!reason) return;
-        reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1);
-      });
-      const topReasons = [...reasonCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 3).map(([reason, count]) => ({ reason, count }));
-      const samplePaths = [...new Set(diffRows.map((row) => getRelativeDiffPath(row)).filter(Boolean))].slice(0, 3);
-      return {
-        sectionKey,
-        sectionLabel: getSectionLabel(sectionKey),
-        ...typeSummary,
-        fetchIssueCount: issueCount,
-        severity,
-        topReasons,
-        samplePaths
-      };
-    });
-  }
-  function buildDiffHighlightRows(rows, limit = 8) {
-    const severityWeight = { high: 300, medium: 200, low: 100 };
-    return getActualDiffRows(rows || []).map((row, index) => {
+    const topReasons = [...reasonCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 3)
+      .map(([reason, count]) => ({ reason, count }));
+    const samplePaths = [...new Set(diffRows.map((row) => getRelativeDiffPath(row)).filter(Boolean))].slice(0, 3);
+    return {
+      sectionKey,
+      sectionLabel: getSectionLabel(sectionKey),
+      ...typeSummary,
+      fetchIssueCount: issueCount,
+      severity,
+      topReasons,
+      samplePaths
+    };
+  });
+}
+
+export function buildDiffHighlightRows(rows, limit = 8) {
+  const severityWeight = { high: 300, medium: 200, low: 100 };
+  return getActualDiffRows(rows || [])
+    .map((row, index) => {
       let score = severityWeight[row?.severity] || 0;
-      if (row?.type === "removed") score += 30;
-      else if (row?.type === "added") score += 18;
+      if (row?.type === 'removed') score += 30;
+      else if (row?.type === 'added') score += 18;
       else score += 12;
       if (row?.renameCandidate) score += 12;
       if (row?.moved) score += 6;
       score += Math.min(40, Number(row?.impactCount || 0) * 4);
       return { row, index, score };
-    }).sort((a, b) => b.score - a.score || a.index - b.index).slice(0, limit).map(({ row }) => ({
+    })
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, limit)
+    .map(({ row }) => ({
       ...buildCompactDiffRow(row),
       impactRefs: Array.isArray(row?.impactRefs) ? row.impactRefs.slice(0, 3) : []
     }));
+}
+
+function buildCompactRowsBySection(rows) {
+  const grouped = {};
+  (rows || []).forEach((row) => {
+    const key = String(row?.sectionKey || row?.section || '').trim() || '未分類';
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(buildCompactDiffRow(row));
+  });
+  return grouped;
+}
+
+export function buildDiffExportPayload({
+  sourceBundle,
+  targetBundle,
+  rows,
+  fetchIssues,
+  ignoreKeys,
+  exportMode,
+  exportLabel,
+  exportContentMode,
+  exportContentLabel,
+  normalizationState,
+  warning,
+  compareScopes,
+  compareSourceBundle,
+  compareTargetBundle
+}: any = {}) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const safeIssues = Array.isArray(fetchIssues) ? fetchIssues : [];
+  const stateMap = normalizationState || ({} as any);
+  const sectionSummaries = buildDiffSectionSummaries(safeRows, safeIssues);
+  const typeSummary = buildDiffTypeSummary(safeRows);
+  const compared = shouldIncludeComparedContent(exportContentMode) && Array.isArray(compareScopes) && compareScopes.length
+    ? {
+        scopes: [...new Set(compareScopes.filter(Boolean))],
+        sourceBundle: compareSourceBundle || null,
+        targetBundle: compareTargetBundle || null
+      }
+    : null;
+  return {
+    generatedAt: new Date().toISOString(),
+    export: {
+      mode: exportMode || 'all',
+      label: exportLabel || '全差分',
+      contentMode: exportContentMode || 'diffOnly',
+      contentLabel: exportContentLabel || getDiffExportContentLabel(exportContentMode),
+      ignoreKeys: String(ignoreKeys || ''),
+      normalizationState: stateMap,
+      normalizationLabels: getActiveDiffNormalizationLabels(stateMap)
+    },
+    source: getBundleExportMeta(sourceBundle),
+    target: getBundleExportMeta(targetBundle),
+    summary: {
+      ...typeSummary,
+      fetchIssueCount: safeIssues.length,
+      sectionCount: sectionSummaries.length,
+      sectionsWithDiff: sectionSummaries.filter((item) => item.diffCount > 0).length,
+      severity: summarizeSeverity(safeRows),
+      warning: warning || {
+        threshold: 0,
+        diffCount: typeSummary.diffCount,
+        issueCount: safeIssues.length,
+        total: typeSummary.diffCount + safeIssues.length,
+        exceeded: false
+      }
+    },
+    sectionSummaries,
+    highlights: buildDiffHighlightRows(safeRows),
+    fetchIssues: safeIssues.map(buildCompactFetchIssue),
+    details: {
+      rows: safeRows,
+      rowsCompact: safeRows.map(buildCompactDiffRow),
+      rowsBySection: buildCompactRowsBySection(safeRows)
+    },
+    compared
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Markdown export
+// ---------------------------------------------------------------------------
+
+const MD_FIELD_TYPE_LABELS = {
+  SINGLE_LINE_TEXT: '文字列（1行）',
+  MULTI_LINE_TEXT: '文字列（複数行）',
+  RICH_TEXT: 'リッチテキスト',
+  NUMBER: '数値',
+  CALC: '計算',
+  CHECK_BOX: 'チェックボックス',
+  RADIO_BUTTON: 'ラジオボタン',
+  DROP_DOWN: 'ドロップダウン',
+  MULTI_SELECT: '複数選択',
+  DATE: '日付',
+  TIME: '時刻',
+  DATETIME: '日時',
+  LINK: 'リンク',
+  FILE: '添付ファイル',
+  USER_SELECT: 'ユーザー選択',
+  ORGANIZATION_SELECT: '組織選択',
+  GROUP_SELECT: 'グループ選択',
+  CATEGORY: 'カテゴリー',
+  STATUS: 'ステータス',
+  STATUS_ASSIGNEE: '作業者',
+  SUBTABLE: 'テーブル',
+  REFERENCE_TABLE: '関連レコード一覧',
+  RECORD_NUMBER: 'レコード番号',
+  CREATOR: '作成者',
+  CREATED_TIME: '作成日時',
+  MODIFIER: '更新者',
+  UPDATED_TIME: '更新日時',
+  SPACER: 'スペース',
+  HR: '罫線',
+  LABEL: 'ラベル',
+  GROUP: 'グループ'
+};
+
+const MD_VIEW_TYPE_LABELS = {
+  LIST: '一覧',
+  CALENDAR: 'カレンダー',
+  CUSTOM: 'カスタマイズ'
+};
+
+const MD_REPORT_CHART_LABELS = {
+  BAR: '棒グラフ',
+  COLUMN: '縦棒グラフ',
+  LINE: '折れ線グラフ',
+  PIE: '円グラフ',
+  PIVOT_TABLE: 'クロス集計表',
+  TABLE: '表',
+  AREA: '面グラフ',
+  SPLINE: 'スプライン',
+  SPLINE_AREA: 'スプライン面',
+  SCATTER: '散布図'
+};
+
+const MD_ENTITY_TYPE_LABELS = {
+  USER: 'ユーザー',
+  GROUP: 'グループ',
+  ORGANIZATION: '組織',
+  FIELD_ENTITY: 'フィールド',
+  CREATOR: 'レコード作成者',
+  CUSTOM_FIELD: 'カスタムフィールド'
+};
+
+function mdEsc(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, '<br>');
+}
+
+function mdFieldTypeLabel(type) {
+  const key = String(type || '').trim();
+  return MD_FIELD_TYPE_LABELS[key] || key || '';
+}
+
+function mdEntityList(entities) {
+  if (!Array.isArray(entities) || entities.length === 0) return '';
+  return entities.map((e) => {
+    const entity = e?.entity || e;
+    if (!entity) return '';
+    const typeLabel = MD_ENTITY_TYPE_LABELS[entity.type] || entity.type || '';
+    const code = entity.code ? `\`${entity.code}\`` : '';
+    const parts = [typeLabel, code].filter(Boolean);
+    const subs = e?.includeSubs ? '（配下含む）' : '';
+    return parts.join(': ') + subs;
+  }).filter(Boolean).join(' / ');
+}
+
+function mdBoolMark(value) {
+  if (value === true) return '○';
+  return '';
+}
+
+function mdTable(headers, rows) {
+  if (!rows || rows.length === 0) return '';
+  const head = `| ${headers.join(' | ')} |`;
+  const sep = `| ${headers.map(() => '---').join(' | ')} |`;
+  const body = rows.map((r) => `| ${r.map(mdEsc).join(' | ')} |`).join('\n');
+  return `${head}\n${sep}\n${body}`;
+}
+
+function mdRawJson(sec) {
+  return [
+    '<details><summary>Raw JSON</summary>',
+    '',
+    '```json',
+    JSON.stringify(sec, null, 2),
+    '```',
+    '',
+    '</details>'
+  ].join('\n');
+}
+
+function mdFormatDefaultValue(value) {
+  if (value == null) return '';
+  if (Array.isArray(value)) {
+    return value.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : String(v))).join(' / ');
   }
-  function buildCompactRowsBySection(rows) {
-    const grouped = {};
-    (rows || []).forEach((row) => {
-      const key = String(row?.sectionKey || row?.section || "").trim() || "未分類";
-      if (!grouped[key]) grouped[key] = [];
-      grouped[key].push(buildCompactDiffRow(row));
-    });
-    return grouped;
-  }
-  function buildDiffExportPayload({
-    sourceBundle,
-    targetBundle,
-    rows,
-    fetchIssues,
-    ignoreKeys,
-    exportMode,
-    exportLabel,
-    exportContentMode,
-    exportContentLabel,
-    normalizationState,
-    warning,
-    compareScopes,
-    compareSourceBundle,
-    compareTargetBundle
-  } = {}) {
-    const safeRows = Array.isArray(rows) ? rows : [];
-    const safeIssues = Array.isArray(fetchIssues) ? fetchIssues : [];
-    const stateMap = normalizationState || {};
-    const sectionSummaries = buildDiffSectionSummaries(safeRows, safeIssues);
-    const typeSummary = buildDiffTypeSummary(safeRows);
-    const compared = shouldIncludeComparedContent(exportContentMode) && Array.isArray(compareScopes) && compareScopes.length ? {
-      scopes: [...new Set(compareScopes.filter(Boolean))],
-      sourceBundle: compareSourceBundle || null,
-      targetBundle: compareTargetBundle || null
-    } : null;
-    return {
-      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      export: {
-        mode: exportMode || "all",
-        label: exportLabel || "全差分",
-        contentMode: exportContentMode || "diffOnly",
-        contentLabel: exportContentLabel || getDiffExportContentLabel(exportContentMode),
-        ignoreKeys: String(ignoreKeys || ""),
-        normalizationState: stateMap,
-        normalizationLabels: getActiveDiffNormalizationLabels(stateMap)
-      },
-      source: getBundleExportMeta(sourceBundle),
-      target: getBundleExportMeta(targetBundle),
-      summary: {
-        ...typeSummary,
-        fetchIssueCount: safeIssues.length,
-        sectionCount: sectionSummaries.length,
-        sectionsWithDiff: sectionSummaries.filter((item) => item.diffCount > 0).length,
-        severity: summarizeSeverity(safeRows),
-        warning: warning || {
-          threshold: 0,
-          diffCount: typeSummary.diffCount,
-          issueCount: safeIssues.length,
-          total: typeSummary.diffCount + safeIssues.length,
-          exceeded: false
-        }
-      },
-      sectionSummaries,
-      highlights: buildDiffHighlightRows(safeRows),
-      fetchIssues: safeIssues.map(buildCompactFetchIssue),
-      details: {
-        rows: safeRows,
-        rowsCompact: safeRows.map(buildCompactDiffRow),
-        rowsBySection: buildCompactRowsBySection(safeRows)
-      },
-      compared
-    };
-  }
-  function buildPatchPayload(rows, sourceBundle, targetBundle) {
-    const grouped = {};
-    const diffRows = getActualDiffRows(rows);
-    for (const r of diffRows) {
-      const section = r.section || "未分類";
-      if (!grouped[section]) grouped[section] = [];
-      grouped[section].push({
-        type: r.type,
-        path: r.path,
-        sourceValue: r.left,
-        targetValue: r.right,
-        moved: !!r.moved,
-        movedFrom: r.movedFrom,
-        movedTo: r.movedTo,
-        arrayKey: r.arrayKey,
-        arrayKeyValue: r.arrayKeyValue,
-        reasonSummary: r.reasonSummary || "",
-        renameCandidate: r.renameCandidate || null,
-        impactCount: r.impactCount || 0,
-        impactRefs: r.impactRefs || []
-      });
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function mdFieldOptions(options: any): string {
+  if (!options || typeof options !== 'object') return '';
+  const entries = (Object.values(options) as any[]).map((opt: any) => ({
+    label: opt?.label ?? '',
+    index: Number(opt?.index ?? 0)
+  }));
+  entries.sort((a, b) => a.index - b.index);
+  return entries.map((o) => o.label).filter(Boolean).join(' / ');
+}
+
+function mdRenderAppSettings(sec: any) {
+  const rows = [
+    ['アプリ名', sec.name || ''],
+    ['説明', sec.description || ''],
+    ['アイコン', sec.icon?.type ? `${sec.icon.type}${sec.icon.key ? ` (${sec.icon.key})` : ''}` : ''],
+    ['テーマ', sec.theme || ''],
+    ['タイトルフィールド', sec.titleField?.selectFieldCode || (sec.titleField?.isDefaultTitleField ? '（既定）' : '')],
+    ['サムネイル', sec.enableThumbnails ? '有効' : '無効'],
+    ['コメント', sec.enableComments ? '有効' : '無効'],
+    ['一括削除', sec.enableBulkDeletion ? '有効' : '無効'],
+    ['レコード複製', sec.enableDuplicateRecord ? '有効' : '無効'],
+    ['インライン編集', sec.enableInlineRecordEditing ? '有効' : '無効'],
+    ['会計年度開始月', sec.firstMonthOfFiscalYear != null ? String(sec.firstMonthOfFiscalYear) : ''],
+    ['リビジョン', sec.revision != null ? String(sec.revision) : '']
+  ].filter((r) => r[1] !== '');
+  return mdTable(['項目', '値'], rows);
+}
+
+function mdRenderFieldSettings(sec: any) {
+  const props = sec?.properties || ({} as any);
+  const rows: any[][] = [];
+  const subtables: any[] = [];
+  (Object.values(props) as any[]).forEach((f: any) => {
+    if (!f) return;
+    rows.push([
+      f.code || '',
+      f.label || '',
+      mdFieldTypeLabel(f.type),
+      f.required ? '○' : '',
+      f.unique ? '○' : '',
+      mdFormatDefaultValue(f.defaultValue),
+      mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : '')
+    ]);
+    if (f.type === 'SUBTABLE' && f.fields) {
+      subtables.push(f);
     }
-    const byType = { added: 0, removed: 0, changed: 0, moved: 0 };
-    diffRows.forEach((row) => {
-      if (row?.type === "added") byType.added += 1;
-      else if (row?.type === "removed") byType.removed += 1;
-      else byType.changed += 1;
-      if (row?.moved) byType.moved += 1;
+  });
+  rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  const parts: string[] = [];
+  parts.push(`- フィールド数: ${rows.length}`);
+  parts.push('');
+  parts.push(mdTable(
+    ['コード', 'フィールド名', '種別', '必須', '重複禁止', '初期値', '選択肢/式'],
+    rows
+  ));
+  subtables.forEach((tbl: any) => {
+    parts.push('');
+    parts.push(`#### テーブル: \`${tbl.code}\` — ${tbl.label || ''}`);
+    parts.push('');
+    const subRows = (Object.values(tbl.fields || ({} as any)) as any[]).map((f: any) => [
+      f.code || '',
+      f.label || '',
+      mdFieldTypeLabel(f.type),
+      f.required ? '○' : '',
+      mdFormatDefaultValue(f.defaultValue),
+      mdFieldOptions(f.options) || (f.expression ? `式: ${f.expression}` : '')
+    ]);
+    subRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    parts.push(mdTable(['コード', 'フィールド名', '種別', '必須', '初期値', '選択肢/式'], subRows));
+  });
+  return parts.join('\n');
+}
+
+function mdRenderLayoutItem(item, depth = 0) {
+  const indent = '  '.repeat(depth);
+  const out: string[] = [];
+  if (!item) return out;
+  if (item.type === 'ROW') {
+    const codes = (item.fields || []).map((f) => {
+      if (f.type === 'LABEL') return `[ラベル]${f.label || ''}`;
+      if (f.type === 'SPACER') return `[スペース${f.elementId ? `:${f.elementId}` : ''}]`;
+      if (f.type === 'HR') return '[罫線]';
+      const width = f.size?.width;
+      const widthLabel = width != null ? ` (${width}${typeof width === 'number' ? 'px' : ''})` : '';
+      return `\`${f.code || ''}\`${widthLabel}`;
+    }).join(' | ');
+    out.push(`${indent}- 行: ${codes || '（空）'}`);
+  } else if (item.type === 'SUBTABLE') {
+    out.push(`${indent}- テーブル: \`${item.code}\``);
+  } else if (item.type === 'GROUP') {
+    out.push(`${indent}- グループ: \`${item.code}\` — ${item.label || ''}`);
+    (item.layout || []).forEach((child) => {
+      out.push(...mdRenderLayoutItem(child, depth + 1));
     });
-    const sectionsMeta = Object.entries(grouped).map(([sectionLabel, sectionRows]) => {
+  }
+  return out;
+}
+
+function mdRenderLayoutSettings(sec) {
+  const layout = sec?.layout || [];
+  const lines: string[] = [];
+  layout.forEach((item) => lines.push(...mdRenderLayoutItem(item)));
+  return lines.join('\n');
+}
+
+function mdRenderViewSettings(sec: any) {
+  const views = sec?.views || ({} as any);
+  const entries = (Object.entries(views) as Array<[string, any]>).map(([name, v]) => ({ name, ...(v as any) }));
+  entries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
+  const rows = entries.map((v: any) => [
+    v.name || '',
+    (MD_VIEW_TYPE_LABELS as any)[v.type] || v.type || '',
+    String(v.index ?? ''),
+    v.builtinType || '',
+    Array.isArray(v.fields) ? v.fields.join(' / ') : '',
+    v.filterCond || '',
+    v.sort || ''
+  ]);
+  return mdTable(['ビュー名', '種別', '表示順', 'ビルトイン', '表示フィールド', '絞り込み条件', 'ソート'], rows);
+}
+
+function mdRenderReportSettings(sec: any) {
+  const reports = sec?.reports || ({} as any);
+  const entries = (Object.entries(reports) as Array<[string, any]>).map(([name, r]) => ({ name, ...(r as any) }));
+  entries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
+  const rows = entries.map((r: any) => [
+    r.name || '',
+    (MD_REPORT_CHART_LABELS as any)[r.chartType] || r.chartType || '',
+    r.chartMode || '',
+    (r.groups || []).map((g: any) => g.code).filter(Boolean).join(' / '),
+    (r.aggregations || []).map((a: any) => `${a.type || ''}(${a.code || ''})`).join(' / '),
+    r.filterCond || '',
+    r.periodicReport?.active ? '定期' : ''
+  ]);
+  return mdTable(['レポート名', 'チャート', 'モード', '分類', '集計', '絞り込み', '定期'], rows);
+}
+
+function mdRenderProcessSettings(sec: any) {
+  const parts: string[] = [];
+  parts.push(`- プロセス管理: ${sec?.enable ? '有効' : '無効'}`);
+  parts.push('');
+  const states = sec?.states || ({} as any);
+  const stateEntries = (Object.entries(states) as Array<[string, any]>).map(([name, s]) => ({ name, ...(s as any) }));
+  stateEntries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
+  if (stateEntries.length) {
+    parts.push('#### ステータス');
+    parts.push('');
+    parts.push(mdTable(
+      ['ステータス名', '表示順', '作業者タイプ', '作業者'],
+      stateEntries.map((s) => [
+        s.name || '',
+        s.index ?? '',
+        s.assignee?.type || '',
+        mdEntityList(s.assignee?.entities)
+      ])
+    ));
+    parts.push('');
+  }
+  const actions = Array.isArray(sec?.actions) ? sec.actions : [];
+  if (actions.length) {
+    parts.push('#### アクション');
+    parts.push('');
+    parts.push(mdTable(
+      ['アクション名', 'From', 'To', '絞り込み条件'],
+      actions.map((a) => [
+        a.name || '',
+        Array.isArray(a.from) ? a.from.join(' / ') : (a.from || ''),
+        a.to || '',
+        a.filterCond || ''
+      ])
+    ));
+  }
+  return parts.join('\n');
+}
+
+function mdRenderPluginSettings(sec) {
+  const plugins = sec?.plugins || [];
+  const rows = plugins.map((p) => [
+    p.id || '',
+    p.name || '',
+    p.version || '',
+    p.description || ''
+  ]);
+  return mdTable(['プラグインID', '名称', 'バージョン', '説明'], rows);
+}
+
+function mdRenderCustomizeSettings(sec) {
+  const parts: string[] = [];
+  parts.push(`- スコープ: ${sec?.scope || ''}`);
+  parts.push('');
+  ['desktop', 'mobile'].forEach((area) => {
+    const zone = sec?.[area];
+    if (!zone) return;
+    parts.push(`#### ${area === 'desktop' ? 'PC' : 'モバイル'}`);
+    parts.push('');
+    ['js', 'css'].forEach((kind) => {
+      const list = zone[kind];
+      if (!Array.isArray(list) || list.length === 0) return;
+      parts.push(`- ${kind.toUpperCase()}:`);
+      list.forEach((item) => {
+        let src = '';
+        if (item.type === 'URL') src = item.url || '';
+        else if (item.file) src = `(ファイル: ${item.file.name || item.file.fileKey || ''})`;
+        parts.push(`  - ${item.type || ''}: ${src}`);
+      });
+    });
+    parts.push('');
+  });
+  return parts.join('\n').trimEnd();
+}
+
+function mdRenderActionSettings(sec) {
+  const actions = sec?.actions || [];
+  const list = Array.isArray(actions) ? actions : Object.values(actions);
+  const rows = list.map((a) => [
+    a.name || '',
+    a.index ?? '',
+    a.app?.code || a.app?.id || '',
+    a.entity?.type || '',
+    (a.mappings || []).length
+  ]);
+  return mdTable(['アクション名', '表示順', '連携先アプリ', 'エンティティ種別', 'マッピング数'], rows);
+}
+
+function mdRenderAclRights(rights, columns) {
+  if (!Array.isArray(rights) || rights.length === 0) return '';
+  return mdTable(
+    ['対象', ...columns.map((c) => c.label)],
+    rights.map((r) => [
+      mdEntityList([{ entity: r.entity, includeSubs: r.includeSubs }]) || r.code || r.filterCond || '',
+      ...columns.map((c) => mdBoolMark(r[c.key]))
+    ])
+  );
+}
+
+function mdRenderAppAcl(sec) {
+  return mdRenderAclRights(sec?.rights, [
+    { key: 'appEditable', label: 'アプリ管理' },
+    { key: 'recordAddable', label: '追加' },
+    { key: 'recordEditable', label: '編集' },
+    { key: 'recordDeletable', label: '削除' },
+    { key: 'recordImportable', label: '読込' },
+    { key: 'recordExportable', label: '書出' }
+  ]);
+}
+
+function mdRenderFieldAcl(sec) {
+  const rights = sec?.rights || [];
+  const parts: string[] = [];
+  rights.forEach((r) => {
+    parts.push(`#### \`${r.code || ''}\``);
+    parts.push('');
+    parts.push(mdTable(
+      ['対象', '閲覧', '編集'],
+      (r.entities || []).map((e) => [
+        mdEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
+        mdBoolMark(e.viewable),
+        mdBoolMark(e.editable)
+      ])
+    ));
+    parts.push('');
+  });
+  return parts.join('\n').trimEnd();
+}
+
+function mdRenderRecordPermissions(sec) {
+  const rights = sec?.rights || [];
+  const parts: string[] = [];
+  rights.forEach((r, idx) => {
+    parts.push(`#### 条件 ${idx + 1}${r.filterCond ? `: \`${r.filterCond}\`` : ''}`);
+    parts.push('');
+    parts.push(mdTable(
+      ['対象', '閲覧', '編集', '削除'],
+      (r.entities || []).map((e) => [
+        mdEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
+        mdBoolMark(e.viewable),
+        mdBoolMark(e.editable),
+        mdBoolMark(e.deletable)
+      ])
+    ));
+    parts.push('');
+  });
+  return parts.join('\n').trimEnd();
+}
+
+function mdRenderNotifications(sec) {
+  const list = sec?.notifications || [];
+  const rows = list.map((n) => [
+    mdEntityList([{ entity: n.entity, includeSubs: n.includeSubs }]),
+    mdBoolMark(n.recordAdded),
+    mdBoolMark(n.recordEdited),
+    mdBoolMark(n.commentAdded),
+    mdBoolMark(n.statusChanged),
+    mdBoolMark(n.fileImported)
+  ]);
+  const parts: string[] = [];
+  if (sec?.notifyToCommenter != null) {
+    parts.push(`- コメント投稿者へ通知: ${sec.notifyToCommenter ? '有効' : '無効'}`);
+    parts.push('');
+  }
+  parts.push(mdTable(
+    ['対象', 'レコード追加', 'レコード編集', 'コメント', 'ステータス変更', 'ファイル取込'],
+    rows
+  ));
+  return parts.join('\n');
+}
+
+function mdRenderPerRecordNotifications(sec) {
+  const list = sec?.notifications || [];
+  return mdTable(
+    ['タイトル', '絞り込み条件', '通知先'],
+    list.map((n) => [n.title || '', n.filterCond || '', mdEntityList(n.targets)])
+  );
+}
+
+function mdRenderReminderNotifications(sec) {
+  const list = sec?.notifications || [];
+  const parts: string[] = [];
+  if (sec?.timezone) {
+    parts.push(`- タイムゾーン: ${sec.timezone}`);
+    parts.push('');
+  }
+  parts.push(mdTable(
+    ['タイトル', 'タイミング', '絞り込み条件', '通知先'],
+    list.map((n) => {
+      const t = n.timing || ({} as any);
+      const timingParts: any[] = [];
+      if (t.code) timingParts.push(t.code);
+      if (t.daysLater != null) timingParts.push(`${t.daysLater}日後`);
+      if (t.hoursLater != null) timingParts.push(`${t.hoursLater}時間後`);
+      if (t.time) timingParts.push(t.time);
+      return [n.title || '', timingParts.join(' '), n.filterCond || '', mdEntityList(n.targets)];
+    })
+  ));
+  return parts.join('\n');
+}
+
+function mdRenderCategories(sec) {
+  const parts: string[] = [];
+  parts.push(`- カテゴリー機能: ${sec?.enabled ? '有効' : '無効'}`);
+  parts.push('');
+  const list = sec?.categories || [];
+  parts.push(mdTable(
+    ['コード', '名称', '表示順'],
+    list.map((c) => [c.code || '', c.name || '', c.index ?? ''])
+  ));
+  return parts.join('\n');
+}
+
+const MD_SECTION_RENDERERS = {
+  appSettings: mdRenderAppSettings,
+  fieldSettings: mdRenderFieldSettings,
+  layoutSettings: mdRenderLayoutSettings,
+  viewSettings: mdRenderViewSettings,
+  reportSettings: mdRenderReportSettings,
+  processSettings: mdRenderProcessSettings,
+  pluginSettings: mdRenderPluginSettings,
+  customizeSettings: mdRenderCustomizeSettings,
+  actionSettings: mdRenderActionSettings,
+  appAcl: mdRenderAppAcl,
+  fieldAcl: mdRenderFieldAcl,
+  recordPermissions: mdRenderRecordPermissions,
+  notifications: mdRenderNotifications,
+  perRecordNotifications: mdRenderPerRecordNotifications,
+  reminderNotifications: mdRenderReminderNotifications,
+  categories: mdRenderCategories
+};
+
+function mdBundleSummary(bundle) {
+  const sections = bundle?.sections || ({} as any);
+  const rows: any[][] = [];
+  const fields = sections.fieldSettings?.properties || ({} as any);
+  const fieldValues: any[] = Object.values(fields);
+  const fieldCount = Object.keys(fields).length;
+  const subtableFieldCount = fieldValues.reduce((sum: number, field: any) => {
+    if (!field || field.type !== 'SUBTABLE' || !field.fields) return sum;
+    return sum + Object.keys(field.fields).length;
+  }, 0);
+  const requiredCount = fieldValues.filter((field: any) => !!field?.required).length;
+  const lookupCount = fieldValues.filter((field: any) => !!field?.lookup).length;
+  const referenceCount = fieldValues.filter((field: any) => !!field?.referenceTable).length;
+  const viewCount = Object.keys(sections.viewSettings?.views || ({} as any)).length;
+  const reportCount = Object.keys(sections.reportSettings?.reports || ({} as any)).length;
+  const stateCount = Object.keys(sections.processSettings?.states || ({} as any)).length;
+  const actionCount = Array.isArray(sections.processSettings?.actions) ? sections.processSettings.actions.length : 0;
+  const pluginCount = (sections.pluginSettings?.plugins || []).length;
+  const notifCount = (sections.notifications?.notifications || []).length;
+  const customizeCount = ['desktop', 'mobile'].reduce((sum, area) => {
+    const zone = sections.customizeSettings?.[area] || ({} as any);
+    return sum + (zone.js || []).length + (zone.css || []).length;
+  }, 0);
+  if (fieldCount) rows.push(['フィールド数', String(fieldCount)]);
+  if (subtableFieldCount) rows.push(['テーブル内フィールド数', String(subtableFieldCount)]);
+  if (requiredCount) rows.push(['必須フィールド数', String(requiredCount)]);
+  if (lookupCount) rows.push(['ルックアップ数', String(lookupCount)]);
+  if (referenceCount) rows.push(['関連レコード一覧数', String(referenceCount)]);
+  if (viewCount) rows.push(['ビュー数', String(viewCount)]);
+  if (reportCount) rows.push(['レポート数', String(reportCount)]);
+  if (stateCount) rows.push(['ステータス数', String(stateCount)]);
+  if (actionCount) rows.push(['プロセスアクション数', String(actionCount)]);
+  if (pluginCount) rows.push(['プラグイン数', String(pluginCount)]);
+  if (notifCount) rows.push(['一般通知宛先数', String(notifCount)]);
+  if (customizeCount) rows.push(['JS/CSSカスタマイズ数', String(customizeCount)]);
+  return rows.length ? mdTable(['項目', '件数'], rows) : '';
+}
+
+function mdDesignReviewPoints(bundle: any) {
+  const sections = bundle?.sections || ({} as any);
+  const fields: any[] = Object.values(sections.fieldSettings?.properties || ({} as any));
+  const points: string[] = [];
+  const lookupCount = fields.filter((field: any) => !!field?.lookup).length;
+  const calcCount = fields.filter((field: any) => !!(field?.expression || field?.formula)).length;
+  const permissionCount = (sections.appAcl?.rights || []).length
+    + (sections.recordPermissions?.rights || []).length
+    + (sections.fieldAcl?.rights || []).length;
+  const customizeCount = ['desktop', 'mobile'].reduce((sum: number, area: string) => {
+    const zone = sections.customizeSettings?.[area] || ({} as any);
+    return sum + (zone.js || []).length + (zone.css || []).length;
+  }, 0);
+  if (lookupCount) points.push(`- ルックアップ設定が ${lookupCount} 件あります。参照先アプリIDとフィールドマッピングを確認してください。`);
+  if (calcCount) points.push(`- 計算式フィールドが ${calcCount} 件あります。参照フィールド変更時の影響を確認してください。`);
+  if (permissionCount) points.push(`- 権限設定エントリが ${permissionCount} 件あります。移行前後でユーザー/組織/グループの差異を確認してください。`);
+  if (customizeCount) points.push(`- JS/CSSカスタマイズが ${customizeCount} 件あります。URL・ファイル参照・読み込み順を確認してください。`);
+  if (sections.processSettings?.enable) points.push('- プロセス管理が有効です。ステータス、作業者、アクション条件を確認してください。');
+  return points.length ? points.join('\n') : '- 特に目立つ確認ポイントはありません。';
+}
+
+function mdDesignSectionRows(bundle: any) {
+  const sections = bundle?.sections || ({} as any);
+  return SECTION_DEFS
+    .filter((def) => sections[def.key])
+    .map((def): string[] => {
+      const sec = sections[def.key];
+      let count: number | string = '';
+      if (def.key === 'fieldSettings') count = Object.keys(sec?.properties || ({} as any)).length;
+      else if (def.key === 'viewSettings') count = Object.keys(sec?.views || ({} as any)).length;
+      else if (def.key === 'reportSettings') count = Object.keys(sec?.reports || ({} as any)).length;
+      else if (def.key === 'processSettings') count = Object.keys(sec?.states || ({} as any)).length;
+      else if (def.key === 'pluginSettings') count = (sec?.plugins || []).length;
+      else if (Array.isArray(sec?.rights)) count = sec.rights.length;
+      else if (Array.isArray(sec?.notifications)) count = sec.notifications.length;
+      else count = sec && typeof sec === 'object' ? Object.keys(sec).length : '';
+      return [def.label, def.key, count === '' ? '-' : String(count)];
+    });
+}
+
+export function bundleToMarkdown(bundle: any) {
+  const sections = bundle?.sections || ({} as any);
+  const appName = sections.appSettings?.name || '';
+  const lines: string[] = [];
+  lines.push('# kintone アプリ設計書');
+  lines.push('');
+  if (appName) {
+    lines.push(`> ${appName}`);
+    lines.push('');
+  }
+  lines.push(mdTable(['項目', '値'], [
+    ['アプリID', bundle.appId],
+    ['ゲストスペースID', bundle.guestId || '(通常空間)'],
+    ['プレビュー取得', bundle.preview ? 'はい' : 'いいえ'],
+    ['取得日時', bundle.fetchedAt]
+  ]));
+  lines.push('');
+
+  const available = SECTION_DEFS.filter((def) => sections[def.key]);
+  if (available.length) {
+    lines.push('## 目次');
+    lines.push('');
+    available.forEach((def) => {
+      const slug = def.label.replace(/\s+/g, '-');
+      lines.push(`- [${def.label}](#${slug})`);
+    });
+    lines.push('');
+  }
+
+  const summary = mdBundleSummary(bundle);
+  if (summary) {
+    lines.push('## サマリー');
+    lines.push('');
+    lines.push(summary);
+    lines.push('');
+  }
+
+  lines.push('## 確認ポイント');
+  lines.push('');
+  lines.push(mdDesignReviewPoints(bundle));
+  lines.push('');
+
+  const sectionRows = mdDesignSectionRows(bundle);
+  if (sectionRows.length) {
+    lines.push('## 出力セクション');
+    lines.push('');
+    lines.push(mdTable(['セクション', 'キー', '件数'], sectionRows));
+    lines.push('');
+  }
+
+  for (const def of SECTION_DEFS) {
+    const sec = sections[def.key];
+    if (!sec) continue;
+    lines.push(`## ${def.label}`);
+    lines.push('');
+    const renderer = MD_SECTION_RENDERERS[def.key];
+    let rendered = '';
+    if (renderer) {
+      try { rendered = renderer(sec) || ''; } catch (e) { rendered = ''; }
+    }
+    if (rendered.trim()) {
+      lines.push(rendered);
+      lines.push('');
+    } else {
+      lines.push('（データなし）');
+      lines.push('');
+    }
+    lines.push(mdRawJson(sec));
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Patch JSON export
+// ---------------------------------------------------------------------------
+
+export function buildPatchPayload(rows, sourceBundle, targetBundle) {
+  const grouped = {};
+  const diffRows = getActualDiffRows(rows);
+  for (const r of diffRows) {
+    const section = r.section || '未分類';
+    if (!grouped[section]) grouped[section] = [];
+    grouped[section].push({
+      type: r.type,
+      path: r.path,
+      sourceValue: r.left,
+      targetValue: r.right,
+      moved: !!r.moved,
+      movedFrom: r.movedFrom,
+      movedTo: r.movedTo,
+      arrayKey: r.arrayKey,
+      arrayKeyValue: r.arrayKeyValue,
+      reasonSummary: r.reasonSummary || '',
+      renameCandidate: r.renameCandidate || null,
+      impactCount: r.impactCount || 0,
+      impactRefs: r.impactRefs || []
+    });
+  }
+  const byType = { added: 0, removed: 0, changed: 0, moved: 0 };
+  diffRows.forEach((row) => {
+    if (row?.type === 'added') byType.added += 1;
+    else if (row?.type === 'removed') byType.removed += 1;
+    else byType.changed += 1;
+    if (row?.moved) byType.moved += 1;
+  });
+  const sectionsMeta = (Object.entries(grouped) as Array<[string, any[]]>)
+    .map(([sectionLabel, sectionRows]) => {
       const sectionKey = SECTION_DEFS.find((item) => item.label === sectionLabel || item.key === sectionLabel)?.key || sectionLabel;
       const sectionTypeSummary = { totalRows: sectionRows.length, diffCount: sectionRows.length, sameCount: 0, added: 0, removed: 0, changed: 0, moved: 0 };
-      sectionRows.forEach((row) => {
-        if (row?.type === "added") sectionTypeSummary.added += 1;
-        else if (row?.type === "removed") sectionTypeSummary.removed += 1;
+      sectionRows.forEach((row: any) => {
+        if (row?.type === 'added') sectionTypeSummary.added += 1;
+        else if (row?.type === 'removed') sectionTypeSummary.removed += 1;
         else sectionTypeSummary.changed += 1;
         if (row?.moved) sectionTypeSummary.moved += 1;
       });
@@ -2240,110 +1654,122 @@ ${contextLine}`);
         sectionLabel: getSectionLabel(sectionKey),
         ...sectionTypeSummary
       };
-    }).sort((a, b) => getSectionOrder(a.sectionKey) - getSectionOrder(b.sectionKey) || a.sectionLabel.localeCompare(b.sectionLabel));
-    return {
-      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      source: getBundleExportMeta(sourceBundle),
-      target: getBundleExportMeta(targetBundle),
-      summary: {
-        diffCount: diffRows.length,
-        sectionCount: sectionsMeta.length,
-        byType
-      },
-      sectionsMeta,
-      sections: grouped
-    };
-  }
-  function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKeys, options = {}) {
-    const withSameSections = (() => {
-      const baseRows = Array.isArray(rows) ? [...rows] : [];
-      const scopeList = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
-      if (!scopeList.length || !sourceBundle?.sections || !targetBundle?.sections) return baseRows;
-      const issueSectionSet = new Set((Array.isArray(options.fetchIssues) ? options.fetchIssues : []).map((issue) => issue?.sectionKey).filter(Boolean));
-      const rowSectionSet = new Set(baseRows.map((row) => row?.sectionKey).filter(Boolean));
-      const presetState = options.normalizationState || {};
-      for (const sec of scopeList) {
-        if (rowSectionSet.has(sec) || issueSectionSet.has(sec)) continue;
-        const sourceSec = sourceBundle.sections?.[sec];
-        const targetSec = targetBundle.sections?.[sec];
-        if (!sourceSec || !targetSec) continue;
-        const normalizedSource = normalizeSectionForCompare(sec, sourceSec, presetState);
-        const normalizedTarget = normalizeSectionForCompare(sec, targetSec, presetState);
-        if (JSON.stringify(normalizedSource) !== JSON.stringify(normalizedTarget)) continue;
-        const sectionLabel = (SECTION_DEFS.find((def) => def.key === sec) || {}).label || sec;
-        baseRows.push({
-          _id: `same:${sec}`,
-          sectionKey: sec,
-          section: sectionLabel,
-          type: "same",
-          path: sec,
-          left: normalizedSource,
-          right: normalizedTarget,
-          severity: "low"
-        });
-        rowSectionSet.add(sec);
-      }
-      return baseRows;
-    })();
-    const summary = summarizeRows(withSameSections);
-    const sectionText = (scopes || []).map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ");
-    const sectionLabelMap = Object.fromEntries(SECTION_DEFS.map((d) => [d.key, d.label]));
-    const MAX_EXPORT_ROWS = 2e3;
-    const displayRows = expandSubtableRowsForDisplay(withSameSections);
-    const exportRows = displayRows.slice(0, MAX_EXPORT_ROWS);
-    const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
-    const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
-    const exportContentMode = options.exportContentMode || "diffOnly";
-    const exportContentLabel = options.exportContentLabel || getDiffExportContentLabel(exportContentMode);
-    const compareScopes = Array.isArray(options.compareScopes) ? options.compareScopes : [];
-    const compareSourceBundle = options.compareSourceBundle || null;
-    const compareTargetBundle = options.compareTargetBundle || null;
-    const KUC_REPORT_VERSION = "1.24.0";
-    const exportPayload = buildDiffExportPayload({
-      sourceBundle,
-      targetBundle,
-      rows: withSameSections,
-      fetchIssues,
-      ignoreKeys,
-      exportMode: options.exportMode || "all",
-      exportLabel: options.exportLabel || "全差分",
-      exportContentMode,
-      exportContentLabel,
-      normalizationState: options.normalizationState || {},
-      warning,
-      compareScopes,
-      compareSourceBundle,
-      compareTargetBundle
-    });
-    const reportMeta = {
-      generatedAt: exportPayload.generatedAt,
-      scopes: scopes || [],
-      sectionText,
-      ignoreKeys: exportPayload.export.ignoreKeys,
-      exportMode: exportPayload.export.mode,
-      exportLabel: exportPayload.export.label,
-      exportContentMode: exportPayload.export.contentMode,
-      exportContentLabel: exportPayload.export.contentLabel,
-      normalizationLabels: exportPayload.export.normalizationLabels,
-      warning: exportPayload.summary.warning,
-      source: exportPayload.source,
-      target: exportPayload.target,
-      summary,
-      diffOverview: exportPayload.summary,
-      sectionSummaries: exportPayload.sectionSummaries,
-      highlights: exportPayload.highlights,
-      fetchIssues,
-      totalRows: withSameSections.length,
-      renderedRows: exportRows.length,
-      truncated: withSameSections.length > exportRows.length,
-      compareScopes
-    };
-    const sectionSummaryRowsHtml = reportMeta.sectionSummaries.map((item) => `<tr>
+    })
+    .sort((a, b) => getSectionOrder(a.sectionKey) - getSectionOrder(b.sectionKey) || a.sectionLabel.localeCompare(b.sectionLabel));
+  return {
+    generatedAt: new Date().toISOString(),
+    source: getBundleExportMeta(sourceBundle),
+    target: getBundleExportMeta(targetBundle),
+    summary: {
+      diffCount: diffRows.length,
+      sectionCount: sectionsMeta.length,
+      byType
+    },
+    sectionsMeta,
+    sections: grouped
+  };
+}
+
+// ---------------------------------------------------------------------------
+// HTML report export
+// ---------------------------------------------------------------------------
+
+export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKeys, options: any = {}) {
+  const withSameSections = (() => {
+    const baseRows = Array.isArray(rows) ? [...rows] : [];
+    const scopeList = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
+    if (!scopeList.length || !sourceBundle?.sections || !targetBundle?.sections) return baseRows;
+    const issueSectionSet = new Set((Array.isArray(options.fetchIssues) ? options.fetchIssues : [])
+      .map((issue) => issue?.sectionKey)
+      .filter(Boolean));
+    const rowSectionSet = new Set(baseRows.map((row) => row?.sectionKey).filter(Boolean));
+    const presetState = options.normalizationState || ({} as any);
+    for (const sec of scopeList) {
+      if (rowSectionSet.has(sec) || issueSectionSet.has(sec)) continue;
+      const sourceSec = sourceBundle.sections?.[sec];
+      const targetSec = targetBundle.sections?.[sec];
+      if (!sourceSec || !targetSec) continue;
+      const normalizedSource = normalizeSectionForCompare(sec, sourceSec, presetState);
+      const normalizedTarget = normalizeSectionForCompare(sec, targetSec, presetState);
+      if (JSON.stringify(normalizedSource) !== JSON.stringify(normalizedTarget)) continue;
+      const sectionLabel = (SECTION_DEFS.find((def) => def.key === sec) || ({} as any)).label || sec;
+      baseRows.push({
+        _id: `same:${sec}`,
+        sectionKey: sec,
+        section: sectionLabel,
+        type: 'same',
+        path: sec,
+        left: normalizedSource,
+        right: normalizedTarget,
+        severity: 'low'
+      });
+      rowSectionSet.add(sec);
+    }
+    return baseRows;
+  })();
+  const summary = summarizeRows(withSameSections);
+  const sectionText = (scopes || []).map((k) => (SECTION_DEFS.find((d) => d.key === k)?.label || k)).join(', ');
+  const sectionLabelMap = Object.fromEntries(SECTION_DEFS.map((d) => [d.key, d.label]));
+  const MAX_EXPORT_ROWS = 2000;
+  // 差分一覧を「テーブル内フィールド単位」で見られるよう、SUBTABLE 追加/削除行を事前展開する。
+  const displayRows = expandSubtableRowsForDisplay(withSameSections);
+  const exportRows = displayRows.slice(0, MAX_EXPORT_ROWS);
+  const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
+  const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
+  const exportContentMode = options.exportContentMode || 'diffOnly';
+  const exportContentLabel = options.exportContentLabel || getDiffExportContentLabel(exportContentMode);
+  const compareScopes = Array.isArray(options.compareScopes) ? options.compareScopes : [];
+  const compareSourceBundle = options.compareSourceBundle || null;
+  const compareTargetBundle = options.compareTargetBundle || null;
+  /** kintone-ui-component UMD / Kucs グローバルと一致させる */
+  const KUC_REPORT_VERSION = '1.24.0';
+  const exportPayload = buildDiffExportPayload({
+    sourceBundle,
+    targetBundle,
+    rows: withSameSections,
+    fetchIssues,
+    ignoreKeys,
+    exportMode: options.exportMode || 'all',
+    exportLabel: options.exportLabel || '全差分',
+    exportContentMode,
+    exportContentLabel,
+    normalizationState: options.normalizationState || ({} as any),
+    warning,
+    compareScopes,
+    compareSourceBundle,
+    compareTargetBundle
+  });
+  const reportMeta = {
+    generatedAt: exportPayload.generatedAt,
+    scopes: scopes || [],
+    sectionText,
+    ignoreKeys: exportPayload.export.ignoreKeys,
+    exportMode: exportPayload.export.mode,
+    exportLabel: exportPayload.export.label,
+    exportContentMode: exportPayload.export.contentMode,
+    exportContentLabel: exportPayload.export.contentLabel,
+    normalizationLabels: exportPayload.export.normalizationLabels,
+    warning: exportPayload.summary.warning,
+    source: exportPayload.source,
+    target: exportPayload.target,
+    summary,
+    diffOverview: exportPayload.summary,
+    sectionSummaries: exportPayload.sectionSummaries,
+    highlights: exportPayload.highlights,
+    fetchIssues,
+    totalRows: withSameSections.length,
+    renderedRows: exportRows.length,
+    truncated: withSameSections.length > exportRows.length,
+    compareScopes
+  };
+  const sectionSummaryRowsHtml = reportMeta.sectionSummaries.map((item) => `<tr>
         <td>
           <div class="sum-table-name">${esc(item.sectionLabel)}</div>
           <div class="sum-table-sub">${esc(
-      item.topReasons.length ? item.topReasons.map((reason) => `${reason.reason} (${reason.count})`).join(" / ") : item.samplePaths.join(" / ") || "-"
-    )}</div>
+            item.topReasons.length
+              ? item.topReasons.map((reason) => `${reason.reason} (${reason.count})`).join(' / ')
+              : item.samplePaths.join(' / ') || '-'
+          )}</div>
         </td>
         <td>${item.diffCount}</td>
         <td>${item.added}</td>
@@ -2352,8 +1778,9 @@ ${contextLine}`);
         <td>${item.sameCount}</td>
         <td>${item.fetchIssueCount}</td>
         <td>${item.severity.high} / ${item.severity.medium} / ${item.severity.low}</td>
-      </tr>`).join("");
-    const sectionSummaryHtml = reportMeta.sectionSummaries.length ? `<section class="panel">
+      </tr>`).join('');
+  const sectionSummaryHtml = reportMeta.sectionSummaries.length
+    ? `<section class="panel">
             <h3>セクション別サマリー</h3>
             <div class="sum-table-wrap">
               <table class="sum-table">
@@ -2361,34 +1788,39 @@ ${contextLine}`);
                 <tbody>${sectionSummaryRowsHtml}</tbody>
               </table>
             </div>
-          </section>` : `<section class="panel"><h3>セクション別サマリー</h3><div class="muted-note">対象セクションはありません。</div></section>`;
-    const highlightCardsHtml = reportMeta.highlights.map((item) => `<article class="highlight-card">
+          </section>`
+    : `<section class="panel"><h3>セクション別サマリー</h3><div class="muted-note">対象セクションはありません。</div></section>`;
+  const highlightCardsHtml = reportMeta.highlights.map((item) => `<article class="highlight-card">
         <div class="highlight-top">
           <span class="meta-tag reason">${esc(getDiffTypeDisplayLabel(item.type, { moved: item.moved }))}</span>
           <span class="meta-tag impact">重要度 ${esc(getSeverityDisplayLabel(item.severity))}</span>
         </div>
-        <div class="highlight-title">${esc(item.sectionLabel)} / ${esc(item.relativePath || item.path || "-")}</div>
-        <div class="highlight-sub">${esc(item.reasonSummary || "-")}</div>
-        ${item.impactSummary ? `<div class="highlight-sub">影響: ${esc(item.impactSummary)}</div>` : ""}
-        ${item.renameCandidate ? `<div class="highlight-sub">名称変更候補: ${esc(item.renameCandidate.fromCode || "-")} → ${esc(item.renameCandidate.toCode || "-")}</div>` : ""}
+        <div class="highlight-title">${esc(item.sectionLabel)} / ${esc(item.relativePath || item.path || '-')}</div>
+        <div class="highlight-sub">${esc(item.reasonSummary || '-')}</div>
+        ${item.impactSummary ? `<div class="highlight-sub">影響: ${esc(item.impactSummary)}</div>` : ''}
+        ${item.renameCandidate ? `<div class="highlight-sub">名称変更候補: ${esc(item.renameCandidate.fromCode || '-')} → ${esc(item.renameCandidate.toCode || '-')}</div>` : ''}
         <div class="highlight-preview">
-          <div class="highlight-pane"><span class="highlight-pane-label">比較元</span>${esc(item.preview.source || "（なし）")}</div>
-          <div class="highlight-pane"><span class="highlight-pane-label">比較先</span>${esc(item.preview.target || "（なし）")}</div>
+          <div class="highlight-pane"><span class="highlight-pane-label">比較元</span>${esc(item.preview.source || '（なし）')}</div>
+          <div class="highlight-pane"><span class="highlight-pane-label">比較先</span>${esc(item.preview.target || '（なし）')}</div>
         </div>
-      </article>`).join("");
-    const highlightSummaryHtml = reportMeta.highlights.length ? `<section class="panel">
+      </article>`).join('');
+  const highlightSummaryHtml = reportMeta.highlights.length
+    ? `<section class="panel">
             <h3>注目差分</h3>
             <div class="highlight-list">${highlightCardsHtml}</div>
-          </section>` : `<section class="panel"><h3>注目差分</h3><div class="muted-note">注目差分はありません。</div></section>`;
-    const diffTotal = summary.added + summary.removed + summary.changed;
-    const diffRate = summary.total ? Math.round(diffTotal / summary.total * 100) : 0;
-    const severitySummary = reportMeta.diffOverview?.severity || { high: 0, medium: 0, low: 0 };
-    const compareSectionsHtml = shouldIncludeComparedContent(exportContentMode) && compareScopes.length ? compareScopes.map((secKey) => {
+          </section>`
+    : `<section class="panel"><h3>注目差分</h3><div class="muted-note">注目差分はありません。</div></section>`;
+  const diffTotal = summary.added + summary.removed + summary.changed;
+  const diffRate = summary.total ? Math.round((diffTotal / summary.total) * 100) : 0;
+  const severitySummary = reportMeta.diffOverview?.severity || { high: 0, medium: 0, low: 0 };
+
+  const compareSectionsHtml = shouldIncludeComparedContent(exportContentMode) && compareScopes.length
+    ? compareScopes.map((secKey) => {
       const label = sectionLabelMap[secKey] || secKey;
       const sourceValue = compareSourceBundle?.sections?.[secKey];
       const targetValue = compareTargetBundle?.sections?.[secKey];
-      const sourceRevision = compareSourceBundle?.meta?.sectionRevisions?.[secKey] || "-";
-      const targetRevision = compareTargetBundle?.meta?.sectionRevisions?.[secKey] || "-";
+      const sourceRevision = compareSourceBundle?.meta?.sectionRevisions?.[secKey] || '-';
+      const targetRevision = compareTargetBundle?.meta?.sectionRevisions?.[secKey] || '-';
       return `<section class="compare-sec">
           <div class="compare-head">
             <span>${esc(label)}</span>
@@ -2405,24 +1837,27 @@ ${contextLine}`);
             </div>
           </div>
         </section>`;
-    }).join("") : "";
-    const compareHtml = compareSectionsHtml ? `<section class="compare-box">
+    }).join('')
+    : '';
+  const compareHtml = compareSectionsHtml ? `<section class="compare-box">
       <div class="compare-box-head">比較対象設定 (${compareScopes.length}セクション)</div>
       ${compareSectionsHtml}
-    </section>` : "";
-    const srcFieldProps = (() => {
-      const s = sourceBundle?.sections?.fieldSettings;
-      if (!s || typeof s !== "object" || Array.isArray(s)) return {};
-      if (s.properties && typeof s.properties === "object" && !Array.isArray(s.properties)) return s.properties;
-      return s;
-    })();
-    const tgtFieldProps = (() => {
-      const s = targetBundle?.sections?.fieldSettings;
-      if (!s || typeof s !== "object" || Array.isArray(s)) return {};
-      if (s.properties && typeof s.properties === "object" && !Array.isArray(s.properties)) return s.properties;
-      return s;
-    })();
-    const logicScript = `
+    </section>` : '';
+
+  const srcFieldProps = (() => {
+    const s = sourceBundle?.sections?.fieldSettings;
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
+    if (s.properties && typeof s.properties === 'object' && !Array.isArray(s.properties)) return s.properties;
+    return s;
+  })();
+  const tgtFieldProps = (() => {
+    const s = targetBundle?.sections?.fieldSettings;
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
+    if (s.properties && typeof s.properties === 'object' && !Array.isArray(s.properties)) return s.properties;
+    return s;
+  })();
+
+  const logicScript = `
 (() => {
   const REPORT_ROWS = ${safeJsonForScript(exportRows)};
   const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
@@ -4440,7 +3875,8 @@ ${contextLine}`);
   else if (getActiveReportTab() === 'formPreview') renderFormPreview();
 })();
 `;
-    return `<!doctype html>
+
+  return `<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8">
@@ -4956,9 +4392,9 @@ ${contextLine}`);
       <div class="sb-title">差分レポート</div>
       <div class="sb-meta">
         生成日時: ${esc(reportMeta.generatedAt)}<br>
-        対象: ${esc(sectionText || "-")}<br>
-        出力対象: ${esc(reportMeta.exportLabel || "全差分")}<br>
-        出力内容: ${esc(reportMeta.exportContentLabel || "差分のみ")}
+        対象: ${esc(sectionText || '-')}<br>
+        出力対象: ${esc(reportMeta.exportLabel || '全差分')}<br>
+        出力内容: ${esc(reportMeta.exportContentLabel || '差分のみ')}
       </div>
     </div>
     <div class="sb-panel sb-stats">
@@ -4999,8 +4435,8 @@ ${contextLine}`);
       </div>
       <div class="header-actions">
         <span class="header-badge">セクション ${esc(String((scopes || []).length || 0))}</span>
-        <span class="header-badge">出力 ${esc(reportMeta.exportContentLabel || "差分のみ")}</span>
-        <span class="header-badge">警告 ${warning.threshold ? esc(String(warning.total)) : "OFF"}</span>
+        <span class="header-badge">出力 ${esc(reportMeta.exportContentLabel || '差分のみ')}</span>
+        <span class="header-badge">警告 ${warning.threshold ? esc(String(warning.total)) : 'OFF'}</span>
       </div>
     </div>
 
@@ -5017,22 +4453,22 @@ ${contextLine}`);
         <div class="app-compare">
           <section class="app-card source">
             <div class="app-role">比較元 Source</div>
-            <div class="app-title">アプリ ${esc(reportMeta.source.appId || "-")}</div>
+            <div class="app-title">アプリ ${esc(reportMeta.source.appId || '-')}</div>
             <div class="app-meta-grid">
-              <div class="meta-card"><span class="label">ゲストスペース</span><span class="value">${esc(reportMeta.source.guestId || "(通常空間)")}</span></div>
-              <div class="meta-card"><span class="label">モード</span><span class="value">${reportMeta.source.preview ? "プレビュー" : "本番"}</span></div>
-              <div class="meta-card"><span class="label">Revision</span><span class="value">${esc(reportMeta.source.revision || "-")}</span></div>
-              <div class="meta-card"><span class="label">比較対象</span><span class="value">${esc(sectionText || "-")}</span></div>
+              <div class="meta-card"><span class="label">ゲストスペース</span><span class="value">${esc(reportMeta.source.guestId || '(通常空間)')}</span></div>
+              <div class="meta-card"><span class="label">モード</span><span class="value">${reportMeta.source.preview ? 'プレビュー' : '本番'}</span></div>
+              <div class="meta-card"><span class="label">Revision</span><span class="value">${esc(reportMeta.source.revision || '-')}</span></div>
+              <div class="meta-card"><span class="label">比較対象</span><span class="value">${esc(sectionText || '-')}</span></div>
             </div>
           </section>
           <section class="app-card target">
             <div class="app-role">比較先 Target</div>
-            <div class="app-title">アプリ ${esc(reportMeta.target.appId || "-")}</div>
+            <div class="app-title">アプリ ${esc(reportMeta.target.appId || '-')}</div>
             <div class="app-meta-grid">
-              <div class="meta-card"><span class="label">ゲストスペース</span><span class="value">${esc(reportMeta.target.guestId || "(通常空間)")}</span></div>
-              <div class="meta-card"><span class="label">モード</span><span class="value">${reportMeta.target.preview ? "プレビュー" : "本番"}</span></div>
-              <div class="meta-card"><span class="label">Revision</span><span class="value">${esc(reportMeta.target.revision || "-")}</span></div>
-              <div class="meta-card"><span class="label">正規化</span><span class="value">${esc(reportMeta.normalizationLabels.join(", ") || "-")}</span></div>
+              <div class="meta-card"><span class="label">ゲストスペース</span><span class="value">${esc(reportMeta.target.guestId || '(通常空間)')}</span></div>
+              <div class="meta-card"><span class="label">モード</span><span class="value">${reportMeta.target.preview ? 'プレビュー' : '本番'}</span></div>
+              <div class="meta-card"><span class="label">Revision</span><span class="value">${esc(reportMeta.target.revision || '-')}</span></div>
+              <div class="meta-card"><span class="label">正規化</span><span class="value">${esc(reportMeta.normalizationLabels.join(', ') || '-')}</span></div>
             </div>
           </section>
         </div>
@@ -5050,13 +4486,13 @@ ${contextLine}`);
           <section class="panel">
             <h3>比較条件</h3>
             <div class="detail-list">
-              <div class="detail-row"><span class="detail-key">無視キー</span><span>${esc(reportMeta.ignoreKeys || "-")}</span></div>
-              <div class="detail-row"><span class="detail-key">出力対象</span><span>${esc(reportMeta.exportLabel || "全差分")}</span></div>
-              <div class="detail-row"><span class="detail-key">出力内容</span><span>${esc(reportMeta.exportContentLabel || "差分のみ")}</span></div>
-              <div class="detail-row"><span class="detail-key">セクション</span><span>${esc(sectionText || "-")}</span></div>
+              <div class="detail-row"><span class="detail-key">無視キー</span><span>${esc(reportMeta.ignoreKeys || '-')}</span></div>
+              <div class="detail-row"><span class="detail-key">出力対象</span><span>${esc(reportMeta.exportLabel || '全差分')}</span></div>
+              <div class="detail-row"><span class="detail-key">出力内容</span><span>${esc(reportMeta.exportContentLabel || '差分のみ')}</span></div>
+              <div class="detail-row"><span class="detail-key">セクション</span><span>${esc(sectionText || '-')}</span></div>
             </div>
-            ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? " (超過)" : ""}</div>` : ""}
-            ${reportMeta.truncated ? `<div class="warn">※ 出力負荷を抑えるため、先頭 ${reportMeta.renderedRows} 件のみをレポートに含めています（元件数 ${reportMeta.totalRows} 件）。</div>` : ""}
+            ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? ' (超過)' : ''}</div>` : ''}
+            ${reportMeta.truncated ? `<div class="warn">※ 出力負荷を抑えるため、先頭 ${reportMeta.renderedRows} 件のみをレポートに含めています（元件数 ${reportMeta.totalRows} 件）。</div>` : ''}
           </section>
           <section class="panel">
             <h3>レビュー補助</h3>
@@ -5078,9 +4514,9 @@ ${contextLine}`);
           <h3>API取得失敗 ${fetchIssues.length}件</h3>
           <table>
             <thead><tr><th style="width:200px">セクション</th><th style="width:90px">対象</th><th>内容</th></tr></thead>
-            <tbody>${fetchIssues.map((issue) => `<tr><td>${esc(issue.section || issue.sectionKey || "-")}</td><td>${esc(getIssueSideLabel(issue.side))}</td><td><div class="msg">${esc(issue.message || "-")}</div></td></tr>`).join("")}</tbody>
+            <tbody>${fetchIssues.map((issue) => `<tr><td>${esc(issue.section || issue.sectionKey || '-')}</td><td>${esc(getIssueSideLabel(issue.side))}</td><td><div class="msg">${esc(issue.message || '-')}</div></td></tr>`).join('')}</tbody>
           </table>
-        </div>` : ""}
+        </div>` : ''}
       </section>
 
       <section class="tab-pane" data-report-pane="diff" hidden>
@@ -5125,673 +4561,460 @@ ${contextLine}`);
       </div>
     </div>
   </main>
-  <script>${logicScript}<\/script>
+  <script>${logicScript}</script>
 </body>
 </html>`;
-  }
-  var init_export = __esm({
-    "src/diff/export.ts"() {
-      init_constants();
-      init_utils();
-      init_state();
-      init_engine();
-      init_enrich();
-      init_filter();
-      init_api();
-    }
-  });
+}
 
-  // src/tabs/diff-standalone.ts
-  init_api();
-  init_engine();
-  init_enrich();
-  init_utils();
-  function warningInfoForStandalone(rows, fetchIssues) {
-    const diffCount = countActualDiffRows(rows || []);
-    const issueCount = (fetchIssues || []).length;
-    const total = diffCount + issueCount;
-    return { threshold: 0, diffCount, issueCount, total, exceeded: false };
+// ---------------------------------------------------------------------------
+// UI sync helpers (in-panel diff view)
+// ---------------------------------------------------------------------------
+
+export function syncDiffThemeButton() {
+  if (!ui.diffThemeBtn) return;
+  ui.diffThemeBtn.textContent = `比較テーマ: ${getThemeDisplayLabel(state.diffViewTheme)}`;
+}
+
+export function renderDiffSuggestionChips() {
+  if (!ui.diffSuggestedIgnore) return;
+  state.diffIgnoreSuggestions = buildIgnoreKeySuggestions(state.lastDiffRows, ui.ignoreKeys.value);
+  if (!state.lastDiffRows.length) {
+    ui.diffSuggestedIgnore.innerHTML = '<span style="color:#94a3b8;font-size:11px;padding:2px 0">差分比較後に候補を表示します</span>';
+    return;
   }
-  async function runDiffStandalone(opts) {
-    const onStatus = typeof opts.onStatus === "function" ? opts.onStatus : () => {
+  if (!state.diffIgnoreSuggestions.length) {
+    ui.diffSuggestedIgnore.innerHTML = '<span style="color:#94a3b8;font-size:11px;padding:2px 0">候補なし</span>';
+    return;
+  }
+  ui.diffSuggestedIgnore.innerHTML = state.diffIgnoreSuggestions.map((item) =>
+    `<button type="button" class="btn sub" data-act="addSuggestedIgnore" data-key="${esc(item.key)}" style="font-size:11px;padding:4px 8px">＋${esc(item.key)} <span style="opacity:.8">(${item.count})</span></button>`
+  ).join('');
+}
+
+export function renderDiffFilterOptions() {
+  if (!ui.diffFilterSection) return;
+  const ex = state.diffExcludeSections;
+  let sections = [...new Set([...(state.lastDiffRows || []).map((r) => r.sectionKey), ...(state.lastFetchIssues || []).map((r) => r.sectionKey)].filter(Boolean))];
+  if (Array.isArray(ex) && ex.length) {
+    sections = sections.filter((k) => !ex.includes(k));
+  }
+  const current = state.diffFilterSection || ui.diffFilterSection.value || '';
+  ui.diffFilterSection.innerHTML = '<option value="">全セクション</option>' +
+    sections.map((secKey) => {
+      const label = SECTION_DEFS.find((d) => d.key === secKey)?.label || secKey;
+      return `<option value="${esc(secKey)}">${esc(label)}</option>`;
+    }).join('');
+  ui.diffFilterSection.value = sections.includes(current) ? current : '';
+  state.diffFilterSection = ui.diffFilterSection.value;
+}
+
+export function renderDiffSelectionState() {
+  if (!ui.diffSelectionState) return;
+  const total = (state.lastDiffRows || []).length;
+  const selected = getSelectedDiffRows().length;
+  const rendered = getRenderedDiffRows().length;
+  const issues = (state.lastFetchIssues || []).length;
+  const normalization = getActiveDiffNormalizationLabels();
+  let reviewTodo = 0;
+  let reviewIgnored = 0;
+  let reviewNotes = 0;
+  for (const row of (state.lastDiffRows || [])) {
+    if (!row || row.type === 'same') continue;
+    const meta = getDiffReviewMeta(row);
+    if (meta.status === 'todo') reviewTodo += 1;
+    if (meta.status === 'ignored') reviewIgnored += 1;
+    if (meta.note) reviewNotes += 1;
+  }
+  const reviewSummary = `レビュー 要対応 ${reviewTodo}件 / 無視 ${reviewIgnored}件 / メモ ${reviewNotes}件`;
+  const exportModeLabelMap = {
+    all: '全件（比較結果）',
+    selected: '選択済み行のみ',
+    visible: '現在表示中のみ',
+    favorites: 'お気に入り行のみ'
+  };
+  if (!total && !issues && !state.lastDiffAt) {
+    ui.diffSelectionState.textContent = '差分未実行';
+    return;
+  }
+  ui.diffSelectionState.textContent =
+    `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / ${reviewSummary} / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || '全件（比較結果）'} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(', ') || '-'}`;
+}
+
+export function renderDiffWarningBox() {
+  if (!ui.diffWarnBox) return;
+  const warning = buildDiffWarningInfo(state.lastDiffRows, state.lastFetchIssues);
+  if (!warning.threshold) {
+    ui.diffWarnBox.style.display = 'none';
+    ui.diffWarnBox.textContent = '';
+    return;
+  }
+  if (!warning.exceeded) {
+    ui.diffWarnBox.style.display = 'none';
+    ui.diffWarnBox.textContent = '';
+    return;
+  }
+  ui.diffWarnBox.style.display = 'block';
+  ui.diffWarnBox.textContent = `差分 ${warning.diffCount}件 + API取得失敗 ${warning.issueCount}件 = ${warning.total}件 が警告しきい値 ${warning.threshold}件以上です。`;
+}
+
+// ---------------------------------------------------------------------------
+// Main in-panel diff result renderer
+// ---------------------------------------------------------------------------
+
+function formatDiffPathRich(row) {
+  const p = String(row?.path || '-');
+  if (p === '-') return esc(p);
+  const fieldInfo = extractFieldPathInfo(row?.path);
+  if (fieldInfo) {
+    const readFieldDef = (code, side) => {
+      if (!code) return null;
+      const bundle = side === 'target' ? state.lastTargetBundle : state.lastSourceBundle;
+      return bundle?.fieldSettings?.properties?.[code] || null;
     };
-    const onProgress = typeof opts.onProgress === "function" ? opts.onProgress : () => {
+    const readSubFieldDef = (tableCode, subFieldCode, side) => {
+      const table = readFieldDef(tableCode, side);
+      return table?.fields?.[subFieldCode] || null;
     };
-    const source = opts.source || {};
-    const target = opts.target || {};
-    const scopes = opts.scopes || [];
-    const ignoreKeys = opts.ignoreKeys != null ? String(opts.ignoreKeys) : "";
-    const includeSame = !!opts.includeSame;
-    const normalizationPresetState = opts.normalizationPresetState || {
-      viewOrder: false,
-      permissionOrder: false,
-      generalArrayOrder: false
+    const formatCodeName = (field, code) => {
+      const label = String(field?.label || field?.name || '').trim();
+      return label ? `${label} (${code})` : String(code || '');
     };
-    if (!scopes.length) throw new Error("比較セクションを選択してください");
-    if (!opts.importedSourceBundle && !String(source.appId || "").trim()) {
-      throw new Error("比較元アプリIDを入力してください");
-    }
-    if (!opts.importedTargetBundle && !String(target.appId || "").trim()) {
-      throw new Error("比較先アプリIDを入力してください");
-    }
-    async function resolveSide(side) {
-      const imported = side === "source" ? opts.importedSourceBundle : opts.importedTargetBundle;
-      if (imported) return imported;
-      const params = side === "source" ? source : target;
-      return fetchBundle({
-        appId: String(params.appId || "").trim(),
-        guestId: String(params.guestId || "").trim(),
-        preview: !!params.preview,
-        sections: scopes,
-        onProgress: onProgress ? (progress, label) => {
-          onProgress(side, progress, label);
-        } : void 0
-      });
-    }
-    onStatus("比較元を取得中...");
-    const sourceBundle = deepClone(await resolveSide("source"));
-    onStatus("比較先を取得中...");
-    const targetBundle = deepClone(await resolveSide("target"));
-    onStatus("差分計算中...");
-    const diffResult = computeDiffRows(sourceBundle, targetBundle, scopes, ignoreKeys, {
-      normalizationPresetState,
-      includeSame
-    });
-    const rows = enrichDiffRows(diffResult.rows, sourceBundle, targetBundle);
-    const fetchIssues = diffResult.fetchIssues || [];
-    const s = summarizeRows(rows);
-    const sev = summarizeSeverity(rows);
-    const warning = warningInfoForStandalone(rows, fetchIssues);
-    const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ""} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`;
-    onStatus(statusLine);
-    return {
-      rows,
-      fetchIssues,
-      sourceBundle,
-      targetBundle,
-      summary: {
-        text: statusLine,
-        counts: s,
-        severity: sev,
-        warning
+    const resolveFieldName = (code: string | undefined | null, tableCode?: string | null) => {
+      if (!code) return '';
+      if (tableCode) {
+        const sub = readSubFieldDef(tableCode, code, 'target') || readSubFieldDef(tableCode, code, 'source');
+        return formatCodeName(sub, code);
       }
+      const f = readFieldDef(code, 'target') || readFieldDef(code, 'source');
+      return formatCodeName(f, code);
     };
-  }
-
-  // src/tabs/diff-export-standalone.ts
-  init_utils();
-  init_engine();
-  init_export();
-  function shouldIncludeComparedContent2(mode) {
-    return mode === "withCompared";
-  }
-  function comparedScopesForExport(exportInfo, scopes, fetchIssues) {
-    const fallback = [...new Set((scopes || []).filter(Boolean))];
-    if ((exportInfo?.mode || "all") === "all") return fallback;
-    const rowScopes = [...new Set((exportInfo?.rows || []).map((r) => r.sectionKey).filter(Boolean))];
-    if (rowScopes.length) return rowScopes;
-    const issueScopes = [...new Set((fetchIssues || []).map((i) => i.sectionKey).filter(Boolean))];
-    return issueScopes.length ? issueScopes : fallback;
-  }
-  function warningInfoLite(rows, fetchIssues) {
-    const diffCount = countActualDiffRows(rows || []);
-    const issueCount = (fetchIssues || []).length;
-    const total = diffCount + issueCount;
-    return { threshold: 0, diffCount, issueCount, total, exceeded: false };
-  }
-  function runExportDiffJsonStandalone(ctx) {
-    const rows = ctx.rows || [];
-    const fetchIssues = ctx.fetchIssues || [];
-    const exportInfo = { mode: "all", label: "全差分", rows };
-    const exportContentMode = ctx.exportContentMode || "diffOnly";
-    const compareInfo = shouldIncludeComparedContent2(exportContentMode) ? buildDiffExportComparedBundles(
-      ctx.sourceBundle,
-      ctx.targetBundle,
-      comparedScopesForExport(exportInfo, ctx.scopes, fetchIssues)
-    ) : null;
-    if (!rows.length && !fetchIssues.length && !compareInfo?.scopes?.length) {
-      throw new Error("出力できる比較結果がありません");
+    const isTableRoot = fieldInfo.isFieldRoot
+      && (row?.left?.type === 'SUBTABLE' || row?.right?.type === 'SUBTABLE');
+    const propLabel = fieldChangePropTitleFromInfo(fieldInfo, row);
+    const propHtml = propLabel ? `<span class="diff-path-prop"> · ${esc(propLabel)}</span>` : '';
+    const rel = p.startsWith('fieldSettings.') ? p.slice('fieldSettings.'.length) : p;
+    let contextHtml;
+    if (fieldInfo.isSubField) {
+      const tableName = resolveFieldName(fieldInfo.rootCode) || fieldInfo.rootCode;
+      const subName = resolveFieldName(fieldInfo.subFieldCode, fieldInfo.rootCode) || fieldInfo.subFieldCode;
+      contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--table" title="テーブル">⊞ テーブル</span>
+          <span class="diff-path-name">${esc(tableName)}</span>
+          <span class="diff-path-arrow" aria-hidden="true">▸</span>
+          <span class="diff-path-chip diff-path-chip--subfield" title="テーブル内フィールド">↳ テーブル内</span>
+          <span class="diff-path-name diff-path-name--child"><strong>${esc(subName)}</strong></span>
+          ${propHtml}
+        </span>`;
+    } else if (isTableRoot) {
+      const tableName = resolveFieldName(fieldInfo.activeCode) || fieldInfo.activeCode;
+      contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--table" title="テーブル">⊞ テーブル</span>
+          <span class="diff-path-name"><strong>${esc(tableName)}</strong></span>
+          ${propHtml}
+        </span>`;
+    } else {
+      const fieldName = resolveFieldName(fieldInfo.activeCode) || fieldInfo.activeCode;
+      contextHtml = `
+        <span class="diff-path-line diff-path-context">
+          <span class="diff-path-chip diff-path-chip--field" title="フィールド">▣ フィールド</span>
+          <span class="diff-path-name"><strong>${esc(fieldName)}</strong></span>
+          ${propHtml}
+        </span>`;
     }
-    const payload = buildDiffExportPayload({
-      sourceBundle: ctx.sourceBundle,
-      targetBundle: ctx.targetBundle,
-      rows,
-      fetchIssues,
-      ignoreKeys: ctx.ignoreKeys || "",
-      exportMode: exportInfo.mode,
-      exportLabel: exportInfo.label,
-      exportContentMode,
-      exportContentLabel: getDiffExportContentLabel(exportContentMode),
-      normalizationState: ctx.normalizationPresetState || {},
-      warning: warningInfoLite(rows, fetchIssues),
-      compareScopes: compareInfo?.scopes || [],
-      compareSourceBundle: compareInfo?.sourceBundle || null,
-      compareTargetBundle: compareInfo?.targetBundle || null
-    });
-    downloadText(`diff_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    return contextHtml +
+      `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(rel)}</span></span>`;
   }
-  function runExportDiffHtmlStandalone(ctx) {
-    const rows = ctx.rows || [];
-    const fetchIssues = ctx.fetchIssues || [];
-    const scopes = ctx.scopes || [];
-    const exportInfo = { mode: "all", label: "全差分", rows };
-    const exportContentMode = ctx.exportContentMode || "diffOnly";
-    const compareInfo = shouldIncludeComparedContent2(exportContentMode) ? buildDiffExportComparedBundles(
-      ctx.sourceBundle,
-      ctx.targetBundle,
-      comparedScopesForExport(exportInfo, scopes, fetchIssues)
-    ) : null;
-    if (!rows.length && !fetchIssues.length && !compareInfo?.scopes?.length) {
-      throw new Error("出力できる比較結果がありません");
-    }
-    const html = buildDiffHtml(ctx.sourceBundle, ctx.targetBundle, rows, scopes, ctx.ignoreKeys || "", {
-      fetchIssues,
-      exportMode: exportInfo.mode,
-      exportLabel: exportInfo.label,
-      exportContentMode,
-      exportContentLabel: getDiffExportContentLabel(exportContentMode),
-      compareScopes: compareInfo?.scopes || [],
-      compareSourceBundle: compareInfo?.sourceBundle || null,
-      compareTargetBundle: compareInfo?.targetBundle || null,
-      normalizationState: ctx.normalizationPresetState || {},
-      warning: warningInfoLite(rows, fetchIssues)
-    });
-    downloadText(`diff_${nowStamp()}.html`, html, "text/html");
-  }
-  function runExportBundleJsonStandalone(sourceBundle, targetBundle) {
-    if (!sourceBundle || !targetBundle) throw new Error("先に差分比較を実行してください");
-    const payload = {
-      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      source: sourceBundle,
-      target: targetBundle
-    };
-    downloadText(`bundle_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
-  }
-  function runExportPatchJsonStandalone(rows, sourceBundle, targetBundle) {
-    if (!countActualDiffRows(rows || [])) throw new Error("出力できる差分がありません");
-    const payload = buildPatchPayload(rows, sourceBundle, targetBundle);
-    downloadText(`patch_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
-  }
+  return `<span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(p)}</span></span>`;
+}
 
-  // src/entries/diff-lite-ui.ts
-  var SCOPE_OPTS = [
-    ["fieldSettings", "フィールド", true],
-    ["layoutSettings", "レイアウト", true],
-    ["viewSettings", "ビュー", true],
-    ["reportSettings", "グラフ", false],
-    ["processSettings", "プロセス", true],
-    ["appSettings", "アプリ設定", false],
-    ["formSettings", "フォーム", false],
-    ["customizeSettings", "JS/CSS", false],
-    ["pluginSettings", "プラグイン", false],
-    ["actionSettings", "アクション", false],
-    ["appAcl", "アプリ権限", false],
-    ["fieldAcl", "フィールド権限", false],
-    ["recordPermissions", "レコード権限", false],
-    ["notifications", "通知", false],
-    ["perRecordNotifications", "レコード条件通知", false],
-    ["reminderNotifications", "リマインダー", false],
-    ["categories", "カテゴリ", false]
+function buildDiffSummaryBars(summary) {
+  const seg = [
+    ['diff-bar-added', summary.added],
+    ['diff-bar-removed', summary.removed],
+    ['diff-bar-changed', summary.changed],
+    ['diff-bar-moved', summary.moved]
+  ].filter(([, n]) => n > 0);
+  if (!seg.length) return '';
+  const inner = seg.map(([cls, n]) =>
+    `<span class="diff-bar ${cls}" style="flex:${Math.max(1, n)}"></span>`
+  ).join('');
+  return `<div class="diff-summary-bars" role="presentation" aria-hidden="true">${inner}</div>`;
+}
+
+function buildDiffImpactCardsHtml(rows) {
+  const actual = getActualDiffRows(rows);
+  if (!actual.length) return '';
+  const bySection = new Map();
+  for (const row of actual) {
+    const key = row.sectionKey || '';
+    if (!key) continue;
+    const slot = bySection.get(key) || { key, label: '', total: 0, added: 0, removed: 0, changed: 0, moved: 0, high: 0, medium: 0, low: 0, viewed: 0 };
+    slot.label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
+    slot.total += 1;
+    if (row.type === 'added') slot.added += 1;
+    else if (row.type === 'removed') slot.removed += 1;
+    else if (row.type === 'changed') slot.changed += 1;
+    if (row.moved) slot.moved += 1;
+    const sev = row.severity || 'low';
+    if (sev === 'high') slot.high += 1;
+    else if (sev === 'medium') slot.medium += 1;
+    else slot.low += 1;
+    if (isDiffRowViewed(row)) slot.viewed += 1;
+    bySection.set(key, slot);
+  }
+  const items = [...bySection.values()].sort((a, b) => (b.high - a.high) || (b.total - a.total));
+  if (!items.length) return '';
+  const curSec = ui.diffFilterSection?.value || state.diffFilterSection || '';
+  const cards = items.map((item) => {
+    const progress = item.total > 0 ? Math.min(1, item.viewed / item.total) : 0;
+    const progressPct = Math.round(progress * 100);
+    const warnIcon = item.high > 0
+      ? `<span class="diff-impact-card-warn" title="高重要度 ${item.high}件">⚠ 高 ${item.high}</span>`
+      : '';
+    const stats = [
+      item.added ? `<span class="diff-impact-stat added" title="追加">+${item.added}</span>` : '',
+      item.removed ? `<span class="diff-impact-stat removed" title="削除">-${item.removed}</span>` : '',
+      item.changed ? `<span class="diff-impact-stat changed" title="変更">~${item.changed}</span>` : '',
+      item.moved ? `<span class="diff-impact-stat moved" title="移動">↕${item.moved}</span>` : ''
+    ].filter(Boolean).join('');
+    const activeClass = curSec === item.key ? ' is-active' : '';
+    const reviewed = item.total === item.viewed ? ' is-complete' : '';
+    return `<button type="button" class="diff-impact-card${activeClass}${reviewed}" data-diff-sec-nav="${esc(item.key)}" title="${esc(item.label)} へジャンプ">
+        <div class="diff-impact-card-head">
+          <span class="diff-impact-card-title">${esc(item.label)}</span>
+          ${warnIcon}
+        </div>
+        <div class="diff-impact-card-total">${item.total}<span class="diff-impact-card-unit">件</span></div>
+        <div class="diff-impact-stats">${stats}</div>
+        <div class="diff-impact-progress" title="レビュー済み ${item.viewed}/${item.total}">
+          <div class="diff-impact-progress-bar" style="width:${progressPct}%"></div>
+          <span class="diff-impact-progress-label">レビュー ${item.viewed}/${item.total}</span>
+        </div>
+      </button>`;
+  }).join('');
+  return `<div class="diff-impact-cards" role="region" aria-label="セクション別インパクト">${cards}</div>`;
+}
+
+function buildDiffSectionNavHtml(rows) {
+  const cur = ui.diffFilterSection?.value || state.diffFilterSection || '';
+  const baseRows = getFilteredDiffRowsWithoutSectionFilter(rows);
+  const grouped = groupDiffRowsBySection(baseRows);
+  const sel = state.diffSelectedIds || new Set();
+  const selectedInBase = baseRows.filter((r) => sel.has(r._id || '')).length;
+  const total = baseRows.length;
+  const pills = [
+    `<button type="button" class="diff-sec-pill${!cur ? ' is-active' : ''}" data-diff-sec-nav="" title="全セクション（セクション以外のフィルタはそのまま）">すべて <span class="diff-sec-pill-n">${total}</span>${selectedInBase ? `<span class="diff-sec-pill-sel">選択${selectedInBase}</span>` : ''}</button>`
   ];
-  var STYLE_ID = "kus-diff-lite-styles";
-  function ensureDiffLiteStyles() {
-    if (document.getElementById(STYLE_ID)) return;
-    const s = document.createElement("style");
-    s.id = STYLE_ID;
-    s.textContent = `
-#kus-diff-lite-root.kus-dlite{
-  --kus-accent:#2563eb;
-  --kus-accent2:#0ea5e9;
-  --kus-border:#e2e8f0;
-  --kus-muted:#64748b;
-  --kus-text:#0f172a;
-  position:fixed;z-index:999999;top:max(16px,2vh);right:max(16px,2vw);
-  width:min(480px,96vw);max-height:min(92vh,900px);overflow:hidden;
-  display:flex;flex-direction:column;
-  background:#fff;border-radius:16px;
-  border:1px solid var(--kus-border);
-  box-shadow:0 4px 6px -1px rgba(15,23,42,.08),0 25px 50px -12px rgba(15,23,42,.28);
-  font:13px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  color:var(--kus-text);
-}
-.kus-dlite__hero{
-  flex-shrink:0;
-  background:linear-gradient(125deg,#1d4ed8 0%,var(--kus-accent) 42%,var(--kus-accent2) 100%);
-  color:#fff;padding:14px 16px 16px;
-  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
-}
-.kus-dlite__hero-main{min-width:0}
-.kus-dlite__title{margin:0;font-size:16px;font-weight:700;letter-spacing:.02em;line-height:1.25}
-.kus-dlite__badge{
-  display:inline-block;margin-top:8px;font-size:10px;font-weight:600;letter-spacing:.04em;
-  text-transform:uppercase;background:rgba(255,255,255,.22);padding:3px 10px;border-radius:999px;
-}
-.kus-dlite__close{
-  flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
-  color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
-}
-.kus-dlite__close:hover{background:rgba(255,255,255,.22)}
-.kus-dlite__body{padding:14px 16px 16px;overflow-y:auto;flex:1;min-height:0}
-.kus-dlite__info{
-  font-size:12px;color:var(--kus-muted);line-height:1.55;margin:0 0 14px;
-  padding:10px 12px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;
-}
-.kus-dlite__card{
-  background:#fafbfc;border:1px solid var(--kus-border);border-radius:12px;padding:12px 14px;margin-bottom:12px;
-}
-.kus-dlite__card-title{
-  font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px;
-  padding-bottom:6px;border-bottom:1px solid #e2e8f0;
-}
-.kus-dlite__row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-bottom:8px}
-.kus-dlite__row:last-child{margin-bottom:0}
-.kus-dlite__label{font-size:12px;font-weight:600;color:#334155;min-width:4.5em}
-.kus-dlite__input,.kus-dlite__textarea,.kus-dlite__select{
-  border:1px solid var(--kus-border);border-radius:8px;padding:7px 10px;font-size:12px;
-  background:#fff;color:var(--kus-text);outline:none;transition:border-color .15s,box-shadow .15s;
-}
-.kus-dlite__input:focus,.kus-dlite__textarea:focus,.kus-dlite__select:focus{
-  border-color:var(--kus-accent);box-shadow:0 0 0 3px rgba(37,99,235,.15);
-}
-.kus-dlite__input--id{width:min(120px,36vw)}
-.kus-dlite__input--guest{width:min(108px,32vw)}
-.kus-dlite__check{font-size:12px;color:#475569;display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
-.kus-dlite__check input{width:14px;height:14px;accent-color:var(--kus-accent)}
-.kus-dlite__chips{display:flex;flex-wrap:wrap;gap:6px}
-.kus-dlite__chip{
-  display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#334155;
-  background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:4px 10px 4px 6px;cursor:pointer;user-select:none;
-}
-.kus-dlite__chip input{accent-color:var(--kus-accent);width:13px;height:13px}
-.kus-dlite__chip:hover{border-color:#94a3b8;background:#f8fafc}
-.kus-dlite__textarea{width:100%;box-sizing:border-box;min-height:52px;resize:vertical;font-family:inherit}
-.kus-dlite__norms{display:flex;flex-wrap:wrap;gap:10px 14px}
-.kus-dlite__btn-run{
-  width:100%;margin-top:4px;padding:11px 16px;font-size:13px;font-weight:700;border:none;border-radius:10px;
-  background:linear-gradient(180deg,#3b82f6 0%,var(--kus-accent) 100%);color:#fff;cursor:pointer;
-  box-shadow:0 2px 4px rgba(37,99,235,.35);transition:filter .15s,transform .05s;
-}
-.kus-dlite__btn-run:hover{filter:brightness(1.06)}
-.kus-dlite__btn-run:active{transform:scale(.99)}
-.kus-dlite__export-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-@media(max-width:380px){.kus-dlite__export-grid{grid-template-columns:1fr}}
-.kus-dlite__btn-sub{
-  padding:8px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:10px;
-  background:linear-gradient(180deg,#fff,#f1f5f9);color:#334155;cursor:pointer;
-}
-.kus-dlite__btn-sub:hover{border-color:#94a3b8;background:#fff}
-.kus-dlite__status{
-  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.45;min-height:2.8em;
-  border:1px solid transparent;
-}
-.kus-dlite__status--neutral{background:#f1f5f9;color:#334155;border-color:#e2e8f0}
-.kus-dlite__status--ok{background:#ecfdf5;color:#065f46;border-color:#a7f3d0}
-.kus-dlite__status--err{background:#fef2f2;color:#991b1b;border-color:#fecaca}
-.kus-dlite__result{
-  margin-top:10px;padding:10px 12px;background:#0f172a;color:#e2e8f0;border-radius:10px;
-  font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;
-  border:1px solid #1e293b;
-}
-`;
-    document.head.appendChild(s);
-  }
-  function setStatusBar(el, text, tone) {
-    el.textContent = text || "";
-    el.classList.remove("kus-dlite__status--neutral", "kus-dlite__status--ok", "kus-dlite__status--err");
-    el.classList.add(
-      tone === "ok" ? "kus-dlite__status--ok" : tone === "err" ? "kus-dlite__status--err" : "kus-dlite__status--neutral"
+  for (const g of grouped) {
+    const nSel = g.rows.filter((r) => sel.has(r._id)).length;
+    const active = cur === g.key ? ' is-active' : '';
+    pills.push(
+      `<button type="button" class="diff-sec-pill${active}" data-diff-sec-nav="${esc(g.key)}" title="${esc(g.label)}">${esc(g.label)} <span class="diff-sec-pill-n">${g.rows.length}</span>${nSel ? `<span class="diff-sec-pill-sel">${nSel}</span>` : ''}</button>`
     );
   }
-  function renderPanel() {
-    ensureDiffLiteStyles();
-    const old = document.getElementById("kus-diff-lite-root");
-    if (old) old.remove();
-    const root = document.createElement("div");
-    root.id = "kus-diff-lite-root";
-    root.className = "kus-dlite";
-    const hero = document.createElement("div");
-    hero.className = "kus-dlite__hero";
-    const heroMain = document.createElement("div");
-    heroMain.className = "kus-dlite__hero-main";
-    const title = document.createElement("h1");
-    title.className = "kus-dlite__title";
-    title.textContent = "差分比較";
-    const badge = document.createElement("div");
-    badge.className = "kus-dlite__badge";
-    badge.textContent = "軽量版 · 出力対応";
-    heroMain.appendChild(title);
-    heroMain.appendChild(badge);
-    const close = document.createElement("button");
-    close.id = "kus-close";
-    close.type = "button";
-    close.className = "kus-dlite__close";
-    close.textContent = "閉じる";
-    hero.appendChild(heroMain);
-    hero.appendChild(close);
-    root.appendChild(hero);
-    const body = document.createElement("div");
-    body.className = "kus-dlite__body";
-    const info = document.createElement("p");
-    info.className = "kus-dlite__info";
-    info.textContent = "API 取得と差分計算はこのスクリプトに同梱されています（統合ツール.js は不要）。実行後に JSON / HTML / バンドル / パッチを保存できます。";
-    body.appendChild(info);
-    function card(titleText) {
-      const c = document.createElement("div");
-      c.className = "kus-dlite__card";
-      const tt = document.createElement("div");
-      tt.className = "kus-dlite__card-title";
-      tt.textContent = titleText;
-      c.appendChild(tt);
-      return c;
-    }
-    const cApp = card("アプリと環境");
-    const rowSrc = document.createElement("div");
-    rowSrc.className = "kus-dlite__row";
-    const ls = document.createElement("span");
-    ls.className = "kus-dlite__label";
-    ls.textContent = "比較元";
-    const srcApp = document.createElement("input");
-    srcApp.id = "kus-src-app";
-    srcApp.type = "text";
-    srcApp.placeholder = "アプリID";
-    srcApp.className = "kus-dlite__input kus-dlite__input--id";
-    const srcGuest = document.createElement("input");
-    srcGuest.id = "kus-src-guest";
-    srcGuest.type = "text";
-    srcGuest.placeholder = "ゲストID";
-    srcGuest.className = "kus-dlite__input kus-dlite__input--guest";
-    const srcPrv = document.createElement("input");
-    srcPrv.id = "kus-src-preview";
-    srcPrv.type = "checkbox";
-    const srcPrvL = document.createElement("label");
-    srcPrvL.className = "kus-dlite__check";
-    srcPrvL.appendChild(srcPrv);
-    srcPrvL.appendChild(document.createTextNode("プレビューで取得"));
-    rowSrc.appendChild(ls);
-    rowSrc.appendChild(srcApp);
-    rowSrc.appendChild(srcGuest);
-    rowSrc.appendChild(srcPrvL);
-    cApp.appendChild(rowSrc);
-    const rowTgt = document.createElement("div");
-    rowTgt.className = "kus-dlite__row";
-    const lt = document.createElement("span");
-    lt.className = "kus-dlite__label";
-    lt.textContent = "比較先";
-    const tgtApp = document.createElement("input");
-    tgtApp.id = "kus-tgt-app";
-    tgtApp.type = "text";
-    tgtApp.placeholder = "アプリID";
-    tgtApp.className = "kus-dlite__input kus-dlite__input--id";
-    const tgtGuest = document.createElement("input");
-    tgtGuest.id = "kus-tgt-guest";
-    tgtGuest.type = "text";
-    tgtGuest.placeholder = "ゲストID";
-    tgtGuest.className = "kus-dlite__input kus-dlite__input--guest";
-    const tgtPrv = document.createElement("input");
-    tgtPrv.id = "kus-tgt-preview";
-    tgtPrv.type = "checkbox";
-    const tgtPrvL = document.createElement("label");
-    tgtPrvL.className = "kus-dlite__check";
-    tgtPrvL.appendChild(tgtPrv);
-    tgtPrvL.appendChild(document.createTextNode("プレビューで取得"));
-    rowTgt.appendChild(lt);
-    rowTgt.appendChild(tgtApp);
-    rowTgt.appendChild(tgtGuest);
-    rowTgt.appendChild(tgtPrvL);
-    cApp.appendChild(rowTgt);
-    body.appendChild(cApp);
-    const cScope = card("比較セクション");
-    const scBox = document.createElement("div");
-    scBox.className = "kus-dlite__chips";
-    for (const kv of SCOPE_OPTS) {
-      const lb = document.createElement("label");
-      lb.className = "kus-dlite__chip";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.className = "kus-scope";
-      cb.value = kv[0];
-      cb.checked = !!kv[2];
-      lb.appendChild(cb);
-      lb.appendChild(document.createTextNode(kv[1]));
-      scBox.appendChild(lb);
-    }
-    cScope.appendChild(scBox);
-    body.appendChild(cScope);
-    const cAdv = card("詳細オプション");
-    const ign = document.createElement("textarea");
-    ign.id = "kus-ignore";
-    ign.rows = 2;
-    ign.placeholder = "無視キー（カンマ区切り）";
-    ign.className = "kus-dlite__textarea";
-    const ignLab = document.createElement("div");
-    ignLab.className = "kus-dlite__row";
-    ignLab.style.marginBottom = "8px";
-    const ignL = document.createElement("span");
-    ignL.className = "kus-dlite__label";
-    ignL.textContent = "無視キー";
-    ignLab.appendChild(ignL);
-    cAdv.appendChild(ignLab);
-    cAdv.appendChild(ign);
-    const inc = document.createElement("input");
-    inc.id = "kus-include-same";
-    inc.type = "checkbox";
-    const incL = document.createElement("label");
-    incL.className = "kus-dlite__check";
-    incL.style.marginTop = "10px";
-    incL.style.display = "inline-flex";
-    incL.appendChild(inc);
-    incL.appendChild(document.createTextNode("同一行も差分行に含める"));
-    cAdv.appendChild(incL);
-    const n1 = document.createElement("input");
-    n1.id = "kus-norm-view";
-    n1.type = "checkbox";
-    const n2 = document.createElement("input");
-    n2.id = "kus-norm-perm";
-    n2.type = "checkbox";
-    const n3 = document.createElement("input");
-    n3.id = "kus-norm-all";
-    n3.type = "checkbox";
-    const norm = document.createElement("div");
-    norm.className = "kus-dlite__norms";
-    norm.style.marginTop = "12px";
-    function normLab(el, t) {
-      const x = document.createElement("label");
-      x.className = "kus-dlite__check";
-      x.appendChild(el);
-      x.appendChild(document.createTextNode(t));
-      return x;
-    }
-    norm.appendChild(normLab(n1, "ビュー順序を正規化"));
-    norm.appendChild(normLab(n2, "権限順序を正規化"));
-    norm.appendChild(normLab(n3, "配列順序を無視"));
-    cAdv.appendChild(norm);
-    body.appendChild(cAdv);
-    const run = document.createElement("button");
-    run.id = "kus-run";
-    run.type = "button";
-    run.className = "kus-dlite__btn-run";
-    run.textContent = "差分比較を実行";
-    body.appendChild(run);
-    const cOut = card("ファイル出力");
-    const hint = document.createElement("div");
-    hint.style.cssText = "font-size:11px;color:#64748b;margin-bottom:10px;line-height:1.45";
-    hint.textContent = "比較完了後に利用できます。レポートに生設定を含めるか選べます。";
-    cOut.appendChild(hint);
-    const expRow = document.createElement("div");
-    expRow.className = "kus-dlite__row";
-    const expLab = document.createElement("span");
-    expLab.className = "kus-dlite__label";
-    expLab.textContent = "レポート";
-    const expMode = document.createElement("select");
-    expMode.className = "kus-dlite__select";
-    expMode.style.flex = "1";
-    expMode.style.minWidth = "0";
-    [["diffOnly", "差分のみ"], ["withCompared", "差分 + 比較セクションの設定"]].forEach(([v, t]) => {
-      const o = document.createElement("option");
-      o.value = v;
-      o.textContent = t;
-      expMode.appendChild(o);
-    });
-    expRow.appendChild(expLab);
-    expRow.appendChild(expMode);
-    cOut.appendChild(expRow);
-    const grid = document.createElement("div");
-    grid.className = "kus-dlite__export-grid";
-    function mkSubBtn(text) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "kus-dlite__btn-sub";
-      b.textContent = text;
-      return b;
-    }
-    const bJson = mkSubBtn("差分 JSON");
-    const bHtml = mkSubBtn("差分 HTML");
-    const bBundle = mkSubBtn("バンドル JSON");
-    const bPatch = mkSubBtn("パッチ JSON");
-    grid.appendChild(bJson);
-    grid.appendChild(bHtml);
-    grid.appendChild(bBundle);
-    grid.appendChild(bPatch);
-    cOut.appendChild(grid);
-    body.appendChild(cOut);
-    const st = document.createElement("div");
-    st.id = "kus-status";
-    st.className = "kus-dlite__status kus-dlite__status--neutral";
-    st.textContent = "比較元・比較先のアプリIDを入力して実行してください。";
-    body.appendChild(st);
-    const res = document.createElement("pre");
-    res.id = "kus-result";
-    res.className = "kus-dlite__result";
-    res.textContent = "";
-    body.appendChild(res);
-    root.appendChild(body);
-    document.body.appendChild(root);
-    return { root, bJson, bHtml, bBundle, bPatch, expMode, st, res };
+  return `<nav class="diff-sec-nav" aria-label="セクションで絞り込み">${pills.join('')}</nav>`;
+}
+
+function scheduleDiffPopoutSync() {
+  queueMicrotask(() => {
+    import('./popout.js').then((m) => {
+      try { m.syncDiffPopoutMirror(); } catch (e) { /* ignore */ }
+    }).catch(() => {});
+  });
+}
+
+function paintDiffOffViewPlaceholder(rows) {
+  if (!ui.result) return;
+  const list = rows || state.lastDiffRows || [];
+  const n = list.length;
+  const m = (state.lastFetchIssues || []).length;
+  if (!n && !m) {
+    ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア（ヘッダー差分）</p><p class="main-result-placeholder-body">差分比較後は、比較条件の下にある<strong>差分結果の整理・出力</strong>から一覧・絞り込み・出力を確認できます。</p></div>`;
+    return;
   }
-  function readForm(root) {
-    const q = (id) => root.querySelector(`#${id}`);
-    const scopes = [...root.querySelectorAll("input.kus-scope:checked")].map((x) => x.value);
-    return {
-      source: {
-        appId: q("kus-src-app").value.trim(),
-        guestId: q("kus-src-guest").value.trim(),
-        preview: q("kus-src-preview").checked
-      },
-      target: {
-        appId: q("kus-tgt-app").value.trim(),
-        guestId: q("kus-tgt-guest").value.trim(),
-        preview: q("kus-tgt-preview").checked
-      },
-      scopes,
-      ignoreKeys: q("kus-ignore").value,
-      includeSame: q("kus-include-same").checked,
-      normalizationPresetState: {
-        viewOrder: q("kus-norm-view").checked,
-        permissionOrder: q("kus-norm-perm").checked,
-        generalArrayOrder: q("kus-norm-all").checked
-      }
-    };
-  }
-  function printRows(rows, el) {
-    const max = 400;
-    const lines = [];
-    for (let i = 0; i < rows.length && i < max; i++) {
-      const r = rows[i];
-      lines.push(`${r.sectionKey || ""}	${r.type || ""}	${r.path || ""}	${r.label || ""}`);
-    }
-    el.textContent = lines.join("\n");
-    if (rows.length > max) el.textContent += `
-... 他 ${rows.length - max} 件`;
-  }
-  function mountDiffLitePanel(runDiffStandalone2) {
-    const { root, bJson, bHtml, bBundle, bPatch, expMode, st, res } = renderPanel();
-    let cache = null;
-    function exportCtx() {
-      if (!cache) throw new Error("先に差分比較を実行してください");
-      return {
-        ...cache,
-        exportContentMode: expMode.value || "diffOnly"
-      };
-    }
-    root.querySelector("#kus-run").onclick = () => {
-      setStatusBar(st, "実行中…", "neutral");
-      res.textContent = "";
-      cache = null;
-      const f = readForm(root);
-      runDiffStandalone2({
-        source: f.source,
-        target: f.target,
-        scopes: f.scopes,
-        ignoreKeys: f.ignoreKeys,
-        includeSame: f.includeSame,
-        normalizationPresetState: f.normalizationPresetState,
-        onStatus: (m) => {
-          setStatusBar(st, m, "neutral");
-        }
-      }).then((out) => {
-        cache = {
-          rows: out.rows,
-          fetchIssues: out.fetchIssues || [],
-          sourceBundle: out.sourceBundle,
-          targetBundle: out.targetBundle,
-          scopes: f.scopes,
-          ignoreKeys: f.ignoreKeys,
-          normalizationPresetState: f.normalizationPresetState
-        };
-        printRows(out.rows, res);
-        setStatusBar(
-          st,
-          `${out.summary?.text || "完了"} — ファイル出力ボタンから保存できます。`,
-          "ok"
-        );
-      }).catch((e) => {
-        setStatusBar(st, `エラー: ${e && e.message ? e.message : String(e)}`, "err");
-      });
-    };
-    bJson.onclick = () => {
-      try {
-        runExportDiffJsonStandalone(exportCtx());
-        setStatusBar(st, "差分 JSON をダウンロードしました。", "ok");
-      } catch (e) {
-        setStatusBar(st, `エラー: ${e.message || String(e)}`, "err");
-      }
-    };
-    bHtml.onclick = () => {
-      try {
-        runExportDiffHtmlStandalone(exportCtx());
-        setStatusBar(st, "差分 HTML をダウンロードしました。", "ok");
-      } catch (e) {
-        setStatusBar(st, `エラー: ${e.message || String(e)}`, "err");
-      }
-    };
-    bBundle.onclick = () => {
-      try {
-        if (!cache) throw new Error("先に差分比較を実行してください");
-        runExportBundleJsonStandalone(cache.sourceBundle, cache.targetBundle);
-        setStatusBar(st, "バンドル JSON をダウンロードしました。", "ok");
-      } catch (e) {
-        setStatusBar(st, `エラー: ${e.message || String(e)}`, "err");
-      }
-    };
-    bPatch.onclick = () => {
-      try {
-        if (!cache) throw new Error("先に差分比較を実行してください");
-        runExportPatchJsonStandalone(cache.rows, cache.sourceBundle, cache.targetBundle);
-        setStatusBar(st, "パッチ JSON をダウンロードしました。", "ok");
-      } catch (e) {
-        setStatusBar(st, `エラー: ${e.message || String(e)}`, "err");
-      }
-    };
-    root.querySelector("#kus-close").onclick = () => {
-      root.remove();
-    };
+  ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${m ? `（取得失敗 ${m} 件）` : ''}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>差分結果の整理・出力</strong>で行ってください。</p></div>`;
+}
+
+/** 差分以外のタブへ移したときに、差分テーブルが残り続けないようにする */
+export const MAIN_RESULT_IDLE_HTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア</p><p class="main-result-placeholder-body">このタブの操作結果やログがここに表示されます。</p></div>`;
+
+export function renderResultRows(rows) {
+  // テーブル（SUBTABLE）の追加/削除行を、テーブル内フィールド単位に展開して表示する。
+  // 展開行には _displayOnly フラグを付与しており、反映系のロジックからは除外される。
+  rows = expandSubtableRowsForDisplay(rows || []);
+  const summary = summarizeRows(rows);
+  const severitySummary = summarizeSeverity(rows);
+  const fetchSummary = summarizeFetchIssues(state.lastFetchIssues);
+  const renameCount = new Set((rows || []).map((row) => row.renameCandidate?.id).filter(Boolean)).size;
+  const impactCount = (rows || []).filter((row) => row.impactCount > 0).length;
+  syncDiffThemeButton();
+  const useCharDiff = !!ui.charDiff?.checked;
+  const filteredRows = getFilteredDiffRows(rows);
+  const grouped = groupDiffRowsBySection(filteredRows);
+  const filteredSeverity = summarizeSeverity(filteredRows);
+  const filteredIssues = getFilteredFetchIssues(state.lastFetchIssues);
+  const renderedRows = getRenderedDiffRows(rows);
+  const selectedRows = getSelectedDiffRows(rows);
+  const rawKeyword = String(ui.diffSearch?.value || '').trim();
+
+  renderDiffSelectionState();
+  renderDiffSuggestionChips();
+  renderDiffWarningBox();
+
+  const impactCardsHtml = rows.length ? buildDiffImpactCardsHtml(rows) : '';
+  const sectionNavHtml = rows.length ? buildDiffSectionNavHtml(rows) : '';
+  const viewedCount = countViewedInRows(rows);
+  const actualTotal = summary.total - summary.same;
+  const viewedPct = actualTotal > 0 ? Math.round((viewedCount / actualTotal) * 100) : 0;
+  const hideViewedActive = !!state.diffHideViewed;
+  const viewedControlsHtml = actualTotal > 0 ? `
+      <div class="diff-viewed-controls" role="group" aria-label="レビュー進捗">
+        <span class="diff-viewed-progress" title="差分 ${actualTotal}件中 ${viewedCount}件をレビュー済みにしています">
+          <span class="diff-viewed-progress-bar"><span class="diff-viewed-progress-fill" style="width:${viewedPct}%"></span></span>
+          <span class="diff-viewed-progress-text">レビュー ${viewedCount}/${actualTotal} (${viewedPct}%)</span>
+        </span>
+        <button type="button" class="diff-viewed-btn${hideViewedActive ? ' is-active' : ''}" data-act="toggleHideViewed" title="レビュー済みの行を一覧から隠します">${hideViewedActive ? '✓ 済みを隠す（ON）' : '済みを隠す'}</button>
+        <button type="button" class="diff-viewed-btn" data-act="markVisibleViewed" title="現在表示中の差分すべてをレビュー済みにします">表示中をレビュー済みに</button>
+        <button type="button" class="diff-viewed-btn" data-act="clearViewed" title="すべてのレビュー済みフラグを外します">すべて未レビューへ</button>
+      </div>
+    ` : '';
+
+  const summaryHtml = `
+      <div class="diff-summary-head" role="region" aria-label="差分サマリー">
+        ${buildDiffSummaryBars(summary)}
+        <div class="diff-summary">
+        <span class="diff-pill">総件数 ${summary.total}</span>
+        <span class="diff-pill">追加 ${summary.added}</span>
+        <span class="diff-pill">削除 ${summary.removed}</span>
+        <span class="diff-pill">変更 ${summary.changed}</span>
+        <span class="diff-pill">移動 ${summary.moved}</span>
+        ${summary.same ? `<span class="diff-pill">同一 ${summary.same}</span>` : ''}
+        <span class="diff-pill">高 ${severitySummary.high}</span>
+        <span class="diff-pill">中 ${severitySummary.medium}</span>
+        <span class="diff-pill">低 ${severitySummary.low}</span>
+        <span class="diff-pill">取得失敗 ${fetchSummary.total}</span>
+        <span class="diff-pill">選択 ${selectedRows.length}</span>
+        <span class="diff-pill">レビュー済 ${viewedCount}</span>
+        <span class="diff-pill">名称変更候補 ${renameCount}</span>
+        <span class="diff-pill">影響情報あり ${impactCount}</span>
+        <span class="diff-info">表示 ${renderedRows.length}/${filteredRows.length}/${rows.length}</span>
+        ${filteredRows.length !== rows.length ? `<span class="diff-info">絞込重要度 高:${filteredSeverity.high} / 中:${filteredSeverity.medium} / 低:${filteredSeverity.low}</span>` : ''}
+        ${rawKeyword ? `<span class="diff-info">検索: ${esc(rawKeyword)}</span>` : ''}
+        </div>
+        ${impactCardsHtml}
+        ${viewedControlsHtml}
+        ${sectionNavHtml}
+      </div>
+    `;
+
+  const issueHtml = filteredIssues.length ? `<section class="diff-issues">
+      <div class="diff-issues-head">API取得失敗 ${filteredIssues.length}件</div>
+      <table class="diff-issue-table">
+        <thead><tr><th style="width:200px">セクション</th><th style="width:100px">対象</th><th>内容</th></tr></thead>
+        <tbody>${filteredIssues.map((issue) => `<tr>
+          <td>${esc(issue.section || issue.sectionKey || '-')}</td>
+          <td>${esc(getIssueSideLabel(issue.side))}</td>
+          <td><div class="diff-issue-msg">${esc(issue.message || '-')}</div></td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </section>` : '';
+
+  if (!rows.length && !state.lastFetchIssues.length) {
+    ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''}">
+        ${summaryHtml}
+        <div class="diff-empty">差分はありません。</div>
+      </div>`;
+    scheduleDiffPopoutSync();
+    return;
   }
 
-  // src/entries/diff-lite-entry.ts
-  if (!window.kintone?.api || !window.kintone?.app) {
-    alert("kintone画面で実行してください");
-  } else {
-    mountDiffLitePanel(runDiffStandalone);
+  if (!filteredRows.length && !filteredIssues.length) {
+    ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''}">
+        ${summaryHtml}
+        <div class="diff-empty">検索条件に一致する差分はありません。</div>
+      </div>`;
+    scheduleDiffPopoutSync();
+    return;
   }
-})();
+
+  const sectionHtml = grouped.map((g) => {
+    const collapsed = state.diffCollapsedSections.has(g.key);
+    const head = `<div class="diff-sec-head" data-diff-sec-toggle="${esc(g.key)}">
+        <span>${collapsed ? '▶' : '▼'} ${esc(g.label)}</span>
+        <span class="diff-sec-meta">${g.rows.length} 件</span>
+      </div>`;
+    if (collapsed) return `<section class="diff-sec">${head}</section>`;
+
+    const visible = Math.max(40, state.diffSectionVisibleCounts[g.key] || 80);
+    const renderRows = g.rows.slice(0, visible);
+    const rowsHtml = renderRows.map((r) => {
+      const typeLabel = getDiffTypeDisplayLabel(r.type, { moved: !!r.moved });
+      const typeClass = r.type === 'same' ? 'same' : (r.type === 'added' ? 'added' : (r.type === 'removed' ? 'removed' : 'changed'));
+      const sev = r.severity || 'low';
+      const sevClass = sev === 'high' ? 'sev-high' : (sev === 'medium' ? 'sev-medium' : 'sev-low');
+      const cols = renderRowColumns(r, useCharDiff);
+      const selected = state.diffSelectedIds.has(r._id) ? 'checked' : '';
+      const rowAccent = `diff-row-t-${typeClass}`;
+      const rowFieldInfo = extractFieldPathInfo(r?.path);
+      const isSubfieldRow = !!(rowFieldInfo?.isSubField) || !!r._expandedFromTable;
+      const isTableRootRow = !!(rowFieldInfo?.isFieldRoot)
+        && (r?.left?.type === 'SUBTABLE' || r?.right?.type === 'SUBTABLE');
+      const hierarchyClass = isSubfieldRow
+        ? ' diff-row-subfield'
+        : (isTableRootRow ? ' diff-row-table-root' : '');
+      const canReflect = !r._displayOnly && !!r.sectionKey;
+      const reflectBtn = canReflect
+        ? `<button type="button" class="diff-mini-btn diff-mini-btn--reflect" data-send-to-reflect="${esc(r._id || '')}" title="この差分ノードだけを反映対象に追加し、反映タブへ移動します">反映へ送る</button>`
+        : '';
+      const viewed = isDiffRowViewed(r);
+      const viewedChecked = viewed ? 'checked' : '';
+      const viewedClass = viewed ? ' diff-row-viewed' : '';
+      const focusClass = state.diffFocusedRowId === r._id ? ' diff-row-focused' : '';
+      return `<tr class="${rowAccent}${selected ? ' diff-row-selected' : ''}${hierarchyClass}${viewedClass}${focusClass}" data-diff-row-tr="${esc(r._id)}">
+          <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" aria-label="この差分を選択" ${selected}></td>
+          <td class="diff-viewed-cell">
+            <label class="diff-viewed-toggle" title="レビュー済みとしてマーク（キー: v）">
+              <input type="checkbox" data-diff-viewed-id="${esc(r._id)}" aria-label="レビュー済み" ${viewedChecked}>
+              <span class="diff-viewed-mark" aria-hidden="true">${viewed ? '✓' : ''}</span>
+            </label>
+          </td>
+          <td><span class="sev-badge ${sevClass}">${esc(getSeverityDisplayLabel(sev))}</span></td>
+          <td class="diff-type ${typeClass}">${esc(typeLabel || '-')}</td>
+          <td>
+            <div class="diff-tools">
+              <button type="button" class="diff-mini-btn" data-copy-val="${esc(r.path || '')}">パス</button>
+              ${reflectBtn}
+            </div>
+            <div class="diff-path diff-path-cell" title="${esc(r.path || '-')}">${formatDiffPathRich(r)}</div>
+            ${renderDiffRowMeta(r)}
+            ${renderDiffReviewControls(r)}
+          </td>
+          <td class="diff-cell">${cols.left}</td>
+          <td class="diff-cell">${cols.right}</td>
+        </tr>`;
+    }).join('');
+    const remain = g.rows.length - renderRows.length;
+    const moreHtml = remain > 0
+      ? `<div class="diff-more"><button class="btn sub" data-act="moreDiffRows" data-sec="${esc(g.key)}">さらに表示 (${remain}件)</button></div>`
+      : '';
+
+    return `<section class="diff-sec">
+        ${head}
+        <table class="diff-table">
+          <thead><tr><th style="width:56px">選択</th><th style="width:48px" title="レビュー済みチェック（キー: v）">済</th><th style="width:90px">重要度</th><th style="width:120px">種別</th><th style="width:260px">パス</th><th>比較元</th><th>比較先</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+        ${moreHtml}
+      </section>`;
+  }).join('');
+
+  ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''}">
+      ${summaryHtml}
+      ${issueHtml}
+      ${!rows.length ? '<div class="diff-empty">比較差分はありません。API取得失敗のみ検出されています。</div>' : ''}
+      ${sectionHtml}
+    </div>`;
+  scheduleDiffPopoutSync();
+}

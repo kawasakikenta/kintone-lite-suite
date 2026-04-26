@@ -14,6 +14,7 @@
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __esm = (fn, res) => function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
   };
@@ -30,6 +31,7 @@
     return to;
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
   // src/featureDefs.mjs
   var ICONS, FEATURE_DEFS, TAB_TO_FEATURE;
@@ -271,7 +273,7 @@
     }
   });
 
-  // src/constants.js
+  // src/constants.ts
   function resolveDefaultAppId() {
     try {
       if (typeof kintone !== "undefined" && kintone?.app?.getId) {
@@ -281,9 +283,9 @@
     }
     return "";
   }
-  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_DEFAULT_COURSE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
-    "src/constants.js"() {
+    "src/constants.ts"() {
       "use strict";
       init_featureDefs();
       TOOL_ID = "kintone-unified-suite-v2";
@@ -403,70 +405,87 @@
         settingsExport: "export",
         analyze: "dashboard"
       });
-      GUIDED_TOUR_STEPS = Object.freeze([
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: "#u_sourceApp",
-          title: "1. 比較元 / 比較先を決める",
-          body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
+      TOUR_STEP_CONNECTION = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: "#u_sourceApp",
+        title: "比較元 / 比較先を決める",
+        body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。プレビュー/本番の切替もここで行います。"
+      };
+      TOUR_STEP_SCOPE = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: '[data-act="openDiffScopePicker"]',
+        title: "比較対象セクションを選ぶ",
+        body: "「比較対象を選ぶ」から、差分比較で確認したい設定だけを選びます。まずはフィールド・レイアウト・ビュー・プロセス管理あたりが見やすいです。"
+      };
+      TOUR_STEP_NOISE = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: "#u_ignoreKeyInput",
+        title: "ノイズ差分を減らす",
+        body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
+      };
+      TOUR_STEP_RUN_DIFF = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: "#u_runDiffPrimary",
+        title: "差分比較を実行する",
+        body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
+      };
+      TOUR_STEP_REVIEW = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 差分結果の整理",
+        selector: "#u_diffSearch",
+        title: "結果を絞り込んで確認する",
+        body: "差分比較後は「差分結果の整理・出力」から、セクション・種別・重要度・検索で絞り込めます。ここで反映対象を見極めます。"
+      };
+      TOUR_STEP_PLAN = {
+        tab: "reflect",
+        path: "プレビュー反映",
+        selector: "#u_footerPlan",
+        title: "反映プランを先に確認する",
+        body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。"
+      };
+      TOUR_STEP_APPLY = {
+        tab: "reflect",
+        path: "プレビュー反映",
+        selector: "#u_footerApply",
+        title: "比較先プレビューへ反映する",
+        body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番デプロイは kintone 管理画面から手動で実施します。"
+      };
+      TOUR_STEP_RECORD = {
+        tab: "design",
+        subTab: "export",
+        path: "設計書 > 設計書出力",
+        selector: '[data-act="exportDesignMd"]',
+        title: "最後に記録を残す",
+        body: "作業後は設計書や差分レポートを出力して、変更内容を記録します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
+      };
+      GUIDED_TOUR_COURSES = Object.freeze({
+        full: {
+          label: "初回（全工程）",
+          description: "接続から記録出力までを順番に案内します（推奨）",
+          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD]
         },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: '[data-act="openDiffScopePicker"]',
-          title: "3. 比較対象セクションを選ぶ",
-          body: "「比較対象を選ぶ」からポップアップを開き、差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。"
+        diff: {
+          label: "差分のみ確認",
+          description: "差分比較とレビューに絞った短縮コース",
+          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW]
         },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: "#u_ignoreKeyInput",
-          title: "4. ノイズ差分を減らす",
-          body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
-        },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: "#u_runDiffPrimary",
-          title: "5. 差分比較を実行する",
-          body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
-        },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 差分結果の整理",
-          selector: "#u_diffSearch",
-          title: "6. 結果を絞り込んで確認する",
-          body: "差分比較後は「差分結果の整理・出力」を開くと、セクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。"
-        },
-        {
-          tab: "reflect",
-          path: "プレビュー反映",
-          selector: "#u_footerPlan",
-          title: "7. 反映プランを先に確認する",
-          body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。要約はメイン欄のプラン欄にも表示されます。"
-        },
-        {
-          tab: "reflect",
-          path: "プレビュー反映",
-          selector: "#u_footerApply",
-          title: "8. 比較先プレビューへ反映する",
-          body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。"
-        },
-        {
-          tab: "design",
-          subTab: "export",
-          path: "設計書 > 設計書出力",
-          selector: '[data-act="exportDesignMd"]',
-          title: "9. 最後に記録を残す",
-          body: "作業後は設計書や差分レポートを出力して、変更内容を残します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
+        apply: {
+          label: "反映まで実施",
+          description: "差分確認からプレビュー反映までをガイド",
+          steps: [TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY]
         }
-      ]);
+      });
+      GUIDED_TOUR_DEFAULT_COURSE = "full";
+      GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
       DIFF_IMPACT_REF_LIMIT = 6;
       FIELD_REF_EXACT_KEYS = /* @__PURE__ */ new Set([
         "code",
@@ -578,7 +597,7 @@
     }
   });
 
-  // src/utils.js
+  // src/utils.ts
   var utils_exports = {};
   __export(utils_exports, {
     apiErrorWithContext: () => apiErrorWithContext,
@@ -866,7 +885,8 @@ ${contextLine}`);
       docLoadedScripts.add(url);
       return Promise.resolve();
     }
-    if (existingScript.readyState === "loaded" || existingScript.readyState === "complete") {
+    const rs = existingScript.readyState;
+    if (rs === "loaded" || rs === "complete") {
       docLoadedScripts.add(url);
       existingScript.dataset.kusLoaded = "true";
       return Promise.resolve();
@@ -925,7 +945,8 @@ ${contextLine}`);
     const docLoadedScripts = getWeakSet(loadedScripts, doc);
     const docLoadingScripts = getWeakMap(loadingScripts, doc);
     if (docLoadedScripts.has(url)) return Promise.resolve();
-    if (docLoadingScripts.has(url)) return docLoadingScripts.get(url);
+    const inflight = docLoadingScripts.get(url);
+    if (inflight) return inflight;
     const existingScript = doc.querySelector(`script[src="${url}"]`);
     if (existingScript) {
       const promise2 = waitForScriptLoad(existingScript, url).finally(() => {
@@ -956,7 +977,8 @@ ${contextLine}`);
     const docLoadedStyles = getWeakSet(loadedStyles, doc);
     const docLoadingStyles = getWeakMap(loadingStyles, doc);
     if (docLoadedStyles.has(url)) return Promise.resolve();
-    if (docLoadingStyles.has(url)) return docLoadingStyles.get(url);
+    const inflight = docLoadingStyles.get(url);
+    if (inflight) return inflight;
     const existingLink = doc.querySelector(`link[href="${url}"]`);
     if (existingLink) {
       const promise2 = waitForStyleLoad(existingLink, url).finally(() => {
@@ -1062,7 +1084,7 @@ ${contextLine}`);
   }
   var loadedScripts, loadedStyles, loadingScripts, loadingStyles;
   var init_utils = __esm({
-    "src/utils.js"() {
+    "src/utils.ts"() {
       "use strict";
       init_constants();
       loadedScripts = /* @__PURE__ */ new WeakMap();
@@ -1072,7 +1094,7 @@ ${contextLine}`);
     }
   });
 
-  // src/state.js
+  // src/state.ts
   function loadDialogState() {
     try {
       return JSON.parse(localStorage.getItem(DIALOG_STATE_KEY) || "{}");
@@ -1174,14 +1196,14 @@ ${contextLine}`);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
-      return parsed.map(normalizeConnectionPreset).filter(Boolean).slice(0, CONNECTION_PRESETS_LIMIT);
+      return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
     } catch {
       return [];
     }
   }
   function persistConnectionPresets(entries) {
     try {
-      const list = Array.isArray(entries) ? entries.map(normalizeConnectionPreset).filter(Boolean).slice(0, CONNECTION_PRESETS_LIMIT) : [];
+      const list = Array.isArray(entries) ? entries.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT) : [];
       localStorage.setItem(CONNECTION_PRESETS_KEY, JSON.stringify(list));
     } catch {
     }
@@ -1210,7 +1232,7 @@ ${contextLine}`);
   }
   var state, REFLECT_APPLY_HISTORY_KEY, REFLECT_APPLY_HISTORY_LIMIT, WORK_HISTORY_KEY, WORK_HISTORY_LIMIT, CONNECTION_PRESETS_KEY, CONNECTION_PRESETS_LIMIT, ui;
   var init_state = __esm({
-    "src/state.js"() {
+    "src/state.ts"() {
       "use strict";
       init_constants();
       state = {
@@ -1280,7 +1302,8 @@ ${contextLine}`);
         importedPatchPayload: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
-        running: false
+        running: false,
+        lastResultByTab: {}
       };
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
       REFLECT_APPLY_HISTORY_LIMIT = 30;
@@ -1295,7 +1318,7 @@ ${contextLine}`);
     }
   });
 
-  // src/api.js
+  // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
@@ -1500,7 +1523,7 @@ ${contextLine}`);
         if (revision) bundle.meta.sectionRevisions[sec] = revision;
         bundle.sections[sec] = normalize(res);
       } catch (e) {
-        bundle.sections[sec] = { _fetchError: e.message || String(e) };
+        bundle.sections[sec] = { _fetchError: e?.message || String(e) };
       }
       if (onProgress) onProgress((i + 1) / sections.length, def.label);
     }
@@ -1517,7 +1540,7 @@ ${contextLine}`);
   }
   var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
   var init_api = __esm({
-    "src/api.js"() {
+    "src/api.ts"() {
       "use strict";
       init_constants();
       init_utils();
@@ -1540,7 +1563,7 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/engine.js
+  // src/diff/engine.ts
   function detectRowSeverity(row) {
     const sec = row?.sectionKey || "";
     const path = String(row?.path || "").toLowerCase();
@@ -1948,11 +1971,11 @@ ${contextLine}`);
     }
     return s;
   }
-  function getActualDiffRows2(rows) {
+  function getActualDiffRows(rows) {
     return (rows || []).filter((row) => row && row.type !== "same" && !row._displayOnly);
   }
   function countActualDiffRows(rows) {
-    return getActualDiffRows2(rows).length;
+    return getActualDiffRows(rows).length;
   }
   function summarizeFetchIssues(issues) {
     const out = { total: (issues || []).length, source: 0, target: 0, both: 0 };
@@ -2070,7 +2093,7 @@ ${contextLine}`);
   }
   var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, SUBTABLE_ROOT_PATH_RE;
   var init_engine = __esm({
-    "src/diff/engine.js"() {
+    "src/diff/engine.ts"() {
       "use strict";
       init_constants();
       init_state();
@@ -2113,7 +2136,7 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/enrich.js
+  // src/diff/enrich.ts
   function relativePathFromRow2(path, secKey) {
     if (!path) return "";
     if (path === secKey) return "";
@@ -2503,8 +2526,8 @@ ${contextLine}`);
     });
     const order = new Map(SECTION_DEFS.map((entry, idx) => [entry.key, idx]));
     refs.sort((a, b) => {
-      const ao = order.has(a.sectionKey) ? order.get(a.sectionKey) : 999;
-      const bo = order.has(b.sectionKey) ? order.get(b.sectionKey) : 999;
+      const ao = order.has(a.sectionKey) ? order.get(a.sectionKey) ?? 999 : 999;
+      const bo = order.has(b.sectionKey) ? order.get(b.sectionKey) ?? 999 : 999;
       if (ao !== bo) return ao - bo;
       return String(a.path || "").localeCompare(String(b.path || ""));
     });
@@ -2594,16 +2617,14 @@ ${contextLine}`);
     });
   }
   var init_enrich = __esm({
-    "src/diff/enrich.js"() {
+    "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
-      init_state();
       init_utils();
-      init_engine();
     }
   });
 
-  // src/ui/dialog.js
+  // src/ui/dialog.ts
   function callScheduleGuidedTourLayout() {
     if (typeof scheduleGuidedTourLayoutFn === "function") scheduleGuidedTourLayoutFn();
   }
@@ -2644,6 +2665,7 @@ ${contextLine}`);
     return clampDialogPosition((tw.innerWidth || dialogWidth) - dialogWidth - DIALOG_MARGIN, DIALOG_MARGIN, dialogWidth, dialogHeight);
   }
   function getCurrentDialogPosition(width, height) {
+    if (!root) return getDefaultDialogPosition(width, height);
     const rect = root.getBoundingClientRect();
     const defaultPos = getDefaultDialogPosition(width || rect.width, height || rect.height);
     const rawLeft = Number.parseFloat(root.style.left);
@@ -2671,6 +2693,7 @@ ${contextLine}`);
   }
   function applyDialogSize(width, height, options = {}) {
     const next = clampDialogSize(width, height);
+    if (!root) return next;
     root.style.width = `${next.width}px`;
     root.style.height = `${next.height}px`;
     const currentPos = getCurrentDialogPosition(next.width, next.height);
@@ -2682,6 +2705,7 @@ ${contextLine}`);
     return next;
   }
   function applyDialogPosition(left, top, options = {}) {
+    if (!root) return clampDialogPosition(left, top);
     const rect = root.getBoundingClientRect();
     const next = clampDialogPosition(left, top, rect.width || root.offsetWidth, rect.height || root.offsetHeight);
     root.style.left = `${next.left}px`;
@@ -2703,9 +2727,15 @@ ${contextLine}`);
     return applyDialogSize(DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT);
   }
   function fitDialogToViewport(options = {}) {
+    if (!root) {
+      const fallback = applyDialogSize(DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, { persist: false });
+      const pos2 = getDefaultDialogPosition(fallback.width, fallback.height);
+      return { ...fallback, ...pos2 };
+    }
     const rect = root.getBoundingClientRect();
     const size = applyDialogSize(rect.width || DIALOG_DEFAULT_WIDTH, rect.height || DIALOG_DEFAULT_HEIGHT, { persist: false });
-    const pos = applyDialogPosition(getCurrentDialogPosition(size.width, size.height).left, getCurrentDialogPosition(size.width, size.height).top, { persist: false });
+    const initialPos = getCurrentDialogPosition(size.width, size.height);
+    const pos = applyDialogPosition(initialPos.left, initialPos.top, { persist: false });
     if (options.persist !== false) saveCurrentDialogState();
     return { ...size, ...pos };
   }
@@ -2742,6 +2772,7 @@ ${contextLine}`);
   }
   function initDialogResizeHandling() {
     if (dialogResizeObserver || typeof ResizeObserver !== "function") return;
+    if (!root) return;
     dialogResizeObserver = new ResizeObserver(() => {
       scheduleDialogSizeSave();
       callScheduleGuidedTourLayout();
@@ -2755,10 +2786,10 @@ ${contextLine}`);
   function finishDialogDrag(persist = true) {
     if (!dialogDragState) return;
     const doc = getToolDocument();
-    doc.removeEventListener("mousemove", dialogDragMoveHandler);
-    doc.removeEventListener("mouseup", dialogDragEndHandler);
+    if (dialogDragMoveHandler) doc.removeEventListener("mousemove", dialogDragMoveHandler);
+    if (dialogDragEndHandler) doc.removeEventListener("mouseup", dialogDragEndHandler);
     dialogDragState = null;
-    root.classList.remove("dragging");
+    root?.classList.remove("dragging");
     doc.body.style.userSelect = "";
     if (persist) saveCurrentDialogState();
   }
@@ -2785,7 +2816,7 @@ ${contextLine}`);
     const doc = getToolDocument();
     doc.addEventListener("mousemove", dialogDragMoveHandler);
     doc.addEventListener("mouseup", dialogDragEndHandler);
-    root.classList.add("dragging");
+    root?.classList.add("dragging");
     doc.body.style.userSelect = "none";
     e.preventDefault();
   }
@@ -2804,11 +2835,10 @@ ${contextLine}`);
   }
   var root, ui2, dialogResizeObserver, dialogResizeSaveTimer, dialogDragState, dialogDragMoveHandler, dialogDragEndHandler, scheduleGuidedTourLayoutFn;
   var init_dialog = __esm({
-    "src/ui/dialog.js"() {
+    "src/ui/dialog.ts"() {
       "use strict";
       init_constants();
       init_state();
-      init_utils();
       root = null;
       ui2 = {};
       dialogResizeObserver = null;
@@ -2820,7 +2850,7 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/popout.js
+  // src/diff/popout.ts
   var popout_exports = {};
   __export(popout_exports, {
     closeDiffViewerPopout: () => closeDiffViewerPopout,
@@ -2840,25 +2870,27 @@ ${contextLine}`);
     const doc = win.document;
     teardownPopoutListeners(doc);
     popoutChangeHandler = (e) => {
-      const diffId = e.target?.dataset?.diffRowId;
-      if (!diffId || e.target.type !== "checkbox") return;
-      const res = e.target.closest?.("#u_diffPopoutResult");
-      if (res?.contains(e.target)) state.diffSelectionAnchorId = diffId;
-      if (e.target.checked) state.diffSelectedIds.add(diffId);
+      const target = e.target;
+      const diffId = target?.dataset?.diffRowId;
+      if (!diffId || target?.type !== "checkbox") return;
+      const res = target.closest?.("#u_diffPopoutResult");
+      if (res?.contains(target)) state.diffSelectionAnchorId = diffId;
+      if (target.checked) state.diffSelectedIds.add(diffId);
       else state.diffSelectedIds.delete(diffId);
       renderResultRows(state.lastDiffRows || []);
       saveCurrentDialogState();
     };
     doc.addEventListener("change", popoutChangeHandler);
     popoutMousedownHandler = (e) => {
-      const cb = e.target.closest("input[type=checkbox][data-diff-row-id]");
+      const target = e.target;
+      const cb = target?.closest("input[type=checkbox][data-diff-row-id]");
       if (!cb) return;
       const res = doc.getElementById("u_diffPopoutResult");
       if (!res || !res.contains(cb) || !e.shiftKey || !state.diffSelectionAnchorId) return;
       const boxes = [...res.querySelectorAll("tbody input[type=checkbox][data-diff-row-id]")];
-      const ids = boxes.map((el) => el.dataset.diffRowId);
+      const ids = boxes.map((el) => el.dataset.diffRowId || "");
       const i0 = ids.indexOf(state.diffSelectionAnchorId);
-      const i1 = ids.indexOf(cb.dataset.diffRowId);
+      const i1 = ids.indexOf(cb.dataset.diffRowId || "");
       if (i0 < 0 || i1 < 0) return;
       e.preventDefault();
       const a = Math.min(i0, i1);
@@ -2875,7 +2907,8 @@ ${contextLine}`);
     };
     doc.addEventListener("mousedown", popoutMousedownHandler, true);
     popoutClickHandler = (e) => {
-      const head = e.target.closest?.("[data-diff-sec-toggle]");
+      const target = e.target;
+      const head = target?.closest?.("[data-diff-sec-toggle]");
       if (head) {
         const key = head.dataset.diffSecToggle;
         if (key) {
@@ -2886,7 +2919,7 @@ ${contextLine}`);
         }
         return;
       }
-      const more = e.target.closest?.('[data-act="moreDiffRows"]');
+      const more = target?.closest?.('[data-act="moreDiffRows"]');
       if (more) {
         const sec = more.dataset.sec;
         if (sec) {
@@ -2956,7 +2989,8 @@ ${contextLine}`);
     return w;
   }
   function syncDiffPopoutMirror() {
-    const w = getToolWindow().__KUS_DIFF_WIN__;
+    const toolWin = getToolWindow();
+    const w = toolWin.__KUS_DIFF_WIN__;
     if (!w || w.closed) return;
     const mount = w.document.getElementById("u_diffPopoutResult");
     const root2 = getRoot();
@@ -2978,7 +3012,7 @@ ${contextLine}`);
   }
   var WIN_NAME, popoutClickHandler, popoutChangeHandler, popoutMousedownHandler;
   var init_popout = __esm({
-    "src/diff/popout.js"() {
+    "src/diff/popout.ts"() {
       "use strict";
       init_state();
       init_dialog();
@@ -2991,7 +3025,7 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/export.js
+  // src/diff/export.ts
   function stringifyForDiff(value) {
     if (value === void 0) return "（未定義）";
     const out = JSON.stringify(value, null, 2);
@@ -3113,9 +3147,10 @@ ${formatSubtableChildrenText(value)}`;
     const segmentGraphemes = (text) => {
       const normalized = String(text ?? "");
       if (!normalized) return [];
-      if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+      const IntlAny = Intl;
+      if (typeof IntlAny !== "undefined" && typeof IntlAny.Segmenter === "function") {
         try {
-          const segmenter = new Intl.Segmenter("ja", { granularity: "grapheme" });
+          const segmenter = new IntlAny.Segmenter("ja", { granularity: "grapheme" });
           return Array.from(segmenter.segment(normalized), (seg) => seg.segment);
         } catch (_) {
         }
@@ -3314,8 +3349,8 @@ ${formatSubtableChildrenText(value)}`;
     const sourceMap = buildFieldLabelMapFromBundle(sourceBundle);
     const targetMap = buildFieldLabelMapFromBundle(targetBundle);
     [...terms].forEach((code) => {
-      (sourceMap.get(code) || []).forEach((label) => terms.add(label));
-      (targetMap.get(code) || []).forEach((label) => terms.add(label));
+      (sourceMap.get(code) || /* @__PURE__ */ new Set()).forEach((label) => terms.add(label));
+      (targetMap.get(code) || /* @__PURE__ */ new Set()).forEach((label) => terms.add(label));
     });
     return [...terms].filter(Boolean);
   }
@@ -3398,25 +3433,48 @@ ${tableContext.tableLabel}`.toLowerCase();
       hideViewed: !!state.diffHideViewed
     };
   }
+  function getDiffReviewScope() {
+    const src = String(ui.sourceApp?.value || "").trim();
+    const srcGuest = String(ui.sourceGuest?.value || "").trim();
+    const tgt = String(ui.targetApp?.value || "").trim();
+    const tgtGuest = String(ui.targetGuest?.value || "").trim();
+    if (!src && !tgt) return "";
+    return `${src}@${srcGuest}#${tgt}@${tgtGuest}`;
+  }
   function diffViewedKey(row) {
     if (!row) return "";
     const section = String(row.sectionKey || "");
     const path = String(row.path || "");
     const type = String(row.type || "");
     if (!path && !section) return "";
-    return `${section}	${path}	${type}`;
+    const scope = getDiffReviewScope();
+    return `${scope}	${section}	${path}	${type}`;
+  }
+  function legacyDiffViewedKey(row) {
+    if (!row) return "";
+    const section = String(row.sectionKey || "");
+    const path = String(row.path || "");
+    const type = String(row.type || "");
+    if (!path && !section) return "";
+    return `	${section}	${path}	${type}`;
   }
   function isDiffRowViewed(row) {
     const key = diffViewedKey(row);
     if (!key) return false;
-    return state.diffViewedKeys.has(key);
+    if (state.diffViewedKeys.has(key)) return true;
+    const legacy = legacyDiffViewedKey(row);
+    return !!legacy && state.diffViewedKeys.has(legacy);
   }
   function getDiffReviewMeta(row) {
     const key = diffViewedKey(row);
     if (!key || !state.diffReviewMeta || typeof state.diffReviewMeta !== "object") {
       return { key: "", status: "", note: "" };
     }
-    const raw = state.diffReviewMeta[key];
+    let raw = state.diffReviewMeta[key];
+    if (!raw || typeof raw !== "object") {
+      const legacy = legacyDiffViewedKey(row);
+      if (legacy && state.diffReviewMeta[legacy]) raw = state.diffReviewMeta[legacy];
+    }
     if (!raw || typeof raw !== "object") return { key, status: "", note: "" };
     const status = raw.status === "todo" || raw.status === "ignored" ? raw.status : "";
     const note = String(raw.note || "").trim();
@@ -3494,8 +3552,8 @@ ${tableContext.tableLabel}`.toLowerCase();
       grouped.get(key).rows.push(row);
     }
     return [...grouped.values()].sort((a, b) => {
-      const oa = orderByKey.has(a.key) ? orderByKey.get(a.key) : 9999;
-      const ob = orderByKey.has(b.key) ? orderByKey.get(b.key) : 9999;
+      const oa = orderByKey.has(a.key) ? orderByKey.get(a.key) ?? 9999 : 9999;
+      const ob = orderByKey.has(b.key) ? orderByKey.get(b.key) ?? 9999 : 9999;
       if (oa !== ob) return oa - ob;
       return String(a.label).localeCompare(String(b.label));
     });
@@ -3520,41 +3578,6 @@ ${tableContext.tableLabel}`.toLowerCase();
   }
   function resolveDiffExportContentMode() {
     return ui.diffExportContent?.value || state.diffExportContent || "diffOnly";
-  }
-  function resolveDiffExportRows(mode) {
-    const exportMode = mode || resolveDiffExportMode();
-    if (exportMode === "selected") {
-      const rows = getSelectedDiffRows();
-      if (!rows.length) throw new Error("選択差分がありません");
-      return { mode: exportMode, label: "選択差分", rows };
-    }
-    if (exportMode === "visible") {
-      const rows = getRenderedDiffRows();
-      if (!rows.length) throw new Error("現在表示中の差分がありません");
-      return { mode: exportMode, label: "現在表示中", rows };
-    }
-    if (exportMode === "favorites") {
-      const rows = (state.lastDiffRows || []).filter((row) => state.diffFavoritePaths.has(String(row.path || "").trim()));
-      if (!rows.length) throw new Error("お気に入り差分がありません");
-      return { mode: exportMode, label: "お気に入り差分", rows };
-    }
-    return { mode: "all", label: "全差分", rows: state.lastDiffRows || [] };
-  }
-  function resolveDiffExportComparedScopes(exportInfo, scopes) {
-    const fallbackScopes = [...new Set((scopes || []).filter(Boolean))];
-    if ((exportInfo?.mode || "all") === "all") return fallbackScopes;
-    const rowScopes = [...new Set((exportInfo?.rows || []).map((row) => row.sectionKey).filter(Boolean))];
-    if (rowScopes.length) return rowScopes;
-    const issueScopes = [...new Set((state.lastFetchIssues || []).map((issue) => issue.sectionKey).filter(Boolean))];
-    return issueScopes.length ? issueScopes : fallbackScopes;
-  }
-  function buildDiffExportComparedBundles(sourceBundle, targetBundle, scopes) {
-    const compareScopes = [...new Set((scopes || []).filter(Boolean))];
-    return {
-      scopes: compareScopes,
-      sourceBundle: pickBundleSections(sourceBundle, compareScopes),
-      targetBundle: pickBundleSections(targetBundle, compareScopes)
-    };
   }
   function getSectionLabel(sectionKeyOrLabel) {
     const raw = String(sectionKeyOrLabel || "").trim();
@@ -3653,7 +3676,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     });
     return keys.map((sectionKey) => {
       const sectionRows = groupedRows.get(sectionKey) || [];
-      const diffRows = getActualDiffRows2(sectionRows);
+      const diffRows = getActualDiffRows(sectionRows);
       const typeSummary = buildDiffTypeSummary(sectionRows);
       const severity = summarizeSeverity(sectionRows);
       const issueCount = (fetchIssues || []).filter((issue) => String(issue?.sectionKey || issue?.section || "").trim() === sectionKey).length;
@@ -3678,7 +3701,7 @@ ${tableContext.tableLabel}`.toLowerCase();
   }
   function buildDiffHighlightRows(rows, limit = 8) {
     const severityWeight = { high: 300, medium: 200, low: 100 };
-    return getActualDiffRows2(rows || []).map((row, index) => {
+    return getActualDiffRows(rows || []).map((row, index) => {
       let score = severityWeight[row?.severity] || 0;
       if (row?.type === "removed") score += 30;
       else if (row?.type === "added") score += 18;
@@ -3923,7 +3946,7 @@ ${body}`;
     const rows = entries.map((v) => [
       v.name || "",
       MD_VIEW_TYPE_LABELS[v.type] || v.type || "",
-      v.index ?? "",
+      String(v.index ?? ""),
       v.builtinType || "",
       Array.isArray(v.fields) ? v.fields.join(" / ") : "",
       v.filterCond || "",
@@ -4290,7 +4313,7 @@ ${body}`;
   }
   function buildPatchPayload(rows, sourceBundle, targetBundle) {
     const grouped = {};
-    const diffRows = getActualDiffRows2(rows);
+    const diffRows = getActualDiffRows(rows);
     for (const r of diffRows) {
       const section = r.section || "未分類";
       if (!grouped[section]) grouped[section] = [];
@@ -4890,7 +4913,7 @@ ${body}`;
       const info = extractFieldPathInfo(fullPath);
       if (info) {
         const code = info.activeCode || '';
-        const field = getFieldRowPayload(row) || getFieldDefinition(code, 'source') || getFieldDefinition(code, 'target') || {};
+        const field = getFieldRowPayload(row) || getFieldDefinition(code, 'source') || getFieldDefinition(code, 'target') || ({});
         const fieldLabel = String(field.label || field.name || code || 'フィールド');
         const propTitle = fieldChangePropTitle(info, row);
         pathMain = fieldLabel + (code ? ' (' + code + ')' : '') + (propTitle ? ' / ' + propTitle : '');
@@ -5425,9 +5448,9 @@ ${body}`;
   }
 
   function collectFlatFieldMap(properties, out) {
-    const dest = out || {};
+    const dest = out || ({});
     function walk(props, parentMeta) {
-      Object.entries(props || {}).forEach(([code, field]) => {
+      Object.entries(props || ({})).forEach(([code, field]) => {
         if (!field || typeof field !== 'object' || Array.isArray(field)) return;
         const normalizedCode = String(field.code || code);
         const next = { ...field, code: normalizedCode };
@@ -5534,7 +5557,7 @@ ${body}`;
   }
 
   function collectAllFieldCodes() {
-    const codes = new Set([...Object.keys(FLAT_FIELD_PROPS_SRC || {}), ...Object.keys(FLAT_FIELD_PROPS_TGT || {})]);
+    const codes = new Set([...Object.keys(FLAT_FIELD_PROPS_SRC || ({})), ...Object.keys(FLAT_FIELD_PROPS_TGT || ({}))]);
     REPORT_ROWS.forEach((row) => {
       if (!row) return;
       if (row.sectionKey === FIELD_SECTION_KEY) {
@@ -5840,8 +5863,8 @@ ${body}`;
     if (!root) return;
     const nav = document.getElementById('nav');
     if (nav) nav.innerHTML = '';
-    const hideSame = !!document.getElementById('hideSame').checked;
-    const keyword = String(document.getElementById('search').value || '').trim().toLowerCase();
+    const hideSame = !!(document.getElementById('hideSame')).checked;
+    const keyword = String((document.getElementById('search')).value || '').trim().toLowerCase();
     const model = buildFieldReviewModel();
     const groups = model.groups.filter((group) => {
       if (!group.fieldRows.length && group.layoutDiffCount > 0) return false;
@@ -6003,8 +6026,8 @@ ${body}`;
   function renderFormPreview() {
     const root = document.getElementById('formPreviewRoot');
     if (!root) return;
-    const hideSame = !!document.getElementById('hideSame').checked;
-    const keyword = String(document.getElementById('search').value || '').trim().toLowerCase();
+    const hideSame = !!(document.getElementById('hideSame')).checked;
+    const keyword = String((document.getElementById('search')).value || '').trim().toLowerCase();
     const nav = document.getElementById('nav');
     if (nav) nav.innerHTML = '';
     const model = buildFieldReviewModel();
@@ -6056,8 +6079,8 @@ ${body}`;
   function renderSettingsLikeViewLegacy() {
     const root = document.getElementById('settingsLikeRoot');
     if (!root) return;
-    const hideSame = !!document.getElementById('hideSame').checked;
-    const keyword = String(document.getElementById('search').value || '').trim().toLowerCase();
+    const hideSame = !!(document.getElementById('hideSame')).checked;
+    const keyword = String((document.getElementById('search')).value || '').trim().toLowerCase();
     const filtered = REPORT_ROWS.filter((row) => {
       if (hideSame && row.type === 'same') return false;
       return rowMatches(row, keyword);
@@ -6229,11 +6252,11 @@ ${body}`;
   }
 
   function computeFieldDiff(before, after) {
-    const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+    const keys = new Set([...Object.keys(before || ({})), ...Object.keys(after || ({}))]);
     const rows = [];
     for (const code of keys) {
-      const bf = (before || {})[code];
-      const af = (after || {})[code];
+      const bf = (before || ({}))[code];
+      const af = (after || ({}))[code];
       if (!bf && af) rows.push({ code, status: 'added', before: null, after: af });
       else if (bf && !af) rows.push({ code, status: 'removed', before: bf, after: null });
       else {
@@ -6250,14 +6273,14 @@ ${body}`;
   function renderFormPreviewLegacy() {
     const root = document.getElementById('formPreviewRoot');
     if (!root) return;
-    const srcKeys = Object.keys(FIELD_PROPS_SRC || {});
-    const tgtKeys = Object.keys(FIELD_PROPS_TGT || {});
+    const srcKeys = Object.keys(FIELD_PROPS_SRC || ({}));
+    const tgtKeys = Object.keys(FIELD_PROPS_TGT || ({}));
     if (!srcKeys.length && !tgtKeys.length) {
       root.innerHTML = '<div class="no-diff">フィールド設定データがありません。比較対象セクションに「フィールド設定」を含めてHTML出力してください。</div>';
       return;
     }
-    const hideSame = !!document.getElementById('hideSame').checked;
-    const keyword = String(document.getElementById('search').value || '').trim().toLowerCase();
+    const hideSame = !!(document.getElementById('hideSame')).checked;
+    const keyword = String((document.getElementById('search')).value || '').trim().toLowerCase();
     let diff = computeFieldDiff(FIELD_PROPS_SRC, FIELD_PROPS_TGT);
     if (hideSame) diff = diff.filter((r) => r.status !== 'unchanged');
     if (keyword) {
@@ -6324,8 +6347,8 @@ ${body}`;
     else if (nextTab === 'formPreview') renderFormPreview();
     else if (nextTab === 'diff') render();
     else {
-      const hideSame = !!document.getElementById('hideSame').checked;
-      const kw = String(document.getElementById('search').value || '').trim().toLowerCase();
+      const hideSame = !!(document.getElementById('hideSame')).checked;
+      const kw = String((document.getElementById('search')).value || '').trim().toLowerCase();
       const allFiltered = REPORT_ROWS.filter((row) => {
         if (hideSame && row.type === 'same') return false;
         return rowMatches(row, kw);
@@ -6341,9 +6364,9 @@ ${body}`;
   }
 
   function render() {
-    const hideSame = !!document.getElementById('hideSame').checked;
-    const useCharDiff = !!document.getElementById('charDiff').checked;
-    const keyword = String(document.getElementById('search').value || '').trim().toLowerCase();
+    const hideSame = !!(document.getElementById('hideSame')).checked;
+    const useCharDiff = !!(document.getElementById('charDiff')).checked;
+    const keyword = String((document.getElementById('search')).value || '').trim().toLowerCase();
     const filtered = REPORT_ROWS.filter((row) => {
       if (hideSame && row.type === 'same') return false;
       return rowMatches(row, keyword);
@@ -6509,7 +6532,7 @@ ${body}`;
         closeFieldDetailModal();
         return;
       }
-      document.getElementById('search').value = '';
+      (document.getElementById('search')).value = '';
       onReportFilterChange();
     }
   });
@@ -7379,7 +7402,7 @@ ${body}`;
     return `<div class="diff-summary-bars" role="presentation" aria-hidden="true">${inner}</div>`;
   }
   function buildDiffImpactCardsHtml(rows) {
-    const actual = getActualDiffRows2(rows);
+    const actual = getActualDiffRows(rows);
     if (!actual.length) return "";
     const bySection = /* @__PURE__ */ new Map();
     for (const row of actual) {
@@ -7434,7 +7457,7 @@ ${body}`;
     const baseRows = getFilteredDiffRowsWithoutSectionFilter(rows);
     const grouped = groupDiffRowsBySection(baseRows);
     const sel = state.diffSelectedIds || /* @__PURE__ */ new Set();
-    const selectedInBase = baseRows.filter((r) => sel.has(r._id)).length;
+    const selectedInBase = baseRows.filter((r) => sel.has(r._id || "")).length;
     const total = baseRows.length;
     const pills = [
       `<button type="button" class="diff-sec-pill${!cur ? " is-active" : ""}" data-diff-sec-nav="" title="全セクション（セクション以外のフィルタはそのまま）">すべて <span class="diff-sec-pill-n">${total}</span>${selectedInBase ? `<span class="diff-sec-pill-sel">選択${selectedInBase}</span>` : ""}</button>`
@@ -7620,7 +7643,7 @@ ${body}`;
   }
   var FIELD_CHANGE_PROP_LABELS, MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_SECTION_RENDERERS, MAIN_RESULT_IDLE_HTML;
   var init_export = __esm({
-    "src/diff/export.js"() {
+    "src/diff/export.ts"() {
       init_constants();
       init_utils();
       init_state();
@@ -7734,7 +7757,7 @@ ${body}`;
     }
   });
 
-  // src/diff/filter.js
+  // src/diff/filter.ts
   function normalizeDiffFavoritePath(path) {
     return String(path || "").trim();
   }
@@ -7791,7 +7814,10 @@ ${body}`;
   }
   function getSelectedDiffRows2(rows) {
     const selected = state.diffSelectedIds || /* @__PURE__ */ new Set();
-    return (rows || state.lastDiffRows || []).filter((row) => selected.has(row._id));
+    return (rows || state.lastDiffRows || []).filter((row) => selected.has(row._id || ""));
+  }
+  function getFavoriteDiffRows(rows) {
+    return (rows || state.lastDiffRows || []).filter((row) => isDiffPathFavorite(row.path));
   }
   function getRenderedDiffRows2(rows) {
     const filtered = getFilteredDiffRows2(rows);
@@ -7813,10 +7839,48 @@ ${body}`;
   function getDiffExportContentLabel2(mode) {
     return mode === "withCompared" ? "差分 + 比較設定" : "差分のみ";
   }
+  function shouldIncludeComparedContent2(mode) {
+    return mode === "withCompared";
+  }
+  function resolveDiffExportRows(mode) {
+    const exportMode = mode || resolveDiffExportMode2();
+    if (exportMode === "selected") {
+      const rows = getSelectedDiffRows2();
+      if (!rows.length) throw new Error("選択差分がありません");
+      return { mode: exportMode, label: "選択差分", rows };
+    }
+    if (exportMode === "visible") {
+      const rows = getRenderedDiffRows2();
+      if (!rows.length) throw new Error("現在表示中の差分がありません");
+      return { mode: exportMode, label: "現在表示中", rows };
+    }
+    if (exportMode === "favorites") {
+      const rows = getFavoriteDiffRows();
+      if (!rows.length) throw new Error("お気に入り差分がありません");
+      return { mode: exportMode, label: "お気に入り差分", rows };
+    }
+    return { mode: "all", label: "全差分", rows: state.lastDiffRows || [] };
+  }
+  function resolveDiffExportComparedScopes(exportInfo, scopes) {
+    const fallbackScopes = [...new Set((scopes || []).filter(Boolean))];
+    if ((exportInfo?.mode || "all") === "all") return fallbackScopes;
+    const rowScopes = [...new Set((exportInfo?.rows || []).map((row) => row.sectionKey).filter(Boolean))];
+    if (rowScopes.length) return rowScopes;
+    const issueScopes = [...new Set((state.lastFetchIssues || []).map((issue) => issue.sectionKey).filter(Boolean))];
+    return issueScopes.length ? issueScopes : fallbackScopes;
+  }
+  function buildDiffExportComparedBundles(sourceBundle, targetBundle, scopes) {
+    const compareScopes = [...new Set((scopes || []).filter(Boolean))];
+    return {
+      scopes: compareScopes,
+      sourceBundle: pickBundleSections(sourceBundle, compareScopes),
+      targetBundle: pickBundleSections(targetBundle, compareScopes)
+    };
+  }
   function buildIgnoreKeySuggestions(rows, ignoreKeysText) {
     const ignoreRules = parseIgnoreRules(ignoreKeysText);
     const counts = /* @__PURE__ */ new Map();
-    for (const row of getActualDiffRows2(rows)) {
+    for (const row of getActualDiffRows(rows)) {
       if (row.severity !== "low") continue;
       const leaf = normalizeIgnoreToken(getPathLeafKey(row.path));
       if (!leaf || leaf.length < 2) continue;
@@ -7831,7 +7895,7 @@ ${body}`;
     return [...counts.values()].filter((item) => item.count >= 2).sort((a, b) => b.count - a.count || b.sections.size - a.sections.size || a.key.localeCompare(b.key)).slice(0, 8).map((item) => ({ key: item.key, count: item.count, sectionCount: item.sections.size }));
   }
   var init_filter = __esm({
-    "src/diff/filter.js"() {
+    "src/diff/filter.ts"() {
       "use strict";
       init_constants();
       init_state();
@@ -7841,18 +7905,18 @@ ${body}`;
     }
   });
 
-  // src/reflect/nodeModeUi.js
+  // src/reflect/nodeModeUi.ts
   function isReflectNodeModeEffective() {
     return state.activeSubTabs["reflect"] === "diff";
   }
   var init_nodeModeUi = __esm({
-    "src/reflect/nodeModeUi.js"() {
+    "src/reflect/nodeModeUi.ts"() {
       "use strict";
       init_state();
     }
   });
 
-  // src/oss_integrations.js
+  // src/oss_integrations.ts
   var oss_integrations_exports = {};
   __export(oss_integrations_exports, {
     destroyGuidedTour: () => destroyGuidedTour,
@@ -8184,7 +8248,7 @@ ${body}`;
         }
       }))
     });
-    driverInstance.drive();
+    driverInstance?.drive();
   }
   function destroyGuidedTour() {
     if (driverInstance) {
@@ -8197,7 +8261,7 @@ ${body}`;
   }
   var editorInstances, driverInstance;
   var init_oss_integrations = __esm({
-    "src/oss_integrations.js"() {
+    "src/oss_integrations.ts"() {
       "use strict";
       init_utils();
       init_dialog();
@@ -8206,7 +8270,7 @@ ${body}`;
     }
   });
 
-  // src/ui/components.js
+  // src/ui/components.ts
   var components_exports = {};
   __export(components_exports, {
     buildReflectAssistHtml: () => buildReflectAssistHtml,
@@ -8257,7 +8321,7 @@ ${body}`;
   function setComponentDeps(overrides) {
     Object.assign(deps, overrides);
   }
-  function setStatus(msg, isError) {
+  function setStatus(msg, isError = false) {
     if (!ui3.status) return;
     ui3.status.textContent = msg;
     ui3.status.style.background = "";
@@ -8267,7 +8331,7 @@ ${body}`;
     const bar = ui3.status.closest?.(".status-bar");
     if (bar) bar.classList.toggle("status-bar--error", !!isError);
   }
-  function setBusy(isBusy, message) {
+  function setBusy(isBusy, message = "") {
     const root2 = ui3.status?.closest(`#${CSS.escape?.("kintone-unified-suite-v2") || "kintone-unified-suite-v2"}`);
     if (message && ui3.busyText) ui3.busyText.textContent = message;
     if (root2) root2.classList.toggle("busy", !!isBusy);
@@ -8365,8 +8429,30 @@ ${body}`;
     if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
     if (options.persist !== false) saveCurrentDialogState();
   }
-  function switchTab(tabKey, options) {
+  function snapshotCurrentTabResult() {
+    if (!ui3.result) return;
+    const prevTab = state.activeTab;
+    if (!prevTab) return;
+    if (prevTab === "diff") return;
+    const html = ui3.result.innerHTML || "";
+    if (!state.lastResultByTab || typeof state.lastResultByTab !== "object") {
+      state.lastResultByTab = {};
+    }
+    if (html && html !== '<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア</p><p class="main-result-placeholder-body">このタブの操作結果やログがここに表示されます。</p></div>') {
+      state.lastResultByTab[prevTab] = html;
+    }
+  }
+  function restoreTabResult(nextKey) {
+    if (!ui3.result) return;
+    if (nextKey === "diff") return;
+    const stored = state.lastResultByTab && state.lastResultByTab[nextKey];
+    if (typeof stored === "string" && stored.length) {
+      ui3.result.innerHTML = stored;
+    }
+  }
+  function switchTab(tabKey, options = {}) {
     const key = ui3.tabs.some((t) => t.dataset.tab === tabKey) ? tabKey : "reflect";
+    if (state.activeTab !== key) snapshotCurrentTabResult();
     state.activeTab = key;
     ui3.tabs.forEach((t) => {
       const active = t.dataset.tab === key;
@@ -8440,6 +8526,7 @@ ${body}`;
     }
     if (state.guidedTourActive && deps.scheduleGuidedTourLayout) deps.scheduleGuidedTourLayout();
     updateConnectionStepIndicators();
+    restoreTabResult(key);
     if (!options || options.persist !== false) saveCurrentDialogState();
   }
   function updateConnectionStepIndicators() {
@@ -8828,7 +8915,7 @@ ${body}`;
     const scopeInfo = getEffectiveReflectScopeInfo();
     const effectiveScopeSet = new Set(scopeInfo.effectiveScopes);
     const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
-    const actualDiffRows = getActualDiffRows2(state.lastDiffRows || []);
+    const actualDiffRows = getActualDiffRows(state.lastDiffRows || []);
     const selectedNodeRows = deps.getSelectedReflectRows();
     const targetRows = isNode ? selectedNodeRows : actualDiffRows.filter((row) => effectiveScopeSet.has(row.sectionKey));
     const sev = summarizeSeverity(targetRows);
@@ -9109,7 +9196,7 @@ ${body}`;
       let timer = 0;
       search.addEventListener("input", (e) => {
         clearTimeout(timer);
-        timer = setTimeout(() => {
+        timer = window.setTimeout(() => {
           state.reflectPlanPreviewKeyword = e.target.value || "";
           renderReflectPlanPreview();
         }, 150);
@@ -9128,7 +9215,7 @@ ${body}`;
     const el = getToolDocument().getElementById("u_reflectFooterBadges");
     if (!el) return;
     const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
-    const diffRowCount = getActualDiffRows2(state.lastDiffRows || []).length;
+    const diffRowCount = getActualDiffRows(state.lastDiffRows || []).length;
     const planSig = getCurrentReflectPlanSignature();
     const plan = state.lastApplyPlan;
     const planReady = !!(plan && planSig && plan.signature === planSig);
@@ -9297,9 +9384,10 @@ ${body}`;
       host.style.display = "none";
       return;
     }
+    const appliedAtNum = Number(appliedAt);
     const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
-    const diffStale = !diffReady || state.lastDiffAt && appliedAt > state.lastDiffAt;
-    const minutesAgo = Math.max(0, Math.round((Date.now() - appliedAt) / 6e4));
+    const diffStale = !diffReady || state.lastDiffAt && appliedAtNum > Number(state.lastDiffAt);
+    const minutesAgo = Math.max(0, Math.round((Date.now() - appliedAtNum) / 6e4));
     const ageLabel = minutesAgo === 0 ? "たった今" : `${minutesAgo}分前`;
     const modeLabel = state.lastApplyCompletedMode === "nodes" ? "差分選択モード" : "まとめて反映モード";
     const hadError = !!state.lastApplyCompletedHadError;
@@ -9324,7 +9412,7 @@ ${body}`;
   }
   function getDiffCountsBySection() {
     const counts = {};
-    for (const row of getActualDiffRows2(state.lastDiffRows || [])) {
+    for (const row of getActualDiffRows(state.lastDiffRows || [])) {
       const key = row.sectionKey || "";
       if (!key) continue;
       if (!counts[key]) counts[key] = { total: 0, added: 0, removed: 0, changed: 0 };
@@ -9408,7 +9496,7 @@ ${body}`;
         return;
       }
       const count = diffCounts[activeSec] || { total: 0, added: 0, removed: 0, changed: 0 };
-      const rows = getActualDiffRows2(state.lastDiffRows || []).filter((r) => r.sectionKey === activeSec);
+      const rows = getActualDiffRows(state.lastDiffRows || []).filter((r) => r.sectionKey === activeSec);
       const openEditorBtn = activeSec === "fieldSettings" ? '<button class="btn primary-action" data-act="openReflectPreviewEditor">フィールド確認を開く</button>' : `<button class="btn primary-action" data-act="openSectionPreviewEditor" data-section="${esc(activeSec)}">このセクションを編集</button>`;
       const topPaths = rows.slice(0, 12).map((r) => {
         const cls = r.type === "added" ? "#166534" : r.type === "removed" ? "#b91c1c" : "#92400e";
@@ -9450,7 +9538,7 @@ ${body}`;
         </div>` : ""}
       </div>`;
       }).join("");
-      const totalDiff = Object.values(diffCounts).reduce((s, c) => s + c.total, 0);
+      const totalDiff = Object.values(diffCounts).reduce((s, c) => s + (c?.total || 0), 0);
       const fieldSelected = selectedScopes.has("fieldSettings");
       const hasNonFieldSelected = [...selectedScopes].some((key) => key && key !== "fieldSettings");
       overview.innerHTML = `
@@ -9795,7 +9883,7 @@ ${body}`;
   }
   var ui3, deps, SCOPE_PICKER_META;
   var init_components = __esm({
-    "src/ui/components.js"() {
+    "src/ui/components.ts"() {
       "use strict";
       init_constants();
       init_state();
@@ -9843,7 +9931,7 @@ ${body}`;
     }
   });
 
-  // src/tabs/preview-compare.js
+  // src/tabs/preview-compare.ts
   function getPreviewCompareStatusPrefix(ui4) {
     const sp = !!ui4?.sourcePreview?.checked;
     const tp = !!ui4?.targetPreview?.checked;
@@ -9853,26 +9941,26 @@ ${body}`;
     return "〔プレビュー → 本番〕";
   }
   var init_preview_compare = __esm({
-    "src/tabs/preview-compare.js"() {
+    "src/tabs/preview-compare.ts"() {
       "use strict";
     }
   });
 
-  // src/reflect/rowMode.js
+  // src/reflect/rowMode.ts
   function reflectRowModeById(rowId) {
     return state.reflectNodeModes[rowId] === "tgt" ? "tgt" : "src";
   }
   function reflectRowDesiredValue(row) {
-    return reflectRowModeById(row._id) === "tgt" ? row.right : row.left;
+    return reflectRowModeById(row._id || "") === "tgt" ? row.right : row.left;
   }
   var init_rowMode = __esm({
-    "src/reflect/rowMode.js"() {
+    "src/reflect/rowMode.ts"() {
       "use strict";
       init_state();
     }
   });
 
-  // src/tabs/reflect.js
+  // src/tabs/reflect.ts
   var reflect_exports = {};
   __export(reflect_exports, {
     applyReflectPreset: () => applyReflectPreset,
@@ -9963,7 +10051,7 @@ ${body}`;
   function loadReflectRowsFromLastDiff() {
     if (!state.lastDiffRows.length) throw new Error("先に差分比較を実行してください");
     const putKeys = new Set(SECTION_DEFS.filter((d) => d.put).map((d) => d.key));
-    const rows = getActualDiffRows2(state.lastDiffRows).filter((r) => putKeys.has(r.sectionKey)).map((r, idx) => ({ ...r, _id: `n${idx}` }));
+    const rows = getActualDiffRows(state.lastDiffRows).filter((r) => putKeys.has(r.sectionKey)).map((r, idx) => ({ ...r, _id: `n${idx}` }));
     state.reflectRows = rows;
     state.reflectSelectedIds = new Set(rows.map((r) => r._id));
     state.reflectNodeModes = {};
@@ -10123,7 +10211,7 @@ ${body}`;
   }
   function getDiffCountsBySection2() {
     const counts = {};
-    for (const row of getActualDiffRows2(state.lastDiffRows || [])) {
+    for (const row of getActualDiffRows(state.lastDiffRows || [])) {
       const key = row.sectionKey || "";
       if (!key) continue;
       if (!counts[key]) counts[key] = { total: 0, added: 0, removed: 0, changed: 0 };
@@ -10366,14 +10454,13 @@ ${body}`;
   }
   var BULK_MODE_CONFIRM_THRESHOLD;
   var init_reflect = __esm({
-    "src/tabs/reflect.js"() {
+    "src/tabs/reflect.ts"() {
       "use strict";
       init_constants();
       init_state();
       init_utils();
       init_api();
       init_engine();
-      init_enrich();
       init_utils();
       init_components();
       init_export();
@@ -10385,7 +10472,7 @@ ${body}`;
     }
   });
 
-  // src/tabs/field.js
+  // src/tabs/field.ts
   function parseFieldInput(text) {
     const obj = JSON.parse(text);
     if (!obj || typeof obj !== "object") throw new Error("JSONはオブジェクト形式で入力してください");
@@ -10631,12 +10718,14 @@ ${body}`;
     }
     ui.fieldJson.value = JSON.stringify(newProps, null, 2);
     const resEl = getToolDocument().getElementById("u_bulkFieldResult");
-    resEl.style.display = "block";
-    resEl.innerHTML = `<strong>完了:</strong> ${modifiedCount} 個のフィールドコードを変更し、上のテキストエリアにセットしました。`;
+    if (resEl) {
+      resEl.style.display = "block";
+      resEl.innerHTML = `<strong>完了:</strong> ${modifiedCount} 個のフィールドコードを変更し、上のテキストエリアにセットしました。`;
+    }
     setBusy(false);
   }
   var init_field = __esm({
-    "src/tabs/field.js"() {
+    "src/tabs/field.ts"() {
       "use strict";
       init_constants();
       init_state();
@@ -10648,10 +10737,10 @@ ${body}`;
     }
   });
 
-  // src/reflect/helpers.js
+  // src/reflect/helpers.ts
   function diffSectionKeySet() {
     const set = /* @__PURE__ */ new Set();
-    for (const row of getActualDiffRows2(state.lastDiffRows || [])) {
+    for (const row of getActualDiffRows(state.lastDiffRows || [])) {
       let key = row.sectionKey;
       if (!key && row.section) {
         const def = SECTION_DEFS.find((d) => d.label === row.section || d.key === row.section);
@@ -10662,14 +10751,14 @@ ${body}`;
     return set;
   }
   async function ensureDiffPreparedForReflect() {
-    const sig = currentDiffSignature();
+    const sig = currentDiffSignature2();
     if (state.lastDiffAt && state.lastDiffSignature === sig) return;
     setStatus("差分が未作成または条件変更のため、自動で差分比較を実行します...");
     await runDiff();
   }
   function resolveApplyScopes(baseScopes) {
     let scopes = [...baseScopes];
-    if (!ui.applyDiffOnly.checked) return scopes;
+    if (!ui.applyDiffOnly?.checked) return scopes;
     const diffSet = diffSectionKeySet();
     if (!diffSet.size) throw new Error("「前回差分のあるセクションのみ反映」がONのため先に差分比較が必要です。差分なしで反映する場合はこのチェックをOFFにしてください");
     scopes = scopes.filter((k) => diffSet.has(k));
@@ -10682,7 +10771,9 @@ ${body}`;
       if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
       setStatus("比較元設定を取得中...");
       sourceBundle = await fetchBundle({
-        ...c.source,
+        appId: c.source.appId,
+        guestId: c.source.guestId,
+        preview: c.source.preview,
         sections: scopes,
         onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
       });
@@ -10694,7 +10785,7 @@ ${body}`;
   }
   function renderProgressLog(logs, options = {}) {
     const { phase, current, total } = options;
-    const progressBar = typeof current === "number" && total > 0 ? `<div style="height:6px;background:#e2e8f0;border-radius:3px;margin:8px 10px 0"><div style="width:${Math.round((current + 1) / total * 100)}%;height:100%;background:#3b82f6;border-radius:3px;transition:width .3s"></div></div>` : "";
+    const progressBar = typeof current === "number" && typeof total === "number" && total > 0 ? `<div style="height:6px;background:#e2e8f0;border-radius:3px;margin:8px 10px 0"><div style="width:${Math.round((current + 1) / total * 100)}%;height:100%;background:#3b82f6;border-radius:3px;transition:width .3s"></div></div>` : "";
     const phaseLabel = phase ? `<div style="font-weight:700;padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:13px">${esc(phase)}</div>` : "";
     const colored = logs.map((line) => {
       if (line.startsWith("OK ")) return `<span style="color:#166534">${esc(line)}</span>`;
@@ -10704,8 +10795,10 @@ ${body}`;
       if (line.startsWith("PLAN ")) return `<span style="color:#1d4ed8">${esc(line)}</span>`;
       return esc(line);
     }).join("\n");
-    ui.result.innerHTML = `${phaseLabel}${progressBar}<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${colored}</pre>`;
-    ui.result.scrollTop = ui.result.scrollHeight;
+    if (ui.result) {
+      ui.result.innerHTML = `${phaseLabel}${progressBar}<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${colored}</pre>`;
+      ui.result.scrollTop = ui.result.scrollHeight;
+    }
   }
   function appendProgressSummary(logs) {
     const ok = logs.filter((l) => l.startsWith("OK ")).length;
@@ -10715,7 +10808,7 @@ ${body}`;
     logs.push(`=== 完了: OK ${ok} / NG ${ng} / SKIP ${skip} ===`);
   }
   var init_helpers = __esm({
-    "src/reflect/helpers.js"() {
+    "src/reflect/helpers.ts"() {
       "use strict";
       init_constants();
       init_state();
@@ -10730,7 +10823,46 @@ ${body}`;
     }
   });
 
-  // src/reflect/apply.js
+  // src/reflect/apply.ts
+  async function preflightLookupMap(lookupMap, prefix) {
+    const entries = Object.entries(lookupMap || {});
+    if (!entries.length) return { ok: true, missing: [] };
+    const missing = [];
+    for (const [from, to] of entries) {
+      const target = String(to || "").trim();
+      if (!target || !/^\d+$/.test(target)) {
+        missing.push({ from, to: target, reason: "AppID 形式が不正" });
+        continue;
+      }
+      const cacheKey = `${prefix}::${target}`;
+      if (_lookupPreflightCache.has(cacheKey)) {
+        if (_lookupPreflightCache.get(cacheKey) === false) {
+          missing.push({ from, to: target, reason: "変換先アプリが見つかりません" });
+        }
+        continue;
+      }
+      try {
+        await apiGet(prefix, "/app.json", { id: target });
+        _lookupPreflightCache.set(cacheKey, true);
+      } catch (e) {
+        _lookupPreflightCache.set(cacheKey, false);
+        missing.push({ from, to: target, reason: `取得失敗: ${e?.message || String(e)}` });
+      }
+    }
+    return { ok: missing.length === 0, missing };
+  }
+  async function assertLookupMapPreflight(lookupMap, prefix) {
+    const result = await preflightLookupMap(lookupMap, prefix);
+    if (result.ok) return;
+    const lines = result.missing.map((m) => ` - ${m.from} → ${m.to || "(空)"}: ${m.reason}`);
+    const message = `Lookup 変換ルールに問題があります:
+${lines.join("\n")}
+
+それでも続行しますか？`;
+    if (!kusConfirm(message)) {
+      throw new Error("Lookup 変換ルールのプリフライトで中断しました");
+    }
+  }
   function convertLookupAppIds2(fieldDef, map) {
     const def = deepClone(fieldDef || {});
     const lookupMap = map || {};
@@ -11080,7 +11212,7 @@ ${body}`;
           recordSectionResult(sectionResults, secKey, def.label, "ok", "");
           continue;
         }
-        const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder(sourceSec) }, note: `${def.label} put` }];
+        const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder?.(sourceSec) || {} }, note: `${def.label} put` }];
         appendRequestPlanLogs(logs, { requests: reqs });
         await executeRequestPlan(prefix, reqs, logs, stopOnError);
         logs.push(`OK ${def.label}`);
@@ -11113,6 +11245,53 @@ ${body}`;
       status,
       message: message || ""
     });
+  }
+  async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, logs }) {
+    const backup = state.lastPreviewBackupPayload;
+    if (!backup?.bundle?.sections) return null;
+    if (String(backup?.target?.appId || "") !== String(targetAppId || "")) return null;
+    if (String(backup?.target?.guestId || "") !== String(targetGuestId || "")) return null;
+    const targetScopes = [...new Set((scopes || []).filter(Boolean))];
+    const backupScopes = Array.isArray(backup?.scopes) ? backup.scopes : Object.keys(backup.bundle.sections || {});
+    const checkable = targetScopes.filter((key) => backupScopes.includes(key));
+    if (!checkable.length) return null;
+    const prefix = buildApiPrefix(targetGuestId, true);
+    const findings = [];
+    for (const secKey of checkable) {
+      const def = SECTION_DEFS.find((item) => item.key === secKey);
+      if (!def) continue;
+      try {
+        const after = normalize(await apiGet(prefix, def.endpoint, { app: targetAppId }));
+        const before = backup.bundle.sections[secKey];
+        if (!before) continue;
+        const beforeText = stableStringify(before);
+        const afterText = stableStringify(after);
+        if (beforeText !== afterText) {
+          findings.push({
+            sectionKey: secKey,
+            label: def.label || secKey
+          });
+        }
+      } catch (e) {
+        findings.push({
+          sectionKey: secKey,
+          label: def.label || secKey,
+          error: e?.message || String(e)
+        });
+      }
+    }
+    if (Array.isArray(logs)) {
+      if (!findings.length) {
+        logs.push("反映後検証: バックアップとの差分なし（プラン外変更は検知されませんでした）");
+      } else {
+        logs.push(`反映後検証: ${findings.length}セクションでバックアップと差分あり`);
+        for (const item of findings) {
+          if (item.error) logs.push(`  - ${item.label}: 取得失敗 ${item.error}`);
+          else logs.push(`  - ${item.label}: 反映後に内容が変化（プラン外の更新の可能性）`);
+        }
+      }
+    }
+    return { checked: checkable.length, findings };
   }
   function commitApplyReport({ mode, appId, scopes, sectionResults, hadError, sourceAppId, sourceGuestId, targetGuestId }) {
     const now = Date.now();
@@ -11556,6 +11735,7 @@ ${body}`;
     const app = c.target.appId;
     const stopOnError = !!ui.stopOnError?.checked;
     const lookupMap = parseLookupMapInput(ui.lookupMap.value);
+    await assertLookupMapPreflight(lookupMap, buildApiPrefix(c.target.guestId, false));
     const logs = [];
     let hadError = false;
     logs.push(`比較先アプリ: ${app}`);
@@ -11581,7 +11761,7 @@ ${body}`;
         if (secKey === "fieldSettings") {
           const beforeProps = before.properties || before || {};
           const afterProps = patched.properties || patched || {};
-          const sourceModeCodes = new Set(sortedRows.map(extractFieldCodeFromRowPath).filter(Boolean));
+          const sourceModeCodes = new Set(sortedRows.map(extractFieldCodeFromRowPath).filter((code) => !!code));
           await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
         } else if (secKey === "viewSettings") {
           await applyViewsSectionDiff(prefix, app, before.views || before || {}, patched.views || patched || {}, logs, stopOnError);
@@ -11590,7 +11770,7 @@ ${body}`;
         } else if (secKey === "actionSettings") {
           await applyActionsSectionDiff(prefix, app, before.actions || before || {}, patched.actions || patched || {}, logs, stopOnError);
         } else {
-          const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder(patched) }, note: `${def.label} put` }];
+          const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder?.(patched) || {} }, note: `${def.label} put` }];
           appendRequestPlanLogs(logs, { requests: reqs });
           await executeRequestPlan(prefix, reqs, logs, stopOnError);
         }
@@ -11607,6 +11787,7 @@ ${body}`;
         }
       }
     }
+    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: sectionKeys, logs });
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: "JSONパッチ反映完了" });
     commitApplyReport({
@@ -11631,6 +11812,7 @@ ${body}`;
     const rows = getSelectedReflectRows();
     if (!rows.length) throw new Error("反映ノードを選択してください");
     const lookupMap = parseLookupMapInput(ui.lookupMap.value);
+    await assertLookupMapPreflight(lookupMap, buildApiPrefix(c.target.guestId, false));
     const stopOnError = !!ui.stopOnError.checked;
     saveCurrentDialogState2();
     const nodeSigRows = rows.map((r) => ({ id: r._id, sectionKey: r.sectionKey, mode: reflectRowModeById(r._id), type: r.type, path: r.path })).sort((a, b) => String(a.id).localeCompare(String(b.id)));
@@ -11710,7 +11892,7 @@ ${body}`;
           const beforeProps = before.properties || before || {};
           const afterProps = patched.properties || patched || {};
           const sourceModeCodes = new Set(
-            rowsInSection.filter((row) => reflectRowModeById(row._id) === "src").map(extractFieldCodeFromRowPath).filter(Boolean)
+            rowsInSection.filter((row) => reflectRowModeById(row._id) === "src").map(extractFieldCodeFromRowPath).filter((code) => !!code)
           );
           await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
           logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
@@ -11730,7 +11912,7 @@ ${body}`;
           await applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError);
           logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
         } else {
-          const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder(patched) }, note: `${def.label} put` }];
+          const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder?.(patched) || {} }, note: `${def.label} put` }];
           appendRequestPlanLogs(logs, { requests: reqs });
           await executeRequestPlan(prefix, reqs, logs, stopOnError);
           logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
@@ -11747,6 +11929,7 @@ ${body}`;
         }
       }
     }
+    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: sectionKeys, logs });
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: "ノード反映完了" });
     commitApplyReport({
@@ -11769,6 +11952,7 @@ ${body}`;
     const c = commonParams();
     if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
     const lookupMap = parseLookupMapInput(ui.lookupMap.value);
+    await assertLookupMapPreflight(lookupMap, buildApiPrefix(c.target.guestId, false));
     const baseScopes = selectedScopeKeys(ui.applyScopes);
     if (!baseScopes.length) throw new Error("反映するセクションを選択してください");
     const scopes = resolveApplyScopes(baseScopes);
@@ -11819,6 +12003,7 @@ ${body}`;
       onProgress: (i, total) => renderProgressLog(logs, { phase: "プレビュー反映実行中", current: i, total }),
       sectionResults
     });
+    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes, logs });
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: "プレビュー反映完了" });
     commitApplyReport({
@@ -11950,6 +12135,7 @@ ${body}`;
       onProgress: (i, total) => renderProgressLog(logs, { phase: "失敗セクション再反映中", current: i, total }),
       sectionResults
     });
+    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: failed, logs });
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: "失敗セクション再反映完了" });
     commitApplyReport({
@@ -11966,9 +12152,9 @@ ${body}`;
     renderReflectMainPanel();
     setStatus(hadError ? "失敗セクション再反映: 一部エラーあり" : "失敗セクション再反映: 完了");
   }
-  var patchJsonDiffTimer, patchJsonDiffSeq, APPLY_GUARD_DIFF_THRESHOLD, APPLY_GUARD_REQUEST_THRESHOLD, ARRAY_KEY_FALLBACK_CANDIDATES;
+  var patchJsonDiffTimer, patchJsonDiffSeq, APPLY_GUARD_DIFF_THRESHOLD, APPLY_GUARD_REQUEST_THRESHOLD, _lookupPreflightCache, ARRAY_KEY_FALLBACK_CANDIDATES;
   var init_apply = __esm({
-    "src/reflect/apply.js"() {
+    "src/reflect/apply.ts"() {
       "use strict";
       init_constants();
       init_utils();
@@ -11986,13 +12172,15 @@ ${body}`;
       patchJsonDiffSeq = 0;
       APPLY_GUARD_DIFF_THRESHOLD = 100;
       APPLY_GUARD_REQUEST_THRESHOLD = 80;
+      _lookupPreflightCache = /* @__PURE__ */ new Map();
       ARRAY_KEY_FALLBACK_CANDIDATES = ["code", "id", "name", "entity", "field", "status", "state", "app", "from", "to", "key"];
     }
   });
 
-  // src/reflect/plan.js
+  // src/reflect/plan.ts
   var plan_exports = {};
   __export(plan_exports, {
+    APPLY_REQUEST_CHUNK_SIZE: () => APPLY_REQUEST_CHUNK_SIZE,
     appendRequestPlanLogs: () => appendRequestPlanLogs,
     buildMapSectionPreview: () => buildMapSectionPreview,
     buildWholeSectionPreview: () => buildWholeSectionPreview,
@@ -12009,7 +12197,7 @@ ${body}`;
     runPreviewApplyPlanNodes: () => runPreviewApplyPlanNodes,
     showInlineConfirmation: () => showInlineConfirmation,
     splitMapSectionDiff: () => splitMapSectionDiff,
-    splitUpsertMap: () => splitUpsertMap2,
+    splitUpsertMap: () => splitUpsertMap3,
     upsertFields: () => upsertFields2
   });
   function renderAppIdConfirmSection2(appIdRefs) {
@@ -12033,7 +12221,7 @@ ${body}`;
     </div>
   </div>`;
   }
-  function splitUpsertMap2(currentMap, incomingMap, options) {
+  function splitUpsertMap3(currentMap, incomingMap, options) {
     const overwrite = !!(options && options.overwrite);
     const renameOnConflict = !!(options && options.renameOnConflict);
     const codeField = options && options.codeField || "code";
@@ -12082,7 +12270,7 @@ ${body}`;
       convertedIncoming[code] = converted.def;
     }
     const current = await apiGet(prefix, "/app/form/fields.json", { app });
-    const split = splitUpsertMap2(current.properties || {}, convertedIncoming || {}, {
+    const split = splitUpsertMap3(current.properties || {}, convertedIncoming || {}, {
       overwrite: options && options.overwrite,
       renameOnConflict: options && options.renameOnConflict,
       codeField: "code"
@@ -12156,6 +12344,50 @@ ${body}`;
     const changed = stableStringify(before) !== stableStringify(after);
     return { beforeText, afterText, changed };
   }
+  function chunkObjectEntries(obj, size = APPLY_REQUEST_CHUNK_SIZE) {
+    const entries = Object.entries(obj || {});
+    if (entries.length <= size) return entries.length ? [Object.fromEntries(entries)] : [];
+    const out = [];
+    for (let i = 0; i < entries.length; i += size) {
+      out.push(Object.fromEntries(entries.slice(i, i + size)));
+    }
+    return out;
+  }
+  function chunkArray(arr, size = APPLY_REQUEST_CHUNK_SIZE) {
+    const list = Array.isArray(arr) ? arr : [];
+    if (list.length <= size) return list.length ? [list] : [];
+    const out = [];
+    for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+    return out;
+  }
+  function pushChunkedMapRequests(requests, { method, path, app, key, map, label }) {
+    const chunks = chunkObjectEntries(map);
+    if (!chunks.length) return;
+    const total = Object.keys(map).length;
+    chunks.forEach((chunk, idx) => {
+      const partLabel = chunks.length > 1 ? ` ${idx + 1}/${chunks.length}` : "";
+      requests.push({
+        method,
+        path,
+        body: { app, [key]: chunk },
+        note: `${label}:${Object.keys(chunk).length}${partLabel} (合計 ${total})`
+      });
+    });
+  }
+  function pushChunkedArrayRequests(requests, { method, path, app, key, list, label }) {
+    const chunks = chunkArray(list);
+    if (!chunks.length) return;
+    const total = list.length;
+    chunks.forEach((chunk, idx) => {
+      const partLabel = chunks.length > 1 ? ` ${idx + 1}/${chunks.length}` : "";
+      requests.push({
+        method,
+        path,
+        body: { app, [key]: chunk },
+        note: `${label}:${chunk.length}${partLabel} (合計 ${total})`
+      });
+    });
+  }
   function planFieldSectionDiffRequests(app, beforeProps, afterProps, lookupMap, sourceModeCodes) {
     const beforeMap = filterWritableFieldProps2(beforeProps, true);
     const afterMap = filterWritableFieldProps2(afterProps, true);
@@ -12178,9 +12410,9 @@ ${body}`;
       if (!Object.prototype.hasOwnProperty.call(afterMap || {}, code)) del.push(code);
     }
     const requests = [];
-    if (Object.keys(add).length) requests.push({ method: "POST", path: "/app/form/fields.json", body: { app, properties: add }, note: `fields add:${Object.keys(add).length}` });
-    if (Object.keys(update).length) requests.push({ method: "PUT", path: "/app/form/fields.json", body: { app, properties: update }, note: `fields update:${Object.keys(update).length}` });
-    if (del.length) requests.push({ method: "DELETE", path: "/app/form/fields.json", body: { app, fields: del }, note: `fields delete:${del.length}` });
+    pushChunkedMapRequests(requests, { method: "POST", path: "/app/form/fields.json", app, key: "properties", map: add, label: "fields add" });
+    pushChunkedMapRequests(requests, { method: "PUT", path: "/app/form/fields.json", app, key: "properties", map: update, label: "fields update" });
+    pushChunkedArrayRequests(requests, { method: "DELETE", path: "/app/form/fields.json", app, key: "fields", list: del, label: "fields delete" });
     const preview = buildMapSectionPreview(beforeMap, { ...add, ...update });
     preview.removedKeys = del.slice(0, PREVIEW_MAX_ENTRIES).map((key) => ({ key, before: truncateForPreview(beforeMap[key]) }));
     preview.removedCount = del.length;
@@ -12191,7 +12423,7 @@ ${body}`;
     const split = splitMapSectionDiff(beforeViews, afterViews);
     const up = { ...split.add, ...split.update };
     const requests = [];
-    if (Object.keys(up).length) requests.push({ method: "PUT", path: "/app/views.json", body: { app, views: up }, note: `views upsert:${Object.keys(up).length}` });
+    pushChunkedMapRequests(requests, { method: "PUT", path: "/app/views.json", app, key: "views", map: up, label: "views upsert" });
     const preview = buildMapSectionPreview(beforeViews, afterViews);
     return { requests, upsertCount: Object.keys(up).length, deleteSkipCount: split.del.length, preview };
   }
@@ -12199,8 +12431,8 @@ ${body}`;
     const split = splitMapSectionDiff(beforeReports, afterReports);
     const up = { ...split.add, ...split.update };
     const requests = [];
-    if (Object.keys(up).length) requests.push({ method: "PUT", path: "/app/reports.json", body: { app, reports: up }, note: `reports upsert:${Object.keys(up).length}` });
-    if (split.del.length) requests.push({ method: "DELETE", path: "/app/reports.json", body: { app, reports: split.del }, note: `reports delete:${split.del.length}` });
+    pushChunkedMapRequests(requests, { method: "PUT", path: "/app/reports.json", app, key: "reports", map: up, label: "reports upsert" });
+    pushChunkedArrayRequests(requests, { method: "DELETE", path: "/app/reports.json", app, key: "reports", list: split.del, label: "reports delete" });
     const preview = buildMapSectionPreview(beforeReports, afterReports);
     return { requests, upsertCount: Object.keys(up).length, deleteCount: split.del.length, preview };
   }
@@ -12208,7 +12440,7 @@ ${body}`;
     const split = splitMapSectionDiff(beforeActions, afterActions);
     const up = { ...split.add, ...split.update };
     const requests = [];
-    if (Object.keys(up).length) requests.push({ method: "PUT", path: "/app/actions.json", body: { app, actions: up }, note: `actions upsert:${Object.keys(up).length}` });
+    pushChunkedMapRequests(requests, { method: "PUT", path: "/app/actions.json", app, key: "actions", map: up, label: "actions upsert" });
     const preview = buildMapSectionPreview(beforeActions, afterActions);
     return { requests, upsertCount: Object.keys(up).length, deleteSkipCount: split.del.length, preview };
   }
@@ -12370,7 +12602,7 @@ ${body}`;
         let plan;
         if (secKey === "fieldSettings") {
           const sourceModeCodes = new Set(
-            rowsInSection.filter((row) => reflectRowModeById(row._id) === "src").map(extractFieldCodeFromRowPath).filter(Boolean)
+            rowsInSection.filter((row) => reflectRowModeById(row._id) === "src").map(extractFieldCodeFromRowPath).filter((code) => !!code)
           );
           plan = planFieldSectionDiffRequests(app, before.properties || before || {}, patched.properties || patched || {}, lookupMap, sourceModeCodes);
         } else if (secKey === "viewSettings") {
@@ -12381,7 +12613,7 @@ ${body}`;
           plan = planActionsSectionDiffRequests(app, before.actions || before || {}, patched.actions || patched || {});
         } else {
           plan = {
-            requests: [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder(patched) }, note: `${def.label} put` }],
+            requests: [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder?.(patched) || {} }, note: `${def.label} put` }],
             wholePreview: buildWholeSectionPreview(before, patched)
           };
         }
@@ -12522,7 +12754,7 @@ ${body}`;
       }
       const current = await apiGet(prefix, def.endpoint, { app });
       targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
-      const afterWhole = def.putBuilder(sourceSec);
+      const afterWhole = def.putBuilder?.(sourceSec) || {};
       const plan = { requests: [{ method: "PUT", path: def.endpoint, body: { app, ...afterWhole }, note: `${def.label} put` }] };
       capturePreview(secKey, def.label, plan, current, afterWhole);
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
@@ -12578,9 +12810,9 @@ ${body}`;
     downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
     setStatus(`ドライランJSONを保存しました: ${filename}（APIは送信していません）`);
   }
-  var PREVIEW_MAX_ENTRIES, PREVIEW_SNIPPET_MAX;
+  var PREVIEW_MAX_ENTRIES, PREVIEW_SNIPPET_MAX, APPLY_REQUEST_CHUNK_SIZE;
   var init_plan = __esm({
-    "src/reflect/plan.js"() {
+    "src/reflect/plan.ts"() {
       "use strict";
       init_constants();
       init_utils();
@@ -12593,16 +12825,17 @@ ${body}`;
       init_helpers();
       PREVIEW_MAX_ENTRIES = 40;
       PREVIEW_SNIPPET_MAX = 600;
+      APPLY_REQUEST_CHUNK_SIZE = 100;
     }
   });
 
-  // src/tabs/diff.js
+  // src/tabs/diff.ts
   var diff_exports = {};
   __export(diff_exports, {
     addIgnoreKeyFromInput: () => addIgnoreKeyFromInput,
     applyIgnorePresetKeysToInput: () => applyIgnorePresetKeysToInput,
     commonParams: () => commonParams,
-    currentDiffSignature: () => currentDiffSignature,
+    currentDiffSignature: () => currentDiffSignature2,
     ensureDiffPreparedForReflect: () => ensureDiffPreparedForReflect2,
     exportBundleJson: () => exportBundleJson,
     exportDiffHtml: () => exportDiffHtml,
@@ -12674,7 +12907,7 @@ ${body}`;
     }
     return ensureBundleShape(obj);
   }
-  function currentDiffSignature() {
+  function currentDiffSignature2() {
     const c = commonParams();
     return stableStringify({
       source: c.source,
@@ -12697,7 +12930,7 @@ ${body}`;
     return fold;
   }
   async function ensureDiffPreparedForReflect2() {
-    const sig = currentDiffSignature();
+    const sig = currentDiffSignature2();
     if (state.lastDiffAt && state.lastDiffSignature === sig) return;
     setStatus("差分が未作成または条件変更のため、自動で差分比較を実行します...");
     await runDiff();
@@ -12733,7 +12966,7 @@ ${body}`;
     renderReflectSidebar();
     renderReflectMainPanel();
   }
-  async function resolveBundle(side, params, scopes, onProgress, options) {
+  async function resolveBundle(side, params, scopes, onProgress, options = {}) {
     const imported = side === "source" ? state.importedSourceBundle : state.importedTargetBundle;
     if (imported && !options?.skipImported) return imported;
     return fetchBundle({ ...params, sections: scopes, onProgress });
@@ -12761,7 +12994,7 @@ ${body}`;
     state.lastDiffRows = rows;
     state.lastFetchIssues = diffResult.fetchIssues || [];
     state.lastDiffAt = (/* @__PURE__ */ new Date()).toISOString();
-    state.lastDiffSignature = currentDiffSignature();
+    state.lastDiffSignature = currentDiffSignature2();
     state.lastApplyPlan = null;
     state.diffSectionVisibleCounts = {};
     state.diffSelectedIds = /* @__PURE__ */ new Set();
@@ -12813,8 +13046,8 @@ ${body}`;
   async function exportDiffJson() {
     if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error("先に差分比較を実行してください");
     const exportInfo = resolveDiffExportRows();
-    const exportContentMode = resolveDiffExportContentMode();
-    const compareInfo = shouldIncludeComparedContent(exportContentMode) ? buildDiffExportComparedBundles(
+    const exportContentMode = resolveDiffExportContentMode2();
+    const compareInfo = shouldIncludeComparedContent2(exportContentMode) ? buildDiffExportComparedBundles(
       state.lastSourceBundle,
       state.lastTargetBundle,
       resolveDiffExportComparedScopes(exportInfo, selectedScopeKeys(ui.diffScopes))
@@ -12831,7 +13064,7 @@ ${body}`;
       exportMode: exportInfo.mode,
       exportLabel: exportInfo.label,
       exportContentMode,
-      exportContentLabel: getDiffExportContentLabel(exportContentMode),
+      exportContentLabel: getDiffExportContentLabel2(exportContentMode),
       normalizationState: getDiffNormalizationPresetState(),
       warning: buildDiffWarningInfo(exportInfo.rows, state.lastFetchIssues),
       compareScopes: compareInfo?.scopes || [],
@@ -12845,7 +13078,7 @@ ${body}`;
       JSON.stringify(payload, null, 2),
       "application/json"
     );
-    setStatus(`差分JSONを保存しました (${exportInfo.label} / ${getDiffExportContentLabel(exportContentMode)})`);
+    setStatus(`差分JSONを保存しました (${exportInfo.label} / ${getDiffExportContentLabel2(exportContentMode)})`);
   }
   async function exportDiffHtml() {
     if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error("先に差分比較を実行してください");
@@ -12855,9 +13088,9 @@ ${body}`;
       includeSame: true
     });
     const rows = enrichDiffRows(diffResult.rows, state.lastSourceBundle, state.lastTargetBundle);
-    const exportContentMode = resolveDiffExportContentMode();
+    const exportContentMode = resolveDiffExportContentMode2();
     const exportInfo = { mode: "all", label: "全差分（同一含む）", rows };
-    const compareInfo = shouldIncludeComparedContent(exportContentMode) ? buildDiffExportComparedBundles(
+    const compareInfo = shouldIncludeComparedContent2(exportContentMode) ? buildDiffExportComparedBundles(
       state.lastSourceBundle,
       state.lastTargetBundle,
       resolveDiffExportComparedScopes(exportInfo, scopes)
@@ -12870,7 +13103,7 @@ ${body}`;
       exportMode: exportInfo.mode,
       exportLabel: exportInfo.label,
       exportContentMode,
-      exportContentLabel: getDiffExportContentLabel(exportContentMode),
+      exportContentLabel: getDiffExportContentLabel2(exportContentMode),
       compareScopes: compareInfo?.scopes || [],
       compareSourceBundle: compareInfo?.sourceBundle || null,
       compareTargetBundle: compareInfo?.targetBundle || null,
@@ -12880,7 +13113,7 @@ ${body}`;
     const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
     const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
     downloadText(buildExportFilename("差分", "html", { appLabel: `${sourceLabel}_vs_${targetLabel}` }), html, "text/html");
-    setStatus(`差分HTMLを保存しました (${exportInfo.label} / ${getDiffExportContentLabel(exportContentMode)})`);
+    setStatus(`差分HTMLを保存しました (${exportInfo.label} / ${getDiffExportContentLabel2(exportContentMode)})`);
   }
   async function exportPatchJson() {
     if (!state.lastDiffRows.length) throw new Error("先に差分比較を実行してください");
@@ -13080,7 +13313,9 @@ ${body}`;
     if (saved.recordBackupIncludeComments != null && ui.recordBackupIncludeComments) ui.recordBackupIncludeComments.checked = !!saved.recordBackupIncludeComments;
     if (saved.diffHideViewed != null) state.diffHideViewed = !!saved.diffHideViewed;
     if (Array.isArray(saved.diffViewedKeys)) {
-      state.diffViewedKeys = new Set(saved.diffViewedKeys.filter((k) => typeof k === "string" && k.length));
+      state.diffViewedKeys = new Set(
+        saved.diffViewedKeys.filter((k) => typeof k === "string" && k.length).map((k) => k.split("	").length === 3 ? `	${k}` : k)
+      );
     }
     if (saved.diffReviewMeta && typeof saved.diffReviewMeta === "object") {
       state.diffReviewMeta = {};
@@ -13088,7 +13323,9 @@ ${body}`;
         if (!key || !value || typeof value !== "object") return;
         const status = value.status === "todo" || value.status === "ignored" ? value.status : "";
         const note = String(value.note || "").trim().slice(0, 500);
-        if (status || note) state.diffReviewMeta[key] = { status, note };
+        if (!status && !note) return;
+        const normalizedKey = key.split("	").length === 3 ? `	${key}` : key;
+        state.diffReviewMeta[normalizedKey] = { status, note };
       });
     }
     if (saved.launcherSortMode != null) {
@@ -13135,7 +13372,7 @@ ${body}`;
     }
   }
   var init_diff = __esm({
-    "src/tabs/diff.js"() {
+    "src/tabs/diff.ts"() {
       "use strict";
       init_constants();
       init_state();
@@ -13153,7 +13390,7 @@ ${body}`;
     }
   });
 
-  // src/tabs/design-xlsx.js
+  // src/tabs/design-xlsx.ts
   var design_xlsx_exports = {};
   __export(design_xlsx_exports, {
     runAdvancedDesignExporter: () => runAdvancedDesignExporter
@@ -13238,6 +13475,9 @@ ${body}`;
     const SYSTEM_FIELDS = /* @__PURE__ */ new Set(["$id", "$revision", "status", "category", "assignee"]);
     class Semaphore {
       constructor(max) {
+        __publicField(this, "max");
+        __publicField(this, "current");
+        __publicField(this, "queue");
         this.max = max;
         this.current = 0;
         this.queue = [];
@@ -13702,14 +13942,17 @@ ${body}`;
       }
     }
     async function retry(fn, max = CONFIG.MAX_RETRIES) {
+      let lastErr;
       for (let i = 0; i < max; i++) {
         try {
           return await fn();
         } catch (e) {
+          lastErr = e;
           if (i === max - 1) throw e;
           await UtilsX.sleep(CONFIG.RETRY_DELAY * (i + 1));
         }
       }
+      throw lastErr;
     }
     async function fetchJob(name, promiseFn) {
       try {
@@ -13749,10 +13992,14 @@ ${body}`;
         overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:460px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.3);"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:16px;">📊 エクスポート設定</div><div style="font-size:12px;color:#666;margin-bottom:12px;">出力するシートを選択してください</div><div style="display:flex;gap:8px;margin-bottom:12px;"><button id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div><div id="kex-sheet-options" style="max-height:340px;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${checkboxes}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;"><button id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
         getToolDocument().body.appendChild(overlay);
         overlay.querySelector("#kex-select-all").onclick = () => {
-          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]').forEach((cb) => cb.checked = true);
+          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]').forEach((cb) => {
+            cb.checked = true;
+          });
         };
         overlay.querySelector("#kex-select-none").onclick = () => {
-          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])').forEach((cb) => cb.checked = false);
+          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])').forEach((cb) => {
+            cb.checked = false;
+          });
         };
         overlay.querySelector("#kex-cancel").onclick = () => {
           getToolDocument().body.removeChild(overlay);
@@ -14600,8 +14847,8 @@ ${body}`;
         pAoa.push(["項目", "値"]);
         pHeaderInfoRows.push(pAoa.length - 1);
         pAoa.push(["プロセス管理", status.enable ? "有効" : "無効"]);
-        pAoa.push(["ステータス数", Object.keys(status.states || {}).length]);
-        pAoa.push(["アクション(遷移)数", (status.actions || []).length]);
+        pAoa.push(["ステータス数", String(Object.keys(status.states || {}).length)]);
+        pAoa.push(["アクション(遷移)数", String((status.actions || []).length)]);
         pAoa.push([]);
         pEmptyRows.push(pAoa.length - 1);
         pAoa.push(["■ ステータス一覧"]);
@@ -14614,7 +14861,7 @@ ${body}`;
           const asgnList = Array.isArray(st.assignee?.entities) ? st.assignee.entities.map(UtilsX.formatEntityDetailed).join("\n") : "-";
           const inCount = (status.actions || []).filter((a) => a.to === name).length;
           const outCount = (status.actions || []).filter((a) => a.from === name).length;
-          pAoa.push([st.index || "-", name, asgnType, asgnList, inCount, outCount]);
+          pAoa.push([String(st.index || "-"), name, asgnType, asgnList, String(inCount), String(outCount)]);
         });
         pAoa.push([]);
         pEmptyRows.push(pAoa.length - 1);
@@ -14623,7 +14870,7 @@ ${body}`;
         pAoa.push(["No.", "アクション名", "遷移元", "遷移先", "遷移条件"]);
         pHeaderInfoRows.push(pAoa.length - 1);
         (status.actions || []).forEach((a, i) => {
-          pAoa.push([i + 1, a.name || "-", a.from || "-", a.to || "-", UtilsX.formatFilterCond(a.filterCond)]);
+          pAoa.push([String(i + 1), a.name || "-", a.from || "-", a.to || "-", UtilsX.formatFilterCond(a.filterCond)]);
         });
         appendSheet("プロセス管理", {
           aoa: pAoa,
@@ -14961,13 +15208,13 @@ ${body}`;
         tocAoa.push([`App ID: ${APP_ID} / 出力: ${UtilsX.dt()} / 取得失敗: ${UI.failedAPIs.length}件`]);
         tocAoa.push([]);
         tocAoa.push(["キーメトリクス", "件数", "キーメトリクス", "件数"]);
-        tocAoa.push(["フィールド", fieldCount, "ビュー", viewCount]);
-        tocAoa.push(["プロセスステータス", processStateCount, "プロセスアクション", processActionCount]);
-        tocAoa.push(["権限エントリ", appAclCount + recordAclCount + fieldAclCount, "JS/CSSカスタマイズ", customizeCount]);
+        tocAoa.push(["フィールド", String(fieldCount), "ビュー", String(viewCount)]);
+        tocAoa.push(["プロセスステータス", String(processStateCount), "プロセスアクション", String(processActionCount)]);
+        tocAoa.push(["権限エントリ", String(appAclCount + recordAclCount + fieldAclCount), "JS/CSSカスタマイズ", String(customizeCount)]);
         tocAoa.push([]);
         tocAoa.push(["No.", "シート名", "内容", "件数"]);
         sheetMetadata.forEach((m, i) => {
-          tocAoa.push([i + 1, m.name, m.description || "-", m.recordCount]);
+          tocAoa.push([String(i + 1), m.name, m.description || "-", String(m.recordCount)]);
         });
         const tocWs = XLSX.utils.aoa_to_sheet(tocAoa);
         autosizeCols(tocWs, tocAoa);
@@ -15047,7 +15294,7 @@ ${body}`;
     }
   }
   var init_design_xlsx = __esm({
-    "src/tabs/design-xlsx.js"() {
+    "src/tabs/design-xlsx.ts"() {
       "use strict";
       init_constants();
       init_dialog();
@@ -15055,10 +15302,10 @@ ${body}`;
     }
   });
 
-  // src/register-api.js
+  // src/register-api.ts
   init_constants();
 
-  // src/tabs/diff-standalone.js
+  // src/tabs/diff-standalone.ts
   init_api();
   init_engine();
   init_enrich();
@@ -15135,7 +15382,7 @@ ${body}`;
     };
   }
 
-  // src/register-api.js
+  // src/register-api.ts
   init_api();
   if (typeof window !== "undefined") {
     window.__KUS__ = window.__KUS__ || {};
@@ -15145,7 +15392,7 @@ ${body}`;
     window.__KUS__.resetApiGetMetrics = resetApiGetMetrics;
   }
 
-  // src/boot.js
+  // src/boot.ts
   init_constants();
   init_state();
   init_utils();
@@ -18635,7 +18882,7 @@ ${body}`;
 }
 `;
 
-  // src/ui/template.js
+  // src/ui/template.ts
   init_constants();
   init_utils();
   init_dialog();
@@ -20430,7 +20677,7 @@ ${body}`;
     });
   }
 
-  // src/boot.js
+  // src/boot.ts
   init_dialog();
   init_components();
   init_export();
@@ -20442,17 +20689,18 @@ ${body}`;
   init_helpers();
   init_plan();
 
-  // src/ui/tour.js
+  // src/ui/tour.ts
   init_constants();
   init_state();
-  init_utils();
   init_dialog();
   init_components();
   var guidedTourLayoutRaf = 0;
+  var activeTourSteps = GUIDED_TOUR_STEPS;
+  var activeTourCourseKey = GUIDED_TOUR_DEFAULT_COURSE;
   function switchSubTab2(parentKey, subKey, options = {}) {
     if (!parentKey) return;
-    const tabs = ui.subTabs.filter((tab) => tab.dataset.subtabParent === parentKey);
-    const panes = ui.subPanes.filter((pane) => pane.dataset.subpaneParent === parentKey);
+    const tabs = ui.subTabs?.filter((tab) => tab.dataset.subtabParent === parentKey) || [];
+    const panes = ui.subPanes?.filter((pane) => pane.dataset.subpaneParent === parentKey) || [];
     if (!tabs.length || !panes.length) return;
     const fallback = state.activeSubTabs[parentKey] || tabs[0]?.dataset.subtab || "";
     const key = tabs.some((tab) => tab.dataset.subtab === subKey) ? subKey : fallback;
@@ -20462,15 +20710,25 @@ ${body}`;
     if (state.guidedTourActive) scheduleGuidedTourLayout();
     if (options.persist !== false) saveCurrentDialogState();
   }
+  function resolveTourCourse(courseKey) {
+    const key = String(courseKey || "").trim();
+    const courses = GUIDED_TOUR_COURSES;
+    const course = courses[key] || courses[GUIDED_TOUR_DEFAULT_COURSE];
+    return {
+      key: courses[key] ? key : GUIDED_TOUR_DEFAULT_COURSE,
+      course,
+      steps: course?.steps || GUIDED_TOUR_STEPS
+    };
+  }
   function getGuidedTourStep(index) {
-    if (!GUIDED_TOUR_STEPS.length) return null;
-    const bounded = Math.max(0, Math.min(GUIDED_TOUR_STEPS.length - 1, Number(index) || 0));
-    return GUIDED_TOUR_STEPS[bounded] || null;
+    if (!activeTourSteps.length) return null;
+    const bounded = Math.max(0, Math.min(activeTourSteps.length - 1, Number(index) || 0));
+    return activeTourSteps[bounded] || null;
   }
   function getGuidedTourTarget(step) {
     if (!step?.selector) return null;
     const root2 = getRoot();
-    return root2.querySelector(step.selector);
+    return root2?.querySelector(step.selector) || null;
   }
   function scheduleGuidedTourLayout() {
     if (!state.guidedTourActive) return;
@@ -20482,7 +20740,7 @@ ${body}`;
   }
   function updateGuidedTourLayout() {
     const root2 = getRoot();
-    if (!state.guidedTourActive || !ui.tourOverlay || !ui.tourCard || !ui.tourSpotlight) return;
+    if (!root2 || !state.guidedTourActive || !ui.tourOverlay || !ui.tourCard || !ui.tourSpotlight) return;
     const step = getGuidedTourStep(state.guidedTourIndex);
     const target = getGuidedTourTarget(step);
     const rootRect = root2.getBoundingClientRect();
@@ -20530,6 +20788,9 @@ ${body}`;
     ui.tourCard.style.left = `${cardLeft}px`;
     ui.tourCard.style.top = `${cardTop}px`;
   }
+  function getCourseLabel(courseKey) {
+    return GUIDED_TOUR_COURSES[courseKey]?.label || "";
+  }
   function renderGuidedTourStep(options = {}) {
     if (!ui.tourOverlay || !ui.tourCard) return;
     const step = getGuidedTourStep(state.guidedTourIndex);
@@ -20537,9 +20798,10 @@ ${body}`;
     if (step.tab) switchTab(step.tab, { persist: false });
     if (step.diffSubTab) switchSubTab2("diff", step.diffSubTab, { persist: false });
     else if (step.tab && step.subTab) switchSubTab2(step.tab, step.subTab, { persist: false });
-    const total = GUIDED_TOUR_STEPS.length;
+    const total = activeTourSteps.length;
+    const courseLabel = getCourseLabel(activeTourCourseKey);
     ui.tourOverlay.classList.add("active");
-    ui.tourStepLabel.textContent = `基本フロー ${state.guidedTourIndex + 1} / ${total}`;
+    ui.tourStepLabel.textContent = `${courseLabel || "ガイド"} ${state.guidedTourIndex + 1} / ${total}`;
     ui.tourTitle.textContent = step.title || `ステップ ${state.guidedTourIndex + 1}`;
     ui.tourBody.textContent = step.body || "";
     ui.tourHint.textContent = step.path || "対象箇所を順番に案内します";
@@ -20557,12 +20819,56 @@ ${body}`;
       });
     });
   }
-  async function openGuidedTour(index = 0) {
-    if (!GUIDED_TOUR_STEPS.length || !ui.tourOverlay) return;
+  function pickGuidedTourCourse() {
+    const lines = [
+      "どのコースで操作ガイドを始めますか？",
+      "",
+      "1: 初回（全工程） — 接続から記録出力まで一通り",
+      "2: 差分のみ確認 — 比較とレビューに絞る",
+      "3: 反映まで実施 — 差分→プラン→反映の最短ルート",
+      "",
+      "番号で入力してください（空入力で 1）"
+    ];
+    let answer = "1";
+    try {
+      const win = typeof window !== "undefined" ? window : globalThis;
+      const promptFn = win?.prompt || (typeof prompt !== "undefined" ? prompt : null);
+      if (typeof promptFn === "function") {
+        const v = promptFn(lines.join("\n"), "1");
+        if (v == null) return null;
+        answer = String(v).trim() || "1";
+      }
+    } catch (_e) {
+    }
+    if (answer === "2") return "diff";
+    if (answer === "3") return "apply";
+    return "full";
+  }
+  async function openGuidedTour(arg1 = 0, arg2) {
+    if (!ui.tourOverlay) return;
+    let courseKey = GUIDED_TOUR_DEFAULT_COURSE;
+    let startIndex = 0;
+    if (typeof arg1 === "string") {
+      courseKey = arg1;
+      startIndex = Number(arg2 || 0) || 0;
+    } else if (typeof arg1 === "number") {
+      startIndex = arg1;
+    }
+    if (typeof arg1 !== "string" && typeof arg1 !== "number") {
+      const picked = pickGuidedTourCourse();
+      if (picked == null) return;
+      courseKey = picked;
+    } else if (typeof arg1 === "number") {
+      courseKey = GUIDED_TOUR_DEFAULT_COURSE;
+    }
+    const resolved = resolveTourCourse(courseKey);
+    activeTourCourseKey = resolved.key;
+    activeTourSteps = resolved.steps;
+    if (!activeTourSteps.length) return;
     try {
       const { startGuidedTour: startDriverTour } = await Promise.resolve().then(() => (init_oss_integrations(), oss_integrations_exports));
       const { switchTab: swTab } = await Promise.resolve().then(() => (init_components(), components_exports));
-      const stepsForDriver = GUIDED_TOUR_STEPS.map((step) => {
+      const stepsForDriver = activeTourSteps.map((step) => {
         return {
           selector: step.selector,
           element: step.selector,
@@ -20579,18 +20885,18 @@ ${body}`;
       });
       await startDriverTour(stepsForDriver, {
         onComplete: () => {
-          setStatus("操作ガイドを完了しました。");
+          setStatus(`操作ガイド「${getCourseLabel(activeTourCourseKey)}」を完了しました。`);
         }
       });
-      setStatus("操作ガイドを開始しました（driver.js 拡張版）。");
+      setStatus(`操作ガイド「${getCourseLabel(activeTourCourseKey)}」を開始しました。`);
       return;
     } catch (e) {
-      console.warn("driver.js tour fallback to custom tour:", e.message);
+      console.warn("driver.js tour fallback to custom tour:", e?.message);
     }
     state.guidedTourActive = true;
-    state.guidedTourIndex = Math.max(0, Math.min(GUIDED_TOUR_STEPS.length - 1, Number(index) || 0));
+    state.guidedTourIndex = Math.max(0, Math.min(activeTourSteps.length - 1, Number(startIndex) || 0));
     renderGuidedTourStep();
-    setStatus("操作ガイドを開始しました。順番に確認してください。");
+    setStatus(`操作ガイド「${getCourseLabel(activeTourCourseKey)}」を開始しました。`);
   }
   function closeGuidedTour(options = {}) {
     state.guidedTourActive = false;
@@ -20606,16 +20912,16 @@ ${body}`;
     if (!state.guidedTourActive) return;
     const nextIndex = state.guidedTourIndex + delta;
     if (nextIndex < 0) return;
-    if (nextIndex >= GUIDED_TOUR_STEPS.length) {
+    if (nextIndex >= activeTourSteps.length) {
       closeGuidedTour({ silent: true });
-      setStatus("操作ガイドを完了しました。必要なら再度ヘッダーの「操作ガイド」から開けます。");
+      setStatus(`操作ガイド「${getCourseLabel(activeTourCourseKey)}」を完了しました。必要なら再度ヘッダーの「操作ガイド」から開けます。`);
       return;
     }
     state.guidedTourIndex = nextIndex;
     renderGuidedTourStep();
   }
 
-  // src/handlers.js
+  // src/handlers.ts
   init_constants();
   init_state();
   init_utils();
@@ -20624,7 +20930,79 @@ ${body}`;
   init_filter();
   init_export();
 
-  // src/diff/presets.js
+  // src/diff/review.ts
+  init_state();
+  init_utils();
+  init_export();
+  init_filter();
+  function getDiffRowByIdFromState(rowId) {
+    if (!rowId) return null;
+    return (state.lastDiffRows || []).find((r) => r && r._id === rowId) || null;
+  }
+  function toggleDiffViewedById(rowId, forced) {
+    const row = getDiffRowByIdFromState(rowId);
+    if (!row) return false;
+    const key = diffViewedKey(row);
+    if (!key) return false;
+    const currentlyViewed = state.diffViewedKeys.has(key);
+    const next = typeof forced === "boolean" ? forced : !currentlyViewed;
+    if (next) state.diffViewedKeys.add(key);
+    else state.diffViewedKeys.delete(key);
+    return next;
+  }
+  function markVisibleDiffRowsViewed() {
+    const rendered = getRenderedDiffRows2();
+    let marked = 0;
+    for (const row of rendered) {
+      if (!row || row.type === "same") continue;
+      const key = diffViewedKey(row);
+      if (!key || state.diffViewedKeys.has(key)) continue;
+      state.diffViewedKeys.add(key);
+      marked += 1;
+    }
+    return { marked, total: rendered.length };
+  }
+  function clearAllDiffViewed() {
+    const n = state.diffViewedKeys.size;
+    state.diffViewedKeys = /* @__PURE__ */ new Set();
+    return n;
+  }
+  function normalizeDiffReviewMetaStore() {
+    if (!state.diffReviewMeta || typeof state.diffReviewMeta !== "object" || Array.isArray(state.diffReviewMeta)) {
+      state.diffReviewMeta = {};
+    }
+    return state.diffReviewMeta;
+  }
+  function setDiffReviewMeta(rowId, action) {
+    const row = getDiffRowByIdFromState(rowId);
+    if (!row) return false;
+    const key = diffViewedKey(row);
+    if (!key) return false;
+    const store = normalizeDiffReviewMetaStore();
+    const existing = store[key];
+    const cur = existing && typeof existing === "object" ? { status: existing.status, note: existing.note } : { status: "", note: "" };
+    if (action === "todo") {
+      cur.status = cur.status === "todo" ? "" : "todo";
+    } else if (action === "ignored") {
+      cur.status = cur.status === "ignored" ? "" : "ignored";
+    } else if (action === "note") {
+      const next = kusPrompt("この差分に残すメモを入力してください", String(cur.note || ""));
+      if (next === null) return false;
+      cur.note = String(next || "").trim().slice(0, 500);
+    } else if (action === "clear") {
+      delete store[key];
+      return true;
+    } else {
+      return false;
+    }
+    cur.status = cur.status === "todo" || cur.status === "ignored" ? cur.status : "";
+    cur.note = String(cur.note || "").trim();
+    if (!cur.status && !cur.note) delete store[key];
+    else store[key] = { status: cur.status, note: cur.note };
+    return true;
+  }
+
+  // src/diff/presets.ts
   init_state();
   init_export();
   function syncFilterStateFromUi() {
@@ -20688,7 +21066,7 @@ ${body}`;
     renderResultRows(state.lastDiffRows || []);
   }
 
-  // src/diff/selection-sets.js
+  // src/diff/selection-sets.ts
   init_constants();
   init_state();
   init_diff();
@@ -20713,7 +21091,7 @@ ${body}`;
     if (!sel) return;
     const sets = loadRaw();
     const cur = sel.value;
-    const curSig = currentDiffSignature();
+    const curSig = currentDiffSignature2();
     sel.innerHTML = '<option value="">-- 読込 --</option>' + sets.map((s) => {
       const bad = s.signature && s.signature !== curSig;
       return `<option value="${escapeAttr(s.name)}">${escapeAttr(s.name)}${bad ? " (条件不一致)" : ""}</option>`;
@@ -20726,7 +21104,7 @@ ${body}`;
   function saveDiffSelectionSet(name) {
     const n = String(name || "").trim();
     if (!n) throw new Error("セット名を入力してください");
-    const sig = currentDiffSignature();
+    const sig = currentDiffSignature2();
     const ids = [...state.diffSelectedIds || []];
     const list = loadRaw().filter((x) => x.name !== n);
     list.unshift({
@@ -20737,15 +21115,16 @@ ${body}`;
     });
     saveRaw(list);
     refreshDiffSelectionSetDropdown();
-    if (ui.diffSelectionSetSelect) ui.diffSelectionSetSelect.value = n;
+    const sel = ui.diffSelectionSetSelect;
+    if (sel) sel.value = n;
   }
   function loadDiffSelectionSet(name) {
     const n = String(name || "").trim();
     if (!n) return false;
     const row = loadRaw().find((x) => x.name === n);
     if (!row || !Array.isArray(row.ids)) return false;
-    const curSig = currentDiffSignature();
-    const mismatch = row.signature && row.signature !== curSig;
+    const curSig = currentDiffSignature2();
+    const mismatch = !!(row.signature && row.signature !== curSig);
     state.diffSelectedIds = new Set(row.ids.filter((id) => (state.lastDiffRows || []).some((r) => r._id === id)));
     renderResultRows(state.lastDiffRows || []);
     return { ok: true, mismatch, restored: state.diffSelectedIds.size, requested: row.ids.length };
@@ -20757,13 +21136,13 @@ ${body}`;
     refreshDiffSelectionSetDropdown();
   }
 
-  // src/handlers.js
+  // src/handlers.ts
   init_popout();
   init_components();
   init_dialog();
   init_diff();
 
-  // src/tabs/reflect-preview-playground.js
+  // src/tabs/reflect-preview-playground.ts
   init_utils();
   init_state();
   var SAMPLE_BEFORE = {
@@ -20987,7 +21366,7 @@ ${body}`;
       st.undo.push({ before: deepClone(st.before), after: deepClone(st.after) });
       if (st.undo.length > 20) st.undo.shift();
     };
-    const parseFieldInput2 = (v) => {
+    const parseFieldInput3 = (v) => {
       const obj = JSON.parse(v);
       if (!obj || typeof obj !== "object") throw new Error("JSONオブジェクトを入力してください");
       if (!obj.code || !obj.type || !obj.label) throw new Error("フィールドコード / フィールド種別 / ラベルが必要です");
@@ -21062,7 +21441,7 @@ ${body}`;
           }
           if (modalAct === "saveFieldJson" && st.modal?.kind === "fieldJson") {
             const raw = root2.querySelector('[data-rpp-modal-input="fieldJson"]')?.value || "";
-            const parsed = parseFieldInput2(raw);
+            const parsed = parseFieldInput3(raw);
             pushUndo();
             if (st.modal.mode === "add") {
               st.after[parsed.code] = parsed;
@@ -21224,7 +21603,7 @@ ${body}`;
     });
     root2.addEventListener("change", (ev) => {
       if (st.modal?.kind !== "fieldForm" || st.modal.mode !== "add") return;
-      const sel = ev.target.closest('[data-rpp-field="type"]');
+      const sel = ev.target?.closest('[data-rpp-field="type"]');
       if (!sel) return;
       const form = root2.querySelector(".rpp-field-grid");
       const currentCode = form?.querySelector('[data-rpp-field="code"]')?.value || st.modal.draft.code;
@@ -21237,18 +21616,17 @@ ${body}`;
     render();
   }
 
-  // src/tabs/reflect-section-preview.js
+  // src/tabs/reflect-section-preview.ts
   init_constants();
   init_utils();
   init_state();
-  init_api();
 
-  // src/reflect/sectionRenderers/defaultRenderer.js
+  // src/reflect/sectionRenderers/defaultRenderer.ts
   init_utils();
   function createDefaultSectionRenderer() {
     function renderDiff({ row, helpers }) {
       const { formatJson: formatJson2 } = helpers;
-      if (row.status === "modified" && row.changes.length) {
+      if (row.status === "modified" && row.changes && row.changes.length) {
         return `<table class="rpp-table"><thead><tr><th>プロパティ</th><th>比較元</th><th>比較先</th></tr></thead><tbody>${row.changes.map((ch) => `<tr><td>${esc(ch.prop)}</td><td><pre>${esc(formatJson2(ch.before))}</pre></td><td><pre>${esc(formatJson2(ch.after))}</pre></td></tr>`).join("")}</tbody></table>`;
       }
       if (row.status === "modified") {
@@ -21256,13 +21634,13 @@ ${body}`;
       }
       return `<pre class="rpp-pre">${esc(formatJson2(row.after || row.before))}</pre>`;
     }
-    function renderPreview({ row, helpers }) {
-      return renderDiff({ row, helpers });
+    function renderPreview(input) {
+      return renderDiff(input);
     }
     return { renderDiff, renderPreview };
   }
 
-  // src/reflect/sectionRenderers/adminSectionRenderer.js
+  // src/reflect/sectionRenderers/adminSectionRenderer.ts
   init_utils();
   function normalizeText(v) {
     if (v === void 0 || v === null || v === "") return "—";
@@ -21347,9 +21725,10 @@ ${body}`;
   };
   function createAdminSectionRenderer() {
     const fallback = createDefaultSectionRenderer();
-    function renderPreview({ row, sectionKey, helpers }) {
-      const adapter = PREVIEW_ADAPTERS[sectionKey];
-      if (!adapter) return fallback.renderPreview({ row, helpers, sectionKey });
+    function renderPreview(input) {
+      const { row, sectionKey, helpers } = input;
+      const adapter = sectionKey ? PREVIEW_ADAPTERS[sectionKey] : void 0;
+      if (!adapter) return fallback.renderPreview({ row, helpers });
       const beforeHtml = adapter(row.before, row, helpers);
       const afterHtml = adapter(row.after, row, helpers);
       return `<div class="rpp-k-like-compare"><div><div class="rpp-k-like-head">比較元</div><div class="rpp-k-like-body">${beforeHtml}</div></div><div><div class="rpp-k-like-head">比較先</div><div class="rpp-k-like-body">${afterHtml}</div></div></div>`;
@@ -21357,7 +21736,7 @@ ${body}`;
     return { renderDiff: fallback.renderDiff, renderPreview };
   }
 
-  // src/reflect/sectionRenderers/registry.js
+  // src/reflect/sectionRenderers/registry.ts
   var defaultRenderer = createDefaultSectionRenderer();
   var adminRenderer = createAdminSectionRenderer();
   var REGISTRY = /* @__PURE__ */ new Map([
@@ -21373,7 +21752,7 @@ ${body}`;
     return REGISTRY.get(sectionKey) || defaultRenderer;
   }
 
-  // src/tabs/reflect-section-preview.js
+  // src/tabs/reflect-section-preview.ts
   var PUT_SECTIONS = SECTION_DEFS.filter((d) => d.put && d.key !== "fieldSettings");
   var WRAPPER_MAP = {
     viewSettings: "views",
@@ -21943,10 +22322,10 @@ ${body}`;
     applySectionChange(st.sectionKey, { silent: true, force: true });
   }
 
-  // src/handlers.js
+  // src/handlers.ts
   init_reflect();
 
-  // src/reflect/previewProdDiff.js
+  // src/reflect/previewProdDiff.ts
   init_constants();
   init_state();
   init_utils();
@@ -22202,7 +22581,7 @@ ${body}`;
       return;
     }
     const { runAt, appId, guestId, scopes, severity, totalActual, fetchIssues, previewBundle, productionBundle } = payload;
-    const actualRows = getActualDiffRows2(payload.rows || []);
+    const actualRows = getActualDiffRows(payload.rows || []);
     const filters = getFilterState();
     const filteredRows = getFilteredRows(actualRows);
     const sectionBreakdown = buildSectionBreakdown(actualRows);
@@ -22298,7 +22677,7 @@ ${body}`;
     const summary = summarizeRows(rows);
     const severity = summarizeSeverity(rows);
     const totalActual = countActualDiffRows(rows);
-    const previewProdSummary = summarizePreviewProdTypes(getActualDiffRows2(rows));
+    const previewProdSummary = summarizePreviewProdTypes(getActualDiffRows(rows));
     const payload = {
       appId,
       guestId,
@@ -22395,10 +22774,10 @@ ${body}`;
     setStatus("プレビュー⇔本番 差分の表示を閉じました");
   }
 
-  // src/handlers.js
+  // src/handlers.ts
   init_field();
 
-  // src/tabs/settings-export.js
+  // src/tabs/settings-export.ts
   init_constants();
   init_state();
   init_utils();
@@ -22408,7 +22787,7 @@ ${body}`;
   init_diff();
   init_field();
 
-  // src/tabs/record.js
+  // src/tabs/record.ts
   init_constants();
   init_state();
   init_utils();
@@ -22478,7 +22857,7 @@ ${body}`;
     }
     return allRecords;
   }
-  var chunkArray = (arr, size) => {
+  var chunkArray2 = (arr, size) => {
     const out = [];
     for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
     return out;
@@ -22496,14 +22875,14 @@ ${body}`;
     if (!kusConfirm(`${ids.length}件のレコードにアクション「${action}」を実行します。よろしいですか？`)) return;
     setStatus("ステータス一括更新を開始...");
     const prefix = getSideApiPrefix(false, false);
-    const batches = chunkArray(ids, 100);
+    const batches = chunkArray2(ids, 100);
     let okCount = 0;
     for (let i = 0; i < batches.length; i++) {
       const batchIds = batches[i];
       const body = {
         app: tApp,
         records: batchIds.map((id) => {
-          let r = { id, action };
+          const r = { id, action };
           if (assignee) r.assignee = assignee;
           return r;
         })
@@ -22827,7 +23206,7 @@ ${body}`;
         const res = await apiGet(prefix, "/app/plugins.json", { app: appId });
         plugins = Array.isArray(res?.plugins) ? res.plugins : [];
       } catch (error) {
-        result._fetchError = error.message || String(error);
+        result._fetchError = error?.message || String(error);
         return result;
       }
     }
@@ -22901,14 +23280,14 @@ ${body}`;
     if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
     const guestPrefix = getToolDocument().getElementById("u_targetGuest")?.value?.trim() ? `/k/guest/${getToolDocument().getElementById("u_targetGuest").value.trim()}/v1` : "/k/v1";
     const fileInput = getToolDocument().getElementById("u_csvImportFile");
-    if (!fileInput.files || !fileInput.files.length) {
+    if (!fileInput || !fileInput.files || !fileInput.files.length) {
       throw new Error("CSVファイルを選択してください");
     }
     const file = fileInput.files[0];
     setBusy(true, "CSVファイルを読み込み中...");
     const text = await new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
+      reader.onload = (e) => resolve(String(e.target.result || ""));
       reader.onerror = (e) => reject(new Error("ファイルの読み取りに失敗しました"));
       reader.readAsText(file);
     });
@@ -23355,7 +23734,7 @@ ${body}`;
     setStatus(`テンプレート「${name}」を削除しました`);
   }
 
-  // src/tabs/settings-export.js
+  // src/tabs/settings-export.ts
   function addAppIdToSettingsExport(appId, appName) {
     if (!/^\d+$/.test(String(appId || "").trim())) return;
     const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
@@ -23433,7 +23812,7 @@ ${body}`;
         const res = await apiGet(prefix, "/app/plugins.json", { app: appId });
         plugins = Array.isArray(res?.plugins) ? res.plugins : [];
       } catch (error) {
-        result._fetchError = error.message || String(error);
+        result._fetchError = error?.message || String(error);
         return result;
       }
     }
@@ -23558,8 +23937,8 @@ ${body}`;
     setStatus(`設定バックアップJSONを保存しました（${bundles.length}アプリ）`);
   }
 
-  // src/handlers.js
-  function withGuard(fn, busyText) {
+  // src/handlers.ts
+  function withGuard(fn, busyText = "") {
     if (state.running) {
       setStatus("別の処理を実行中です。完了までお待ちください。");
       return;
@@ -23595,7 +23974,7 @@ ${body}`;
   ];
   function normalizeReflectApplyChecklist() {
     if (!state.reflectApplyChecklist || typeof state.reflectApplyChecklist !== "object" || Array.isArray(state.reflectApplyChecklist)) {
-      state.reflectApplyChecklist = {};
+      state.reflectApplyChecklist = { diff: false, plan: false, target: false };
     }
     REFLECT_APPLY_CHECKS.forEach((item) => {
       state.reflectApplyChecklist[item.key] = !!state.reflectApplyChecklist[item.key];
@@ -23918,71 +24297,6 @@ ${body}`;
   }
   function normalizeDiffFavoritePath2(path) {
     return String(path || "").trim();
-  }
-  function getDiffRowByIdFromState(rowId) {
-    if (!rowId) return null;
-    return (state.lastDiffRows || []).find((r) => r && r._id === rowId) || null;
-  }
-  function toggleDiffViewedById(rowId, forced) {
-    const row = getDiffRowByIdFromState(rowId);
-    if (!row) return false;
-    const key = diffViewedKey(row);
-    if (!key) return false;
-    const currentlyViewed = state.diffViewedKeys.has(key);
-    const next = typeof forced === "boolean" ? forced : !currentlyViewed;
-    if (next) state.diffViewedKeys.add(key);
-    else state.diffViewedKeys.delete(key);
-    return next;
-  }
-  function markVisibleDiffRowsViewed() {
-    const rendered = getRenderedDiffRows2();
-    let marked = 0;
-    for (const row of rendered) {
-      if (!row || row.type === "same") continue;
-      const key = diffViewedKey(row);
-      if (!key || state.diffViewedKeys.has(key)) continue;
-      state.diffViewedKeys.add(key);
-      marked += 1;
-    }
-    return { marked, total: rendered.length };
-  }
-  function clearAllDiffViewed() {
-    const n = state.diffViewedKeys.size;
-    state.diffViewedKeys = /* @__PURE__ */ new Set();
-    return n;
-  }
-  function normalizeDiffReviewMetaStore() {
-    if (!state.diffReviewMeta || typeof state.diffReviewMeta !== "object" || Array.isArray(state.diffReviewMeta)) {
-      state.diffReviewMeta = {};
-    }
-    return state.diffReviewMeta;
-  }
-  function setDiffReviewMeta(rowId, action) {
-    const row = getDiffRowByIdFromState(rowId);
-    if (!row) return false;
-    const key = diffViewedKey(row);
-    if (!key) return false;
-    const store = normalizeDiffReviewMetaStore();
-    const cur = store[key] && typeof store[key] === "object" ? { ...store[key] } : {};
-    if (action === "todo") {
-      cur.status = cur.status === "todo" ? "" : "todo";
-    } else if (action === "ignored") {
-      cur.status = cur.status === "ignored" ? "" : "ignored";
-    } else if (action === "note") {
-      const next = kusPrompt("この差分に残すメモを入力してください", String(cur.note || ""));
-      if (next === null) return false;
-      cur.note = String(next || "").trim().slice(0, 500);
-    } else if (action === "clear") {
-      delete store[key];
-      return true;
-    } else {
-      return false;
-    }
-    cur.status = cur.status === "todo" || cur.status === "ignored" ? cur.status : "";
-    cur.note = String(cur.note || "").trim();
-    if (!cur.status && !cur.note) delete store[key];
-    else store[key] = { status: cur.status, note: cur.note };
-    return true;
   }
   function focusDiffRow(rowId, options = {}) {
     if (!rowId) return false;
@@ -24454,6 +24768,11 @@ ${body}`;
         renderResultRows(state.lastDiffRows || []);
         return;
       }
+      const stored = state.lastResultByTab && state.lastResultByTab[key];
+      if (typeof stored === "string" && stored.length) {
+        ui.result.innerHTML = stored;
+        return;
+      }
       ui.result.innerHTML = MAIN_RESULT_IDLE_HTML;
     }
     async function copyToClipboard(text, successMessage, errorMessage) {
@@ -24595,7 +24914,7 @@ ${body}`;
     if (ui.nodeFilterSeverity) ui.nodeFilterSeverity.addEventListener("change", () => renderReflectNodeList());
     if (ui.nodePropertyList) {
       ui.nodePropertyList.addEventListener("change", (ev) => {
-        const input = ev.target.closest?.("[data-reflect-prop]");
+        const input = ev.target?.closest?.("[data-reflect-prop]");
         if (!input) return;
         const key = input.dataset.reflectProp;
         if (!key) return;
@@ -24766,7 +25085,7 @@ ${body}`;
         applyPreviewProdDiffSearch();
         return;
       }
-      const featCard = e.target.closest?.(".feature-card[data-feature]");
+      const featCard = e.target?.closest?.(".feature-card[data-feature]");
       if (featCard && !editable && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
         featCard.click();
@@ -24862,7 +25181,7 @@ ${body}`;
       }
     });
     root2.addEventListener("input", (e) => {
-      if (e.target.closest("#u_lookupMapRows")) {
+      if (e.target?.closest("#u_lookupMapRows")) {
         syncLookupMapFromRows();
         saveCurrentDialogState2();
         return;
@@ -24964,14 +25283,14 @@ ${body}`;
       }
     });
     root2.addEventListener("mousedown", (e) => {
-      const cb = e.target.closest("input[type=checkbox][data-diff-row-id]");
+      const cb = e.target?.closest("input[type=checkbox][data-diff-row-id]");
       if (!cb) return;
       const res = getToolDocument().getElementById("u_result");
       if (!res || !res.contains(cb) || !e.shiftKey || !state.diffSelectionAnchorId) return;
       const boxes = [...res.querySelectorAll("tbody input[type=checkbox][data-diff-row-id]")];
-      const ids = boxes.map((el) => el.dataset.diffRowId);
+      const ids = boxes.map((el) => el.dataset.diffRowId || "");
       const i0 = ids.indexOf(state.diffSelectionAnchorId);
-      const i1 = ids.indexOf(cb.dataset.diffRowId);
+      const i1 = ids.indexOf(cb.dataset.diffRowId || "");
       if (i0 < 0 || i1 < 0) return;
       e.preventDefault();
       const a = Math.min(i0, i1);
@@ -25060,12 +25379,12 @@ ${body}`;
       });
     }
     root2.addEventListener("click", (e) => {
-      const innerTab = e.target.closest("[data-reflect-inner]");
+      const innerTab = e.target?.closest("[data-reflect-inner]");
       if (innerTab) {
         activateReflectInnerTab(innerTab.getAttribute("data-reflect-inner") || "overview");
         return;
       }
-      const favBtn = e.target.closest("[data-diff-fav-path]");
+      const favBtn = e.target?.closest("[data-diff-fav-path]");
       if (favBtn) {
         const path = normalizeDiffFavoritePath2(favBtn.dataset.diffFavPath || "");
         if (!path) return;
@@ -25075,7 +25394,7 @@ ${body}`;
         renderResultRows(state.lastDiffRows);
         return;
       }
-      const reviewBtn = e.target.closest("[data-diff-review-action]");
+      const reviewBtn = e.target?.closest("[data-diff-review-action]");
       if (reviewBtn) {
         const rowId = reviewBtn.dataset.diffReviewId || "";
         const action = reviewBtn.dataset.diffReviewAction || "";
@@ -25087,7 +25406,7 @@ ${body}`;
         setStatus(`${label}を更新しました`);
         return;
       }
-      const secNavBtn = e.target.closest("[data-diff-sec-nav]");
+      const secNavBtn = e.target?.closest("[data-diff-sec-nav]");
       if (secNavBtn) {
         const key = secNavBtn.getAttribute("data-diff-sec-nav") ?? "";
         applyDiffSectionNav(key);
@@ -25096,8 +25415,8 @@ ${body}`;
         setStatus(key ? `セクションで絞り込み: ${label}` : "セクション絞り込みを解除しました");
         return;
       }
-      const sidebarItem = e.target.closest("[data-sidebar-sec]");
-      if (sidebarItem && !e.target.closest(".sec-check")) {
+      const sidebarItem = e.target?.closest("[data-sidebar-sec]");
+      if (sidebarItem && !e.target?.closest(".sec-check")) {
         const secKey = sidebarItem.dataset.sidebarSec || "";
         state.reflectActiveSidebarSection = state.reflectActiveSidebarSection === secKey ? null : secKey;
         renderReflectSidebar();
@@ -25105,7 +25424,7 @@ ${body}`;
         if (ui.scopePickerModal?.dataset?.scopePickerKind === "reflect") closeScopePicker();
         return;
       }
-      const overviewNav = e.target.closest("[data-sidebar-nav]");
+      const overviewNav = e.target?.closest("[data-sidebar-nav]");
       if (overviewNav) {
         const secKey = overviewNav.dataset.sidebarNav || "";
         if (secKey) {
@@ -25116,7 +25435,7 @@ ${body}`;
         }
         return;
       }
-      const secToggle = e.target.closest("[data-diff-sec-toggle]");
+      const secToggle = e.target?.closest("[data-diff-sec-toggle]");
       if (secToggle) {
         const secKey = secToggle.dataset.diffSecToggle || "";
         if (secKey) {
@@ -25126,7 +25445,7 @@ ${body}`;
         }
         return;
       }
-      const moreRowsBtn = e.target.closest('[data-act="moreDiffRows"]');
+      const moreRowsBtn = e.target?.closest('[data-act="moreDiffRows"]');
       if (moreRowsBtn) {
         const secKey = moreRowsBtn.dataset.sec || "";
         if (!secKey) return;
@@ -25135,7 +25454,7 @@ ${body}`;
         if (state.lastDiffRows.length) renderResultRows(state.lastDiffRows);
         return;
       }
-      const modeBtn = e.target.closest("[data-node-mode]");
+      const modeBtn = e.target?.closest("[data-node-mode]");
       if (modeBtn) {
         const nodeId = modeBtn.dataset.nodeMode;
         if (nodeId) {
@@ -25147,8 +25466,8 @@ ${body}`;
         }
         return;
       }
-      const nodeOpen = e.target.closest("[data-node-open]");
-      if (nodeOpen && !e.target.closest("input,button,label,a")) {
+      const nodeOpen = e.target?.closest("[data-node-open]");
+      if (nodeOpen && !e.target?.closest("input,button,label,a")) {
         const nodeId = nodeOpen.dataset.nodeOpen || "";
         if (nodeId) {
           setActiveReflectNode(nodeId, { persist: false });
@@ -25156,14 +25475,14 @@ ${body}`;
         }
         return;
       }
-      const nodeDetailTab = e.target.closest("[data-node-detail-tab]");
+      const nodeDetailTab = e.target?.closest("[data-node-detail-tab]");
       if (nodeDetailTab) {
         state.reflectDetailTab = nodeDetailTab.dataset.nodeDetailTab || "diff";
         saveCurrentDialogState2();
         renderReflectNodeDetail();
         return;
       }
-      const sendToReflectBtn = e.target.closest("[data-send-to-reflect]");
+      const sendToReflectBtn = e.target?.closest("[data-send-to-reflect]");
       if (sendToReflectBtn) {
         const diffRowId = sendToReflectBtn.dataset.sendToReflect || "";
         try {
@@ -25180,7 +25499,7 @@ ${body}`;
           return;
         }
       }
-      const copyBtn = e.target.closest("[data-copy-val]");
+      const copyBtn = e.target?.closest("[data-copy-val]");
       if (copyBtn) {
         const val = copyBtn.dataset.copyVal || "";
         try {
@@ -25195,7 +25514,7 @@ ${body}`;
         }
         return;
       }
-      const addSuggestedBtn = e.target.closest('[data-act="addSuggestedIgnore"]');
+      const addSuggestedBtn = e.target?.closest('[data-act="addSuggestedIgnore"]');
       if (addSuggestedBtn) {
         const key = addSuggestedBtn.dataset.key || "";
         if (!key) return;
@@ -25209,7 +25528,7 @@ ${body}`;
         }
         return;
       }
-      const addSettingsAppBtn = e.target.closest("[data-add-settings-app]");
+      const addSettingsAppBtn = e.target?.closest("[data-add-settings-app]");
       if (addSettingsAppBtn) {
         const appId = addSettingsAppBtn.dataset.addSettingsApp || "";
         const appName = addSettingsAppBtn.dataset.addSettingsName || "";
@@ -25221,7 +25540,7 @@ ${body}`;
         [...ui.sourceFieldTbody.querySelectorAll(".src-field-sel")].forEach((c) => c.checked = checked);
         return;
       }
-      const subTab = e.target.closest(".subtab");
+      const subTab = e.target?.closest(".subtab");
       if (subTab) {
         const parent = subTab.dataset.subtabParent || "";
         const nextSubTab = subTab.dataset.subtab || "";
@@ -25241,7 +25560,7 @@ ${body}`;
         }
         return;
       }
-      const tab = e.target.closest(".tab");
+      const tab = e.target?.closest(".tab");
       if (tab) {
         const nextTab = tab.dataset.tab || "";
         switchTab(nextTab);
@@ -25249,7 +25568,7 @@ ${body}`;
         syncMainResultForFeature(nextTab);
         return;
       }
-      const actEl = e.target.closest("[data-act]");
+      const actEl = e.target?.closest("[data-act]");
       const act = actEl?.dataset.act;
       if (!act) return;
       if (act === "startChangeWizard") {
@@ -25431,7 +25750,7 @@ ${body}`;
         return;
       }
       if (act === "startGuidedTour") {
-        openGuidedTour(0);
+        openGuidedTour();
         return;
       }
       if (act === "tourClose") {
@@ -25497,7 +25816,7 @@ ${body}`;
           if (filterEl) {
             const changed = filterEl.value !== "unused";
             filterEl.value = "unused";
-            if (changed) filterEl.dispatchEvent(new toolWindow.Event("change", { bubbles: true }));
+            if (changed) filterEl.dispatchEvent(new (toolWindow.Event || Event)("change", { bubbles: true }));
           }
         }
         const focusTarget = act === "openAnalyzeFieldGraph" ? doc.querySelector('[data-act="runFieldDependencyGraph"]') : doc.querySelector('[data-act="runFieldImpactAnalysis"]');
@@ -25522,11 +25841,11 @@ ${body}`;
           const filterEl = doc.getElementById("u_analyzeFieldFilter");
           if (filterEl) {
             filterEl.value = actEl.dataset.analyzeFilter;
-            filterEl.dispatchEvent(new toolWindow.Event("change", { bubbles: true }));
+            filterEl.dispatchEvent(new (toolWindow.Event || Event)("change", { bubbles: true }));
           }
         }
         saveCurrentDialogState2();
-        setStatus(`分析 > ${actEl.textContent.trim() || "詳細"}へ移動しました`);
+        setStatus(`分析 > ${actEl.textContent?.trim() || "詳細"}へ移動しました`);
         return;
       }
       if (act === "setSourceCurrent") {
@@ -25921,11 +26240,11 @@ ${body}`;
         row.dataset.lookupRow = String(i);
         row.innerHTML = `<span style="align-self:center;font-size:11px;color:#64748b;white-space:nowrap">変換元</span><input type="text" class="lookup-from" value="" placeholder="AppID" style="flex:1;min-width:0"><span style="align-self:center;padding:0 4px;color:#64748b">→</span><span style="align-self:center;font-size:11px;color:#64748b;white-space:nowrap">変換先</span><input type="text" class="lookup-to" value="" placeholder="AppID" style="flex:1;min-width:0"><button type="button" class="btn sub" data-act="removeLookupMapRow" data-row="${i}" style="padding:4px 8px">×</button>`;
         container.appendChild(row);
-        row.querySelector(".lookup-from").focus();
+        row.querySelector(".lookup-from")?.focus();
         return;
       }
       if (act === "removeLookupMapRow") {
-        const row = e.target.closest("[data-lookup-row]");
+        const row = e.target?.closest("[data-lookup-row]");
         if (row) {
           row.remove();
           syncLookupMapFromRows();
@@ -26487,11 +26806,10 @@ ${body}`;
     syncDiffOnboardingVisibility();
   }
 
-  // src/boot.js
+  // src/boot.ts
   init_oss_integrations();
-  init_constants();
 
-  // src/tabs/design.js
+  // src/tabs/design.ts
   init_constants();
   init_state();
   init_utils();
@@ -26619,7 +26937,7 @@ ${diffMd}
     setStatus("設計書Excel出力完了");
   }
 
-  // src/tabs/er.js
+  // src/tabs/er.ts
   init_constants();
   init_state();
   init_utils();
@@ -28195,7 +28513,7 @@ cy.on("tap","node",e=>{
 });
 cy.on("cxttap","node",e=>{
   const n = e.target;
-  const oe = e.originalEvent || {};
+  const oe = e.originalEvent || ({});
   if(oe.altKey || oe.metaKey){
     manuallyRemovedNodeIds.add(n.id());
     n.addClass("app-manual-hidden");
@@ -28901,7 +29219,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     }
   }
 
-  // src/tabs/jsconfig.js
+  // src/tabs/jsconfig.ts
   init_state();
   init_utils();
   init_api();
@@ -29064,7 +29382,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setStatus(`JS/CSS一括DL完了 (403スキップ: ${failedCount}件)`);
   }
 
-  // src/tabs/process.js
+  // src/tabs/process.ts
   init_state();
   init_utils();
   init_api();
@@ -29091,9 +29409,10 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       });
     }
     await mermaidLoadPromise;
-    if (window.mermaid) {
-      window.mermaid.initialize({ startOnLoad: false, theme: "default" });
-      return window.mermaid;
+    const w = window;
+    if (w.mermaid) {
+      w.mermaid.initialize({ startOnLoad: false, theme: "default" });
+      return w.mermaid;
     }
     throw new Error("Mermaid.js の読み込みに失敗しました");
   }
@@ -29123,8 +29442,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       const s = doc.createElement("script");
       s.src = url;
       s.async = true;
-      doc.addEventListener("securitypolicyviolation", onPolicyViolation, { once: false });
-      const cleanup = () => doc.removeEventListener("securitypolicyviolation", onPolicyViolation, { once: false });
+      doc.addEventListener("securitypolicyviolation", onPolicyViolation, false);
+      const cleanup = () => doc.removeEventListener("securitypolicyviolation", onPolicyViolation, false);
       s.onload = () => {
         cleanup();
         s.dataset.loaded = "1";
@@ -29228,22 +29547,25 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       return;
     }
     if (container) container.style.display = "block";
+    const elCurrEl = elCurr;
+    const elSelEl = elSel;
+    if (!elCurrEl || !elSelEl) return;
     if (!pfSimCurrent) {
-      elCurr.textContent = "未開始";
-      elCurr.style.background = "#e2e8f0";
-      elSel.innerHTML = '<option value="">-- 最初から開始してください --</option>';
-      elSel.disabled = true;
+      elCurrEl.textContent = "未開始";
+      elCurrEl.style.background = "#e2e8f0";
+      elSelEl.innerHTML = '<option value="">-- 最初から開始してください --</option>';
+      elSelEl.disabled = true;
       return;
     }
-    elCurr.textContent = pfSimCurrent;
-    elCurr.style.background = "#bbf7d0";
-    elSel.disabled = false;
+    elCurrEl.textContent = pfSimCurrent;
+    elCurrEl.style.background = "#bbf7d0";
+    elSelEl.disabled = false;
     const available = pfSimActions.filter((a) => a.from === pfSimCurrent);
     if (available.length === 0) {
-      elSel.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
-      elSel.disabled = true;
+      elSelEl.innerHTML = '<option value="">-- 次のアクションなし（完了） --</option>';
+      elSelEl.disabled = true;
     } else {
-      elSel.innerHTML = available.map((a) => `<option value="${esc(a.name)}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join("");
+      elSelEl.innerHTML = available.map((a) => `<option value="${esc(a.name)}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join("");
     }
   }
   async function runSimStart() {
@@ -29259,7 +29581,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   }
   async function runSimExecuteAction() {
     const sel = getToolDocument().getElementById("u_simActionSelect");
-    if (sel.disabled) return;
+    if (!sel || sel.disabled) return;
     const actionName = sel.value;
     if (!actionName) return;
     const action = pfSimActions.find((a) => a.from === pfSimCurrent && a.name === actionName);
@@ -29300,8 +29622,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     }
   }
 
-  // src/tabs/sql.js
-  init_state();
+  // src/tabs/sql.ts
   init_utils();
   init_api();
   init_components();
@@ -29455,7 +29776,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
           toolWindow?.alasql,
           toolWindow?.AlaSQL,
           toolWindow?.globalThis?.alasql,
-          toolWindow?.globalThis?.AlaSQL
+          toolWindow?.(globalThis)?.AlaSQL
         ].filter(Boolean);
         const resolveRunner = (candidate) => {
           if (!candidate) return null;
@@ -30257,7 +30578,7 @@ ${safety.hash}`, "");
     UI.init();
   }
 
-  // src/tabs/api-tester.js
+  // src/tabs/api-tester.ts
   init_utils();
   init_api();
   init_components();
@@ -30500,7 +30821,7 @@ ${safety.hash}`, "");
       listEl.innerHTML = html;
       const items = listEl.querySelectorAll(".api-history-item");
       const applyHistoryItem = (item) => {
-        const idx = parseInt(item.dataset.idx, 10);
+        const idx = parseInt(item.dataset.idx || "0", 10);
         const data = hist[idx];
         if (!data) return;
         const methodEl = getToolDocument().getElementById("u_apiTesterMethod");
@@ -30515,7 +30836,8 @@ ${safety.hash}`, "");
           applyHistoryItem(item);
         });
         item.addEventListener("keydown", (event) => {
-          if (event.key !== "Enter" && event.key !== " ") return;
+          const ke = event;
+          if (ke.key !== "Enter" && ke.key !== " ") return;
           event.preventDefault();
           applyHistoryItem(item);
         });
@@ -30539,7 +30861,7 @@ ${safety.hash}`, "");
     }
   }
 
-  // src/tabs/analyze.js
+  // src/tabs/analyze.ts
   init_constants();
   init_utils();
   init_api();
@@ -32210,11 +32532,12 @@ ${field.label}` : code,
       setBusy(false);
       return;
     }
-    if (!cytoscapeDagreRegistered && window.cytoscapeDagre && window.cytoscape) {
-      window.cytoscape.use(window.cytoscapeDagre);
+    const w = window;
+    if (!cytoscapeDagreRegistered && w.cytoscapeDagre && w.cytoscape) {
+      w.cytoscape.use(w.cytoscapeDagre);
       cytoscapeDagreRegistered = true;
     }
-    const cy = window.cytoscape({
+    const cy = w.cytoscape({
       container,
       elements: data.elements,
       style: [
@@ -32343,7 +32666,7 @@ ${field.label}` : code,
     setStatus("PNGを保存しました");
   }
 
-  // src/boot.js
+  // src/boot.ts
   var TOOL_POPOUT_NAME = "kintone-unified-suite-v2";
   function runKintoneUnifiedSuite(options = {}) {
     if (!window.kintone?.api || !window.kintone?.app) {
@@ -32576,7 +32899,7 @@ ${field.label}` : code,
       getActiveReflectRow,
       resolveApplyScopes,
       commonParams,
-      currentDiffSignature,
+      currentDiffSignature: currentDiffSignature2,
       parseLookupMapInput,
       makeApplyPlanSignature,
       getSelectedReflectRows,
@@ -32756,7 +33079,7 @@ ${field.label}` : code,
     }
   }
 
-  // src/index.js
+  // src/index.ts
   if (typeof window !== "undefined" && window.__KUS_AUTOBOOT__ !== false) {
     runKintoneUnifiedSuite({});
   }

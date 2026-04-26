@@ -4,9 +4,13 @@
   "private": true,
   "scripts": {
     "build": "node build.js",
-    "watch": "node build.js --watch"
+    "watch": "node build.js --watch",
+    "typecheck": "tsc --noEmit",
+    "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.3",
+    "@types/node": "^22.9.0"
   }
 }

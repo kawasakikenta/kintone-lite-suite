@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "noImplicitThis": false,
+    "alwaysStrict": false,
+    "strictFunctionTypes": false,
+    "strictBindCallApply": false,
+    "strictPropertyInitialization": false,
+    "useUnknownInCatchVariables": false,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.js", "src/**/*.mjs", "build.js"],
+  "exclude": ["node_modules", "dist"]
+}

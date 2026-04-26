@@ -11,10 +11,13 @@
 // ==========================================================================
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
   var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __esm = (fn, res) => function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
   };
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
   // src/featureDefs.mjs
   var ICONS, FEATURE_DEFS, TAB_TO_FEATURE;
@@ -256,7 +259,7 @@
     }
   });
 
-  // src/constants.js
+  // src/constants.ts
   function resolveDefaultAppId() {
     try {
       if (typeof kintone !== "undefined" && kintone?.app?.getId) {
@@ -266,9 +269,9 @@
     }
     return "";
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
-    "src/constants.js"() {
+    "src/constants.ts"() {
       "use strict";
       init_featureDefs();
       TOOL_ID = "kintone-unified-suite-v2";
@@ -355,74 +358,90 @@
         settingsExport: "export",
         analyze: "dashboard"
       });
-      GUIDED_TOUR_STEPS = Object.freeze([
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: "#u_sourceApp",
-          title: "1. 比較元 / 比較先を決める",
-          body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。次のステップのプリセットで、それぞれ本番APIとプレビューAPIのどちらから設定を読むかを決めます。"
+      TOUR_STEP_CONNECTION = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: "#u_sourceApp",
+        title: "比較元 / 比較先を決める",
+        body: "上部の接続パネルで比較元・比較先のアプリIDとゲストIDを入力します。プレビュー/本番の切替もここで行います。"
+      };
+      TOUR_STEP_SCOPE = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: '[data-act="openDiffScopePicker"]',
+        title: "比較対象セクションを選ぶ",
+        body: "「比較対象を選ぶ」から、差分比較で確認したい設定だけを選びます。まずはフィールド・レイアウト・ビュー・プロセス管理あたりが見やすいです。"
+      };
+      TOUR_STEP_NOISE = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: "#u_ignoreKeyInput",
+        title: "ノイズ差分を減らす",
+        body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
+      };
+      TOUR_STEP_RUN_DIFF = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 比較条件",
+        selector: "#u_runDiffPrimary",
+        title: "差分比較を実行する",
+        body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
+      };
+      TOUR_STEP_REVIEW = {
+        tab: "diff",
+        diffSubTab: "conditions",
+        path: "ヘッダー > 差分結果の整理",
+        selector: "#u_diffSearch",
+        title: "結果を絞り込んで確認する",
+        body: "差分比較後は「差分結果の整理・出力」から、セクション・種別・重要度・検索で絞り込めます。ここで反映対象を見極めます。"
+      };
+      TOUR_STEP_PLAN = {
+        tab: "reflect",
+        path: "プレビュー反映",
+        selector: "#u_footerPlan",
+        title: "反映プランを先に確認する",
+        body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。"
+      };
+      TOUR_STEP_APPLY = {
+        tab: "reflect",
+        path: "プレビュー反映",
+        selector: "#u_footerApply",
+        title: "比較先プレビューへ反映する",
+        body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番デプロイは kintone 管理画面から手動で実施します。"
+      };
+      TOUR_STEP_RECORD = {
+        tab: "design",
+        subTab: "export",
+        path: "設計書 > 設計書出力",
+        selector: '[data-act="exportDesignMd"]',
+        title: "最後に記録を残す",
+        body: "作業後は設計書や差分レポートを出力して、変更内容を記録します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
+      };
+      GUIDED_TOUR_COURSES = Object.freeze({
+        full: {
+          label: "初回（全工程）",
+          description: "接続から記録出力までを順番に案内します（推奨）",
+          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD]
         },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: '[data-act="openDiffScopePicker"]',
-          title: "3. 比較対象セクションを選ぶ",
-          body: "「比較対象を選ぶ」からポップアップを開き、差分比較で確認したい設定だけを選びます。まずはフィールド、レイアウト、ビュー、プロセス管理あたりから始めるのが見やすいです。"
+        diff: {
+          label: "差分のみ確認",
+          description: "差分比較とレビューに絞った短縮コース",
+          steps: [TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW]
         },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: "#u_ignoreKeyInput",
-          title: "4. ノイズ差分を減らす",
-          body: "無視キーや正規化プリセットを使うと、順序違い・メタ情報の差分を抑えられます。比較が荒れるときはここを先に調整します。"
-        },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 比較条件",
-          selector: "#u_runDiffPrimary",
-          title: "5. 差分比較を実行する",
-          body: "条件が決まったら差分比較を実行します。必要ならこのまま JSON / HTML / Excel / パッチJSON として保存できます。"
-        },
-        {
-          tab: "diff",
-          diffSubTab: "conditions",
-          path: "ヘッダー > 差分結果の整理",
-          selector: "#u_diffSearch",
-          title: "6. 結果を絞り込んで確認する",
-          body: "差分比較後は「差分結果の整理・出力」を開くと、セクション、種別、重要度、検索で絞り込めます。ここで反映対象を見極めてから次のステップへ進みます。"
-        },
-        {
-          tab: "reflect",
-          path: "プレビュー反映",
-          selector: "#u_footerPlan",
-          title: "7. 反映プランを先に確認する",
-          body: "画面下の固定バーから「実行前プラン確認」を押し、API リクエスト内容や対象セクションを確認します。要約はメイン欄のプラン欄にも表示されます。"
-        },
-        {
-          tab: "reflect",
-          path: "プレビュー反映",
-          selector: "#u_footerApply",
-          title: "8. 比較先プレビューへ反映する",
-          body: "固定バーの「プレビューへ反映」で比較先プレビューへ書き込みます。本番へのデプロイはkintone管理画面から手動で行います（ツールからのデプロイAPIは無効です）。"
-        },
-        {
-          tab: "design",
-          subTab: "export",
-          path: "設計書 > 設計書出力",
-          selector: '[data-act="exportDesignMd"]',
-          title: "9. 最後に記録を残す",
-          body: "作業後は設計書や差分レポートを出力して、変更内容を残します。複数アプリをまとめて保存したい場合は「設定一括取得」も使えます。"
+        apply: {
+          label: "反映まで実施",
+          description: "差分確認からプレビュー反映までをガイド",
+          steps: [TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY]
         }
-      ]);
+      });
+      GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
     }
   });
 
-  // src/state.js
+  // src/state.ts
   function loadReflectApplyHistory() {
     try {
       const raw = sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
@@ -468,14 +487,14 @@
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
-      return parsed.map(normalizeConnectionPreset).filter(Boolean).slice(0, CONNECTION_PRESETS_LIMIT);
+      return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
     } catch {
       return [];
     }
   }
   var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY, CONNECTION_PRESETS_LIMIT;
   var init_state = __esm({
-    "src/state.js"() {
+    "src/state.ts"() {
       "use strict";
       init_constants();
       state = {
@@ -545,7 +564,8 @@
         importedPatchPayload: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
-        running: false
+        running: false,
+        lastResultByTab: {}
       };
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
       WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
@@ -557,7 +577,7 @@
     }
   });
 
-  // src/utils.js
+  // src/utils.ts
   function getToolWindowSafe() {
     try {
       const popWin = window.__KUS_TOOL_WINDOW__;
@@ -715,15 +735,15 @@ ${contextLine}`);
     }
   }
   var init_utils = __esm({
-    "src/utils.js"() {
+    "src/utils.ts"() {
       "use strict";
       init_constants();
     }
   });
 
-  // src/diff/engine.js
+  // src/diff/engine.ts
   var init_engine = __esm({
-    "src/diff/engine.js"() {
+    "src/diff/engine.ts"() {
       "use strict";
       init_constants();
       init_state();
@@ -731,7 +751,7 @@ ${contextLine}`);
     }
   });
 
-  // src/api.js
+  // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
@@ -839,7 +859,7 @@ ${contextLine}`);
         if (revision) bundle.meta.sectionRevisions[sec] = revision;
         bundle.sections[sec] = normalize(res);
       } catch (e) {
-        bundle.sections[sec] = { _fetchError: e.message || String(e) };
+        bundle.sections[sec] = { _fetchError: e?.message || String(e) };
       }
       if (onProgress) onProgress((i + 1) / sections.length, def.label);
     }
@@ -847,7 +867,7 @@ ${contextLine}`);
   }
   var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
   var init_api = __esm({
-    "src/api.js"() {
+    "src/api.ts"() {
       "use strict";
       init_constants();
       init_utils();
@@ -867,18 +887,16 @@ ${contextLine}`);
     }
   });
 
-  // src/diff/enrich.js
+  // src/diff/enrich.ts
   var init_enrich = __esm({
-    "src/diff/enrich.js"() {
+    "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
-      init_state();
       init_utils();
-      init_engine();
     }
   });
 
-  // src/diff/export.js
+  // src/diff/export.ts
   function mdEsc(value) {
     return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
   }
@@ -1037,7 +1055,7 @@ ${body}`;
     const rows = entries.map((v) => [
       v.name || "",
       MD_VIEW_TYPE_LABELS[v.type] || v.type || "",
-      v.index ?? "",
+      String(v.index ?? ""),
       v.builtinType || "",
       Array.isArray(v.fields) ? v.fields.join(" / ") : "",
       v.filterCond || "",
@@ -1404,7 +1422,7 @@ ${body}`;
   }
   var MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_SECTION_RENDERERS;
   var init_export = __esm({
-    "src/diff/export.js"() {
+    "src/diff/export.ts"() {
       init_constants();
       init_utils();
       init_state();
@@ -1491,9 +1509,9 @@ ${body}`;
     }
   });
 
-  // src/diff/filter.js
+  // src/diff/filter.ts
   var init_filter = __esm({
-    "src/diff/filter.js"() {
+    "src/diff/filter.ts"() {
       "use strict";
       init_constants();
       init_state();
@@ -1503,7 +1521,7 @@ ${body}`;
     }
   });
 
-  // src/ui/dialog.js
+  // src/ui/dialog.ts
   function getToolDocument() {
     return root?.ownerDocument || document;
   }
@@ -1512,19 +1530,18 @@ ${body}`;
   }
   var root;
   var init_dialog = __esm({
-    "src/ui/dialog.js"() {
+    "src/ui/dialog.ts"() {
       "use strict";
       init_constants();
       init_state();
-      init_utils();
       root = null;
     }
   });
 
-  // src/entries/design-lite-ui.js
+  // src/entries/design-lite-ui.ts
   init_constants();
 
-  // src/ui/components.js
+  // src/ui/components.ts
   init_constants();
   init_state();
   init_utils();
@@ -1532,23 +1549,23 @@ ${body}`;
   init_engine();
   init_enrich();
 
-  // src/reflect/nodeModeUi.js
+  // src/reflect/nodeModeUi.ts
   init_state();
 
-  // src/ui/components.js
+  // src/ui/components.ts
   init_constants();
   init_dialog();
 
-  // src/oss_integrations.js
+  // src/oss_integrations.ts
   init_utils();
   init_dialog();
 
-  // src/ui/components.js
+  // src/ui/components.ts
   var ui2 = {};
   function setComponentUi(uiRefs) {
     ui2 = uiRefs;
   }
-  function setStatus(msg, isError) {
+  function setStatus(msg, isError = false) {
     if (!ui2.status) return;
     ui2.status.textContent = msg;
     ui2.status.style.background = "";
@@ -1573,14 +1590,14 @@ ${body}`;
     })
   });
 
-  // src/tabs/design-standalone.js
+  // src/tabs/design-standalone.ts
   init_constants();
   init_state();
   init_utils();
   init_api();
   init_export();
 
-  // src/tabs/design-xlsx.js
+  // src/tabs/design-xlsx.ts
   init_constants();
   init_dialog();
   init_utils();
@@ -1664,6 +1681,9 @@ ${body}`;
     const SYSTEM_FIELDS = /* @__PURE__ */ new Set(["$id", "$revision", "status", "category", "assignee"]);
     class Semaphore {
       constructor(max) {
+        __publicField(this, "max");
+        __publicField(this, "current");
+        __publicField(this, "queue");
         this.max = max;
         this.current = 0;
         this.queue = [];
@@ -2128,14 +2148,17 @@ ${body}`;
       }
     }
     async function retry(fn, max = CONFIG.MAX_RETRIES) {
+      let lastErr;
       for (let i = 0; i < max; i++) {
         try {
           return await fn();
         } catch (e) {
+          lastErr = e;
           if (i === max - 1) throw e;
           await UtilsX.sleep(CONFIG.RETRY_DELAY * (i + 1));
         }
       }
+      throw lastErr;
     }
     async function fetchJob(name, promiseFn) {
       try {
@@ -2175,10 +2198,14 @@ ${body}`;
         overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:460px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.3);"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:16px;">📊 エクスポート設定</div><div style="font-size:12px;color:#666;margin-bottom:12px;">出力するシートを選択してください</div><div style="display:flex;gap:8px;margin-bottom:12px;"><button id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div><div id="kex-sheet-options" style="max-height:340px;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${checkboxes}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;"><button id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
         getToolDocument().body.appendChild(overlay);
         overlay.querySelector("#kex-select-all").onclick = () => {
-          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]').forEach((cb) => cb.checked = true);
+          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]').forEach((cb) => {
+            cb.checked = true;
+          });
         };
         overlay.querySelector("#kex-select-none").onclick = () => {
-          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])').forEach((cb) => cb.checked = false);
+          overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])').forEach((cb) => {
+            cb.checked = false;
+          });
         };
         overlay.querySelector("#kex-cancel").onclick = () => {
           getToolDocument().body.removeChild(overlay);
@@ -3026,8 +3053,8 @@ ${body}`;
         pAoa.push(["項目", "値"]);
         pHeaderInfoRows.push(pAoa.length - 1);
         pAoa.push(["プロセス管理", status.enable ? "有効" : "無効"]);
-        pAoa.push(["ステータス数", Object.keys(status.states || {}).length]);
-        pAoa.push(["アクション(遷移)数", (status.actions || []).length]);
+        pAoa.push(["ステータス数", String(Object.keys(status.states || {}).length)]);
+        pAoa.push(["アクション(遷移)数", String((status.actions || []).length)]);
         pAoa.push([]);
         pEmptyRows.push(pAoa.length - 1);
         pAoa.push(["■ ステータス一覧"]);
@@ -3040,7 +3067,7 @@ ${body}`;
           const asgnList = Array.isArray(st.assignee?.entities) ? st.assignee.entities.map(UtilsX.formatEntityDetailed).join("\n") : "-";
           const inCount = (status.actions || []).filter((a) => a.to === name).length;
           const outCount = (status.actions || []).filter((a) => a.from === name).length;
-          pAoa.push([st.index || "-", name, asgnType, asgnList, inCount, outCount]);
+          pAoa.push([String(st.index || "-"), name, asgnType, asgnList, String(inCount), String(outCount)]);
         });
         pAoa.push([]);
         pEmptyRows.push(pAoa.length - 1);
@@ -3049,7 +3076,7 @@ ${body}`;
         pAoa.push(["No.", "アクション名", "遷移元", "遷移先", "遷移条件"]);
         pHeaderInfoRows.push(pAoa.length - 1);
         (status.actions || []).forEach((a, i) => {
-          pAoa.push([i + 1, a.name || "-", a.from || "-", a.to || "-", UtilsX.formatFilterCond(a.filterCond)]);
+          pAoa.push([String(i + 1), a.name || "-", a.from || "-", a.to || "-", UtilsX.formatFilterCond(a.filterCond)]);
         });
         appendSheet("プロセス管理", {
           aoa: pAoa,
@@ -3387,13 +3414,13 @@ ${body}`;
         tocAoa.push([`App ID: ${APP_ID} / 出力: ${UtilsX.dt()} / 取得失敗: ${UI.failedAPIs.length}件`]);
         tocAoa.push([]);
         tocAoa.push(["キーメトリクス", "件数", "キーメトリクス", "件数"]);
-        tocAoa.push(["フィールド", fieldCount, "ビュー", viewCount]);
-        tocAoa.push(["プロセスステータス", processStateCount, "プロセスアクション", processActionCount]);
-        tocAoa.push(["権限エントリ", appAclCount + recordAclCount + fieldAclCount, "JS/CSSカスタマイズ", customizeCount]);
+        tocAoa.push(["フィールド", String(fieldCount), "ビュー", String(viewCount)]);
+        tocAoa.push(["プロセスステータス", String(processStateCount), "プロセスアクション", String(processActionCount)]);
+        tocAoa.push(["権限エントリ", String(appAclCount + recordAclCount + fieldAclCount), "JS/CSSカスタマイズ", String(customizeCount)]);
         tocAoa.push([]);
         tocAoa.push(["No.", "シート名", "内容", "件数"]);
         sheetMetadata.forEach((m, i) => {
-          tocAoa.push([i + 1, m.name, m.description || "-", m.recordCount]);
+          tocAoa.push([String(i + 1), m.name, m.description || "-", String(m.recordCount)]);
         });
         const tocWs = XLSX.utils.aoa_to_sheet(tocAoa);
         autosizeCols(tocWs, tocAoa);
@@ -3473,7 +3500,7 @@ ${body}`;
     }
   }
 
-  // src/tabs/design-standalone.js
+  // src/tabs/design-standalone.ts
   async function runDesignExportStandalone(kind, source, setStatus2) {
     const appId = String(source.appId || "").trim();
     if (!appId) throw new Error("アプリIDを入力してください");
@@ -3532,7 +3559,7 @@ ${body}`;
     setStatus2("設計書Excel出力完了");
   }
 
-  // src/entries/liteMount.js
+  // src/entries/liteMount.ts
   init_dialog();
   var PANEL_STYLE = "position:fixed;z-index:999999;top:max(16px,2vh);right:max(16px,2vw);width:min(440px,94vw);max-height:min(92vh,880px);overflow:hidden;display:flex;flex-direction:column;background:#fff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 12px 40px rgba(15,23,42,.2);font:12px/1.5 system-ui,sans-serif;";
   function mountKusLitePanel(opts) {
@@ -3582,7 +3609,7 @@ ${body}`;
     return { root: root2, status, bodySlot, result };
   }
 
-  // src/entries/design-lite-ui.js
+  // src/entries/design-lite-ui.ts
   function row(labelHtml, child) {
     const wrap = document.createElement("div");
     wrap.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px";
@@ -3675,7 +3702,7 @@ ${body}`;
     bodySlot.appendChild(btnRow);
   }
 
-  // src/entries/design-lite-entry.js
+  // src/entries/design-lite-entry.ts
   if (!window.kintone?.api || !window.kintone?.app) {
     alert("kintone画面で実行してください");
   } else {

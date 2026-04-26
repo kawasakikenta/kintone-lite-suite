@@ -1,0 +1,35 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": false,
+    "strictNullChecks": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "useUnknownInCatchVariables": false
+  },
+  "include": [
+    "src/types/**/*.ts",
+    "src/constants.ts",
+    "src/state.ts",
+    "src/utils.ts",
+    "src/api.ts",
+    "src/diff/types.ts",
+    "src/diff/presets.ts",
+    "src/diff/selection-sets.ts",
+    "src/diff/review.ts",
+    "src/diff/filter.ts",
+    "src/diff/popout.ts",
+    "src/diff/engine.ts",
+    "src/diff/enrich.ts",
+    "src/diff/export.ts",
+    "src/reflect/apply.ts",
+    "src/reflect/plan.ts",
+    "src/oss_integrations.ts",
+    "src/ui/components.ts",
+    "src/tabs/field.ts"
+  ]
+}
