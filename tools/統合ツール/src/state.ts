@@ -184,7 +184,8 @@ const CONNECTION_PRESETS_LIMIT = 30;
 
 export function loadReflectApplyHistory(): any[] {
   try {
-    const raw = sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
+    const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY)
+      ?? sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -196,7 +197,12 @@ export function loadReflectApplyHistory(): any[] {
 export function persistReflectApplyHistory(entries: any[] | null | undefined): void {
   try {
     const list = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
-    sessionStorage.setItem(REFLECT_APPLY_HISTORY_KEY, JSON.stringify(list));
+    const text = JSON.stringify(list);
+    localStorage.setItem(REFLECT_APPLY_HISTORY_KEY, text);
+  } catch { /* noop */ }
+  try {
+    // 旧セッション保存があれば掃除（移行）。
+    sessionStorage.removeItem(REFLECT_APPLY_HISTORY_KEY);
   } catch { /* noop */ }
 }
 
@@ -212,6 +218,19 @@ export function pushReflectApplyHistoryEntry(entry: any): void {
 export function clearReflectApplyHistory(): void {
   state.reflectApplyHistory = [];
   persistReflectApplyHistory([]);
+}
+
+export function snapshotReflectApplyHistoryExport(): {
+  exportedAt: string;
+  count: number;
+  entries: any[];
+} {
+  const entries = Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [];
+  return {
+    exportedAt: new Date().toISOString(),
+    count: entries.length,
+    entries: entries.map((e) => ({ ...e }))
+  };
 }
 
 export function loadWorkHistory(): any[] {

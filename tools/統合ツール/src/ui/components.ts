@@ -1281,8 +1281,11 @@ export function renderReflectApplyHistory() {
   }).join('');
   host.innerHTML = `<details${open} data-act-host="reflectApplyHistory">
       <summary>
-        <span>反映履歴（このセッション ${history.length}件）</span>
-        <button type="button" class="btn sub" data-act="clearApplyHistory" style="padding:2px 8px;font-size:10px" title="履歴を消去">クリア</button>
+        <span>反映履歴（${history.length}件・端末保存）</span>
+        <span style="display:inline-flex;gap:6px">
+          <button type="button" class="btn sub" data-act="exportApplyHistory" style="padding:2px 8px;font-size:10px" title="反映履歴をJSONファイルとして書き出します">JSON書き出し</button>
+          <button type="button" class="btn sub" data-act="clearApplyHistory" style="padding:2px 8px;font-size:10px" title="履歴を消去">クリア</button>
+        </span>
       </summary>
       <div class="reflect-apply-history__list">${items}</div>
     </details>`;
@@ -1660,7 +1663,7 @@ export function renderReflectNodeList() {
       ? `名称変更候補 ${r.renameCandidate.fromCode || '-'} → ${r.renameCandidate.toCode || '-'}`
       : '';
     const metaItems = [reason, impact, rename].filter(Boolean);
-    const modeLabel = mode === 'src' ? '比較元を採用' : '比較先を維持';
+    const modeLabel = mode === 'src' ? '比較元を採用' : '比較先を維持（反映しない）';
     const selectedLabel = selected.has(r._id) ? '選択中' : '未選択';
     return `<article class="reflect-node-card-item${activeRow?._id === r._id ? ' is-active' : ''}${selected.has(r._id) ? ' is-selected' : ''}" data-node-open="${esc(r._id)}">
       <div class="reflect-node-card-headline">
@@ -1785,11 +1788,11 @@ export function renderReflectNodeDetail() {
     <div class="reflect-node-badges">
       <span class="reflect-node-badge ${esc(severity)}">${esc(getSeverityDisplayLabel(severity))}重要度</span>
       <span class="reflect-node-badge">${selected ? '選択中' : '未選択'}</span>
-      <span class="reflect-node-badge">${mode === 'src' ? '比較元を採用' : '比較先を残す'}</span>
+      <span class="reflect-node-badge">${mode === 'src' ? '比較元を採用' : '比較先を維持'}</span>
     </div>
     <div class="reflect-node-actions">
       <button class="btn ${selected ? 'sub' : 'ok'}" data-act="toggleActiveReflectNodeSelection">${selected ? '選択解除' : 'このノードを選択'}</button>
-      <button class="btn ok" data-act="toggleActiveReflectNodeMode">${mode === 'src' ? '比較先を採用' : '比較元を採用'}</button>
+      <button class="btn ok" data-act="toggleActiveReflectNodeMode" title="${mode === 'src' ? '反映しない（比較先を維持）に切り替え' : '比較元の値で反映に切り替え'}">${mode === 'src' ? '比較先を維持に切替' : '比較元を採用に切替'}</button>
       <button class="btn sub" data-act="focusActiveReflectNodeDiff">上の差分一覧で開く</button>
       <button class="btn sub" data-copy-val="${esc(row.path || '')}">パスコピー</button>
     </div>

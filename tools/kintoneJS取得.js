@@ -416,7 +416,7 @@
   // src/state.ts
   function loadReflectApplyHistory() {
     try {
-      const raw = sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
+      const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY) ?? sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
