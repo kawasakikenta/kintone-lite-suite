@@ -6,8 +6,7 @@ import {
 import {
   esc, deepClone, safeJsonForScript,
   getDiffTypeDisplayLabel, getSeverityDisplayLabel,
-  getIssueSideLabel, getPreviewStateLabel, getThemeDisplayLabel,
-  kusAlert
+  getIssueSideLabel, getPreviewStateLabel, getThemeDisplayLabel
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import {
@@ -3851,7 +3850,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   function exportPatch() {
     const patchRows = REPORT_ROWS.filter((row) => row.type !== 'same');
     if (!patchRows.length) {
-      kusAlert('出力できる差分がありません');
+      window.alert('出力できる差分がありません');
       return;
     }
     const grouped = {};
