@@ -5,6 +5,7 @@ import { assertAllowsMutatingApiUrl } from '../api.js';
 import { setBusy } from '../ui/components.js';
 import { setStatus } from '../ui/components.js';
 import { getToolDocument } from '../ui/dialog.js';
+import { bumpSessionMetric } from '../ui/psychology.js';
 
 const API_TESTER_PRESETS = [
   {
@@ -86,6 +87,7 @@ const API_TESTER_PRESETS = [
 ];
 
 export async function runApiTester() {
+  bumpSessionMetric('apiTesterRun');
   const method = (getToolDocument().getElementById('u_apiTesterMethod') as HTMLInputElement | null)?.value || 'GET';
   const path = (getToolDocument().getElementById('u_apiTesterPath') as HTMLInputElement | null)?.value?.trim();
   const bodyStr = (getToolDocument().getElementById('u_apiTesterBody') as HTMLInputElement | null)?.value?.trim() || '{}';

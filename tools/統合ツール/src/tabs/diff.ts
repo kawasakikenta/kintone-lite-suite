@@ -2,6 +2,7 @@
 
 import { SECTION_DEFS, IGNORE_PRESET_KEYS, DEFAULT_SUBTAB_STATE, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT } from '../constants.js';
 import { state, ui, saveDialogState, loadDialogState } from '../state.js';
+import { bumpSessionMetric } from '../ui/psychology.js';
 import {
   esc,
   stableStringify,
@@ -222,6 +223,7 @@ async function resolveBundle(side: 'source' | 'target', params: any, scopes: str
 // ---------------------------------------------------------------------------
 
 export async function runDiff() {
+  bumpSessionMetric('diffRun');
   const c = commonParams();
   const scopes = selectedScopeKeys(ui.diffScopes);
   if (!scopes.length) throw new Error('比較セクションを選択してください');

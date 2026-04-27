@@ -9964,6 +9964,354 @@ ${body}`;
     }
   });
 
+  // src/ui/psychology.ts
+  function rememberAppId(kind, value) {
+    const v = String(value || "").trim();
+    if (!v || !/^\d+$/.test(v)) return;
+    const list = recentAppIdsByKind[kind];
+    const idx = list.indexOf(v);
+    if (idx >= 0) list.splice(idx, 1);
+    list.unshift(v);
+    while (list.length > RECENT_LIMIT) list.pop();
+    syncDatalist(kind);
+  }
+  function syncDatalist(kind) {
+    const doc = getToolDocument();
+    const id = kind === "source" ? "u_sourceAppRecents" : "u_targetAppRecents";
+    const list = doc?.getElementById(id);
+    if (!list) return;
+    list.innerHTML = recentAppIdsByKind[kind].map((v) => `<option value="${esc(v)}"></option>`).join("");
+  }
+  function installAppIdRecents(input, kind) {
+    if (!input) return;
+    const doc = input.ownerDocument || getToolDocument();
+    const listId = kind === "source" ? "u_sourceAppRecents" : "u_targetAppRecents";
+    if (!doc.getElementById(listId)) {
+      const dl = doc.createElement("datalist");
+      dl.id = listId;
+      input.parentElement?.appendChild(dl);
+    }
+    input.setAttribute("list", listId);
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("data-kus-recents", kind);
+    input.addEventListener("change", () => rememberAppId(kind, input.value));
+    input.addEventListener("blur", () => rememberAppId(kind, input.value));
+    syncDatalist(kind);
+  }
+  function renderEnvBadge(ctx) {
+    const tone = ctx.sameConnection ? "danger" : !ctx.targetPreview ? "danger" : ctx.targetAppId ? "caution" : "neutral";
+    const label = ctx.sameConnection ? "同一接続" : !ctx.targetPreview ? "比較先=本番" : ctx.targetAppId ? "比較先=プレビュー" : "未設定";
+    const direction = ctx.sourceAppId && ctx.targetAppId ? `<span class="kus-env-badge__dir"><span class="kus-env-badge__src">#${esc(ctx.sourceAppId)}</span><span class="kus-env-badge__arrow" aria-hidden="true">→</span><span class="kus-env-badge__tgt">#${esc(ctx.targetAppId)}</span></span>` : '<span class="kus-env-badge__dir kus-env-badge__dir--empty">アプリID未設定</span>';
+    const icon = tone === "danger" ? "!" : tone === "caution" ? "⚠" : "i";
+    return `<span class="kus-env-badge kus-env-badge--${tone}" role="status" aria-live="polite" title="比較元→比較先 / プレビュー or 本番">
+    <span class="kus-env-badge__icon" aria-hidden="true">${icon}</span>
+    <span class="kus-env-badge__label">${esc(label)}</span>
+    ${direction}
+  </span>`;
+  }
+  function updateEnvBadge(host, getCtx) {
+    if (!host) return;
+    host.innerHTML = renderEnvBadge(getCtx());
+  }
+  function confirmDestructive(opts) {
+    return new Promise((resolve) => {
+      const root2 = getRoot();
+      const doc = getToolDocument();
+      if (!root2 || !doc) {
+        resolve(false);
+        return;
+      }
+      const overlay = doc.createElement("div");
+      overlay.className = `kus-confirm-overlay kus-confirm-overlay--${opts.riskTone || "danger"}`;
+      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("aria-modal", "true");
+      overlay.setAttribute("aria-labelledby", "kus-confirm-title");
+      overlay.innerHTML = `
+      <div class="kus-confirm-card">
+        <div class="kus-confirm-header">
+          <span class="kus-confirm-icon" aria-hidden="true">!</span>
+          <h3 class="kus-confirm-title" id="kus-confirm-title">${esc(opts.title)}</h3>
+        </div>
+        <div class="kus-confirm-body">${escMultiline(opts.body)}</div>
+        <label class="kus-confirm-prompt">
+          確認のため <code>${esc(opts.keyword)}</code> と入力してください
+          <input type="text" class="kus-confirm-input" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="kus-confirm-actions">
+          <button type="button" class="kus-confirm-cancel">キャンセル</button>
+          <button type="button" class="kus-confirm-ok" disabled>${esc(opts.okLabel || "実行する")}</button>
+        </div>
+      </div>
+    `;
+      root2.appendChild(overlay);
+      const input = overlay.querySelector(".kus-confirm-input");
+      const ok = overlay.querySelector(".kus-confirm-ok");
+      const cancel = overlay.querySelector(".kus-confirm-cancel");
+      const close = (result) => {
+        overlay.remove();
+        resolve(result);
+      };
+      input?.addEventListener("input", () => {
+        if (ok) ok.disabled = (input.value || "").trim() !== opts.keyword;
+      });
+      input?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && ok && !ok.disabled) close(true);
+        if (event.key === "Escape") close(false);
+      });
+      ok?.addEventListener("click", () => {
+        if (!ok.disabled) close(true);
+      });
+      cancel?.addEventListener("click", () => close(false));
+      setTimeout(() => input?.focus(), 0);
+    });
+  }
+  function escMultiline(text) {
+    return esc(text).replace(/\n/g, "<br>");
+  }
+  function startProgress(initialLabel, total = 0) {
+    const root2 = getRoot();
+    const doc = getToolDocument();
+    if (!root2 || !doc) {
+      return {
+        setLabel() {
+        },
+        setProgress() {
+        },
+        finish() {
+        },
+        cancel() {
+        }
+      };
+    }
+    const startedAt = Date.now();
+    const overlay = doc.createElement("div");
+    overlay.className = "kus-progress-overlay";
+    overlay.setAttribute("role", "status");
+    overlay.setAttribute("aria-live", "polite");
+    overlay.innerHTML = `
+    <div class="kus-progress-card">
+      <div class="kus-progress-spinner" aria-hidden="true"></div>
+      <div class="kus-progress-label">${esc(initialLabel)}</div>
+      <div class="kus-progress-bar"><div class="kus-progress-fill" style="width:0%"></div></div>
+      <div class="kus-progress-meta"><span class="kus-progress-count"></span><span class="kus-progress-elapsed">0秒</span></div>
+    </div>
+  `;
+    root2.appendChild(overlay);
+    const labelEl = overlay.querySelector(".kus-progress-label");
+    const fill = overlay.querySelector(".kus-progress-fill");
+    const countEl = overlay.querySelector(".kus-progress-count");
+    const elapsedEl = overlay.querySelector(".kus-progress-elapsed");
+    let totalRef = Number(total) || 0;
+    let currentRef = 0;
+    const elapsedTimer = setInterval(() => {
+      if (!elapsedEl) return;
+      const sec = Math.max(0, Math.round((Date.now() - startedAt) / 1e3));
+      elapsedEl.textContent = `${sec}秒`;
+    }, 500);
+    function update() {
+      if (countEl) {
+        if (totalRef > 0) countEl.textContent = `${currentRef} / ${totalRef}`;
+        else countEl.textContent = currentRef ? `${currentRef} 件` : "";
+      }
+      if (fill) {
+        const ratio = totalRef > 0 ? Math.min(1, currentRef / totalRef) : currentRef > 0 ? 0.5 : 0;
+        fill.style.width = `${Math.round(ratio * 100)}%`;
+        fill.classList.toggle("kus-progress-fill--indeterminate", totalRef <= 0);
+      }
+    }
+    update();
+    function dispose() {
+      clearInterval(elapsedTimer);
+      overlay.remove();
+    }
+    return {
+      setLabel(label) {
+        if (labelEl) labelEl.textContent = label;
+      },
+      setProgress(current, totalArg) {
+        currentRef = Math.max(0, Number(current) || 0);
+        if (typeof totalArg === "number") totalRef = Math.max(0, totalArg);
+        update();
+      },
+      finish(summary) {
+        dispose();
+        renderCompletionSummary(summary, Date.now() - startedAt);
+      },
+      cancel() {
+        dispose();
+      }
+    };
+  }
+  function renderCompletionSummary(summary, elapsedMs) {
+    const root2 = getRoot();
+    const doc = getToolDocument();
+    if (!root2 || !doc) return;
+    const card = doc.createElement("div");
+    card.className = `kus-completion-card kus-completion-card--${summary.hasError ? "warn" : "ok"}`;
+    card.setAttribute("role", "status");
+    const elapsedSec = Math.max(0, Math.round(elapsedMs / 1e3));
+    const metricsHtml = (summary.metrics || []).map((m) => `
+    <div class="kus-completion-metric kus-completion-metric--${m.tone || "info"}">
+      <div class="kus-completion-metric__label">${esc(m.label)}</div>
+      <div class="kus-completion-metric__value">${esc(m.value)}</div>
+    </div>
+  `).join("");
+    card.innerHTML = `
+    <div class="kus-completion-head">
+      <span class="kus-completion-icon" aria-hidden="true">${summary.hasError ? "⚠" : "✓"}</span>
+      <h3 class="kus-completion-title">${esc(summary.title)}</h3>
+      <button type="button" class="kus-completion-close" aria-label="閉じる">×</button>
+    </div>
+    <div class="kus-completion-grid">${metricsHtml}
+      <div class="kus-completion-metric kus-completion-metric--info">
+        <div class="kus-completion-metric__label">所要時間</div>
+        <div class="kus-completion-metric__value">${elapsedSec}秒</div>
+      </div>
+    </div>
+    ${summary.hint ? `<p class="kus-completion-hint">${escMultiline(summary.hint)}</p>` : ""}
+  `;
+    root2.appendChild(card);
+    card.querySelector(".kus-completion-close")?.addEventListener("click", () => card.remove());
+    setTimeout(() => card.classList.add("kus-completion-card--dim"), 6e3);
+  }
+  function bumpSessionMetric(key, delta = 1) {
+    if (!(key in sessionMetrics)) return;
+    sessionMetrics[key] = Math.max(0, sessionMetrics[key] + Number(delta || 0));
+    refreshSessionSummary();
+  }
+  function renderSessionSummary() {
+    const items = Object.keys(sessionMetrics).map((k) => k).filter((k) => sessionMetrics[k] > 0);
+    if (!items.length) {
+      return `<p class="kus-session-empty">このセッションの実行記録はまだありません。安全な操作から始めて記録を残せます。</p>`;
+    }
+    const chips = items.map((k) => `
+    <span class="kus-session-chip kus-session-chip--${k === "applyError" ? "warn" : "info"}">
+      <span class="kus-session-chip__label">${esc(METRIC_LABELS[k])}</span>
+      <span class="kus-session-chip__value">${sessionMetrics[k]}</span>
+    </span>
+  `).join("");
+    return `<div class="kus-session-chips">${chips}</div>`;
+  }
+  function refreshSessionSummary() {
+    const doc = getToolDocument();
+    const host = doc?.getElementById("u_sessionSummary");
+    if (!host) return;
+    host.innerHTML = renderSessionSummary();
+  }
+  function humanizeError(err, context = "") {
+    const raw = err instanceof Error ? err.message : String(err ?? "");
+    const lower = raw.toLowerCase();
+    if (!raw) {
+      return {
+        title: "不明なエラー",
+        body: "原因情報が取得できませんでした。",
+        hint: "ブラウザの開発者ツール (Console) でログを確認してください。"
+      };
+    }
+    if (/network|failed to fetch|networkerror/i.test(raw)) {
+      return {
+        title: "接続できませんでした",
+        body: "kintone との通信が失敗しました。原因はネットワーク・VPN・kintone 側障害が考えられます。",
+        hint: "少し待ってから再試行するか、kintone 管理画面が開けるか確認してください。"
+      };
+    }
+    if (/cb_va01|invalid input|不正/i.test(raw)) {
+      return {
+        title: "入力内容に問題がありました",
+        body: `kintone から入力エラーが返されました。原文: ${raw}`,
+        hint: "対象アプリID、フィールドコード、JSON 形式を見直してください。"
+      };
+    }
+    if (/permission|aclsetting|権限/i.test(raw)) {
+      return {
+        title: "権限が不足しています",
+        body: "実行ユーザにアプリ管理権限が無い、または対象アプリへのアクセスが許可されていません。",
+        hint: "アプリ管理者に依頼するか、別アカウントで再試行してください。"
+      };
+    }
+    if (/cb_au01|cb_au02|認証|unauthorized|401/i.test(raw)) {
+      return {
+        title: "ログインセッションが切れています",
+        body: "kintone のセッション認証が無効になりました。",
+        hint: "同じブラウザで kintone を開き直してから、再度ツールを実行してください。"
+      };
+    }
+    if (lower.includes("timeout")) {
+      return {
+        title: "タイムアウトしました",
+        body: "応答に時間がかかりすぎたため処理を打ち切りました。",
+        hint: "対象範囲（セクション・件数）を絞って分割実行してください。"
+      };
+    }
+    return {
+      title: context ? `${context}でエラーが発生しました` : "エラーが発生しました",
+      body: raw,
+      hint: "同じ内容で再現する場合は、ヘッダーのビルド表記をクリックして識別情報をコピーし、共有してください。"
+    };
+  }
+  function renderHumanizedError(err, context = "") {
+    const h = humanizeError(err, context);
+    return `<div class="kus-humanized-error" role="alert">
+    <div class="kus-humanized-error__title">${esc(h.title)}</div>
+    <div class="kus-humanized-error__body">${escMultiline(h.body)}</div>
+    ${h.hint ? `<div class="kus-humanized-error__hint">対処: ${escMultiline(h.hint)}</div>` : ""}
+  </div>`;
+  }
+  function installPsychology(refs) {
+    installAppIdRecents(refs.sourceApp || null, "source");
+    installAppIdRecents(refs.targetApp || null, "target");
+    if (refs.envBadgeHost && typeof refs.getEnvContext === "function") {
+      const refresh = () => updateEnvBadge(refs.envBadgeHost, refs.getEnvContext);
+      refresh();
+      [refs.sourceApp, refs.targetApp].forEach((el) => {
+        el?.addEventListener("input", refresh);
+        el?.addEventListener("change", refresh);
+      });
+      const root2 = getRoot();
+      root2?.addEventListener("change", (e) => {
+        const target = e.target;
+        if (target?.id === "u_sourcePreview" || target?.id === "u_targetPreview") refresh();
+      });
+    }
+    if (refs.sessionSummaryHost) {
+      refs.sessionSummaryHost.id = "u_sessionSummary";
+      refs.sessionSummaryHost.innerHTML = renderSessionSummary();
+    }
+  }
+  var recentAppIdsByKind, RECENT_LIMIT, sessionMetrics, METRIC_LABELS;
+  var init_psychology = __esm({
+    "src/ui/psychology.ts"() {
+      "use strict";
+      init_utils();
+      init_dialog();
+      recentAppIdsByKind = {
+        source: [],
+        target: []
+      };
+      RECENT_LIMIT = 8;
+      sessionMetrics = {
+        diffRun: 0,
+        planRun: 0,
+        applyRun: 0,
+        applyError: 0,
+        recordDelete: 0,
+        designExport: 0,
+        sqlRun: 0,
+        apiTesterRun: 0
+      };
+      METRIC_LABELS = {
+        diffRun: "差分比較",
+        planRun: "プラン確認",
+        applyRun: "プレビュー反映",
+        applyError: "反映エラー",
+        recordDelete: "レコード削除",
+        designExport: "設計書出力",
+        sqlRun: "SQL実行",
+        apiTesterRun: "APIテスター実行"
+      };
+    }
+  });
+
   // src/tabs/preview-compare.ts
   function getPreviewCompareStatusPrefix(ui4) {
     const sp = !!ui4?.sourcePreview?.checked;
@@ -11367,6 +11715,7 @@ ${lines.join("\n")}
     state.lastApplyCompletedMode = mode;
     state.lastApplyCompletedHadError = !!hadError;
     state.lastApplyCompletedAppId = appId || "";
+    if (hadError) bumpSessionMetric("applyError");
     pushReflectApplyHistoryEntry({
       id: `apply_${now}`,
       at: now,
@@ -11453,7 +11802,7 @@ ${lines.join("\n")}
     }
     return out;
   }
-  function confirmApplyRiskGuard(mode, c, options = {}) {
+  async function confirmApplyRiskGuard(mode, c, options = {}) {
     const issues = [];
     const labels = [];
     const diffSummary = options.diffSummary || { total: 0, high: 0, medium: 0, low: 0 };
@@ -11477,18 +11826,23 @@ ${lines.join("\n")}
     labels.push(`差分件数: ${diffSummary.total}件（高 ${diffSummary.high} / 中 ${diffSummary.medium} / 低 ${diffSummary.low}）`);
     if (requestCount > 0) labels.push(`予定リクエスト: ${requestCount}件`);
     const modeLabel = mode === "nodes" ? "ノード反映" : mode === "patch" ? "JSONパッチ反映" : "プレビュー反映";
+    const targetAppId = String(c?.target?.appId || "").trim();
     const body = [
       `【安全確認: ${modeLabel}】`,
-      "",
-      `比較先アプリ: ${c?.target?.appId || "-"}`,
+      `比較先アプリ: ${targetAppId || "-"}`,
       ...labels,
       "",
       "注意点:",
-      ...issues.map((line) => ` - ${line}`),
-      "",
-      "内容を確認したうえで実行しますか？"
+      ...issues.map((line) => ` - ${line}`)
     ].join("\n");
-    return kusConfirm(body);
+    const highRisk = isSameConnectionPair(c) || diffSummary.high > 0;
+    return confirmDestructive({
+      title: `${modeLabel} の最終確認`,
+      body,
+      keyword: highRisk && targetAppId ? targetAppId : "実行する",
+      okLabel: `${modeLabel}を実行`,
+      riskTone: highRisk ? "danger" : "warning"
+    });
   }
   async function assertTargetPreviewMatchesPlannedBaseline(prefix, app, sectionKeys) {
     const plan = state.lastApplyPlan;
@@ -11776,10 +12130,11 @@ ${lines.join("\n")}
     const patchSummary = summarizeRowsBySeverity(patchRows);
     const planReqCount = Number(state.lastApplyPlan?.totalReq || 0);
     const scopeLabels = sectionKeys.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
-    if (!confirmApplyRiskGuard("patch", c, { diffSummary: patchSummary, requestCount: planReqCount, scopeLabels })) {
+    if (!await confirmApplyRiskGuard("patch", c, { diffSummary: patchSummary, requestCount: planReqCount, scopeLabels })) {
       setStatus("JSONパッチ反映をキャンセルしました（安全確認）");
       return;
     }
+    bumpSessionMetric("applyRun");
     const prefix = buildApiPrefix(c.target.guestId, true);
     const app = c.target.appId;
     const stopOnError = !!ui.stopOnError?.checked;
@@ -11883,10 +12238,11 @@ ${lines.join("\n")}
     const nodeSummary = summarizeRowsBySeverity(rows);
     const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
     const nodeScopeLabels = nodeScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
-    if (!confirmApplyRiskGuard("nodes", c, { diffSummary: nodeSummary, requestCount: plannedReq, scopeLabels: nodeScopeLabels })) {
+    if (!await confirmApplyRiskGuard("nodes", c, { diffSummary: nodeSummary, requestCount: plannedReq, scopeLabels: nodeScopeLabels })) {
       setStatus("反映をキャンセルしました（安全確認）");
       return;
     }
+    bumpSessionMetric("applyRun");
     const prefix = buildApiPrefix(c.target.guestId, true);
     const app = c.target.appId;
     const logs = [];
@@ -12023,10 +12379,11 @@ ${lines.join("\n")}
     const sectionSummary = summarizeRowsBySeverity(actualRows);
     const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
     const scopeLabels = scopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
-    if (!confirmApplyRiskGuard("section", c, { diffSummary: sectionSummary, requestCount: plannedReq, scopeLabels })) {
+    if (!await confirmApplyRiskGuard("section", c, { diffSummary: sectionSummary, requestCount: plannedReq, scopeLabels })) {
       setStatus("反映をキャンセルしました（安全確認）");
       return;
     }
+    bumpSessionMetric("applyRun");
     saveCurrentDialogState2();
     const sourceBundle = await getSourceBundleForApply(c, scopes);
     const prefix = buildApiPrefix(c.target.guestId, true);
@@ -12034,40 +12391,70 @@ ${lines.join("\n")}
     const stopOnError = !!ui.stopOnError.checked;
     const logs = [];
     let hadError = false;
+    let backupFilename = "";
+    const progress = startProgress("反映前チェック中...", scopes.length);
     setStatus("反映前チェック中...");
-    const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, scopes);
-    logs.push(`比較先アプリ: ${app}`);
-    logs.push(`適用セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ")}`);
-    logs.push(`エラー時動作: ${stopOnError ? "中断" : "継続"}`);
-    if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
-    if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
-    if (ui.autoBackupPreview?.checked) {
-      const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
-      logs.push(`バックアップ保存: ${backup.filename}`);
+    try {
+      const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, scopes);
+      logs.push(`比較先アプリ: ${app}`);
+      logs.push(`適用セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ")}`);
+      logs.push(`エラー時動作: ${stopOnError ? "中断" : "継続"}`);
+      if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
+      if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
+      if (ui.autoBackupPreview?.checked) {
+        progress.setLabel("バックアップ保存中...");
+        const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
+        logs.push(`バックアップ保存: ${backup.filename}`);
+        backupFilename = backup.filename || "";
+      }
+      logs.push("");
+      progress.setLabel("プレビュー反映を実行中...");
+      const sectionResults = [];
+      hadError = await applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, {
+        phaseLabel: "反映",
+        onProgress: (i, total) => {
+          renderProgressLog(logs, { phase: "プレビュー反映実行中", current: i, total });
+          progress.setProgress(i, total);
+        },
+        sectionResults
+      });
+      await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes, logs });
+      appendProgressSummary(logs);
+      renderProgressLog(logs, { phase: "プレビュー反映完了" });
+      commitApplyReport({
+        mode: "section",
+        appId: app,
+        scopes,
+        sectionResults,
+        hadError,
+        sourceAppId: c.source.appId,
+        sourceGuestId: c.source.guestId,
+        targetGuestId: c.target.guestId
+      });
+      renderReflectAssistPanel();
+      renderReflectMainPanel();
+      setStatus("プレビュー反映処理完了");
+      progress.finish({
+        title: hadError ? "プレビュー反映 完了（一部エラー）" : "プレビュー反映 完了",
+        hasError: hadError,
+        metrics: [
+          { label: "比較先アプリ", value: `#${app}` },
+          { label: "適用セクション", value: `${scopes.length}件` },
+          { label: "結果", value: hadError ? "一部失敗" : "全成功", tone: hadError ? "warn" : "ok" }
+        ],
+        hint: backupFilename ? `バックアップ保存先: ${backupFilename}
+本番デプロイは kintone 管理画面から手動で実施してください。` : "本番デプロイは kintone 管理画面から手動で実施してください。"
+      });
+    } catch (err) {
+      progress.cancel();
+      const host = ui.result || ui.status;
+      if (host) {
+        const div = (host.ownerDocument || document).createElement("div");
+        div.innerHTML = renderHumanizedError(err, "プレビュー反映");
+        host.appendChild(div);
+      }
+      throw err;
     }
-    logs.push("");
-    const sectionResults = [];
-    hadError = await applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, {
-      phaseLabel: "反映",
-      onProgress: (i, total) => renderProgressLog(logs, { phase: "プレビュー反映実行中", current: i, total }),
-      sectionResults
-    });
-    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes, logs });
-    appendProgressSummary(logs);
-    renderProgressLog(logs, { phase: "プレビュー反映完了" });
-    commitApplyReport({
-      mode: "section",
-      appId: app,
-      scopes,
-      sectionResults,
-      hadError,
-      sourceAppId: c.source.appId,
-      sourceGuestId: c.source.guestId,
-      targetGuestId: c.target.guestId
-    });
-    renderReflectAssistPanel();
-    renderReflectMainPanel();
-    setStatus("プレビュー反映処理完了");
   }
   async function runBackupTargetPreview() {
     const c = commonParams();
@@ -12216,6 +12603,7 @@ ${lines.join("\n")}
       init_nodeModeUi();
       init_dialog();
       init_oss_integrations();
+      init_psychology();
       init_rowMode();
       patchJsonDiffTimer = 0;
       patchJsonDiffSeq = 0;
@@ -12578,6 +12966,7 @@ ${lines.join("\n")}
     return showInlineConfirmation(currentPlan, options);
   }
   async function runPreviewApplyPlanNodes() {
+    bumpSessionMetric("planRun");
     await ensureDiffPreparedForReflect();
     const c = commonParams();
     if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
@@ -12696,6 +13085,7 @@ ${lines.join("\n")}
   }
   async function runPreviewApplyPlan() {
     if (isReflectNodeModeEffective()) return runPreviewApplyPlanNodes();
+    bumpSessionMetric("planRun");
     await ensureDiffPreparedForReflect();
     const c = commonParams();
     if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
@@ -12867,6 +13257,7 @@ ${lines.join("\n")}
       init_utils();
       init_state();
       init_dialog();
+      init_psychology();
       init_nodeModeUi();
       init_api();
       init_apply();
@@ -13021,6 +13412,7 @@ ${lines.join("\n")}
     return fetchBundle({ ...params, sections: scopes, onProgress });
   }
   async function runDiff() {
+    bumpSessionMetric("diffRun");
     const c = commonParams();
     const scopes = selectedScopeKeys(ui.diffScopes);
     if (!scopes.length) throw new Error("比較セクションを選択してください");
@@ -13425,6 +13817,7 @@ ${lines.join("\n")}
       "use strict";
       init_constants();
       init_state();
+      init_psychology();
       init_utils();
       init_api();
       init_engine();
@@ -18986,6 +19379,111 @@ ${lines.join("\n")}
   #kintone-unified-suite-v2 .shortcut-help-card{width:min(100%,calc(100vw - 12px));max-height:calc(100vh - 20px)}
   #kintone-unified-suite-v2 .shortcut-help-list li{grid-template-columns:1fr;gap:2px}
 }
+
+/* =================================================================
+ *  心理学ベースの UI 強化（環境バッジ / 進捗 / 完了 / セッション要約 /
+ *  人間化エラー / type-to-confirm / 推奨デフォルト ★ / 反映ボタン強調）
+ *  - すべて #kintone-unified-suite-v2 配下に閉じる。
+ *  - 永続化は行わず、表示のみで効果を出す。
+ * ================================================================= */
+
+/* 環境バッジ（比較先がプレビュー / 本番 / 同一接続を示す） */
+#kintone-unified-suite-v2 .kus-env-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;line-height:1.4;border:1px solid transparent;background:#e0f2fe;color:#075985;border-color:#7dd3fc}
+#kintone-unified-suite-v2 .kus-env-badge--neutral{background:#e2e8f0;color:#1f2937;border-color:#cbd5e1}
+#kintone-unified-suite-v2 .kus-env-badge--caution{background:#fef9c3;color:#854d0e;border-color:#fde047}
+#kintone-unified-suite-v2 .kus-env-badge--danger{background:#fee2e2;color:#7f1d1d;border-color:#fca5a5;animation:kus-env-badge-pulse 2.4s ease-in-out infinite}
+@keyframes kus-env-badge-pulse{0%,100%{box-shadow:0 0 0 0 rgba(248,113,113,.55)}50%{box-shadow:0 0 0 6px rgba(248,113,113,0)}}
+#kintone-unified-suite-v2 .kus-env-badge__icon{font-weight:900;width:16px;height:16px;border-radius:50%;background:rgba(255,255,255,.65);display:inline-flex;align-items:center;justify-content:center;font-size:11px}
+#kintone-unified-suite-v2 .kus-env-badge__dir{display:inline-flex;align-items:center;gap:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+#kintone-unified-suite-v2 .kus-env-badge__src{color:#1d4ed8}
+#kintone-unified-suite-v2 .kus-env-badge--danger .kus-env-badge__src{color:#b91c1c}
+#kintone-unified-suite-v2 .kus-env-badge__tgt{color:#9a3412;font-weight:800}
+#kintone-unified-suite-v2 .kus-env-badge--danger .kus-env-badge__tgt{color:#7f1d1d;text-decoration:underline;text-underline-offset:2px}
+#kintone-unified-suite-v2 .kus-env-badge__arrow{color:#475569}
+#kintone-unified-suite-v2 .kus-env-badge__dir--empty{color:#64748b;font-style:italic}
+
+/* type-to-confirm モーダル */
+#kintone-unified-suite-v2 .kus-confirm-overlay{position:absolute;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.55);backdrop-filter:blur(2px)}
+#kintone-unified-suite-v2 .kus-confirm-card{width:min(480px,calc(100% - 32px));background:#fff;border-radius:14px;padding:18px;box-shadow:0 24px 60px rgba(15,23,42,.45);border:2px solid #ef4444}
+#kintone-unified-suite-v2 .kus-confirm-overlay--warning .kus-confirm-card{border-color:#f59e0b}
+#kintone-unified-suite-v2 .kus-confirm-header{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+#kintone-unified-suite-v2 .kus-confirm-icon{width:28px;height:28px;border-radius:50%;background:#fee2e2;color:#b91c1c;display:inline-flex;align-items:center;justify-content:center;font-weight:900}
+#kintone-unified-suite-v2 .kus-confirm-overlay--warning .kus-confirm-icon{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .kus-confirm-title{margin:0;font-size:16px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .kus-confirm-body{font-size:13px;line-height:1.7;color:#0f172a;margin:8px 0 12px;white-space:normal}
+#kintone-unified-suite-v2 .kus-confirm-prompt{display:block;font-size:12px;color:#334155;margin-bottom:10px}
+#kintone-unified-suite-v2 .kus-confirm-prompt code{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-weight:700;color:#b91c1c}
+#kintone-unified-suite-v2 .kus-confirm-input{width:100%;margin-top:6px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#kintone-unified-suite-v2 .kus-confirm-input:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(248,113,113,.25)}
+#kintone-unified-suite-v2 .kus-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+#kintone-unified-suite-v2 .kus-confirm-cancel{padding:8px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;cursor:pointer;font-weight:700;font-size:12px}
+#kintone-unified-suite-v2 .kus-confirm-cancel:hover{background:#e2e8f0}
+#kintone-unified-suite-v2 .kus-confirm-ok{padding:8px 16px;border-radius:8px;border:0;background:#dc2626;color:#fff;cursor:pointer;font-weight:800;font-size:12px}
+#kintone-unified-suite-v2 .kus-confirm-overlay--warning .kus-confirm-ok{background:#d97706}
+#kintone-unified-suite-v2 .kus-confirm-ok:disabled{background:#cbd5e1;color:#64748b;cursor:not-allowed}
+#kintone-unified-suite-v2 .kus-confirm-ok:not(:disabled):hover{filter:brightness(1.08)}
+
+/* 進捗オーバーレイ */
+#kintone-unified-suite-v2 .kus-progress-overlay{position:absolute;inset:0;z-index:180;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.45);backdrop-filter:blur(1px)}
+#kintone-unified-suite-v2 .kus-progress-card{width:min(420px,calc(100% - 32px));background:#fff;border-radius:14px;padding:18px;box-shadow:0 24px 60px rgba(15,23,42,.4);border:1px solid #cbd5e1}
+#kintone-unified-suite-v2 .kus-progress-spinner{width:36px;height:36px;border-radius:50%;border:3px solid #cbd5e1;border-top-color:#2563eb;animation:kus-spin 1s linear infinite;margin:0 auto 10px}
+@keyframes kus-spin{to{transform:rotate(360deg)}}
+#kintone-unified-suite-v2 .kus-progress-label{font-size:14px;font-weight:700;color:#0f172a;text-align:center;line-height:1.5}
+#kintone-unified-suite-v2 .kus-progress-bar{margin-top:12px;height:10px;background:#e2e8f0;border-radius:999px;overflow:hidden}
+#kintone-unified-suite-v2 .kus-progress-fill{height:100%;background:linear-gradient(90deg,#0ea5e9,#2563eb);border-radius:999px;transition:width .25s ease}
+#kintone-unified-suite-v2 .kus-progress-fill--indeterminate{width:35%!important;animation:kus-progress-indet 1.6s ease-in-out infinite}
+@keyframes kus-progress-indet{0%{margin-left:-35%}50%{margin-left:50%}100%{margin-left:100%}}
+#kintone-unified-suite-v2 .kus-progress-meta{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:#475569;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* 完了サマリ（Peak-End） */
+#kintone-unified-suite-v2 .kus-completion-card{position:absolute;right:16px;bottom:16px;width:min(380px,calc(100% - 32px));background:#fff;border-radius:12px;border:1px solid #d6dee8;box-shadow:0 16px 40px rgba(15,23,42,.28);z-index:160;padding:14px;transition:opacity .4s ease}
+#kintone-unified-suite-v2 .kus-completion-card--ok{border-left:4px solid #15803d}
+#kintone-unified-suite-v2 .kus-completion-card--warn{border-left:4px solid #d97706}
+#kintone-unified-suite-v2 .kus-completion-card--dim{opacity:.85}
+#kintone-unified-suite-v2 .kus-completion-head{display:flex;align-items:center;gap:8px}
+#kintone-unified-suite-v2 .kus-completion-icon{width:24px;height:24px;border-radius:50%;background:#dcfce7;color:#15803d;display:inline-flex;align-items:center;justify-content:center;font-weight:900}
+#kintone-unified-suite-v2 .kus-completion-card--warn .kus-completion-icon{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .kus-completion-title{margin:0;font-size:14px;font-weight:800;color:#0f172a;flex:1}
+#kintone-unified-suite-v2 .kus-completion-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer;line-height:1;padding:0 4px}
+#kintone-unified-suite-v2 .kus-completion-close:hover{color:#0f172a}
+#kintone-unified-suite-v2 .kus-completion-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:8px}
+#kintone-unified-suite-v2 .kus-completion-metric{padding:6px 8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px}
+#kintone-unified-suite-v2 .kus-completion-metric--ok{background:#f0fdf4;border-color:#bbf7d0}
+#kintone-unified-suite-v2 .kus-completion-metric--warn{background:#fef3c7;border-color:#fde047}
+#kintone-unified-suite-v2 .kus-completion-metric__label{font-size:10px;color:#64748b;font-weight:600}
+#kintone-unified-suite-v2 .kus-completion-metric__value{font-size:13px;color:#0f172a;font-weight:800;margin-top:2px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#kintone-unified-suite-v2 .kus-completion-hint{margin:8px 0 0;font-size:11px;color:#334155;line-height:1.6}
+
+/* セッション要約（メタ認知） */
+#kintone-unified-suite-v2 .kus-session-empty{font-size:11px;color:#64748b;margin:0;line-height:1.55}
+#kintone-unified-suite-v2 .kus-session-chips{display:flex;flex-wrap:wrap;gap:6px}
+#kintone-unified-suite-v2 .kus-session-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:11px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+#kintone-unified-suite-v2 .kus-session-chip--warn{background:#fef3c7;color:#92400e;border-color:#fde047}
+#kintone-unified-suite-v2 .kus-session-chip__label{font-weight:700}
+#kintone-unified-suite-v2 .kus-session-chip__value{background:rgba(255,255,255,.7);padding:0 6px;border-radius:999px;font-weight:800;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* 人間化エラー */
+#kintone-unified-suite-v2 .kus-humanized-error{margin-top:8px;padding:10px 12px;border-radius:10px;border:1px solid #fecaca;background:#fef2f2;color:#7f1d1d}
+#kintone-unified-suite-v2 .kus-humanized-error__title{font-size:13px;font-weight:800;line-height:1.45}
+#kintone-unified-suite-v2 .kus-humanized-error__body{margin-top:6px;font-size:12px;line-height:1.7}
+#kintone-unified-suite-v2 .kus-humanized-error__hint{margin-top:6px;font-size:11px;color:#9a3412;line-height:1.7}
+
+/* 推奨デフォルト ★ バッジ */
+#kintone-unified-suite-v2 .kus-recommended-mark{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#7c2d12;font-size:11px;font-weight:900;margin-left:6px;vertical-align:middle;box-shadow:0 1px 2px rgba(15,23,42,.2)}
+
+/* 危険ボタンの強調（プレビュー反映系・削除系の class="btn danger"） */
+#kintone-unified-suite-v2 .btn.danger{background:#dc2626;color:#fff;font-weight:800}
+#kintone-unified-suite-v2 .btn.danger:hover{background:#b91c1c}
+#kintone-unified-suite-v2 .btn.danger:focus-visible{outline:3px solid #fecaca;outline-offset:2px}
+
+/* タブ群の段階表示（フェーズ番号） */
+#kintone-unified-suite-v2 .tab-group[data-group="change"]{box-shadow:inset 3px 0 0 #2563eb}
+#kintone-unified-suite-v2 .tab-group[data-group="vis"]{box-shadow:inset 3px 0 0 #15803d}
+#kintone-unified-suite-v2 .tab-group[data-group="data"]{box-shadow:inset 3px 0 0 #b45309}
+
+/* ヘッダー右上に env バッジを置く時の余白調整 */
+#kintone-unified-suite-v2 .h-actions .kus-env-badge{margin-right:6px}
+
 `;
 
   // src/ui/template.ts
@@ -19054,7 +19552,8 @@ ${lines.join("\n")}
             </div>
           </div>
           <div class="h-actions">
-            <button class="x size" data-act="startGuidedTour">操作ガイド</button>
+            <span id="u_envBadge" class="kus-env-badge-host" aria-live="polite"></span>
+            <button class="x size" data-act="startGuidedTour" title="初回: 全工程 / 復習: 差分のみ / 反映直前: 反映まで">操作ガイド</button>
             <button class="x size" data-act="openShortcutHelp" title="キーボードショートカット一覧 (?)" aria-label="キーボードショートカット一覧">?</button>
             <button class="x size" data-act="dialogSizeDefault">標準</button>
             <button class="x size" data-act="dialogSizeLarge">大</button>
@@ -19526,6 +20025,16 @@ ${lines.join("\n")}
                 </button>
               </div>
             </div>
+            <section class="work-history-panel" id="u_sessionSummaryPanel" aria-label="このセッションの操作サマリ" style="margin-bottom:8px">
+              <div class="work-history-head">
+                <div>
+                  <p class="work-history-kicker">Session Recap</p>
+                  <p class="work-history-title">このセッションの操作サマリ</p>
+                  <p class="work-history-desc">タブを閉じるとリセットされます（永続化なし）。自分の作業を俯瞰でき、ヒューマンエラーの自己点検につながります。</p>
+                </div>
+              </div>
+              <div id="u_sessionSummary" class="kus-session-summary" aria-live="polite"></div>
+            </section>
             <section class="work-history-panel" id="u_workHistoryPanel" aria-label="作業履歴・復元">
               <div class="work-history-head">
                 <div>
@@ -19846,8 +20355,8 @@ ${lines.join("\n")}
                     </div>
                   </div>
                   <div class="reflect-footer-options__chips">
-                    <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存</label>
-                    <label class="chip" title="APIエラーが出た時点で残りの反映を止めます"><input type="checkbox" id="u_stopOnError" checked> エラー時中断</label>
+                    <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します（推奨）"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存 <span class="kus-recommended-mark" aria-label="推奨">★</span></label>
+                    <label class="chip" title="APIエラーが出た時点で残りの反映を止めます（推奨）"><input type="checkbox" id="u_stopOnError" checked> エラー時中断 <span class="kus-recommended-mark" aria-label="推奨">★</span></label>
                     <span class="muted" style="font-size:11px;line-height:1.45;max-width:420px;display:inline-block;vertical-align:middle">本番デプロイAPIは利用できません。プレビュー反映後は管理画面から手動デプロイしてください。</span>
                     <input type="checkbox" id="u_doDeploy" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
                   </div>
@@ -22946,6 +23455,7 @@ ${lines.join("\n")}
   init_constants();
   init_state();
   init_utils();
+  init_psychology();
   init_api();
   init_components();
   init_diff();
@@ -23027,7 +23537,16 @@ ${lines.join("\n")}
     setStatus("対象レコードを取得中...");
     const ids = await getRecordIdsByQuery(tApp, query, false);
     if (ids.length === 0) throw new Error("処理対象のレコードが0件です。");
-    if (!kusConfirm(`${ids.length}件のレコードにアクション「${action}」を実行します。よろしいですか？`)) return;
+    if (!await confirmDestructive({
+      title: `ステータス一括更新の最終確認`,
+      body: `比較先アプリ ${tApp} の ${ids.length} 件のレコードに対し、アクション「${action}」を実行します。
+
+この処理は元に戻せません。`,
+      keyword: tApp,
+      okLabel: "ステータスを更新",
+      riskTone: "danger"
+    })) return;
+    bumpSessionMetric("recordDelete", 0);
     setStatus("ステータス一括更新を開始...");
     const prefix = getSideApiPrefix(false, false);
     const batches = chunkArray2(ids, 100);
@@ -23506,7 +24025,14 @@ ${lines.join("\n")}
       records.push(rec);
     }
     if (!records.length) throw new Error("登録するデータが見つかりませんでした");
-    if (!kusConfirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) {
+    if (!await confirmDestructive({
+      title: "CSVインポートの最終確認",
+      body: `比較先アプリ ${tgtAppId} に CSV から ${records.length} 件のレコードを登録します。
+この処理は元に戻せません。`,
+      keyword: tgtAppId,
+      okLabel: "CSVをインポート",
+      riskTone: "danger"
+    })) {
       setBusy(false);
       return;
     }
@@ -23765,7 +24291,14 @@ ${lines.join("\n")}
     const srcGuest = srcGuestStr ? `/k/guest/${srcGuestStr}/v1` : "/k/v1";
     const tgtGuest = tgtGuestStr ? `/k/guest/${tgtGuestStr}/v1` : "/k/v1";
     const query = getToolDocument().getElementById("u_recordCopyQuery")?.value || "";
-    if (!kusConfirm(`比較元(${srcApp}) から 比較先(${tgtApp}) へレコードをコピーします。よろしいですか？`)) return;
+    if (!await confirmDestructive({
+      title: "レコードコピーの最終確認",
+      body: `比較元 ${srcApp} → 比較先 ${tgtApp} へレコードをコピーします。
+この処理は元に戻せません。`,
+      keyword: tgtApp,
+      okLabel: "レコードをコピー",
+      riskTone: "danger"
+    })) return;
     setBusy(true, "比較元のレコードを取得中...");
     let totalFetched = 0;
     const records = [];
@@ -23805,7 +24338,14 @@ ${lines.join("\n")}
       }
       return clean;
     });
-    if (!kusConfirm(`${records.length}件のレコードを比較先(AppID: ${tgtApp})へ登録します。実行しますか？`)) {
+    if (!await confirmDestructive({
+      title: "レコード登録の最終確認",
+      body: `${records.length} 件のレコードを比較先 (AppID: ${tgtApp}) へ登録します。
+この処理は元に戻せません。`,
+      keyword: tgtApp,
+      okLabel: "レコードを登録",
+      riskTone: "danger"
+    })) {
       setBusy(false);
       return;
     }
@@ -27005,6 +27545,7 @@ ${lines.join("\n")}
   }
 
   // src/boot.ts
+  init_psychology();
   init_oss_integrations();
 
   // src/tabs/design.ts
@@ -27017,8 +27558,10 @@ ${lines.join("\n")}
   init_dialog();
   init_engine();
   init_export();
+  init_psychology();
   init_design_xlsx();
   async function runDesignExport(kind) {
+    bumpSessionMetric("designExport");
     const c = commonParams();
     if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
     const scopes = SECTION_DEFS.map((s) => s.key);
@@ -30782,6 +31325,7 @@ ${safety.hash}`, "");
   init_components();
   init_components();
   init_dialog();
+  init_psychology();
   var API_TESTER_PRESETS = [
     {
       id: "app-settings",
@@ -30861,6 +31405,7 @@ ${safety.hash}`, "");
     }
   ];
   async function runApiTester() {
+    bumpSessionMetric("apiTesterRun");
     const method = getToolDocument().getElementById("u_apiTesterMethod")?.value || "GET";
     const path = getToolDocument().getElementById("u_apiTesterPath")?.value?.trim();
     const bodyStr = getToolDocument().getElementById("u_apiTesterBody")?.value?.trim() || "{}";
@@ -33160,6 +33705,22 @@ ${field.label}` : code,
     });
     renderApiTesterHistory();
     initApiTesterEnhancements();
+    installPsychology({
+      sourceApp: ui4.sourceApp,
+      targetApp: ui4.targetApp,
+      envBadgeHost: root2.querySelector("#u_envBadge"),
+      sessionSummaryHost: root2.querySelector("#u_sessionSummary"),
+      getEnvContext: () => {
+        const sourceAppId = String(ui4.sourceApp?.value || "").trim();
+        const targetAppId = String(ui4.targetApp?.value || "").trim();
+        const sourceGuestId = String(ui4.sourceGuest?.value || "").trim();
+        const targetGuestId = String(ui4.targetGuest?.value || "").trim();
+        const sourcePreview = !!ui4.sourcePreview?.checked;
+        const targetPreview = !!ui4.targetPreview?.checked;
+        const sameConnection = !!sourceAppId && sourceAppId === targetAppId && sourceGuestId === targetGuestId;
+        return { sourceAppId, targetAppId, sourcePreview, targetPreview, sameConnection };
+      }
+    });
     setStatus("待機中");
     if (options.initialTab) {
       const initialFeature = FEATURE_DEFS.find((def) => def.key === options.initialTab) || FEATURE_DEFS.find((def) => (def.tab || def.tabs?.[0]) === options.initialTab && (options.initialTab !== "reflect" || def.key === "reflect"));

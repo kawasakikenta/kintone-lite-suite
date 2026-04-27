@@ -19,6 +19,7 @@ import { commonParams } from './diff.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { getDiffNormalizationPresetState } from '../diff/engine.js';
 import { bundleToMarkdown } from '../diff/export.js';
+import { bumpSessionMetric } from '../ui/psychology.js';
 
 let jsondiffpatchLibPromise = null;
 
@@ -32,6 +33,7 @@ function formatExternalLoadError(name, err, urls) {
 }
 
 export async function runDesignExport(kind) {
+  bumpSessionMetric('designExport');
   const c = commonParams();
   if (!c.source.appId) throw new Error('比較元アプリIDを入力してください');
   const scopes = SECTION_DEFS.map((s) => s.key);

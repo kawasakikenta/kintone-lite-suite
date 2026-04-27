@@ -3537,3 +3537,108 @@
   #kintone-unified-suite-v2 .shortcut-help-card{width:min(100%,calc(100vw - 12px));max-height:calc(100vh - 20px)}
   #kintone-unified-suite-v2 .shortcut-help-list li{grid-template-columns:1fr;gap:2px}
 }
+
+/* =================================================================
+ *  心理学ベースの UI 強化（環境バッジ / 進捗 / 完了 / セッション要約 /
+ *  人間化エラー / type-to-confirm / 推奨デフォルト ★ / 反映ボタン強調）
+ *  - すべて #kintone-unified-suite-v2 配下に閉じる。
+ *  - 永続化は行わず、表示のみで効果を出す。
+ * ================================================================= */
+
+/* 環境バッジ（比較先がプレビュー / 本番 / 同一接続を示す） */
+#kintone-unified-suite-v2 .kus-env-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;line-height:1.4;border:1px solid transparent;background:#e0f2fe;color:#075985;border-color:#7dd3fc}
+#kintone-unified-suite-v2 .kus-env-badge--neutral{background:#e2e8f0;color:#1f2937;border-color:#cbd5e1}
+#kintone-unified-suite-v2 .kus-env-badge--caution{background:#fef9c3;color:#854d0e;border-color:#fde047}
+#kintone-unified-suite-v2 .kus-env-badge--danger{background:#fee2e2;color:#7f1d1d;border-color:#fca5a5;animation:kus-env-badge-pulse 2.4s ease-in-out infinite}
+@keyframes kus-env-badge-pulse{0%,100%{box-shadow:0 0 0 0 rgba(248,113,113,.55)}50%{box-shadow:0 0 0 6px rgba(248,113,113,0)}}
+#kintone-unified-suite-v2 .kus-env-badge__icon{font-weight:900;width:16px;height:16px;border-radius:50%;background:rgba(255,255,255,.65);display:inline-flex;align-items:center;justify-content:center;font-size:11px}
+#kintone-unified-suite-v2 .kus-env-badge__dir{display:inline-flex;align-items:center;gap:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+#kintone-unified-suite-v2 .kus-env-badge__src{color:#1d4ed8}
+#kintone-unified-suite-v2 .kus-env-badge--danger .kus-env-badge__src{color:#b91c1c}
+#kintone-unified-suite-v2 .kus-env-badge__tgt{color:#9a3412;font-weight:800}
+#kintone-unified-suite-v2 .kus-env-badge--danger .kus-env-badge__tgt{color:#7f1d1d;text-decoration:underline;text-underline-offset:2px}
+#kintone-unified-suite-v2 .kus-env-badge__arrow{color:#475569}
+#kintone-unified-suite-v2 .kus-env-badge__dir--empty{color:#64748b;font-style:italic}
+
+/* type-to-confirm モーダル */
+#kintone-unified-suite-v2 .kus-confirm-overlay{position:absolute;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.55);backdrop-filter:blur(2px)}
+#kintone-unified-suite-v2 .kus-confirm-card{width:min(480px,calc(100% - 32px));background:#fff;border-radius:14px;padding:18px;box-shadow:0 24px 60px rgba(15,23,42,.45);border:2px solid #ef4444}
+#kintone-unified-suite-v2 .kus-confirm-overlay--warning .kus-confirm-card{border-color:#f59e0b}
+#kintone-unified-suite-v2 .kus-confirm-header{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+#kintone-unified-suite-v2 .kus-confirm-icon{width:28px;height:28px;border-radius:50%;background:#fee2e2;color:#b91c1c;display:inline-flex;align-items:center;justify-content:center;font-weight:900}
+#kintone-unified-suite-v2 .kus-confirm-overlay--warning .kus-confirm-icon{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .kus-confirm-title{margin:0;font-size:16px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .kus-confirm-body{font-size:13px;line-height:1.7;color:#0f172a;margin:8px 0 12px;white-space:normal}
+#kintone-unified-suite-v2 .kus-confirm-prompt{display:block;font-size:12px;color:#334155;margin-bottom:10px}
+#kintone-unified-suite-v2 .kus-confirm-prompt code{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-weight:700;color:#b91c1c}
+#kintone-unified-suite-v2 .kus-confirm-input{width:100%;margin-top:6px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#kintone-unified-suite-v2 .kus-confirm-input:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(248,113,113,.25)}
+#kintone-unified-suite-v2 .kus-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+#kintone-unified-suite-v2 .kus-confirm-cancel{padding:8px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;cursor:pointer;font-weight:700;font-size:12px}
+#kintone-unified-suite-v2 .kus-confirm-cancel:hover{background:#e2e8f0}
+#kintone-unified-suite-v2 .kus-confirm-ok{padding:8px 16px;border-radius:8px;border:0;background:#dc2626;color:#fff;cursor:pointer;font-weight:800;font-size:12px}
+#kintone-unified-suite-v2 .kus-confirm-overlay--warning .kus-confirm-ok{background:#d97706}
+#kintone-unified-suite-v2 .kus-confirm-ok:disabled{background:#cbd5e1;color:#64748b;cursor:not-allowed}
+#kintone-unified-suite-v2 .kus-confirm-ok:not(:disabled):hover{filter:brightness(1.08)}
+
+/* 進捗オーバーレイ */
+#kintone-unified-suite-v2 .kus-progress-overlay{position:absolute;inset:0;z-index:180;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.45);backdrop-filter:blur(1px)}
+#kintone-unified-suite-v2 .kus-progress-card{width:min(420px,calc(100% - 32px));background:#fff;border-radius:14px;padding:18px;box-shadow:0 24px 60px rgba(15,23,42,.4);border:1px solid #cbd5e1}
+#kintone-unified-suite-v2 .kus-progress-spinner{width:36px;height:36px;border-radius:50%;border:3px solid #cbd5e1;border-top-color:#2563eb;animation:kus-spin 1s linear infinite;margin:0 auto 10px}
+@keyframes kus-spin{to{transform:rotate(360deg)}}
+#kintone-unified-suite-v2 .kus-progress-label{font-size:14px;font-weight:700;color:#0f172a;text-align:center;line-height:1.5}
+#kintone-unified-suite-v2 .kus-progress-bar{margin-top:12px;height:10px;background:#e2e8f0;border-radius:999px;overflow:hidden}
+#kintone-unified-suite-v2 .kus-progress-fill{height:100%;background:linear-gradient(90deg,#0ea5e9,#2563eb);border-radius:999px;transition:width .25s ease}
+#kintone-unified-suite-v2 .kus-progress-fill--indeterminate{width:35%!important;animation:kus-progress-indet 1.6s ease-in-out infinite}
+@keyframes kus-progress-indet{0%{margin-left:-35%}50%{margin-left:50%}100%{margin-left:100%}}
+#kintone-unified-suite-v2 .kus-progress-meta{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:#475569;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* 完了サマリ（Peak-End） */
+#kintone-unified-suite-v2 .kus-completion-card{position:absolute;right:16px;bottom:16px;width:min(380px,calc(100% - 32px));background:#fff;border-radius:12px;border:1px solid #d6dee8;box-shadow:0 16px 40px rgba(15,23,42,.28);z-index:160;padding:14px;transition:opacity .4s ease}
+#kintone-unified-suite-v2 .kus-completion-card--ok{border-left:4px solid #15803d}
+#kintone-unified-suite-v2 .kus-completion-card--warn{border-left:4px solid #d97706}
+#kintone-unified-suite-v2 .kus-completion-card--dim{opacity:.85}
+#kintone-unified-suite-v2 .kus-completion-head{display:flex;align-items:center;gap:8px}
+#kintone-unified-suite-v2 .kus-completion-icon{width:24px;height:24px;border-radius:50%;background:#dcfce7;color:#15803d;display:inline-flex;align-items:center;justify-content:center;font-weight:900}
+#kintone-unified-suite-v2 .kus-completion-card--warn .kus-completion-icon{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .kus-completion-title{margin:0;font-size:14px;font-weight:800;color:#0f172a;flex:1}
+#kintone-unified-suite-v2 .kus-completion-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer;line-height:1;padding:0 4px}
+#kintone-unified-suite-v2 .kus-completion-close:hover{color:#0f172a}
+#kintone-unified-suite-v2 .kus-completion-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:8px}
+#kintone-unified-suite-v2 .kus-completion-metric{padding:6px 8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px}
+#kintone-unified-suite-v2 .kus-completion-metric--ok{background:#f0fdf4;border-color:#bbf7d0}
+#kintone-unified-suite-v2 .kus-completion-metric--warn{background:#fef3c7;border-color:#fde047}
+#kintone-unified-suite-v2 .kus-completion-metric__label{font-size:10px;color:#64748b;font-weight:600}
+#kintone-unified-suite-v2 .kus-completion-metric__value{font-size:13px;color:#0f172a;font-weight:800;margin-top:2px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#kintone-unified-suite-v2 .kus-completion-hint{margin:8px 0 0;font-size:11px;color:#334155;line-height:1.6}
+
+/* セッション要約（メタ認知） */
+#kintone-unified-suite-v2 .kus-session-empty{font-size:11px;color:#64748b;margin:0;line-height:1.55}
+#kintone-unified-suite-v2 .kus-session-chips{display:flex;flex-wrap:wrap;gap:6px}
+#kintone-unified-suite-v2 .kus-session-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:11px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+#kintone-unified-suite-v2 .kus-session-chip--warn{background:#fef3c7;color:#92400e;border-color:#fde047}
+#kintone-unified-suite-v2 .kus-session-chip__label{font-weight:700}
+#kintone-unified-suite-v2 .kus-session-chip__value{background:rgba(255,255,255,.7);padding:0 6px;border-radius:999px;font-weight:800;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* 人間化エラー */
+#kintone-unified-suite-v2 .kus-humanized-error{margin-top:8px;padding:10px 12px;border-radius:10px;border:1px solid #fecaca;background:#fef2f2;color:#7f1d1d}
+#kintone-unified-suite-v2 .kus-humanized-error__title{font-size:13px;font-weight:800;line-height:1.45}
+#kintone-unified-suite-v2 .kus-humanized-error__body{margin-top:6px;font-size:12px;line-height:1.7}
+#kintone-unified-suite-v2 .kus-humanized-error__hint{margin-top:6px;font-size:11px;color:#9a3412;line-height:1.7}
+
+/* 推奨デフォルト ★ バッジ */
+#kintone-unified-suite-v2 .kus-recommended-mark{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,#fbbf24,#f59e0b);color:#7c2d12;font-size:11px;font-weight:900;margin-left:6px;vertical-align:middle;box-shadow:0 1px 2px rgba(15,23,42,.2)}
+
+/* 危険ボタンの強調（プレビュー反映系・削除系の class="btn danger"） */
+#kintone-unified-suite-v2 .btn.danger{background:#dc2626;color:#fff;font-weight:800}
+#kintone-unified-suite-v2 .btn.danger:hover{background:#b91c1c}
+#kintone-unified-suite-v2 .btn.danger:focus-visible{outline:3px solid #fecaca;outline-offset:2px}
+
+/* タブ群の段階表示（フェーズ番号） */
+#kintone-unified-suite-v2 .tab-group[data-group="change"]{box-shadow:inset 3px 0 0 #2563eb}
+#kintone-unified-suite-v2 .tab-group[data-group="vis"]{box-shadow:inset 3px 0 0 #15803d}
+#kintone-unified-suite-v2 .tab-group[data-group="data"]{box-shadow:inset 3px 0 0 #b45309}
+
+/* ヘッダー右上に env バッジを置く時の余白調整 */
+#kintone-unified-suite-v2 .h-actions .kus-env-badge{margin-right:6px}
+

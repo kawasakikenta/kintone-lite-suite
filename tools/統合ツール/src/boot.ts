@@ -29,6 +29,7 @@ import { resolveApplyScopes } from './reflect/helpers.js';
 import { makeApplyPlanSignature, runPreviewApplyPlan, runExportDryRunPlan } from './reflect/plan.js';
 import { scheduleGuidedTourLayout } from './ui/tour.js';
 import { setupEventHandlers } from './handlers.js';
+import { installPsychology } from './ui/psychology.js';
 import { initJsonEditor, getJsonEditorInstance, startGuidedTour } from './oss_integrations.js';
 import { GUIDED_TOUR_STEPS } from './constants.js';
 
@@ -369,6 +370,24 @@ export function runKintoneUnifiedSuite(options: any = {}) {
 
   renderApiTesterHistory();
   initApiTesterEnhancements();
+
+  // 心理学ベースの UI 強化を起動: 揮発メモリのみ。永続化なし。
+  installPsychology({
+    sourceApp: ui.sourceApp as HTMLInputElement | null,
+    targetApp: ui.targetApp as HTMLInputElement | null,
+    envBadgeHost: root.querySelector('#u_envBadge') as HTMLElement | null,
+    sessionSummaryHost: root.querySelector('#u_sessionSummary') as HTMLElement | null,
+    getEnvContext: () => {
+      const sourceAppId = String((ui.sourceApp as HTMLInputElement | null)?.value || '').trim();
+      const targetAppId = String((ui.targetApp as HTMLInputElement | null)?.value || '').trim();
+      const sourceGuestId = String((ui.sourceGuest as HTMLInputElement | null)?.value || '').trim();
+      const targetGuestId = String((ui.targetGuest as HTMLInputElement | null)?.value || '').trim();
+      const sourcePreview = !!(ui.sourcePreview as HTMLInputElement | null)?.checked;
+      const targetPreview = !!(ui.targetPreview as HTMLInputElement | null)?.checked;
+      const sameConnection = !!sourceAppId && sourceAppId === targetAppId && sourceGuestId === targetGuestId;
+      return { sourceAppId, targetAppId, sourcePreview, targetPreview, sameConnection };
+    }
+  });
 
   setStatus('待機中');
 

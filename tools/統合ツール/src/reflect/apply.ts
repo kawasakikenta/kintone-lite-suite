@@ -49,6 +49,7 @@ import { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
 import { isReflectNodeModeEffective } from './nodeModeUi.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { getJsonEditorInstance, renderRichDiff } from '../oss_integrations.js';
+import { confirmDestructive, bumpSessionMetric, startProgress, renderHumanizedError } from '../ui/psychology.js';
 
 export { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
 
@@ -599,6 +600,7 @@ function commitApplyReport({ mode, appId, scopes, sectionResults, hadError, sour
   state.lastApplyCompletedMode = mode;
   state.lastApplyCompletedHadError = !!hadError;
   state.lastApplyCompletedAppId = appId || '';
+  if (hadError) bumpSessionMetric('applyError');
   pushReflectApplyHistoryEntry({
     id: `apply_${now}`,
     at: now,
@@ -702,7 +704,7 @@ interface ApplyRiskGuardOptions {
   scopeLabels?: string[];
 }
 
-function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGuardOptions = {}) {
+async function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGuardOptions = {}): Promise<boolean> {
   const issues: string[] = [];
   const labels: string[] = [];
   const diffSummary = options.diffSummary || { total: 0, high: 0, medium: 0, low: 0 };
@@ -729,18 +731,24 @@ function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGuardOpti
   if (requestCount > 0) labels.push(`予定リクエスト: ${requestCount}件`);
 
   const modeLabel = mode === 'nodes' ? 'ノード反映' : (mode === 'patch' ? 'JSONパッチ反映' : 'プレビュー反映');
+  const targetAppId = String(c?.target?.appId || '').trim();
   const body = [
     `【安全確認: ${modeLabel}】`,
-    '',
-    `比較先アプリ: ${c?.target?.appId || '-'}`,
+    `比較先アプリ: ${targetAppId || '-'}`,
     ...labels,
     '',
     '注意点:',
-    ...issues.map((line) => ` - ${line}`),
-    '',
-    '内容を確認したうえで実行しますか？'
+    ...issues.map((line) => ` - ${line}`)
   ].join('\n');
-  return kusConfirm(body);
+  // 高リスク（高重要度差分 or 同一接続）はアプリID 入力での確認、それ以外は固定キーワード。
+  const highRisk = isSameConnectionPair(c) || diffSummary.high > 0;
+  return confirmDestructive({
+    title: `${modeLabel} の最終確認`,
+    body,
+    keyword: highRisk && targetAppId ? targetAppId : '実行する',
+    okLabel: `${modeLabel}を実行`,
+    riskTone: highRisk ? 'danger' : 'warning'
+  });
 }
 
 async function assertTargetPreviewMatchesPlannedBaseline(prefix: string, app: string | number, sectionKeys: string[]) {
@@ -1050,10 +1058,11 @@ export async function runApplyPatchJson() {
   const patchSummary = summarizeRowsBySeverity(patchRows);
   const planReqCount = Number(state.lastApplyPlan?.totalReq || 0);
   const scopeLabels = sectionKeys.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
-  if (!confirmApplyRiskGuard('patch', c, { diffSummary: patchSummary, requestCount: planReqCount, scopeLabels })) {
+  if (!(await confirmApplyRiskGuard('patch', c, { diffSummary: patchSummary, requestCount: planReqCount, scopeLabels }))) {
     setStatus('JSONパッチ反映をキャンセルしました（安全確認）');
     return;
   }
+  bumpSessionMetric('applyRun');
 
   const prefix = buildApiPrefix(c.target.guestId, true);
   const app = c.target.appId;
@@ -1187,10 +1196,11 @@ export async function runApplyPreviewByNodes() {
   const nodeSummary = summarizeRowsBySeverity(rows);
   const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
   const nodeScopeLabels = nodeScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
-  if (!confirmApplyRiskGuard('nodes', c, { diffSummary: nodeSummary, requestCount: plannedReq, scopeLabels: nodeScopeLabels })) {
+  if (!(await confirmApplyRiskGuard('nodes', c, { diffSummary: nodeSummary, requestCount: plannedReq, scopeLabels: nodeScopeLabels }))) {
     setStatus('反映をキャンセルしました（安全確認）');
     return;
   }
+  bumpSessionMetric('applyRun');
 
   const prefix = buildApiPrefix(c.target.guestId, true);
   const app = c.target.appId;
@@ -1338,10 +1348,11 @@ export async function runApplyPreview() {
   const sectionSummary = summarizeRowsBySeverity(actualRows);
   const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
   const scopeLabels = scopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
-  if (!confirmApplyRiskGuard('section', c, { diffSummary: sectionSummary, requestCount: plannedReq, scopeLabels })) {
+  if (!(await confirmApplyRiskGuard('section', c, { diffSummary: sectionSummary, requestCount: plannedReq, scopeLabels }))) {
     setStatus('反映をキャンセルしました（安全確認）');
     return;
   }
+  bumpSessionMetric('applyRun');
   saveCurrentDialogState();
   const sourceBundle = await getSourceBundleForApply(c, scopes);
 
@@ -1350,42 +1361,73 @@ export async function runApplyPreview() {
   const stopOnError = !!ui.stopOnError.checked;
   const logs: string[] = [];
   let hadError = false;
+  let backupFilename = '';
+  const progress = startProgress('反映前チェック中...', scopes.length);
   setStatus('反映前チェック中...');
-  const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, scopes);
-  logs.push(`比較先アプリ: ${app}`);
-  logs.push(`適用セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
-  logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
-  if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
-  if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
-  if (ui.autoBackupPreview?.checked) {
-    const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
-    logs.push(`バックアップ保存: ${backup.filename}`);
+  try {
+    const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, scopes);
+    logs.push(`比較先アプリ: ${app}`);
+    logs.push(`適用セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
+    logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+    if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
+    if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
+    if (ui.autoBackupPreview?.checked) {
+      progress.setLabel('バックアップ保存中...');
+      const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
+      logs.push(`バックアップ保存: ${backup.filename}`);
+      backupFilename = backup.filename || '';
+    }
+    logs.push('');
+
+    progress.setLabel('プレビュー反映を実行中...');
+    const sectionResults: any[] = [];
+    hadError = await applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, {
+      phaseLabel: '反映',
+      onProgress: (i, total) => {
+        renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total });
+        progress.setProgress(i, total);
+      },
+      sectionResults
+    });
+
+    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes, logs });
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: 'プレビュー反映完了' });
+    commitApplyReport({
+      mode: 'section',
+      appId: app,
+      scopes,
+      sectionResults,
+      hadError,
+      sourceAppId: c.source.appId,
+      sourceGuestId: c.source.guestId,
+      targetGuestId: c.target.guestId
+    });
+    renderReflectAssistPanel();
+    renderReflectMainPanel();
+    setStatus('プレビュー反映処理完了');
+    progress.finish({
+      title: hadError ? 'プレビュー反映 完了（一部エラー）' : 'プレビュー反映 完了',
+      hasError: hadError,
+      metrics: [
+        { label: '比較先アプリ', value: `#${app}` },
+        { label: '適用セクション', value: `${scopes.length}件` },
+        { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
+      ],
+      hint: backupFilename
+        ? `バックアップ保存先: ${backupFilename}\n本番デプロイは kintone 管理画面から手動で実施してください。`
+        : '本番デプロイは kintone 管理画面から手動で実施してください。'
+    });
+  } catch (err) {
+    progress.cancel();
+    const host = ui.result || ui.status;
+    if (host) {
+      const div = (host.ownerDocument || document).createElement('div');
+      div.innerHTML = renderHumanizedError(err, 'プレビュー反映');
+      host.appendChild(div);
+    }
+    throw err;
   }
-  logs.push('');
-
-  const sectionResults: any[] = [];
-  hadError = await applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, {
-    phaseLabel: '反映',
-    onProgress: (i, total) => renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total }),
-    sectionResults
-  });
-
-  await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes, logs });
-  appendProgressSummary(logs);
-  renderProgressLog(logs, { phase: 'プレビュー反映完了' });
-  commitApplyReport({
-    mode: 'section',
-    appId: app,
-    scopes,
-    sectionResults,
-    hadError,
-    sourceAppId: c.source.appId,
-    sourceGuestId: c.source.guestId,
-    targetGuestId: c.target.guestId
-  });
-  renderReflectAssistPanel();
-  renderReflectMainPanel();
-  setStatus('プレビュー反映処理完了');
 }
 
 export async function runBackupTargetPreview() {
