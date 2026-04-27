@@ -148,7 +148,7 @@ import {
 //
 //   runDesignExport, runDesignCopyMd, runDesignExportXlsx, runDesignDiffMd,
 //   runFetchJsConfig, runExportJsConfig, runApplyJsConfig,
-//   runRenderProcessFlow, launchKintoneSql, runGenerateERDiagram,
+//   runRenderProcessFlow, runGenerateERDiagram,
 //   runExportERDiagramHtml, runBatchProcess, runBatchFileDownload,
 //   runBatchJsConfigDownload, loadViewsForSelect, runCsvExport, runCsvImport,
 //   exportDiffXlsx, runRecordCopy, saveTemplate, loadTemplate, deleteTemplate,
@@ -343,7 +343,6 @@ export function setupEventHandlers(injected: any = {}) {
     runExportJsConfig,
     runApplyJsConfig,
     runRenderProcessFlow,
-    launchKintoneSql,
     runGenerateERDiagram,
     runExportERDiagramHtml,
     runBatchProcess,
@@ -2627,7 +2626,6 @@ export function setupEventHandlers(injected: any = {}) {
 
     // ----- Other tabs -----
     if (act === 'renderProcessFlow' && typeof runRenderProcessFlow === 'function') return withGuard(runRenderProcessFlow);
-    if (act === 'launchKintoneSql' && typeof launchKintoneSql === 'function') return withGuard(launchKintoneSql);
     if (act === 'generateERDiagram' && typeof runGenerateERDiagram === 'function') return withGuard(runGenerateERDiagram);
     if (act === 'exportERDiagramHtml' && typeof runExportERDiagramHtml === 'function') return withGuard(runExportERDiagramHtml);
     if (act === 'runBatchProcess' && typeof runBatchProcess === 'function') return withGuard(runBatchProcess);
