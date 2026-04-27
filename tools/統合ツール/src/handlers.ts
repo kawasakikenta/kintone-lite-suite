@@ -5,13 +5,14 @@ import {
   state,
   ui,
   clearReflectApplyHistory,
+  snapshotReflectApplyHistoryExport,
   pushWorkHistoryEntry,
   deleteWorkHistoryEntry,
   clearWorkHistory,
   upsertConnectionPreset,
   deleteConnectionPreset
 } from './state.js';
-import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast, kusConfirm, kusPrompt } from './utils.js';
+import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast, kusConfirm, kusPrompt, nowStamp, downloadText } from './utils.js';
 import { buildApiPrefix, apiGet } from './api.js';
 import { countActualDiffRows, getActualDiffRows, summarizeRows } from './diff/engine.js';
 import { getRenderedDiffRows } from './diff/filter.js';
@@ -2578,10 +2579,18 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
     if (act === 'clearApplyHistory') {
-      if (!kusConfirm('反映履歴を全て削除しますか？（このセッションに保存された履歴のみ）')) return;
+      if (!kusConfirm('反映履歴を全て削除しますか？（端末（localStorage）に保存された履歴のみ）')) return;
       if (typeof clearReflectApplyHistory === 'function') clearReflectApplyHistory();
       renderReflectAssistPanel();
       setStatus('反映履歴をクリアしました');
+      return;
+    }
+    if (act === 'exportApplyHistory') {
+      const snapshot = snapshotReflectApplyHistoryExport();
+      if (!snapshot.count) { setStatus('書き出し対象の反映履歴がありません', true); return; }
+      const filename = `reflect_apply_history_${nowStamp()}.json`;
+      downloadText(filename, JSON.stringify(snapshot, null, 2), 'application/json');
+      setStatus(`反映履歴を書き出しました: ${filename}（${snapshot.count}件）`);
       return;
     }
     if (act === 'applyReflectQuickPreset') {

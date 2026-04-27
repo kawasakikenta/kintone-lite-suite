@@ -1206,118 +1206,149 @@ export async function runApplyPreviewByNodes() {
   const app = c.target.appId;
   const logs: string[] = [];
   let hadError = false;
-  setStatus('反映前チェック中...');
-  const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, nodeScopes);
-  const srcModeCount = rows.filter((r) => reflectRowModeById(r._id) === 'src').length;
-  const tgtModeCount = rows.length - srcModeCount;
-  logs.push(`比較先アプリ: ${app}`);
-  logs.push(`ノードモード選択数: ${rows.length}`);
-  logs.push(`モード内訳: 比較元 ${srcModeCount} / 比較先 ${tgtModeCount}`);
-  logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
-  if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
-  if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
-  if (ui.autoBackupPreview?.checked) {
-    const backupScopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
-    const backup = await backupTargetPreviewSettings(c, backupScopes, { silentStatus: true });
-    logs.push(`バックアップ保存: ${backup.filename}`);
-  }
-  logs.push('');
-
+  let backupFilename = '';
   const bySection: Record<string, any[]> = {};
   for (const row of rows) {
     if (!row.sectionKey) continue;
     if (!bySection[row.sectionKey]) bySection[row.sectionKey] = [];
     bySection[row.sectionKey].push(row);
   }
-
   const sectionKeys = Object.keys(bySection);
-  const sectionResults: any[] = [];
-  for (let i = 0; i < sectionKeys.length; i++) {
-    const secKey = sectionKeys[i];
-    const def = SECTION_DEFS.find((d) => d.key === secKey);
-    if (!def || !def.put) {
-      logs.push(`SKIP ${def?.label || secKey}: PUT非対応`);
-      recordSectionResult(sectionResults, secKey, def?.label || secKey, 'skipped', 'PUT非対応');
+  const progress = startProgress('反映前チェック中...', sectionKeys.length);
+  setStatus('反映前チェック中...');
+  try {
+    const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, nodeScopes);
+    const srcModeCount = rows.filter((r) => reflectRowModeById(r._id) === 'src').length;
+    const tgtModeCount = rows.length - srcModeCount;
+    logs.push(`比較先アプリ: ${app}`);
+    logs.push(`ノードモード選択数: ${rows.length}`);
+    logs.push(`モード内訳: 比較元採用 ${srcModeCount} / 比較先維持 ${tgtModeCount}`);
+    logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+    if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
+    if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
+    if (ui.autoBackupPreview?.checked) {
+      progress.setLabel('バックアップ保存中...');
+      const backupScopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
+      const backup = await backupTargetPreviewSettings(c, backupScopes, { silentStatus: true });
+      logs.push(`バックアップ保存: ${backup.filename}`);
+      backupFilename = backup.filename || '';
+    }
+    logs.push('');
+
+    progress.setLabel('差分選択モードで反映中...');
+    const sectionResults: any[] = [];
+    for (let i = 0; i < sectionKeys.length; i++) {
+      const secKey = sectionKeys[i];
+      const def = SECTION_DEFS.find((d) => d.key === secKey);
+      progress.setProgress(i, sectionKeys.length);
+      if (!def || !def.put) {
+        logs.push(`SKIP ${def?.label || secKey}: PUT非対応`);
+        recordSectionResult(sectionResults, secKey, def?.label || secKey, 'skipped', 'PUT非対応');
+        renderProgressLog(logs, { phase: 'ノード反映実行中', current: i, total: sectionKeys.length });
+        continue;
+      }
+
+      setStatus(`ノード反映中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
+      progress.setLabel(`反映中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
       renderProgressLog(logs, { phase: 'ノード反映実行中', current: i, total: sectionKeys.length });
-      continue;
-    }
+      try {
+        const current = normalize(await apiGet(prefix, def.endpoint, { app }));
+        const before = deepClone(current);
+        let patched = deepClone(current);
+        const rowsInSection = sortRowsForPatch(bySection[secKey], secKey);
+        let appliedCount = 0;
 
-    setStatus(`ノード反映中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
-    renderProgressLog(logs, { phase: 'ノード反映実行中', current: i, total: sectionKeys.length });
-    try {
-      const current = normalize(await apiGet(prefix, def.endpoint, { app }));
-      const before = deepClone(current);
-      let patched = deepClone(current);
-      const rowsInSection = sortRowsForPatch(bySection[secKey], secKey);
-      let appliedCount = 0;
+        for (const row of rowsInSection) {
+          const r = applyDiffRowToSection(patched, row, secKey);
+          patched = r.section;
+          if (r.applied) appliedCount += 1;
+        }
 
-      for (const row of rowsInSection) {
-        const r = applyDiffRowToSection(patched, row, secKey);
-        patched = r.section;
-        if (r.applied) appliedCount += 1;
-      }
-
-      if (secKey === 'fieldSettings') {
-        const beforeProps = before.properties || before || ({} as any);
-        const afterProps = patched.properties || patched || ({} as any);
-        const sourceModeCodes = new Set<string>(
-          rowsInSection
-            .filter((row) => reflectRowModeById(row._id) === 'src')
-            .map(extractFieldCodeFromRowPath)
-            .filter((code): code is string => !!code)
-        );
-        await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
-        logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-      } else if (secKey === 'viewSettings') {
-        const beforeViews = before.views || before || ({} as any);
-        const afterViews = patched.views || patched || ({} as any);
-        await applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError);
-        logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-      } else if (secKey === 'reportSettings') {
-        const beforeReports = before.reports || before || ({} as any);
-        const afterReports = patched.reports || patched || ({} as any);
-        await applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError);
-        logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-      } else if (secKey === 'actionSettings') {
-        const beforeActions = before.actions || before || ({} as any);
-        const afterActions = patched.actions || patched || ({} as any);
-        await applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError);
-        logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-      } else {
-        const reqs = [{ method: 'PUT', path: def.endpoint, body: { app, ...((def.putBuilder as any)?.(patched) || {}) }, note: `${def.label} put` }];
-        appendRequestPlanLogs(logs, { requests: reqs });
-        await executeRequestPlan(prefix, reqs, logs, stopOnError);
-        logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-      }
-      recordSectionResult(sectionResults, secKey, def.label, 'ok', `${appliedCount}/${rowsInSection.length}`);
-    } catch (e) {
-      hadError = true;
-      const msg = e.message || String(e);
-      logs.push(`NG ${def.label}: ${msg}`);
-      recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
-      if (stopOnError) {
-        logs.push('中断: エラーが発生したため処理を停止しました');
-        break;
+        if (secKey === 'fieldSettings') {
+          const beforeProps = before.properties || before || ({} as any);
+          const afterProps = patched.properties || patched || ({} as any);
+          const sourceModeCodes = new Set<string>(
+            rowsInSection
+              .filter((row) => reflectRowModeById(row._id) === 'src')
+              .map(extractFieldCodeFromRowPath)
+              .filter((code): code is string => !!code)
+          );
+          await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
+          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
+        } else if (secKey === 'viewSettings') {
+          const beforeViews = before.views || before || ({} as any);
+          const afterViews = patched.views || patched || ({} as any);
+          await applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError);
+          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
+        } else if (secKey === 'reportSettings') {
+          const beforeReports = before.reports || before || ({} as any);
+          const afterReports = patched.reports || patched || ({} as any);
+          await applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError);
+          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
+        } else if (secKey === 'actionSettings') {
+          const beforeActions = before.actions || before || ({} as any);
+          const afterActions = patched.actions || patched || ({} as any);
+          await applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError);
+          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
+        } else {
+          const reqs = [{ method: 'PUT', path: def.endpoint, body: { app, ...((def.putBuilder as any)?.(patched) || {}) }, note: `${def.label} put` }];
+          appendRequestPlanLogs(logs, { requests: reqs });
+          await executeRequestPlan(prefix, reqs, logs, stopOnError);
+          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
+        }
+        recordSectionResult(sectionResults, secKey, def.label, 'ok', `${appliedCount}/${rowsInSection.length}`);
+      } catch (e) {
+        hadError = true;
+        const msg = e.message || String(e);
+        logs.push(`NG ${def.label}: ${msg}`);
+        recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
+        if (stopOnError) {
+          logs.push('中断: エラーが発生したため処理を停止しました');
+          break;
+        }
       }
     }
+
+    progress.setProgress(sectionKeys.length, sectionKeys.length);
+    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: sectionKeys, logs });
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: 'ノード反映完了' });
+    commitApplyReport({
+      mode: 'nodes',
+      appId: app,
+      scopes: sectionKeys,
+      sectionResults,
+      hadError,
+      sourceAppId: c.source.appId,
+      sourceGuestId: c.source.guestId,
+      targetGuestId: c.target.guestId
+    });
+    renderReflectAssistPanel();
+    renderReflectMainPanel();
+    setStatus(hadError ? 'ノード反映処理完了（一部エラーあり）' : 'ノード反映処理完了');
+    progress.finish({
+      title: hadError ? 'ノード反映 完了（一部エラー）' : 'ノード反映 完了',
+      hasError: hadError,
+      metrics: [
+        { label: '比較先アプリ', value: `#${app}` },
+        { label: '反映ノード数', value: `${rows.length}件（比較元採用 ${srcModeCount} / 比較先維持 ${tgtModeCount}）` },
+        { label: '対象セクション', value: `${sectionKeys.length}件` },
+        { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
+      ],
+      hint: backupFilename
+        ? `バックアップ保存先: ${backupFilename}\n本番デプロイは kintone 管理画面から手動で実施してください。`
+        : '本番デプロイは kintone 管理画面から手動で実施してください。'
+    });
+  } catch (err) {
+    progress.cancel();
+    const host = ui.result || ui.status;
+    if (host) {
+      const div = (host.ownerDocument || document).createElement('div');
+      div.innerHTML = renderHumanizedError(err, 'ノード反映');
+      host.appendChild(div);
+    }
+    throw err;
   }
-
-  await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: sectionKeys, logs });
-  appendProgressSummary(logs);
-  renderProgressLog(logs, { phase: 'ノード反映完了' });
-  commitApplyReport({
-    mode: 'nodes',
-    appId: app,
-    scopes: sectionKeys,
-    sectionResults,
-    hadError,
-    sourceAppId: c.source.appId,
-    sourceGuestId: c.source.guestId,
-    targetGuestId: c.target.guestId
-  });
-  renderReflectAssistPanel();
-  renderReflectMainPanel();
-  setStatus('ノード反映処理完了');
 }
 
 export async function runApplyPreview() {
@@ -1466,42 +1497,81 @@ export async function runRestoreTargetPreviewBackup() {
     return;
   }
 
+  if (!(await confirmApplyRiskGuard('section', c, { diffSummary: { total: 0, high: 1, medium: 0, low: 0 }, requestCount: 0, scopeLabels: scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k) }))) {
+    setStatus('バックアップ復元をキャンセルしました（安全確認）');
+    return;
+  }
+  bumpSessionMetric('applyRun');
+
   const prefix = buildApiPrefix(c.target.guestId, true);
   const app = c.target.appId;
   const stopOnError = !!ui.stopOnError?.checked;
   const logs: string[] = [];
-  logs.push(`比較先アプリ: ${app}`);
-  logs.push(`復元元バックアップ: ${restoreFilename}`);
-  logs.push(`復元セクション: ${labels || '-'}`);
-  logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
-  if (ui.autoBackupPreview?.checked) {
-    const beforeRestoreBackup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
-    logs.push(`復元前バックアップ保存: ${beforeRestoreBackup.filename}`);
+  let beforeRestoreFilename = '';
+  let hadError = false;
+  const progress = startProgress('バックアップ復元の準備中...', scopes.length);
+  try {
+    logs.push(`比較先アプリ: ${app}`);
+    logs.push(`復元元バックアップ: ${restoreFilename}`);
+    logs.push(`復元セクション: ${labels || '-'}`);
+    logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+    if (ui.autoBackupPreview?.checked) {
+      progress.setLabel('復元前のバックアップ保存中...');
+      const beforeRestoreBackup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
+      logs.push(`復元前バックアップ保存: ${beforeRestoreBackup.filename}`);
+      beforeRestoreFilename = beforeRestoreBackup.filename || '';
+    }
+    logs.push('');
+
+    progress.setLabel('バックアップから復元中...');
+    const sectionResults: any[] = [];
+    hadError = await applySectionsLoop(prefix, app, backupBundle, scopes, logs, {}, stopOnError, {
+      phaseLabel: 'バックアップ復元',
+      onProgress: (i, total) => {
+        renderProgressLog(logs, { phase: 'バックアップ復元中', current: i, total });
+        progress.setProgress(i, total);
+      },
+      sectionResults
+    });
+
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: 'バックアップ復元完了' });
+    commitApplyReport({
+      mode: 'restore',
+      appId: app,
+      scopes,
+      sectionResults,
+      hadError,
+      sourceAppId: c.source?.appId,
+      sourceGuestId: c.source?.guestId,
+      targetGuestId: c.target?.guestId
+    });
+    renderReflectAssistPanel();
+    renderReflectMainPanel();
+    setStatus(hadError ? 'バックアップ復元で一部エラーが発生しました' : '直前バックアップから復元しました');
+    progress.finish({
+      title: hadError ? 'バックアップ復元 完了（一部エラー）' : 'バックアップ復元 完了',
+      hasError: hadError,
+      metrics: [
+        { label: '比較先アプリ', value: `#${app}` },
+        { label: '復元元', value: restoreFilename },
+        { label: '復元セクション', value: `${scopes.length}件` },
+        { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
+      ],
+      hint: beforeRestoreFilename
+        ? `復元前のバックアップ: ${beforeRestoreFilename}`
+        : ''
+    });
+  } catch (err) {
+    progress.cancel();
+    const host = ui.result || ui.status;
+    if (host) {
+      const div = (host.ownerDocument || document).createElement('div');
+      div.innerHTML = renderHumanizedError(err, 'バックアップ復元');
+      host.appendChild(div);
+    }
+    throw err;
   }
-  logs.push('');
-
-  const sectionResults: any[] = [];
-  const hadError = await applySectionsLoop(prefix, app, backupBundle, scopes, logs, {}, stopOnError, {
-    phaseLabel: 'バックアップ復元',
-    onProgress: (i, total) => renderProgressLog(logs, { phase: 'バックアップ復元中', current: i, total }),
-    sectionResults
-  });
-
-  appendProgressSummary(logs);
-  renderProgressLog(logs, { phase: 'バックアップ復元完了' });
-  commitApplyReport({
-    mode: 'restore',
-    appId: app,
-    scopes,
-    sectionResults,
-    hadError,
-    sourceAppId: c.source?.appId,
-    sourceGuestId: c.source?.guestId,
-    targetGuestId: c.target?.guestId
-  });
-  renderReflectAssistPanel();
-  renderReflectMainPanel();
-  setStatus(hadError ? 'バックアップ復元で一部エラーが発生しました' : '直前バックアップから復元しました');
 }
 
 export async function runDeployOnly() {
@@ -1535,6 +1605,12 @@ export async function runRetryFailedSections() {
     setStatus('失敗セクション再実行をキャンセルしました');
     return;
   }
+  const retryScopeLabels = failed.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k);
+  if (!(await confirmApplyRiskGuard('section', c, { diffSummary: { total: 0, high: 0, medium: 0, low: 0 }, requestCount: 0, scopeLabels: retryScopeLabels }))) {
+    setStatus('失敗セクション再反映をキャンセルしました（安全確認）');
+    return;
+  }
+  bumpSessionMetric('applyRun');
 
   const sourceBundle = await getSourceBundleForApply(c, failed);
   const prefix = buildApiPrefix(c.target.guestId, true);
@@ -1542,35 +1618,67 @@ export async function runRetryFailedSections() {
   const stopOnError = !!ui.stopOnError?.checked;
   const lookupMap = parseLookupMapInput(ui.lookupMap?.value || '');
   const logs: string[] = [];
-  logs.push(`比較先アプリ: ${app}`);
-  logs.push(`再反映セクション（前回NG）: ${failedLabels}`);
-  logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
-  if (ui.autoBackupPreview?.checked) {
-    const backup = await backupTargetPreviewSettings(c, failed, { silentStatus: true });
-    logs.push(`バックアップ保存: ${backup.filename}`);
-  }
-  logs.push('');
+  let backupFilename = '';
+  let hadError = false;
+  const progress = startProgress('失敗セクション再反映の準備中...', failed.length);
+  try {
+    logs.push(`比較先アプリ: ${app}`);
+    logs.push(`再反映セクション（前回NG）: ${failedLabels}`);
+    logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
+    if (ui.autoBackupPreview?.checked) {
+      progress.setLabel('バックアップ保存中...');
+      const backup = await backupTargetPreviewSettings(c, failed, { silentStatus: true });
+      logs.push(`バックアップ保存: ${backup.filename}`);
+      backupFilename = backup.filename || '';
+    }
+    logs.push('');
 
-  const sectionResults: any[] = [];
-  const hadError = await applySectionsLoop(prefix, app, sourceBundle, failed, logs, lookupMap, stopOnError, {
-    phaseLabel: '再反映',
-    onProgress: (i, total) => renderProgressLog(logs, { phase: '失敗セクション再反映中', current: i, total }),
-    sectionResults
-  });
-  await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: failed, logs });
-  appendProgressSummary(logs);
-  renderProgressLog(logs, { phase: '失敗セクション再反映完了' });
-  commitApplyReport({
-    mode: 'retry',
-    appId: app,
-    scopes: failed,
-    sectionResults,
-    hadError,
-    sourceAppId: c.source.appId,
-    sourceGuestId: c.source.guestId,
-    targetGuestId: c.target.guestId
-  });
-  renderReflectAssistPanel();
-  renderReflectMainPanel();
-  setStatus(hadError ? '失敗セクション再反映: 一部エラーあり' : '失敗セクション再反映: 完了');
+    progress.setLabel('失敗セクションを再反映中...');
+    const sectionResults: any[] = [];
+    hadError = await applySectionsLoop(prefix, app, sourceBundle, failed, logs, lookupMap, stopOnError, {
+      phaseLabel: '再反映',
+      onProgress: (i, total) => {
+        renderProgressLog(logs, { phase: '失敗セクション再反映中', current: i, total });
+        progress.setProgress(i, total);
+      },
+      sectionResults
+    });
+    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: failed, logs });
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: '失敗セクション再反映完了' });
+    commitApplyReport({
+      mode: 'retry',
+      appId: app,
+      scopes: failed,
+      sectionResults,
+      hadError,
+      sourceAppId: c.source.appId,
+      sourceGuestId: c.source.guestId,
+      targetGuestId: c.target.guestId
+    });
+    renderReflectAssistPanel();
+    renderReflectMainPanel();
+    setStatus(hadError ? '失敗セクション再反映: 一部エラーあり' : '失敗セクション再反映: 完了');
+    progress.finish({
+      title: hadError ? '失敗セクション再反映 完了（一部エラー）' : '失敗セクション再反映 完了',
+      hasError: hadError,
+      metrics: [
+        { label: '比較先アプリ', value: `#${app}` },
+        { label: '再反映セクション', value: `${failed.length}件` },
+        { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
+      ],
+      hint: backupFilename
+        ? `バックアップ保存先: ${backupFilename}`
+        : ''
+    });
+  } catch (err) {
+    progress.cancel();
+    const host = ui.result || ui.status;
+    if (host) {
+      const div = (host.ownerDocument || document).createElement('div');
+      div.innerHTML = renderHumanizedError(err, '失敗セクション再反映');
+      host.appendChild(div);
+    }
+    throw err;
+  }
 }

@@ -195,7 +195,7 @@ function sectionBreakdownForRows(rows) {
 
 function confirmBulkModeChange({ mode, scopeLabel, rows, changeCount }) {
   if (changeCount < BULK_MODE_CONFIRM_THRESHOLD) return true;
-  const modeLabel = mode === 'src' ? '比較元を採用' : '比較先を残す';
+  const modeLabel = mode === 'src' ? '比較元を採用' : '比較先を維持（反映しない）';
   const breakdown = sectionBreakdownForRows(rows).slice(0, 8).join('\n  - ');
   const msg = `【一括モード変更の確認】\n\n対象: ${scopeLabel}（${rows.length}件 / 変更予定 ${changeCount}件）\n操作: ${modeLabel}\n\n影響セクション:\n  - ${breakdown}\n\nこの操作はUndo（元に戻す）で取り消せます。実行しますか？`;
   return kusConfirm(msg);
