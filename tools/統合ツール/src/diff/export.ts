@@ -2925,16 +2925,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return 'same';
   }
 
-  function describeLayoutChange(row) {
-    const rel = relativePathLabel(row);
-    if (!rel || rel === '（セクション全体）') return 'レイアウト全体';
-    const compact = rel
-      .replace(/^layout\\[\\d+\\]\\.fields\\[\\d+\\]\\.?/, '')
-      .replace(/^layout\\[\\d+\\]\\.?/, '')
-      .replace(/\\.fields\\[\\d+\\]\\.?/, '.');
-    return compact || '配置設定';
-  }
-
   function collectAllFieldCodes() {
     const codes = new Set([...Object.keys(FLAT_FIELD_PROPS_SRC || ({})), ...Object.keys(FLAT_FIELD_PROPS_TGT || ({}))]);
     REPORT_ROWS.forEach((row) => {
@@ -3261,7 +3251,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const modelForView = { groupMap: new Map(groups.map((group) => [group.code, group])) };
     root.innerHTML = '<div class="sl-board">' +
       '<div class="sl-legend" role="note">' +
-        '<span><strong>フィールド単位</strong>で、設定差分とレイアウト差分を同じ項目にまとめて確認できます。</span>' +
+        '<span><strong>フィールド単位</strong>で、フィールドごとの設定差分をまとめて確認できます。</span>' +
         '<span><i class="sl-dot sl-dot--src"></i> 比較元のみ</span>' +
         '<span><i class="sl-dot sl-dot--tgt"></i> 比較先のみ</span>' +
         '<span><i class="sl-dot sl-dot--chg"></i> 差分あり</span>' +
@@ -3302,151 +3292,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       });
     }
     bindFieldSelectionButtons(root, renderSettingsLikeView);
-    syncFieldDetailModal(modelForView, { hideSame });
-  }
-
-  function renderLayoutFieldCard(item, side, groupMap, usedCodes) {
-    const code = String(item?.code || '').trim();
-    const group = code ? groupMap.get(code) : null;
-    if (code) usedCodes.add(code);
-    const field = code ? getFieldDefinition(code, side) : null;
-    const label = String(field?.label || field?.name || item?.label || code || item?.type || '項目');
-    const type = String(field?.type || item?.type || '-');
-    const tone = group
-      ? (group.layoutDiffCount > 0 && group.status === 'unchanged' ? 'changed' : fieldStatusTone(group.status))
-      : 'same';
-    const hasDiff = !!group && group.diffCount > 0;
-    const hasLayoutDiff = !!group && group.layoutDiffCount > 0;
-    return '<article class="lp-field lp-field--' + tone + (hasLayoutDiff ? ' lp-field--layout-diff' : '') + (code && code === activeFieldCode ? ' is-active' : '') + '">' +
-      '<div class="lp-field-top">' +
-        '<strong class="lp-field-title">' + escHtml(label) + '</strong>' +
-        (group ? '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' : '') +
-      '</div>' +
-      '<div class="lp-field-meta"><code>' + escHtml(code || '-') + '</code><span>' + escHtml(type) + '</span></div>' +
-      (group ? '<div class="fc-chip-row fc-chip-row--compact">' + renderFieldSummaryChips(group, { includeLayout: true }) + '</div>' : '') +
-      (code ? '<div class="lp-field-actions"><button type="button" class="btn' + (hasDiff ? ' primary' : '') + '" data-field-select="' + escHtml(code) + '">' + escHtml(hasDiff ? '設定差分を開く' : '設定を開く') + '</button></div>' : '') +
-    '</article>';
-  }
-
-  function renderLayoutStaticItem(item) {
-    if (item?.type === 'SPACER') return '<div class="lp-static lp-static--spacer" aria-hidden="true"></div>';
-    if (item?.type === 'HR') return '<div class="lp-static lp-static--hr" aria-hidden="true"></div>';
-    return '<div class="lp-static lp-static--label">' + escHtml(item?.label || item?.text || item?.type || '要素') + '</div>';
-  }
-
-  function renderLayoutItem(item, opts) {
-    if (!item || typeof item !== 'object') return '';
-    if (item.type === 'GROUP' && Array.isArray(item.layout)) {
-      return '<section class="lp-groupbox">' +
-        '<div class="lp-groupbox-head">' + escHtml(item.label || item.code || 'グループ') + '</div>' +
-        '<div class="lp-groupbox-body">' + renderLayoutRows(item.layout, opts) + '</div>' +
-      '</section>';
-    }
-    if (item.type === 'SUBTABLE' || Array.isArray(item.fields)) {
-      const code = String(item.code || '').trim();
-      const group = code ? opts.groupMap.get(code) : null;
-      if (code) opts.usedCodes.add(code);
-      const headerField = code ? getFieldDefinition(code, opts.side) : null;
-      const label = String(headerField?.label || headerField?.name || item.label || code || 'テーブル');
-      return '<section class="lp-subtable lp-field--' + (group ? fieldStatusTone(group.status) : 'same') + '">' +
-        '<div class="lp-subtable-head">' +
-          '<strong>' + escHtml(label) + '</strong>' +
-          (code ? '<button type="button" class="btn' + (group?.diffCount ? ' primary' : '') + '" data-field-select="' + escHtml(code) + '">' + escHtml(group?.diffCount ? '設定差分を開く' : '設定を開く') + '</button>' : '') +
-        '</div>' +
-        '<div class="lp-subtable-grid">' + (Array.isArray(item.fields) && item.fields.length ? item.fields.map((child) => renderLayoutFieldCard(child, opts.side, opts.groupMap, opts.usedCodes)).join('') : '<div class="lp-empty">子フィールドがありません。</div>') + '</div>' +
-      '</section>';
-    }
-    if (item.code) return renderLayoutFieldCard(item, opts.side, opts.groupMap, opts.usedCodes);
-    return renderLayoutStaticItem(item);
-  }
-
-  function renderLayoutRows(rows, opts) {
-    const list = Array.isArray(rows) ? rows : [];
-    if (!list.length) return '<div class="lp-empty">この側のレイアウトはありません。</div>';
-    return list.map((row) => {
-      if (!row || typeof row !== 'object') return '';
-      if (row.type === 'GROUP' && Array.isArray(row.layout)) {
-        return '<section class="lp-groupbox">' +
-          '<div class="lp-groupbox-head">' + escHtml(row.label || row.code || 'グループ') + '</div>' +
-          '<div class="lp-groupbox-body">' + renderLayoutRows(row.layout, opts) + '</div>' +
-        '</section>';
-      }
-      const fields = Array.isArray(row.fields) ? row.fields : [];
-      if (!fields.length) return '';
-      return '<div class="lp-row">' + fields.map((item) => renderLayoutItem(item, opts)).join('') + '</div>';
-    }).join('');
-  }
-
-  function renderLayoutlessPane(side, groups, usedCodes) {
-    const visible = groups.filter((group) => side === 'source' ? !!group.sourceField : !!group.targetField);
-    if (!visible.length) return '<div class="lp-empty">この側に表示できるフィールドはありません。</div>';
-    return '<div class="lp-fallback-grid">' + visible.map((group) => renderLayoutFieldCard({ code: group.code, label: group.label, type: group.type }, side, new Map(groups.map((item) => [item.code, item])), usedCodes)).join('') + '</div>';
-  }
-
-  function renderLayoutPane(side, groups) {
-    const sideLabel = side === 'source' ? '比較元レイアウト' : '比較先レイアウト';
-    const rows = side === 'source' ? LAYOUT_ROWS_SRC : LAYOUT_ROWS_TGT;
-    const usedCodes = new Set();
-    const groupMap = new Map(groups.map((group) => [group.code, group]));
-    const body = rows.length ? renderLayoutRows(rows, { side, groupMap, usedCodes }) : renderLayoutlessPane(side, groups, usedCodes);
-    const leftovers = groups.filter((group) => {
-      if (usedCodes.has(group.code)) return false;
-      return side === 'source' ? !!group.sourceField : !!group.targetField;
-    });
-    return '<section class="lp-pane">' +
-      '<div class="lp-pane-head">' + escHtml(sideLabel) + '</div>' +
-      '<div class="lp-pane-body">' +
-        body +
-        (leftovers.length ? '<div class="lp-leftovers"><div class="lp-pane-sub">レイアウト外 / 非表示</div><div class="lp-fallback-grid">' + leftovers.map((group) => renderLayoutFieldCard({ code: group.code, label: group.label, type: group.type }, side, groupMap, usedCodes)).join('') + '</div></div>' : '') +
-      '</div>' +
-    '</section>';
-  }
-
-  function renderFormPreview() {
-    const root = document.getElementById('formPreviewRoot');
-    if (!root) return;
-    const hideSame = !!(document.getElementById('hideSame')).checked;
-    const keyword = String((document.getElementById('search')).value || '').trim().toLowerCase();
-    const nav = document.getElementById('nav');
-    if (nav) nav.innerHTML = '';
-    const model = buildFieldReviewModel();
-    const groups = model.groups.filter((group) => {
-      if (hideSame && group.status === 'unchanged') return false;
-      if (!fieldGroupMatchesKeyword(group, keyword)) return false;
-      return true;
-    });
-    updateStatsFromFieldGroups(groups);
-    if (!groups.length) {
-      closeFieldDetailModal();
-      root.innerHTML = '<div class="no-diff">表示対象のフィールドがありません。検索条件か「同一項目を隠す」を見直してください。</div>';
-      return;
-    }
-    ensureActiveFieldCode(groups, { preserveMissing: detailModalOpen });
-    const modelForView = { groupMap: new Map(groups.map((group) => [group.code, group])) };
-    root.innerHTML = '<div class="lp-shell">' +
-      '<div class="sl-legend" role="note">' +
-        '<span><strong>レイアウト比較</strong>で左右の配置を見比べつつ、差分がある項目は「設定差分」から詳細を確認できます。</span>' +
-        '<span><i class="sl-dot sl-dot--chg"></i> ボタン付きカードは設定差分あり</span>' +
-        '<span>「設定差分を開く」でポップアップ表示</span>' +
-      '</div>' +
-      '<div class="lp-main">' +
-        renderLayoutPane('source', groups) +
-        renderLayoutPane('target', groups) +
-      '</div>' +
-    '</div>';
-    if (nav) {
-      groups.forEach((group) => {
-        const navItem = document.createElement('div');
-        navItem.className = 'nav-item' + (group.code === activeFieldCode ? ' active' : '');
-        navItem.innerHTML = '<span>' + escHtml(group.code) + '</span><span class="badge">' + String(group.diffCount || 0) + '</span>';
-        navItem.onclick = () => {
-          activeFieldCode = group.code;
-          renderFormPreview();
-        };
-        nav.appendChild(navItem);
-      });
-    }
-    bindFieldSelectionButtons(root, renderFormPreview);
     syncFieldDetailModal(modelForView, { hideSame });
   }
 
@@ -3615,76 +3460,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     root.innerHTML = html;
   }
 
-  // ---------------------------------------------------------------------------
-  // フォームプレビュー（プレビュー反映エディター風）
-  // ---------------------------------------------------------------------------
-
-  function fpFieldPreview(field) {
-    if (!field) return '<div class="fp-preview-body muted">なし</div>';
-    const label = field.label || field.code || '-';
-    const code = field.code || '-';
-    const type = field.type || '-';
-    return '<div class="fp-preview-body">' +
-      '<div class="fp-title">' + escHtml(label) + '</div>' +
-      '<div class="fp-meta"><span>code: <code>' + escHtml(code) + '</code></span><span>type: ' + escHtml(type) + '</span>' + (field.required ? '<span class="fp-req-chip">必須</span>' : '') + '</div>' +
-      '</div>';
-  }
-
-  function computeFieldDiff(before, after) {
-    const keys = new Set([...Object.keys(before || ({})), ...Object.keys(after || ({}))]);
-    const rows = [];
-    for (const code of keys) {
-      const bf = (before || ({}))[code];
-      const af = (after || ({}))[code];
-      if (!bf && af) rows.push({ code, status: 'added', before: null, after: af });
-      else if (bf && !af) rows.push({ code, status: 'removed', before: bf, after: null });
-      else {
-        let same = true;
-        try { same = JSON.stringify(bf) === JSON.stringify(af); } catch (e) {}
-        rows.push({ code, status: same ? 'unchanged' : 'modified', before: bf, after: af });
-      }
-    }
-    const order = { added: 0, removed: 1, modified: 2, unchanged: 3 };
-    rows.sort((a, b) => (order[a.status] || 0) - (order[b.status] || 0));
-    return rows;
-  }
-
-  function renderFormPreviewLegacy() {
-    const root = document.getElementById('formPreviewRoot');
-    if (!root) return;
-    const srcKeys = Object.keys(FIELD_PROPS_SRC || ({}));
-    const tgtKeys = Object.keys(FIELD_PROPS_TGT || ({}));
-    if (!srcKeys.length && !tgtKeys.length) {
-      root.innerHTML = '<div class="no-diff">フィールド設定データがありません。比較対象セクションに「フィールド設定」を含めてHTML出力してください。</div>';
-      return;
-    }
-    const hideSame = !!(document.getElementById('hideSame')).checked;
-    const keyword = String((document.getElementById('search')).value || '').trim().toLowerCase();
-    let diff = computeFieldDiff(FIELD_PROPS_SRC, FIELD_PROPS_TGT);
-    if (hideSame) diff = diff.filter((r) => r.status !== 'unchanged');
-    if (keyword) {
-      diff = diff.filter((r) => {
-        const text = [r.code, (r.before && r.before.label) || '', (r.after && r.after.label) || ''].join(' ').toLowerCase();
-        return text.includes(keyword);
-      });
-    }
-    if (!diff.length) {
-      root.innerHTML = '<div class="no-diff">表示対象のフィールドがありません。</div>';
-      return;
-    }
-    let html = '<div class="fp-view">';
-    for (const row of diff) {
-      const displayLabel = row.after?.label || row.before?.label || row.code;
-      const typeKey = row.status === 'unchanged' ? 'same' : (row.status === 'modified' ? 'changed' : row.status);
-      html += '<article class="fp-card fp-' + row.status + '">' +
-        '<header class="fp-card-head"><span class="fp-badge">' + escHtml(diffTypeLabel(typeKey, false)) + '</span><strong>' + escHtml(displayLabel) + '</strong><code>' + escHtml(row.code) + '</code></header>' +
-        '<div class="fp-preview-grid"><div><div class="fp-preview-head">比較元</div>' + fpFieldPreview(row.before) + '</div><div><div class="fp-preview-head">比較先</div>' + fpFieldPreview(row.after) + '</div></div>' +
-      '</article>';
-    }
-    html += '</div>';
-    root.innerHTML = html;
-  }
-
   function updateStats(rows) {
     let added = 0;
     let removed = 0;
@@ -3709,7 +3484,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   }
 
   function setActiveTab(tabName) {
-    const nextTab = tabName || 'summary';
+    const KNOWN_TABS = ['summary', 'diff', 'settingsLike', 'compare'];
+    const nextTab = KNOWN_TABS.indexOf(tabName) >= 0 ? tabName : 'summary';
     document.querySelectorAll('[data-report-tab]').forEach((btn) => {
       const active = btn.getAttribute('data-report-tab') === nextTab;
       btn.classList.toggle('passive', !active);
@@ -3719,11 +3495,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       pane.hidden = pane.getAttribute('data-report-pane') !== nextTab;
     });
     const navWrap = document.getElementById('navWrap');
-    if (navWrap) navWrap.hidden = (nextTab !== 'diff' && nextTab !== 'settingsLike' && nextTab !== 'formPreview');
-    if (nextTab !== 'settingsLike' && nextTab !== 'formPreview') closeFieldDetailModal();
+    if (navWrap) navWrap.hidden = (nextTab !== 'diff' && nextTab !== 'settingsLike');
+    if (nextTab !== 'settingsLike') closeFieldDetailModal();
     safeStorageSet(ACTIVE_TAB_KEY, nextTab);
     if (nextTab === 'settingsLike') renderSettingsLikeView();
-    else if (nextTab === 'formPreview') renderFormPreview();
     else if (nextTab === 'diff') render();
     else {
       const hideSame = !!(document.getElementById('hideSame')).checked;
@@ -3739,7 +3514,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   function onReportFilterChange() {
     render();
     if (getActiveReportTab() === 'settingsLike') renderSettingsLikeView();
-    else if (getActiveReportTab() === 'formPreview') renderFormPreview();
   }
 
   function render() {
@@ -3832,7 +3606,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     safeStorageSet(THEME_KEY, document.body.classList.contains('dark') ? 'dark' : 'light');
     syncThemeButtonLabel();
     if (getActiveReportTab() === 'settingsLike') renderSettingsLikeView();
-    else if (getActiveReportTab() === 'formPreview') renderFormPreview();
   }
 
   function collapseAll() {
@@ -3887,7 +3660,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     URL.revokeObjectURL(a.href);
   }
 
-  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, exportPatch, setActiveTab, renderFormPreview };
+  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, exportPatch, setActiveTab };
 
   document.getElementById('hideSame').onchange = onReportFilterChange;
   document.getElementById('charDiff').onchange = onReportFilterChange;
@@ -3930,7 +3703,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   setActiveTab(safeStorageGet(ACTIVE_TAB_KEY) || 'summary');
   render();
   if (getActiveReportTab() === 'settingsLike') renderSettingsLikeView();
-  else if (getActiveReportTab() === 'formPreview') renderFormPreview();
 })();
 `;
 
@@ -4278,25 +4050,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .app-compare,.info-grid,.compare-grid{grid-template-columns:1fr}
       .header-actions{justify-content:flex-start}
     }
-    /* Form Preview (preview editor-like) */
-    .fp-root{padding:16px 18px 28px;background:var(--card-soft);min-height:320px}
-    .fp-view{display:flex;flex-direction:column;gap:10px}
-    .fp-card{border:1px solid var(--border);border-radius:10px;background:var(--card);overflow:hidden}
-    .fp-card-head{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--card-soft)}
-    .fp-card-head strong{font-size:14px;line-height:1.35}
-    .fp-card-head code{font-size:11px;color:var(--muted);background:var(--border);padding:2px 8px;border-radius:999px}
-    .fp-badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;color:#fff}
-    .fp-added .fp-badge{background:#0d9488}
-    .fp-removed .fp-badge{background:#dc2626}
-    .fp-modified .fp-badge{background:#d97706}
-    .fp-unchanged .fp-badge{background:#64748b}
-    .fp-preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 12px 12px}
-    .fp-preview-head{font-size:11px;font-weight:700;color:var(--muted);background:var(--border);border:1px solid var(--border);border-radius:8px 8px 0 0;padding:6px 10px}
-    .fp-preview-body{font-size:13px;line-height:1.5;color:var(--fg);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;padding:10px 12px;min-height:44px;background:var(--card)}
-    .fp-title{font-weight:700}
-    .fp-meta{margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
-    .fp-req-chip{display:inline-block;background:#dc2626;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px}
-    @media (max-width:900px){.fp-preview-grid{grid-template-columns:1fr}}
     .nav-item.active{background:var(--card);border-color:var(--accent-soft);box-shadow:var(--shadow)}
     .fc-shell{display:flex;flex-direction:column;gap:16px}
     .fc-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
@@ -4401,38 +4154,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .kf-extra{display:flex;flex-direction:column;gap:10px}
     .kf-extra-title{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
     .kf-extra-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-    .lp-shell{display:flex;flex-direction:column;gap:16px}
-    .lp-main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
-    .lp-pane{border:1px solid var(--border);border-radius:18px;background:var(--card);box-shadow:var(--shadow);overflow:hidden}
-    .lp-pane-head{padding:14px 16px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card-soft) 0%,var(--card) 100%);font-size:13px;font-weight:800;color:var(--fg)}
-    .lp-pane-body{padding:14px;display:flex;flex-direction:column;gap:14px}
-    .lp-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-    .lp-groupbox,.lp-subtable,.lp-leftovers{border:1px solid var(--border);border-radius:14px;background:var(--card-soft);padding:12px}
-    .lp-groupbox-head,.lp-subtable-head,.lp-pane-sub{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;font-size:12px;font-weight:800;color:var(--fg)}
-    .lp-groupbox-body{display:flex;flex-direction:column;gap:10px}
-    .lp-field{border:1px solid var(--border);border-radius:12px;padding:11px 12px;background:var(--card);display:flex;flex-direction:column;gap:8px;min-width:0}
-    .lp-field.is-active{border-color:var(--accent);box-shadow:0 0 0 1px rgba(37,99,235,.18)}
-    .lp-field--added{background:rgba(22,163,74,.06)}
-    .lp-field--removed{background:rgba(220,38,38,.06)}
-    .lp-field--changed{background:rgba(202,138,4,.08)}
-    .lp-field--layout-diff{box-shadow:inset 0 0 0 2px rgba(217,119,6,.28)}
-    .lp-field-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
-    .lp-field-title{font-size:13px;line-height:1.45;color:var(--fg)}
-    .lp-field-meta{display:flex;flex-wrap:wrap;gap:8px 10px;font-size:10px;color:var(--muted)}
-    .lp-field-meta code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-    .lp-field-actions{margin-top:auto}
-    .lp-static{min-height:58px;border:1px dashed var(--border);border-radius:12px;background:var(--card-soft);display:flex;align-items:center;justify-content:center;padding:10px;font-size:11px;color:var(--muted);text-align:center}
-    .lp-static--hr{min-height:16px}
-    .lp-static--spacer{background:transparent}
-    .lp-subtable-grid,.lp-fallback-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-    @media (max-width:1280px){
-      .lp-main{grid-template-columns:1fr}
-    }
     @media (max-width:900px){
       .fd-overlay{padding:12px}
       .fd-overlay-head,.kf-modal-head{flex-direction:column;align-items:flex-start}
       .fd-overlay-actions{width:100%;justify-content:space-between}
-      .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid,.lp-row,.lp-subtable-grid,.lp-fallback-grid,.diff-pane-grid{grid-template-columns:1fr}
+      .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid,.diff-pane-grid{grid-template-columns:1fr}
       .diff-card-head{grid-template-columns:1fr}
     }
     @media print{
@@ -4487,9 +4213,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   <main>
     <div class="topbar">
       <div class="topbar-main">
-        <div class="sb-kicker">Field / Layout Diff Review</div>
-        <div class="topbar-title">フィールド単位とレイアウト上で、設定差分を行き来しながらレビュー</div>
-        <div class="topbar-desc">フィールドごとの差分を1項目ずつ整理しつつ、レイアウト比較では差分があるフィールドの「設定差分を開く」からポップアップ表示できます。値の差分一覧とフォーム配置の両方を、一覧領域を広く使いながら確認できます。</div>
+        <div class="sb-kicker">Field Diff Review</div>
+        <div class="topbar-title">フィールド単位で、設定差分をまとめてレビュー</div>
+        <div class="topbar-desc">フィールドごとの差分を1項目ずつ整理し、「設定差分を開く」からポップアップで詳細を確認できます。値の差分一覧と合わせて、一覧領域を広く使いながら確認できます。</div>
       </div>
       <div class="header-actions">
         <span class="header-badge">セクション ${esc(String((scopes || []).length || 0))}</span>
@@ -4503,7 +4229,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <button type="button" role="tab" class="settings-tab" data-report-tab="summary" aria-selected="true">サマリー</button>
         <button type="button" role="tab" class="settings-tab passive" data-report-tab="diff" aria-selected="false">差分一覧</button>
         <button type="button" role="tab" class="settings-tab passive" data-report-tab="settingsLike" aria-selected="false">フィールド単位</button>
-        <button type="button" role="tab" class="settings-tab passive" data-report-tab="formPreview" aria-selected="false">レイアウト比較</button>
         <button type="button" role="tab" class="settings-tab passive" data-report-tab="compare" aria-selected="false">比較対象設定</button>
       </div>
 
@@ -4585,15 +4310,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
       <section class="tab-pane" data-report-pane="settingsLike" hidden>
         <div class="content" style="padding:0">
-          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6"><strong>フィールド単位</strong>で、設定差分・レイアウト差分・影響範囲を1つの項目にまとめて確認します。左の検索と「同一項目を隠す」が連動し、カードのボタンから詳細をポップアップ表示できます。</p>
+          <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6"><strong>フィールド単位</strong>で、フィールドごとの設定差分と影響範囲を1つの項目にまとめて確認します。左の検索と「同一項目を隠す」が連動し、カードのボタンから詳細をポップアップ表示できます。</p>
           <div id="settingsLikeRoot" class="sl-root"></div>
-        </div>
-      </section>
-
-      <section class="tab-pane" data-report-pane="formPreview" hidden>
-        <div class="content" style="padding:0">
-          <p style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6;color:var(--muted)"><strong>レイアウト比較</strong>では、比較元 / 比較先の配置を並べて確認します。差分があるフィールドはカード内の「設定差分を開く」から詳細をポップアップ表示できます。左の検索と「同一項目を隠す」も連動します。</p>
-          <div id="formPreviewRoot" class="fp-root"></div>
         </div>
       </section>
 
