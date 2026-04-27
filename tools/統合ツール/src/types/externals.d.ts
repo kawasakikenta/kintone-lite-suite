@@ -1,7 +1,6 @@
 declare global {
   interface Window {
     JSZip?: unknown;
-    alasql?: unknown;
     cytoscape?: unknown;
     dagre?: unknown;
     JSONEditor?: unknown;

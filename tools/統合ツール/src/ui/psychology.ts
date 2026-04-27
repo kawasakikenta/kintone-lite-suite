@@ -336,7 +336,6 @@ type SessionMetricKey =
   | 'applyError'
   | 'recordDelete'
   | 'designExport'
-  | 'sqlRun'
   | 'apiTesterRun';
 
 const sessionMetrics: Record<SessionMetricKey, number> = {
@@ -346,7 +345,6 @@ const sessionMetrics: Record<SessionMetricKey, number> = {
   applyError: 0,
   recordDelete: 0,
   designExport: 0,
-  sqlRun: 0,
   apiTesterRun: 0
 };
 
@@ -357,7 +355,6 @@ const METRIC_LABELS: Record<SessionMetricKey, string> = {
   applyError: '反映エラー',
   recordDelete: 'レコード削除',
   designExport: '設計書出力',
-  sqlRun: 'SQL実行',
   apiTesterRun: 'APIテスター実行'
 };
 

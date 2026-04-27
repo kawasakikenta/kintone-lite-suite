@@ -48,7 +48,6 @@ import {
   renderCustomizeResult
 } from './tabs/jsconfig.js';
 import { runRenderProcessFlow, runSimStart, runSimExecuteAction } from './tabs/process.js';
-import { launchKintoneSql } from './tabs/sql.js';
 import {
   runBatchProcess,
   runBatchFileDownload,
@@ -324,7 +323,6 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     runExportJsConfig,
     runApplyJsConfig,
     runRenderProcessFlow,
-    launchKintoneSql,
     runGenerateERDiagram,
     runExportERDiagramHtml,
     runBatchProcess,

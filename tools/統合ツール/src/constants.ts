@@ -18,14 +18,6 @@ export const EXTERNAL_LIBRARIES: Readonly<Record<string, Readonly<ExternalLibrar
     version: '3.10.1',
     cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
   }),
-  alasql: Object.freeze({
-    version: '4',
-    cdnCandidates: Object.freeze([
-      'https://cdn.jsdelivr.net/npm/alasql@4/dist/alasql.min.js',
-      'https://unpkg.com/alasql@4/dist/alasql.min.js',
-      'https://cdn.jsdelivr.net/npm/alasql@4'
-    ])
-  }),
   cytoscape: Object.freeze({
     version: '3.28.1',
     cdnUrl: 'https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js',
@@ -155,7 +147,6 @@ export const TAB_CONNECTION_NEEDS: Record<string, TabConnectionNeed> = {
   recordMgr:      { appInputs: true,  target: true,  connectionActions: false },
   er:             { appInputs: true,  target: false, connectionActions: false },
   processFlow:    { appInputs: true,  target: false, connectionActions: false },
-  sql:            { appInputs: true,  target: false, connectionActions: false },
   apiTester:      { appInputs: false, target: false, connectionActions: false },
   settingsExport: { appInputs: false, target: false, connectionActions: false },
   analyze:        { appInputs: true,  target: true,  connectionActions: false }

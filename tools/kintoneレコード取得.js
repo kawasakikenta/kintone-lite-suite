@@ -31,7 +31,6 @@
         design: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
         settingsExport: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
         recordMgr: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v8c0 1.7 3.6 3 8 3s8-1.3 8-3v-8"/></svg>',
-        sql: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h10"/><path d="M4 19h7"/><path d="M17 15l3 4 3-4"/></svg>',
         apiTester: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 1 0-1.1 1.6L5 19l-2 2"/><path d="M15 7h6"/><path d="M18 4v6"/></svg>',
         analyze: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>'
       });
@@ -197,23 +196,6 @@
           badge: { tone: "caution", label: "要注意", icon: "!" }
         },
         {
-          key: "sql",
-          group: "data",
-          groupLabel: "データ・保守",
-          icon: ICONS.sql,
-          label: "SQL実行",
-          desc: "kintoneデータをSQLライクに参照します。",
-          tabs: ["sql"],
-          tab: "sql",
-          focusSelector: '[data-act="launchKintoneSql"]',
-          priority: "low",
-          riskLevel: "warning",
-          recommendedFor: ["調査", "データ確認"],
-          usageOrder: 10,
-          onboardingOrder: 10,
-          badge: { tone: "caution", label: "要注意", icon: "!" }
-        },
-        {
           key: "apiTester",
           group: "data",
           groupLabel: "データ・保守",
@@ -226,8 +208,8 @@
           priority: "low",
           riskLevel: "warning",
           recommendedFor: ["調査", "レスポンス確認"],
-          usageOrder: 11,
-          onboardingOrder: 11,
+          usageOrder: 10,
+          onboardingOrder: 10,
           badge: { tone: "caution", label: "上級者向け", icon: "!" }
         },
         {
@@ -276,14 +258,6 @@
         jszip: Object.freeze({
           version: "3.10.1",
           cdnUrl: "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
-        }),
-        alasql: Object.freeze({
-          version: "4",
-          cdnCandidates: Object.freeze([
-            "https://cdn.jsdelivr.net/npm/alasql@4/dist/alasql.min.js",
-            "https://unpkg.com/alasql@4/dist/alasql.min.js",
-            "https://cdn.jsdelivr.net/npm/alasql@4"
-          ])
         }),
         cytoscape: Object.freeze({
           version: "3.28.1",

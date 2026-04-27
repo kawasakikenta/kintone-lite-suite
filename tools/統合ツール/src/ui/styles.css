@@ -898,7 +898,7 @@
 /* ただしランチャー初期画面では常に接続設定を表示する */
 #kintone-unified-suite-v2.screen-launcher .connection-section--app-inputs { display: block !important; }
 
-/* 比較先が不要なタブ（er, processFlow, sql）では比較先入力欄を隠す */
+/* 比較先が不要なタブ（er, processFlow）では比較先入力欄を隠す */
 #kintone-unified-suite-v2:not(.tab-needs-target) .conn-target { display: none !important; }
 
 /* 差分/反映系以外では接続パネル内の専用UIを隠す（Step2 の差分 UI はヘッダー内 .kus-header-diff-suite） */
@@ -1553,7 +1553,6 @@
 #kintone-unified-suite-v2 .feature-card[data-feature="er"]::before{background:linear-gradient(90deg,#6366f1,#8b5cf6)}
 #kintone-unified-suite-v2 .feature-card[data-feature="processFlow"]::before{background:linear-gradient(90deg,#2563eb,#0891b2)}
 #kintone-unified-suite-v2 .feature-card[data-feature="recordMgr"]::before{background:linear-gradient(90deg,#64748b,#475569)}
-#kintone-unified-suite-v2 .feature-card[data-feature="sql"]::before{background:linear-gradient(90deg,#475569,#334155)}
 #kintone-unified-suite-v2 .feature-card[data-feature="apiTester"]::before{background:linear-gradient(90deg,#7c2d12,#b45309)}
 #kintone-unified-suite-v2 .feature-card:hover{
   border-color:#7dd3fc;

@@ -644,7 +644,6 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <div class="tab-group" data-group="data">
                 <div class="tab-group-lbl">データ・保守</div>
                 <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
-                <button class="tab" data-tab="sql" data-state="idle">SQL実行</button>
                 <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
               </div>
             </div>
@@ -1378,23 +1377,6 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   </details>
                 </div>
               </div>
-            </div>
-
-            
-            <div class="pane" data-pane="sql">
-              <details class="diff-fold diff-fold--sql" open>
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">kintone SQL（比較元ベース）</span>
-                  <span class="diff-fold-sub">Alasql でレコードにSQLライクにアクセス</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div class="step" style="margin-top:0">kintone SQL 実行（比較元アプリベース）</div>
-              <div class="muted" style="margin-top:8px;line-height:1.55">Alasqlを用いて、Kintone上でSQLライクにデータアクセス・集計を行います。</div>
-              <div class="btns" style="margin-top:10px">
-                <button type="button" class="btn ok" data-act="launchKintoneSql" title="別UIのSQLエディタを開きます">SQLエディタを開く</button>
-              </div>
-                </div>
-              </details>
             </div>
 
             <div class="pane" data-pane="apiTester">

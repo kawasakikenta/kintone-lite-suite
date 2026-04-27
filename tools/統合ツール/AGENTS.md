@@ -14,7 +14,6 @@
 | `設計書作成.js` | `design-lite-entry.js` | `tabs/design.js`, `tabs/design-standalone.js`, `tabs/design-xlsx.js` |
 | `kintoneJS取得.js` | `jsconfig-lite-entry.js` | `tabs/jsconfig.js`, `tabs/jsconfig-standalone.js` |
 | `設定取得.js` | `settings-export-lite-entry.js` | `tabs/settings-export.js`, `tabs/settings-export-standalone.js` |
-| `kintoneSQL.js` | `sql-lite-entry.js` | `tabs/sql.js` |
 | `ER図.js` | `er-lite-entry.js` | `tabs/er.js`, `tabs/er-standalone.js` |
 | `プロセス実行.js` | `process-lite-entry.js` | `tabs/process.js`, `tabs/process-standalone.js` |
 | `プレビュー反映.js` | `reflect-lite-entry.js` | `tabs/reflect.js`, `tabs/reflect-standalone.js` |
@@ -34,7 +33,7 @@ lite 版は必要な機能のみバンドルするため、各ファイル 30〜
 
 1. **ソースを編集**: `tools/統合ツール/src/` 配下のファイルを変更する
 2. **再ビルド**: `cd tools/統合ツール && npm run build`
-3. ソース 1 箇所の変更が **最大 11 本の生成 JS** に波及する
+3. ソース 1 箇所の変更が **最大 10 本の生成 JS** に波及する
 
 ## ディレクトリ構成
 
