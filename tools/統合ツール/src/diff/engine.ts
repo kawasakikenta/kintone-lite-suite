@@ -67,31 +67,70 @@ export function normalizeIgnoreToken(token) {
     .toLowerCase();
 }
 
+function tokenLooksLikePath(token) {
+  return token.includes('.') || token.includes('[');
+}
+
+function tokenHasWildcard(token) {
+  return token.includes('*');
+}
+
+function compileWildcardRegex(token) {
+  // `*` だけメタ文字として扱い、それ以外は通常のリテラル比較。
+  const escaped = token.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`);
+}
+
 export function parseIgnoreRules(text) {
   const keySet = new Set(DEFAULT_IGNORE_KEYS);
-  const pathSet = new Set();
+  const pathSet = new Set<string>();
+  const keyPatterns: RegExp[] = [];
+  const pathPatterns: RegExp[] = [];
   String(text || '')
     .split(/[\n\r,、，;；\s\u3000]+/)
     .map(normalizeIgnoreToken)
     .filter(Boolean)
     .forEach((token) => {
-      if (token.includes('.') || token.includes('[')) pathSet.add(token.replace(/\s+/g, ''));
-      else keySet.add(token);
+      const isPath = tokenLooksLikePath(token);
+      const cleaned = isPath ? token.replace(/\s+/g, '') : token;
+      if (tokenHasWildcard(cleaned)) {
+        try {
+          const re = compileWildcardRegex(cleaned);
+          if (isPath) pathPatterns.push(re);
+          else keyPatterns.push(re);
+        } catch { /* 不正なパターンは無視 */ }
+        return;
+      }
+      if (isPath) pathSet.add(cleaned);
+      else keySet.add(cleaned);
     });
-  return { keySet, pathSet };
+  return { keySet, pathSet, keyPatterns, pathPatterns };
+}
+
+function matchAnyPattern(patterns, value) {
+  if (!Array.isArray(patterns) || !patterns.length || !value) return false;
+  for (const re of patterns) {
+    if (re.test(value)) return true;
+  }
+  return false;
 }
 
 export function isIgnoredKey(ignoreRules, key) {
   const normalized = normalizeIgnoreToken(key);
-  return !!normalized && ignoreRules.keySet.has(normalized);
+  if (!normalized) return false;
+  if (ignoreRules.keySet.has(normalized)) return true;
+  return matchAnyPattern(ignoreRules.keyPatterns, normalized);
 }
 
 export function isIgnoredPath(ignoreRules, path) {
   const normalizedPath = normalizeIgnoreToken(path).replace(/\s+/g, '');
   if (!normalizedPath) return false;
   if (ignoreRules.pathSet.has(normalizedPath)) return true;
+  if (matchAnyPattern(ignoreRules.pathPatterns, normalizedPath)) return true;
   const leaf = getPathLeafKey(normalizedPath);
-  return !!leaf && ignoreRules.keySet.has(leaf);
+  if (!leaf) return false;
+  if (ignoreRules.keySet.has(leaf)) return true;
+  return matchAnyPattern(ignoreRules.keyPatterns, leaf);
 }
 
 export function pushDiffRow(out, row, ignoreRules) {

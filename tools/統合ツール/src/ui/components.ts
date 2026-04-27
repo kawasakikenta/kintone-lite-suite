@@ -4,7 +4,8 @@ import {
   FEATURE_DEFS,
   SECTION_DEFS,
   SETTINGS_EXPORT_SCOPE_DEFS,
-  TAB_CONNECTION_NEEDS
+  TAB_CONNECTION_NEEDS,
+  DEFAULT_IGNORE_KEYS
 } from '../constants.js';
 import { state } from '../state.js';
 import {
@@ -19,8 +20,10 @@ import {
   resolveDiffExportMode,
   resolveDiffExportContentMode,
   getDiffExportContentLabel,
-  buildIgnoreKeySuggestions
+  buildIgnoreKeySuggestions,
+  previewIgnoreKeyImpact
 } from '../diff/filter.js';
+import { refreshIgnorePresetDropdown } from '../diff/ignore-presets.js';
 import {
   getActualDiffRows,
   countActualDiffRows,
@@ -469,19 +472,41 @@ export function setSettingsExportScopeSelection(checked) {
 }
 
 export function renderIgnoreKeyChips() {
+  renderDefaultIgnoreChips();
   const tags = getToolDocument().getElementById('u_ignoreKeysTags');
-  if (!tags) return;
+  if (!tags) {
+    renderDiffSuggestionChips();
+    renderIgnoreImpactPreview();
+    refreshIgnorePresetDropdown();
+    return;
+  }
   const val = ui.ignoreKeys.value || '';
   const keys = val.split(',').map((k) => k.trim()).filter(Boolean);
   if (keys.length === 0) {
     tags.innerHTML = '<span style="color:#94a3b8;font-size:11px;padding:2px 0">追加の無視キーなし（上のデフォルトキーは常に除外）</span>';
-    renderDiffSuggestionChips();
-    return;
+  } else {
+    tags.innerHTML = keys.map((k) => {
+      const isPath = k.includes('.') || k.includes('[');
+      const isWildcard = k.includes('*');
+      const kindLabel = isPath ? 'パス' : (isWildcard ? 'パターン' : 'キー');
+      const kindTitle = isPath
+        ? 'JSONパス完全一致で無視'
+        : (isWildcard ? '* を含むパターン（例: *At, *Id）' : 'キー名一致で無視（どこに現れても）');
+      return `<span class="chip" style="user-select:none" title="${esc(kindTitle)}"><span style="opacity:.55;font-size:10px;margin-right:2px">${esc(kindLabel)}</span>${esc(k)}<button type="button" style="border:none;background:none;cursor:pointer;padding:0 0 0 4px;font-size:12px;color:#64748b;line-height:1" data-act="removeIgnoreKey" data-key="${esc(k)}">×</button></span>`;
+    }).join('');
   }
-  tags.innerHTML = keys.map((k) =>
-    `<span class="chip" style="user-select:none">${esc(k)}<button type="button" style="border:none;background:none;cursor:pointer;padding:0 0 0 4px;font-size:12px;color:#64748b;line-height:1" data-act="removeIgnoreKey" data-key="${esc(k)}">×</button></span>`
-  ).join('');
   renderDiffSuggestionChips();
+  renderIgnoreImpactPreview();
+  refreshIgnorePresetDropdown();
+}
+
+export function renderDefaultIgnoreChips() {
+  const host = ui.ignoreDefaultChips || getToolDocument().getElementById('u_ignoreDefaultChips');
+  if (!host) return;
+  const items = [...DEFAULT_IGNORE_KEYS];
+  host.innerHTML =
+    '<span class="diff-static-chip-lbl" title="ツール側で常に差分計算から外すメタ系キー">常時除外</span>' +
+    items.map((k) => `<span class="chip diff-static-chip" title="常に除外（DEFAULT_IGNORE_KEYS）">${esc(k)}</span>`).join('');
 }
 
 export function renderDiffSuggestionChips() {
@@ -495,9 +520,39 @@ export function renderDiffSuggestionChips() {
     ui.diffSuggestedIgnore.innerHTML = '<span style="color:#94a3b8;font-size:11px;padding:2px 0">候補なし</span>';
     return;
   }
-  ui.diffSuggestedIgnore.innerHTML = state.diffIgnoreSuggestions.map((item) =>
-    `<button type="button" class="btn sub" data-act="addSuggestedIgnore" data-key="${esc(item.key)}" style="font-size:11px;padding:4px 8px">＋${esc(item.key)} <span style="opacity:.8">(${item.count})</span></button>`
-  ).join('');
+  ui.diffSuggestedIgnore.innerHTML = state.diffIgnoreSuggestions.map((item: any) => {
+    const tooltipLines = [
+      `${item.key}: 出現 ${item.count} 件 / ${item.sectionCount} セクション`,
+      item.topSectionLabel ? `主なセクション: ${item.topSectionLabel}` : '',
+      item.samplePath ? `代表パス: ${item.samplePath}` : '',
+      item.sampleLeft ? `比較元の例: ${item.sampleLeft}` : '',
+      item.sampleRight ? `比較先の例: ${item.sampleRight}` : ''
+    ].filter(Boolean).join('\n');
+    const sectionTag = item.topSectionLabel
+      ? `<span style="opacity:.7;font-size:10px;margin-left:4px">${esc(item.topSectionLabel)}</span>`
+      : '';
+    return `<button type="button" class="btn sub" data-act="addSuggestedIgnore" data-key="${esc(item.key)}" style="font-size:11px;padding:4px 8px" title="${esc(tooltipLines)}">＋${esc(item.key)} <span style="opacity:.8">(${item.count})</span>${sectionTag}</button>`;
+  }).join('');
+}
+
+export function renderIgnoreImpactPreview() {
+  const host = ui.ignoreImpactPreview || getToolDocument().getElementById('u_ignoreImpactPreview');
+  if (!host) return;
+  if (!state.lastDiffRows || !state.lastDiffRows.length) {
+    host.textContent = '差分比較を実行すると、現在の無視キー設定で何件除外されるかをここに表示します。';
+    return;
+  }
+  const impact = previewIgnoreKeyImpact(state.lastDiffRows, ui.ignoreKeys.value);
+  if (!impact.total) {
+    host.textContent = '対象となる差分行がありません。';
+    return;
+  }
+  if (!impact.wouldRemove) {
+    host.textContent = `現在の無視キー設定で次回比較しても、差分 ${impact.total} 件は変わりません（追加の除外なし）。`;
+    return;
+  }
+  const remaining = impact.total - impact.wouldRemove;
+  host.textContent = `現在の無視キー設定で再実行すると、差分 ${impact.total} 件 → 約 ${remaining} 件になります（${impact.wouldRemove} 件が新たに除外）。`;
 }
 
 export function renderDiffFilterOptions() {

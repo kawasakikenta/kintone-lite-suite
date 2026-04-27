@@ -248,7 +248,7 @@
     }
     return "";
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -296,6 +296,7 @@
       DEFAULT_APP_ID = resolveDefaultAppId();
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
+      DIFF_IGNORE_PRESETS_KEY = `${TOOL_ID}:diffIgnorePresets`;
       DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
       REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
       SECTION_DEFS = [
@@ -898,25 +899,60 @@ ${contextLine}`);
   function normalizeIgnoreToken(token) {
     return String(token || "").replace(/[\u200b\u200c\u200d\ufeff]/g, "").replace(/^[\s\u3000]+|[\s\u3000]+$/g, "").toLowerCase();
   }
+  function tokenLooksLikePath(token) {
+    return token.includes(".") || token.includes("[");
+  }
+  function tokenHasWildcard(token) {
+    return token.includes("*");
+  }
+  function compileWildcardRegex(token) {
+    const escaped = token.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+    return new RegExp(`^${escaped}$`);
+  }
   function parseIgnoreRules(text) {
     const keySet = new Set(DEFAULT_IGNORE_KEYS);
     const pathSet = /* @__PURE__ */ new Set();
+    const keyPatterns = [];
+    const pathPatterns = [];
     String(text || "").split(/[\n\r,、，;；\s\u3000]+/).map(normalizeIgnoreToken).filter(Boolean).forEach((token) => {
-      if (token.includes(".") || token.includes("[")) pathSet.add(token.replace(/\s+/g, ""));
-      else keySet.add(token);
+      const isPath = tokenLooksLikePath(token);
+      const cleaned = isPath ? token.replace(/\s+/g, "") : token;
+      if (tokenHasWildcard(cleaned)) {
+        try {
+          const re = compileWildcardRegex(cleaned);
+          if (isPath) pathPatterns.push(re);
+          else keyPatterns.push(re);
+        } catch {
+        }
+        return;
+      }
+      if (isPath) pathSet.add(cleaned);
+      else keySet.add(cleaned);
     });
-    return { keySet, pathSet };
+    return { keySet, pathSet, keyPatterns, pathPatterns };
+  }
+  function matchAnyPattern(patterns, value) {
+    if (!Array.isArray(patterns) || !patterns.length || !value) return false;
+    for (const re of patterns) {
+      if (re.test(value)) return true;
+    }
+    return false;
   }
   function isIgnoredKey(ignoreRules, key) {
     const normalized = normalizeIgnoreToken(key);
-    return !!normalized && ignoreRules.keySet.has(normalized);
+    if (!normalized) return false;
+    if (ignoreRules.keySet.has(normalized)) return true;
+    return matchAnyPattern(ignoreRules.keyPatterns, normalized);
   }
   function isIgnoredPath(ignoreRules, path) {
     const normalizedPath = normalizeIgnoreToken(path).replace(/\s+/g, "");
     if (!normalizedPath) return false;
     if (ignoreRules.pathSet.has(normalizedPath)) return true;
+    if (matchAnyPattern(ignoreRules.pathPatterns, normalizedPath)) return true;
     const leaf = getPathLeafKey(normalizedPath);
-    return !!leaf && ignoreRules.keySet.has(leaf);
+    if (!leaf) return false;
+    if (ignoreRules.keySet.has(leaf)) return true;
+    return matchAnyPattern(ignoreRules.keyPatterns, leaf);
   }
   function pushDiffRow(out, row, ignoreRules) {
     if (!row) return false;
@@ -1931,6 +1967,7 @@ ${contextLine}`);
   });
 
   // src/diff/filter.ts
+  var SECTION_LABEL_BY_KEY;
   var init_filter = __esm({
     "src/diff/filter.ts"() {
       "use strict";
@@ -1939,6 +1976,9 @@ ${contextLine}`);
       init_engine();
       init_api();
       init_export();
+      SECTION_LABEL_BY_KEY = new Map(
+        SECTION_DEFS.map((s) => [s.key, s.label])
+      );
     }
   });
 

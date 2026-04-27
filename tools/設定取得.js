@@ -248,7 +248,7 @@
     }
     return "";
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -296,6 +296,7 @@
       DEFAULT_APP_ID = resolveDefaultAppId();
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
+      DIFF_IGNORE_PRESETS_KEY = `${TOOL_ID}:diffIgnorePresets`;
       DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
       REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
       SECTION_DEFS = [
@@ -804,6 +805,7 @@ ${contextLine}`);
   });
 
   // src/diff/filter.ts
+  var SECTION_LABEL_BY_KEY;
   var init_filter = __esm({
     "src/diff/filter.ts"() {
       "use strict";
@@ -812,6 +814,18 @@ ${contextLine}`);
       init_engine();
       init_api();
       init_export();
+      SECTION_LABEL_BY_KEY = new Map(
+        SECTION_DEFS.map((s) => [s.key, s.label])
+      );
+    }
+  });
+
+  // src/diff/ignore-presets.ts
+  var init_ignore_presets = __esm({
+    "src/diff/ignore-presets.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
     }
   });
 
@@ -868,6 +882,7 @@ ${contextLine}`);
       init_state();
       init_utils();
       init_filter();
+      init_ignore_presets();
       init_engine();
       init_enrich();
       init_nodeModeUi();

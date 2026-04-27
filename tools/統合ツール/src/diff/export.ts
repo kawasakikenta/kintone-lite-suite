@@ -4744,6 +4744,14 @@ export function renderResultRows(rows) {
       const reflectBtn = canReflect
         ? `<button type="button" class="diff-mini-btn diff-mini-btn--reflect" data-send-to-reflect="${esc(r._id || '')}" title="この差分ノードだけを反映対象に追加し、反映タブへ移動します">反映へ送る</button>`
         : '';
+      const rowLeafKey = r?.path ? getPathLeafKey(r.path) : '';
+      const rowPath = String(r?.path || '');
+      const ignoreKeyBtn = rowLeafKey
+        ? `<button type="button" class="diff-mini-btn diff-mini-btn--ignore" data-act="ignoreRowKey" data-key="${esc(rowLeafKey)}" title="このキー名 (${esc(rowLeafKey)}) を無視キーに追加。同名キーが現れる差分はすべて除外されます">キー無視</button>`
+        : '';
+      const ignorePathBtn = rowPath
+        ? `<button type="button" class="diff-mini-btn diff-mini-btn--ignore" data-act="ignoreRowPath" data-path="${esc(rowPath)}" title="このパス (${esc(rowPath)}) ぴったりだけを無視。配列のインデックスや位置も含めて完全一致">パス無視</button>`
+        : '';
       const viewed = isDiffRowViewed(r);
       const viewedChecked = viewed ? 'checked' : '';
       const viewedClass = viewed ? ' diff-row-viewed' : '';
@@ -4762,6 +4770,8 @@ export function renderResultRows(rows) {
             <div class="diff-tools">
               <button type="button" class="diff-mini-btn" data-copy-val="${esc(r.path || '')}">パス</button>
               ${reflectBtn}
+              ${ignoreKeyBtn}
+              ${ignorePathBtn}
             </div>
             <div class="diff-path diff-path-cell" title="${esc(r.path || '-')}">${formatDiffPathRich(r)}</div>
             ${renderDiffRowMeta(r)}

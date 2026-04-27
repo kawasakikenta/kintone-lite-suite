@@ -224,17 +224,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <span class="diff-fold-sub">ノイズ差分を減らす（初期は閉じた状態）</span>
                 </summary>
                 <div class="diff-fold-body">
-                <div class="muted" style="margin-top:0;line-height:1.6">比較時に値が違っても無視する JSON キー名を指定します。以下のキーは常に自動で除外されます。</div>
-                <div class="chips" style="min-height:28px;padding:4px 6px;margin-top:6px">
-                  <span class="diff-static-chip-lbl" title="ツール側で常に差分計算から外すメタ系キー">常時除外</span>
-                  <span class="chip diff-static-chip" title="常に除外">id</span>
-                  <span class="chip diff-static-chip" title="常に除外">appid</span>
-                  <span class="chip diff-static-chip" title="常に除外">revision</span>
-                  <span class="chip diff-static-chip" title="常に除外">createdat</span>
-                  <span class="chip diff-static-chip" title="常に除外">creator</span>
-                  <span class="chip diff-static-chip" title="常に除外">modifiedat</span>
-                  <span class="chip diff-static-chip" title="常に除外">modifier</span>
-                </div>
+                <div class="muted" style="margin-top:0;line-height:1.6">比較時に値が違っても無視する JSON キー名を指定します。以下のキーは常に自動で除外されます。<code>*At</code> / <code>*Id</code> のように <code>*</code> ワイルドカードも使えます。</div>
+                <div id="u_ignoreDefaultChips" class="chips" style="min-height:28px;padding:4px 6px;margin-top:6px"></div>
                 <div class="muted" style="margin-top:8px">追加で無視したいキー名（ワンクリックで無視リストへ追加）</div>
                 <div class="btns" style="margin-top:4px;flex-wrap:wrap">
                   <button type="button" class="btn sub" data-act="addPresetKey" data-key="code" style="font-size:11px;padding:2px 8px" title="code キーの値差分を無視（フィールドコードなど識別子の揺れ対策）">＋code</button>
@@ -259,8 +250,18 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <input type="hidden" id="u_ignoreKeys">
                 <div id="u_ignoreKeysTags" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:4px 6px;background:#fff;margin-top:4px;align-items:center"></div>
                 <div class="btns" style="margin-top:4px">
-                  <input type="text" id="u_ignoreKeyInput" placeholder="キー名を入力してEnterまたは追加" style="flex:1;min-width:0" title="カンマ区切りで複数指定可能な場合は設定保存形式に従います">
+                  <input type="text" id="u_ignoreKeyInput" placeholder="キー名 / *At / a.b.c のパス" style="flex:1;min-width:0" title="単純なキー名のほか、*At のような末尾ワイルドカード、a.b.c[0] のようなパスも指定できます">
                   <button type="button" class="btn sub" data-act="addIgnoreKey">追加</button>
+                </div>
+                <div id="u_ignoreImpactPreview" class="muted" style="margin-top:6px;font-size:11px;line-height:1.5">差分比較を実行すると、現在の無視キー設定で何件除外されるかをここに表示します。</div>
+                <div class="muted" style="margin-top:10px">無視キー設定セット（名前付きで保存・再利用）</div>
+                <div class="btns" style="margin-top:4px;flex-wrap:wrap;gap:6px">
+                  <input type="text" id="u_ignorePresetName" placeholder="例: 監査用 / 軽量比較" style="flex:1;min-width:0" title="現在の無視キー設定に名前を付けて保存します">
+                  <button type="button" class="btn sub" data-act="saveIgnorePreset" title="現在のキー一覧をこの名前で保存">保存</button>
+                  <select id="u_ignorePresetSelect" title="保存済みセットを読み込み" style="min-width:160px"><option value="">-- 読込 --</option></select>
+                  <button type="button" class="btn sub" data-act="loadIgnorePreset" title="選んだセットを現在の無視キーに置き換え">読込</button>
+                  <button type="button" class="btn sub" data-act="mergeIgnorePreset" title="選んだセットを現在の無視キーに追加（マージ）">追加</button>
+                  <button type="button" class="btn sub" data-act="deleteIgnorePreset" title="選んだセットを削除">削除</button>
                 </div>
                 </div>
               </details>

@@ -265,7 +265,7 @@
     }
     return "";
   }
-  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_DEFAULT_COURSE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_DEFAULT_COURSE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -314,6 +314,7 @@
       DEFAULT_APP_ID = resolveDefaultAppId();
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
       DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
+      DIFF_IGNORE_PRESETS_KEY = `${TOOL_ID}:diffIgnorePresets`;
       DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
       REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
       DIALOG_MARGIN = 16;
@@ -1556,25 +1557,60 @@ ${contextLine}`);
   function normalizeIgnoreToken(token) {
     return String(token || "").replace(/[\u200b\u200c\u200d\ufeff]/g, "").replace(/^[\s\u3000]+|[\s\u3000]+$/g, "").toLowerCase();
   }
+  function tokenLooksLikePath(token) {
+    return token.includes(".") || token.includes("[");
+  }
+  function tokenHasWildcard(token) {
+    return token.includes("*");
+  }
+  function compileWildcardRegex(token) {
+    const escaped = token.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+    return new RegExp(`^${escaped}$`);
+  }
   function parseIgnoreRules(text) {
     const keySet = new Set(DEFAULT_IGNORE_KEYS);
     const pathSet = /* @__PURE__ */ new Set();
+    const keyPatterns = [];
+    const pathPatterns = [];
     String(text || "").split(/[\n\r,、，;；\s\u3000]+/).map(normalizeIgnoreToken).filter(Boolean).forEach((token) => {
-      if (token.includes(".") || token.includes("[")) pathSet.add(token.replace(/\s+/g, ""));
-      else keySet.add(token);
+      const isPath = tokenLooksLikePath(token);
+      const cleaned = isPath ? token.replace(/\s+/g, "") : token;
+      if (tokenHasWildcard(cleaned)) {
+        try {
+          const re = compileWildcardRegex(cleaned);
+          if (isPath) pathPatterns.push(re);
+          else keyPatterns.push(re);
+        } catch {
+        }
+        return;
+      }
+      if (isPath) pathSet.add(cleaned);
+      else keySet.add(cleaned);
     });
-    return { keySet, pathSet };
+    return { keySet, pathSet, keyPatterns, pathPatterns };
+  }
+  function matchAnyPattern(patterns, value) {
+    if (!Array.isArray(patterns) || !patterns.length || !value) return false;
+    for (const re of patterns) {
+      if (re.test(value)) return true;
+    }
+    return false;
   }
   function isIgnoredKey(ignoreRules, key) {
     const normalized = normalizeIgnoreToken(key);
-    return !!normalized && ignoreRules.keySet.has(normalized);
+    if (!normalized) return false;
+    if (ignoreRules.keySet.has(normalized)) return true;
+    return matchAnyPattern(ignoreRules.keyPatterns, normalized);
   }
   function isIgnoredPath(ignoreRules, path) {
     const normalizedPath = normalizeIgnoreToken(path).replace(/\s+/g, "");
     if (!normalizedPath) return false;
     if (ignoreRules.pathSet.has(normalizedPath)) return true;
+    if (matchAnyPattern(ignoreRules.pathPatterns, normalizedPath)) return true;
     const leaf = getPathLeafKey(normalizedPath);
-    return !!leaf && ignoreRules.keySet.has(leaf);
+    if (!leaf) return false;
+    if (ignoreRules.keySet.has(leaf)) return true;
+    return matchAnyPattern(ignoreRules.keyPatterns, leaf);
   }
   function pushDiffRow(out, row, ignoreRules) {
     if (!row) return false;
@@ -7319,6 +7355,10 @@ ${body}`;
         const hierarchyClass = isSubfieldRow ? " diff-row-subfield" : isTableRootRow ? " diff-row-table-root" : "";
         const canReflect = !r._displayOnly && !!r.sectionKey;
         const reflectBtn = canReflect ? `<button type="button" class="diff-mini-btn diff-mini-btn--reflect" data-send-to-reflect="${esc(r._id || "")}" title="この差分ノードだけを反映対象に追加し、反映タブへ移動します">反映へ送る</button>` : "";
+        const rowLeafKey = r?.path ? getPathLeafKey(r.path) : "";
+        const rowPath = String(r?.path || "");
+        const ignoreKeyBtn = rowLeafKey ? `<button type="button" class="diff-mini-btn diff-mini-btn--ignore" data-act="ignoreRowKey" data-key="${esc(rowLeafKey)}" title="このキー名 (${esc(rowLeafKey)}) を無視キーに追加。同名キーが現れる差分はすべて除外されます">キー無視</button>` : "";
+        const ignorePathBtn = rowPath ? `<button type="button" class="diff-mini-btn diff-mini-btn--ignore" data-act="ignoreRowPath" data-path="${esc(rowPath)}" title="このパス (${esc(rowPath)}) ぴったりだけを無視。配列のインデックスや位置も含めて完全一致">パス無視</button>` : "";
         const viewed = isDiffRowViewed(r);
         const viewedChecked = viewed ? "checked" : "";
         const viewedClass = viewed ? " diff-row-viewed" : "";
@@ -7337,6 +7377,8 @@ ${body}`;
             <div class="diff-tools">
               <button type="button" class="diff-mini-btn" data-copy-val="${esc(r.path || "")}">パス</button>
               ${reflectBtn}
+              ${ignoreKeyBtn}
+              ${ignorePathBtn}
             </div>
             <div class="diff-path diff-path-cell" title="${esc(r.path || "-")}">${formatDiffPathRich(r)}</div>
             ${renderDiffRowMeta(r)}
@@ -7601,6 +7643,18 @@ ${body}`;
       targetBundle: pickBundleSections(targetBundle, compareScopes)
     };
   }
+  function snippet(value, max = 80) {
+    if (value == null) return "";
+    let text;
+    try {
+      text = typeof value === "string" ? value : JSON.stringify(value);
+    } catch {
+      text = String(value);
+    }
+    text = String(text).replace(/\s+/g, " ").trim();
+    if (text.length > max) text = `${text.slice(0, max - 1)}…`;
+    return text;
+  }
   function buildIgnoreKeySuggestions(rows, ignoreKeysText) {
     const ignoreRules = parseIgnoreRules(ignoreKeysText);
     const counts = /* @__PURE__ */ new Map();
@@ -7611,13 +7665,57 @@ ${body}`;
       if (ignoreRules.keySet.has(leaf) || DEFAULT_IGNORE_KEYS.has(leaf)) continue;
       if (!/^[a-z0-9_]+$/i.test(leaf)) continue;
       if (leaf === normalizeIgnoreToken(row.sectionKey)) continue;
-      const cur = counts.get(leaf) || { key: leaf, count: 0, sections: /* @__PURE__ */ new Set() };
+      const cur = counts.get(leaf) || {
+        key: leaf,
+        count: 0,
+        sections: /* @__PURE__ */ new Map(),
+        sample: null
+      };
       cur.count += 1;
-      if (row.sectionKey) cur.sections.add(row.sectionKey);
+      if (row.sectionKey) {
+        cur.sections.set(row.sectionKey, (cur.sections.get(row.sectionKey) || 0) + 1);
+      }
+      if (!cur.sample) {
+        cur.sample = {
+          left: snippet(row.left),
+          right: snippet(row.right),
+          path: String(row.path || "")
+        };
+      }
       counts.set(leaf, cur);
     }
-    return [...counts.values()].filter((item) => item.count >= 2).sort((a, b) => b.count - a.count || b.sections.size - a.sections.size || a.key.localeCompare(b.key)).slice(0, 8).map((item) => ({ key: item.key, count: item.count, sectionCount: item.sections.size }));
+    return [...counts.values()].filter((item) => item.count >= 2).sort((a, b) => b.count - a.count || b.sections.size - a.sections.size || a.key.localeCompare(b.key)).slice(0, 8).map((item) => {
+      let topKey = "";
+      let topCount = -1;
+      for (const [k, c] of item.sections) {
+        if (c > topCount) {
+          topKey = k;
+          topCount = c;
+        }
+      }
+      return {
+        key: item.key,
+        count: item.count,
+        sectionCount: item.sections.size,
+        topSectionKey: topKey,
+        topSectionLabel: SECTION_LABEL_BY_KEY.get(topKey) || topKey,
+        sampleLeft: item.sample?.left || "",
+        sampleRight: item.sample?.right || "",
+        samplePath: item.sample?.path || ""
+      };
+    });
   }
+  function previewIgnoreKeyImpact(rows, ignoreKeysText) {
+    const list = getActualDiffRows(rows);
+    if (!list.length) return { total: 0, wouldRemove: 0 };
+    const ignoreRules = parseIgnoreRules(ignoreKeysText);
+    let wouldRemove = 0;
+    for (const row of list) {
+      if (isIgnoredPath(ignoreRules, row.path)) wouldRemove += 1;
+    }
+    return { total: list.length, wouldRemove };
+  }
+  var SECTION_LABEL_BY_KEY;
   var init_filter = __esm({
     "src/diff/filter.ts"() {
       "use strict";
@@ -7626,6 +7724,94 @@ ${body}`;
       init_engine();
       init_api();
       init_export();
+      SECTION_LABEL_BY_KEY = new Map(
+        SECTION_DEFS.map((s) => [s.key, s.label])
+      );
+    }
+  });
+
+  // src/diff/ignore-presets.ts
+  function loadRaw() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(DIFF_IGNORE_PRESETS_KEY) || "[]");
+      if (!Array.isArray(raw)) return [];
+      return raw.map((entry) => ({
+        name: String(entry?.name || "").trim(),
+        keys: Array.isArray(entry?.keys) ? entry.keys.map((k) => String(k || "").trim()).filter(Boolean) : [],
+        savedAt: Number(entry?.savedAt) || 0
+      })).filter((entry) => entry.name.length > 0).slice(0, MAX_PRESETS);
+    } catch {
+      return [];
+    }
+  }
+  function saveRaw(list) {
+    try {
+      localStorage.setItem(DIFF_IGNORE_PRESETS_KEY, JSON.stringify(list.slice(0, MAX_PRESETS)));
+    } catch {
+    }
+  }
+  function escapeAttr(s) {
+    return String(s || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  }
+  function parseCurrentKeys() {
+    return String(ui.ignoreKeys?.value || "").split(",").map((k) => k.trim()).filter(Boolean);
+  }
+  function refreshIgnorePresetDropdown() {
+    const sel = ui.ignorePresetSelect;
+    if (!sel) return;
+    const list = loadRaw();
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">-- 読込 --</option>' + list.map((s) => `<option value="${escapeAttr(s.name)}">${escapeAttr(s.name)} (${s.keys.length}件)</option>`).join("");
+    if (list.some((s) => s.name === cur)) sel.value = cur;
+  }
+  function saveIgnorePreset(name) {
+    const n = String(name || "").trim();
+    if (!n) throw new Error("セット名を入力してください");
+    const keys = parseCurrentKeys();
+    const list = loadRaw().filter((x) => x.name !== n);
+    const entry = { name: n, keys, savedAt: Date.now() };
+    list.unshift(entry);
+    saveRaw(list);
+    refreshIgnorePresetDropdown();
+    const sel = ui.ignorePresetSelect;
+    if (sel) sel.value = n;
+    return entry;
+  }
+  function applyKeysToInput(keys) {
+    if (!ui.ignoreKeys) return;
+    ui.ignoreKeys.value = keys.join(", ");
+  }
+  function loadIgnorePreset(name, options = {}) {
+    const n = String(name || "").trim();
+    if (!n) return null;
+    const entry = loadRaw().find((x) => x.name === n);
+    if (!entry) return null;
+    if (options.merge) {
+      const current = new Set(parseCurrentKeys());
+      for (const key of entry.keys) current.add(key);
+      applyKeysToInput([...current]);
+    } else {
+      applyKeysToInput(entry.keys);
+    }
+    return entry;
+  }
+  function deleteIgnorePreset(name) {
+    const n = String(name || "").trim();
+    if (!n) return false;
+    const before = loadRaw();
+    const after = before.filter((x) => x.name !== n);
+    if (after.length === before.length) return false;
+    saveRaw(after);
+    refreshIgnorePresetDropdown();
+    return true;
+  }
+  var MAX_PRESETS;
+  var init_ignore_presets = __esm({
+    "src/diff/ignore-presets.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      MAX_PRESETS = 24;
     }
   });
 
@@ -8003,10 +8189,12 @@ ${body}`;
     openScopePicker: () => openScopePicker,
     renderAppIdConfirmSection: () => renderAppIdConfirmSection,
     renderBundleState: () => renderBundleState,
+    renderDefaultIgnoreChips: () => renderDefaultIgnoreChips,
     renderDiffFilterOptions: () => renderDiffFilterOptions2,
     renderDiffSelectionState: () => renderDiffSelectionState2,
     renderDiffSuggestionChips: () => renderDiffSuggestionChips2,
     renderDiffWarningBox: () => renderDiffWarningBox2,
+    renderIgnoreImpactPreview: () => renderIgnoreImpactPreview,
     renderIgnoreKeyChips: () => renderIgnoreKeyChips,
     renderLookupMapRows: () => renderLookupMapRows,
     renderReflectActiveFilterChips: () => renderReflectActiveFilterChips,
@@ -8399,19 +8587,36 @@ ${body}`;
     saveCurrentDialogState();
   }
   function renderIgnoreKeyChips() {
+    renderDefaultIgnoreChips();
     const tags = getToolDocument().getElementById("u_ignoreKeysTags");
-    if (!tags) return;
+    if (!tags) {
+      renderDiffSuggestionChips2();
+      renderIgnoreImpactPreview();
+      refreshIgnorePresetDropdown();
+      return;
+    }
     const val = ui3.ignoreKeys.value || "";
     const keys = val.split(",").map((k) => k.trim()).filter(Boolean);
     if (keys.length === 0) {
       tags.innerHTML = '<span style="color:#94a3b8;font-size:11px;padding:2px 0">追加の無視キーなし（上のデフォルトキーは常に除外）</span>';
-      renderDiffSuggestionChips2();
-      return;
+    } else {
+      tags.innerHTML = keys.map((k) => {
+        const isPath = k.includes(".") || k.includes("[");
+        const isWildcard = k.includes("*");
+        const kindLabel = isPath ? "パス" : isWildcard ? "パターン" : "キー";
+        const kindTitle = isPath ? "JSONパス完全一致で無視" : isWildcard ? "* を含むパターン（例: *At, *Id）" : "キー名一致で無視（どこに現れても）";
+        return `<span class="chip" style="user-select:none" title="${esc(kindTitle)}"><span style="opacity:.55;font-size:10px;margin-right:2px">${esc(kindLabel)}</span>${esc(k)}<button type="button" style="border:none;background:none;cursor:pointer;padding:0 0 0 4px;font-size:12px;color:#64748b;line-height:1" data-act="removeIgnoreKey" data-key="${esc(k)}">×</button></span>`;
+      }).join("");
     }
-    tags.innerHTML = keys.map(
-      (k) => `<span class="chip" style="user-select:none">${esc(k)}<button type="button" style="border:none;background:none;cursor:pointer;padding:0 0 0 4px;font-size:12px;color:#64748b;line-height:1" data-act="removeIgnoreKey" data-key="${esc(k)}">×</button></span>`
-    ).join("");
     renderDiffSuggestionChips2();
+    renderIgnoreImpactPreview();
+    refreshIgnorePresetDropdown();
+  }
+  function renderDefaultIgnoreChips() {
+    const host = ui3.ignoreDefaultChips || getToolDocument().getElementById("u_ignoreDefaultChips");
+    if (!host) return;
+    const items = [...DEFAULT_IGNORE_KEYS];
+    host.innerHTML = '<span class="diff-static-chip-lbl" title="ツール側で常に差分計算から外すメタ系キー">常時除外</span>' + items.map((k) => `<span class="chip diff-static-chip" title="常に除外（DEFAULT_IGNORE_KEYS）">${esc(k)}</span>`).join("");
   }
   function renderDiffSuggestionChips2() {
     if (!ui3.diffSuggestedIgnore) return;
@@ -8424,9 +8629,36 @@ ${body}`;
       ui3.diffSuggestedIgnore.innerHTML = '<span style="color:#94a3b8;font-size:11px;padding:2px 0">候補なし</span>';
       return;
     }
-    ui3.diffSuggestedIgnore.innerHTML = state.diffIgnoreSuggestions.map(
-      (item) => `<button type="button" class="btn sub" data-act="addSuggestedIgnore" data-key="${esc(item.key)}" style="font-size:11px;padding:4px 8px">＋${esc(item.key)} <span style="opacity:.8">(${item.count})</span></button>`
-    ).join("");
+    ui3.diffSuggestedIgnore.innerHTML = state.diffIgnoreSuggestions.map((item) => {
+      const tooltipLines = [
+        `${item.key}: 出現 ${item.count} 件 / ${item.sectionCount} セクション`,
+        item.topSectionLabel ? `主なセクション: ${item.topSectionLabel}` : "",
+        item.samplePath ? `代表パス: ${item.samplePath}` : "",
+        item.sampleLeft ? `比較元の例: ${item.sampleLeft}` : "",
+        item.sampleRight ? `比較先の例: ${item.sampleRight}` : ""
+      ].filter(Boolean).join("\n");
+      const sectionTag = item.topSectionLabel ? `<span style="opacity:.7;font-size:10px;margin-left:4px">${esc(item.topSectionLabel)}</span>` : "";
+      return `<button type="button" class="btn sub" data-act="addSuggestedIgnore" data-key="${esc(item.key)}" style="font-size:11px;padding:4px 8px" title="${esc(tooltipLines)}">＋${esc(item.key)} <span style="opacity:.8">(${item.count})</span>${sectionTag}</button>`;
+    }).join("");
+  }
+  function renderIgnoreImpactPreview() {
+    const host = ui3.ignoreImpactPreview || getToolDocument().getElementById("u_ignoreImpactPreview");
+    if (!host) return;
+    if (!state.lastDiffRows || !state.lastDiffRows.length) {
+      host.textContent = "差分比較を実行すると、現在の無視キー設定で何件除外されるかをここに表示します。";
+      return;
+    }
+    const impact = previewIgnoreKeyImpact(state.lastDiffRows, ui3.ignoreKeys.value);
+    if (!impact.total) {
+      host.textContent = "対象となる差分行がありません。";
+      return;
+    }
+    if (!impact.wouldRemove) {
+      host.textContent = `現在の無視キー設定で次回比較しても、差分 ${impact.total} 件は変わりません（追加の除外なし）。`;
+      return;
+    }
+    const remaining = impact.total - impact.wouldRemove;
+    host.textContent = `現在の無視キー設定で再実行すると、差分 ${impact.total} 件 → 約 ${remaining} 件になります（${impact.wouldRemove} 件が新たに除外）。`;
   }
   function renderDiffFilterOptions2() {
     if (!ui3.diffFilterSection) return;
@@ -9613,6 +9845,7 @@ ${body}`;
       init_state();
       init_utils();
       init_filter();
+      init_ignore_presets();
       init_engine();
       init_enrich();
       init_nodeModeUi();
@@ -19389,17 +19622,8 @@ ${lines.join("\n")}
                   <span class="diff-fold-sub">ノイズ差分を減らす（初期は閉じた状態）</span>
                 </summary>
                 <div class="diff-fold-body">
-                <div class="muted" style="margin-top:0;line-height:1.6">比較時に値が違っても無視する JSON キー名を指定します。以下のキーは常に自動で除外されます。</div>
-                <div class="chips" style="min-height:28px;padding:4px 6px;margin-top:6px">
-                  <span class="diff-static-chip-lbl" title="ツール側で常に差分計算から外すメタ系キー">常時除外</span>
-                  <span class="chip diff-static-chip" title="常に除外">id</span>
-                  <span class="chip diff-static-chip" title="常に除外">appid</span>
-                  <span class="chip diff-static-chip" title="常に除外">revision</span>
-                  <span class="chip diff-static-chip" title="常に除外">createdat</span>
-                  <span class="chip diff-static-chip" title="常に除外">creator</span>
-                  <span class="chip diff-static-chip" title="常に除外">modifiedat</span>
-                  <span class="chip diff-static-chip" title="常に除外">modifier</span>
-                </div>
+                <div class="muted" style="margin-top:0;line-height:1.6">比較時に値が違っても無視する JSON キー名を指定します。以下のキーは常に自動で除外されます。<code>*At</code> / <code>*Id</code> のように <code>*</code> ワイルドカードも使えます。</div>
+                <div id="u_ignoreDefaultChips" class="chips" style="min-height:28px;padding:4px 6px;margin-top:6px"></div>
                 <div class="muted" style="margin-top:8px">追加で無視したいキー名（ワンクリックで無視リストへ追加）</div>
                 <div class="btns" style="margin-top:4px;flex-wrap:wrap">
                   <button type="button" class="btn sub" data-act="addPresetKey" data-key="code" style="font-size:11px;padding:2px 8px" title="code キーの値差分を無視（フィールドコードなど識別子の揺れ対策）">＋code</button>
@@ -19424,8 +19648,18 @@ ${lines.join("\n")}
                 <input type="hidden" id="u_ignoreKeys">
                 <div id="u_ignoreKeysTags" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:4px 6px;background:#fff;margin-top:4px;align-items:center"></div>
                 <div class="btns" style="margin-top:4px">
-                  <input type="text" id="u_ignoreKeyInput" placeholder="キー名を入力してEnterまたは追加" style="flex:1;min-width:0" title="カンマ区切りで複数指定可能な場合は設定保存形式に従います">
+                  <input type="text" id="u_ignoreKeyInput" placeholder="キー名 / *At / a.b.c のパス" style="flex:1;min-width:0" title="単純なキー名のほか、*At のような末尾ワイルドカード、a.b.c[0] のようなパスも指定できます">
                   <button type="button" class="btn sub" data-act="addIgnoreKey">追加</button>
+                </div>
+                <div id="u_ignoreImpactPreview" class="muted" style="margin-top:6px;font-size:11px;line-height:1.5">差分比較を実行すると、現在の無視キー設定で何件除外されるかをここに表示します。</div>
+                <div class="muted" style="margin-top:10px">無視キー設定セット（名前付きで保存・再利用）</div>
+                <div class="btns" style="margin-top:4px;flex-wrap:wrap;gap:6px">
+                  <input type="text" id="u_ignorePresetName" placeholder="例: 監査用 / 軽量比較" style="flex:1;min-width:0" title="現在の無視キー設定に名前を付けて保存します">
+                  <button type="button" class="btn sub" data-act="saveIgnorePreset" title="現在のキー一覧をこの名前で保存">保存</button>
+                  <select id="u_ignorePresetSelect" title="保存済みセットを読み込み" style="min-width:160px"><option value="">-- 読込 --</option></select>
+                  <button type="button" class="btn sub" data-act="loadIgnorePreset" title="選んだセットを現在の無視キーに置き換え">読込</button>
+                  <button type="button" class="btn sub" data-act="mergeIgnorePreset" title="選んだセットを現在の無視キーに追加（マージ）">追加</button>
+                  <button type="button" class="btn sub" data-act="deleteIgnorePreset" title="選んだセットを削除">削除</button>
                 </div>
                 </div>
               </details>
@@ -21406,7 +21640,7 @@ ${lines.join("\n")}
   init_diff();
   init_export();
   var MAX_SETS = 24;
-  function loadRaw() {
+  function loadRaw2() {
     try {
       const raw = JSON.parse(localStorage.getItem(DIFF_SELECTION_SETS_KEY) || "[]");
       return Array.isArray(raw) ? raw : [];
@@ -21414,7 +21648,7 @@ ${lines.join("\n")}
       return [];
     }
   }
-  function saveRaw(list) {
+  function saveRaw2(list) {
     try {
       localStorage.setItem(DIFF_SELECTION_SETS_KEY, JSON.stringify(list.slice(0, MAX_SETS)));
     } catch {
@@ -21423,16 +21657,16 @@ ${lines.join("\n")}
   function refreshDiffSelectionSetDropdown() {
     const sel = ui.diffSelectionSetSelect;
     if (!sel) return;
-    const sets = loadRaw();
+    const sets = loadRaw2();
     const cur = sel.value;
     const curSig = currentDiffSignature2();
     sel.innerHTML = '<option value="">-- 読込 --</option>' + sets.map((s) => {
       const bad = s.signature && s.signature !== curSig;
-      return `<option value="${escapeAttr(s.name)}">${escapeAttr(s.name)}${bad ? " (条件不一致)" : ""}</option>`;
+      return `<option value="${escapeAttr2(s.name)}">${escapeAttr2(s.name)}${bad ? " (条件不一致)" : ""}</option>`;
     }).join("");
     if (sets.some((s) => s.name === cur)) sel.value = cur;
   }
-  function escapeAttr(s) {
+  function escapeAttr2(s) {
     return String(s || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
   }
   function saveDiffSelectionSet(name) {
@@ -21440,14 +21674,14 @@ ${lines.join("\n")}
     if (!n) throw new Error("セット名を入力してください");
     const sig = currentDiffSignature2();
     const ids = [...state.diffSelectedIds || []];
-    const list = loadRaw().filter((x) => x.name !== n);
+    const list = loadRaw2().filter((x) => x.name !== n);
     list.unshift({
       name: n,
       signature: sig,
       ids,
       savedAt: Date.now()
     });
-    saveRaw(list);
+    saveRaw2(list);
     refreshDiffSelectionSetDropdown();
     const sel = ui.diffSelectionSetSelect;
     if (sel) sel.value = n;
@@ -21455,7 +21689,7 @@ ${lines.join("\n")}
   function loadDiffSelectionSet(name) {
     const n = String(name || "").trim();
     if (!n) return false;
-    const row = loadRaw().find((x) => x.name === n);
+    const row = loadRaw2().find((x) => x.name === n);
     if (!row || !Array.isArray(row.ids)) return false;
     const curSig = currentDiffSignature2();
     const mismatch = !!(row.signature && row.signature !== curSig);
@@ -21466,11 +21700,12 @@ ${lines.join("\n")}
   function deleteDiffSelectionSet(name) {
     const n = String(name || "").trim();
     if (!n) return;
-    saveRaw(loadRaw().filter((x) => x.name !== n));
+    saveRaw2(loadRaw2().filter((x) => x.name !== n));
     refreshDiffSelectionSetDropdown();
   }
 
   // src/handlers.ts
+  init_ignore_presets();
   init_popout();
   init_components();
   init_dialog();
@@ -22670,7 +22905,7 @@ ${lines.join("\n")}
   init_components();
   init_dialog();
   var RESULT_HOST_ID = "u_reflectPreviewProdDiff";
-  var PREVIEW_PROD_STATE_KEY = /* @__PURE__ */ Symbol.for("kus.reflect.previewProdDiff");
+  var PREVIEW_PROD_STATE_KEY = Symbol.for("kus.reflect.previewProdDiff");
   function getPreviewProdState() {
     if (!state[PREVIEW_PROD_STATE_KEY]) {
       state[PREVIEW_PROD_STATE_KEY] = {
@@ -26634,6 +26869,67 @@ ${lines.join("\n")}
         ui.ignoreKeys.value = current.join(", ");
         renderIgnoreKeyChips();
         saveCurrentDialogState2();
+        return;
+      }
+      if (act === "ignoreRowKey" || act === "ignoreRowPath") {
+        const isPath = act === "ignoreRowPath";
+        const raw = isPath ? actEl.dataset.path || "" : actEl.dataset.key || "";
+        const value = String(raw || "").trim();
+        if (!value) {
+          setStatus(isPath ? "無視するパスを取得できませんでした" : "無視するキー名を取得できませんでした", true);
+          return;
+        }
+        const current = (ui.ignoreKeys.value || "").split(",").map((k) => k.trim()).filter(Boolean);
+        if (current.includes(value)) {
+          setStatus(`既に無視リストに含まれています: ${value}`);
+          return;
+        }
+        current.push(value);
+        ui.ignoreKeys.value = current.join(", ");
+        renderIgnoreKeyChips();
+        renderResultRows(state.lastDiffRows || []);
+        saveCurrentDialogState2();
+        setStatus(isPath ? `無視パスを追加しました: ${value} （次回の差分比較から反映）` : `無視キーを追加しました: ${value} （次回の差分比較から反映）`);
+        return;
+      }
+      if (act === "saveIgnorePreset") {
+        try {
+          const entry = saveIgnorePreset(ui.ignorePresetName?.value || "");
+          if (ui.ignorePresetName) ui.ignorePresetName.value = "";
+          setStatus(`無視キーセットを保存しました: ${entry.name} (${entry.keys.length}件)`);
+        } catch (err) {
+          setStatus(err?.message || String(err), true);
+        }
+        return;
+      }
+      if (act === "loadIgnorePreset" || act === "mergeIgnorePreset") {
+        const name = ui.ignorePresetSelect?.value || "";
+        if (!name) {
+          setStatus("読み込むセットを選んでください", true);
+          return;
+        }
+        const entry = loadIgnorePreset(name, { merge: act === "mergeIgnorePreset" });
+        if (!entry) {
+          setStatus("セットを読み込めませんでした", true);
+          return;
+        }
+        renderIgnoreKeyChips();
+        saveCurrentDialogState2();
+        setStatus(act === "mergeIgnorePreset" ? `無視キーセットを追加（マージ）しました: ${entry.name}` : `無視キーセットを読込みました: ${entry.name}（${entry.keys.length}件で置き換え）`);
+        return;
+      }
+      if (act === "deleteIgnorePreset") {
+        const name = ui.ignorePresetSelect?.value || "";
+        if (!name) {
+          setStatus("削除するセットを選んでください", true);
+          return;
+        }
+        const ok = deleteIgnorePreset(name);
+        if (!ok) {
+          setStatus("セットを削除できませんでした", true);
+          return;
+        }
+        setStatus(`無視キーセットを削除しました: ${name}`);
         return;
       }
       if (act === "addLookupMapRow") {
@@ -32220,6 +32516,10 @@ ${field.label}` : code,
       diffWarnThreshold: $("#u_diffWarnThreshold"),
       diffWarnBox: $("#u_diffWarnBox"),
       diffSuggestedIgnore: $("#u_diffSuggestedIgnore"),
+      ignoreDefaultChips: $("#u_ignoreDefaultChips"),
+      ignoreImpactPreview: $("#u_ignoreImpactPreview"),
+      ignorePresetName: $("#u_ignorePresetName"),
+      ignorePresetSelect: $("#u_ignorePresetSelect"),
       diffMultiTargets: $("#u_diffMultiTargets"),
       diffMultiTargetResult: $("#u_diffMultiTargetResult"),
       commonDataState: $("#u_commonDataState"),

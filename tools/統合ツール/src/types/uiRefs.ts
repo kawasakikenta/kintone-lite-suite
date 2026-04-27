@@ -93,6 +93,10 @@ export interface KusUiRefs {
   diffWarnThreshold: UiInput;
   diffWarnBox: UiEl;
   diffSuggestedIgnore: UiEl;
+  ignoreDefaultChips: UiEl;
+  ignoreImpactPreview: UiEl;
+  ignorePresetName: UiInput;
+  ignorePresetSelect: UiSelect;
   diffMultiTargets: UiTextArea;
   diffMultiTargetResult: UiEl;
   charDiff: UiInput;

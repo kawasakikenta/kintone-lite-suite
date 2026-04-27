@@ -34,6 +34,7 @@ import {
 } from './diff/review.js';
 import { applyDiffUiPreset, applyDiffSectionNav } from './diff/presets.js';
 import { saveDiffSelectionSet, loadDiffSelectionSet, deleteDiffSelectionSet, refreshDiffSelectionSetDropdown } from './diff/selection-sets.js';
+import { saveIgnorePreset, loadIgnorePreset, deleteIgnorePreset, refreshIgnorePresetDropdown } from './diff/ignore-presets.js';
 import { openDiffViewerPopout } from './diff/popout.js';
 import {
   setStatus,
@@ -2083,6 +2084,59 @@ export function setupEventHandlers(injected: any = {}) {
       ui.ignoreKeys.value = current.join(', ');
       renderIgnoreKeyChips();
       saveCurrentDialogState();
+      return;
+    }
+    if (act === 'ignoreRowKey' || act === 'ignoreRowPath') {
+      const isPath = act === 'ignoreRowPath';
+      const raw = isPath ? (actEl.dataset.path || '') : (actEl.dataset.key || '');
+      const value = String(raw || '').trim();
+      if (!value) {
+        setStatus(isPath ? '無視するパスを取得できませんでした' : '無視するキー名を取得できませんでした', true);
+        return;
+      }
+      const current = (ui.ignoreKeys.value || '').split(',').map((k) => k.trim()).filter(Boolean);
+      if (current.includes(value)) {
+        setStatus(`既に無視リストに含まれています: ${value}`);
+        return;
+      }
+      current.push(value);
+      ui.ignoreKeys.value = current.join(', ');
+      renderIgnoreKeyChips();
+      renderResultRows(state.lastDiffRows || []);
+      saveCurrentDialogState();
+      setStatus(isPath
+        ? `無視パスを追加しました: ${value} （次回の差分比較から反映）`
+        : `無視キーを追加しました: ${value} （次回の差分比較から反映）`);
+      return;
+    }
+    if (act === 'saveIgnorePreset') {
+      try {
+        const entry = saveIgnorePreset(ui.ignorePresetName?.value || '');
+        if (ui.ignorePresetName) ui.ignorePresetName.value = '';
+        setStatus(`無視キーセットを保存しました: ${entry.name} (${entry.keys.length}件)`);
+      } catch (err: any) {
+        setStatus(err?.message || String(err), true);
+      }
+      return;
+    }
+    if (act === 'loadIgnorePreset' || act === 'mergeIgnorePreset') {
+      const name = ui.ignorePresetSelect?.value || '';
+      if (!name) { setStatus('読み込むセットを選んでください', true); return; }
+      const entry = loadIgnorePreset(name, { merge: act === 'mergeIgnorePreset' });
+      if (!entry) { setStatus('セットを読み込めませんでした', true); return; }
+      renderIgnoreKeyChips();
+      saveCurrentDialogState();
+      setStatus(act === 'mergeIgnorePreset'
+        ? `無視キーセットを追加（マージ）しました: ${entry.name}`
+        : `無視キーセットを読込みました: ${entry.name}（${entry.keys.length}件で置き換え）`);
+      return;
+    }
+    if (act === 'deleteIgnorePreset') {
+      const name = ui.ignorePresetSelect?.value || '';
+      if (!name) { setStatus('削除するセットを選んでください', true); return; }
+      const ok = deleteIgnorePreset(name);
+      if (!ok) { setStatus('セットを削除できませんでした', true); return; }
+      setStatus(`無視キーセットを削除しました: ${name}`);
       return;
     }
 
