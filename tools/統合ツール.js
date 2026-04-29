@@ -11,9 +11,7 @@
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
-  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
-  var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __esm = (fn, res) => function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
@@ -22,15 +20,6 @@
     for (var name in all)
       __defProp(target, name, { get: all[name], enumerable: true });
   };
-  var __copyProps = (to, from, except, desc) => {
-    if (from && typeof from === "object" || typeof from === "function") {
-      for (let key of __getOwnPropNames(from))
-        if (!__hasOwnProp.call(to, key) && key !== except)
-          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-    }
-    return to;
-  };
-  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
   // src/featureDefs.mjs
@@ -265,7 +254,7 @@
     }
     return "";
   }
-  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_DEFAULT_COURSE, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_DEFAULT_COURSE, GUIDED_TOUR_STEPS, HIGH_IMPACT_SECTIONS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -321,7 +310,7 @@
       DIALOG_MIN_WIDTH = 560;
       DIALOG_MIN_HEIGHT = 360;
       DIALOG_DEFAULT_WIDTH = 980;
-      DIALOG_DEFAULT_HEIGHT = 860;
+      DIALOG_DEFAULT_HEIGHT = 720;
       DIALOG_LARGE_WIDTH = 1240;
       DIALOG_LARGE_HEIGHT = 940;
       SECTION_DEFS = [
@@ -341,7 +330,14 @@
         { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
         { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
         { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+        // PUT /app/notifications/reminder.json は notifications に加え timezone を必須的に要求するためソース側の値を引き継ぐ。
+        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => {
+          const body = { notifications: d?.notifications || (Array.isArray(d) ? d : []) };
+          if (d && typeof d === "object" && typeof d.timezone === "string" && d.timezone) {
+            body.timezone = d.timezone;
+          }
+          return body;
+        } },
         { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
       ];
       SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS;
@@ -460,6 +456,14 @@
       });
       GUIDED_TOUR_DEFAULT_COURSE = "full";
       GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
+      HIGH_IMPACT_SECTIONS = /* @__PURE__ */ new Set([
+        "fieldSettings",
+        "processSettings",
+        "actionSettings",
+        "appAcl",
+        "fieldAcl",
+        "recordPermissions"
+      ]);
       DIFF_IMPACT_REF_LIMIT = 6;
       FIELD_REF_EXACT_KEYS = /* @__PURE__ */ new Set([
         "code",
@@ -577,6 +581,7 @@
     apiErrorWithContext: () => apiErrorWithContext,
     buildAppFilenameLabel: () => buildAppFilenameLabel,
     buildExportFilename: () => buildExportFilename,
+    classifyStage: () => classifyStage,
     compactForLog: () => compactForLog,
     deepClone: () => deepClone,
     downloadBlob: () => downloadBlob,
@@ -587,6 +592,7 @@
     getIssueSideLabel: () => getIssueSideLabel,
     getOnOffDisplayLabel: () => getOnOffDisplayLabel,
     getPreviewStateLabel: () => getPreviewStateLabel,
+    getSectionIconChar: () => getSectionIconChar,
     getSeverityDisplayLabel: () => getSeverityDisplayLabel,
     getThemeDisplayLabel: () => getThemeDisplayLabel,
     getToolWindowSafe: () => getToolWindowSafe,
@@ -600,11 +606,16 @@
     nowStamp: () => nowStamp,
     readTextFile: () => readTextFile,
     relativePathFromRow: () => relativePathFromRow,
+    renderSectionIconHtml: () => renderSectionIconHtml,
+    renderSeverityIconHtml: () => renderSeverityIconHtml,
     safeJsonForScript: () => safeJsonForScript,
     sanitizeFilenamePart: () => sanitizeFilenamePart,
     selectedScopeKeys: () => selectedScopeKeys,
+    severityClass: () => severityClass,
+    severityToneOf: () => severityToneOf,
     showToast: () => showToast,
     stableStringify: () => stableStringify,
+    stageIconChar: () => stageIconChar,
     tokenizePath: () => tokenizePath
   });
   function getToolWindowSafe() {
@@ -790,6 +801,44 @@ ${contextLine}`);
     };
     const base = map[type] || String(type || "-");
     return options.moved && type !== "moved" ? `${base}(移動)` : base;
+  }
+  function getSectionIconChar(sectionKey) {
+    return SECTION_ICONS[String(sectionKey || "")] || "·";
+  }
+  function renderSectionIconHtml(sectionKey, options = {}) {
+    const ch = getSectionIconChar(sectionKey);
+    const tip = options.withTooltip ? ` title="${esc(options.withTooltip)}"` : "";
+    return `<span class="sec-icon" data-section="${esc(sectionKey || "")}"${tip} aria-hidden="true">${esc(ch)}</span>`;
+  }
+  function severityToneOf(severity) {
+    const s = String(severity || "").toLowerCase();
+    if (s === "high") return "high";
+    if (s === "medium" || s === "mid") return "medium";
+    return "low";
+  }
+  function renderSeverityIconHtml(severity) {
+    const tone = severityToneOf(severity);
+    const glyph = tone === "high" ? "⚠" : tone === "medium" ? "⚡" : "◦";
+    return `<span class="sev-icon sev-icon--${tone}" aria-label="重要度${tone}">${esc(glyph)}</span>`;
+  }
+  function severityClass(severity) {
+    return `sev-${severityToneOf(severity)}`;
+  }
+  function classifyStage(act) {
+    const a = String(act || "");
+    if (!a) return "";
+    if (a.startsWith("runDiff") && a !== "runDiffAndPlan") return "diff";
+    if (a === "loadReflectNodes" || a === "selectVisibleReflectNodes" || a === "applyScopeDiffOnly" || a === "reflectBulkSelect") return "select";
+    if (a === "previewApplyPlan" || a === "runDiffAndPlan" || a === "exportDryRunPlan") return "plan";
+    if (a === "applyPreview") return "apply";
+    return "";
+  }
+  function stageIconChar(stage) {
+    if (stage === "diff") return "🔍";
+    if (stage === "select") return "✓";
+    if (stage === "plan") return "📋";
+    if (stage === "apply") return "🚀";
+    return "▶";
   }
   function getSeverityDisplayLabel(severity) {
     if (severity === "high") return "高";
@@ -1056,11 +1105,31 @@ ${contextLine}`);
       console.log(`[Toast ${type}] ${message}`);
     }
   }
-  var loadedScripts, loadedStyles, loadingScripts, loadingStyles;
+  var SECTION_ICONS, loadedScripts, loadedStyles, loadingScripts, loadingStyles;
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
       init_constants();
+      SECTION_ICONS = {
+        fieldSettings: "▦",
+        layoutSettings: "☰",
+        formSettings: "▤",
+        viewSettings: "⌗",
+        reportSettings: "📊",
+        processSettings: "⇄",
+        actionSettings: "⇒",
+        pluginSettings: "◆",
+        customizeSettings: "</>",
+        appAcl: "🔒",
+        fieldAcl: "🔒",
+        recordPermissions: "🔒",
+        notifications: "🔔",
+        perRecordNotifications: "🔔",
+        reminderNotifications: "⏰",
+        categories: "☷",
+        appSettings: "⚙",
+        appInfo: "ⓘ"
+      };
       loadedScripts = /* @__PURE__ */ new WeakMap();
       loadedStyles = /* @__PURE__ */ new WeakMap();
       loadingScripts = /* @__PURE__ */ new WeakMap();
@@ -1285,11 +1354,15 @@ ${contextLine}`);
         importedTargetBundle: null,
         importedSourceName: "",
         importedTargetName: "",
+        lastSettingsExportBundles: [],
         patchJsonPanelOpen: false,
         importedPatchPayload: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
         running: false,
+        runningStartedAt: null,
+        runningTaskLabel: "",
+        runningWatchdogId: null,
         lastResultByTab: {}
       };
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
@@ -1486,6 +1559,94 @@ ${contextLine}`);
     }
     return picked;
   }
+  function fnv1aHashString(text) {
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+    }
+    return h.toString(16).padStart(8, "0");
+  }
+  async function fetchTextFileBody(prefix, fileKey) {
+    if (!fileKey) return null;
+    const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    try {
+      const resp = await fetch(url, { method: "GET", headers });
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      if (blob.size > CUSTOMIZE_BODY_MAX_BYTES) return null;
+      return await blob.text();
+    } catch {
+      return null;
+    }
+  }
+  async function fetchCustomizeFileBodies(customizeSection, prefix) {
+    const stats = { fetched: 0, skipped: 0, failed: 0 };
+    if (!customizeSection || typeof customizeSection !== "object") return stats;
+    const tasks = [];
+    for (const platform of ["desktop", "mobile"]) {
+      for (const kind of ["js", "css"]) {
+        const arr = customizeSection?.[platform]?.[kind];
+        if (!Array.isArray(arr)) continue;
+        for (const item of arr) {
+          if (!item || typeof item !== "object" || item.type !== "FILE") continue;
+          const fileKey = item?.file?.fileKey;
+          const fileName = String(item?.file?.name || "");
+          if (!fileKey) {
+            stats.skipped += 1;
+            continue;
+          }
+          if (fileName && !TEXT_LIKE_EXT.test(fileName)) {
+            stats.skipped += 1;
+            continue;
+          }
+          tasks.push((async () => {
+            const text = await fetchTextFileBody(prefix, fileKey);
+            if (text == null) {
+              stats.failed += 1;
+              return;
+            }
+            item._bodyText = text;
+            item._bodyHash = fnv1aHashString(text);
+            stats.fetched += 1;
+          })());
+        }
+      }
+    }
+    await Promise.all(tasks);
+    return stats;
+  }
+  async function fetchPluginConfigs(pluginSection, prefix, appId) {
+    const stats = { fetched: 0, skipped: 0, failed: 0 };
+    if (!pluginSection || typeof pluginSection !== "object") return stats;
+    const plugins = Array.isArray(pluginSection.plugins) ? pluginSection.plugins : [];
+    if (!plugins.length) return stats;
+    const tasks = [];
+    for (const plugin of plugins) {
+      if (!plugin || typeof plugin !== "object") continue;
+      const id = String(plugin.id || "").trim();
+      if (!id) {
+        stats.skipped += 1;
+        continue;
+      }
+      tasks.push((async () => {
+        try {
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          if (res && typeof res === "object") {
+            plugin._config = res?.config != null ? res.config : res;
+            stats.fetched += 1;
+          } else {
+            stats.skipped += 1;
+          }
+        } catch {
+          stats.failed += 1;
+        }
+      })());
+    }
+    await Promise.all(tasks);
+    return stats;
+  }
   async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
@@ -1514,6 +1675,26 @@ ${contextLine}`);
       }
       if (onProgress) onProgress((i + 1) / sections.length, def.label);
     }
+    try {
+      if (sections.includes("customizeSettings")) {
+        const cust = bundle.sections.customizeSettings;
+        if (cust && !cust._fetchError) {
+          const prefix = buildApiPrefix(guestId, preview);
+          await fetchCustomizeFileBodies(cust, prefix);
+        }
+      }
+    } catch {
+    }
+    try {
+      if (sections.includes("pluginSettings")) {
+        const plug = bundle.sections.pluginSettings;
+        if (plug && !plug._fetchError) {
+          const prefix = buildApiPrefix(guestId, preview);
+          await fetchPluginConfigs(plug, prefix, app);
+        }
+      }
+    } catch {
+    }
     return bundle;
   }
   function resolveBundleRevision(bundle) {
@@ -1525,7 +1706,7 @@ ${contextLine}`);
     const first = Object.values(revisions).find((value) => value != null && value !== "");
     return first != null ? String(first) : "";
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1547,16 +1728,45 @@ ${contextLine}`);
         lastError: "",
         byPath: {}
       };
+      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+      TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
     }
   });
 
   // src/diff/engine.ts
+  function fieldAclLevelIndex(value) {
+    if (value == null) return -1;
+    return FIELD_ACL_LEVEL_ORDER.indexOf(String(value).toUpperCase());
+  }
   function detectRowSeverity(row) {
     const sec = row?.sectionKey || "";
-    const path = String(row?.path || "").toLowerCase();
-    if (row?.type === "removed") return "high";
-    if (HIGH_IMPACT_SECTIONS.has(sec)) return "high";
-    if (path.includes("lookup") || path.includes("relatedapp") || path.includes("condition")) return "high";
+    const rawPath = String(row?.path || "");
+    const pathLower = rawPath.toLowerCase();
+    const leafMatch = rawPath.match(/([^[.\]]+)(?:\[\d+\])?$/);
+    const leaf = leafMatch ? leafMatch[1] : "";
+    if (row?.moved && row?.type === "changed") return "low";
+    if (LOW_PRIORITY_LEAF_KEYS.has(leaf) && row?.type === "changed") return "low";
+    if ((sec === "appAcl" || sec === "recordPermissions") && ACL_GRANT_FLAG_KEYS.has(leaf) && row?.type === "changed") {
+      if (row?.left === true && row?.right === false) return "high";
+      if (row?.left === false && row?.right === true) return "medium";
+    }
+    if (sec === "fieldAcl" && leaf === "accessibility" && row?.type === "changed") {
+      const lIdx = fieldAclLevelIndex(row?.left);
+      const rIdx = fieldAclLevelIndex(row?.right);
+      if (lIdx >= 0 && rIdx >= 0) {
+        if (rIdx < lIdx) return "high";
+        if (rIdx > lIdx) return "medium";
+      }
+    }
+    if (sec === "pluginSettings" && leaf === "version" && row?.type === "changed") return "medium";
+    if (row?.type === "removed" && rawPath === sec) return "high";
+    if (row?.type === "removed") {
+      if (HIGH_IMPACT_SECTIONS2.has(sec)) return "high";
+      if (MEDIUM_IMPACT_SECTIONS.has(sec)) return "medium";
+      return "low";
+    }
+    if (HIGH_IMPACT_SECTIONS2.has(sec)) return "high";
+    if (pathLower.includes("lookup") || pathLower.includes("relatedapp") || pathLower.includes("condition")) return "high";
     if (MEDIUM_IMPACT_SECTIONS.has(sec)) return "medium";
     return "low";
   }
@@ -1918,6 +2128,150 @@ ${contextLine}`);
     }
     pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
   }
+  function preprocessCustomizePairForDiff(src, tgt) {
+    const sClone = src && typeof src === "object" ? deepClone(src) : src;
+    const tClone = tgt && typeof tgt === "object" ? deepClone(tgt) : tgt;
+    const injectName = (bundle) => {
+      if (!bundle || typeof bundle !== "object") return;
+      for (const platform of ["desktop", "mobile"]) {
+        for (const kind of ["js", "css"]) {
+          const arr = bundle?.[platform]?.[kind];
+          if (!Array.isArray(arr)) continue;
+          for (const item of arr) {
+            if (!item || typeof item !== "object" || item.name) continue;
+            if (item.type === "FILE") {
+              item.name = String(item?.file?.name || item?.file?.fileKey || "(ファイル未設定)");
+            } else if (item.type === "URL") {
+              item.name = String(item.url || "(URL未設定)");
+            }
+          }
+        }
+      }
+    };
+    injectName(sClone);
+    injectName(tClone);
+    const swapBodyOrCleanup = (item, counterpart) => {
+      if (!item || typeof item !== "object") return;
+      const sBody = item._bodyText;
+      const cBody = counterpart?._bodyText;
+      if (item.type === "FILE" && item.file && typeof item.file === "object" && sBody != null && cBody != null) {
+        const newFile = { ...item.file };
+        newFile._body = String(sBody);
+        delete newFile.fileKey;
+        item.file = newFile;
+      }
+      if ("_bodyText" in item) delete item._bodyText;
+      if ("_bodyHash" in item) delete item._bodyHash;
+    };
+    for (const platform of ["desktop", "mobile"]) {
+      for (const kind of ["js", "css"]) {
+        const sArr = sClone?.[platform]?.[kind];
+        const tArr = tClone?.[platform]?.[kind];
+        const sList = Array.isArray(sArr) ? sArr : [];
+        const tList = Array.isArray(tArr) ? tArr : [];
+        const tByName = /* @__PURE__ */ new Map();
+        tList.forEach((it) => {
+          if (it && typeof it === "object" && it.name) tByName.set(String(it.name), it);
+        });
+        const sByName = /* @__PURE__ */ new Map();
+        sList.forEach((it) => {
+          if (it && typeof it === "object" && it.name) sByName.set(String(it.name), it);
+        });
+        sList.forEach((it) => swapBodyOrCleanup(it, tByName.get(String(it?.name || ""))));
+        tList.forEach((it) => swapBodyOrCleanup(it, sByName.get(String(it?.name || ""))));
+      }
+    }
+    return { source: sClone, target: tClone };
+  }
+  function preprocessPluginSettingsForDiff(value) {
+    if (!value || typeof value !== "object") return value;
+    const cloned = deepClone(value);
+    if (!Array.isArray(cloned.plugins)) return cloned;
+    cloned.plugins.forEach((p) => {
+      if (!p || typeof p !== "object") return;
+      if (p._config !== void 0) {
+        p.config = p._config;
+        delete p._config;
+      }
+    });
+    return cloned;
+  }
+  function stripStateBodyForRenameMatch(value) {
+    const drop = /* @__PURE__ */ new Set(["name", "index"]);
+    const walk = (v) => {
+      if (Array.isArray(v)) return v.map(walk);
+      if (v && typeof v === "object") {
+        const o = {};
+        Object.keys(v).sort().forEach((k) => {
+          if (drop.has(k)) return;
+          o[k] = walk(v[k]);
+        });
+        return o;
+      }
+      return v;
+    };
+    return walk(value);
+  }
+  function detectProcessStateRenames(sourceProcess, targetProcess) {
+    const out = /* @__PURE__ */ new Map();
+    if (!sourceProcess || !targetProcess) return out;
+    const srcStates = sourceProcess.states && typeof sourceProcess.states === "object" ? sourceProcess.states : {};
+    const tgtStates = targetProcess.states && typeof targetProcess.states === "object" ? targetProcess.states : {};
+    const onlyInSrc = Object.keys(srcStates).filter((k) => !Object.prototype.hasOwnProperty.call(tgtStates, k));
+    const onlyInTgt = Object.keys(tgtStates).filter((k) => !Object.prototype.hasOwnProperty.call(srcStates, k));
+    if (!onlyInSrc.length || !onlyInTgt.length) return out;
+    const candidates = [];
+    onlyInSrc.forEach((from) => {
+      onlyInTgt.forEach((to) => {
+        const lhs = srcStates[from];
+        const rhs = tgtStates[to];
+        const sigL = stableStringify(stripStateBodyForRenameMatch(lhs));
+        const sigR = stableStringify(stripStateBodyForRenameMatch(rhs));
+        let score = 0;
+        if (sigL === sigR) score += 5;
+        const aL = lhs?.assignee;
+        const aR = rhs?.assignee;
+        if (aL && aR && aL.type === aR.type) score += 1;
+        if (Array.isArray(aL?.entities) && Array.isArray(aR?.entities) && stableStringify(aL.entities) === stableStringify(aR.entities)) score += 1;
+        if (score < 5) return;
+        candidates.push({ from, to, score });
+      });
+    });
+    candidates.sort((a, b) => b.score - a.score);
+    const usedFrom = /* @__PURE__ */ new Set();
+    const usedTo = /* @__PURE__ */ new Set();
+    candidates.forEach((c) => {
+      if (usedFrom.has(c.from) || usedTo.has(c.to)) return;
+      usedFrom.add(c.from);
+      usedTo.add(c.to);
+      out.set(c.from, c.to);
+    });
+    return out;
+  }
+  function applyProcessStateRenamesToSource(sourceProcess, renameMap) {
+    if (!sourceProcess || !renameMap || !renameMap.size) return sourceProcess;
+    const cloned = deepClone(sourceProcess);
+    if (cloned.states && typeof cloned.states === "object" && !Array.isArray(cloned.states)) {
+      const newStates = {};
+      Object.keys(cloned.states).forEach((k) => {
+        const newKey = renameMap.get(k) || k;
+        const obj = cloned.states[k];
+        if (obj && typeof obj === "object" && obj.name === k && renameMap.has(k)) {
+          obj.name = newKey;
+        }
+        newStates[newKey] = obj;
+      });
+      cloned.states = newStates;
+    }
+    if (Array.isArray(cloned.actions)) {
+      cloned.actions.forEach((act) => {
+        if (!act || typeof act !== "object") return;
+        if (typeof act.from === "string" && renameMap.has(act.from)) act.from = renameMap.get(act.from);
+        if (typeof act.to === "string" && renameMap.has(act.to)) act.to = renameMap.get(act.to);
+      });
+    }
+    return cloned;
+  }
   function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeysText, options = {}) {
     const ignoreRules = parseIgnoreRules(ignoreKeysText);
     const presetState = options.normalizationPresetState || {};
@@ -1956,8 +2310,24 @@ ${contextLine}`);
         continue;
       }
       if (!s && !t) continue;
-      const sourceForDiff = normalizeSectionForCompare(sec, s, presetState);
-      const targetForDiff = normalizeSectionForCompare(sec, t, presetState);
+      let sourceForSection = s;
+      let targetForSection = t;
+      let stateRenames = null;
+      if (sec === "processSettings") {
+        stateRenames = detectProcessStateRenames(s, t);
+        if (stateRenames && stateRenames.size) {
+          sourceForSection = applyProcessStateRenamesToSource(s, stateRenames);
+        }
+      } else if (sec === "customizeSettings") {
+        const pair = preprocessCustomizePairForDiff(s, t);
+        sourceForSection = pair.source;
+        targetForSection = pair.target;
+      } else if (sec === "pluginSettings") {
+        sourceForSection = preprocessPluginSettingsForDiff(s);
+        targetForSection = preprocessPluginSettingsForDiff(t);
+      }
+      const sourceForDiff = normalizeSectionForCompare(sec, sourceForSection, presetState);
+      const targetForDiff = normalizeSectionForCompare(sec, targetForSection, presetState);
       if (stableStringify(sourceForDiff) === stableStringify(targetForDiff)) {
         if (includeSame) {
           pushDiffRow(rows, { sectionKey: sec, section: label, type: "same", path: sec, left: sourceForDiff, right: targetForDiff, severity: "low" }, ignoreRules);
@@ -1970,6 +2340,31 @@ ${contextLine}`);
         if (!rows[i].section) rows[i].section = label;
         if (!rows[i].sectionKey) rows[i].sectionKey = sec;
         if (!rows[i].severity) rows[i].severity = detectRowSeverity(rows[i]);
+      }
+      if (sec === "processSettings" && stateRenames && stateRenames.size) {
+        stateRenames.forEach((to, from) => {
+          pushDiffRow(rows, {
+            sectionKey: sec,
+            section: label,
+            type: "changed",
+            path: `${sec}.states.__rename__`,
+            left: { name: from },
+            right: { name: to },
+            severity: "low",
+            _displayOnly: true,
+            _stateRenameNotice: true,
+            renameCandidate: {
+              id: `state-rename:${from}:${to}`,
+              fromCode: from,
+              toCode: to,
+              entityKind: "state",
+              sectionKey: sec,
+              score: 99,
+              matchedBy: "process-state-cascade-suppressed"
+            },
+            reasonSummary: `ステータス改名：${from} → ${to}（参照を自動補正）`
+          }, ignoreRules);
+        });
       }
     }
     for (const row of rows) {
@@ -2065,6 +2460,192 @@ ${contextLine}`);
     const stateMap = presetState || getDiffNormalizationPresetState();
     return Object.keys(DIFF_NORMALIZATION_PRESETS).filter((key) => !!stateMap[key]).map((key) => DIFF_NORMALIZATION_PRESETS[key].label);
   }
+  function tokenizeForExpansion(path) {
+    if (!path) return [];
+    const out = [];
+    const re = /([^[.\]]+)|\[(\d+)\]/g;
+    let m;
+    while ((m = re.exec(path)) !== null) {
+      if (m[1] != null) out.push(m[1]);
+      else out.push(Number(m[2]));
+    }
+    return out;
+  }
+  function aclEntityLabel(entity) {
+    if (!entity || typeof entity !== "object") return "";
+    const code = String(entity.code || "").trim();
+    const type = String(entity.type || "").trim();
+    if (!code) return type ? `(${type})` : "";
+    return type ? `${code} (${type})` : code;
+  }
+  function enumerateNamedMap(obj, basePath, kind, kindLabel) {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return [];
+    return Object.keys(obj).map((name) => ({
+      path: `${basePath}.${name}`,
+      payload: obj[name],
+      entityKind: kind,
+      entityLabel: name,
+      entityCode: name,
+      reasonNoun: kindLabel
+    }));
+  }
+  function enumerateArray(arr, basePath, kind, kindLabel, options = {}) {
+    if (!Array.isArray(arr)) return [];
+    return arr.map((item, idx) => {
+      let label = "";
+      let code = "";
+      const keyField = options.keyField;
+      if (item && typeof item === "object") {
+        if (kind === "aclEntry" || kind === "recordAclEntry") {
+          label = aclEntityLabel(item.entity);
+          code = String(item.entity?.code || "");
+        } else if (kind === "fieldAclEntry") {
+          label = String(item.code || "");
+          code = label;
+        } else if (kind === "plugin") {
+          const id = String(item.id || "");
+          const name = String(item.name || "");
+          label = name ? id ? `${name} (${id})` : name : id;
+          code = id;
+        } else if (kind === "jsCss") {
+          const fileKey = item.file?.fileKey || item.fileKey || "";
+          const url = item.url || "";
+          label = url || (fileKey ? `ファイル(${String(fileKey).slice(0, 8)}…)` : "");
+          code = String(fileKey || url || "");
+        } else if (kind === "layoutRow") {
+          const t = String(item.type || "").toUpperCase();
+          if (t === "GROUP" && item.code) label = `グループ「${item.code}」`;
+          else if (t === "SUBTABLE" && item.code) label = `テーブル「${item.code}」`;
+          else label = `行 #${idx} (${t || "ROW"})`;
+          code = String(item.code || "");
+        } else if (kind === "notification" || kind === "perRecordNotification" || kind === "reminderNotification") {
+          label = String(item.name || item.title || "").trim();
+          if (!label && Array.isArray(item.recipients) && item.recipients.length) {
+            const first = item.recipients[0];
+            const rc = first?.entity?.code || first?.code || "";
+            label = rc ? `${rc}${item.recipients.length > 1 ? " 他" : ""}` : "";
+          }
+          code = String(item.name || "");
+        } else if (keyField) {
+          label = String(item[keyField] || "");
+          code = label;
+        }
+      }
+      if (!label) {
+        label = options.fallbackLabel ? options.fallbackLabel(item, idx) : `${kindLabel} #${idx}`;
+      }
+      return {
+        path: `${basePath}[${idx}]`,
+        payload: item,
+        entityKind: kind,
+        entityLabel: label,
+        entityCode: code,
+        reasonNoun: kindLabel
+      };
+    });
+  }
+  function computeSectionWideEntityChildren(sectionKey, payload) {
+    if (!payload || typeof payload !== "object") return [];
+    switch (sectionKey) {
+      case "viewSettings":
+        return enumerateNamedMap(payload.views, `${sectionKey}.views`, "view", "ビュー");
+      case "reportSettings":
+        return enumerateNamedMap(payload.reports, `${sectionKey}.reports`, "report", "グラフ");
+      case "processSettings": {
+        const out = [];
+        out.push(...enumerateNamedMap(payload.states, `${sectionKey}.states`, "state", "ステータス"));
+        out.push(...enumerateArray(payload.actions, `${sectionKey}.actions`, "action", "遷移アクション", { keyField: "name" }));
+        return out;
+      }
+      case "actionSettings":
+        return enumerateArray(payload.actions, `${sectionKey}.actions`, "appAction", "アクション", { keyField: "name" });
+      case "appAcl":
+        return enumerateArray(payload.rights, `${sectionKey}.rights`, "aclEntry", "権限エントリー");
+      case "recordPermissions":
+        return enumerateArray(payload.rights, `${sectionKey}.rights`, "recordAclEntry", "レコード権限エントリー");
+      case "fieldAcl":
+        return enumerateArray(payload.rights, `${sectionKey}.rights`, "fieldAclEntry", "フィールド権限");
+      case "notifications":
+        return enumerateArray(payload.notifications, `${sectionKey}.notifications`, "notification", "通知");
+      case "perRecordNotifications":
+        return enumerateArray(payload.notifications, `${sectionKey}.notifications`, "perRecordNotification", "レコード条件通知");
+      case "reminderNotifications":
+        return enumerateArray(payload.notifications, `${sectionKey}.notifications`, "reminderNotification", "リマインダー通知");
+      case "categories":
+        return enumerateNamedMap(payload.categories, `${sectionKey}.categories`, "category", "カテゴリ");
+      case "pluginSettings":
+        return enumerateArray(payload.plugins, `${sectionKey}.plugins`, "plugin", "プラグイン", { keyField: "id" });
+      case "customizeSettings": {
+        const out = [];
+        ["desktop", "mobile"].forEach((platform) => {
+          ["js", "css"].forEach((kind) => {
+            const arr = payload?.[platform]?.[kind];
+            if (Array.isArray(arr)) {
+              const platLabel = platform === "desktop" ? "デスクトップ" : "モバイル";
+              const kindLabel = kind.toUpperCase();
+              out.push(...enumerateArray(arr, `${sectionKey}.${platform}.${kind}`, "jsCss", `${platLabel}/${kindLabel}`).map((spec) => ({
+                ...spec,
+                entityLabel: `${platLabel}/${kindLabel}: ${spec.entityLabel}`
+              })));
+            }
+          });
+        });
+        return out;
+      }
+      case "layoutSettings":
+        return enumerateArray(payload.layout, `${sectionKey}.layout`, "layoutRow", "レイアウト行");
+      default:
+        return [];
+    }
+  }
+  function expandEntityRowsForDisplay(rows) {
+    if (!Array.isArray(rows) || !rows.length) return rows || [];
+    const out = [];
+    rows.forEach((row, idx) => {
+      out.push(row);
+      if (!row || row._displayOnly) return;
+      if (row.sectionKey === "fieldSettings") return;
+      const isAdded = row.type === "added";
+      const isRemoved = row.type === "removed";
+      if (!isAdded && !isRemoved) return;
+      const sectionKey = String(row.sectionKey || "");
+      if (!sectionKey) return;
+      const path = String(row.path || "");
+      const tokens = tokenizeForExpansion(path);
+      const isSectionWide = path === sectionKey;
+      if (!isSectionWide) return;
+      const payload = isAdded ? row.right : row.left;
+      let children = computeSectionWideEntityChildren(sectionKey, payload);
+      if (!children.length) return;
+      if (children.length > ENTITY_EXPAND_LIMIT) children = children.slice(0, ENTITY_EXPAND_LIMIT);
+      const parentId = row._id || `d${idx}`;
+      let childIdx = 0;
+      children.forEach((spec) => {
+        out.push({
+          ...row,
+          _id: `${parentId}::echild::${childIdx++}`,
+          _parentRowId: parentId,
+          _expandedFromEntity: true,
+          _displayOnly: true,
+          path: spec.path,
+          left: isRemoved ? spec.payload : void 0,
+          right: isAdded ? spec.payload : void 0,
+          type: row.type,
+          moved: false,
+          entityKind: spec.entityKind,
+          entityLabel: spec.entityLabel,
+          entityCode: spec.entityCode || "",
+          entityPropLabel: "",
+          reasonSummary: isAdded ? `${spec.reasonNoun}追加：${spec.entityLabel}` : `${spec.reasonNoun}削除：${spec.entityLabel}`,
+          renameCandidate: null,
+          impactCount: 0,
+          impactRefs: [],
+          impactSummary: ""
+        });
+      });
+    });
+    return out;
+  }
   function expandSubtableRowsForDisplay(rows) {
     if (!Array.isArray(rows) || !rows.length) return rows || [];
     const out = [];
@@ -2113,14 +2694,14 @@ ${contextLine}`);
     });
     return out;
   }
-  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, SUBTABLE_ROOT_PATH_RE;
+  var HIGH_IMPACT_SECTIONS2, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
   var init_engine = __esm({
     "src/diff/engine.ts"() {
       "use strict";
       init_constants();
       init_state();
       init_utils();
-      HIGH_IMPACT_SECTIONS = /* @__PURE__ */ new Set([
+      HIGH_IMPACT_SECTIONS2 = /* @__PURE__ */ new Set([
         "fieldSettings",
         "processSettings",
         "actionSettings",
@@ -2154,7 +2735,35 @@ ${contextLine}`);
         "to",
         "key"
       ];
+      LOW_PRIORITY_LEAF_KEYS = /* @__PURE__ */ new Set([
+        "width",
+        "x",
+        "y",
+        "index",
+        "no",
+        "order",
+        "paginationStyle",
+        "pager",
+        "description",
+        "minWidth",
+        "maxWidth",
+        "thumbnailSize"
+      ]);
+      ACL_GRANT_FLAG_KEYS = /* @__PURE__ */ new Set([
+        "recordViewable",
+        "recordAddable",
+        "recordEditable",
+        "recordDeletable",
+        "recordImportable",
+        "recordExportable",
+        "appEditable",
+        "viewable",
+        "editable",
+        "deletable"
+      ]);
+      FIELD_ACL_LEVEL_ORDER = ["NONE", "READ", "READ_WRITE"];
       SUBTABLE_ROOT_PATH_RE = /^fieldSettings\.properties\.([^.[\]]+)$/;
+      ENTITY_EXPAND_LIMIT = 200;
     }
   });
 
@@ -2288,9 +2897,15 @@ ${contextLine}`);
       reasons.push("label-similar");
       hasStrongMatch = true;
     }
-    if (scoreTokenOverlap(leftCode, rightCode) >= 0.5) {
+    const codeOverlap = scoreTokenOverlap(leftCode, rightCode);
+    if (codeOverlap >= 0.5) {
       score += 1;
       reasons.push("code-similar");
+    }
+    if (!hasStrongMatch && codeOverlap >= 0.7) {
+      score += 2;
+      reasons.push("code-strong");
+      hasStrongMatch = true;
     }
     if (leftDef.required === rightDef.required) {
       score += 1;
@@ -2565,6 +3180,276 @@ ${contextLine}`);
     const head = [...sectionCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([section, count]) => `${section}:${count}`).join(" / ");
     return head || `影響 ${refs.length}件`;
   }
+  function isEntityRootRow(row) {
+    if (!row || row.sectionKey === "fieldSettings") return false;
+    if (row._displayOnly) return false;
+    if (!row.entityKind || !RENAMABLE_ENTITY_KINDS.has(row.entityKind)) return false;
+    const tokens = tokenizePath2(String(row.path || ""));
+    const sectionKey = String(row.sectionKey || "");
+    if ((sectionKey === "viewSettings" || sectionKey === "reportSettings" || sectionKey === "categories") && tokens.length === 3) return true;
+    if (sectionKey === "processSettings" && tokens[1] === "states" && tokens.length === 3) return true;
+    if ((sectionKey === "processSettings" || sectionKey === "actionSettings") && tokens[1] === "actions" && tokens.length === 3) return true;
+    if ((sectionKey === "appAcl" || sectionKey === "recordPermissions" || sectionKey === "fieldAcl") && tokens[1] === "rights" && tokens.length === 3) return true;
+    if (["notifications", "perRecordNotifications", "reminderNotifications"].includes(sectionKey) && tokens[1] === "notifications" && tokens.length === 3) return true;
+    if (sectionKey === "pluginSettings" && tokens[1] === "plugins" && tokens.length === 3) return true;
+    if (sectionKey === "layoutSettings" && tokens[1] === "layout" && tokens.length === 3) return true;
+    if (sectionKey === "customizeSettings" && tokens.length === 4) return true;
+    return false;
+  }
+  function entityPayload(row) {
+    return row?.right || row?.left || null;
+  }
+  function normalizeEntityBodyForRename(value, sectionKey, dropPresentation = false) {
+    const dropKeys = /* @__PURE__ */ new Set(["id", "index", "no", "order", "revision", "createdAt", "creator", "modifiedAt", "modifier"]);
+    if (dropPresentation) {
+      if (sectionKey === "viewSettings" || sectionKey === "reportSettings") dropKeys.add("name");
+      if (sectionKey === "processSettings" || sectionKey === "actionSettings") dropKeys.add("name");
+      if (sectionKey === "pluginSettings") dropKeys.add("name");
+      if (["notifications", "perRecordNotifications", "reminderNotifications"].includes(sectionKey)) {
+        dropKeys.add("name");
+        dropKeys.add("title");
+      }
+    }
+    const walk = (v) => {
+      if (Array.isArray(v)) return v.map(walk);
+      if (v && typeof v === "object") {
+        const out = {};
+        Object.keys(v).sort().forEach((k) => {
+          if (dropKeys.has(k)) return;
+          out[k] = walk(v[k]);
+        });
+        return out;
+      }
+      return v;
+    };
+    return walk(value);
+  }
+  function scoreEntityRenameCandidate(removedRow, addedRow) {
+    if (removedRow.sectionKey !== addedRow.sectionKey) return null;
+    if (removedRow.entityKind !== addedRow.entityKind) return null;
+    const left = entityPayload(removedRow);
+    const right = entityPayload(addedRow);
+    if (!left || !right || typeof left !== "object" || typeof right !== "object") return null;
+    const lType = left.type;
+    const rType = right.type;
+    if (lType != null && rType != null && String(lType) !== String(rType)) return null;
+    const sectionKey = removedRow.sectionKey;
+    const exactSigLeft = stableStringify(normalizeEntityBodyForRename(left, sectionKey));
+    const exactSigRight = stableStringify(normalizeEntityBodyForRename(right, sectionKey));
+    const coreSigLeft = stableStringify(normalizeEntityBodyForRename(left, sectionKey, true));
+    const coreSigRight = stableStringify(normalizeEntityBodyForRename(right, sectionKey, true));
+    const reasons = [];
+    let score = 0;
+    let strong = false;
+    if (lType && rType) {
+      score += 1;
+      reasons.push(`type:${lType}`);
+    }
+    if (exactSigLeft === exactSigRight) {
+      score += 6;
+      reasons.push("same-body");
+      strong = true;
+    } else if (coreSigLeft === coreSigRight) {
+      score += 5;
+      reasons.push("same-core");
+      strong = true;
+    }
+    const leftLabel = normalizeLooseText(String(removedRow.entityLabel || ""));
+    const rightLabel = normalizeLooseText(String(addedRow.entityLabel || ""));
+    if (leftLabel && rightLabel) {
+      if (leftLabel === rightLabel) {
+        score += 2;
+        reasons.push("same-label");
+      } else if (scoreTokenOverlap(leftLabel, rightLabel) >= 0.6) {
+        score += 1;
+        reasons.push("label-similar");
+      }
+    }
+    if (!strong) return null;
+    if (score < 6) return null;
+    return { score, matchedBy: reasons.join(", ") };
+  }
+  function detectEntityRenameCandidates(rows) {
+    const eligible = (rows || []).filter(isEntityRootRow);
+    const removedRows = eligible.filter((r) => r.type === "removed");
+    const addedRows = eligible.filter((r) => r.type === "added");
+    if (!removedRows.length || !addedRows.length) return /* @__PURE__ */ new Map();
+    const candidates = [];
+    removedRows.forEach((rr) => {
+      addedRows.forEach((ar) => {
+        const scored = scoreEntityRenameCandidate(rr, ar);
+        if (!scored) return;
+        candidates.push({ removedRow: rr, addedRow: ar, score: scored.score, matchedBy: scored.matchedBy });
+      });
+    });
+    candidates.sort((a, b) => b.score - a.score);
+    const usedRemoved = /* @__PURE__ */ new Set();
+    const usedAdded = /* @__PURE__ */ new Set();
+    const out = /* @__PURE__ */ new Map();
+    candidates.forEach((cand) => {
+      if (usedRemoved.has(cand.removedRow._id) || usedAdded.has(cand.addedRow._id)) return;
+      usedRemoved.add(cand.removedRow._id);
+      usedAdded.add(cand.addedRow._id);
+      const fromCode = String(cand.removedRow.entityCode || cand.removedRow.entityLabel || "");
+      const toCode = String(cand.addedRow.entityCode || cand.addedRow.entityLabel || "");
+      const renameInfo = {
+        id: `entity-rename:${cand.removedRow.sectionKey}:${fromCode}:${toCode}`,
+        fromCode,
+        toCode,
+        score: cand.score,
+        matchedBy: cand.matchedBy,
+        entityKind: cand.removedRow.entityKind,
+        sectionKey: cand.removedRow.sectionKey
+      };
+      out.set(cand.removedRow._id, renameInfo);
+      out.set(cand.addedRow._id, renameInfo);
+    });
+    return out;
+  }
+  function getSectionPropLabel(sectionKey, leaf) {
+    const map = SECTION_PROP_LABELS[sectionKey];
+    if (!map) return "";
+    return map[leaf] || "";
+  }
+  function describeAclEntity(entity) {
+    if (!entity || typeof entity !== "object") return "";
+    const code = String(entity.code || "").trim();
+    const type = String(entity.type || "").trim();
+    if (!code) return type ? `(${type})` : "";
+    return type ? `${code} (${type})` : code;
+  }
+  function extractEntityContext(row) {
+    const sectionKey = String(row?.sectionKey || "");
+    const path = String(row?.path || "");
+    const tokens = tokenizePath2(path);
+    const leaf = getPathLeafKey2(path);
+    const propLabel = getSectionPropLabel(sectionKey, leaf);
+    const empty = { entityKind: "", entityLabel: "", entityCode: "", propLabel };
+    if (sectionKey === "fieldSettings") return empty;
+    const payload = row?.right || row?.left || null;
+    switch (sectionKey) {
+      case "viewSettings": {
+        if (tokens[1] === "views" && typeof tokens[2] === "string") {
+          return { entityKind: "view", entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+        }
+        return empty;
+      }
+      case "reportSettings": {
+        if (tokens[1] === "reports" && typeof tokens[2] === "string") {
+          return { entityKind: "report", entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+        }
+        return empty;
+      }
+      case "processSettings": {
+        if (tokens[1] === "states" && typeof tokens[2] === "string") {
+          return { entityKind: "state", entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+        }
+        if (tokens[1] === "actions" && typeof tokens[2] === "number") {
+          const name = row?.arrayKey === "name" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.name || "");
+          const label = name || `遷移 #${tokens[2]}`;
+          return { entityKind: "action", entityLabel: label, entityCode: name, propLabel };
+        }
+        return empty;
+      }
+      case "actionSettings": {
+        if (tokens[1] === "actions" && typeof tokens[2] === "number") {
+          const name = row?.arrayKey === "name" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.name || "");
+          const label = name || `アクション #${tokens[2]}`;
+          return { entityKind: "appAction", entityLabel: label, entityCode: name, propLabel };
+        }
+        return empty;
+      }
+      case "appAcl":
+      case "recordPermissions": {
+        if (tokens[1] === "rights" && typeof tokens[2] === "number") {
+          let entityRef = row?.arrayKey === "entity" && row?.arrayKeyValue && typeof row.arrayKeyValue === "object" ? row.arrayKeyValue : null;
+          if (!entityRef) entityRef = payload && typeof payload === "object" ? payload.entity : null;
+          const label = describeAclEntity(entityRef) || `エントリー #${tokens[2]}`;
+          const code = String(entityRef?.code || "");
+          const kind = sectionKey === "appAcl" ? "aclEntry" : "recordAclEntry";
+          return { entityKind: kind, entityLabel: label, entityCode: code, propLabel };
+        }
+        return empty;
+      }
+      case "fieldAcl": {
+        if (tokens[1] === "rights" && typeof tokens[2] === "number") {
+          const fc = row?.arrayKey === "code" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.code || "");
+          const label = fc || `エントリー #${tokens[2]}`;
+          return { entityKind: "fieldAclEntry", entityLabel: label, entityCode: fc, propLabel };
+        }
+        return empty;
+      }
+      case "notifications":
+      case "perRecordNotifications":
+      case "reminderNotifications": {
+        if (tokens[1] === "notifications" && typeof tokens[2] === "number") {
+          const obj = payload && typeof payload === "object" ? payload : {};
+          let label = String(obj.name || obj.title || "").trim();
+          if (!label) {
+            const recipients = obj.recipients;
+            if (Array.isArray(recipients) && recipients.length) {
+              const first = recipients[0];
+              const code = first?.entity?.code || first?.code || "";
+              label = code ? `${code}${recipients.length > 1 ? " 他" : ""}` : "";
+            }
+          }
+          if (!label && row?.arrayKey === "name" && row?.arrayKeyValue != null) {
+            label = String(row.arrayKeyValue);
+          }
+          if (!label) label = `通知 #${tokens[2]}`;
+          const kind = sectionKey === "perRecordNotifications" ? "perRecordNotification" : sectionKey === "reminderNotifications" ? "reminderNotification" : "notification";
+          return { entityKind: kind, entityLabel: label, entityCode: String(obj.name || ""), propLabel };
+        }
+        return empty;
+      }
+      case "categories": {
+        if (tokens[1] === "categories" && typeof tokens[2] === "string") {
+          return { entityKind: "category", entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+        }
+        return empty;
+      }
+      case "pluginSettings": {
+        if (tokens[1] === "plugins" && typeof tokens[2] === "number") {
+          const id = row?.arrayKey === "id" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.id || "");
+          const name = String(payload && typeof payload === "object" && payload.name || "");
+          const label = name ? id ? `${name} (${id})` : name : id || `プラグイン #${tokens[2]}`;
+          return { entityKind: "plugin", entityLabel: label, entityCode: id, propLabel };
+        }
+        return empty;
+      }
+      case "customizeSettings": {
+        if ((tokens[1] === "desktop" || tokens[1] === "mobile") && (tokens[2] === "js" || tokens[2] === "css") && typeof tokens[3] === "number") {
+          const platform = tokens[1] === "desktop" ? "デスクトップ" : "モバイル";
+          const kind = String(tokens[2]).toUpperCase();
+          const obj = payload && typeof payload === "object" ? payload : {};
+          const fileKey = obj?.file?.fileKey || obj?.fileKey || "";
+          const url = obj?.url || "";
+          const ref = url ? url : fileKey ? `ファイル(${String(fileKey).slice(0, 8)}…)` : `#${tokens[3]}`;
+          return {
+            entityKind: "jsCss",
+            entityLabel: `${platform}/${kind}: ${ref}`,
+            entityCode: String(fileKey || url || ""),
+            propLabel
+          };
+        }
+        return empty;
+      }
+      case "layoutSettings": {
+        if (tokens[1] === "layout" && typeof tokens[2] === "number") {
+          const obj = payload && typeof payload === "object" ? payload : {};
+          const t = String(obj.type || "").toUpperCase();
+          let label = `行 #${tokens[2]}`;
+          if (t === "GROUP" && obj.code) label = `グループ「${obj.code}」`;
+          else if (t === "SUBTABLE" && obj.code) label = `テーブル「${obj.code}」`;
+          else if (t === "ROW") label = `行 #${tokens[2]}`;
+          return { entityKind: "layoutRow", entityLabel: label, entityCode: String(obj.code || ""), propLabel };
+        }
+        return empty;
+      }
+      default:
+        return empty;
+    }
+  }
   function buildDiffReasonSummary(row) {
     const sectionKey = row.sectionKey || "";
     const sectionLabel2 = SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey || "差分";
@@ -2590,41 +3475,74 @@ ${contextLine}`);
       if (String(row.path || "").includes(".lookup.")) return "ルックアップ設定変更";
       return `${noun}設定変更`;
     }
-    if (sectionKey === "layoutSettings") return "レイアウト変更";
-    if (sectionKey === "viewSettings") {
-      if (String(row.path || "").includes("filterCond")) return "ビュー条件変更";
-      if (String(row.path || "").includes(".fields")) return "ビュー列変更";
-      if (leafKey === "name") return "ビュー名変更";
-      return row.type === "added" ? "ビュー追加" : row.type === "removed" ? "ビュー削除" : "ビュー設定変更";
+    const entity = row && (row.entityLabel || row.entityKind) ? { entityKind: String(row.entityKind || ""), entityLabel: String(row.entityLabel || ""), propLabel: String(row.entityPropLabel || "") } : extractEntityContext(row);
+    const kindLabel = entity.entityKind ? ENTITY_KIND_LABELS[entity.entityKind] || "" : "";
+    const propLabel = entity.propLabel || "";
+    const isEntityRoot = !!entity.entityKind && !propLabel && (() => {
+      const tokens = tokenizePath2(String(row.path || ""));
+      if (sectionKey === "viewSettings" || sectionKey === "reportSettings" || sectionKey === "categories") {
+        return tokens.length === 3;
+      }
+      if (sectionKey === "processSettings" && tokens[1] === "states") return tokens.length === 3;
+      if ((sectionKey === "processSettings" || sectionKey === "actionSettings") && tokens[1] === "actions") return tokens.length === 3;
+      if ((sectionKey === "appAcl" || sectionKey === "recordPermissions" || sectionKey === "fieldAcl") && tokens[1] === "rights") return tokens.length === 3;
+      if (["notifications", "perRecordNotifications", "reminderNotifications"].includes(sectionKey) && tokens[1] === "notifications") return tokens.length === 3;
+      if (sectionKey === "pluginSettings" && tokens[1] === "plugins") return tokens.length === 3;
+      if (sectionKey === "layoutSettings" && tokens[1] === "layout") return tokens.length === 3;
+      if (sectionKey === "customizeSettings") return tokens.length === 4;
+      return false;
+    })();
+    if (entity.entityKind && isEntityRoot) {
+      if (row.type === "added") return `${kindLabel}追加：${entity.entityLabel}`;
+      if (row.type === "removed") return `${kindLabel}削除：${entity.entityLabel}`;
+      return `${kindLabel}変更：${entity.entityLabel}`;
     }
-    if (sectionKey === "reportSettings") {
-      if (String(row.path || "").includes("filterCond")) return "グラフ条件変更";
-      return row.type === "added" ? "グラフ追加" : row.type === "removed" ? "グラフ削除" : "グラフ設定変更";
+    if (entity.entityKind) {
+      const detail = propLabel || (leafKey || "");
+      const head = `${kindLabel}「${entity.entityLabel}」`;
+      if (row.type === "added") return detail ? `${head} / ${detail} 追加` : `${head} 追加`;
+      if (row.type === "removed") return detail ? `${head} / ${detail} 削除` : `${head} 削除`;
+      return detail ? `${head} / ${detail} 変更` : `${head} 変更`;
     }
-    if (sectionKey === "processSettings") {
-      if (String(row.path || "").includes(".states.")) return row.type === "added" ? "ステータス追加" : row.type === "removed" ? "ステータス削除" : "ステータス設定変更";
-      if (String(row.path || "").includes(".actions.")) return row.type === "added" ? "遷移アクション追加" : row.type === "removed" ? "遷移アクション削除" : "遷移アクション変更";
-      if (leafKey === "enable") return "プロセス有効/無効変更";
-      return "プロセス設定変更";
+    if (sectionKey === "appSettings") {
+      const sp = getSectionPropLabel("appSettings", leafKey);
+      return sp ? `アプリ設定変更：${sp}` : "アプリ設定変更";
     }
-    if (sectionKey === "actionSettings") return row.type === "added" ? "アクション追加" : row.type === "removed" ? "アクション削除" : "アクション設定変更";
-    if (["appAcl", "fieldAcl", "recordPermissions"].includes(sectionKey)) return row.type === "added" ? "権限追加" : row.type === "removed" ? "権限削除" : "権限変更";
-    if (["notifications", "perRecordNotifications", "reminderNotifications"].includes(sectionKey)) {
-      if (String(row.path || "").includes("condition")) return "通知条件変更";
-      return row.type === "added" ? "通知追加" : row.type === "removed" ? "通知削除" : "通知設定変更";
+    if (sectionKey === "appInfo") {
+      const sp = getSectionPropLabel("appInfo", leafKey);
+      return sp ? `アプリ情報変更：${sp}` : "アプリ情報変更";
     }
-    if (sectionKey === "categories") return row.type === "added" ? "カテゴリ追加" : row.type === "removed" ? "カテゴリ削除" : "カテゴリ設定変更";
+    if (sectionKey === "formSettings") return "フォーム設定変更";
     return row.type === "added" ? `${sectionLabel2}追加` : row.type === "removed" ? `${sectionLabel2}削除` : `${sectionLabel2}変更`;
   }
   function enrichDiffRows(rows, sourceBundle, targetBundle) {
-    const renameMap = detectFieldRenameCandidates(rows);
+    const seeded = (rows || []).map((row) => {
+      if (!row || row.sectionKey === "fieldSettings") return row;
+      const ctx = extractEntityContext(row);
+      if (!ctx.entityKind) return row;
+      return {
+        ...row,
+        entityKind: ctx.entityKind,
+        entityLabel: ctx.entityLabel,
+        entityCode: ctx.entityCode,
+        entityPropLabel: ctx.propLabel
+      };
+    });
+    const renameMap = detectFieldRenameCandidates(seeded);
+    const entityRenameMap = detectEntityRenameCandidates(seeded);
     const impactIndex = buildCombinedFieldImpactIndex(sourceBundle, targetBundle);
-    return (rows || []).map((row) => {
+    return seeded.map((row) => {
       const next = { ...row };
-      const renameCandidate = renameMap.get(row._id);
+      const renameCandidate = renameMap.get(row._id) || entityRenameMap.get(row._id);
       if (renameCandidate) next.renameCandidate = renameCandidate;
+      if (renameCandidate && (next.severity === "high" || next.severity === "medium")) {
+        next.severity = "low";
+      }
       const reason = buildDiffReasonSummary(next);
-      if (reason) next.reasonSummary = renameCandidate ? `${reason} / コード変更候補` : reason;
+      if (reason) {
+        const suffix = renameCandidate ? renameCandidate.entityKind ? "改名候補" : "コード変更候補" : "";
+        next.reasonSummary = suffix ? `${reason} / ${suffix}` : reason;
+      }
       const impactRefs = resolveRowImpactRefs(next, impactIndex);
       if (impactRefs.length) {
         next.impactRefs = impactRefs.slice(0, DIFF_IMPACT_REF_LIMIT);
@@ -2638,11 +3556,234 @@ ${contextLine}`);
       return next;
     });
   }
+  var RENAMABLE_ENTITY_KINDS, SECTION_PROP_LABELS, ENTITY_KIND_LABELS;
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      RENAMABLE_ENTITY_KINDS = /* @__PURE__ */ new Set([
+        "view",
+        "report",
+        "state",
+        "category",
+        "action",
+        "appAction",
+        "aclEntry",
+        "recordAclEntry",
+        "fieldAclEntry",
+        "notification",
+        "perRecordNotification",
+        "reminderNotification",
+        "plugin",
+        "jsCss",
+        "layoutRow"
+      ]);
+      SECTION_PROP_LABELS = {
+        viewSettings: {
+          name: "ビュー名",
+          type: "ビュー種別",
+          filterCond: "絞り込み条件",
+          sort: "ソート",
+          fields: "表示フィールド",
+          pager: "ページャー",
+          paginationStyle: "ページャー表示",
+          builtinType: "組み込みビュー種別",
+          html: "カスタムHTML",
+          index: "表示順",
+          customView: "カスタマイズビュー",
+          date: "日付フィールド",
+          title: "タイトルフィールド",
+          description: "説明",
+          id: "ビューID"
+        },
+        reportSettings: {
+          name: "グラフ名",
+          chartType: "グラフ種別",
+          chartMode: "グラフモード",
+          groups: "グループ化",
+          aggregations: "集計",
+          filterCond: "絞り込み条件",
+          sorts: "ソート",
+          periodicReport: "定期実行",
+          index: "表示順",
+          id: "グラフID"
+        },
+        processSettings: {
+          enable: "プロセス管理 有効/無効",
+          name: "名称",
+          index: "表示順",
+          assignee: "作業者",
+          from: "遷移元",
+          to: "遷移先",
+          condition: "実行条件",
+          actions: "遷移アクション",
+          states: "ステータス",
+          filterCond: "実行条件",
+          revisions: "リビジョン"
+        },
+        actionSettings: {
+          name: "アクション名",
+          link: "リンク先",
+          params: "パラメータ",
+          targetApp: "転送先アプリ",
+          index: "表示順",
+          mappings: "項目マッピング",
+          targetAppId: "転送先アプリID",
+          filterCond: "実行条件",
+          id: "アクションID"
+        },
+        appAcl: {
+          appEditable: "アプリ管理権限",
+          recordViewable: "レコード閲覧",
+          recordAddable: "レコード追加",
+          recordEditable: "レコード編集",
+          recordDeletable: "レコード削除",
+          recordImportable: "レコード読み込み",
+          recordExportable: "レコード書き出し",
+          entity: "エンティティ",
+          includeSubs: "配下を含む",
+          code: "エンティティコード",
+          type: "エンティティ種別"
+        },
+        fieldAcl: {
+          accessibility: "アクセス権",
+          code: "フィールドコード",
+          entity: "エンティティ",
+          includeSubs: "配下を含む",
+          viewable: "閲覧",
+          editable: "編集"
+        },
+        recordPermissions: {
+          filterCond: "対象レコード条件",
+          viewable: "閲覧",
+          editable: "編集",
+          deletable: "削除",
+          includeSubs: "配下を含む",
+          entity: "エンティティ",
+          code: "エンティティコード",
+          type: "エンティティ種別"
+        },
+        notifications: {
+          recipients: "宛先",
+          includeSubs: "配下を含む",
+          appAdmin: "アプリ管理者",
+          onUserAccess: "アクセス権変更通知",
+          notifyToCommenter: "コメント通知",
+          code: "エンティティコード",
+          type: "エンティティ種別",
+          entity: "エンティティ"
+        },
+        perRecordNotifications: {
+          name: "通知名",
+          filterCond: "通知対象条件",
+          title: "タイトル",
+          body: "本文",
+          recipients: "宛先",
+          includeSubs: "配下を含む",
+          code: "エンティティコード",
+          type: "エンティティ種別",
+          entity: "エンティティ"
+        },
+        reminderNotifications: {
+          name: "通知名",
+          timing: "タイミング",
+          filterCond: "通知対象条件",
+          title: "タイトル",
+          body: "本文",
+          recipients: "宛先",
+          daysLater: "日数後",
+          hoursLater: "時間後",
+          baseDate: "基準日"
+        },
+        categories: {
+          enable: "カテゴリ管理 有効/無効",
+          name: "カテゴリ名",
+          index: "表示順",
+          code: "カテゴリコード"
+        },
+        customizeSettings: {
+          type: "種別",
+          url: "URL",
+          file: "ファイル",
+          fileKey: "ファイルキー",
+          js: "JavaScript",
+          css: "CSS",
+          desktop: "デスクトップ",
+          mobile: "モバイル",
+          scope: "スコープ",
+          resources: "リソース",
+          _body: "JS/CSS本文",
+          name: "ファイル名"
+        },
+        pluginSettings: {
+          plugins: "プラグイン一覧",
+          id: "プラグインID",
+          name: "プラグイン名",
+          enabled: "有効/無効",
+          version: "バージョン",
+          config: "プラグイン設定",
+          code: "プラグインコード"
+        },
+        layoutSettings: {
+          type: "種別",
+          code: "フィールドコード",
+          fields: "フィールド",
+          elementId: "要素ID",
+          label: "ラベル",
+          value: "初期値",
+          layout: "レイアウト",
+          size: "サイズ",
+          width: "横幅",
+          height: "高さ"
+        },
+        appSettings: {
+          name: "アプリ名",
+          description: "説明",
+          icon: "アイコン",
+          theme: "テーマ",
+          titleField: "タイトルフィールド",
+          enableThumbnails: "サムネイル表示",
+          enableBulkDeletion: "一括削除",
+          enableComments: "コメント",
+          enableDuplicateRecord: "レコード複製",
+          enableInlineRecordEditing: "インライン編集",
+          numberPrecision: "数値精度",
+          firstMonthOfFiscalYear: "会計年度開始月",
+          revision: "リビジョン"
+        },
+        appInfo: {
+          name: "アプリ名",
+          code: "アプリコード",
+          description: "説明",
+          threadId: "スレッドID",
+          spaceId: "スペースID",
+          createdAt: "作成日時",
+          modifiedAt: "更新日時"
+        },
+        formSettings: {
+          name: "フォーム名",
+          layout: "レイアウト",
+          revision: "リビジョン"
+        }
+      };
+      ENTITY_KIND_LABELS = {
+        view: "ビュー",
+        report: "グラフ",
+        state: "ステータス",
+        action: "遷移アクション",
+        appAction: "アクション",
+        aclEntry: "権限エントリー",
+        fieldAclEntry: "フィールド権限",
+        recordAclEntry: "レコード権限",
+        notification: "通知",
+        perRecordNotification: "レコード条件通知",
+        reminderNotification: "リマインダー通知",
+        category: "カテゴリ",
+        plugin: "プラグイン",
+        jsCss: "JS/CSS",
+        layoutRow: "レイアウト行"
+      };
     }
   });
 
@@ -3116,6 +4257,9 @@ ${formatSubtableChildrenText(value.fields)}`;
   }
   function stringifyRowValueForDiff(value, path) {
     if (value === void 0) return "（未定義）";
+    if (typeof value === "string" && /customizeSettings\..+\.file\._body$/.test(String(path || ""))) {
+      return value;
+    }
     if (value && typeof value === "object" && !Array.isArray(value)) {
       if (value.type === "SUBTABLE" && value.fields && typeof value.fields === "object") {
         return formatSubtableSnapshotText(sanitizeHtmlBearingProps(value));
@@ -4457,8 +5601,25 @@ ${body}`;
     const summary = summarizeRows(withSameSections);
     const sectionText = (scopes || []).map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ");
     const sectionLabelMap = Object.fromEntries(SECTION_DEFS.map((d) => [d.key, d.label]));
+    const entityKindLabelMap = {
+      view: "ビュー",
+      report: "グラフ",
+      state: "ステータス",
+      action: "遷移アクション",
+      appAction: "アクション",
+      aclEntry: "権限エントリー",
+      fieldAclEntry: "フィールド権限",
+      recordAclEntry: "レコード権限",
+      notification: "通知",
+      perRecordNotification: "レコード条件通知",
+      reminderNotification: "リマインダー通知",
+      category: "カテゴリ",
+      plugin: "プラグイン",
+      jsCss: "JS/CSS",
+      layoutRow: "レイアウト行"
+    };
     const MAX_EXPORT_ROWS = 2e3;
-    const displayRows = expandSubtableRowsForDisplay(withSameSections);
+    const displayRows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(withSameSections));
     const exportRows = displayRows.slice(0, MAX_EXPORT_ROWS);
     const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
     const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
@@ -4595,6 +5756,7 @@ ${body}`;
 (() => {
   const REPORT_ROWS = ${safeJsonForScript(exportRows)};
   const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
+  const ENTITY_KIND_LABEL_MAP = ${safeJsonForScript(entityKindLabelMap)};
   const REPORT_META = ${safeJsonForScript(reportMeta)};
   const THEME_KEY = '${TOOL_ID}:diffReportTheme';
   const ACTIVE_TAB_KEY = '${TOOL_ID}:diffReportActiveTab';
@@ -4973,6 +6135,14 @@ ${body}`;
         const propTitle = fieldChangePropTitle(info, row);
         pathMain = fieldLabel + (code ? ' (' + code + ')' : '') + (propTitle ? ' / ' + propTitle : '');
       }
+    } else if (row?.entityLabel || row?.entityKind) {
+      const sectionLabel = SECTION_LABEL_MAP[row?.sectionKey || ''] || row?.section || '';
+      const kindLabel = ENTITY_KIND_LABEL_MAP[row?.entityKind || ''] || '';
+      const parts = [];
+      if (sectionLabel) parts.push(sectionLabel);
+      if (row?.entityLabel) parts.push((kindLabel ? kindLabel + '「' + row.entityLabel + '」' : row.entityLabel));
+      if (row?.entityPropLabel) parts.push(row.entityPropLabel);
+      pathMain = parts.join(' / ') || pathMain;
     }
     let html = '<div class="path-main">' + escHtml(pathMain) + '</div>';
     if (relPath && relPath !== fullPath && row?.sectionKey !== FIELD_SECTION_KEY) {
@@ -6253,7 +7423,10 @@ ${body}`;
           const cells = renderRowCells(row, useCharDiff);
           const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
           const card = document.createElement('article');
-          card.className = 'diff-card diff-card--' + typeClass;
+          const sevToken = String(row.severity || 'low').toLowerCase();
+          const sevCls = sevToken === 'high' ? ' sev-high' : sevToken === 'medium' ? ' sev-medium' : ' sev-low';
+          const reviewedCls = '';
+          card.className = 'diff-card diff-card--' + typeClass + sevCls + reviewedCls;
           card.innerHTML =
             '<div class="diff-card-head">' +
               '<span class="type-chip type-chip--' + typeClass + '">' + escHtml(typeLabel) + '</span>' +
@@ -7100,6 +8273,24 @@ ${body}`;
     const p = String(row?.path || "-");
     if (p === "-") return esc(p);
     const fieldInfo = extractFieldPathInfo(row?.path);
+    if (!fieldInfo && (row?.entityLabel || row?.entityKind)) {
+      const sectionLabel2 = SECTION_DEFS.find((d) => d.key === row?.sectionKey)?.label || row?.section || "";
+      const kindLabel = ENTITY_KIND_INTAB_LABELS[row?.entityKind || ""] || "";
+      const propLabel = String(row?.entityPropLabel || "");
+      const sectionHtml = sectionLabel2 ? `<span class="diff-path-chip diff-path-chip--section" title="${esc(sectionLabel2)}">${esc(sectionLabel2)}</span>` : "";
+      const kindChipHtml = kindLabel ? `<span class="diff-path-chip diff-path-chip--entity" title="${esc(kindLabel)}">${esc(kindLabel)}</span>` : "";
+      const propHtml = propLabel ? `<span class="diff-path-prop"> · ${esc(propLabel)}</span>` : "";
+      const arrowHtml = sectionHtml && kindChipHtml ? '<span class="diff-path-arrow" aria-hidden="true">▸</span>' : "";
+      return `
+      <span class="diff-path-line diff-path-context">
+        ${sectionHtml}
+        ${arrowHtml}
+        ${kindChipHtml}
+        <span class="diff-path-name"><strong>${esc(row?.entityLabel || "-")}</strong></span>
+        ${propHtml}
+      </span>
+      <span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(p)}</span></span>`;
+    }
     if (fieldInfo) {
       const readFieldDef = (code, side) => {
         if (!code) return null;
@@ -7210,8 +8401,10 @@ ${body}`;
       ].filter(Boolean).join("");
       const activeClass = curSec === item.key ? " is-active" : "";
       const reviewed = item.total === item.viewed ? " is-complete" : "";
-      return `<button type="button" class="diff-impact-card${activeClass}${reviewed}" data-diff-sec-nav="${esc(item.key)}" title="${esc(item.label)} へジャンプ">
+      const sevTone = item.high > 0 ? " diff-impact-card--high" : item.medium > 0 ? " diff-impact-card--medium" : " diff-impact-card--low";
+      return `<button type="button" class="diff-impact-card${activeClass}${reviewed}${sevTone}" data-diff-sec-nav="${esc(item.key)}" title="${esc(item.label)} へジャンプ">
         <div class="diff-impact-card-head">
+          ${renderSectionIconHtml(item.key, { withTooltip: item.label })}
           <span class="diff-impact-card-title">${esc(item.label)}</span>
           ${warnIcon}
         </div>
@@ -7239,7 +8432,7 @@ ${body}`;
       const nSel = g.rows.filter((r) => sel.has(r._id)).length;
       const active = cur === g.key ? " is-active" : "";
       pills.push(
-        `<button type="button" class="diff-sec-pill${active}" data-diff-sec-nav="${esc(g.key)}" title="${esc(g.label)}">${esc(g.label)} <span class="diff-sec-pill-n">${g.rows.length}</span>${nSel ? `<span class="diff-sec-pill-sel">${nSel}</span>` : ""}</button>`
+        `<button type="button" class="diff-sec-pill${active}" data-diff-sec-nav="${esc(g.key)}" title="${esc(g.label)}">${renderSectionIconHtml(g.key)}<span>${esc(g.label)}</span> <span class="diff-sec-pill-n">${g.rows.length}</span>${nSel ? `<span class="diff-sec-pill-sel">${nSel}</span>` : ""}</button>`
       );
     }
     return `<nav class="diff-sec-nav" aria-label="セクションで絞り込み">${pills.join("")}</nav>`;
@@ -7256,7 +8449,7 @@ ${body}`;
     });
   }
   function renderResultRows(rows) {
-    rows = expandSubtableRowsForDisplay(rows || []);
+    rows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(rows || []));
     const summary = summarizeRows(rows);
     const severitySummary = summarizeSeverity(rows);
     const fetchSummary = summarizeFetchIssues(state.lastFetchIssues);
@@ -7291,27 +8484,52 @@ ${body}`;
         <button type="button" class="diff-viewed-btn" data-act="clearViewed" title="すべてのレビュー済みフラグを外します">すべて未レビューへ</button>
       </div>
     ` : "";
+    const totalActual = summary.total - summary.same;
+    const statChipsHtml = `
+      <div class="diff-stat-chip-row" role="group" aria-label="差分サマリー">
+        <div class="diff-stat-chip diff-stat-chip--accent" title="差分の総件数（同一除く）">
+          <div class="diff-stat-chip__num">${totalActual}</div>
+          <div class="diff-stat-chip__label">差分</div>
+        </div>
+        <div class="diff-stat-chip${summary.added ? " diff-stat-chip--add" : ""}" title="追加">
+          <div class="diff-stat-chip__num">+${summary.added}</div>
+          <div class="diff-stat-chip__label">追加</div>
+        </div>
+        <div class="diff-stat-chip${summary.removed ? " diff-stat-chip--rm" : ""}" title="削除">
+          <div class="diff-stat-chip__num">−${summary.removed}</div>
+          <div class="diff-stat-chip__label">削除</div>
+        </div>
+        <div class="diff-stat-chip${summary.changed ? " diff-stat-chip--chg" : ""}" title="変更">
+          <div class="diff-stat-chip__num">~${summary.changed}</div>
+          <div class="diff-stat-chip__label">変更</div>
+        </div>
+        ${summary.moved ? `<div class="diff-stat-chip diff-stat-chip--mv" title="移動"><div class="diff-stat-chip__num">↕${summary.moved}</div><div class="diff-stat-chip__label">移動</div></div>` : ""}
+        <div class="diff-stat-chip${severitySummary.high > 0 ? " diff-stat-chip--high" : ""}" title="重要度 高">
+          <div class="diff-stat-chip__num">${severitySummary.high}</div>
+          <div class="diff-stat-chip__label">高</div>
+        </div>
+        <div class="diff-stat-chip${severitySummary.medium > 0 ? " diff-stat-chip--mid" : ""}" title="重要度 中">
+          <div class="diff-stat-chip__num">${severitySummary.medium}</div>
+          <div class="diff-stat-chip__label">中</div>
+        </div>
+        <div class="diff-stat-chip" title="重要度 低">
+          <div class="diff-stat-chip__num">${severitySummary.low}</div>
+          <div class="diff-stat-chip__label">低</div>
+        </div>
+        ${summary.same ? `<div class="diff-stat-chip" title="同一"><div class="diff-stat-chip__num">${summary.same}</div><div class="diff-stat-chip__label">同一</div></div>` : ""}
+        ${fetchSummary.total ? `<div class="diff-stat-chip diff-stat-chip--err" title="API取得失敗"><div class="diff-stat-chip__num">${fetchSummary.total}</div><div class="diff-stat-chip__label">取得失敗</div></div>` : ""}
+        ${selectedRows.length ? `<div class="diff-stat-chip diff-stat-chip--accent" title="選択中"><div class="diff-stat-chip__num">${selectedRows.length}</div><div class="diff-stat-chip__label">選択</div></div>` : ""}
+        ${viewedCount ? `<div class="diff-stat-chip diff-stat-chip--ok" title="レビュー済"><div class="diff-stat-chip__num">${viewedCount}</div><div class="diff-stat-chip__label">レビュー済</div></div>` : ""}
+        ${renameCount ? `<div class="diff-stat-chip" title="名称変更候補"><div class="diff-stat-chip__num">${renameCount}</div><div class="diff-stat-chip__label">改名候補</div></div>` : ""}
+      </div>`;
     const summaryHtml = `
       <div class="diff-summary-head" role="region" aria-label="差分サマリー">
         ${buildDiffSummaryBars(summary)}
-        <div class="diff-summary">
-        <span class="diff-pill">総件数 ${summary.total}</span>
-        <span class="diff-pill">追加 ${summary.added}</span>
-        <span class="diff-pill">削除 ${summary.removed}</span>
-        <span class="diff-pill">変更 ${summary.changed}</span>
-        <span class="diff-pill">移動 ${summary.moved}</span>
-        ${summary.same ? `<span class="diff-pill">同一 ${summary.same}</span>` : ""}
-        <span class="diff-pill">高 ${severitySummary.high}</span>
-        <span class="diff-pill">中 ${severitySummary.medium}</span>
-        <span class="diff-pill">低 ${severitySummary.low}</span>
-        <span class="diff-pill">取得失敗 ${fetchSummary.total}</span>
-        <span class="diff-pill">選択 ${selectedRows.length}</span>
-        <span class="diff-pill">レビュー済 ${viewedCount}</span>
-        <span class="diff-pill">名称変更候補 ${renameCount}</span>
-        <span class="diff-pill">影響情報あり ${impactCount}</span>
-        <span class="diff-info">表示 ${renderedRows.length}/${filteredRows.length}/${rows.length}</span>
-        ${filteredRows.length !== rows.length ? `<span class="diff-info">絞込重要度 高:${filteredSeverity.high} / 中:${filteredSeverity.medium} / 低:${filteredSeverity.low}</span>` : ""}
-        ${rawKeyword ? `<span class="diff-info">検索: ${esc(rawKeyword)}</span>` : ""}
+        ${statChipsHtml}
+        <div class="diff-summary diff-summary--meta">
+          <span class="diff-info">表示 ${renderedRows.length}/${filteredRows.length}/${rows.length}</span>
+          ${filteredRows.length !== rows.length ? `<span class="diff-info">絞込中: 高 ${filteredSeverity.high} / 中 ${filteredSeverity.medium} / 低 ${filteredSeverity.low}</span>` : ""}
+          ${rawKeyword ? `<span class="diff-info">検索: ${esc(rawKeyword)}</span>` : ""}
         </div>
         ${impactCardsHtml}
         ${viewedControlsHtml}
@@ -7347,8 +8565,36 @@ ${body}`;
     }
     const sectionHtml = grouped.map((g) => {
       const collapsed = state.diffCollapsedSections.has(g.key);
+      const secCounts = g.rows.reduce(
+        (acc, r) => {
+          if (!r) return acc;
+          if (r.type === "added") acc.added += 1;
+          else if (r.type === "removed") acc.removed += 1;
+          else if (r.type === "changed") acc.changed += 1;
+          else if (r.type === "moved") acc.moved += 1;
+          else if (r.type === "same") acc.same += 1;
+          const sev = String(r.severity || "low").toLowerCase();
+          if (sev === "high") acc.high += 1;
+          else if (sev === "medium") acc.medium += 1;
+          else acc.low += 1;
+          return acc;
+        },
+        { added: 0, removed: 0, changed: 0, moved: 0, same: 0, high: 0, medium: 0, low: 0 }
+      );
+      const headBadges = [
+        secCounts.added ? `<span class="diff-sec-badge diff-sec-badge--add" title="追加">+${secCounts.added}</span>` : "",
+        secCounts.removed ? `<span class="diff-sec-badge diff-sec-badge--rm" title="削除">−${secCounts.removed}</span>` : "",
+        secCounts.changed ? `<span class="diff-sec-badge diff-sec-badge--chg" title="変更">~${secCounts.changed}</span>` : "",
+        secCounts.moved ? `<span class="diff-sec-badge diff-sec-badge--mv" title="移動">↕${secCounts.moved}</span>` : "",
+        secCounts.high ? `<span class="diff-sec-badge diff-sec-badge--high" title="高重要度">⚠ ${secCounts.high}</span>` : ""
+      ].filter(Boolean).join("");
       const head = `<div class="diff-sec-head" data-diff-sec-toggle="${esc(g.key)}">
-        <span>${collapsed ? "▶" : "▼"} ${esc(g.label)}</span>
+        <span class="diff-sec-head__title">
+          <span class="diff-sec-head__chev" aria-hidden="true">${collapsed ? "▶" : "▼"}</span>
+          ${renderSectionIconHtml(g.key, { withTooltip: g.label })}
+          <span class="diff-sec-head__label">${esc(g.label)}</span>
+        </span>
+        <span class="diff-sec-head__badges">${headBadges}</span>
         <span class="diff-sec-meta">${g.rows.length} 件</span>
       </div>`;
       if (collapsed) return `<section class="diff-sec">${head}</section>`;
@@ -7376,7 +8622,11 @@ ${body}`;
         const viewedChecked = viewed ? "checked" : "";
         const viewedClass = viewed ? " diff-row-viewed" : "";
         const focusClass = state.diffFocusedRowId === r._id ? " diff-row-focused" : "";
-        return `<tr class="${rowAccent}${selected ? " diff-row-selected" : ""}${hierarchyClass}${viewedClass}${focusClass}" data-diff-row-tr="${esc(r._id)}">
+        const sevBorderClass = sev === "high" ? " diff-row-sev-high" : sev === "medium" ? " diff-row-sev-medium" : " diff-row-sev-low";
+        const reviewedFadedClass = viewed ? " is-reviewed-faded" : "";
+        const typeGlyph = r.type === "added" ? "+" : r.type === "removed" ? "−" : r.type === "same" ? "＝" : r.moved ? "↕" : "~";
+        const sevGlyph = sev === "high" ? "⚠" : sev === "medium" ? "⚡" : "◦";
+        return `<tr class="${rowAccent}${selected ? " diff-row-selected" : ""}${hierarchyClass}${viewedClass}${focusClass}${sevBorderClass}${reviewedFadedClass}" data-diff-row-tr="${esc(r._id)}">
           <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" aria-label="この差分を選択" ${selected}></td>
           <td class="diff-viewed-cell">
             <label class="diff-viewed-toggle" title="レビュー済みとしてマーク（キー: v）">
@@ -7384,8 +8634,8 @@ ${body}`;
               <span class="diff-viewed-mark" aria-hidden="true">${viewed ? "✓" : ""}</span>
             </label>
           </td>
-          <td><span class="sev-badge ${sevClass}">${esc(getSeverityDisplayLabel(sev))}</span></td>
-          <td class="diff-type ${typeClass}">${esc(typeLabel || "-")}</td>
+          <td><span class="diff-sev-pill diff-sev-pill--${sev}" title="${esc(getSeverityDisplayLabel(sev))}重要度"><span class="diff-sev-pill__icon">${sevGlyph}</span>${esc(getSeverityDisplayLabel(sev))}</span></td>
+          <td><span class="diff-type-pill diff-type-pill--${typeClass}" title="${esc(typeLabel || "-")}"><span class="diff-type-pill__icon">${typeGlyph}</span>${esc(typeLabel || "-")}</span></td>
           <td>
             <div class="diff-tools">
               <button type="button" class="diff-mini-btn" data-copy-val="${esc(r.path || "")}">パス</button>
@@ -7420,7 +8670,7 @@ ${body}`;
     </div>`;
     scheduleDiffPopoutSync();
   }
-  var FIELD_CHANGE_PROP_LABELS, MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_SECTION_RENDERERS, MAIN_RESULT_IDLE_HTML;
+  var FIELD_CHANGE_PROP_LABELS, MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_SECTION_RENDERERS, ENTITY_KIND_INTAB_LABELS, MAIN_RESULT_IDLE_HTML;
   var init_export = __esm({
     "src/diff/export.ts"() {
       init_constants();
@@ -7532,7 +8782,36 @@ ${body}`;
         reminderNotifications: mdRenderReminderNotifications,
         categories: mdRenderCategories
       };
-      MAIN_RESULT_IDLE_HTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア</p><p class="main-result-placeholder-body">このタブの操作結果やログがここに表示されます。</p></div>`;
+      ENTITY_KIND_INTAB_LABELS = {
+        view: "ビュー",
+        report: "グラフ",
+        state: "ステータス",
+        action: "遷移アクション",
+        appAction: "アクション",
+        aclEntry: "権限エントリー",
+        fieldAclEntry: "フィールド権限",
+        recordAclEntry: "レコード権限",
+        notification: "通知",
+        perRecordNotification: "レコード条件通知",
+        reminderNotification: "リマインダー通知",
+        category: "カテゴリ",
+        plugin: "プラグイン",
+        jsCss: "JS/CSS",
+        layoutRow: "レイアウト行"
+      };
+      MAIN_RESULT_IDLE_HTML = `
+<div class="main-result-placeholder">
+  <p class="main-result-placeholder-title">使い方ガイド</p>
+  <ol class="main-result-placeholder-steps">
+    <li><strong>① 接続</strong> 比較元・比較先アプリIDを入力（必要ならゲストID／プレビュー切替）</li>
+    <li><strong>② 比較</strong> 「差分比較」を実行すると差分テーブルがここに出ます</li>
+    <li><strong>③ 確認</strong> 「JSON / 出力 / 詳細」で内容や CSV/Markdown 等にエクスポート</li>
+    <li><strong>④ 反映</strong> 「プレビュー反映」タブで対象を選んで比較先プレビューへ書き込み</li>
+  </ol>
+  <p class="main-result-placeholder-body">
+    キーボードショートカット: <kbd>1</kbd>=差分 <kbd>2</kbd>=反映 <kbd>5</kbd>=ER図 <kbd>?</kbd>=ヘルプ <kbd>Esc</kbd>=ランチャーに戻る
+  </p>
+</div>`;
     }
   });
 
@@ -8197,8 +9476,12 @@ ${body}`;
   var components_exports = {};
   __export(components_exports, {
     buildReflectAssistHtml: () => buildReflectAssistHtml,
+    closeAllReflectModals: () => closeAllReflectModals,
+    closeReflectModal: () => closeReflectModal,
     closeScopePicker: () => closeScopePicker,
+    getReflectNextAction: () => getReflectNextAction,
     openFeatureScreen: () => openFeatureScreen,
+    openReflectModal: () => openReflectModal,
     openScopePicker: () => openScopePicker,
     renderAppIdConfirmSection: () => renderAppIdConfirmSection,
     renderBundleState: () => renderBundleState,
@@ -8215,7 +9498,11 @@ ${body}`;
     renderReflectApplyReport: () => renderReflectApplyReport,
     renderReflectAssistPanel: () => renderReflectAssistPanel,
     renderReflectFooterBadges: () => renderReflectFooterBadges,
+    renderReflectFooterLinkBadges: () => renderReflectFooterLinkBadges,
+    renderReflectFooterNext: () => renderReflectFooterNext,
+    renderReflectHeroCard: () => renderReflectHeroCard,
     renderReflectMainPanel: () => renderReflectMainPanel,
+    renderReflectMinimapNav: () => renderReflectMinimapNav,
     renderReflectModeUi: () => renderReflectModeUi,
     renderReflectNodeDetail: () => renderReflectNodeDetail,
     renderReflectNodeList: () => renderReflectNodeList,
@@ -8223,7 +9510,9 @@ ${body}`;
     renderReflectPlanPreview: () => renderReflectPlanPreview,
     renderReflectPostApplyCard: () => renderReflectPostApplyCard,
     renderReflectQuickPresets: () => renderReflectQuickPresets,
+    renderReflectRouteSummaries: () => renderReflectRouteSummaries,
     renderReflectSidebar: () => renderReflectSidebar,
+    renderReflectTargetBadge: () => renderReflectTargetBadge,
     renderScopeChips: () => renderScopeChips,
     renderScopePickerSummaries: () => renderScopePickerSummaries,
     setBusy: () => setBusy,
@@ -8290,13 +9579,25 @@ ${body}`;
     if (group === "vis") root2.classList.add("feat-vis");
     else if (group === "data") root2.classList.add("feat-data");
     else root2.classList.add("feat-change");
+    const moreEl = root2.querySelector(".kus-tab-more");
+    if (moreEl) {
+      const wantOpen = group === "vis" || group === "data";
+      moreEl.open = wantOpen;
+      if (!moreEl.__keepOpenGuardAttached) {
+        moreEl.__keepOpenGuardAttached = true;
+        moreEl.addEventListener("toggle", () => {
+          const stayOpen = root2.classList.contains("feat-vis") || root2.classList.contains("feat-data");
+          if (stayOpen && !moreEl.open) moreEl.open = true;
+        });
+      }
+    }
   }
   function showLauncherScreen(options = {}) {
     const root2 = getToolDocument().getElementById("kintone-unified-suite-v2");
     if (!root2) return;
     state.activeFeatureKey = "";
     root2.classList.remove("screen-feature", "feat-vis", "feat-data", "feat-change");
-    root2.classList.add("screen-launcher");
+    root2.classList.add("screen-launcher", "launcher-tabbed", "launcher-show-advanced");
     if (ui3.featureTitle) ui3.featureTitle.textContent = "";
     if (ui3.featureConn) ui3.featureConn.textContent = "";
     if (ui3.featureBreadcrumb) ui3.featureBreadcrumb.textContent = "ホーム / 機能";
@@ -8946,81 +10247,196 @@ ${body}`;
       modeSwitchAction,
       jsonRouteAction
     ].filter(Boolean).join("");
-    return `<div class="reflect-assist">
-    <div class="reflect-command-center">
-      <div class="reflect-command-head">
-        <div>
-          <div class="reflect-command-kicker">Preview Apply Route</div>
-          <div class="reflect-guide-title">${esc(routeTitle)}</div>
-          <div class="reflect-guide-sub">比較先 App ${esc(c.target.appId || "-")} / 書き込み先はプレビューAPIです。画面に出す操作は標準ルートに絞り、細かい調整は詳細ルートにまとめています。</div>
+    const highRiskRows = targetRows.filter((row) => row && row.severity === "high" && row.type !== "same");
+    const highRiskCount = highRiskRows.length;
+    const highBreakdown = (() => {
+      const breakdown = {};
+      highRiskRows.forEach((row) => {
+        const key = String(row.sectionKey || "");
+        breakdown[key] = (breakdown[key] || 0) + 1;
+      });
+      return Object.entries(breakdown).slice(0, 4).map(([key, n]) => {
+        const label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
+        return `${esc(label)} ${n}`;
+      }).join(" / ");
+    })();
+    const dangerBanner = highRiskCount > 0 ? `<div class="reflect-danger-banner" role="alert">
+        <span class="reflect-danger-banner__icon" aria-hidden="true">!</span>
+        <div class="reflect-danger-banner__copy">
+          <div class="reflect-danger-banner__title">高重要度の変更 ${highRiskCount}件 が含まれています</div>
+          <div class="reflect-danger-banner__sub">${highBreakdown || "権限の弱化・フィールド削除・状態削除など、影響の大きな変更です"}</div>
         </div>
-        <div class="reflect-command-next">
-          <span class="reflect-guide-badge">${esc(routeLabel)}</span>
-        </div>
-      </div>
-      <div class="reflect-flow">${stepHtml}</div>
-      <div class="reflect-route-panel">
-        <section class="reflect-route-primary">
-          <div class="reflect-route-primary__copy">
-            <div class="reflect-route-primary__label">${esc(routeLabel)}</div>
-            <div class="reflect-route-primary__title">${esc(routeTitle)}</div>
-            <div class="reflect-route-primary__meta">${esc(routeSub)} ${esc(selectionMeta || "未選択")}</div>
-          </div>
-          <div class="reflect-route-primary__action">${nextAction}</div>
-        </section>
-        <details class="reflect-route-details">
-          <summary>
-            <span>詳細ルート・補助操作</span>
-            <small>個別差分、JSON、本番比較、手動確認</small>
-          </summary>
-          <div class="reflect-route-detail-grid">
-            <section>
-              <div class="reflect-route-detail-title">ルート切替</div>
-              <div class="reflect-route-detail-actions">${routeSwitchActions}</div>
-            </section>
-            <section>
-              <div class="reflect-route-detail-title">対象調整</div>
-              <div class="reflect-route-detail-actions">${targetAdjustActions || '<span class="muted">現在の選択では追加調整はありません</span>'}</div>
-            </section>
-            <section>
-              <div class="reflect-route-detail-title">確認補助</div>
-              <div class="reflect-route-detail-actions">
-                ${planAction}
-                <button class="btn sub" data-act="runDiffAndPlan">差分比較してプラン</button>
-                <button class="btn sub" data-act="runPreviewProdDiff">プレビュー⇔本番を比較</button>
-                <button class="btn sub" data-act="markReflectTargetConfirmed">反映先を確認済みにする</button>
-              </div>
-            </section>
-          </div>
-        </details>
-      </div>
+      </div>` : "";
+    const stepNo = !diffReady ? 1 : !targetCountValue ? 2 : !planReady ? 3 : 4;
+    const stepLabels = ["差分を作る", "対象を選ぶ", "プラン確認", "プレビュー反映"];
+    const stepTitle = stepLabels[stepNo - 1];
+    const progressBar = `<div class="reflect-mini-progress" aria-label="進行ステップ"><div class="reflect-mini-progress__bar" style="width:${(stepNo - 1) * 33.3}%"></div>${[1, 2, 3, 4].map((n) => `<span class="reflect-mini-progress__dot${n < stepNo ? " is-done" : ""}${n === stepNo ? " is-current" : ""}" title="${esc(stepLabels[n - 1])}"></span>`).join("")}</div>`;
+    const statChips = `<div class="stat-chip-row" role="group" aria-label="状況サマリー">
+    <div class="stat-chip ${actualDiffRows.length ? "stat-chip--accent" : ""}" title="${diffReady ? "最新差分件数" : "差分は未作成または再計算が必要です"}">
+      <div class="stat-chip__num">${diffReady ? actualDiffRows.length : "—"}</div>
+      <div class="stat-chip__label">差分</div>
     </div>
-    <div class="reflect-summary-grid">
-      <div class="reflect-summary-card">
-        <div class="reflect-summary-label">反映対象</div>
-        <div class="reflect-summary-value">${targetCountValue}</div>
-        <div class="reflect-summary-meta">${esc(targetCountLabel)} / ${isNode ? `候補 ${state.reflectRows.length}件` : `選択 ${scopeInfo.baseScopes.length}件`}</div>
-      </div>
-      <div class="reflect-summary-card">
-        <div class="reflect-summary-label">反映される差分</div>
-        <div class="reflect-summary-value">${targetRows.length}</div>
-        <div class="reflect-summary-meta">高 ${sev.high} / 中 ${sev.medium} / 低 ${sev.low}</div>
-      </div>
-      <div class="reflect-summary-card">
-        <div class="reflect-summary-label">反映前チェック</div>
-        <div class="reflect-summary-value">${esc(safetyLabel)}</div>
-        <div class="reflect-summary-meta">チェック ${checklistDone}/3 / バックアップ ${backupReady ? "ON" : "OFF"} / エラー時 ${stopOnError ? "中断" : "継続"}</div>
-      </div>
-      <div class="reflect-summary-card">
-        <div class="reflect-summary-label">プラン確認</div>
-      <div class="reflect-summary-value">${esc(planReady ? "確認済み" : "未確認")}</div>
-      <div class="reflect-summary-meta">${esc(planReady ? `最新確認: ${planTime}` : "まだ実行前プラン確認をしていません")}</div>
-      </div>
+    <div class="stat-chip ${targetCountValue ? "stat-chip--accent" : ""}" title="反映する対象の件数">
+      <div class="stat-chip__num">${targetCountValue}</div>
+      <div class="stat-chip__label">${esc(targetCountLabel)}</div>
     </div>
-    <p class="reflect-action-hint">基本は標準ルートだけで完結します。差分単位の採用元切替、JSON編集、本番との差分確認は「詳細ルート・補助操作」から開きます。</p>
-    ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join("") : '<div class="reflect-good">このまま「実行前プラン確認」へ進めます。最終確認後に「プレビューへ反映」を実行してください。</div>'}
-    ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? " / 必要なら「直前保存を戻す」で元に戻せます。" : ""}</div>` : ""}
+    <div class="stat-chip ${sev.high > 0 ? "stat-chip--danger" : ""}" title="高重要度の差分">
+      <div class="stat-chip__num">${sev.high}</div>
+      <div class="stat-chip__label">高</div>
+    </div>
+    <div class="stat-chip ${sev.medium > 0 ? "stat-chip--warn" : ""}" title="中重要度の差分">
+      <div class="stat-chip__num">${sev.medium}</div>
+      <div class="stat-chip__label">中</div>
+    </div>
+    <div class="stat-chip" title="低重要度の差分">
+      <div class="stat-chip__num">${sev.low}</div>
+      <div class="stat-chip__label">低</div>
+    </div>
+    <div class="stat-chip ${checklistDone === 3 ? "stat-chip--ok" : "stat-chip--warn"}" title="反映前チェックリスト">
+      <div class="stat-chip__num">${checklistDone}<span style="font-size:11px;color:var(--txt-3)">/3</span></div>
+      <div class="stat-chip__label">安全</div>
+    </div>
+    <div class="stat-chip ${planReady ? "stat-chip--ok" : ""}" title="${planReady ? "最新条件と一致" : "まだ未確認"}">
+      <div class="stat-chip__num">${planReady ? "✓" : "—"}</div>
+      <div class="stat-chip__label">プラン</div>
+    </div>
   </div>`;
+    const distHtml = (() => {
+      if (!diffReady || !targetRows.length) return "";
+      const SECTION_PALETTE = {
+        fieldSettings: "#3b82f6",
+        layoutSettings: "#6366f1",
+        formSettings: "#0ea5e9",
+        viewSettings: "#f59e0b",
+        reportSettings: "#ec4899",
+        processSettings: "#06b6d4",
+        actionSettings: "#10b981",
+        pluginSettings: "#a855f7",
+        customizeSettings: "#1e293b",
+        appAcl: "#dc2626",
+        fieldAcl: "#ef4444",
+        recordPermissions: "#f97316",
+        notifications: "#fb923c",
+        perRecordNotifications: "#fb923c",
+        reminderNotifications: "#fdba74",
+        categories: "#94a3b8",
+        appSettings: "#64748b",
+        appInfo: "#94a3b8"
+      };
+      const counts = /* @__PURE__ */ new Map();
+      for (const row of targetRows) {
+        const k = String(row?.sectionKey || "");
+        if (!k) continue;
+        counts.set(k, (counts.get(k) || 0) + 1);
+      }
+      const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+      if (!sorted.length) return "";
+      const total = sorted.reduce((acc, [, n]) => acc + n, 0);
+      const filterSec = ui3.diffFilterSection?.value || state.diffFilterSection || "";
+      const segs = sorted.map(([k, n]) => {
+        const lbl = SECTION_DEFS.find((d) => d.key === k)?.label || k;
+        const color = SECTION_PALETTE[k] || "#475569";
+        const flex = Math.max(1, n);
+        const active = filterSec === k ? " is-active" : "";
+        return `<button type="button" class="sec-dist__seg${active}" data-act="filterDiffBySectionFromDist" data-section="${esc(k)}" style="flex:${flex};background:${color}" title="${esc(lbl)} ${n}件 (クリックで差分一覧をこのセクションで絞り込み)">${n >= 3 ? n : ""}</button>`;
+      }).join("");
+      const legend = sorted.slice(0, 6).map(([k, n]) => {
+        const lbl = SECTION_DEFS.find((d) => d.key === k)?.label || k;
+        const color = SECTION_PALETTE[k] || "#475569";
+        return `<span class="sec-dist__legend-item"><span class="sec-dist__legend-swatch" style="background:${color}"></span>${esc(lbl)} ${n}</span>`;
+      }).join("");
+      return `<section class="sec-dist" aria-label="セクション分布">
+      <div class="sec-dist__head">
+        <span class="sec-dist__title">セクション分布</span>
+        <span class="sec-dist__total">全 ${total} 件</span>
+      </div>
+      <div class="sec-dist__bar">${segs}</div>
+      <div class="sec-dist__legend">${legend}${sorted.length > 6 ? `<span class="sec-dist__legend-item">他 ${sorted.length - 6}</span>` : ""}</div>
+    </section>`;
+    })();
+    const detailButtons = [
+      routeSwitchActions,
+      targetAdjustActions,
+      planAction,
+      '<button class="btn sub" data-act="runDiffAndPlan" title="差分比較とプラン確認をまとめて実行">差分比較してプラン</button>',
+      '<button class="btn sub" data-act="runPreviewProdDiff" title="比較先プレビューと本番の差分を確認">プレビュー⇔本番を比較</button>',
+      '<button class="btn sub" data-act="backupTargetPreview" title="今の比較先プレビューをJSON保存">今の比較先を保存</button>',
+      '<button class="btn sub" data-act="importTargetPreviewBackupFile" title="保存したバックアップJSONを読み込む">保存済みJSONを読込</button>',
+      '<button class="btn sub" data-act="markReflectTargetConfirmed" title="チェックリスト「反映先=プレビュー」を済にする">反映先を確認済みにする</button>'
+    ].filter(Boolean).join("");
+    const headlineMsg = warnings[0] || "次のアクションへ進めます";
+    return `<div class="reflect-assist reflect-assist--compact">
+    ${dangerBanner}
+    <section class="reflect-headline" data-step="${stepNo}">
+      <div class="reflect-headline__top">
+        <div class="reflect-headline__step">STEP ${stepNo}/4</div>
+        <div class="reflect-headline__title">${esc(stepTitle)}</div>
+        <div class="reflect-headline__meta">${esc(routeLabel)} ／ ${esc(selectionMeta || "未選択")}</div>
+      </div>
+      ${progressBar}
+      <div class="reflect-headline__action-row">
+        <div class="reflect-headline__action">${nextAction}</div>
+      </div>
+      ${statChips}
+      <div class="reflect-headline__hint ${warnings.length ? "is-warn" : "is-ok"}">${esc(headlineMsg)}</div>
+    </section>
+    ${distHtml}
+    <details class="reflect-detail-fold" open>
+      <summary>
+        <span>その他の操作・詳細</span>
+        <small>ルート切替 / 対象調整 / 個別確認 / バックアップ / 残り警告</small>
+      </summary>
+      <div class="reflect-detail-fold__body">
+        <div class="reflect-detail-fold__buttons">${detailButtons}</div>
+        ${warnings.length > 1 ? `<ul class="reflect-detail-fold__warns">${warnings.slice(1).map((msg) => `<li>${esc(msg)}</li>`).join("")}</ul>` : ""}
+        ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? " / 必要なら「直前保存を戻す」で元に戻せます。" : ""}</div>` : ""}
+        <div class="reflect-detail-fold__small">
+          反映前チェック ${checklistDone}/3 ／ バックアップ ${backupReady ? "ON" : "OFF"} ／ エラー時 ${stopOnError ? "中断" : "継続"}
+          ${planReady ? `／ プラン: ${esc(planTime)}` : ""}
+        </div>
+      </div>
+    </details>
+  </div>`;
+  }
+  function buildPlannedRequestsListHtml(plannedRequests) {
+    const list = Array.isArray(plannedRequests) ? plannedRequests : [];
+    if (!list.length) return "";
+    const methodColor = (m) => {
+      const v = String(m || "").toUpperCase();
+      if (v === "POST") return "#15803d";
+      if (v === "PUT") return "#1d4ed8";
+      if (v === "DELETE") return "#b91c1c";
+      return "#475569";
+    };
+    const rows = list.map((req, idx) => {
+      const method = String(req?.method || "?").toUpperCase();
+      const path = String(req?.path || "");
+      const note = req?.note ? `<span style="color:#64748b;font-size:11px"> (${esc(String(req.note))})</span>` : "";
+      const sectionLabel2 = req?.sectionLabel || req?.sectionKey || "";
+      let bodyJson = "";
+      try {
+        bodyJson = JSON.stringify(req?.body ?? {}, null, 2);
+      } catch {
+        bodyJson = String(req?.body ?? "");
+      }
+      const bodyTrunc = bodyJson.length > 8e3 ? bodyJson.slice(0, 8e3) + "\n…(省略)" : bodyJson;
+      return `<details class="planned-request-row">
+      <summary>
+        <span style="color:#64748b;width:24px;text-align:right">#${idx + 1}</span>
+        <span style="font-weight:700;color:${methodColor(method)};min-width:54px">${esc(method)}</span>
+        <code>${esc(path)}</code>
+        ${sectionLabel2 ? `<span style="font-size:10px;color:#64748b;margin-left:auto;background:#f1f5f9;padding:1px 6px;border-radius:4px">${esc(String(sectionLabel2))}</span>` : ""}
+      </summary>
+      <div style="padding:6px 10px;background:#f8fafc">
+        ${note ? `<div style="font-size:11px;color:#475569;margin-bottom:4px">${note}</div>` : ""}
+        <pre>${esc(bodyTrunc)}</pre>
+      </div>
+    </details>`;
+    }).join("");
+    return `<details class="reflect-planned-requests">
+    <summary>予定リクエスト一覧 (${list.length} 件) — クリックで詳細展開</summary>
+    <div>${rows}</div>
+  </details>`;
   }
   function renderReflectPlanInline() {
     const el = getToolDocument().getElementById("u_reflectPlanInline");
@@ -9041,7 +10457,8 @@ ${body}`;
       <span class="reflect-plan-inline__title">実行前プラン（現在の条件と一致）</span>
       <span class="reflect-plan-inline__meta">予定リクエスト ${plan.totalReq || 0} 件 · ${esc(stamp)}</span>
     </div>
-    <pre class="reflect-plan-inline__pre">${esc(head)}${esc(more)}</pre>`;
+    <pre class="reflect-plan-inline__pre">${esc(head)}${esc(more)}</pre>
+    ${buildPlannedRequestsListHtml(plan.plannedRequests)}`;
       return;
     }
     if (stalePlan && hasPlan) {
@@ -9056,6 +10473,60 @@ ${body}`;
     <p class="reflect-plan-inline__muted">「実行前プラン確認」を実行すると、ここにログ要約が表示されます。詳細は下部の<strong>結果</strong>エリアにも出力されます。</p>
   </div>`;
   }
+  function buildLayoutHeatmapHtml(beforeLayout, afterLayout) {
+    const before = Array.isArray(beforeLayout?.layout) ? beforeLayout.layout : Array.isArray(beforeLayout) ? beforeLayout : [];
+    const after = Array.isArray(afterLayout?.layout) ? afterLayout.layout : Array.isArray(afterLayout) ? afterLayout : [];
+    if (!before.length && !after.length) return "";
+    const sigOf = (item) => {
+      try {
+        return JSON.stringify({ type: item?.type, code: item?.code, fields: (item?.fields || []).map((f) => f?.code) });
+      } catch {
+        return "";
+      }
+    };
+    const beforeSigs = new Set(before.map(sigOf));
+    const afterSigs = new Set(after.map(sigOf));
+    const cells = [];
+    const flatten = (rows, side) => {
+      rows.forEach((row, idx) => {
+        if (!row || typeof row !== "object") return;
+        const fields = Array.isArray(row.fields) ? row.fields : [];
+        const t = String(row.type || "ROW").toUpperCase();
+        const rowSig = sigOf(row);
+        const inBefore = beforeSigs.has(rowSig);
+        const inAfter = afterSigs.has(rowSig);
+        let changed = 0;
+        if (side === "before" && !inAfter) changed = 1;
+        else if (side === "after" && !inBefore) changed = 1;
+        else if (inBefore && inAfter) changed = 0;
+        else changed = 2;
+        if (t === "GROUP" || t === "SUBTABLE") {
+          const code = String(row.code || "");
+          cells.push(`<div class="layout-heatmap__cell" data-changed="${changed}" title="${esc(t)}: ${esc(code)}">${esc(t === "SUBTABLE" ? "⊞" : "▦")} ${esc(code || `#${idx}`)}</div>`);
+        } else {
+          fields.forEach((f) => {
+            const code = String(f?.code || f?.elementId || "");
+            if (!code) return;
+            const cellChanged = changed;
+            cells.push(`<div class="layout-heatmap__cell" data-changed="${cellChanged}" title="${esc(code)}">${esc(code)}</div>`);
+          });
+        }
+      });
+    };
+    flatten(after, "after");
+    before.forEach((row, idx) => {
+      const sig = sigOf(row);
+      if (afterSigs.has(sig)) return;
+      const fields = Array.isArray(row?.fields) ? row.fields : [];
+      fields.forEach((f) => {
+        const code = String(f?.code || "");
+        if (!code) return;
+        cells.push(`<div class="layout-heatmap__cell" data-changed="1" title="削除: ${esc(code)}" style="opacity:.55">−${esc(code)}</div>`);
+      });
+    });
+    if (!cells.length) return "";
+    return `<div class="layout-heatmap" aria-label="レイアウトヒートマップ">${cells.join("")}</div>`;
+  }
   function buildSectionPreviewCardHtml(secKey, info) {
     const label = esc(info?.label || secKey);
     const shape = info?.shape;
@@ -9063,7 +10534,7 @@ ${body}`;
       const p = info.preview;
       const counter = `<span class="reflect-preview-counter reflect-preview-counter--add">追加 ${p.addedCount}</span><span class="reflect-preview-counter reflect-preview-counter--upd">更新 ${p.updatedCount}</span><span class="reflect-preview-counter reflect-preview-counter--rm">削除 ${p.removedCount}</span>`;
       if (!p.totalCount) {
-        return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span>${counter}<span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
+        return `<details class="reflect-preview-card"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span>${counter}<span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
       }
       const renderKey = (title, className, item, bothCols) => {
         if (bothCols) {
@@ -9084,7 +10555,7 @@ ${body}`;
       const updated = (p.updatedKeys || []).map((item) => renderKey("更新", "upd", item, true)).join("");
       const removed = (p.removedKeys || []).map((item) => renderKey("削除", "rm", item, false)).join("");
       const truncated = p.truncated ? `<div class="reflect-preview-card__muted">…一部省略（全${p.totalCount}件のうち先頭のみ表示）</div>` : "";
-      return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span>${counter}</summary>
+      return `<details class="reflect-preview-card"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span>${counter}</summary>
       <div class="reflect-preview-card__body">
         ${added}${updated}${removed}${truncated}
       </div>
@@ -9093,13 +10564,23 @@ ${body}`;
     if (shape === "whole" && info.wholePreview) {
       const w = info.wholePreview;
       if (!w.changed) {
-        return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span><span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
+        return `<details class="reflect-preview-card"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span><span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
       }
-      return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span><span class="reflect-preview-counter reflect-preview-counter--upd">セクション全体更新</span></summary>
+      let heatmapHtml = "";
+      if (secKey === "layoutSettings") {
+        try {
+          const before = JSON.parse(w.beforeText || "{}");
+          const after = JSON.parse(w.afterText || "{}");
+          heatmapHtml = buildLayoutHeatmapHtml(before, after);
+        } catch {
+        }
+      }
+      return `<details class="reflect-preview-card sev-medium"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span><span class="reflect-preview-counter reflect-preview-counter--upd">セクション全体更新</span></summary>
       <div class="reflect-preview-card__body">
-        <div class="reflect-preview-row__grid">
-          <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更前</div><pre class="reflect-preview-col__pre">${esc(w.beforeText)}</pre></div>
-          <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更後</div><pre class="reflect-preview-col__pre">${esc(w.afterText)}</pre></div>
+        ${heatmapHtml}
+        <div class="ba-slider">
+          <div class="ba-slider__col ba-slider__col--before"><h5>変更前</h5><pre class="ba-slider__pre">${esc(w.beforeText)}</pre></div>
+          <div class="ba-slider__col ba-slider__col--after"><h5>変更後</h5><pre class="ba-slider__pre">${esc(w.afterText)}</pre></div>
         </div>
       </div>
     </details>`;
@@ -9180,6 +10661,142 @@ ${body}`;
       });
     }
   }
+  function renderReflectMinimapNav() {
+    const id = "u_reflectMinimapNav";
+    const doc = getToolDocument();
+    let host = doc.getElementById(id);
+    const isReflect = state.activeTab === "reflect";
+    if (!isReflect) {
+      if (host) host.remove();
+      return;
+    }
+    const layout = doc.getElementById("u_reflectLayout");
+    if (!layout) return;
+    if (!host) {
+      host = doc.createElement("div");
+      host.id = id;
+      host.className = "minimap-nav";
+      host.setAttribute("role", "navigation");
+      host.setAttribute("aria-label", "差分セクションへジャンプ");
+      layout.parentElement?.appendChild(host);
+    }
+    const counts = /* @__PURE__ */ new Map();
+    const rows = getActualDiffRows(state.lastDiffRows || []);
+    for (const r of rows) {
+      const k = String(r.sectionKey || "");
+      if (!k) continue;
+      const slot = counts.get(k) || { total: 0, high: 0, medium: 0 };
+      slot.total += 1;
+      const tone = severityToneOf(r.severity);
+      if (tone === "high") slot.high += 1;
+      else if (tone === "medium") slot.medium += 1;
+      counts.set(k, slot);
+    }
+    if (!counts.size) {
+      host.innerHTML = "";
+      host.style.display = "none";
+      return;
+    }
+    host.style.display = "flex";
+    const filterSec = ui3.diffFilterSection?.value || state.diffFilterSection || "";
+    host.innerHTML = SECTION_DEFS.filter((d) => counts.has(d.key)).map((d) => {
+      const slot = counts.get(d.key);
+      const cls = slot.high > 0 ? "has-diff" : slot.medium > 0 ? "has-diff-mid" : "has-diff-low";
+      const active = filterSec === d.key ? " is-current" : "";
+      return `<button type="button" class="minimap-nav__dot ${cls}${active}" data-act="filterDiffBySectionFromDist" data-section="${esc(d.key)}" title="${esc(d.label)}: ${slot.total}件 (高 ${slot.high} / 中 ${slot.medium})"></button>`;
+    }).join("");
+  }
+  function renderReflectTargetBadge() {
+    const el = getToolDocument().getElementById("u_reflectTargetBadge");
+    if (!el) return;
+    let appId = "";
+    let isPreview = true;
+    let guestId = "";
+    try {
+      const c = deps.commonParams();
+      appId = String(c.target?.appId || "").trim();
+      isPreview = !!c.target?.preview;
+      guestId = String(c.target?.guestId || "").trim();
+    } catch {
+    }
+    const targetBundle = state.importedTargetBundle || state.lastTargetBundle;
+    const appLabel = (() => {
+      const info = targetBundle?.sections?.appInfo;
+      if (info && typeof info === "object" && !info._fetchError) {
+        return String(info.name || "").trim();
+      }
+      return "";
+    })();
+    const previewLabel = isPreview ? "プレビュー" : "本番";
+    const previewClass = isPreview ? "is-preview" : "is-prod";
+    const guestSuffix = guestId ? ` / ゲスト${esc(guestId)}` : "";
+    if (!appId) {
+      el.innerHTML = `<div class="reflect-target-badge__inner" data-state="empty">
+      <span class="reflect-target-badge__label">反映先未設定</span>
+    </div>`;
+      return;
+    }
+    el.innerHTML = `<div class="reflect-target-badge__inner ${previewClass}">
+    <span class="reflect-target-badge__chip">${esc(previewLabel)}</span>
+    <span class="reflect-target-badge__app">App ${esc(appId)}</span>
+    ${appLabel ? `<span class="reflect-target-badge__name" title="${esc(appLabel)}">${esc(appLabel)}</span>` : ""}
+    ${guestSuffix ? `<span class="reflect-target-badge__guest">${guestSuffix}</span>` : ""}
+  </div>`;
+  }
+  function getReflectNextAction() {
+    const isNode = isReflectNodeModeEffective();
+    const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
+    const actualDiffRows = getActualDiffRows(state.lastDiffRows || []);
+    const scopeInfo = getEffectiveReflectScopeInfo();
+    const selectedNodeRows = deps.getSelectedReflectRows ? deps.getSelectedReflectRows() : [];
+    const targetCount = isNode ? selectedNodeRows.length : scopeInfo.effectiveScopes.length;
+    const planSig = getCurrentReflectPlanSignature();
+    const plan = state.lastApplyPlan;
+    const planReady = !!(plan && planSig && plan.signature === planSig);
+    const checklist = state.reflectApplyChecklist || {};
+    const checklistDone = ["diff", "plan", "target"].filter((k) => !!checklist[k]).length;
+    if (!diffReady) {
+      return {
+        act: isNode ? "runDiffLoadReflectNodes" : "runDiff",
+        label: isNode ? "差分比較して候補作成" : "差分比較を実行",
+        hint: "最新の差分を取得します",
+        disabled: false
+      };
+    }
+    if (!actualDiffRows.length) {
+      return { act: "", label: "反映する差分がありません", hint: "0件のため反映は不要", disabled: true };
+    }
+    if (!targetCount) {
+      return isNode ? state.reflectRows.length ? { act: "selectVisibleReflectNodes", label: "表示中の差分を選択", hint: "候補から選びましょう", disabled: false } : { act: "loadReflectNodes", label: "差分候補を読み込む", hint: "差分から候補を生成", disabled: false } : { act: "applyScopeDiffOnly", label: "差分があるセクションだけ選ぶ", hint: "ワンクリックで自動選択", disabled: false };
+    }
+    if (!planReady) {
+      return { act: "previewApplyPlan", label: "実行前プラン確認", hint: "APIリクエスト内容を確認", disabled: false };
+    }
+    return {
+      act: "applyPreview",
+      label: "プレビューへ反映",
+      hint: checklistDone === 3 ? "反映を実行します" : `安全チェック ${checklistDone}/3`,
+      disabled: false
+    };
+  }
+  function renderReflectFooterNext() {
+    const el = getToolDocument().getElementById("u_reflectFooterNext");
+    if (!el) return;
+    const info = getReflectNextAction();
+    if (!info.act) {
+      el.innerHTML = `<div class="reflect-footer-next__pill" data-state="muted" title="${esc(info.hint)}">
+      <span class="reflect-footer-next__label">${esc(info.label)}</span>
+    </div>`;
+      return;
+    }
+    const stage = classifyStage(info.act) || "plan";
+    const stageIcon = stageIconChar(stage);
+    el.innerHTML = `<button type="button" class="btn-stage" data-stage="${esc(stage)}" data-act="${esc(info.act)}" data-reflect-next="1" title="${esc(info.hint)}" ${info.disabled ? "disabled" : ""}>
+    <span class="btn-stage__icon" aria-hidden="true">${esc(stageIcon)}</span>
+    <span>次：${esc(info.label)}</span>
+    <span class="btn-stage__shortcut" title="Ctrl+Enter">Ctrl+Enter</span>
+  </button>`;
+  }
   function renderReflectFooterBadges() {
     const el = getToolDocument().getElementById("u_reflectFooterBadges");
     if (!el) return;
@@ -9229,8 +10846,7 @@ ${body}`;
     }
   }
   function renderReflectAssistPanel() {
-    if (!ui3.reflectAssist) return;
-    ui3.reflectAssist.innerHTML = buildReflectAssistHtml();
+    if (ui3.reflectAssist) ui3.reflectAssist.innerHTML = "";
     renderReflectHowto();
     renderReflectPlanInline();
     renderReflectPlanPreview();
@@ -9239,6 +10855,123 @@ ${body}`;
     renderReflectApplyHistory();
     renderReflectQuickPresets();
     renderReflectFooterBadges();
+    renderReflectFooterNext();
+    renderReflectTargetBadge();
+    renderReflectMinimapNav();
+    renderReflectHeroCard();
+    renderReflectRouteSummaries();
+    renderReflectFooterLinkBadges();
+  }
+  function renderReflectHeroCard() {
+    const host = getToolDocument().getElementById("u_reflectHeroCard");
+    if (!host) return;
+    const info = getReflectNextAction();
+    const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
+    const isNode = isReflectNodeModeEffective();
+    const targetCount = isNode ? deps.getSelectedReflectRows ? deps.getSelectedReflectRows().length : 0 : (deps.selectedScopeKeys?.(ui3.applyScopes) || []).length;
+    const planSig = typeof deps.makeApplyPlanSignature === "function" ? "" : "";
+    const plan = state.lastApplyPlan;
+    const planReady = !!(plan && plan.totalReq);
+    const checklist = state.reflectApplyChecklist || {};
+    const checklistDone = ["diff", "plan", "target"].filter((k) => !!checklist[k]).length;
+    const stepNo = !diffReady ? 1 : !targetCount ? 2 : !planReady ? 3 : 4;
+    const stepTitles = ["差分を作る", "反映する内容を決める", "プラン確認", "プレビュー反映"];
+    const tone = info.disabled ? "warn" : stepNo === 4 && checklistDone === 3 ? "ok" : stepNo === 1 ? "" : "";
+    const desc = !diffReady ? "まずは差分比較を実行して、反映する変更を取得します。" : !targetCount ? "標準ルートまたは詳細ルートで、反映するセクション/差分を選びます。" : !planReady ? "APIに送信される予定のリクエスト内容を、プラン確認モーダルで見ます。" : checklistDone === 3 ? "すべての準備が完了しました。下の赤いボタンから反映を実行できます。" : "反映前チェックリストを確認してから反映してください。";
+    const actionBtn = info.act ? `<button type="button" class="btn" data-act="${esc(info.act)}" data-reflect-next="1" ${info.disabled ? "disabled" : ""}>
+        ▶ ${esc(info.label)}
+      </button>` : `<span style="opacity:.85;font-size:12px">${esc(info.label || "次のアクションはありません")}</span>`;
+    const progress = [1, 2, 3, 4].map((n) => {
+      const cls = n < stepNo ? "is-done" : n === stepNo ? "is-current" : "";
+      return `<span class="reflect-hero-card__progress-step ${cls}"></span>`;
+    }).join("");
+    host.dataset.tone = tone;
+    host.innerHTML = `
+    <div class="reflect-hero-card__step">STEP ${stepNo} / 4</div>
+    <div class="reflect-hero-card__title">${esc(stepTitles[stepNo - 1])}</div>
+    <div class="reflect-hero-card__desc">${esc(desc)}</div>
+    <div class="reflect-hero-card__action">${actionBtn}<span style="font-size:11px;opacity:.85">${esc(info.hint || "")}</span></div>
+    <div class="reflect-hero-card__progress" aria-label="進行ステップ">${progress}</div>
+  `;
+  }
+  function renderReflectRouteSummaries() {
+    const doc = getToolDocument();
+    const scopeSummary = doc.getElementById("u_reflectScopeSummary");
+    if (scopeSummary) {
+      const scopes = deps.selectedScopeKeys?.(ui3.applyScopes) || [];
+      scopeSummary.textContent = scopes.length ? `選択中: ${scopes.length} セクション` : "未選択";
+    }
+    const nodeSummary = doc.getElementById("u_reflectNodeSummary");
+    if (nodeSummary) {
+      const rows = state.reflectRows || [];
+      const sel = deps.getSelectedReflectRows ? deps.getSelectedReflectRows().length : 0;
+      nodeSummary.textContent = rows.length ? `候補 ${rows.length} / 選択 ${sel}` : "候補未読込";
+    }
+    const jsonSummary = doc.getElementById("u_reflectJsonSummary");
+    if (jsonSummary) {
+      const payload = state.importedPatchPayload;
+      if (payload?.sections) {
+        const sectionCount = Object.keys(payload.sections).length;
+        jsonSummary.textContent = `読込済: ${sectionCount} セクション`;
+      } else {
+        jsonSummary.textContent = "未読込";
+      }
+    }
+  }
+  function renderReflectFooterLinkBadges() {
+    const doc = getToolDocument();
+    const reportBadge = doc.getElementById("u_reflectReportBadge");
+    if (reportBadge) {
+      const r = state.lastApplyReport;
+      if (r) {
+        const total = (r.okCount || 0) + (r.ngCount || 0) + (r.skipCount || 0);
+        reportBadge.textContent = total ? String(total) : "";
+      } else {
+        reportBadge.textContent = "";
+      }
+    }
+    const histBadge = doc.getElementById("u_reflectHistoryBadge");
+    if (histBadge) {
+      const list = Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [];
+      histBadge.textContent = list.length ? String(list.length) : "";
+    }
+  }
+  function openReflectModal(name) {
+    const map = {
+      node: "u_reflectNodeModal",
+      json: "u_reflectJsonModal",
+      plan: "u_reflectPlanModal",
+      history: "u_reflectHistoryModal",
+      report: "u_reflectReportModal",
+      support: "u_reflectSupportModal",
+      fieldEditor: "u_reflectFieldEditorModal",
+      otherEditor: "u_reflectOtherEditorModal"
+    };
+    const id = map[name];
+    if (!id) return;
+    const el = getToolDocument().getElementById(id);
+    if (!el) return;
+    el.hidden = false;
+  }
+  function closeReflectModal(name) {
+    const map = {
+      node: "u_reflectNodeModal",
+      json: "u_reflectJsonModal",
+      plan: "u_reflectPlanModal",
+      history: "u_reflectHistoryModal",
+      report: "u_reflectReportModal",
+      support: "u_reflectSupportModal",
+      fieldEditor: "u_reflectFieldEditorModal",
+      otherEditor: "u_reflectOtherEditorModal"
+    };
+    const id = map[name];
+    if (!id) return;
+    const el = getToolDocument().getElementById(id);
+    if (!el) return;
+    el.hidden = true;
+  }
+  function closeAllReflectModals() {
+    ["node", "json", "plan", "history", "report", "support", "fieldEditor", "otherEditor"].forEach(closeReflectModal);
   }
   function renderReflectApplyReport() {
     const host = getToolDocument().getElementById("u_reflectApplyReport");
@@ -9367,9 +11100,10 @@ ${body}`;
     const statusLabel = hadError ? "一部エラーあり" : "正常完了";
     const staleNote = diffStale ? '<span class="reflect-post-apply__hint">反映後の実機状態はまだ比較されていません。「今すぐ再比較」で差分が 0 件になったか確認できます。</span>' : '<span class="reflect-post-apply__hint">現在表示中の差分は反映後の最新状態と同期済みです。</span>';
     host.style.display = "block";
-    host.innerHTML = `<div class="reflect-post-apply ${statusCls}">
+    const celebrate = !hadError && minutesAgo < 5;
+    host.innerHTML = `<div class="reflect-post-apply ${statusCls}${celebrate ? " apply-celebrate" : ""}">
     <div class="reflect-post-apply__head">
-      <span class="reflect-post-apply__title">反映${ageLabel}に完了しました（${esc(modeLabel)} / ${esc(statusLabel)}）</span>
+      <span class="reflect-post-apply__title">${celebrate ? "✨ " : ""}反映${ageLabel}に完了しました（${esc(modeLabel)} / ${esc(statusLabel)}）</span>
       <div class="reflect-post-apply__actions">
         <button type="button" class="btn ok" data-act="postApplyRecompare" title="反映後の比較先プレビューを再取得して差分比較を実行します"${diffStale ? "" : " disabled"}>今すぐ再比較</button>
         <button type="button" class="btn sub" data-act="dismissPostApplyCard" title="このお知らせを閉じます">閉じる</button>
@@ -9651,7 +11385,17 @@ ${body}`;
     const srcCount = selectedRows.filter((r) => deps.reflectRowModeById(r._id) === "src").length;
     const tgtCount = selectedRows.length - srcCount;
     const sev = summarizeSeverity(selectedRows);
-    const header = `<div class="reflect-node-list-summary">
+    const renamesCount = rows.filter((r) => !!r.renameCandidate).length;
+    const bulkToolbar = `<div class="reflect-node-bulk-toolbar" role="toolbar" aria-label="差分候補の一括選択">
+    <span class="reflect-node-bulk-toolbar__label">一括選択：</span>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="all" title="表示中の全候補を選択">全て (${filtered.length})</button>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="high" title="重要度=高 のみ選択">高のみ</button>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="medium" title="重要度 中 以下のみ選択">中以下</button>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="renames" ${renamesCount === 0 ? "disabled" : ""} title="改名候補のみ選択">改名候補 (${renamesCount})</button>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="invert" title="表示中の選択状態を反転">反転</button>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="clear" title="選択をすべて解除">クリア</button>
+  </div>`;
+    const header = `${bulkToolbar}<div class="reflect-node-list-summary">
     <div class="reflect-node-list-summary__main">候補 ${rows.length}件 / 表示 ${filtered.length}件 / 選択 ${selectedCount}件</div>
     <div class="reflect-node-list-summary__sub">比較元採用 ${srcCount} / 比較先維持 ${tgtCount} / 高 ${sev.high} / 中 ${sev.medium} / 低 ${sev.low}</div>
   </div>`;
@@ -9939,8 +11683,8 @@ ${body}`;
     syncDatalist(kind);
   }
   function renderEnvBadge(ctx) {
-    const tone = ctx.sameConnection ? "danger" : !ctx.targetPreview ? "danger" : ctx.targetAppId ? "caution" : "neutral";
-    const label = ctx.sameConnection ? "同一接続" : !ctx.targetPreview ? "比較先=本番" : ctx.targetAppId ? "比較先=プレビュー" : "未設定";
+    const tone = !ctx.targetPreview && ctx.targetAppId ? "danger" : ctx.sameConnection ? "caution" : ctx.targetAppId ? "info" : "neutral";
+    const label = !ctx.targetPreview && ctx.targetAppId ? "比較先=本番" : ctx.sameConnection ? "同一接続" : ctx.targetAppId ? "比較先=プレビュー" : "未設定";
     const direction = ctx.sourceAppId && ctx.targetAppId ? `<span class="kus-env-badge__dir"><span class="kus-env-badge__src">#${esc(ctx.sourceAppId)}</span><span class="kus-env-badge__arrow" aria-hidden="true">→</span><span class="kus-env-badge__tgt">#${esc(ctx.targetAppId)}</span></span>` : '<span class="kus-env-badge__dir kus-env-badge__dir--empty">アプリID未設定</span>';
     const icon = tone === "danger" ? "!" : tone === "caution" ? "⚠" : "i";
     return `<span class="kus-env-badge kus-env-badge--${tone}" role="status" aria-live="polite" title="比較元→比較先 / プレビュー or 本番">
@@ -10265,532 +12009,6 @@ ${body}`;
     }
   });
 
-  // src/reflect/rowMode.ts
-  function reflectRowModeById(rowId) {
-    return state.reflectNodeModes[rowId] === "tgt" ? "tgt" : "src";
-  }
-  function reflectRowDesiredValue(row) {
-    return reflectRowModeById(row._id || "") === "tgt" ? row.right : row.left;
-  }
-  var init_rowMode = __esm({
-    "src/reflect/rowMode.ts"() {
-      "use strict";
-      init_state();
-    }
-  });
-
-  // src/tabs/reflect.ts
-  var reflect_exports = {};
-  __export(reflect_exports, {
-    applyReflectPreset: () => applyReflectPreset,
-    applyReflectQuickPreset: () => applyReflectQuickPreset,
-    deleteReflectPreset: () => deleteReflectPreset,
-    ensureActiveReflectNodeId: () => ensureActiveReflectNodeId,
-    exportReflectSelectionJson: () => exportReflectSelectionJson,
-    getActiveReflectRow: () => getActiveReflectRow,
-    getDiffCountsBySection: () => getDiffCountsBySection2,
-    getEffectiveReflectScopeInfo: () => getEffectiveReflectScopeInfo2,
-    getReflectQuickPresets: () => getReflectQuickPresets,
-    getReflectRowById: () => getReflectRowById,
-    getSelectedReflectRows: () => getSelectedReflectRows,
-    importReflectSelectionFromFile: () => importReflectSelectionFromFile,
-    loadReflectPresets: () => loadReflectPresets,
-    loadReflectRowsFromLastDiff: () => loadReflectRowsFromLastDiff,
-    pushReflectUndo: () => pushReflectUndo,
-    queueDiffRowForReflect: () => queueDiffRowForReflect,
-    redoReflectState: () => redoReflectState,
-    reflectRowDesiredValue: () => reflectRowDesiredValue,
-    reflectRowModeById: () => reflectRowModeById,
-    restoreReflectState: () => restoreReflectState,
-    runPrefetchCommonData: () => runPrefetchCommonData,
-    runReflectModeAll: () => runReflectModeAll,
-    runReflectModeVisible: () => runReflectModeVisible,
-    saveReflectPreset: () => saveReflectPreset,
-    setActiveReflectNode: () => setActiveReflectNode,
-    snapshotReflectState: () => snapshotReflectState,
-    undoReflectState: () => undoReflectState
-  });
-  function snapshotReflectState() {
-    return {
-      selectedIds: [...state.reflectSelectedIds],
-      modes: { ...state.reflectNodeModes }
-    };
-  }
-  function restoreReflectState(snapshot) {
-    state.reflectSelectedIds = new Set(snapshot?.selectedIds || []);
-    state.reflectNodeModes = { ...snapshot?.modes || {} };
-  }
-  function pushReflectUndo() {
-    state.reflectUndoStack.push(snapshotReflectState());
-    if (state.reflectUndoStack.length > 50) state.reflectUndoStack.shift();
-    state.reflectRedoStack = [];
-  }
-  function undoReflectState() {
-    if (!state.reflectUndoStack.length) return false;
-    state.reflectRedoStack.push(snapshotReflectState());
-    restoreReflectState(state.reflectUndoStack.pop());
-    return true;
-  }
-  function redoReflectState() {
-    if (!state.reflectRedoStack.length) return false;
-    state.reflectUndoStack.push(snapshotReflectState());
-    restoreReflectState(state.reflectRedoStack.pop());
-    return true;
-  }
-  function getReflectRowById(rowId) {
-    return (state.reflectRows || []).find((row) => row && row._id === rowId) || null;
-  }
-  function ensureActiveReflectNodeId(candidateIds) {
-    const rows = state.reflectRows || [];
-    if (!rows.length) {
-      state.reflectActiveNodeId = "";
-      return "";
-    }
-    const candidateSet = Array.isArray(candidateIds) && candidateIds.length ? new Set(candidateIds) : null;
-    const current = getReflectRowById(state.reflectActiveNodeId);
-    if (current && (!candidateSet || candidateSet.has(current._id))) return current._id;
-    const selectedRow = rows.find((row) => state.reflectSelectedIds.has(row._id) && (!candidateSet || candidateSet.has(row._id)));
-    if (selectedRow) {
-      state.reflectActiveNodeId = selectedRow._id;
-      return selectedRow._id;
-    }
-    const fallbackRow = rows.find((row) => !candidateSet || candidateSet.has(row._id)) || rows[0];
-    state.reflectActiveNodeId = fallbackRow?._id || "";
-    return state.reflectActiveNodeId;
-  }
-  function getActiveReflectRow(candidateIds) {
-    const rowId = ensureActiveReflectNodeId(candidateIds);
-    return rowId ? getReflectRowById(rowId) : null;
-  }
-  function setActiveReflectNode(rowId, options = {}) {
-    if (!rowId || !getReflectRowById(rowId)) return;
-    state.reflectActiveNodeId = rowId;
-    if (options.persist !== false) saveCurrentDialogState2();
-  }
-  function loadReflectRowsFromLastDiff() {
-    if (!state.lastDiffRows.length) throw new Error("先に差分比較を実行してください");
-    const putKeys = new Set(SECTION_DEFS.filter((d) => d.put).map((d) => d.key));
-    const rows = getActualDiffRows(state.lastDiffRows).filter((r) => putKeys.has(r.sectionKey)).map((r, idx) => ({ ...r, _id: `n${idx}` }));
-    state.reflectRows = rows;
-    state.reflectSelectedIds = new Set(rows.map((r) => r._id));
-    state.reflectNodeModes = {};
-    rows.forEach((r) => {
-      state.reflectNodeModes[r._id] = "src";
-    });
-    state.reflectUndoStack = [];
-    state.reflectRedoStack = [];
-    state.reflectPropertyFilters = /* @__PURE__ */ new Set();
-    state.reflectActiveNodeId = rows[0]?._id || "";
-    if (ui.nodeFilterSection) {
-      const sections = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
-      ui.nodeFilterSection.innerHTML = '<option value="">全セクション</option>' + sections.map((k) => {
-        const label = SECTION_DEFS.find((d) => d.key === k)?.label || k;
-        return `<option value="${esc(k)}">${esc(label)}</option>`;
-      }).join("");
-    }
-    renderReflectNodeList();
-    renderReflectMainPanel();
-    setStatus(`差分ノードを読込: ${rows.length}件`);
-  }
-  function queueDiffRowForReflect(diffRowId, options = {}) {
-    if (!diffRowId) throw new Error("対象の差分行が指定されていません");
-    const diffRow = (state.lastDiffRows || []).find((r) => r && r._id === diffRowId);
-    if (!diffRow) throw new Error("対応する差分行が見つかりませんでした（差分比較を再実行してください）");
-    const putKeys = new Set(SECTION_DEFS.filter((d) => d.put).map((d) => d.key));
-    if (!putKeys.has(diffRow.sectionKey)) {
-      throw new Error(`このセクション「${SECTION_DEFS.find((d) => d.key === diffRow.sectionKey)?.label || diffRow.sectionKey || "-"}」は反映に対応していません`);
-    }
-    if (!state.reflectRows || !state.reflectRows.length) {
-      loadReflectRowsFromLastDiff();
-    }
-    const match = (state.reflectRows || []).find(
-      (row) => row && row.sectionKey === diffRow.sectionKey && String(row.path || "") === String(diffRow.path || "") && row.type === diffRow.type
-    );
-    if (!match) {
-      throw new Error("反映候補に同じノードが見つかりませんでした。差分の再実行後にもう一度お試しください");
-    }
-    pushReflectUndo();
-    state.reflectSelectedIds.add(match._id);
-    state.reflectNodeModes[match._id] = options.mode === "tgt" ? "tgt" : "src";
-    state.reflectActiveNodeId = match._id;
-    return { reflectRowId: match._id, section: diffRow.sectionKey };
-  }
-  function getSelectedReflectRows() {
-    const selected = state.reflectSelectedIds || /* @__PURE__ */ new Set();
-    return (state.reflectRows || []).filter((r) => selected.has(r._id));
-  }
-  function sectionBreakdownForRows(rows) {
-    const counts = /* @__PURE__ */ new Map();
-    for (const r of rows) {
-      const key = r?.sectionKey || "";
-      counts.set(key, (counts.get(key) || 0) + 1);
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([key, n]) => {
-      const label = SECTION_DEFS.find((d) => d.key === key)?.label || key || "(未分類)";
-      return `${label}: ${n}件`;
-    });
-  }
-  function confirmBulkModeChange({ mode, scopeLabel, rows, changeCount }) {
-    if (changeCount < BULK_MODE_CONFIRM_THRESHOLD) return true;
-    const modeLabel = mode === "src" ? "比較元を採用" : "比較先を維持（反映しない）";
-    const breakdown = sectionBreakdownForRows(rows).slice(0, 8).join("\n  - ");
-    const msg = `【一括モード変更の確認】
-
-対象: ${scopeLabel}（${rows.length}件 / 変更予定 ${changeCount}件）
-操作: ${modeLabel}
-
-影響セクション:
-  - ${breakdown}
-
-この操作はUndo（元に戻す）で取り消せます。実行しますか？`;
-    return kusConfirm(msg);
-  }
-  function runReflectModeAll(mode) {
-    if (!state.reflectRows.length) {
-      setStatus("反映ノードが読込されていません");
-      return;
-    }
-    const selected = getSelectedReflectRows();
-    if (!selected.length) {
-      setStatus("ノードが選択されていません");
-      return;
-    }
-    const changeCandidates = selected.filter((r) => state.reflectNodeModes[r._id] !== mode);
-    if (!confirmBulkModeChange({
-      mode,
-      scopeLabel: "選択中ノード",
-      rows: selected,
-      changeCount: changeCandidates.length
-    })) {
-      setStatus("一括モード変更をキャンセルしました");
-      return;
-    }
-    pushReflectUndo();
-    let count = 0;
-    for (const r of selected) {
-      if (state.reflectNodeModes[r._id] !== mode) {
-        state.reflectNodeModes[r._id] = mode;
-        count++;
-      }
-    }
-    renderReflectNodeList();
-    setStatus(`選択中ノード(${selected.length}件)のうち、${count}件を ${mode === "src" ? "比較元" : "比較先"} に一括変更しました（元に戻すで取消可）`);
-  }
-  function runReflectModeVisible(mode) {
-    if (!state.reflectRows.length) {
-      setStatus("反映ノードが読込されていません");
-      return;
-    }
-    const visibleIds = [...ui.reflectNodeList?.querySelectorAll("[data-node-open]") || []].map((el) => el.dataset.nodeOpen).filter((id) => !!id);
-    if (!visibleIds.length) {
-      setStatus("表示中ノードがありません（絞り込み条件を見直してください）");
-      return;
-    }
-    const visibleRows = visibleIds.map((id) => getReflectRowById(id)).filter(Boolean);
-    const changeCandidates = visibleRows.filter((r) => state.reflectNodeModes[r._id] !== mode);
-    if (!confirmBulkModeChange({
-      mode,
-      scopeLabel: "表示中ノード",
-      rows: visibleRows,
-      changeCount: changeCandidates.length
-    })) {
-      setStatus("一括モード変更をキャンセルしました");
-      return;
-    }
-    pushReflectUndo();
-    let count = 0;
-    visibleIds.forEach((id) => {
-      if (state.reflectNodeModes[id] !== mode) {
-        state.reflectNodeModes[id] = mode;
-        count += 1;
-      }
-    });
-    renderReflectNodeList();
-    setStatus(`表示中ノード(${visibleIds.length}件)のうち、${count}件を ${mode === "src" ? "比較元" : "比較先"} に変更しました（元に戻すで取消可）`);
-  }
-  function getEffectiveReflectScopeInfo2() {
-    const baseScopes = ui.applyScopes ? selectedScopeKeys(ui.applyScopes) : [];
-    if (isReflectNodeModeEffective()) {
-      return { baseScopes, effectiveScopes: [...baseScopes], warning: "" };
-    }
-    try {
-      const { resolveApplyScopes: resolveApplyScopes2 } = (init_diff(), __toCommonJS(diff_exports));
-      return {
-        baseScopes,
-        effectiveScopes: resolveApplyScopes2(baseScopes),
-        warning: ""
-      };
-    } catch (e) {
-      return {
-        baseScopes,
-        effectiveScopes: [...baseScopes],
-        warning: e.message || String(e)
-      };
-    }
-  }
-  function getDiffCountsBySection2() {
-    const counts = {};
-    for (const row of getActualDiffRows(state.lastDiffRows || [])) {
-      const key = row.sectionKey || "";
-      if (!key) continue;
-      if (!counts[key]) counts[key] = { total: 0, added: 0, removed: 0, changed: 0 };
-      counts[key].total++;
-      if (row.type === "added") counts[key].added++;
-      else if (row.type === "removed") counts[key].removed++;
-      else if (row.type === "changed") counts[key].changed++;
-    }
-    return counts;
-  }
-  async function runPrefetchCommonData() {
-    const c = commonParams();
-    if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
-    if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
-    const sections = SECTION_DEFS.map((d) => d.key);
-    const modeTag = getPreviewCompareStatusPrefix(ui);
-    setStatus(`${modeTag} 共通データ取得: 比較元...`);
-    const source = await fetchBundle({
-      ...c.source,
-      sections,
-      onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較元 ${Math.round(p * 100)}% (${l})`)
-    });
-    setStatus(`${modeTag} 共通データ取得: 比較先...`);
-    const target = await fetchBundle({
-      ...c.target,
-      sections,
-      onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較先 ${Math.round(p * 100)}% (${l})`)
-    });
-    state.lastSourceBundle = source;
-    state.lastTargetBundle = target;
-    state.lastDiffAt = null;
-    state.lastDiffRows = [];
-    state.lastFetchIssues = [];
-    state.lastDiffSignature = "";
-    state.lastApplyPlan = null;
-    state.diffSelectedIds = /* @__PURE__ */ new Set();
-    state.diffIgnoreSuggestions = [];
-    state.reflectRows = [];
-    state.reflectSelectedIds = /* @__PURE__ */ new Set();
-    state.reflectNodeModes = {};
-    state.reflectUndoStack = [];
-    state.reflectRedoStack = [];
-    state.reflectPropertyFilters = /* @__PURE__ */ new Set();
-    state.reflectActiveNodeId = "";
-    renderResultRows([]);
-    renderDiffFilterOptions();
-    renderReflectNodeList();
-    renderBundleState();
-    renderReflectSidebar();
-    renderReflectMainPanel();
-    const sourceErr = Object.values(source.sections || {}).filter((x) => x && x._fetchError).length;
-    const targetErr = Object.values(target.sections || {}).filter((x) => x && x._fetchError).length;
-    setStatus(`共通データ取得完了: 比較元 ${sections.length}セクション(NG ${sourceErr}) / 比較先 ${sections.length}セクション(NG ${targetErr})`);
-  }
-  function loadReflectPresets() {
-    try {
-      const raw = localStorage.getItem(REFLECT_PRESETS_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      return [];
-    }
-  }
-  function persistReflectPresets(presets) {
-    try {
-      localStorage.setItem(REFLECT_PRESETS_KEY, JSON.stringify(presets || []));
-    } catch (e) {
-    }
-  }
-  function saveReflectPreset(name) {
-    const trimmed = String(name || "").trim();
-    if (!trimmed) throw new Error("プリセット名を入力してください");
-    const scopes = [...ui.applyScopes?.querySelectorAll("input[type=checkbox]:checked") || []].map((el) => el.value).filter(Boolean);
-    const preset = {
-      name: trimmed,
-      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-      source: {
-        appId: String(ui.sourceApp?.value || "").trim(),
-        guestId: String(ui.sourceGuest?.value || "").trim(),
-        preview: !!ui.sourcePreview?.checked
-      },
-      target: {
-        appId: String(ui.targetApp?.value || "").trim(),
-        guestId: String(ui.targetGuest?.value || "").trim(),
-        preview: !!ui.targetPreview?.checked
-      },
-      scopes,
-      applyDiffOnly: !!ui.applyDiffOnly?.checked,
-      lookupMap: String(ui.lookupMap?.value || "").trim()
-    };
-    const presets = loadReflectPresets().filter((p) => p && p.name !== trimmed);
-    presets.unshift(preset);
-    persistReflectPresets(presets.slice(0, 30));
-    return preset;
-  }
-  function applyReflectPreset(name) {
-    const preset = loadReflectPresets().find((p) => p && p.name === name);
-    if (!preset) throw new Error(`プリセット「${name}」が見つかりません`);
-    if (ui.sourceApp) ui.sourceApp.value = preset.source?.appId || "";
-    if (ui.sourceGuest) ui.sourceGuest.value = preset.source?.guestId || "";
-    if (ui.sourcePreview) ui.sourcePreview.checked = !!preset.source?.preview;
-    if (ui.targetApp) ui.targetApp.value = preset.target?.appId || "";
-    if (ui.targetGuest) ui.targetGuest.value = preset.target?.guestId || "";
-    if (ui.targetPreview) ui.targetPreview.checked = !!preset.target?.preview;
-    if (ui.applyDiffOnly) ui.applyDiffOnly.checked = !!preset.applyDiffOnly;
-    if (ui.lookupMap) ui.lookupMap.value = preset.lookupMap || "";
-    const wantedScopes = new Set(preset.scopes || []);
-    ui.applyScopes?.querySelectorAll("input[type=checkbox]").forEach((el) => {
-      el.checked = wantedScopes.has(el.value);
-    });
-    saveCurrentDialogState2();
-    return preset;
-  }
-  function deleteReflectPreset(name) {
-    const presets = loadReflectPresets().filter((p) => p && p.name !== name);
-    persistReflectPresets(presets);
-  }
-  function exportReflectSelectionJson() {
-    const rows = state.reflectRows || [];
-    if (!rows.length) throw new Error("反映候補がありません。先に「差分候補を読込」を実行してください");
-    const selected = rows.filter((r) => state.reflectSelectedIds.has(r._id));
-    if (!selected.length) throw new Error("選択中のノードがありません");
-    const payload = {
-      kind: "reflect-selection",
-      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      target: {
-        appId: String(ui.targetApp?.value || "").trim(),
-        guestId: String(ui.targetGuest?.value || "").trim()
-      },
-      source: {
-        appId: String(ui.sourceApp?.value || "").trim(),
-        guestId: String(ui.sourceGuest?.value || "").trim()
-      },
-      total: rows.length,
-      selectedCount: selected.length,
-      items: selected.map((r) => ({
-        sectionKey: r.sectionKey || "",
-        path: r.path || "",
-        type: r.type || "",
-        mode: state.reflectNodeModes[r._id] || "src"
-      }))
-    };
-    const filename = `reflect_selection_${nowStamp()}.json`;
-    downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
-    return { filename, selectedCount: selected.length };
-  }
-  async function importReflectSelectionFromFile(file) {
-    if (!file) throw new Error("ファイルが選択されていません");
-    const text = await readTextFile(file);
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      throw new Error("選択JSONの読み込みに失敗しました（JSON形式が不正です）");
-    }
-    if (!parsed || parsed.kind !== "reflect-selection" || !Array.isArray(parsed.items)) {
-      throw new Error('この形式は選択JSONとして認識できません（kind="reflect-selection" を想定）');
-    }
-    if (!state.reflectRows || !state.reflectRows.length) {
-      loadReflectRowsFromLastDiff();
-    }
-    const indexMap = /* @__PURE__ */ new Map();
-    for (const row of state.reflectRows || []) {
-      const key = `${row.sectionKey || ""}	${row.path || ""}	${row.type || ""}`;
-      indexMap.set(key, row);
-    }
-    pushReflectUndo();
-    let matched = 0;
-    let missed = 0;
-    for (const item of parsed.items || []) {
-      const key = `${item.sectionKey || ""}	${item.path || ""}	${item.type || ""}`;
-      const row = indexMap.get(key);
-      if (!row) {
-        missed += 1;
-        continue;
-      }
-      state.reflectSelectedIds.add(row._id);
-      state.reflectNodeModes[row._id] = item.mode === "tgt" ? "tgt" : "src";
-      matched += 1;
-    }
-    return { matched, missed, total: (parsed.items || []).length };
-  }
-  function getReflectQuickPresets() {
-    return REFLECT_QUICK_PRESETS.map((p) => ({ ...p }));
-  }
-  function isSystemFieldRow(row) {
-    if (!row || row.sectionKey !== "fieldSettings") return false;
-    const candidates = [row.right, row.left];
-    for (const v of candidates) {
-      if (v && typeof v === "object" && typeof v.type === "string" && SYSTEM_FIELD_TYPES.has(v.type)) {
-        return true;
-      }
-    }
-    return false;
-  }
-  function applyReflectQuickPreset(presetId) {
-    const preset = REFLECT_QUICK_PRESETS.find((p) => p.id === presetId);
-    if (!preset) throw new Error(`クイックプリセット「${presetId}」が見つかりません`);
-    if (!state.reflectRows.length) loadReflectRowsFromLastDiff();
-    if (!state.reflectRows.length) throw new Error("差分候補が空のためプリセットを適用できません");
-    pushReflectUndo();
-    const rows = state.reflectRows;
-    const includeSections = preset.sections ? new Set(preset.sections) : null;
-    const excludeSections = preset.excludeSections ? new Set(preset.excludeSections) : null;
-    const severities = preset.severities ? new Set(preset.severities.map((s) => String(s).toLowerCase())) : null;
-    const types = preset.types ? new Set(preset.types) : null;
-    const matchedIds = /* @__PURE__ */ new Set();
-    let keptSelection = false;
-    if (preset.keepSelection) {
-      keptSelection = true;
-      for (const id of state.reflectSelectedIds) matchedIds.add(id);
-    } else {
-      for (const row of rows) {
-        if (!row || !row._id) continue;
-        if (includeSections && !includeSections.has(row.sectionKey)) continue;
-        if (excludeSections && excludeSections.has(row.sectionKey)) continue;
-        if (severities && !severities.has(String(row.severity || "low").toLowerCase())) continue;
-        if (types && !types.has(row.type)) continue;
-        if (preset.excludeSystemFields && isSystemFieldRow(row)) continue;
-        matchedIds.add(row._id);
-      }
-    }
-    if (!keptSelection) {
-      state.reflectSelectedIds = matchedIds;
-    }
-    const mode = preset.mode === "tgt" ? "tgt" : "src";
-    const modeTarget = preset.keepSelection ? state.reflectSelectedIds : matchedIds;
-    for (const id of modeTarget) {
-      state.reflectNodeModes[id] = mode;
-    }
-    return {
-      id: preset.id,
-      label: preset.label,
-      mode,
-      selectedCount: state.reflectSelectedIds.size,
-      matchedCount: matchedIds.size,
-      total: rows.length
-    };
-  }
-  var BULK_MODE_CONFIRM_THRESHOLD;
-  var init_reflect = __esm({
-    "src/tabs/reflect.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_utils();
-      init_api();
-      init_engine();
-      init_utils();
-      init_components();
-      init_export();
-      init_diff();
-      init_preview_compare();
-      init_nodeModeUi();
-      init_rowMode();
-      BULK_MODE_CONFIRM_THRESHOLD = 5;
-    }
-  });
-
   // src/tabs/field.ts
   function parseFieldInput(text) {
     const obj = JSON.parse(text);
@@ -11086,7 +12304,7 @@ ${body}`;
     return set;
   }
   async function ensureDiffPreparedForReflect() {
-    const sig = currentDiffSignature2();
+    const sig = currentDiffSignature();
     if (state.lastDiffAt && state.lastDiffSignature === sig) return;
     setStatus("差分が未作成または条件変更のため、自動で差分比較を実行します...");
     await runDiff();
@@ -11118,20 +12336,77 @@ ${body}`;
     }
     return sourceBundle;
   }
+  function classifyLogLine(line) {
+    if (line.startsWith("OK ")) return { tone: "ok", icon: "✓", rest: line.slice(3) };
+    if (line.startsWith("NG ")) return { tone: "ng", icon: "✗", rest: line.slice(3) };
+    if (line.startsWith("SKIP ")) return { tone: "skip", icon: "⊘", rest: line.slice(5) };
+    if (line.startsWith("START ")) return { tone: "start", icon: "▶", rest: line.slice(6) };
+    if (line.startsWith("PLAN ")) return { tone: "plan", icon: "📋", rest: line.slice(5) };
+    if (/^=+/.test(line)) return { tone: "head", icon: "", rest: line };
+    if (line.trim() === "") return { tone: "blank", icon: "", rest: "" };
+    return { tone: "plain", icon: "", rest: line };
+  }
+  function buildGanttHtmlFromLogs(logs, scopes) {
+    if (!Array.isArray(scopes) || !scopes.length) return "";
+    const rows = scopes.map((k) => ({
+      sectionKey: String(k),
+      label: SECTION_DEFS.find((d) => d.key === k)?.label || k,
+      status: "pending"
+    }));
+    let runningKey = "";
+    for (const line of logs) {
+      const text = String(line);
+      for (const r of rows) {
+        if (text.startsWith(`OK ${r.label}`)) r.status = "ok";
+        else if (text.startsWith(`NG ${r.label}`)) r.status = "ng";
+        else if (text.startsWith(`SKIP ${r.label}`)) r.status = "skip";
+        else if (text.startsWith(`START ${r.label}`)) {
+          r.status = "running";
+          runningKey = r.sectionKey;
+        }
+      }
+    }
+    if (!runningKey) {
+      const firstPending = rows.find((r) => r.status === "pending");
+      if (firstPending) firstPending.status = "running";
+    }
+    const rowsHtml = rows.map((r) => {
+      const pct = r.status === "ok" ? 100 : r.status === "ng" ? 100 : r.status === "skip" ? 100 : r.status === "running" ? 60 : 0;
+      const barCls = r.status === "ok" ? "apply-gantt__bar--ok" : r.status === "ng" ? "apply-gantt__bar--ng" : r.status === "running" ? "apply-gantt__bar--running" : "";
+      const statusGlyph = r.status === "ok" ? "✓" : r.status === "ng" ? "✗" : r.status === "skip" ? "⊘" : r.status === "running" ? "⏳" : "";
+      return `<div class="apply-gantt__row" data-status="${r.status}">
+      <div class="apply-gantt__label">${renderSectionIconHtml(r.sectionKey)}<span>${esc(r.label)}</span></div>
+      <div class="apply-gantt__track"><div class="apply-gantt__bar ${barCls}" style="width:${pct}%"></div></div>
+      <div class="apply-gantt__time">${statusGlyph}</div>
+    </div>`;
+    }).join("");
+    return `<div class="apply-gantt" aria-label="セクション別進捗">${rowsHtml}</div>`;
+  }
   function renderProgressLog(logs, options = {}) {
-    const { phase, current, total } = options;
-    const progressBar = typeof current === "number" && typeof total === "number" && total > 0 ? `<div style="height:6px;background:#e2e8f0;border-radius:3px;margin:8px 10px 0"><div style="width:${Math.round((current + 1) / total * 100)}%;height:100%;background:#3b82f6;border-radius:3px;transition:width .3s"></div></div>` : "";
-    const phaseLabel = phase ? `<div style="font-weight:700;padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:13px">${esc(phase)}</div>` : "";
-    const colored = logs.map((line) => {
-      if (line.startsWith("OK ")) return `<span style="color:#166534">${esc(line)}</span>`;
-      if (line.startsWith("NG ")) return `<span style="color:#b91c1c">${esc(line)}</span>`;
-      if (line.startsWith("SKIP ")) return `<span style="color:#92400e">${esc(line)}</span>`;
-      if (line.startsWith("START ")) return `<span style="color:#1d4ed8">${esc(line)}</span>`;
-      if (line.startsWith("PLAN ")) return `<span style="color:#1d4ed8">${esc(line)}</span>`;
-      return esc(line);
-    }).join("\n");
+    const { phase, current, total, scopes } = options;
+    const progressBar = typeof current === "number" && typeof total === "number" && total > 0 ? `<div class="reflect-log-progress"><div class="reflect-log-progress__bar" style="width:${Math.round((current + 1) / total * 100)}%"></div><span class="reflect-log-progress__text">${Math.min(current + 1, total)} / ${total}</span></div>` : "";
+    const phaseLabel = phase ? `<div class="reflect-log-phase">${esc(phase)}</div>` : "";
+    const ganttHtml = buildGanttHtmlFromLogs(logs, scopes);
+    const okCount = logs.filter((l) => l.startsWith("OK ")).length;
+    const ngCount = logs.filter((l) => l.startsWith("NG ")).length;
+    const skipCount = logs.filter((l) => l.startsWith("SKIP ")).length;
+    const counterChips = okCount + ngCount + skipCount > 0 ? `<div class="reflect-log-counters">
+        ${okCount ? `<span class="reflect-log-chip ok" title="成功">✓ ${okCount}</span>` : ""}
+        ${ngCount ? `<span class="reflect-log-chip ng" title="失敗">✗ ${ngCount}</span>` : ""}
+        ${skipCount ? `<span class="reflect-log-chip skip" title="スキップ">⊘ ${skipCount}</span>` : ""}
+      </div>` : "";
+    const items = logs.map((line) => {
+      const { tone, icon, rest } = classifyLogLine(line);
+      if (tone === "blank") return '<div class="reflect-log-line reflect-log-line--blank"></div>';
+      const iconSpan = icon ? `<span class="reflect-log-line__icon">${esc(icon)}</span>` : "";
+      return `<div class="reflect-log-line reflect-log-line--${tone}">${iconSpan}<span class="reflect-log-line__text">${esc(rest)}</span></div>`;
+    }).join("");
     if (ui.result) {
-      ui.result.innerHTML = `${phaseLabel}${progressBar}<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${colored}</pre>`;
+      ui.result.innerHTML = `<div class="reflect-log-host">
+      ${phaseLabel}${progressBar}${counterChips}
+      ${ganttHtml}
+      <div class="reflect-log-body">${items}</div>
+    </div>`;
       ui.result.scrollTop = ui.result.scrollHeight;
     }
   }
@@ -11155,6 +12430,543 @@ ${body}`;
       init_field();
       init_reflect();
       init_components();
+    }
+  });
+
+  // src/reflect/rowMode.ts
+  function reflectRowModeById(rowId) {
+    return state.reflectNodeModes[rowId] === "tgt" ? "tgt" : "src";
+  }
+  function reflectRowDesiredValue(row) {
+    return reflectRowModeById(row._id || "") === "tgt" ? row.right : row.left;
+  }
+  var init_rowMode = __esm({
+    "src/reflect/rowMode.ts"() {
+      "use strict";
+      init_state();
+    }
+  });
+
+  // src/tabs/reflect.ts
+  var reflect_exports = {};
+  __export(reflect_exports, {
+    applyReflectPreset: () => applyReflectPreset,
+    applyReflectQuickPreset: () => applyReflectQuickPreset,
+    deleteReflectPreset: () => deleteReflectPreset,
+    ensureActiveReflectNodeId: () => ensureActiveReflectNodeId,
+    exportReflectSelectionJson: () => exportReflectSelectionJson,
+    getActiveReflectRow: () => getActiveReflectRow,
+    getDiffCountsBySection: () => getDiffCountsBySection2,
+    getEffectiveReflectScopeInfo: () => getEffectiveReflectScopeInfo2,
+    getReflectQuickPresets: () => getReflectQuickPresets,
+    getReflectRowById: () => getReflectRowById,
+    getSelectedReflectRows: () => getSelectedReflectRows,
+    importReflectSelectionFromFile: () => importReflectSelectionFromFile,
+    loadReflectPresets: () => loadReflectPresets,
+    loadReflectRowsFromLastDiff: () => loadReflectRowsFromLastDiff,
+    pushReflectUndo: () => pushReflectUndo,
+    queueDiffRowForReflect: () => queueDiffRowForReflect,
+    redoReflectState: () => redoReflectState,
+    reflectRowDesiredValue: () => reflectRowDesiredValue,
+    reflectRowModeById: () => reflectRowModeById,
+    restoreReflectState: () => restoreReflectState,
+    runPrefetchCommonData: () => runPrefetchCommonData,
+    runReflectModeAll: () => runReflectModeAll,
+    runReflectModeVisible: () => runReflectModeVisible,
+    saveReflectPreset: () => saveReflectPreset,
+    setActiveReflectNode: () => setActiveReflectNode,
+    snapshotReflectState: () => snapshotReflectState,
+    undoReflectState: () => undoReflectState
+  });
+  function snapshotReflectState() {
+    return {
+      selectedIds: [...state.reflectSelectedIds],
+      modes: { ...state.reflectNodeModes }
+    };
+  }
+  function restoreReflectState(snapshot) {
+    state.reflectSelectedIds = new Set(snapshot?.selectedIds || []);
+    state.reflectNodeModes = { ...snapshot?.modes || {} };
+  }
+  function pushReflectUndo() {
+    state.reflectUndoStack.push(snapshotReflectState());
+    if (state.reflectUndoStack.length > 50) state.reflectUndoStack.shift();
+    state.reflectRedoStack = [];
+  }
+  function undoReflectState() {
+    if (!state.reflectUndoStack.length) return false;
+    state.reflectRedoStack.push(snapshotReflectState());
+    restoreReflectState(state.reflectUndoStack.pop());
+    return true;
+  }
+  function redoReflectState() {
+    if (!state.reflectRedoStack.length) return false;
+    state.reflectUndoStack.push(snapshotReflectState());
+    restoreReflectState(state.reflectRedoStack.pop());
+    return true;
+  }
+  function getReflectRowById(rowId) {
+    return (state.reflectRows || []).find((row) => row && row._id === rowId) || null;
+  }
+  function ensureActiveReflectNodeId(candidateIds) {
+    const rows = state.reflectRows || [];
+    if (!rows.length) {
+      state.reflectActiveNodeId = "";
+      return "";
+    }
+    const candidateSet = Array.isArray(candidateIds) && candidateIds.length ? new Set(candidateIds) : null;
+    const current = getReflectRowById(state.reflectActiveNodeId);
+    if (current && (!candidateSet || candidateSet.has(current._id))) return current._id;
+    const selectedRow = rows.find((row) => state.reflectSelectedIds.has(row._id) && (!candidateSet || candidateSet.has(row._id)));
+    if (selectedRow) {
+      state.reflectActiveNodeId = selectedRow._id;
+      return selectedRow._id;
+    }
+    const fallbackRow = rows.find((row) => !candidateSet || candidateSet.has(row._id)) || rows[0];
+    state.reflectActiveNodeId = fallbackRow?._id || "";
+    return state.reflectActiveNodeId;
+  }
+  function getActiveReflectRow(candidateIds) {
+    const rowId = ensureActiveReflectNodeId(candidateIds);
+    return rowId ? getReflectRowById(rowId) : null;
+  }
+  function setActiveReflectNode(rowId, options = {}) {
+    if (!rowId || !getReflectRowById(rowId)) return;
+    state.reflectActiveNodeId = rowId;
+    if (options.persist !== false) saveCurrentDialogState2();
+  }
+  function loadReflectRowsFromLastDiff() {
+    if (!state.lastDiffRows.length) throw new Error("先に差分比較を実行してください");
+    const putKeys = new Set(SECTION_DEFS.filter((d) => d.put).map((d) => d.key));
+    const rows = getActualDiffRows(state.lastDiffRows).filter((r) => putKeys.has(r.sectionKey)).map((r, idx) => ({ ...r, _id: `n${idx}` }));
+    state.reflectRows = rows;
+    const FULL_PRESELECT_THRESHOLD = 20;
+    if (rows.length <= FULL_PRESELECT_THRESHOLD) {
+      state.reflectSelectedIds = new Set(rows.map((r) => r._id));
+    } else {
+      const highIds = rows.filter((r) => String(r.severity || "low").toLowerCase() === "high").map((r) => r._id);
+      state.reflectSelectedIds = new Set(highIds.length ? highIds : rows.map((r) => r._id));
+    }
+    state.reflectNodeModes = {};
+    rows.forEach((r) => {
+      state.reflectNodeModes[r._id] = "src";
+    });
+    state.reflectUndoStack = [];
+    state.reflectRedoStack = [];
+    state.reflectPropertyFilters = /* @__PURE__ */ new Set();
+    state.reflectActiveNodeId = rows[0]?._id || "";
+    if (ui.nodeFilterSection) {
+      const sections = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
+      ui.nodeFilterSection.innerHTML = '<option value="">全セクション</option>' + sections.map((k) => {
+        const label = SECTION_DEFS.find((d) => d.key === k)?.label || k;
+        return `<option value="${esc(k)}">${esc(label)}</option>`;
+      }).join("");
+    }
+    renderReflectNodeList();
+    renderReflectMainPanel();
+    const selCount = state.reflectSelectedIds.size;
+    if (selCount === rows.length) {
+      setStatus(`差分ノードを読込: ${rows.length}件 (全件選択済み)`);
+    } else {
+      setStatus(`差分ノードを読込: ${rows.length}件 (安全のため「高」${selCount}件を初期選択 / 「全て (${rows.length})」で広げられます)`);
+    }
+  }
+  function queueDiffRowForReflect(diffRowId, options = {}) {
+    if (!diffRowId) throw new Error("対象の差分行が指定されていません");
+    const diffRow = (state.lastDiffRows || []).find((r) => r && r._id === diffRowId);
+    if (!diffRow) throw new Error("対応する差分行が見つかりませんでした（差分比較を再実行してください）");
+    const putKeys = new Set(SECTION_DEFS.filter((d) => d.put).map((d) => d.key));
+    if (!putKeys.has(diffRow.sectionKey)) {
+      throw new Error(`このセクション「${SECTION_DEFS.find((d) => d.key === diffRow.sectionKey)?.label || diffRow.sectionKey || "-"}」は反映に対応していません`);
+    }
+    if (!state.reflectRows || !state.reflectRows.length) {
+      loadReflectRowsFromLastDiff();
+    }
+    const match = (state.reflectRows || []).find(
+      (row) => row && row.sectionKey === diffRow.sectionKey && String(row.path || "") === String(diffRow.path || "") && row.type === diffRow.type
+    );
+    if (!match) {
+      throw new Error("反映候補に同じノードが見つかりませんでした。差分の再実行後にもう一度お試しください");
+    }
+    pushReflectUndo();
+    state.reflectSelectedIds.add(match._id);
+    state.reflectNodeModes[match._id] = options.mode === "tgt" ? "tgt" : "src";
+    state.reflectActiveNodeId = match._id;
+    return { reflectRowId: match._id, section: diffRow.sectionKey };
+  }
+  function getSelectedReflectRows() {
+    const selected = state.reflectSelectedIds || /* @__PURE__ */ new Set();
+    return (state.reflectRows || []).filter((r) => selected.has(r._id));
+  }
+  function sectionBreakdownForRows(rows) {
+    const counts = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = r?.sectionKey || "";
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([key, n]) => {
+      const label = SECTION_DEFS.find((d) => d.key === key)?.label || key || "(未分類)";
+      return `${label}: ${n}件`;
+    });
+  }
+  function confirmBulkModeChange({ mode, scopeLabel, rows, changeCount }) {
+    if (changeCount < BULK_MODE_CONFIRM_THRESHOLD) return true;
+    const modeLabel = mode === "src" ? "比較元を採用" : "比較先を維持（反映しない）";
+    const breakdown = sectionBreakdownForRows(rows).slice(0, 8).join("\n  - ");
+    const msg = `【一括モード変更の確認】
+
+対象: ${scopeLabel}（${rows.length}件 / 変更予定 ${changeCount}件）
+操作: ${modeLabel}
+
+影響セクション:
+  - ${breakdown}
+
+この操作はUndo（元に戻す）で取り消せます。実行しますか？`;
+    return kusConfirm(msg);
+  }
+  function runReflectModeAll(mode) {
+    if (!state.reflectRows.length) {
+      setStatus("反映ノードが読込されていません");
+      return;
+    }
+    const selected = getSelectedReflectRows();
+    if (!selected.length) {
+      setStatus("ノードが選択されていません");
+      return;
+    }
+    const changeCandidates = selected.filter((r) => state.reflectNodeModes[r._id] !== mode);
+    if (!confirmBulkModeChange({
+      mode,
+      scopeLabel: "選択中ノード",
+      rows: selected,
+      changeCount: changeCandidates.length
+    })) {
+      setStatus("一括モード変更をキャンセルしました");
+      return;
+    }
+    pushReflectUndo();
+    let count = 0;
+    for (const r of selected) {
+      if (state.reflectNodeModes[r._id] !== mode) {
+        state.reflectNodeModes[r._id] = mode;
+        count++;
+      }
+    }
+    renderReflectNodeList();
+    setStatus(`選択中ノード(${selected.length}件)のうち、${count}件を ${mode === "src" ? "比較元" : "比較先"} に一括変更しました（元に戻すで取消可）`);
+  }
+  function runReflectModeVisible(mode) {
+    if (!state.reflectRows.length) {
+      setStatus("反映ノードが読込されていません");
+      return;
+    }
+    const visibleIds = [...ui.reflectNodeList?.querySelectorAll("[data-node-open]") || []].map((el) => el.dataset.nodeOpen).filter((id) => !!id);
+    if (!visibleIds.length) {
+      setStatus("表示中ノードがありません（絞り込み条件を見直してください）");
+      return;
+    }
+    const visibleRows = visibleIds.map((id) => getReflectRowById(id)).filter(Boolean);
+    const changeCandidates = visibleRows.filter((r) => state.reflectNodeModes[r._id] !== mode);
+    if (!confirmBulkModeChange({
+      mode,
+      scopeLabel: "表示中ノード",
+      rows: visibleRows,
+      changeCount: changeCandidates.length
+    })) {
+      setStatus("一括モード変更をキャンセルしました");
+      return;
+    }
+    pushReflectUndo();
+    let count = 0;
+    visibleIds.forEach((id) => {
+      if (state.reflectNodeModes[id] !== mode) {
+        state.reflectNodeModes[id] = mode;
+        count += 1;
+      }
+    });
+    renderReflectNodeList();
+    setStatus(`表示中ノード(${visibleIds.length}件)のうち、${count}件を ${mode === "src" ? "比較元" : "比較先"} に変更しました（元に戻すで取消可）`);
+  }
+  function getEffectiveReflectScopeInfo2() {
+    const baseScopes = ui.applyScopes ? selectedScopeKeys(ui.applyScopes) : [];
+    if (isReflectNodeModeEffective()) {
+      return { baseScopes, effectiveScopes: [...baseScopes], warning: "" };
+    }
+    try {
+      return {
+        baseScopes,
+        effectiveScopes: resolveApplyScopes(baseScopes),
+        warning: ""
+      };
+    } catch (e) {
+      return {
+        baseScopes,
+        effectiveScopes: [...baseScopes],
+        warning: e && e.message || String(e)
+      };
+    }
+  }
+  function getDiffCountsBySection2() {
+    const counts = {};
+    for (const row of getActualDiffRows(state.lastDiffRows || [])) {
+      const key = row.sectionKey || "";
+      if (!key) continue;
+      if (!counts[key]) counts[key] = { total: 0, added: 0, removed: 0, changed: 0 };
+      counts[key].total++;
+      if (row.type === "added") counts[key].added++;
+      else if (row.type === "removed") counts[key].removed++;
+      else if (row.type === "changed") counts[key].changed++;
+    }
+    return counts;
+  }
+  async function runPrefetchCommonData() {
+    const c = commonParams();
+    if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
+    if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
+    const sections = SECTION_DEFS.map((d) => d.key);
+    const modeTag = getPreviewCompareStatusPrefix(ui);
+    setStatus(`${modeTag} 共通データ取得: 比較元...`);
+    const source = await fetchBundle({
+      ...c.source,
+      sections,
+      onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較元 ${Math.round(p * 100)}% (${l})`)
+    });
+    setStatus(`${modeTag} 共通データ取得: 比較先...`);
+    const target = await fetchBundle({
+      ...c.target,
+      sections,
+      onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較先 ${Math.round(p * 100)}% (${l})`)
+    });
+    state.lastSourceBundle = source;
+    state.lastTargetBundle = target;
+    state.lastDiffAt = null;
+    state.lastDiffRows = [];
+    state.lastFetchIssues = [];
+    state.lastDiffSignature = "";
+    state.lastApplyPlan = null;
+    state.diffSelectedIds = /* @__PURE__ */ new Set();
+    state.diffIgnoreSuggestions = [];
+    state.reflectRows = [];
+    state.reflectSelectedIds = /* @__PURE__ */ new Set();
+    state.reflectNodeModes = {};
+    state.reflectUndoStack = [];
+    state.reflectRedoStack = [];
+    state.reflectPropertyFilters = /* @__PURE__ */ new Set();
+    state.reflectActiveNodeId = "";
+    renderResultRows([]);
+    renderDiffFilterOptions();
+    renderReflectNodeList();
+    renderBundleState();
+    renderReflectSidebar();
+    renderReflectMainPanel();
+    const sourceErr = Object.values(source.sections || {}).filter((x) => x && x._fetchError).length;
+    const targetErr = Object.values(target.sections || {}).filter((x) => x && x._fetchError).length;
+    setStatus(`共通データ取得完了: 比較元 ${sections.length}セクション(NG ${sourceErr}) / 比較先 ${sections.length}セクション(NG ${targetErr})`);
+  }
+  function loadReflectPresets() {
+    try {
+      const raw = localStorage.getItem(REFLECT_PRESETS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  function persistReflectPresets(presets) {
+    try {
+      localStorage.setItem(REFLECT_PRESETS_KEY, JSON.stringify(presets || []));
+    } catch (e) {
+    }
+  }
+  function saveReflectPreset(name) {
+    const trimmed = String(name || "").trim();
+    if (!trimmed) throw new Error("プリセット名を入力してください");
+    const scopes = [...ui.applyScopes?.querySelectorAll("input[type=checkbox]:checked") || []].map((el) => el.value).filter(Boolean);
+    const preset = {
+      name: trimmed,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      source: {
+        appId: String(ui.sourceApp?.value || "").trim(),
+        guestId: String(ui.sourceGuest?.value || "").trim(),
+        preview: !!ui.sourcePreview?.checked
+      },
+      target: {
+        appId: String(ui.targetApp?.value || "").trim(),
+        guestId: String(ui.targetGuest?.value || "").trim(),
+        preview: !!ui.targetPreview?.checked
+      },
+      scopes,
+      applyDiffOnly: !!ui.applyDiffOnly?.checked,
+      lookupMap: String(ui.lookupMap?.value || "").trim()
+    };
+    const presets = loadReflectPresets().filter((p) => p && p.name !== trimmed);
+    presets.unshift(preset);
+    persistReflectPresets(presets.slice(0, 30));
+    return preset;
+  }
+  function applyReflectPreset(name) {
+    const preset = loadReflectPresets().find((p) => p && p.name === name);
+    if (!preset) throw new Error(`プリセット「${name}」が見つかりません`);
+    if (ui.sourceApp) ui.sourceApp.value = preset.source?.appId || "";
+    if (ui.sourceGuest) ui.sourceGuest.value = preset.source?.guestId || "";
+    if (ui.sourcePreview) ui.sourcePreview.checked = !!preset.source?.preview;
+    if (ui.targetApp) ui.targetApp.value = preset.target?.appId || "";
+    if (ui.targetGuest) ui.targetGuest.value = preset.target?.guestId || "";
+    if (ui.targetPreview) ui.targetPreview.checked = !!preset.target?.preview;
+    if (ui.applyDiffOnly) ui.applyDiffOnly.checked = !!preset.applyDiffOnly;
+    if (ui.lookupMap) ui.lookupMap.value = preset.lookupMap || "";
+    const wantedScopes = new Set(preset.scopes || []);
+    ui.applyScopes?.querySelectorAll("input[type=checkbox]").forEach((el) => {
+      el.checked = wantedScopes.has(el.value);
+    });
+    saveCurrentDialogState2();
+    return preset;
+  }
+  function deleteReflectPreset(name) {
+    const presets = loadReflectPresets().filter((p) => p && p.name !== name);
+    persistReflectPresets(presets);
+  }
+  function exportReflectSelectionJson() {
+    const rows = state.reflectRows || [];
+    if (!rows.length) throw new Error("反映候補がありません。先に「差分候補を読込」を実行してください");
+    const selected = rows.filter((r) => state.reflectSelectedIds.has(r._id));
+    if (!selected.length) throw new Error("選択中のノードがありません");
+    const payload = {
+      kind: "reflect-selection",
+      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      target: {
+        appId: String(ui.targetApp?.value || "").trim(),
+        guestId: String(ui.targetGuest?.value || "").trim()
+      },
+      source: {
+        appId: String(ui.sourceApp?.value || "").trim(),
+        guestId: String(ui.sourceGuest?.value || "").trim()
+      },
+      total: rows.length,
+      selectedCount: selected.length,
+      items: selected.map((r) => ({
+        sectionKey: r.sectionKey || "",
+        path: r.path || "",
+        type: r.type || "",
+        mode: state.reflectNodeModes[r._id] || "src"
+      }))
+    };
+    const filename = `reflect_selection_${nowStamp()}.json`;
+    downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
+    return { filename, selectedCount: selected.length };
+  }
+  async function importReflectSelectionFromFile(file) {
+    if (!file) throw new Error("ファイルが選択されていません");
+    const text = await readTextFile(file);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new Error("選択JSONの読み込みに失敗しました（JSON形式が不正です）");
+    }
+    if (!parsed || parsed.kind !== "reflect-selection" || !Array.isArray(parsed.items)) {
+      throw new Error('この形式は選択JSONとして認識できません（kind="reflect-selection" を想定）');
+    }
+    if (!state.reflectRows || !state.reflectRows.length) {
+      loadReflectRowsFromLastDiff();
+    }
+    const indexMap = /* @__PURE__ */ new Map();
+    for (const row of state.reflectRows || []) {
+      const key = `${row.sectionKey || ""}	${row.path || ""}	${row.type || ""}`;
+      indexMap.set(key, row);
+    }
+    pushReflectUndo();
+    let matched = 0;
+    let missed = 0;
+    for (const item of parsed.items || []) {
+      const key = `${item.sectionKey || ""}	${item.path || ""}	${item.type || ""}`;
+      const row = indexMap.get(key);
+      if (!row) {
+        missed += 1;
+        continue;
+      }
+      state.reflectSelectedIds.add(row._id);
+      state.reflectNodeModes[row._id] = item.mode === "tgt" ? "tgt" : "src";
+      matched += 1;
+    }
+    return { matched, missed, total: (parsed.items || []).length };
+  }
+  function getReflectQuickPresets() {
+    return REFLECT_QUICK_PRESETS.map((p) => ({ ...p }));
+  }
+  function isSystemFieldRow(row) {
+    if (!row || row.sectionKey !== "fieldSettings") return false;
+    const candidates = [row.right, row.left];
+    for (const v of candidates) {
+      if (v && typeof v === "object" && typeof v.type === "string" && SYSTEM_FIELD_TYPES.has(v.type)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function applyReflectQuickPreset(presetId) {
+    const preset = REFLECT_QUICK_PRESETS.find((p) => p.id === presetId);
+    if (!preset) throw new Error(`クイックプリセット「${presetId}」が見つかりません`);
+    if (!state.reflectRows.length) loadReflectRowsFromLastDiff();
+    if (!state.reflectRows.length) throw new Error("差分候補が空のためプリセットを適用できません");
+    pushReflectUndo();
+    const rows = state.reflectRows;
+    const includeSections = preset.sections ? new Set(preset.sections) : null;
+    const excludeSections = preset.excludeSections ? new Set(preset.excludeSections) : null;
+    const severities = preset.severities ? new Set(preset.severities.map((s) => String(s).toLowerCase())) : null;
+    const types = preset.types ? new Set(preset.types) : null;
+    const matchedIds = /* @__PURE__ */ new Set();
+    let keptSelection = false;
+    if (preset.keepSelection) {
+      keptSelection = true;
+      for (const id of state.reflectSelectedIds) matchedIds.add(id);
+    } else {
+      for (const row of rows) {
+        if (!row || !row._id) continue;
+        if (includeSections && !includeSections.has(row.sectionKey)) continue;
+        if (excludeSections && excludeSections.has(row.sectionKey)) continue;
+        if (severities && !severities.has(String(row.severity || "low").toLowerCase())) continue;
+        if (types && !types.has(row.type)) continue;
+        if (preset.excludeSystemFields && isSystemFieldRow(row)) continue;
+        matchedIds.add(row._id);
+      }
+    }
+    if (!keptSelection) {
+      state.reflectSelectedIds = matchedIds;
+    }
+    const mode = preset.mode === "tgt" ? "tgt" : "src";
+    const modeTarget = preset.keepSelection ? state.reflectSelectedIds : matchedIds;
+    for (const id of modeTarget) {
+      state.reflectNodeModes[id] = mode;
+    }
+    return {
+      id: preset.id,
+      label: preset.label,
+      mode,
+      selectedCount: state.reflectSelectedIds.size,
+      matchedCount: matchedIds.size,
+      total: rows.length
+    };
+  }
+  var BULK_MODE_CONFIRM_THRESHOLD;
+  var init_reflect = __esm({
+    "src/tabs/reflect.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      init_utils();
+      init_api();
+      init_engine();
+      init_utils();
+      init_components();
+      init_export();
+      init_diff();
+      init_preview_compare();
+      init_nodeModeUi();
+      init_helpers();
+      init_rowMode();
+      BULK_MODE_CONFIRM_THRESHOLD = 5;
     }
   });
 
@@ -11617,12 +13429,12 @@ ${lines.join("\n")}
     }
     if (Array.isArray(logs)) {
       if (!findings.length) {
-        logs.push("反映後検証: バックアップとの差分なし（プラン外変更は検知されませんでした）");
+        logs.push("反映後検証: バックアップ時点からの変化は検出されませんでした");
       } else {
-        logs.push(`反映後検証: ${findings.length}セクションでバックアップと差分あり`);
+        logs.push(`反映後検証: ${findings.length}セクションがバックアップ時点から変化しました`);
         for (const item of findings) {
           if (item.error) logs.push(`  - ${item.label}: 取得失敗 ${item.error}`);
-          else logs.push(`  - ${item.label}: 反映後に内容が変化（プラン外の更新の可能性）`);
+          else logs.push(`  - ${item.label}: バックアップ時点から内容が変化`);
         }
       }
     }
@@ -11681,6 +13493,45 @@ ${lines.join("\n")}
     if (!baseScopes.length) throw new Error("反映するセクションを選択してください");
     return [...new Set(baseScopes.filter(Boolean))];
   }
+  function buildBackupHealth(bundle, scopes) {
+    const actualScopes = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
+    const issues = actualScopes.map((sectionKey) => {
+      const section = bundle?.sections?.[sectionKey];
+      if (!section) return { sectionKey, label: getSectionDisplayLabel(sectionKey), message: "未取得" };
+      if (section._fetchError) return { sectionKey, label: getSectionDisplayLabel(sectionKey), message: section._fetchError };
+      return null;
+    }).filter(Boolean);
+    return {
+      totalCount: actualScopes.length,
+      okCount: Math.max(0, actualScopes.length - issues.length),
+      ngCount: issues.length,
+      issues
+    };
+  }
+  function formatBackupHealthSummary(health) {
+    const h = health || {};
+    const base = `取得OK ${Number(h.okCount || 0)} / NG ${Number(h.ngCount || 0)}`;
+    if (!h.ngCount) return base;
+    const labels = (h.issues || []).map((item) => item.label || item.sectionKey).slice(0, 4).join(", ");
+    return `${base}（${labels}${(h.issues || []).length > 4 ? " ほか" : ""}）`;
+  }
+  function renderBackupStatus(filename, scopes, health) {
+    if (!ui.backupStatus) return;
+    const h = health || buildBackupHealth(null, scopes);
+    const scopeSummary = formatSectionList(scopes);
+    const ok = !h.ngCount;
+    ui.backupStatus.textContent = `${ok ? "✅" : "⚠"} バックアップ保存済: ${filename} (${formatBackupHealthSummary(h)}, ${scopeSummary || "-"}, ${(/* @__PURE__ */ new Date()).toLocaleTimeString()})`;
+    ui.backupStatus.style.display = "block";
+    ui.backupStatus.style.background = ok ? "#ecfdf5" : "#fff7ed";
+    ui.backupStatus.style.borderColor = ok ? "#a7f3d0" : "#fed7aa";
+    ui.backupStatus.style.color = ok ? "#065f46" : "#9a3412";
+  }
+  function assertBackupHealthOk(backupResult, actionLabel) {
+    const health = backupResult?.health || backupResult?.payload?.health;
+    if (!health?.ngCount) return;
+    const detail = (health.issues || []).map((item) => `${item.label || item.sectionKey}: ${item.message || "取得失敗"}`).join(" / ");
+    throw new Error(`${actionLabel || "反映"}を中断しました。反映前バックアップに取得NGがあります（${formatBackupHealthSummary(health)}）。${detail}`);
+  }
   async function backupTargetPreviewSettings(c, scopes, options = {}) {
     if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
     const actualScopes = Array.isArray(scopes) && scopes.length ? scopes : resolveBackupScopes(c);
@@ -11692,10 +13543,12 @@ ${lines.join("\n")}
       sections: actualScopes,
       onProgress: (p, l) => setStatus(`バックアップ取得中 ${Math.round(p * 100)}% (${l})`)
     });
+    const health = buildBackupHealth(bundle, actualScopes);
     const payload = {
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       mode: "target-preview-backup",
       scopes: actualScopes,
+      health,
       target: {
         appId: target.appId,
         guestId: target.guestId || "",
@@ -11709,12 +13562,10 @@ ${lines.join("\n")}
     state.lastPreviewBackupPayload = deepClone(payload);
     state.lastPreviewBackupFilename = filename;
     downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
-    if (!options?.silentStatus) setStatus(`比較先(プレビュー)バックアップ保存: ${filename} (${scopeSummary || "-"})`);
-    if (ui.backupStatus) {
-      ui.backupStatus.textContent = `✅ バックアップ保存済: ${filename} (${actualScopes.length}セクション: ${scopeSummary || "-"}, ${(/* @__PURE__ */ new Date()).toLocaleTimeString()})`;
-      ui.backupStatus.style.display = "block";
-    }
-    return { filename, payload };
+    const statusMessage = `比較先(プレビュー)バックアップ保存: ${filename} (${formatBackupHealthSummary(health)} / ${scopeSummary || "-"})`;
+    if (!options?.silentStatus) setStatus(statusMessage, health.ngCount > 0);
+    renderBackupStatus(filename, actualScopes, health);
+    return { filename, payload, health };
   }
   function getSectionDisplayLabel(sectionKey) {
     return SECTION_DEFS.find((item) => item.key === sectionKey)?.label || sectionKey;
@@ -11814,7 +13665,14 @@ ${lines.join("\n")}
     }
     if (mismatches.length) {
       const detail = mismatches.map((item) => `${item.label} (plan ${item.plannedRevision} / current ${item.currentRevision})`).join(", ");
-      throw new Error(`プラン確認後に比較先プレビューが更新されています。再度「実行前プラン確認」を実行してください。対象: ${detail}`);
+      const planAge = plan?.createdAt ? Math.round((Date.now() - plan.createdAt) / 6e4) : 0;
+      const ageNote = planAge > 0 ? `（プラン確認から${planAge}分経過）` : "";
+      throw new Error(
+        `🛑 反映を中止しました${ageNote}：プラン確認後に比較先プレビューが他の操作で更新されています。
+対象: ${detail}
+
+対処：フッターの「実行前プラン確認」を押し直して、最新の差分でプランを作り直してから反映してください。`
+      );
     }
     return { checked, skipped };
   }
@@ -11999,7 +13857,28 @@ ${lines.join("\n")}
     state.importedPatchPayload = payload;
     setPatchEditorValue(payload);
     renderPatchJsonSummary(payload);
-    setStatus(`パッチJSON読込完了: ${file.name}`);
+    const c = commonParams();
+    const patchTargetApp = String(payload.target?.appId || "").trim();
+    const currentTargetApp = String(c.target.appId || "").trim();
+    const patchSourceApp = String(payload.source?.appId || "").trim();
+    const currentSourceApp = String(c.source.appId || "").trim();
+    const mismatches = [];
+    if (patchTargetApp && currentTargetApp && patchTargetApp !== currentTargetApp) {
+      mismatches.push(`比較先 App ${currentTargetApp} ≠ パッチ target ${patchTargetApp}`);
+    }
+    if (patchSourceApp && currentSourceApp && patchSourceApp !== currentSourceApp) {
+      mismatches.push(`比較元 App ${currentSourceApp} ≠ パッチ source ${patchSourceApp}`);
+    }
+    const sectionCount = Object.keys(payload.sections || {}).length;
+    if (mismatches.length) {
+      const warn = `パッチJSON読込完了: ${file.name} (${sectionCount}セクション) — 接続不一致: ${mismatches.join(" / ")}`;
+      console.warn("[統合ツール] patch import target/source mismatch:", mismatches);
+      setStatus(warn, true);
+      showToast(warn, "error").catch(() => {
+      });
+    } else {
+      setStatus(`パッチJSON読込完了: ${file.name} (${sectionCount}セクション)`);
+    }
     return payload;
   }
   function populatePatchJsonFromCurrentDiff(options = {}) {
@@ -12086,6 +13965,7 @@ ${lines.join("\n")}
     if (ui.autoBackupPreview?.checked) {
       const backup = await backupTargetPreviewSettings(c, sectionKeys, { silentStatus: true });
       logs.push(`バックアップ保存: ${backup.filename}`);
+      assertBackupHealthOk(backup, "JSONパッチ反映");
     }
     logs.push("");
     const sectionResults = [];
@@ -12210,6 +14090,7 @@ ${lines.join("\n")}
         const backupScopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
         const backup = await backupTargetPreviewSettings(c, backupScopes, { silentStatus: true });
         logs.push(`バックアップ保存: ${backup.filename}`);
+        assertBackupHealthOk(backup, "ノード反映");
         backupFilename = backup.filename || "";
       }
       logs.push("");
@@ -12222,12 +14103,12 @@ ${lines.join("\n")}
         if (!def || !def.put) {
           logs.push(`SKIP ${def?.label || secKey}: PUT非対応`);
           recordSectionResult(sectionResults, secKey, def?.label || secKey, "skipped", "PUT非対応");
-          renderProgressLog(logs, { phase: "ノード反映実行中", current: i, total: sectionKeys.length });
+          renderProgressLog(logs, { phase: "ノード反映実行中", current: i, total: sectionKeys.length, scopes: sectionKeys });
           continue;
         }
         setStatus(`ノード反映中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
         progress.setLabel(`反映中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
-        renderProgressLog(logs, { phase: "ノード反映実行中", current: i, total: sectionKeys.length });
+        renderProgressLog(logs, { phase: "ノード反映実行中", current: i, total: sectionKeys.length, scopes: sectionKeys });
         try {
           const current = normalize(await apiGet(prefix, def.endpoint, { app }));
           const before = deepClone(current);
@@ -12283,7 +14164,7 @@ ${lines.join("\n")}
       progress.setProgress(sectionKeys.length, sectionKeys.length);
       await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: sectionKeys, logs });
       appendProgressSummary(logs);
-      renderProgressLog(logs, { phase: "ノード反映完了" });
+      renderProgressLog(logs, { phase: "ノード反映完了", scopes: sectionKeys });
       commitApplyReport({
         mode: "nodes",
         appId: app,
@@ -12374,6 +14255,7 @@ ${lines.join("\n")}
         progress.setLabel("バックアップ保存中...");
         const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
         logs.push(`バックアップ保存: ${backup.filename}`);
+        assertBackupHealthOk(backup, "プレビュー反映");
         backupFilename = backup.filename || "";
       }
       logs.push("");
@@ -12382,14 +14264,14 @@ ${lines.join("\n")}
       hadError = await applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, {
         phaseLabel: "反映",
         onProgress: (i, total) => {
-          renderProgressLog(logs, { phase: "プレビュー反映実行中", current: i, total });
+          renderProgressLog(logs, { phase: "プレビュー反映実行中", current: i, total, scopes });
           progress.setProgress(i, total);
         },
         sectionResults
       });
       await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes, logs });
       appendProgressSummary(logs);
-      renderProgressLog(logs, { phase: "プレビュー反映完了" });
+      renderProgressLog(logs, { phase: "プレビュー反映完了", scopes });
       commitApplyReport({
         mode: "section",
         appId: app,
@@ -12431,6 +14313,46 @@ ${lines.join("\n")}
     await backupTargetPreviewSettings(c, scopes);
     renderReflectAssistPanel();
   }
+  async function importTargetPreviewBackupFromFile(file) {
+    if (!file) throw new Error("バックアップJSONファイルを選択してください");
+    const text = await readTextFile(file);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new Error("バックアップJSONの読み込みに失敗しました（JSON形式が不正です）");
+    }
+    const rawBundle = parsed?.bundle || parsed;
+    const bundle = ensureBundleShape(rawBundle);
+    const target = {
+      appId: String(parsed?.target?.appId || bundle.appId || "").trim(),
+      guestId: String(parsed?.target?.guestId || bundle.guestId || "").trim(),
+      preview: true
+    };
+    if (!target.appId) throw new Error("バックアップJSONから対象アプリIDを判定できません");
+    if (parsed?.target?.preview === false || bundle.preview === false) {
+      throw new Error("比較先プレビューのバックアップJSONではありません（本番設定のJSONは復元対象外です）");
+    }
+    const scopes = Array.isArray(parsed?.scopes) && parsed.scopes.length ? parsed.scopes.filter(Boolean) : Object.keys(bundle.sections || {});
+    if (!scopes.length) throw new Error("バックアップJSONに復元対象セクションがありません");
+    const health = parsed?.health || buildBackupHealth(bundle, scopes);
+    const payload = {
+      ...parsed,
+      generatedAt: parsed?.generatedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      mode: "target-preview-backup",
+      scopes,
+      health,
+      target,
+      bundle
+    };
+    const filename = file.name || "imported-backup.json";
+    state.lastPreviewBackupPayload = deepClone(payload);
+    state.lastPreviewBackupFilename = filename;
+    renderBackupStatus(filename, scopes, health);
+    renderReflectAssistPanel();
+    setStatus(`バックアップJSONを読み込みました: ${filename} (${formatBackupHealthSummary(health)})`, health.ngCount > 0);
+    return payload;
+  }
   async function runRestoreTargetPreviewBackup() {
     const c = commonParams();
     if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
@@ -12449,6 +14371,10 @@ ${lines.join("\n")}
     const backupBundle = ensureBundleShape(restorePayload.bundle);
     const scopes = Array.isArray(restorePayload.scopes) && restorePayload.scopes.length ? restorePayload.scopes.filter(Boolean) : Object.keys(backupBundle.sections || {});
     if (!scopes.length) throw new Error("復元対象セクションがありません");
+    const restoreHealth = restorePayload.health || buildBackupHealth(backupBundle, scopes);
+    if (restoreHealth.ngCount) {
+      throw new Error(`このバックアップは取得NGを含むため復元できません（${formatBackupHealthSummary(restoreHealth)}）。取得NGのないバックアップJSONを読み込んでください`);
+    }
     const labels = formatSectionList(scopes);
     if (!kusConfirm(`直前バックアップを比較先(プレビュー)へ復元しますか？
 比較先アプリ: ${c.target.appId}
@@ -12477,6 +14403,7 @@ ${lines.join("\n")}
         progress.setLabel("復元前のバックアップ保存中...");
         const beforeRestoreBackup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
         logs.push(`復元前バックアップ保存: ${beforeRestoreBackup.filename}`);
+        assertBackupHealthOk(beforeRestoreBackup, "バックアップ復元");
         beforeRestoreFilename = beforeRestoreBackup.filename || "";
       }
       logs.push("");
@@ -12579,6 +14506,7 @@ ${lines.join("\n")}
         progress.setLabel("バックアップ保存中...");
         const backup = await backupTargetPreviewSettings(c, failed, { silentStatus: true });
         logs.push(`バックアップ保存: ${backup.filename}`);
+        assertBackupHealthOk(backup, "失敗セクション再反映");
         backupFilename = backup.filename || "";
       }
       logs.push("");
@@ -12678,6 +14606,38 @@ ${lines.join("\n")}
     splitUpsertMap: () => splitUpsertMap3,
     upsertFields: () => upsertFields2
   });
+  function computeCurrentReflectPlanSignature() {
+    try {
+      const c = commonParams();
+      if (!c?.target?.appId) return "";
+      if (isReflectNodeModeEffective()) {
+        const rows = getSelectedReflectRows();
+        if (!rows.length) return "";
+        const nodeSigRows = rows.map((r) => ({ id: r._id, sectionKey: r.sectionKey, mode: reflectRowModeById(r._id), type: r.type, path: r.path })).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        return makeApplyPlanSignature("nodes", {
+          targetApp: c.target.appId,
+          targetGuest: c.target.guestId,
+          sourceApp: c.source.appId,
+          sourceGuest: c.source.guestId,
+          nodes: nodeSigRows,
+          lookupMap: ui.lookupMap.value.trim()
+        });
+      }
+      const baseScopes = selectedScopeKeys(ui.applyScopes);
+      if (!baseScopes.length) return "";
+      const scopes = resolveApplyScopes(baseScopes);
+      return makeApplyPlanSignature("section", {
+        targetApp: c.target.appId,
+        targetGuest: c.target.guestId,
+        sourceApp: c.source.appId,
+        sourceGuest: c.source.guestId,
+        scopes,
+        lookupMap: ui.lookupMap.value.trim()
+      });
+    } catch {
+      return "";
+    }
+  }
   function renderAppIdConfirmSection2(appIdRefs) {
     if (!appIdRefs || !appIdRefs.length) return '<div style="color:#64748b;font-size:12px;margin-bottom:8px">関連アプリIDなし</div>';
     const rows = appIdRefs.map(
@@ -12946,7 +14906,47 @@ ${lines.join("\n")}
       fingerprint: stableStringify(response)
     };
   }
+  function buildPlanRequestSummary(requests) {
+    const list = Array.isArray(requests) ? requests : [];
+    const methods = { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 };
+    const sections = /* @__PURE__ */ new Map();
+    for (const req of list) {
+      const method = String(req?.method || "").toUpperCase();
+      if (method === "POST" || method === "PUT" || method === "DELETE") methods[method] += 1;
+      else methods.OTHER += 1;
+      const sectionKey = String(req?.sectionKey || "");
+      const sectionLabel2 = String(req?.sectionLabel || sectionKey || "-");
+      const row = sections.get(sectionKey) || { sectionKey, sectionLabel: sectionLabel2, count: 0, methods: { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 } };
+      row.count += 1;
+      if (method === "POST" || method === "PUT" || method === "DELETE") row.methods[method] += 1;
+      else row.methods.OTHER += 1;
+      sections.set(sectionKey, row);
+    }
+    const sectionRows = [...sections.values()].sort((a, b) => b.count - a.count);
+    const highImpact = sectionRows.filter((row) => HIGH_IMPACT_SECTIONS.has(row.sectionKey));
+    return {
+      totalRequests: list.length,
+      methods,
+      sectionRows,
+      sectionCount: sectionRows.length,
+      highImpactCount: highImpact.length,
+      highImpactLabels: highImpact.map((row) => row.sectionLabel)
+    };
+  }
+  function renderPlanRequestSummary(plan) {
+    const summary = plan?.requestSummary || buildPlanRequestSummary(plan?.plannedRequests || []);
+    const methods = summary.methods || {};
+    const highLabels = (summary.highImpactLabels || []).slice(0, 4).join(", ");
+    const topSections = (summary.sectionRows || []).slice(0, 6).map((row) => `${row.sectionLabel}:${row.count}`).join(" / ");
+    return `<div class="plan-summary-grid">
+    <div class="plan-summary-card"><span>予定リクエスト</span><strong>${esc(String(summary.totalRequests || 0))}</strong><small>対象 ${esc(String(summary.sectionCount || 0))} セクション</small></div>
+    <div class="plan-summary-card"><span>追加・更新・削除</span><strong>${esc(String(methods.POST || 0))} / ${esc(String(methods.PUT || 0))} / ${esc(String(methods.DELETE || 0))}</strong><small>POST / PUT / DELETE</small></div>
+    <div class="plan-summary-card"><span>高リスク領域</span><strong>${esc(String(summary.highImpactCount || 0))}</strong><small>${esc(highLabels || "なし")}</small></div>
+    <div class="plan-summary-card"><span>主な対象</span><strong>${esc(topSections || "-")}</strong><small>リクエスト数順</small></div>
+  </div>`;
+  }
   function markApplyPlan(signature, mode, totalReq, lines, extra = {}) {
+    const requestSummary = buildPlanRequestSummary(extra.plannedRequests || []);
     state.lastApplyPlan = {
       signature,
       mode,
@@ -12954,6 +14954,7 @@ ${lines.join("\n")}
       createdAt: Date.now(),
       summary: (lines || []).slice(0, 16).join("\n"),
       logs: lines || [],
+      requestSummary,
       ...extra
     };
   }
@@ -12963,10 +14964,20 @@ ${lines.join("\n")}
       const stamp = new Date(plan.createdAt).toLocaleString();
       const planText = (plan.logs || []).join("\n") || "(プラン詳細なし)";
       const appIdSection = renderAppIdConfirmSection2(appIdRefs);
-      const previousHtml = ui.result.innerHTML;
-      const previousScrollTop = ui.result.scrollTop;
-      ui.result.innerHTML = `<div class="plan-confirm-panel">
+      const doc = getToolDocument();
+      const modalEl = doc.getElementById("u_reflectPlanModal");
+      const modalBody = modalEl?.querySelector(".reflect-modal-body");
+      const fallbackHost = modalBody || ui.result;
+      if (!fallbackHost) {
+        resolve(false);
+        return;
+      }
+      const previousHtml = fallbackHost.innerHTML;
+      const previousScrollTop = fallbackHost.scrollTop || 0;
+      if (modalEl) modalEl.hidden = false;
+      fallbackHost.innerHTML = `<div class="plan-confirm-panel">
       <div style="font-weight:700;font-size:13px;margin-bottom:8px">実行前プラン確認</div>
+      ${renderPlanRequestSummary(plan)}
       ${appIdSection}
       <div class="plan-summary">${esc(planText)}</div>
       <div class="plan-actions">
@@ -12975,25 +14986,27 @@ ${lines.join("\n")}
         <button class="btn ok" id="u_planExecute">このまま実行</button>
       </div>
     </div>`;
-      ui.result.scrollTop = 0;
+      fallbackHost.scrollTop = 0;
       const cleanup = () => {
-        const execBtn = getToolDocument().getElementById("u_planExecute");
-        const cancelBtn = getToolDocument().getElementById("u_planCancel");
+        const execBtn = doc.getElementById("u_planExecute");
+        const cancelBtn = doc.getElementById("u_planCancel");
         if (execBtn) execBtn.removeEventListener("click", onExec);
         if (cancelBtn) cancelBtn.removeEventListener("click", onCancel);
       };
       const onExec = () => {
         cleanup();
+        if (modalEl) modalEl.hidden = true;
         resolve(true);
       };
       const onCancel = () => {
         cleanup();
-        ui.result.innerHTML = previousHtml;
-        ui.result.scrollTop = previousScrollTop;
+        fallbackHost.innerHTML = previousHtml;
+        fallbackHost.scrollTop = previousScrollTop;
+        if (modalEl) modalEl.hidden = true;
         resolve(false);
       };
-      getToolDocument().getElementById("u_planExecute")?.addEventListener("click", onExec);
-      getToolDocument().getElementById("u_planCancel")?.addEventListener("click", onCancel);
+      doc.getElementById("u_planExecute")?.addEventListener("click", onExec);
+      doc.getElementById("u_planCancel")?.addEventListener("click", onCancel);
     });
   }
   async function ensureApplyPlanApproved(signature, mode, planRunner, options) {
@@ -13119,7 +15132,7 @@ ${lines.join("\n")}
     lines.push(`合計予定リクエスト数: ${totalReq}`);
     lines.push("※ ノードモードは差分パスをもとに比較先プレビューへ反映します。");
     markApplyPlan(planSignature, "nodes", totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests });
-    ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(lines.join("\n"))}</pre>`;
+    renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
     renderReflectAssistPanel();
     renderReflectMainPanel();
     setStatus("差分選択モードのプラン確認が完了しました");
@@ -13244,19 +15257,111 @@ ${lines.join("\n")}
     logs.push("");
     logs.push(`合計予定リクエスト数: ${totalReq}`);
     markApplyPlan(planSignature, "section", totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests });
-    ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`;
+    renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
     renderReflectAssistPanel();
     renderReflectMainPanel();
     setStatus("実行前プラン確認が完了しました");
   }
+  function renderPlanIntoModal(plan, plannedRequests) {
+    const html = renderPlanConfirmPanelHtml(plan, plannedRequests);
+    const doc = getToolDocument();
+    const modalBody = doc.querySelector("#u_reflectPlanModal .reflect-modal-body");
+    if (modalBody) {
+      modalBody.innerHTML = html;
+    } else if (ui.result) {
+      ui.result.innerHTML = html;
+    }
+  }
+  function renderPlanConfirmPanelHtml(plan, plannedRequests) {
+    const reqs = Array.isArray(plannedRequests) ? plannedRequests : [];
+    const sectionPreviews = plan?.sectionPreviews || {};
+    const sectionMap = /* @__PURE__ */ new Map();
+    for (const req of reqs) {
+      const key = String(req?.sectionKey || "");
+      const label = String(req?.sectionLabel || key || "-");
+      const slot = sectionMap.get(key) || { sectionKey: key, sectionLabel: label, reqs: [], methods: { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 } };
+      slot.reqs.push(req);
+      const m = String(req?.method || "").toUpperCase();
+      if (m === "POST" || m === "PUT" || m === "DELETE") slot.methods[m] += 1;
+      else slot.methods.OTHER += 1;
+      sectionMap.set(key, slot);
+    }
+    const sections = [...sectionMap.values()].sort((a, b) => b.reqs.length - a.reqs.length);
+    const cards = sections.map((sec) => {
+      const methodChips = ["POST", "PUT", "DELETE"].filter((m) => sec.methods[m] > 0).map((m) => `<span class="plan-card-chip plan-card-chip--${m.toLowerCase()}">${m} ${sec.methods[m]}</span>`).join("");
+      const isHigh = HIGH_IMPACT_SECTIONS.has(sec.sectionKey);
+      const sevClass = isHigh ? "sev-high" : "sev-medium";
+      const preview = sectionPreviews[sec.sectionKey];
+      let deltaHtml = "";
+      if (preview?.shape === "map" && preview.preview) {
+        const p = preview.preview;
+        const adds = Number(p.addedCount || 0);
+        const upds = Number(p.updatedCount || 0);
+        const rms = Number(p.removedCount || 0);
+        const parts = [];
+        if (adds) parts.push(`<span class="plan-card-delta plan-card-delta--add" title="追加">+${adds}</span>`);
+        if (upds) parts.push(`<span class="plan-card-delta plan-card-delta--neutral" title="更新">~${upds}</span>`);
+        if (rms) parts.push(`<span class="plan-card-delta plan-card-delta--remove" title="削除">−${rms}</span>`);
+        deltaHtml = parts.join("");
+      } else if (preview?.shape === "whole" && preview.wholePreview) {
+        deltaHtml = `<span class="plan-card-delta plan-card-delta--neutral" title="セクション全体更新">⇄ 全体更新</span>`;
+      }
+      const sectionIcon = renderSectionIconHtml(sec.sectionKey, { withTooltip: sec.sectionLabel });
+      const detailRows = sec.reqs.slice(0, 12).map((req) => {
+        const note = String(req?.note || "").trim();
+        const path = String(req?.path || "");
+        return `<div class="plan-card-row">
+        <span class="plan-card-row__method">${esc(String(req?.method || ""))}</span>
+        <span class="plan-card-row__path">${esc(path)}</span>
+        ${note ? `<span class="plan-card-row__note">${esc(note)}</span>` : ""}
+      </div>`;
+      }).join("");
+      const more = sec.reqs.length > 12 ? `<div class="plan-card-row plan-card-row--more">…他 ${sec.reqs.length - 12} 件</div>` : "";
+      return `<details class="plan-card ${sevClass}${isHigh ? " plan-card--high" : ""}" open>
+      <summary class="plan-card__head">
+        ${sectionIcon}
+        <span class="plan-card__title">${esc(sec.sectionLabel)}</span>
+        <span class="plan-card__count">${sec.reqs.length}件</span>
+        <span class="plan-card__chips">${methodChips}</span>
+        ${deltaHtml}
+        ${isHigh ? '<span class="plan-card__risk">高リスク</span>' : ""}
+      </summary>
+      <div class="plan-card__body">${detailRows}${more}</div>
+    </details>`;
+    }).join("");
+    const stamp = new Date(plan?.createdAt || Date.now()).toLocaleString();
+    return `<div class="plan-confirm-panel">
+    <div class="plan-confirm-head">
+      <div class="plan-confirm-head__title">実行前プラン確認</div>
+      <div class="plan-confirm-head__meta">予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}</div>
+    </div>
+    ${renderPlanRequestSummary(plan)}
+    <div class="plan-confirm-cards">${cards || '<div class="muted">予定リクエストがありません</div>'}</div>
+    <div class="plan-confirm-actions">
+      <button type="button" class="btn-stage" data-stage="apply" data-act="applyPreview" title="このプランの内容で比較先プレビューへ反映します">
+        <span class="btn-stage__icon">🚀</span><span>このプランで反映する</span>
+        <span class="btn-stage__shortcut">Ctrl+Shift+Enter</span>
+      </button>
+      <button type="button" class="btn sub" data-act="exportDryRunPlan" title="APIを実行せずプランをJSONで保存">ドライランJSONを保存</button>
+    </div>
+    <details class="plan-confirm-rawlogs"><summary>テキストログを表示</summary><div class="plan-summary">${esc((plan?.logs || []).join("\n"))}</div></details>
+  </div>`;
+  }
   async function runExportDryRunPlan() {
     const plan = state.lastApplyPlan;
-    if (!plan || !Array.isArray(plan.plannedRequests) || !plan.plannedRequests.length) {
+    const expectedSignature = computeCurrentReflectPlanSignature();
+    const planIsFresh = !!(plan && Array.isArray(plan.plannedRequests) && plan.plannedRequests.length && expectedSignature && plan.signature === expectedSignature);
+    if (!planIsFresh) {
+      setStatus("プランが古いため再生成します（モード切替や差分・選択の変化を検知）");
       await runPreviewApplyPlan();
     }
     const latest = state.lastApplyPlan;
+    const latestSignatureMatches = !!(latest && expectedSignature && latest.signature === expectedSignature);
     if (!latest || !Array.isArray(latest.plannedRequests) || !latest.plannedRequests.length) {
       throw new Error("ドライランに出力できる計画がありません。先に「実行前プラン確認」を実行してください。");
+    }
+    if (expectedSignature && !latestSignatureMatches) {
+      throw new Error("プランが現在の条件と一致しません。再度「実行前プラン確認」を実行してください。");
     }
     const c = commonParams();
     const payload = {
@@ -13311,26 +15416,6 @@ ${lines.join("\n")}
   });
 
   // src/tabs/diff.ts
-  var diff_exports = {};
-  __export(diff_exports, {
-    addIgnoreKeyFromInput: () => addIgnoreKeyFromInput,
-    applyIgnorePresetKeysToInput: () => applyIgnorePresetKeysToInput,
-    commonParams: () => commonParams,
-    currentDiffSignature: () => currentDiffSignature2,
-    ensureDiffPreparedForReflect: () => ensureDiffPreparedForReflect2,
-    exportBundleJson: () => exportBundleJson,
-    exportDiffHtml: () => exportDiffHtml,
-    exportDiffJson: () => exportDiffJson,
-    exportPatchJson: () => exportPatchJson,
-    getIgnorePresetState: () => getIgnorePresetState,
-    importBundleFromFile: () => importBundleFromFile,
-    openDiffReviewFold: () => openDiffReviewFold,
-    parseBundleLikeObject: () => parseBundleLikeObject,
-    restoreDialogState: () => restoreDialogState,
-    runDiff: () => runDiff,
-    runDiffAndPreviewPlan: () => runDiffAndPreviewPlan,
-    saveCurrentDialogState: () => saveCurrentDialogState2
-  });
   function getIgnorePresetState() {
     return {
       fieldOrder: !!ui.ignorePresetFieldOrder?.checked,
@@ -13388,7 +15473,7 @@ ${lines.join("\n")}
     }
     return ensureBundleShape(obj);
   }
-  function currentDiffSignature2() {
+  function currentDiffSignature() {
     const c = commonParams();
     return stableStringify({
       source: c.source,
@@ -13409,12 +15494,6 @@ ${lines.join("\n")}
       fold.scrollIntoView({ behavior: options.behavior || "smooth", block: "start" });
     }
     return fold;
-  }
-  async function ensureDiffPreparedForReflect2() {
-    const sig = currentDiffSignature2();
-    if (state.lastDiffAt && state.lastDiffSignature === sig) return;
-    setStatus("差分が未作成または条件変更のため、自動で差分比較を実行します...");
-    await runDiff();
   }
   async function importBundleFromFile(side, file) {
     const text = await readTextFile(file);
@@ -13476,7 +15555,7 @@ ${lines.join("\n")}
     state.lastDiffRows = rows;
     state.lastFetchIssues = diffResult.fetchIssues || [];
     state.lastDiffAt = (/* @__PURE__ */ new Date()).toISOString();
-    state.lastDiffSignature = currentDiffSignature2();
+    state.lastDiffSignature = currentDiffSignature();
     state.lastApplyPlan = null;
     state.diffSectionVisibleCounts = {};
     state.diffSelectedIds = /* @__PURE__ */ new Set();
@@ -15881,13 +17960,210 @@ ${lines.join("\n")}
   init_utils();
 
   // src/ui/styles.css
-  var styles_default = `#kintone-unified-suite-v2{position:fixed;top:16px;left:calc(100vw - min(980px,calc(100vw - 32px)) - 16px);z-index:2147483647;width:min(980px,calc(100vw - 32px));height:min(860px,calc(100vh - 32px));min-width:min(560px,calc(100vw - 32px));min-height:min(360px,calc(100vh - 32px));max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);background:#f6f8fb;border:1px solid #d9e2ec;border-radius:14px;box-shadow:0 18px 40px rgba(15,23,42,.28);font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;color:#1f2937;display:flex;flex-direction:column;overflow:hidden;resize:both;box-sizing:border-box}
+  var styles_default = `/* === Design tokens (S18-S20 + S9 dark + reduced-motion) === */
+#kintone-unified-suite-v2{
+  /* Severity colors (S1) */
+  --sev-high:#dc2626; --sev-high-bg:#fef2f2; --sev-high-fg:#7f1d1d; --sev-high-border:#fca5a5;
+  --sev-mid:#f59e0b;  --sev-mid-bg:#fffbeb;  --sev-mid-fg:#7c2d12;  --sev-mid-border:#fcd34d;
+  --sev-low:#22c55e;  --sev-low-bg:#f0fdf4;  --sev-low-fg:#15803d;  --sev-low-border:#86efac;
+  /* Stage colors (S3) */
+  --stg-diff:#3b82f6;   --stg-diff-bg:#dbeafe;   /* 🔍 */
+  --stg-select:#8b5cf6; --stg-select-bg:#ede9fe; /* ✓ */
+  --stg-plan:#f59e0b;   --stg-plan-bg:#fef3c7;   /* 📋 */
+  --stg-apply:#22c55e;  --stg-apply-bg:#dcfce7;  /* 🚀 */
+  /* Spacing (S18) */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px;
+  /* Radius (S20) */
+  --r-chip:4px; --r-card:8px; --r-modal:12px;
+  /* Font size (S19) — 3 tier */
+  --fs-aux:11px; --fs-body:13px; --fs-head:16px;
+  /* Surface palette */
+  --bg-app:#f6f8fb; --bg-card:#ffffff; --bg-soft:#f1f5f9; --bg-soft2:#f8fafc;
+  --txt-1:#0f172a; --txt-2:#334155; --txt-3:#64748b; --txt-mute:#94a3b8;
+  --border-1:#e2e8f0; --border-2:#cbd5e1;
+  --accent:#2563eb; --accent-2:#1d4ed8;
+}
+@media (prefers-color-scheme:dark){
+  #kintone-unified-suite-v2[data-theme="auto"]{
+    --bg-app:#0f172a; --bg-card:#1e293b; --bg-soft:#1e293b; --bg-soft2:#0f172a;
+    --txt-1:#f1f5f9; --txt-2:#cbd5e1; --txt-3:#94a3b8; --txt-mute:#64748b;
+    --border-1:#334155; --border-2:#475569;
+    --sev-high-bg:#3f0e0e; --sev-high-fg:#fca5a5;
+    --sev-mid-bg:#3a2200;  --sev-mid-fg:#fcd34d;
+    --sev-low-bg:#0a3d1f;  --sev-low-fg:#86efac;
+    --stg-diff-bg:#172554; --stg-select-bg:#2e1065; --stg-plan-bg:#451a03; --stg-apply-bg:#052e16;
+  }
+}
+#kintone-unified-suite-v2[data-theme="dark"]{
+  --bg-app:#0f172a; --bg-card:#1e293b; --bg-soft:#1e293b; --bg-soft2:#0f172a;
+  --txt-1:#f1f5f9; --txt-2:#cbd5e1; --txt-3:#94a3b8; --txt-mute:#64748b;
+  --border-1:#334155; --border-2:#475569;
+}
+@media (prefers-reduced-motion:reduce){
+  #kintone-unified-suite-v2 *,
+  #kintone-unified-suite-v2 *::before,
+  #kintone-unified-suite-v2 *::after{
+    animation-duration:0.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:0.01ms !important;
+  }
+}
+/* === Severity universal styles (S1) === */
+#kintone-unified-suite-v2 .sev-high{border-left:4px solid var(--sev-high) !important}
+#kintone-unified-suite-v2 .sev-medium{border-left:2px solid var(--sev-mid) !important}
+#kintone-unified-suite-v2 .sev-low{border-left:1px solid var(--sev-low) !important}
+#kintone-unified-suite-v2 .sev-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;font-size:10px;font-weight:900;flex-shrink:0}
+#kintone-unified-suite-v2 .sev-icon--high{background:var(--sev-high);color:#fff}
+#kintone-unified-suite-v2 .sev-icon--medium{background:var(--sev-mid);color:#fff}
+#kintone-unified-suite-v2 .sev-icon--low{background:var(--sev-low);color:#fff}
+#kintone-unified-suite-v2 .sev-pill{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:999px;font-size:var(--fs-aux);font-weight:800;border:1px solid var(--border-1)}
+#kintone-unified-suite-v2 .sev-pill--high{background:var(--sev-high-bg);color:var(--sev-high-fg);border-color:var(--sev-high-border)}
+#kintone-unified-suite-v2 .sev-pill--medium{background:var(--sev-mid-bg);color:var(--sev-mid-fg);border-color:var(--sev-mid-border)}
+#kintone-unified-suite-v2 .sev-pill--low{background:var(--sev-low-bg);color:var(--sev-low-fg);border-color:var(--sev-low-border)}
+/* === Section icon system (S10) === */
+#kintone-unified-suite-v2 .sec-icon{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;font-size:11px;font-weight:900;border-radius:4px;background:var(--bg-soft);color:var(--txt-2);flex-shrink:0}
+#kintone-unified-suite-v2 .sec-icon[data-section="fieldSettings"]{background:#dbeafe;color:#1e40af}
+#kintone-unified-suite-v2 .sec-icon[data-section="layoutSettings"]{background:#e0e7ff;color:#3730a3}
+#kintone-unified-suite-v2 .sec-icon[data-section="viewSettings"]{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .sec-icon[data-section="reportSettings"]{background:#fce7f3;color:#9d174d}
+#kintone-unified-suite-v2 .sec-icon[data-section="processSettings"]{background:#cffafe;color:#155e75}
+#kintone-unified-suite-v2 .sec-icon[data-section="actionSettings"]{background:#d1fae5;color:#065f46}
+#kintone-unified-suite-v2 .sec-icon[data-section="appAcl"],
+#kintone-unified-suite-v2 .sec-icon[data-section="fieldAcl"],
+#kintone-unified-suite-v2 .sec-icon[data-section="recordPermissions"]{background:#fee2e2;color:#991b1b}
+#kintone-unified-suite-v2 .sec-icon[data-section="notifications"],
+#kintone-unified-suite-v2 .sec-icon[data-section="perRecordNotifications"],
+#kintone-unified-suite-v2 .sec-icon[data-section="reminderNotifications"]{background:#ffedd5;color:#9a3412}
+#kintone-unified-suite-v2 .sec-icon[data-section="customizeSettings"]{background:#1e293b;color:#fbbf24}
+#kintone-unified-suite-v2 .sec-icon[data-section="pluginSettings"]{background:#fae8ff;color:#6b21a8}
+#kintone-unified-suite-v2 .sec-icon[data-section="categories"]{background:#f1f5f9;color:#475569}
+#kintone-unified-suite-v2 .sec-icon[data-section="appSettings"],
+#kintone-unified-suite-v2 .sec-icon[data-section="appInfo"],
+#kintone-unified-suite-v2 .sec-icon[data-section="formSettings"]{background:#f3f4f6;color:#374151}
+/* === Unified button hover/active (S17) === */
+#kintone-unified-suite-v2 .btn{transition:transform .12s ease,box-shadow .15s ease,background-color .15s ease,border-color .15s ease}
+#kintone-unified-suite-v2 .btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 3px 8px rgba(15,23,42,.12)}
+#kintone-unified-suite-v2 .btn:active:not(:disabled){transform:translateY(0);box-shadow:0 1px 2px rgba(15,23,42,.08)}
+/* === Skeleton loading (S16) === */
+#kintone-unified-suite-v2 .skeleton{background:linear-gradient(90deg,#e2e8f0,#f1f5f9,#e2e8f0);background-size:200% 100%;animation:skeleton-shimmer 1.4s ease-in-out infinite;border-radius:var(--r-chip);min-height:14px}
+@keyframes skeleton-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+#kintone-unified-suite-v2 .skeleton-card{padding:var(--sp-3);border:1px solid var(--border-1);border-radius:var(--r-card);background:var(--bg-card);display:flex;flex-direction:column;gap:6px}
+#kintone-unified-suite-v2 .skeleton-line{height:12px}
+#kintone-unified-suite-v2 .skeleton-line--w70{width:70%}
+#kintone-unified-suite-v2 .skeleton-line--w50{width:50%}
+#kintone-unified-suite-v2 .skeleton-line--w90{width:90%}
+/* === Reviewed row faded (S15) === */
+#kintone-unified-suite-v2 .is-reviewed-faded{opacity:.55;text-decoration:line-through;text-decoration-color:rgba(15,23,42,.25);text-decoration-thickness:1px;transition:opacity .2s ease}
+#kintone-unified-suite-v2 .is-reviewed-faded:hover{opacity:.9;text-decoration:none}
+/* === Section distribution bar (S2) === */
+#kintone-unified-suite-v2 .sec-dist{display:flex;flex-direction:column;gap:6px;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border-1);border-radius:var(--r-card)}
+#kintone-unified-suite-v2 .sec-dist__head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+#kintone-unified-suite-v2 .sec-dist__title{font-size:var(--fs-aux);font-weight:800;color:var(--txt-3);letter-spacing:.05em;text-transform:uppercase}
+#kintone-unified-suite-v2 .sec-dist__total{font-size:var(--fs-body);font-weight:900;color:var(--txt-1)}
+#kintone-unified-suite-v2 .sec-dist__bar{display:flex;height:24px;border-radius:var(--r-chip);overflow:hidden;background:var(--bg-soft);border:1px solid var(--border-1)}
+#kintone-unified-suite-v2 .sec-dist__seg{display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:rgba(255,255,255,.95);text-shadow:0 1px 2px rgba(0,0,0,.25);min-width:24px;cursor:pointer;transition:filter .15s,flex .25s}
+#kintone-unified-suite-v2 .sec-dist__seg:hover{filter:brightness(1.08)}
+#kintone-unified-suite-v2 .sec-dist__seg.is-active{outline:2px solid var(--accent);outline-offset:-2px}
+#kintone-unified-suite-v2 .sec-dist__legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+#kintone-unified-suite-v2 .sec-dist__legend-item{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-aux);color:var(--txt-3)}
+#kintone-unified-suite-v2 .sec-dist__legend-swatch{width:10px;height:10px;border-radius:2px}
+/* === Number-first stat chips (S4) === */
+#kintone-unified-suite-v2 .stat-chip{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 14px;min-width:64px;border:1px solid var(--border-1);border-radius:var(--r-card);background:var(--bg-card)}
+#kintone-unified-suite-v2 .stat-chip__num{font-size:18px;font-weight:900;color:var(--txt-1);line-height:1}
+#kintone-unified-suite-v2 .stat-chip__label{font-size:9px;font-weight:700;color:var(--txt-3);letter-spacing:.06em;text-transform:uppercase;margin-top:3px}
+#kintone-unified-suite-v2 .stat-chip--ok .stat-chip__num{color:var(--sev-low)}
+#kintone-unified-suite-v2 .stat-chip--warn .stat-chip__num{color:var(--sev-mid)}
+#kintone-unified-suite-v2 .stat-chip--danger .stat-chip__num{color:var(--sev-high)}
+#kintone-unified-suite-v2 .stat-chip--accent .stat-chip__num{color:var(--accent)}
+#kintone-unified-suite-v2 .stat-chip-row{display:flex;flex-wrap:wrap;gap:6px}
+/* === Stage button gradient (S3) === */
+#kintone-unified-suite-v2 .btn-stage{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:800;border:1px solid transparent;cursor:pointer;color:#fff;text-shadow:0 1px 1px rgba(0,0,0,.18);box-shadow:0 2px 6px rgba(15,23,42,.18)}
+#kintone-unified-suite-v2 .btn-stage[data-stage="diff"]{background:linear-gradient(180deg,#60a5fa,#2563eb)}
+#kintone-unified-suite-v2 .btn-stage[data-stage="select"]{background:linear-gradient(180deg,#a78bfa,#7c3aed)}
+#kintone-unified-suite-v2 .btn-stage[data-stage="plan"]{background:linear-gradient(180deg,#fbbf24,#d97706);text-shadow:0 1px 1px rgba(0,0,0,.3)}
+#kintone-unified-suite-v2 .btn-stage[data-stage="apply"]{background:linear-gradient(180deg,#34d399,#059669);animation:btn-apply-pulse 1.6s ease-in-out infinite alternate}
+@keyframes btn-apply-pulse{0%{box-shadow:0 2px 6px rgba(5,150,105,.4)}100%{box-shadow:0 4px 14px rgba(5,150,105,.7)}}
+#kintone-unified-suite-v2 .btn-stage:disabled{opacity:.45;cursor:not-allowed;animation:none}
+#kintone-unified-suite-v2 .btn-stage__icon{font-size:14px}
+#kintone-unified-suite-v2 .btn-stage__shortcut{font-size:9px;font-weight:700;padding:2px 5px;background:rgba(255,255,255,.25);border-radius:3px;letter-spacing:.04em}
+/* === Plan card delta indicator (S5) === */
+#kintone-unified-suite-v2 .plan-card-delta{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px}
+#kintone-unified-suite-v2 .plan-card-delta--add{background:var(--sev-low-bg);color:var(--sev-low-fg)}
+#kintone-unified-suite-v2 .plan-card-delta--remove{background:var(--sev-high-bg);color:var(--sev-high-fg)}
+#kintone-unified-suite-v2 .plan-card-delta--neutral{background:var(--bg-soft);color:var(--txt-3)}
+/* === Gantt-style apply progress (S6) === */
+#kintone-unified-suite-v2 .apply-gantt{display:flex;flex-direction:column;gap:4px;padding:10px;background:var(--bg-card);border:1px solid var(--border-1);border-radius:var(--r-card);margin-bottom:8px}
+#kintone-unified-suite-v2 .apply-gantt__row{display:grid;grid-template-columns:140px 1fr 60px;gap:8px;align-items:center;font-size:var(--fs-aux)}
+#kintone-unified-suite-v2 .apply-gantt__label{font-weight:700;color:var(--txt-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:4px}
+#kintone-unified-suite-v2 .apply-gantt__track{height:14px;background:var(--bg-soft);border-radius:7px;overflow:hidden;position:relative}
+#kintone-unified-suite-v2 .apply-gantt__bar{height:100%;background:linear-gradient(90deg,var(--accent),var(--sev-low));border-radius:7px;transition:width .25s}
+#kintone-unified-suite-v2 .apply-gantt__bar--ok{background:linear-gradient(90deg,#22c55e,#16a34a)}
+#kintone-unified-suite-v2 .apply-gantt__bar--ng{background:linear-gradient(90deg,#ef4444,#b91c1c)}
+#kintone-unified-suite-v2 .apply-gantt__bar--running{background:linear-gradient(90deg,#3b82f6,#22c55e);background-size:200% 100%;animation:gantt-flow 1.2s linear infinite}
+@keyframes gantt-flow{0%{background-position:200% 0}100%{background-position:-200% 0}}
+#kintone-unified-suite-v2 .apply-gantt__time{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--txt-3);text-align:right}
+/* === Layout heatmap (S7) === */
+#kintone-unified-suite-v2 .layout-heatmap{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:3px;padding:8px;background:var(--bg-soft);border-radius:var(--r-card);margin:4px 0}
+#kintone-unified-suite-v2 .layout-heatmap__cell{aspect-ratio:1.6/1;border-radius:3px;background:var(--bg-card);border:1px solid var(--border-1);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--txt-3);overflow:hidden;padding:2px;text-align:center;cursor:default}
+#kintone-unified-suite-v2 .layout-heatmap__cell[data-changed="1"]{border-color:var(--sev-high-border);background:var(--sev-high-bg);color:var(--sev-high-fg);font-weight:800}
+#kintone-unified-suite-v2 .layout-heatmap__cell[data-changed="2"]{border-color:var(--sev-mid-border);background:var(--sev-mid-bg);color:var(--sev-mid-fg);font-weight:700}
+/* === Mini-map nav (S12) === */
+#kintone-unified-suite-v2 .minimap-nav{position:absolute;right:6px;top:60px;display:flex;flex-direction:column;gap:2px;padding:4px;background:rgba(255,255,255,.85);backdrop-filter:blur(4px);border:1px solid var(--border-1);border-radius:var(--r-chip);z-index:10}
+#kintone-unified-suite-v2 .minimap-nav__dot{width:10px;height:10px;border-radius:50%;background:var(--border-2);cursor:pointer;transition:transform .15s,background-color .15s}
+#kintone-unified-suite-v2 .minimap-nav__dot:hover{transform:scale(1.3)}
+#kintone-unified-suite-v2 .minimap-nav__dot.has-diff{background:var(--sev-high)}
+#kintone-unified-suite-v2 .minimap-nav__dot.has-diff-mid{background:var(--sev-mid)}
+#kintone-unified-suite-v2 .minimap-nav__dot.is-current{outline:2px solid var(--accent);outline-offset:1px}
+/* === Apply celebration (S14) === */
+@keyframes apply-success-pop{
+  0%{transform:scale(.95);opacity:0}
+  60%{transform:scale(1.05)}
+  100%{transform:scale(1);opacity:1}
+}
+#kintone-unified-suite-v2 .apply-celebrate{animation:apply-success-pop .55s ease forwards;position:relative}
+#kintone-unified-suite-v2 .apply-celebrate::after{content:"🎉";position:absolute;top:8px;right:14px;font-size:22px;animation:apply-confetti 1.4s ease forwards;pointer-events:none}
+@keyframes apply-confetti{
+  0%{transform:translateY(0) rotate(0);opacity:0}
+  20%{opacity:1}
+  100%{transform:translateY(-30px) rotate(40deg);opacity:0}
+}
+/* === Before/after slider (S8) === */
+#kintone-unified-suite-v2 .ba-slider{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px;border:1px solid var(--border-1);border-radius:var(--r-card);background:var(--bg-card)}
+#kintone-unified-suite-v2 .ba-slider__col{display:flex;flex-direction:column;gap:4px;min-width:0}
+#kintone-unified-suite-v2 .ba-slider__col h5{margin:0;font-size:var(--fs-aux);font-weight:800;color:var(--txt-3);text-transform:uppercase;letter-spacing:.05em}
+#kintone-unified-suite-v2 .ba-slider__col--before h5{color:var(--sev-high-fg)}
+#kintone-unified-suite-v2 .ba-slider__col--after h5{color:var(--sev-low-fg)}
+#kintone-unified-suite-v2 .ba-slider__pre{margin:0;background:var(--bg-soft2);border:1px solid var(--border-1);border-radius:var(--r-chip);padding:6px 8px;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;max-height:160px;overflow:auto;white-space:pre-wrap;color:var(--txt-2)}
+
+#kintone-unified-suite-v2{position:fixed;top:16px;left:calc(100vw - min(980px,calc(100vw - 32px)) - 16px);z-index:2147483647;width:min(980px,calc(100vw - 32px));height:min(860px,calc(100vh - 32px));min-width:min(560px,calc(100vw - 32px));min-height:min(360px,calc(100vh - 32px));max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);background:#f6f8fb;border:1px solid #d9e2ec;border-radius:14px;box-shadow:0 18px 40px rgba(15,23,42,.28);font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;color:#1f2937;display:flex;flex-direction:column;overflow:hidden;resize:both;box-sizing:border-box}
 #kintone-unified-suite-v2.suite-popout-tab{top:0!important;left:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;border-radius:0;resize:none;box-shadow:none;border-width:0 0 1px}
 /* 別タブ表示はウィンドウ全体にフィット済みのため、サイズプリセットは隠す（閉じる・操作ガイドはそのまま） */
 #kintone-unified-suite-v2.suite-popout-tab .h-actions .x.size[data-act="dialogSizeDefault"],
 #kintone-unified-suite-v2.suite-popout-tab .h-actions .x.size[data-act="dialogSizeLarge"],
 #kintone-unified-suite-v2.suite-popout-tab .h-actions .x.size[data-act="dialogSizeMax"]{display:none!important}
-#kintone-unified-suite-v2 .h{padding:12px 16px;background:linear-gradient(135deg,#0f4c81,#2563eb);color:#fff;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-shrink:0;cursor:move;user-select:none;box-shadow:inset 0 -1px 0 rgba(255,255,255,.22)}
+#kintone-unified-suite-v2 .h{padding:6px 12px;background:linear-gradient(135deg,#0f4c81,#2563eb);color:#fff;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-shrink:0;cursor:move;user-select:none;box-shadow:inset 0 -1px 0 rgba(255,255,255,.22);transition:padding .15s ease}
+#kintone-unified-suite-v2 .h .ht{font-size:13px}
+#kintone-unified-suite-v2 .h .hs{font-size:10px;line-height:1.3}
+#kintone-unified-suite-v2 .h .x.size{padding:4px 8px;font-size:10px}
+#kintone-unified-suite-v2 .h .x{padding:4px 10px;font-size:11px}
+/* ヘッダー折りたたみ：高さを最小化し、タイトル詳細を隠す */
+#kintone-unified-suite-v2.header-collapsed .h{padding:2px 10px;min-height:32px}
+#kintone-unified-suite-v2.header-collapsed .h-brand{transform:scale(.55);transform-origin:left center;margin-right:-12px}
+#kintone-unified-suite-v2.header-collapsed .ht{font-size:11px;line-height:1.2}
+#kintone-unified-suite-v2.header-collapsed .hs,
+#kintone-unified-suite-v2.header-collapsed .tool-ver,
+#kintone-unified-suite-v2.header-collapsed .feature-breadcrumb,
+#kintone-unified-suite-v2.header-collapsed .feature-conn{display:none !important}
+#kintone-unified-suite-v2.header-collapsed .h-title-feature-main{gap:0}
+#kintone-unified-suite-v2.header-collapsed .h-back{padding:2px 8px;font-size:11px}
+#kintone-unified-suite-v2.header-collapsed .h-actions{gap:4px}
+#kintone-unified-suite-v2.header-collapsed .h-actions .x.size[data-act="dialogSizeDefault"],
+#kintone-unified-suite-v2.header-collapsed .h-actions .x.size[data-act="dialogSizeLarge"],
+#kintone-unified-suite-v2.header-collapsed .h-actions .x.size[data-act="dialogSizeMax"],
+#kintone-unified-suite-v2.header-collapsed .h-actions .x.size[data-act="startGuidedTour"],
+#kintone-unified-suite-v2.header-collapsed .h-actions .x.size[data-act="openShortcutHelp"]{display:none !important}
+#kintone-unified-suite-v2.header-collapsed .h-actions .x{padding:2px 8px;font-size:10px}
+#kintone-unified-suite-v2.header-collapsed #u_envBadge{transform:scale(.85);transform-origin:right center}
 #kintone-unified-suite-v2 .ht{font-size:15px;font-weight:700}
 #kintone-unified-suite-v2 .hs{font-size:11px;opacity:.92}
 #kintone-unified-suite-v2 .tool-ver{display:inline-block;margin-top:3px;font-size:10px;opacity:.78;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
@@ -15898,7 +18174,13 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .x:active{transform:translateY(1px)}
 #kintone-unified-suite-v2 .x.size{padding:6px 8px;font-size:11px}
 #kintone-unified-suite-v2.dragging{box-shadow:0 24px 52px rgba(15,23,42,.34)}
-#kintone-unified-suite-v2 .body{padding:12px;display:grid;gap:10px;overflow:auto;flex:1;min-height:0}
+#kintone-unified-suite-v2 .body{padding:6px 10px;display:flex;flex-direction:column;gap:4px;overflow:auto;flex:1;min-height:0}
+/* ノートPC快適化: card padding 削減 */
+#kintone-unified-suite-v2 .body > .card{padding:6px 10px}
+/* 接続パネルが折り畳み時はもっと小さく */
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel.is-collapsed{padding:5px 12px !important}
+/* kus-header-diff-suite を独立 box として薄く */
+#kintone-unified-suite-v2 .kus-header-diff-suite{padding:0;margin:0;display:flex;flex-direction:column;gap:4px}
 #kintone-unified-suite-v2 .card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
 #kintone-unified-suite-v2 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
 #kintone-unified-suite-v2 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px}
@@ -15948,6 +18230,11 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .plan-confirm-panel .plan-summary{max-height:300px;overflow:auto;background:#fff;border:1px solid #bfdbfe;border-radius:6px;padding:10px;font-size:12px;white-space:pre-wrap;font-family:monospace}
 #kintone-unified-suite-v2 .plan-confirm-panel .plan-actions{display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid #bfdbfe}
 #kintone-unified-suite-v2 .plan-confirm-panel .plan-meta{font-size:11px;color:#3b82f6;flex:1}
+#kintone-unified-suite-v2 .plan-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:8px 0 10px}
+#kintone-unified-suite-v2 .plan-summary-card{border:1px solid #bfdbfe;border-radius:8px;background:#fff;padding:9px 10px;min-width:0}
+#kintone-unified-suite-v2 .plan-summary-card span{display:block;font-size:10px;font-weight:800;color:#1d4ed8}
+#kintone-unified-suite-v2 .plan-summary-card strong{display:block;margin-top:4px;font-size:16px;color:#0f172a;word-break:break-word}
+#kintone-unified-suite-v2 .plan-summary-card small{display:block;margin-top:3px;font-size:10px;line-height:1.45;color:#64748b;word-break:break-word}
 #kintone-unified-suite-v2 .muted{font-size:11px;color:#64748b}
 #kintone-unified-suite-v2 .step{font-size:11px;font-weight:700;color:#1e293b;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:6px 8px;margin-top:8px}
 #kintone-unified-suite-v2 .kv{font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.7}
@@ -15986,6 +18273,158 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .diff-view .sev-high{background:#fee2e2;color:#991b1b}
 #kintone-unified-suite-v2 .diff-view .sev-medium{background:#fef3c7;color:#92400e}
 #kintone-unified-suite-v2 .diff-view .sev-low{background:#dbeafe;color:#1d4ed8}
+/* === D2 Number-first stat chips === */
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip-row{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;background:var(--dv-card)}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 10px;min-width:54px;border:1px solid var(--dv-border);border-radius:8px;background:var(--dv-bg);transition:transform .12s,box-shadow .15s}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip:hover{transform:translateY(-1px);box-shadow:0 2px 5px rgba(15,23,42,.08)}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip__num{font-size:16px;font-weight:900;color:var(--dv-text);line-height:1}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip__label{font-size:9px;font-weight:700;color:var(--dv-sub);letter-spacing:.06em;text-transform:uppercase;margin-top:3px}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip--accent .diff-stat-chip__num{color:#2563eb}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip--add .diff-stat-chip__num{color:#16a34a}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip--rm .diff-stat-chip__num{color:#dc2626}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip--chg .diff-stat-chip__num{color:#ca8a04}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip--mv .diff-stat-chip__num{color:#7c3aed}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip--high .diff-stat-chip__num{color:#dc2626}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip--mid .diff-stat-chip__num{color:#f59e0b}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip--err .diff-stat-chip__num{color:#b91c1c}
+#kintone-unified-suite-v2 .diff-view .diff-stat-chip--ok .diff-stat-chip__num{color:#15803d}
+#kintone-unified-suite-v2 .diff-view .diff-summary--meta{padding:6px 10px;font-size:11px;color:var(--dv-sub);border-top:1px dashed var(--dv-border);background:transparent}
+/* === D3 Type pill with icon === */
+#kintone-unified-suite-v2 .diff-view .diff-type-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:800;border:1px solid transparent;letter-spacing:.02em;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-view .diff-type-pill__icon{font-size:11px;font-weight:900;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#kintone-unified-suite-v2 .diff-view .diff-type-pill--added{background:#dcfce7;color:#15803d;border-color:#86efac}
+#kintone-unified-suite-v2 .diff-view .diff-type-pill--removed{background:#fee2e2;color:#b91c1c;border-color:#fca5a5}
+#kintone-unified-suite-v2 .diff-view .diff-type-pill--changed{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+#kintone-unified-suite-v2 .diff-view .diff-type-pill--same{background:#ccfbf1;color:#0f766e;border-color:#5eead4}
+#kintone-unified-suite-v2 .diff-view.dark .diff-type-pill--added{background:#14532d;color:#bbf7d0;border-color:#166534}
+#kintone-unified-suite-v2 .diff-view.dark .diff-type-pill--removed{background:#450a0a;color:#fecaca;border-color:#991b1b}
+#kintone-unified-suite-v2 .diff-view.dark .diff-type-pill--changed{background:#78350f;color:#fde68a;border-color:#b45309}
+#kintone-unified-suite-v2 .diff-view.dark .diff-type-pill--same{background:#134e4a;color:#99f6e4;border-color:#0f766e}
+/* === D1 Severity pill (replacing sev-badge) === */
+#kintone-unified-suite-v2 .diff-view .diff-sev-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;font-size:10px;font-weight:800;border:1px solid transparent;letter-spacing:.02em}
+#kintone-unified-suite-v2 .diff-view .diff-sev-pill__icon{font-size:10px;font-weight:900}
+#kintone-unified-suite-v2 .diff-view .diff-sev-pill--high{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+#kintone-unified-suite-v2 .diff-view .diff-sev-pill--medium{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+#kintone-unified-suite-v2 .diff-view .diff-sev-pill--low{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}
+#kintone-unified-suite-v2 .diff-view.dark .diff-sev-pill--high{background:#450a0a;color:#fca5a5;border-color:#991b1b}
+#kintone-unified-suite-v2 .diff-view.dark .diff-sev-pill--medium{background:#78350f;color:#fde68a;border-color:#b45309}
+#kintone-unified-suite-v2 .diff-view.dark .diff-sev-pill--low{background:#1e3a8a;color:#bfdbfe;border-color:#1d4ed8}
+/* === D1 row severity left border === */
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-sev-high > td:first-child{box-shadow:inset 4px 0 0 var(--sev-high)}
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-sev-medium > td:first-child{box-shadow:inset 2px 0 0 var(--sev-mid)}
+#kintone-unified-suite-v2 .diff-view .diff-table tr.diff-row-sev-low > td:first-child{box-shadow:inset 1px 0 0 var(--sev-low)}
+/* === D4 Section group head with section icon + badges === */
+#kintone-unified-suite-v2 .diff-view .diff-sec-head{padding:9px 12px}
+#kintone-unified-suite-v2 .diff-view .diff-sec-head__title{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+#kintone-unified-suite-v2 .diff-view .diff-sec-head__chev{font-size:10px;color:var(--dv-sub)}
+#kintone-unified-suite-v2 .diff-view .diff-sec-head__label{font-weight:800;font-size:12px;color:var(--dv-text)}
+#kintone-unified-suite-v2 .diff-view .diff-sec-head__badges{display:flex;gap:4px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-view .diff-sec-badge{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:800;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#kintone-unified-suite-v2 .diff-view .diff-sec-badge--add{background:#dcfce7;color:#15803d}
+#kintone-unified-suite-v2 .diff-view .diff-sec-badge--rm{background:#fee2e2;color:#b91c1c}
+#kintone-unified-suite-v2 .diff-view .diff-sec-badge--chg{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .diff-view .diff-sec-badge--mv{background:#ede9fe;color:#6d28d9}
+#kintone-unified-suite-v2 .diff-view .diff-sec-badge--high{background:#fef2f2;color:#7f1d1d;border:1px solid #fca5a5}
+/* === D7 Impact card severity tone + section icon === */
+#kintone-unified-suite-v2 .diff-impact-card--high{border-left:4px solid var(--sev-high) !important}
+#kintone-unified-suite-v2 .diff-impact-card--medium{border-left:3px solid var(--sev-mid) !important}
+#kintone-unified-suite-v2 .diff-impact-card--low{border-left:1px solid var(--sev-low) !important}
+#kintone-unified-suite-v2 .diff-impact-card-head{display:flex;align-items:center;gap:6px}
+/* === D5/D7 Section pill icons === */
+#kintone-unified-suite-v2 .diff-sec-pill .sec-icon{margin-right:4px}
+/* === Diff hero action bar (1行コンパクト) === */
+#kintone-unified-suite-v2 .diff-hero{display:flex;align-items:center;gap:8px;padding:6px 10px;margin:0 0 6px;background:linear-gradient(180deg,#fff,#f8fafc);border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 1px 3px rgba(15,23,42,.04);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-hero--compact{padding:4px 8px}
+#kintone-unified-suite-v2 .diff-hero__run{font-size:12px;padding:6px 14px;flex-shrink:0;font-weight:800}
+#kintone-unified-suite-v2 .diff-hero__run .btn-stage__icon{font-size:13px}
+#kintone-unified-suite-v2 .diff-hero__state{flex:1;min-width:120px;font-size:10px;color:#64748b;line-height:1.4;background:#f1f5f9;padding:3px 8px;border-radius:5px;border:1px solid #e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#kintone-unified-suite-v2 .diff-hero__menu{display:inline-flex;align-items:center;gap:4px;flex-shrink:0}
+/* JSON / 出力 をポップアップ化 */
+#kintone-unified-suite-v2 .diff-hero__pop{position:relative}
+#kintone-unified-suite-v2 .diff-hero__pop > summary{cursor:pointer;list-style:none;padding:4px 10px;font-size:11px;font-weight:700}
+#kintone-unified-suite-v2 .diff-hero__pop > summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .diff-hero__pop[open] > summary{background:#dbeafe;color:#1e40af;border-color:#93c5fd}
+#kintone-unified-suite-v2 .diff-hero__pop-body{position:absolute;right:0;top:calc(100% + 4px);z-index:10;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 4px 12px rgba(15,23,42,.12);padding:6px;display:flex;flex-direction:column;gap:3px;min-width:140px}
+#kintone-unified-suite-v2 .diff-hero__pop-body .btn{padding:5px 10px;font-size:11px;text-align:left;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-hero__advanced{padding:4px 10px;font-size:11px}
+#kintone-unified-suite-v2 .diff-step-label{font-size:11px;color:#64748b;font-weight:700;margin:6px 4px 4px;letter-spacing:.04em}
+/* 比較条件の調整: ⚙ 詳細 popover からのみ開閉（閉じてる間は完全に隠す） */
+#kintone-unified-suite-v2 .diff-advanced-fold:not([open]){display:none}
+#kintone-unified-suite-v2 .diff-advanced-fold > summary.diff-advanced-fold__summary{display:none}
+#kintone-unified-suite-v2 .diff-advanced-fold{margin:4px 0 6px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;overflow:hidden}
+#kintone-unified-suite-v2 .diff-advanced-fold[open]{background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.05)}
+#kintone-unified-suite-v2 .diff-advanced-fold__summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px;color:#475569}
+#kintone-unified-suite-v2 .diff-advanced-fold__summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .diff-advanced-fold__chev{font-size:10px;color:#94a3b8;transition:transform .15s;flex-shrink:0}
+#kintone-unified-suite-v2 .diff-advanced-fold[open] .diff-advanced-fold__chev{transform:rotate(90deg)}
+#kintone-unified-suite-v2 .diff-advanced-fold__title{font-weight:800;color:#0f172a;font-size:12px}
+#kintone-unified-suite-v2 .diff-advanced-fold__sub{font-size:11px;color:#94a3b8;font-weight:500;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%}
+#kintone-unified-suite-v2 .diff-advanced-fold__body{padding:6px 10px 10px;border-top:1px dashed #e2e8f0;display:flex;flex-direction:column;gap:8px}
+/* 比較データ取得・一括フロー: 折り畳み */
+#kintone-unified-suite-v2 .diff-step2-fold{padding:0;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;margin-bottom:8px;overflow:hidden}
+#kintone-unified-suite-v2 .diff-step2-fold[open]{background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.05)}
+#kintone-unified-suite-v2 .diff-step2-fold__summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-step2-fold__summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .diff-step2-fold__chev{font-size:10px;color:#94a3b8;transition:transform .15s;flex-shrink:0}
+#kintone-unified-suite-v2 .diff-step2-fold[open] .diff-step2-fold__chev{transform:rotate(90deg)}
+#kintone-unified-suite-v2 .diff-step2-fold__state{margin-left:auto;font-size:10px;color:#64748b;flex-shrink:0}
+#kintone-unified-suite-v2 .diff-step2-fold__body{padding:6px 12px 12px;border-top:1px dashed #e2e8f0}
+/* タブナビバー：ヘッダー直下に sticky 配置（ノートPC配慮で 1行・低高さ） */
+#kintone-unified-suite-v2 .kus-tab-bar{order:-10;position:sticky;top:0;z-index:4;background:#f6f8fb;padding:3px 0;margin:-6px -2px 2px;border-bottom:1px solid #d9e2ec}
+#kintone-unified-suite-v2 .kus-tab-bar .tabs{margin:0;display:flex;gap:4px;flex-wrap:nowrap;padding:0 6px;align-items:center}
+#kintone-unified-suite-v2 .kus-tab-bar .tab-group{padding:1px 2px;display:inline-flex;align-items:center;gap:2px;flex-shrink:0;border-radius:5px;background:transparent;border:none}
+#kintone-unified-suite-v2 .kus-tab-bar .tab-group--primary{background:#e2e8f0;padding:2px 4px}
+#kintone-unified-suite-v2 .kus-tab-bar .tab{padding:3px 10px;font-size:11px;border-radius:4px;font-weight:700;white-space:nowrap}
+#kintone-unified-suite-v2 .kus-tab-bar .tab-group-lbl{display:none}
+/* ⋯ その他ドロップダウン */
+#kintone-unified-suite-v2 .kus-tab-more{position:relative;margin-left:auto;flex-shrink:0}
+#kintone-unified-suite-v2 .kus-tab-more__summary{cursor:pointer;list-style:none;padding:3px 12px;font-size:11px;font-weight:700;color:#475569;background:#fff;border:1px solid #cbd5e1;border-radius:4px;transition:background-color .15s}
+#kintone-unified-suite-v2 .kus-tab-more__summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .kus-tab-more__summary:hover{background:#f1f5f9}
+#kintone-unified-suite-v2 .kus-tab-more[open] > .kus-tab-more__summary{background:#dbeafe;color:#1e40af;border-color:#93c5fd}
+#kintone-unified-suite-v2 .kus-tab-bar{overflow:visible}
+/* ドロップダウンは position:fixed でビューポート基準。位置は JS が summary 直下に設定 */
+#kintone-unified-suite-v2 .kus-tab-more__body{position:fixed;z-index:9999;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 8px 24px rgba(15,23,42,.18);padding:8px;display:flex;gap:10px;min-width:360px;max-width:480px}
+#kintone-unified-suite-v2 .kus-tab-more__group{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+#kintone-unified-suite-v2 .kus-tab-more__group-lbl{font-size:9px;font-weight:800;color:#94a3b8;letter-spacing:.06em;text-transform:uppercase;padding:0 0 4px;margin:0;border-bottom:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .kus-tab-more__group .tab{padding:5px 10px;font-size:11px;text-align:left;background:#f8fafc;border:1px solid transparent;border-radius:4px}
+#kintone-unified-suite-v2 .kus-tab-more__group .tab:hover{background:#dbeafe;border-color:#93c5fd;color:#1e40af}
+#kintone-unified-suite-v2 .kus-tab-more__group .tab.active{background:#2563eb;border-color:#2563eb;color:#fff}
+#kintone-unified-suite-v2 .screen-launcher .kus-tab-bar{display:none}
+/* ホーム/launcher 表示時はタブバー隠す。screen-feature 時のみ表示 */
+#kintone-unified-suite-v2.screen-feature .kus-tab-bar{display:block}
+/* TOP画面（launcher）整理：接続パネル・タブバー・タイトルは隠して機能選択に集中
+   feature-card のサイズ・余白は .launcher-tabbed (file末尾) に一元化したので
+   ここでは「screen-launcher のときだけ非表示にしたい要素」のみを宣言する。 */
+#kintone-unified-suite-v2.screen-launcher #u_connectionPanel{display:none !important}
+#kintone-unified-suite-v2.screen-launcher #u_headerDiffSuite{display:none !important}
+#kintone-unified-suite-v2.screen-launcher .kus-tab-bar{display:none !important}
+#kintone-unified-suite-v2.screen-launcher .launcher-panel-head{display:none !important}
+#kintone-unified-suite-v2.screen-launcher .launcher-active-filters:empty,
+#kintone-unified-suite-v2.screen-launcher .launcher-filter-meta{display:none}
+/* 差分結果の整理・出力：優先度ベースの再構成 */
+#kintone-unified-suite-v2 .diff-review-body{display:flex;flex-direction:column;gap:8px;padding:8px 10px}
+#kintone-unified-suite-v2 .diff-review-toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 10px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px}
+#kintone-unified-suite-v2 .diff-review-toolbar__sel{padding:4px 8px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;min-width:100px}
+#kintone-unified-suite-v2 .diff-review-toolbar__search{flex:1;min-width:180px;padding:5px 10px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px}
+#kintone-unified-suite-v2 .diff-review-toolbar__clear{padding:4px 10px;font-size:11px}
+#kintone-unified-suite-v2 .diff-review-toolbar__quick{display:flex;gap:4px;flex-wrap:wrap;margin-left:auto}
+#kintone-unified-suite-v2 .diff-review-toolbar__quick .btn{padding:4px 9px;font-size:11px;font-weight:700}
+#kintone-unified-suite-v2 .diff-result-main{min-height:420px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:0;overflow:auto}
+#kintone-unified-suite-v2 .diff-result-main:empty{min-height:120px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:11px;background:#f8fafc}
+#kintone-unified-suite-v2 .diff-result-main:empty::before{content:"差分比較を実行すると、ここに結果が表示されます"}
+#kintone-unified-suite-v2 .diff-review-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:6px 10px;background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:8px;font-size:11px}
+#kintone-unified-suite-v2 .diff-review-actions__group{display:inline-flex;align-items:center;gap:4px}
+#kintone-unified-suite-v2 .diff-review-actions__lbl{font-size:10px;font-weight:800;color:#475569;letter-spacing:.04em;margin-right:4px;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-review-actions__sel{padding:3px 6px;font-size:11px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;max-width:140px}
+#kintone-unified-suite-v2 .diff-review-actions .btn{padding:3px 8px;font-size:11px}
+#kintone-unified-suite-v2 .diff-fold--review-extra{margin-top:6px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc}
+#kintone-unified-suite-v2 .diff-extra-section{border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px;background:#fff;margin:0}
+#kintone-unified-suite-v2 .diff-extra-section legend{font-size:10px;font-weight:800;color:#475569;letter-spacing:.04em;padding:0 6px;background:#fff}
+@media (max-width:640px){
+  #kintone-unified-suite-v2 .diff-hero__primary{flex-direction:column;align-items:stretch}
+  #kintone-unified-suite-v2 .diff-hero__advanced{margin-left:0;width:100%}
+}
 #kintone-unified-suite-v2 .diff-view .diff-path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--dv-sub)}
 #kintone-unified-suite-v2 .diff-view .diff-cell{padding:0;overflow:hidden}
 #kintone-unified-suite-v2 .diff-view .diff-scroll{max-height:420px;overflow:auto}
@@ -16216,6 +18655,8 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .diff-view .diff-path-chip--field{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 #kintone-unified-suite-v2 .diff-view .diff-path-chip--table{background:#f3e8ff;color:#6b21a8;border-color:#d8b4fe}
 #kintone-unified-suite-v2 .diff-view .diff-path-chip--subfield{background:#ecfeff;color:#155e75;border-color:#67e8f9}
+#kintone-unified-suite-v2 .diff-view .diff-path-chip--section{background:#f1f5f9;color:#475569;border-color:#cbd5e1}
+#kintone-unified-suite-v2 .diff-view .diff-path-chip--entity{background:#fef3c7;color:#92400e;border-color:#fcd34d}
 #kintone-unified-suite-v2 .diff-view .diff-path-name{font-size:12px;color:var(--dv-text);word-break:break-word}
 #kintone-unified-suite-v2 .diff-view .diff-path-name--child{color:var(--dv-text)}
 #kintone-unified-suite-v2 .diff-view .diff-path-arrow{color:#94a3b8;font-weight:700;padding:0 1px}
@@ -16232,6 +18673,8 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--field{background:#1e1b4b;color:#c7d2fe;border-color:#3730a3}
 #kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--table{background:#3b0764;color:#e9d5ff;border-color:#7e22ce}
 #kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--subfield{background:#083344;color:#a5f3fc;border-color:#0e7490}
+#kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--section{background:#1e293b;color:#cbd5e1;border-color:#475569}
+#kintone-unified-suite-v2 .diff-view.dark .diff-path-chip--entity{background:#451a03;color:#fde68a;border-color:#a16207}
 #kintone-unified-suite-v2 .diff-view.dark .diff-path-arrow{color:#64748b}
 #kintone-unified-suite-v2 .diff-view.dark .diff-table tr.diff-row-table-root > td{background:color-mix(in srgb, #3b0764 22%, var(--dv-card))}
 #kintone-unified-suite-v2 .diff-view.dark .diff-table tr.diff-row-table-root:hover > td{background:color-mix(in srgb, #3b0764 38%, var(--dv-card))}
@@ -16249,7 +18692,11 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .diff-selection-set-select{min-width:140px;padding:6px 8px;border-radius:6px;font-size:12px}
 #kintone-unified-suite-v2 .main-result-placeholder{padding:18px 14px;font-size:12px;line-height:1.65;color:#475569;background:linear-gradient(180deg,#f8fafc,#fff);border:1px dashed #cbd5e1;border-radius:10px;margin:2px 0}
 #kintone-unified-suite-v2 .main-result-placeholder-title{font-weight:800;color:#0f172a;margin:0 0 8px;font-size:13px;letter-spacing:0}
-#kintone-unified-suite-v2 .main-result-placeholder-body{margin:0}
+#kintone-unified-suite-v2 .main-result-placeholder-body{margin:6px 0 0}
+#kintone-unified-suite-v2 .main-result-placeholder-steps{margin:0 0 4px;padding:0 0 0 20px;display:flex;flex-direction:column;gap:4px}
+#kintone-unified-suite-v2 .main-result-placeholder-steps li{font-size:12px;color:#334155;line-height:1.6}
+#kintone-unified-suite-v2 .main-result-placeholder-steps li strong{color:#0f172a;margin-right:4px}
+#kintone-unified-suite-v2 .main-result-placeholder kbd{display:inline-block;padding:1px 6px;border:1px solid #cbd5e1;border-bottom-width:2px;border-radius:4px;background:#f8fafc;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#1e293b;line-height:1.3;margin:0 2px}
 #kintone-unified-suite-v2 .settings-like{margin:12px;border:1px solid var(--dv-border);border-radius:14px;background:linear-gradient(180deg,var(--dv-card) 0%,var(--dv-bg) 100%);padding:12px}
 #kintone-unified-suite-v2 .settings-like-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 #kintone-unified-suite-v2 .settings-like-title{font-size:13px;font-weight:800;color:var(--dv-text)}
@@ -16402,6 +18849,21 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .reflect-plan-inline__muted{margin:0;font-size:11px;line-height:1.65;color:#64748b}
 #kintone-unified-suite-v2 .reflect-plan-inline--stale{border-color:#fdba74;background:linear-gradient(180deg,#fffbeb,#fff)}
 #kintone-unified-suite-v2 .reflect-plan-inline--empty{border-style:dashed}
+/* 予定リクエスト一覧（ドライランJSONの中身を画面で確認） */
+#kintone-unified-suite-v2 .reflect-planned-requests{margin-top:8px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;overflow:hidden}
+#kintone-unified-suite-v2 .reflect-planned-requests>summary{padding:6px 10px;cursor:pointer;font-size:12px;font-weight:600;color:#0f172a;list-style:revert;background:#eef2f7;border-bottom:1px solid transparent;transition:background .15s}
+#kintone-unified-suite-v2 .reflect-planned-requests>summary:hover{background:#e2e8f0}
+#kintone-unified-suite-v2 .reflect-planned-requests[open]>summary{border-bottom-color:#cbd5e1}
+#kintone-unified-suite-v2 .reflect-planned-requests>div{padding:6px 10px;display:flex;flex-direction:column;gap:4px}
+#kintone-unified-suite-v2 .planned-request-row{margin:0;border:1px solid #e2e8f0;border-radius:6px;background:#fff;transition:border-color .15s,box-shadow .15s}
+#kintone-unified-suite-v2 .planned-request-row:hover{border-color:#94a3b8;box-shadow:0 1px 2px rgba(15,23,42,.06)}
+#kintone-unified-suite-v2 .planned-request-row>summary{padding:6px 10px;cursor:pointer;display:flex;gap:10px;align-items:center;font-size:12px;list-style:revert}
+#kintone-unified-suite-v2 .planned-request-row[open]>summary{border-bottom:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .planned-request-row code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#0f172a}
+#kintone-unified-suite-v2 .planned-request-row pre{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.45;white-space:pre-wrap;word-break:break-all;background:#fff;padding:6px 8px;border-radius:4px;border:1px solid #e2e8f0;max-height:280px;overflow:auto}
+/* 設定一括取得 → 差分タブへの読込ショートカット */
+#kintone-unified-suite-v2 .settings-export-load-actions{display:flex;gap:4px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .settings-export-load-actions .btn{padding:3px 8px;font-size:10px;line-height:1.3}
 #kintone-unified-suite-v2 .reflect-plan-preview{margin-bottom:8px}
 #kintone-unified-suite-v2 .reflect-plan-preview:empty{display:none}
 #kintone-unified-suite-v2 .reflect-plan-preview__wrap{border:1px solid #bbf7d0;border-radius:12px;background:linear-gradient(180deg,#f0fdf4,#fff);padding:10px 12px}
@@ -16438,6 +18900,135 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .reflect-main .main-body{flex:1;overflow:auto;padding:16px 16px 18px;display:flex;flex-direction:column;gap:14px;min-height:0}
 #kintone-unified-suite-v2 .reflect-main .main-footer{padding:10px 14px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 #kintone-unified-suite-v2 .reflect-footer-stack{border-top:1px solid #e2e8f0;background:#fafbfc}
+/* === V1 Compact assist panel === */
+#kintone-unified-suite-v2 .reflect-assist--compact{display:flex;flex-direction:column;gap:10px}
+#kintone-unified-suite-v2 .reflect-headline{display:flex;flex-direction:column;gap:8px;border:1px solid #cbd5e1;border-radius:10px;background:linear-gradient(180deg,#fff,#f8fafc);padding:12px 14px;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+#kintone-unified-suite-v2 .reflect-headline[data-step="4"]{border-color:#86efac;background:linear-gradient(180deg,#fff,#f0fdf4)}
+#kintone-unified-suite-v2 .reflect-headline__top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-headline__step{font-size:10px;font-weight:900;letter-spacing:.08em;color:#2563eb;background:#dbeafe;padding:2px 7px;border-radius:999px}
+#kintone-unified-suite-v2 .reflect-headline__title{font-size:15px;font-weight:900;color:#0f172a;flex-shrink:0}
+#kintone-unified-suite-v2 .reflect-headline__meta{font-size:11px;color:#64748b;flex:1;min-width:0;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}
+#kintone-unified-suite-v2 .reflect-mini-progress{position:relative;display:flex;align-items:center;height:6px;background:#e2e8f0;border-radius:999px;margin:2px 0}
+#kintone-unified-suite-v2 .reflect-mini-progress__bar{position:absolute;left:0;top:0;height:100%;background:linear-gradient(90deg,#3b82f6,#22c55e);border-radius:999px;transition:width .3s}
+#kintone-unified-suite-v2 .reflect-mini-progress__dot{position:relative;flex:1;display:block;width:10px;height:10px;border-radius:50%;background:#cbd5e1;border:2px solid #fff;margin-left:-3px;z-index:1}
+#kintone-unified-suite-v2 .reflect-mini-progress__dot:first-child{margin-left:0}
+#kintone-unified-suite-v2 .reflect-mini-progress__dot.is-done{background:#22c55e}
+#kintone-unified-suite-v2 .reflect-mini-progress__dot.is-current{background:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.18)}
+#kintone-unified-suite-v2 .reflect-headline__action-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+#kintone-unified-suite-v2 .reflect-headline__action .btn{font-size:13px;padding:8px 16px;font-weight:700}
+#kintone-unified-suite-v2 .reflect-headline__action .btn-primary-emphasis{font-size:14px;padding:9px 18px;box-shadow:0 2px 6px rgba(37,99,235,.3)}
+#kintone-unified-suite-v2 .reflect-headline__chips{display:flex;gap:5px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-status-chip{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .reflect-status-chip.ok{background:#ecfdf5;color:#166534;border-color:#86efac}
+#kintone-unified-suite-v2 .reflect-status-chip.warn{background:#fff7ed;color:#9a3412;border-color:#fdba74}
+#kintone-unified-suite-v2 .reflect-headline__hint{font-size:11px;line-height:1.5;color:#475569;padding:6px 8px;border-radius:6px;background:#f8fafc;border-left:3px solid #cbd5e1}
+#kintone-unified-suite-v2 .reflect-headline__hint.is-warn{border-left-color:#f59e0b;background:#fffbeb;color:#92400e}
+#kintone-unified-suite-v2 .reflect-headline__hint.is-ok{border-left-color:#22c55e;background:#f0fdf4;color:#166534}
+#kintone-unified-suite-v2 .reflect-detail-fold{border:1px solid #e2e8f0;border-radius:8px;background:#fff}
+#kintone-unified-suite-v2 .reflect-detail-fold > summary{cursor:pointer;padding:8px 12px;font-size:12px;font-weight:700;color:#475569;display:flex;align-items:center;gap:8px;list-style:none}
+#kintone-unified-suite-v2 .reflect-detail-fold > summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .reflect-detail-fold > summary::before{content:"▸";font-size:10px;color:#94a3b8;transition:transform .15s}
+#kintone-unified-suite-v2 .reflect-detail-fold[open] > summary::before{transform:rotate(90deg)}
+#kintone-unified-suite-v2 .reflect-detail-fold > summary small{font-weight:500;color:#94a3b8;font-size:10px}
+#kintone-unified-suite-v2 .reflect-detail-fold__body{padding:8px 12px 12px;border-top:1px dashed #e2e8f0;display:flex;flex-direction:column;gap:8px}
+#kintone-unified-suite-v2 .reflect-detail-fold__buttons{display:flex;gap:6px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-detail-fold__warns{margin:0;padding-left:18px;font-size:11px;color:#92400e;line-height:1.6}
+#kintone-unified-suite-v2 .reflect-detail-fold__small{font-size:10px;color:#94a3b8}
+/* === V2 Danger banner === */
+#kintone-unified-suite-v2 .reflect-danger-banner{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;background:linear-gradient(90deg,#fef2f2,#fff5f5);border:1px solid #fca5a5;border-left:4px solid #dc2626;border-radius:8px;color:#7f1d1d;animation:reflect-danger-pulse 2s ease-in-out infinite alternate}
+@keyframes reflect-danger-pulse{0%{box-shadow:0 0 0 rgba(220,38,38,0)}100%{box-shadow:0 0 12px rgba(220,38,38,.18)}}
+#kintone-unified-suite-v2 .reflect-danger-banner__icon{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#dc2626;color:#fff;font-weight:900;font-size:18px;display:flex;align-items:center;justify-content:center}
+#kintone-unified-suite-v2 .reflect-danger-banner__copy{flex:1;min-width:0}
+#kintone-unified-suite-v2 .reflect-danger-banner__title{font-size:13px;font-weight:900;color:#7f1d1d}
+#kintone-unified-suite-v2 .reflect-danger-banner__sub{font-size:11px;color:#991b1b;margin-top:2px}
+/* === U1 Footer next-action button === */
+#kintone-unified-suite-v2 .reflect-footer-next{flex:1;min-width:200px;display:flex;justify-content:center;padding:0 8px}
+#kintone-unified-suite-v2 .reflect-footer-next__btn{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;border:1px solid transparent;transition:transform .1s,box-shadow .15s}
+#kintone-unified-suite-v2 .reflect-footer-next__btn.primary{background:linear-gradient(180deg,#3b82f6,#2563eb);color:#fff;box-shadow:0 2px 6px rgba(37,99,235,.3)}
+#kintone-unified-suite-v2 .reflect-footer-next__btn.ok{background:linear-gradient(180deg,#22c55e,#16a34a);color:#fff;box-shadow:0 2px 6px rgba(22,163,74,.3)}
+#kintone-unified-suite-v2 .reflect-footer-next__btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 10px rgba(37,99,235,.35)}
+#kintone-unified-suite-v2 .reflect-footer-next__btn:disabled{opacity:.5;cursor:not-allowed}
+#kintone-unified-suite-v2 .reflect-footer-next__chev{font-size:10px}
+#kintone-unified-suite-v2 .reflect-footer-next__shortcut{font-size:9px;font-weight:700;padding:2px 5px;background:rgba(255,255,255,.25);border-radius:4px;letter-spacing:.04em}
+#kintone-unified-suite-v2 .reflect-footer-next__pill{display:inline-flex;align-items:center;padding:6px 12px;border-radius:8px;font-size:12px;color:#94a3b8;background:#f1f5f9;border:1px dashed #cbd5e1}
+/* === U5 Target app badge === */
+#kintone-unified-suite-v2 .reflect-main-header{display:flex;align-items:center;gap:12px;justify-content:space-between}
+#kintone-unified-suite-v2 .reflect-target-badge{flex-shrink:0}
+#kintone-unified-suite-v2 .reflect-target-badge__inner{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;font-size:11px;font-weight:700;border:1px solid #cbd5e1;background:#f8fafc;color:#475569}
+#kintone-unified-suite-v2 .reflect-target-badge__inner.is-preview{background:linear-gradient(90deg,#fef3c7,#fde68a);border-color:#f59e0b;color:#7c2d12}
+#kintone-unified-suite-v2 .reflect-target-badge__inner.is-prod{background:linear-gradient(90deg,#fee2e2,#fecaca);border-color:#dc2626;color:#7f1d1d;animation:reflect-prod-flash 1.4s ease-in-out infinite alternate}
+@keyframes reflect-prod-flash{0%{box-shadow:0 0 0 rgba(220,38,38,0)}100%{box-shadow:0 0 8px rgba(220,38,38,.4)}}
+#kintone-unified-suite-v2 .reflect-target-badge__inner[data-state="empty"]{opacity:.6}
+#kintone-unified-suite-v2 .reflect-target-badge__chip{padding:1px 6px;background:rgba(0,0,0,.1);border-radius:4px;font-size:9px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
+#kintone-unified-suite-v2 .reflect-target-badge__app{font-weight:900;font-size:11px}
+#kintone-unified-suite-v2 .reflect-target-badge__name{font-weight:700;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .reflect-target-badge__guest{font-size:10px;opacity:.85}
+/* === V4 Result log === */
+#kintone-unified-suite-v2 .reflect-log-host{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#kintone-unified-suite-v2 .reflect-log-phase{font-weight:800;padding:10px 12px;background:#0f172a;color:#fff;font-size:12px;border-radius:6px 6px 0 0;display:flex;align-items:center;gap:8px}
+#kintone-unified-suite-v2 .reflect-log-phase::before{content:"▶";font-size:9px;color:#60a5fa}
+#kintone-unified-suite-v2 .reflect-log-progress{position:relative;height:8px;background:#1e293b;overflow:hidden}
+#kintone-unified-suite-v2 .reflect-log-progress__bar{height:100%;background:linear-gradient(90deg,#3b82f6,#22c55e);transition:width .25s}
+#kintone-unified-suite-v2 .reflect-log-progress__text{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:9px;font-weight:800;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4)}
+#kintone-unified-suite-v2 .reflect-log-counters{display:flex;gap:4px;padding:6px 10px;background:#1e293b;border-bottom:1px solid #334155}
+#kintone-unified-suite-v2 .reflect-log-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:800;font-family:system-ui,-apple-system,sans-serif}
+#kintone-unified-suite-v2 .reflect-log-chip.ok{background:#dcfce7;color:#15803d}
+#kintone-unified-suite-v2 .reflect-log-chip.ng{background:#fee2e2;color:#b91c1c}
+#kintone-unified-suite-v2 .reflect-log-chip.skip{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .reflect-log-body{background:#0f172a;color:#e2e8f0;padding:8px 0;max-height:520px;overflow:auto;border-radius:0 0 6px 6px}
+#kintone-unified-suite-v2 .reflect-log-line{display:flex;gap:8px;padding:3px 12px;font-size:12px;line-height:1.5;border-left:3px solid transparent;align-items:flex-start}
+#kintone-unified-suite-v2 .reflect-log-line__icon{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;font-weight:900;font-size:11px}
+#kintone-unified-suite-v2 .reflect-log-line__text{flex:1;white-space:pre-wrap;word-break:break-word}
+#kintone-unified-suite-v2 .reflect-log-line--ok{border-left-color:#22c55e;background:rgba(34,197,94,.08)}
+#kintone-unified-suite-v2 .reflect-log-line--ok .reflect-log-line__icon{color:#4ade80}
+#kintone-unified-suite-v2 .reflect-log-line--ng{border-left-color:#ef4444;background:rgba(239,68,68,.12)}
+#kintone-unified-suite-v2 .reflect-log-line--ng .reflect-log-line__icon{color:#f87171}
+#kintone-unified-suite-v2 .reflect-log-line--ng .reflect-log-line__text{color:#fca5a5;font-weight:600}
+#kintone-unified-suite-v2 .reflect-log-line--skip{border-left-color:#f59e0b;background:rgba(245,158,11,.08)}
+#kintone-unified-suite-v2 .reflect-log-line--skip .reflect-log-line__icon{color:#fbbf24}
+#kintone-unified-suite-v2 .reflect-log-line--start{border-left-color:#3b82f6;background:rgba(59,130,246,.1);font-weight:700}
+#kintone-unified-suite-v2 .reflect-log-line--start .reflect-log-line__icon{color:#60a5fa}
+#kintone-unified-suite-v2 .reflect-log-line--plan{border-left-color:#8b5cf6;background:rgba(139,92,246,.08)}
+#kintone-unified-suite-v2 .reflect-log-line--plan .reflect-log-line__icon{color:#a78bfa}
+#kintone-unified-suite-v2 .reflect-log-line--head{font-weight:800;color:#cbd5e1;background:rgba(255,255,255,.03);padding:6px 12px;margin:4px 0}
+#kintone-unified-suite-v2 .reflect-log-line--blank{height:6px}
+/* === V3+U3 Plan confirm cards === */
+#kintone-unified-suite-v2 .plan-confirm-panel{display:flex;flex-direction:column;gap:10px;padding:10px}
+#kintone-unified-suite-v2 .plan-confirm-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .plan-confirm-head__title{font-size:14px;font-weight:900;color:#0f172a}
+#kintone-unified-suite-v2 .plan-confirm-head__meta{font-size:11px;color:#64748b}
+#kintone-unified-suite-v2 .plan-confirm-cards{display:flex;flex-direction:column;gap:8px;max-height:480px;overflow-y:auto;padding:4px}
+#kintone-unified-suite-v2 .plan-card{border:1px solid #e2e8f0;border-radius:8px;background:#fff;overflow:hidden}
+#kintone-unified-suite-v2 .plan-card--high{border-color:#fca5a5;background:linear-gradient(180deg,#fff,#fff5f5)}
+#kintone-unified-suite-v2 .plan-card__head{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;list-style:none;flex-wrap:wrap;border-bottom:1px solid transparent}
+#kintone-unified-suite-v2 .plan-card[open] .plan-card__head{border-bottom-color:#e2e8f0;background:#f8fafc}
+#kintone-unified-suite-v2 .plan-card__head::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .plan-card__head::before{content:"▸";font-size:10px;color:#94a3b8;transition:transform .15s}
+#kintone-unified-suite-v2 .plan-card[open] .plan-card__head::before{transform:rotate(90deg)}
+#kintone-unified-suite-v2 .plan-card__title{font-size:12px;font-weight:800;color:#0f172a;flex:1;min-width:0}
+#kintone-unified-suite-v2 .plan-card__count{font-size:10px;font-weight:800;padding:2px 7px;background:#dbeafe;color:#1e3a8a;border-radius:999px}
+#kintone-unified-suite-v2 .plan-card__chips{display:flex;gap:4px}
+#kintone-unified-suite-v2 .plan-card-chip{font-size:9px;font-weight:800;padding:2px 6px;border-radius:4px;letter-spacing:.05em}
+#kintone-unified-suite-v2 .plan-card-chip--post{background:#dcfce7;color:#15803d}
+#kintone-unified-suite-v2 .plan-card-chip--put{background:#dbeafe;color:#1e40af}
+#kintone-unified-suite-v2 .plan-card-chip--delete{background:#fee2e2;color:#b91c1c}
+#kintone-unified-suite-v2 .plan-card__risk{font-size:9px;font-weight:900;padding:2px 7px;border-radius:999px;background:#fee2e2;color:#7f1d1d;letter-spacing:.05em;text-transform:uppercase}
+#kintone-unified-suite-v2 .plan-card__body{padding:8px 12px;display:flex;flex-direction:column;gap:3px}
+#kintone-unified-suite-v2 .plan-card-row{display:flex;gap:8px;align-items:center;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:2px 0}
+#kintone-unified-suite-v2 .plan-card-row__method{flex-shrink:0;display:inline-block;width:55px;padding:1px 6px;font-size:9px;font-weight:900;border-radius:4px;background:#e2e8f0;color:#475569;text-align:center}
+#kintone-unified-suite-v2 .plan-card-row__path{color:#0f172a;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .plan-card-row__note{font-size:10px;color:#64748b;font-family:system-ui,-apple-system,sans-serif}
+#kintone-unified-suite-v2 .plan-card-row--more{color:#94a3b8;font-style:italic}
+#kintone-unified-suite-v2 .plan-confirm-actions{display:flex;gap:10px;align-items:center;padding:10px;border-top:1px solid #e2e8f0;background:#f8fafc;border-radius:6px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .plan-confirm-apply{font-size:13px;font-weight:800;padding:8px 18px;background:linear-gradient(180deg,#22c55e,#16a34a);color:#fff;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 6px rgba(22,163,74,.3)}
+#kintone-unified-suite-v2 .plan-confirm-apply:hover:not(:disabled){box-shadow:0 4px 10px rgba(22,163,74,.4);transform:translateY(-1px)}
+#kintone-unified-suite-v2 .plan-confirm-rawlogs > summary{cursor:pointer;font-size:11px;color:#64748b;padding:6px 10px}
+#kintone-unified-suite-v2 .plan-confirm-rawlogs[open] > summary{margin-bottom:6px}
+/* === U4 Node bulk-select toolbar === */
+#kintone-unified-suite-v2 .reflect-node-bulk-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;border-radius:6px 6px 0 0;position:sticky;top:0;z-index:2}
+#kintone-unified-suite-v2 .reflect-node-bulk-toolbar__label{font-size:11px;font-weight:800;color:#475569;margin-right:4px}
+#kintone-unified-suite-v2 .reflect-node-bulk-toolbar .btn{padding:3px 9px;font-size:11px;font-weight:600}
+#kintone-unified-suite-v2 .reflect-node-bulk-toolbar .btn:disabled{opacity:.4;cursor:not-allowed}
 #kintone-unified-suite-v2 .reflect-footer-badges{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 14px 0}
 #kintone-unified-suite-v2 .reflect-footer-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.02em;border:1px solid #e2e8f0;background:#fff;color:#475569}
 #kintone-unified-suite-v2 .reflect-footer-badge--ok{border-color:#86efac;background:#ecfdf5;color:#166534}
@@ -16751,6 +19342,28 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2.screen-feature.feat-data .tab-group:not([data-group="data"]){display:none}
 #kintone-unified-suite-v2.screen-feature.feat-change .tabs{display:flex}
 #kintone-unified-suite-v2.screen-feature.feat-change .tab-group:not([data-group="change"]){display:none}
+
+/* feat-vis / feat-data: 「⋯ その他」を常時インライン展開してタブを横並び表示 */
+#kintone-unified-suite-v2.screen-feature.feat-vis .kus-tab-more__summary,
+#kintone-unified-suite-v2.screen-feature.feat-data .kus-tab-more__summary{display:none}
+#kintone-unified-suite-v2.screen-feature.feat-vis .kus-tab-more,
+#kintone-unified-suite-v2.screen-feature.feat-data .kus-tab-more{margin-left:0;flex:1 1 auto;min-width:0}
+#kintone-unified-suite-v2.screen-feature.feat-vis .kus-tab-more__body,
+#kintone-unified-suite-v2.screen-feature.feat-data .kus-tab-more__body{
+  position:static !important;display:flex !important;flex-direction:row;gap:8px;
+  background:transparent;border:0;box-shadow:none;padding:0;min-width:0;max-width:none
+}
+#kintone-unified-suite-v2.screen-feature.feat-vis .kus-tab-more__group-lbl,
+#kintone-unified-suite-v2.screen-feature.feat-data .kus-tab-more__group-lbl{display:none}
+#kintone-unified-suite-v2.screen-feature.feat-vis .kus-tab-more__group,
+#kintone-unified-suite-v2.screen-feature.feat-data .kus-tab-more__group{flex-direction:row;gap:4px;align-items:center}
+/* 自分のグループ以外は隠す（vis/data 切替） */
+#kintone-unified-suite-v2.screen-feature.feat-vis .kus-tab-more__group:not(:has([data-tab="er"])){display:none}
+#kintone-unified-suite-v2.screen-feature.feat-data .kus-tab-more__group:not(:has([data-tab="recordMgr"])){display:none}
+/* selected 状態のタブ強調 */
+#kintone-unified-suite-v2.screen-feature .kus-tab-more__body .tab[data-state="selected"]{
+  background:#2563eb;border-color:#2563eb;color:#fff
+}
 
 /* #u_status は既存スクリプト互換のため DOM に残すが UI には出さない */
 #kintone-unified-suite-v2 .kus-host-hidden{display:none !important}
@@ -18854,7 +21467,12 @@ ${lines.join("\n")}
   background:linear-gradient(145deg,#22d3ee,#14b8a6 55%,#2563eb);
 }
 #kintone-unified-suite-v2.screen-launcher .body{
-  grid-template-columns:minmax(300px,390px) minmax(420px,1fr);
+  display:flex !important;
+  flex-direction:column;
+  align-items:stretch;
+  justify-content:flex-start;
+  gap:6px;
+  padding:8px 10px;
 }
 #kintone-unified-suite-v2.screen-launcher .common-card{
   border-color:rgba(15,118,110,.18);
@@ -19430,6 +22048,7 @@ ${lines.join("\n")}
 /* 環境バッジ（比較先がプレビュー / 本番 / 同一接続を示す） */
 #kintone-unified-suite-v2 .kus-env-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;line-height:1.4;border:1px solid transparent;background:#e0f2fe;color:#075985;border-color:#7dd3fc}
 #kintone-unified-suite-v2 .kus-env-badge--neutral{background:#e2e8f0;color:#1f2937;border-color:#cbd5e1}
+#kintone-unified-suite-v2 .kus-env-badge--info{background:#dbeafe;color:#1e3a8a;border-color:#93c5fd}
 #kintone-unified-suite-v2 .kus-env-badge--caution{background:#fef9c3;color:#854d0e;border-color:#fde047}
 #kintone-unified-suite-v2 .kus-env-badge--danger{background:#fee2e2;color:#7f1d1d;border-color:#fca5a5;animation:kus-env-badge-pulse 2.4s ease-in-out infinite}
 @keyframes kus-env-badge-pulse{0%,100%{box-shadow:0 0 0 0 rgba(248,113,113,.55)}50%{box-shadow:0 0 0 6px rgba(248,113,113,0)}}
@@ -19524,6 +22143,1091 @@ ${lines.join("\n")}
 /* ヘッダー右上に env バッジを置く時の余白調整 */
 #kintone-unified-suite-v2 .h-actions .kus-env-badge{margin-right:6px}
 
+/* =================================================================
+ *  Launcher simplification: purpose tabs + compact feature cards
+ * ================================================================= */
+#kintone-unified-suite-v2.launcher-tabbed .launcher-menu{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  width:100%;
+  max-width:none;
+  padding:8px 10px;
+  flex:0 1 auto;
+  align-self:flex-start;
+  min-width:0;
+  box-sizing:border-box;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-panels{
+  display:block;
+  margin-top:4px;
+  min-width:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-panel.is-active{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-width:0;
+}
+/* feature 表示時は launcher-tabbed が残っていても launcher-menu は隠す */
+#kintone-unified-suite-v2.launcher-tabbed.screen-feature .launcher-menu{display:none !important}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-hero--simple{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:10px 12px;
+  background:#fff;
+  border:1px solid #dbe3ed;
+  border-radius:8px;
+  box-shadow:none;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-hero-copy{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  min-width:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-hero .launcher-lead{
+  margin:0;
+  font-size:14px;
+  line-height:1.35;
+  color:#0f172a;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-hero .launcher-tagline{
+  margin:0;
+  font-size:11px;
+  line-height:1.5;
+  color:#64748b;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-metrics{
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  gap:6px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-metrics span{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  min-height:26px;
+  padding:3px 8px;
+  border:1px solid #e2e8f0;
+  border-radius:999px;
+  background:#f8fafc;
+  color:#475569;
+  font-size:10px;
+  font-weight:700;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-metrics strong{
+  color:#0f172a;
+  font-size:12px;
+  font-variant-numeric:tabular-nums;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-nav{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+  padding:4px;
+  background:#eef2f7;
+  border:1px solid #dbe3ed;
+  border-radius:8px;
+  overflow-x:auto;
+  scrollbar-width:thin;
+  -webkit-overflow-scrolling:touch;
+  min-width:0;
+  box-sizing:border-box;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn{
+  flex:1 1 auto;
+  justify-content:center;
+  gap:7px;
+  min-height:34px;
+  min-width:0;
+  margin:0;
+  padding:6px 10px;
+  border-radius:6px;
+  border:1px solid transparent;
+  background:transparent;
+  color:#334155;
+  font-size:12px;
+  font-weight:800;
+  cursor:pointer;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn__label{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  min-width:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn:hover{
+  background:#fff;
+  border-color:#cbd5e1;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn.is-active{
+  background:#fff;
+  border-color:#93c5fd;
+  color:#1d4ed8;
+  box-shadow:0 1px 2px rgba(15,23,42,.08);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn__meta{
+  min-width:20px;
+  padding:1px 6px;
+  border-radius:999px;
+  background:#e2e8f0;
+  color:#475569;
+  font-size:10px;
+  line-height:1.6;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn.is-active .launcher-tab-btn__meta{
+  background:#dbeafe;
+  color:#1e40af;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-filter-bar{
+  display:grid;
+  grid-template-columns:minmax(220px,1fr) auto;
+  align-items:center;
+  gap:8px 10px;
+  min-width:0;
+  padding:0;
+  border:0;
+  background:transparent;
+  box-shadow:none;
+  flex:0 0 auto;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-command-row{
+  min-width:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-search-input{
+  min-height:34px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-search-input:disabled{
+  opacity:.55;
+  cursor:not-allowed;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-active-filters{
+  grid-column:1 / -1;
+  min-height:0;
+  margin-top:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-filter-meta{
+  justify-self:end;
+  font-size:11px;
+  color:#64748b;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-panels{
+  min-height:0;
+  display:block;
+  margin-top:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-panel{
+  display:none;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-panel.is-active{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-width:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-panel[hidden]{
+  display:none !important;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-panel-head{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:10px;
+  margin:2px 0 8px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-section-title{
+  margin:0;
+  font-size:13px;
+  font-weight:900;
+  color:#0f172a;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-section-desc{
+  margin:2px 0 0;
+  font-size:11px;
+  line-height:1.55;
+  color:#64748b;
+}
+#kintone-unified-suite-v2.launcher-tabbed .change-wizard{
+  margin:0 0 10px;
+  padding:10px;
+  border:1px solid #dbe3ed;
+  border-radius:8px;
+  background:#fff;
+  box-shadow:none;
+}
+#kintone-unified-suite-v2.launcher-tabbed .change-wizard-head{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px 10px;
+  margin-bottom:8px;
+  min-width:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .change-wizard-head > div{
+  flex:1 1 200px;
+  min-width:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .change-wizard-title{
+  margin:0;
+  font-size:12px;
+  font-weight:900;
+  color:#0f172a;
+}
+#kintone-unified-suite-v2.launcher-tabbed .change-wizard-desc{
+  margin:2px 0 0;
+  font-size:11px;
+  color:#64748b;
+}
+#kintone-unified-suite-v2.launcher-tabbed .change-wizard-start{
+  min-width:64px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow{
+  display:grid;
+  grid-template-columns:repeat(5,minmax(0,1fr));
+  gap:6px;
+  min-width:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step{
+  min-height:52px;
+  padding:7px 8px;
+  border-radius:6px;
+  border:1px solid #e2e8f0;
+  background:#f8fafc;
+  box-shadow:none;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step::after{
+  display:none;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step:hover{
+  background:#eff6ff;
+  border-color:#93c5fd;
+  transform:none;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-no{
+  width:22px;
+  height:22px;
+  border-radius:999px;
+  background:#e2e8f0;
+  color:#334155;
+  font-size:10px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-main{
+  font-size:11px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-sub{
+  font-size:10px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-grid--launcher{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+  gap:10px;
+  margin-top:0;
+  min-width:0;
+  align-items:stretch;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  min-height:120px;
+  height:100%;
+  padding:11px 12px;
+  border-radius:8px;
+  border:1px solid #dbe3ed;
+  background:#fff;
+  box-shadow:none;
+  min-width:0;
+  box-sizing:border-box;
+  overflow:hidden;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card--primary,
+#kintone-unified-suite-v2.launcher-tabbed .feature-grid--primary .feature-card{
+  min-height:132px;
+  border-color:#dbe3ed;
+  background:#fff;
+  box-shadow:none;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card:hover{
+  border-color:#93c5fd;
+  box-shadow:0 6px 16px rgba(37,99,235,.1);
+  transform:none;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card::before{
+  display:none;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-top{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-height:26px;
+  min-width:0;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-top .feature-card-meta{
+  min-width:0;
+  overflow:hidden;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-icon,
+#kintone-unified-suite-v2.launcher-tabbed .feature-grid--primary .feature-card-icon{
+  width:30px;
+  height:30px;
+  border-radius:7px;
+  color:#1d4ed8;
+  background:#eff6ff;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-order,
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-tags{
+  display:none;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-group{
+  font-size:10px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-badges{
+  min-height:20px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-label,
+#kintone-unified-suite-v2.launcher-tabbed .feature-grid--primary .feature-card-label{
+  margin:0;
+  font-size:13px;
+  font-weight:800;
+  line-height:1.35;
+  color:#0f172a;
+  word-break:break-word;
+  overflow-wrap:anywhere;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-desc,
+#kintone-unified-suite-v2.launcher-tabbed .feature-grid--primary .feature-card-desc{
+  font-size:11px;
+  line-height:1.5;
+  color:#475569;
+  display:-webkit-box;
+  -webkit-line-clamp:3;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+  word-break:break-word;
+  overflow-wrap:anywhere;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-go{
+  position:static;
+  margin-top:auto;
+  align-self:flex-end;
+  opacity:1;
+  transform:none;
+  width:auto;
+  height:auto;
+  padding:2px 0;
+  color:#1d4ed8;
+  background:transparent;
+  font-size:11px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-panel--history{
+  display:none;
+  gap:8px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-panel--history.is-active{
+  display:grid;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-panel--history .work-history-panel{
+  margin:0;
+  padding:12px;
+  border:1px solid #dbe3ed;
+  border-radius:8px;
+  background:#fff;
+  box-shadow:none;
+}
+/* =================================================================
+ *  Launcher 専用レスポンシブ（横幅基準で 1/2/3/4 列に段階切替）
+ *  ダイアログ自体が可変なのでビューポート幅でなく container query 風に
+ *  max-width で素直に書く。順番が大事：上から狭→広に向かって積み上げる。
+ * ================================================================= */
+/* ~600px：超ナロー（モバイル / 狭い分割画面）
+   - フローもグリッドもタブも1列に折り返す。ボタン群は縦積み。 */
+@media (max-width:600px){
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-menu{
+    padding:6px 8px;
+    gap:8px;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-hero--simple{
+    align-items:flex-start;
+    flex-direction:column;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-metrics{
+    justify-content:flex-start;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-tab-nav{
+    flex-wrap:nowrap;
+    overflow-x:auto;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn{
+    flex:0 0 auto;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-filter-bar{
+    grid-template-columns:1fr;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-filter-meta{
+    justify-self:start;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .change-wizard{
+    padding:8px;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .change-wizard-head{
+    flex-direction:column;
+    align-items:stretch;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .change-wizard-start{
+    width:100%;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-flow{
+    grid-template-columns:1fr;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .feature-grid--launcher{
+    grid-template-columns:1fr;
+    gap:8px;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .feature-card{
+    min-height:auto;
+    padding:10px 12px;
+  }
+}
+/* 600~860px：ナロー（タブレット縦/小さめウィンドウ）
+   - グリッドを2列、フローも2列に。ウィザードヘッダーは横並びを維持できる範囲で。 */
+@media (min-width:601px) and (max-width:860px){
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-flow{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .feature-grid--launcher{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+/* 861~1100px：ミディアム
+   - グリッドは3列、フローは横5列のままにする（5枚は数が決まっているので狭くなっても保つ） */
+@media (min-width:861px) and (max-width:1100px){
+  #kintone-unified-suite-v2.launcher-tabbed .feature-grid--launcher{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+}
+/* 1101px～：ワイド
+   - feature-grid は auto-fill を効かせて自然に4列以上に展開させる。
+     既定（min-width 220px）にこの段で gap を広めに調整。 */
+@media (min-width:1101px){
+  #kintone-unified-suite-v2.launcher-tabbed .feature-grid--launcher{
+    grid-template-columns:repeat(auto-fill,minmax(240px,1fr));
+    gap:12px;
+  }
+}
+
+/* ============================================================================
+   プレビュー反映タブ — シンプル化レイアウト + モーダル
+   ============================================================================ */
+
+#kintone-unified-suite-v2 .reflect-simple-shell{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+  padding:4px 2px 12px;
+}
+
+/* ── ヒーローカード ── */
+#kintone-unified-suite-v2 .reflect-hero-card{
+  position:relative;
+  padding:18px 20px;
+  border-radius:14px;
+  background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%);
+  color:#fff;
+  box-shadow:0 8px 24px rgba(15,23,42,.18);
+  overflow:hidden;
+}
+#kintone-unified-suite-v2 .reflect-hero-card[data-tone="ok"]{
+  background:linear-gradient(135deg,#065f46 0%,#0f766e 100%);
+}
+#kintone-unified-suite-v2 .reflect-hero-card[data-tone="warn"]{
+  background:linear-gradient(135deg,#9a3412 0%,#b45309 100%);
+}
+#kintone-unified-suite-v2 .reflect-hero-card[data-tone="danger"]{
+  background:linear-gradient(135deg,#7f1d1d 0%,#dc2626 100%);
+}
+#kintone-unified-suite-v2 .reflect-hero-card__step{
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.12em;
+  opacity:.85;
+  margin-bottom:6px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__title{
+  font-size:20px;
+  font-weight:900;
+  line-height:1.35;
+  margin-bottom:4px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__desc{
+  font-size:12px;
+  line-height:1.6;
+  opacity:.9;
+  margin-bottom:14px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__action{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__action .btn{
+  font-size:13px;
+  padding:9px 18px;
+  font-weight:800;
+  background:rgba(255,255,255,.95);
+  color:#0f172a;
+  border:1px solid rgba(255,255,255,.4);
+}
+#kintone-unified-suite-v2 .reflect-hero-card__action .btn:hover{
+  background:#fff;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__progress{
+  display:flex;
+  gap:6px;
+  margin-top:14px;
+  align-items:center;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__progress-step{
+  flex:1;
+  height:4px;
+  border-radius:999px;
+  background:rgba(255,255,255,.18);
+}
+#kintone-unified-suite-v2 .reflect-hero-card__progress-step.is-done{
+  background:rgba(255,255,255,.85);
+}
+#kintone-unified-suite-v2 .reflect-hero-card__progress-step.is-current{
+  background:rgba(255,255,255,.6);
+  position:relative;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__progress-step.is-current::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  border-radius:999px;
+  background:rgba(255,255,255,.95);
+  width:50%;
+  animation:reflect-hero-progress 1.5s ease-in-out infinite alternate;
+}
+@keyframes reflect-hero-progress{
+  0%{width:30%}
+  100%{width:80%}
+}
+#kintone-unified-suite-v2 .reflect-hero-card__loading{
+  font-size:13px;
+  opacity:.85;
+}
+
+/* ── ステータスグリッド ── */
+#kintone-unified-suite-v2 .reflect-status-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+  padding:12px 14px;
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:12px;
+  box-shadow:0 1px 3px rgba(15,23,42,.04);
+}
+#kintone-unified-suite-v2 .reflect-status-grid__label{
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:#64748b;
+  margin-bottom:6px;
+}
+#kintone-unified-suite-v2 .reflect-status-grid__target,
+#kintone-unified-suite-v2 .reflect-status-grid__badges,
+#kintone-unified-suite-v2 .reflect-status-grid__safety{
+  min-width:0;
+}
+#kintone-unified-suite-v2 .reflect-status-grid__safety{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  align-items:flex-start;
+}
+#kintone-unified-suite-v2 .reflect-target-meta{
+  margin-top:6px;
+  font-size:10px;
+  color:#64748b;
+  line-height:1.45;
+}
+@media (max-width:760px){
+  #kintone-unified-suite-v2 .reflect-status-grid{grid-template-columns:1fr}
+}
+
+/* ── チェックリストカード ── */
+#kintone-unified-suite-v2 .reflect-checklist-card{
+  padding:0;
+  background:transparent;
+  border:none;
+}
+
+/* ── ルートカード ── */
+#kintone-unified-suite-v2 .reflect-route-grid{
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:12px;
+  padding:14px 16px;
+  box-shadow:0 1px 3px rgba(15,23,42,.04);
+}
+#kintone-unified-suite-v2 .reflect-route-grid__title{
+  font-size:13px;
+  font-weight:900;
+  color:#0f172a;
+  margin-bottom:10px;
+  letter-spacing:0;
+}
+#kintone-unified-suite-v2 .reflect-route-grid__cards{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+}
+@media (max-width:860px){
+  #kintone-unified-suite-v2 .reflect-route-grid__cards{grid-template-columns:1fr}
+}
+#kintone-unified-suite-v2 .reflect-route-card{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  gap:10px;
+  align-items:center;
+  padding:12px 14px;
+  border:1px solid #dbe3ed;
+  border-radius:10px;
+  background:#f8fafc;
+  text-align:left;
+  cursor:pointer;
+  transition:transform .12s ease,box-shadow .15s ease,border-color .15s ease,background .15s ease;
+}
+#kintone-unified-suite-v2 .reflect-route-card:hover{
+  transform:translateY(-1px);
+  border-color:#93c5fd;
+  background:#fff;
+  box-shadow:0 4px 12px rgba(37,99,235,.12);
+}
+#kintone-unified-suite-v2 .reflect-route-card__no{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:36px;
+  height:36px;
+  border-radius:10px;
+  background:#dbeafe;
+  color:#1e3a8a;
+  font-size:13px;
+  font-weight:900;
+  font-variant-numeric:tabular-nums;
+}
+#kintone-unified-suite-v2 .reflect-route-card--node .reflect-route-card__no{
+  background:#fef3c7;color:#92400e;
+}
+#kintone-unified-suite-v2 .reflect-route-card--json .reflect-route-card__no{
+  background:#ede9fe;color:#5b21b6;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+#kintone-unified-suite-v2 .reflect-route-card__body{min-width:0}
+#kintone-unified-suite-v2 .reflect-route-card__title{
+  font-size:13px;
+  font-weight:800;
+  color:#0f172a;
+  line-height:1.35;
+}
+#kintone-unified-suite-v2 .reflect-route-card__desc{
+  margin-top:2px;
+  font-size:11px;
+  line-height:1.5;
+  color:#64748b;
+}
+#kintone-unified-suite-v2 .reflect-route-card__summary{
+  margin-top:6px;
+  font-size:10px;
+  font-weight:700;
+  color:#475569;
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:6px;
+  padding:3px 7px;
+  display:inline-block;
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+#kintone-unified-suite-v2 .reflect-route-card__chev{
+  font-size:24px;
+  color:#94a3b8;
+  font-weight:300;
+  line-height:1;
+}
+#kintone-unified-suite-v2 .reflect-route-card:hover .reflect-route-card__chev{
+  color:#2563eb;
+}
+
+/* ── 詳細レビュー（フィールド／他設定エディタへの常設導線） ── */
+#kintone-unified-suite-v2 .reflect-detail-review{
+  padding:14px 16px;
+  background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);
+  border:1px solid #e2e8f0;
+  border-radius:12px;
+  box-shadow:0 1px 3px rgba(15,23,42,.04);
+}
+#kintone-unified-suite-v2 .reflect-detail-review__head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-bottom:10px;
+}
+#kintone-unified-suite-v2 .reflect-detail-review__kicker{
+  font-size:10px;
+  font-weight:800;
+  color:#0ea5e9;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  margin-bottom:2px;
+}
+#kintone-unified-suite-v2 .reflect-detail-review__title{
+  font-size:13px;
+  font-weight:800;
+  color:#0f172a;
+  letter-spacing:.02em;
+}
+#kintone-unified-suite-v2 .reflect-detail-review__sub{
+  font-size:11px;
+  color:#64748b;
+  line-height:1.55;
+  max-width:380px;
+  text-align:right;
+}
+#kintone-unified-suite-v2 .reflect-detail-review__buttons{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  gap:10px;
+}
+#kintone-unified-suite-v2 .reflect-detail-btn{
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  padding:12px 14px;
+  background:#fff;
+  border:1px solid #d6dee8;
+  border-radius:10px;
+  cursor:pointer;
+  text-align:left;
+  transition:border-color .15s ease,background .15s ease,transform .15s ease,box-shadow .15s ease;
+  font:inherit;
+  color:inherit;
+  width:100%;
+}
+#kintone-unified-suite-v2 .reflect-detail-btn:hover{
+  border-color:#93c5fd;
+  background:#eff6ff;
+  transform:translateY(-1px);
+  box-shadow:0 4px 10px rgba(15,23,42,.06);
+}
+#kintone-unified-suite-v2 .reflect-detail-btn:focus-visible{
+  outline:2px solid #2563eb;
+  outline-offset:2px;
+}
+#kintone-unified-suite-v2 .reflect-detail-btn__icon{
+  font-size:22px;
+  line-height:1;
+  flex-shrink:0;
+  margin-top:1px;
+}
+#kintone-unified-suite-v2 .reflect-detail-btn__text{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  flex:1;
+  min-width:0;
+}
+#kintone-unified-suite-v2 .reflect-detail-btn__title{
+  font-size:13px;
+  font-weight:800;
+  color:#0f172a;
+}
+#kintone-unified-suite-v2 .reflect-detail-btn__desc{
+  font-size:11px;
+  color:#475569;
+  line-height:1.55;
+}
+#kintone-unified-suite-v2 .reflect-detail-btn__chev{
+  font-size:20px;
+  color:#94a3b8;
+  font-weight:300;
+  line-height:1;
+  align-self:center;
+  flex-shrink:0;
+}
+#kintone-unified-suite-v2 .reflect-detail-btn:hover .reflect-detail-btn__chev{
+  color:#2563eb;
+}
+
+/* ── 危険ゾーン ── */
+#kintone-unified-suite-v2 .reflect-danger-zone{
+  padding:14px 16px;
+  border:1px solid #fecaca;
+  border-left:4px solid #dc2626;
+  border-radius:12px;
+  background:linear-gradient(180deg,#fff,#fef2f2);
+  box-shadow:0 4px 12px rgba(220,38,38,.08);
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom:10px;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__label{
+  font-size:11px;
+  font-weight:900;
+  color:#7f1d1d;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__buttons{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__buttons .btn.ok{
+  background:linear-gradient(180deg,#dc2626,#b91c1c);
+  color:#fff;
+  font-size:13px;
+  padding:9px 18px;
+  font-weight:800;
+  box-shadow:0 2px 8px rgba(220,38,38,.3);
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__buttons .btn.ok:hover:not(:disabled){
+  filter:brightness(1.05);
+  box-shadow:0 4px 12px rgba(220,38,38,.4);
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__buttons .btn:disabled{
+  opacity:.5;
+  cursor:not-allowed;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__prod-note{
+  margin-top:10px;
+  padding:6px 10px;
+  font-size:10px;
+  color:#64748b;
+  background:#f8fafc;
+  border:1px dashed #cbd5e1;
+  border-radius:6px;
+  line-height:1.5;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__prod-note strong{color:#0f172a}
+
+/* ── フッターリンク ── */
+#kintone-unified-suite-v2 .reflect-footer-links{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  padding:10px 12px;
+  background:#f8fafc;
+  border:1px solid #e2e8f0;
+  border-radius:10px;
+}
+#kintone-unified-suite-v2 .reflect-footer-link{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 12px;
+  border:1px solid #cbd5e1;
+  border-radius:999px;
+  background:#fff;
+  color:#334155;
+  font-size:11px;
+  font-weight:700;
+  cursor:pointer;
+  transition:.12s;
+}
+#kintone-unified-suite-v2 .reflect-footer-link:hover{
+  border-color:#93c5fd;
+  color:#1e40af;
+  background:#eff6ff;
+}
+#kintone-unified-suite-v2 .reflect-footer-link__icon{font-size:13px}
+#kintone-unified-suite-v2 .reflect-footer-link__badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:18px;
+  height:18px;
+  padding:0 6px;
+  border-radius:999px;
+  background:#e2e8f0;
+  color:#334155;
+  font-size:10px;
+  font-weight:800;
+}
+#kintone-unified-suite-v2 .reflect-footer-link__badge:empty{display:none}
+#kintone-unified-suite-v2 .reflect-footer-links__backup-status{
+  flex-basis:100%;
+  margin-top:6px;
+}
+
+/* ============================================================================
+   汎用モーダル（reflect-modal-overlay）
+   ============================================================================ */
+
+#kintone-unified-suite-v2 .reflect-modal-overlay{
+  position:fixed;
+  inset:0;
+  z-index:200;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+}
+#kintone-unified-suite-v2 .reflect-modal-overlay[hidden]{display:none}
+#kintone-unified-suite-v2 .reflect-modal-backdrop{
+  position:absolute;
+  inset:0;
+  background:rgba(15,23,42,.55);
+  backdrop-filter:blur(3px);
+  cursor:pointer;
+}
+#kintone-unified-suite-v2 .reflect-modal-card{
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  width:min(720px,calc(100vw - 48px));
+  max-height:calc(100vh - 48px);
+  background:#fff;
+  border:1px solid #cbd5e1;
+  border-radius:16px;
+  box-shadow:0 24px 60px rgba(15,23,42,.45);
+  overflow:hidden;
+}
+#kintone-unified-suite-v2 .reflect-modal-card--md{width:min(640px,calc(100vw - 48px))}
+#kintone-unified-suite-v2 .reflect-modal-card--lg{width:min(900px,calc(100vw - 48px))}
+#kintone-unified-suite-v2 .reflect-modal-card--xl{width:min(1180px,calc(100vw - 48px))}
+
+#kintone-unified-suite-v2 .reflect-modal-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:14px;
+  padding:18px 20px 14px;
+  border-bottom:1px solid #e2e8f0;
+  background:linear-gradient(180deg,#f8fafc,#fff);
+}
+#kintone-unified-suite-v2 .reflect-modal-kicker{
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.08em;
+  color:#1e40af;
+  background:#dbeafe;
+  padding:3px 8px;
+  border-radius:999px;
+  display:inline-block;
+  margin-bottom:6px;
+}
+#kintone-unified-suite-v2 .reflect-modal-title{
+  margin:0;
+  font-size:16px;
+  font-weight:900;
+  color:#0f172a;
+  letter-spacing:0;
+}
+#kintone-unified-suite-v2 .reflect-modal-sub{
+  margin:4px 0 0;
+  font-size:11px;
+  color:#64748b;
+  line-height:1.6;
+}
+#kintone-unified-suite-v2 .reflect-modal-close{
+  flex-shrink:0;
+  width:32px;
+  height:32px;
+  border-radius:999px;
+  border:1px solid #cbd5e1;
+  background:#fff;
+  color:#334155;
+  font-size:16px;
+  cursor:pointer;
+  line-height:1;
+}
+#kintone-unified-suite-v2 .reflect-modal-close:hover{background:#f1f5f9}
+#kintone-unified-suite-v2 .reflect-modal-body{
+  flex:1;
+  overflow:auto;
+  padding:16px 20px;
+}
+#kintone-unified-suite-v2 .reflect-modal-foot{
+  display:flex;
+  justify-content:flex-end;
+  gap:8px;
+  padding:12px 20px;
+  border-top:1px solid #e2e8f0;
+  background:#f8fafc;
+  flex-wrap:wrap;
+}
+#kintone-unified-suite-v2 .reflect-modal-foot .btn.ok{
+  background:linear-gradient(180deg,#22c55e,#16a34a);
+  color:#fff;
+  font-weight:800;
+  padding:8px 18px;
+  font-size:13px;
+}
+
+/* 補助モーダル: グリッド */
+#kintone-unified-suite-v2 .reflect-support-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+}
+@media (max-width:720px){
+  #kintone-unified-suite-v2 .reflect-support-grid{grid-template-columns:1fr}
+}
+#kintone-unified-suite-v2 .reflect-support-item{
+  padding:12px;
+  border:1px solid #e2e8f0;
+  border-radius:10px;
+  background:#f8fafc;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+#kintone-unified-suite-v2 .reflect-support-item__title{
+  font-size:12px;
+  font-weight:800;
+  color:#0f172a;
+}
+#kintone-unified-suite-v2 .reflect-support-item__desc{
+  margin:0;
+  font-size:11px;
+  color:#64748b;
+  line-height:1.5;
+}
+#kintone-unified-suite-v2 .reflect-support-item .btn{
+  align-self:flex-start;
+  padding:5px 10px;
+  font-size:11px;
+}
+
+/* 後方互換: 隠しスロット */
+#kintone-unified-suite-v2 .reflect-legacy-slots{
+  position:absolute !important;
+  width:1px;height:1px;
+  overflow:hidden;clip:rect(0,0,0,0);
+}
 `;
 
   // src/ui/template.ts
@@ -19534,7 +23238,7 @@ ${lines.join("\n")}
     const doc = targetDocument || document;
     const root2 = doc.createElement("div");
     root2.id = TOOL_ID;
-    root2.className = options.popout ? "screen-launcher suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions" : "screen-launcher tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions";
+    root2.className = options.popout ? "screen-launcher launcher-tabbed launcher-show-advanced suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions" : "screen-launcher launcher-tabbed launcher-show-advanced tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions";
     const getRiskLabel = (riskLevel) => riskLevel === "warning" ? "要注意" : "比較的安全";
     const launcherFeatures = [...FEATURE_DEFS].sort((a, b) => {
       const aOrder = Number.isFinite(a.usageOrder) ? a.usageOrder : 999;
@@ -19545,9 +23249,15 @@ ${lines.join("\n")}
     const primaryFeatureKeys = new Set(
       launcherFeatures.filter((feature) => Number.isFinite(feature.usageOrder) && feature.usageOrder <= 5).map((feature) => feature.key)
     );
-    const primaryFeatures = launcherFeatures.filter((feature) => primaryFeatureKeys.has(feature.key));
-    const secondaryFeatures = launcherFeatures.filter((feature) => !primaryFeatureKeys.has(feature.key));
-    const secondaryFeatureCount = secondaryFeatures.length;
+    const launcherGroupDefs = [
+      { key: "change", label: "変更・反映", desc: "差分確認からプレビュー反映まで" },
+      { key: "vis", label: "可視化・出力", desc: "設計書、図、分析、設定保存" },
+      { key: "data", label: "データ・保守", desc: "レコード操作とAPI調査" }
+    ];
+    const launcherFeaturesByGroup = launcherGroupDefs.reduce((acc, group) => {
+      acc[group.key] = launcherFeatures.filter((feature) => feature.group === group.key);
+      return acc;
+    }, {});
     const renderFeatureCard = (f) => {
       const recommended = Array.isArray(f.recommendedFor) ? f.recommendedFor : [];
       const tier = primaryFeatureKeys.has(f.key) ? "primary" : "secondary";
@@ -19564,8 +23274,7 @@ ${lines.join("\n")}
         ${f.badge ? `<span class="feature-badge feature-badge--${f.badge.tone || "recommended"}" aria-label="バッジ: ${esc(f.badge.label || "")}">
           <span class="feature-badge-icon" aria-hidden="true">${f.badge.icon || "•"}</span>
           <span class="feature-badge-label">${esc(f.badge.label || "")}</span>
-        </span>` : ""}
-        <span class="feature-risk feature-risk--${f.riskLevel === "warning" ? "warning" : "safe"}">${getRiskLabel(f.riskLevel)}</span>
+        </span>` : `<span class="feature-risk feature-risk--${f.riskLevel === "warning" ? "warning" : "safe"}">${getRiskLabel(f.riskLevel)}</span>`}
       </div>
       <div class="feature-card-label">${f.label}</div>
       <div class="feature-card-desc">${f.desc}</div>
@@ -19573,6 +23282,7 @@ ${lines.join("\n")}
       <div class="feature-card-go" aria-hidden="true">開く</div>
     </div>`;
     };
+    const renderLauncherFeatureGroup = (groupKey) => (launcherFeaturesByGroup[groupKey] || []).map(renderFeatureCard).join("");
     root2.innerHTML = `<style>${styles_default}</style>
         <div class="h" data-dialog-drag-handle="1">
           <div class="h-brand" aria-hidden="true">
@@ -19598,6 +23308,7 @@ ${lines.join("\n")}
             <button class="x size" data-act="dialogSizeDefault">標準</button>
             <button class="x size" data-act="dialogSizeLarge">大</button>
             <button class="x size" data-act="dialogSizeMax">最大</button>
+            <button class="x size" data-act="toggleHeaderCollapse" id="u_headerCollapseBtn" title="ヘッダーを折りたたむ／展開する" aria-label="ヘッダーを折りたたむ">▲</button>
             <button class="x" data-act="close">閉じる</button>
           </div>
         </div>
@@ -19699,24 +23410,61 @@ ${lines.join("\n")}
             </details>
             </div>
             </section>
-            <div class="kus-header-diff-suite" id="u_headerDiffSuite">
-            <section class="connection-section connection-section--step2 connection-section--actions diff-pane-step2" aria-labelledby="conn-diff-pane-heading">
-                <div class="connection-step-banner">
-                  <span class="connection-step-title" id="conn-diff-pane-heading">比較データ取得・一括フロー</span>
-                  <span class="connection-step-indicator" id="u_step2Indicator" data-step-state="pending">未取得</span>
-                </div>
-                <p class="muted connection-step-desc">比較元・比較先の設定を先に取り込みます。迷ったら「差分比較してプラン確認」を押すと、差分確認から反映前チェックまで続けて進められます。</p>
-                <div class="btns connection-step-btns">
-                  <button class="btn btn-primary-emphasis" data-act="runDiffAndPlan" data-state="推奨">差分比較してプラン確認</button>
-                  <button class="btn sub connection-secondary-cta" data-act="prefetchCommonData" data-state="選択中">共通データ取得（比較元+比較先）</button>
-                </div>
-                <div class="kv" id="u_commonDataState">共通データ未取得</div>
-              </section>
+          </div>
+          <div class="kus-header-diff-suite" id="u_headerDiffSuite">
+            <!-- 「比較データ取得・一括フロー」フォールドはヒーローバーと重複のため削除。
+                 「差分比較してプラン確認」「共通データ取得」は ⚙ 詳細 popover の中に集約 -->
+            <span id="u_step2Indicator" data-step-state="pending" hidden>未取得</span>
+            <span id="u_commonDataState" hidden>共通データ未取得</span>
               <section class="diff-pane-embed" aria-label="差分の条件・一覧">
               <div class="subpane active">
-              <div class="step">比較条件を調整して差分を取得</div>
 
-              <details class="diff-fold diff-fold--scopes" open>
+              <!-- 主要アクションバー：1行コンパクト -->
+              <section class="diff-hero diff-hero--compact" aria-label="差分の主要アクション">
+                <button type="button" class="btn-stage diff-hero__run" data-stage="diff" id="u_runDiffPrimary" data-act="runDiff" title="現在の比較設定で差分を取得します（Ctrl+Enter）">
+                  <span class="btn-stage__icon" aria-hidden="true">🔍</span>
+                  <span>差分比較</span>
+                </button>
+                <div class="diff-hero__state kv" id="u_bundleState">未取得</div>
+                <div class="diff-hero__menu" role="group" aria-label="補助操作">
+                  <details class="diff-hero__pop">
+                    <summary class="btn sub diff-hero__pop-btn" title="設定JSONの読込・保存">📥 JSON</summary>
+                    <div class="diff-hero__pop-body">
+                      <button type="button" class="btn sub" data-act="importSourceBundle">比較元 読込</button>
+                      <button type="button" class="btn sub" data-act="importTargetBundle">比較先 読込</button>
+                      <button type="button" class="btn sub" data-act="clearBundle">読込解除</button>
+                      <button type="button" class="btn sub" data-act="exportBundleJson">💾 設定保存</button>
+                    </div>
+                  </details>
+                  <details class="diff-hero__pop">
+                    <summary class="btn sub diff-hero__pop-btn" title="差分結果の出力">📤 出力</summary>
+                    <div class="diff-hero__pop-body">
+                      <button type="button" class="btn sub" data-act="exportDiffJson">JSON</button>
+                      <button type="button" class="btn sub" data-act="exportDiffHtml">HTML</button>
+                      <button type="button" class="btn sub" data-act="exportPatchJson">パッチ</button>
+                    </div>
+                  </details>
+                  <details class="diff-hero__pop diff-hero__pop--advanced">
+                    <summary class="btn sub diff-hero__pop-btn" title="高度な操作・比較条件の調整">⚙ 詳細</summary>
+                    <div class="diff-hero__pop-body">
+                      <button type="button" class="btn sub" data-act="runDiffAndPlan" title="差分比較とプラン確認をまとめて実行">差分比較→プラン確認</button>
+                      <button type="button" class="btn sub" data-act="prefetchCommonData" title="比較元と比較先のデータを先に取得">共通データ事前取得</button>
+                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <button type="button" class="btn sub" data-act="toggleDiffAdvanced" title="比較対象セクション・無視キー・複数比較先などを開閉">▾ 比較条件の調整を開く</button>
+                    </div>
+                  </details>
+                </div>
+              </section>
+
+              <details class="diff-advanced-fold" id="u_diffAdvancedFold">
+                <summary class="diff-advanced-fold__summary">
+                  <span class="diff-advanced-fold__chev" aria-hidden="true">▸</span>
+                  <span class="diff-advanced-fold__title">比較条件の調整</span>
+                  <span class="diff-advanced-fold__sub">必要なときだけ開きます（セクション選択 / 無視キー / 複数比較先）</span>
+                </summary>
+                <div class="diff-advanced-fold__body">
+
+              <details class="diff-fold diff-fold--scopes">
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">比較対象セクション</span>
                   <span class="diff-fold-sub">API 取得範囲（各チップにマウスを載せると API パスが表示されます）</span>
@@ -19783,27 +23531,7 @@ ${lines.join("\n")}
                 </div>
               </details>
 
-              <details class="diff-fold diff-fold--run" open>
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">差分の実行・保存・設定JSON読込</span>
-                  <span class="diff-fold-sub">保存済み設定JSONの読込や各種エクスポート</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div class="kv" id="u_bundleState">比較元: API取得 / 比較先: API取得</div>
-              <div class="btns">
-                <button type="button" class="btn sub" data-act="importSourceBundle">比較元JSON読込</button>
-                <button type="button" class="btn sub" data-act="importTargetBundle">比較先JSON読込</button>
-                <button type="button" class="btn sub" data-act="clearBundle">JSON読込解除</button>
-                <button type="button" class="btn sub" data-act="exportBundleJson">設定JSON保存</button>
-              </div>
-              <div class="btns">
-                <button type="button" class="btn" id="u_runDiffPrimary" data-act="runDiff">差分比較を実行</button>
-                <button type="button" class="btn sub" data-act="exportDiffJson">差分JSON保存</button>
-                <button type="button" class="btn sub" data-act="exportDiffHtml">差分HTML保存</button>
-                <button type="button" class="btn sub" data-act="exportPatchJson">パッチJSON保存</button>
-              </div>
-                </div>
-              </details>
+              <!-- (旧「差分の実行・保存・設定JSON読込」フォールドはヒーローバーへ移動) -->
               <details class="diff-fold diff-fold--multi">
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">複数比較先の一括比較</span>
@@ -19819,76 +23547,23 @@ ${lines.join("\n")}
                 <div id="u_diffMultiTargetResult" class="result" style="max-height:260px;margin-top:6px"></div>
                 </div>
               </details>
+
+                </div>
+              </details>
+              <!-- /diff-advanced-fold -->
+
               <details class="diff-fold diff-fold--review" id="u_diffReviewFold">
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">差分結果の整理・出力</span>
-                  <span class="diff-fold-sub">差分比較後に、絞り込み・選択・各種出力をまとめて行います</span>
+                  <span class="diff-fold-sub" id="u_diffSelectionState">差分未実行</span>
                 </summary>
-                <div class="diff-fold-body">
-                <div class="diff-view-overview">
-                  <div class="diff-view-overview-main">
-                    <div class="diff-view-overview-title">現在の比較結果</div>
-                    <div class="kv diff-view-overview-state" id="u_diffSelectionState">差分未実行</div>
-                  </div>
-                  <div class="diff-view-overview-side">
-                    <div class="diff-view-overview-side-title">主な操作</div>
-                    <div class="diff-view-overview-side-body">フィルタ調整 → 必要行を選択 → JSON/HTML/Excel/パッチを出力。別ウィンドウ表示や選択セット保存もこのエリアで実行できます。</div>
-                  </div>
-                </div>
-              <details class="diff-fold diff-fold--view-extras">
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">拡大・クイック・選択セット</span>
-                  <span class="diff-fold-sub">別ウィンドウ・一括プリセット・チェック選択の保存（普段は閉じたままでOK）</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div id="u_diffOnboarding" class="diff-onboarding" style="display:none" role="note">
-                <div class="diff-onboarding-body">
-                  <p class="diff-onboarding-text"><strong>ヒント</strong> 差分比較後は、この整理エリアで絞り込み・帯グラフ・セクションピル・別ウィンドウ・Shift+範囲選択が使えます。</p>
-                  <button type="button" class="btn sub" data-act="dismissDiffOnboarding">了解して閉じる</button>
-                </div>
-              </div>
-              <div class="diff-ext-toolbar">
-                <div class="btns diff-ext-toolbar-row">
-                  <button type="button" class="btn sub" data-act="openDiffPopout" title="メイン画面と選択・折り畳みを同期した別ウィンドウで差分一覧を表示">差分を別ウィンドウで開く</button>
-                </div>
-                <div class="diff-preset-toolbar btns">
-                  <span class="diff-preset-label">クイック</span>
-                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="reset" title="セクション・種別・重要度の絞り込みをクリア">解除</button>
-                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="severity_high" title="重要度「高」だけ表示">高</button>
-                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_added" title="追加差分だけ">追加</button>
-                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_removed" title="削除差分だけ">削除</button>
-                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_changed" title="変更差分だけ">変更</button>
-                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_field" title="フィールド設定セクションに絞る">フィールド</button>
-                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_layout" title="レイアウト設定に絞る">レイアウト</button>
-                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_view" title="ビュー設定に絞る">ビュー</button>
-                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_process" title="プロセス管理に絞る">プロセス</button>
-                  <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="no_acl" title="アプリ/フィールド/レコード権限のセクションを除外して表示">権限非表示</button>
-                </div>
-                <div class="diff-selection-set-row">
-                  <label class="diff-selection-set-lbl" for="u_diffSelectionSetName">選択セット</label>
-                  <input type="text" id="u_diffSelectionSetName" class="diff-selection-set-name" placeholder="例: レビュー用" title="現在のチェック選択を名前付きで保存します">
-                  <button type="button" class="btn sub" data-act="saveDiffSelectionSet" title="入力した名前で保存">保存</button>
-                  <select id="u_diffSelectionSetSelect" class="diff-selection-set-select" title="保存済みセットを読み込み"><option value="">-- 読込 --</option></select>
-                  <button type="button" class="btn sub" data-act="loadDiffSelectionSet" title="選択したセットを復元">読込</button>
-                  <button type="button" class="btn sub" data-act="deleteDiffSelectionSet" title="選択したセットを削除">削除</button>
-                </div>
-              </div>
-                </div>
-              </details>
-              <details class="diff-fold diff-fold--view-filter" open>
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">フィルタ・出力対象・選択</span>
-                  <span class="diff-fold-sub">セクション/種別/重要度の絞り込みとエクスポート範囲</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div class="grid2" style="margin-top:0">
-                <div>
-                  <label title="比較結果をセクション・種別・重要度で絞り込みます">差分フィルタ</label>
-                  <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:4px">
-                    <select id="u_diffFilterSection" title="表示する差分のセクションを限定">
+                <div class="diff-fold-body diff-review-body">
+                  <!-- 高優先：必須フィルタ + 検索（横1行） -->
+                  <div class="diff-review-toolbar" role="group" aria-label="差分の必須フィルタ">
+                    <select id="u_diffFilterSection" title="表示する差分のセクションを限定" class="diff-review-toolbar__sel">
                       <option value="">全セクション</option>
                     </select>
-                    <select id="u_diffFilterType" title="追加/削除/変更など種別で限定">
+                    <select id="u_diffFilterType" title="追加/削除/変更など種別で限定" class="diff-review-toolbar__sel">
                       <option value="">全種別</option>
                       <option value="added">追加</option>
                       <option value="removed">削除</option>
@@ -19896,493 +23571,347 @@ ${lines.join("\n")}
                       <option value="moved">移動</option>
                       <option value="same">同一</option>
                     </select>
-                    <select id="u_diffFilterSeverity" title="エンリッチされた重要度で限定">
+                    <select id="u_diffFilterSeverity" title="重要度で限定" class="diff-review-toolbar__sel">
                       <option value="">全重要度</option>
                       <option value="high">高</option>
                       <option value="medium">中</option>
                       <option value="low">低</option>
                     </select>
-                  </div>
-                  <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:6px">
-                    <label class="chip" title="テーブル内フィールドの差分のみ表示します"><input type="checkbox" id="u_diffFilterTableOnly"> テーブル内フィールドのみ</label>
-                    <input type="text" id="u_diffFilterTableKeyword" placeholder="テーブル名 / コードで絞り込み" title="フィールド設定のうちテーブル内フィールドを、親テーブル名またはコードで絞り込みます">
+                    <input type="text" id="u_diffSearch" placeholder="パス/値で検索（Ctrl+F）" class="diff-review-toolbar__search" title="パスや値の一部で絞り込み（Ctrl/Cmd+F でフォーカス）">
+                    <button type="button" class="btn sub diff-review-toolbar__clear" data-act="clearDiffFilters" title="フィルタをすべてクリア">クリア</button>
+                    <div class="diff-review-toolbar__quick btns">
+                      <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="severity_high" title="重要度「高」だけ表示">⚠ 高のみ</button>
+                      <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_added" title="追加差分だけ">+ 追加</button>
+                      <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_removed" title="削除差分だけ">− 削除</button>
+                      <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_changed" title="変更差分だけ">~ 変更</button>
+                    </div>
                   </div>
                   <div class="diff-active-filters" id="u_diffActiveFilters" aria-live="polite"></div>
-                  <div class="btns" style="margin-top:6px">
-                    <button type="button" class="btn sub" data-act="clearDiffFilters">差分フィルタをクリア</button>
+
+                  <!-- 最高優先：実際の差分結果（最大スペースを与える） -->
+                  <div class="result diff-result-main" id="u_result"></div>
+
+                  <!-- 中優先：選択操作・出力（コンパクト1行） -->
+                  <div class="diff-review-actions" role="group" aria-label="出力と選択操作">
+                    <div class="diff-review-actions__group">
+                      <span class="diff-review-actions__lbl">📤 出力</span>
+                      <select id="u_diffExportMode" title="保存・コピーに含める行の範囲" class="diff-review-actions__sel">
+                        <option value="all">全件</option>
+                        <option value="selected">選択行のみ</option>
+                        <option value="visible">表示中のみ</option>
+                        <option value="favorites">お気に入りのみ</option>
+                      </select>
+                      <select id="u_diffExportContent" title="出力内容" class="diff-review-actions__sel">
+                        <option value="diffOnly">行データのみ</option>
+                        <option value="withCompared">行+比較設定</option>
+                      </select>
+                    </div>
+                    <div class="diff-review-actions__group">
+                      <span class="diff-review-actions__lbl">✓ 選択</span>
+                      <button type="button" class="btn sub" data-act="selectVisibleDiffs" title="表示中を選択">表示中</button>
+                      <button type="button" class="btn sub" data-act="selectAllDiffs" title="全行を選択">全件</button>
+                      <button type="button" class="btn sub" data-act="clearDiffSelection" title="選択を外す">解除</button>
+                      <button type="button" class="btn sub" data-act="toggleDiffFavoritesOnly" id="u_diffFavoritesOnlyBtn" title="お気に入り行だけ表示">★のみ: OFF</button>
+                    </div>
                   </div>
+
+                  <!-- 低優先：詳細設定（折り畳み・初期閉） -->
+                  <details class="diff-fold diff-fold--review-extra">
+                    <summary class="diff-fold-summary">
+                      <span class="diff-fold-title">詳細設定（プリセット / 表示 / 警告 / 選択セット）</span>
+                      <span class="diff-fold-sub">普段は閉じてOK。必要なときだけ開きます</span>
+                    </summary>
+                    <div class="diff-fold-body" style="display:flex;flex-direction:column;gap:8px">
+                      <div id="u_diffOnboarding" class="diff-onboarding" style="display:none" role="note">
+                        <div class="diff-onboarding-body">
+                          <p class="diff-onboarding-text"><strong>ヒント</strong> 差分比較後は、ここで絞り込み・帯グラフ・別ウィンドウ・Shift+範囲選択が使えます。</p>
+                          <button type="button" class="btn sub" data-act="dismissDiffOnboarding">了解して閉じる</button>
+                        </div>
+                      </div>
+                      <fieldset class="diff-extra-section">
+                        <legend>セクションプリセット</legend>
+                        <div class="btns">
+                          <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="reset">解除</button>
+                          <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_field">フィールド</button>
+                          <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_layout">レイアウト</button>
+                          <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_view">ビュー</button>
+                          <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="sec_process">プロセス</button>
+                          <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="no_acl">権限非表示</button>
+                        </div>
+                      </fieldset>
+                      <fieldset class="diff-extra-section">
+                        <legend>テーブル絞り込み</legend>
+                        <div class="btns">
+                          <label class="chip"><input type="checkbox" id="u_diffFilterTableOnly"> テーブル内フィールドのみ</label>
+                          <input type="text" id="u_diffFilterTableKeyword" placeholder="テーブル名 / コードで絞り込み" style="flex:1;min-width:160px">
+                        </div>
+                      </fieldset>
+                      <fieldset class="diff-extra-section">
+                        <legend>表示設定</legend>
+                        <div class="btns">
+                          <label class="chip"><input type="checkbox" id="u_diffSearchFieldName"> フィールド名で検索</label>
+                          <label class="chip"><input type="checkbox" id="u_charDiff" checked> 文字単位ハイライト</label>
+                          <label class="chip"><input type="checkbox" id="u_diffIncludeSame" checked> 差分なしも表示</label>
+                          <button type="button" class="btn sub" data-act="toggleDiffTheme" id="u_diffThemeBtn">テーマ: ライト</button>
+                          <button type="button" class="btn sub" data-act="collapseDiffSections">全折畳</button>
+                          <button type="button" class="btn sub" data-act="expandDiffSections">全展開</button>
+                          <button type="button" class="btn sub" data-act="openDiffPopout">別ウィンドウ</button>
+                        </div>
+                      </fieldset>
+                      <fieldset class="diff-extra-section">
+                        <legend>選択セット保存</legend>
+                        <div class="diff-selection-set-row">
+                          <input type="text" id="u_diffSelectionSetName" class="diff-selection-set-name" placeholder="例: レビュー用" style="flex:1;min-width:120px">
+                          <button type="button" class="btn sub" data-act="saveDiffSelectionSet">保存</button>
+                          <select id="u_diffSelectionSetSelect" class="diff-selection-set-select"><option value="">-- 読込 --</option></select>
+                          <button type="button" class="btn sub" data-act="loadDiffSelectionSet">読込</button>
+                          <button type="button" class="btn sub" data-act="deleteDiffSelectionSet">削除</button>
+                        </div>
+                      </fieldset>
+                      <fieldset class="diff-extra-section">
+                        <legend>件数警告・無視キー候補</legend>
+                        <div class="btns" style="margin-bottom:6px">
+                          <label style="font-size:11px;color:#475569">しきい値:</label>
+                          <input type="text" id="u_diffWarnThreshold" placeholder="例: 200 / 0でOFF" style="max-width:160px">
+                        </div>
+                        <div class="warnbox" id="u_diffWarnBox" style="display:none;margin-bottom:6px"></div>
+                        <div class="muted" style="font-size:11px;margin-bottom:4px">おすすめ無視キー候補</div>
+                        <div id="u_diffSuggestedIgnore" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:6px;background:#fff"></div>
+                        <div class="muted" style="margin-top:6px;line-height:1.5;font-size:10px">ショートカット: Ctrl+F 検索 / Esc クリア / Ctrl+A 全件選択 / Shift+クリックで範囲選択</div>
+                      </fieldset>
+                    </div>
+                  </details>
                 </div>
-                <div>
-                  <label title="保存やコピー時に含める範囲を選びます">出力対象（どの行を出すか）</label>
-                  <div class="btns" style="margin-top:0">
-                    <select id="u_diffExportMode" style="flex:1;min-width:160px" title="保存・コピーに含める行の範囲">
-                      <option value="all">全件（同一を含む比較結果すべて）</option>
-                      <option value="selected">選択済み行のみ（チェック行）</option>
-                      <option value="visible">現在表示中のみ（フィルタ適用後）</option>
-                      <option value="favorites">お気に入り行のみ（★）</option>
-                    </select>
-                    <select id="u_diffExportContent" style="flex:1;min-width:180px" title="比較対象の生設定をレポートに含めるか">
-                      <option value="diffOnly">出力内容: 行データのみ</option>
-                      <option value="withCompared">出力内容: 行データ + 比較設定</option>
-                    </select>
-                  </div>
-                  <label title="画面上のチェック状態をまとめて変更します" style="margin-top:8px;display:block">選択操作（チェック行の操作）</label>
-                  <div class="btns" style="margin-top:0">
-                    <button type="button" class="btn sub" data-act="selectVisibleDiffs" title="現在フィルタで見えている行を選択状態にします">表示中を選択</button>
-                    <button type="button" class="btn sub" data-act="selectAllDiffs" title="全行を選択">全件選択</button>
-                    <button type="button" class="btn sub" data-act="clearDiffSelection" title="選択をすべて外す">選択解除</button>
-                    <button type="button" class="btn sub" data-act="toggleDiffFavoritesOnly" id="u_diffFavoritesOnlyBtn" title="お気に入り登録した行だけ表示">お気に入りのみ: OFF</button>
-                  </div>
-                </div>
-              </div>
-                </div>
-              </details>
-              <details class="diff-fold diff-fold--view-display">
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">検索・比較ビューの見え方</span>
-                  <span class="diff-fold-sub">パス検索・ハイライト・テーマ・折り畳み（必要なときだけ開く）</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div class="grid2" style="margin-top:0">
-                <div>
-                  <label title="パスや値の一部でインライン検索">比較ビュー検索（パス / 値）</label>
-                  <input type="text" id="u_diffSearch" placeholder="例: fieldSettings.properties.customer_code" title="Ctrl/Cmd+F でもフォーカスできます（ヘッダー比較条件の説明参照）">
-                  <div class="btns" style="margin-top:6px">
-                    <label class="chip" title="ONにすると、フィールドコード/フィールド名（ラベル）を優先して検索します"><input type="checkbox" id="u_diffSearchFieldName"> フィールド名で確認</label>
-                  </div>
-                </div>
-                <div>
-                  <label>比較ビュー表示</label>
-                  <div class="btns" style="margin-top:0">
-                    <label class="chip" title="変更行内の文字単位で追加削除を着色"><input type="checkbox" id="u_charDiff" checked> 文字単位ハイライト</label>
-                    <label class="chip" title="同一種別の行もテーブルに出す"><input type="checkbox" id="u_diffIncludeSame" checked> 差分なしも表示</label>
-                    <button type="button" class="btn sub" data-act="toggleDiffTheme" id="u_diffThemeBtn" title="ライト/ダークの表示テーマ">比較テーマ: ライト</button>
-                    <button type="button" class="btn sub" data-act="collapseDiffSections" title="セクション見出しをすべて閉じる">全折畳</button>
-                    <button type="button" class="btn sub" data-act="expandDiffSections" title="セクション見出しをすべて開く">全展開</button>
-                  </div>
-                </div>
-              </div>
-                </div>
-              </details>
-              <details class="diff-fold diff-fold--view-extra">
-                <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">件数警告・無視キー候補・ショートカット</span>
-                  <span class="diff-fold-sub">大量差分の注意喚起や候補ボタン（普段は閉じてOK）</span>
-                </summary>
-                <div class="diff-fold-body">
-              <div style="margin-top:0">
-                <label title="差分件数+取得失敗が閾値を超えたとき警告">差分件数しきい値警告</label>
-                <div class="btns" style="margin-top:4px">
-                  <input type="text" id="u_diffWarnThreshold" placeholder="例: 200 / 0でOFF" style="max-width:180px" title="0 または空で警告オフ。超過時はこの整理エリアの上にメッセージが出ます">
-                </div>
-                <div class="warnbox" id="u_diffWarnBox" style="display:none;margin-top:6px"></div>
-              </div>
-              <div style="margin-top:8px">
-                <label title="直近の差分結果から、よくあるノイズキーを提案します">おすすめ無視キー候補（低影響差分から抽出）</label>
-                <div id="u_diffSuggestedIgnore" class="chips" style="min-height:32px;border:1px solid #d6dee8;border-radius:6px;padding:6px;background:#fff;margin-top:4px;align-items:center"></div>
-                <div class="muted" style="margin-top:4px;line-height:1.55">ショートカット: Ctrl/Cmd+F 検索, Esc 検索クリア, Ctrl/Cmd+A 全件選択（検索欄以外フォーカス時）, Shift+クリックでチェック範囲選択, 矢印キーでチェック間移動</div>
-              </div>
-                </div>
-              </details>
-              <div class="result" id="u_result"></div>
-              </div>
               </details>
               <input type="file" id="u_sourceBundleFile" accept=".json" style="display:none">
               <input type="file" id="u_targetBundleFile" accept=".json" style="display:none">
               </div>
               </section>
             </div>
-            <section class="connection-section connection-section--step3 connection-section--actions" aria-labelledby="conn-feature-heading">
-              <div class="connection-step-banner">
-                <span class="connection-step-title" id="conn-feature-heading">機能選択</span>
-                <span class="connection-step-indicator" id="u_step3Indicator" data-step-state="pending">未選択</span>
-              </div>
-              <p class="muted connection-step-desc">下のカードからやりたい作業を選びます。カードには「用途」と「安全性」を表示しているので、迷ったらまず「差分比較」から進めてください。</p>
-              <div class="btns connection-step-btns connection-quick-btns">
-                <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
-                <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
-                <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
-              </div>
-            </section>
-            </div>
+          <!-- step3「機能選択」は接続パネル内のクイックボタンと重複していたため統合・削除 -->
+          <span id="u_step3Indicator" data-step-state="pending" hidden>未選択</span>
 
           <div class="launcher-menu" id="u_launcherMenu">
-            <div class="launcher-menu-head launcher-hero">
-              <div class="launcher-hero-copy">
-                <p class="launcher-kicker">Unified Operations</p>
-                <p class="launcher-lead">変更作業ダッシュボード</p>
-                <p class="launcher-tagline">差分確認、反映、記録、保守をこの画面から開始します。</p>
-              </div>
-              <div class="launcher-metrics" aria-label="機能数">
-                <span><strong>${primaryFeatures.length}</strong> 主要</span>
-                <span><strong>${secondaryFeatureCount}</strong> 補助</span>
-                <span><strong>${launcherFeatures.length}</strong> 全機能</span>
-              </div>
+            <!-- launcher-hero（"変更作業ダッシュボード"見出し+メトリクス）はカテゴリタブと重複のため削除 -->
+
+            <div class="launcher-tab-nav" id="u_launcherGroupFilters" role="tablist" aria-label="機能カテゴリ">
+              ${launcherGroupDefs.map((group, index) => `
+                <button type="button" class="chip launcher-tab-btn${index === 0 ? " is-active" : ""}" data-act="setLauncherGroup" data-group="${group.key}" role="tab" aria-selected="${index === 0 ? "true" : "false"}" aria-pressed="${index === 0 ? "true" : "false"}" aria-controls="u_launcherPanel_${group.key}" tabindex="${index === 0 ? "0" : "-1"}">
+                  <span class="launcher-tab-btn__label">${group.label}</span>
+                  <span class="launcher-tab-btn__meta">${(launcherFeaturesByGroup[group.key] || []).length}</span>
+                </button>
+              `).join("")}
+              <button type="button" class="chip launcher-tab-btn" data-act="setLauncherGroup" data-group="history" role="tab" aria-selected="false" aria-pressed="false" aria-controls="u_launcherPanel_history" tabindex="-1">
+                <span class="launcher-tab-btn__label">履歴・復元</span>
+                <span class="launcher-tab-btn__meta">作業</span>
+              </button>
             </div>
-            <div class="change-wizard" aria-label="変更作業ウィザード">
-              <div class="change-wizard-head">
-                <div>
-                  <p class="change-wizard-kicker">Guided Flow</p>
-                  <p class="change-wizard-title">変更作業ウィザード</p>
-                  <p class="change-wizard-desc">接続確認から差分比較、反映前確認、プレビュー反映、記録出力まで順番に進めます。</p>
-                </div>
-                <button type="button" class="btn change-wizard-start" data-act="startChangeWizard">開始</button>
+
+            <div class="launcher-filter-bar" aria-label="機能の絞り込み">
+              <div class="launcher-command-row">
+                <input
+                  type="search"
+                  id="u_launcherSearch"
+                  class="launcher-search-input"
+                  placeholder="このタブ内を検索（例: 差分 / レコード / 設計書）"
+                  autocomplete="off"
+                  aria-label="機能検索">
+                <button type="button" class="btn sub launcher-clear-btn" data-act="clearLauncherFilter">クリア</button>
               </div>
-              <div class="launcher-flow" aria-label="基本フロー">
-                <button type="button" class="launcher-flow-step is-primary" data-act="openWizardStep" data-wizard-step="connection">
-                  <span class="launcher-flow-no">01</span>
-                  <span class="launcher-flow-copy">
-                    <span class="launcher-flow-main">接続確認</span>
-                    <span class="launcher-flow-sub">アプリIDとゲストID</span>
-                  </span>
-                </button>
-                <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="diff">
-                  <span class="launcher-flow-no">02</span>
-                  <span class="launcher-flow-copy">
-                    <span class="launcher-flow-main">差分比較</span>
-                    <span class="launcher-flow-sub">設定差分を取得</span>
-                  </span>
-                </button>
-                <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="plan">
-                  <span class="launcher-flow-no">03</span>
-                  <span class="launcher-flow-copy">
-                    <span class="launcher-flow-main">プラン確認</span>
-                    <span class="launcher-flow-sub">反映内容を確認</span>
-                  </span>
-                </button>
-                <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="apply">
-                  <span class="launcher-flow-no">04</span>
-                  <span class="launcher-flow-copy">
-                    <span class="launcher-flow-main">プレビュー反映</span>
-                    <span class="launcher-flow-sub">比較先へ書き込み</span>
-                  </span>
-                </button>
-                <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="design">
-                  <span class="launcher-flow-no">05</span>
-                  <span class="launcher-flow-copy">
-                    <span class="launcher-flow-main">記録出力</span>
-                    <span class="launcher-flow-sub">設計書・差分資料</span>
-                  </span>
-                </button>
-              </div>
+              <div class="launcher-active-filters" id="u_launcherActiveFilters" aria-live="polite"></div>
+              <div class="launcher-filter-meta" id="u_launcherVisibleCount">表示中: ${(launcherFeaturesByGroup.change || []).length}/${(launcherFeaturesByGroup.change || []).length}</div>
             </div>
-            <section class="work-history-panel" id="u_sessionSummaryPanel" aria-label="このセッションの操作サマリ" style="margin-bottom:8px">
-              <div class="work-history-head">
-                <div>
-                  <p class="work-history-kicker">Session Recap</p>
-                  <p class="work-history-title">このセッションの操作サマリ</p>
-                  <p class="work-history-desc">タブを閉じるとリセットされます（永続化なし）。自分の作業を俯瞰でき、ヒューマンエラーの自己点検につながります。</p>
-                </div>
-              </div>
-              <div id="u_sessionSummary" class="kus-session-summary" aria-live="polite"></div>
-            </section>
-            <section class="work-history-panel" id="u_workHistoryPanel" aria-label="作業履歴・復元">
-              <div class="work-history-head">
-                <div>
-                  <p class="work-history-kicker">Restore Point</p>
-                  <p class="work-history-title">作業履歴・復元</p>
-                  <p class="work-history-desc">接続先、スコープ、フィルタ、レビュー状態を保存して、あとから同じ作業条件へ戻します。</p>
-                </div>
-                <div class="work-history-actions">
-                  <span class="work-history-summary" id="u_workHistorySummary">履歴なし</span>
-                  <button type="button" class="btn sub" data-act="saveWorkHistory">現在の作業を保存</button>
-                  <button type="button" class="btn sub" data-act="clearWorkHistory">クリア</button>
-                </div>
-              </div>
-              <div class="work-history-list" id="u_workHistoryList" aria-live="polite">
-                <div class="work-history-empty">まだ保存された作業はありません</div>
-              </div>
-            </section>
-            <section class="launcher-section launcher-section--primary" aria-label="メイン機能">
-              <div class="launcher-section-head">
-                <p class="launcher-section-title">よく使うメイン機能</p>
-                <span class="launcher-section-sub">まずはここから</span>
-              </div>
-              <div class="feature-grid feature-grid--primary">
-                ${primaryFeatures.map(renderFeatureCard).join("")}
-              </div>
-            </section>
-            <section class="launcher-section launcher-section--secondary" aria-label="補助機能">
-              <div class="launcher-tools">
-                <div class="launcher-section-head">
-                  <p class="launcher-section-title">補助機能</p>
-                  <span class="launcher-section-sub">詳細設定・保守向け</span>
-                </div>
-                <div class="launcher-filter-bar" aria-label="機能の絞り込み">
-                  <div class="launcher-command-row">
-                    <input
-                      type="search"
-                      id="u_launcherSearch"
-                      class="launcher-search-input"
-                      placeholder="機能名・説明で検索（例: 差分 / レコード / 設計書）"
-                      autocomplete="off"
-                      aria-label="機能検索">
-                    <button type="button" class="btn sub launcher-clear-btn" data-act="clearLauncherFilter">クリア</button>
+
+            <div class="launcher-panels">
+              <section class="launcher-panel is-active" data-launcher-panel="change" id="u_launcherPanel_change" role="tabpanel" aria-label="変更・反映">
+                <div class="launcher-panel-head">
+                  <div>
+                    <p class="launcher-section-title">変更・反映</p>
+                    <p class="launcher-section-desc">差分確認、プラン確認、プレビュー反映までをここに集約します。</p>
                   </div>
-                  <div class="launcher-group-filters" id="u_launcherGroupFilters" role="group" aria-label="機能グループ">
-                    <button type="button" class="chip is-active" data-act="setLauncherGroup" data-group="all" aria-pressed="true">すべて</button>
-                    <button type="button" class="chip" data-act="setLauncherGroup" data-group="change" aria-pressed="false">変更・反映</button>
-                    <button type="button" class="chip" data-act="setLauncherGroup" data-group="vis" aria-pressed="false">可視化・出力</button>
-                    <button type="button" class="chip" data-act="setLauncherGroup" data-group="data" aria-pressed="false">データ・保守</button>
-                  </div>
-                  <div class="launcher-active-filters" id="u_launcherActiveFilters" aria-live="polite"></div>
-                  <div class="launcher-filter-meta" id="u_launcherVisibleCount">表示中: ${launcherFeatures.length}/${launcherFeatures.length}</div>
                 </div>
-                <button type="button" class="btn sub launcher-more-toggle" id="u_launcherToggleMore" data-act="toggleLauncherMore" aria-expanded="false">その他の ${secondaryFeatureCount} 機能を表示</button>
-              </div>
-              <div class="feature-grid feature-grid--secondary">
-                ${secondaryFeatures.map(renderFeatureCard).join("")}
-              </div>
-              <div class="launcher-empty-state" id="u_launcherEmptyState" hidden>
-                <p class="launcher-empty-title">一致する機能がありません</p>
-                <p class="launcher-empty-desc">検索語やグループ絞り込みを変更するか、クリアを押して全件表示に戻してください。</p>
-              </div>
-            </section>
+                <div class="change-wizard" aria-label="変更作業ウィザード">
+                  <div class="change-wizard-head">
+                    <div>
+                      <p class="change-wizard-title">変更作業ウィザード</p>
+                      <p class="change-wizard-desc">接続確認から記録出力まで順番に進めます。</p>
+                    </div>
+                    <button type="button" class="btn change-wizard-start" data-act="startChangeWizard">開始</button>
+                  </div>
+                  <div class="launcher-flow" aria-label="基本フロー">
+                    <button type="button" class="launcher-flow-step is-primary" data-act="openWizardStep" data-wizard-step="connection">
+                      <span class="launcher-flow-no">01</span>
+                      <span class="launcher-flow-copy">
+                        <span class="launcher-flow-main">接続確認</span>
+                        <span class="launcher-flow-sub">アプリIDとゲストID</span>
+                      </span>
+                    </button>
+                    <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="diff">
+                      <span class="launcher-flow-no">02</span>
+                      <span class="launcher-flow-copy">
+                        <span class="launcher-flow-main">差分比較</span>
+                        <span class="launcher-flow-sub">設定差分を取得</span>
+                      </span>
+                    </button>
+                    <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="plan">
+                      <span class="launcher-flow-no">03</span>
+                      <span class="launcher-flow-copy">
+                        <span class="launcher-flow-main">プラン確認</span>
+                        <span class="launcher-flow-sub">反映内容を確認</span>
+                      </span>
+                    </button>
+                    <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="apply">
+                      <span class="launcher-flow-no">04</span>
+                      <span class="launcher-flow-copy">
+                        <span class="launcher-flow-main">プレビュー反映</span>
+                        <span class="launcher-flow-sub">比較先へ書き込み</span>
+                      </span>
+                    </button>
+                    <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="design">
+                      <span class="launcher-flow-no">05</span>
+                      <span class="launcher-flow-copy">
+                        <span class="launcher-flow-main">記録出力</span>
+                        <span class="launcher-flow-sub">設計書・差分資料</span>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+                <div class="feature-grid feature-grid--launcher">
+                  ${renderLauncherFeatureGroup("change")}
+                </div>
+              </section>
+
+              <section class="launcher-panel" data-launcher-panel="vis" id="u_launcherPanel_vis" role="tabpanel" aria-label="可視化・出力">
+                <div class="launcher-panel-head">
+                  <div>
+                    <p class="launcher-section-title">可視化・出力</p>
+                    <p class="launcher-section-desc">設計書、ER図、プロセス図、影響分析、設定バックアップをまとめています。</p>
+                  </div>
+                </div>
+                <div class="feature-grid feature-grid--launcher">
+                  ${renderLauncherFeatureGroup("vis")}
+                </div>
+              </section>
+
+              <section class="launcher-panel" data-launcher-panel="data" id="u_launcherPanel_data" role="tabpanel" aria-label="データ・保守">
+                <div class="launcher-panel-head">
+                  <div>
+                    <p class="launcher-section-title">データ・保守</p>
+                    <p class="launcher-section-desc">レコード操作やAPI調査など、保守寄りの機能を分けて配置します。</p>
+                  </div>
+                </div>
+                <div class="feature-grid feature-grid--launcher">
+                  ${renderLauncherFeatureGroup("data")}
+                </div>
+              </section>
+
+              <section class="launcher-panel launcher-panel--history" data-launcher-panel="history" id="u_launcherPanel_history" role="tabpanel" aria-label="履歴・復元">
+                <section class="work-history-panel" id="u_sessionSummaryPanel" aria-label="このセッションの操作サマリ">
+                  <div class="work-history-head">
+                    <div>
+                      <p class="work-history-title">このセッションの操作サマリ</p>
+                      <p class="work-history-desc">タブを閉じるとリセットされます（永続化なし）。</p>
+                    </div>
+                  </div>
+                  <div id="u_sessionSummary" class="kus-session-summary" aria-live="polite"></div>
+                </section>
+                <section class="work-history-panel" id="u_workHistoryPanel" aria-label="作業履歴・復元">
+                  <div class="work-history-head">
+                    <div>
+                      <p class="work-history-title">作業履歴・復元</p>
+                      <p class="work-history-desc">接続先、スコープ、フィルタ、レビュー状態を保存して、あとから同じ条件へ戻します。</p>
+                    </div>
+                    <div class="work-history-actions">
+                      <span class="work-history-summary" id="u_workHistorySummary">履歴なし</span>
+                      <button type="button" class="btn sub" data-act="saveWorkHistory">現在の作業を保存</button>
+                      <button type="button" class="btn sub" data-act="clearWorkHistory">クリア</button>
+                    </div>
+                  </div>
+                  <div class="work-history-list" id="u_workHistoryList" aria-live="polite">
+                    <div class="work-history-empty">まだ保存された作業はありません</div>
+                  </div>
+                </section>
+              </section>
+            </div>
+            <div class="launcher-empty-state" id="u_launcherEmptyState" hidden>
+              <p class="launcher-empty-title">一致する機能がありません</p>
+              <p class="launcher-empty-desc">検索語を変えるか、クリアで表示を戻してください。</p>
+            </div>
           </div>
 
-          <div class="card tab-card">
+          <!-- タブナビゲーション（ヘッダー直下に sticky 配置・主要4タブのみ常時表示） -->
+          <div class="kus-tab-bar" id="u_kusTabBar">
             <div class="tabs">
-              <div class="tab-group" data-group="change">
-                <div class="tab-group-lbl">変更・反映</div>
+              <div class="tab-group tab-group--primary" data-group="change">
                 <button class="tab" data-tab="diff" data-state="idle">差分比較</button>
                 <button class="tab active" data-tab="reflect" data-state="selected">プレビュー反映</button>
                 <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
                 <button class="tab" data-tab="jsconfig" data-state="idle">JS/CSS設定</button>
               </div>
-              
-              <div class="tab-group" data-group="vis">
-                <div class="tab-group-lbl">可視化・出力</div>
-                <button class="tab" data-tab="er" data-state="idle">ER図</button>
-                <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
-                <button class="tab" data-tab="design" data-state="idle">設計書</button>
-                <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
-                <button class="tab" data-tab="analyze" data-state="idle">分析</button>
-              </div>
-              
-              <div class="tab-group" data-group="data">
-                <div class="tab-group-lbl">データ・保守</div>
-                <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
-                <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
-              </div>
-            </div>
 
-            <div class="pane" data-pane="diff">
-              <section class="opt-card feature-pane-card feature-pane-card--diff" style="display:block;margin:12px">
-                <div class="opt-title">差分比較</div>
-                <p class="muted" style="margin:0 0 10px;font-size:12px;line-height:1.6">比較条件は上のエリア、結果の確認は下の結果欄で確認します。</p>
-                <div class="btns">
-                  <button type="button" class="btn" data-act="runDiff">差分比較を実行</button>
-                  <button type="button" class="btn sub" data-act="goDiffReview">結果の整理へ移動</button>
+              <details class="kus-tab-more" id="u_kusTabMore">
+                <summary class="kus-tab-more__summary" title="可視化・出力 / データ・保守 系の補助機能">⋯ その他</summary>
+                <div class="kus-tab-more__body">
+                  <div class="kus-tab-more__group">
+                    <div class="kus-tab-more__group-lbl">可視化・出力</div>
+                    <button class="tab" data-tab="er" data-state="idle">ER図</button>
+                    <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
+                    <button class="tab" data-tab="design" data-state="idle">設計書</button>
+                    <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
+                    <button class="tab" data-tab="analyze" data-state="idle">分析</button>
+                  </div>
+                  <div class="kus-tab-more__group">
+                    <div class="kus-tab-more__group-lbl">データ・保守</div>
+                    <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
+                    <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
+                  </div>
                 </div>
-              </section>
+              </details>
             </div>
+          </div>
+
+          <div class="card tab-card">
+
+            <!-- 差分比較タブの中身は kus-header-diff-suite に集約しているため、ここは空 -->
+            <div class="pane" data-pane="diff"></div>
 
             <div class="pane active" data-pane="reflect">
-              <div class="subtabs subtabs--reflect-modes">
-                <button class="subtab active" data-subtab-parent="reflect" data-subtab="settings" title="標準ルートでプレビューへ反映">
-                  <span class="subtab-icon" aria-hidden="true">01</span>
-                  <span class="subtab-label">標準ルート</span>
-                  <span class="subtab-sub">まず使う</span>
-                </button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="diff" title="差分比較結果から反映する項目を選択">
-                  <span class="subtab-icon" aria-hidden="true">02</span>
-                  <span class="subtab-label">詳細ルート</span>
-                  <span class="subtab-sub">差分ごと</span>
-                </button>
-                <button class="subtab" data-subtab-parent="reflect" data-subtab="json" title="JSONを直接編集して反映（開発者向け）">
-                  <span class="subtab-icon" aria-hidden="true">{ }</span>
-                  <span class="subtab-label">JSON</span>
-                  <span class="subtab-sub">必要時のみ</span>
-                </button>
-              </div>
+              <!-- ========================================================================
+                   シンプル化されたプレビュー反映タブ
+                   - 詳細操作はモーダルへ集約（標準/詳細/JSON/プラン/履歴/レポート/補助）
+                   - メインは「次のアクション + チェックリスト + 反映ボタン」だけに絞る
+                   ======================================================================== -->
+              <div class="reflect-simple-shell">
+                <!-- ヒーローカード: 次のアクション -->
+                <section class="reflect-hero-card" id="u_reflectHeroCard" aria-live="polite">
+                  <div class="reflect-hero-card__loading">読み込み中...</div>
+                </section>
 
-              <!-- ===== Subpane: settings (kintone設定画面風 / 一般ユーザー向け) ===== -->
-              <div class="subpane active" data-subpane-parent="reflect" data-subpane="settings">
-                <section class="reflect-mode-hero reflect-mode-hero--settings">
-                  <div class="reflect-mode-hero__icon" aria-hidden="true">01</div>
-                  <div class="reflect-mode-hero__copy">
-                    <div class="reflect-mode-hero__title">標準ルート</div>
-                    <div class="reflect-mode-hero__desc">セクション単位で反映対象を決め、実行前プランと安全チェックを通して比較先プレビューへ反映します。迷ったときはこの画面だけで進めます。</div>
+                <!-- ステータスバッジ + 反映先 + 安全設定 -->
+                <section class="reflect-status-grid">
+                  <div class="reflect-status-grid__target">
+                    <div class="reflect-status-grid__label">反映先</div>
+                    <div class="reflect-target-badge" id="u_reflectTargetBadge" title="反映先アプリの情報"></div>
+                    <div class="reflect-target-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
+                  </div>
+                  <div class="reflect-status-grid__badges">
+                    <div class="reflect-status-grid__label">状態</div>
+                    <div id="u_reflectFooterBadges" aria-live="polite"></div>
+                  </div>
+                  <div class="reflect-status-grid__safety">
+                    <div class="reflect-status-grid__label">安全設定</div>
+                    <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します（推奨）">
+                      <input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存 <span class="kus-recommended-mark">★</span>
+                    </label>
+                    <label class="chip" title="APIエラーが出た時点で残りの反映を止めます（推奨）">
+                      <input type="checkbox" id="u_stopOnError" checked> エラー時中断 <span class="kus-recommended-mark">★</span>
+                    </label>
+                    <input type="checkbox" id="u_doDeploy" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true">
                   </div>
                 </section>
-                <div id="u_applyScopeBlock" style="display:none"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
-                <div class="reflect-settings-inner">
-                  <div class="reflect-inner-tabs" role="tablist" aria-label="反映対象の切替">
-                    <button type="button" class="reflect-inner-tab active" data-reflect-inner="overview" role="tab" aria-selected="true">概要</button>
-                    <button type="button" class="reflect-inner-tab" data-reflect-inner="field" role="tab" aria-selected="false">フィールド調整</button>
-                    <button type="button" class="reflect-inner-tab" data-reflect-inner="other" role="tab" aria-selected="false">他設定調整</button>
-                  </div>
 
-                  <div class="reflect-inner-pane active" data-reflect-inner-pane="overview">
-                    <div class="reflect-layout" id="u_reflectLayout">
-                      <div class="reflect-main">
-                        <div class="main-header reflect-main-header">
-                          <div class="reflect-main-header__text">
-                            <div class="main-title" id="u_reflectMainTitle">いまの反映内容</div>
-                            <div class="main-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
-                          </div>
-                        </div>
-                        <div class="main-body" id="u_reflectMainBody">
-                          <div class="scope-launcher-card scope-launcher-card--reflect">
-                            <div class="scope-launcher-copy">
-                              <div class="scope-launcher-kicker">ステップ1</div>
-                              <div class="scope-launcher-title">反映するセクションを絞ります</div>
-                              <div class="scope-launcher-summary" id="u_reflectScopeSummary">読み込み中...</div>
-                            </div>
-                            <div class="scope-launcher-actions">
-                              <button type="button" class="btn sub" data-act="openReflectScopePicker">反映セクションを選ぶ</button>
-                            </div>
-                          </div>
-                          <div id="u_reflectAssist"></div>
-                          <div id="u_reflectHowto" style="margin-bottom:10px"></div>
-                          <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
-                          <div class="reflect-plan-preview" id="u_reflectPlanPreview" aria-live="polite"></div>
-                          <div class="reflect-post-apply-host" id="u_reflectPostApply" aria-live="polite" style="display:none"></div>
-                          <div id="u_reflectApplyReport" class="reflect-apply-report" aria-live="polite"></div>
-                          <div id="u_reflectApplyHistory" class="reflect-apply-history" aria-live="polite"></div>
-                          <div id="u_reflectOverview"></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="reflect-inner-pane" data-reflect-inner-pane="field">
-                    <section class="opt-card reflect-preview-editor-card" id="u_reflectPreviewEditorFold" style="margin:12px">
-                      <div class="opt-title">フィールド設定画面（プレビューエディタ）</div>
-                      <p class="reflect-preview-editor-lead">kintoneの「フォーム設定」画面のように、フィールドを並べ替えたり、比較元カードから比較先カードへドラッグ＆ドロップで設定上書き（code/typeは保持）できます。JSON編集とUndoにも対応します。</p>
-                      <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
-                    </section>
-                  </div>
-
-                  <div class="reflect-inner-pane" data-reflect-inner-pane="other">
-                    <section class="opt-card" style="margin:12px">
-                      <div class="opt-title">他設定の差分エディタ</div>
-                      <p class="muted" style="margin:0 0 8px;font-size:12px">セクション（ビュー・レイアウト・プロセス管理・通知・権限など）を選び、比較元と比較先を見比べながら比較先JSONを調整できます。</p>
-                      <div id="u_sectionPreviewEditor" class="section-preview-editor"></div>
-                    </section>
-                  </div>
-                </div>
-              </div>
-
-              <!-- ===== Subpane: json (開発者向け) ===== -->
-              <div class="subpane" data-subpane-parent="reflect" data-subpane="json">
-                <section class="reflect-mode-hero reflect-mode-hero--json">
-                  <div class="reflect-mode-hero__icon" aria-hidden="true">{ }</div>
-                  <div class="reflect-mode-hero__copy">
-                    <div class="reflect-mode-hero__title">JSON</div>
-                    <div class="reflect-mode-hero__desc">パッチJSONを直接編集して反映できます。差分比較結果を取り込んで調整し、比較先プレビューに書き込みます。</div>
-                  </div>
-                </section>
-                <div id="u_patchJsonPanel" style="display:block">
-                  <div class="opt-card" style="margin:12px">
-                    <div class="opt-title">パッチJSON編集</div>
-                    <div class="muted" style="margin-bottom:6px">パッチJSONファイルを読み込むか、差分比較結果から生成した内容をそのまま使って、比較先プレビューに反映します。</div>
-                    <div class="btns" style="margin-bottom:6px">
-                      <button class="btn sub" data-act="patchJsonUseCurrentDiff">差分比較結果を読込</button>
-                      <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
-                      <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
-                      <button class="btn sub" data-act="patchJsonClear">クリア</button>
-                    </div>
-                    <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
-                    <div id="u_patchJsonEditor" style="width:100%;height:400px;border-radius:6px;"></div>
-                    <div style="margin-top:10px;font-size:11px;font-weight:700;color:#334155">JSON差分比較</div>
-                    <div id="u_patchJsonDiff" style="margin-top:6px;min-height:120px;max-height:420px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
-                    <div class="btns" style="margin-top:6px">
-                      <button class="btn ok" data-act="applyPatchJson">この内容で反映</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- ===== Subpane: diff (差分から反映フィールドを調整) ===== -->
-              <div class="subpane" data-subpane-parent="reflect" data-subpane="diff">
-                <section class="reflect-mode-hero reflect-mode-hero--diff">
-                  <div class="reflect-mode-hero__icon" aria-hidden="true">02</div>
-                  <div class="reflect-mode-hero__copy">
-                    <div class="reflect-mode-hero__title">詳細ルート</div>
-                    <div class="reflect-mode-hero__desc">差分ごとに「比較元を採用」「比較先を維持」を切り替え、必要な変更だけをプレビューへ反映します。標準ルートで足りないときに使います。</div>
-                  </div>
-                </section>
-                <div class="reflect-layout">
-                  <div class="reflect-main" style="width:100%">
-                    <div class="main-body" style="padding:12px">
-                      <div class="warnbox" id="u_nodeWarn" style="display:none">一部だけ選んで反映するには、先に差分比較を実行してから「差分候補を読込」を押してください。</div>
-                      <div id="u_reflectHint" class="kv" style="display:none"></div>
-                      <div id="u_nodeControls" class="reflect-node-controls" style="display:none">
-                        <div class="reflect-node-controls__primary">
-                          <button class="btn btn-primary-emphasis" data-act="runDiffLoadReflectNodes">差分比較して候補作成</button>
-                          <button class="btn sub" data-act="selectVisibleReflectNodes">表示中を選択</button>
-                          <button class="btn ok" data-act="reflectModeVisibleSrc">表示中を比較元にする</button>
-                        </div>
-                        <div class="reflect-quick-presets" id="u_reflectQuickPresets" aria-label="差分選択クイックプリセット"></div>
-                        <details class="diff-fold reflect-inline-fold reflect-inline-fold--node">
-                          <summary class="diff-fold-summary">
-                            <span class="diff-fold-title">補助操作</span>
-                            <span class="diff-fold-sub">解除、比較先維持、Undo / Redo、JSON保存が必要なときだけ開きます</span>
-                          </summary>
-                          <div class="diff-fold-body">
-                            <div class="reflect-node-controls__secondary">
-                              <button class="btn sub" data-act="loadReflectNodes">現在の差分から候補読込</button>
-                              <button class="btn sub" data-act="clearVisibleReflectNodes">表示中の選択解除</button>
-                              <button class="btn ok" data-act="reflectModeVisibleTgt">表示中を比較先にする</button>
-                              <button class="btn sub" data-act="selectHighSeverityReflectNodes">高重要度を選択</button>
-                              <button class="btn sub" data-act="selectReflectNodesAll">候補を全選択</button>
-                              <button class="btn sub" data-act="clearReflectNodes">候補を全解除</button>
-                              <button class="btn ok" data-act="reflectModeAllSrc">すべて比較元にする</button>
-                              <button class="btn ok" data-act="reflectModeAllTgt">すべて比較先にする</button>
-                              <button class="btn sub" data-act="reflectUndo">元に戻す</button>
-                              <button class="btn sub" data-act="reflectRedo">やり直す</button>
-                              <button class="btn sub" data-act="exportReflectSelection" title="選択ノード・モードをJSONで保存してレビュアーに共有">選択をJSONで保存</button>
-                              <button class="btn sub" data-act="importReflectSelection" title="保存した選択JSONを読み込み、同じノード・モードを復元">選択JSONを読込</button>
-                              <input type="file" id="u_reflectSelectionFileInput" accept="application/json" style="display:none">
-                            </div>
-                          </div>
-                        </details>
-                      </div>
-                      <div id="u_nodeFilterBlock" style="display:none;margin-bottom:8px">
-                        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                          <input type="text" id="u_nodeSearch" placeholder="パス / セクション名 / 理由 / 影響 で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                          <select id="u_nodeFilterSection" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px"><option value="">全セクション</option></select>
-                          <select id="u_nodeFilterType" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                            <option value="">全種別</option><option value="added">追加</option><option value="removed">削除</option><option value="changed">変更</option><option value="moved">移動</option>
-                          </select>
-                          <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
-                            <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
-                          </select>
-                          <button class="btn sub" type="button" data-act="toggleReflectPropertyPanel" style="padding:4px 8px;font-size:10px">プロパティで絞る</button>
-                          <button class="btn sub" data-act="clearReflectNodeFilters" style="padding:4px 8px;font-size:10px">絞り込み解除</button>
-                        </div>
-                        <div id="u_nodePropertyPanel" style="display:none;margin-top:8px;border:1px solid #d6dee8;border-radius:8px;background:#f8fafc;padding:8px 10px">
-                          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
-                            <div style="font-size:11px;font-weight:700;color:#334155">絞り込むプロパティ</div>
-                            <div style="display:flex;gap:6px">
-                              <button class="btn sub" type="button" data-act="selectAllReflectProperties" style="padding:3px 7px;font-size:10px">全選択</button>
-                              <button class="btn sub" type="button" data-act="clearReflectProperties" style="padding:3px 7px;font-size:10px">全解除</button>
-                            </div>
-                          </div>
-                          <div id="u_nodePropertyChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
-                          <div id="u_nodePropertyList" style="max-height:160px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:6px"></div>
-                        </div>
-                        <div id="u_activeFilterChips" class="reflect-active-chips" aria-live="polite"></div>
-                      </div>
-                      <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none;">
-                        <div class="reflect-node-pane">
-                          <div class="reflect-node-list-wrap">
-                            <div class="result" id="u_reflectNodeList" style="max-height:none;border:1px solid #dbe3ed;border-radius:8px;overflow:auto;flex:1"></div>
-                          </div>
-                        </div>
-                        <div class="reflect-node-detail" id="u_reflectNodeDetail"></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-
-              <div class="reflect-footer-stack" style="margin-top:auto">
-                <div class="reflect-footer-badges" id="u_reflectFooterBadges" aria-live="polite"></div>
-                <div class="reflect-footer-options" id="u_reflectOptionsCard">
-                  <div class="reflect-footer-options__label">反映前の安全設定</div>
+                <!-- 反映前チェックリスト -->
+                <section class="reflect-checklist-card">
                   <div class="reflect-apply-checklist" id="u_reflectApplyChecklist" aria-label="反映前チェックリスト">
                     <div class="reflect-apply-checklist__head">
                       <span>反映前チェック</span>
@@ -20394,51 +23923,412 @@ ${lines.join("\n")}
                       <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="target"> 反映先は比較先プレビュー</label>
                     </div>
                   </div>
-                  <div class="reflect-footer-options__chips">
-                    <label class="chip" title="反映直前に比較先プレビューの設定JSONを自動保存します（推奨）"><input type="checkbox" id="u_autoBackupPreview" checked> バックアップ自動保存 <span class="kus-recommended-mark" aria-label="推奨">★</span></label>
-                    <label class="chip" title="APIエラーが出た時点で残りの反映を止めます（推奨）"><input type="checkbox" id="u_stopOnError" checked> エラー時中断 <span class="kus-recommended-mark" aria-label="推奨">★</span></label>
-                    <span class="muted" style="font-size:11px;line-height:1.45;max-width:420px;display:inline-block;vertical-align:middle">本番デプロイAPIは利用できません。プレビュー反映後は管理画面から手動デプロイしてください。</span>
-                    <input type="checkbox" id="u_doDeploy" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
+                </section>
+
+                <!-- ルート選択カード（モーダル起動） -->
+                <section class="reflect-route-grid">
+                  <div class="reflect-route-grid__title">反映する内容を決める</div>
+                  <div class="reflect-route-grid__cards">
+                    <button type="button" class="reflect-route-card reflect-route-card--standard" data-act="openReflectScopePicker">
+                      <div class="reflect-route-card__no">01</div>
+                      <div class="reflect-route-card__body">
+                        <div class="reflect-route-card__title">標準ルート</div>
+                        <div class="reflect-route-card__desc">セクション単位で反映対象を選びます。まずはこちら。</div>
+                        <div class="reflect-route-card__summary" id="u_reflectScopeSummary">読み込み中...</div>
+                      </div>
+                      <div class="reflect-route-card__chev">›</div>
+                    </button>
+                    <button type="button" class="reflect-route-card reflect-route-card--node" data-act="openReflectNodeModal">
+                      <div class="reflect-route-card__no">02</div>
+                      <div class="reflect-route-card__body">
+                        <div class="reflect-route-card__title">詳細ルート</div>
+                        <div class="reflect-route-card__desc">差分ごとに「比較元 / 比較先」を切替えて部分反映します。</div>
+                        <div class="reflect-route-card__summary" id="u_reflectNodeSummary">候補未読込</div>
+                      </div>
+                      <div class="reflect-route-card__chev">›</div>
+                    </button>
+                    <button type="button" class="reflect-route-card reflect-route-card--json" data-act="openReflectJsonModal">
+                      <div class="reflect-route-card__no">{ }</div>
+                      <div class="reflect-route-card__body">
+                        <div class="reflect-route-card__title">JSON</div>
+                        <div class="reflect-route-card__desc">パッチJSONを直接編集して反映（開発者向け）。</div>
+                        <div class="reflect-route-card__summary" id="u_reflectJsonSummary">未読込</div>
+                      </div>
+                      <div class="reflect-route-card__chev">›</div>
+                    </button>
                   </div>
-                  <div id="u_backupStatus" style="display:none;margin-top:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46"></div>
-                </div>
-                <div class="reflect-footer-actions main-footer" id="u_reflectFooter">
-                  <div class="reflect-footer-actions__preview">
-                    <span class="reflect-footer-zone-label">プレビュー反映</span>
-                    <div class="reflect-footer-actions__primary">
-                      <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="比較先プレビューに対するAPIリクエスト内容を結果欄に表示します（実行前の確認）">実行前プラン確認</button>
-                      <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択した内容を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます">プレビューへ反映</button>
+                </section>
+
+                <!-- 詳細レビュー: フィールド/他設定をkintone風に確認・編集する導線 -->
+                <section class="reflect-detail-review" aria-label="詳細レビュー">
+                  <div class="reflect-detail-review__head">
+                    <div>
+                      <div class="reflect-detail-review__kicker">詳細レビュー（任意）</div>
+                      <div class="reflect-detail-review__title">kintoneフォーム風に並べて確認・上書き</div>
                     </div>
-                    <details class="diff-fold reflect-inline-fold reflect-inline-fold--footer">
-                      <summary class="diff-fold-summary">
-                        <span class="diff-fold-title">補助操作</span>
-                        <span class="diff-fold-sub">反映セクションで選んだ項目を保存・復元します（JS/CSS含む）</span>
-                      </summary>
-                      <div class="diff-fold-body">
-                        <div class="reflect-footer-actions__support">
-                          <button type="button" class="btn sub" data-act="runPreviewProdDiff" id="u_footerPreviewProdDiff" title="比較先アプリのプレビューと本番の差分を比較します。デプロイ待ちの変更を確認できます">プレビュー⇔本番を比較</button>
-                          <button type="button" class="btn sub" data-act="exportDryRunPlan" id="u_footerDryRun" title="APIを叩かずに、予定されているリクエスト一式をJSONファイルとして保存します（ドライラン）">ドライランJSONを保存</button>
-                          <button type="button" class="btn sub" data-act="backupTargetPreview" title="比較先のプレビュー設定をJSONファイルとして保存します。反映セクションでチェックした項目を対象にし、JS/CSS設定も含められます">今の比較先を保存</button>
-                          <button type="button" class="btn sub" data-act="restoreTargetPreviewBackup" title="このセッションで保存した直前バックアップを比較先プレビューへ戻します">直前保存を戻す</button>
+                    <div class="reflect-detail-review__sub">範囲を絞ったあと、フィールド粒度で内容を確認したい時に使います。</div>
+                  </div>
+                  <div class="reflect-detail-review__buttons">
+                    <button type="button" class="reflect-detail-btn" data-act="openReflectPreviewEditor" id="u_openFieldEditorBtnMain">
+                      <span class="reflect-detail-btn__icon" aria-hidden="true">🧱</span>
+                      <span class="reflect-detail-btn__text">
+                        <span class="reflect-detail-btn__title">フィールド設定エディタ</span>
+                        <span class="reflect-detail-btn__desc">比較元⇔比較先のフィールドをkintoneのフォーム設定風に並べて、ドラッグ＆ドロップで上書き。</span>
+                      </span>
+                      <span class="reflect-detail-btn__chev" aria-hidden="true">›</span>
+                    </button>
+                    <button type="button" class="reflect-detail-btn" data-act="openSectionPreviewEditor" id="u_openOtherEditorBtnMain">
+                      <span class="reflect-detail-btn__icon" aria-hidden="true">🧩</span>
+                      <span class="reflect-detail-btn__text">
+                        <span class="reflect-detail-btn__title">他設定エディタ</span>
+                        <span class="reflect-detail-btn__desc">ビュー / レイアウト / プロセス管理 / 通知 / 権限などを、セクション単位で個別調整。</span>
+                      </span>
+                      <span class="reflect-detail-btn__chev" aria-hidden="true">›</span>
+                    </button>
+                  </div>
+                </section>
+
+                <!-- 危険ゾーン: メイン反映ボタン -->
+                <section class="reflect-danger-zone">
+                  <div class="reflect-danger-zone__head">
+                    <span class="reflect-danger-zone__label">プレビュー反映</span>
+                    <div class="reflect-footer-next" id="u_reflectFooterNext" aria-live="polite"></div>
+                  </div>
+                  <div class="reflect-danger-zone__buttons">
+                    <button type="button" class="btn sub" data-act="previewApplyPlan" id="u_footerPlan" title="プラン内容を確認モーダルで表示">実行前プラン確認</button>
+                    <button type="button" class="btn ok" data-act="applyPreview" id="u_footerApply" title="選択内容を比較先プレビューへ反映">プレビューへ反映</button>
+                  </div>
+                  <div class="reflect-danger-zone__prod-note">
+                    <strong>本番反映</strong> はツールから実行できません。kintone管理画面から手動デプロイしてください。
+                  </div>
+                </section>
+
+                <!-- フッターリンク: 履歴・レポート・補助 -->
+                <section class="reflect-footer-links">
+                  <button type="button" class="reflect-footer-link" data-act="openReflectReportModal" id="u_openReportBtn">
+                    <span class="reflect-footer-link__icon">📊</span>
+                    <span>直近の反映結果</span>
+                    <span class="reflect-footer-link__badge" id="u_reflectReportBadge"></span>
+                  </button>
+                  <button type="button" class="reflect-footer-link" data-act="openReflectHistoryModal">
+                    <span class="reflect-footer-link__icon">🕘</span>
+                    <span>反映履歴</span>
+                    <span class="reflect-footer-link__badge" id="u_reflectHistoryBadge"></span>
+                  </button>
+                  <button type="button" class="reflect-footer-link" data-act="openReflectSupportModal">
+                    <span class="reflect-footer-link__icon">🛟</span>
+                    <span>バックアップ・復元・ドライラン</span>
+                  </button>
+                  <div id="u_backupStatus" class="reflect-footer-links__backup-status" style="display:none"></div>
+                  <div class="reflect-post-apply-host" id="u_reflectPostApply" aria-live="polite" style="display:none"></div>
+                </section>
+              </div>
+
+              <!-- ========================================================================
+                   モーダル群: 詳細ルート / JSON / プラン確認 / 履歴 / レポート / 補助
+                   ======================================================================== -->
+
+              <!-- モーダル: 詳細ルート（ノード選択） -->
+              <div class="reflect-modal-overlay" id="u_reflectNodeModal" hidden>
+                <div class="reflect-modal-backdrop" data-act="closeReflectModal" data-modal="node"></div>
+                <div class="reflect-modal-card reflect-modal-card--xl" role="dialog" aria-modal="true" aria-labelledby="u_reflectNodeModalTitle">
+                  <header class="reflect-modal-head">
+                    <div>
+                      <div class="reflect-modal-kicker">02 詳細ルート</div>
+                      <h3 class="reflect-modal-title" id="u_reflectNodeModalTitle">差分ごとに反映対象を選ぶ</h3>
+                      <p class="reflect-modal-sub">差分候補から「比較元 / 比較先」を切替え、必要な変更だけを反映します。</p>
+                    </div>
+                    <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="node" aria-label="閉じる">×</button>
+                  </header>
+                  <div class="reflect-modal-body">
+                    <div class="warnbox" id="u_nodeWarn" style="display:none">一部だけ選んで反映するには、先に差分比較を実行してから「差分候補を読込」を押してください。</div>
+                    <div id="u_reflectHint" class="kv" style="display:none"></div>
+                    <div id="u_nodeControls" class="reflect-node-controls" style="display:none">
+                      <div class="reflect-node-controls__primary">
+                        <button class="btn btn-primary-emphasis" data-act="runDiffLoadReflectNodes">差分比較して候補作成</button>
+                        <button class="btn sub" data-act="selectVisibleReflectNodes">表示中を選択</button>
+                        <button class="btn ok" data-act="reflectModeVisibleSrc">表示中を比較元にする</button>
+                      </div>
+                      <div class="reflect-quick-presets" id="u_reflectQuickPresets" aria-label="差分選択クイックプリセット"></div>
+                      <details class="diff-fold reflect-inline-fold reflect-inline-fold--node">
+                        <summary class="diff-fold-summary">
+                          <span class="diff-fold-title">補助操作</span>
+                          <span class="diff-fold-sub">解除、比較先維持、Undo / Redo、JSON保存</span>
+                        </summary>
+                        <div class="diff-fold-body">
+                          <div class="reflect-node-controls__secondary">
+                            <button class="btn sub" data-act="loadReflectNodes">現在の差分から候補読込</button>
+                            <button class="btn sub" data-act="clearVisibleReflectNodes">表示中の選択解除</button>
+                            <button class="btn ok" data-act="reflectModeVisibleTgt">表示中を比較先にする</button>
+                            <button class="btn sub" data-act="selectHighSeverityReflectNodes">高重要度を選択</button>
+                            <button class="btn sub" data-act="selectReflectNodesAll">候補を全選択</button>
+                            <button class="btn sub" data-act="clearReflectNodes">候補を全解除</button>
+                            <button class="btn ok" data-act="reflectModeAllSrc">すべて比較元にする</button>
+                            <button class="btn ok" data-act="reflectModeAllTgt">すべて比較先にする</button>
+                            <button class="btn sub" data-act="reflectUndo">元に戻す</button>
+                            <button class="btn sub" data-act="reflectRedo">やり直す</button>
+                            <button class="btn sub" data-act="exportReflectSelection" title="選択ノード・モードをJSONで保存">選択をJSONで保存</button>
+                            <button class="btn sub" data-act="importReflectSelection" title="保存した選択JSONを読み込み">選択JSONを読込</button>
+                            <input type="file" id="u_reflectSelectionFileInput" accept="application/json" style="display:none">
+                          </div>
+                        </div>
+                      </details>
+                    </div>
+                    <div id="u_nodeFilterBlock" style="display:none;margin-bottom:8px">
+                      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                        <input type="text" id="u_nodeSearch" placeholder="パス / セクション名 / 理由 / 影響 で絞り込み" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                        <select id="u_nodeFilterSection" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px"><option value="">全セクション</option></select>
+                        <select id="u_nodeFilterType" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                          <option value="">全種別</option><option value="added">追加</option><option value="removed">削除</option><option value="changed">変更</option><option value="moved">移動</option>
+                        </select>
+                        <select id="u_nodeFilterSeverity" style="padding:4px 6px;border:1px solid #d6dee8;border-radius:6px;font-size:11px">
+                          <option value="">全重要度</option><option value="HIGH">高</option><option value="MEDIUM">中</option><option value="LOW">低</option>
+                        </select>
+                        <button class="btn sub" type="button" data-act="toggleReflectPropertyPanel" style="padding:4px 8px;font-size:10px">プロパティで絞る</button>
+                        <button class="btn sub" data-act="clearReflectNodeFilters" style="padding:4px 8px;font-size:10px">絞り込み解除</button>
+                      </div>
+                      <div id="u_nodePropertyPanel" style="display:none;margin-top:8px;border:1px solid #d6dee8;border-radius:8px;background:#f8fafc;padding:8px 10px">
+                        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+                          <div style="font-size:11px;font-weight:700;color:#334155">絞り込むプロパティ</div>
+                          <div style="display:flex;gap:6px">
+                            <button class="btn sub" type="button" data-act="selectAllReflectProperties" style="padding:3px 7px;font-size:10px">全選択</button>
+                            <button class="btn sub" type="button" data-act="clearReflectProperties" style="padding:3px 7px;font-size:10px">全解除</button>
+                          </div>
+                        </div>
+                        <div id="u_nodePropertyChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
+                        <div id="u_nodePropertyList" style="max-height:160px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:6px"></div>
+                      </div>
+                      <div id="u_activeFilterChips" class="reflect-active-chips" aria-live="polite"></div>
+                    </div>
+                    <div class="reflect-node-workbench" id="u_reflectNodeWorkbench" style="display:none;">
+                      <div class="reflect-node-pane">
+                        <div class="reflect-node-list-wrap">
+                          <div class="result" id="u_reflectNodeList" style="max-height:none;border:1px solid #dbe3ed;border-radius:8px;overflow:auto;flex:1"></div>
                         </div>
                       </div>
-                    </details>
+                      <div class="reflect-node-detail" id="u_reflectNodeDetail"></div>
+                    </div>
                   </div>
-                  <div class="reflect-footer-actions__prod">
-                    <span class="reflect-footer-zone-label reflect-footer-zone-label--prod">本番反映</span>
-                    <span class="muted" style="font-size:11px;line-height:1.45;max-width:220px;display:inline-block">デプロイはkintone管理画面から手動で行ってください。</span>
-                  </div>
-                  <span class="footer-status" id="u_reflectFooterStatus"></span>
+                  <footer class="reflect-modal-foot">
+                    <button type="button" class="btn sub" data-act="closeReflectModal" data-modal="node">閉じる</button>
+                    <button type="button" class="btn sub" data-act="previewApplyPlan">プラン確認</button>
+                    <button type="button" class="btn ok" data-act="applyPreview">この差分を反映</button>
+                  </footer>
                 </div>
               </div>
 
-              <!-- Keep hidden inputs used by logic -->
-              <input type="checkbox" id="u_nodeMode" style="display:none">
-              <label class="reflect-simple-toggle chip" style="display:none"><input type="checkbox" id="u_reflectSimpleMode"></label>
-              <button type="button" id="u_modeSectionBtn" data-act="reflectModeSection" style="display:none"></button>
-              <button type="button" id="u_modeNodeBtn" data-act="reflectModeNode" style="display:none"></button>
-              <button data-act="togglePatchJsonPanel" style="display:none"></button>
-              <button data-act="openReflectPreviewEditor" style="display:none"></button>
+              <!-- モーダル: JSON パッチ -->
+              <div class="reflect-modal-overlay" id="u_reflectJsonModal" hidden>
+                <div class="reflect-modal-backdrop" data-act="closeReflectModal" data-modal="json"></div>
+                <div class="reflect-modal-card reflect-modal-card--lg" role="dialog" aria-modal="true" aria-labelledby="u_reflectJsonModalTitle">
+                  <header class="reflect-modal-head">
+                    <div>
+                      <div class="reflect-modal-kicker">{ } JSON ルート</div>
+                      <h3 class="reflect-modal-title" id="u_reflectJsonModalTitle">パッチJSONを編集して反映</h3>
+                      <p class="reflect-modal-sub">差分比較結果を取り込んで調整するか、外部JSONを読み込んで反映できます。</p>
+                    </div>
+                    <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="json" aria-label="閉じる">×</button>
+                  </header>
+                  <div class="reflect-modal-body">
+                    <div id="u_patchJsonPanel" style="display:block">
+                      <div class="btns" style="margin-bottom:6px">
+                        <button class="btn sub" data-act="patchJsonUseCurrentDiff">差分比較結果を読込</button>
+                        <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
+                        <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
+                        <button class="btn sub" data-act="patchJsonClear">クリア</button>
+                      </div>
+                      <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
+                      <div id="u_patchJsonEditor" style="width:100%;height:360px;border-radius:6px;"></div>
+                      <div style="margin-top:10px;font-size:11px;font-weight:700;color:#334155">JSON差分比較</div>
+                      <div id="u_patchJsonDiff" style="margin-top:6px;min-height:120px;max-height:320px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
+                    </div>
+                  </div>
+                  <footer class="reflect-modal-foot">
+                    <button type="button" class="btn sub" data-act="closeReflectModal" data-modal="json">閉じる</button>
+                    <button type="button" class="btn ok" data-act="applyPatchJson">この内容で反映</button>
+                  </footer>
+                </div>
+              </div>
+
+              <!-- モーダル: プラン確認 -->
+              <div class="reflect-modal-overlay" id="u_reflectPlanModal" hidden>
+                <div class="reflect-modal-backdrop" data-act="closeReflectModal" data-modal="plan"></div>
+                <div class="reflect-modal-card reflect-modal-card--xl" role="dialog" aria-modal="true" aria-labelledby="u_reflectPlanModalTitle">
+                  <header class="reflect-modal-head">
+                    <div>
+                      <div class="reflect-modal-kicker">📋 プラン確認</div>
+                      <h3 class="reflect-modal-title" id="u_reflectPlanModalTitle">実行前プラン</h3>
+                      <p class="reflect-modal-sub">比較先プレビューに送信される予定のAPIリクエストを確認してから反映します。</p>
+                    </div>
+                    <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="plan" aria-label="閉じる">×</button>
+                  </header>
+                  <div class="reflect-modal-body">
+                    <div class="reflect-plan-inline" id="u_reflectPlanInline" aria-live="polite"></div>
+                    <div class="reflect-plan-preview" id="u_reflectPlanPreview" aria-live="polite"></div>
+                  </div>
+                  <footer class="reflect-modal-foot">
+                    <button type="button" class="btn sub" data-act="exportDryRunPlan">ドライランJSONを保存</button>
+                    <button type="button" class="btn sub" data-act="closeReflectModal" data-modal="plan">閉じる</button>
+                    <button type="button" class="btn ok" data-act="applyPreview" data-source="planModal">このプランで反映</button>
+                  </footer>
+                </div>
+              </div>
+
+              <!-- モーダル: 履歴 -->
+              <div class="reflect-modal-overlay" id="u_reflectHistoryModal" hidden>
+                <div class="reflect-modal-backdrop" data-act="closeReflectModal" data-modal="history"></div>
+                <div class="reflect-modal-card reflect-modal-card--md" role="dialog" aria-modal="true" aria-labelledby="u_reflectHistoryModalTitle">
+                  <header class="reflect-modal-head">
+                    <div>
+                      <div class="reflect-modal-kicker">🕘 履歴</div>
+                      <h3 class="reflect-modal-title" id="u_reflectHistoryModalTitle">反映履歴</h3>
+                      <p class="reflect-modal-sub">この端末（localStorage）に保存された反映ログを確認できます。</p>
+                    </div>
+                    <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="history" aria-label="閉じる">×</button>
+                  </header>
+                  <div class="reflect-modal-body">
+                    <div id="u_reflectApplyHistory" class="reflect-apply-history" aria-live="polite"></div>
+                  </div>
+                  <footer class="reflect-modal-foot">
+                    <button type="button" class="btn sub" data-act="exportApplyHistory">JSONで書き出し</button>
+                    <button type="button" class="btn sub" data-act="closeReflectModal" data-modal="history">閉じる</button>
+                  </footer>
+                </div>
+              </div>
+
+              <!-- モーダル: レポート -->
+              <div class="reflect-modal-overlay" id="u_reflectReportModal" hidden>
+                <div class="reflect-modal-backdrop" data-act="closeReflectModal" data-modal="report"></div>
+                <div class="reflect-modal-card reflect-modal-card--md" role="dialog" aria-modal="true" aria-labelledby="u_reflectReportModalTitle">
+                  <header class="reflect-modal-head">
+                    <div>
+                      <div class="reflect-modal-kicker">📊 レポート</div>
+                      <h3 class="reflect-modal-title" id="u_reflectReportModalTitle">直近の反映結果</h3>
+                      <p class="reflect-modal-sub">最後に実行した反映のセクション別成否を確認します。</p>
+                    </div>
+                    <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="report" aria-label="閉じる">×</button>
+                  </header>
+                  <div class="reflect-modal-body">
+                    <div id="u_reflectApplyReport" class="reflect-apply-report" aria-live="polite"></div>
+                  </div>
+                  <footer class="reflect-modal-foot">
+                    <button type="button" class="btn sub" data-act="closeReflectModal" data-modal="report">閉じる</button>
+                  </footer>
+                </div>
+              </div>
+
+              <!-- モーダル: 補助操作 -->
+              <div class="reflect-modal-overlay" id="u_reflectSupportModal" hidden>
+                <div class="reflect-modal-backdrop" data-act="closeReflectModal" data-modal="support"></div>
+                <div class="reflect-modal-card reflect-modal-card--md" role="dialog" aria-modal="true" aria-labelledby="u_reflectSupportModalTitle">
+                  <header class="reflect-modal-head">
+                    <div>
+                      <div class="reflect-modal-kicker">🛟 補助</div>
+                      <h3 class="reflect-modal-title" id="u_reflectSupportModalTitle">バックアップ・復元・差分</h3>
+                      <p class="reflect-modal-sub">反映先の保存・復元・プレビュー⇔本番の差分など、運用補助の操作を集めています。</p>
+                    </div>
+                    <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="support" aria-label="閉じる">×</button>
+                  </header>
+                  <div class="reflect-modal-body">
+                    <div class="reflect-support-grid">
+                      <div class="reflect-support-item">
+                        <div class="reflect-support-item__title">プレビュー比較</div>
+                        <p class="reflect-support-item__desc">比較先アプリのプレビューと本番の差分を確認します。デプロイ待ちの変更がわかります。</p>
+                        <button type="button" class="btn sub" data-act="runPreviewProdDiff" id="u_footerPreviewProdDiff">プレビュー⇔本番を比較</button>
+                      </div>
+                      <div class="reflect-support-item">
+                        <div class="reflect-support-item__title">バックアップ</div>
+                        <p class="reflect-support-item__desc">比較先のプレビュー設定をJSONで保存します。反映で選んだセクションが対象です。</p>
+                        <button type="button" class="btn sub" data-act="backupTargetPreview">今の比較先を保存</button>
+                        <button type="button" class="btn sub" data-act="importTargetPreviewBackupFile">保存済みJSONを読込</button>
+                        <button type="button" class="btn sub" data-act="restoreTargetPreviewBackup">直前保存を戻す</button>
+                        <input type="file" id="u_targetPreviewBackupFileInput" accept="application/json" style="display:none">
+                      </div>
+                      <div class="reflect-support-item">
+                        <div class="reflect-support-item__title">ドライラン</div>
+                        <p class="reflect-support-item__desc">APIを実行せず、予定リクエスト一式をJSONで保存します。</p>
+                        <button type="button" class="btn sub" data-act="exportDryRunPlan" id="u_footerDryRun">ドライランJSONを保存</button>
+                      </div>
+                      <div class="reflect-support-item">
+                        <div class="reflect-support-item__title">フィールド調整</div>
+                        <p class="reflect-support-item__desc">比較元と比較先のフィールド設定を、kintoneのフォーム設定風に並べて調整できます。</p>
+                        <button type="button" class="btn sub" data-act="openReflectPreviewEditor" id="u_openFieldEditorBtn">フィールド設定エディタ</button>
+                      </div>
+                      <div class="reflect-support-item">
+                        <div class="reflect-support-item__title">他設定エディタ</div>
+                        <p class="reflect-support-item__desc">ビュー / レイアウト / プロセス管理 / 通知 / 権限などをセクション単位で調整します。</p>
+                        <button type="button" class="btn sub" data-act="openSectionPreviewEditor">他設定エディタを開く</button>
+                      </div>
+                    </div>
+                    <div id="u_backupStatus" style="display:none;margin-top:10px;padding:6px 10px;border-radius:6px;font-size:11px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46"></div>
+                  </div>
+                  <footer class="reflect-modal-foot">
+                    <button type="button" class="btn sub" data-act="closeReflectModal" data-modal="support">閉じる</button>
+                  </footer>
+                </div>
+              </div>
+
+              <!-- モーダル: フィールド設定エディタ（既存ペイン） -->
+              <div class="reflect-modal-overlay" id="u_reflectFieldEditorModal" hidden>
+                <div class="reflect-modal-backdrop" data-act="closeReflectModal" data-modal="fieldEditor"></div>
+                <div class="reflect-modal-card reflect-modal-card--xl" role="dialog" aria-modal="true">
+                  <header class="reflect-modal-head">
+                    <div>
+                      <div class="reflect-modal-kicker">🧱 フィールド調整</div>
+                      <h3 class="reflect-modal-title">フィールド設定エディタ</h3>
+                      <p class="reflect-modal-sub">kintoneの「フォーム設定」風に、比較元⇔比較先のフィールドを並べ替え・上書きできます。</p>
+                    </div>
+                    <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="fieldEditor" aria-label="閉じる">×</button>
+                  </header>
+                  <div class="reflect-modal-body">
+                    <section class="opt-card reflect-preview-editor-card" id="u_reflectPreviewEditorFold">
+                      <p class="reflect-preview-editor-lead">フィールドを並べ替えたり、比較元カードから比較先カードへドラッグ＆ドロップで設定上書き（code/typeは保持）できます。JSON編集とUndoにも対応します。</p>
+                      <div id="u_reflectPreviewPlayground" class="reflect-preview-playground"></div>
+                    </section>
+                  </div>
+                  <footer class="reflect-modal-foot">
+                    <button type="button" class="btn sub" data-act="closeReflectModal" data-modal="fieldEditor">閉じる</button>
+                  </footer>
+                </div>
+              </div>
+
+              <!-- モーダル: 他設定エディタ（既存ペイン） -->
+              <div class="reflect-modal-overlay" id="u_reflectOtherEditorModal" hidden>
+                <div class="reflect-modal-backdrop" data-act="closeReflectModal" data-modal="otherEditor"></div>
+                <div class="reflect-modal-card reflect-modal-card--xl" role="dialog" aria-modal="true">
+                  <header class="reflect-modal-head">
+                    <div>
+                      <div class="reflect-modal-kicker">🧩 他設定</div>
+                      <h3 class="reflect-modal-title">他設定エディタ</h3>
+                      <p class="reflect-modal-sub">セクション（ビュー・レイアウト・プロセス管理・通知・権限など）を選び、比較先JSONを直接調整できます。</p>
+                    </div>
+                    <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="otherEditor" aria-label="閉じる">×</button>
+                  </header>
+                  <div class="reflect-modal-body">
+                    <section class="opt-card">
+                      <div id="u_sectionPreviewEditor" class="section-preview-editor"></div>
+                    </section>
+                  </div>
+                  <footer class="reflect-modal-foot">
+                    <button type="button" class="btn sub" data-act="closeReflectModal" data-modal="otherEditor">閉じる</button>
+                  </footer>
+                </div>
+              </div>
+
+              <!-- 後方互換: ロジック側が参照する隠しスロット -->
+              <div class="reflect-legacy-slots" hidden aria-hidden="true">
+                <div id="u_applyScopeBlock"><div class="chips diff-scope-chips" id="u_applyScopes"></div></div>
+                <div id="u_reflectMainTitle"></div>
+                <div id="u_reflectAssist"></div>
+                <div id="u_reflectHowto"></div>
+                <div id="u_reflectOverview"></div>
+                <div class="reflect-layout" id="u_reflectLayout"></div>
+                <input type="checkbox" id="u_nodeMode">
+                <label class="reflect-simple-toggle chip"><input type="checkbox" id="u_reflectSimpleMode"></label>
+                <button type="button" id="u_modeSectionBtn" data-act="reflectModeSection"></button>
+                <button type="button" id="u_modeNodeBtn" data-act="reflectModeNode"></button>
+                <button data-act="togglePatchJsonPanel"></button>
+              </div>
             </div>
             <div class="pane" data-pane="field">
               <div class="subtabs">
@@ -21065,9 +24955,11 @@ ${lines.join("\n")}
                 </div>
                 </div>
               </details>
-              <div class="btns" style="margin-top:10px">
-                <button type="button" class="btn" data-act="runSettingsExportJson" title="1ファイルのJSONにまとめて保存">JSONバックアップ</button>
-                <button type="button" class="btn dark" data-act="runSettingsExportZip" title="アプリごとに分割してZIP">ZIPバックアップ</button>
+              <div class="btns" style="margin-top:10px;align-items:center">
+                <span style="font-weight:600;font-size:12px;color:#0f172a;margin-right:4px">▶ 実行:</span>
+                <button type="button" class="btn ok" data-act="runSettingsExportJson" title="1ファイルのJSONにまとめて保存">JSONで一括取得</button>
+                <button type="button" class="btn dark" data-act="runSettingsExportZip" title="アプリごとに分割してZIP">ZIPで一括取得</button>
+                <span style="font-size:11px;color:#64748b;margin-left:6px">※ 上のフォームでアプリIDとセクションを指定後、ここで実行</span>
               </div>
               <div class="result" id="u_settingsExportResult" style="max-height:220px;margin-top:8px"></div>
               </div>
@@ -21270,6 +25162,10 @@ ${lines.join("\n")}
                     <button class="btn sub" data-act="applyScopeNone">全解除</button>
                     <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn">差分のみ</button>
                     <button class="btn sub" data-act="applyScopeHighRisk">高重要度</button>
+                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="safe">安全寄り</button>
+                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="visual">画面系</button>
+                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="permissions">権限系</button>
+                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="customize">JS/CSS</button>
                   </div>
                   <div class="reflect-preset-row" title="接続先とセクション選択をまとめてプリセットに保存/復元します">
                     <span class="reflect-preset-row__label">反映プリセット</span>
@@ -21778,7 +25674,7 @@ ${lines.join("\n")}
     if (!sel) return;
     const sets = loadRaw2();
     const cur = sel.value;
-    const curSig = currentDiffSignature2();
+    const curSig = currentDiffSignature();
     sel.innerHTML = '<option value="">-- 読込 --</option>' + sets.map((s) => {
       const bad = s.signature && s.signature !== curSig;
       return `<option value="${escapeAttr2(s.name)}">${escapeAttr2(s.name)}${bad ? " (条件不一致)" : ""}</option>`;
@@ -21791,7 +25687,7 @@ ${lines.join("\n")}
   function saveDiffSelectionSet(name) {
     const n = String(name || "").trim();
     if (!n) throw new Error("セット名を入力してください");
-    const sig = currentDiffSignature2();
+    const sig = currentDiffSignature();
     const ids = [...state.diffSelectedIds || []];
     const list = loadRaw2().filter((x) => x.name !== n);
     list.unshift({
@@ -21810,7 +25706,7 @@ ${lines.join("\n")}
     if (!n) return false;
     const row = loadRaw2().find((x) => x.name === n);
     if (!row || !Array.isArray(row.ids)) return false;
-    const curSig = currentDiffSignature2();
+    const curSig = currentDiffSignature();
     const mismatch = !!(row.signature && row.signature !== curSig);
     state.diffSelectedIds = new Set(row.ids.filter((id) => (state.lastDiffRows || []).some((r) => r._id === id)));
     renderResultRows(state.lastDiffRows || []);
@@ -24070,13 +27966,15 @@ ${lines.join("\n")}
         await apiPost(guestPrefix, "/records.json", { app: tgtAppId, records: batch });
         successCount += batch.length;
       } catch (e) {
-        throw new Error(`レコード登録エラー（${i + 1}件目付近）: ${e.message}`);
+        setBusy(false);
+        throw new Error(`レコード登録エラー（${i + 1}～${i + batch.length}件目付近 / 既に成功 ${successCount}件）: ${e && e.message || e}`);
       }
     }
     setBusy(false);
     showToast(`完了: ${successCount}件のレコードを登録しました。`, "success");
     fileInput.value = "";
-    getToolDocument().getElementById("u_csvImportFileName").textContent = "未選択";
+    const fnEl = getToolDocument().getElementById("u_csvImportFileName");
+    if (fnEl) fnEl.textContent = "未選択";
   }
   async function runRecordBackup() {
     const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
@@ -24326,8 +28224,16 @@ ${lines.join("\n")}
     setBusy(true, "比較元のレコードを取得中...");
     let totalFetched = 0;
     const records = [];
+    const userQueryHasOrder = /\border\s+by\b/i.test(query);
+    const userQueryHasLimit = /\blimit\s+\d+/i.test(query);
+    if (userQueryHasLimit) {
+      showToast("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。", "warn");
+      setBusy(false);
+      return;
+    }
+    const baseQuery = userQueryHasOrder ? query : `${query} order by $id asc`;
     while (true) {
-      const q = `${query} limit 500 offset ${totalFetched}`;
+      const q = `${baseQuery} limit 500 offset ${totalFetched}`;
       const res = await apiGet(srcGuest, "/records.json", { app: srcApp, query: q });
       if (!res.records || res.records.length === 0) break;
       records.push(...res.records);
@@ -24340,24 +28246,39 @@ ${lines.join("\n")}
       setBusy(false);
       return;
     }
-    const systemFields = ["$id", "$revision", "作成者", "作成日時", "更新者", "更新日時", "レコード番号", "ステータス", "作業者"];
-    const systemTypes = ["RECORD_NUMBER", "CREATOR", "CREATED_TIME", "MODIFIER", "UPDATED_TIME", "STATUS", "STATUS_ASSIGNEE", "CALC"];
+    const systemTypes = /* @__PURE__ */ new Set([
+      "RECORD_NUMBER",
+      "CREATOR",
+      "CREATED_TIME",
+      "MODIFIER",
+      "UPDATED_TIME",
+      "STATUS",
+      "STATUS_ASSIGNEE",
+      "CALC",
+      "CATEGORY",
+      "__ID__",
+      "__REVISION__"
+    ]);
+    const systemKeys = /* @__PURE__ */ new Set(["$id", "$revision"]);
     const cleanRecords = records.map((rec) => {
       const clean = {};
       for (const [k, v] of Object.entries(rec)) {
-        if (!systemFields.includes(k) && !systemTypes.includes(v.type)) {
-          if (v.type === "SUBTABLE") {
-            const cleanSub = v.value.map((sRow) => {
-              const cleanSRow = {};
-              for (const [sk, sv] of Object.entries(sRow.value)) {
-                cleanSRow[sk] = { value: sv.value };
-              }
-              return { value: cleanSRow };
-            });
-            clean[k] = { value: cleanSub };
-          } else {
-            clean[k] = { value: v.value };
-          }
+        if (!v || typeof v !== "object") continue;
+        if (systemKeys.has(k)) continue;
+        if (systemTypes.has(v.type)) continue;
+        if (v.type === "SUBTABLE") {
+          const rows = Array.isArray(v.value) ? v.value : [];
+          const cleanSub = rows.map((sRow) => {
+            const inner = sRow && typeof sRow === "object" && sRow.value && typeof sRow.value === "object" ? sRow.value : {};
+            const cleanSRow = {};
+            for (const [sk, sv] of Object.entries(inner)) {
+              if (sv && typeof sv === "object") cleanSRow[sk] = { value: sv.value };
+            }
+            return { value: cleanSRow };
+          });
+          clean[k] = { value: cleanSub };
+        } else {
+          clean[k] = { value: v.value };
         }
       }
       return clean;
@@ -24383,7 +28304,8 @@ ${lines.join("\n")}
         await apiPost(tgtGuest, "/records.json", { app: tgtApp, records: batch });
         successCount += batch.length;
       } catch (e) {
-        throw new Error(`レコード登録エラー（${i + 1}件目付近）: ${e.message}`);
+        setBusy(false);
+        throw new Error(`レコード登録エラー（${i + 1}～${i + batch.length}件目付近 / 既に成功 ${successCount}件）: ${e && e.message || e}`);
       }
     }
     setBusy(false);
@@ -24492,20 +28414,60 @@ ${lines.join("\n")}
   }
   function renderSettingsExportSummary(rows, scopes) {
     const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(", ");
-    const body = rows.map((r) => `<tr>
-    <td>${esc(r.appId)}</td>
-    <td>${esc(String(r.okCount))}</td>
-    <td>${esc(String(r.ngCount))}</td>
-    <td>${esc(r.pluginConfigLabel || "-")}</td>
-    <td>${esc(r.note || "-")}</td>
-  </tr>`).join("");
+    const stashed = Array.isArray(state.lastSettingsExportBundles) ? state.lastSettingsExportBundles : [];
+    const stashedById = new Map(stashed.map((b) => [String(b?.appId || ""), b]));
+    const body = rows.map((r) => {
+      const idStr = String(r.appId);
+      const canLoad = stashedById.has(idStr);
+      const loadCell = canLoad ? `<div class="settings-export-load-actions">
+          <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="source" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較元」としてセットし差分タブへ移動">比較元へ</button>
+          <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="target" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較先」としてセットし差分タブへ移動">比較先へ</button>
+        </div>` : '<span class="muted" style="font-size:10px">取得失敗</span>';
+      return `<tr>
+      <td>${esc(idStr)}</td>
+      <td>${esc(String(r.okCount))}</td>
+      <td>${esc(String(r.ngCount))}</td>
+      <td>${esc(r.pluginConfigLabel || "-")}</td>
+      <td>${esc(r.note || "-")}</td>
+      <td>${loadCell}</td>
+    </tr>`;
+    }).join("");
     return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || "-")}</div>
     <table>
-      <thead><tr><th>アプリID</th><th>取得OK</th><th>取得NG</th><th>プラグイン設定</th><th>メモ</th></tr></thead>
-      <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
+      <thead><tr><th>アプリID</th><th>取得OK</th><th>取得NG</th><th>プラグイン設定</th><th>メモ</th><th style="width:160px">差分タブへ</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
     </table>
   `;
+  }
+  function loadSettingsExportBundleToDiff(appId, side) {
+    const stash = Array.isArray(state.lastSettingsExportBundles) ? state.lastSettingsExportBundles : [];
+    const bundle = stash.find((b) => String(b?.appId || "") === String(appId));
+    if (!bundle) return false;
+    const cloned = JSON.parse(JSON.stringify(bundle));
+    if (side === "source") {
+      state.importedSourceBundle = cloned;
+      state.importedSourceName = `settings-export:app${appId}`;
+      state.lastSourceBundle = cloned;
+    } else {
+      state.importedTargetBundle = cloned;
+      state.importedTargetName = `settings-export:app${appId}`;
+      state.lastTargetBundle = cloned;
+    }
+    state.lastDiffAt = null;
+    state.lastDiffRows = [];
+    state.lastFetchIssues = [];
+    state.lastDiffSignature = "";
+    state.lastApplyPlan = null;
+    state.diffSelectedIds = /* @__PURE__ */ new Set();
+    state.diffIgnoreSuggestions = [];
+    state.reflectRows = [];
+    state.reflectSelectedIds = /* @__PURE__ */ new Set();
+    state.reflectNodeModes = {};
+    state.reflectUndoStack = [];
+    state.reflectRedoStack = [];
+    state.reflectActiveNodeId = "";
+    return true;
   }
   function formatPluginConfigSummary2(backup) {
     if (!backup || !backup.requested) return "-";
@@ -24620,6 +28582,7 @@ ${lines.join("\n")}
         note: noteParts.join(" / ")
       });
     }
+    state.lastSettingsExportBundles = bundles;
     ui.settingsExportResult.innerHTML = renderSettingsExportSummary(rows, scopes);
     const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
     const payload = {
@@ -25249,13 +29212,56 @@ ${lines.join("\n")}
   }
 
   // src/handlers.ts
-  function withGuard(fn, busyText = "") {
+  var WITHGUARD_DEFAULT_TIMEOUT_MS = 18e4;
+  function releaseRunningGuard() {
+    if (state.runningWatchdogId) {
+      try {
+        clearTimeout(state.runningWatchdogId);
+      } catch {
+      }
+      state.runningWatchdogId = null;
+    }
+    state.running = false;
+    state.runningStartedAt = null;
+    state.runningTaskLabel = "";
+    setBusy(false);
+  }
+  function forceReleaseRunningGuard(reason = "ユーザー操作") {
+    if (!state.running) return false;
+    const startedAt = state.runningStartedAt;
+    const elapsedSec = startedAt ? Math.round((Date.now() - startedAt) / 1e3) : 0;
+    const label = state.runningTaskLabel || "処理";
+    releaseRunningGuard();
+    console.warn(`[統合ツール] running guard force-released: task="${label}" elapsed=${elapsedSec}s reason=${reason}`);
+    setStatus(`実行中フラグを強制解除しました（${label} / 経過 ${elapsedSec}s）`, true);
+    return true;
+  }
+  function withGuard(fn, busyText = "", timeoutMs = WITHGUARD_DEFAULT_TIMEOUT_MS) {
     if (state.running) {
-      setStatus("別の処理を実行中です。完了までお待ちください。");
+      const elapsedSec = state.runningStartedAt ? Math.round((Date.now() - state.runningStartedAt) / 1e3) : 0;
+      const label2 = state.runningTaskLabel || "別の処理";
+      setStatus(
+        `${label2} を実行中です（経過 ${elapsedSec}s）。長時間反応がない場合はステータスバーをダブルクリックで強制解除できます。`
+      );
       return;
     }
+    const label = busyText || "処理中...";
     state.running = true;
-    setBusy(true, busyText || "処理中...");
+    state.runningStartedAt = Date.now();
+    state.runningTaskLabel = label;
+    setBusy(true, label);
+    if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+      state.runningWatchdogId = setTimeout(() => {
+        if (!state.running) return;
+        const elapsedSec = state.runningStartedAt ? Math.round((Date.now() - state.runningStartedAt) / 1e3) : 0;
+        console.warn(`[統合ツール] withGuard watchdog fired: task="${label}" elapsed=${elapsedSec}s timeout=${timeoutMs}ms`);
+        releaseRunningGuard();
+        const msg = `処理が ${elapsedSec}s 経過しても完了しなかったため自動解除しました（${label}）。再実行するか、ネットワーク・権限を確認してください。`;
+        setStatus(msg, true);
+        showToast(msg, "error").catch(() => {
+        });
+      }, timeoutMs);
+    }
     return (async () => {
       try {
         return await fn();
@@ -25269,8 +29275,7 @@ ${lines.join("\n")}
         });
         return void 0;
       } finally {
-        state.running = false;
-        setBusy(false);
+        releaseRunningGuard();
       }
     })();
   }
@@ -25352,6 +29357,7 @@ ${lines.join("\n")}
       runExportDryRunPlan: runExportDryRunPlan2,
       runBackupTargetPreview: runBackupTargetPreview2,
       runRestoreTargetPreviewBackup: runRestoreTargetPreviewBackup2,
+      importTargetPreviewBackupFromFile: importTargetPreviewBackupFromFile2,
       runApplyPreview: runApplyPreview2,
       runDeployOnly: runDeployOnly2,
       runApplyPatchJson: runApplyPatchJson2,
@@ -25389,21 +29395,29 @@ ${lines.join("\n")}
     function renderLauncherActiveFilters(group, searchText) {
       if (!ui.launcherActiveFilters) return;
       const chips = [];
-      if (group && group !== "all") {
-        const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim() || group;
-        chips.push(`<span class="chip chip-active-filter">グループ: ${esc(groupLabel)}</span>`);
+      if (group) {
+        const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"] .launcher-tab-btn__label`)?.textContent?.trim() || ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim() || group;
+        chips.push(`<span class="chip chip-active-filter">タブ: ${esc(groupLabel)}</span>`);
       }
       if (searchText) {
         chips.push(`<span class="chip chip-active-filter">検索: ${esc(searchText)}</span>`);
       }
-      ui.launcherActiveFilters.innerHTML = chips.length ? chips.join("") : '<span class="muted">現在フィルタは未適用です</span>';
+      ui.launcherActiveFilters.innerHTML = chips.join("");
     }
     function applyLauncherFilter() {
       const activeGroupBtn = ui.launcherGroupFilters?.querySelector(".chip.is-active[data-group]");
-      const group = activeGroupBtn?.dataset?.group || "all";
+      const group = activeGroupBtn?.dataset?.group || "change";
       const searchText = String(ui.launcherSearch?.value || "").trim();
       const normalizedSearch = searchText.toLowerCase();
+      const panels = [...ui.launcherMenu?.querySelectorAll("[data-launcher-panel]") || []];
+      panels.forEach((panel) => {
+        const on = panel.dataset.launcherPanel === group;
+        panel.classList.toggle("is-active", on);
+        panel.hidden = !on;
+      });
+      if (ui.launcherSearch) ui.launcherSearch.disabled = group === "history";
       const cards = [...ui.launcherMenu?.querySelectorAll(".feature-card[data-feature]") || []];
+      const targetCards = cards.filter((card) => String(card.dataset.group || "").trim() === group);
       let visibleCount = 0;
       cards.forEach((card) => {
         const groupKey = String(card.dataset.group || "").trim();
@@ -25411,14 +29425,16 @@ ${lines.join("\n")}
         const desc = String(card.querySelector(".feature-card-desc")?.textContent || "").trim();
         const cardGroup = String(card.querySelector(".feature-card-group")?.textContent || "").trim();
         const cardText = `${label} ${desc} ${cardGroup}`.toLowerCase();
-        const groupMatched = group === "all" || groupKey === group;
+        const groupMatched = groupKey === group;
         const searchMatched = !normalizedSearch || cardText.includes(normalizedSearch);
         const show = groupMatched && searchMatched;
         card.style.display = show ? "" : "none";
         if (show) visibleCount += 1;
       });
-      if (ui.launcherVisibleCount) ui.launcherVisibleCount.textContent = `表示中: ${visibleCount}/${cards.length}`;
-      if (ui.launcherEmptyState) ui.launcherEmptyState.hidden = visibleCount !== 0;
+      if (ui.launcherVisibleCount) {
+        ui.launcherVisibleCount.textContent = group === "history" ? "履歴・復元を表示中" : `表示中: ${visibleCount}/${targetCards.length}`;
+      }
+      if (ui.launcherEmptyState) ui.launcherEmptyState.hidden = group === "history" || visibleCount !== 0;
       renderLauncherActiveFilters(group, searchText);
     }
     function focusWizardTarget(selector, options = {}) {
@@ -25538,11 +29554,11 @@ ${lines.join("\n")}
       const nextSectionKey = resolveSectionPreviewTarget(sectionKey);
       const label = SECTION_DEFS.find((def) => def.key === nextSectionKey)?.label || nextSectionKey;
       switchTab("reflect", { persist: false });
-      switchSubTab("reflect", "settings");
-      activateReflectInnerTab("other");
+      try {
+        openReflectModal("otherEditor");
+      } catch (_e) {
+      }
       const focusEditor = () => {
-        const pane = root2.querySelector('[data-subpane-parent="reflect"][data-subpane="settings"]');
-        pane?.scrollIntoView?.({ behavior: "smooth", block: "start" });
         const editorApi = ui.sectionPreviewEditor?.__sectionPreviewApi;
         if (editorApi?.setSection) {
           editorApi.setSection(nextSectionKey, { silent: true, force: true });
@@ -25558,7 +29574,7 @@ ${lines.join("\n")}
       const view = getToolWindow();
       if (view?.requestAnimationFrame) view.requestAnimationFrame(focusEditor);
       else focusEditor();
-      setStatus(`${label} の差分エディタへ移動しました`);
+      setStatus(`${label} の差分エディタを開きました`);
     }
     renderScopeChips();
     restoreDialogState();
@@ -25799,6 +29815,14 @@ ${lines.join("\n")}
         ui.shortcutHelpModal.hidden = true;
         return;
       }
+      if (e.key === "Escape") {
+        const openModal = root2.querySelector(".reflect-modal-overlay:not([hidden])");
+        if (openModal) {
+          e.preventDefault();
+          closeAllReflectModals();
+          return;
+        }
+      }
       if (!editable && e.key === "?") {
         e.preventDefault();
         if (ui.shortcutHelpModal) ui.shortcutHelpModal.hidden = !ui.shortcutHelpModal.hidden;
@@ -25842,11 +29866,68 @@ ${lines.join("\n")}
         featCard.click();
         return;
       }
+      const launcherTabBtn = e.target?.closest?.(".launcher-tab-btn");
+      if (launcherTabBtn && !editable && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+        e.preventDefault();
+        const tabs = Array.from(ui.launcherGroupFilters?.querySelectorAll(".launcher-tab-btn") || []);
+        if (tabs.length === 0) return;
+        const currentIdx = tabs.indexOf(launcherTabBtn);
+        let nextIdx = currentIdx;
+        if (e.key === "ArrowLeft") nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
+        else if (e.key === "ArrowRight") nextIdx = (currentIdx + 1) % tabs.length;
+        else if (e.key === "Home") nextIdx = 0;
+        else if (e.key === "End") nextIdx = tabs.length - 1;
+        tabs[nextIdx]?.focus();
+        tabs[nextIdx]?.click();
+        return;
+      }
       if (!editable && (e.key === "/" || (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k")) {
         e.preventDefault();
         showLauncherScreen({ persist: false });
         ui.launcherSearch?.focus();
         ui.launcherSearch?.select();
+        return;
+      }
+      if (!editable && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && root2.classList.contains("screen-feature")) {
+        const tabByKey = {
+          "1": "diff",
+          "2": "reflect",
+          "3": "field",
+          "4": "jsconfig",
+          "5": "er",
+          "6": "processFlow",
+          "7": "design",
+          "8": "settingsExport",
+          "9": "analyze",
+          "0": "recordMgr",
+          "-": "apiTester"
+        };
+        const target = tabByKey[e.key];
+        if (target) {
+          e.preventDefault();
+          switchTab(target);
+          return;
+        }
+        if (e.key === "Escape" && (!ui.scopePickerModal || ui.scopePickerModal.hidden)) {
+          e.preventDefault();
+          showLauncherScreen({ persist: false });
+          return;
+        }
+      }
+      if (state.activeTab === "reflect" && (e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        const doc = getToolDocument();
+        if (e.shiftKey) {
+          const applyBtn = doc.getElementById("u_footerApply");
+          if (applyBtn && !applyBtn.disabled) applyBtn.click();
+        } else {
+          const nextBtn = doc.querySelector('[data-reflect-next="1"]');
+          if (nextBtn && !nextBtn.disabled) nextBtn.click();
+          else {
+            const planBtn = doc.getElementById("u_footerPlan");
+            if (planBtn && !planBtn.disabled) planBtn.click();
+          }
+        }
         return;
       }
       if (e.key === "Escape" && e.target === ui.launcherSearch) {
@@ -26129,6 +30210,17 @@ ${lines.join("\n")}
         });
       });
     }
+    const targetPreviewBackupFileInput = getToolDocument().getElementById("u_targetPreviewBackupFileInput");
+    if (targetPreviewBackupFileInput) {
+      targetPreviewBackupFileInput.addEventListener("change", () => {
+        const f = targetPreviewBackupFileInput.files && targetPreviewBackupFileInput.files[0];
+        targetPreviewBackupFileInput.value = "";
+        if (!f) return;
+        withGuard(async () => {
+          if (typeof importTargetPreviewBackupFromFile2 === "function") await importTargetPreviewBackupFromFile2(f);
+        });
+      });
+    }
     root2.addEventListener("click", (e) => {
       const innerTab = e.target?.closest("[data-reflect-inner]");
       if (innerTab) {
@@ -26319,6 +30411,8 @@ ${lines.join("\n")}
         switchTab(nextTab);
         syncDiffOnboardingVisibility();
         syncMainResultForFeature(nextTab);
+        const moreFold = getToolDocument().getElementById("u_kusTabMore");
+        if (moreFold && moreFold.contains(tab)) moreFold.open = false;
         return;
       }
       const actEl = e.target?.closest("[data-act]");
@@ -26380,24 +30474,28 @@ ${lines.join("\n")}
       if (act === "clearLauncherFilter") {
         if (ui.launcherSearch) ui.launcherSearch.value = "";
         ui.launcherGroupFilters?.querySelectorAll(".chip[data-group]").forEach((btn) => {
-          const active = btn.dataset.group === "all";
+          const active = btn.dataset.group === "change";
           btn.classList.toggle("is-active", active);
           btn.setAttribute("aria-pressed", active ? "true" : "false");
+          btn.setAttribute("aria-selected", active ? "true" : "false");
         });
         applyLauncherFilter();
         ui.launcherSearch?.focus();
-        setStatus("機能検索とグループ絞り込みを解除しました");
+        setStatus("変更・反映タブに戻し、機能検索をクリアしました");
         return;
       }
       if (act === "setLauncherGroup") {
-        const group = String(actEl.dataset.group || "all");
+        const group = String(actEl.dataset.group || "change");
+        if (group === "history" && ui.launcherSearch) ui.launcherSearch.value = "";
         ui.launcherGroupFilters?.querySelectorAll(".chip[data-group]").forEach((btn) => {
           const active = btn.dataset.group === group;
           btn.classList.toggle("is-active", active);
           btn.setAttribute("aria-pressed", active ? "true" : "false");
+          btn.setAttribute("aria-selected", active ? "true" : "false");
+          btn.setAttribute("tabindex", active ? "0" : "-1");
         });
         applyLauncherFilter();
-        setStatus(group === "all" ? "全機能を表示中です" : `機能を絞り込みました: ${actEl.textContent?.trim() || ""}`);
+        setStatus(`ランチャータブを切り替えました: ${actEl.textContent?.trim() || ""}`);
         return;
       }
       if (act === "clearDiffFilters") {
@@ -26547,11 +30645,8 @@ ${lines.join("\n")}
       }
       if (act === "openReflectPreviewEditor") {
         switchTab("reflect", { persist: false });
-        switchSubTab("reflect", "settings");
-        activateReflectInnerTab("field");
-        const fold = root2.querySelector("#u_reflectPreviewEditorFold");
-        fold?.scrollIntoView?.({ behavior: "smooth", block: "start" });
-        setStatus("フィールド設定画面へ移動しました");
+        openReflectModal("fieldEditor");
+        setStatus("フィールド設定エディタを開きました");
         return;
       }
       if (act === "openSectionPreviewEditor") {
@@ -26697,6 +30792,27 @@ ${lines.join("\n")}
       }
       if (act === "runSettingsExportJson") return withGuard(async () => runSettingsExport("json"));
       if (act === "runSettingsExportZip") return withGuard(async () => runSettingsExport("zip"));
+      if (act === "settingsExportLoadToDiff") {
+        const appId = actEl.dataset.appId || "";
+        const side = actEl.dataset.side === "target" ? "target" : "source";
+        if (!appId) {
+          setStatus("対象アプリIDが取得できませんでした", true);
+          return;
+        }
+        const ok = loadSettingsExportBundleToDiff(appId, side);
+        if (!ok) {
+          setStatus(`App ${appId} の取得済みバンドルが見つかりません（先に「JSONで一括取得」を実行してください）`, true);
+          return;
+        }
+        switchTab("diff");
+        renderResultRows([]);
+        renderBundleState();
+        renderReflectSidebar();
+        renderReflectMainPanel();
+        const sideLabel = side === "source" ? "比較元" : "比較先";
+        setStatus(`App ${appId} の取得済みJSONを${sideLabel}に読込みました（差分タブで「差分比較」を実行してください）`);
+        return;
+      }
       if (act === "settingsExportSearchApps") return withGuard(runSettingsExportSearchApps);
       if (act === "connectionSearchApps") return withGuard(runConnectionSearchApps);
       if (act === "addConnectionSearchApp") {
@@ -27101,6 +31217,33 @@ ${lines.join("\n")}
         setStatus("差分のあるセクションのみ選択しました");
         return;
       }
+      if (act === "applyScopePreset") {
+        const preset = actEl.dataset.scopePreset || "";
+        const presetMap = {
+          safe: ["layoutSettings", "viewSettings", "reportSettings", "customizeSettings", "categories", "notifications", "perRecordNotifications", "reminderNotifications"],
+          visual: ["layoutSettings", "viewSettings", "reportSettings"],
+          permissions: ["appAcl", "fieldAcl", "recordPermissions"],
+          customize: ["customizeSettings"],
+          noAcl: SECTION_DEFS.filter((def) => def.put && !["appAcl", "fieldAcl", "recordPermissions"].includes(def.key)).map((def) => def.key)
+        };
+        const labels = {
+          safe: "安全寄りセット",
+          visual: "画面系セット",
+          permissions: "権限系セット",
+          customize: "JS/CSSセット",
+          noAcl: "権限除外セット"
+        };
+        const selected = new Set(presetMap[preset] || []);
+        if (!selected.size) return;
+        ui.applyScopes?.querySelectorAll('input[type="checkbox"]').forEach((c) => {
+          c.checked = selected.has(c.value);
+        });
+        saveCurrentDialogState2();
+        renderReflectSidebar();
+        renderReflectMainPanel();
+        setStatus(`${labels[preset] || "プリセット"}を選択しました`);
+        return;
+      }
       if (act === "applyScopeHighRisk") {
         const highRiskSections = new Set(
           getActualDiffRows(state.lastDiffRows || []).filter((row) => String(row.severity || "").toLowerCase() === "high").map((row) => row.sectionKey).filter(Boolean)
@@ -27242,6 +31385,81 @@ ${lines.join("\n")}
         state.reflectSelectedIds = new Set((state.reflectRows || []).map((r) => r._id));
         renderReflectNodeList();
         setStatus("反映ノードを全選択しました");
+        return;
+      }
+      if (act === "toggleHeaderCollapse") {
+        const doc = getToolDocument();
+        const root3 = doc.getElementById("kintone-unified-suite-v2");
+        if (!root3) return;
+        const collapsed = root3.classList.toggle("header-collapsed");
+        try {
+          (doc.defaultView || window).localStorage.setItem("kus:headerCollapsed", collapsed ? "1" : "0");
+        } catch (e2) {
+        }
+        const btn = doc.getElementById("u_headerCollapseBtn");
+        if (btn) {
+          btn.textContent = collapsed ? "▼" : "▲";
+          btn.setAttribute("aria-label", collapsed ? "ヘッダーを展開" : "ヘッダーを折りたたむ");
+          btn.setAttribute("title", collapsed ? "ヘッダーを展開" : "ヘッダーを折りたたむ");
+        }
+        return;
+      }
+      if (act === "toggleDiffAdvanced") {
+        const doc = getToolDocument();
+        const adv = doc.getElementById("u_diffAdvancedFold");
+        if (adv) {
+          adv.open = !adv.open;
+          if (adv.open) adv.scrollIntoView({ behavior: "smooth", block: "start" });
+          setStatus(adv.open ? "比較条件の調整を開きました" : "比較条件の調整を折り畳みました");
+        }
+        return;
+      }
+      if (act === "filterDiffBySectionFromDist") {
+        const secKey = String(actEl.dataset.section || "");
+        switchTab("diff");
+        openDiffReviewFold({ scroll: true });
+        if (ui.diffFilterSection) ui.diffFilterSection.value = secKey;
+        state.diffFilterSection = secKey;
+        renderDiffActiveFilters();
+        renderResultRows(state.lastDiffRows);
+        const lbl = SECTION_DEFS.find((d) => d.key === secKey)?.label || secKey;
+        setStatus(`差分一覧を「${lbl}」で絞り込みました`);
+        return;
+      }
+      if (act === "reflectBulkSelect") {
+        const kind = String(actEl.dataset.bulk || "");
+        const allRows = state.reflectRows || [];
+        const visibleIds = new Set(getVisibleReflectNodeIds());
+        pushReflectUndo();
+        if (kind === "all") {
+          visibleIds.forEach((id) => state.reflectSelectedIds.add(id));
+          setStatus(`表示中の全候補を選択しました (${visibleIds.size}件)`);
+        } else if (kind === "high") {
+          visibleIds.forEach((id) => state.reflectSelectedIds.delete(id));
+          const ids = allRows.filter((r) => visibleIds.has(r._id) && String(r.severity || "low").toLowerCase() === "high").map((r) => r._id);
+          ids.forEach((id) => state.reflectSelectedIds.add(id));
+          setStatus(`高重要度のみ選択しました (${ids.length}件)`);
+        } else if (kind === "medium") {
+          visibleIds.forEach((id) => state.reflectSelectedIds.delete(id));
+          const ids = allRows.filter((r) => visibleIds.has(r._id) && ["medium", "low"].includes(String(r.severity || "low").toLowerCase())).map((r) => r._id);
+          ids.forEach((id) => state.reflectSelectedIds.add(id));
+          setStatus(`中以下のみ選択しました (${ids.length}件)`);
+        } else if (kind === "renames") {
+          visibleIds.forEach((id) => state.reflectSelectedIds.delete(id));
+          const ids = allRows.filter((r) => !!r.renameCandidate && visibleIds.has(r._id)).map((r) => r._id);
+          ids.forEach((id) => state.reflectSelectedIds.add(id));
+          setStatus(`改名候補のみ選択しました (${ids.length}件)`);
+        } else if (kind === "invert") {
+          visibleIds.forEach((id) => {
+            if (state.reflectSelectedIds.has(id)) state.reflectSelectedIds.delete(id);
+            else state.reflectSelectedIds.add(id);
+          });
+          setStatus(`表示中の選択を反転しました`);
+        } else if (kind === "clear") {
+          state.reflectSelectedIds = /* @__PURE__ */ new Set();
+          setStatus("全選択解除しました");
+        }
+        renderReflectNodeList();
         return;
       }
       if (act === "clearReflectNodes") {
@@ -27396,11 +31614,55 @@ ${lines.join("\n")}
         setStatus("ヘッダーの差分一覧で該当ノードを表示しました");
         return;
       }
+      if (act === "openReflectNodeModal") {
+        const nodeChk = ui.nodeMode;
+        if (nodeChk) nodeChk.checked = true;
+        saveCurrentDialogState2();
+        renderReflectModeUi();
+        if (state.lastDiffRows && state.lastDiffRows.length && !state.reflectRows.length) {
+          try {
+            loadReflectRowsFromLastDiff();
+          } catch (_e) {
+          }
+        }
+        renderReflectNodeList();
+        openReflectModal("node");
+        return;
+      }
+      if (act === "openReflectJsonModal") {
+        openReflectModal("json");
+        try {
+          if (typeof populatePatchJsonFromCurrentDiff2 === "function") populatePatchJsonFromCurrentDiff2({ silent: true });
+        } catch (_e) {
+        }
+        return;
+      }
+      if (act === "openReflectHistoryModal") {
+        openReflectModal("history");
+        return;
+      }
+      if (act === "openReflectReportModal") {
+        openReflectModal("report");
+        return;
+      }
+      if (act === "openReflectSupportModal") {
+        openReflectModal("support");
+        return;
+      }
+      if (act === "closeReflectModal") {
+        const name = actEl.dataset.modal || "";
+        closeReflectModal(name);
+        return;
+      }
       if (act === "previewApplyPlan" && typeof runPreviewApplyPlan2 === "function") {
         return withGuard(async () => {
           await runPreviewApplyPlan2();
           markReflectApplyChecks(["plan"]);
           saveWorkHistorySnapshot("plan", { label: "プラン確認後", silent: true });
+          try {
+            openReflectModal("plan");
+          } catch (_e) {
+          }
         });
       }
       if (act === "markReflectTargetConfirmed") {
@@ -27410,6 +31672,14 @@ ${lines.join("\n")}
       }
       if (act === "exportDryRunPlan" && typeof runExportDryRunPlan2 === "function") return withGuard(runExportDryRunPlan2);
       if (act === "backupTargetPreview" && typeof runBackupTargetPreview2 === "function") return withGuard(runBackupTargetPreview2);
+      if (act === "importTargetPreviewBackupFile") {
+        const input = getToolDocument().getElementById("u_targetPreviewBackupFileInput");
+        if (input) {
+          input.value = "";
+          input.click();
+        }
+        return;
+      }
       if (act === "restoreTargetPreviewBackup" && typeof runRestoreTargetPreviewBackup2 === "function") return withGuard(runRestoreTargetPreviewBackup2);
       if (act === "applyPreview" && typeof runApplyPreview2 === "function") {
         if (!ensureReflectApplyChecklistReady()) return;
@@ -27834,10 +32104,23 @@ ${diffMd}
   }
   var progressUi = /* @__PURE__ */ (() => {
     let el, bar, msg;
+    const removeEl = () => {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+      el = null;
+      bar = null;
+      msg = null;
+    };
     return {
       init() {
-        if (el) el.remove();
-        el = document.createElement("div");
+        removeEl();
+        const doc = (() => {
+          try {
+            return getToolDocument();
+          } catch (_) {
+            return document;
+          }
+        })();
+        el = doc.createElement("div");
         Object.assign(el.style, {
           position: "fixed",
           top: "20px",
@@ -27857,7 +32140,7 @@ ${diffMd}
         <div id="_eb" style="width:0%;height:100%;background:linear-gradient(90deg,#00d4ff,#7b61ff);transition:width .3s;border-radius:4px;"></div>
       </div>
       <div id="_em" style="font-size:12px;margin-top:8px;color:#aaa;">準備中...</div>`;
-        document.body.appendChild(el);
+        (doc.body || doc.documentElement).appendChild(el);
         bar = el.querySelector("#_eb");
         msg = el.querySelector("#_em");
       },
@@ -27866,15 +32149,37 @@ ${diffMd}
         if (msg) msg.textContent = t;
       },
       close() {
+        if (!el) return;
         this.update(100, "完了！");
+        const target = el;
         setTimeout(() => {
-          el.style.opacity = "0";
-          setTimeout(() => el.remove(), 600);
+          if (target) target.style.opacity = "0";
+          setTimeout(() => {
+            if (target && target.parentNode) target.parentNode.removeChild(target);
+            if (el === target) {
+              el = null;
+              bar = null;
+              msg = null;
+            }
+          }, 600);
         }, 2e3);
       },
       error(e) {
+        if (!el) return;
         this.update(100, "エラー: " + e);
         if (bar) bar.style.background = "#f44";
+        const target = el;
+        setTimeout(() => {
+          if (target && target.parentNode) target.parentNode.removeChild(target);
+          if (el === target) {
+            el = null;
+            bar = null;
+            msg = null;
+          }
+        }, 6e3);
+      },
+      dismiss() {
+        removeEl();
       }
     };
   })();
@@ -27984,24 +32289,37 @@ ${diffMd}
       const linkedFieldPaths = new Set(
         relations.filter((rel) => rel.kind === "LOOKUP" || rel.kind === "REF").map((rel) => String(rel.fromPath || rel.from || "").trim()).filter(Boolean)
       );
-      const essentialFields = fields.filter((field) => {
+      const density = String(options?.fieldDensity || ER_DEFAULTS.fieldDensity);
+      const isEssential = (field) => {
         if (field.type === "SUBTABLE") return false;
         if (field.isPK || field.unique) return true;
         return linkedFieldPaths.has(String(field.path || field.code || "").trim());
-      });
-      const visibleFieldsSource = essentialFields.length ? essentialFields : fields.filter((field) => field.type !== "SUBTABLE").slice(0, 6);
+      };
+      let visibleFieldsSource;
+      if (density === "full") {
+        visibleFieldsSource = fields.filter((f) => f.type !== "SUBTABLE");
+      } else if (density === "standard") {
+        visibleFieldsSource = fields.filter((f) => f.type !== "SUBTABLE" && (isEssential(f) || !!f.required));
+        if (!visibleFieldsSource.length) visibleFieldsSource = fields.filter((f) => f.type !== "SUBTABLE").slice(0, 6);
+      } else {
+        const essential = fields.filter(isEssential);
+        visibleFieldsSource = essential.length ? essential : fields.filter((f) => f.type !== "SUBTABLE").slice(0, 6);
+      }
       const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
+      const totalFieldCount = fields.filter((f) => f.type !== "SUBTABLE").length;
       const r = {
         id: appId,
         name: aR.name || `アプリ ${appId}`,
         spaceId: aR.spaceId || null,
         threadId: aR.threadId || null,
         fields: visibleFields,
+        allFields: fields,
+        totalFieldCount,
         relations,
         ok: true,
         createdAt: aR.createdAt,
         modifiedAt: aR.modifiedAt,
-        requiredCount: visibleFields.filter((field) => !!field.required).length,
+        requiredCount: fields.filter((field) => !!field.required && field.type !== "SUBTABLE").length,
         lookupCount: relations.filter((rel) => rel.kind === "LOOKUP").length,
         refCount: relations.filter((rel) => rel.kind === "REF").length,
         sourceGuestId: options?.source?.guestId || ""
@@ -28010,7 +32328,7 @@ ${diffMd}
       return r;
     } catch (e) {
       console.error(`App ${appId}:`, e);
-      const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], relations: [], ok: false };
+      const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], allFields: [], totalFieldCount: 0, relations: [], ok: false };
       cache.set(appId, r);
       return r;
     }
@@ -28761,9 +33079,13 @@ function buildNodeLabel(app){
   });
   const preview = ordered.slice(0, maxLines).map((f)=>buildFieldPreviewLine(f));
   if(ordered.length > maxLines) preview.push("+ " + (ordered.length - maxLines) + " 件");
+  const totalFieldCount = typeof app.totalFieldCount === "number" ? app.totalFieldCount : fields.length;
+  const fieldCountText = totalFieldCount > fields.length
+    ? fields.length + "/" + totalFieldCount + "項目"
+    : fields.length + "項目";
   const meta = [
     "App " + app.id,
-    fields.length + "項目",
+    fieldCountText,
     app.relations.length + "関連",
     "深さ " + (app.depth || 0)
   ].join(" / ");
@@ -28955,21 +33277,6 @@ cy.one("layoutstop",()=>setTimeout(fit,200));
 syncLayoutButtons(ER_OPTIONS.layoutName || "dagre");
 syncDensityControl();
 updateSearchMeta("", 0);
-
-// ─── Export ───
-function exportPNG(){
-  const b64 = cy.png({ full: true, scale: 2, bg: currentPalette().bg });
-  const a = document.createElement("a");
-  a.href = b64;
-  a.download = "kintone_erd.png";
-  a.click();
-}
-function exportSVG(){
-  // cytoscape-svg plugin is not present, so we fallback to a simple message or a data-uri attempt.
-  // Actually, standard cytoscape does not natively support SVG without an extension.
-  // We can try to use JSON instead or alert the user.
-  showToast("SVGエクスポートには追加のプラグイン(cytoscape-svg)が必要です。PNGをご利用ください。", 'warn');
-}
 
 // ─── Layout Switching ───
 function setLayout(name){
@@ -29261,11 +33568,15 @@ function renderAppDetail(app){
   const fieldGroups = detailFieldGroups(app);
   const panel = document.getElementById("detail");
   document.getElementById("detail-title").textContent = app.name;
+  const realFieldTotal = typeof app.totalFieldCount === "number" ? app.totalFieldCount : visibleFields.length;
+  const fieldPillText = realFieldTotal > visibleFields.length
+    ? '項目 ' + visibleFields.length + '/<small>' + realFieldTotal + '</small>'
+    : '<b>項目</b> ' + visibleFields.length;
   document.getElementById("detail-meta").innerHTML = "ID: " + escapeHtml(app.id)
     + (app.createdAt ? " | 作成: " + escapeHtml(new Date(app.createdAt).toLocaleDateString()) : "")
     + (app.modifiedAt ? " | 更新: " + escapeHtml(new Date(app.modifiedAt).toLocaleDateString()) : "")
     + '<div class="detail-chip-row">'
-    + '<span class="meta-pill"><b>項目</b> ' + visibleFields.length + '</span>'
+    + '<span class="meta-pill" title="表示中 / 総数（表示数は密度設定に依存）">' + fieldPillText + '</span>'
     + '<span class="meta-pill"><b>ルックアップ</b> ' + fieldGroups.lookup.length + '</span>'
     + '<span class="meta-pill"><b>関連</b> ' + fieldGroups.ref.length + '</span>'
     + '<span class="meta-pill"><b>必須</b> ' + fieldGroups.required.length + '</span>'
@@ -29393,7 +33704,8 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
 
 // Build stats
 (function buildSidebar(){
-  const totalFields=APPS.reduce((s,a)=>s+visibleFieldsForNode(a).length,0);
+  const visibleFieldsTotal=APPS.reduce((s,a)=>s+visibleFieldsForNode(a).length,0);
+  const totalFieldsAcrossApps=APPS.reduce((s,a)=>s+(typeof a.totalFieldCount==="number"?a.totalFieldCount:visibleFieldsForNode(a).length),0);
   const totalRels=APPS.reduce((s,a)=>s+a.relations.length,0);
   const lookups=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="LOOKUP").length,0);
   const actions=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="ACTION").length,0);
@@ -29402,7 +33714,10 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
   APPS.forEach(a=>visibleFieldsForNode(a).forEach(f=>{typeCount[f.type]=(typeCount[f.type]||0)+1;}));
 
   let html='<div class="stat-row"><span>アプリ数</span><span class="stat-val">'+APPS.length+'</span></div>';
-  html+='<div class="stat-row"><span>総フィールド数</span><span class="stat-val">'+totalFields+'</span></div>';
+  html+='<div class="stat-row"><span>総フィールド数</span><span class="stat-val">'+totalFieldsAcrossApps+'</span></div>';
+  if(visibleFieldsTotal!==totalFieldsAcrossApps){
+    html+='<div class="stat-row"><span>表示中フィールド</span><span class="stat-val">'+visibleFieldsTotal+'</span></div>';
+  }
   html+='<div class="stat-row"><span>ルックアップ数</span><span class="stat-val">'+lookups+'</span></div>';
   html+='<div class="stat-row"><span>関連レコード数</span><span class="stat-val">'+refs+'</span></div>';
   html+='<div class="stat-row"><span>アクション線数</span><span class="stat-val">'+actions+'</span></div>';
@@ -29643,18 +33958,28 @@ document.addEventListener("keydown",e=>{
 
 // ─── Exports ───
 function exportPNG(){
-  const a=document.createElement("a");
-  a.href=cy.png({bg:isDark?"#08090d":"#f0f2f5",full:true,scale:2});
-  a.download="kintone_erd.png";a.click();toast("PNG ダウンロード");
+  try{
+    const a=document.createElement("a");
+    a.href=cy.png({bg:isDark?"#08090d":"#f0f2f5",full:true,scale:2});
+    a.download="kintone_erd.png";a.click();toast("PNG ダウンロード");
+  }catch(err){
+    console.error("[ER] exportPNG failed", err);
+    toast("PNG出力に失敗: "+((err&&err.message)||err));
+  }
 }
 function exportSVG(){
-  if(typeof cy.svg !== "function"){
-    toast("SVGエクスポートは未対応のためPNGを出力します");
-    exportPNG();
-    return;
+  try{
+    if(typeof cy.svg !== "function"){
+      toast("SVGエクスポートは未対応のためPNGを出力します");
+      exportPNG();
+      return;
+    }
+    const blob=new Blob([cy.svg({full:true,bg:isDark?"#08090d":"#f0f2f5"})],{type:"image/svg+xml"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="kintone_erd.svg";a.click();toast("SVG ダウンロード");
+  }catch(err){
+    console.error("[ER] exportSVG failed", err);
+    toast("SVG出力に失敗: "+((err&&err.message)||err));
   }
-  const blob=new Blob([cy.svg({full:true,bg:isDark?"#08090d":"#f0f2f5"})],{type:"image/svg+xml"});
-  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="kintone_erd.svg";a.click();toast("SVG ダウンロード");
 }
 
 let _md={text:"",filename:""};
@@ -29991,7 +34316,10 @@ cy.on("mouseover","node",e=>{
   const app=appMap.get(e.target.data("appId"));
   if(!app) return;
   if(!tipEl){tipEl=document.createElement("div");Object.assign(tipEl.style,{position:"fixed",zIndex:"999",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"8px",padding:"8px 12px",fontSize:"11px",fontFamily:"'DM Mono',monospace",pointerEvents:"none",boxShadow:"0 4px 16px rgba(0,0,0,0.3)",maxWidth:"260px"});document.body.appendChild(tipEl);}
-  tipEl.innerHTML="<b>"+app.name+"</b> (ID:"+app.id+")<br>項目: "+visibleFieldsForNode(app).length+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
+  const _v = visibleFieldsForNode(app).length;
+  const _t = typeof app.totalFieldCount === "number" ? app.totalFieldCount : _v;
+  const _itemText = _t > _v ? (_v + "/" + _t) : _v;
+  tipEl.innerHTML="<b>"+app.name+"</b> (ID:"+app.id+")<br>項目: "+_itemText+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
   tipEl.style.display="block";
 });
 cy.on("mouseout","node",()=>{if(tipEl) tipEl.style.display="none";});
@@ -30018,7 +34346,18 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       const url = URL.createObjectURL(blob);
       popup.location.href = url;
       progressUi.close();
-      setStatus(`ER図の生成完了: ${apps.length}アプリを別タブ表示しました`);
+      const seedCount = options.startAppIds.length;
+      const onlySeeds = apps.length === seedCount;
+      if (onlySeeds && seedCount === 1) {
+        const totalRels = apps[0]?.relations?.length || 0;
+        if (totalRels === 0) {
+          setStatus(`ER図の生成完了: 起点アプリのみ表示（関連 0件）。「逆引き探索」をONにすると、このアプリを参照しているアプリも辿れます`);
+        } else {
+          setStatus(`ER図の生成完了: 起点アプリのみ表示（関連先アプリは取得不可）`);
+        }
+      } else {
+        setStatus(`ER図の生成完了: ${apps.length}アプリを別タブ表示しました`);
+      }
       setTimeout(() => URL.revokeObjectURL(url), 60 * 1e3);
     } catch (e) {
       try {
@@ -30143,11 +34482,14 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       return;
     }
     const prefix = buildApiPrefix(c.target.guestId, true);
-    setStatus("JS/CSS設定を反映中...");
+    setStatus("JS/CSS設定をプレビューへ反映中...");
     await apiPut(prefix, "/app/customize.json", body);
-    const logs = [`OK JS/CSS設定反映（アプリ: ${c.target.appId}）`];
+    const logs = [
+      `OK JS/CSS設定をプレビューへ反映（アプリ: ${c.target.appId}）`,
+      "※ 運用環境に反映するにはアプリ設定画面から「アプリを更新」（デプロイ）を実行してください。"
+    ];
     ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`;
-    setStatus("JS/CSS設定反映完了");
+    setStatus("JS/CSS設定を「プレビュー」へ反映しました（運用反映には別途デプロイが必要）");
   }
   async function runBatchJsConfigDownload() {
     setStatus("対象スペースの全アプリを取得中...");
@@ -30193,12 +34535,14 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         if (blob) {
           appFolder.file(file.file.name, blob);
           hasFiles = true;
+        } else {
+          failedCount++;
         }
       }
       await new Promise((r) => setTimeout(r, 100));
     }
     if (!hasFiles) {
-      setStatus(`対象ファイルがありません。(403エラー: ${failedCount}件スキップ)`, true);
+      setStatus(`対象ファイルがありません。(取得失敗: ${failedCount}件スキップ)`, true);
       return;
     }
     setStatus("ZIPファイル作成中...");
@@ -30234,8 +34578,16 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     "https://unpkg.com/mermaid@10.6.1/dist/mermaid.min.js",
     "https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js"
   ];
-  async function ensureMermaid() {
+  function getMermaidGlobal() {
+    const doc = getToolDocument();
+    const docWin = doc?.defaultView;
+    if (docWin && docWin.mermaid) return docWin.mermaid;
     if (window.mermaid) return window.mermaid;
+    return null;
+  }
+  async function ensureMermaid() {
+    const existing = getMermaidGlobal();
+    if (existing) return existing;
     if (!mermaidLoadPromise) {
       setStatus("Mermaid.js を読み込み中...");
       mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err) => {
@@ -30244,10 +34596,10 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       });
     }
     await mermaidLoadPromise;
-    const w = window;
-    if (w.mermaid) {
-      w.mermaid.initialize({ startOnLoad: false, theme: "default" });
-      return w.mermaid;
+    const m = getMermaidGlobal();
+    if (m) {
+      m.initialize({ startOnLoad: false, theme: "default" });
+      return m;
     }
     throw new Error("Mermaid.js の読み込みに失敗しました");
   }
@@ -30339,19 +34691,21 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   async function redrawProcessFlow(highlightState) {
     if (!pfSimStates) return;
     let md = "stateDiagram-v2\n";
-    const safeStateName = (n) => n.replace(/[*_~\[\]()]/g, "");
+    const safeStateName = (n) => String(n == null ? "" : n).replace(/[*_~\[\]()]/g, "");
+    const safeActionName = (n) => String(n == null ? "" : n).replace(/[*_~\[\]()"]/g, "");
     const startStates = new Set(Object.keys(pfSimStates));
     for (const a of pfSimActions) {
-      if (a.to) startStates.delete(a.to);
+      if (a && a.to) startStates.delete(a.to);
     }
     for (const st of startStates) {
       if (st && pfSimStates[st]) md += `    [*] --> ${safeStateName(st)}
 `;
     }
     for (const a of pfSimActions) {
+      if (!a || !a.from || !a.to) continue;
       const from = safeStateName(a.from);
       const to = safeStateName(a.to);
-      const actionName = a.name.replace(/[*_~\[\]()"]/g, "");
+      const actionName = safeActionName(a.name);
       md += `    ${from} --> ${to} : ${actionName}
 `;
     }
@@ -31117,7 +35471,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     );
     const fieldRows = buildFieldImpactRows(bundle);
     const usedFields = fieldRows.filter((row) => row.refCount > 0);
-    const unusedFields = fieldRows.filter((row) => row.refCount === 0);
+    const unusedFields = fieldRows.filter((row) => row.refCount === 0 && !isBuiltinSystemFieldType(row.type));
     const highImpactFields = fieldRows.filter((row) => row.refCount >= 3);
     const notificationRows = buildNotificationRows(bundle);
     const permissionData = buildPermissionMatrixData(bundle);
@@ -31385,6 +35739,21 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setBusy(false);
     setStatus(`影響分析ダッシュボードを更新しました (App ${data.appId})`);
   }
+  var BUILTIN_SYSTEM_FIELD_TYPES = /* @__PURE__ */ new Set([
+    "RECORD_NUMBER",
+    "__ID__",
+    "__REVISION__",
+    "CREATOR",
+    "MODIFIER",
+    "CREATED_TIME",
+    "UPDATED_TIME",
+    "CATEGORY",
+    "STATUS",
+    "STATUS_ASSIGNEE"
+  ]);
+  function isBuiltinSystemFieldType(type) {
+    return BUILTIN_SYSTEM_FIELD_TYPES.has(String(type || "").toUpperCase());
+  }
   function summarizeSectionRefs(refs) {
     const counts = /* @__PURE__ */ new Map();
     (refs || []).forEach((ref) => {
@@ -31429,7 +35798,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   function getFilteredFieldImpactRows() {
     const { searchTerm, filterMode } = getFieldImpactFilterState();
     return (_fieldImpactState.allRows || []).filter((row) => {
-      if (filterMode === "unused" && row.refCount > 0) return false;
+      if (filterMode === "unused" && (row.refCount > 0 || isBuiltinSystemFieldType(row.type))) return false;
       if (filterMode === "used" && row.refCount === 0) return false;
       if (!searchTerm) return true;
       const searchText = [
@@ -32413,6 +36782,15 @@ ${field.label}` : code,
       setBusy(false);
       return;
     }
+    const previousCy = el._cyInstance;
+    if (previousCy && typeof previousCy.destroy === "function") {
+      try {
+        previousCy.destroy();
+      } catch (_) {
+      }
+      el._cyInstance = null;
+    }
+    container.innerHTML = "";
     const w = window;
     if (!cytoscapeDagreRegistered && w.cytoscapeDagre && w.cytoscape) {
       w.cytoscape.use(w.cytoscapeDagre);
@@ -32512,12 +36890,24 @@ ${field.label}` : code,
       cy.elements().removeClass("highlighted");
       renderFieldGraphDetail(detailEl, "", data);
     });
-    doc.getElementById("u_fieldGraphSearch")?.addEventListener("input", (event) => {
-      applyFieldGraphSearch(cy, event.target.value);
-    });
-    doc.getElementById("u_fieldGraphHideIsolated")?.addEventListener("change", () => {
-      runFieldDependencyGraph().catch((error) => handleAnalyzeInlineError(error, "依存グラフの再生成に失敗しました"));
-    });
+    const searchEl = doc.getElementById("u_fieldGraphSearch");
+    if (searchEl && searchEl.parentNode) {
+      const fresh = searchEl.cloneNode(true);
+      fresh.value = searchEl.value;
+      searchEl.parentNode.replaceChild(fresh, searchEl);
+      fresh.addEventListener("input", (event) => {
+        applyFieldGraphSearch(cy, event.target.value);
+      });
+    }
+    const hideEl = doc.getElementById("u_fieldGraphHideIsolated");
+    if (hideEl && hideEl.parentNode) {
+      const fresh = hideEl.cloneNode(true);
+      fresh.checked = hideEl.checked;
+      hideEl.parentNode.replaceChild(fresh, hideEl);
+      fresh.addEventListener("change", () => {
+        runFieldDependencyGraph().catch((error) => handleAnalyzeInlineError(error, "依存グラフの再生成に失敗しました"));
+      });
+    }
     setBusy(false);
     setStatus(`依存グラフ生成完了 (ノード: ${data.visibleNodeCount}, エッジ: ${data.edgeCount})`);
   }
@@ -32593,6 +36983,39 @@ ${field.label}` : code,
       }
     }
     setRootElement(root2);
+    try {
+      const moreFold = root2.querySelector("#u_kusTabMore");
+      if (moreFold) {
+        const summary = moreFold.querySelector(".kus-tab-more__summary");
+        const body = moreFold.querySelector(".kus-tab-more__body");
+        const positionBody = () => {
+          if (!summary || !body || !moreFold.open) return;
+          const r = summary.getBoundingClientRect();
+          body.style.top = `${r.bottom + 4}px`;
+          body.style.right = `${window.innerWidth - r.right}px`;
+          body.style.left = "auto";
+        };
+        moreFold.addEventListener("toggle", () => positionBody());
+        window.addEventListener("resize", positionBody);
+        window.addEventListener("scroll", positionBody, true);
+      }
+    } catch (e) {
+    }
+    try {
+      const ownerWin = root2.ownerDocument && root2.ownerDocument.defaultView || window;
+      const stored = ownerWin.localStorage.getItem("kus:headerCollapsed");
+      const collapsed = stored == null ? true : stored === "1";
+      if (collapsed) {
+        root2.classList.add("header-collapsed");
+        const btn = root2.querySelector("#u_headerCollapseBtn");
+        if (btn) {
+          btn.textContent = "▼";
+          btn.setAttribute("aria-label", "ヘッダーを展開");
+          btn.setAttribute("title", "ヘッダーを展開");
+        }
+      }
+    } catch (e) {
+    }
     const $ = (id) => root2.querySelector(id);
     const ui4 = {
       tabs: [...root2.querySelectorAll(".tab")],
@@ -32785,7 +37208,7 @@ ${field.label}` : code,
       getActiveReflectRow,
       resolveApplyScopes,
       commonParams,
-      currentDiffSignature: currentDiffSignature2,
+      currentDiffSignature,
       parseLookupMapInput,
       makeApplyPlanSignature,
       getSelectedReflectRows,
@@ -32823,6 +37246,7 @@ ${field.label}` : code,
       runExportDryRunPlan,
       runBackupTargetPreview,
       runRestoreTargetPreviewBackup,
+      importTargetPreviewBackupFromFile,
       runApplyPreview,
       runDeployOnly,
       runApplyPatchJson,
@@ -32863,6 +37287,19 @@ ${field.label}` : code,
       }
     });
     setStatus("待機中");
+    try {
+      const statusEl = ui4.status;
+      if (statusEl) {
+        statusEl.title = "実行中の処理がハングした場合はダブルクリックで強制解除";
+        statusEl.style.cursor = "pointer";
+        statusEl.addEventListener("dblclick", () => {
+          if (!forceReleaseRunningGuard("ステータスバー ダブルクリック")) {
+            setStatus("実行中の処理はありません");
+          }
+        });
+      }
+    } catch (e) {
+    }
     if (options.initialTab) {
       const initialFeature = FEATURE_DEFS.find((def) => def.key === options.initialTab) || FEATURE_DEFS.find((def) => (def.tab || def.tabs?.[0]) === options.initialTab && (options.initialTab !== "reflect" || def.key === "reflect"));
       if (initialFeature) openFeatureScreen(initialFeature.key, { persist: false, focus: false });

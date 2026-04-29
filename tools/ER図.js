@@ -316,7 +316,14 @@
         { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
         { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
         { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+        // PUT /app/notifications/reminder.json は notifications に加え timezone を必須的に要求するためソース側の値を引き継ぐ。
+        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => {
+          const body = { notifications: d?.notifications || (Array.isArray(d) ? d : []) };
+          if (d && typeof d === "object" && typeof d.timezone === "string" && d.timezone) {
+            body.timezone = d.timezone;
+          }
+          return body;
+        } },
         { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
       ];
       DEFAULT_SUBTAB_STATE = Object.freeze({
@@ -531,11 +538,15 @@
         importedTargetBundle: null,
         importedSourceName: "",
         importedTargetName: "",
+        lastSettingsExportBundles: [],
         patchJsonPanelOpen: false,
         importedPatchPayload: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
         running: false,
+        runningStartedAt: null,
+        runningTaskLabel: "",
+        runningWatchdogId: null,
         lastResultByTab: {}
       };
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
@@ -704,7 +715,7 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -723,6 +734,7 @@ ${contextLine}`);
         lastError: "",
         byPath: {}
       };
+      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
     }
   });
 
@@ -782,6 +794,9 @@ ${contextLine}`);
   });
 
   // src/ui/dialog.ts
+  function getToolDocument() {
+    return root?.ownerDocument || document;
+  }
   function setRootElement(el) {
     root = el;
   }
@@ -933,10 +948,23 @@ ${contextLine}`);
   }
   var progressUi = /* @__PURE__ */ (() => {
     let el, bar, msg;
+    const removeEl = () => {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+      el = null;
+      bar = null;
+      msg = null;
+    };
     return {
       init() {
-        if (el) el.remove();
-        el = document.createElement("div");
+        removeEl();
+        const doc = (() => {
+          try {
+            return getToolDocument();
+          } catch (_) {
+            return document;
+          }
+        })();
+        el = doc.createElement("div");
         Object.assign(el.style, {
           position: "fixed",
           top: "20px",
@@ -956,7 +984,7 @@ ${contextLine}`);
         <div id="_eb" style="width:0%;height:100%;background:linear-gradient(90deg,#00d4ff,#7b61ff);transition:width .3s;border-radius:4px;"></div>
       </div>
       <div id="_em" style="font-size:12px;margin-top:8px;color:#aaa;">準備中...</div>`;
-        document.body.appendChild(el);
+        (doc.body || doc.documentElement).appendChild(el);
         bar = el.querySelector("#_eb");
         msg = el.querySelector("#_em");
       },
@@ -965,15 +993,37 @@ ${contextLine}`);
         if (msg) msg.textContent = t;
       },
       close() {
+        if (!el) return;
         this.update(100, "完了！");
+        const target = el;
         setTimeout(() => {
-          el.style.opacity = "0";
-          setTimeout(() => el.remove(), 600);
+          if (target) target.style.opacity = "0";
+          setTimeout(() => {
+            if (target && target.parentNode) target.parentNode.removeChild(target);
+            if (el === target) {
+              el = null;
+              bar = null;
+              msg = null;
+            }
+          }, 600);
         }, 2e3);
       },
       error(e) {
+        if (!el) return;
         this.update(100, "エラー: " + e);
         if (bar) bar.style.background = "#f44";
+        const target = el;
+        setTimeout(() => {
+          if (target && target.parentNode) target.parentNode.removeChild(target);
+          if (el === target) {
+            el = null;
+            bar = null;
+            msg = null;
+          }
+        }, 6e3);
+      },
+      dismiss() {
+        removeEl();
       }
     };
   })();
@@ -1083,24 +1133,37 @@ ${contextLine}`);
       const linkedFieldPaths = new Set(
         relations.filter((rel) => rel.kind === "LOOKUP" || rel.kind === "REF").map((rel) => String(rel.fromPath || rel.from || "").trim()).filter(Boolean)
       );
-      const essentialFields = fields.filter((field) => {
+      const density = String(options?.fieldDensity || ER_DEFAULTS.fieldDensity);
+      const isEssential = (field) => {
         if (field.type === "SUBTABLE") return false;
         if (field.isPK || field.unique) return true;
         return linkedFieldPaths.has(String(field.path || field.code || "").trim());
-      });
-      const visibleFieldsSource = essentialFields.length ? essentialFields : fields.filter((field) => field.type !== "SUBTABLE").slice(0, 6);
+      };
+      let visibleFieldsSource;
+      if (density === "full") {
+        visibleFieldsSource = fields.filter((f) => f.type !== "SUBTABLE");
+      } else if (density === "standard") {
+        visibleFieldsSource = fields.filter((f) => f.type !== "SUBTABLE" && (isEssential(f) || !!f.required));
+        if (!visibleFieldsSource.length) visibleFieldsSource = fields.filter((f) => f.type !== "SUBTABLE").slice(0, 6);
+      } else {
+        const essential = fields.filter(isEssential);
+        visibleFieldsSource = essential.length ? essential : fields.filter((f) => f.type !== "SUBTABLE").slice(0, 6);
+      }
       const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
+      const totalFieldCount = fields.filter((f) => f.type !== "SUBTABLE").length;
       const r = {
         id: appId,
         name: aR.name || `アプリ ${appId}`,
         spaceId: aR.spaceId || null,
         threadId: aR.threadId || null,
         fields: visibleFields,
+        allFields: fields,
+        totalFieldCount,
         relations,
         ok: true,
         createdAt: aR.createdAt,
         modifiedAt: aR.modifiedAt,
-        requiredCount: visibleFields.filter((field) => !!field.required).length,
+        requiredCount: fields.filter((field) => !!field.required && field.type !== "SUBTABLE").length,
         lookupCount: relations.filter((rel) => rel.kind === "LOOKUP").length,
         refCount: relations.filter((rel) => rel.kind === "REF").length,
         sourceGuestId: options?.source?.guestId || ""
@@ -1109,7 +1172,7 @@ ${contextLine}`);
       return r;
     } catch (e) {
       console.error(`App ${appId}:`, e);
-      const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], relations: [], ok: false };
+      const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], allFields: [], totalFieldCount: 0, relations: [], ok: false };
       cache.set(appId, r);
       return r;
     }
@@ -1860,9 +1923,13 @@ function buildNodeLabel(app){
   });
   const preview = ordered.slice(0, maxLines).map((f)=>buildFieldPreviewLine(f));
   if(ordered.length > maxLines) preview.push("+ " + (ordered.length - maxLines) + " 件");
+  const totalFieldCount = typeof app.totalFieldCount === "number" ? app.totalFieldCount : fields.length;
+  const fieldCountText = totalFieldCount > fields.length
+    ? fields.length + "/" + totalFieldCount + "項目"
+    : fields.length + "項目";
   const meta = [
     "App " + app.id,
-    fields.length + "項目",
+    fieldCountText,
     app.relations.length + "関連",
     "深さ " + (app.depth || 0)
   ].join(" / ");
@@ -2054,21 +2121,6 @@ cy.one("layoutstop",()=>setTimeout(fit,200));
 syncLayoutButtons(ER_OPTIONS.layoutName || "dagre");
 syncDensityControl();
 updateSearchMeta("", 0);
-
-// ─── Export ───
-function exportPNG(){
-  const b64 = cy.png({ full: true, scale: 2, bg: currentPalette().bg });
-  const a = document.createElement("a");
-  a.href = b64;
-  a.download = "kintone_erd.png";
-  a.click();
-}
-function exportSVG(){
-  // cytoscape-svg plugin is not present, so we fallback to a simple message or a data-uri attempt.
-  // Actually, standard cytoscape does not natively support SVG without an extension.
-  // We can try to use JSON instead or alert the user.
-  showToast("SVGエクスポートには追加のプラグイン(cytoscape-svg)が必要です。PNGをご利用ください。", 'warn');
-}
 
 // ─── Layout Switching ───
 function setLayout(name){
@@ -2360,11 +2412,15 @@ function renderAppDetail(app){
   const fieldGroups = detailFieldGroups(app);
   const panel = document.getElementById("detail");
   document.getElementById("detail-title").textContent = app.name;
+  const realFieldTotal = typeof app.totalFieldCount === "number" ? app.totalFieldCount : visibleFields.length;
+  const fieldPillText = realFieldTotal > visibleFields.length
+    ? '項目 ' + visibleFields.length + '/<small>' + realFieldTotal + '</small>'
+    : '<b>項目</b> ' + visibleFields.length;
   document.getElementById("detail-meta").innerHTML = "ID: " + escapeHtml(app.id)
     + (app.createdAt ? " | 作成: " + escapeHtml(new Date(app.createdAt).toLocaleDateString()) : "")
     + (app.modifiedAt ? " | 更新: " + escapeHtml(new Date(app.modifiedAt).toLocaleDateString()) : "")
     + '<div class="detail-chip-row">'
-    + '<span class="meta-pill"><b>項目</b> ' + visibleFields.length + '</span>'
+    + '<span class="meta-pill" title="表示中 / 総数（表示数は密度設定に依存）">' + fieldPillText + '</span>'
     + '<span class="meta-pill"><b>ルックアップ</b> ' + fieldGroups.lookup.length + '</span>'
     + '<span class="meta-pill"><b>関連</b> ' + fieldGroups.ref.length + '</span>'
     + '<span class="meta-pill"><b>必須</b> ' + fieldGroups.required.length + '</span>'
@@ -2492,7 +2548,8 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
 
 // Build stats
 (function buildSidebar(){
-  const totalFields=APPS.reduce((s,a)=>s+visibleFieldsForNode(a).length,0);
+  const visibleFieldsTotal=APPS.reduce((s,a)=>s+visibleFieldsForNode(a).length,0);
+  const totalFieldsAcrossApps=APPS.reduce((s,a)=>s+(typeof a.totalFieldCount==="number"?a.totalFieldCount:visibleFieldsForNode(a).length),0);
   const totalRels=APPS.reduce((s,a)=>s+a.relations.length,0);
   const lookups=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="LOOKUP").length,0);
   const actions=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="ACTION").length,0);
@@ -2501,7 +2558,10 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
   APPS.forEach(a=>visibleFieldsForNode(a).forEach(f=>{typeCount[f.type]=(typeCount[f.type]||0)+1;}));
 
   let html='<div class="stat-row"><span>アプリ数</span><span class="stat-val">'+APPS.length+'</span></div>';
-  html+='<div class="stat-row"><span>総フィールド数</span><span class="stat-val">'+totalFields+'</span></div>';
+  html+='<div class="stat-row"><span>総フィールド数</span><span class="stat-val">'+totalFieldsAcrossApps+'</span></div>';
+  if(visibleFieldsTotal!==totalFieldsAcrossApps){
+    html+='<div class="stat-row"><span>表示中フィールド</span><span class="stat-val">'+visibleFieldsTotal+'</span></div>';
+  }
   html+='<div class="stat-row"><span>ルックアップ数</span><span class="stat-val">'+lookups+'</span></div>';
   html+='<div class="stat-row"><span>関連レコード数</span><span class="stat-val">'+refs+'</span></div>';
   html+='<div class="stat-row"><span>アクション線数</span><span class="stat-val">'+actions+'</span></div>';
@@ -2742,18 +2802,28 @@ document.addEventListener("keydown",e=>{
 
 // ─── Exports ───
 function exportPNG(){
-  const a=document.createElement("a");
-  a.href=cy.png({bg:isDark?"#08090d":"#f0f2f5",full:true,scale:2});
-  a.download="kintone_erd.png";a.click();toast("PNG ダウンロード");
+  try{
+    const a=document.createElement("a");
+    a.href=cy.png({bg:isDark?"#08090d":"#f0f2f5",full:true,scale:2});
+    a.download="kintone_erd.png";a.click();toast("PNG ダウンロード");
+  }catch(err){
+    console.error("[ER] exportPNG failed", err);
+    toast("PNG出力に失敗: "+((err&&err.message)||err));
+  }
 }
 function exportSVG(){
-  if(typeof cy.svg !== "function"){
-    toast("SVGエクスポートは未対応のためPNGを出力します");
-    exportPNG();
-    return;
+  try{
+    if(typeof cy.svg !== "function"){
+      toast("SVGエクスポートは未対応のためPNGを出力します");
+      exportPNG();
+      return;
+    }
+    const blob=new Blob([cy.svg({full:true,bg:isDark?"#08090d":"#f0f2f5"})],{type:"image/svg+xml"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="kintone_erd.svg";a.click();toast("SVG ダウンロード");
+  }catch(err){
+    console.error("[ER] exportSVG failed", err);
+    toast("SVG出力に失敗: "+((err&&err.message)||err));
   }
-  const blob=new Blob([cy.svg({full:true,bg:isDark?"#08090d":"#f0f2f5"})],{type:"image/svg+xml"});
-  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="kintone_erd.svg";a.click();toast("SVG ダウンロード");
 }
 
 let _md={text:"",filename:""};
@@ -3090,7 +3160,10 @@ cy.on("mouseover","node",e=>{
   const app=appMap.get(e.target.data("appId"));
   if(!app) return;
   if(!tipEl){tipEl=document.createElement("div");Object.assign(tipEl.style,{position:"fixed",zIndex:"999",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"8px",padding:"8px 12px",fontSize:"11px",fontFamily:"'DM Mono',monospace",pointerEvents:"none",boxShadow:"0 4px 16px rgba(0,0,0,0.3)",maxWidth:"260px"});document.body.appendChild(tipEl);}
-  tipEl.innerHTML="<b>"+app.name+"</b> (ID:"+app.id+")<br>項目: "+visibleFieldsForNode(app).length+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
+  const _v = visibleFieldsForNode(app).length;
+  const _t = typeof app.totalFieldCount === "number" ? app.totalFieldCount : _v;
+  const _itemText = _t > _v ? (_v + "/" + _t) : _v;
+  tipEl.innerHTML="<b>"+app.name+"</b> (ID:"+app.id+")<br>項目: "+_itemText+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
   tipEl.style.display="block";
 });
 cy.on("mouseout","node",()=>{if(tipEl) tipEl.style.display="none";});

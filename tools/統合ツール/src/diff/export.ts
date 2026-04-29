@@ -6,7 +6,8 @@ import {
 import {
   esc, deepClone, safeJsonForScript,
   getDiffTypeDisplayLabel, getSeverityDisplayLabel,
-  getIssueSideLabel, getPreviewStateLabel, getThemeDisplayLabel
+  getIssueSideLabel, getPreviewStateLabel, getThemeDisplayLabel,
+  renderSectionIconHtml
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import {
@@ -14,7 +15,8 @@ import {
   summarizeRows, summarizeFetchIssues,
   normalizeIgnoreToken, getPathLeafKey,
   getActiveDiffNormalizationLabels, normalizeSectionForCompare,
-  expandSubtableRowsForDisplay
+  expandSubtableRowsForDisplay,
+  expandEntityRowsForDisplay
 } from './engine.js';
 import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './enrich.js';
 import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter } from './filter.js';
@@ -126,6 +128,11 @@ function sanitizeHtmlBearingProps<T>(value: T): T {
 
 export function stringifyRowValueForDiff(value, path) {
   if (value === undefined) return '（未定義）';
+  // customizeSettings の JS/CSS 本文（preprocess で `file._body` に格納）は
+  // 文字列のままでライン diff を効かせる。
+  if (typeof value === 'string' && /customizeSettings\..+\.file\._body$/.test(String(path || ''))) {
+    return value;
+  }
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     if (value.type === 'SUBTABLE' && value.fields && typeof value.fields === 'object') {
       return formatSubtableSnapshotText(sanitizeHtmlBearingProps(value));
@@ -1768,9 +1775,18 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const summary = summarizeRows(withSameSections);
   const sectionText = (scopes || []).map((k) => (SECTION_DEFS.find((d) => d.key === k)?.label || k)).join(', ');
   const sectionLabelMap = Object.fromEntries(SECTION_DEFS.map((d) => [d.key, d.label]));
+  // 非フィールド行のエンティティ種別 → 日本語ラベル（enrich.ts と同期）
+  const entityKindLabelMap: Record<string, string> = {
+    view: 'ビュー', report: 'グラフ', state: 'ステータス', action: '遷移アクション',
+    appAction: 'アクション', aclEntry: '権限エントリー', fieldAclEntry: 'フィールド権限',
+    recordAclEntry: 'レコード権限', notification: '通知',
+    perRecordNotification: 'レコード条件通知', reminderNotification: 'リマインダー通知',
+    category: 'カテゴリ', plugin: 'プラグイン', jsCss: 'JS/CSS', layoutRow: 'レイアウト行'
+  };
   const MAX_EXPORT_ROWS = 2000;
-  // 差分一覧を「テーブル内フィールド単位」で見られるよう、SUBTABLE 追加/削除行を事前展開する。
-  const displayRows = expandSubtableRowsForDisplay(withSameSections);
+  // 差分一覧の見通しを良くするため、SUBTABLE 追加/削除行をテーブル内フィールド単位に、
+  // 非フィールドのセクション全体追加/削除をエンティティ単位に、それぞれ事前展開する。
+  const displayRows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(withSameSections));
   const exportRows = displayRows.slice(0, MAX_EXPORT_ROWS);
   const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
   const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
@@ -1919,6 +1935,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 (() => {
   const REPORT_ROWS = ${safeJsonForScript(exportRows)};
   const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
+  const ENTITY_KIND_LABEL_MAP = ${safeJsonForScript(entityKindLabelMap)};
   const REPORT_META = ${safeJsonForScript(reportMeta)};
   const THEME_KEY = '${TOOL_ID}:diffReportTheme';
   const ACTIVE_TAB_KEY = '${TOOL_ID}:diffReportActiveTab';
@@ -2297,6 +2314,14 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         const propTitle = fieldChangePropTitle(info, row);
         pathMain = fieldLabel + (code ? ' (' + code + ')' : '') + (propTitle ? ' / ' + propTitle : '');
       }
+    } else if (row?.entityLabel || row?.entityKind) {
+      const sectionLabel = SECTION_LABEL_MAP[row?.sectionKey || ''] || row?.section || '';
+      const kindLabel = ENTITY_KIND_LABEL_MAP[row?.entityKind || ''] || '';
+      const parts = [];
+      if (sectionLabel) parts.push(sectionLabel);
+      if (row?.entityLabel) parts.push((kindLabel ? kindLabel + '「' + row.entityLabel + '」' : row.entityLabel));
+      if (row?.entityPropLabel) parts.push(row.entityPropLabel);
+      pathMain = parts.join(' / ') || pathMain;
     }
     let html = '<div class="path-main">' + escHtml(pathMain) + '</div>';
     if (relPath && relPath !== fullPath && row?.sectionKey !== FIELD_SECTION_KEY) {
@@ -3577,7 +3602,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
           const cells = renderRowCells(row, useCharDiff);
           const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
           const card = document.createElement('article');
-          card.className = 'diff-card diff-card--' + typeClass;
+          const sevToken = String(row.severity || 'low').toLowerCase();
+          const sevCls = sevToken === 'high' ? ' sev-high' : sevToken === 'medium' ? ' sev-medium' : ' sev-low';
+          const reviewedCls = '';
+          card.className = 'diff-card diff-card--' + typeClass + sevCls + reviewedCls;
           card.innerHTML =
             '<div class="diff-card-head">' +
               '<span class="type-chip type-chip--' + typeClass + '">' + escHtml(typeLabel) + '</span>' +
@@ -4437,10 +4465,40 @@ export function renderDiffWarningBox() {
 // Main in-panel diff result renderer
 // ---------------------------------------------------------------------------
 
+const ENTITY_KIND_INTAB_LABELS: Record<string, string> = {
+  view: 'ビュー', report: 'グラフ', state: 'ステータス', action: '遷移アクション',
+  appAction: 'アクション', aclEntry: '権限エントリー', fieldAclEntry: 'フィールド権限',
+  recordAclEntry: 'レコード権限', notification: '通知',
+  perRecordNotification: 'レコード条件通知', reminderNotification: 'リマインダー通知',
+  category: 'カテゴリ', plugin: 'プラグイン', jsCss: 'JS/CSS', layoutRow: 'レイアウト行'
+};
+
 function formatDiffPathRich(row) {
   const p = String(row?.path || '-');
   if (p === '-') return esc(p);
   const fieldInfo = extractFieldPathInfo(row?.path);
+  if (!fieldInfo && (row?.entityLabel || row?.entityKind)) {
+    const sectionLabel = SECTION_DEFS.find((d) => d.key === row?.sectionKey)?.label || row?.section || '';
+    const kindLabel = ENTITY_KIND_INTAB_LABELS[row?.entityKind || ''] || '';
+    const propLabel = String(row?.entityPropLabel || '');
+    const sectionHtml = sectionLabel
+      ? `<span class="diff-path-chip diff-path-chip--section" title="${esc(sectionLabel)}">${esc(sectionLabel)}</span>`
+      : '';
+    const kindChipHtml = kindLabel
+      ? `<span class="diff-path-chip diff-path-chip--entity" title="${esc(kindLabel)}">${esc(kindLabel)}</span>`
+      : '';
+    const propHtml = propLabel ? `<span class="diff-path-prop"> · ${esc(propLabel)}</span>` : '';
+    const arrowHtml = sectionHtml && kindChipHtml ? '<span class="diff-path-arrow" aria-hidden="true">▸</span>' : '';
+    return `
+      <span class="diff-path-line diff-path-context">
+        ${sectionHtml}
+        ${arrowHtml}
+        ${kindChipHtml}
+        <span class="diff-path-name"><strong>${esc(row?.entityLabel || '-')}</strong></span>
+        ${propHtml}
+      </span>
+      <span class="diff-path-line diff-path-rich" title="${esc(p)}"><span class="diff-path-prefix">${esc(p)}</span></span>`;
+  }
   if (fieldInfo) {
     const readFieldDef = (code, side) => {
       if (!code) return null;
@@ -4557,8 +4615,11 @@ function buildDiffImpactCardsHtml(rows) {
     ].filter(Boolean).join('');
     const activeClass = curSec === item.key ? ' is-active' : '';
     const reviewed = item.total === item.viewed ? ' is-complete' : '';
-    return `<button type="button" class="diff-impact-card${activeClass}${reviewed}" data-diff-sec-nav="${esc(item.key)}" title="${esc(item.label)} へジャンプ">
+    // D7: severity-tinted left border + section icon
+    const sevTone = item.high > 0 ? ' diff-impact-card--high' : item.medium > 0 ? ' diff-impact-card--medium' : ' diff-impact-card--low';
+    return `<button type="button" class="diff-impact-card${activeClass}${reviewed}${sevTone}" data-diff-sec-nav="${esc(item.key)}" title="${esc(item.label)} へジャンプ">
         <div class="diff-impact-card-head">
+          ${renderSectionIconHtml(item.key, { withTooltip: item.label })}
           <span class="diff-impact-card-title">${esc(item.label)}</span>
           ${warnIcon}
         </div>
@@ -4587,7 +4648,7 @@ function buildDiffSectionNavHtml(rows) {
     const nSel = g.rows.filter((r) => sel.has(r._id)).length;
     const active = cur === g.key ? ' is-active' : '';
     pills.push(
-      `<button type="button" class="diff-sec-pill${active}" data-diff-sec-nav="${esc(g.key)}" title="${esc(g.label)}">${esc(g.label)} <span class="diff-sec-pill-n">${g.rows.length}</span>${nSel ? `<span class="diff-sec-pill-sel">${nSel}</span>` : ''}</button>`
+      `<button type="button" class="diff-sec-pill${active}" data-diff-sec-nav="${esc(g.key)}" title="${esc(g.label)}">${renderSectionIconHtml(g.key)}<span>${esc(g.label)}</span> <span class="diff-sec-pill-n">${g.rows.length}</span>${nSel ? `<span class="diff-sec-pill-sel">${nSel}</span>` : ''}</button>`
     );
   }
   return `<nav class="diff-sec-nav" aria-label="セクションで絞り込み">${pills.join('')}</nav>`;
@@ -4614,12 +4675,25 @@ function paintDiffOffViewPlaceholder(rows) {
 }
 
 /** 差分以外のタブへ移したときに、差分テーブルが残り続けないようにする */
-export const MAIN_RESULT_IDLE_HTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア</p><p class="main-result-placeholder-body">このタブの操作結果やログがここに表示されます。</p></div>`;
+export const MAIN_RESULT_IDLE_HTML = `
+<div class="main-result-placeholder">
+  <p class="main-result-placeholder-title">使い方ガイド</p>
+  <ol class="main-result-placeholder-steps">
+    <li><strong>① 接続</strong> 比較元・比較先アプリIDを入力（必要ならゲストID／プレビュー切替）</li>
+    <li><strong>② 比較</strong> 「差分比較」を実行すると差分テーブルがここに出ます</li>
+    <li><strong>③ 確認</strong> 「JSON / 出力 / 詳細」で内容や CSV/Markdown 等にエクスポート</li>
+    <li><strong>④ 反映</strong> 「プレビュー反映」タブで対象を選んで比較先プレビューへ書き込み</li>
+  </ol>
+  <p class="main-result-placeholder-body">
+    キーボードショートカット: <kbd>1</kbd>=差分 <kbd>2</kbd>=反映 <kbd>5</kbd>=ER図 <kbd>?</kbd>=ヘルプ <kbd>Esc</kbd>=ランチャーに戻る
+  </p>
+</div>`;
 
 export function renderResultRows(rows) {
-  // テーブル（SUBTABLE）の追加/削除行を、テーブル内フィールド単位に展開して表示する。
+  // テーブル（SUBTABLE）の追加/削除行をテーブル内フィールド単位に、非フィールド
+  // セクションの「丸ごと追加/削除」をエンティティ単位に展開して表示する。
   // 展開行には _displayOnly フラグを付与しており、反映系のロジックからは除外される。
-  rows = expandSubtableRowsForDisplay(rows || []);
+  rows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(rows || []));
   const summary = summarizeRows(rows);
   const severitySummary = summarizeSeverity(rows);
   const fetchSummary = summarizeFetchIssues(state.lastFetchIssues);
@@ -4657,27 +4731,54 @@ export function renderResultRows(rows) {
       </div>
     ` : '';
 
+  // D2: number-first stat chips replacing the long pill row
+  const totalActual = summary.total - summary.same;
+  const statChipsHtml = `
+      <div class="diff-stat-chip-row" role="group" aria-label="差分サマリー">
+        <div class="diff-stat-chip diff-stat-chip--accent" title="差分の総件数（同一除く）">
+          <div class="diff-stat-chip__num">${totalActual}</div>
+          <div class="diff-stat-chip__label">差分</div>
+        </div>
+        <div class="diff-stat-chip${summary.added ? ' diff-stat-chip--add' : ''}" title="追加">
+          <div class="diff-stat-chip__num">+${summary.added}</div>
+          <div class="diff-stat-chip__label">追加</div>
+        </div>
+        <div class="diff-stat-chip${summary.removed ? ' diff-stat-chip--rm' : ''}" title="削除">
+          <div class="diff-stat-chip__num">−${summary.removed}</div>
+          <div class="diff-stat-chip__label">削除</div>
+        </div>
+        <div class="diff-stat-chip${summary.changed ? ' diff-stat-chip--chg' : ''}" title="変更">
+          <div class="diff-stat-chip__num">~${summary.changed}</div>
+          <div class="diff-stat-chip__label">変更</div>
+        </div>
+        ${summary.moved ? `<div class="diff-stat-chip diff-stat-chip--mv" title="移動"><div class="diff-stat-chip__num">↕${summary.moved}</div><div class="diff-stat-chip__label">移動</div></div>` : ''}
+        <div class="diff-stat-chip${severitySummary.high > 0 ? ' diff-stat-chip--high' : ''}" title="重要度 高">
+          <div class="diff-stat-chip__num">${severitySummary.high}</div>
+          <div class="diff-stat-chip__label">高</div>
+        </div>
+        <div class="diff-stat-chip${severitySummary.medium > 0 ? ' diff-stat-chip--mid' : ''}" title="重要度 中">
+          <div class="diff-stat-chip__num">${severitySummary.medium}</div>
+          <div class="diff-stat-chip__label">中</div>
+        </div>
+        <div class="diff-stat-chip" title="重要度 低">
+          <div class="diff-stat-chip__num">${severitySummary.low}</div>
+          <div class="diff-stat-chip__label">低</div>
+        </div>
+        ${summary.same ? `<div class="diff-stat-chip" title="同一"><div class="diff-stat-chip__num">${summary.same}</div><div class="diff-stat-chip__label">同一</div></div>` : ''}
+        ${fetchSummary.total ? `<div class="diff-stat-chip diff-stat-chip--err" title="API取得失敗"><div class="diff-stat-chip__num">${fetchSummary.total}</div><div class="diff-stat-chip__label">取得失敗</div></div>` : ''}
+        ${selectedRows.length ? `<div class="diff-stat-chip diff-stat-chip--accent" title="選択中"><div class="diff-stat-chip__num">${selectedRows.length}</div><div class="diff-stat-chip__label">選択</div></div>` : ''}
+        ${viewedCount ? `<div class="diff-stat-chip diff-stat-chip--ok" title="レビュー済"><div class="diff-stat-chip__num">${viewedCount}</div><div class="diff-stat-chip__label">レビュー済</div></div>` : ''}
+        ${renameCount ? `<div class="diff-stat-chip" title="名称変更候補"><div class="diff-stat-chip__num">${renameCount}</div><div class="diff-stat-chip__label">改名候補</div></div>` : ''}
+      </div>`;
+
   const summaryHtml = `
       <div class="diff-summary-head" role="region" aria-label="差分サマリー">
         ${buildDiffSummaryBars(summary)}
-        <div class="diff-summary">
-        <span class="diff-pill">総件数 ${summary.total}</span>
-        <span class="diff-pill">追加 ${summary.added}</span>
-        <span class="diff-pill">削除 ${summary.removed}</span>
-        <span class="diff-pill">変更 ${summary.changed}</span>
-        <span class="diff-pill">移動 ${summary.moved}</span>
-        ${summary.same ? `<span class="diff-pill">同一 ${summary.same}</span>` : ''}
-        <span class="diff-pill">高 ${severitySummary.high}</span>
-        <span class="diff-pill">中 ${severitySummary.medium}</span>
-        <span class="diff-pill">低 ${severitySummary.low}</span>
-        <span class="diff-pill">取得失敗 ${fetchSummary.total}</span>
-        <span class="diff-pill">選択 ${selectedRows.length}</span>
-        <span class="diff-pill">レビュー済 ${viewedCount}</span>
-        <span class="diff-pill">名称変更候補 ${renameCount}</span>
-        <span class="diff-pill">影響情報あり ${impactCount}</span>
-        <span class="diff-info">表示 ${renderedRows.length}/${filteredRows.length}/${rows.length}</span>
-        ${filteredRows.length !== rows.length ? `<span class="diff-info">絞込重要度 高:${filteredSeverity.high} / 中:${filteredSeverity.medium} / 低:${filteredSeverity.low}</span>` : ''}
-        ${rawKeyword ? `<span class="diff-info">検索: ${esc(rawKeyword)}</span>` : ''}
+        ${statChipsHtml}
+        <div class="diff-summary diff-summary--meta">
+          <span class="diff-info">表示 ${renderedRows.length}/${filteredRows.length}/${rows.length}</span>
+          ${filteredRows.length !== rows.length ? `<span class="diff-info">絞込中: 高 ${filteredSeverity.high} / 中 ${filteredSeverity.medium} / 低 ${filteredSeverity.low}</span>` : ''}
+          ${rawKeyword ? `<span class="diff-info">検索: ${esc(rawKeyword)}</span>` : ''}
         </div>
         ${impactCardsHtml}
         ${viewedControlsHtml}
@@ -4717,8 +4818,37 @@ export function renderResultRows(rows) {
 
   const sectionHtml = grouped.map((g) => {
     const collapsed = state.diffCollapsedSections.has(g.key);
+    // D4: section icon + per-type counts in head
+    const secCounts = g.rows.reduce(
+      (acc, r) => {
+        if (!r) return acc;
+        if (r.type === 'added') acc.added += 1;
+        else if (r.type === 'removed') acc.removed += 1;
+        else if (r.type === 'changed') acc.changed += 1;
+        else if (r.type === 'moved') acc.moved += 1;
+        else if (r.type === 'same') acc.same += 1;
+        const sev = String(r.severity || 'low').toLowerCase();
+        if (sev === 'high') acc.high += 1;
+        else if (sev === 'medium') acc.medium += 1;
+        else acc.low += 1;
+        return acc;
+      },
+      { added: 0, removed: 0, changed: 0, moved: 0, same: 0, high: 0, medium: 0, low: 0 }
+    );
+    const headBadges = [
+      secCounts.added ? `<span class="diff-sec-badge diff-sec-badge--add" title="追加">+${secCounts.added}</span>` : '',
+      secCounts.removed ? `<span class="diff-sec-badge diff-sec-badge--rm" title="削除">−${secCounts.removed}</span>` : '',
+      secCounts.changed ? `<span class="diff-sec-badge diff-sec-badge--chg" title="変更">~${secCounts.changed}</span>` : '',
+      secCounts.moved ? `<span class="diff-sec-badge diff-sec-badge--mv" title="移動">↕${secCounts.moved}</span>` : '',
+      secCounts.high ? `<span class="diff-sec-badge diff-sec-badge--high" title="高重要度">⚠ ${secCounts.high}</span>` : ''
+    ].filter(Boolean).join('');
     const head = `<div class="diff-sec-head" data-diff-sec-toggle="${esc(g.key)}">
-        <span>${collapsed ? '▶' : '▼'} ${esc(g.label)}</span>
+        <span class="diff-sec-head__title">
+          <span class="diff-sec-head__chev" aria-hidden="true">${collapsed ? '▶' : '▼'}</span>
+          ${renderSectionIconHtml(g.key, { withTooltip: g.label })}
+          <span class="diff-sec-head__label">${esc(g.label)}</span>
+        </span>
+        <span class="diff-sec-head__badges">${headBadges}</span>
         <span class="diff-sec-meta">${g.rows.length} 件</span>
       </div>`;
     if (collapsed) return `<section class="diff-sec">${head}</section>`;
@@ -4756,7 +4886,13 @@ export function renderResultRows(rows) {
       const viewedChecked = viewed ? 'checked' : '';
       const viewedClass = viewed ? ' diff-row-viewed' : '';
       const focusClass = state.diffFocusedRowId === r._id ? ' diff-row-focused' : '';
-      return `<tr class="${rowAccent}${selected ? ' diff-row-selected' : ''}${hierarchyClass}${viewedClass}${focusClass}" data-diff-row-tr="${esc(r._id)}">
+      // D1: severity left-border via class on TR + viewed-faded class (S15)
+      const sevBorderClass = sev === 'high' ? ' diff-row-sev-high' : sev === 'medium' ? ' diff-row-sev-medium' : ' diff-row-sev-low';
+      const reviewedFadedClass = viewed ? ' is-reviewed-faded' : '';
+      // D3: diff type icon
+      const typeGlyph = r.type === 'added' ? '+' : r.type === 'removed' ? '−' : r.type === 'same' ? '＝' : (r.moved ? '↕' : '~');
+      const sevGlyph = sev === 'high' ? '⚠' : sev === 'medium' ? '⚡' : '◦';
+      return `<tr class="${rowAccent}${selected ? ' diff-row-selected' : ''}${hierarchyClass}${viewedClass}${focusClass}${sevBorderClass}${reviewedFadedClass}" data-diff-row-tr="${esc(r._id)}">
           <td><input type="checkbox" data-diff-row-id="${esc(r._id)}" aria-label="この差分を選択" ${selected}></td>
           <td class="diff-viewed-cell">
             <label class="diff-viewed-toggle" title="レビュー済みとしてマーク（キー: v）">
@@ -4764,8 +4900,8 @@ export function renderResultRows(rows) {
               <span class="diff-viewed-mark" aria-hidden="true">${viewed ? '✓' : ''}</span>
             </label>
           </td>
-          <td><span class="sev-badge ${sevClass}">${esc(getSeverityDisplayLabel(sev))}</span></td>
-          <td class="diff-type ${typeClass}">${esc(typeLabel || '-')}</td>
+          <td><span class="diff-sev-pill diff-sev-pill--${sev}" title="${esc(getSeverityDisplayLabel(sev))}重要度"><span class="diff-sev-pill__icon">${sevGlyph}</span>${esc(getSeverityDisplayLabel(sev))}</span></td>
+          <td><span class="diff-type-pill diff-type-pill--${typeClass}" title="${esc(typeLabel || '-')}"><span class="diff-type-pill__icon">${typeGlyph}</span>${esc(typeLabel || '-')}</span></td>
           <td>
             <div class="diff-tools">
               <button type="button" class="diff-mini-btn" data-copy-val="${esc(r.path || '')}">パス</button>

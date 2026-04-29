@@ -156,9 +156,17 @@ export function scoreFieldRenameCandidate(removedRow, addedRow) {
     reasons.push('label-similar');
     hasStrongMatch = true;
   }
-  if (scoreTokenOverlap(leftCode, rightCode) >= 0.5) {
+  const codeOverlap = scoreTokenOverlap(leftCode, rightCode);
+  if (codeOverlap >= 0.5) {
     score += 1;
     reasons.push('code-similar');
+  }
+  // ラベルが取れない / 一致しない場合でも、コードトークン重なりが十分高ければ rename 候補として扱う
+  // （例: company_name → company は scoreTokenOverlap = 0.5、companyName → company は ≒1.0）
+  if (!hasStrongMatch && codeOverlap >= 0.7) {
+    score += 2;
+    reasons.push('code-strong');
+    hasStrongMatch = true;
   }
   if (leftDef.required === rightDef.required) {
     score += 1;
@@ -450,6 +458,452 @@ export function summarizeImpactRefs(refs) {
   return head || `影響 ${refs.length}件`;
 }
 
+// ---------------------------------------------------------------------------
+// Non-field entity rename detection
+// ---------------------------------------------------------------------------
+// ビュー/グラフ/ステータス/遷移/カテゴリ/通知/権限エントリー/プラグイン等の
+// 「改名」で発生する added + removed の偽陽性ペアを統合する。
+// extractEntityContext で entityKind/entityCode を解決済み前提。
+// ---------------------------------------------------------------------------
+const RENAMABLE_ENTITY_KINDS = new Set([
+  'view', 'report', 'state', 'category',
+  'action', 'appAction',
+  'aclEntry', 'recordAclEntry', 'fieldAclEntry',
+  'notification', 'perRecordNotification', 'reminderNotification',
+  'plugin', 'jsCss', 'layoutRow'
+]);
+
+function isEntityRootRow(row): boolean {
+  if (!row || row.sectionKey === 'fieldSettings') return false;
+  if (row._displayOnly) return false;
+  if (!row.entityKind || !RENAMABLE_ENTITY_KINDS.has(row.entityKind)) return false;
+  const tokens = tokenizePath(String(row.path || ''));
+  const sectionKey = String(row.sectionKey || '');
+  if ((sectionKey === 'viewSettings' || sectionKey === 'reportSettings' || sectionKey === 'categories') && tokens.length === 3) return true;
+  if (sectionKey === 'processSettings' && tokens[1] === 'states' && tokens.length === 3) return true;
+  if ((sectionKey === 'processSettings' || sectionKey === 'actionSettings') && tokens[1] === 'actions' && tokens.length === 3) return true;
+  if ((sectionKey === 'appAcl' || sectionKey === 'recordPermissions' || sectionKey === 'fieldAcl') && tokens[1] === 'rights' && tokens.length === 3) return true;
+  if (['notifications', 'perRecordNotifications', 'reminderNotifications'].includes(sectionKey) && tokens[1] === 'notifications' && tokens.length === 3) return true;
+  if (sectionKey === 'pluginSettings' && tokens[1] === 'plugins' && tokens.length === 3) return true;
+  if (sectionKey === 'layoutSettings' && tokens[1] === 'layout' && tokens.length === 3) return true;
+  if (sectionKey === 'customizeSettings' && tokens.length === 4) return true;
+  return false;
+}
+
+function entityPayload(row) {
+  return row?.right || row?.left || null;
+}
+
+function normalizeEntityBodyForRename(value, sectionKey, dropPresentation = false) {
+  const dropKeys = new Set<string>(['id', 'index', 'no', 'order', 'revision', 'createdAt', 'creator', 'modifiedAt', 'modifier']);
+  if (dropPresentation) {
+    if (sectionKey === 'viewSettings' || sectionKey === 'reportSettings') dropKeys.add('name');
+    if (sectionKey === 'processSettings' || sectionKey === 'actionSettings') dropKeys.add('name');
+    if (sectionKey === 'pluginSettings') dropKeys.add('name');
+    if (['notifications', 'perRecordNotifications', 'reminderNotifications'].includes(sectionKey)) {
+      dropKeys.add('name'); dropKeys.add('title');
+    }
+  }
+  const walk = (v) => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') {
+      const out = {};
+      Object.keys(v).sort().forEach((k) => {
+        if (dropKeys.has(k)) return;
+        out[k] = walk(v[k]);
+      });
+      return out;
+    }
+    return v;
+  };
+  return walk(value);
+}
+
+function scoreEntityRenameCandidate(removedRow, addedRow) {
+  if (removedRow.sectionKey !== addedRow.sectionKey) return null;
+  if (removedRow.entityKind !== addedRow.entityKind) return null;
+  const left = entityPayload(removedRow);
+  const right = entityPayload(addedRow);
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return null;
+  // Type 整合（type プロパティを持つもの: view/layoutRow/customize.type 等）
+  const lType = (left as any).type;
+  const rType = (right as any).type;
+  if (lType != null && rType != null && String(lType) !== String(rType)) return null;
+
+  const sectionKey = removedRow.sectionKey;
+  const exactSigLeft = stableStringify(normalizeEntityBodyForRename(left, sectionKey));
+  const exactSigRight = stableStringify(normalizeEntityBodyForRename(right, sectionKey));
+  const coreSigLeft = stableStringify(normalizeEntityBodyForRename(left, sectionKey, true));
+  const coreSigRight = stableStringify(normalizeEntityBodyForRename(right, sectionKey, true));
+
+  const reasons: string[] = [];
+  let score = 0;
+  let strong = false;
+  if (lType && rType) {
+    score += 1;
+    reasons.push(`type:${lType}`);
+  }
+  if (exactSigLeft === exactSigRight) {
+    score += 6;
+    reasons.push('same-body');
+    strong = true;
+  } else if (coreSigLeft === coreSigRight) {
+    score += 5;
+    reasons.push('same-core');
+    strong = true;
+  }
+  const leftLabel = normalizeLooseText(String(removedRow.entityLabel || ''));
+  const rightLabel = normalizeLooseText(String(addedRow.entityLabel || ''));
+  if (leftLabel && rightLabel) {
+    if (leftLabel === rightLabel) {
+      score += 2;
+      reasons.push('same-label');
+    } else if (scoreTokenOverlap(leftLabel, rightLabel) >= 0.6) {
+      score += 1;
+      reasons.push('label-similar');
+    }
+  }
+  if (!strong) return null;
+  if (score < 6) return null;
+  return { score, matchedBy: reasons.join(', ') };
+}
+
+export function detectEntityRenameCandidates(rows) {
+  const eligible = (rows || []).filter(isEntityRootRow);
+  const removedRows = eligible.filter((r) => r.type === 'removed');
+  const addedRows = eligible.filter((r) => r.type === 'added');
+  if (!removedRows.length || !addedRows.length) return new Map();
+  type Cand = { removedRow: any; addedRow: any; score: number; matchedBy: string };
+  const candidates: Cand[] = [];
+  removedRows.forEach((rr) => {
+    addedRows.forEach((ar) => {
+      const scored = scoreEntityRenameCandidate(rr, ar);
+      if (!scored) return;
+      candidates.push({ removedRow: rr, addedRow: ar, score: scored.score, matchedBy: scored.matchedBy });
+    });
+  });
+  candidates.sort((a, b) => b.score - a.score);
+  const usedRemoved = new Set<string>();
+  const usedAdded = new Set<string>();
+  const out = new Map<string, any>();
+  candidates.forEach((cand) => {
+    if (usedRemoved.has(cand.removedRow._id) || usedAdded.has(cand.addedRow._id)) return;
+    usedRemoved.add(cand.removedRow._id);
+    usedAdded.add(cand.addedRow._id);
+    const fromCode = String(cand.removedRow.entityCode || cand.removedRow.entityLabel || '');
+    const toCode = String(cand.addedRow.entityCode || cand.addedRow.entityLabel || '');
+    const renameInfo = {
+      id: `entity-rename:${cand.removedRow.sectionKey}:${fromCode}:${toCode}`,
+      fromCode,
+      toCode,
+      score: cand.score,
+      matchedBy: cand.matchedBy,
+      entityKind: cand.removedRow.entityKind,
+      sectionKey: cand.removedRow.sectionKey
+    };
+    out.set(cand.removedRow._id, renameInfo);
+    out.set(cand.addedRow._id, renameInfo);
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Non-field entity context resolver
+// ---------------------------------------------------------------------------
+// セクション別に「行が属するエンティティ（ビュー、ステータス、アクション、ACL
+// エントリー、通知、…）」を特定し、人間に読みやすいラベル/種別と、葉キーに
+// 対応する日本語プロパティ名を解決する。フィールド行 (fieldSettings) は
+// 既存の extractFieldPathInfo で十分なため、この関数では扱わない。
+// ---------------------------------------------------------------------------
+
+const SECTION_PROP_LABELS: Record<string, Record<string, string>> = {
+  viewSettings: {
+    name: 'ビュー名', type: 'ビュー種別', filterCond: '絞り込み条件', sort: 'ソート',
+    fields: '表示フィールド', pager: 'ページャー', paginationStyle: 'ページャー表示',
+    builtinType: '組み込みビュー種別', html: 'カスタムHTML', index: '表示順',
+    customView: 'カスタマイズビュー', date: '日付フィールド', title: 'タイトルフィールド',
+    description: '説明', id: 'ビューID'
+  },
+  reportSettings: {
+    name: 'グラフ名', chartType: 'グラフ種別', chartMode: 'グラフモード',
+    groups: 'グループ化', aggregations: '集計', filterCond: '絞り込み条件',
+    sorts: 'ソート', periodicReport: '定期実行', index: '表示順', id: 'グラフID'
+  },
+  processSettings: {
+    enable: 'プロセス管理 有効/無効', name: '名称', index: '表示順',
+    assignee: '作業者', from: '遷移元', to: '遷移先', condition: '実行条件',
+    actions: '遷移アクション', states: 'ステータス', filterCond: '実行条件',
+    revisions: 'リビジョン'
+  },
+  actionSettings: {
+    name: 'アクション名', link: 'リンク先', params: 'パラメータ',
+    targetApp: '転送先アプリ', index: '表示順', mappings: '項目マッピング',
+    targetAppId: '転送先アプリID', filterCond: '実行条件', id: 'アクションID'
+  },
+  appAcl: {
+    appEditable: 'アプリ管理権限', recordViewable: 'レコード閲覧',
+    recordAddable: 'レコード追加', recordEditable: 'レコード編集',
+    recordDeletable: 'レコード削除', recordImportable: 'レコード読み込み',
+    recordExportable: 'レコード書き出し', entity: 'エンティティ',
+    includeSubs: '配下を含む', code: 'エンティティコード', type: 'エンティティ種別'
+  },
+  fieldAcl: {
+    accessibility: 'アクセス権', code: 'フィールドコード', entity: 'エンティティ',
+    includeSubs: '配下を含む', viewable: '閲覧', editable: '編集'
+  },
+  recordPermissions: {
+    filterCond: '対象レコード条件', viewable: '閲覧', editable: '編集',
+    deletable: '削除', includeSubs: '配下を含む', entity: 'エンティティ',
+    code: 'エンティティコード', type: 'エンティティ種別'
+  },
+  notifications: {
+    recipients: '宛先', includeSubs: '配下を含む', appAdmin: 'アプリ管理者',
+    onUserAccess: 'アクセス権変更通知', notifyToCommenter: 'コメント通知',
+    code: 'エンティティコード', type: 'エンティティ種別', entity: 'エンティティ'
+  },
+  perRecordNotifications: {
+    name: '通知名', filterCond: '通知対象条件', title: 'タイトル', body: '本文',
+    recipients: '宛先', includeSubs: '配下を含む', code: 'エンティティコード',
+    type: 'エンティティ種別', entity: 'エンティティ'
+  },
+  reminderNotifications: {
+    name: '通知名', timing: 'タイミング', filterCond: '通知対象条件',
+    title: 'タイトル', body: '本文', recipients: '宛先',
+    daysLater: '日数後', hoursLater: '時間後', baseDate: '基準日'
+  },
+  categories: {
+    enable: 'カテゴリ管理 有効/無効', name: 'カテゴリ名', index: '表示順',
+    code: 'カテゴリコード'
+  },
+  customizeSettings: {
+    type: '種別', url: 'URL', file: 'ファイル', fileKey: 'ファイルキー',
+    js: 'JavaScript', css: 'CSS', desktop: 'デスクトップ', mobile: 'モバイル',
+    scope: 'スコープ', resources: 'リソース',
+    _body: 'JS/CSS本文', name: 'ファイル名'
+  },
+  pluginSettings: {
+    plugins: 'プラグイン一覧', id: 'プラグインID', name: 'プラグイン名',
+    enabled: '有効/無効', version: 'バージョン', config: 'プラグイン設定',
+    code: 'プラグインコード'
+  },
+  layoutSettings: {
+    type: '種別', code: 'フィールドコード', fields: 'フィールド',
+    elementId: '要素ID', label: 'ラベル', value: '初期値',
+    layout: 'レイアウト', size: 'サイズ', width: '横幅', height: '高さ'
+  },
+  appSettings: {
+    name: 'アプリ名', description: '説明', icon: 'アイコン', theme: 'テーマ',
+    titleField: 'タイトルフィールド', enableThumbnails: 'サムネイル表示',
+    enableBulkDeletion: '一括削除', enableComments: 'コメント',
+    enableDuplicateRecord: 'レコード複製', enableInlineRecordEditing: 'インライン編集',
+    numberPrecision: '数値精度', firstMonthOfFiscalYear: '会計年度開始月',
+    revision: 'リビジョン'
+  },
+  appInfo: {
+    name: 'アプリ名', code: 'アプリコード', description: '説明',
+    threadId: 'スレッドID', spaceId: 'スペースID', createdAt: '作成日時',
+    modifiedAt: '更新日時'
+  },
+  formSettings: {
+    name: 'フォーム名', layout: 'レイアウト', revision: 'リビジョン'
+  }
+};
+
+const ENTITY_KIND_LABELS: Record<string, string> = {
+  view: 'ビュー',
+  report: 'グラフ',
+  state: 'ステータス',
+  action: '遷移アクション',
+  appAction: 'アクション',
+  aclEntry: '権限エントリー',
+  fieldAclEntry: 'フィールド権限',
+  recordAclEntry: 'レコード権限',
+  notification: '通知',
+  perRecordNotification: 'レコード条件通知',
+  reminderNotification: 'リマインダー通知',
+  category: 'カテゴリ',
+  plugin: 'プラグイン',
+  jsCss: 'JS/CSS',
+  layoutRow: 'レイアウト行'
+};
+
+export function getEntityKindLabel(kind: string): string {
+  return ENTITY_KIND_LABELS[kind] || '';
+}
+
+function getSectionPropLabel(sectionKey: string, leaf: string): string {
+  const map = SECTION_PROP_LABELS[sectionKey];
+  if (!map) return '';
+  return map[leaf] || '';
+}
+
+function describeAclEntity(entity: any): string {
+  if (!entity || typeof entity !== 'object') return '';
+  const code = String(entity.code || '').trim();
+  const type = String(entity.type || '').trim();
+  if (!code) return type ? `(${type})` : '';
+  return type ? `${code} (${type})` : code;
+}
+
+export interface DiffEntityContext {
+  entityKind: string;
+  entityLabel: string;
+  entityCode: string;
+  propLabel: string;
+}
+
+export function extractEntityContext(row: any): DiffEntityContext {
+  const sectionKey = String(row?.sectionKey || '');
+  const path = String(row?.path || '');
+  const tokens = tokenizePath(path);
+  const leaf = getPathLeafKey(path);
+  const propLabel = getSectionPropLabel(sectionKey, leaf);
+  const empty: DiffEntityContext = { entityKind: '', entityLabel: '', entityCode: '', propLabel };
+  if (sectionKey === 'fieldSettings') return empty;
+
+  const payload = row?.right || row?.left || null;
+
+  switch (sectionKey) {
+    case 'viewSettings': {
+      // viewSettings.views.{viewName}.(...)  または viewSettings.views.{viewName}
+      if (tokens[1] === 'views' && typeof tokens[2] === 'string') {
+        return { entityKind: 'view', entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+      }
+      return empty;
+    }
+    case 'reportSettings': {
+      if (tokens[1] === 'reports' && typeof tokens[2] === 'string') {
+        return { entityKind: 'report', entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+      }
+      return empty;
+    }
+    case 'processSettings': {
+      if (tokens[1] === 'states' && typeof tokens[2] === 'string') {
+        return { entityKind: 'state', entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+      }
+      if (tokens[1] === 'actions' && typeof tokens[2] === 'number') {
+        const name = (row?.arrayKey === 'name' && row?.arrayKeyValue != null)
+          ? String(row.arrayKeyValue)
+          : String((payload && typeof payload === 'object' && (payload as any).name) || '');
+        const label = name || `遷移 #${tokens[2]}`;
+        return { entityKind: 'action', entityLabel: label, entityCode: name, propLabel };
+      }
+      return empty;
+    }
+    case 'actionSettings': {
+      if (tokens[1] === 'actions' && typeof tokens[2] === 'number') {
+        const name = (row?.arrayKey === 'name' && row?.arrayKeyValue != null)
+          ? String(row.arrayKeyValue)
+          : String((payload && typeof payload === 'object' && (payload as any).name) || '');
+        const label = name || `アクション #${tokens[2]}`;
+        return { entityKind: 'appAction', entityLabel: label, entityCode: name, propLabel };
+      }
+      return empty;
+    }
+    case 'appAcl':
+    case 'recordPermissions': {
+      if (tokens[1] === 'rights' && typeof tokens[2] === 'number') {
+        let entityRef: any = (row?.arrayKey === 'entity' && row?.arrayKeyValue && typeof row.arrayKeyValue === 'object') ? row.arrayKeyValue : null;
+        if (!entityRef) entityRef = (payload && typeof payload === 'object') ? (payload as any).entity : null;
+        const label = describeAclEntity(entityRef) || `エントリー #${tokens[2]}`;
+        const code = String(entityRef?.code || '');
+        const kind = sectionKey === 'appAcl' ? 'aclEntry' : 'recordAclEntry';
+        return { entityKind: kind, entityLabel: label, entityCode: code, propLabel };
+      }
+      return empty;
+    }
+    case 'fieldAcl': {
+      if (tokens[1] === 'rights' && typeof tokens[2] === 'number') {
+        const fc = (row?.arrayKey === 'code' && row?.arrayKeyValue != null)
+          ? String(row.arrayKeyValue)
+          : String((payload && typeof payload === 'object' && (payload as any).code) || '');
+        const label = fc || `エントリー #${tokens[2]}`;
+        return { entityKind: 'fieldAclEntry', entityLabel: label, entityCode: fc, propLabel };
+      }
+      return empty;
+    }
+    case 'notifications':
+    case 'perRecordNotifications':
+    case 'reminderNotifications': {
+      if (tokens[1] === 'notifications' && typeof tokens[2] === 'number') {
+        const obj = (payload && typeof payload === 'object') ? payload as any : {};
+        let label = String(obj.name || obj.title || '').trim();
+        if (!label) {
+          const recipients = obj.recipients;
+          if (Array.isArray(recipients) && recipients.length) {
+            const first = recipients[0];
+            const code = first?.entity?.code || first?.code || '';
+            label = code ? `${code}${recipients.length > 1 ? ' 他' : ''}` : '';
+          }
+        }
+        if (!label && row?.arrayKey === 'name' && row?.arrayKeyValue != null) {
+          label = String(row.arrayKeyValue);
+        }
+        if (!label) label = `通知 #${tokens[2]}`;
+        const kind = sectionKey === 'perRecordNotifications'
+          ? 'perRecordNotification'
+          : (sectionKey === 'reminderNotifications' ? 'reminderNotification' : 'notification');
+        return { entityKind: kind, entityLabel: label, entityCode: String(obj.name || ''), propLabel };
+      }
+      return empty;
+    }
+    case 'categories': {
+      if (tokens[1] === 'categories' && typeof tokens[2] === 'string') {
+        return { entityKind: 'category', entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+      }
+      return empty;
+    }
+    case 'pluginSettings': {
+      if (tokens[1] === 'plugins' && typeof tokens[2] === 'number') {
+        const id = (row?.arrayKey === 'id' && row?.arrayKeyValue != null)
+          ? String(row.arrayKeyValue)
+          : String((payload && typeof payload === 'object' && (payload as any).id) || '');
+        const name = String((payload && typeof payload === 'object' && (payload as any).name) || '');
+        const label = name ? (id ? `${name} (${id})` : name) : (id || `プラグイン #${tokens[2]}`);
+        return { entityKind: 'plugin', entityLabel: label, entityCode: id, propLabel };
+      }
+      return empty;
+    }
+    case 'customizeSettings': {
+      // customizeSettings.{desktop|mobile}.{js|css}[N].(...)
+      if ((tokens[1] === 'desktop' || tokens[1] === 'mobile')
+        && (tokens[2] === 'js' || tokens[2] === 'css')
+        && typeof tokens[3] === 'number'
+      ) {
+        const platform = tokens[1] === 'desktop' ? 'デスクトップ' : 'モバイル';
+        const kind = String(tokens[2]).toUpperCase();
+        const obj = (payload && typeof payload === 'object') ? payload as any : {};
+        const fileKey = obj?.file?.fileKey || obj?.fileKey || '';
+        const url = obj?.url || '';
+        const ref = url
+          ? url
+          : (fileKey ? `ファイル(${String(fileKey).slice(0, 8)}…)` : `#${tokens[3]}`);
+        return {
+          entityKind: 'jsCss',
+          entityLabel: `${platform}/${kind}: ${ref}`,
+          entityCode: String(fileKey || url || ''),
+          propLabel
+        };
+      }
+      return empty;
+    }
+    case 'layoutSettings': {
+      if (tokens[1] === 'layout' && typeof tokens[2] === 'number') {
+        const obj = (payload && typeof payload === 'object') ? payload as any : {};
+        const t = String(obj.type || '').toUpperCase();
+        let label = `行 #${tokens[2]}`;
+        if (t === 'GROUP' && obj.code) label = `グループ「${obj.code}」`;
+        else if (t === 'SUBTABLE' && obj.code) label = `テーブル「${obj.code}」`;
+        else if (t === 'ROW') label = `行 #${tokens[2]}`;
+        return { entityKind: 'layoutRow', entityLabel: label, entityCode: String(obj.code || ''), propLabel };
+      }
+      return empty;
+    }
+    default:
+      return empty;
+  }
+}
+
 export function buildDiffReasonSummary(row) {
   const sectionKey = row.sectionKey || '';
   const sectionLabel = SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey || '差分';
@@ -475,42 +929,91 @@ export function buildDiffReasonSummary(row) {
     if (String(row.path || '').includes('.lookup.')) return 'ルックアップ設定変更';
     return `${noun}設定変更`;
   }
-  if (sectionKey === 'layoutSettings') return 'レイアウト変更';
-  if (sectionKey === 'viewSettings') {
-    if (String(row.path || '').includes('filterCond')) return 'ビュー条件変更';
-    if (String(row.path || '').includes('.fields')) return 'ビュー列変更';
-    if (leafKey === 'name') return 'ビュー名変更';
-    return row.type === 'added' ? 'ビュー追加' : (row.type === 'removed' ? 'ビュー削除' : 'ビュー設定変更');
+
+  // 非フィールド: エンティティ文脈を活用したサマリ
+  const entity = (row && (row.entityLabel || row.entityKind))
+    ? { entityKind: String(row.entityKind || ''), entityLabel: String(row.entityLabel || ''), propLabel: String(row.entityPropLabel || '') }
+    : extractEntityContext(row);
+  const kindLabel = entity.entityKind ? (ENTITY_KIND_LABELS[entity.entityKind] || '') : '';
+  const propLabel = entity.propLabel || '';
+
+  // エンティティ自体の追加/削除（path 末端がエンティティ）
+  const isEntityRoot = !!entity.entityKind && (!propLabel)
+    && (() => {
+      const tokens = tokenizePath(String(row.path || ''));
+      // entity の所在位置に応じて末端深さを判定
+      if (sectionKey === 'viewSettings' || sectionKey === 'reportSettings' || sectionKey === 'categories') {
+        return tokens.length === 3; // section.<bucket>.<name>
+      }
+      if (sectionKey === 'processSettings' && tokens[1] === 'states') return tokens.length === 3;
+      if ((sectionKey === 'processSettings' || sectionKey === 'actionSettings') && tokens[1] === 'actions') return tokens.length === 3;
+      if ((sectionKey === 'appAcl' || sectionKey === 'recordPermissions' || sectionKey === 'fieldAcl') && tokens[1] === 'rights') return tokens.length === 3;
+      if (['notifications', 'perRecordNotifications', 'reminderNotifications'].includes(sectionKey) && tokens[1] === 'notifications') return tokens.length === 3;
+      if (sectionKey === 'pluginSettings' && tokens[1] === 'plugins') return tokens.length === 3;
+      if (sectionKey === 'layoutSettings' && tokens[1] === 'layout') return tokens.length === 3;
+      if (sectionKey === 'customizeSettings') return tokens.length === 4;
+      return false;
+    })();
+
+  if (entity.entityKind && isEntityRoot) {
+    if (row.type === 'added') return `${kindLabel}追加：${entity.entityLabel}`;
+    if (row.type === 'removed') return `${kindLabel}削除：${entity.entityLabel}`;
+    return `${kindLabel}変更：${entity.entityLabel}`;
   }
-  if (sectionKey === 'reportSettings') {
-    if (String(row.path || '').includes('filterCond')) return 'グラフ条件変更';
-    return row.type === 'added' ? 'グラフ追加' : (row.type === 'removed' ? 'グラフ削除' : 'グラフ設定変更');
+  if (entity.entityKind) {
+    const detail = propLabel || (leafKey || '');
+    const head = `${kindLabel}「${entity.entityLabel}」`;
+    if (row.type === 'added') return detail ? `${head} / ${detail} 追加` : `${head} 追加`;
+    if (row.type === 'removed') return detail ? `${head} / ${detail} 削除` : `${head} 削除`;
+    return detail ? `${head} / ${detail} 変更` : `${head} 変更`;
   }
-  if (sectionKey === 'processSettings') {
-    if (String(row.path || '').includes('.states.')) return row.type === 'added' ? 'ステータス追加' : (row.type === 'removed' ? 'ステータス削除' : 'ステータス設定変更');
-    if (String(row.path || '').includes('.actions.')) return row.type === 'added' ? '遷移アクション追加' : (row.type === 'removed' ? '遷移アクション削除' : '遷移アクション変更');
-    if (leafKey === 'enable') return 'プロセス有効/無効変更';
-    return 'プロセス設定変更';
+
+  // フォールバック: 旧来のセクション単位サマリ（appSettings/appInfo/formSettings 等）
+  if (sectionKey === 'appSettings') {
+    const sp = getSectionPropLabel('appSettings', leafKey);
+    return sp ? `アプリ設定変更：${sp}` : 'アプリ設定変更';
   }
-  if (sectionKey === 'actionSettings') return row.type === 'added' ? 'アクション追加' : (row.type === 'removed' ? 'アクション削除' : 'アクション設定変更');
-  if (['appAcl', 'fieldAcl', 'recordPermissions'].includes(sectionKey)) return row.type === 'added' ? '権限追加' : (row.type === 'removed' ? '権限削除' : '権限変更');
-  if (['notifications', 'perRecordNotifications', 'reminderNotifications'].includes(sectionKey)) {
-    if (String(row.path || '').includes('condition')) return '通知条件変更';
-    return row.type === 'added' ? '通知追加' : (row.type === 'removed' ? '通知削除' : '通知設定変更');
+  if (sectionKey === 'appInfo') {
+    const sp = getSectionPropLabel('appInfo', leafKey);
+    return sp ? `アプリ情報変更：${sp}` : 'アプリ情報変更';
   }
-  if (sectionKey === 'categories') return row.type === 'added' ? 'カテゴリ追加' : (row.type === 'removed' ? 'カテゴリ削除' : 'カテゴリ設定変更');
+  if (sectionKey === 'formSettings') return 'フォーム設定変更';
   return row.type === 'added' ? `${sectionLabel}追加` : (row.type === 'removed' ? `${sectionLabel}削除` : `${sectionLabel}変更`);
 }
 
 export function enrichDiffRows(rows, sourceBundle, targetBundle) {
-  const renameMap = detectFieldRenameCandidates(rows);
+  // 先にエンティティ文脈を一度走らせてから rename 検出する
+  // （非フィールドの rename 検出は entityKind/entityLabel/entityCode 必須）
+  const seeded = (rows || []).map((row) => {
+    if (!row || row.sectionKey === 'fieldSettings') return row;
+    const ctx = extractEntityContext(row);
+    if (!ctx.entityKind) return row;
+    return {
+      ...row,
+      entityKind: ctx.entityKind,
+      entityLabel: ctx.entityLabel,
+      entityCode: ctx.entityCode,
+      entityPropLabel: ctx.propLabel
+    };
+  });
+  const renameMap = detectFieldRenameCandidates(seeded);
+  const entityRenameMap = detectEntityRenameCandidates(seeded);
   const impactIndex = buildCombinedFieldImpactIndex(sourceBundle, targetBundle);
-  return (rows || []).map((row) => {
+  return seeded.map((row) => {
     const next = { ...row };
-    const renameCandidate = renameMap.get(row._id);
+    const renameCandidate = renameMap.get(row._id) || entityRenameMap.get(row._id);
     if (renameCandidate) next.renameCandidate = renameCandidate;
+    // rename 確定時は重要度を下げる（偽陽性ノイズの抑制）
+    if (renameCandidate && (next.severity === 'high' || next.severity === 'medium')) {
+      next.severity = 'low';
+    }
     const reason = buildDiffReasonSummary(next);
-    if (reason) next.reasonSummary = renameCandidate ? `${reason} / コード変更候補` : reason;
+    if (reason) {
+      const suffix = renameCandidate
+        ? (renameCandidate.entityKind ? '改名候補' : 'コード変更候補')
+        : '';
+      next.reasonSummary = suffix ? `${reason} / ${suffix}` : reason;
+    }
     const impactRefs = resolveRowImpactRefs(next, impactIndex);
     if (impactRefs.length) {
       next.impactRefs = impactRefs.slice(0, DIFF_IMPACT_REF_LIMIT);

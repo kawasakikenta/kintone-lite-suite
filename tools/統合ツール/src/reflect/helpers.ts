@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, selectedScopeKeys } from '../utils.js';
+import { esc, selectedScopeKeys, renderSectionIconHtml } from '../utils.js';
 import { fetchBundle, pickBundleSections } from '../api.js';
 import { getActualDiffRows } from '../diff/engine.js';
 import { setStatus } from '../ui/components.js';
@@ -102,26 +102,98 @@ export interface ProgressLogOptions {
   phase?: string;
   current?: number;
   total?: number;
+  scopes?: readonly string[];
+  perSection?: ReadonlyArray<{ sectionKey: string; label?: string; status: 'pending' | 'running' | 'ok' | 'ng' | 'skip'; durationMs?: number }>;
+}
+
+function classifyLogLine(line: string): { tone: string; icon: string; rest: string } {
+  if (line.startsWith('OK ')) return { tone: 'ok', icon: '✓', rest: line.slice(3) };
+  if (line.startsWith('NG ')) return { tone: 'ng', icon: '✗', rest: line.slice(3) };
+  if (line.startsWith('SKIP ')) return { tone: 'skip', icon: '⊘', rest: line.slice(5) };
+  if (line.startsWith('START ')) return { tone: 'start', icon: '▶', rest: line.slice(6) };
+  if (line.startsWith('PLAN ')) return { tone: 'plan', icon: '📋', rest: line.slice(5) };
+  if (/^=+/.test(line)) return { tone: 'head', icon: '', rest: line };
+  if (line.trim() === '') return { tone: 'blank', icon: '', rest: '' };
+  return { tone: 'plain', icon: '', rest: line };
+}
+
+// S6: ガント形式の進捗。logs から各セクションの状態を推定して横棒で可視化
+function buildGanttHtmlFromLogs(logs: string[], scopes: readonly string[] | undefined): string {
+  if (!Array.isArray(scopes) || !scopes.length) return '';
+  // セクションごとの状態を集約
+  type Row = { sectionKey: string; label: string; status: 'pending' | 'running' | 'ok' | 'ng' | 'skip' };
+  const rows: Row[] = scopes.map((k) => ({
+    sectionKey: String(k),
+    label: SECTION_DEFS.find((d) => d.key === k)?.label || k,
+    status: 'pending'
+  }));
+  let runningKey = '';
+  for (const line of logs) {
+    const text = String(line);
+    // OK/NG/SKIP のセクション名検出
+    for (const r of rows) {
+      if (text.startsWith(`OK ${r.label}`)) r.status = 'ok';
+      else if (text.startsWith(`NG ${r.label}`)) r.status = 'ng';
+      else if (text.startsWith(`SKIP ${r.label}`)) r.status = 'skip';
+      else if (text.startsWith(`START ${r.label}`)) { r.status = 'running'; runningKey = r.sectionKey; }
+    }
+  }
+  // 実行中行が無く、未確定の最初の pending を「running」とみなす
+  if (!runningKey) {
+    const firstPending = rows.find((r) => r.status === 'pending');
+    if (firstPending) firstPending.status = 'running';
+  }
+  const rowsHtml = rows.map((r) => {
+    const pct = r.status === 'ok' ? 100
+      : r.status === 'ng' ? 100
+      : r.status === 'skip' ? 100
+      : r.status === 'running' ? 60
+      : 0;
+    const barCls = r.status === 'ok' ? 'apply-gantt__bar--ok'
+      : r.status === 'ng' ? 'apply-gantt__bar--ng'
+      : r.status === 'running' ? 'apply-gantt__bar--running'
+      : '';
+    const statusGlyph = r.status === 'ok' ? '✓' : r.status === 'ng' ? '✗' : r.status === 'skip' ? '⊘' : r.status === 'running' ? '⏳' : '';
+    return `<div class="apply-gantt__row" data-status="${r.status}">
+      <div class="apply-gantt__label">${renderSectionIconHtml(r.sectionKey)}<span>${esc(r.label)}</span></div>
+      <div class="apply-gantt__track"><div class="apply-gantt__bar ${barCls}" style="width:${pct}%"></div></div>
+      <div class="apply-gantt__time">${statusGlyph}</div>
+    </div>`;
+  }).join('');
+  return `<div class="apply-gantt" aria-label="セクション別進捗">${rowsHtml}</div>`;
 }
 
 export function renderProgressLog(logs: string[], options: ProgressLogOptions = {}): void {
-  const { phase, current, total } = options;
+  const { phase, current, total, scopes } = options;
   const progressBar = (typeof current === 'number' && typeof total === 'number' && total > 0)
-    ? `<div style="height:6px;background:#e2e8f0;border-radius:3px;margin:8px 10px 0"><div style="width:${Math.round(((current + 1) / total) * 100)}%;height:100%;background:#3b82f6;border-radius:3px;transition:width .3s"></div></div>`
+    ? `<div class="reflect-log-progress"><div class="reflect-log-progress__bar" style="width:${Math.round(((current + 1) / total) * 100)}%"></div><span class="reflect-log-progress__text">${Math.min(current + 1, total)} / ${total}</span></div>`
     : '';
   const phaseLabel = phase
-    ? `<div style="font-weight:700;padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:13px">${esc(phase)}</div>`
+    ? `<div class="reflect-log-phase">${esc(phase)}</div>`
     : '';
-  const colored = logs.map((line) => {
-    if (line.startsWith('OK ')) return `<span style="color:#166534">${esc(line)}</span>`;
-    if (line.startsWith('NG ')) return `<span style="color:#b91c1c">${esc(line)}</span>`;
-    if (line.startsWith('SKIP ')) return `<span style="color:#92400e">${esc(line)}</span>`;
-    if (line.startsWith('START ')) return `<span style="color:#1d4ed8">${esc(line)}</span>`;
-    if (line.startsWith('PLAN ')) return `<span style="color:#1d4ed8">${esc(line)}</span>`;
-    return esc(line);
-  }).join('\n');
+  const ganttHtml = buildGanttHtmlFromLogs(logs, scopes);
+  const okCount = logs.filter((l) => l.startsWith('OK ')).length;
+  const ngCount = logs.filter((l) => l.startsWith('NG ')).length;
+  const skipCount = logs.filter((l) => l.startsWith('SKIP ')).length;
+  const counterChips = (okCount + ngCount + skipCount > 0)
+    ? `<div class="reflect-log-counters">
+        ${okCount ? `<span class="reflect-log-chip ok" title="成功">✓ ${okCount}</span>` : ''}
+        ${ngCount ? `<span class="reflect-log-chip ng" title="失敗">✗ ${ngCount}</span>` : ''}
+        ${skipCount ? `<span class="reflect-log-chip skip" title="スキップ">⊘ ${skipCount}</span>` : ''}
+      </div>`
+    : '';
+  const items = logs.map((line) => {
+    const { tone, icon, rest } = classifyLogLine(line);
+    if (tone === 'blank') return '<div class="reflect-log-line reflect-log-line--blank"></div>';
+    const iconSpan = icon ? `<span class="reflect-log-line__icon">${esc(icon)}</span>` : '';
+    return `<div class="reflect-log-line reflect-log-line--${tone}">${iconSpan}<span class="reflect-log-line__text">${esc(rest)}</span></div>`;
+  }).join('');
   if (ui.result) {
-    ui.result.innerHTML = `${phaseLabel}${progressBar}<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${colored}</pre>`;
+    ui.result.innerHTML = `<div class="reflect-log-host">
+      ${phaseLabel}${progressBar}${counterChips}
+      ${ganttHtml}
+      <div class="reflect-log-body">${items}</div>
+    </div>`;
     ui.result.scrollTop = ui.result.scrollHeight;
   }
 }

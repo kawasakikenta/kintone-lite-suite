@@ -8,6 +8,7 @@
     "snippet": "node scripts/build-snippet.js",
     "build:kintone-calendar": "vite build --config plugins/KintoneCalendar/vite.config.mjs",
     "check:kintone-calendar": "svelte-check --tsconfig plugins/KintoneCalendar/tsconfig.json",
+    "test:kintone-calendar": "node --test plugins/KintoneCalendar/tests/*.test.mjs",
     "package:kintone-calendar": "kintone-plugin-packer --ppk plugins/KintoneCalendar.ppk plugins/KintoneCalendar --out plugins/KintoneCalendar.zip",
     "mcp:playwright": "node node_modules/@playwright/mcp/cli.js --browser=chrome --output-dir=.playwright-mcp --save-session",
     "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs",

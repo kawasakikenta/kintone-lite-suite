@@ -98,17 +98,19 @@ export interface EnvBadgeContext {
 }
 
 export function renderEnvBadge(ctx: EnvBadgeContext): string {
-  const tone = ctx.sameConnection
+  // 同一接続自体は読み取り操作で問題なく、destructive 操作時は confirmDestructive で別途守る。
+  // よってヘッダーバッジでは danger ではなく caution（注意）にトーンダウン。本番書込みのみ danger を維持。
+  const tone = !ctx.targetPreview && ctx.targetAppId
     ? 'danger'
-    : !ctx.targetPreview
-    ? 'danger'
-    : ctx.targetAppId
+    : ctx.sameConnection
     ? 'caution'
+    : ctx.targetAppId
+    ? 'info'
     : 'neutral';
-  const label = ctx.sameConnection
-    ? '同一接続'
-    : !ctx.targetPreview
+  const label = !ctx.targetPreview && ctx.targetAppId
     ? '比較先=本番'
+    : ctx.sameConnection
+    ? '同一接続'
     : ctx.targetAppId
     ? '比較先=プレビュー'
     : '未設定';

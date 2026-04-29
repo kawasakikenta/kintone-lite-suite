@@ -15,6 +15,7 @@ import { reflectRowModeById, reflectRowDesiredValue } from './reflect/rowMode.js
 import {
   runBackupTargetPreview,
   runRestoreTargetPreviewBackup,
+  importTargetPreviewBackupFromFile,
   runDeployOnly,
   runApplyPreview,
   runApplyPatchJson,
@@ -28,7 +29,7 @@ import { getActiveReflectRow, getSelectedReflectRows } from './tabs/reflect.js';
 import { resolveApplyScopes } from './reflect/helpers.js';
 import { makeApplyPlanSignature, runPreviewApplyPlan, runExportDryRunPlan } from './reflect/plan.js';
 import { scheduleGuidedTourLayout } from './ui/tour.js';
-import { setupEventHandlers } from './handlers.js';
+import { setupEventHandlers, forceReleaseRunningGuard } from './handlers.js';
 import { installPsychology } from './ui/psychology.js';
 import { initJsonEditor, getJsonEditorInstance, startGuidedTour } from './oss_integrations.js';
 import { GUIDED_TOUR_STEPS } from './constants.js';
@@ -114,6 +115,41 @@ export function runKintoneUnifiedSuite(options: any = {}) {
   }
 
   setRootElement(root);
+
+  // 「⋯ その他」ドロップダウン body を summary 直下に配置（position:fixed）
+  try {
+    const moreFold = root.querySelector('#u_kusTabMore') as HTMLDetailsElement | null;
+    if (moreFold) {
+      const summary = moreFold.querySelector('.kus-tab-more__summary') as HTMLElement | null;
+      const body = moreFold.querySelector('.kus-tab-more__body') as HTMLElement | null;
+      const positionBody = () => {
+        if (!summary || !body || !moreFold.open) return;
+        const r = summary.getBoundingClientRect();
+        body.style.top = `${r.bottom + 4}px`;
+        body.style.right = `${(window.innerWidth - r.right)}px`;
+        body.style.left = 'auto';
+      };
+      moreFold.addEventListener('toggle', () => positionBody());
+      window.addEventListener('resize', positionBody);
+      window.addEventListener('scroll', positionBody, true);
+    }
+  } catch (e) { /* ignore */ }
+
+  // ヘッダーの折りたたみ状態を localStorage から復元（デフォルトは折りたたみ）
+  try {
+    const ownerWin = (root.ownerDocument && root.ownerDocument.defaultView) || window;
+    const stored = ownerWin.localStorage.getItem('kus:headerCollapsed');
+    const collapsed = stored == null ? true : stored === '1';
+    if (collapsed) {
+      root.classList.add('header-collapsed');
+      const btn = root.querySelector('#u_headerCollapseBtn') as HTMLElement | null;
+      if (btn) {
+        btn.textContent = '▼';
+        btn.setAttribute('aria-label', 'ヘッダーを展開');
+        btn.setAttribute('title', 'ヘッダーを展開');
+      }
+    }
+  } catch (e) { /* ignore */ }
 
   const $ = (id) => root.querySelector(id);
 
@@ -348,6 +384,7 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     runExportDryRunPlan,
     runBackupTargetPreview,
     runRestoreTargetPreviewBackup,
+    importTargetPreviewBackupFromFile,
     runApplyPreview,
     runDeployOnly,
     runApplyPatchJson,
@@ -392,6 +429,20 @@ export function runKintoneUnifiedSuite(options: any = {}) {
   });
 
   setStatus('待機中');
+
+  // ステータスバーのダブルクリックで「実行中」フラグを強制解除（ハング検知時の救済）
+  try {
+    const statusEl = ui.status as HTMLElement | null;
+    if (statusEl) {
+      statusEl.title = '実行中の処理がハングした場合はダブルクリックで強制解除';
+      statusEl.style.cursor = 'pointer';
+      statusEl.addEventListener('dblclick', () => {
+        if (!forceReleaseRunningGuard('ステータスバー ダブルクリック')) {
+          setStatus('実行中の処理はありません');
+        }
+      });
+    }
+  } catch (e) { /* ignore */ }
 
   if (options.initialTab) {
     const initialFeature = FEATURE_DEFS.find((def) => def.key === options.initialTab)

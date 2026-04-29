@@ -653,14 +653,16 @@ export async function runCsvImport() {
       await apiPost(guestPrefix, '/records.json', { app: tgtAppId, records: batch });
       successCount += batch.length;
     } catch (e) {
-      throw new Error(`レコード登録エラー（${i + 1}件目付近）: ${e.message}`);
+      setBusy(false);
+      throw new Error(`レコード登録エラー（${i + 1}～${i + batch.length}件目付近 / 既に成功 ${successCount}件）: ${(e && e.message) || e}`);
     }
   }
 
   setBusy(false);
   showToast(`完了: ${successCount}件のレコードを登録しました。`, 'success');
   fileInput.value = '';
-  getToolDocument().getElementById('u_csvImportFileName').textContent = '未選択';
+  const fnEl = getToolDocument().getElementById('u_csvImportFileName');
+  if (fnEl) fnEl.textContent = '未選択';
 }
 
 export async function runRecordBackup() {
@@ -932,8 +934,16 @@ export async function runRecordCopy() {
   setBusy(true, '比較元のレコードを取得中...');
   let totalFetched = 0;
   const records = [];
+  const userQueryHasOrder = /\border\s+by\b/i.test(query);
+  const userQueryHasLimit = /\blimit\s+\d+/i.test(query);
+  if (userQueryHasLimit) {
+    showToast('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。', 'warn');
+    setBusy(false);
+    return;
+  }
+  const baseQuery = userQueryHasOrder ? query : `${query} order by $id asc`;
   while (true) {
-    const q = `${query} limit 500 offset ${totalFetched}`;
+    const q = `${baseQuery} limit 500 offset ${totalFetched}`;
     const res = await apiGet(srcGuest, '/records.json', { app: srcApp, query: q });
     if (!res.records || res.records.length === 0) break;
     records.push(...res.records);
@@ -948,24 +958,30 @@ export async function runRecordCopy() {
     return;
   }
 
-  const systemFields = ['$id', '$revision', '作成者', '作成日時', '更新者', '更新日時', 'レコード番号', 'ステータス', '作業者'];
-  const systemTypes = ['RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME', 'STATUS', 'STATUS_ASSIGNEE', 'CALC'];
+  const systemTypes = new Set([
+    'RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME',
+    'STATUS', 'STATUS_ASSIGNEE', 'CALC', 'CATEGORY', '__ID__', '__REVISION__'
+  ]);
+  const systemKeys = new Set(['$id', '$revision']);
   const cleanRecords = records.map(rec => {
     const clean = {};
     for (const [k, v] of Object.entries(rec) as Array<[string, any]>) {
-      if (!systemFields.includes(k) && !systemTypes.includes(v.type)) {
-        if (v.type === 'SUBTABLE') {
-          const cleanSub = v.value.map(sRow => {
-            const cleanSRow = {};
-            for (const [sk, sv] of Object.entries(sRow.value) as Array<[string, any]>) {
-              cleanSRow[sk] = { value: sv.value };
-            }
-            return { value: cleanSRow };
-          });
-          clean[k] = { value: cleanSub };
-        } else {
-          clean[k] = { value: v.value };
-        }
+      if (!v || typeof v !== 'object') continue;
+      if (systemKeys.has(k)) continue;
+      if (systemTypes.has(v.type)) continue;
+      if (v.type === 'SUBTABLE') {
+        const rows = Array.isArray(v.value) ? v.value : [];
+        const cleanSub = rows.map(sRow => {
+          const inner = sRow && typeof sRow === 'object' && sRow.value && typeof sRow.value === 'object' ? sRow.value : {};
+          const cleanSRow = {};
+          for (const [sk, sv] of Object.entries(inner) as Array<[string, any]>) {
+            if (sv && typeof sv === 'object') cleanSRow[sk] = { value: sv.value };
+          }
+          return { value: cleanSRow };
+        });
+        clean[k] = { value: cleanSub };
+      } else {
+        clean[k] = { value: v.value };
       }
     }
     return clean;
@@ -992,7 +1008,8 @@ export async function runRecordCopy() {
       await apiPost(tgtGuest, '/records.json', { app: tgtApp, records: batch });
       successCount += batch.length;
     } catch (e) {
-      throw new Error(`レコード登録エラー（${i + 1}件目付近）: ${e.message}`);
+      setBusy(false);
+      throw new Error(`レコード登録エラー（${i + 1}～${i + batch.length}件目付近 / 既に成功 ${successCount}件）: ${(e && e.message) || e}`);
     }
   }
 

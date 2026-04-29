@@ -418,7 +418,10 @@ function buildAnalyzeDashboardData(bundle) {
   );
   const fieldRows = buildFieldImpactRows(bundle);
   const usedFields = fieldRows.filter((row) => row.refCount > 0);
-  const unusedFields = fieldRows.filter((row) => row.refCount === 0);
+  // 「未使用候補」はユーザーが操作可能なフィールドだけが対象。
+  // RECORD_NUMBER/CREATOR/MODIFIER/CREATED_TIME/UPDATED_TIME/CATEGORY/STATUS 等の
+  // ビルトインメタは参照ゼロでも削除/非表示できないため除外する。
+  const unusedFields = fieldRows.filter((row) => row.refCount === 0 && !isBuiltinSystemFieldType(row.type));
   const highImpactFields = fieldRows.filter((row) => row.refCount >= 3);
   const notificationRows = buildNotificationRows(bundle);
   const permissionData = buildPermissionMatrixData(bundle);
@@ -700,6 +703,28 @@ export async function runAnalyzeDashboard() {
   setStatus(`影響分析ダッシュボードを更新しました (App ${data.appId})`);
 }
 
+/**
+ * kintone のビルトイン/システムメタフィールド種別。
+ * これらは form-fields API からは返るが利用者が削除・非表示にできないため、
+ * 「未使用候補」のような操作可能性を前提とする集計からは除外する。
+ */
+const BUILTIN_SYSTEM_FIELD_TYPES = new Set([
+  'RECORD_NUMBER',
+  '__ID__',
+  '__REVISION__',
+  'CREATOR',
+  'MODIFIER',
+  'CREATED_TIME',
+  'UPDATED_TIME',
+  'CATEGORY',
+  'STATUS',
+  'STATUS_ASSIGNEE'
+]);
+
+function isBuiltinSystemFieldType(type: string | undefined | null): boolean {
+  return BUILTIN_SYSTEM_FIELD_TYPES.has(String(type || '').toUpperCase());
+}
+
 function summarizeSectionRefs(refs) {
   const counts = new Map();
   (refs || []).forEach((ref) => {
@@ -752,7 +777,8 @@ function getFieldImpactFilterState() {
 function getFilteredFieldImpactRows() {
   const { searchTerm, filterMode } = getFieldImpactFilterState();
   return (_fieldImpactState.allRows || []).filter((row) => {
-    if (filterMode === 'unused' && row.refCount > 0) return false;
+    // ダッシュボードの「未使用候補」と整合させ、ビルトインメタは「未使用」フィルタから除外。
+    if (filterMode === 'unused' && (row.refCount > 0 || isBuiltinSystemFieldType(row.type))) return false;
     if (filterMode === 'used' && row.refCount === 0) return false;
     if (!searchTerm) return true;
     const searchText = [
@@ -1841,6 +1867,15 @@ export async function runFieldDependencyGraph() {
     return;
   }
 
+  // 既存の Cytoscape インスタンスがあれば破棄してメモリ/リスナリークを防ぐ
+  const previousCy = (el as any)._cyInstance;
+  if (previousCy && typeof previousCy.destroy === 'function') {
+    try { previousCy.destroy(); } catch (_) { /* noop */ }
+    (el as any)._cyInstance = null;
+  }
+  // コンテナを空に戻し、前回の listener 登録フラグもリセット
+  container.innerHTML = '';
+
   // スクリプトは loadExternalScript によりメインページの window にロードされるため、
   // ツールがポップアップウィンドウで動作している場合でも window を直接参照する。
   const w = window as any;
@@ -1947,12 +1982,25 @@ export async function runFieldDependencyGraph() {
     renderFieldGraphDetail(detailEl, '', data);
   });
 
-  doc.getElementById('u_fieldGraphSearch')?.addEventListener('input', (event: Event) => {
-    applyFieldGraphSearch(cy, (event.target as HTMLInputElement).value);
-  });
-  doc.getElementById('u_fieldGraphHideIsolated')?.addEventListener('change', () => {
-    runFieldDependencyGraph().catch((error) => handleAnalyzeInlineError(error, '依存グラフの再生成に失敗しました'));
-  });
+  // 再生成のたびにリスナが多重登録されないよう、ノードを clone で置換してから付け直す
+  const searchEl = doc.getElementById('u_fieldGraphSearch') as HTMLInputElement | null;
+  if (searchEl && searchEl.parentNode) {
+    const fresh = searchEl.cloneNode(true) as HTMLInputElement;
+    fresh.value = searchEl.value;
+    searchEl.parentNode.replaceChild(fresh, searchEl);
+    fresh.addEventListener('input', (event: Event) => {
+      applyFieldGraphSearch(cy, (event.target as HTMLInputElement).value);
+    });
+  }
+  const hideEl = doc.getElementById('u_fieldGraphHideIsolated') as HTMLInputElement | null;
+  if (hideEl && hideEl.parentNode) {
+    const fresh = hideEl.cloneNode(true) as HTMLInputElement;
+    fresh.checked = hideEl.checked;
+    hideEl.parentNode.replaceChild(fresh, hideEl);
+    fresh.addEventListener('change', () => {
+      runFieldDependencyGraph().catch((error) => handleAnalyzeInlineError(error, '依存グラフの再生成に失敗しました'));
+    });
+  }
 
   setBusy(false);
   setStatus(`依存グラフ生成完了 (ノード: ${data.visibleNodeCount}, エッジ: ${data.edgeCount})`);

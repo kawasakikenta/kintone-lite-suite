@@ -316,7 +316,14 @@
         { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
         { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
         { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+        // PUT /app/notifications/reminder.json は notifications に加え timezone を必須的に要求するためソース側の値を引き継ぐ。
+        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => {
+          const body = { notifications: d?.notifications || (Array.isArray(d) ? d : []) };
+          if (d && typeof d === "object" && typeof d.timezone === "string" && d.timezone) {
+            body.timezone = d.timezone;
+          }
+          return body;
+        } },
         { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
       ];
       META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
@@ -532,11 +539,15 @@
         importedTargetBundle: null,
         importedSourceName: "",
         importedTargetName: "",
+        lastSettingsExportBundles: [],
         patchJsonPanelOpen: false,
         importedPatchPayload: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
         running: false,
+        runningStartedAt: null,
+        runningTaskLabel: "",
+        runningWatchdogId: null,
         lastResultByTab: {}
       };
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
@@ -737,7 +748,7 @@ ${contextLine}`);
       throw apiErrorWithContext(e, { method: "PUT", prefix, path, payload: body });
     }
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -759,6 +770,7 @@ ${contextLine}`);
         lastError: "",
         byPath: {}
       };
+      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
     }
   });
 

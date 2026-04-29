@@ -316,7 +316,14 @@
         { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
         { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
         { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+        // PUT /app/notifications/reminder.json は notifications に加え timezone を必須的に要求するためソース側の値を引き継ぐ。
+        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => {
+          const body = { notifications: d?.notifications || (Array.isArray(d) ? d : []) };
+          if (d && typeof d === "object" && typeof d.timezone === "string" && d.timezone) {
+            body.timezone = d.timezone;
+          }
+          return body;
+        } },
         { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
       ];
       META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
@@ -696,11 +703,15 @@ ${contextLine}`);
         importedTargetBundle: null,
         importedSourceName: "",
         importedTargetName: "",
+        lastSettingsExportBundles: [],
         patchJsonPanelOpen: false,
         importedPatchPayload: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
         running: false,
+        runningStartedAt: null,
+        runningTaskLabel: "",
+        runningWatchdogId: null,
         lastResultByTab: {}
       };
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
@@ -818,6 +829,94 @@ ${contextLine}`);
     }
     return picked;
   }
+  function fnv1aHashString(text) {
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+    }
+    return h.toString(16).padStart(8, "0");
+  }
+  async function fetchTextFileBody(prefix, fileKey) {
+    if (!fileKey) return null;
+    const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    try {
+      const resp = await fetch(url, { method: "GET", headers });
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      if (blob.size > CUSTOMIZE_BODY_MAX_BYTES) return null;
+      return await blob.text();
+    } catch {
+      return null;
+    }
+  }
+  async function fetchCustomizeFileBodies(customizeSection, prefix) {
+    const stats = { fetched: 0, skipped: 0, failed: 0 };
+    if (!customizeSection || typeof customizeSection !== "object") return stats;
+    const tasks = [];
+    for (const platform of ["desktop", "mobile"]) {
+      for (const kind of ["js", "css"]) {
+        const arr = customizeSection?.[platform]?.[kind];
+        if (!Array.isArray(arr)) continue;
+        for (const item of arr) {
+          if (!item || typeof item !== "object" || item.type !== "FILE") continue;
+          const fileKey = item?.file?.fileKey;
+          const fileName = String(item?.file?.name || "");
+          if (!fileKey) {
+            stats.skipped += 1;
+            continue;
+          }
+          if (fileName && !TEXT_LIKE_EXT.test(fileName)) {
+            stats.skipped += 1;
+            continue;
+          }
+          tasks.push((async () => {
+            const text = await fetchTextFileBody(prefix, fileKey);
+            if (text == null) {
+              stats.failed += 1;
+              return;
+            }
+            item._bodyText = text;
+            item._bodyHash = fnv1aHashString(text);
+            stats.fetched += 1;
+          })());
+        }
+      }
+    }
+    await Promise.all(tasks);
+    return stats;
+  }
+  async function fetchPluginConfigs(pluginSection, prefix, appId) {
+    const stats = { fetched: 0, skipped: 0, failed: 0 };
+    if (!pluginSection || typeof pluginSection !== "object") return stats;
+    const plugins = Array.isArray(pluginSection.plugins) ? pluginSection.plugins : [];
+    if (!plugins.length) return stats;
+    const tasks = [];
+    for (const plugin of plugins) {
+      if (!plugin || typeof plugin !== "object") continue;
+      const id = String(plugin.id || "").trim();
+      if (!id) {
+        stats.skipped += 1;
+        continue;
+      }
+      tasks.push((async () => {
+        try {
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          if (res && typeof res === "object") {
+            plugin._config = res?.config != null ? res.config : res;
+            stats.fetched += 1;
+          } else {
+            stats.skipped += 1;
+          }
+        } catch {
+          stats.failed += 1;
+        }
+      })());
+    }
+    await Promise.all(tasks);
+    return stats;
+  }
   async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
@@ -846,6 +945,26 @@ ${contextLine}`);
       }
       if (onProgress) onProgress((i + 1) / sections.length, def.label);
     }
+    try {
+      if (sections.includes("customizeSettings")) {
+        const cust = bundle.sections.customizeSettings;
+        if (cust && !cust._fetchError) {
+          const prefix = buildApiPrefix(guestId, preview);
+          await fetchCustomizeFileBodies(cust, prefix);
+        }
+      }
+    } catch {
+    }
+    try {
+      if (sections.includes("pluginSettings")) {
+        const plug = bundle.sections.pluginSettings;
+        if (plug && !plug._fetchError) {
+          const prefix = buildApiPrefix(guestId, preview);
+          await fetchPluginConfigs(plug, prefix, app);
+        }
+      }
+    } catch {
+    }
     return bundle;
   }
   function resolveBundleRevision(bundle) {
@@ -857,7 +976,7 @@ ${contextLine}`);
     const first = Object.values(revisions).find((value) => value != null && value !== "");
     return first != null ? String(first) : "";
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -876,16 +995,45 @@ ${contextLine}`);
         lastError: "",
         byPath: {}
       };
+      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+      TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
     }
   });
 
   // src/diff/engine.ts
+  function fieldAclLevelIndex(value) {
+    if (value == null) return -1;
+    return FIELD_ACL_LEVEL_ORDER.indexOf(String(value).toUpperCase());
+  }
   function detectRowSeverity(row) {
     const sec = row?.sectionKey || "";
-    const path = String(row?.path || "").toLowerCase();
-    if (row?.type === "removed") return "high";
+    const rawPath = String(row?.path || "");
+    const pathLower = rawPath.toLowerCase();
+    const leafMatch = rawPath.match(/([^[.\]]+)(?:\[\d+\])?$/);
+    const leaf = leafMatch ? leafMatch[1] : "";
+    if (row?.moved && row?.type === "changed") return "low";
+    if (LOW_PRIORITY_LEAF_KEYS.has(leaf) && row?.type === "changed") return "low";
+    if ((sec === "appAcl" || sec === "recordPermissions") && ACL_GRANT_FLAG_KEYS.has(leaf) && row?.type === "changed") {
+      if (row?.left === true && row?.right === false) return "high";
+      if (row?.left === false && row?.right === true) return "medium";
+    }
+    if (sec === "fieldAcl" && leaf === "accessibility" && row?.type === "changed") {
+      const lIdx = fieldAclLevelIndex(row?.left);
+      const rIdx = fieldAclLevelIndex(row?.right);
+      if (lIdx >= 0 && rIdx >= 0) {
+        if (rIdx < lIdx) return "high";
+        if (rIdx > lIdx) return "medium";
+      }
+    }
+    if (sec === "pluginSettings" && leaf === "version" && row?.type === "changed") return "medium";
+    if (row?.type === "removed" && rawPath === sec) return "high";
+    if (row?.type === "removed") {
+      if (HIGH_IMPACT_SECTIONS.has(sec)) return "high";
+      if (MEDIUM_IMPACT_SECTIONS.has(sec)) return "medium";
+      return "low";
+    }
     if (HIGH_IMPACT_SECTIONS.has(sec)) return "high";
-    if (path.includes("lookup") || path.includes("relatedapp") || path.includes("condition")) return "high";
+    if (pathLower.includes("lookup") || pathLower.includes("relatedapp") || pathLower.includes("condition")) return "high";
     if (MEDIUM_IMPACT_SECTIONS.has(sec)) return "medium";
     return "low";
   }
@@ -1247,6 +1395,150 @@ ${contextLine}`);
     }
     pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
   }
+  function preprocessCustomizePairForDiff(src, tgt) {
+    const sClone = src && typeof src === "object" ? deepClone(src) : src;
+    const tClone = tgt && typeof tgt === "object" ? deepClone(tgt) : tgt;
+    const injectName = (bundle) => {
+      if (!bundle || typeof bundle !== "object") return;
+      for (const platform of ["desktop", "mobile"]) {
+        for (const kind of ["js", "css"]) {
+          const arr = bundle?.[platform]?.[kind];
+          if (!Array.isArray(arr)) continue;
+          for (const item of arr) {
+            if (!item || typeof item !== "object" || item.name) continue;
+            if (item.type === "FILE") {
+              item.name = String(item?.file?.name || item?.file?.fileKey || "(ファイル未設定)");
+            } else if (item.type === "URL") {
+              item.name = String(item.url || "(URL未設定)");
+            }
+          }
+        }
+      }
+    };
+    injectName(sClone);
+    injectName(tClone);
+    const swapBodyOrCleanup = (item, counterpart) => {
+      if (!item || typeof item !== "object") return;
+      const sBody = item._bodyText;
+      const cBody = counterpart?._bodyText;
+      if (item.type === "FILE" && item.file && typeof item.file === "object" && sBody != null && cBody != null) {
+        const newFile = { ...item.file };
+        newFile._body = String(sBody);
+        delete newFile.fileKey;
+        item.file = newFile;
+      }
+      if ("_bodyText" in item) delete item._bodyText;
+      if ("_bodyHash" in item) delete item._bodyHash;
+    };
+    for (const platform of ["desktop", "mobile"]) {
+      for (const kind of ["js", "css"]) {
+        const sArr = sClone?.[platform]?.[kind];
+        const tArr = tClone?.[platform]?.[kind];
+        const sList = Array.isArray(sArr) ? sArr : [];
+        const tList = Array.isArray(tArr) ? tArr : [];
+        const tByName = /* @__PURE__ */ new Map();
+        tList.forEach((it) => {
+          if (it && typeof it === "object" && it.name) tByName.set(String(it.name), it);
+        });
+        const sByName = /* @__PURE__ */ new Map();
+        sList.forEach((it) => {
+          if (it && typeof it === "object" && it.name) sByName.set(String(it.name), it);
+        });
+        sList.forEach((it) => swapBodyOrCleanup(it, tByName.get(String(it?.name || ""))));
+        tList.forEach((it) => swapBodyOrCleanup(it, sByName.get(String(it?.name || ""))));
+      }
+    }
+    return { source: sClone, target: tClone };
+  }
+  function preprocessPluginSettingsForDiff(value) {
+    if (!value || typeof value !== "object") return value;
+    const cloned = deepClone(value);
+    if (!Array.isArray(cloned.plugins)) return cloned;
+    cloned.plugins.forEach((p) => {
+      if (!p || typeof p !== "object") return;
+      if (p._config !== void 0) {
+        p.config = p._config;
+        delete p._config;
+      }
+    });
+    return cloned;
+  }
+  function stripStateBodyForRenameMatch(value) {
+    const drop = /* @__PURE__ */ new Set(["name", "index"]);
+    const walk = (v) => {
+      if (Array.isArray(v)) return v.map(walk);
+      if (v && typeof v === "object") {
+        const o = {};
+        Object.keys(v).sort().forEach((k) => {
+          if (drop.has(k)) return;
+          o[k] = walk(v[k]);
+        });
+        return o;
+      }
+      return v;
+    };
+    return walk(value);
+  }
+  function detectProcessStateRenames(sourceProcess, targetProcess) {
+    const out = /* @__PURE__ */ new Map();
+    if (!sourceProcess || !targetProcess) return out;
+    const srcStates = sourceProcess.states && typeof sourceProcess.states === "object" ? sourceProcess.states : {};
+    const tgtStates = targetProcess.states && typeof targetProcess.states === "object" ? targetProcess.states : {};
+    const onlyInSrc = Object.keys(srcStates).filter((k) => !Object.prototype.hasOwnProperty.call(tgtStates, k));
+    const onlyInTgt = Object.keys(tgtStates).filter((k) => !Object.prototype.hasOwnProperty.call(srcStates, k));
+    if (!onlyInSrc.length || !onlyInTgt.length) return out;
+    const candidates = [];
+    onlyInSrc.forEach((from) => {
+      onlyInTgt.forEach((to) => {
+        const lhs = srcStates[from];
+        const rhs = tgtStates[to];
+        const sigL = stableStringify(stripStateBodyForRenameMatch(lhs));
+        const sigR = stableStringify(stripStateBodyForRenameMatch(rhs));
+        let score = 0;
+        if (sigL === sigR) score += 5;
+        const aL = lhs?.assignee;
+        const aR = rhs?.assignee;
+        if (aL && aR && aL.type === aR.type) score += 1;
+        if (Array.isArray(aL?.entities) && Array.isArray(aR?.entities) && stableStringify(aL.entities) === stableStringify(aR.entities)) score += 1;
+        if (score < 5) return;
+        candidates.push({ from, to, score });
+      });
+    });
+    candidates.sort((a, b) => b.score - a.score);
+    const usedFrom = /* @__PURE__ */ new Set();
+    const usedTo = /* @__PURE__ */ new Set();
+    candidates.forEach((c) => {
+      if (usedFrom.has(c.from) || usedTo.has(c.to)) return;
+      usedFrom.add(c.from);
+      usedTo.add(c.to);
+      out.set(c.from, c.to);
+    });
+    return out;
+  }
+  function applyProcessStateRenamesToSource(sourceProcess, renameMap) {
+    if (!sourceProcess || !renameMap || !renameMap.size) return sourceProcess;
+    const cloned = deepClone(sourceProcess);
+    if (cloned.states && typeof cloned.states === "object" && !Array.isArray(cloned.states)) {
+      const newStates = {};
+      Object.keys(cloned.states).forEach((k) => {
+        const newKey = renameMap.get(k) || k;
+        const obj = cloned.states[k];
+        if (obj && typeof obj === "object" && obj.name === k && renameMap.has(k)) {
+          obj.name = newKey;
+        }
+        newStates[newKey] = obj;
+      });
+      cloned.states = newStates;
+    }
+    if (Array.isArray(cloned.actions)) {
+      cloned.actions.forEach((act) => {
+        if (!act || typeof act !== "object") return;
+        if (typeof act.from === "string" && renameMap.has(act.from)) act.from = renameMap.get(act.from);
+        if (typeof act.to === "string" && renameMap.has(act.to)) act.to = renameMap.get(act.to);
+      });
+    }
+    return cloned;
+  }
   function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeysText, options = {}) {
     const ignoreRules = parseIgnoreRules(ignoreKeysText);
     const presetState = options.normalizationPresetState || {};
@@ -1285,8 +1577,24 @@ ${contextLine}`);
         continue;
       }
       if (!s && !t) continue;
-      const sourceForDiff = normalizeSectionForCompare(sec, s, presetState);
-      const targetForDiff = normalizeSectionForCompare(sec, t, presetState);
+      let sourceForSection = s;
+      let targetForSection = t;
+      let stateRenames = null;
+      if (sec === "processSettings") {
+        stateRenames = detectProcessStateRenames(s, t);
+        if (stateRenames && stateRenames.size) {
+          sourceForSection = applyProcessStateRenamesToSource(s, stateRenames);
+        }
+      } else if (sec === "customizeSettings") {
+        const pair = preprocessCustomizePairForDiff(s, t);
+        sourceForSection = pair.source;
+        targetForSection = pair.target;
+      } else if (sec === "pluginSettings") {
+        sourceForSection = preprocessPluginSettingsForDiff(s);
+        targetForSection = preprocessPluginSettingsForDiff(t);
+      }
+      const sourceForDiff = normalizeSectionForCompare(sec, sourceForSection, presetState);
+      const targetForDiff = normalizeSectionForCompare(sec, targetForSection, presetState);
       if (stableStringify(sourceForDiff) === stableStringify(targetForDiff)) {
         if (includeSame) {
           pushDiffRow(rows, { sectionKey: sec, section: label, type: "same", path: sec, left: sourceForDiff, right: targetForDiff, severity: "low" }, ignoreRules);
@@ -1299,6 +1607,31 @@ ${contextLine}`);
         if (!rows[i].section) rows[i].section = label;
         if (!rows[i].sectionKey) rows[i].sectionKey = sec;
         if (!rows[i].severity) rows[i].severity = detectRowSeverity(rows[i]);
+      }
+      if (sec === "processSettings" && stateRenames && stateRenames.size) {
+        stateRenames.forEach((to, from) => {
+          pushDiffRow(rows, {
+            sectionKey: sec,
+            section: label,
+            type: "changed",
+            path: `${sec}.states.__rename__`,
+            left: { name: from },
+            right: { name: to },
+            severity: "low",
+            _displayOnly: true,
+            _stateRenameNotice: true,
+            renameCandidate: {
+              id: `state-rename:${from}:${to}`,
+              fromCode: from,
+              toCode: to,
+              entityKind: "state",
+              sectionKey: sec,
+              score: 99,
+              matchedBy: "process-state-cascade-suppressed"
+            },
+            reasonSummary: `ステータス改名：${from} → ${to}（参照を自動補正）`
+          }, ignoreRules);
+        });
       }
     }
     for (const row of rows) {
@@ -1385,6 +1718,192 @@ ${contextLine}`);
     const stateMap = presetState || getDiffNormalizationPresetState();
     return Object.keys(DIFF_NORMALIZATION_PRESETS).filter((key) => !!stateMap[key]).map((key) => DIFF_NORMALIZATION_PRESETS[key].label);
   }
+  function tokenizeForExpansion(path) {
+    if (!path) return [];
+    const out = [];
+    const re = /([^[.\]]+)|\[(\d+)\]/g;
+    let m;
+    while ((m = re.exec(path)) !== null) {
+      if (m[1] != null) out.push(m[1]);
+      else out.push(Number(m[2]));
+    }
+    return out;
+  }
+  function aclEntityLabel(entity) {
+    if (!entity || typeof entity !== "object") return "";
+    const code = String(entity.code || "").trim();
+    const type = String(entity.type || "").trim();
+    if (!code) return type ? `(${type})` : "";
+    return type ? `${code} (${type})` : code;
+  }
+  function enumerateNamedMap(obj, basePath, kind, kindLabel) {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return [];
+    return Object.keys(obj).map((name) => ({
+      path: `${basePath}.${name}`,
+      payload: obj[name],
+      entityKind: kind,
+      entityLabel: name,
+      entityCode: name,
+      reasonNoun: kindLabel
+    }));
+  }
+  function enumerateArray(arr, basePath, kind, kindLabel, options = {}) {
+    if (!Array.isArray(arr)) return [];
+    return arr.map((item, idx) => {
+      let label = "";
+      let code = "";
+      const keyField = options.keyField;
+      if (item && typeof item === "object") {
+        if (kind === "aclEntry" || kind === "recordAclEntry") {
+          label = aclEntityLabel(item.entity);
+          code = String(item.entity?.code || "");
+        } else if (kind === "fieldAclEntry") {
+          label = String(item.code || "");
+          code = label;
+        } else if (kind === "plugin") {
+          const id = String(item.id || "");
+          const name = String(item.name || "");
+          label = name ? id ? `${name} (${id})` : name : id;
+          code = id;
+        } else if (kind === "jsCss") {
+          const fileKey = item.file?.fileKey || item.fileKey || "";
+          const url = item.url || "";
+          label = url || (fileKey ? `ファイル(${String(fileKey).slice(0, 8)}…)` : "");
+          code = String(fileKey || url || "");
+        } else if (kind === "layoutRow") {
+          const t = String(item.type || "").toUpperCase();
+          if (t === "GROUP" && item.code) label = `グループ「${item.code}」`;
+          else if (t === "SUBTABLE" && item.code) label = `テーブル「${item.code}」`;
+          else label = `行 #${idx} (${t || "ROW"})`;
+          code = String(item.code || "");
+        } else if (kind === "notification" || kind === "perRecordNotification" || kind === "reminderNotification") {
+          label = String(item.name || item.title || "").trim();
+          if (!label && Array.isArray(item.recipients) && item.recipients.length) {
+            const first = item.recipients[0];
+            const rc = first?.entity?.code || first?.code || "";
+            label = rc ? `${rc}${item.recipients.length > 1 ? " 他" : ""}` : "";
+          }
+          code = String(item.name || "");
+        } else if (keyField) {
+          label = String(item[keyField] || "");
+          code = label;
+        }
+      }
+      if (!label) {
+        label = options.fallbackLabel ? options.fallbackLabel(item, idx) : `${kindLabel} #${idx}`;
+      }
+      return {
+        path: `${basePath}[${idx}]`,
+        payload: item,
+        entityKind: kind,
+        entityLabel: label,
+        entityCode: code,
+        reasonNoun: kindLabel
+      };
+    });
+  }
+  function computeSectionWideEntityChildren(sectionKey, payload) {
+    if (!payload || typeof payload !== "object") return [];
+    switch (sectionKey) {
+      case "viewSettings":
+        return enumerateNamedMap(payload.views, `${sectionKey}.views`, "view", "ビュー");
+      case "reportSettings":
+        return enumerateNamedMap(payload.reports, `${sectionKey}.reports`, "report", "グラフ");
+      case "processSettings": {
+        const out = [];
+        out.push(...enumerateNamedMap(payload.states, `${sectionKey}.states`, "state", "ステータス"));
+        out.push(...enumerateArray(payload.actions, `${sectionKey}.actions`, "action", "遷移アクション", { keyField: "name" }));
+        return out;
+      }
+      case "actionSettings":
+        return enumerateArray(payload.actions, `${sectionKey}.actions`, "appAction", "アクション", { keyField: "name" });
+      case "appAcl":
+        return enumerateArray(payload.rights, `${sectionKey}.rights`, "aclEntry", "権限エントリー");
+      case "recordPermissions":
+        return enumerateArray(payload.rights, `${sectionKey}.rights`, "recordAclEntry", "レコード権限エントリー");
+      case "fieldAcl":
+        return enumerateArray(payload.rights, `${sectionKey}.rights`, "fieldAclEntry", "フィールド権限");
+      case "notifications":
+        return enumerateArray(payload.notifications, `${sectionKey}.notifications`, "notification", "通知");
+      case "perRecordNotifications":
+        return enumerateArray(payload.notifications, `${sectionKey}.notifications`, "perRecordNotification", "レコード条件通知");
+      case "reminderNotifications":
+        return enumerateArray(payload.notifications, `${sectionKey}.notifications`, "reminderNotification", "リマインダー通知");
+      case "categories":
+        return enumerateNamedMap(payload.categories, `${sectionKey}.categories`, "category", "カテゴリ");
+      case "pluginSettings":
+        return enumerateArray(payload.plugins, `${sectionKey}.plugins`, "plugin", "プラグイン", { keyField: "id" });
+      case "customizeSettings": {
+        const out = [];
+        ["desktop", "mobile"].forEach((platform) => {
+          ["js", "css"].forEach((kind) => {
+            const arr = payload?.[platform]?.[kind];
+            if (Array.isArray(arr)) {
+              const platLabel = platform === "desktop" ? "デスクトップ" : "モバイル";
+              const kindLabel = kind.toUpperCase();
+              out.push(...enumerateArray(arr, `${sectionKey}.${platform}.${kind}`, "jsCss", `${platLabel}/${kindLabel}`).map((spec) => ({
+                ...spec,
+                entityLabel: `${platLabel}/${kindLabel}: ${spec.entityLabel}`
+              })));
+            }
+          });
+        });
+        return out;
+      }
+      case "layoutSettings":
+        return enumerateArray(payload.layout, `${sectionKey}.layout`, "layoutRow", "レイアウト行");
+      default:
+        return [];
+    }
+  }
+  function expandEntityRowsForDisplay(rows) {
+    if (!Array.isArray(rows) || !rows.length) return rows || [];
+    const out = [];
+    rows.forEach((row, idx) => {
+      out.push(row);
+      if (!row || row._displayOnly) return;
+      if (row.sectionKey === "fieldSettings") return;
+      const isAdded = row.type === "added";
+      const isRemoved = row.type === "removed";
+      if (!isAdded && !isRemoved) return;
+      const sectionKey = String(row.sectionKey || "");
+      if (!sectionKey) return;
+      const path = String(row.path || "");
+      const tokens = tokenizeForExpansion(path);
+      const isSectionWide = path === sectionKey;
+      if (!isSectionWide) return;
+      const payload = isAdded ? row.right : row.left;
+      let children = computeSectionWideEntityChildren(sectionKey, payload);
+      if (!children.length) return;
+      if (children.length > ENTITY_EXPAND_LIMIT) children = children.slice(0, ENTITY_EXPAND_LIMIT);
+      const parentId = row._id || `d${idx}`;
+      let childIdx = 0;
+      children.forEach((spec) => {
+        out.push({
+          ...row,
+          _id: `${parentId}::echild::${childIdx++}`,
+          _parentRowId: parentId,
+          _expandedFromEntity: true,
+          _displayOnly: true,
+          path: spec.path,
+          left: isRemoved ? spec.payload : void 0,
+          right: isAdded ? spec.payload : void 0,
+          type: row.type,
+          moved: false,
+          entityKind: spec.entityKind,
+          entityLabel: spec.entityLabel,
+          entityCode: spec.entityCode || "",
+          entityPropLabel: "",
+          reasonSummary: isAdded ? `${spec.reasonNoun}追加：${spec.entityLabel}` : `${spec.reasonNoun}削除：${spec.entityLabel}`,
+          renameCandidate: null,
+          impactCount: 0,
+          impactRefs: [],
+          impactSummary: ""
+        });
+      });
+    });
+    return out;
+  }
   function expandSubtableRowsForDisplay(rows) {
     if (!Array.isArray(rows) || !rows.length) return rows || [];
     const out = [];
@@ -1433,7 +1952,7 @@ ${contextLine}`);
     });
     return out;
   }
-  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, SUBTABLE_ROOT_PATH_RE;
+  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
   var init_engine = __esm({
     "src/diff/engine.ts"() {
       "use strict";
@@ -1474,7 +1993,35 @@ ${contextLine}`);
         "to",
         "key"
       ];
+      LOW_PRIORITY_LEAF_KEYS = /* @__PURE__ */ new Set([
+        "width",
+        "x",
+        "y",
+        "index",
+        "no",
+        "order",
+        "paginationStyle",
+        "pager",
+        "description",
+        "minWidth",
+        "maxWidth",
+        "thumbnailSize"
+      ]);
+      ACL_GRANT_FLAG_KEYS = /* @__PURE__ */ new Set([
+        "recordViewable",
+        "recordAddable",
+        "recordEditable",
+        "recordDeletable",
+        "recordImportable",
+        "recordExportable",
+        "appEditable",
+        "viewable",
+        "editable",
+        "deletable"
+      ]);
+      FIELD_ACL_LEVEL_ORDER = ["NONE", "READ", "READ_WRITE"];
       SUBTABLE_ROOT_PATH_RE = /^fieldSettings\.properties\.([^.[\]]+)$/;
+      ENTITY_EXPAND_LIMIT = 200;
     }
   });
 
@@ -1608,9 +2155,15 @@ ${contextLine}`);
       reasons.push("label-similar");
       hasStrongMatch = true;
     }
-    if (scoreTokenOverlap(leftCode, rightCode) >= 0.5) {
+    const codeOverlap = scoreTokenOverlap(leftCode, rightCode);
+    if (codeOverlap >= 0.5) {
       score += 1;
       reasons.push("code-similar");
+    }
+    if (!hasStrongMatch && codeOverlap >= 0.7) {
+      score += 2;
+      reasons.push("code-strong");
+      hasStrongMatch = true;
     }
     if (leftDef.required === rightDef.required) {
       score += 1;
@@ -1885,6 +2438,276 @@ ${contextLine}`);
     const head = [...sectionCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([section, count]) => `${section}:${count}`).join(" / ");
     return head || `影響 ${refs.length}件`;
   }
+  function isEntityRootRow(row) {
+    if (!row || row.sectionKey === "fieldSettings") return false;
+    if (row._displayOnly) return false;
+    if (!row.entityKind || !RENAMABLE_ENTITY_KINDS.has(row.entityKind)) return false;
+    const tokens = tokenizePath(String(row.path || ""));
+    const sectionKey = String(row.sectionKey || "");
+    if ((sectionKey === "viewSettings" || sectionKey === "reportSettings" || sectionKey === "categories") && tokens.length === 3) return true;
+    if (sectionKey === "processSettings" && tokens[1] === "states" && tokens.length === 3) return true;
+    if ((sectionKey === "processSettings" || sectionKey === "actionSettings") && tokens[1] === "actions" && tokens.length === 3) return true;
+    if ((sectionKey === "appAcl" || sectionKey === "recordPermissions" || sectionKey === "fieldAcl") && tokens[1] === "rights" && tokens.length === 3) return true;
+    if (["notifications", "perRecordNotifications", "reminderNotifications"].includes(sectionKey) && tokens[1] === "notifications" && tokens.length === 3) return true;
+    if (sectionKey === "pluginSettings" && tokens[1] === "plugins" && tokens.length === 3) return true;
+    if (sectionKey === "layoutSettings" && tokens[1] === "layout" && tokens.length === 3) return true;
+    if (sectionKey === "customizeSettings" && tokens.length === 4) return true;
+    return false;
+  }
+  function entityPayload(row) {
+    return row?.right || row?.left || null;
+  }
+  function normalizeEntityBodyForRename(value, sectionKey, dropPresentation = false) {
+    const dropKeys = /* @__PURE__ */ new Set(["id", "index", "no", "order", "revision", "createdAt", "creator", "modifiedAt", "modifier"]);
+    if (dropPresentation) {
+      if (sectionKey === "viewSettings" || sectionKey === "reportSettings") dropKeys.add("name");
+      if (sectionKey === "processSettings" || sectionKey === "actionSettings") dropKeys.add("name");
+      if (sectionKey === "pluginSettings") dropKeys.add("name");
+      if (["notifications", "perRecordNotifications", "reminderNotifications"].includes(sectionKey)) {
+        dropKeys.add("name");
+        dropKeys.add("title");
+      }
+    }
+    const walk = (v) => {
+      if (Array.isArray(v)) return v.map(walk);
+      if (v && typeof v === "object") {
+        const out = {};
+        Object.keys(v).sort().forEach((k) => {
+          if (dropKeys.has(k)) return;
+          out[k] = walk(v[k]);
+        });
+        return out;
+      }
+      return v;
+    };
+    return walk(value);
+  }
+  function scoreEntityRenameCandidate(removedRow, addedRow) {
+    if (removedRow.sectionKey !== addedRow.sectionKey) return null;
+    if (removedRow.entityKind !== addedRow.entityKind) return null;
+    const left = entityPayload(removedRow);
+    const right = entityPayload(addedRow);
+    if (!left || !right || typeof left !== "object" || typeof right !== "object") return null;
+    const lType = left.type;
+    const rType = right.type;
+    if (lType != null && rType != null && String(lType) !== String(rType)) return null;
+    const sectionKey = removedRow.sectionKey;
+    const exactSigLeft = stableStringify(normalizeEntityBodyForRename(left, sectionKey));
+    const exactSigRight = stableStringify(normalizeEntityBodyForRename(right, sectionKey));
+    const coreSigLeft = stableStringify(normalizeEntityBodyForRename(left, sectionKey, true));
+    const coreSigRight = stableStringify(normalizeEntityBodyForRename(right, sectionKey, true));
+    const reasons = [];
+    let score = 0;
+    let strong = false;
+    if (lType && rType) {
+      score += 1;
+      reasons.push(`type:${lType}`);
+    }
+    if (exactSigLeft === exactSigRight) {
+      score += 6;
+      reasons.push("same-body");
+      strong = true;
+    } else if (coreSigLeft === coreSigRight) {
+      score += 5;
+      reasons.push("same-core");
+      strong = true;
+    }
+    const leftLabel = normalizeLooseText(String(removedRow.entityLabel || ""));
+    const rightLabel = normalizeLooseText(String(addedRow.entityLabel || ""));
+    if (leftLabel && rightLabel) {
+      if (leftLabel === rightLabel) {
+        score += 2;
+        reasons.push("same-label");
+      } else if (scoreTokenOverlap(leftLabel, rightLabel) >= 0.6) {
+        score += 1;
+        reasons.push("label-similar");
+      }
+    }
+    if (!strong) return null;
+    if (score < 6) return null;
+    return { score, matchedBy: reasons.join(", ") };
+  }
+  function detectEntityRenameCandidates(rows) {
+    const eligible = (rows || []).filter(isEntityRootRow);
+    const removedRows = eligible.filter((r) => r.type === "removed");
+    const addedRows = eligible.filter((r) => r.type === "added");
+    if (!removedRows.length || !addedRows.length) return /* @__PURE__ */ new Map();
+    const candidates = [];
+    removedRows.forEach((rr) => {
+      addedRows.forEach((ar) => {
+        const scored = scoreEntityRenameCandidate(rr, ar);
+        if (!scored) return;
+        candidates.push({ removedRow: rr, addedRow: ar, score: scored.score, matchedBy: scored.matchedBy });
+      });
+    });
+    candidates.sort((a, b) => b.score - a.score);
+    const usedRemoved = /* @__PURE__ */ new Set();
+    const usedAdded = /* @__PURE__ */ new Set();
+    const out = /* @__PURE__ */ new Map();
+    candidates.forEach((cand) => {
+      if (usedRemoved.has(cand.removedRow._id) || usedAdded.has(cand.addedRow._id)) return;
+      usedRemoved.add(cand.removedRow._id);
+      usedAdded.add(cand.addedRow._id);
+      const fromCode = String(cand.removedRow.entityCode || cand.removedRow.entityLabel || "");
+      const toCode = String(cand.addedRow.entityCode || cand.addedRow.entityLabel || "");
+      const renameInfo = {
+        id: `entity-rename:${cand.removedRow.sectionKey}:${fromCode}:${toCode}`,
+        fromCode,
+        toCode,
+        score: cand.score,
+        matchedBy: cand.matchedBy,
+        entityKind: cand.removedRow.entityKind,
+        sectionKey: cand.removedRow.sectionKey
+      };
+      out.set(cand.removedRow._id, renameInfo);
+      out.set(cand.addedRow._id, renameInfo);
+    });
+    return out;
+  }
+  function getSectionPropLabel(sectionKey, leaf) {
+    const map = SECTION_PROP_LABELS[sectionKey];
+    if (!map) return "";
+    return map[leaf] || "";
+  }
+  function describeAclEntity(entity) {
+    if (!entity || typeof entity !== "object") return "";
+    const code = String(entity.code || "").trim();
+    const type = String(entity.type || "").trim();
+    if (!code) return type ? `(${type})` : "";
+    return type ? `${code} (${type})` : code;
+  }
+  function extractEntityContext(row) {
+    const sectionKey = String(row?.sectionKey || "");
+    const path = String(row?.path || "");
+    const tokens = tokenizePath(path);
+    const leaf = getPathLeafKey2(path);
+    const propLabel = getSectionPropLabel(sectionKey, leaf);
+    const empty = { entityKind: "", entityLabel: "", entityCode: "", propLabel };
+    if (sectionKey === "fieldSettings") return empty;
+    const payload = row?.right || row?.left || null;
+    switch (sectionKey) {
+      case "viewSettings": {
+        if (tokens[1] === "views" && typeof tokens[2] === "string") {
+          return { entityKind: "view", entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+        }
+        return empty;
+      }
+      case "reportSettings": {
+        if (tokens[1] === "reports" && typeof tokens[2] === "string") {
+          return { entityKind: "report", entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+        }
+        return empty;
+      }
+      case "processSettings": {
+        if (tokens[1] === "states" && typeof tokens[2] === "string") {
+          return { entityKind: "state", entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+        }
+        if (tokens[1] === "actions" && typeof tokens[2] === "number") {
+          const name = row?.arrayKey === "name" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.name || "");
+          const label = name || `遷移 #${tokens[2]}`;
+          return { entityKind: "action", entityLabel: label, entityCode: name, propLabel };
+        }
+        return empty;
+      }
+      case "actionSettings": {
+        if (tokens[1] === "actions" && typeof tokens[2] === "number") {
+          const name = row?.arrayKey === "name" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.name || "");
+          const label = name || `アクション #${tokens[2]}`;
+          return { entityKind: "appAction", entityLabel: label, entityCode: name, propLabel };
+        }
+        return empty;
+      }
+      case "appAcl":
+      case "recordPermissions": {
+        if (tokens[1] === "rights" && typeof tokens[2] === "number") {
+          let entityRef = row?.arrayKey === "entity" && row?.arrayKeyValue && typeof row.arrayKeyValue === "object" ? row.arrayKeyValue : null;
+          if (!entityRef) entityRef = payload && typeof payload === "object" ? payload.entity : null;
+          const label = describeAclEntity(entityRef) || `エントリー #${tokens[2]}`;
+          const code = String(entityRef?.code || "");
+          const kind = sectionKey === "appAcl" ? "aclEntry" : "recordAclEntry";
+          return { entityKind: kind, entityLabel: label, entityCode: code, propLabel };
+        }
+        return empty;
+      }
+      case "fieldAcl": {
+        if (tokens[1] === "rights" && typeof tokens[2] === "number") {
+          const fc = row?.arrayKey === "code" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.code || "");
+          const label = fc || `エントリー #${tokens[2]}`;
+          return { entityKind: "fieldAclEntry", entityLabel: label, entityCode: fc, propLabel };
+        }
+        return empty;
+      }
+      case "notifications":
+      case "perRecordNotifications":
+      case "reminderNotifications": {
+        if (tokens[1] === "notifications" && typeof tokens[2] === "number") {
+          const obj = payload && typeof payload === "object" ? payload : {};
+          let label = String(obj.name || obj.title || "").trim();
+          if (!label) {
+            const recipients = obj.recipients;
+            if (Array.isArray(recipients) && recipients.length) {
+              const first = recipients[0];
+              const code = first?.entity?.code || first?.code || "";
+              label = code ? `${code}${recipients.length > 1 ? " 他" : ""}` : "";
+            }
+          }
+          if (!label && row?.arrayKey === "name" && row?.arrayKeyValue != null) {
+            label = String(row.arrayKeyValue);
+          }
+          if (!label) label = `通知 #${tokens[2]}`;
+          const kind = sectionKey === "perRecordNotifications" ? "perRecordNotification" : sectionKey === "reminderNotifications" ? "reminderNotification" : "notification";
+          return { entityKind: kind, entityLabel: label, entityCode: String(obj.name || ""), propLabel };
+        }
+        return empty;
+      }
+      case "categories": {
+        if (tokens[1] === "categories" && typeof tokens[2] === "string") {
+          return { entityKind: "category", entityLabel: tokens[2], entityCode: tokens[2], propLabel };
+        }
+        return empty;
+      }
+      case "pluginSettings": {
+        if (tokens[1] === "plugins" && typeof tokens[2] === "number") {
+          const id = row?.arrayKey === "id" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.id || "");
+          const name = String(payload && typeof payload === "object" && payload.name || "");
+          const label = name ? id ? `${name} (${id})` : name : id || `プラグイン #${tokens[2]}`;
+          return { entityKind: "plugin", entityLabel: label, entityCode: id, propLabel };
+        }
+        return empty;
+      }
+      case "customizeSettings": {
+        if ((tokens[1] === "desktop" || tokens[1] === "mobile") && (tokens[2] === "js" || tokens[2] === "css") && typeof tokens[3] === "number") {
+          const platform = tokens[1] === "desktop" ? "デスクトップ" : "モバイル";
+          const kind = String(tokens[2]).toUpperCase();
+          const obj = payload && typeof payload === "object" ? payload : {};
+          const fileKey = obj?.file?.fileKey || obj?.fileKey || "";
+          const url = obj?.url || "";
+          const ref = url ? url : fileKey ? `ファイル(${String(fileKey).slice(0, 8)}…)` : `#${tokens[3]}`;
+          return {
+            entityKind: "jsCss",
+            entityLabel: `${platform}/${kind}: ${ref}`,
+            entityCode: String(fileKey || url || ""),
+            propLabel
+          };
+        }
+        return empty;
+      }
+      case "layoutSettings": {
+        if (tokens[1] === "layout" && typeof tokens[2] === "number") {
+          const obj = payload && typeof payload === "object" ? payload : {};
+          const t = String(obj.type || "").toUpperCase();
+          let label = `行 #${tokens[2]}`;
+          if (t === "GROUP" && obj.code) label = `グループ「${obj.code}」`;
+          else if (t === "SUBTABLE" && obj.code) label = `テーブル「${obj.code}」`;
+          else if (t === "ROW") label = `行 #${tokens[2]}`;
+          return { entityKind: "layoutRow", entityLabel: label, entityCode: String(obj.code || ""), propLabel };
+        }
+        return empty;
+      }
+      default:
+        return empty;
+    }
+  }
   function buildDiffReasonSummary(row) {
     const sectionKey = row.sectionKey || "";
     const sectionLabel = SECTION_DEFS.find((entry) => entry.key === sectionKey)?.label || sectionKey || "差分";
@@ -1910,41 +2733,74 @@ ${contextLine}`);
       if (String(row.path || "").includes(".lookup.")) return "ルックアップ設定変更";
       return `${noun}設定変更`;
     }
-    if (sectionKey === "layoutSettings") return "レイアウト変更";
-    if (sectionKey === "viewSettings") {
-      if (String(row.path || "").includes("filterCond")) return "ビュー条件変更";
-      if (String(row.path || "").includes(".fields")) return "ビュー列変更";
-      if (leafKey === "name") return "ビュー名変更";
-      return row.type === "added" ? "ビュー追加" : row.type === "removed" ? "ビュー削除" : "ビュー設定変更";
+    const entity = row && (row.entityLabel || row.entityKind) ? { entityKind: String(row.entityKind || ""), entityLabel: String(row.entityLabel || ""), propLabel: String(row.entityPropLabel || "") } : extractEntityContext(row);
+    const kindLabel = entity.entityKind ? ENTITY_KIND_LABELS[entity.entityKind] || "" : "";
+    const propLabel = entity.propLabel || "";
+    const isEntityRoot = !!entity.entityKind && !propLabel && (() => {
+      const tokens = tokenizePath(String(row.path || ""));
+      if (sectionKey === "viewSettings" || sectionKey === "reportSettings" || sectionKey === "categories") {
+        return tokens.length === 3;
+      }
+      if (sectionKey === "processSettings" && tokens[1] === "states") return tokens.length === 3;
+      if ((sectionKey === "processSettings" || sectionKey === "actionSettings") && tokens[1] === "actions") return tokens.length === 3;
+      if ((sectionKey === "appAcl" || sectionKey === "recordPermissions" || sectionKey === "fieldAcl") && tokens[1] === "rights") return tokens.length === 3;
+      if (["notifications", "perRecordNotifications", "reminderNotifications"].includes(sectionKey) && tokens[1] === "notifications") return tokens.length === 3;
+      if (sectionKey === "pluginSettings" && tokens[1] === "plugins") return tokens.length === 3;
+      if (sectionKey === "layoutSettings" && tokens[1] === "layout") return tokens.length === 3;
+      if (sectionKey === "customizeSettings") return tokens.length === 4;
+      return false;
+    })();
+    if (entity.entityKind && isEntityRoot) {
+      if (row.type === "added") return `${kindLabel}追加：${entity.entityLabel}`;
+      if (row.type === "removed") return `${kindLabel}削除：${entity.entityLabel}`;
+      return `${kindLabel}変更：${entity.entityLabel}`;
     }
-    if (sectionKey === "reportSettings") {
-      if (String(row.path || "").includes("filterCond")) return "グラフ条件変更";
-      return row.type === "added" ? "グラフ追加" : row.type === "removed" ? "グラフ削除" : "グラフ設定変更";
+    if (entity.entityKind) {
+      const detail = propLabel || (leafKey || "");
+      const head = `${kindLabel}「${entity.entityLabel}」`;
+      if (row.type === "added") return detail ? `${head} / ${detail} 追加` : `${head} 追加`;
+      if (row.type === "removed") return detail ? `${head} / ${detail} 削除` : `${head} 削除`;
+      return detail ? `${head} / ${detail} 変更` : `${head} 変更`;
     }
-    if (sectionKey === "processSettings") {
-      if (String(row.path || "").includes(".states.")) return row.type === "added" ? "ステータス追加" : row.type === "removed" ? "ステータス削除" : "ステータス設定変更";
-      if (String(row.path || "").includes(".actions.")) return row.type === "added" ? "遷移アクション追加" : row.type === "removed" ? "遷移アクション削除" : "遷移アクション変更";
-      if (leafKey === "enable") return "プロセス有効/無効変更";
-      return "プロセス設定変更";
+    if (sectionKey === "appSettings") {
+      const sp = getSectionPropLabel("appSettings", leafKey);
+      return sp ? `アプリ設定変更：${sp}` : "アプリ設定変更";
     }
-    if (sectionKey === "actionSettings") return row.type === "added" ? "アクション追加" : row.type === "removed" ? "アクション削除" : "アクション設定変更";
-    if (["appAcl", "fieldAcl", "recordPermissions"].includes(sectionKey)) return row.type === "added" ? "権限追加" : row.type === "removed" ? "権限削除" : "権限変更";
-    if (["notifications", "perRecordNotifications", "reminderNotifications"].includes(sectionKey)) {
-      if (String(row.path || "").includes("condition")) return "通知条件変更";
-      return row.type === "added" ? "通知追加" : row.type === "removed" ? "通知削除" : "通知設定変更";
+    if (sectionKey === "appInfo") {
+      const sp = getSectionPropLabel("appInfo", leafKey);
+      return sp ? `アプリ情報変更：${sp}` : "アプリ情報変更";
     }
-    if (sectionKey === "categories") return row.type === "added" ? "カテゴリ追加" : row.type === "removed" ? "カテゴリ削除" : "カテゴリ設定変更";
+    if (sectionKey === "formSettings") return "フォーム設定変更";
     return row.type === "added" ? `${sectionLabel}追加` : row.type === "removed" ? `${sectionLabel}削除` : `${sectionLabel}変更`;
   }
   function enrichDiffRows(rows, sourceBundle, targetBundle) {
-    const renameMap = detectFieldRenameCandidates(rows);
+    const seeded = (rows || []).map((row) => {
+      if (!row || row.sectionKey === "fieldSettings") return row;
+      const ctx = extractEntityContext(row);
+      if (!ctx.entityKind) return row;
+      return {
+        ...row,
+        entityKind: ctx.entityKind,
+        entityLabel: ctx.entityLabel,
+        entityCode: ctx.entityCode,
+        entityPropLabel: ctx.propLabel
+      };
+    });
+    const renameMap = detectFieldRenameCandidates(seeded);
+    const entityRenameMap = detectEntityRenameCandidates(seeded);
     const impactIndex = buildCombinedFieldImpactIndex(sourceBundle, targetBundle);
-    return (rows || []).map((row) => {
+    return seeded.map((row) => {
       const next = { ...row };
-      const renameCandidate = renameMap.get(row._id);
+      const renameCandidate = renameMap.get(row._id) || entityRenameMap.get(row._id);
       if (renameCandidate) next.renameCandidate = renameCandidate;
+      if (renameCandidate && (next.severity === "high" || next.severity === "medium")) {
+        next.severity = "low";
+      }
       const reason = buildDiffReasonSummary(next);
-      if (reason) next.reasonSummary = renameCandidate ? `${reason} / コード変更候補` : reason;
+      if (reason) {
+        const suffix = renameCandidate ? renameCandidate.entityKind ? "改名候補" : "コード変更候補" : "";
+        next.reasonSummary = suffix ? `${reason} / ${suffix}` : reason;
+      }
       const impactRefs = resolveRowImpactRefs(next, impactIndex);
       if (impactRefs.length) {
         next.impactRefs = impactRefs.slice(0, DIFF_IMPACT_REF_LIMIT);
@@ -1958,11 +2814,234 @@ ${contextLine}`);
       return next;
     });
   }
+  var RENAMABLE_ENTITY_KINDS, SECTION_PROP_LABELS, ENTITY_KIND_LABELS;
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
       "use strict";
       init_constants();
       init_utils();
+      RENAMABLE_ENTITY_KINDS = /* @__PURE__ */ new Set([
+        "view",
+        "report",
+        "state",
+        "category",
+        "action",
+        "appAction",
+        "aclEntry",
+        "recordAclEntry",
+        "fieldAclEntry",
+        "notification",
+        "perRecordNotification",
+        "reminderNotification",
+        "plugin",
+        "jsCss",
+        "layoutRow"
+      ]);
+      SECTION_PROP_LABELS = {
+        viewSettings: {
+          name: "ビュー名",
+          type: "ビュー種別",
+          filterCond: "絞り込み条件",
+          sort: "ソート",
+          fields: "表示フィールド",
+          pager: "ページャー",
+          paginationStyle: "ページャー表示",
+          builtinType: "組み込みビュー種別",
+          html: "カスタムHTML",
+          index: "表示順",
+          customView: "カスタマイズビュー",
+          date: "日付フィールド",
+          title: "タイトルフィールド",
+          description: "説明",
+          id: "ビューID"
+        },
+        reportSettings: {
+          name: "グラフ名",
+          chartType: "グラフ種別",
+          chartMode: "グラフモード",
+          groups: "グループ化",
+          aggregations: "集計",
+          filterCond: "絞り込み条件",
+          sorts: "ソート",
+          periodicReport: "定期実行",
+          index: "表示順",
+          id: "グラフID"
+        },
+        processSettings: {
+          enable: "プロセス管理 有効/無効",
+          name: "名称",
+          index: "表示順",
+          assignee: "作業者",
+          from: "遷移元",
+          to: "遷移先",
+          condition: "実行条件",
+          actions: "遷移アクション",
+          states: "ステータス",
+          filterCond: "実行条件",
+          revisions: "リビジョン"
+        },
+        actionSettings: {
+          name: "アクション名",
+          link: "リンク先",
+          params: "パラメータ",
+          targetApp: "転送先アプリ",
+          index: "表示順",
+          mappings: "項目マッピング",
+          targetAppId: "転送先アプリID",
+          filterCond: "実行条件",
+          id: "アクションID"
+        },
+        appAcl: {
+          appEditable: "アプリ管理権限",
+          recordViewable: "レコード閲覧",
+          recordAddable: "レコード追加",
+          recordEditable: "レコード編集",
+          recordDeletable: "レコード削除",
+          recordImportable: "レコード読み込み",
+          recordExportable: "レコード書き出し",
+          entity: "エンティティ",
+          includeSubs: "配下を含む",
+          code: "エンティティコード",
+          type: "エンティティ種別"
+        },
+        fieldAcl: {
+          accessibility: "アクセス権",
+          code: "フィールドコード",
+          entity: "エンティティ",
+          includeSubs: "配下を含む",
+          viewable: "閲覧",
+          editable: "編集"
+        },
+        recordPermissions: {
+          filterCond: "対象レコード条件",
+          viewable: "閲覧",
+          editable: "編集",
+          deletable: "削除",
+          includeSubs: "配下を含む",
+          entity: "エンティティ",
+          code: "エンティティコード",
+          type: "エンティティ種別"
+        },
+        notifications: {
+          recipients: "宛先",
+          includeSubs: "配下を含む",
+          appAdmin: "アプリ管理者",
+          onUserAccess: "アクセス権変更通知",
+          notifyToCommenter: "コメント通知",
+          code: "エンティティコード",
+          type: "エンティティ種別",
+          entity: "エンティティ"
+        },
+        perRecordNotifications: {
+          name: "通知名",
+          filterCond: "通知対象条件",
+          title: "タイトル",
+          body: "本文",
+          recipients: "宛先",
+          includeSubs: "配下を含む",
+          code: "エンティティコード",
+          type: "エンティティ種別",
+          entity: "エンティティ"
+        },
+        reminderNotifications: {
+          name: "通知名",
+          timing: "タイミング",
+          filterCond: "通知対象条件",
+          title: "タイトル",
+          body: "本文",
+          recipients: "宛先",
+          daysLater: "日数後",
+          hoursLater: "時間後",
+          baseDate: "基準日"
+        },
+        categories: {
+          enable: "カテゴリ管理 有効/無効",
+          name: "カテゴリ名",
+          index: "表示順",
+          code: "カテゴリコード"
+        },
+        customizeSettings: {
+          type: "種別",
+          url: "URL",
+          file: "ファイル",
+          fileKey: "ファイルキー",
+          js: "JavaScript",
+          css: "CSS",
+          desktop: "デスクトップ",
+          mobile: "モバイル",
+          scope: "スコープ",
+          resources: "リソース",
+          _body: "JS/CSS本文",
+          name: "ファイル名"
+        },
+        pluginSettings: {
+          plugins: "プラグイン一覧",
+          id: "プラグインID",
+          name: "プラグイン名",
+          enabled: "有効/無効",
+          version: "バージョン",
+          config: "プラグイン設定",
+          code: "プラグインコード"
+        },
+        layoutSettings: {
+          type: "種別",
+          code: "フィールドコード",
+          fields: "フィールド",
+          elementId: "要素ID",
+          label: "ラベル",
+          value: "初期値",
+          layout: "レイアウト",
+          size: "サイズ",
+          width: "横幅",
+          height: "高さ"
+        },
+        appSettings: {
+          name: "アプリ名",
+          description: "説明",
+          icon: "アイコン",
+          theme: "テーマ",
+          titleField: "タイトルフィールド",
+          enableThumbnails: "サムネイル表示",
+          enableBulkDeletion: "一括削除",
+          enableComments: "コメント",
+          enableDuplicateRecord: "レコード複製",
+          enableInlineRecordEditing: "インライン編集",
+          numberPrecision: "数値精度",
+          firstMonthOfFiscalYear: "会計年度開始月",
+          revision: "リビジョン"
+        },
+        appInfo: {
+          name: "アプリ名",
+          code: "アプリコード",
+          description: "説明",
+          threadId: "スレッドID",
+          spaceId: "スペースID",
+          createdAt: "作成日時",
+          modifiedAt: "更新日時"
+        },
+        formSettings: {
+          name: "フォーム名",
+          layout: "レイアウト",
+          revision: "リビジョン"
+        }
+      };
+      ENTITY_KIND_LABELS = {
+        view: "ビュー",
+        report: "グラフ",
+        state: "ステータス",
+        action: "遷移アクション",
+        appAction: "アクション",
+        aclEntry: "権限エントリー",
+        fieldAclEntry: "フィールド権限",
+        recordAclEntry: "レコード権限",
+        notification: "通知",
+        perRecordNotification: "レコード条件通知",
+        reminderNotification: "リマインダー通知",
+        category: "カテゴリ",
+        plugin: "プラグイン",
+        jsCss: "JS/CSS",
+        layoutRow: "レイアウト行"
+      };
     }
   });
 
@@ -2302,8 +3381,25 @@ ${contextLine}`);
     const summary = summarizeRows(withSameSections);
     const sectionText = (scopes || []).map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ");
     const sectionLabelMap = Object.fromEntries(SECTION_DEFS.map((d) => [d.key, d.label]));
+    const entityKindLabelMap = {
+      view: "ビュー",
+      report: "グラフ",
+      state: "ステータス",
+      action: "遷移アクション",
+      appAction: "アクション",
+      aclEntry: "権限エントリー",
+      fieldAclEntry: "フィールド権限",
+      recordAclEntry: "レコード権限",
+      notification: "通知",
+      perRecordNotification: "レコード条件通知",
+      reminderNotification: "リマインダー通知",
+      category: "カテゴリ",
+      plugin: "プラグイン",
+      jsCss: "JS/CSS",
+      layoutRow: "レイアウト行"
+    };
     const MAX_EXPORT_ROWS = 2e3;
-    const displayRows = expandSubtableRowsForDisplay(withSameSections);
+    const displayRows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(withSameSections));
     const exportRows = displayRows.slice(0, MAX_EXPORT_ROWS);
     const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
     const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
@@ -2440,6 +3536,7 @@ ${contextLine}`);
 (() => {
   const REPORT_ROWS = ${safeJsonForScript(exportRows)};
   const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
+  const ENTITY_KIND_LABEL_MAP = ${safeJsonForScript(entityKindLabelMap)};
   const REPORT_META = ${safeJsonForScript(reportMeta)};
   const THEME_KEY = '${TOOL_ID}:diffReportTheme';
   const ACTIVE_TAB_KEY = '${TOOL_ID}:diffReportActiveTab';
@@ -2818,6 +3915,14 @@ ${contextLine}`);
         const propTitle = fieldChangePropTitle(info, row);
         pathMain = fieldLabel + (code ? ' (' + code + ')' : '') + (propTitle ? ' / ' + propTitle : '');
       }
+    } else if (row?.entityLabel || row?.entityKind) {
+      const sectionLabel = SECTION_LABEL_MAP[row?.sectionKey || ''] || row?.section || '';
+      const kindLabel = ENTITY_KIND_LABEL_MAP[row?.entityKind || ''] || '';
+      const parts = [];
+      if (sectionLabel) parts.push(sectionLabel);
+      if (row?.entityLabel) parts.push((kindLabel ? kindLabel + '「' + row.entityLabel + '」' : row.entityLabel));
+      if (row?.entityPropLabel) parts.push(row.entityPropLabel);
+      pathMain = parts.join(' / ') || pathMain;
     }
     let html = '<div class="path-main">' + escHtml(pathMain) + '</div>';
     if (relPath && relPath !== fullPath && row?.sectionKey !== FIELD_SECTION_KEY) {
@@ -4098,7 +5203,10 @@ ${contextLine}`);
           const cells = renderRowCells(row, useCharDiff);
           const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
           const card = document.createElement('article');
-          card.className = 'diff-card diff-card--' + typeClass;
+          const sevToken = String(row.severity || 'low').toLowerCase();
+          const sevCls = sevToken === 'high' ? ' sev-high' : sevToken === 'medium' ? ' sev-medium' : ' sev-low';
+          const reviewedCls = '';
+          card.className = 'diff-card diff-card--' + typeClass + sevCls + reviewedCls;
           card.innerHTML =
             '<div class="diff-card-head">' +
               '<span class="type-chip type-chip--' + typeClass + '">' + escHtml(typeLabel) + '</span>' +

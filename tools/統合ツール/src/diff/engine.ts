@@ -41,12 +41,69 @@ const ARRAY_KEY_CANDIDATES = [
   'key'
 ];
 
+// 装飾・順序・寸法・説明など、挙動に影響しない変更は low に降格する。
+const LOW_PRIORITY_LEAF_KEYS: ReadonlySet<string> = new Set([
+  'width', 'x', 'y', 'index', 'no', 'order',
+  'paginationStyle', 'pager', 'description',
+  'minWidth', 'maxWidth', 'thumbnailSize'
+]);
+
+// レコード操作系の許可フラグ（true ⇄ false の変化を判定する）
+const ACL_GRANT_FLAG_KEYS: ReadonlySet<string> = new Set([
+  'recordViewable', 'recordAddable', 'recordEditable', 'recordDeletable',
+  'recordImportable', 'recordExportable', 'appEditable',
+  'viewable', 'editable', 'deletable'
+]);
+
+const FIELD_ACL_LEVEL_ORDER: ReadonlyArray<string> = ['NONE', 'READ', 'READ_WRITE'];
+
+function fieldAclLevelIndex(value): number {
+  if (value == null) return -1;
+  return FIELD_ACL_LEVEL_ORDER.indexOf(String(value).toUpperCase());
+}
+
 export function detectRowSeverity(row) {
   const sec = row?.sectionKey || '';
-  const path = String(row?.path || '').toLowerCase();
-  if (row?.type === 'removed') return 'high';
+  const rawPath = String(row?.path || '');
+  const pathLower = rawPath.toLowerCase();
+  const leafMatch = rawPath.match(/([^[.\]]+)(?:\[\d+\])?$/);
+  const leaf = leafMatch ? leafMatch[1] : '';
+
+  // 純粋な順序変更（moved）は low
+  if (row?.moved && row?.type === 'changed') return 'low';
+
+  // 装飾・順序・寸法・説明だけの変更は low（HIGH_IMPACT セクションでも降格）
+  if (LOW_PRIORITY_LEAF_KEYS.has(leaf) && row?.type === 'changed') return 'low';
+
+  // ACL の許可フラグ：true→false は権限弱化（high）、false→true は権限拡大（medium）
+  if ((sec === 'appAcl' || sec === 'recordPermissions') && ACL_GRANT_FLAG_KEYS.has(leaf) && row?.type === 'changed') {
+    if (row?.left === true && row?.right === false) return 'high';
+    if (row?.left === false && row?.right === true) return 'medium';
+  }
+  // fieldAcl の accessibility（NONE < READ < READ_WRITE）：低下=high、上昇=medium
+  if (sec === 'fieldAcl' && leaf === 'accessibility' && row?.type === 'changed') {
+    const lIdx = fieldAclLevelIndex(row?.left);
+    const rIdx = fieldAclLevelIndex(row?.right);
+    if (lIdx >= 0 && rIdx >= 0) {
+      if (rIdx < lIdx) return 'high';
+      if (rIdx > lIdx) return 'medium';
+    }
+  }
+
+  // プラグインバージョン更新は medium（脆弱性修正・破壊的変更を含む可能性）
+  if (sec === 'pluginSettings' && leaf === 'version' && row?.type === 'changed') return 'medium';
+
+  // セクション全体が removed の行は依然として high（重大インシデント）
+  if (row?.type === 'removed' && rawPath === sec) return 'high';
+
+  // 旧来のセクション単位ロジック（refinements 後）
+  if (row?.type === 'removed') {
+    if (HIGH_IMPACT_SECTIONS.has(sec)) return 'high';
+    if (MEDIUM_IMPACT_SECTIONS.has(sec)) return 'medium';
+    return 'low';
+  }
   if (HIGH_IMPACT_SECTIONS.has(sec)) return 'high';
-  if (path.includes('lookup') || path.includes('relatedapp') || path.includes('condition')) return 'high';
+  if (pathLower.includes('lookup') || pathLower.includes('relatedapp') || pathLower.includes('condition')) return 'high';
   if (MEDIUM_IMPACT_SECTIONS.has(sec)) return 'medium';
   return 'low';
 }
@@ -451,6 +508,217 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
   pushDiffRow(out, { type: 'changed', path, left: a, right: b }, ignoreRules);
 }
 
+// ---------------------------------------------------------------------------
+// customizeSettings preprocessing
+// ---------------------------------------------------------------------------
+// JS/CSS の各 FILE/URL アイテムに安定キー (`name`) を注入し、配列キー検出
+// （ARRAY_KEY_CANDIDATES）でマッチさせる。本文取得済み（_bodyText 付与済）の
+// FILE はファイル本体を比較対象とするため fileKey を _body に置き換える。
+// 同内容を再アップロードしただけの fileKey 変更は差分に出なくなり、
+// 本文が違う場合は engine の line-diff が自然に効く。
+// ---------------------------------------------------------------------------
+export function preprocessCustomizeForDiff(value) {
+  if (!value || typeof value !== 'object') return value;
+  const cloned = deepClone(value);
+  for (const platform of ['desktop', 'mobile']) {
+    for (const kind of ['js', 'css']) {
+      const arr = cloned?.[platform]?.[kind];
+      if (!Array.isArray(arr)) continue;
+      for (const item of arr) {
+        if (!item || typeof item !== 'object') continue;
+        if (!item.name) {
+          if (item.type === 'FILE') {
+            item.name = String(item?.file?.name || item?.file?.fileKey || '(ファイル未設定)');
+          } else if (item.type === 'URL') {
+            item.name = String(item.url || '(URL未設定)');
+          }
+        }
+        if (item.type === 'FILE' && item.file && typeof item.file === 'object' && item._bodyText != null) {
+          // 比較対象を本文に切り替える
+          const newFile = { ...item.file };
+          newFile._body = String(item._bodyText);
+          delete newFile.fileKey;
+          item.file = newFile;
+        }
+        // 取得時補助フィールドは比較から除外（ハッシュは比較対象でなくキャッシュ用）
+        if ('_bodyText' in item) delete item._bodyText;
+        if ('_bodyHash' in item) delete item._bodyHash;
+      }
+    }
+  }
+  return cloned;
+}
+
+// 左右ペア対応：両側とも本文取得済の場合のみ _body 比較に切り替える。
+// 片側だけ本文取得失敗 → fileKey 比較に揃える（非対称ノイズを防ぐ）。
+export function preprocessCustomizePairForDiff(src, tgt) {
+  const sClone = src && typeof src === 'object' ? deepClone(src) : src;
+  const tClone = tgt && typeof tgt === 'object' ? deepClone(tgt) : tgt;
+
+  const injectName = (bundle) => {
+    if (!bundle || typeof bundle !== 'object') return;
+    for (const platform of ['desktop', 'mobile']) {
+      for (const kind of ['js', 'css']) {
+        const arr = bundle?.[platform]?.[kind];
+        if (!Array.isArray(arr)) continue;
+        for (const item of arr) {
+          if (!item || typeof item !== 'object' || item.name) continue;
+          if (item.type === 'FILE') {
+            item.name = String(item?.file?.name || item?.file?.fileKey || '(ファイル未設定)');
+          } else if (item.type === 'URL') {
+            item.name = String(item.url || '(URL未設定)');
+          }
+        }
+      }
+    }
+  };
+  injectName(sClone);
+  injectName(tClone);
+
+  const swapBodyOrCleanup = (item, counterpart) => {
+    if (!item || typeof item !== 'object') return;
+    const sBody = item._bodyText;
+    const cBody = counterpart?._bodyText;
+    if (item.type === 'FILE' && item.file && typeof item.file === 'object' && sBody != null && cBody != null) {
+      const newFile = { ...item.file };
+      newFile._body = String(sBody);
+      delete newFile.fileKey;
+      item.file = newFile;
+    }
+    if ('_bodyText' in item) delete item._bodyText;
+    if ('_bodyHash' in item) delete item._bodyHash;
+  };
+
+  for (const platform of ['desktop', 'mobile']) {
+    for (const kind of ['js', 'css']) {
+      const sArr = sClone?.[platform]?.[kind];
+      const tArr = tClone?.[platform]?.[kind];
+      const sList: any[] = Array.isArray(sArr) ? sArr : [];
+      const tList: any[] = Array.isArray(tArr) ? tArr : [];
+      const tByName = new Map<string, any>();
+      tList.forEach((it) => { if (it && typeof it === 'object' && it.name) tByName.set(String(it.name), it); });
+      const sByName = new Map<string, any>();
+      sList.forEach((it) => { if (it && typeof it === 'object' && it.name) sByName.set(String(it.name), it); });
+      sList.forEach((it) => swapBodyOrCleanup(it, tByName.get(String(it?.name || ''))));
+      tList.forEach((it) => swapBodyOrCleanup(it, sByName.get(String(it?.name || ''))));
+    }
+  }
+  return { source: sClone, target: tClone };
+}
+
+// ---------------------------------------------------------------------------
+// pluginSettings preprocessing
+// ---------------------------------------------------------------------------
+// 各プラグインに対して fetchPluginConfigs で取得した _config を本体に組み込み、
+// プラグイン単位の config 差分が自然に出るようにする。
+// ---------------------------------------------------------------------------
+export function preprocessPluginSettingsForDiff(value) {
+  if (!value || typeof value !== 'object') return value;
+  const cloned = deepClone(value);
+  if (!Array.isArray(cloned.plugins)) return cloned;
+  cloned.plugins.forEach((p) => {
+    if (!p || typeof p !== 'object') return;
+    if (p._config !== undefined) {
+      // _config を恒常フィールド config として比較対象にする
+      p.config = p._config;
+      delete p._config;
+    }
+  });
+  return cloned;
+}
+
+// ---------------------------------------------------------------------------
+// Process management state-rename detection (cross-cascade noise reduction)
+// ---------------------------------------------------------------------------
+// プロセス管理のステータス名（states のキー）が改名されると、
+//   - states.{旧名} removed / states.{新名} added
+//   - 全 actions[].from / actions[].to の {旧名→新名} 変更
+// が一斉に出てしまう。改名候補を検出したら、比較元側の states キーと
+// actions の from/to 参照を仮想的に新名へリネームしてから diff することで、
+// 改名そのものの 1 行だけを残す（参照のカスケードを吸収）。
+// ---------------------------------------------------------------------------
+function stripStateBodyForRenameMatch(value) {
+  const drop = new Set(['name', 'index']);
+  const walk = (v) => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') {
+      const o = {};
+      Object.keys(v).sort().forEach((k) => {
+        if (drop.has(k)) return;
+        o[k] = walk(v[k]);
+      });
+      return o;
+    }
+    return v;
+  };
+  return walk(value);
+}
+
+export function detectProcessStateRenames(sourceProcess, targetProcess): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!sourceProcess || !targetProcess) return out;
+  const srcStates = (sourceProcess.states && typeof sourceProcess.states === 'object') ? sourceProcess.states : {};
+  const tgtStates = (targetProcess.states && typeof targetProcess.states === 'object') ? targetProcess.states : {};
+  const onlyInSrc = Object.keys(srcStates).filter((k) => !Object.prototype.hasOwnProperty.call(tgtStates, k));
+  const onlyInTgt = Object.keys(tgtStates).filter((k) => !Object.prototype.hasOwnProperty.call(srcStates, k));
+  if (!onlyInSrc.length || !onlyInTgt.length) return out;
+
+  type Cand = { from: string; to: string; score: number };
+  const candidates: Cand[] = [];
+  onlyInSrc.forEach((from) => {
+    onlyInTgt.forEach((to) => {
+      const lhs = srcStates[from];
+      const rhs = tgtStates[to];
+      const sigL = stableStringify(stripStateBodyForRenameMatch(lhs));
+      const sigR = stableStringify(stripStateBodyForRenameMatch(rhs));
+      let score = 0;
+      if (sigL === sigR) score += 5;
+      const aL = lhs?.assignee;
+      const aR = rhs?.assignee;
+      if (aL && aR && aL.type === aR.type) score += 1;
+      if (Array.isArray(aL?.entities) && Array.isArray(aR?.entities)
+        && stableStringify(aL.entities) === stableStringify(aR.entities)) score += 1;
+      if (score < 5) return;
+      candidates.push({ from, to, score });
+    });
+  });
+  candidates.sort((a, b) => b.score - a.score);
+  const usedFrom = new Set<string>();
+  const usedTo = new Set<string>();
+  candidates.forEach((c) => {
+    if (usedFrom.has(c.from) || usedTo.has(c.to)) return;
+    usedFrom.add(c.from);
+    usedTo.add(c.to);
+    out.set(c.from, c.to);
+  });
+  return out;
+}
+
+export function applyProcessStateRenamesToSource(sourceProcess, renameMap: Map<string, string>) {
+  if (!sourceProcess || !renameMap || !renameMap.size) return sourceProcess;
+  const cloned = deepClone(sourceProcess);
+  if (cloned.states && typeof cloned.states === 'object' && !Array.isArray(cloned.states)) {
+    const newStates = {};
+    Object.keys(cloned.states).forEach((k) => {
+      const newKey = renameMap.get(k) || k;
+      const obj = cloned.states[k];
+      if (obj && typeof obj === 'object' && obj.name === k && renameMap.has(k)) {
+        obj.name = newKey;
+      }
+      newStates[newKey] = obj;
+    });
+    cloned.states = newStates;
+  }
+  if (Array.isArray(cloned.actions)) {
+    cloned.actions.forEach((act) => {
+      if (!act || typeof act !== 'object') return;
+      if (typeof act.from === 'string' && renameMap.has(act.from)) act.from = renameMap.get(act.from);
+      if (typeof act.to === 'string' && renameMap.has(act.to)) act.to = renameMap.get(act.to);
+    });
+  }
+  return cloned;
+}
+
 export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeysText, options: any = {}) {
   const ignoreRules = parseIgnoreRules(ignoreKeysText);
   const presetState = options.normalizationPresetState || ({} as any);
@@ -491,8 +759,28 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
     }
     if (!s && !t) continue;
 
-    const sourceForDiff = normalizeSectionForCompare(sec, s, presetState);
-    const targetForDiff = normalizeSectionForCompare(sec, t, presetState);
+    // セクション固有の前処理
+    let sourceForSection = s;
+    let targetForSection = t;
+    let stateRenames: Map<string, string> | null = null;
+    if (sec === 'processSettings') {
+      // プロセス管理：ステータス改名による参照カスケードを吸収（比較元側を仮想リネーム）
+      stateRenames = detectProcessStateRenames(s, t);
+      if (stateRenames && stateRenames.size) {
+        sourceForSection = applyProcessStateRenamesToSource(s, stateRenames);
+      }
+    } else if (sec === 'customizeSettings') {
+      // JS/CSS：安定マッチのための name 注入と、両側で本文取得済なら _body 比較へ切替
+      const pair = preprocessCustomizePairForDiff(s, t);
+      sourceForSection = pair.source;
+      targetForSection = pair.target;
+    } else if (sec === 'pluginSettings') {
+      // プラグイン設定：取得済 _config を比較対象に取り込む
+      sourceForSection = preprocessPluginSettingsForDiff(s);
+      targetForSection = preprocessPluginSettingsForDiff(t);
+    }
+    const sourceForDiff = normalizeSectionForCompare(sec, sourceForSection, presetState);
+    const targetForDiff = normalizeSectionForCompare(sec, targetForSection, presetState);
     if (stableStringify(sourceForDiff) === stableStringify(targetForDiff)) {
       if (includeSame) {
         pushDiffRow(rows, { sectionKey: sec, section: label, type: 'same', path: sec, left: sourceForDiff, right: targetForDiff, severity: 'low' }, ignoreRules);
@@ -505,6 +793,32 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
       if (!rows[i].section) rows[i].section = label;
       if (!rows[i].sectionKey) rows[i].sectionKey = sec;
       if (!rows[i].severity) rows[i].severity = detectRowSeverity(rows[i]);
+    }
+    // ステータス改名の通知行（_displayOnly：反映系ロジックからは除外）
+    if (sec === 'processSettings' && stateRenames && stateRenames.size) {
+      stateRenames.forEach((to, from) => {
+        pushDiffRow(rows, {
+          sectionKey: sec,
+          section: label,
+          type: 'changed',
+          path: `${sec}.states.__rename__`,
+          left: { name: from },
+          right: { name: to },
+          severity: 'low',
+          _displayOnly: true,
+          _stateRenameNotice: true,
+          renameCandidate: {
+            id: `state-rename:${from}:${to}`,
+            fromCode: from,
+            toCode: to,
+            entityKind: 'state',
+            sectionKey: sec,
+            score: 99,
+            matchedBy: 'process-state-cascade-suppressed'
+          },
+          reasonSummary: `ステータス改名：${from} → ${to}（参照を自動補正）`
+        }, ignoreRules);
+      });
     }
   }
   for (const row of rows) {
@@ -621,6 +935,223 @@ export function getActiveDiffNormalizationLabels(presetState?: any) {
 // 反映・適用系の処理（getActualDiffRows 等）からは除外する運用とする。
 // ---------------------------------------------------------------------------
 const SUBTABLE_ROOT_PATH_RE = /^fieldSettings\.properties\.([^.[\]]+)$/;
+
+// ---------------------------------------------------------------------------
+// Section-wide entity expansion (display-only)
+// ---------------------------------------------------------------------------
+// 非フィールドのセクション（views / process / acl / notifications / plugins /
+// customize / categories / layout）が「丸ごと added/removed」となった場合、
+// 既存の SUBTABLE 展開と同じ方針で、エンティティ単位の表示行を生成する。
+// 親行は元のまま残し、子行に `_displayOnly:true` を付ける。
+// ---------------------------------------------------------------------------
+function tokenizeForExpansion(path) {
+  if (!path) return [];
+  const out = [];
+  const re = /([^[.\]]+)|\[(\d+)\]/g;
+  let m;
+  while ((m = re.exec(path)) !== null) {
+    if (m[1] != null) out.push(m[1]);
+    else out.push(Number(m[2]));
+  }
+  return out;
+}
+
+function aclEntityLabel(entity) {
+  if (!entity || typeof entity !== 'object') return '';
+  const code = String(entity.code || '').trim();
+  const type = String(entity.type || '').trim();
+  if (!code) return type ? `(${type})` : '';
+  return type ? `${code} (${type})` : code;
+}
+
+interface EntityChildSpec {
+  path: string;
+  payload: any;
+  entityKind: string;
+  entityLabel: string;
+  entityCode?: string;
+  reasonNoun: string;
+}
+
+function enumerateNamedMap(obj, basePath, kind, kindLabel): EntityChildSpec[] {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return [];
+  return Object.keys(obj).map((name) => ({
+    path: `${basePath}.${name}`,
+    payload: obj[name],
+    entityKind: kind,
+    entityLabel: name,
+    entityCode: name,
+    reasonNoun: kindLabel
+  }));
+}
+
+function enumerateArray(arr, basePath, kind, kindLabel, options: { keyField?: string | null; fallbackLabel?: (item: any, idx: number) => string } = {}): EntityChildSpec[] {
+  if (!Array.isArray(arr)) return [];
+  return arr.map((item, idx) => {
+    let label = '';
+    let code = '';
+    const keyField = options.keyField;
+    if (item && typeof item === 'object') {
+      if (kind === 'aclEntry' || kind === 'recordAclEntry') {
+        label = aclEntityLabel(item.entity);
+        code = String(item.entity?.code || '');
+      } else if (kind === 'fieldAclEntry') {
+        label = String(item.code || '');
+        code = label;
+      } else if (kind === 'plugin') {
+        const id = String(item.id || '');
+        const name = String(item.name || '');
+        label = name ? (id ? `${name} (${id})` : name) : id;
+        code = id;
+      } else if (kind === 'jsCss') {
+        const fileKey = item.file?.fileKey || item.fileKey || '';
+        const url = item.url || '';
+        label = url || (fileKey ? `ファイル(${String(fileKey).slice(0, 8)}…)` : '');
+        code = String(fileKey || url || '');
+      } else if (kind === 'layoutRow') {
+        const t = String(item.type || '').toUpperCase();
+        if (t === 'GROUP' && item.code) label = `グループ「${item.code}」`;
+        else if (t === 'SUBTABLE' && item.code) label = `テーブル「${item.code}」`;
+        else label = `行 #${idx} (${t || 'ROW'})`;
+        code = String(item.code || '');
+      } else if (kind === 'notification' || kind === 'perRecordNotification' || kind === 'reminderNotification') {
+        label = String(item.name || item.title || '').trim();
+        if (!label && Array.isArray(item.recipients) && item.recipients.length) {
+          const first = item.recipients[0];
+          const rc = first?.entity?.code || first?.code || '';
+          label = rc ? `${rc}${item.recipients.length > 1 ? ' 他' : ''}` : '';
+        }
+        code = String(item.name || '');
+      } else if (keyField) {
+        label = String(item[keyField] || '');
+        code = label;
+      }
+    }
+    if (!label) {
+      label = options.fallbackLabel ? options.fallbackLabel(item, idx) : `${kindLabel} #${idx}`;
+    }
+    return {
+      path: `${basePath}[${idx}]`,
+      payload: item,
+      entityKind: kind,
+      entityLabel: label,
+      entityCode: code,
+      reasonNoun: kindLabel
+    };
+  });
+}
+
+function computeSectionWideEntityChildren(sectionKey, payload): EntityChildSpec[] {
+  if (!payload || typeof payload !== 'object') return [];
+  switch (sectionKey) {
+    case 'viewSettings':
+      return enumerateNamedMap(payload.views, `${sectionKey}.views`, 'view', 'ビュー');
+    case 'reportSettings':
+      return enumerateNamedMap(payload.reports, `${sectionKey}.reports`, 'report', 'グラフ');
+    case 'processSettings': {
+      const out: EntityChildSpec[] = [];
+      out.push(...enumerateNamedMap(payload.states, `${sectionKey}.states`, 'state', 'ステータス'));
+      out.push(...enumerateArray(payload.actions, `${sectionKey}.actions`, 'action', '遷移アクション', { keyField: 'name' }));
+      return out;
+    }
+    case 'actionSettings':
+      return enumerateArray(payload.actions, `${sectionKey}.actions`, 'appAction', 'アクション', { keyField: 'name' });
+    case 'appAcl':
+      return enumerateArray(payload.rights, `${sectionKey}.rights`, 'aclEntry', '権限エントリー');
+    case 'recordPermissions':
+      return enumerateArray(payload.rights, `${sectionKey}.rights`, 'recordAclEntry', 'レコード権限エントリー');
+    case 'fieldAcl':
+      return enumerateArray(payload.rights, `${sectionKey}.rights`, 'fieldAclEntry', 'フィールド権限');
+    case 'notifications':
+      return enumerateArray(payload.notifications, `${sectionKey}.notifications`, 'notification', '通知');
+    case 'perRecordNotifications':
+      return enumerateArray(payload.notifications, `${sectionKey}.notifications`, 'perRecordNotification', 'レコード条件通知');
+    case 'reminderNotifications':
+      return enumerateArray(payload.notifications, `${sectionKey}.notifications`, 'reminderNotification', 'リマインダー通知');
+    case 'categories':
+      return enumerateNamedMap(payload.categories, `${sectionKey}.categories`, 'category', 'カテゴリ');
+    case 'pluginSettings':
+      return enumerateArray(payload.plugins, `${sectionKey}.plugins`, 'plugin', 'プラグイン', { keyField: 'id' });
+    case 'customizeSettings': {
+      const out: EntityChildSpec[] = [];
+      ['desktop', 'mobile'].forEach((platform) => {
+        ['js', 'css'].forEach((kind) => {
+          const arr = payload?.[platform]?.[kind];
+          if (Array.isArray(arr)) {
+            const platLabel = platform === 'desktop' ? 'デスクトップ' : 'モバイル';
+            const kindLabel = kind.toUpperCase();
+            out.push(...enumerateArray(arr, `${sectionKey}.${platform}.${kind}`, 'jsCss', `${platLabel}/${kindLabel}`).map((spec) => ({
+              ...spec,
+              entityLabel: `${platLabel}/${kindLabel}: ${spec.entityLabel}`
+            })));
+          }
+        });
+      });
+      return out;
+    }
+    case 'layoutSettings':
+      return enumerateArray(payload.layout, `${sectionKey}.layout`, 'layoutRow', 'レイアウト行');
+    default:
+      return [];
+  }
+}
+
+const ENTITY_EXPAND_LIMIT = 200;
+
+export function expandEntityRowsForDisplay(rows) {
+  if (!Array.isArray(rows) || !rows.length) return rows || [];
+  const out = [];
+  rows.forEach((row, idx) => {
+    out.push(row);
+    if (!row || row._displayOnly) return;
+    if (row.sectionKey === 'fieldSettings') return;
+    const isAdded = row.type === 'added';
+    const isRemoved = row.type === 'removed';
+    if (!isAdded && !isRemoved) return;
+
+    const sectionKey = String(row.sectionKey || '');
+    if (!sectionKey) return;
+
+    const path = String(row.path || '');
+    const tokens = tokenizeForExpansion(path);
+    const isSectionWide = path === sectionKey;
+    if (!isSectionWide) return; // 個別エンティティ（path = section.bucket.name）は既に粒度が十分
+
+    const payload = isAdded ? row.right : row.left;
+    let children = computeSectionWideEntityChildren(sectionKey, payload);
+    if (!children.length) return;
+    if (children.length > ENTITY_EXPAND_LIMIT) children = children.slice(0, ENTITY_EXPAND_LIMIT);
+
+    const parentId = row._id || `d${idx}`;
+    let childIdx = 0;
+    children.forEach((spec) => {
+      out.push({
+        ...row,
+        _id: `${parentId}::echild::${childIdx++}`,
+        _parentRowId: parentId,
+        _expandedFromEntity: true,
+        _displayOnly: true,
+        path: spec.path,
+        left: isRemoved ? spec.payload : undefined,
+        right: isAdded ? spec.payload : undefined,
+        type: row.type,
+        moved: false,
+        entityKind: spec.entityKind,
+        entityLabel: spec.entityLabel,
+        entityCode: spec.entityCode || '',
+        entityPropLabel: '',
+        reasonSummary: isAdded
+          ? `${spec.reasonNoun}追加：${spec.entityLabel}`
+          : `${spec.reasonNoun}削除：${spec.entityLabel}`,
+        renameCandidate: null,
+        impactCount: 0,
+        impactRefs: [],
+        impactSummary: ''
+      });
+    });
+  });
+  return out;
+}
 
 export function expandSubtableRowsForDisplay(rows) {
   if (!Array.isArray(rows) || !rows.length) return rows || [];

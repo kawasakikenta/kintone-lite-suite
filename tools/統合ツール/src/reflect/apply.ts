@@ -3,7 +3,8 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import {
   deepClone, normalize, stableStringify, downloadText, apiErrorWithContext, esc, readTextFile,
-  relativePathFromRow, tokenizePath, kusConfirm, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle
+  relativePathFromRow, tokenizePath, kusConfirm, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle,
+  showToast
 } from '../utils.js';
 import { state, ui, pushReflectApplyHistoryEntry } from '../state.js';
 import {
@@ -524,7 +525,7 @@ function recordSectionResult(results, sectionKey, label, status, message) {
 }
 
 // 反映完了直後に「反映前バックアップ」と「反映後の比較先プレビュー」を比較し、
-// プラン外の変更が無いか軽量チェックする。差分が検知された場合はログに追記する。
+// バックアップ時点から変化したセクションをログに追記する。
 async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, logs }: { targetGuestId: string; targetAppId: string; scopes: string[]; logs: string[] }) {
   const backup = state.lastPreviewBackupPayload;
   if (!backup?.bundle?.sections) return null;
@@ -563,12 +564,12 @@ async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, 
 
   if (Array.isArray(logs)) {
     if (!findings.length) {
-      logs.push('反映後検証: バックアップとの差分なし（プラン外変更は検知されませんでした）');
+      logs.push('反映後検証: バックアップ時点からの変化は検出されませんでした');
     } else {
-      logs.push(`反映後検証: ${findings.length}セクションでバックアップと差分あり`);
+      logs.push(`反映後検証: ${findings.length}セクションがバックアップ時点から変化しました`);
       for (const item of findings) {
         if (item.error) logs.push(`  - ${item.label}: 取得失敗 ${item.error}`);
-        else logs.push(`  - ${item.label}: 反映後に内容が変化（プラン外の更新の可能性）`);
+        else logs.push(`  - ${item.label}: バックアップ時点から内容が変化`);
       }
     }
   }
@@ -634,6 +635,53 @@ export interface BackupTargetPreviewOptions {
   silentStatus?: boolean;
 }
 
+function buildBackupHealth(bundle, scopes) {
+  const actualScopes = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
+  const issues = actualScopes
+    .map((sectionKey) => {
+      const section = bundle?.sections?.[sectionKey];
+      if (!section) return { sectionKey, label: getSectionDisplayLabel(sectionKey), message: '未取得' };
+      if (section._fetchError) return { sectionKey, label: getSectionDisplayLabel(sectionKey), message: section._fetchError };
+      return null;
+    })
+    .filter(Boolean);
+  return {
+    totalCount: actualScopes.length,
+    okCount: Math.max(0, actualScopes.length - issues.length),
+    ngCount: issues.length,
+    issues
+  };
+}
+
+function formatBackupHealthSummary(health) {
+  const h = health || ({} as any);
+  const base = `取得OK ${Number(h.okCount || 0)} / NG ${Number(h.ngCount || 0)}`;
+  if (!h.ngCount) return base;
+  const labels = (h.issues || []).map((item) => item.label || item.sectionKey).slice(0, 4).join(', ');
+  return `${base}（${labels}${(h.issues || []).length > 4 ? ' ほか' : ''}）`;
+}
+
+function renderBackupStatus(filename, scopes, health) {
+  if (!ui.backupStatus) return;
+  const h = health || buildBackupHealth(null, scopes);
+  const scopeSummary = formatSectionList(scopes);
+  const ok = !h.ngCount;
+  ui.backupStatus.textContent = `${ok ? '\u2705' : '\u26A0'} バックアップ保存済: ${filename} (${formatBackupHealthSummary(h)}, ${scopeSummary || '-'}, ${new Date().toLocaleTimeString()})`;
+  ui.backupStatus.style.display = 'block';
+  ui.backupStatus.style.background = ok ? '#ecfdf5' : '#fff7ed';
+  ui.backupStatus.style.borderColor = ok ? '#a7f3d0' : '#fed7aa';
+  ui.backupStatus.style.color = ok ? '#065f46' : '#9a3412';
+}
+
+function assertBackupHealthOk(backupResult, actionLabel) {
+  const health = backupResult?.health || backupResult?.payload?.health;
+  if (!health?.ngCount) return;
+  const detail = (health.issues || [])
+    .map((item) => `${item.label || item.sectionKey}: ${item.message || '取得失敗'}`)
+    .join(' / ');
+  throw new Error(`${actionLabel || '反映'}を中断しました。反映前バックアップに取得NGがあります（${formatBackupHealthSummary(health)}）。${detail}`);
+}
+
 export async function backupTargetPreviewSettings(c: any, scopes: string[], options: BackupTargetPreviewOptions = {}) {
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
   const actualScopes = Array.isArray(scopes) && scopes.length ? scopes : resolveBackupScopes(c);
@@ -645,10 +693,12 @@ export async function backupTargetPreviewSettings(c: any, scopes: string[], opti
     sections: actualScopes,
     onProgress: (p, l) => setStatus(`バックアップ取得中 ${Math.round(p * 100)}% (${l})`)
   });
+  const health = buildBackupHealth(bundle, actualScopes);
   const payload = {
     generatedAt: new Date().toISOString(),
     mode: 'target-preview-backup',
     scopes: actualScopes,
+    health,
     target: {
       appId: target.appId,
       guestId: target.guestId || '',
@@ -662,12 +712,10 @@ export async function backupTargetPreviewSettings(c: any, scopes: string[], opti
   state.lastPreviewBackupPayload = deepClone(payload);
   state.lastPreviewBackupFilename = filename;
   downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
-  if (!options?.silentStatus) setStatus(`比較先(プレビュー)バックアップ保存: ${filename} (${scopeSummary || '-'})`);
-  if (ui.backupStatus) {
-    ui.backupStatus.textContent = `\u2705 バックアップ保存済: ${filename} (${actualScopes.length}セクション: ${scopeSummary || '-'}, ${new Date().toLocaleTimeString()})`;
-    ui.backupStatus.style.display = 'block';
-  }
-  return { filename, payload };
+  const statusMessage = `比較先(プレビュー)バックアップ保存: ${filename} (${formatBackupHealthSummary(health)} / ${scopeSummary || '-'})`;
+  if (!options?.silentStatus) setStatus(statusMessage, health.ngCount > 0);
+  renderBackupStatus(filename, actualScopes, health);
+  return { filename, payload, health };
 }
 
 function getSectionDisplayLabel(sectionKey) {
@@ -787,7 +835,13 @@ async function assertTargetPreviewMatchesPlannedBaseline(prefix: string, app: st
     const detail = mismatches
       .map((item) => `${item.label} (plan ${item.plannedRevision} / current ${item.currentRevision})`)
       .join(', ');
-    throw new Error(`プラン確認後に比較先プレビューが更新されています。再度「実行前プラン確認」を実行してください。対象: ${detail}`);
+    const planAge = plan?.createdAt ? Math.round((Date.now() - plan.createdAt) / 60000) : 0;
+    const ageNote = planAge > 0 ? `（プラン確認から${planAge}分経過）` : '';
+    throw new Error(
+      `🛑 反映を中止しました${ageNote}：プラン確認後に比較先プレビューが他の操作で更新されています。`
+      + `\n対象: ${detail}`
+      + '\n\n対処：フッターの「実行前プラン確認」を押し直して、最新の差分でプランを作り直してから反映してください。'
+    );
   }
 
   return { checked, skipped };
@@ -982,7 +1036,28 @@ export async function importPatchJsonFromFile(file) {
   state.importedPatchPayload = payload;
   setPatchEditorValue(payload);
   renderPatchJsonSummary(payload);
-  setStatus(`パッチJSON読込完了: ${file.name}`);
+  // 取り込み済みパッチの target/source と現在の接続を比較し、ミスマッチを目立たせる
+  const c = commonParams();
+  const patchTargetApp = String(payload.target?.appId || '').trim();
+  const currentTargetApp = String(c.target.appId || '').trim();
+  const patchSourceApp = String(payload.source?.appId || '').trim();
+  const currentSourceApp = String(c.source.appId || '').trim();
+  const mismatches: string[] = [];
+  if (patchTargetApp && currentTargetApp && patchTargetApp !== currentTargetApp) {
+    mismatches.push(`比較先 App ${currentTargetApp} ≠ パッチ target ${patchTargetApp}`);
+  }
+  if (patchSourceApp && currentSourceApp && patchSourceApp !== currentSourceApp) {
+    mismatches.push(`比較元 App ${currentSourceApp} ≠ パッチ source ${patchSourceApp}`);
+  }
+  const sectionCount = Object.keys(payload.sections || ({} as any)).length;
+  if (mismatches.length) {
+    const warn = `パッチJSON読込完了: ${file.name} (${sectionCount}セクション) — 接続不一致: ${mismatches.join(' / ')}`;
+    console.warn('[統合ツール] patch import target/source mismatch:', mismatches);
+    setStatus(warn, true);
+    showToast(warn, 'error').catch(() => {});
+  } else {
+    setStatus(`パッチJSON読込完了: ${file.name} (${sectionCount}セクション)`);
+  }
   return payload;
 }
 
@@ -1078,6 +1153,7 @@ export async function runApplyPatchJson() {
   if (ui.autoBackupPreview?.checked) {
     const backup = await backupTargetPreviewSettings(c, sectionKeys, { silentStatus: true });
     logs.push(`バックアップ保存: ${backup.filename}`);
+    assertBackupHealthOk(backup, 'JSONパッチ反映');
   }
   logs.push('');
 
@@ -1231,6 +1307,7 @@ export async function runApplyPreviewByNodes() {
       const backupScopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
       const backup = await backupTargetPreviewSettings(c, backupScopes, { silentStatus: true });
       logs.push(`バックアップ保存: ${backup.filename}`);
+      assertBackupHealthOk(backup, 'ノード反映');
       backupFilename = backup.filename || '';
     }
     logs.push('');
@@ -1244,13 +1321,13 @@ export async function runApplyPreviewByNodes() {
       if (!def || !def.put) {
         logs.push(`SKIP ${def?.label || secKey}: PUT非対応`);
         recordSectionResult(sectionResults, secKey, def?.label || secKey, 'skipped', 'PUT非対応');
-        renderProgressLog(logs, { phase: 'ノード反映実行中', current: i, total: sectionKeys.length });
+        renderProgressLog(logs, { phase: 'ノード反映実行中', current: i, total: sectionKeys.length, scopes: sectionKeys });
         continue;
       }
 
       setStatus(`ノード反映中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
       progress.setLabel(`反映中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
-      renderProgressLog(logs, { phase: 'ノード反映実行中', current: i, total: sectionKeys.length });
+      renderProgressLog(logs, { phase: 'ノード反映実行中', current: i, total: sectionKeys.length, scopes: sectionKeys });
       try {
         const current = normalize(await apiGet(prefix, def.endpoint, { app }));
         const before = deepClone(current);
@@ -1312,7 +1389,7 @@ export async function runApplyPreviewByNodes() {
     progress.setProgress(sectionKeys.length, sectionKeys.length);
     await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: sectionKeys, logs });
     appendProgressSummary(logs);
-    renderProgressLog(logs, { phase: 'ノード反映完了' });
+    renderProgressLog(logs, { phase: 'ノード反映完了', scopes: sectionKeys });
     commitApplyReport({
       mode: 'nodes',
       appId: app,
@@ -1406,6 +1483,7 @@ export async function runApplyPreview() {
       progress.setLabel('バックアップ保存中...');
       const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
       logs.push(`バックアップ保存: ${backup.filename}`);
+      assertBackupHealthOk(backup, 'プレビュー反映');
       backupFilename = backup.filename || '';
     }
     logs.push('');
@@ -1415,7 +1493,7 @@ export async function runApplyPreview() {
     hadError = await applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, {
       phaseLabel: '反映',
       onProgress: (i, total) => {
-        renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total });
+        renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total, scopes });
         progress.setProgress(i, total);
       },
       sectionResults
@@ -1423,7 +1501,7 @@ export async function runApplyPreview() {
 
     await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes, logs });
     appendProgressSummary(logs);
-    renderProgressLog(logs, { phase: 'プレビュー反映完了' });
+    renderProgressLog(logs, { phase: 'プレビュー反映完了', scopes });
     commitApplyReport({
       mode: 'section',
       appId: app,
@@ -1468,6 +1546,49 @@ export async function runBackupTargetPreview() {
   renderReflectAssistPanel();
 }
 
+export async function importTargetPreviewBackupFromFile(file) {
+  if (!file) throw new Error('バックアップJSONファイルを選択してください');
+  const text = await readTextFile(file);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error('バックアップJSONの読み込みに失敗しました（JSON形式が不正です）');
+  }
+  const rawBundle = parsed?.bundle || parsed;
+  const bundle = ensureBundleShape(rawBundle);
+  const target = {
+    appId: String(parsed?.target?.appId || bundle.appId || '').trim(),
+    guestId: String(parsed?.target?.guestId || bundle.guestId || '').trim(),
+    preview: true
+  };
+  if (!target.appId) throw new Error('バックアップJSONから対象アプリIDを判定できません');
+  if (parsed?.target?.preview === false || bundle.preview === false) {
+    throw new Error('比較先プレビューのバックアップJSONではありません（本番設定のJSONは復元対象外です）');
+  }
+  const scopes = Array.isArray(parsed?.scopes) && parsed.scopes.length
+    ? parsed.scopes.filter(Boolean)
+    : Object.keys(bundle.sections || ({} as any));
+  if (!scopes.length) throw new Error('バックアップJSONに復元対象セクションがありません');
+  const health = parsed?.health || buildBackupHealth(bundle, scopes);
+  const payload = {
+    ...parsed,
+    generatedAt: parsed?.generatedAt || new Date().toISOString(),
+    mode: 'target-preview-backup',
+    scopes,
+    health,
+    target,
+    bundle
+  };
+  const filename = file.name || 'imported-backup.json';
+  state.lastPreviewBackupPayload = deepClone(payload);
+  state.lastPreviewBackupFilename = filename;
+  renderBackupStatus(filename, scopes, health);
+  renderReflectAssistPanel();
+  setStatus(`バックアップJSONを読み込みました: ${filename} (${formatBackupHealthSummary(health)})`, health.ngCount > 0);
+  return payload;
+}
+
 export async function runRestoreTargetPreviewBackup() {
   const c = commonParams();
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
@@ -1490,6 +1611,10 @@ export async function runRestoreTargetPreviewBackup() {
     ? restorePayload.scopes.filter(Boolean)
     : Object.keys(backupBundle.sections || ({} as any));
   if (!scopes.length) throw new Error('復元対象セクションがありません');
+  const restoreHealth = restorePayload.health || buildBackupHealth(backupBundle, scopes);
+  if (restoreHealth.ngCount) {
+    throw new Error(`このバックアップは取得NGを含むため復元できません（${formatBackupHealthSummary(restoreHealth)}）。取得NGのないバックアップJSONを読み込んでください`);
+  }
 
   const labels = formatSectionList(scopes);
   if (!kusConfirm(`直前バックアップを比較先(プレビュー)へ復元しますか？\n比較先アプリ: ${c.target.appId}\n対象セクション: ${labels || '-'}`)) {
@@ -1519,6 +1644,7 @@ export async function runRestoreTargetPreviewBackup() {
       progress.setLabel('復元前のバックアップ保存中...');
       const beforeRestoreBackup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
       logs.push(`復元前バックアップ保存: ${beforeRestoreBackup.filename}`);
+      assertBackupHealthOk(beforeRestoreBackup, 'バックアップ復元');
       beforeRestoreFilename = beforeRestoreBackup.filename || '';
     }
     logs.push('');
@@ -1629,6 +1755,7 @@ export async function runRetryFailedSections() {
       progress.setLabel('バックアップ保存中...');
       const backup = await backupTargetPreviewSettings(c, failed, { silentStatus: true });
       logs.push(`バックアップ保存: ${backup.filename}`);
+      assertBackupHealthOk(backup, '失敗セクション再反映');
       backupFilename = backup.filename || '';
     }
     logs.push('');

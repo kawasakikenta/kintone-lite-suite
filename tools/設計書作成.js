@@ -319,7 +319,14 @@
         { key: "recordPermissions", label: "レコード権限", endpoint: "/record/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
         { key: "notifications", label: "通知設定", endpoint: "/app/notifications/general.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
         { key: "perRecordNotifications", label: "レコード条件通知", endpoint: "/app/notifications/perRecord.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+        // PUT /app/notifications/reminder.json は notifications に加え timezone を必須的に要求するためソース側の値を引き継ぐ。
+        { key: "reminderNotifications", label: "リマインダー通知", endpoint: "/app/notifications/reminder.json", put: true, putBuilder: (d) => {
+          const body = { notifications: d?.notifications || (Array.isArray(d) ? d : []) };
+          if (d && typeof d === "object" && typeof d.timezone === "string" && d.timezone) {
+            body.timezone = d.timezone;
+          }
+          return body;
+        } },
         { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
       ];
       META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
@@ -535,11 +542,15 @@
         importedTargetBundle: null,
         importedSourceName: "",
         importedTargetName: "",
+        lastSettingsExportBundles: [],
         patchJsonPanelOpen: false,
         importedPatchPayload: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
         running: false,
+        runningStartedAt: null,
+        runningTaskLabel: "",
+        runningWatchdogId: null,
         lastResultByTab: {}
       };
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
@@ -810,6 +821,94 @@ ${contextLine}`);
     }
     return "";
   }
+  function fnv1aHashString(text) {
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+    }
+    return h.toString(16).padStart(8, "0");
+  }
+  async function fetchTextFileBody(prefix, fileKey) {
+    if (!fileKey) return null;
+    const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    try {
+      const resp = await fetch(url, { method: "GET", headers });
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      if (blob.size > CUSTOMIZE_BODY_MAX_BYTES) return null;
+      return await blob.text();
+    } catch {
+      return null;
+    }
+  }
+  async function fetchCustomizeFileBodies(customizeSection, prefix) {
+    const stats = { fetched: 0, skipped: 0, failed: 0 };
+    if (!customizeSection || typeof customizeSection !== "object") return stats;
+    const tasks = [];
+    for (const platform of ["desktop", "mobile"]) {
+      for (const kind of ["js", "css"]) {
+        const arr = customizeSection?.[platform]?.[kind];
+        if (!Array.isArray(arr)) continue;
+        for (const item of arr) {
+          if (!item || typeof item !== "object" || item.type !== "FILE") continue;
+          const fileKey = item?.file?.fileKey;
+          const fileName = String(item?.file?.name || "");
+          if (!fileKey) {
+            stats.skipped += 1;
+            continue;
+          }
+          if (fileName && !TEXT_LIKE_EXT.test(fileName)) {
+            stats.skipped += 1;
+            continue;
+          }
+          tasks.push((async () => {
+            const text = await fetchTextFileBody(prefix, fileKey);
+            if (text == null) {
+              stats.failed += 1;
+              return;
+            }
+            item._bodyText = text;
+            item._bodyHash = fnv1aHashString(text);
+            stats.fetched += 1;
+          })());
+        }
+      }
+    }
+    await Promise.all(tasks);
+    return stats;
+  }
+  async function fetchPluginConfigs(pluginSection, prefix, appId) {
+    const stats = { fetched: 0, skipped: 0, failed: 0 };
+    if (!pluginSection || typeof pluginSection !== "object") return stats;
+    const plugins = Array.isArray(pluginSection.plugins) ? pluginSection.plugins : [];
+    if (!plugins.length) return stats;
+    const tasks = [];
+    for (const plugin of plugins) {
+      if (!plugin || typeof plugin !== "object") continue;
+      const id = String(plugin.id || "").trim();
+      if (!id) {
+        stats.skipped += 1;
+        continue;
+      }
+      tasks.push((async () => {
+        try {
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          if (res && typeof res === "object") {
+            plugin._config = res?.config != null ? res.config : res;
+            stats.fetched += 1;
+          } else {
+            stats.skipped += 1;
+          }
+        } catch {
+          stats.failed += 1;
+        }
+      })());
+    }
+    await Promise.all(tasks);
+    return stats;
+  }
   async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
     const app = String(appId || "").trim();
     if (!app) throw new Error("アプリIDが必要です");
@@ -838,9 +937,29 @@ ${contextLine}`);
       }
       if (onProgress) onProgress((i + 1) / sections.length, def.label);
     }
+    try {
+      if (sections.includes("customizeSettings")) {
+        const cust = bundle.sections.customizeSettings;
+        if (cust && !cust._fetchError) {
+          const prefix = buildApiPrefix(guestId, preview);
+          await fetchCustomizeFileBodies(cust, prefix);
+        }
+      }
+    } catch {
+    }
+    try {
+      if (sections.includes("pluginSettings")) {
+        const plug = bundle.sections.pluginSettings;
+        if (plug && !plug._fetchError) {
+          const prefix = buildApiPrefix(guestId, preview);
+          await fetchPluginConfigs(plug, prefix, app);
+        }
+      }
+    } catch {
+    }
     return bundle;
   }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -859,6 +978,8 @@ ${contextLine}`);
         lastError: "",
         byPath: {}
       };
+      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+      TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
     }
   });
 

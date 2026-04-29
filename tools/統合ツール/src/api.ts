@@ -275,6 +275,118 @@ export interface FetchBundleParams {
   onProgress?: (ratio: number, label: string) => void;
 }
 
+// ---------------------------------------------------------------------------
+// JS/CSS / プラグイン用の補助フェッチ
+// ---------------------------------------------------------------------------
+// kintone.api はファイル本体（/k/v1/file.json）の取得を直接サポートしないため、
+// fetch を使う。差分比較用なのでテキスト系（.js / .css / .json / .txt 等）の
+// FILE 要素のみ本文取得する。サイズ上限を超えるものはスキップ。
+// ---------------------------------------------------------------------------
+const CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024; // 1 MB
+const TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
+
+function fnv1aHashString(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+export async function fetchTextFileBody(prefix: string, fileKey: string): Promise<string | null> {
+  if (!fileKey) return null;
+  const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
+  const headers = { 'X-Requested-With': 'XMLHttpRequest' } as Record<string, string>;
+  try {
+    const resp = await fetch(url, { method: 'GET', headers });
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
+    if (blob.size > CUSTOMIZE_BODY_MAX_BYTES) return null;
+    return await blob.text();
+  } catch {
+    return null;
+  }
+}
+
+interface CustomizeFetchStats {
+  fetched: number;
+  skipped: number;
+  failed: number;
+}
+
+export async function fetchCustomizeFileBodies(
+  customizeSection: any,
+  prefix: string
+): Promise<CustomizeFetchStats> {
+  const stats: CustomizeFetchStats = { fetched: 0, skipped: 0, failed: 0 };
+  if (!customizeSection || typeof customizeSection !== 'object') return stats;
+  const tasks: Array<Promise<void>> = [];
+  for (const platform of ['desktop', 'mobile']) {
+    for (const kind of ['js', 'css']) {
+      const arr = customizeSection?.[platform]?.[kind];
+      if (!Array.isArray(arr)) continue;
+      for (const item of arr) {
+        if (!item || typeof item !== 'object' || item.type !== 'FILE') continue;
+        const fileKey = item?.file?.fileKey;
+        const fileName = String(item?.file?.name || '');
+        if (!fileKey) { stats.skipped += 1; continue; }
+        if (fileName && !TEXT_LIKE_EXT.test(fileName)) { stats.skipped += 1; continue; }
+        tasks.push((async () => {
+          const text = await fetchTextFileBody(prefix, fileKey);
+          if (text == null) {
+            stats.failed += 1;
+            return;
+          }
+          item._bodyText = text;
+          item._bodyHash = fnv1aHashString(text);
+          stats.fetched += 1;
+        })());
+      }
+    }
+  }
+  await Promise.all(tasks);
+  return stats;
+}
+
+export interface PluginConfigFetchStats {
+  fetched: number;
+  skipped: number;
+  failed: number;
+}
+
+export async function fetchPluginConfigs(
+  pluginSection: any,
+  prefix: string,
+  appId: string | number
+): Promise<PluginConfigFetchStats> {
+  const stats: PluginConfigFetchStats = { fetched: 0, skipped: 0, failed: 0 };
+  if (!pluginSection || typeof pluginSection !== 'object') return stats;
+  const plugins = Array.isArray(pluginSection.plugins) ? pluginSection.plugins : [];
+  if (!plugins.length) return stats;
+  const tasks: Array<Promise<void>> = [];
+  for (const plugin of plugins) {
+    if (!plugin || typeof plugin !== 'object') continue;
+    const id = String(plugin.id || '').trim();
+    if (!id) { stats.skipped += 1; continue; }
+    tasks.push((async () => {
+      try {
+        const res = await apiGet(prefix, '/app/plugin/config.json', { app: appId, id }, 1);
+        if (res && typeof res === 'object') {
+          plugin._config = res?.config != null ? res.config : res;
+          stats.fetched += 1;
+        } else {
+          stats.skipped += 1;
+        }
+      } catch {
+        stats.failed += 1;
+      }
+    })());
+  }
+  await Promise.all(tasks);
+  return stats;
+}
+
 export async function fetchBundle({ appId, guestId, preview, sections, onProgress }: FetchBundleParams): Promise<Bundle> {
   const app = String(appId || '').trim();
   if (!app) throw new Error('アプリIDが必要です');
@@ -305,6 +417,25 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
     }
     if (onProgress) onProgress((i + 1) / sections.length, def.label);
   }
+  // 差分比較精度向上のための補助取得（失敗しても本体取得は成功扱い）
+  try {
+    if (sections.includes('customizeSettings')) {
+      const cust = bundle.sections.customizeSettings;
+      if (cust && !cust._fetchError) {
+        const prefix = buildApiPrefix(guestId, preview);
+        await fetchCustomizeFileBodies(cust, prefix);
+      }
+    }
+  } catch { /* ignore: 本文取得失敗は致命的ではない */ }
+  try {
+    if (sections.includes('pluginSettings')) {
+      const plug = bundle.sections.pluginSettings;
+      if (plug && !plug._fetchError) {
+        const prefix = buildApiPrefix(guestId, preview);
+        await fetchPluginConfigs(plug, prefix, app);
+      }
+    }
+  } catch { /* ignore: プラグイン設定取得失敗は致命的ではない */ }
   return bundle;
 }
 

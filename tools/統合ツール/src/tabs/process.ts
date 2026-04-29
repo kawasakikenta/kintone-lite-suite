@@ -19,8 +19,17 @@ const MERMAID_CDN_URLS = [
   'https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js'
 ];
 
+function getMermaidGlobal(): any {
+  const doc = getToolDocument();
+  const docWin = (doc as any)?.defaultView;
+  if (docWin && docWin.mermaid) return docWin.mermaid;
+  if ((window as any).mermaid) return (window as any).mermaid;
+  return null;
+}
+
 async function ensureMermaid() {
-  if (window.mermaid) return window.mermaid;
+  const existing = getMermaidGlobal();
+  if (existing) return existing;
   if (!mermaidLoadPromise) {
     setStatus('Mermaid.js を読み込み中...');
     mermaidLoadPromise = loadScriptWithFallback(MERMAID_CDN_URLS).catch((err) => {
@@ -29,10 +38,10 @@ async function ensureMermaid() {
     });
   }
   await mermaidLoadPromise;
-  const w = window as any;
-  if (w.mermaid) {
-    w.mermaid.initialize({ startOnLoad: false, theme: 'default' });
-    return w.mermaid;
+  const m = getMermaidGlobal();
+  if (m) {
+    m.initialize({ startOnLoad: false, theme: 'default' });
+    return m;
   }
   throw new Error('Mermaid.js の読み込みに失敗しました');
 }
@@ -129,11 +138,12 @@ export async function redrawProcessFlow(highlightState) {
   if (!pfSimStates) return;
 
   let md = 'stateDiagram-v2\n';
-  const safeStateName = (n) => n.replace(/[*_~\[\]()]/g, '');
+  const safeStateName = (n) => String(n == null ? '' : n).replace(/[*_~\[\]()]/g, '');
+  const safeActionName = (n) => String(n == null ? '' : n).replace(/[*_~\[\]()"]/g, '');
 
   const startStates = new Set(Object.keys(pfSimStates));
   for (const a of pfSimActions) {
-    if (a.to) startStates.delete(a.to);
+    if (a && a.to) startStates.delete(a.to);
   }
 
   for (const st of startStates) {
@@ -141,9 +151,10 @@ export async function redrawProcessFlow(highlightState) {
   }
 
   for (const a of pfSimActions) {
+    if (!a || !a.from || !a.to) continue;
     const from = safeStateName(a.from);
     const to = safeStateName(a.to);
-    const actionName = a.name.replace(/[*_~\[\]()"]/g, '');
+    const actionName = safeActionName(a.name);
     md += `    ${from} --> ${to} : ${actionName}\n`;
   }
 

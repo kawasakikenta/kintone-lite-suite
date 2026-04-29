@@ -70,20 +70,67 @@ export async function runSettingsExportSearchApps() {
 
 export function renderSettingsExportSummary(rows, scopes) {
   const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(', ');
-  const body = rows.map((r) => `<tr>
-    <td>${esc(r.appId)}</td>
-    <td>${esc(String(r.okCount))}</td>
-    <td>${esc(String(r.ngCount))}</td>
-    <td>${esc(r.pluginConfigLabel || '-')}</td>
-    <td>${esc(r.note || '-')}</td>
-  </tr>`).join('');
+  const stashed = Array.isArray(state.lastSettingsExportBundles) ? state.lastSettingsExportBundles : [];
+  const stashedById = new Map(stashed.map((b: any) => [String(b?.appId || ''), b]));
+  const body = rows.map((r) => {
+    const idStr = String(r.appId);
+    const canLoad = stashedById.has(idStr);
+    const loadCell = canLoad
+      ? `<div class="settings-export-load-actions">
+          <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="source" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較元」としてセットし差分タブへ移動">比較元へ</button>
+          <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="target" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較先」としてセットし差分タブへ移動">比較先へ</button>
+        </div>`
+      : '<span class="muted" style="font-size:10px">取得失敗</span>';
+    return `<tr>
+      <td>${esc(idStr)}</td>
+      <td>${esc(String(r.okCount))}</td>
+      <td>${esc(String(r.ngCount))}</td>
+      <td>${esc(r.pluginConfigLabel || '-')}</td>
+      <td>${esc(r.note || '-')}</td>
+      <td>${loadCell}</td>
+    </tr>`;
+  }).join('');
   return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
     <table>
-      <thead><tr><th>アプリID</th><th>取得OK</th><th>取得NG</th><th>プラグイン設定</th><th>メモ</th></tr></thead>
-      <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
+      <thead><tr><th>アプリID</th><th>取得OK</th><th>取得NG</th><th>プラグイン設定</th><th>メモ</th><th style="width:160px">差分タブへ</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
     </table>
   `;
+}
+
+/**
+ * 設定一括取得で取得済みのバンドルを差分タブの比較元 or 比較先にセットする。
+ * 既存の importBundleFromFile と同等の状態遷移を踏むことで再取得不要にする。
+ */
+export function loadSettingsExportBundleToDiff(appId: string | number, side: 'source' | 'target'): boolean {
+  const stash = Array.isArray(state.lastSettingsExportBundles) ? state.lastSettingsExportBundles : [];
+  const bundle = stash.find((b: any) => String(b?.appId || '') === String(appId));
+  if (!bundle) return false;
+  const cloned = JSON.parse(JSON.stringify(bundle));
+  if (side === 'source') {
+    state.importedSourceBundle = cloned;
+    state.importedSourceName = `settings-export:app${appId}`;
+    state.lastSourceBundle = cloned;
+  } else {
+    state.importedTargetBundle = cloned;
+    state.importedTargetName = `settings-export:app${appId}`;
+    state.lastTargetBundle = cloned;
+  }
+  state.lastDiffAt = null;
+  state.lastDiffRows = [];
+  state.lastFetchIssues = [];
+  state.lastDiffSignature = '';
+  state.lastApplyPlan = null;
+  state.diffSelectedIds = new Set();
+  state.diffIgnoreSuggestions = [];
+  state.reflectRows = [];
+  state.reflectSelectedIds = new Set();
+  state.reflectNodeModes = {};
+  state.reflectUndoStack = [];
+  state.reflectRedoStack = [];
+  state.reflectActiveNodeId = '';
+  return true;
 }
 
 function formatPluginConfigSummary(backup) {
@@ -216,6 +263,8 @@ export async function runSettingsExport(mode) {
     });
   }
 
+  // バンドルを保持して差分タブから「比較元/比較先として読込」できるようにする
+  state.lastSettingsExportBundles = bundles;
   ui.settingsExportResult.innerHTML = renderSettingsExportSummary(rows, scopes);
 
   const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);

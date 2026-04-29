@@ -93,7 +93,8 @@ export const DIALOG_MARGIN = 16;
 export const DIALOG_MIN_WIDTH = 560;
 export const DIALOG_MIN_HEIGHT = 360;
 export const DIALOG_DEFAULT_WIDTH = 980;
-export const DIALOG_DEFAULT_HEIGHT = 860;
+// ノートPC（1366x768 / 1440x900）でも縦に余裕を残すため、ビューポートに合わせる
+export const DIALOG_DEFAULT_HEIGHT = 720;
 export const DIALOG_LARGE_WIDTH = 1240;
 export const DIALOG_LARGE_HEIGHT = 940;
 
@@ -124,7 +125,14 @@ export const SECTION_DEFS: readonly SectionDef[] = [
   { key: 'recordPermissions', label: 'レコード権限', endpoint: '/record/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
   { key: 'notifications', label: '通知設定', endpoint: '/app/notifications/general.json', put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
   { key: 'perRecordNotifications', label: 'レコード条件通知', endpoint: '/app/notifications/perRecord.json', put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
-  { key: 'reminderNotifications', label: 'リマインダー通知', endpoint: '/app/notifications/reminder.json', put: true, putBuilder: (d) => ({ notifications: d.notifications || d }) },
+  // PUT /app/notifications/reminder.json は notifications に加え timezone を必須的に要求するためソース側の値を引き継ぐ。
+  { key: 'reminderNotifications', label: 'リマインダー通知', endpoint: '/app/notifications/reminder.json', put: true, putBuilder: (d) => {
+    const body: Record<string, unknown> = { notifications: d?.notifications || (Array.isArray(d) ? d : []) };
+    if (d && typeof d === 'object' && typeof (d as any).timezone === 'string' && (d as any).timezone) {
+      body.timezone = (d as any).timezone;
+    }
+    return body;
+  } },
   { key: 'categories', label: 'カテゴリ設定', endpoint: '/app/categories.json', put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
 ];
 

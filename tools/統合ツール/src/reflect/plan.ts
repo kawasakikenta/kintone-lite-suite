@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS } from '../constants.js';
+import { SECTION_DEFS, HIGH_IMPACT_SECTIONS } from '../constants.js';
 import {
   deepClone,
   stableStringify,
@@ -8,7 +8,8 @@ import {
   normalize,
   downloadText,
   buildExportFilename,
-  buildAppFilenameLabel
+  buildAppFilenameLabel,
+  renderSectionIconHtml
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import { getToolDocument } from '../ui/dialog.js';
@@ -38,6 +39,47 @@ import {
   renderReflectAssistPanel,
   renderReflectMainPanel
 } from './helpers.js';
+
+/**
+ * 現状の差分・選択・接続情報からプラン署名を計算する。
+ * `state.lastApplyPlan.signature` と一致しなければプランは古い。
+ * Section/Node どちらのモードでも対応する。
+ * 計算不能な状況（接続未設定など）では '' を返す。
+ */
+function computeCurrentReflectPlanSignature(): string {
+  try {
+    const c = commonParams();
+    if (!c?.target?.appId) return '';
+    if (isReflectNodeModeEffective()) {
+      const rows = getSelectedReflectRows();
+      if (!rows.length) return '';
+      const nodeSigRows = rows
+        .map((r) => ({ id: r._id, sectionKey: r.sectionKey, mode: reflectRowModeById(r._id), type: r.type, path: r.path }))
+        .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      return makeApplyPlanSignature('nodes', {
+        targetApp: c.target.appId,
+        targetGuest: c.target.guestId,
+        sourceApp: c.source.appId,
+        sourceGuest: c.source.guestId,
+        nodes: nodeSigRows,
+        lookupMap: ui.lookupMap.value.trim()
+      });
+    }
+    const baseScopes = selectedScopeKeys(ui.applyScopes);
+    if (!baseScopes.length) return '';
+    const scopes = resolveApplyScopes(baseScopes);
+    return makeApplyPlanSignature('section', {
+      targetApp: c.target.appId,
+      targetGuest: c.target.guestId,
+      sourceApp: c.source.appId,
+      sourceGuest: c.source.guestId,
+      scopes,
+      lookupMap: ui.lookupMap.value.trim()
+    });
+  } catch {
+    return '';
+  }
+}
 
 export function renderAppIdConfirmSection(appIdRefs) {
   if (!appIdRefs || !appIdRefs.length) return '<div style="color:#64748b;font-size:12px;margin-bottom:8px">関連アプリIDなし</div>';
@@ -343,7 +385,51 @@ function makeSectionPlanBaseline(response) {
   };
 }
 
+function buildPlanRequestSummary(requests) {
+  const list = Array.isArray(requests) ? requests : [];
+  const methods = { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 };
+  const sections = new Map<string, any>();
+  for (const req of list) {
+    const method = String(req?.method || '').toUpperCase();
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE') methods[method] += 1;
+    else methods.OTHER += 1;
+    const sectionKey = String(req?.sectionKey || '');
+    const sectionLabel = String(req?.sectionLabel || sectionKey || '-');
+    const row = sections.get(sectionKey) || { sectionKey, sectionLabel, count: 0, methods: { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 } };
+    row.count += 1;
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE') row.methods[method] += 1;
+    else row.methods.OTHER += 1;
+    sections.set(sectionKey, row);
+  }
+  const sectionRows = [...sections.values()].sort((a, b) => b.count - a.count);
+  const highImpact = sectionRows.filter((row) => HIGH_IMPACT_SECTIONS.has(row.sectionKey));
+  return {
+    totalRequests: list.length,
+    methods,
+    sectionRows,
+    sectionCount: sectionRows.length,
+    highImpactCount: highImpact.length,
+    highImpactLabels: highImpact.map((row) => row.sectionLabel)
+  };
+}
+
+function renderPlanRequestSummary(plan) {
+  const summary = plan?.requestSummary || buildPlanRequestSummary(plan?.plannedRequests || []);
+  const methods = summary.methods || ({} as any);
+  const highLabels = (summary.highImpactLabels || []).slice(0, 4).join(', ');
+  const topSections = (summary.sectionRows || []).slice(0, 6)
+    .map((row) => `${row.sectionLabel}:${row.count}`)
+    .join(' / ');
+  return `<div class="plan-summary-grid">
+    <div class="plan-summary-card"><span>予定リクエスト</span><strong>${esc(String(summary.totalRequests || 0))}</strong><small>対象 ${esc(String(summary.sectionCount || 0))} セクション</small></div>
+    <div class="plan-summary-card"><span>追加・更新・削除</span><strong>${esc(String(methods.POST || 0))} / ${esc(String(methods.PUT || 0))} / ${esc(String(methods.DELETE || 0))}</strong><small>POST / PUT / DELETE</small></div>
+    <div class="plan-summary-card"><span>高リスク領域</span><strong>${esc(String(summary.highImpactCount || 0))}</strong><small>${esc(highLabels || 'なし')}</small></div>
+    <div class="plan-summary-card"><span>主な対象</span><strong>${esc(topSections || '-')}</strong><small>リクエスト数順</small></div>
+  </div>`;
+}
+
 export function markApplyPlan(signature, mode, totalReq, lines, extra: any = {}) {
+  const requestSummary = buildPlanRequestSummary(extra.plannedRequests || []);
   state.lastApplyPlan = {
     signature,
     mode,
@@ -351,6 +437,7 @@ export function markApplyPlan(signature, mode, totalReq, lines, extra: any = {})
     createdAt: Date.now(),
     summary: (lines || []).slice(0, 16).join('\n'),
     logs: lines || [],
+    requestSummary,
     ...extra
   };
 }
@@ -361,10 +448,17 @@ export function showInlineConfirmation(plan, options) {
     const stamp = new Date(plan.createdAt).toLocaleString();
     const planText = (plan.logs || []).join('\n') || '(プラン詳細なし)';
     const appIdSection = renderAppIdConfirmSection(appIdRefs);
-    const previousHtml = ui.result.innerHTML;
-    const previousScrollTop = ui.result.scrollTop;
-    ui.result.innerHTML = `<div class="plan-confirm-panel">
+    const doc = getToolDocument();
+    const modalEl = doc.getElementById('u_reflectPlanModal') as HTMLElement | null;
+    const modalBody = modalEl?.querySelector('.reflect-modal-body') as HTMLElement | null;
+    const fallbackHost = modalBody || ui.result;
+    if (!fallbackHost) { resolve(false); return; }
+    const previousHtml = fallbackHost.innerHTML;
+    const previousScrollTop = (fallbackHost as any).scrollTop || 0;
+    if (modalEl) modalEl.hidden = false;
+    fallbackHost.innerHTML = `<div class="plan-confirm-panel">
       <div style="font-weight:700;font-size:13px;margin-bottom:8px">実行前プラン確認</div>
+      ${renderPlanRequestSummary(plan)}
       ${appIdSection}
       <div class="plan-summary">${esc(planText)}</div>
       <div class="plan-actions">
@@ -373,22 +467,27 @@ export function showInlineConfirmation(plan, options) {
         <button class="btn ok" id="u_planExecute">このまま実行</button>
       </div>
     </div>`;
-    ui.result.scrollTop = 0;
+    (fallbackHost as any).scrollTop = 0;
     const cleanup = () => {
-      const execBtn = getToolDocument().getElementById('u_planExecute');
-      const cancelBtn = getToolDocument().getElementById('u_planCancel');
+      const execBtn = doc.getElementById('u_planExecute');
+      const cancelBtn = doc.getElementById('u_planCancel');
       if (execBtn) execBtn.removeEventListener('click', onExec);
       if (cancelBtn) cancelBtn.removeEventListener('click', onCancel);
     };
-    const onExec = () => { cleanup(); resolve(true); };
+    const onExec = () => {
+      cleanup();
+      if (modalEl) modalEl.hidden = true;
+      resolve(true);
+    };
     const onCancel = () => {
       cleanup();
-      ui.result.innerHTML = previousHtml;
-      ui.result.scrollTop = previousScrollTop;
+      fallbackHost.innerHTML = previousHtml;
+      (fallbackHost as any).scrollTop = previousScrollTop;
+      if (modalEl) modalEl.hidden = true;
       resolve(false);
     };
-    getToolDocument().getElementById('u_planExecute')?.addEventListener('click', onExec);
-    getToolDocument().getElementById('u_planCancel')?.addEventListener('click', onCancel);
+    doc.getElementById('u_planExecute')?.addEventListener('click', onExec);
+    doc.getElementById('u_planCancel')?.addEventListener('click', onCancel);
   });
 }
 
@@ -531,7 +630,8 @@ export async function runPreviewApplyPlanNodes() {
   lines.push('※ ノードモードは差分パスをもとに比較先プレビューへ反映します。');
   markApplyPlan(planSignature, 'nodes', totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests });
 
-  ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(lines.join('\n'))}</pre>`;
+  // プラン確認モーダル本体に描画（無ければ result にフォールバック）
+  renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
   renderReflectAssistPanel();
   renderReflectMainPanel();
   setStatus('差分選択モードのプラン確認が完了しました');
@@ -661,20 +761,129 @@ export async function runPreviewApplyPlan() {
   logs.push('');
   logs.push(`合計予定リクエスト数: ${totalReq}`);
   markApplyPlan(planSignature, 'section', totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests });
-  ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
+  // プラン確認モーダル本体に描画（無ければ result にフォールバック）
+  renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
   renderReflectAssistPanel();
   renderReflectMainPanel();
   setStatus('実行前プラン確認が完了しました');
 }
 
+// プラン確認の出力を専用モーダルに描画する。モーダル要素が無い場合は #u_result にフォールバック。
+function renderPlanIntoModal(plan: any, plannedRequests: any[]): void {
+  const html = renderPlanConfirmPanelHtml(plan, plannedRequests);
+  const doc = getToolDocument();
+  const modalBody = doc.querySelector('#u_reflectPlanModal .reflect-modal-body');
+  if (modalBody) {
+    // プランパネルの中の "applyPreview" ボタンや "exportDryRunPlan" はフッターと重複するため抑制
+    modalBody.innerHTML = html;
+  } else if (ui.result) {
+    ui.result.innerHTML = html;
+  }
+}
+
+// V3+U3+S5+S10+S1: リクエスト一覧をカード化 + delta指標 + セクションアイコン
+function renderPlanConfirmPanelHtml(plan: any, plannedRequests: any[]): string {
+  const reqs = Array.isArray(plannedRequests) ? plannedRequests : [];
+  const sectionPreviews = (plan?.sectionPreviews || ({} as any)) as Record<string, any>;
+  const sectionMap = new Map<string, { sectionKey: string; sectionLabel: string; reqs: any[]; methods: { POST: number; PUT: number; DELETE: number; OTHER: number } }>();
+  for (const req of reqs) {
+    const key = String(req?.sectionKey || '');
+    const label = String(req?.sectionLabel || key || '-');
+    const slot = sectionMap.get(key) || { sectionKey: key, sectionLabel: label, reqs: [], methods: { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 } };
+    slot.reqs.push(req);
+    const m = String(req?.method || '').toUpperCase();
+    if (m === 'POST' || m === 'PUT' || m === 'DELETE') slot.methods[m] += 1;
+    else slot.methods.OTHER += 1;
+    sectionMap.set(key, slot);
+  }
+  const sections = [...sectionMap.values()].sort((a, b) => b.reqs.length - a.reqs.length);
+  const cards = sections.map((sec) => {
+    const methodChips = (['POST', 'PUT', 'DELETE'] as const)
+      .filter((m) => sec.methods[m] > 0)
+      .map((m) => `<span class="plan-card-chip plan-card-chip--${m.toLowerCase()}">${m} ${sec.methods[m]}</span>`)
+      .join('');
+    const isHigh = HIGH_IMPACT_SECTIONS.has(sec.sectionKey);
+    const sevClass = isHigh ? 'sev-high' : 'sev-medium';
+    // S5: delta indicator
+    const preview = sectionPreviews[sec.sectionKey];
+    let deltaHtml = '';
+    if (preview?.shape === 'map' && preview.preview) {
+      const p = preview.preview;
+      const adds = Number(p.addedCount || 0);
+      const upds = Number(p.updatedCount || 0);
+      const rms = Number(p.removedCount || 0);
+      const parts: string[] = [];
+      if (adds) parts.push(`<span class="plan-card-delta plan-card-delta--add" title="追加">+${adds}</span>`);
+      if (upds) parts.push(`<span class="plan-card-delta plan-card-delta--neutral" title="更新">~${upds}</span>`);
+      if (rms) parts.push(`<span class="plan-card-delta plan-card-delta--remove" title="削除">−${rms}</span>`);
+      deltaHtml = parts.join('');
+    } else if (preview?.shape === 'whole' && preview.wholePreview) {
+      deltaHtml = `<span class="plan-card-delta plan-card-delta--neutral" title="セクション全体更新">⇄ 全体更新</span>`;
+    }
+    // S10 + S1: section icon + severity class on the card
+    const sectionIcon = renderSectionIconHtml(sec.sectionKey, { withTooltip: sec.sectionLabel });
+    const detailRows = sec.reqs.slice(0, 12).map((req) => {
+      const note = String(req?.note || '').trim();
+      const path = String(req?.path || '');
+      return `<div class="plan-card-row">
+        <span class="plan-card-row__method">${esc(String(req?.method || ''))}</span>
+        <span class="plan-card-row__path">${esc(path)}</span>
+        ${note ? `<span class="plan-card-row__note">${esc(note)}</span>` : ''}
+      </div>`;
+    }).join('');
+    const more = sec.reqs.length > 12 ? `<div class="plan-card-row plan-card-row--more">…他 ${sec.reqs.length - 12} 件</div>` : '';
+    return `<details class="plan-card ${sevClass}${isHigh ? ' plan-card--high' : ''}" open>
+      <summary class="plan-card__head">
+        ${sectionIcon}
+        <span class="plan-card__title">${esc(sec.sectionLabel)}</span>
+        <span class="plan-card__count">${sec.reqs.length}件</span>
+        <span class="plan-card__chips">${methodChips}</span>
+        ${deltaHtml}
+        ${isHigh ? '<span class="plan-card__risk">高リスク</span>' : ''}
+      </summary>
+      <div class="plan-card__body">${detailRows}${more}</div>
+    </details>`;
+  }).join('');
+  const stamp = new Date(plan?.createdAt || Date.now()).toLocaleString();
+  return `<div class="plan-confirm-panel">
+    <div class="plan-confirm-head">
+      <div class="plan-confirm-head__title">実行前プラン確認</div>
+      <div class="plan-confirm-head__meta">予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}</div>
+    </div>
+    ${renderPlanRequestSummary(plan)}
+    <div class="plan-confirm-cards">${cards || '<div class="muted">予定リクエストがありません</div>'}</div>
+    <div class="plan-confirm-actions">
+      <button type="button" class="btn-stage" data-stage="apply" data-act="applyPreview" title="このプランの内容で比較先プレビューへ反映します">
+        <span class="btn-stage__icon">🚀</span><span>このプランで反映する</span>
+        <span class="btn-stage__shortcut">Ctrl+Shift+Enter</span>
+      </button>
+      <button type="button" class="btn sub" data-act="exportDryRunPlan" title="APIを実行せずプランをJSONで保存">ドライランJSONを保存</button>
+    </div>
+    <details class="plan-confirm-rawlogs"><summary>テキストログを表示</summary><div class="plan-summary">${esc((plan?.logs || []).join('\n'))}</div></details>
+  </div>`;
+}
+
 export async function runExportDryRunPlan() {
   const plan = state.lastApplyPlan;
-  if (!plan || !Array.isArray(plan.plannedRequests) || !plan.plannedRequests.length) {
+  const expectedSignature = computeCurrentReflectPlanSignature();
+  const planIsFresh = !!(
+    plan &&
+    Array.isArray(plan.plannedRequests) &&
+    plan.plannedRequests.length &&
+    expectedSignature &&
+    plan.signature === expectedSignature
+  );
+  if (!planIsFresh) {
+    setStatus('プランが古いため再生成します（モード切替や差分・選択の変化を検知）');
     await runPreviewApplyPlan();
   }
   const latest = state.lastApplyPlan;
+  const latestSignatureMatches = !!(latest && expectedSignature && latest.signature === expectedSignature);
   if (!latest || !Array.isArray(latest.plannedRequests) || !latest.plannedRequests.length) {
     throw new Error('ドライランに出力できる計画がありません。先に「実行前プラン確認」を実行してください。');
+  }
+  if (expectedSignature && !latestSignatureMatches) {
+    throw new Error('プランが現在の条件と一致しません。再度「実行前プラン確認」を実行してください。');
   }
   const c = commonParams();
   const payload = {

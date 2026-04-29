@@ -230,6 +230,75 @@ export function getDiffTypeDisplayLabel(type: string, options: { moved?: boolean
   return options.moved && type !== 'moved' ? `${base}(移動)` : base;
 }
 
+// === Section icon system (S10) ===
+const SECTION_ICONS: Record<string, string> = {
+  fieldSettings: '▦',
+  layoutSettings: '☰',
+  formSettings: '▤',
+  viewSettings: '⌗',
+  reportSettings: '📊',
+  processSettings: '⇄',
+  actionSettings: '⇒',
+  pluginSettings: '◆',
+  customizeSettings: '</>',
+  appAcl: '🔒',
+  fieldAcl: '🔒',
+  recordPermissions: '🔒',
+  notifications: '🔔',
+  perRecordNotifications: '🔔',
+  reminderNotifications: '⏰',
+  categories: '☷',
+  appSettings: '⚙',
+  appInfo: 'ⓘ'
+};
+
+export function getSectionIconChar(sectionKey: string): string {
+  return SECTION_ICONS[String(sectionKey || '')] || '·';
+}
+
+export function renderSectionIconHtml(sectionKey: string, options: { withTooltip?: string } = {}): string {
+  const ch = getSectionIconChar(sectionKey);
+  const tip = options.withTooltip ? ` title="${esc(options.withTooltip)}"` : '';
+  return `<span class="sec-icon" data-section="${esc(sectionKey || '')}"${tip} aria-hidden="true">${esc(ch)}</span>`;
+}
+
+// === Severity helpers (S1) ===
+export function severityToneOf(severity: string | undefined | null): 'high' | 'medium' | 'low' {
+  const s = String(severity || '').toLowerCase();
+  if (s === 'high') return 'high';
+  if (s === 'medium' || s === 'mid') return 'medium';
+  return 'low';
+}
+
+export function renderSeverityIconHtml(severity: string | undefined | null): string {
+  const tone = severityToneOf(severity);
+  const glyph = tone === 'high' ? '⚠' : tone === 'medium' ? '⚡' : '◦';
+  return `<span class="sev-icon sev-icon--${tone}" aria-label="重要度${tone}">${esc(glyph)}</span>`;
+}
+
+export function severityClass(severity: string | undefined | null): string {
+  return `sev-${severityToneOf(severity)}`;
+}
+
+// === Stage classification (S3) ===
+export function classifyStage(act: string | undefined | null): 'diff' | 'select' | 'plan' | 'apply' | '' {
+  const a = String(act || '');
+  if (!a) return '';
+  if (a.startsWith('runDiff') && a !== 'runDiffAndPlan') return 'diff';
+  if (a === 'loadReflectNodes' || a === 'selectVisibleReflectNodes' || a === 'applyScopeDiffOnly' || a === 'reflectBulkSelect') return 'select';
+  if (a === 'previewApplyPlan' || a === 'runDiffAndPlan' || a === 'exportDryRunPlan') return 'plan';
+  if (a === 'applyPreview') return 'apply';
+  return '';
+}
+
+export function stageIconChar(stage: string): string {
+  if (stage === 'diff') return '🔍';
+  if (stage === 'select') return '✓';
+  if (stage === 'plan') return '📋';
+  if (stage === 'apply') return '🚀';
+  return '▶';
+}
+
 export function getSeverityDisplayLabel(severity: string): string {
   if (severity === 'high') return '高';
   if (severity === 'medium') return '中';

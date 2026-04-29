@@ -12,7 +12,12 @@ import {
   esc,
   getPreviewStateLabel,
   getDiffTypeDisplayLabel,
-  getSeverityDisplayLabel
+  getSeverityDisplayLabel,
+  classifyStage,
+  stageIconChar,
+  renderSectionIconHtml,
+  severityToneOf,
+  severityClass
 } from '../utils.js';
 import {
   getSelectedDiffRows,
@@ -114,6 +119,20 @@ function applyFeatureGroupClass(root, group) {
   if (group === 'vis') root.classList.add('feat-vis');
   else if (group === 'data') root.classList.add('feat-data');
   else root.classList.add('feat-change');
+  // 上部タブバーの「⋯ その他」details を強制 open/close（vis/data 時は中身を横並び表示）
+  const moreEl = root.querySelector('.kus-tab-more') as HTMLDetailsElement | null;
+  if (moreEl) {
+    const wantOpen = (group === 'vis' || group === 'data');
+    moreEl.open = wantOpen;
+    // タブをクリックすると details が toggle されてしまうので、vis/data の間は close を阻止する
+    if (!(moreEl as any).__keepOpenGuardAttached) {
+      (moreEl as any).__keepOpenGuardAttached = true;
+      moreEl.addEventListener('toggle', () => {
+        const stayOpen = root.classList.contains('feat-vis') || root.classList.contains('feat-data');
+        if (stayOpen && !moreEl.open) moreEl.open = true;
+      });
+    }
+  }
 }
 
 export function showLauncherScreen(options: any = {}) {
@@ -121,7 +140,7 @@ export function showLauncherScreen(options: any = {}) {
   if (!root) return;
   state.activeFeatureKey = '';
   root.classList.remove('screen-feature', 'feat-vis', 'feat-data', 'feat-change');
-  root.classList.add('screen-launcher');
+  root.classList.add('screen-launcher', 'launcher-tabbed', 'launcher-show-advanced');
   if (ui.featureTitle) ui.featureTitle.textContent = '';
   if (ui.featureConn) ui.featureConn.textContent = '';
   if (ui.featureBreadcrumb) ui.featureBreadcrumb.textContent = 'ホーム / 機能';
@@ -882,81 +901,211 @@ export function buildReflectAssistHtml() {
     jsonRouteAction
   ].filter(Boolean).join('');
 
-  return `<div class="reflect-assist">
-    <div class="reflect-command-center">
-      <div class="reflect-command-head">
-        <div>
-          <div class="reflect-command-kicker">Preview Apply Route</div>
-          <div class="reflect-guide-title">${esc(routeTitle)}</div>
-          <div class="reflect-guide-sub">比較先 App ${esc(c.target.appId || '-')} / 書き込み先はプレビューAPIです。画面に出す操作は標準ルートに絞り、細かい調整は詳細ルートにまとめています。</div>
+  // V2: 高重要度の差分が含まれる場合の赤帯バナー
+  const highRiskRows = targetRows.filter((row) => row && row.severity === 'high' && row.type !== 'same');
+  const highRiskCount = highRiskRows.length;
+  const highBreakdown = (() => {
+    const breakdown: Record<string, number> = {};
+    highRiskRows.forEach((row) => {
+      const key = String(row.sectionKey || '');
+      breakdown[key] = (breakdown[key] || 0) + 1;
+    });
+    return Object.entries(breakdown).slice(0, 4).map(([key, n]) => {
+      const label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
+      return `${esc(label)} ${n}`;
+    }).join(' / ');
+  })();
+  const dangerBanner = highRiskCount > 0
+    ? `<div class="reflect-danger-banner" role="alert">
+        <span class="reflect-danger-banner__icon" aria-hidden="true">!</span>
+        <div class="reflect-danger-banner__copy">
+          <div class="reflect-danger-banner__title">高重要度の変更 ${highRiskCount}件 が含まれています</div>
+          <div class="reflect-danger-banner__sub">${highBreakdown || '権限の弱化・フィールド削除・状態削除など、影響の大きな変更です'}</div>
         </div>
-        <div class="reflect-command-next">
-          <span class="reflect-guide-badge">${esc(routeLabel)}</span>
-        </div>
-      </div>
-      <div class="reflect-flow">${stepHtml}</div>
-      <div class="reflect-route-panel">
-        <section class="reflect-route-primary">
-          <div class="reflect-route-primary__copy">
-            <div class="reflect-route-primary__label">${esc(routeLabel)}</div>
-            <div class="reflect-route-primary__title">${esc(routeTitle)}</div>
-            <div class="reflect-route-primary__meta">${esc(routeSub)} ${esc(selectionMeta || '未選択')}</div>
-          </div>
-          <div class="reflect-route-primary__action">${nextAction}</div>
-        </section>
-        <details class="reflect-route-details">
-          <summary>
-            <span>詳細ルート・補助操作</span>
-            <small>個別差分、JSON、本番比較、手動確認</small>
-          </summary>
-          <div class="reflect-route-detail-grid">
-            <section>
-              <div class="reflect-route-detail-title">ルート切替</div>
-              <div class="reflect-route-detail-actions">${routeSwitchActions}</div>
-            </section>
-            <section>
-              <div class="reflect-route-detail-title">対象調整</div>
-              <div class="reflect-route-detail-actions">${targetAdjustActions || '<span class="muted">現在の選択では追加調整はありません</span>'}</div>
-            </section>
-            <section>
-              <div class="reflect-route-detail-title">確認補助</div>
-              <div class="reflect-route-detail-actions">
-                ${planAction}
-                <button class="btn sub" data-act="runDiffAndPlan">差分比較してプラン</button>
-                <button class="btn sub" data-act="runPreviewProdDiff">プレビュー⇔本番を比較</button>
-                <button class="btn sub" data-act="markReflectTargetConfirmed">反映先を確認済みにする</button>
-              </div>
-            </section>
-          </div>
-        </details>
-      </div>
+      </div>`
+    : '';
+
+  // V1: 1 ステータス行 + 次のアクション 1 つ + 折りたたみ詳細
+  const stepNo = !diffReady ? 1 : (!targetCountValue ? 2 : (!planReady ? 3 : 4));
+  const stepLabels = ['差分を作る', '対象を選ぶ', 'プラン確認', 'プレビュー反映'];
+  const stepTitle = stepLabels[stepNo - 1];
+  const progressBar = `<div class="reflect-mini-progress" aria-label="進行ステップ"><div class="reflect-mini-progress__bar" style="width:${(stepNo - 1) * 33.3}%"></div>${[1, 2, 3, 4].map((n) => `<span class="reflect-mini-progress__dot${n < stepNo ? ' is-done' : ''}${n === stepNo ? ' is-current' : ''}" title="${esc(stepLabels[n - 1])}"></span>`).join('')}</div>`;
+
+  // S4: 数字主役チップ
+  const statChips = `<div class="stat-chip-row" role="group" aria-label="状況サマリー">
+    <div class="stat-chip ${actualDiffRows.length ? 'stat-chip--accent' : ''}" title="${diffReady ? '最新差分件数' : '差分は未作成または再計算が必要です'}">
+      <div class="stat-chip__num">${diffReady ? actualDiffRows.length : '—'}</div>
+      <div class="stat-chip__label">差分</div>
     </div>
-    <div class="reflect-summary-grid">
-      <div class="reflect-summary-card">
-        <div class="reflect-summary-label">反映対象</div>
-        <div class="reflect-summary-value">${targetCountValue}</div>
-        <div class="reflect-summary-meta">${esc(targetCountLabel)} / ${isNode ? `候補 ${state.reflectRows.length}件` : `選択 ${scopeInfo.baseScopes.length}件`}</div>
-      </div>
-      <div class="reflect-summary-card">
-        <div class="reflect-summary-label">反映される差分</div>
-        <div class="reflect-summary-value">${targetRows.length}</div>
-        <div class="reflect-summary-meta">高 ${sev.high} / 中 ${sev.medium} / 低 ${sev.low}</div>
-      </div>
-      <div class="reflect-summary-card">
-        <div class="reflect-summary-label">反映前チェック</div>
-        <div class="reflect-summary-value">${esc(safetyLabel)}</div>
-        <div class="reflect-summary-meta">チェック ${checklistDone}/3 / バックアップ ${backupReady ? 'ON' : 'OFF'} / エラー時 ${stopOnError ? '中断' : '継続'}</div>
-      </div>
-      <div class="reflect-summary-card">
-        <div class="reflect-summary-label">プラン確認</div>
-      <div class="reflect-summary-value">${esc(planReady ? '確認済み' : '未確認')}</div>
-      <div class="reflect-summary-meta">${esc(planReady ? `最新確認: ${planTime}` : 'まだ実行前プラン確認をしていません')}</div>
-      </div>
+    <div class="stat-chip ${targetCountValue ? 'stat-chip--accent' : ''}" title="反映する対象の件数">
+      <div class="stat-chip__num">${targetCountValue}</div>
+      <div class="stat-chip__label">${esc(targetCountLabel)}</div>
     </div>
-    <p class="reflect-action-hint">基本は標準ルートだけで完結します。差分単位の採用元切替、JSON編集、本番との差分確認は「詳細ルート・補助操作」から開きます。</p>
-    ${warnings.length ? warnings.map((msg) => `<div class="reflect-warning">${esc(msg)}</div>`).join('') : '<div class="reflect-good">このまま「実行前プラン確認」へ進めます。最終確認後に「プレビューへ反映」を実行してください。</div>'}
-    ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? ' / 必要なら「直前保存を戻す」で元に戻せます。' : ''}</div>` : ''}
+    <div class="stat-chip ${sev.high > 0 ? 'stat-chip--danger' : ''}" title="高重要度の差分">
+      <div class="stat-chip__num">${sev.high}</div>
+      <div class="stat-chip__label">高</div>
+    </div>
+    <div class="stat-chip ${sev.medium > 0 ? 'stat-chip--warn' : ''}" title="中重要度の差分">
+      <div class="stat-chip__num">${sev.medium}</div>
+      <div class="stat-chip__label">中</div>
+    </div>
+    <div class="stat-chip" title="低重要度の差分">
+      <div class="stat-chip__num">${sev.low}</div>
+      <div class="stat-chip__label">低</div>
+    </div>
+    <div class="stat-chip ${checklistDone === 3 ? 'stat-chip--ok' : 'stat-chip--warn'}" title="反映前チェックリスト">
+      <div class="stat-chip__num">${checklistDone}<span style="font-size:11px;color:var(--txt-3)">/3</span></div>
+      <div class="stat-chip__label">安全</div>
+    </div>
+    <div class="stat-chip ${planReady ? 'stat-chip--ok' : ''}" title="${planReady ? '最新条件と一致' : 'まだ未確認'}">
+      <div class="stat-chip__num">${planReady ? '✓' : '—'}</div>
+      <div class="stat-chip__label">プラン</div>
+    </div>
   </div>`;
+
+  // S2: セクション分布バー（差分件数）
+  const distHtml = (() => {
+    if (!diffReady || !targetRows.length) return '';
+    const SECTION_PALETTE: Record<string, string> = {
+      fieldSettings: '#3b82f6',
+      layoutSettings: '#6366f1',
+      formSettings: '#0ea5e9',
+      viewSettings: '#f59e0b',
+      reportSettings: '#ec4899',
+      processSettings: '#06b6d4',
+      actionSettings: '#10b981',
+      pluginSettings: '#a855f7',
+      customizeSettings: '#1e293b',
+      appAcl: '#dc2626',
+      fieldAcl: '#ef4444',
+      recordPermissions: '#f97316',
+      notifications: '#fb923c',
+      perRecordNotifications: '#fb923c',
+      reminderNotifications: '#fdba74',
+      categories: '#94a3b8',
+      appSettings: '#64748b',
+      appInfo: '#94a3b8'
+    };
+    const counts = new Map<string, number>();
+    for (const row of targetRows) {
+      const k = String(row?.sectionKey || '');
+      if (!k) continue;
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    if (!sorted.length) return '';
+    const total = sorted.reduce((acc, [, n]) => acc + n, 0);
+    const filterSec = ui.diffFilterSection?.value || state.diffFilterSection || '';
+    const segs = sorted.map(([k, n]) => {
+      const lbl = SECTION_DEFS.find((d) => d.key === k)?.label || k;
+      const color = SECTION_PALETTE[k] || '#475569';
+      const flex = Math.max(1, n);
+      const active = filterSec === k ? ' is-active' : '';
+      return `<button type="button" class="sec-dist__seg${active}" data-act="filterDiffBySectionFromDist" data-section="${esc(k)}" style="flex:${flex};background:${color}" title="${esc(lbl)} ${n}件 (クリックで差分一覧をこのセクションで絞り込み)">${n >= 3 ? n : ''}</button>`;
+    }).join('');
+    const legend = sorted.slice(0, 6).map(([k, n]) => {
+      const lbl = SECTION_DEFS.find((d) => d.key === k)?.label || k;
+      const color = SECTION_PALETTE[k] || '#475569';
+      return `<span class="sec-dist__legend-item"><span class="sec-dist__legend-swatch" style="background:${color}"></span>${esc(lbl)} ${n}</span>`;
+    }).join('');
+    return `<section class="sec-dist" aria-label="セクション分布">
+      <div class="sec-dist__head">
+        <span class="sec-dist__title">セクション分布</span>
+        <span class="sec-dist__total">全 ${total} 件</span>
+      </div>
+      <div class="sec-dist__bar">${segs}</div>
+      <div class="sec-dist__legend">${legend}${sorted.length > 6 ? `<span class="sec-dist__legend-item">他 ${sorted.length - 6}</span>` : ''}</div>
+    </section>`;
+  })();
+
+  const detailButtons = [
+    routeSwitchActions,
+    targetAdjustActions,
+    planAction,
+    '<button class="btn sub" data-act="runDiffAndPlan" title="差分比較とプラン確認をまとめて実行">差分比較してプラン</button>',
+    '<button class="btn sub" data-act="runPreviewProdDiff" title="比較先プレビューと本番の差分を確認">プレビュー⇔本番を比較</button>',
+    '<button class="btn sub" data-act="backupTargetPreview" title="今の比較先プレビューをJSON保存">今の比較先を保存</button>',
+    '<button class="btn sub" data-act="importTargetPreviewBackupFile" title="保存したバックアップJSONを読み込む">保存済みJSONを読込</button>',
+    '<button class="btn sub" data-act="markReflectTargetConfirmed" title="チェックリスト「反映先=プレビュー」を済にする">反映先を確認済みにする</button>'
+  ].filter(Boolean).join('');
+
+  // 単一最重要メッセージ
+  const headlineMsg = warnings[0] || '次のアクションへ進めます';
+
+  return `<div class="reflect-assist reflect-assist--compact">
+    ${dangerBanner}
+    <section class="reflect-headline" data-step="${stepNo}">
+      <div class="reflect-headline__top">
+        <div class="reflect-headline__step">STEP ${stepNo}/4</div>
+        <div class="reflect-headline__title">${esc(stepTitle)}</div>
+        <div class="reflect-headline__meta">${esc(routeLabel)} ／ ${esc(selectionMeta || '未選択')}</div>
+      </div>
+      ${progressBar}
+      <div class="reflect-headline__action-row">
+        <div class="reflect-headline__action">${nextAction}</div>
+      </div>
+      ${statChips}
+      <div class="reflect-headline__hint ${warnings.length ? 'is-warn' : 'is-ok'}">${esc(headlineMsg)}</div>
+    </section>
+    ${distHtml}
+    <details class="reflect-detail-fold" open>
+      <summary>
+        <span>その他の操作・詳細</span>
+        <small>ルート切替 / 対象調整 / 個別確認 / バックアップ / 残り警告</small>
+      </summary>
+      <div class="reflect-detail-fold__body">
+        <div class="reflect-detail-fold__buttons">${detailButtons}</div>
+        ${warnings.length > 1 ? `<ul class="reflect-detail-fold__warns">${warnings.slice(1).map((msg) => `<li>${esc(msg)}</li>`).join('')}</ul>` : ''}
+        ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? ' / 必要なら「直前保存を戻す」で元に戻せます。' : ''}</div>` : ''}
+        <div class="reflect-detail-fold__small">
+          反映前チェック ${checklistDone}/3 ／ バックアップ ${backupReady ? 'ON' : 'OFF'} ／ エラー時 ${stopOnError ? '中断' : '継続'}
+          ${planReady ? `／ プラン: ${esc(planTime)}` : ''}
+        </div>
+      </div>
+    </details>
+  </div>`;
+}
+
+/**
+ * 予定リクエスト一覧を画面で確認できるようにする HTML 片を返す。
+ * ドライランと同じ plannedRequests を、ファイル保存せずインラインで参照できる。
+ * Method/Path/note を行で並べ、body は <details> で展開すると JSON が見える。
+ */
+function buildPlannedRequestsListHtml(plannedRequests: any): string {
+  const list = Array.isArray(plannedRequests) ? plannedRequests : [];
+  if (!list.length) return '';
+  const methodColor = (m: string) => {
+    const v = String(m || '').toUpperCase();
+    if (v === 'POST') return '#15803d';
+    if (v === 'PUT') return '#1d4ed8';
+    if (v === 'DELETE') return '#b91c1c';
+    return '#475569';
+  };
+  const rows = list.map((req, idx) => {
+    const method = String(req?.method || '?').toUpperCase();
+    const path = String(req?.path || '');
+    const note = req?.note ? `<span style="color:#64748b;font-size:11px"> (${esc(String(req.note))})</span>` : '';
+    const sectionLabel = req?.sectionLabel || req?.sectionKey || '';
+    let bodyJson = '';
+    try { bodyJson = JSON.stringify(req?.body ?? {}, null, 2); } catch { bodyJson = String(req?.body ?? ''); }
+    const bodyTrunc = bodyJson.length > 8000 ? bodyJson.slice(0, 8000) + '\n…(省略)' : bodyJson;
+    return `<details class="planned-request-row">
+      <summary>
+        <span style="color:#64748b;width:24px;text-align:right">#${idx + 1}</span>
+        <span style="font-weight:700;color:${methodColor(method)};min-width:54px">${esc(method)}</span>
+        <code>${esc(path)}</code>
+        ${sectionLabel ? `<span style="font-size:10px;color:#64748b;margin-left:auto;background:#f1f5f9;padding:1px 6px;border-radius:4px">${esc(String(sectionLabel))}</span>` : ''}
+      </summary>
+      <div style="padding:6px 10px;background:#f8fafc">
+        ${note ? `<div style="font-size:11px;color:#475569;margin-bottom:4px">${note}</div>` : ''}
+        <pre>${esc(bodyTrunc)}</pre>
+      </div>
+    </details>`;
+  }).join('');
+  return `<details class="reflect-planned-requests">
+    <summary>予定リクエスト一覧 (${list.length} 件) — クリックで詳細展開</summary>
+    <div>${rows}</div>
+  </details>`;
 }
 
 export function renderReflectPlanInline() {
@@ -978,7 +1127,8 @@ export function renderReflectPlanInline() {
       <span class="reflect-plan-inline__title">実行前プラン（現在の条件と一致）</span>
       <span class="reflect-plan-inline__meta">予定リクエスト ${plan.totalReq || 0} 件 · ${esc(stamp)}</span>
     </div>
-    <pre class="reflect-plan-inline__pre">${esc(head)}${esc(more)}</pre>`;
+    <pre class="reflect-plan-inline__pre">${esc(head)}${esc(more)}</pre>
+    ${buildPlannedRequestsListHtml(plan.plannedRequests)}`;
     return;
   }
   if (stalePlan && hasPlan) {
@@ -994,6 +1144,61 @@ export function renderReflectPlanInline() {
   </div>`;
 }
 
+// S7: layoutSettings 用のヒートマップ HTML を生成
+function buildLayoutHeatmapHtml(beforeLayout: any, afterLayout: any): string {
+  const before = Array.isArray(beforeLayout?.layout) ? beforeLayout.layout : Array.isArray(beforeLayout) ? beforeLayout : [];
+  const after = Array.isArray(afterLayout?.layout) ? afterLayout.layout : Array.isArray(afterLayout) ? afterLayout : [];
+  if (!before.length && !after.length) return '';
+  const sigOf = (item: any) => {
+    try { return JSON.stringify({ type: item?.type, code: item?.code, fields: (item?.fields || []).map((f: any) => f?.code) }); }
+    catch { return ''; }
+  };
+  const beforeSigs = new Set(before.map(sigOf));
+  const afterSigs = new Set(after.map(sigOf));
+  const cells: string[] = [];
+  const flatten = (rows: any[], side: 'before' | 'after' | 'both') => {
+    rows.forEach((row, idx) => {
+      if (!row || typeof row !== 'object') return;
+      const fields = Array.isArray(row.fields) ? row.fields : [];
+      const t = String(row.type || 'ROW').toUpperCase();
+      const rowSig = sigOf(row);
+      const inBefore = beforeSigs.has(rowSig);
+      const inAfter = afterSigs.has(rowSig);
+      let changed = 0;
+      if (side === 'before' && !inAfter) changed = 1; // 削除
+      else if (side === 'after' && !inBefore) changed = 1; // 追加
+      else if (inBefore && inAfter) changed = 0; // 同一
+      else changed = 2; // 部分変更
+      if (t === 'GROUP' || t === 'SUBTABLE') {
+        const code = String(row.code || '');
+        cells.push(`<div class="layout-heatmap__cell" data-changed="${changed}" title="${esc(t)}: ${esc(code)}">${esc(t === 'SUBTABLE' ? '⊞' : '▦')} ${esc(code || `#${idx}`)}</div>`);
+      } else {
+        fields.forEach((f: any) => {
+          const code = String(f?.code || f?.elementId || '');
+          if (!code) return;
+          const cellChanged = changed;
+          cells.push(`<div class="layout-heatmap__cell" data-changed="${cellChanged}" title="${esc(code)}">${esc(code)}</div>`);
+        });
+      }
+    });
+  };
+  // After 側を主に表示しつつ、before のみは削除セルとして含める
+  flatten(after, 'after');
+  // before のみのセル
+  before.forEach((row: any, idx: number) => {
+    const sig = sigOf(row);
+    if (afterSigs.has(sig)) return;
+    const fields = Array.isArray(row?.fields) ? row.fields : [];
+    fields.forEach((f: any) => {
+      const code = String(f?.code || '');
+      if (!code) return;
+      cells.push(`<div class="layout-heatmap__cell" data-changed="1" title="削除: ${esc(code)}" style="opacity:.55">−${esc(code)}</div>`);
+    });
+  });
+  if (!cells.length) return '';
+  return `<div class="layout-heatmap" aria-label="レイアウトヒートマップ">${cells.join('')}</div>`;
+}
+
 function buildSectionPreviewCardHtml(secKey, info) {
   const label = esc(info?.label || secKey);
   const shape = info?.shape;
@@ -1003,7 +1208,7 @@ function buildSectionPreviewCardHtml(secKey, info) {
       `<span class="reflect-preview-counter reflect-preview-counter--upd">更新 ${p.updatedCount}</span>` +
       `<span class="reflect-preview-counter reflect-preview-counter--rm">削除 ${p.removedCount}</span>`;
     if (!p.totalCount) {
-      return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span>${counter}<span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
+      return `<details class="reflect-preview-card"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span>${counter}<span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
     }
     const renderKey = (title, className, item, bothCols) => {
       if (bothCols) {
@@ -1024,7 +1229,7 @@ function buildSectionPreviewCardHtml(secKey, info) {
     const updated = (p.updatedKeys || []).map((item) => renderKey('更新', 'upd', item, true)).join('');
     const removed = (p.removedKeys || []).map((item) => renderKey('削除', 'rm', item, false)).join('');
     const truncated = p.truncated ? `<div class="reflect-preview-card__muted">…一部省略（全${p.totalCount}件のうち先頭のみ表示）</div>` : '';
-    return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span>${counter}</summary>
+    return `<details class="reflect-preview-card"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span>${counter}</summary>
       <div class="reflect-preview-card__body">
         ${added}${updated}${removed}${truncated}
       </div>
@@ -1033,13 +1238,24 @@ function buildSectionPreviewCardHtml(secKey, info) {
   if (shape === 'whole' && info.wholePreview) {
     const w = info.wholePreview;
     if (!w.changed) {
-      return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span><span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
+      return `<details class="reflect-preview-card"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span><span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
     }
-    return `<details class="reflect-preview-card"><summary><span class="reflect-preview-card__label">${label}</span><span class="reflect-preview-counter reflect-preview-counter--upd">セクション全体更新</span></summary>
+    // S7: layoutSettings ならヒートマップを併用
+    let heatmapHtml = '';
+    if (secKey === 'layoutSettings') {
+      try {
+        const before = JSON.parse(w.beforeText || '{}');
+        const after = JSON.parse(w.afterText || '{}');
+        heatmapHtml = buildLayoutHeatmapHtml(before, after);
+      } catch { /* parse 失敗時は省略 */ }
+    }
+    // S8: Before/After スライダー風 2 列レイアウト
+    return `<details class="reflect-preview-card sev-medium"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span><span class="reflect-preview-counter reflect-preview-counter--upd">セクション全体更新</span></summary>
       <div class="reflect-preview-card__body">
-        <div class="reflect-preview-row__grid">
-          <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更前</div><pre class="reflect-preview-col__pre">${esc(w.beforeText)}</pre></div>
-          <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更後</div><pre class="reflect-preview-col__pre">${esc(w.afterText)}</pre></div>
+        ${heatmapHtml}
+        <div class="ba-slider">
+          <div class="ba-slider__col ba-slider__col--before"><h5>変更前</h5><pre class="ba-slider__pre">${esc(w.beforeText)}</pre></div>
+          <div class="ba-slider__col ba-slider__col--after"><h5>変更後</h5><pre class="ba-slider__pre">${esc(w.afterText)}</pre></div>
         </div>
       </div>
     </details>`;
@@ -1129,6 +1345,163 @@ export function renderReflectPlanPreview() {
   }
 }
 
+// S12: 反映タブのミニマップナビ（差分セクションを縦の点で可視化）
+export function renderReflectMinimapNav() {
+  const id = 'u_reflectMinimapNav';
+  const doc = getToolDocument();
+  let host = doc.getElementById(id);
+  const isReflect = state.activeTab === 'reflect';
+  if (!isReflect) {
+    if (host) host.remove();
+    return;
+  }
+  const layout = doc.getElementById('u_reflectLayout');
+  if (!layout) return;
+  if (!host) {
+    host = doc.createElement('div');
+    host.id = id;
+    host.className = 'minimap-nav';
+    host.setAttribute('role', 'navigation');
+    host.setAttribute('aria-label', '差分セクションへジャンプ');
+    layout.parentElement?.appendChild(host);
+  }
+  const counts = new Map<string, { total: number; high: number; medium: number }>();
+  const rows = getActualDiffRows(state.lastDiffRows || []);
+  for (const r of rows) {
+    const k = String(r.sectionKey || '');
+    if (!k) continue;
+    const slot = counts.get(k) || { total: 0, high: 0, medium: 0 };
+    slot.total += 1;
+    const tone = severityToneOf(r.severity);
+    if (tone === 'high') slot.high += 1;
+    else if (tone === 'medium') slot.medium += 1;
+    counts.set(k, slot);
+  }
+  if (!counts.size) {
+    host.innerHTML = '';
+    host.style.display = 'none';
+    return;
+  }
+  host.style.display = 'flex';
+  const filterSec = ui.diffFilterSection?.value || state.diffFilterSection || '';
+  host.innerHTML = SECTION_DEFS
+    .filter((d) => counts.has(d.key))
+    .map((d) => {
+      const slot = counts.get(d.key)!;
+      const cls = slot.high > 0 ? 'has-diff' : slot.medium > 0 ? 'has-diff-mid' : 'has-diff-low';
+      const active = filterSec === d.key ? ' is-current' : '';
+      return `<button type="button" class="minimap-nav__dot ${cls}${active}" data-act="filterDiffBySectionFromDist" data-section="${esc(d.key)}" title="${esc(d.label)}: ${slot.total}件 (高 ${slot.high} / 中 ${slot.medium})"></button>`;
+    }).join('');
+}
+
+// U5: 比較先アプリの常駐バッジ（事故防止）
+export function renderReflectTargetBadge() {
+  const el = getToolDocument().getElementById('u_reflectTargetBadge');
+  if (!el) return;
+  let appId = '';
+  let isPreview = true;
+  let guestId = '';
+  try {
+    const c = deps.commonParams();
+    appId = String(c.target?.appId || '').trim();
+    isPreview = !!c.target?.preview;
+    guestId = String(c.target?.guestId || '').trim();
+  } catch { /* ignore */ }
+  const targetBundle = state.importedTargetBundle || state.lastTargetBundle;
+  const appLabel = (() => {
+    const info = targetBundle?.sections?.appInfo;
+    if (info && typeof info === 'object' && !info._fetchError) {
+      return String(info.name || '').trim();
+    }
+    return '';
+  })();
+  const previewLabel = isPreview ? 'プレビュー' : '本番';
+  const previewClass = isPreview ? 'is-preview' : 'is-prod';
+  const guestSuffix = guestId ? ` / ゲスト${esc(guestId)}` : '';
+  if (!appId) {
+    el.innerHTML = `<div class="reflect-target-badge__inner" data-state="empty">
+      <span class="reflect-target-badge__label">反映先未設定</span>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `<div class="reflect-target-badge__inner ${previewClass}">
+    <span class="reflect-target-badge__chip">${esc(previewLabel)}</span>
+    <span class="reflect-target-badge__app">App ${esc(appId)}</span>
+    ${appLabel ? `<span class="reflect-target-badge__name" title="${esc(appLabel)}">${esc(appLabel)}</span>` : ''}
+    ${guestSuffix ? `<span class="reflect-target-badge__guest">${guestSuffix}</span>` : ''}
+  </div>`;
+}
+
+// U1: 状態に応じた「次の一手」ボタンをフッターに常駐
+export interface ReflectNextActionInfo {
+  act: string;
+  label: string;
+  hint: string;
+  disabled: boolean;
+}
+
+export function getReflectNextAction(): ReflectNextActionInfo {
+  const isNode = isReflectNodeModeEffective();
+  const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
+  const actualDiffRows = getActualDiffRows(state.lastDiffRows || []);
+  const scopeInfo = getEffectiveReflectScopeInfo();
+  const selectedNodeRows = deps.getSelectedReflectRows ? deps.getSelectedReflectRows() : [];
+  const targetCount = isNode ? selectedNodeRows.length : scopeInfo.effectiveScopes.length;
+  const planSig = getCurrentReflectPlanSignature();
+  const plan = state.lastApplyPlan;
+  const planReady = !!(plan && planSig && plan.signature === planSig);
+  const checklist = state.reflectApplyChecklist || ({} as any);
+  const checklistDone = ['diff', 'plan', 'target'].filter((k) => !!checklist[k]).length;
+
+  if (!diffReady) {
+    return {
+      act: isNode ? 'runDiffLoadReflectNodes' : 'runDiff',
+      label: isNode ? '差分比較して候補作成' : '差分比較を実行',
+      hint: '最新の差分を取得します',
+      disabled: false
+    };
+  }
+  if (!actualDiffRows.length) {
+    return { act: '', label: '反映する差分がありません', hint: '0件のため反映は不要', disabled: true };
+  }
+  if (!targetCount) {
+    return isNode
+      ? (state.reflectRows.length
+          ? { act: 'selectVisibleReflectNodes', label: '表示中の差分を選択', hint: '候補から選びましょう', disabled: false }
+          : { act: 'loadReflectNodes', label: '差分候補を読み込む', hint: '差分から候補を生成', disabled: false })
+      : { act: 'applyScopeDiffOnly', label: '差分があるセクションだけ選ぶ', hint: 'ワンクリックで自動選択', disabled: false };
+  }
+  if (!planReady) {
+    return { act: 'previewApplyPlan', label: '実行前プラン確認', hint: 'APIリクエスト内容を確認', disabled: false };
+  }
+  return {
+    act: 'applyPreview',
+    label: 'プレビューへ反映',
+    hint: checklistDone === 3 ? '反映を実行します' : `安全チェック ${checklistDone}/3`,
+    disabled: false
+  };
+}
+
+export function renderReflectFooterNext() {
+  const el = getToolDocument().getElementById('u_reflectFooterNext');
+  if (!el) return;
+  const info = getReflectNextAction();
+  if (!info.act) {
+    el.innerHTML = `<div class="reflect-footer-next__pill" data-state="muted" title="${esc(info.hint)}">
+      <span class="reflect-footer-next__label">${esc(info.label)}</span>
+    </div>`;
+    return;
+  }
+  // S3: ステージごとの色とアイコン
+  const stage = classifyStage(info.act) || 'plan';
+  const stageIcon = stageIconChar(stage);
+  el.innerHTML = `<button type="button" class="btn-stage" data-stage="${esc(stage)}" data-act="${esc(info.act)}" data-reflect-next="1" title="${esc(info.hint)}" ${info.disabled ? 'disabled' : ''}>
+    <span class="btn-stage__icon" aria-hidden="true">${esc(stageIcon)}</span>
+    <span>次：${esc(info.label)}</span>
+    <span class="btn-stage__shortcut" title="Ctrl+Enter">Ctrl+Enter</span>
+  </button>`;
+}
+
 export function renderReflectFooterBadges() {
   const el = getToolDocument().getElementById('u_reflectFooterBadges');
   if (!el) return;
@@ -1187,8 +1560,8 @@ export function renderReflectFooterBadges() {
 }
 
 export function renderReflectAssistPanel() {
-  if (!ui.reflectAssist) return;
-  ui.reflectAssist.innerHTML = buildReflectAssistHtml();
+  // 旧アシストパネル本体は隠しスロットになったため innerHTML を設定しない
+  if (ui.reflectAssist) ui.reflectAssist.innerHTML = '';
   renderReflectHowto();
   renderReflectPlanInline();
   renderReflectPlanPreview();
@@ -1197,6 +1570,158 @@ export function renderReflectAssistPanel() {
   renderReflectApplyHistory();
   renderReflectQuickPresets();
   renderReflectFooterBadges();
+  renderReflectFooterNext();
+  renderReflectTargetBadge();
+  renderReflectMinimapNav();
+  renderReflectHeroCard();
+  renderReflectRouteSummaries();
+  renderReflectFooterLinkBadges();
+}
+
+/**
+ * 新メイン画面のヒーローカード（次のアクション）を描画します。
+ */
+export function renderReflectHeroCard() {
+  const host = getToolDocument().getElementById('u_reflectHeroCard');
+  if (!host) return;
+  const info = getReflectNextAction();
+  const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
+  const isNode = isReflectNodeModeEffective();
+  const targetCount = isNode
+    ? (deps.getSelectedReflectRows ? deps.getSelectedReflectRows().length : 0)
+    : (deps.selectedScopeKeys?.(ui.applyScopes) || []).length;
+  const planSig = (typeof deps.makeApplyPlanSignature === 'function') ? '' : '';
+  const plan = state.lastApplyPlan;
+  const planReady = !!(plan && plan.totalReq);
+  const checklist = state.reflectApplyChecklist || {};
+  const checklistDone = ['diff','plan','target'].filter((k) => !!checklist[k]).length;
+
+  const stepNo = !diffReady ? 1 : !targetCount ? 2 : !planReady ? 3 : 4;
+  const stepTitles = ['差分を作る', '反映する内容を決める', 'プラン確認', 'プレビュー反映'];
+  const tone = info.disabled ? 'warn' : (stepNo === 4 && checklistDone === 3) ? 'ok' : (stepNo === 1 ? '' : '');
+
+  const desc = !diffReady
+    ? 'まずは差分比較を実行して、反映する変更を取得します。'
+    : !targetCount
+      ? '標準ルートまたは詳細ルートで、反映するセクション/差分を選びます。'
+      : !planReady
+        ? 'APIに送信される予定のリクエスト内容を、プラン確認モーダルで見ます。'
+        : checklistDone === 3
+          ? 'すべての準備が完了しました。下の赤いボタンから反映を実行できます。'
+          : '反映前チェックリストを確認してから反映してください。';
+
+  const actionBtn = info.act
+    ? `<button type="button" class="btn" data-act="${esc(info.act)}" data-reflect-next="1" ${info.disabled ? 'disabled' : ''}>
+        ▶ ${esc(info.label)}
+      </button>`
+    : `<span style="opacity:.85;font-size:12px">${esc(info.label || '次のアクションはありません')}</span>`;
+
+  const progress = [1,2,3,4].map((n) => {
+    const cls = n < stepNo ? 'is-done' : n === stepNo ? 'is-current' : '';
+    return `<span class="reflect-hero-card__progress-step ${cls}"></span>`;
+  }).join('');
+
+  host.dataset.tone = tone;
+  host.innerHTML = `
+    <div class="reflect-hero-card__step">STEP ${stepNo} / 4</div>
+    <div class="reflect-hero-card__title">${esc(stepTitles[stepNo - 1])}</div>
+    <div class="reflect-hero-card__desc">${esc(desc)}</div>
+    <div class="reflect-hero-card__action">${actionBtn}<span style="font-size:11px;opacity:.85">${esc(info.hint || '')}</span></div>
+    <div class="reflect-hero-card__progress" aria-label="進行ステップ">${progress}</div>
+  `;
+}
+
+/**
+ * ルートカードの要約（選択中セクション数 / 候補数 / JSON状態）を描画。
+ */
+export function renderReflectRouteSummaries() {
+  const doc = getToolDocument();
+  const scopeSummary = doc.getElementById('u_reflectScopeSummary');
+  if (scopeSummary) {
+    const scopes = deps.selectedScopeKeys?.(ui.applyScopes) || [];
+    scopeSummary.textContent = scopes.length ? `選択中: ${scopes.length} セクション` : '未選択';
+  }
+  const nodeSummary = doc.getElementById('u_reflectNodeSummary');
+  if (nodeSummary) {
+    const rows = state.reflectRows || [];
+    const sel = (deps.getSelectedReflectRows ? deps.getSelectedReflectRows().length : 0);
+    nodeSummary.textContent = rows.length ? `候補 ${rows.length} / 選択 ${sel}` : '候補未読込';
+  }
+  const jsonSummary = doc.getElementById('u_reflectJsonSummary');
+  if (jsonSummary) {
+    const payload = state.importedPatchPayload;
+    if (payload?.sections) {
+      const sectionCount = Object.keys(payload.sections).length;
+      jsonSummary.textContent = `読込済: ${sectionCount} セクション`;
+    } else {
+      jsonSummary.textContent = '未読込';
+    }
+  }
+}
+
+/**
+ * フッターリンクのバッジ件数を描画。
+ */
+export function renderReflectFooterLinkBadges() {
+  const doc = getToolDocument();
+  const reportBadge = doc.getElementById('u_reflectReportBadge');
+  if (reportBadge) {
+    const r = state.lastApplyReport;
+    if (r) {
+      const total = (r.okCount || 0) + (r.ngCount || 0) + (r.skipCount || 0);
+      reportBadge.textContent = total ? String(total) : '';
+    } else {
+      reportBadge.textContent = '';
+    }
+  }
+  const histBadge = doc.getElementById('u_reflectHistoryBadge');
+  if (histBadge) {
+    const list = Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [];
+    histBadge.textContent = list.length ? String(list.length) : '';
+  }
+}
+
+/**
+ * モーダルを開閉する共通関数。
+ */
+export function openReflectModal(name: string) {
+  const map: Record<string, string> = {
+    node: 'u_reflectNodeModal',
+    json: 'u_reflectJsonModal',
+    plan: 'u_reflectPlanModal',
+    history: 'u_reflectHistoryModal',
+    report: 'u_reflectReportModal',
+    support: 'u_reflectSupportModal',
+    fieldEditor: 'u_reflectFieldEditorModal',
+    otherEditor: 'u_reflectOtherEditorModal',
+  };
+  const id = map[name];
+  if (!id) return;
+  const el = getToolDocument().getElementById(id);
+  if (!el) return;
+  el.hidden = false;
+}
+
+export function closeReflectModal(name: string) {
+  const map: Record<string, string> = {
+    node: 'u_reflectNodeModal',
+    json: 'u_reflectJsonModal',
+    plan: 'u_reflectPlanModal',
+    history: 'u_reflectHistoryModal',
+    report: 'u_reflectReportModal',
+    support: 'u_reflectSupportModal',
+    fieldEditor: 'u_reflectFieldEditorModal',
+    otherEditor: 'u_reflectOtherEditorModal',
+  };
+  const id = map[name];
+  if (!id) return;
+  const el = getToolDocument().getElementById(id);
+  if (!el) return;
+  el.hidden = true;
+}
+
+export function closeAllReflectModals() {
+  ['node','json','plan','history','report','support','fieldEditor','otherEditor'].forEach(closeReflectModal);
 }
 
 /**
@@ -1339,9 +1864,11 @@ export function renderReflectPostApplyCard() {
     ? '<span class="reflect-post-apply__hint">反映後の実機状態はまだ比較されていません。「今すぐ再比較」で差分が 0 件になったか確認できます。</span>'
     : '<span class="reflect-post-apply__hint">現在表示中の差分は反映後の最新状態と同期済みです。</span>';
   host.style.display = 'block';
-  host.innerHTML = `<div class="reflect-post-apply ${statusCls}">
+  // S14: 完了直後（5分以内）かつエラー無しならセレブレーション
+  const celebrate = !hadError && minutesAgo < 5;
+  host.innerHTML = `<div class="reflect-post-apply ${statusCls}${celebrate ? ' apply-celebrate' : ''}">
     <div class="reflect-post-apply__head">
-      <span class="reflect-post-apply__title">反映${ageLabel}に完了しました（${esc(modeLabel)} / ${esc(statusLabel)}）</span>
+      <span class="reflect-post-apply__title">${celebrate ? '✨ ' : ''}反映${ageLabel}に完了しました（${esc(modeLabel)} / ${esc(statusLabel)}）</span>
       <div class="reflect-post-apply__actions">
         <button type="button" class="btn ok" data-act="postApplyRecompare" title="反映後の比較先プレビューを再取得して差分比較を実行します"${diffStale ? '' : ' disabled'}>今すぐ再比較</button>
         <button type="button" class="btn sub" data-act="dismissPostApplyCard" title="このお知らせを閉じます">閉じる</button>
@@ -1636,7 +2163,18 @@ export function renderReflectNodeList() {
   const srcCount = selectedRows.filter((r) => deps.reflectRowModeById(r._id) === 'src').length;
   const tgtCount = selectedRows.length - srcCount;
   const sev = summarizeSeverity(selectedRows);
-  const header = `<div class="reflect-node-list-summary">
+  // U4: 一括選択ツールバー
+  const renamesCount = rows.filter((r) => !!r.renameCandidate).length;
+  const bulkToolbar = `<div class="reflect-node-bulk-toolbar" role="toolbar" aria-label="差分候補の一括選択">
+    <span class="reflect-node-bulk-toolbar__label">一括選択：</span>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="all" title="表示中の全候補を選択">全て (${filtered.length})</button>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="high" title="重要度=高 のみ選択">高のみ</button>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="medium" title="重要度 中 以下のみ選択">中以下</button>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="renames" ${renamesCount === 0 ? 'disabled' : ''} title="改名候補のみ選択">改名候補 (${renamesCount})</button>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="invert" title="表示中の選択状態を反転">反転</button>
+    <button type="button" class="btn sub" data-act="reflectBulkSelect" data-bulk="clear" title="選択をすべて解除">クリア</button>
+  </div>`;
+  const header = `${bulkToolbar}<div class="reflect-node-list-summary">
     <div class="reflect-node-list-summary__main">候補 ${rows.length}件 / 表示 ${filtered.length}件 / 選択 ${selectedCount}件</div>
     <div class="reflect-node-list-summary__sub">比較元採用 ${srcCount} / 比較先維持 ${tgtCount} / 高 ${sev.high} / 中 ${sev.medium} / 低 ${sev.low}</div>
   </div>`;

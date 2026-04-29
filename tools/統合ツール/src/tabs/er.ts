@@ -5,7 +5,7 @@ import { state, ui } from '../state.js';
 import { esc, safeJsonForScript, nowStamp, downloadText, showToast } from '../utils.js';
 import { apiGet, buildApiPrefix } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
-import { getToolWindow } from '../ui/dialog.js';
+import { getToolWindow, getToolDocument } from '../ui/dialog.js';
 import { commonParams } from './diff.js';
 
 const ER_DEFAULTS = {
@@ -70,10 +70,15 @@ export function formatErLayoutLabel(layoutName) {
 
 const progressUi = (() => {
   let el, bar, msg;
+  const removeEl = () => {
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+    el = null; bar = null; msg = null;
+  };
   return {
     init() {
-      if (el) el.remove();
-      el = document.createElement("div");
+      removeEl();
+      const doc = (() => { try { return getToolDocument(); } catch (_) { return document; } })();
+      el = doc.createElement("div");
       Object.assign(el.style, {
         position: "fixed", top: "20px", right: "20px", width: "320px",
         padding: "16px", background: "rgba(10,10,18,0.94)", color: "#fff",
@@ -86,12 +91,30 @@ const progressUi = (() => {
         <div id="_eb" style="width:0%;height:100%;background:linear-gradient(90deg,#00d4ff,#7b61ff);transition:width .3s;border-radius:4px;"></div>
       </div>
       <div id="_em" style="font-size:12px;margin-top:8px;color:#aaa;">準備中...</div>`;
-      document.body.appendChild(el);
+      (doc.body || doc.documentElement).appendChild(el);
       bar = el.querySelector("#_eb"); msg = el.querySelector("#_em");
     },
     update(p, t) { if (bar) bar.style.width = p + "%"; if (msg) msg.textContent = t; },
-    close() { this.update(100, "完了！"); setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 600); }, 2e3); },
-    error(e) { this.update(100, "エラー: " + e); if (bar) bar.style.background = "#f44"; },
+    close() {
+      if (!el) return;
+      this.update(100, "完了！");
+      const target = el;
+      setTimeout(() => {
+        if (target) target.style.opacity = "0";
+        setTimeout(() => { if (target && target.parentNode) target.parentNode.removeChild(target); if (el === target) { el = null; bar = null; msg = null; } }, 600);
+      }, 2e3);
+    },
+    error(e) {
+      if (!el) return;
+      this.update(100, "エラー: " + e);
+      if (bar) bar.style.background = "#f44";
+      const target = el;
+      setTimeout(() => {
+        if (target && target.parentNode) target.parentNode.removeChild(target);
+        if (el === target) { el = null; bar = null; msg = null; }
+      }, 6e3);
+    },
+    dismiss() { removeEl(); },
   };
 })();
 
@@ -208,30 +231,48 @@ const getSchema = async (appId, options, cache) => {
         .map((rel) => String(rel.fromPath || rel.from || '').trim())
         .filter(Boolean)
     );
-    const essentialFields = fields.filter((field) => {
+    // 表示密度に応じて可視フィールド集合を変える
+    // - compact: PK / unique / リレーション結びの先 だけ
+    // - standard: 上記 + 必須項目
+    // - full: 全フィールド（SUBTABLE除く / inSubtable はオプション従属）
+    const density = String(options?.fieldDensity || ER_DEFAULTS.fieldDensity);
+    const isEssential = (field) => {
       if (field.type === 'SUBTABLE') return false;
       if (field.isPK || field.unique) return true;
       return linkedFieldPaths.has(String(field.path || field.code || '').trim());
-    });
-    const visibleFieldsSource = essentialFields.length ? essentialFields : fields.filter((field) => field.type !== 'SUBTABLE').slice(0, 6);
+    };
+    let visibleFieldsSource;
+    if (density === 'full') {
+      visibleFieldsSource = fields.filter((f) => f.type !== 'SUBTABLE');
+    } else if (density === 'standard') {
+      visibleFieldsSource = fields.filter((f) => f.type !== 'SUBTABLE' && (isEssential(f) || !!f.required));
+      // standard で 0件になるケース（必須も unique もない簡素なアプリ）には先頭6件をフォールバック
+      if (!visibleFieldsSource.length) visibleFieldsSource = fields.filter((f) => f.type !== 'SUBTABLE').slice(0, 6);
+    } else { // compact
+      const essential = fields.filter(isEssential);
+      visibleFieldsSource = essential.length ? essential : fields.filter((f) => f.type !== 'SUBTABLE').slice(0, 6);
+    }
     const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
+    const totalFieldCount = fields.filter((f) => f.type !== 'SUBTABLE').length;
     const r = {
       id: appId,
       name: aR.name || `アプリ ${appId}`,
       spaceId: aR.spaceId || null,
       threadId: aR.threadId || null,
       fields: visibleFields,
+      allFields: fields,
+      totalFieldCount,
       relations,
       ok: true,
       createdAt: aR.createdAt,
       modifiedAt: aR.modifiedAt,
-      requiredCount: visibleFields.filter((field) => !!field.required).length,
+      requiredCount: fields.filter((field) => !!field.required && field.type !== 'SUBTABLE').length,
       lookupCount: relations.filter((rel) => rel.kind === 'LOOKUP').length,
       refCount: relations.filter((rel) => rel.kind === 'REF').length,
       sourceGuestId: options?.source?.guestId || ''
     };
     cache.set(appId, r); return r;
-  } catch (e) { console.error(`App ${appId}:`, e); const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], relations: [], ok: false }; cache.set(appId, r); return r; }
+  } catch (e) { console.error(`App ${appId}:`, e); const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], allFields: [], totalFieldCount: 0, relations: [], ok: false }; cache.set(appId, r); return r; }
 };
 
 export const crawl = async (startIds, options) => {
@@ -979,9 +1020,13 @@ function buildNodeLabel(app){
   });
   const preview = ordered.slice(0, maxLines).map((f)=>buildFieldPreviewLine(f));
   if(ordered.length > maxLines) preview.push("+ " + (ordered.length - maxLines) + " 件");
+  const totalFieldCount = typeof app.totalFieldCount === "number" ? app.totalFieldCount : fields.length;
+  const fieldCountText = totalFieldCount > fields.length
+    ? fields.length + "/" + totalFieldCount + "項目"
+    : fields.length + "項目";
   const meta = [
     "App " + app.id,
-    fields.length + "項目",
+    fieldCountText,
     app.relations.length + "関連",
     "深さ " + (app.depth || 0)
   ].join(" / ");
@@ -1173,21 +1218,6 @@ cy.one("layoutstop",()=>setTimeout(fit,200));
 syncLayoutButtons(ER_OPTIONS.layoutName || "dagre");
 syncDensityControl();
 updateSearchMeta("", 0);
-
-// ─── Export ───
-function exportPNG(){
-  const b64 = cy.png({ full: true, scale: 2, bg: currentPalette().bg });
-  const a = document.createElement("a");
-  a.href = b64;
-  a.download = "kintone_erd.png";
-  a.click();
-}
-function exportSVG(){
-  // cytoscape-svg plugin is not present, so we fallback to a simple message or a data-uri attempt.
-  // Actually, standard cytoscape does not natively support SVG without an extension.
-  // We can try to use JSON instead or alert the user.
-  showToast("SVGエクスポートには追加のプラグイン(cytoscape-svg)が必要です。PNGをご利用ください。", 'warn');
-}
 
 // ─── Layout Switching ───
 function setLayout(name){
@@ -1479,11 +1509,15 @@ function renderAppDetail(app){
   const fieldGroups = detailFieldGroups(app);
   const panel = document.getElementById("detail");
   document.getElementById("detail-title").textContent = app.name;
+  const realFieldTotal = typeof app.totalFieldCount === "number" ? app.totalFieldCount : visibleFields.length;
+  const fieldPillText = realFieldTotal > visibleFields.length
+    ? '項目 ' + visibleFields.length + '/<small>' + realFieldTotal + '</small>'
+    : '<b>項目</b> ' + visibleFields.length;
   document.getElementById("detail-meta").innerHTML = "ID: " + escapeHtml(app.id)
     + (app.createdAt ? " | 作成: " + escapeHtml(new Date(app.createdAt).toLocaleDateString()) : "")
     + (app.modifiedAt ? " | 更新: " + escapeHtml(new Date(app.modifiedAt).toLocaleDateString()) : "")
     + '<div class="detail-chip-row">'
-    + '<span class="meta-pill"><b>項目</b> ' + visibleFields.length + '</span>'
+    + '<span class="meta-pill" title="表示中 / 総数（表示数は密度設定に依存）">' + fieldPillText + '</span>'
     + '<span class="meta-pill"><b>ルックアップ</b> ' + fieldGroups.lookup.length + '</span>'
     + '<span class="meta-pill"><b>関連</b> ' + fieldGroups.ref.length + '</span>'
     + '<span class="meta-pill"><b>必須</b> ' + fieldGroups.required.length + '</span>'
@@ -1611,7 +1645,8 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
 
 // Build stats
 (function buildSidebar(){
-  const totalFields=APPS.reduce((s,a)=>s+visibleFieldsForNode(a).length,0);
+  const visibleFieldsTotal=APPS.reduce((s,a)=>s+visibleFieldsForNode(a).length,0);
+  const totalFieldsAcrossApps=APPS.reduce((s,a)=>s+(typeof a.totalFieldCount==="number"?a.totalFieldCount:visibleFieldsForNode(a).length),0);
   const totalRels=APPS.reduce((s,a)=>s+a.relations.length,0);
   const lookups=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="LOOKUP").length,0);
   const actions=APPS.reduce((s,a)=>s+a.relations.filter(r=>r.kind==="ACTION").length,0);
@@ -1620,7 +1655,10 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
   APPS.forEach(a=>visibleFieldsForNode(a).forEach(f=>{typeCount[f.type]=(typeCount[f.type]||0)+1;}));
 
   let html='<div class="stat-row"><span>アプリ数</span><span class="stat-val">'+APPS.length+'</span></div>';
-  html+='<div class="stat-row"><span>総フィールド数</span><span class="stat-val">'+totalFields+'</span></div>';
+  html+='<div class="stat-row"><span>総フィールド数</span><span class="stat-val">'+totalFieldsAcrossApps+'</span></div>';
+  if(visibleFieldsTotal!==totalFieldsAcrossApps){
+    html+='<div class="stat-row"><span>表示中フィールド</span><span class="stat-val">'+visibleFieldsTotal+'</span></div>';
+  }
   html+='<div class="stat-row"><span>ルックアップ数</span><span class="stat-val">'+lookups+'</span></div>';
   html+='<div class="stat-row"><span>関連レコード数</span><span class="stat-val">'+refs+'</span></div>';
   html+='<div class="stat-row"><span>アクション線数</span><span class="stat-val">'+actions+'</span></div>';
@@ -1861,18 +1899,28 @@ document.addEventListener("keydown",e=>{
 
 // ─── Exports ───
 function exportPNG(){
-  const a=document.createElement("a");
-  a.href=cy.png({bg:isDark?"#08090d":"#f0f2f5",full:true,scale:2});
-  a.download="kintone_erd.png";a.click();toast("PNG ダウンロード");
+  try{
+    const a=document.createElement("a");
+    a.href=cy.png({bg:isDark?"#08090d":"#f0f2f5",full:true,scale:2});
+    a.download="kintone_erd.png";a.click();toast("PNG ダウンロード");
+  }catch(err){
+    console.error("[ER] exportPNG failed", err);
+    toast("PNG出力に失敗: "+((err&&err.message)||err));
+  }
 }
 function exportSVG(){
-  if(typeof cy.svg !== "function"){
-    toast("SVGエクスポートは未対応のためPNGを出力します");
-    exportPNG();
-    return;
+  try{
+    if(typeof cy.svg !== "function"){
+      toast("SVGエクスポートは未対応のためPNGを出力します");
+      exportPNG();
+      return;
+    }
+    const blob=new Blob([cy.svg({full:true,bg:isDark?"#08090d":"#f0f2f5"})],{type:"image/svg+xml"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="kintone_erd.svg";a.click();toast("SVG ダウンロード");
+  }catch(err){
+    console.error("[ER] exportSVG failed", err);
+    toast("SVG出力に失敗: "+((err&&err.message)||err));
   }
-  const blob=new Blob([cy.svg({full:true,bg:isDark?"#08090d":"#f0f2f5"})],{type:"image/svg+xml"});
-  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="kintone_erd.svg";a.click();toast("SVG ダウンロード");
 }
 
 let _md={text:"",filename:""};
@@ -2209,7 +2257,10 @@ cy.on("mouseover","node",e=>{
   const app=appMap.get(e.target.data("appId"));
   if(!app) return;
   if(!tipEl){tipEl=document.createElement("div");Object.assign(tipEl.style,{position:"fixed",zIndex:"999",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"8px",padding:"8px 12px",fontSize:"11px",fontFamily:"'DM Mono',monospace",pointerEvents:"none",boxShadow:"0 4px 16px rgba(0,0,0,0.3)",maxWidth:"260px"});document.body.appendChild(tipEl);}
-  tipEl.innerHTML="<b>"+app.name+"</b> (ID:"+app.id+")<br>項目: "+visibleFieldsForNode(app).length+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
+  const _v = visibleFieldsForNode(app).length;
+  const _t = typeof app.totalFieldCount === "number" ? app.totalFieldCount : _v;
+  const _itemText = _t > _v ? (_v + "/" + _t) : _v;
+  tipEl.innerHTML="<b>"+app.name+"</b> (ID:"+app.id+")<br>項目: "+_itemText+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
   tipEl.style.display="block";
 });
 cy.on("mouseout","node",()=>{if(tipEl) tipEl.style.display="none";});
@@ -2238,7 +2289,19 @@ export async function runGenerateERDiagram() {
     const url = URL.createObjectURL(blob);
     popup.location.href = url;
     progressUi.close();
-    setStatus(`ER図の生成完了: ${apps.length}アプリを別タブ表示しました`);
+    // 起点アプリ群と一致 = 関連が全く伸びなかった = 孤立しているケース
+    const seedCount = options.startAppIds.length;
+    const onlySeeds = apps.length === seedCount;
+    if (onlySeeds && seedCount === 1) {
+      const totalRels = apps[0]?.relations?.length || 0;
+      if (totalRels === 0) {
+        setStatus(`ER図の生成完了: 起点アプリのみ表示（関連 0件）。「逆引き探索」をONにすると、このアプリを参照しているアプリも辿れます`);
+      } else {
+        setStatus(`ER図の生成完了: 起点アプリのみ表示（関連先アプリは取得不可）`);
+      }
+    } else {
+      setStatus(`ER図の生成完了: ${apps.length}アプリを別タブ表示しました`);
+    }
     setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
   } catch (e) {
     try { popup.close(); } catch (e) { /* noop */ }

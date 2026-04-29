@@ -61,7 +61,10 @@ import {
   openScopePicker,
   closeScopePicker,
   openFeatureScreen,
-  showLauncherScreen
+  showLauncherScreen,
+  openReflectModal,
+  closeReflectModal,
+  closeAllReflectModals
 } from './ui/components.js';
 import {
   fitDialogToViewport,
@@ -141,7 +144,8 @@ import {
 import {
   runSettingsExport,
   runSettingsExportSearchApps,
-  addAppIdToSettingsExport
+  addAppIdToSettingsExport,
+  loadSettingsExportBundleToDiff
 } from './tabs/settings-export.js';
 
 // --- These functions are not yet extracted into modules. They remain in the
@@ -166,26 +170,79 @@ import {
 // withGuard - wraps async actions with running guard and busy indicator
 // ---------------------------------------------------------------------------
 
+/** withGuard の既定ウォッチドッグ秒数。これを超えると state.running を強制解除し、
+ *  UI を「次の操作可能」状態へ戻す。長尺バックアップなどは個別に override する。 */
+const WITHGUARD_DEFAULT_TIMEOUT_MS = 180_000;
+
+/** state.running を確実に解放する内部ヘルパ。watchdog/正常完了/強制解除の3経路で呼ばれる。 */
+function releaseRunningGuard(): void {
+  if (state.runningWatchdogId) {
+    try { clearTimeout(state.runningWatchdogId); } catch { /* noop */ }
+    state.runningWatchdogId = null;
+  }
+  state.running = false;
+  state.runningStartedAt = null;
+  state.runningTaskLabel = '';
+  setBusy(false);
+}
+
+/** ハングした非同期処理を手動でリセットするための公開API（UIから呼び出す）。 */
+export function forceReleaseRunningGuard(reason = 'ユーザー操作'): boolean {
+  if (!state.running) return false;
+  const startedAt = state.runningStartedAt;
+  const elapsedSec = startedAt ? Math.round((Date.now() - startedAt) / 1000) : 0;
+  const label = state.runningTaskLabel || '処理';
+  releaseRunningGuard();
+  console.warn(`[統合ツール] running guard force-released: task="${label}" elapsed=${elapsedSec}s reason=${reason}`);
+  setStatus(`実行中フラグを強制解除しました（${label} / 経過 ${elapsedSec}s）`, true);
+  return true;
+}
+
 /**
- * 非同期処理の二重実行ガード + ビジー表示 + エラー集約。
+ * 非同期処理の二重実行ガード + ビジー表示 + エラー集約 + ハング検知。
  *
- * - 既に実行中なら no-op（戻り値 undefined）し、ステータスバーで通知。
+ * - 既に実行中なら no-op し、経過時間と強制解除案内をステータスバーへ。
  * - 例外発生時はステータス・トーストの両方に通知し、API エラーには
  *   `apiErrorWithContext` のメタ（method/path/app）が `__apiDiag` で
  *   付与済みであれば最初の行だけを表示してユーザーに過剰情報を出さない。
+ * - timeoutMs（既定 180000ms）を超えると watchdog が state.running を
+ *   強制解除し、UI を次の操作可能状態へ戻す。長尺タスクは override 可。
  * - 戻り値は `fn` の戻り値の `Promise`。失敗時は `undefined` を解決して、
  *   呼び出し側が UI 更新を続行できるようにする（例外を再スローしない）。
  */
 export function withGuard<T = void>(
   fn: () => Promise<T> | T,
-  busyText = ''
+  busyText = '',
+  timeoutMs: number = WITHGUARD_DEFAULT_TIMEOUT_MS
 ): Promise<T | undefined> | undefined {
   if (state.running) {
-    setStatus('別の処理を実行中です。完了までお待ちください。');
+    const elapsedSec = state.runningStartedAt
+      ? Math.round((Date.now() - state.runningStartedAt) / 1000)
+      : 0;
+    const label = state.runningTaskLabel || '別の処理';
+    setStatus(
+      `${label} を実行中です（経過 ${elapsedSec}s）。長時間反応がない場合はステータスバーをダブルクリックで強制解除できます。`
+    );
     return;
   }
+  const label = busyText || '処理中...';
   state.running = true;
-  setBusy(true, busyText || '処理中...');
+  state.runningStartedAt = Date.now();
+  state.runningTaskLabel = label;
+  setBusy(true, label);
+  if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+    state.runningWatchdogId = setTimeout(() => {
+      if (!state.running) return;
+      const elapsedSec = state.runningStartedAt
+        ? Math.round((Date.now() - state.runningStartedAt) / 1000)
+        : 0;
+      console.warn(`[統合ツール] withGuard watchdog fired: task="${label}" elapsed=${elapsedSec}s timeout=${timeoutMs}ms`);
+      releaseRunningGuard();
+      const msg = `処理が ${elapsedSec}s 経過しても完了しなかったため自動解除しました（${label}）。再実行するか、ネットワーク・権限を確認してください。`;
+      setStatus(msg, true);
+      showToast(msg, 'error').catch(() => {});
+    }, timeoutMs);
+  }
   return (async () => {
     try {
       return await fn();
@@ -200,8 +257,7 @@ export function withGuard<T = void>(
       showToast(userMsg, 'error').catch(() => {});
       return undefined;
     } finally {
-      state.running = false;
-      setBusy(false);
+      releaseRunningGuard();
     }
   })();
 }
@@ -366,6 +422,7 @@ export function setupEventHandlers(injected: any = {}) {
     runExportDryRunPlan,
     runBackupTargetPreview,
     runRestoreTargetPreviewBackup,
+    importTargetPreviewBackupFromFile,
     runApplyPreview,
     runDeployOnly,
     runApplyPatchJson,
@@ -408,22 +465,32 @@ export function setupEventHandlers(injected: any = {}) {
   function renderLauncherActiveFilters(group, searchText) {
     if (!ui.launcherActiveFilters) return;
     const chips = [];
-    if (group && group !== 'all') {
-      const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim() || group;
-      chips.push(`<span class="chip chip-active-filter">グループ: ${esc(groupLabel)}</span>`);
+    if (group) {
+      const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"] .launcher-tab-btn__label`)?.textContent?.trim()
+        || ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim()
+        || group;
+      chips.push(`<span class="chip chip-active-filter">タブ: ${esc(groupLabel)}</span>`);
     }
     if (searchText) {
       chips.push(`<span class="chip chip-active-filter">検索: ${esc(searchText)}</span>`);
     }
-    ui.launcherActiveFilters.innerHTML = chips.length ? chips.join('') : '<span class="muted">現在フィルタは未適用です</span>';
+    ui.launcherActiveFilters.innerHTML = chips.join('');
   }
 
   function applyLauncherFilter() {
     const activeGroupBtn = ui.launcherGroupFilters?.querySelector<HTMLElement>('.chip.is-active[data-group]');
-    const group = activeGroupBtn?.dataset?.group || 'all';
+    const group = activeGroupBtn?.dataset?.group || 'change';
     const searchText = String(ui.launcherSearch?.value || '').trim();
     const normalizedSearch = searchText.toLowerCase();
+    const panels = [...(ui.launcherMenu?.querySelectorAll<HTMLElement>('[data-launcher-panel]') || [])];
+    panels.forEach((panel) => {
+      const on = panel.dataset.launcherPanel === group;
+      panel.classList.toggle('is-active', on);
+      panel.hidden = !on;
+    });
+    if (ui.launcherSearch) ui.launcherSearch.disabled = group === 'history';
     const cards = [...(ui.launcherMenu?.querySelectorAll<HTMLElement>('.feature-card[data-feature]') || [])];
+    const targetCards = cards.filter((card) => String(card.dataset.group || '').trim() === group);
     let visibleCount = 0;
     cards.forEach((card) => {
       const groupKey = String(card.dataset.group || '').trim();
@@ -431,14 +498,18 @@ export function setupEventHandlers(injected: any = {}) {
       const desc = String(card.querySelector('.feature-card-desc')?.textContent || '').trim();
       const cardGroup = String(card.querySelector('.feature-card-group')?.textContent || '').trim();
       const cardText = `${label} ${desc} ${cardGroup}`.toLowerCase();
-      const groupMatched = group === 'all' || groupKey === group;
+      const groupMatched = groupKey === group;
       const searchMatched = !normalizedSearch || cardText.includes(normalizedSearch);
       const show = groupMatched && searchMatched;
       card.style.display = show ? '' : 'none';
       if (show) visibleCount += 1;
     });
-    if (ui.launcherVisibleCount) ui.launcherVisibleCount.textContent = `表示中: ${visibleCount}/${cards.length}`;
-    if (ui.launcherEmptyState) ui.launcherEmptyState.hidden = visibleCount !== 0;
+    if (ui.launcherVisibleCount) {
+      ui.launcherVisibleCount.textContent = group === 'history'
+        ? '履歴・復元を表示中'
+        : `表示中: ${visibleCount}/${targetCards.length}`;
+    }
+    if (ui.launcherEmptyState) ui.launcherEmptyState.hidden = group === 'history' || visibleCount !== 0;
     renderLauncherActiveFilters(group, searchText);
   }
 
@@ -563,11 +634,9 @@ export function setupEventHandlers(injected: any = {}) {
     const nextSectionKey = resolveSectionPreviewTarget(sectionKey);
     const label = SECTION_DEFS.find((def) => def.key === nextSectionKey)?.label || nextSectionKey;
     switchTab('reflect', { persist: false });
-    switchSubTab('reflect', 'settings');
-    activateReflectInnerTab('other');
+    // モーダルで開く
+    try { openReflectModal('otherEditor'); } catch (_e) {}
     const focusEditor = () => {
-      const pane = root.querySelector('[data-subpane-parent="reflect"][data-subpane="settings"]');
-      pane?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
       const editorApi = (ui.sectionPreviewEditor as any)?.__sectionPreviewApi;
       if (editorApi?.setSection) {
         editorApi.setSection(nextSectionKey, { silent: true, force: true });
@@ -583,7 +652,7 @@ export function setupEventHandlers(injected: any = {}) {
     const view = getToolWindow();
     if (view?.requestAnimationFrame) view.requestAnimationFrame(focusEditor);
     else focusEditor();
-    setStatus(`${label} の差分エディタへ移動しました`);
+    setStatus(`${label} の差分エディタを開きました`);
   }
 
   // -------------------------------------------------------------------
@@ -862,6 +931,16 @@ export function setupEventHandlers(injected: any = {}) {
       ui.shortcutHelpModal.hidden = true;
       return;
     }
+
+    // 反映モーダルが開いていれば Esc で閉じる
+    if (e.key === 'Escape') {
+      const openModal = root.querySelector('.reflect-modal-overlay:not([hidden])');
+      if (openModal) {
+        e.preventDefault();
+        closeAllReflectModals();
+        return;
+      }
+    }
     if (!editable && e.key === '?') {
       e.preventDefault();
       if (ui.shortcutHelpModal) ui.shortcutHelpModal.hidden = !ui.shortcutHelpModal.hidden;
@@ -896,11 +975,72 @@ export function setupEventHandlers(injected: any = {}) {
       featCard.click();
       return;
     }
+
+    // ランチャーのタブナビ（変更・反映 / 可視化・出力 / データ・保守 / 履歴・復元）の roving tabindex
+    const launcherTabBtn = (e.target as Element)?.closest?.('.launcher-tab-btn') as HTMLButtonElement | null;
+    if (launcherTabBtn && !editable && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+      e.preventDefault();
+      const tabs = Array.from(ui.launcherGroupFilters?.querySelectorAll<HTMLButtonElement>('.launcher-tab-btn') || []);
+      if (tabs.length === 0) return;
+      const currentIdx = tabs.indexOf(launcherTabBtn);
+      let nextIdx = currentIdx;
+      if (e.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'ArrowRight') nextIdx = (currentIdx + 1) % tabs.length;
+      else if (e.key === 'Home') nextIdx = 0;
+      else if (e.key === 'End') nextIdx = tabs.length - 1;
+      tabs[nextIdx]?.focus();
+      tabs[nextIdx]?.click();
+      return;
+    }
     if (!editable && (e.key === '/' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'))) {
       e.preventDefault();
       showLauncherScreen({ persist: false });
       ui.launcherSearch?.focus();
       ui.launcherSearch?.select();
+      return;
+    }
+
+    // 数字キー 1-9 / 0 / - で機能タブをワンキー切替（screen-feature のときのみ・装飾キーなし）
+    if (
+      !editable &&
+      !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey &&
+      root.classList.contains('screen-feature')
+    ) {
+      const tabByKey: Record<string, string> = {
+        '1': 'diff', '2': 'reflect', '3': 'field', '4': 'jsconfig',
+        '5': 'er', '6': 'processFlow', '7': 'design', '8': 'settingsExport',
+        '9': 'analyze', '0': 'recordMgr', '-': 'apiTester'
+      };
+      const target = tabByKey[e.key];
+      if (target) {
+        e.preventDefault();
+        switchTab(target);
+        return;
+      }
+      // Esc で screen-feature からランチャーへ戻る（モーダルが開いてない場合のみ）
+      if (e.key === 'Escape' && (!ui.scopePickerModal || ui.scopePickerModal.hidden)) {
+        e.preventDefault();
+        showLauncherScreen({ persist: false });
+        return;
+      }
+    }
+
+    // U2: Reflect tab keyboard shortcuts
+    if (state.activeTab === 'reflect' && (e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      const doc = getToolDocument();
+      // Ctrl+Shift+Enter: 反映、Ctrl+Enter: 状態に応じた次のアクション
+      if (e.shiftKey) {
+        const applyBtn = doc.getElementById('u_footerApply') as HTMLButtonElement | null;
+        if (applyBtn && !applyBtn.disabled) applyBtn.click();
+      } else {
+        const nextBtn = doc.querySelector('[data-reflect-next="1"]') as HTMLButtonElement | null;
+        if (nextBtn && !nextBtn.disabled) nextBtn.click();
+        else {
+          const planBtn = doc.getElementById('u_footerPlan') as HTMLButtonElement | null;
+          if (planBtn && !planBtn.disabled) planBtn.click();
+        }
+      }
       return;
     }
     if (e.key === 'Escape' && e.target === ui.launcherSearch) {
@@ -1217,6 +1357,18 @@ export function setupEventHandlers(injected: any = {}) {
     });
   }
 
+  const targetPreviewBackupFileInput = getToolDocument().getElementById('u_targetPreviewBackupFileInput') as HTMLInputElement | null;
+  if (targetPreviewBackupFileInput) {
+    targetPreviewBackupFileInput.addEventListener('change', () => {
+      const f = targetPreviewBackupFileInput.files && targetPreviewBackupFileInput.files[0];
+      targetPreviewBackupFileInput.value = '';
+      if (!f) return;
+      withGuard(async () => {
+        if (typeof importTargetPreviewBackupFromFile === 'function') await importTargetPreviewBackupFromFile(f);
+      });
+    });
+  }
+
 // Legacy textarea input handling removed – JSONEditor now manages changes.
 // The previous code that listened for 'input' events on the textarea has been deprecated.
 // JSONEditor instance will invoke its onChange callback defined during initialization.
@@ -1445,6 +1597,9 @@ export function setupEventHandlers(injected: any = {}) {
       switchTab(nextTab);
       syncDiffOnboardingVisibility();
       syncMainResultForFeature(nextTab);
+      // 補助タブを選んだら ⋯ その他 ドロップダウンを自動で閉じる
+      const moreFold = getToolDocument().getElementById('u_kusTabMore') as HTMLDetailsElement | null;
+      if (moreFold && moreFold.contains(tab)) moreFold.open = false;
       return;
     }
 
@@ -1507,25 +1662,30 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'clearLauncherFilter') {
       if (ui.launcherSearch) ui.launcherSearch.value = '';
       ui.launcherGroupFilters?.querySelectorAll<HTMLElement>('.chip[data-group]').forEach((btn) => {
-        const active = btn.dataset.group === 'all';
+        const active = btn.dataset.group === 'change';
         btn.classList.toggle('is-active', active);
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
       });
       applyLauncherFilter();
       ui.launcherSearch?.focus();
-      setStatus('機能検索とグループ絞り込みを解除しました');
+      setStatus('変更・反映タブに戻し、機能検索をクリアしました');
       return;
     }
 
     if (act === 'setLauncherGroup') {
-      const group = String(actEl.dataset.group || 'all');
+      const group = String(actEl.dataset.group || 'change');
+      if (group === 'history' && ui.launcherSearch) ui.launcherSearch.value = '';
       ui.launcherGroupFilters?.querySelectorAll<HTMLElement>('.chip[data-group]').forEach((btn) => {
         const active = btn.dataset.group === group;
         btn.classList.toggle('is-active', active);
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        // roving tabindex: アクティブのみ tab order に入れる
+        btn.setAttribute('tabindex', active ? '0' : '-1');
       });
       applyLauncherFilter();
-      setStatus(group === 'all' ? '全機能を表示中です' : `機能を絞り込みました: ${actEl.textContent?.trim() || ''}`);
+      setStatus(`ランチャータブを切り替えました: ${actEl.textContent?.trim() || ''}`);
       return;
     }
     if (act === 'clearDiffFilters') {
@@ -1658,11 +1818,9 @@ export function setupEventHandlers(injected: any = {}) {
     }
     if (act === 'openReflectPreviewEditor') {
       switchTab('reflect', { persist: false });
-      switchSubTab('reflect', 'settings');
-      activateReflectInnerTab('field');
-      const fold = root.querySelector('#u_reflectPreviewEditorFold');
-      fold?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-      setStatus('フィールド設定画面へ移動しました');
+      // openReflectModal は静的インポート済
+      openReflectModal('fieldEditor');
+      setStatus('フィールド設定エディタを開きました');
       return;
     }
     if (act === 'openSectionPreviewEditor') {
@@ -1798,6 +1956,22 @@ export function setupEventHandlers(injected: any = {}) {
     }
     if (act === 'runSettingsExportJson') return withGuard(async () => runSettingsExport('json'));
     if (act === 'runSettingsExportZip') return withGuard(async () => runSettingsExport('zip'));
+    if (act === 'settingsExportLoadToDiff') {
+      const appId = actEl.dataset.appId || '';
+      const side = (actEl.dataset.side === 'target' ? 'target' : 'source') as 'source' | 'target';
+      if (!appId) { setStatus('対象アプリIDが取得できませんでした', true); return; }
+      const ok = loadSettingsExportBundleToDiff(appId, side);
+      if (!ok) { setStatus(`App ${appId} の取得済みバンドルが見つかりません（先に「JSONで一括取得」を実行してください）`, true); return; }
+      // 差分タブへ移動して取り込み済みバンドルを表示（importBundleFromFile と同じ後処理）
+      switchTab('diff');
+      renderResultRows([]);
+      renderBundleState();
+      renderReflectSidebar();
+      renderReflectMainPanel();
+      const sideLabel = side === 'source' ? '比較元' : '比較先';
+      setStatus(`App ${appId} の取得済みJSONを${sideLabel}に読込みました（差分タブで「差分比較」を実行してください）`);
+      return;
+    }
     if (act === 'settingsExportSearchApps') return withGuard(runSettingsExportSearchApps);
     if (act === 'connectionSearchApps') return withGuard(runConnectionSearchApps);
     if (act === 'addConnectionSearchApp') {
@@ -2200,6 +2374,33 @@ export function setupEventHandlers(injected: any = {}) {
       setStatus('差分のあるセクションのみ選択しました');
       return;
     }
+    if (act === 'applyScopePreset') {
+      const preset = actEl.dataset.scopePreset || '';
+      const presetMap: Record<string, string[]> = {
+        safe: ['layoutSettings', 'viewSettings', 'reportSettings', 'customizeSettings', 'categories', 'notifications', 'perRecordNotifications', 'reminderNotifications'],
+        visual: ['layoutSettings', 'viewSettings', 'reportSettings'],
+        permissions: ['appAcl', 'fieldAcl', 'recordPermissions'],
+        customize: ['customizeSettings'],
+        noAcl: SECTION_DEFS.filter((def) => def.put && !['appAcl', 'fieldAcl', 'recordPermissions'].includes(def.key)).map((def) => def.key)
+      };
+      const labels: Record<string, string> = {
+        safe: '安全寄りセット',
+        visual: '画面系セット',
+        permissions: '権限系セット',
+        customize: 'JS/CSSセット',
+        noAcl: '権限除外セット'
+      };
+      const selected = new Set(presetMap[preset] || []);
+      if (!selected.size) return;
+      ui.applyScopes?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((c) => {
+        c.checked = selected.has(c.value);
+      });
+      saveCurrentDialogState();
+      renderReflectSidebar();
+      renderReflectMainPanel();
+      setStatus(`${labels[preset] || 'プリセット'}を選択しました`);
+      return;
+    }
     if (act === 'applyScopeHighRisk') {
       const highRiskSections = new Set(
         (getActualDiffRows(state.lastDiffRows || []) as any[])
@@ -2355,6 +2556,89 @@ export function setupEventHandlers(injected: any = {}) {
       setStatus('反映ノードを全選択しました');
       return;
     }
+    // ヘッダー折りたたみ／展開
+    if (act === 'toggleHeaderCollapse') {
+      const doc = getToolDocument();
+      const root = doc.getElementById('kintone-unified-suite-v2');
+      if (!root) return;
+      const collapsed = root.classList.toggle('header-collapsed');
+      try { (doc.defaultView || window).localStorage.setItem('kus:headerCollapsed', collapsed ? '1' : '0'); } catch (e) { /* ignore */ }
+      const btn = doc.getElementById('u_headerCollapseBtn');
+      if (btn) {
+        btn.textContent = collapsed ? '▼' : '▲';
+        btn.setAttribute('aria-label', collapsed ? 'ヘッダーを展開' : 'ヘッダーを折りたたむ');
+        btn.setAttribute('title', collapsed ? 'ヘッダーを展開' : 'ヘッダーを折りたたむ');
+      }
+      return;
+    }
+    // 差分タブ：ヒーローバーの「⚙ 詳細条件」で「比較条件の調整」フォールドを開閉
+    if (act === 'toggleDiffAdvanced') {
+      const doc = getToolDocument();
+      const adv = doc.getElementById('u_diffAdvancedFold') as HTMLDetailsElement | null;
+      if (adv) {
+        adv.open = !adv.open;
+        if (adv.open) adv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setStatus(adv.open ? '比較条件の調整を開きました' : '比較条件の調整を折り畳みました');
+      }
+      return;
+    }
+    // S2: セクション分布バーから差分一覧へ絞り込みジャンプ
+    if (act === 'filterDiffBySectionFromDist') {
+      const secKey = String(actEl.dataset.section || '');
+      switchTab('diff');
+      openDiffReviewFold({ scroll: true });
+      if (ui.diffFilterSection) ui.diffFilterSection.value = secKey;
+      state.diffFilterSection = secKey;
+      renderDiffActiveFilters();
+      renderResultRows(state.lastDiffRows);
+      const lbl = SECTION_DEFS.find((d) => d.key === secKey)?.label || secKey;
+      setStatus(`差分一覧を「${lbl}」で絞り込みました`);
+      return;
+    }
+    // U4: ノードモードの一括選択ツールバー
+    if (act === 'reflectBulkSelect') {
+      const kind = String(actEl.dataset.bulk || '');
+      const allRows = state.reflectRows || [];
+      const visibleIds = new Set(getVisibleReflectNodeIds());
+      pushReflectUndo();
+      if (kind === 'all') {
+        visibleIds.forEach((id) => state.reflectSelectedIds.add(id));
+        setStatus(`表示中の全候補を選択しました (${visibleIds.size}件)`);
+      } else if (kind === 'high') {
+        // 表示中の他重要度はいったん解除し、高のみへ絞る（「高のみ」というラベル準拠）
+        visibleIds.forEach((id) => state.reflectSelectedIds.delete(id));
+        const ids = allRows
+          .filter((r) => visibleIds.has(r._id) && String(r.severity || 'low').toLowerCase() === 'high')
+          .map((r) => r._id);
+        ids.forEach((id) => state.reflectSelectedIds.add(id));
+        setStatus(`高重要度のみ選択しました (${ids.length}件)`);
+      } else if (kind === 'medium') {
+        // 表示中の他重要度を解除して「中以下」のみへ絞る
+        visibleIds.forEach((id) => state.reflectSelectedIds.delete(id));
+        const ids = allRows
+          .filter((r) => visibleIds.has(r._id) && ['medium', 'low'].includes(String(r.severity || 'low').toLowerCase()))
+          .map((r) => r._id);
+        ids.forEach((id) => state.reflectSelectedIds.add(id));
+        setStatus(`中以下のみ選択しました (${ids.length}件)`);
+      } else if (kind === 'renames') {
+        // 改名候補のみへ絞る（既存選択は解除）
+        visibleIds.forEach((id) => state.reflectSelectedIds.delete(id));
+        const ids = allRows.filter((r) => !!r.renameCandidate && visibleIds.has(r._id)).map((r) => r._id);
+        ids.forEach((id) => state.reflectSelectedIds.add(id));
+        setStatus(`改名候補のみ選択しました (${ids.length}件)`);
+      } else if (kind === 'invert') {
+        visibleIds.forEach((id) => {
+          if (state.reflectSelectedIds.has(id)) state.reflectSelectedIds.delete(id);
+          else state.reflectSelectedIds.add(id);
+        });
+        setStatus(`表示中の選択を反転しました`);
+      } else if (kind === 'clear') {
+        state.reflectSelectedIds = new Set();
+        setStatus('全選択解除しました');
+      }
+      renderReflectNodeList();
+      return;
+    }
     if (act === 'clearReflectNodes') {
       pushReflectUndo();
       state.reflectSelectedIds = new Set();
@@ -2492,12 +2776,59 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
 
+    // ----- Reflect modal open/close (新シンプル化UI) -----
+    if (act === 'openReflectNodeModal') {
+      // ノードモードへ切替してから差分候補を準備
+      const nodeChk = ui.nodeMode as HTMLInputElement | undefined;
+      if (nodeChk) nodeChk.checked = true;
+      saveCurrentDialogState();
+      renderReflectModeUi();
+      if (state.lastDiffRows && state.lastDiffRows.length && !state.reflectRows.length) {
+        try { loadReflectRowsFromLastDiff(); } catch (_e) {}
+      }
+      renderReflectNodeList();
+      // openReflectModal は静的インポート済
+      openReflectModal('node');
+      return;
+    }
+    if (act === 'openReflectJsonModal') {
+      // openReflectModal は静的インポート済
+      openReflectModal('json');
+      try { if (typeof populatePatchJsonFromCurrentDiff === 'function') populatePatchJsonFromCurrentDiff({ silent: true }); } catch (_e) {}
+      return;
+    }
+    if (act === 'openReflectHistoryModal') {
+      // openReflectModal は静的インポート済
+      openReflectModal('history');
+      return;
+    }
+    if (act === 'openReflectReportModal') {
+      // openReflectModal は静的インポート済
+      openReflectModal('report');
+      return;
+    }
+    if (act === 'openReflectSupportModal') {
+      // openReflectModal は静的インポート済
+      openReflectModal('support');
+      return;
+    }
+    if (act === 'closeReflectModal') {
+      const name = actEl.dataset.modal || '';
+      closeReflectModal(name);
+      return;
+    }
+
     // ----- Reflect apply actions -----
     if (act === 'previewApplyPlan' && typeof runPreviewApplyPlan === 'function') {
       return withGuard(async () => {
         await runPreviewApplyPlan();
         markReflectApplyChecks(['plan']);
         saveWorkHistorySnapshot('plan', { label: 'プラン確認後', silent: true });
+        // プラン作成後、確認モーダルを開く
+        try {
+          // openReflectModal は静的インポート済
+          openReflectModal('plan');
+        } catch (_e) {}
       });
     }
     if (act === 'markReflectTargetConfirmed') {
@@ -2507,6 +2838,11 @@ export function setupEventHandlers(injected: any = {}) {
     }
     if (act === 'exportDryRunPlan' && typeof runExportDryRunPlan === 'function') return withGuard(runExportDryRunPlan);
     if (act === 'backupTargetPreview' && typeof runBackupTargetPreview === 'function') return withGuard(runBackupTargetPreview);
+    if (act === 'importTargetPreviewBackupFile') {
+      const input = getToolDocument().getElementById('u_targetPreviewBackupFileInput') as HTMLInputElement | null;
+      if (input) { input.value = ''; input.click(); }
+      return;
+    }
     if (act === 'restoreTargetPreviewBackup' && typeof runRestoreTargetPreviewBackup === 'function') return withGuard(runRestoreTargetPreviewBackup);
     if (act === 'applyPreview' && typeof runApplyPreview === 'function') {
       if (!ensureReflectApplyChecklistReady()) return;

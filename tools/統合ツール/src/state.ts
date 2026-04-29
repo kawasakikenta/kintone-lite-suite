@@ -84,11 +84,16 @@ export interface AppState {
   importedTargetBundle: any;
   importedSourceName: string;
   importedTargetName: string;
+  /** 設定一括取得タブで取得したバンドル群を一時保持。差分タブへ「比較元/比較先として読込」する動線で参照する */
+  lastSettingsExportBundles: any[];
   patchJsonPanelOpen: boolean;
   importedPatchPayload: any;
   guidedTourActive: boolean;
   guidedTourIndex: number;
   running: boolean;
+  runningStartedAt: number | null;
+  runningTaskLabel: string;
+  runningWatchdogId: any;
   lastResultByTab: Record<string, any>;
   // 追加項目: 各タブから動的に書き込まれるフィールド (loose)
   [key: string]: any;
@@ -157,11 +162,15 @@ export const state: AppState = {
   importedTargetBundle: null,
   importedSourceName: '',
   importedTargetName: '',
+  lastSettingsExportBundles: [],
   patchJsonPanelOpen: false,
   importedPatchPayload: null,
   guidedTourActive: false,
   guidedTourIndex: 0,
   running: false,
+  runningStartedAt: null,
+  runningTaskLabel: '',
+  runningWatchdogId: null,
   lastResultByTab: {}
 };
 

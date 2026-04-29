@@ -25,6 +25,7 @@ import { renderResultRows, renderDiffFilterOptions } from '../diff/export.js';
 import { commonParams, saveCurrentDialogState, currentDiffSignature } from './diff.js';
 import { getPreviewCompareStatusPrefix } from './preview-compare.js';
 import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
+import { resolveApplyScopes } from '../reflect/helpers.js';
 
 // ---------------------------------------------------------------------------
 // Reflect state snapshot / undo / redo
@@ -114,7 +115,19 @@ export function loadReflectRowsFromLastDiff() {
     .filter((r) => putKeys.has(r.sectionKey))
     .map((r, idx) => ({ ...r, _id: `n${idx}` }));
   state.reflectRows = rows;
-  state.reflectSelectedIds = new Set(rows.map((r) => r._id));
+  // 初期選択は安全側に倒す。差分が多いと UI 上「選択 N件 / N件」になり全件反映の事故を招くので、
+  // 件数が多い場合は高重要度のみ事前選択し、ユーザーが「全て」「中以下」で広げる導線にする。
+  // 件数が少ない（=20件以下）時は従来どおり全件選択。
+  const FULL_PRESELECT_THRESHOLD = 20;
+  if (rows.length <= FULL_PRESELECT_THRESHOLD) {
+    state.reflectSelectedIds = new Set(rows.map((r) => r._id));
+  } else {
+    const highIds = rows
+      .filter((r) => String(r.severity || 'low').toLowerCase() === 'high')
+      .map((r) => r._id);
+    // 「高」が 0 件なら全件にフォールバック（何も選ばれていない状態を避ける）
+    state.reflectSelectedIds = new Set(highIds.length ? highIds : rows.map((r) => r._id));
+  }
   state.reflectNodeModes = {};
   rows.forEach((r) => { state.reflectNodeModes[r._id] = 'src'; });
   state.reflectUndoStack = [];
@@ -131,7 +144,12 @@ export function loadReflectRowsFromLastDiff() {
   }
   renderReflectNodeList();
   renderReflectMainPanel();
-  setStatus(`差分ノードを読込: ${rows.length}件`);
+  const selCount = state.reflectSelectedIds.size;
+  if (selCount === rows.length) {
+    setStatus(`差分ノードを読込: ${rows.length}件 (全件選択済み)`);
+  } else {
+    setStatus(`差分ノードを読込: ${rows.length}件 (安全のため「高」${selCount}件を初期選択 / 「全て (${rows.length})」で広げられます)`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +298,6 @@ export function getEffectiveReflectScopeInfo() {
     return { baseScopes, effectiveScopes: [...baseScopes], warning: '' };
   }
   try {
-    const { resolveApplyScopes } = require('./diff.js');
     return {
       baseScopes,
       effectiveScopes: resolveApplyScopes(baseScopes),
@@ -290,7 +307,7 @@ export function getEffectiveReflectScopeInfo() {
     return {
       baseScopes,
       effectiveScopes: [...baseScopes],
-      warning: e.message || String(e)
+      warning: (e && e.message) || String(e)
     };
   }
 }

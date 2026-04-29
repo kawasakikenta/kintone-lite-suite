@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>kintone test harness</title>
+<style>
+  body{margin:0;font-family:"Noto Sans JP",sans-serif;background:#e2e8f0;color:#0f172a}
+  #fake-kintone-banner{position:fixed;bottom:8px;left:8px;font-size:11px;color:#64748b;background:#fff;padding:4px 8px;border-radius:6px;border:1px solid #cbd5e1;z-index:1}
+</style>
+</head>
+<body>
+<div id="fake-kintone-banner">mock kintone harness</div>
+<script>
+  // Minimal mock of kintone global. No real API calls allowed.
+  (function () {
+    const mock = {
+      _calls: [],
+      api(path, method, params) {
+        mock._calls.push({ path, method, params });
+        // Return canned responses based on path
+        if (/\/app\/form\/fields\.json/.test(path)) {
+          return Promise.resolve({
+            properties: {
+              field_a: { code: 'field_a', type: 'SINGLE_LINE_TEXT', label: '名前', required: true },
+              field_b: { code: 'field_b', type: 'NUMBER', label: '金額', required: false },
+              field_c: { code: 'field_c', type: 'DROP_DOWN', label: '区分', options: { '甲': { label:'甲', index:'0'}, '乙':{label:'乙', index:'1'} } }
+            },
+            revision: '5'
+          });
+        }
+        if (/\/app\.json/.test(path)) {
+          return Promise.resolve({ appId: params.id || '1', name: 'デモアプリ', code: 'DEMO', description: 'mock', spaceId: null, threadId: null });
+        }
+        if (/\/app\/settings\.json/.test(path)) {
+          return Promise.resolve({ name: 'デモアプリ', description: '', icon: { type: 'PRESET', key: 'APP62' }, theme: 'WHITE', revision: '5' });
+        }
+        if (/\/app\/form\/layout\.json/.test(path)) {
+          return Promise.resolve({ layout: [
+            { type: 'ROW', fields: [{ type: 'SINGLE_LINE_TEXT', code: 'field_a' }] },
+            { type: 'ROW', fields: [{ type: 'NUMBER', code: 'field_b' }] }
+          ], revision: '5' });
+        }
+        if (/\/app\/views\.json/.test(path)) {
+          return Promise.resolve({ views: {
+            '一覧': { id: '11', name: '一覧', type: 'LIST', fields: ['field_a', 'field_b'], filterCond: '', sort: '', index: '0' },
+            '集計': { id: '12', name: '集計', type: 'CALENDAR', date: 'field_b', title: 'field_a', index: '1' }
+          }, revision: '5' });
+        }
+        if (/\/app\/reports\.json/.test(path)) {
+          return Promise.resolve({ reports: {}, revision: '5' });
+        }
+        if (/\/form\.json/.test(path)) {
+          return Promise.resolve({ properties: [] });
+        }
+        if (/\/app\/status\.json/.test(path)) {
+          return Promise.resolve({ enable: true, states: { '未処理': { name: '未処理', index: '0', assignee: null }, '処理中': { name: '処理中', index: '1', assignee: null } }, actions: [], revision: '5' });
+        }
+        if (/\/app\/plugins\.json/.test(path)) {
+          return Promise.resolve({ plugins: [] });
+        }
+        if (/\/app\/customize\.json/.test(path)) {
+          return Promise.resolve({ desktop: { js: [], css: [] }, mobile: { js: [], css: [] }, scope: 'ALL' });
+        }
+        if (/\/app\/actions\.json/.test(path)) {
+          return Promise.resolve({ actions: [], revision: '5' });
+        }
+        if (/\/app\/acl\.json/.test(path)) {
+          return Promise.resolve({ rights: [{ entity: { type: 'USER', code: 'admin' }, appEditable: true, recordViewable: true, recordAddable: true, recordEditable: true, recordDeletable: true, recordImportable: true, recordExportable: true }], revision: '5' });
+        }
+        if (/\/field\/acl\.json/.test(path)) {
+          return Promise.resolve({ rights: [], revision: '5' });
+        }
+        if (/\/record\/acl\.json/.test(path)) {
+          return Promise.resolve({ rights: [], revision: '5' });
+        }
+        if (/\/app\/notifications\/general\.json/.test(path)) {
+          return Promise.resolve({ notifications: [], notifyToCommenter: true, revision: '5' });
+        }
+        if (/\/app\/notifications\/perRecord\.json/.test(path)) {
+          return Promise.resolve({ notifications: [], revision: '5' });
+        }
+        if (/\/app\/notifications\/reminder\.json/.test(path)) {
+          return Promise.resolve({ notifications: [], revision: '5' });
+        }
+        if (/\/app\/categories\.json/.test(path)) {
+          return Promise.resolve({ enable: false, categories: {}, revision: '5' });
+        }
+        return Promise.resolve({});
+      }
+    };
+    window.kintone = mock;
+  })();
+</script>
+</body>
+</html>

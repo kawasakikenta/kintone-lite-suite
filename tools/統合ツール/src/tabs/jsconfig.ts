@@ -105,12 +105,15 @@ export async function runApplyJsConfig() {
     return;
   }
   const prefix = buildApiPrefix(c.target.guestId, true);
-  setStatus('JS/CSS設定を反映中...');
+  setStatus('JS/CSS設定をプレビューへ反映中...');
   await apiPut(prefix, '/app/customize.json', body);
-  const logs = [`OK JS/CSS設定反映（アプリ: ${c.target.appId}）`];
+  const logs = [
+    `OK JS/CSS設定をプレビューへ反映（アプリ: ${c.target.appId}）`,
+    '※ 運用環境に反映するにはアプリ設定画面から「アプリを更新」（デプロイ）を実行してください。'
+  ];
 
   ui.result.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join('\n'))}</pre>`;
-  setStatus('JS/CSS設定反映完了');
+  setStatus('JS/CSS設定を「プレビュー」へ反映しました（運用反映には別途デプロイが必要）');
 }
 
 export async function runBatchJsConfigDownload() {
@@ -166,13 +169,15 @@ export async function runBatchJsConfigDownload() {
       if (blob) {
         appFolder.file(file.file.name, blob);
         hasFiles = true;
+      } else {
+        failedCount++;
       }
     }
     await new Promise(r => setTimeout(r, 100));
   }
 
   if (!hasFiles) {
-    setStatus(`対象ファイルがありません。(403エラー: ${failedCount}件スキップ)`, true);
+    setStatus(`対象ファイルがありません。(取得失敗: ${failedCount}件スキップ)`, true);
     return;
   }
 
