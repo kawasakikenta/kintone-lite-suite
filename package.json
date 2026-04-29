@@ -14,7 +14,9 @@
     "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs",
     "build:field-transfer": "npm --prefix plugins/FieldTransfer run build",
     "test:field-transfer": "npm --prefix plugins/FieldTransfer test",
-    "package:field-transfer": "npm run build:field-transfer && kintone-plugin-packer --ppk plugins/FieldTransfer.ppk plugins/FieldTransfer --out plugins/FieldTransfer.zip"
+    "package:field-transfer": "npm run build:field-transfer && kintone-plugin-packer --ppk plugins/FieldTransfer.ppk plugins/FieldTransfer --out plugins/FieldTransfer.zip",
+    "build:simple-task-board": "node plugins/SimpleTaskBoard/build-desktop.js",
+    "package:simple-task-board": "npm run build:simple-task-board && kintone-plugin-packer --ppk plugins/SimpleTaskBoard.ppk plugins/SimpleTaskBoard --out plugins/SimpleTaskBoard.zip"
   },
   "repository": {
     "type": "git",
