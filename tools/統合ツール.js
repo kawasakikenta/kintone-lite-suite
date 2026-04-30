@@ -13270,10 +13270,10 @@ ${lines.join("\n")}
     for (let i = 0; i < list.length; i++) {
       const req = list[i];
       try {
+        assertAllowsMutatingRestCall(prefix, req.path, req.method);
         let _err;
         for (let _r = 0; _r <= 2; _r++) {
           try {
-            assertAllowsMutatingRestCall(prefix, req.path, req.method);
             await kintone.api(`${prefix}${req.path}`, req.method, req.body);
             _err = null;
             break;
@@ -13913,22 +13913,24 @@ ${lines.join("\n")}
     const previousModes = {};
     let patched = deepClone(sectionObj);
     let appliedCount = 0;
-    const normalizedRows = sortRowsForPatch(rows, secKey);
+    rows.forEach((row) => {
+      previousModes[row._id] = state.reflectNodeModes[row._id];
+      state.reflectNodeModes[row._id] = "src";
+    });
     try {
+      const normalizedRows = sortRowsForPatch(rows, secKey);
       normalizedRows.forEach((row) => {
-        previousModes[row._id] = state.reflectNodeModes[row._id];
-        state.reflectNodeModes[row._id] = "src";
         const result = applyDiffRowToSection(patched, row, secKey);
         patched = result.section;
         if (result.applied) appliedCount += 1;
       });
+      return { patched, appliedCount, rows: normalizedRows };
     } finally {
-      normalizedRows.forEach((row) => {
+      rows.forEach((row) => {
         if (previousModes[row._id] == null) delete state.reflectNodeModes[row._id];
         else state.reflectNodeModes[row._id] = previousModes[row._id];
       });
     }
-    return { patched, appliedCount, rows: normalizedRows };
   }
   async function runApplyPatchJson() {
     const c = commonParams();
@@ -15528,7 +15530,7 @@ ${lines.join("\n")}
   }
   async function resolveBundle(side, params, scopes, onProgress, options = {}) {
     const imported = side === "source" ? state.importedSourceBundle : state.importedTargetBundle;
-    if (imported && !options?.skipImported) return imported;
+    if (imported && !options?.skipImported) return pickBundleSections(imported, scopes);
     return fetchBundle({ ...params, sections: scopes, onProgress });
   }
   async function runDiff() {
@@ -29205,7 +29207,6 @@ ${lines.join("\n")}
     } else if (assign === "settingsExport") {
       if (searchGuestId && ui.settingsExportGuest && !ui.settingsExportGuest.value.trim()) ui.settingsExportGuest.value = searchGuestId;
       addAppIdToSettingsExport(id, appName);
-      return;
     }
     saveCurrentDialogState2();
     updateConnectionStepIndicators();
@@ -29613,14 +29614,16 @@ ${lines.join("\n")}
         if (state.guidedTourActive) scheduleGuidedTourLayout();
       }, { passive: true });
     }
-    let guidedTourWindowResizeHandler = null;
-    if (!guidedTourWindowResizeHandler) {
-      guidedTourWindowResizeHandler = () => {
-        fitDialogToViewport({ persist: false });
-        if (state.guidedTourActive) scheduleGuidedTourLayout();
-      };
-      getToolWindow().addEventListener("resize", guidedTourWindowResizeHandler);
+    const tw = getToolWindow();
+    if (tw.__KUS_RESIZE_HANDLER__) {
+      tw.removeEventListener("resize", tw.__KUS_RESIZE_HANDLER__);
     }
+    const guidedTourWindowResizeHandler = () => {
+      fitDialogToViewport({ persist: false });
+      if (state.guidedTourActive) scheduleGuidedTourLayout();
+    };
+    tw.__KUS_RESIZE_HANDLER__ = guidedTourWindowResizeHandler;
+    tw.addEventListener("resize", guidedTourWindowResizeHandler);
     ui.applyDiffOnly.addEventListener("change", () => {
       saveCurrentDialogState2();
       resetReflectApplyChecks(["plan"]);

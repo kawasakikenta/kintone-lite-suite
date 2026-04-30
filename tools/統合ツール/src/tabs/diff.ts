@@ -14,7 +14,7 @@ import {
   buildAppFilenameLabel,
   extractAppNameFromBundle
 } from '../utils.js';
-import { buildApiPrefix, fetchBundle, ensureBundleShape } from '../api.js';
+import { buildApiPrefix, fetchBundle, ensureBundleShape, pickBundleSections } from '../api.js';
 import {
   computeDiffRows,
   getActualDiffRows,
@@ -214,7 +214,7 @@ export async function importBundleFromFile(side, file) {
 
 async function resolveBundle(side: 'source' | 'target', params: any, scopes: string[], onProgress?: (p: number, l: string) => void, options: { skipImported?: boolean } = {}) {
   const imported = side === 'source' ? state.importedSourceBundle : state.importedTargetBundle;
-  if (imported && !(options?.skipImported)) return imported;
+  if (imported && !(options?.skipImported)) return pickBundleSections(imported, scopes);
   return fetchBundle({ ...params, sections: scopes, onProgress });
 }
 

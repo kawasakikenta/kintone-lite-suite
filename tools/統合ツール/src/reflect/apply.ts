@@ -387,10 +387,11 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError) {
   for (let i = 0; i < list.length; i++) {
     const req = list[i];
     try {
+      // Permission check is synchronous and not retriable — fail fast.
+      assertAllowsMutatingRestCall(prefix, req.path, req.method);
       let _err;
       for (let _r = 0; _r <= 2; _r++) {
         try {
-          assertAllowsMutatingRestCall(prefix, req.path, req.method);
           await (kintone as any).api(`${prefix}${req.path}`, req.method, req.body);
           _err = null;
           break;
@@ -1100,22 +1101,27 @@ function applyPatchRowsToSection(sectionObj, rows, secKey) {
   const previousModes = {};
   let patched = deepClone(sectionObj);
   let appliedCount = 0;
-  const normalizedRows = sortRowsForPatch(rows, secKey);
+  // 1) Force 'src' mode on every row first so that reflectRowDesiredValue
+  //    inside sortRowsForPatch sees the patched mode (delete vs set classification).
+  rows.forEach((row) => {
+    previousModes[row._id] = state.reflectNodeModes[row._id];
+    state.reflectNodeModes[row._id] = 'src';
+  });
   try {
+    // 2) Sort under the forced-src view.
+    const normalizedRows = sortRowsForPatch(rows, secKey);
     normalizedRows.forEach((row) => {
-      previousModes[row._id] = state.reflectNodeModes[row._id];
-      state.reflectNodeModes[row._id] = 'src';
       const result = applyDiffRowToSection(patched, row, secKey);
       patched = result.section;
       if (result.applied) appliedCount += 1;
     });
+    return { patched, appliedCount, rows: normalizedRows };
   } finally {
-    normalizedRows.forEach((row) => {
+    rows.forEach((row) => {
       if (previousModes[row._id] == null) delete state.reflectNodeModes[row._id];
       else state.reflectNodeModes[row._id] = previousModes[row._id];
     });
   }
-  return { patched, appliedCount, rows: normalizedRows };
 }
 
 export async function runApplyPatchJson() {

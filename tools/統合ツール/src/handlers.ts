@@ -702,14 +702,16 @@ export function setupEventHandlers(injected: any = {}) {
     }, { passive: true });
   }
 
-  let guidedTourWindowResizeHandler = null;
-  if (!guidedTourWindowResizeHandler) {
-    guidedTourWindowResizeHandler = () => {
-      fitDialogToViewport({ persist: false });
-      if (state.guidedTourActive) scheduleGuidedTourLayout();
-    };
-    getToolWindow().addEventListener('resize', guidedTourWindowResizeHandler);
+  const tw = getToolWindow() as Window & { __KUS_RESIZE_HANDLER__?: (() => void) | null };
+  if (tw.__KUS_RESIZE_HANDLER__) {
+    tw.removeEventListener('resize', tw.__KUS_RESIZE_HANDLER__);
   }
+  const guidedTourWindowResizeHandler = () => {
+    fitDialogToViewport({ persist: false });
+    if (state.guidedTourActive) scheduleGuidedTourLayout();
+  };
+  tw.__KUS_RESIZE_HANDLER__ = guidedTourWindowResizeHandler;
+  tw.addEventListener('resize', guidedTourWindowResizeHandler);
 
   // -------------------------------------------------------------------
   // Individual element change listeners

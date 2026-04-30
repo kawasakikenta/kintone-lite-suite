@@ -198,7 +198,6 @@ export function addConnectionSearchApp(appId: string, appName: string): void {
   } else if (assign === 'settingsExport') {
     if (searchGuestId && ui.settingsExportGuest && !ui.settingsExportGuest.value.trim()) ui.settingsExportGuest.value = searchGuestId;
     addAppIdToSettingsExport(id, appName);
-    return;
   }
   saveCurrentDialogState();
   updateConnectionStepIndicators();
