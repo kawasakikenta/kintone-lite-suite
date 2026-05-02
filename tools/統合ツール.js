@@ -8248,9 +8248,11 @@ ${body}`;
       favorites: "お気に入り行のみ"
     };
     if (!total && !issues && !state.lastDiffAt) {
-      ui.diffSelectionState.textContent = "差分未実行";
+      ui.diffSelectionState.textContent = "⏳ まだ差分を実行していません";
+      ui.diffSelectionState.classList.add("is-empty-state");
       return;
     }
+    ui.diffSelectionState.classList.remove("is-empty-state");
     ui.diffSelectionState.textContent = `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / ${reviewSummary} / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || "全件（比較結果）"} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(", ") || "-"}`;
   }
   function renderDiffWarningBox() {
@@ -9993,9 +9995,11 @@ ${body}`;
     const issues = (state.lastFetchIssues || []).length;
     const normalization = getActiveDiffNormalizationLabels();
     if (!total && !issues && !state.lastDiffAt) {
-      ui3.diffSelectionState.textContent = "差分未実行";
+      ui3.diffSelectionState.textContent = "⏳ まだ差分を実行していません";
+      ui3.diffSelectionState.classList.add("is-empty-state");
       return;
     }
+    ui3.diffSelectionState.classList.remove("is-empty-state");
     ui3.diffSelectionState.textContent = `選択 ${selected}/${total}件 ・ 表示 ${rendered}件 ・ API失敗 ${issues}件 ・ 出力 ${resolveDiffExportMode2() === "all" ? "全差分" : resolveDiffExportMode2() === "selected" ? "選択差分" : resolveDiffExportMode2() === "visible" ? "現在表示中" : "全差分"} ・ 内容 ${getDiffExportContentLabel2(resolveDiffExportContentMode2())} ・ 正規化 ${normalization.join(", ") || "-"}`;
   }
   function renderDiffWarningBox2() {
@@ -18170,7 +18174,7 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .hs{font-size:11px;opacity:.92}
 #kintone-unified-suite-v2 .tool-ver{display:inline-block;margin-top:3px;font-size:10px;opacity:.78;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
 #kintone-unified-suite-v2 .tool-ver:hover{opacity:1}
-#kintone-unified-suite-v2 .h-actions{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap;cursor:default}
+#kintone-unified-suite-v2 .h-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;cursor:default}
 #kintone-unified-suite-v2 .x{border:0;background:rgba(255,255,255,.22);color:#fff;border-radius:6px;padding:6px 10px;cursor:pointer;transition:background-color .16s ease,transform .16s ease,box-shadow .16s ease}
 #kintone-unified-suite-v2 .x:hover{background:rgba(255,255,255,.3);box-shadow:0 1px 6px rgba(15,23,42,.18)}
 #kintone-unified-suite-v2 .x:active{transform:translateY(1px)}
@@ -18380,10 +18384,10 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .kus-tab-bar .tab-group-lbl{display:none}
 /* ⋯ その他ドロップダウン */
 #kintone-unified-suite-v2 .kus-tab-more{position:relative;margin-left:auto;flex-shrink:0}
-#kintone-unified-suite-v2 .kus-tab-more__summary{cursor:pointer;list-style:none;padding:3px 12px;font-size:11px;font-weight:700;color:#475569;background:#fff;border:1px solid #cbd5e1;border-radius:4px;transition:background-color .15s}
+#kintone-unified-suite-v2 .kus-tab-more__summary{cursor:pointer;list-style:none;padding:4px 14px;font-size:11px;font-weight:700;color:#1e3a8a;background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;transition:background-color .15s,border-color .15s,box-shadow .15s;box-shadow:0 1px 2px rgba(15,23,42,.06)}
 #kintone-unified-suite-v2 .kus-tab-more__summary::-webkit-details-marker{display:none}
-#kintone-unified-suite-v2 .kus-tab-more__summary:hover{background:#f1f5f9}
-#kintone-unified-suite-v2 .kus-tab-more[open] > .kus-tab-more__summary{background:#dbeafe;color:#1e40af;border-color:#93c5fd}
+#kintone-unified-suite-v2 .kus-tab-more__summary:hover{background:#dbeafe;border-color:#60a5fa;box-shadow:0 2px 6px rgba(37,99,235,.18)}
+#kintone-unified-suite-v2 .kus-tab-more[open] > .kus-tab-more__summary{background:#2563eb;color:#fff;border-color:#1d4ed8;box-shadow:0 2px 8px rgba(37,99,235,.3)}
 #kintone-unified-suite-v2 .kus-tab-bar{overflow:visible}
 /* ドロップダウンは position:fixed でビューポート基準。位置は JS が summary 直下に設定 */
 #kintone-unified-suite-v2 .kus-tab-more__body{position:fixed;z-index:9999;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 8px 24px rgba(15,23,42,.18);padding:8px;display:flex;gap:10px;min-width:360px;max-width:480px}
@@ -19500,6 +19504,9 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .diff-fold-title{font-size:12px;font-weight:800;color:#0f172a}
 #kintone-unified-suite-v2 .diff-fold-sub{
   font-size:10px;font-weight:600;color:#64748b;flex:1 1 100%;margin-left:20px;line-height:1.45;
+}
+#kintone-unified-suite-v2 .diff-fold-sub.is-empty-state{
+  display:inline-block;padding:2px 10px;border-radius:999px;font-weight:700;color:#92400e;background:#fef3c7;border:1px solid #fde68a;
 }
 @media (min-width:560px){
   #kintone-unified-suite-v2 .diff-fold-sub{flex:1 1 auto;margin-left:0;max-width:48ch}
@@ -23557,7 +23564,7 @@ ${lines.join("\n")}
               <details class="diff-fold diff-fold--review" id="u_diffReviewFold">
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">差分結果の整理・出力</span>
-                  <span class="diff-fold-sub" id="u_diffSelectionState">差分未実行</span>
+                  <span class="diff-fold-sub is-empty-state" id="u_diffSelectionState">⏳ まだ差分を実行していません</span>
                 </summary>
                 <div class="diff-fold-body diff-review-body">
                   <!-- 高優先：必須フィルタ + 検索（横1行） -->
@@ -23715,7 +23722,7 @@ ${lines.join("\n")}
                   type="search"
                   id="u_launcherSearch"
                   class="launcher-search-input"
-                  placeholder="このタブ内を検索（例: 差分 / レコード / 設計書）"
+                  placeholder="🔍 機能を検索  (例: 差分 / レコード / 設計書)"
                   autocomplete="off"
                   aria-label="機能検索">
                 <button type="button" class="btn sub launcher-clear-btn" data-act="clearLauncherFilter">クリア</button>

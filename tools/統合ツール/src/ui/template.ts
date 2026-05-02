@@ -336,7 +336,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <details class="diff-fold diff-fold--review" id="u_diffReviewFold">
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">差分結果の整理・出力</span>
-                  <span class="diff-fold-sub" id="u_diffSelectionState">差分未実行</span>
+                  <span class="diff-fold-sub is-empty-state" id="u_diffSelectionState">⏳ まだ差分を実行していません</span>
                 </summary>
                 <div class="diff-fold-body diff-review-body">
                   <!-- 高優先：必須フィルタ + 検索（横1行） -->
@@ -494,7 +494,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   type="search"
                   id="u_launcherSearch"
                   class="launcher-search-input"
-                  placeholder="このタブ内を検索（例: 差分 / レコード / 設計書）"
+                  placeholder="🔍 機能を検索  (例: 差分 / レコード / 設計書)"
                   autocomplete="off"
                   aria-label="機能検索">
                 <button type="button" class="btn sub launcher-clear-btn" data-act="clearLauncherFilter">クリア</button>

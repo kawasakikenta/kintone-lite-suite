@@ -4437,9 +4437,11 @@ export function renderDiffSelectionState() {
     favorites: 'お気に入り行のみ'
   };
   if (!total && !issues && !state.lastDiffAt) {
-    ui.diffSelectionState.textContent = '差分未実行';
+    ui.diffSelectionState.textContent = '⏳ まだ差分を実行していません';
+    ui.diffSelectionState.classList.add('is-empty-state');
     return;
   }
+  ui.diffSelectionState.classList.remove('is-empty-state');
   ui.diffSelectionState.textContent =
     `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / ${reviewSummary} / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || '全件（比較結果）'} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(', ') || '-'}`;
 }

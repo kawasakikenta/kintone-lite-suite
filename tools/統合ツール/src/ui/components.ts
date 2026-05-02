@@ -595,9 +595,11 @@ export function renderDiffSelectionState() {
   const issues = (state.lastFetchIssues || []).length;
   const normalization = getActiveDiffNormalizationLabels();
   if (!total && !issues && !state.lastDiffAt) {
-    ui.diffSelectionState.textContent = '差分未実行';
+    ui.diffSelectionState.textContent = '⏳ まだ差分を実行していません';
+    ui.diffSelectionState.classList.add('is-empty-state');
     return;
   }
+  ui.diffSelectionState.classList.remove('is-empty-state');
   ui.diffSelectionState.textContent =
     `選択 ${selected}/${total}件 ・ 表示 ${rendered}件 ・ API失敗 ${issues}件 ・ 出力 ${resolveDiffExportMode() === 'all' ? '全差分' : resolveDiffExportMode() === 'selected' ? '選択差分' : resolveDiffExportMode() === 'visible' ? '現在表示中' : '全差分'} ・ 内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} ・ 正規化 ${normalization.join(', ') || '-'}`;
 }
