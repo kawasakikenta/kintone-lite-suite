@@ -19509,7 +19509,13 @@ ${lines.join("\n")}
   display:inline-block;padding:2px 10px;border-radius:999px;font-weight:700;color:#92400e;background:#fef3c7;border:1px solid #fde68a;
 }
 @media (min-width:560px){
-  #kintone-unified-suite-v2 .diff-fold-sub{flex:1 1 auto;margin-left:0;max-width:48ch}
+  #kintone-unified-suite-v2 .diff-fold-sub{flex:1 1 auto;margin-left:0;max-width:none}
+}
+/* 状態サブテキストはタイトル行に収めて 1〜2 行で完結させる。長すぎる時は省略表示にする */
+#kintone-unified-suite-v2 .diff-fold-summary > .diff-fold-sub:not(.is-empty-state){
+  font-size:11px;color:#475569;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;
+  word-break:keep-all;line-height:1.4;
 }
 #kintone-unified-suite-v2 .diff-fold-body{padding:10px 12px 12px;background:#fff}
 #kintone-unified-suite-v2 .diff-scope-chips{
@@ -29403,11 +29409,11 @@ ${lines.join("\n")}
     function renderLauncherActiveFilters(group, searchText) {
       if (!ui.launcherActiveFilters) return;
       const chips = [];
-      if (group) {
-        const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"] .launcher-tab-btn__label`)?.textContent?.trim() || ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim() || group;
-        chips.push(`<span class="chip chip-active-filter">タブ: ${esc(groupLabel)}</span>`);
-      }
       if (searchText) {
+        if (group) {
+          const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"] .launcher-tab-btn__label`)?.textContent?.trim() || ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim() || group;
+          chips.push(`<span class="chip chip-active-filter">タブ: ${esc(groupLabel)}</span>`);
+        }
         chips.push(`<span class="chip chip-active-filter">検索: ${esc(searchText)}</span>`);
       }
       ui.launcherActiveFilters.innerHTML = chips.join("");

@@ -465,13 +465,15 @@ export function setupEventHandlers(injected: any = {}) {
   function renderLauncherActiveFilters(group, searchText) {
     if (!ui.launcherActiveFilters) return;
     const chips = [];
-    if (group) {
-      const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"] .launcher-tab-btn__label`)?.textContent?.trim()
-        || ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim()
-        || group;
-      chips.push(`<span class="chip chip-active-filter">タブ: ${esc(groupLabel)}</span>`);
-    }
+    // 検索や追加フィルタが無いときは「タブ: ...」だけを単独で表示しない
+    // （上のタブバーと冗長なため）
     if (searchText) {
+      if (group) {
+        const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"] .launcher-tab-btn__label`)?.textContent?.trim()
+          || ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim()
+          || group;
+        chips.push(`<span class="chip chip-active-filter">タブ: ${esc(groupLabel)}</span>`);
+      }
       chips.push(`<span class="chip chip-active-filter">検索: ${esc(searchText)}</span>`);
     }
     ui.launcherActiveFilters.innerHTML = chips.join('');

@@ -32,7 +32,15 @@ function resolveFile(rawPath) {
   return path.resolve(ROOT, safe || 'index.html');
 }
 
+function setCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+}
+
 http.createServer((req, res) => {
+  setCors(res);
+  if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   const u = decodeURIComponent(url.parse(req.url).pathname);
   const file = resolveFile(u);
   // どの ROOT 配下にも入っていなければ拒否
