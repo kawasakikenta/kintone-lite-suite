@@ -443,8 +443,11 @@
 /* 差分結果の整理・出力：優先度ベースの再構成 */
 #kintone-unified-suite-v2 .diff-review-body{display:flex;flex-direction:column;gap:8px;padding:8px 10px}
 #kintone-unified-suite-v2 .diff-review-toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 10px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px}
-#kintone-unified-suite-v2 .diff-review-toolbar__sel{padding:4px 8px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;min-width:100px}
-#kintone-unified-suite-v2 .diff-review-toolbar__search{flex:1;min-width:180px;padding:5px 10px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px}
+#kintone-unified-suite-v2 .diff-review-toolbar__sel{
+  width:auto;flex:0 0 auto;min-width:130px;max-width:200px;
+  padding:4px 8px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;
+}
+#kintone-unified-suite-v2 .diff-review-toolbar__search{flex:1 1 200px;min-width:180px;width:auto;padding:5px 10px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px}
 #kintone-unified-suite-v2 .diff-review-toolbar__clear{padding:4px 10px;font-size:11px}
 #kintone-unified-suite-v2 .diff-review-toolbar__quick{display:flex;gap:4px;flex-wrap:wrap;margin-left:auto}
 #kintone-unified-suite-v2 .diff-review-toolbar__quick .btn{padding:4px 9px;font-size:11px;font-weight:700}
@@ -3424,6 +3427,8 @@
 #kintone-unified-suite-v2 .feature-breadcrumb{font-size:10px;opacity:.9;margin-top:2px}
 #kintone-unified-suite-v2 .req{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:800;vertical-align:middle}
 #kintone-unified-suite-v2 .diff-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-height:26px;align-items:center}
+#kintone-unified-suite-v2 .diff-active-filters__lbl{font-size:10px;font-weight:800;color:#0f766e;letter-spacing:.04em;margin-right:2px}
+#kintone-unified-suite-v2 .diff-active-filters__hint{font-size:11px;color:#94a3b8;font-style:italic}
 #kintone-unified-suite-v2 .input-invalid{border-color:#ef4444!important;background:#fef2f2!important}
 
 /* ========== Feature screen: compact header + collapsible connection panel ========== */

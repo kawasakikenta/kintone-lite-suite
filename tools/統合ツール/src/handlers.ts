@@ -588,7 +588,9 @@ export function setupEventHandlers(injected: any = {}) {
     if (ui.diffFilterTableOnly?.checked) chips.push('<span class="chip chip-active-filter">テーブル内フィールドのみ</span>');
     if (tableKeyword) chips.push(`<span class="chip chip-active-filter">テーブル: ${esc(tableKeyword)}</span>`);
     if (search) chips.push(`<span class="chip chip-active-filter">検索: ${esc(search)}</span>`);
-    ui.diffActiveFilters.innerHTML = chips.length ? chips.join('') : '<span class="muted">差分フィルタは未適用です</span>';
+    ui.diffActiveFilters.innerHTML = chips.length
+      ? `<span class="diff-active-filters__lbl">適用中:</span>${chips.join('')}`
+      : '<span class="muted diff-active-filters__hint">🔍 上で絞り込み条件を選ぶと、ここに適用中のフィルタが表示されます</span>';
   }
 
   function syncMainResultForFeature(featureKey) {

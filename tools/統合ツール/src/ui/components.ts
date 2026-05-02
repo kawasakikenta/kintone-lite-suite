@@ -671,19 +671,26 @@ export function renderBundleState() {
     if (!v) return '-';
     try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
   };
+  // 短い1行サマリ + title 属性に詳細
   const describeBundle = (label, bundle, importedName, imported) => {
-    if (!bundle) return `${label}: API取得`;
+    if (!bundle) return { short: `${label}: 未取得`, full: `${label}: 未取得` };
     const previewText = getPreviewStateLabel(bundle.preview);
     const revisionText = resolveBundleRevision(bundle) || '-';
     const guestText = bundle.guestId ? `ゲスト ${bundle.guestId}` : '通常空間';
+    const appId = bundle.appId || '-';
     if (imported) {
-      return `${label}: 保存済みJSONを読込 (${importedName || bundle.appId || '-'}) [${previewText} / rev ${revisionText} / ${guestText}]`;
+      const short = `${label}: 📄${importedName || appId} (${previewText}/rev${revisionText})`;
+      const full = `${label}: 保存済みJSONを読込 (${importedName || appId}) [${previewText} / rev ${revisionText} / ${guestText}]`;
+      return { short, full };
     }
-    return `${label}: API取得済み(アプリ ${bundle.appId || '-'} / ${previewText} / rev ${revisionText} / ${guestText} / ${fmtFetchTime(bundle.fetchedAt)})`;
+    const short = `${label}: アプリ${appId} (${previewText}/rev${revisionText})`;
+    const full = `${label}: API取得済み(アプリ ${appId} / ${previewText} / rev ${revisionText} / ${guestText} / ${fmtFetchTime(bundle.fetchedAt)})`;
+    return { short, full };
   };
-  const sourceText = describeBundle('比較元', state.importedSourceBundle || state.lastSourceBundle, state.importedSourceName, !!state.importedSourceBundle);
-  const targetText = describeBundle('比較先', state.importedTargetBundle || state.lastTargetBundle, state.importedTargetName, !!state.importedTargetBundle);
-  ui.bundleState.textContent = `${sourceText} / ${targetText}`;
+  const src = describeBundle('比較元', state.importedSourceBundle || state.lastSourceBundle, state.importedSourceName, !!state.importedSourceBundle);
+  const tgt = describeBundle('比較先', state.importedTargetBundle || state.lastTargetBundle, state.importedTargetName, !!state.importedTargetBundle);
+  ui.bundleState.textContent = `${src.short} → ${tgt.short}`;
+  ui.bundleState.setAttribute('title', `${src.full}\n${tgt.full}`);
   const rangeMode = isReflectNodeModeEffective()
     ? `選択ノード(${state.reflectSelectedIds.size})`
     : (ui.applyDiffOnly?.checked ? '前回差分セクションのみ' : '選択セクション');
