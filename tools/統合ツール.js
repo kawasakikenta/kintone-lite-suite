@@ -19504,6 +19504,7 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .diff-fold-title{font-size:12px;font-weight:800;color:#0f172a}
 #kintone-unified-suite-v2 .diff-fold-sub{
   font-size:10px;font-weight:600;color:#64748b;flex:1 1 100%;margin-left:20px;line-height:1.45;
+  word-break:keep-all;overflow-wrap:break-word;
 }
 #kintone-unified-suite-v2 .diff-fold-sub.is-empty-state{
   display:inline-block;padding:2px 10px;border-radius:999px;font-weight:700;color:#92400e;background:#fef3c7;border:1px solid #fde68a;
@@ -21624,9 +21625,21 @@ ${lines.join("\n")}
 }
 #kintone-unified-suite-v2 .launcher-flow-step:last-child::after{display:none}
 #kintone-unified-suite-v2 .launcher-flow-step.is-primary{
-  border-color:#5eead4;
-  background:#f0fdfa;
+  border-color:#0d9488;
+  background:linear-gradient(180deg,#ccfbf1,#99f6e4);
+  box-shadow:0 2px 8px rgba(13,148,136,.22);
 }
+#kintone-unified-suite-v2 .launcher-flow-step.is-primary::before{
+  content:"NOW";
+  position:absolute;top:-7px;right:8px;
+  background:#0f766e;color:#fff;font-size:9px;font-weight:800;
+  padding:1px 6px;border-radius:999px;letter-spacing:.06em;
+  box-shadow:0 2px 4px rgba(15,118,110,.35);
+}
+#kintone-unified-suite-v2 .launcher-flow-step.is-primary .launcher-flow-no{
+  background:#0f766e;color:#fff;border-color:#0f766e;
+}
+#kintone-unified-suite-v2 .launcher-flow-step.is-primary .launcher-flow-main{font-weight:800;color:#0f172a}
 #kintone-unified-suite-v2 .launcher-flow-step:hover{
   transform:translateY(-1px);
   border-color:#5eead4;
@@ -29406,14 +29419,10 @@ ${lines.join("\n")}
       ui.launcherToggleMore.textContent = expanded ? "よく使う作業だけ表示" : `その他の ${hiddenCount} 機能を表示`;
       ui.launcherToggleMore.setAttribute("aria-expanded", expanded ? "true" : "false");
     }
-    function renderLauncherActiveFilters(group, searchText) {
+    function renderLauncherActiveFilters(_group, searchText) {
       if (!ui.launcherActiveFilters) return;
       const chips = [];
       if (searchText) {
-        if (group) {
-          const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"] .launcher-tab-btn__label`)?.textContent?.trim() || ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim() || group;
-          chips.push(`<span class="chip chip-active-filter">タブ: ${esc(groupLabel)}</span>`);
-        }
         chips.push(`<span class="chip chip-active-filter">検索: ${esc(searchText)}</span>`);
       }
       ui.launcherActiveFilters.innerHTML = chips.join("");

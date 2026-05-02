@@ -462,18 +462,12 @@ export function setupEventHandlers(injected: any = {}) {
     ui.launcherToggleMore.setAttribute('aria-expanded', expanded ? 'true' : 'false');
   }
 
-  function renderLauncherActiveFilters(group, searchText) {
+  function renderLauncherActiveFilters(_group, searchText) {
     if (!ui.launcherActiveFilters) return;
     const chips = [];
-    // 検索や追加フィルタが無いときは「タブ: ...」だけを単独で表示しない
-    // （上のタブバーと冗長なため）
+    // 「タブ: ...」チップはタブバーと冗長なので常に省略する。
+    // 検索キーワードは active filter として残す。
     if (searchText) {
-      if (group) {
-        const groupLabel = ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"] .launcher-tab-btn__label`)?.textContent?.trim()
-          || ui.launcherGroupFilters?.querySelector(`.chip[data-group="${group}"]`)?.textContent?.trim()
-          || group;
-        chips.push(`<span class="chip chip-active-filter">タブ: ${esc(groupLabel)}</span>`);
-      }
       chips.push(`<span class="chip chip-active-filter">検索: ${esc(searchText)}</span>`);
     }
     ui.launcherActiveFilters.innerHTML = chips.join('');
