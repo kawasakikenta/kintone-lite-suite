@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "snippet": "node scripts/build-snippet.js",
     "build:kintone-calendar": "vite build --config plugins/KintoneCalendar/vite.config.mjs",
-    "check:kintone-calendar": "svelte-check --tsconfig plugins/KintoneCalendar/tsconfig.json",
+    "check:kintone-calendar": "tsc --noEmit --project plugins/KintoneCalendar/tsconfig.json",
     "test:kintone-calendar": "node --test plugins/KintoneCalendar/tests/*.test.mjs",
     "package:kintone-calendar": "kintone-plugin-packer --ppk plugins/KintoneCalendar.ppk plugins/KintoneCalendar --out plugins/KintoneCalendar.zip",
     "mcp:playwright": "node node_modules/@playwright/mcp/cli.js --browser=chrome --output-dir=.playwright-mcp --save-session",
@@ -33,10 +33,12 @@
   "devDependencies": {
     "@kintone/plugin-packer": "^9.1.0",
     "@playwright/mcp": "^0.0.70",
-    "@sveltejs/vite-plugin-svelte": "^7.0.0",
-    "svelte": "^5.55.5",
-    "svelte-check": "^4.4.6",
     "typescript": "^6.0.3",
     "vite": "^8.0.10"
+  },
+  "optionalDependencies": {
+    "@rolldown/binding-darwin-arm64": "*",
+    "@rolldown/binding-linux-x64-gnu": "*",
+    "@rolldown/binding-win32-x64-msvc": "*"
   }
 }

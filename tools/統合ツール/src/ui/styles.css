@@ -3426,6 +3426,11 @@
 @keyframes kintone-unified-suite-v2-shimmer{100%{transform:translateX(100%)}}
 #kintone-unified-suite-v2 .feature-breadcrumb{font-size:10px;opacity:.9;margin-top:2px}
 #kintone-unified-suite-v2 .req{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:800;vertical-align:middle}
+#kintone-unified-suite-v2 .req-soft{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#fef3c7;color:#b45309;font-size:10px;font-weight:700;vertical-align:middle;cursor:help;border:1px solid #fde68a}
+#kintone-unified-suite-v2 .conn-label-hint{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#ecfdf5;color:#047857;font-size:10px;font-weight:700;vertical-align:middle;cursor:help;border:1px solid #a7f3d0}
+#kintone-unified-suite-v2 .connection-secondary-action--primary{background:#0ea5e9;color:#fff;border-color:#0284c7;font-weight:700}
+#kintone-unified-suite-v2 .connection-secondary-action--primary:hover{background:#0284c7;border-color:#0369a1}
+#kintone-unified-suite-v2:not(.tab-needs-target) .conn-target-action{display:none !important}
 #kintone-unified-suite-v2 .diff-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-height:26px;align-items:center}
 #kintone-unified-suite-v2 .diff-active-filters__lbl{font-size:10px;font-weight:800;color:#0f766e;letter-spacing:.04em;margin-right:2px}
 #kintone-unified-suite-v2 .diff-active-filters__hint{font-size:11px;color:#94a3b8;font-style:italic}
@@ -5292,4 +5297,662 @@
   position:absolute !important;
   width:1px;height:1px;
   overflow:hidden;clip:rect(0,0,0,0);
+}
+
+/* ========================================================================
+   表示設定ポップオーバー / 表示プリファレンス（87-90, 92-94 共通）
+   ======================================================================== */
+#kintone-unified-suite-v2 .kus-display-prefs{position:relative;display:inline-block}
+#kintone-unified-suite-v2 .kus-display-prefs > summary{
+  cursor:pointer;list-style:none;
+}
+#kintone-unified-suite-v2 .kus-display-prefs > summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .kus-display-prefs[open] > summary{background:rgba(15,23,42,.08)}
+#kintone-unified-suite-v2 .kus-display-prefs__panel{
+  position:absolute;right:0;top:calc(100% + 6px);z-index:120;
+  min-width:280px;padding:10px 12px;border-radius:10px;
+  background:#fff;color:#0f172a;border:1px solid #cbd5e1;
+  box-shadow:0 16px 40px rgba(15,23,42,.18);
+  display:flex;flex-direction:column;gap:10px;
+}
+#kintone-unified-suite-v2 .kus-display-prefs__group{display:flex;flex-direction:column;gap:4px}
+#kintone-unified-suite-v2 .kus-display-prefs__title{font-size:11px;font-weight:800;color:#475569;letter-spacing:.04em}
+#kintone-unified-suite-v2 .kus-display-prefs__row{display:flex;flex-wrap:wrap;gap:4px}
+#kintone-unified-suite-v2 .kus-display-prefs__row .btn{padding:3px 10px;font-size:11px}
+#kintone-unified-suite-v2 .kus-display-prefs__foot{
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+  margin-top:4px;padding-top:8px;border-top:1px solid #e2e8f0;font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-display-prefs__foot .muted{color:#64748b}
+
+/* === Active button highlight === */
+#kintone-unified-suite-v2.kus-pref-theme-light .kus-display-prefs__panel [data-pref="theme"][data-value="light"],
+#kintone-unified-suite-v2.kus-pref-theme-dark .kus-display-prefs__panel [data-pref="theme"][data-value="dark"],
+#kintone-unified-suite-v2.kus-pref-theme-contrast .kus-display-prefs__panel [data-pref="theme"][data-value="contrast"],
+#kintone-unified-suite-v2.kus-pref-fontSize-sm .kus-display-prefs__panel [data-pref="fontSize"][data-value="sm"],
+#kintone-unified-suite-v2.kus-pref-fontSize-md .kus-display-prefs__panel [data-pref="fontSize"][data-value="md"],
+#kintone-unified-suite-v2.kus-pref-fontSize-lg .kus-display-prefs__panel [data-pref="fontSize"][data-value="lg"],
+#kintone-unified-suite-v2.kus-pref-palette-default .kus-display-prefs__panel [data-pref="palette"][data-value="default"],
+#kintone-unified-suite-v2.kus-pref-palette-cb .kus-display-prefs__panel [data-pref="palette"][data-value="cb"],
+#kintone-unified-suite-v2.kus-pref-focusRing-default .kus-display-prefs__panel [data-pref="focusRing"][data-value="default"],
+#kintone-unified-suite-v2.kus-pref-focusRing-strong .kus-display-prefs__panel [data-pref="focusRing"][data-value="strong"],
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .kus-display-prefs__panel [data-pref="verbosity"][data-value="brief"],
+#kintone-unified-suite-v2.kus-pref-verbosity-normal .kus-display-prefs__panel [data-pref="verbosity"][data-value="normal"],
+#kintone-unified-suite-v2.kus-pref-verbosity-detail .kus-display-prefs__panel [data-pref="verbosity"][data-value="detail"],
+#kintone-unified-suite-v2.kus-dialog-align-left .kus-display-prefs__panel [data-act="setDialogAlign"][data-value="left"],
+#kintone-unified-suite-v2.kus-dialog-align-center .kus-display-prefs__panel [data-act="setDialogAlign"][data-value="center"],
+#kintone-unified-suite-v2.kus-dialog-align-right .kus-display-prefs__panel [data-act="setDialogAlign"][data-value="right"]{
+  background:#2563eb !important;color:#fff !important;border-color:#1d4ed8 !important;font-weight:800;
+}
+
+/* ----- 87/94: ダーク / 高コントラスト ----- */
+#kintone-unified-suite-v2.kus-pref-theme-dark{
+  --bg-app:#0f172a; --bg-card:#1e293b; --bg-soft:#1e293b; --bg-soft2:#0f172a;
+  --txt-1:#f1f5f9; --txt-2:#cbd5e1; --txt-3:#94a3b8; --txt-mute:#64748b;
+  --border-1:#334155; --border-2:#475569;
+  background:#0f172a !important;color:#f1f5f9;
+}
+#kintone-unified-suite-v2.kus-pref-theme-dark .body,
+#kintone-unified-suite-v2.kus-pref-theme-dark .card,
+#kintone-unified-suite-v2.kus-pref-theme-dark .tab-card{
+  background:#1e293b !important;color:#f1f5f9 !important;border-color:#334155 !important;
+}
+#kintone-unified-suite-v2.kus-pref-theme-dark input[type="text"],
+#kintone-unified-suite-v2.kus-pref-theme-dark input[type="search"],
+#kintone-unified-suite-v2.kus-pref-theme-dark input[type="number"],
+#kintone-unified-suite-v2.kus-pref-theme-dark textarea,
+#kintone-unified-suite-v2.kus-pref-theme-dark select{
+  background:#0f172a !important;color:#f1f5f9 !important;border-color:#475569 !important;
+}
+#kintone-unified-suite-v2.kus-pref-theme-dark .muted{color:#94a3b8 !important}
+#kintone-unified-suite-v2.kus-pref-theme-dark .feature-card{background:rgba(30,41,59,.85) !important;border-color:#475569 !important}
+#kintone-unified-suite-v2.kus-pref-theme-dark .feature-card-label{color:#f1f5f9 !important}
+#kintone-unified-suite-v2.kus-pref-theme-dark .feature-card-desc{color:#cbd5e1 !important}
+#kintone-unified-suite-v2.kus-pref-theme-dark .kus-display-prefs__panel{background:#1e293b;color:#f1f5f9;border-color:#475569}
+
+#kintone-unified-suite-v2.kus-pref-theme-contrast{
+  --bg-app:#ffffff; --bg-card:#ffffff; --bg-soft:#f8fafc; --bg-soft2:#ffffff;
+  --txt-1:#000; --txt-2:#000; --txt-3:#1f2937; --txt-mute:#374151;
+  --border-1:#000; --border-2:#000;
+  --accent:#0000ee; --accent-2:#0000aa;
+}
+#kintone-unified-suite-v2.kus-pref-theme-contrast input,
+#kintone-unified-suite-v2.kus-pref-theme-contrast textarea,
+#kintone-unified-suite-v2.kus-pref-theme-contrast select,
+#kintone-unified-suite-v2.kus-pref-theme-contrast .btn,
+#kintone-unified-suite-v2.kus-pref-theme-contrast .feature-card,
+#kintone-unified-suite-v2.kus-pref-theme-contrast .card{
+  border:1.5px solid #000 !important;
+}
+
+/* ----- 88: フォントサイズ ----- */
+#kintone-unified-suite-v2.kus-pref-fontSize-sm{
+  --fs-aux:10px; --fs-body:11px; --fs-head:14px;
+  font-size:11px;
+}
+#kintone-unified-suite-v2.kus-pref-fontSize-lg{
+  --fs-aux:13px; --fs-body:15px; --fs-head:18px;
+  font-size:15px;
+}
+#kintone-unified-suite-v2.kus-pref-fontSize-lg .feature-card-label{font-size:16px}
+#kintone-unified-suite-v2.kus-pref-fontSize-lg .feature-card-desc{font-size:13px}
+
+/* ----- 89: 色覚対応パレット（追加=青/削除=黄/変更=紫） ----- */
+#kintone-unified-suite-v2.kus-pref-palette-cb{
+  --sev-high:#0066cc; --sev-high-bg:#dbeafe; --sev-high-fg:#1e3a8a; --sev-high-border:#93c5fd;
+  --sev-mid:#a16207;  --sev-mid-bg:#fef9c3;  --sev-mid-fg:#713f12;  --sev-mid-border:#fde047;
+  --sev-low:#7c3aed;  --sev-low-bg:#ede9fe;  --sev-low-fg:#5b21b6;  --sev-low-border:#c4b5fd;
+}
+#kintone-unified-suite-v2.kus-pref-palette-cb .row.added,
+#kintone-unified-suite-v2.kus-pref-palette-cb .diff-row--added,
+#kintone-unified-suite-v2.kus-pref-palette-cb [data-diff-type="added"]{
+  background:#dbeafe !important;border-left:3px solid #2563eb !important;
+}
+#kintone-unified-suite-v2.kus-pref-palette-cb .row.removed,
+#kintone-unified-suite-v2.kus-pref-palette-cb .diff-row--removed,
+#kintone-unified-suite-v2.kus-pref-palette-cb [data-diff-type="removed"]{
+  background:#fef9c3 !important;border-left:3px solid #ca8a04 !important;
+}
+#kintone-unified-suite-v2.kus-pref-palette-cb .row.changed,
+#kintone-unified-suite-v2.kus-pref-palette-cb .diff-row--changed,
+#kintone-unified-suite-v2.kus-pref-palette-cb [data-diff-type="changed"]{
+  background:#ede9fe !important;border-left:3px solid #7c3aed !important;
+}
+
+/* ----- 90: 強調フォーカスリング ----- */
+#kintone-unified-suite-v2.kus-pref-focusRing-strong *:focus-visible{
+  outline:3px solid #f59e0b !important;outline-offset:2px !important;
+  box-shadow:0 0 0 4px rgba(245,158,11,.35) !important;
+}
+#kintone-unified-suite-v2.kus-pref-focusRing-strong button:focus-visible,
+#kintone-unified-suite-v2.kus-pref-focusRing-strong input:focus-visible,
+#kintone-unified-suite-v2.kus-pref-focusRing-strong select:focus-visible,
+#kintone-unified-suite-v2.kus-pref-focusRing-strong textarea:focus-visible{
+  outline:3px solid #f59e0b !important;outline-offset:2px !important;
+}
+
+/* ----- 93: 説明文の詳細度 ----- */
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .feature-card-desc,
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .connection-section-lead,
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .reflect-modal-sub,
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .launcher-section-desc,
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .feature-conn{
+  display:none !important;
+}
+#kintone-unified-suite-v2.kus-pref-verbosity-detail .feature-card-desc{
+  display:block !important;font-size:12px;margin-bottom:8px;
+}
+
+/* ========================================================================
+   クリック可能パンくず（26）
+   ======================================================================== */
+#kintone-unified-suite-v2 .feature-breadcrumb{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+#kintone-unified-suite-v2 .feature-breadcrumb__link{
+  background:transparent;border:none;color:inherit;padding:0 4px;
+  font:inherit;cursor:pointer;border-radius:4px;
+  text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,.4);
+}
+#kintone-unified-suite-v2 .feature-breadcrumb__link:hover{
+  background:rgba(255,255,255,.15);text-decoration-color:rgba(255,255,255,.9);
+}
+#kintone-unified-suite-v2 .feature-breadcrumb__link:focus-visible{
+  outline:2px solid #f59e0b;outline-offset:1px;
+}
+#kintone-unified-suite-v2 .feature-breadcrumb__sep{opacity:.6;padding:0 2px}
+#kintone-unified-suite-v2 .feature-breadcrumb__current{font-weight:700}
+
+/* ========================================================================
+   反映ボタンの抑制（67）— チェック未完時は淡く・小さく
+   ======================================================================== */
+#kintone-unified-suite-v2 .reflect-apply-checklist:not(.is-complete) ~ .reflect-route-grid,
+#kintone-unified-suite-v2 .reflect-checklist-card .reflect-apply-checklist:not(.is-complete) + .reflect-apply-hint{display:block}
+#kintone-unified-suite-v2 .reflect-danger-zone:has(~ * .reflect-apply-checklist:not(.is-complete)) .btn.ok,
+#kintone-unified-suite-v2 .reflect-checklist-card:has(.reflect-apply-checklist:not(.is-complete)) ~ .reflect-danger-zone .btn.ok,
+#kintone-unified-suite-v2 .reflect-simple-shell:has(.reflect-apply-checklist:not(.is-complete)) .reflect-danger-zone .btn.ok#u_footerApply{
+  opacity:.55;transform:scale(.92);filter:grayscale(.3);
+  box-shadow:none !important;
+}
+#kintone-unified-suite-v2 .reflect-simple-shell:has(.reflect-apply-checklist.is-complete) .reflect-danger-zone .btn.ok#u_footerApply{
+  opacity:1;transform:scale(1);filter:none;
+  animation:kus-apply-pulse 2.4s ease-in-out infinite;
+}
+@keyframes kus-apply-pulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}
+  50%{box-shadow:0 0 0 6px rgba(34,197,94,.18)}
+}
+
+/* ========================================================================
+   反映スコープ選択数バッジ（66）
+   ======================================================================== */
+#kintone-unified-suite-v2 .reflect-route-card__count{
+  display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;
+  background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:800;
+  border:1px solid #bfdbfe;vertical-align:middle;
+}
+#kintone-unified-suite-v2 .reflect-route-card__count.is-empty{
+  background:#fee2e2;color:#b91c1c;border-color:#fecaca;
+}
+#kintone-unified-suite-v2 .reflect-route-card__count.is-full{
+  background:#dcfce7;color:#166534;border-color:#bbf7d0;
+}
+
+/* ========================================================================
+   差分ツールバー区切り
+   ======================================================================== */
+#kintone-unified-suite-v2 .diff-review-toolbar__sep{
+  display:inline-block;color:#cbd5e1;font-weight:400;padding:0 4px;
+  align-self:center;
+}
+
+/* ========================================================================
+   extras.ts 用スタイル — 35/37/39/41/44/47/49/51/52/55/60/70/78/80/84/85/86/...
+   ======================================================================== */
+
+/* 35: トーストスタック */
+#kintone-unified-suite-v2 .kus-toast-stack{
+  position:fixed;right:16px;bottom:16px;z-index:9000;
+  display:flex;flex-direction:column;gap:6px;pointer-events:none;
+}
+#kintone-unified-suite-v2 .kus-toast{
+  pointer-events:auto;cursor:pointer;
+  min-width:220px;max-width:380px;padding:8px 12px;border-radius:8px;
+  font-size:12px;line-height:1.5;
+  background:#1e293b;color:#f1f5f9;border:1px solid #334155;
+  box-shadow:0 8px 24px rgba(15,23,42,.18);
+  animation:kus-toast-in .18s ease-out;
+}
+#kintone-unified-suite-v2 .kus-toast.is-leaving{opacity:0;transform:translateY(8px);transition:opacity .2s,transform .2s}
+#kintone-unified-suite-v2 .kus-toast--ok{background:#065f46;border-color:#10b981;color:#ecfdf5}
+#kintone-unified-suite-v2 .kus-toast--warn{background:#78350f;border-color:#f59e0b;color:#fffbeb}
+#kintone-unified-suite-v2 .kus-toast--error{background:#7f1d1d;border-color:#ef4444;color:#fef2f2}
+@keyframes kus-toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* 39: 実行中タスクピル */
+#kintone-unified-suite-v2 .kus-active-task-pill{
+  display:inline-flex;align-items:center;gap:4px;padding:3px 10px;
+  border-radius:999px;border:1px solid #cbd5e1;background:#f1f5f9;color:#0f172a;
+  font-size:11px;font-weight:700;cursor:pointer;
+}
+#kintone-unified-suite-v2 .kus-active-task-pill.is-busy{
+  background:#fef3c7;border-color:#fbbf24;color:#78350f;
+  animation:kus-active-task-pulse 1.4s ease-in-out infinite;
+}
+@keyframes kus-active-task-pulse{0%,100%{box-shadow:0 0 0 0 rgba(251,191,36,0)}50%{box-shadow:0 0 0 5px rgba(251,191,36,.3)}}
+
+/* 37: 確認スライダー */
+.kus-confirm-overlay{
+  position:fixed;inset:0;z-index:10000;
+  background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;
+  animation:kus-confirm-fade .18s ease-out;
+}
+@keyframes kus-confirm-fade{from{opacity:0}to{opacity:1}}
+.kus-confirm-card{
+  background:#fff;border-radius:12px;padding:18px 20px;
+  width:min(420px,90vw);box-shadow:0 24px 60px rgba(15,23,42,.35);
+  display:flex;flex-direction:column;gap:12px;
+}
+.kus-confirm-card__title{font-size:14px;font-weight:800;color:#b45309}
+.kus-confirm-card__msg{font-size:12px;line-height:1.6;color:#334155}
+.kus-confirm-card__slider{display:flex;flex-direction:column;gap:4px}
+.kus-confirm-card__range{width:100%;accent-color:#dc2626}
+.kus-confirm-card__hint{font-size:10px;color:#94a3b8}
+.kus-confirm-card__btns{display:flex;justify-content:flex-end;gap:6px}
+
+/* 41: 差分上部固定サマリ */
+#kintone-unified-suite-v2 .kus-diff-fixed-summary{
+  position:sticky;top:0;z-index:5;
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+  padding:6px 8px;margin:0 0 6px;
+  background:linear-gradient(180deg,#fff,#f8fafc);
+  border-bottom:1px solid #e2e8f0;font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-diff-fixed-summary__pill{
+  display:inline-block;padding:2px 8px;border-radius:999px;font-weight:800;
+  border:1px solid;
+}
+#kintone-unified-suite-v2 .kus-diff-fixed-summary__pill--add{background:#ecfdf5;color:#065f46;border-color:#a7f3d0}
+#kintone-unified-suite-v2 .kus-diff-fixed-summary__pill--remove{background:#fef2f2;color:#991b1b;border-color:#fca5a5}
+#kintone-unified-suite-v2 .kus-diff-fixed-summary__pill--change{background:#fff7ed;color:#9a3412;border-color:#fdba74}
+#kintone-unified-suite-v2 .kus-diff-fixed-summary__pill--same{background:#f1f5f9;color:#475569;border-color:#cbd5e1}
+
+/* 44: 重要度しきい値 */
+#kintone-unified-suite-v2 .kus-sev-threshold{
+  display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-sev-threshold__lbl{color:#475569;font-weight:700}
+#kintone-unified-suite-v2 .kus-sev-threshold__sel{padding:2px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px}
+
+/* 47: ハイライト色選択 */
+#kintone-unified-suite-v2 .kus-highlight-picker{
+  margin-left:6px;padding:2px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px;
+}
+#kintone-unified-suite-v2 mark, #kintone-unified-suite-v2 .kus-hl{
+  background:var(--kus-highlight,#fde68a) !important;
+}
+
+/* 51: 行フォーカス / 承認 / 却下 */
+#kintone-unified-suite-v2 .kus-row-focused{outline:2px solid #2563eb;outline-offset:-2px}
+#kintone-unified-suite-v2 .kus-row-approved{background:rgba(34,197,94,.12) !important;border-left:3px solid #22c55e !important}
+#kintone-unified-suite-v2 .kus-row-rejected{background:rgba(239,68,68,.10) !important;border-left:3px solid #ef4444 !important;opacity:.6}
+
+/* 60: フィールド種別アイコン */
+#kintone-unified-suite-v2 .kus-field-type-icon{
+  display:inline-block;margin-right:4px;width:18px;height:18px;
+  text-align:center;line-height:18px;border-radius:4px;
+  background:#dbeafe;color:#1e40af;font-size:11px;font-weight:800;
+  border:1px solid #bfdbfe;
+}
+
+/* 70: ER フィルタバー */
+#kintone-unified-suite-v2 .kus-er-filter-bar{
+  display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;margin-bottom:8px;
+  border-bottom:1px solid #e2e8f0;
+}
+#kintone-unified-suite-v2 .kus-er-lookup-only [data-edge-type]:not([data-edge-type="lookup"]),
+#kintone-unified-suite-v2 .kus-er-ref-only [data-edge-type]:not([data-edge-type="reference"]){display:none}
+#kintone-unified-suite-v2 .kus-er-hide-orphan [data-orphan="true"]{display:none}
+
+/* 78: ダイアグラム出力 */
+#kintone-unified-suite-v2 .kus-diagram-export{
+  position:absolute;top:6px;right:6px;z-index:3;display:flex;gap:4px;
+}
+
+/* 80: ZIP 分割サイズ */
+#kintone-unified-suite-v2 .kus-zip-split{
+  display:flex;align-items:center;gap:6px;padding:6px 8px;
+  background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;
+  font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-zip-split__input{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;width:80px}
+
+/* 84: API レスポンス表示切替 */
+#kintone-unified-suite-v2 .kus-api-view-toggle{margin-bottom:6px}
+#kintone-unified-suite-v2 .kus-api-view-toggle .btn.is-active{background:#2563eb;color:#fff;border-color:#1d4ed8}
+#kintone-unified-suite-v2 .kus-api-raw{font-family:Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;background:#f8fafc;padding:8px;border-radius:6px;border:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .kus-api-tree{font-family:Menlo,Consolas,monospace;font-size:11px}
+#kintone-unified-suite-v2 .kus-api-tree__node summary{cursor:pointer;padding:2px 0}
+#kintone-unified-suite-v2 .kus-api-tree__leaf{padding-left:14px}
+#kintone-unified-suite-v2 .kus-api-tree__key{color:#0369a1;margin-right:4px}
+#kintone-unified-suite-v2 .kus-api-tree__val{color:#16a34a}
+#kintone-unified-suite-v2 .kus-api-table__t{border-collapse:collapse;font-size:11px}
+#kintone-unified-suite-v2 .kus-api-table__t th,
+#kintone-unified-suite-v2 .kus-api-table__t td{border:1px solid #e2e8f0;padding:3px 6px;vertical-align:top}
+#kintone-unified-suite-v2 .kus-api-table__t th{background:#f1f5f9;text-align:left}
+
+/* 85: 環境変数 */
+#kintone-unified-suite-v2 .kus-api-envvars{margin-bottom:8px;padding:6px 8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:11px}
+#kintone-unified-suite-v2 .kus-api-envvars summary{cursor:pointer;font-weight:700}
+#kintone-unified-suite-v2 .kus-api-envvars__ta{width:100%;padding:6px;border-radius:6px;border:1px solid #cbd5e1;font-family:Menlo,Consolas,monospace;font-size:11px}
+
+/* 86: cURL コピーボタン */
+#kintone-unified-suite-v2 .kus-curl-copy{margin-bottom:6px}
+
+/* 行コピーフォーマット */
+#kintone-unified-suite-v2 .kus-row-copy-format{display:inline-flex;gap:4px;align-items:center;margin-left:8px}
+#kintone-unified-suite-v2 .kus-row-copy-format__sel{padding:2px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px}
+
+/* 32: タブバー自動格納 */
+#kintone-unified-suite-v2 .kus-tabbar-collapse-toggle{margin-left:auto;font-size:10px;padding:2px 8px}
+#kintone-unified-suite-v2 .kus-tabbar-collapse-toggle.is-active{background:#2563eb;color:#fff;border-color:#1d4ed8}
+#kintone-unified-suite-v2.kus-tabs-auto-collapse .kus-tab-bar.is-collapsed{
+  transform:translateY(-100%);transition:transform .2s ease;
+  height:0;overflow:hidden;
+}
+#kintone-unified-suite-v2.kus-tabs-auto-collapse .kus-tab-bar{transition:transform .2s ease}
+
+/* 34: ステータスバー Undo */
+#kintone-unified-suite-v2 .kus-status-undo{
+  margin-left:auto;font-size:10px;padding:2px 8px;
+}
+
+/* 42: 右ペイン JSON 差分 */
+#kintone-unified-suite-v2 .kus-diff-with-side{display:grid;grid-template-columns:1fr 0;gap:0;transition:grid-template-columns .25s ease}
+#kintone-unified-suite-v2 .kus-diff-with-side:has(.kus-diff-side.is-open){grid-template-columns:1fr minmax(280px, 360px);gap:8px}
+#kintone-unified-suite-v2 .kus-diff-side{
+  position:sticky;top:0;align-self:start;
+  background:#fff;border:1px solid #e2e8f0;border-radius:8px;
+  display:none;flex-direction:column;max-height:calc(100vh - 160px);overflow:hidden;
+}
+#kintone-unified-suite-v2 .kus-diff-side.is-open{display:flex}
+#kintone-unified-suite-v2 .kus-diff-side__head{
+  display:flex;justify-content:space-between;align-items:center;padding:6px 10px;
+  background:#f8fafc;border-bottom:1px solid #e2e8f0;
+}
+#kintone-unified-suite-v2 .kus-diff-side__title{font-size:12px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .kus-diff-side__close{padding:0 8px;font-size:14px}
+#kintone-unified-suite-v2 .kus-diff-side__body{padding:8px 10px;overflow:auto;font-size:11px}
+#kintone-unified-suite-v2 .kus-diff-side__meta{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+#kintone-unified-suite-v2 .kus-diff-side__cols{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+#kintone-unified-suite-v2 .kus-diff-side__col-h{font-size:10px;font-weight:800;color:#475569;margin-bottom:2px}
+#kintone-unified-suite-v2 .kus-diff-side pre{
+  margin:0;padding:6px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;
+  font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-all;
+  max-height:50vh;overflow:auto;
+}
+
+/* 43: インラインメモ */
+#kintone-unified-suite-v2 .kus-row-memo-btn{
+  display:inline-block;margin-left:6px;padding:0 6px;background:transparent;border:1px dashed #cbd5e1;
+  border-radius:4px;cursor:pointer;font-size:11px;color:#64748b;
+}
+#kintone-unified-suite-v2 .kus-row-memo-btn[data-has-note="1"]{
+  background:#fef3c7;color:#b45309;border:1px solid #fbbf24;border-style:solid;
+}
+
+/* 63: 失敗のみ再送 */
+#kintone-unified-suite-v2 .kus-retry-failed{
+  margin-top:8px;background:#fef3c7;color:#92400e;border-color:#f59e0b;
+}
+
+/* 71: ER レイアウト切替 — SVG ノードを CSS 変換で並べ替え */
+#kintone-unified-suite-v2 .kus-er-layout-switch{display:flex;align-items:center;gap:4px;font-size:11px;padding:4px 0}
+#kintone-unified-suite-v2 .kus-er-layout-switch button{padding:2px 8px;font-size:10px}
+#kintone-unified-suite-v2 .kus-er-layout-switch button.is-active{background:#2563eb;color:#fff;border-color:#1d4ed8}
+
+/* Force レイアウト = 既定（描画側のレイアウト） */
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-force svg{filter:none}
+
+/* Tree レイアウト = 階層タイル化（DOM ベース） */
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-tree .er-fallback{
+  display:flex;flex-direction:column;gap:8px;
+}
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-tree .er-fallback .er-row{
+  display:flex;flex-wrap:wrap;gap:6px;justify-content:center;
+}
+
+/* Grid レイアウト = カード並べ替え（DOM ベース） */
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-grid .er-fallback{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;
+}
+
+/* SVG モード時の弱変換 — Tree は縦横比矯正、Grid は SVG を非表示にしてカードを表示 */
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-grid svg{display:none}
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-tree svg{aspect-ratio:auto}
+
+/* ER フィルタ強化 */
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-lookup-only [data-edge-type]:not([data-edge-type="lookup"]),
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-lookup-only line:not([data-edge-type="lookup"]),
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-lookup-only path:not([data-edge-type="lookup"]){opacity:.1}
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-ref-only [data-edge-type]:not([data-edge-type="reference"]){opacity:.1}
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-hide-orphan [data-orphan="true"]{display:none}
+
+/* 81: 件数差分 */
+#kintone-unified-suite-v2 .kus-record-delta{
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 8px;
+  background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;
+  font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-record-delta__lbl{color:#475569;font-weight:700}
+#kintone-unified-suite-v2 .kus-record-delta__before,
+#kintone-unified-suite-v2 .kus-record-delta__after{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1}
+#kintone-unified-suite-v2 .kus-record-delta__result.is-positive{color:#065f46;font-weight:800}
+#kintone-unified-suite-v2 .kus-record-delta__result.is-negative{color:#991b1b;font-weight:800}
+
+/* 83: API コレクション */
+#kintone-unified-suite-v2 .kus-api-collection{
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px;
+  padding:6px 8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;
+}
+#kintone-unified-suite-v2 .kus-api-collection__name{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px}
+#kintone-unified-suite-v2 .kus-api-collection__sel{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px;max-width:240px}
+
+/* 48: プロパティパネル左固定 */
+#kintone-unified-suite-v2 .kus-prop-dock-toggle{margin-right:6px;font-size:10px;padding:2px 8px}
+#kintone-unified-suite-v2 .kus-prop-dock-toggle.is-active{background:#2563eb;color:#fff;border-color:#1d4ed8}
+#kintone-unified-suite-v2.kus-prop-dock-left #u_nodePropertyPanel{
+  position:fixed;left:8px;top:140px;width:260px;max-height:70vh;overflow:auto;z-index:30;
+  background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 24px rgba(15,23,42,.18);
+}
+
+/* 57: API 差分プレビュー */
+#kintone-unified-suite-v2 .kus-api-diff__item{padding:8px 6px;border-top:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .kus-api-diff__head{font-weight:800;font-size:12px;margin-bottom:4px}
+#kintone-unified-suite-v2 .kus-api-diff__cols{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+#kintone-unified-suite-v2 .kus-api-diff__col-h{font-size:10px;font-weight:800;color:#475569;margin-bottom:2px}
+#kintone-unified-suite-v2 .kus-api-diff pre{margin:0;padding:6px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:10px;line-height:1.4;white-space:pre-wrap;word-break:break-all;max-height:30vh;overflow:auto}
+
+/* 59: フィルタ付きスコープツリー */
+#kintone-unified-suite-v2 .kus-scope-tree-filter{display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid #e2e8f0;margin-bottom:6px}
+#kintone-unified-suite-v2 .kus-scope-tree-filter__q{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;flex:1;font-size:11px}
+
+/* 61: JSON 検証ボタン */
+#kintone-unified-suite-v2 .kus-validate-btn{margin-top:4px;font-size:11px}
+
+/* 68/69: 設計書テンプレート / TOC */
+#kintone-unified-suite-v2 .kus-design-templates{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-bottom:6px;padding:4px 0}
+#kintone-unified-suite-v2 .kus-design-templates button{padding:2px 8px;font-size:10px}
+#kintone-unified-suite-v2 .kus-design-templates button.is-active{background:#2563eb;color:#fff;border-color:#1d4ed8}
+#kintone-unified-suite-v2 [data-pane="design"].kus-design-a4-portrait .result{max-width:794px;margin:0 auto;background:#fff;padding:30px;box-shadow:0 4px 12px rgba(0,0,0,.08)}
+#kintone-unified-suite-v2 [data-pane="design"].kus-design-a4-landscape .result{max-width:1123px;margin:0 auto;background:#fff;padding:30px;box-shadow:0 4px 12px rgba(0,0,0,.08)}
+#kintone-unified-suite-v2 [data-pane="design"].kus-design-presentation .result{max-width:1280px;margin:0 auto;font-size:14px;background:#fff;padding:40px}
+#kintone-unified-suite-v2 [data-pane="design"].kus-design-compact .result{font-size:11px}
+#kintone-unified-suite-v2 [data-pane="design"].kus-design-compact .result h2{font-size:13px}
+#kintone-unified-suite-v2 .kus-design-toc{
+  position:fixed;right:12px;top:160px;width:220px;max-height:65vh;overflow:auto;z-index:25;
+  background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:8px;
+  box-shadow:0 8px 24px rgba(15,23,42,.16);font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-design-toc__title{font-weight:800;margin-bottom:4px}
+#kintone-unified-suite-v2 .kus-design-toc__lnk{display:block;color:#0369a1;text-decoration:none;padding:2px 4px;border-radius:4px}
+#kintone-unified-suite-v2 .kus-design-toc__lnk:hover{background:#e0f2fe}
+#kintone-unified-suite-v2 .kus-design-toc__lnk[data-lvl="1"]{padding-left:12px}
+#kintone-unified-suite-v2 .kus-design-toc__lnk[data-lvl="2"]{padding-left:20px;color:#475569}
+
+/* 74: プロセス スナップ差分 */
+#kintone-unified-suite-v2 .kus-proc-screenshot{display:flex;gap:6px;padding:4px 0}
+
+/* 75: 設計書表紙 */
+#kintone-unified-suite-v2 .kus-design-cover summary{cursor:pointer;padding:4px;font-weight:700}
+#kintone-unified-suite-v2 .kus-design-cover__body{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0}
+#kintone-unified-suite-v2 .kus-design-cover__body input[type="text"]{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px}
+#kintone-unified-suite-v2 .kus-design-cover__preview{width:100%;font-size:11px;color:#64748b}
+
+/* 76: Excel シート分割 */
+#kintone-unified-suite-v2 .kus-excel-split summary{cursor:pointer;padding:4px;font-weight:700}
+#kintone-unified-suite-v2 .kus-excel-split__body{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;font-size:11px}
+
+/* 79: CSV マッピング */
+#kintone-unified-suite-v2 .kus-csv-mapping summary{cursor:pointer;padding:4px;font-weight:700}
+#kintone-unified-suite-v2 .kus-csv-mapping__t{border-collapse:collapse;font-size:11px;margin-top:6px}
+#kintone-unified-suite-v2 .kus-csv-mapping__t th,
+#kintone-unified-suite-v2 .kus-csv-mapping__t td{border:1px solid #e2e8f0;padding:3px 6px}
+#kintone-unified-suite-v2 .kus-csv-mapping__t select{padding:2px 4px;border-radius:4px;border:1px solid #cbd5e1;font-size:11px}
+
+/* 82: クエリビルダ */
+#kintone-unified-suite-v2 .kus-query-builder summary{cursor:pointer;padding:4px;font-weight:700}
+#kintone-unified-suite-v2 .kus-query-builder__t{border-collapse:collapse;font-size:11px;margin:6px 0;width:100%}
+#kintone-unified-suite-v2 .kus-query-builder__t th,
+#kintone-unified-suite-v2 .kus-query-builder__t td{border:1px solid #e2e8f0;padding:3px 6px;vertical-align:middle}
+#kintone-unified-suite-v2 .kus-query-builder__t input{padding:2px 4px;border-radius:4px;border:1px solid #cbd5e1;font-size:11px}
+#kintone-unified-suite-v2 .kus-query-builder__t select{padding:2px 4px;border-radius:4px;border:1px solid #cbd5e1;font-size:11px}
+#kintone-unified-suite-v2 .kus-query-builder__out{padding:4px 8px;border-radius:6px;border:1px solid #cbd5e1;font-family:Menlo,Consolas,monospace;font-size:11px;background:#f8fafc}
+
+/* ========================================================================
+   JSON ルート（部分反映）の可視化
+   ======================================================================== */
+#kintone-unified-suite-v2 .patch-json-steps{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:8px;margin:0 0 12px;padding:10px 12px;
+  background:linear-gradient(135deg,#eff6ff,#f0fdfa);
+  border:1px solid #bfdbfe;border-radius:10px;list-style:none;font-size:11px;line-height:1.55;
+}
+#kintone-unified-suite-v2 .patch-json-steps li{
+  display:flex;gap:8px;align-items:flex-start;
+}
+#kintone-unified-suite-v2 .patch-json-step-no{
+  flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;border-radius:50%;
+  background:#2563eb;color:#fff;font-weight:900;font-size:11px;
+}
+#kintone-unified-suite-v2 .patch-json-toolbar{
+  display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+  padding:8px 10px;border:1px solid #dbe3ed;border-radius:8px;background:#fafbfc;
+}
+#kintone-unified-suite-v2 .patch-json-toolbar-label{
+  font-size:10px;font-weight:800;color:#475569;letter-spacing:.04em;text-transform:uppercase;
+}
+#kintone-unified-suite-v2 .patch-json-toolbar-sep{
+  color:#cbd5e1;font-weight:400;padding:0 4px;
+}
+#kintone-unified-suite-v2 .patch-json-summary-card{
+  padding:12px 14px;border:1px solid #bae6fd;border-radius:10px;
+  background:linear-gradient(180deg,#f0f9ff,#fff);box-shadow:0 1px 2px rgba(15,23,42,.04);
+}
+#kintone-unified-suite-v2 .patch-json-summary-head{
+  display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .patch-json-summary-title{
+  font-size:13px;font-weight:900;color:#0c4a6e;
+}
+#kintone-unified-suite-v2 .patch-json-summary-meta{
+  font-size:10px;color:#475569;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+#kintone-unified-suite-v2 .patch-json-summary-stats{
+  display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .patch-stat{
+  display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
+  min-width:54px;padding:4px 10px;border-radius:8px;
+  background:#fff;border:1px solid #e2e8f0;
+}
+#kintone-unified-suite-v2 .patch-stat b{font-size:14px;font-weight:900;color:#0f172a;line-height:1.1}
+#kintone-unified-suite-v2 .patch-stat small{font-size:9px;font-weight:700;color:#64748b;letter-spacing:.04em;margin-top:2px}
+#kintone-unified-suite-v2 .patch-stat-total b{color:#1d4ed8}
+#kintone-unified-suite-v2 .patch-stat-added{background:#ecfdf5;border-color:#bbf7d0}
+#kintone-unified-suite-v2 .patch-stat-added b{color:#166534}
+#kintone-unified-suite-v2 .patch-stat-removed{background:#fef2f2;border-color:#fecaca}
+#kintone-unified-suite-v2 .patch-stat-removed b{color:#b91c1c}
+#kintone-unified-suite-v2 .patch-stat-changed{background:#fffbeb;border-color:#fde68a}
+#kintone-unified-suite-v2 .patch-stat-changed b{color:#92400e}
+#kintone-unified-suite-v2 .patch-stat-moved{background:#f5f3ff;border-color:#c4b5fd}
+#kintone-unified-suite-v2 .patch-stat-moved b{color:#6b21a8}
+#kintone-unified-suite-v2 .patch-stat-section{background:#f1f5f9;border-color:#cbd5e1}
+#kintone-unified-suite-v2 .patch-stat-section b{color:#334155}
+#kintone-unified-suite-v2 .patch-json-summary-sections{
+  display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;
+}
+#kintone-unified-suite-v2 .patch-section-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:3px 9px;
+  border-radius:999px;background:#fff;border:1px solid #cbd5e1;
+  font-size:11px;color:#334155;
+}
+#kintone-unified-suite-v2 .patch-section-chip-name{font-weight:700}
+#kintone-unified-suite-v2 .patch-section-chip-count{
+  font-size:10px;font-weight:800;color:#1d4ed8;background:#dbeafe;
+  padding:1px 7px;border-radius:999px;
+}
+#kintone-unified-suite-v2 .patch-json-summary-hint{
+  font-size:11px;color:#0c4a6e;line-height:1.55;
+  padding:6px 10px;background:#dbeafe;border-radius:6px;border:1px dashed #93c5fd;
+}
+#kintone-unified-suite-v2 .patch-json-fold[open]{background:#fff}
+#kintone-unified-suite-v2 .patch-json-fold > summary{outline:none;list-style:none}
+#kintone-unified-suite-v2 .patch-json-fold > summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .patch-json-fold > summary::before{
+  content:"▸";display:inline-block;margin-right:6px;font-size:10px;color:#94a3b8;
+  transition:transform .15s;
+}
+#kintone-unified-suite-v2 .patch-json-fold[open] > summary::before{transform:rotate(90deg)}
+#kintone-unified-suite-v2 .patch-section{
+  margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed #e2e8f0;
+}
+#kintone-unified-suite-v2 .patch-section:last-child{margin-bottom:0;padding-bottom:0;border-bottom:none}
+#kintone-unified-suite-v2 .patch-section-head{
+  display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;
+}
+#kintone-unified-suite-v2 .patch-section-label{font-weight:800;color:#0f172a;font-size:12px}
+#kintone-unified-suite-v2 .patch-section-count{
+  font-size:10px;font-weight:800;color:#1d4ed8;
+  background:#dbeafe;padding:1px 8px;border-radius:999px;
+}
+#kintone-unified-suite-v2 .patch-row-list{
+  list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:3px;
+}
+#kintone-unified-suite-v2 .patch-row{
+  display:flex;align-items:flex-start;gap:6px;padding:5px 8px;
+  border-radius:6px;border:1px solid #e2e8f0;background:#fff;font-size:11px;
+}
+#kintone-unified-suite-v2 .patch-row-type{
+  flex-shrink:0;display:inline-block;min-width:36px;text-align:center;
+  font-size:10px;font-weight:800;padding:1px 5px;border-radius:4px;
+}
+#kintone-unified-suite-v2 .patch-row-added{border-left:3px solid #22c55e}
+#kintone-unified-suite-v2 .patch-row-added .patch-row-type{background:#dcfce7;color:#15803d}
+#kintone-unified-suite-v2 .patch-row-removed{border-left:3px solid #ef4444}
+#kintone-unified-suite-v2 .patch-row-removed .patch-row-type{background:#fee2e2;color:#b91c1c}
+#kintone-unified-suite-v2 .patch-row-changed{border-left:3px solid #eab308}
+#kintone-unified-suite-v2 .patch-row-changed .patch-row-type{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .patch-row-moved{border-left:3px solid #a855f7}
+#kintone-unified-suite-v2 .patch-row-moved .patch-row-type{background:#f3e8ff;color:#6b21a8}
+#kintone-unified-suite-v2 .patch-row-path{
+  flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:10px;color:#334155;word-break:break-all;
+}
+#kintone-unified-suite-v2 .patch-row-reason{
+  flex-shrink:0;font-size:10px;color:#475569;
+  background:#f1f5f9;padding:1px 6px;border-radius:4px;border:1px solid #cbd5e1;
+  max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+#kintone-unified-suite-v2 .patch-row-more{
+  margin-top:6px;font-size:10px;color:#64748b;text-align:center;
 }

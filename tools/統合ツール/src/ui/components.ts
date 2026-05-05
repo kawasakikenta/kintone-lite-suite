@@ -109,8 +109,12 @@ function setFeatureBreadcrumb(def, tabKey) {
   if (!ui.featureBreadcrumb) return;
   const tab = String(tabKey || def?.tab || '').trim();
   const tabLabel = ui.tabs.find((item) => item.dataset.tab === tab)?.textContent?.trim() || '機能';
-  const featureLabel = def?.label ? ` / ${def.label}` : '';
-  ui.featureBreadcrumb.textContent = `ホーム / ${tabLabel}${featureLabel}`;
+  const featureLabel = def?.label || '';
+  const sep = '<span class="feature-breadcrumb__sep" aria-hidden="true">/</span>';
+  const home = `<button type="button" class="feature-breadcrumb__link" data-act="breadcrumbHome" title="ランチャーへ戻る">ホーム</button>`;
+  const tabSpan = `<span class="feature-breadcrumb__current">${tabLabel}</span>`;
+  const featureSpan = featureLabel ? `${sep}<span class="feature-breadcrumb__current">${featureLabel}</span>` : '';
+  ui.featureBreadcrumb.innerHTML = `${home}${sep}${tabSpan}${featureSpan}`;
 }
 
 function applyFeatureGroupClass(root, group) {
@@ -143,7 +147,7 @@ export function showLauncherScreen(options: any = {}) {
   root.classList.add('screen-launcher', 'launcher-tabbed', 'launcher-show-advanced');
   if (ui.featureTitle) ui.featureTitle.textContent = '';
   if (ui.featureConn) ui.featureConn.textContent = '';
-  if (ui.featureBreadcrumb) ui.featureBreadcrumb.textContent = 'ホーム / 機能';
+  if (ui.featureBreadcrumb) ui.featureBreadcrumb.innerHTML = '<span class="feature-breadcrumb__current">ホーム</span><span class="feature-breadcrumb__sep" aria-hidden="true">/</span><span class="feature-breadcrumb__current">機能</span>';
   setConnectionPanelCollapsed(false);
   updateConnectionStepIndicators();
   if (options.persist !== false) saveCurrentDialogState();
@@ -422,15 +426,24 @@ export function renderScopePickerSummaries() {
   }
 
   const reflectSummary = getToolDocument().getElementById('u_reflectScopeSummary');
+  const reflectScopeKeys = deps.selectedScopeKeys?.(ui.applyScopes) || [];
   if (reflectSummary) {
     const extraText = isReflectNodeModeEffective()
       ? '差分を選んで反映モード中'
       : (ui.applyDiffOnly?.checked ? '差分ありセクションのみ反映' : '');
     reflectSummary.innerHTML = scopeSummaryLabel(
       SECTION_DEFS.filter((def) => def.put),
-      deps.selectedScopeKeys?.(ui.applyScopes) || [],
+      reflectScopeKeys,
       { emptyText: '反映対象がまだ選ばれていません', extraText }
     );
+  }
+  const reflectCountBadge = getToolDocument().getElementById('u_reflectScopeCountBadge');
+  if (reflectCountBadge) {
+    const total = SECTION_DEFS.filter((def) => def.put).length;
+    const sel = reflectScopeKeys.length;
+    reflectCountBadge.textContent = `${sel} / ${total}`;
+    reflectCountBadge.classList.toggle('is-empty', sel === 0);
+    reflectCountBadge.classList.toggle('is-full', sel > 0 && sel === total);
   }
 
   const settingsSummary = getToolDocument().getElementById('u_settingsExportScopeSummary');
@@ -707,7 +720,7 @@ export function renderBundleState() {
     const diffInfo = state.lastDiffAt
       ? `差分: ${fmtFetchTime(state.lastDiffAt)} (差分 ${countActualDiffRows(state.lastDiffRows)}件 / 同一 ${diffSummary.same}件 / 取得失敗 ${state.lastFetchIssues.length}件)`
       : '差分: 未実行';
-    ui.commonDataState.textContent = `${sourceText} / ${targetText} / ${diffInfo}`;
+    ui.commonDataState.textContent = `${src.short} / ${tgt.short} / ${diffInfo}`;
   }
   updateConnectionStepIndicators();
   renderDiffSelectionState();

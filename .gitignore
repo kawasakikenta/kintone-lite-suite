@@ -4,6 +4,7 @@ node_modules/
 .playwright-mcp/
 *.ppk
 *.zip
+plugins/KintoneCalendar/tests/preview.html
 {
   "permissions": {
     "allow": [

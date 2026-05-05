@@ -993,6 +993,16 @@ ${contextLine}`);
   });
 
   // src/diff/export.ts
+  function mdProcessAssigneeTypeLabel(value) {
+    const key = String(value || "").trim();
+    if (!key) return "";
+    return MD_PROCESS_ASSIGNEE_TYPE_LABELS[key] || key;
+  }
+  function mdLookupLabel(map, value) {
+    const key = String(value || "").trim();
+    if (!key) return "";
+    return map[key] || key;
+  }
   function mdEsc(value) {
     return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
   }
@@ -1027,7 +1037,7 @@ ${body}`;
   }
   function mdRawJson(sec) {
     return [
-      "<details><summary>Raw JSON</summary>",
+      "<details><summary>APIレスポンス（生データ）</summary>",
       "",
       "```json",
       JSON.stringify(sec, null, 2),
@@ -1057,8 +1067,8 @@ ${body}`;
     const rows = [
       ["アプリ名", sec.name || ""],
       ["説明", sec.description || ""],
-      ["アイコン", sec.icon?.type ? `${sec.icon.type}${sec.icon.key ? ` (${sec.icon.key})` : ""}` : ""],
-      ["テーマ", sec.theme || ""],
+      ["アイコン", sec.icon?.type ? `${mdLookupLabel(MD_ICON_TYPE_LABELS, sec.icon.type)}${sec.icon.key ? `（${sec.icon.key}）` : ""}` : ""],
+      ["テーマ", mdLookupLabel(MD_THEME_LABELS, sec.theme) || ""],
       ["タイトルフィールド", sec.titleField?.selectFieldCode || (sec.titleField?.isDefaultTitleField ? "（既定）" : "")],
       ["サムネイル", sec.enableThumbnails ? "有効" : "無効"],
       ["コメント", sec.enableComments ? "有効" : "無効"],
@@ -1148,16 +1158,27 @@ ${body}`;
     const views = sec?.views || {};
     const entries = Object.entries(views).map(([name, v]) => ({ name, ...v }));
     entries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
-    const rows = entries.map((v) => [
-      v.name || "",
-      MD_VIEW_TYPE_LABELS[v.type] || v.type || "",
-      String(v.index ?? ""),
-      v.builtinType || "",
-      Array.isArray(v.fields) ? v.fields.join(" / ") : "",
-      v.filterCond || "",
-      v.sort || ""
-    ]);
-    return mdTable(["ビュー名", "種別", "表示順", "ビルトイン", "表示フィールド", "絞り込み条件", "ソート"], rows);
+    const rows = entries.map((v) => {
+      const builtinNote = v.builtinType ? mdLookupLabel(MD_VIEW_BUILTIN_LABELS, v.builtinType) || v.builtinType : "";
+      const extras = [];
+      if (v.customView || v.html) extras.push("カスタムHTMLあり");
+      if (v.pager === false) extras.push("ページャー無効");
+      if (v.paginationStyle) {
+        const paginationLabel = mdLookupLabel(MD_PAGINATION_LABELS, v.paginationStyle) || v.paginationStyle;
+        extras.push(`ページャー:${paginationLabel}`);
+      }
+      return [
+        v.name || "",
+        MD_VIEW_TYPE_LABELS[v.type] || v.type || "",
+        String(v.index ?? ""),
+        builtinNote,
+        Array.isArray(v.fields) ? v.fields.join(" / ") : "",
+        v.filterCond || "",
+        v.sort || "",
+        extras.join(" / ")
+      ];
+    });
+    return mdTable(["ビュー名", "種別", "表示順", "組み込み種別", "表示フィールド", "絞り込み条件", "ソート", "備考"], rows);
   }
   function mdRenderReportSettings(sec) {
     const reports = sec?.reports || {};
@@ -1166,13 +1187,16 @@ ${body}`;
     const rows = entries.map((r) => [
       r.name || "",
       MD_REPORT_CHART_LABELS[r.chartType] || r.chartType || "",
-      r.chartMode || "",
+      mdLookupLabel(MD_REPORT_CHART_MODE_LABELS, r.chartMode),
       (r.groups || []).map((g) => g.code).filter(Boolean).join(" / "),
-      (r.aggregations || []).map((a) => `${a.type || ""}(${a.code || ""})`).join(" / "),
+      (r.aggregations || []).map((a) => {
+        const typeLabel = mdLookupLabel(MD_AGGREGATION_TYPE_LABELS, a.type);
+        return `${typeLabel}（${a.code || ""}）`;
+      }).join(" / "),
       r.filterCond || "",
-      r.periodicReport?.active ? "定期" : ""
+      r.periodicReport?.active ? "定期実行あり" : ""
     ]);
-    return mdTable(["レポート名", "チャート", "モード", "分類", "集計", "絞り込み", "定期"], rows);
+    return mdTable(["レポート名", "チャート", "モード", "分類", "集計", "絞り込み条件", "定期実行"], rows);
   }
   function mdRenderProcessSettings(sec) {
     const parts = [];
@@ -1185,11 +1209,11 @@ ${body}`;
       parts.push("#### ステータス");
       parts.push("");
       parts.push(mdTable(
-        ["ステータス名", "表示順", "作業者タイプ", "作業者"],
+        ["ステータス名", "表示順", "作業者の選び方", "作業者候補"],
         stateEntries.map((s) => [
           s.name || "",
           s.index ?? "",
-          s.assignee?.type || "",
+          mdProcessAssigneeTypeLabel(s.assignee?.type),
           mdEntityList(s.assignee?.entities)
         ])
       ));
@@ -1200,7 +1224,7 @@ ${body}`;
       parts.push("#### アクション");
       parts.push("");
       parts.push(mdTable(
-        ["アクション名", "From", "To", "絞り込み条件"],
+        ["アクション名", "遷移元（From）", "遷移先（To）", "絞り込み条件"],
         actions.map((a) => [
           a.name || "",
           Array.isArray(a.from) ? a.from.join(" / ") : a.from || "",
@@ -1223,22 +1247,23 @@ ${body}`;
   }
   function mdRenderCustomizeSettings(sec) {
     const parts = [];
-    parts.push(`- スコープ: ${sec?.scope || ""}`);
+    parts.push(`- 適用範囲（スコープ）: ${mdLookupLabel(MD_CUSTOMIZE_SCOPE_LABELS, sec?.scope) || "（未設定）"}`);
     parts.push("");
     ["desktop", "mobile"].forEach((area) => {
       const zone = sec?.[area];
       if (!zone) return;
-      parts.push(`#### ${area === "desktop" ? "PC" : "モバイル"}`);
+      parts.push(`#### ${area === "desktop" ? "PC（デスクトップ）" : "モバイル"}`);
       parts.push("");
       ["js", "css"].forEach((kind) => {
         const list = zone[kind];
         if (!Array.isArray(list) || list.length === 0) return;
-        parts.push(`- ${kind.toUpperCase()}:`);
+        parts.push(`- ${kind.toUpperCase()}（${kind === "js" ? "JavaScript" : "スタイルシート"}）:`);
         list.forEach((item) => {
           let src = "";
           if (item.type === "URL") src = item.url || "";
-          else if (item.file) src = `(ファイル: ${item.file.name || item.file.fileKey || ""})`;
-          parts.push(`  - ${item.type || ""}: ${src}`);
+          else if (item.file) src = `ファイル: ${item.file.name || item.file.fileKey || ""}`;
+          const typeLabel = mdLookupLabel(MD_RESOURCE_TYPE_LABELS, item.type);
+          parts.push(`  - ${typeLabel || "(種別不明)"}: ${src}`);
         });
       });
       parts.push("");
@@ -1252,10 +1277,10 @@ ${body}`;
       a.name || "",
       a.index ?? "",
       a.app?.code || a.app?.id || "",
-      a.entity?.type || "",
-      (a.mappings || []).length
+      mdLookupLabel(MD_ENTITY_TYPE_LABELS, a.entity?.type),
+      String((a.mappings || []).length)
     ]);
-    return mdTable(["アクション名", "表示順", "連携先アプリ", "エンティティ種別", "マッピング数"], rows);
+    return mdTable(["アクション名", "表示順", "連携先アプリ", "実行可能対象", "マッピング数"], rows);
   }
   function mdRenderAclRights(rights, columns) {
     if (!Array.isArray(rights) || rights.length === 0) return "";
@@ -1350,15 +1375,17 @@ ${body}`;
       parts.push("");
     }
     parts.push(mdTable(
-      ["タイトル", "タイミング", "絞り込み条件", "通知先"],
+      ["タイトル", "通知タイミング", "絞り込み条件", "通知先"],
       list.map((n) => {
         const t = n.timing || {};
         const timingParts = [];
-        if (t.code) timingParts.push(t.code);
+        if (t.code) timingParts.push(mdLookupLabel(MD_NOTIFICATION_TIMING_LABELS, t.code));
         if (t.daysLater != null) timingParts.push(`${t.daysLater}日後`);
         if (t.hoursLater != null) timingParts.push(`${t.hoursLater}時間後`);
-        if (t.time) timingParts.push(t.time);
-        return [n.title || "", timingParts.join(" "), n.filterCond || "", mdEntityList(n.targets)];
+        if (t.time) timingParts.push(`${t.time}`);
+        if (t.weekday) timingParts.push(`曜日: ${t.weekday}`);
+        if (t.day != null) timingParts.push(`日付: ${t.day}日`);
+        return [n.title || "", timingParts.join(" / "), n.filterCond || "", mdEntityList(n.targets)];
       })
     ));
     return parts.join("\n");
@@ -1516,7 +1543,7 @@ ${body}`;
     }
     return lines.join("\n");
   }
-  var MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_SECTION_RENDERERS;
+  var MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_PROCESS_ASSIGNEE_TYPE_LABELS, MD_NOTIFICATION_TIMING_LABELS, MD_REPORT_CHART_MODE_LABELS, MD_AGGREGATION_TYPE_LABELS, MD_CUSTOMIZE_SCOPE_LABELS, MD_RESOURCE_TYPE_LABELS, MD_ICON_TYPE_LABELS, MD_THEME_LABELS, MD_VIEW_BUILTIN_LABELS, MD_PAGINATION_LABELS, MD_SECTION_RENDERERS;
   var init_export = __esm({
     "src/diff/export.ts"() {
       init_constants();
@@ -1557,7 +1584,8 @@ ${body}`;
         SPACER: "スペース",
         HR: "罫線",
         LABEL: "ラベル",
-        GROUP: "グループ"
+        GROUP: "グループ",
+        LOOKUP: "ルックアップ"
       };
       MD_VIEW_TYPE_LABELS = {
         LIST: "一覧",
@@ -1583,6 +1611,61 @@ ${body}`;
         FIELD_ENTITY: "フィールド",
         CREATOR: "レコード作成者",
         CUSTOM_FIELD: "カスタムフィールド"
+      };
+      MD_PROCESS_ASSIGNEE_TYPE_LABELS = {
+        ONE: "1人選出（候補から1人）",
+        ANYONE: "候補の誰でも（先着）",
+        ALL: "全員（全員の処理が必要）"
+      };
+      MD_NOTIFICATION_TIMING_LABELS = {
+        CREATION: "レコード作成時",
+        DAYS_OF_WEEK: "曜日指定",
+        TIME: "時刻指定",
+        WEEKLY: "毎週",
+        MONTHLY: "毎月"
+      };
+      MD_REPORT_CHART_MODE_LABELS = {
+        NORMAL: "通常",
+        STACKED: "積み上げ",
+        PERCENTAGE: "100%積み上げ"
+      };
+      MD_AGGREGATION_TYPE_LABELS = {
+        COUNT: "件数",
+        SUM: "合計",
+        AVG: "平均",
+        MAX: "最大値",
+        MIN: "最小値"
+      };
+      MD_CUSTOMIZE_SCOPE_LABELS = {
+        ALL: "全ユーザー",
+        ADMIN: "管理者のみ",
+        NONE: "無効"
+      };
+      MD_RESOURCE_TYPE_LABELS = {
+        URL: "URL指定",
+        FILE: "ファイル指定"
+      };
+      MD_ICON_TYPE_LABELS = {
+        PRESET: "プリセット",
+        FILE: "アップロードファイル"
+      };
+      MD_THEME_LABELS = {
+        WHITE: "ホワイト",
+        RED: "レッド",
+        BLUE: "ブルー",
+        GREEN: "グリーン",
+        YELLOW: "イエロー",
+        BLACK: "ブラック"
+      };
+      MD_VIEW_BUILTIN_LABELS = {
+        ASSIGNEE: "作業者ビュー",
+        UNDONE: "未完了レコード",
+        ACTIVE_BY_USER: "自分が処理すべきレコード",
+        RECORDS_OF_USER: "自分が関わるレコード"
+      };
+      MD_PAGINATION_LABELS = {
+        ROW: "行ページャ",
+        PAGE: "ページ番号"
       };
       MD_SECTION_RENDERERS = {
         appSettings: mdRenderAppSettings,
@@ -1783,6 +1866,56 @@ ${body}`;
       "STATUS": "ステータス",
       "CATEGORY": "カテゴリー",
       "STATUS_ASSIGNEE": "作業者"
+    };
+    const CHART_TYPE_LABEL = {
+      BAR: "横棒グラフ",
+      COLUMN: "縦棒グラフ",
+      LINE: "折れ線グラフ",
+      PIE: "円グラフ",
+      PIVOT_TABLE: "クロス集計表",
+      TABLE: "表",
+      AREA: "面グラフ",
+      SPLINE: "スプライン",
+      SPLINE_AREA: "スプライン面",
+      SCATTER: "散布図"
+    };
+    const CHART_MODE_LABEL = { NORMAL: "通常", STACKED: "積み上げ", PERCENTAGE: "100%積み上げ" };
+    const AGGREGATION_TYPE_LABEL = { COUNT: "件数", SUM: "合計", AVG: "平均", MAX: "最大値", MIN: "最小値" };
+    const GROUP_PER_LABEL = {
+      YEAR: "年",
+      QUARTER: "四半期",
+      MONTH: "月",
+      WEEK: "週",
+      DAY: "日",
+      HOUR: "時",
+      MINUTE: "分"
+    };
+    const ASSIGNEE_TYPE_LABEL = {
+      ONE: "1人選出（候補から1人）",
+      ANYONE: "候補の誰でも（先着）",
+      ALL: "全員（全員の処理が必要）"
+    };
+    const NOTIFICATION_TIMING_LABEL = {
+      CREATION: "レコード作成時",
+      DAYS_OF_WEEK: "曜日指定",
+      TIME: "時刻指定",
+      WEEKLY: "毎週",
+      MONTHLY: "毎月"
+    };
+    const RESOURCE_TYPE_LABEL = { URL: "URL指定", FILE: "ファイル指定" };
+    const PAGINATION_LABEL = { ROW: "行ページャ", PAGE: "ページ番号" };
+    const WEBHOOK_EVENT_LABEL = {
+      ADD_RECORD: "レコード追加",
+      UPDATE_RECORD: "レコード編集",
+      DELETE_RECORD: "レコード削除",
+      UPDATE_STATUS: "ステータス変更",
+      ADD_COMMENT: "コメント追加",
+      DELETE_COMMENT: "コメント削除"
+    };
+    const ENUM_LOOKUP = (map, value) => {
+      if (value == null || value === "") return "";
+      const key = String(value).trim().toUpperCase();
+      return map[key] || String(value);
     };
     const SYSTEM_FIELDS = /* @__PURE__ */ new Set(["$id", "$revision", "status", "category", "assignee"]);
     class Semaphore {
@@ -3128,7 +3261,7 @@ ${body}`;
             fieldLabels.join("\n") || "-",
             UtilsX.formatFilterCond(v.filterCond),
             UtilsX.formatSort(v.sort),
-            v.paginationType || (v.pagination === false ? "無効" : "既定"),
+            v.paginationType ? PAGINATION_LABEL[String(v.paginationType).toUpperCase()] || v.paginationType : v.pagination === false ? "無効" : "既定",
             UtilsX.stripHtml(v.customView || v.html || v.builtinType || "")
           ];
         });
@@ -3138,10 +3271,10 @@ ${body}`;
         const headers = ["グラフ名", "種別", "集計対象", "集計方法", "グループ化", "ソート", "フィルター"];
         const rows = Object.entries(reports.reports).sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0)).map(([name, r]) => [
           name,
-          r.chartType || r.type || "",
-          Array.isArray(r.aggregations) ? r.aggregations.map((a) => `${a.type || ""}:${a.code || ""}`).join("\n") : "",
-          r.chartMode || "",
-          Array.isArray(r.groups) ? r.groups.map((g) => `${g.code || ""}${g.per ? `(${g.per})` : ""}`).join("、") : "",
+          ENUM_LOOKUP(CHART_TYPE_LABEL, r.chartType || r.type) || r.chartType || r.type || "",
+          Array.isArray(r.aggregations) ? r.aggregations.map((a) => `${ENUM_LOOKUP(AGGREGATION_TYPE_LABEL, a.type) || a.type || ""}（${a.code || ""}）`).join("\n") : "",
+          ENUM_LOOKUP(CHART_MODE_LABEL, r.chartMode) || r.chartMode || "",
+          Array.isArray(r.groups) ? r.groups.map((g) => `${g.code || ""}${g.per ? `(${ENUM_LOOKUP(GROUP_PER_LABEL, g.per) || g.per})` : ""}`).join("、") : "",
           UtilsX.formatSort(Array.isArray(r.sorts) ? r.sorts.map((s) => `${s.by || ""} ${s.order || ""}`).join(", ") : ""),
           UtilsX.formatFilterCond(r.filterCond)
         ]);
@@ -3165,11 +3298,11 @@ ${body}`;
         pEmptyRows.push(pAoa.length - 1);
         pAoa.push(["■ ステータス一覧"]);
         pSectionRows.push(pAoa.length - 1);
-        pAoa.push(["順序", "ステータス名", "作業者タイプ", "作業者", "入ってくる遷移数", "出て行く遷移数"]);
+        pAoa.push(["順序", "ステータス名", "作業者の選び方", "作業者候補", "入ってくる遷移数", "出て行く遷移数"]);
         pHeaderInfoRows.push(pAoa.length - 1);
         const stateEntries = Object.entries(status.states || {}).sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0));
         stateEntries.forEach(([name, st]) => {
-          const asgnType = st.assignee?.type || "-";
+          const asgnType = st.assignee?.type ? ENUM_LOOKUP(ASSIGNEE_TYPE_LABEL, st.assignee.type) || st.assignee.type : "-";
           const asgnList = Array.isArray(st.assignee?.entities) ? st.assignee.entities.map(UtilsX.formatEntityDetailed).join("\n") : "-";
           const inCount = (status.actions || []).filter((a) => a.to === name).length;
           const outCount = (status.actions || []).filter((a) => a.from === name).length;
@@ -3298,7 +3431,8 @@ ${body}`;
           const list = [];
           ["js", "css"].forEach((kind) => {
             (obj?.[kind] || []).forEach((entry, i) => {
-              list.push([scope, kind.toUpperCase(), i + 1, entry.type || "", entry.file?.name || entry.url || "", entry.file?.fileKey || ""]);
+              const refType = entry.type ? ENUM_LOOKUP(RESOURCE_TYPE_LABEL, entry.type) || entry.type : "";
+              list.push([scope, kind.toUpperCase(), i + 1, refType, entry.file?.name || entry.url || "", entry.file?.fileKey || ""]);
             });
           });
           return list;
@@ -3340,7 +3474,7 @@ ${body}`;
             return [
               i + 1,
               UtilsX.formatEntityDetailed(n.entity || n),
-              n.timing || "-",
+              n.timing ? typeof n.timing === "object" ? ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing.code) || n.timing.code || "-" : ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing) || n.timing : "-",
               baseLabel,
               n.daysLater != null || n.daysBefore != null ? `${n.daysLater != null ? `+${n.daysLater}` : ""}${n.daysBefore != null ? `-${n.daysBefore}` : ""}日` : "-",
               Array.isArray(n.weekdays) ? n.weekdays.join("、") : "-",
@@ -3385,7 +3519,7 @@ ${body}`;
           UtilsX.formatBoolean(n.commentAdded ?? n.notifyOnComment),
           UtilsX.formatBoolean(n.statusChanged ?? n.notifyOnStatusChange),
           UtilsX.formatBoolean(n.fileImported),
-          UtilsX.formatFilterCond(n.filterCond || n.timing || "-"),
+          n.filterCond ? UtilsX.formatFilterCond(n.filterCond) : n.timing ? typeof n.timing === "object" ? ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing.code) || n.timing.code || "-" : ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing) || n.timing : "-",
           UtilsX.stripHtml(n.title || n.body || "-")
         ]);
         appendSheet(
@@ -3404,7 +3538,7 @@ ${body}`;
           const rows = list.map((w) => [
             w.id || "",
             w.url || w.notifyUrl || "",
-            Array.isArray(w.notificationEvents || w.events) ? (w.notificationEvents || w.events).join(", ") : "",
+            Array.isArray(w.notificationEvents || w.events) ? (w.notificationEvents || w.events).map((ev) => ENUM_LOOKUP(WEBHOOK_EVENT_LABEL, ev) || ev).join(", ") : "",
             UtilsX.stripHtml(w.description || ""),
             UtilsX.formatBoolean(w.enabled !== false)
           ]);

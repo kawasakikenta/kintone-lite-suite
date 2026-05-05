@@ -1878,6 +1878,23 @@ function fieldIconForLabel(f){
   if(f.required) return "•";
   return "·";
 }
+// kintone API のフィールド ENUM を日本語化（ER 図側パネル表示用）
+const FIELD_TYPE_JP_LABEL = {
+  SINGLE_LINE_TEXT:"文字列(1行)", MULTI_LINE_TEXT:"文字列(複数行)", RICH_TEXT:"リッチエディター",
+  NUMBER:"数値", CALC:"計算", RADIO_BUTTON:"ラジオボタン", CHECK_BOX:"チェックボックス",
+  DROP_DOWN:"ドロップダウン", MULTI_SELECT:"複数選択", DATE:"日付", TIME:"時刻", DATETIME:"日時",
+  USER_SELECT:"ユーザー選択", ORGANIZATION_SELECT:"組織選択", GROUP_SELECT:"グループ選択",
+  LOOKUP:"ルックアップ", SUBTABLE:"テーブル", REFERENCE_TABLE:"関連レコード一覧",
+  RECORD_NUMBER:"レコード番号", CREATOR:"作成者", CREATED_TIME:"作成日時",
+  MODIFIER:"更新者", UPDATED_TIME:"更新日時", STATUS:"ステータス", STATUS_ASSIGNEE:"作業者",
+  CATEGORY:"カテゴリー", FILE:"添付ファイル", LINK:"リンク",
+  LABEL:"ラベル", SPACER:"スペース", HR:"罫線", GROUP:"グループ"
+};
+function fieldTypeJpLabel(type){
+  if(!type) return "-";
+  const key = String(type).trim().toUpperCase();
+  return FIELD_TYPE_JP_LABEL[key] || type;
+}
 function visibleFieldsForNode(app){
   return (app.fields || []).filter(f=>ER_OPTIONS.includeSubtableFields || !f.inSubtable);
 }
@@ -1906,7 +1923,7 @@ function buildFieldPreviewLine(field){
   if(ER_OPTIONS.fieldDensity === "full"){
     const extras = [];
     if(code && code !== label) extras.push("[" + code + "]");
-    if(type) extras.push(type);
+    if(type) extras.push(lookupEnum(FIELD_TYPE_JP, type) || type);
     return prefix + " " + label + (extras.length ? " • " + extras.join(" • ") : "");
   }
   return prefix + " " + label + (code && code !== label ? " [" + code + "]" : "");
@@ -2479,7 +2496,7 @@ function renderAppDetail(app){
         + '<div class="field-name">' + escapeHtml(fieldName) + tags + '</div>'
         + '<div class="field-sub">' + escapeHtml(meta.join(' / ')) + '</div>'
         + '</div>'
-        + '<span class="field-type">' + escapeHtml(field.type || "-") + '</span>'
+        + '<span class="field-type">' + escapeHtml(fieldTypeJpLabel(field.type)) + '</span>'
         + '</div>';
     });
   };

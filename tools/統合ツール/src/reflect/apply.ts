@@ -1009,26 +1009,133 @@ export function parsePatchJsonPayload(input) {
   };
 }
 
+function getPatchTypeJpLabel(type, moved) {
+  if (moved) return '移動';
+  if (type === 'added') return '追加';
+  if (type === 'removed') return '削除';
+  if (type === 'changed') return '変更';
+  if (type === 'same') return '同一';
+  return String(type || '-');
+}
+
+function renderPatchJsonRangeBody(payload) {
+  const body = getToolDocument().getElementById('u_patchJsonRangeBody');
+  if (!body) return;
+  const fold = getToolDocument().getElementById('u_patchJsonRangeFold') as HTMLDetailsElement | null;
+  const sections = payload?.sections || {};
+  const sectionKeys = Object.keys(sections);
+  if (!sectionKeys.length) {
+    if (fold) fold.style.display = 'none';
+    body.innerHTML = '';
+    return;
+  }
+  if (fold) fold.style.display = 'block';
+  const order = new Map<string, number>(SECTION_DEFS.map((item, index): [string, number] => [item.key, index]));
+  const orderedKeys = sectionKeys.sort((a, b) => {
+    const ao = order.has(a) ? (order.get(a) as number) : 999;
+    const bo = order.has(b) ? (order.get(b) as number) : 999;
+    if (ao !== bo) return ao - bo;
+    return String(a).localeCompare(String(b));
+  });
+  const blocks = orderedKeys.map((key) => {
+    const def = SECTION_DEFS.find((item) => item.key === key);
+    const label = def?.label || key;
+    const rows = Array.isArray(sections[key]) ? sections[key] : [];
+    if (!rows.length) return '';
+    const items = rows.slice(0, 80).map((row: any) => {
+      const typeLabel = getPatchTypeJpLabel(row?.type, row?.moved);
+      const cls = row?.type === 'added' ? 'patch-row-added' : row?.type === 'removed' ? 'patch-row-removed' : row?.moved ? 'patch-row-moved' : 'patch-row-changed';
+      const reason = row?.reasonSummary ? `<span class="patch-row-reason">${esc(String(row.reasonSummary))}</span>` : '';
+      return `<li class="patch-row ${cls}"><span class="patch-row-type">${esc(typeLabel)}</span><code class="patch-row-path">${esc(String(row?.path || '-'))}</code>${reason}</li>`;
+    }).join('');
+    const more = rows.length > 80 ? `<div class="patch-row-more muted">…他 ${rows.length - 80} 件</div>` : '';
+    return `<section class="patch-section">
+      <header class="patch-section-head">
+        <span class="patch-section-label">${esc(label)}</span>
+        <span class="patch-section-count">${rows.length}件</span>
+      </header>
+      <ul class="patch-row-list">${items}</ul>
+      ${more}
+    </section>`;
+  }).filter(Boolean).join('');
+  body.innerHTML = blocks || '<div class="muted" style="padding:8px">該当行なし</div>';
+}
+
 export function renderPatchJsonSummary(payload) {
   const el = getToolDocument().getElementById('u_patchJsonSummary');
   if (!el) {
     renderPatchJsonDiff(payload);
+    renderPatchJsonRangeBody(payload);
     return;
   }
   if (!payload || !payload.sections || !Object.keys(payload.sections).length) {
     el.style.display = 'none';
-    el.textContent = '';
+    el.innerHTML = '';
     renderPatchJsonDiff(null);
+    renderPatchJsonRangeBody(null);
     return;
   }
-  const sectionLabels = Object.entries(payload.sections).map(([key, rows]) => {
-    const def = SECTION_DEFS.find((item) => item.key === key);
-    return `${def?.label || key}:${Array.isArray(rows) ? rows.length : 0}件`;
-  });
-  const totalRows = Object.values(payload.sections).reduce((sum: number, rows: any) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
-  el.textContent = `生成日時 ${payload.generatedAt || '-'} / 比較元 ${payload.source?.appId || '-'} → 比較先 ${payload.target?.appId || '-'} / ${sectionLabels.join(' / ')} / 合計 ${totalRows} 行`;
+  // セクション別件数（並び順は SECTION_DEFS 順）
+  const order = new Map<string, number>(SECTION_DEFS.map((item, index): [string, number] => [item.key, index]));
+  const sectionEntries = Object.entries(payload.sections)
+    .map(([key, rows]: [string, any]) => ({
+      key,
+      label: SECTION_DEFS.find((item) => item.key === key)?.label || key,
+      count: Array.isArray(rows) ? rows.length : 0,
+      added: Array.isArray(rows) ? rows.filter((r: any) => r?.type === 'added').length : 0,
+      removed: Array.isArray(rows) ? rows.filter((r: any) => r?.type === 'removed').length : 0,
+      changed: Array.isArray(rows) ? rows.filter((r: any) => r?.type !== 'added' && r?.type !== 'removed').length : 0,
+      moved: Array.isArray(rows) ? rows.filter((r: any) => !!r?.moved).length : 0
+    }))
+    .sort((a, b) => {
+      const ao = order.has(a.key) ? (order.get(a.key) as number) : 999;
+      const bo = order.has(b.key) ? (order.get(b.key) as number) : 999;
+      if (ao !== bo) return ao - bo;
+      return a.label.localeCompare(b.label);
+    });
+  const totalRows = sectionEntries.reduce((sum, item) => sum + item.count, 0);
+  const totals = sectionEntries.reduce(
+    (acc, item) => {
+      acc.added += item.added;
+      acc.removed += item.removed;
+      acc.changed += item.changed;
+      acc.moved += item.moved;
+      return acc;
+    },
+    { added: 0, removed: 0, changed: 0, moved: 0 }
+  );
+  const generatedAt = payload.generatedAt ? new Date(payload.generatedAt).toLocaleString() : '-';
+  const srcId = payload.source?.appId || '-';
+  const tgtId = payload.target?.appId || '-';
+  const headerHtml = `
+    <div class="patch-json-summary-card">
+      <div class="patch-json-summary-head">
+        <div class="patch-json-summary-title">📦 取込済みパッチJSONの内容</div>
+        <div class="patch-json-summary-meta">生成日時 ${esc(generatedAt)} / 比較元 App ${esc(String(srcId))} → 比較先 App ${esc(String(tgtId))}</div>
+      </div>
+      <div class="patch-json-summary-stats">
+        <span class="patch-stat patch-stat-total"><b>${totalRows}</b><small>合計行</small></span>
+        <span class="patch-stat patch-stat-added"><b>${totals.added}</b><small>追加</small></span>
+        <span class="patch-stat patch-stat-removed"><b>${totals.removed}</b><small>削除</small></span>
+        <span class="patch-stat patch-stat-changed"><b>${totals.changed}</b><small>変更</small></span>
+        ${totals.moved ? `<span class="patch-stat patch-stat-moved"><b>${totals.moved}</b><small>移動</small></span>` : ''}
+        <span class="patch-stat patch-stat-section"><b>${sectionEntries.length}</b><small>対象セクション</small></span>
+      </div>
+      <div class="patch-json-summary-sections">
+        ${sectionEntries.map((s) => `
+          <span class="patch-section-chip" title="${esc(s.label)}">
+            <span class="patch-section-chip-name">${esc(s.label)}</span>
+            <span class="patch-section-chip-count">${s.count}</span>
+          </span>
+        `).join('')}
+      </div>
+      <div class="patch-json-summary-hint">この内容で「比較先プレビュー」へ反映されます。中身を確認したい場合は下の「📋 このJSONに含まれる差分範囲」を開いてください。</div>
+    </div>
+  `;
+  el.innerHTML = headerHtml;
   el.style.display = 'block';
   renderPatchJsonDiff(payload);
+  renderPatchJsonRangeBody(payload);
 }
 
 export async function importPatchJsonFromFile(file) {
@@ -1079,6 +1186,72 @@ export function populatePatchJsonFromCurrentDiff(options: PopulatePatchJsonOptio
   renderPatchJsonSummary(payload);
   if (!options.silent) setStatus(`差分比較結果からパッチJSONを生成しました (${Object.keys(payload.sections).length}セクション)`);
   return payload;
+}
+
+/**
+ * 差分タブで選択中の行だけをパッチJSONとして取り込む（部分反映の主動線）。
+ * 選択がない場合は明示的にエラーにし、誤って全件を反映してしまうのを防ぐ。
+ */
+export function populatePatchJsonFromSelectedDiff(options: PopulatePatchJsonOptions = {}) {
+  if (!state.lastDiffRows.length) throw new Error('先に差分比較を実行してください');
+  if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error('差分比較の比較元/比較先バンドルがありません');
+  const selectedIds = state.diffSelectedIds instanceof Set ? state.diffSelectedIds : new Set();
+  const selectedRows = (state.lastDiffRows || []).filter((row) => row && row._id && selectedIds.has(row._id));
+  if (!selectedRows.length) {
+    throw new Error('差分タブで反映したい行を選択してから実行してください（チェックボックスや「表示中を選択」ボタンで指定できます）');
+  }
+  const payload = parsePatchJsonPayload(buildPatchPayload(selectedRows, state.lastSourceBundle, state.lastTargetBundle));
+  state.importedPatchPayload = payload;
+  setPatchEditorValue(payload);
+  renderPatchJsonSummary(payload);
+  const sectionCount = Object.keys(payload.sections).length;
+  const totalRows = (Object.values(payload.sections) as any[][]).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
+  if (!options.silent) setStatus(`選択した差分 ${totalRows} 行（${sectionCount}セクション）をパッチJSONに取り込みました（"この内容で反映"ボタンで部分反映できます）`);
+  return payload;
+}
+
+/**
+ * エディタにある現在のパッチJSONをファイルダウンロード（部分反映の受け渡し用）
+ */
+export function exportPatchJsonToFile() {
+  const text = getPatchEditorText();
+  if (isPatchEditorEffectivelyEmpty(text)) throw new Error('エクスポートするパッチJSONがありません。先に「差分比較結果を読込」または「選択中の差分だけ取込」を実行してください');
+  let payload;
+  try {
+    payload = parsePatchJsonPayload(text);
+  } catch (e) {
+    throw new Error(`パッチJSONのパースに失敗しました: ${e?.message || e}`);
+  }
+  const c = commonParams();
+  const sourceLabel = buildAppFilenameLabel(payload.source?.appId || c.source.appId || 'unknown', extractAppNameFromBundle(state.lastSourceBundle));
+  const targetLabel = buildAppFilenameLabel(payload.target?.appId || c.target.appId || 'unknown', extractAppNameFromBundle(state.lastTargetBundle));
+  const filename = buildExportFilename('反映パッチ', 'json', { appLabel: `${sourceLabel}_to_${targetLabel}` });
+  const formatted = JSON.stringify(payload, null, 2);
+  downloadText(filename, formatted, 'application/json');
+  const totalRows = (Object.values(payload.sections) as any[][]).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
+  setStatus(`パッチJSONを保存しました: ${filename} (${totalRows} 行 / ${Object.keys(payload.sections).length} セクション)`);
+  return { filename, payload };
+}
+
+/**
+ * エディタの現在のパッチJSONをクリップボードにコピー
+ */
+export async function copyPatchJsonToClipboard() {
+  const text = getPatchEditorText();
+  if (isPatchEditorEffectivelyEmpty(text)) throw new Error('コピーするパッチJSONがありません');
+  // 整形してからコピー（編集中の整形不要なテキストでもきれいに）
+  let formatted = text;
+  try {
+    const parsed = parsePatchJsonPayload(text);
+    formatted = JSON.stringify(parsed, null, 2);
+  } catch (e) { /* keep as-is if parse fails */ }
+  try {
+    await navigator.clipboard.writeText(formatted);
+    setStatus('パッチJSONをクリップボードにコピーしました');
+    return true;
+  } catch (e) {
+    throw new Error(`クリップボードへのコピーに失敗: ${e?.message || e}`);
+  }
 }
 
 function getPatchPayloadForApply() {

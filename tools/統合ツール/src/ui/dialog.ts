@@ -120,7 +120,7 @@ export function getCurrentDialogPosition(width?: number, height?: number): Dialo
   return clampDialogPosition(left, top, width || rect.width, height || rect.height);
 }
 
-function getDialogSizeBounds(): DialogSizeBounds {
+export function getDialogSizeBounds(): DialogSizeBounds {
   const tw = getToolWindow();
   const maxWidth = Math.max(360, Math.floor((tw.innerWidth || DIALOG_DEFAULT_WIDTH) - (DIALOG_MARGIN * 2)));
   const maxHeight = Math.max(320, Math.floor((tw.innerHeight || DIALOG_DEFAULT_HEIGHT) - (DIALOG_MARGIN * 2)));

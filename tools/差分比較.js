@@ -4051,12 +4051,15 @@ ${contextLine}`);
     if (val === null) return escHtml('null');
     const t = typeof val;
     if (t === 'string' || t === 'number' || t === 'boolean') {
-      return escHtml(String(val));
+      // 単独の API ENUM 文字列（"CREATOR" / "BAR" 等）を日本語ラベルに置換
+      const s = String(val);
+      const labeled = FIELD_TYPE_LABELS[s] || s;
+      return escHtml(labeled);
     }
     if (Array.isArray(val)) {
       let j;
       try { j = JSON.stringify(val); } catch (e) { j = String(val); }
-      return '<span class="sl-val-mono">' + escHtml(j) + '</span>';
+      return '<span class="sl-val-mono">' + escHtml(localizeJsonEnums(j)) + '</span>';
     }
     if (t === 'object') {
       // SUBTABLE 全体: テーブル情報 + 内部フィールドを表形式でレンダリング
@@ -4073,13 +4076,15 @@ ${contextLine}`);
           const v = val[k];
           let cell;
           if (v === null || v === undefined || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-            cell = escHtml(v === undefined ? '（未定義）' : JSON.stringify(v));
+            // type/フィールド型を持つ key の場合は値を ENUM ラベルに置換
+            const stringified = v === undefined ? '（未定義）' : JSON.stringify(v);
+            cell = escHtml(localizeJsonEnums(stringified));
           } else if (k === 'fields' && isSubtableFieldsMap(v)) {
             cell = renderSubtableFieldsTableHtml(v);
           } else {
             let j;
             try { j = JSON.stringify(v); } catch (e) { j = String(v); }
-            cell = escHtml(j);
+            cell = escHtml(localizeJsonEnums(j));
           }
           return '<tr><th>' + escHtml(k) + '</th><td>' + cell + '</td></tr>';
         }).join('');
@@ -4088,7 +4093,7 @@ ${contextLine}`);
     }
     let j;
     try { j = JSON.stringify(val); } catch (e) { j = String(val); }
-    return '<span class="sl-val-mono">' + escHtml(j) + '</span>';
+    return '<span class="sl-val-mono">' + escHtml(localizeJsonEnums(j)) + '</span>';
   }
 
   function formatFieldValuePlain(val, maxLen) {
@@ -4139,7 +4144,9 @@ ${contextLine}`);
     UPDATED_TIME: '更新日時',
     SPACER: 'スペース',
     HR: '罫線',
-    LABEL: 'ラベル'
+    LABEL: 'ラベル',
+    GROUP: 'グループ',
+    LOOKUP: 'ルックアップ'
   };
 
   const FIELD_SETTING_LABELS = {
@@ -4197,6 +4204,53 @@ ${contextLine}`);
   function fieldTypeDisplayLabel(type) {
     const key = String(type || '').trim();
     return FIELD_TYPE_LABELS[key] || key || 'フィールド';
+  }
+
+  // diff HTML の値セル内 JSON 文字列に含まれる kintone API ENUM トークンを日本語ラベルへ置換する。
+  // 「フィールド型 / ACL エンティティ型 / ビュー / グラフ / 通知タイミング / Webhook イベント」などを網羅。
+  function localizeJsonEnums(jsonStr) {
+    if (!jsonStr || typeof jsonStr !== 'string') return jsonStr;
+    let out = jsonStr;
+    const dictionaries = [
+      FIELD_TYPE_LABELS,
+      // 重複は longer-key first ソートで解消されるため一括連結する
+      Object.freeze({
+        // ACL / 通知の対象エンティティ
+        USER: 'ユーザー', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド値',
+        LOGIN_USER: 'ログインユーザー', ALL: '全員',
+        CUSTOM_FIELD: 'カスタムフィールド',
+        // Chart / Aggregation
+        BAR: '横棒グラフ', COLUMN: '縦棒グラフ', LINE: '折れ線グラフ', PIE: '円グラフ',
+        PIVOT_TABLE: 'クロス集計表', AREA: '面グラフ', SPLINE: 'スプライン',
+        SPLINE_AREA: 'スプライン面', SCATTER: '散布図',
+        COUNT: '件数', SUM: '合計', AVG: '平均', MAX: '最大値', MIN: '最小値',
+        NORMAL: '通常', STACKED: '積み上げ', PERCENTAGE: '100%積み上げ',
+        // Process assignee
+        ONE: '1人選出', ANYONE: '候補の誰でも',
+        // Customize / scope
+        URL: 'URL指定', ADMIN: '管理者のみ', NONE: '無効',
+        // Notification timing
+        CREATION: 'レコード作成時', DAYS_OF_WEEK: '曜日指定', WEEKLY: '毎週', MONTHLY: '毎月',
+        // Webhook events
+        ADD_RECORD: 'レコード追加', UPDATE_RECORD: 'レコード編集',
+        DELETE_RECORD: 'レコード削除', UPDATE_STATUS: 'ステータス変更',
+        ADD_COMMENT: 'コメント追加', DELETE_COMMENT: 'コメント削除',
+        // View kind
+        LIST: '一覧', CALENDAR: 'カレンダー', CUSTOM: 'カスタマイズ',
+        // Date grouping unit
+        YEAR: '年', QUARTER: '四半期', MONTH: '月', WEEK: '週', DAY: '日',
+        HOUR: '時', MINUTE: '分'
+      })
+    ];
+    const merged = {};
+    dictionaries.forEach((d) => Object.assign(merged, d));
+    const keys = Object.keys(merged).sort((a, b) => b.length - a.length);
+    for (const key of keys) {
+      const jp = merged[key];
+      // クォート付きトークン: "ENUM" → "JP"
+      out = out.split('"' + key + '"').join('"' + jp + '"');
+    }
+    return out;
   }
 
   function fieldAlignDisplayLabel(align) {

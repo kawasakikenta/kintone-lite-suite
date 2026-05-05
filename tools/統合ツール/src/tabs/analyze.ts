@@ -2,6 +2,7 @@
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { esc, downloadText, nowStamp, showToast, stableStringify } from '../utils.js';
+import { FIELD_TYPE_JP, lookupEnum } from '../kintone-enums.js';
 import { fetchBundle, ensureBundleShape } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { commonParams } from './diff.js';
@@ -892,15 +893,16 @@ export function exportFieldImpactCsv() {
   }
   const csvRows = [];
   rows.forEach((row) => {
+    const typeJp = lookupEnum(FIELD_TYPE_JP, row.type) || row.type;
     if (!row.refs.length) {
-      csvRows.push([row.code, row.label, row.type, row.refCount, '', '', '']);
+      csvRows.push([row.code, row.label, typeJp, row.refCount, '', '', '']);
       return;
     }
     row.refs.forEach((ref) => {
       csvRows.push([
         row.code,
         row.label,
-        row.type,
+        typeJp,
         row.refCount,
         ref.section || sectionLabel(ref.sectionKey || ''),
         ref.kind || '',

@@ -55,6 +55,39 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     'STATUS_ASSIGNEE': '作業者'
   };
 
+  // kintone API のレスポンス値（ENUM）を日本語ラベルへ変換するための辞書群。
+  // Excel 出力で「CREATOR」のような英語の生値が混在しないようにするため。
+  const CHART_TYPE_LABEL = {
+    BAR: '横棒グラフ', COLUMN: '縦棒グラフ', LINE: '折れ線グラフ',
+    PIE: '円グラフ', PIVOT_TABLE: 'クロス集計表', TABLE: '表',
+    AREA: '面グラフ', SPLINE: 'スプライン', SPLINE_AREA: 'スプライン面', SCATTER: '散布図'
+  };
+  const CHART_MODE_LABEL = { NORMAL: '通常', STACKED: '積み上げ', PERCENTAGE: '100%積み上げ' };
+  const AGGREGATION_TYPE_LABEL = { COUNT: '件数', SUM: '合計', AVG: '平均', MAX: '最大値', MIN: '最小値' };
+  const GROUP_PER_LABEL = {
+    YEAR: '年', QUARTER: '四半期', MONTH: '月', WEEK: '週', DAY: '日',
+    HOUR: '時', MINUTE: '分'
+  };
+  const ASSIGNEE_TYPE_LABEL = {
+    ONE: '1人選出（候補から1人）', ANYONE: '候補の誰でも（先着）', ALL: '全員（全員の処理が必要）'
+  };
+  const NOTIFICATION_TIMING_LABEL = {
+    CREATION: 'レコード作成時', DAYS_OF_WEEK: '曜日指定', TIME: '時刻指定',
+    WEEKLY: '毎週', MONTHLY: '毎月'
+  };
+  const RESOURCE_TYPE_LABEL = { URL: 'URL指定', FILE: 'ファイル指定' };
+  const PAGINATION_LABEL = { ROW: '行ページャ', PAGE: 'ページ番号' };
+  const WEBHOOK_EVENT_LABEL = {
+    ADD_RECORD: 'レコード追加', UPDATE_RECORD: 'レコード編集', DELETE_RECORD: 'レコード削除',
+    UPDATE_STATUS: 'ステータス変更', ADD_COMMENT: 'コメント追加',
+    DELETE_COMMENT: 'コメント削除'
+  };
+  const ENUM_LOOKUP = (map: Record<string, string>, value: any) => {
+    if (value == null || value === '') return '';
+    const key = String(value).trim().toUpperCase();
+    return map[key] || String(value);
+  };
+
   const SYSTEM_FIELDS = new Set(['$id', '$revision', 'status', 'category', 'assignee']);
 
   class Semaphore {
@@ -1249,7 +1282,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
             fieldLabels.join('\n') || '-',
             UtilsX.formatFilterCond(v.filterCond),
             UtilsX.formatSort(v.sort),
-            v.paginationType || (v.pagination === false ? '無効' : '既定'),
+            (v.paginationType ? (PAGINATION_LABEL[String(v.paginationType).toUpperCase()] || v.paginationType) : (v.pagination === false ? '無効' : '既定')),
             UtilsX.stripHtml(v.customView || v.html || v.builtinType || '')
           ];
         });
@@ -1262,10 +1295,10 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0))
         .map(([name, r]: [string, any]) => [
           name,
-          r.chartType || r.type || '',
-          Array.isArray(r.aggregations) ? r.aggregations.map((a: any) => `${a.type || ''}:${a.code || ''}`).join('\n') : '',
-          r.chartMode || '',
-          Array.isArray(r.groups) ? r.groups.map((g: any) => `${g.code || ''}${g.per ? `(${g.per})` : ''}`).join('、') : '',
+          ENUM_LOOKUP(CHART_TYPE_LABEL, r.chartType || r.type) || r.chartType || r.type || '',
+          Array.isArray(r.aggregations) ? r.aggregations.map((a: any) => `${ENUM_LOOKUP(AGGREGATION_TYPE_LABEL, a.type) || a.type || ''}（${a.code || ''}）`).join('\n') : '',
+          ENUM_LOOKUP(CHART_MODE_LABEL, r.chartMode) || r.chartMode || '',
+          Array.isArray(r.groups) ? r.groups.map((g: any) => `${g.code || ''}${g.per ? `(${ENUM_LOOKUP(GROUP_PER_LABEL, g.per) || g.per})` : ''}`).join('、') : '',
           UtilsX.formatSort(Array.isArray(r.sorts) ? r.sorts.map((s: any) => `${s.by || ''} ${s.order || ''}`).join(', ') : ''),
           UtilsX.formatFilterCond(r.filterCond)
         ]);
@@ -1287,11 +1320,11 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       pAoa.push([]); pEmptyRows.push(pAoa.length - 1);
 
       pAoa.push(['■ ステータス一覧']); pSectionRows.push(pAoa.length - 1);
-      pAoa.push(['順序', 'ステータス名', '作業者タイプ', '作業者', '入ってくる遷移数', '出て行く遷移数']); pHeaderInfoRows.push(pAoa.length - 1);
+      pAoa.push(['順序', 'ステータス名', '作業者の選び方', '作業者候補', '入ってくる遷移数', '出て行く遷移数']); pHeaderInfoRows.push(pAoa.length - 1);
       const stateEntries = (Object.entries(status.states || ({} as any)) as Array<[string, any]>)
         .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0));
       stateEntries.forEach(([name, st]: [string, any]) => {
-        const asgnType = st.assignee?.type || '-';
+        const asgnType = st.assignee?.type ? (ENUM_LOOKUP(ASSIGNEE_TYPE_LABEL, st.assignee.type) || st.assignee.type) : '-';
         const asgnList = Array.isArray(st.assignee?.entities)
           ? st.assignee.entities.map(UtilsX.formatEntityDetailed).join('\n')
           : '-';
@@ -1429,7 +1462,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         const list = [];
         ['js', 'css'].forEach((kind) => {
           (obj?.[kind] || []).forEach((entry, i) => {
-            list.push([scope, kind.toUpperCase(), i + 1, entry.type || '', entry.file?.name || entry.url || '', entry.file?.fileKey || '']);
+            const refType = entry.type ? (ENUM_LOOKUP(RESOURCE_TYPE_LABEL, entry.type) || entry.type) : '';
+            list.push([scope, kind.toUpperCase(), i + 1, refType, entry.file?.name || entry.url || '', entry.file?.fileKey || '']);
           });
         });
         return list;
@@ -1474,7 +1508,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
           return [
             i + 1,
             UtilsX.formatEntityDetailed(n.entity || n),
-            n.timing || '-',
+            n.timing ? (typeof n.timing === 'object' ? (ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing.code) || n.timing.code || '-') : (ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing) || n.timing)) : '-',
             baseLabel,
             n.daysLater != null || n.daysBefore != null ? `${n.daysLater != null ? `+${n.daysLater}` : ''}${n.daysBefore != null ? `-${n.daysBefore}` : ''}日` : '-',
             Array.isArray(n.weekdays) ? n.weekdays.join('、') : '-',
@@ -1513,7 +1547,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         UtilsX.formatBoolean(n.commentAdded ?? n.notifyOnComment),
         UtilsX.formatBoolean(n.statusChanged ?? n.notifyOnStatusChange),
         UtilsX.formatBoolean(n.fileImported),
-        UtilsX.formatFilterCond(n.filterCond || n.timing || '-'),
+        n.filterCond ? UtilsX.formatFilterCond(n.filterCond) : (n.timing ? (typeof n.timing === 'object' ? (ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing.code) || n.timing.code || '-') : (ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing) || n.timing)) : '-'),
         UtilsX.stripHtml(n.title || n.body || '-')
       ]);
       appendSheet(title, { ...buildSimpleAOA(title, headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } },
@@ -1531,7 +1565,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         const rows = list.map((w) => [
           w.id || '',
           w.url || w.notifyUrl || '',
-          Array.isArray(w.notificationEvents || w.events) ? (w.notificationEvents || w.events).join(', ') : '',
+          Array.isArray(w.notificationEvents || w.events) ? (w.notificationEvents || w.events).map((ev) => ENUM_LOOKUP(WEBHOOK_EVENT_LABEL, ev) || ev).join(', ') : '',
           UtilsX.stripHtml(w.description || ''),
           UtilsX.formatBoolean(w.enabled !== false)
         ]);

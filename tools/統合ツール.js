@@ -4987,6 +4987,16 @@ ${tableContext.tableLabel}`.toLowerCase();
       compared
     };
   }
+  function mdProcessAssigneeTypeLabel(value) {
+    const key = String(value || "").trim();
+    if (!key) return "";
+    return MD_PROCESS_ASSIGNEE_TYPE_LABELS[key] || key;
+  }
+  function mdLookupLabel(map, value) {
+    const key = String(value || "").trim();
+    if (!key) return "";
+    return map[key] || key;
+  }
   function mdEsc(value) {
     return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
   }
@@ -5021,7 +5031,7 @@ ${body}`;
   }
   function mdRawJson(sec) {
     return [
-      "<details><summary>Raw JSON</summary>",
+      "<details><summary>APIレスポンス（生データ）</summary>",
       "",
       "```json",
       JSON.stringify(sec, null, 2),
@@ -5051,8 +5061,8 @@ ${body}`;
     const rows = [
       ["アプリ名", sec.name || ""],
       ["説明", sec.description || ""],
-      ["アイコン", sec.icon?.type ? `${sec.icon.type}${sec.icon.key ? ` (${sec.icon.key})` : ""}` : ""],
-      ["テーマ", sec.theme || ""],
+      ["アイコン", sec.icon?.type ? `${mdLookupLabel(MD_ICON_TYPE_LABELS, sec.icon.type)}${sec.icon.key ? `（${sec.icon.key}）` : ""}` : ""],
+      ["テーマ", mdLookupLabel(MD_THEME_LABELS, sec.theme) || ""],
       ["タイトルフィールド", sec.titleField?.selectFieldCode || (sec.titleField?.isDefaultTitleField ? "（既定）" : "")],
       ["サムネイル", sec.enableThumbnails ? "有効" : "無効"],
       ["コメント", sec.enableComments ? "有効" : "無効"],
@@ -5142,16 +5152,27 @@ ${body}`;
     const views = sec?.views || {};
     const entries = Object.entries(views).map(([name, v]) => ({ name, ...v }));
     entries.sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0));
-    const rows = entries.map((v) => [
-      v.name || "",
-      MD_VIEW_TYPE_LABELS[v.type] || v.type || "",
-      String(v.index ?? ""),
-      v.builtinType || "",
-      Array.isArray(v.fields) ? v.fields.join(" / ") : "",
-      v.filterCond || "",
-      v.sort || ""
-    ]);
-    return mdTable(["ビュー名", "種別", "表示順", "ビルトイン", "表示フィールド", "絞り込み条件", "ソート"], rows);
+    const rows = entries.map((v) => {
+      const builtinNote = v.builtinType ? mdLookupLabel(MD_VIEW_BUILTIN_LABELS, v.builtinType) || v.builtinType : "";
+      const extras = [];
+      if (v.customView || v.html) extras.push("カスタムHTMLあり");
+      if (v.pager === false) extras.push("ページャー無効");
+      if (v.paginationStyle) {
+        const paginationLabel = mdLookupLabel(MD_PAGINATION_LABELS, v.paginationStyle) || v.paginationStyle;
+        extras.push(`ページャー:${paginationLabel}`);
+      }
+      return [
+        v.name || "",
+        MD_VIEW_TYPE_LABELS[v.type] || v.type || "",
+        String(v.index ?? ""),
+        builtinNote,
+        Array.isArray(v.fields) ? v.fields.join(" / ") : "",
+        v.filterCond || "",
+        v.sort || "",
+        extras.join(" / ")
+      ];
+    });
+    return mdTable(["ビュー名", "種別", "表示順", "組み込み種別", "表示フィールド", "絞り込み条件", "ソート", "備考"], rows);
   }
   function mdRenderReportSettings(sec) {
     const reports = sec?.reports || {};
@@ -5160,13 +5181,16 @@ ${body}`;
     const rows = entries.map((r) => [
       r.name || "",
       MD_REPORT_CHART_LABELS[r.chartType] || r.chartType || "",
-      r.chartMode || "",
+      mdLookupLabel(MD_REPORT_CHART_MODE_LABELS, r.chartMode),
       (r.groups || []).map((g) => g.code).filter(Boolean).join(" / "),
-      (r.aggregations || []).map((a) => `${a.type || ""}(${a.code || ""})`).join(" / "),
+      (r.aggregations || []).map((a) => {
+        const typeLabel = mdLookupLabel(MD_AGGREGATION_TYPE_LABELS, a.type);
+        return `${typeLabel}（${a.code || ""}）`;
+      }).join(" / "),
       r.filterCond || "",
-      r.periodicReport?.active ? "定期" : ""
+      r.periodicReport?.active ? "定期実行あり" : ""
     ]);
-    return mdTable(["レポート名", "チャート", "モード", "分類", "集計", "絞り込み", "定期"], rows);
+    return mdTable(["レポート名", "チャート", "モード", "分類", "集計", "絞り込み条件", "定期実行"], rows);
   }
   function mdRenderProcessSettings(sec) {
     const parts = [];
@@ -5179,11 +5203,11 @@ ${body}`;
       parts.push("#### ステータス");
       parts.push("");
       parts.push(mdTable(
-        ["ステータス名", "表示順", "作業者タイプ", "作業者"],
+        ["ステータス名", "表示順", "作業者の選び方", "作業者候補"],
         stateEntries.map((s) => [
           s.name || "",
           s.index ?? "",
-          s.assignee?.type || "",
+          mdProcessAssigneeTypeLabel(s.assignee?.type),
           mdEntityList(s.assignee?.entities)
         ])
       ));
@@ -5194,7 +5218,7 @@ ${body}`;
       parts.push("#### アクション");
       parts.push("");
       parts.push(mdTable(
-        ["アクション名", "From", "To", "絞り込み条件"],
+        ["アクション名", "遷移元（From）", "遷移先（To）", "絞り込み条件"],
         actions.map((a) => [
           a.name || "",
           Array.isArray(a.from) ? a.from.join(" / ") : a.from || "",
@@ -5217,22 +5241,23 @@ ${body}`;
   }
   function mdRenderCustomizeSettings(sec) {
     const parts = [];
-    parts.push(`- スコープ: ${sec?.scope || ""}`);
+    parts.push(`- 適用範囲（スコープ）: ${mdLookupLabel(MD_CUSTOMIZE_SCOPE_LABELS, sec?.scope) || "（未設定）"}`);
     parts.push("");
     ["desktop", "mobile"].forEach((area) => {
       const zone = sec?.[area];
       if (!zone) return;
-      parts.push(`#### ${area === "desktop" ? "PC" : "モバイル"}`);
+      parts.push(`#### ${area === "desktop" ? "PC（デスクトップ）" : "モバイル"}`);
       parts.push("");
       ["js", "css"].forEach((kind) => {
         const list = zone[kind];
         if (!Array.isArray(list) || list.length === 0) return;
-        parts.push(`- ${kind.toUpperCase()}:`);
+        parts.push(`- ${kind.toUpperCase()}（${kind === "js" ? "JavaScript" : "スタイルシート"}）:`);
         list.forEach((item) => {
           let src = "";
           if (item.type === "URL") src = item.url || "";
-          else if (item.file) src = `(ファイル: ${item.file.name || item.file.fileKey || ""})`;
-          parts.push(`  - ${item.type || ""}: ${src}`);
+          else if (item.file) src = `ファイル: ${item.file.name || item.file.fileKey || ""}`;
+          const typeLabel = mdLookupLabel(MD_RESOURCE_TYPE_LABELS, item.type);
+          parts.push(`  - ${typeLabel || "(種別不明)"}: ${src}`);
         });
       });
       parts.push("");
@@ -5246,10 +5271,10 @@ ${body}`;
       a.name || "",
       a.index ?? "",
       a.app?.code || a.app?.id || "",
-      a.entity?.type || "",
-      (a.mappings || []).length
+      mdLookupLabel(MD_ENTITY_TYPE_LABELS, a.entity?.type),
+      String((a.mappings || []).length)
     ]);
-    return mdTable(["アクション名", "表示順", "連携先アプリ", "エンティティ種別", "マッピング数"], rows);
+    return mdTable(["アクション名", "表示順", "連携先アプリ", "実行可能対象", "マッピング数"], rows);
   }
   function mdRenderAclRights(rights, columns) {
     if (!Array.isArray(rights) || rights.length === 0) return "";
@@ -5344,15 +5369,17 @@ ${body}`;
       parts.push("");
     }
     parts.push(mdTable(
-      ["タイトル", "タイミング", "絞り込み条件", "通知先"],
+      ["タイトル", "通知タイミング", "絞り込み条件", "通知先"],
       list.map((n) => {
         const t = n.timing || {};
         const timingParts = [];
-        if (t.code) timingParts.push(t.code);
+        if (t.code) timingParts.push(mdLookupLabel(MD_NOTIFICATION_TIMING_LABELS, t.code));
         if (t.daysLater != null) timingParts.push(`${t.daysLater}日後`);
         if (t.hoursLater != null) timingParts.push(`${t.hoursLater}時間後`);
-        if (t.time) timingParts.push(t.time);
-        return [n.title || "", timingParts.join(" "), n.filterCond || "", mdEntityList(n.targets)];
+        if (t.time) timingParts.push(`${t.time}`);
+        if (t.weekday) timingParts.push(`曜日: ${t.weekday}`);
+        if (t.day != null) timingParts.push(`日付: ${t.day}日`);
+        return [n.title || "", timingParts.join(" / "), n.filterCond || "", mdEntityList(n.targets)];
       })
     ));
     return parts.join("\n");
@@ -6271,12 +6298,15 @@ ${body}`;
     if (val === null) return escHtml('null');
     const t = typeof val;
     if (t === 'string' || t === 'number' || t === 'boolean') {
-      return escHtml(String(val));
+      // 単独の API ENUM 文字列（"CREATOR" / "BAR" 等）を日本語ラベルに置換
+      const s = String(val);
+      const labeled = FIELD_TYPE_LABELS[s] || s;
+      return escHtml(labeled);
     }
     if (Array.isArray(val)) {
       let j;
       try { j = JSON.stringify(val); } catch (e) { j = String(val); }
-      return '<span class="sl-val-mono">' + escHtml(j) + '</span>';
+      return '<span class="sl-val-mono">' + escHtml(localizeJsonEnums(j)) + '</span>';
     }
     if (t === 'object') {
       // SUBTABLE 全体: テーブル情報 + 内部フィールドを表形式でレンダリング
@@ -6293,13 +6323,15 @@ ${body}`;
           const v = val[k];
           let cell;
           if (v === null || v === undefined || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-            cell = escHtml(v === undefined ? '（未定義）' : JSON.stringify(v));
+            // type/フィールド型を持つ key の場合は値を ENUM ラベルに置換
+            const stringified = v === undefined ? '（未定義）' : JSON.stringify(v);
+            cell = escHtml(localizeJsonEnums(stringified));
           } else if (k === 'fields' && isSubtableFieldsMap(v)) {
             cell = renderSubtableFieldsTableHtml(v);
           } else {
             let j;
             try { j = JSON.stringify(v); } catch (e) { j = String(v); }
-            cell = escHtml(j);
+            cell = escHtml(localizeJsonEnums(j));
           }
           return '<tr><th>' + escHtml(k) + '</th><td>' + cell + '</td></tr>';
         }).join('');
@@ -6308,7 +6340,7 @@ ${body}`;
     }
     let j;
     try { j = JSON.stringify(val); } catch (e) { j = String(val); }
-    return '<span class="sl-val-mono">' + escHtml(j) + '</span>';
+    return '<span class="sl-val-mono">' + escHtml(localizeJsonEnums(j)) + '</span>';
   }
 
   function formatFieldValuePlain(val, maxLen) {
@@ -6359,7 +6391,9 @@ ${body}`;
     UPDATED_TIME: '更新日時',
     SPACER: 'スペース',
     HR: '罫線',
-    LABEL: 'ラベル'
+    LABEL: 'ラベル',
+    GROUP: 'グループ',
+    LOOKUP: 'ルックアップ'
   };
 
   const FIELD_SETTING_LABELS = {
@@ -6417,6 +6451,53 @@ ${body}`;
   function fieldTypeDisplayLabel(type) {
     const key = String(type || '').trim();
     return FIELD_TYPE_LABELS[key] || key || 'フィールド';
+  }
+
+  // diff HTML の値セル内 JSON 文字列に含まれる kintone API ENUM トークンを日本語ラベルへ置換する。
+  // 「フィールド型 / ACL エンティティ型 / ビュー / グラフ / 通知タイミング / Webhook イベント」などを網羅。
+  function localizeJsonEnums(jsonStr) {
+    if (!jsonStr || typeof jsonStr !== 'string') return jsonStr;
+    let out = jsonStr;
+    const dictionaries = [
+      FIELD_TYPE_LABELS,
+      // 重複は longer-key first ソートで解消されるため一括連結する
+      Object.freeze({
+        // ACL / 通知の対象エンティティ
+        USER: 'ユーザー', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド値',
+        LOGIN_USER: 'ログインユーザー', ALL: '全員',
+        CUSTOM_FIELD: 'カスタムフィールド',
+        // Chart / Aggregation
+        BAR: '横棒グラフ', COLUMN: '縦棒グラフ', LINE: '折れ線グラフ', PIE: '円グラフ',
+        PIVOT_TABLE: 'クロス集計表', AREA: '面グラフ', SPLINE: 'スプライン',
+        SPLINE_AREA: 'スプライン面', SCATTER: '散布図',
+        COUNT: '件数', SUM: '合計', AVG: '平均', MAX: '最大値', MIN: '最小値',
+        NORMAL: '通常', STACKED: '積み上げ', PERCENTAGE: '100%積み上げ',
+        // Process assignee
+        ONE: '1人選出', ANYONE: '候補の誰でも',
+        // Customize / scope
+        URL: 'URL指定', ADMIN: '管理者のみ', NONE: '無効',
+        // Notification timing
+        CREATION: 'レコード作成時', DAYS_OF_WEEK: '曜日指定', WEEKLY: '毎週', MONTHLY: '毎月',
+        // Webhook events
+        ADD_RECORD: 'レコード追加', UPDATE_RECORD: 'レコード編集',
+        DELETE_RECORD: 'レコード削除', UPDATE_STATUS: 'ステータス変更',
+        ADD_COMMENT: 'コメント追加', DELETE_COMMENT: 'コメント削除',
+        // View kind
+        LIST: '一覧', CALENDAR: 'カレンダー', CUSTOM: 'カスタマイズ',
+        // Date grouping unit
+        YEAR: '年', QUARTER: '四半期', MONTH: '月', WEEK: '週', DAY: '日',
+        HOUR: '時', MINUTE: '分'
+      })
+    ];
+    const merged = {};
+    dictionaries.forEach((d) => Object.assign(merged, d));
+    const keys = Object.keys(merged).sort((a, b) => b.length - a.length);
+    for (const key of keys) {
+      const jp = merged[key];
+      // クォート付きトークン: "ENUM" → "JP"
+      out = out.split('"' + key + '"').join('"' + jp + '"');
+    }
+    return out;
   }
 
   function fieldAlignDisplayLabel(align) {
@@ -8671,8 +8752,12 @@ ${body}`;
       ${sectionHtml}
     </div>`;
     scheduleDiffPopoutSync();
+    try {
+      document.dispatchEvent(new CustomEvent("kus:diffRendered", { detail: { count: rows.length } }));
+    } catch (e) {
+    }
   }
-  var FIELD_CHANGE_PROP_LABELS, MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_SECTION_RENDERERS, ENTITY_KIND_INTAB_LABELS, MAIN_RESULT_IDLE_HTML;
+  var FIELD_CHANGE_PROP_LABELS, MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_PROCESS_ASSIGNEE_TYPE_LABELS, MD_NOTIFICATION_TIMING_LABELS, MD_REPORT_CHART_MODE_LABELS, MD_AGGREGATION_TYPE_LABELS, MD_CUSTOMIZE_SCOPE_LABELS, MD_RESOURCE_TYPE_LABELS, MD_ICON_TYPE_LABELS, MD_THEME_LABELS, MD_VIEW_BUILTIN_LABELS, MD_PAGINATION_LABELS, MD_SECTION_RENDERERS, ENTITY_KIND_INTAB_LABELS, MAIN_RESULT_IDLE_HTML;
   var init_export = __esm({
     "src/diff/export.ts"() {
       init_constants();
@@ -8739,7 +8824,8 @@ ${body}`;
         SPACER: "スペース",
         HR: "罫線",
         LABEL: "ラベル",
-        GROUP: "グループ"
+        GROUP: "グループ",
+        LOOKUP: "ルックアップ"
       };
       MD_VIEW_TYPE_LABELS = {
         LIST: "一覧",
@@ -8765,6 +8851,61 @@ ${body}`;
         FIELD_ENTITY: "フィールド",
         CREATOR: "レコード作成者",
         CUSTOM_FIELD: "カスタムフィールド"
+      };
+      MD_PROCESS_ASSIGNEE_TYPE_LABELS = {
+        ONE: "1人選出（候補から1人）",
+        ANYONE: "候補の誰でも（先着）",
+        ALL: "全員（全員の処理が必要）"
+      };
+      MD_NOTIFICATION_TIMING_LABELS = {
+        CREATION: "レコード作成時",
+        DAYS_OF_WEEK: "曜日指定",
+        TIME: "時刻指定",
+        WEEKLY: "毎週",
+        MONTHLY: "毎月"
+      };
+      MD_REPORT_CHART_MODE_LABELS = {
+        NORMAL: "通常",
+        STACKED: "積み上げ",
+        PERCENTAGE: "100%積み上げ"
+      };
+      MD_AGGREGATION_TYPE_LABELS = {
+        COUNT: "件数",
+        SUM: "合計",
+        AVG: "平均",
+        MAX: "最大値",
+        MIN: "最小値"
+      };
+      MD_CUSTOMIZE_SCOPE_LABELS = {
+        ALL: "全ユーザー",
+        ADMIN: "管理者のみ",
+        NONE: "無効"
+      };
+      MD_RESOURCE_TYPE_LABELS = {
+        URL: "URL指定",
+        FILE: "ファイル指定"
+      };
+      MD_ICON_TYPE_LABELS = {
+        PRESET: "プリセット",
+        FILE: "アップロードファイル"
+      };
+      MD_THEME_LABELS = {
+        WHITE: "ホワイト",
+        RED: "レッド",
+        BLUE: "ブルー",
+        GREEN: "グリーン",
+        YELLOW: "イエロー",
+        BLACK: "ブラック"
+      };
+      MD_VIEW_BUILTIN_LABELS = {
+        ASSIGNEE: "作業者ビュー",
+        UNDONE: "未完了レコード",
+        ACTIVE_BY_USER: "自分が処理すべきレコード",
+        RECORDS_OF_USER: "自分が関わるレコード"
+      };
+      MD_PAGINATION_LABELS = {
+        ROW: "行ページャ",
+        PAGE: "ページ番号"
       };
       MD_SECTION_RENDERERS = {
         appSettings: mdRenderAppSettings,
@@ -9572,8 +9713,12 @@ ${body}`;
     if (!ui3.featureBreadcrumb) return;
     const tab = String(tabKey || def?.tab || "").trim();
     const tabLabel = ui3.tabs.find((item) => item.dataset.tab === tab)?.textContent?.trim() || "機能";
-    const featureLabel = def?.label ? ` / ${def.label}` : "";
-    ui3.featureBreadcrumb.textContent = `ホーム / ${tabLabel}${featureLabel}`;
+    const featureLabel = def?.label || "";
+    const sep = '<span class="feature-breadcrumb__sep" aria-hidden="true">/</span>';
+    const home = `<button type="button" class="feature-breadcrumb__link" data-act="breadcrumbHome" title="ランチャーへ戻る">ホーム</button>`;
+    const tabSpan = `<span class="feature-breadcrumb__current">${tabLabel}</span>`;
+    const featureSpan = featureLabel ? `${sep}<span class="feature-breadcrumb__current">${featureLabel}</span>` : "";
+    ui3.featureBreadcrumb.innerHTML = `${home}${sep}${tabSpan}${featureSpan}`;
   }
   function applyFeatureGroupClass(root2, group) {
     if (!root2) return;
@@ -9602,7 +9747,7 @@ ${body}`;
     root2.classList.add("screen-launcher", "launcher-tabbed", "launcher-show-advanced");
     if (ui3.featureTitle) ui3.featureTitle.textContent = "";
     if (ui3.featureConn) ui3.featureConn.textContent = "";
-    if (ui3.featureBreadcrumb) ui3.featureBreadcrumb.textContent = "ホーム / 機能";
+    if (ui3.featureBreadcrumb) ui3.featureBreadcrumb.innerHTML = '<span class="feature-breadcrumb__current">ホーム</span><span class="feature-breadcrumb__sep" aria-hidden="true">/</span><span class="feature-breadcrumb__current">機能</span>';
     setConnectionPanelCollapsed(false);
     updateConnectionStepIndicators();
     if (options.persist !== false) saveCurrentDialogState();
@@ -9842,13 +9987,22 @@ ${body}`;
       );
     }
     const reflectSummary = getToolDocument().getElementById("u_reflectScopeSummary");
+    const reflectScopeKeys = deps.selectedScopeKeys?.(ui3.applyScopes) || [];
     if (reflectSummary) {
       const extraText = isReflectNodeModeEffective() ? "差分を選んで反映モード中" : ui3.applyDiffOnly?.checked ? "差分ありセクションのみ反映" : "";
       reflectSummary.innerHTML = scopeSummaryLabel(
         SECTION_DEFS.filter((def) => def.put),
-        deps.selectedScopeKeys?.(ui3.applyScopes) || [],
+        reflectScopeKeys,
         { emptyText: "反映対象がまだ選ばれていません", extraText }
       );
+    }
+    const reflectCountBadge = getToolDocument().getElementById("u_reflectScopeCountBadge");
+    if (reflectCountBadge) {
+      const total = SECTION_DEFS.filter((def) => def.put).length;
+      const sel = reflectScopeKeys.length;
+      reflectCountBadge.textContent = `${sel} / ${total}`;
+      reflectCountBadge.classList.toggle("is-empty", sel === 0);
+      reflectCountBadge.classList.toggle("is-full", sel > 0 && sel === total);
     }
     const settingsSummary = getToolDocument().getElementById("u_settingsExportScopeSummary");
     if (settingsSummary) {
@@ -10098,7 +10252,7 @@ ${tgt.full}`);
     if (ui3.commonDataState) {
       const diffSummary = summarizeRows(state.lastDiffRows || []);
       const diffInfo = state.lastDiffAt ? `差分: ${fmtFetchTime(state.lastDiffAt)} (差分 ${countActualDiffRows(state.lastDiffRows)}件 / 同一 ${diffSummary.same}件 / 取得失敗 ${state.lastFetchIssues.length}件)` : "差分: 未実行";
-      ui3.commonDataState.textContent = `${sourceText} / ${targetText} / ${diffInfo}`;
+      ui3.commonDataState.textContent = `${src.short} / ${tgt.short} / ${diffInfo}`;
     }
     updateConnectionStepIndicators();
     renderDiffSelectionState2();
@@ -11032,13 +11186,13 @@ ${tgt.full}`);
   function renderReflectApplyHistory() {
     const host = getToolDocument().getElementById("u_reflectApplyHistory");
     if (!host) return;
-    const history = Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [];
-    if (!history.length) {
+    const history2 = Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [];
+    if (!history2.length) {
       host.innerHTML = "";
       return;
     }
     const open = state.reflectApplyHistoryOpen ? " open" : "";
-    const items = history.map((entry) => {
+    const items = history2.map((entry) => {
       const hasErr = entry.hadError || (entry.ngCount || 0) > 0;
       const modeLabel = {
         section: "まとめ反映",
@@ -11057,7 +11211,7 @@ ${tgt.full}`);
     }).join("");
     host.innerHTML = `<details${open} data-act-host="reflectApplyHistory">
       <summary>
-        <span>反映履歴（${history.length}件・端末保存）</span>
+        <span>反映履歴（${history2.length}件・端末保存）</span>
         <span style="display:inline-flex;gap:6px">
           <button type="button" class="btn sub" data-act="exportApplyHistory" style="padding:2px 8px;font-size:10px" title="反映履歴をJSONファイルとして書き出します">JSON書き出し</button>
           <button type="button" class="btn sub" data-act="clearApplyHistory" style="padding:2px 8px;font-size:10px" title="履歴を消去">クリア</button>
@@ -13841,26 +13995,128 @@ ${lines.join("\n")}
       sections: normalizedSections
     };
   }
+  function getPatchTypeJpLabel(type, moved) {
+    if (moved) return "移動";
+    if (type === "added") return "追加";
+    if (type === "removed") return "削除";
+    if (type === "changed") return "変更";
+    if (type === "same") return "同一";
+    return String(type || "-");
+  }
+  function renderPatchJsonRangeBody(payload) {
+    const body = getToolDocument().getElementById("u_patchJsonRangeBody");
+    if (!body) return;
+    const fold = getToolDocument().getElementById("u_patchJsonRangeFold");
+    const sections = payload?.sections || {};
+    const sectionKeys = Object.keys(sections);
+    if (!sectionKeys.length) {
+      if (fold) fold.style.display = "none";
+      body.innerHTML = "";
+      return;
+    }
+    if (fold) fold.style.display = "block";
+    const order = new Map(SECTION_DEFS.map((item, index) => [item.key, index]));
+    const orderedKeys = sectionKeys.sort((a, b) => {
+      const ao = order.has(a) ? order.get(a) : 999;
+      const bo = order.has(b) ? order.get(b) : 999;
+      if (ao !== bo) return ao - bo;
+      return String(a).localeCompare(String(b));
+    });
+    const blocks = orderedKeys.map((key) => {
+      const def = SECTION_DEFS.find((item) => item.key === key);
+      const label = def?.label || key;
+      const rows = Array.isArray(sections[key]) ? sections[key] : [];
+      if (!rows.length) return "";
+      const items = rows.slice(0, 80).map((row) => {
+        const typeLabel = getPatchTypeJpLabel(row?.type, row?.moved);
+        const cls = row?.type === "added" ? "patch-row-added" : row?.type === "removed" ? "patch-row-removed" : row?.moved ? "patch-row-moved" : "patch-row-changed";
+        const reason = row?.reasonSummary ? `<span class="patch-row-reason">${esc(String(row.reasonSummary))}</span>` : "";
+        return `<li class="patch-row ${cls}"><span class="patch-row-type">${esc(typeLabel)}</span><code class="patch-row-path">${esc(String(row?.path || "-"))}</code>${reason}</li>`;
+      }).join("");
+      const more = rows.length > 80 ? `<div class="patch-row-more muted">…他 ${rows.length - 80} 件</div>` : "";
+      return `<section class="patch-section">
+      <header class="patch-section-head">
+        <span class="patch-section-label">${esc(label)}</span>
+        <span class="patch-section-count">${rows.length}件</span>
+      </header>
+      <ul class="patch-row-list">${items}</ul>
+      ${more}
+    </section>`;
+    }).filter(Boolean).join("");
+    body.innerHTML = blocks || '<div class="muted" style="padding:8px">該当行なし</div>';
+  }
   function renderPatchJsonSummary(payload) {
     const el = getToolDocument().getElementById("u_patchJsonSummary");
     if (!el) {
       renderPatchJsonDiff(payload);
+      renderPatchJsonRangeBody(payload);
       return;
     }
     if (!payload || !payload.sections || !Object.keys(payload.sections).length) {
       el.style.display = "none";
-      el.textContent = "";
+      el.innerHTML = "";
       renderPatchJsonDiff(null);
+      renderPatchJsonRangeBody(null);
       return;
     }
-    const sectionLabels = Object.entries(payload.sections).map(([key, rows]) => {
-      const def = SECTION_DEFS.find((item) => item.key === key);
-      return `${def?.label || key}:${Array.isArray(rows) ? rows.length : 0}件`;
+    const order = new Map(SECTION_DEFS.map((item, index) => [item.key, index]));
+    const sectionEntries = Object.entries(payload.sections).map(([key, rows]) => ({
+      key,
+      label: SECTION_DEFS.find((item) => item.key === key)?.label || key,
+      count: Array.isArray(rows) ? rows.length : 0,
+      added: Array.isArray(rows) ? rows.filter((r) => r?.type === "added").length : 0,
+      removed: Array.isArray(rows) ? rows.filter((r) => r?.type === "removed").length : 0,
+      changed: Array.isArray(rows) ? rows.filter((r) => r?.type !== "added" && r?.type !== "removed").length : 0,
+      moved: Array.isArray(rows) ? rows.filter((r) => !!r?.moved).length : 0
+    })).sort((a, b) => {
+      const ao = order.has(a.key) ? order.get(a.key) : 999;
+      const bo = order.has(b.key) ? order.get(b.key) : 999;
+      if (ao !== bo) return ao - bo;
+      return a.label.localeCompare(b.label);
     });
-    const totalRows = Object.values(payload.sections).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
-    el.textContent = `生成日時 ${payload.generatedAt || "-"} / 比較元 ${payload.source?.appId || "-"} → 比較先 ${payload.target?.appId || "-"} / ${sectionLabels.join(" / ")} / 合計 ${totalRows} 行`;
+    const totalRows = sectionEntries.reduce((sum, item) => sum + item.count, 0);
+    const totals = sectionEntries.reduce(
+      (acc, item) => {
+        acc.added += item.added;
+        acc.removed += item.removed;
+        acc.changed += item.changed;
+        acc.moved += item.moved;
+        return acc;
+      },
+      { added: 0, removed: 0, changed: 0, moved: 0 }
+    );
+    const generatedAt = payload.generatedAt ? new Date(payload.generatedAt).toLocaleString() : "-";
+    const srcId = payload.source?.appId || "-";
+    const tgtId = payload.target?.appId || "-";
+    const headerHtml = `
+    <div class="patch-json-summary-card">
+      <div class="patch-json-summary-head">
+        <div class="patch-json-summary-title">📦 取込済みパッチJSONの内容</div>
+        <div class="patch-json-summary-meta">生成日時 ${esc(generatedAt)} / 比較元 App ${esc(String(srcId))} → 比較先 App ${esc(String(tgtId))}</div>
+      </div>
+      <div class="patch-json-summary-stats">
+        <span class="patch-stat patch-stat-total"><b>${totalRows}</b><small>合計行</small></span>
+        <span class="patch-stat patch-stat-added"><b>${totals.added}</b><small>追加</small></span>
+        <span class="patch-stat patch-stat-removed"><b>${totals.removed}</b><small>削除</small></span>
+        <span class="patch-stat patch-stat-changed"><b>${totals.changed}</b><small>変更</small></span>
+        ${totals.moved ? `<span class="patch-stat patch-stat-moved"><b>${totals.moved}</b><small>移動</small></span>` : ""}
+        <span class="patch-stat patch-stat-section"><b>${sectionEntries.length}</b><small>対象セクション</small></span>
+      </div>
+      <div class="patch-json-summary-sections">
+        ${sectionEntries.map((s) => `
+          <span class="patch-section-chip" title="${esc(s.label)}">
+            <span class="patch-section-chip-name">${esc(s.label)}</span>
+            <span class="patch-section-chip-count">${s.count}</span>
+          </span>
+        `).join("")}
+      </div>
+      <div class="patch-json-summary-hint">この内容で「比較先プレビュー」へ反映されます。中身を確認したい場合は下の「📋 このJSONに含まれる差分範囲」を開いてください。</div>
+    </div>
+  `;
+    el.innerHTML = headerHtml;
     el.style.display = "block";
     renderPatchJsonDiff(payload);
+    renderPatchJsonRangeBody(payload);
   }
   async function importPatchJsonFromFile(file) {
     const text = await readTextFile(file);
@@ -13904,6 +14160,59 @@ ${lines.join("\n")}
     renderPatchJsonSummary(payload);
     if (!options.silent) setStatus(`差分比較結果からパッチJSONを生成しました (${Object.keys(payload.sections).length}セクション)`);
     return payload;
+  }
+  function populatePatchJsonFromSelectedDiff(options = {}) {
+    if (!state.lastDiffRows.length) throw new Error("先に差分比較を実行してください");
+    if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error("差分比較の比較元/比較先バンドルがありません");
+    const selectedIds = state.diffSelectedIds instanceof Set ? state.diffSelectedIds : /* @__PURE__ */ new Set();
+    const selectedRows = (state.lastDiffRows || []).filter((row) => row && row._id && selectedIds.has(row._id));
+    if (!selectedRows.length) {
+      throw new Error("差分タブで反映したい行を選択してから実行してください（チェックボックスや「表示中を選択」ボタンで指定できます）");
+    }
+    const payload = parsePatchJsonPayload(buildPatchPayload(selectedRows, state.lastSourceBundle, state.lastTargetBundle));
+    state.importedPatchPayload = payload;
+    setPatchEditorValue(payload);
+    renderPatchJsonSummary(payload);
+    const sectionCount = Object.keys(payload.sections).length;
+    const totalRows = Object.values(payload.sections).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
+    if (!options.silent) setStatus(`選択した差分 ${totalRows} 行（${sectionCount}セクション）をパッチJSONに取り込みました（"この内容で反映"ボタンで部分反映できます）`);
+    return payload;
+  }
+  function exportPatchJsonToFile() {
+    const text = getPatchEditorText();
+    if (isPatchEditorEffectivelyEmpty(text)) throw new Error("エクスポートするパッチJSONがありません。先に「差分比較結果を読込」または「選択中の差分だけ取込」を実行してください");
+    let payload;
+    try {
+      payload = parsePatchJsonPayload(text);
+    } catch (e) {
+      throw new Error(`パッチJSONのパースに失敗しました: ${e?.message || e}`);
+    }
+    const c = commonParams();
+    const sourceLabel = buildAppFilenameLabel(payload.source?.appId || c.source.appId || "unknown", extractAppNameFromBundle(state.lastSourceBundle));
+    const targetLabel = buildAppFilenameLabel(payload.target?.appId || c.target.appId || "unknown", extractAppNameFromBundle(state.lastTargetBundle));
+    const filename = buildExportFilename("反映パッチ", "json", { appLabel: `${sourceLabel}_to_${targetLabel}` });
+    const formatted = JSON.stringify(payload, null, 2);
+    downloadText(filename, formatted, "application/json");
+    const totalRows = Object.values(payload.sections).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
+    setStatus(`パッチJSONを保存しました: ${filename} (${totalRows} 行 / ${Object.keys(payload.sections).length} セクション)`);
+    return { filename, payload };
+  }
+  async function copyPatchJsonToClipboard() {
+    const text = getPatchEditorText();
+    if (isPatchEditorEffectivelyEmpty(text)) throw new Error("コピーするパッチJSONがありません");
+    let formatted = text;
+    try {
+      const parsed = parsePatchJsonPayload(text);
+      formatted = JSON.stringify(parsed, null, 2);
+    } catch (e) {
+    }
+    try {
+      await navigator.clipboard.writeText(formatted);
+      setStatus("パッチJSONをクリップボードにコピーしました");
+      return true;
+    } catch (e) {
+      throw new Error(`クリップボードへのコピーに失敗: ${e?.message || e}`);
+    }
   }
   function getPatchPayloadForApply() {
     const text = getPatchEditorText();
@@ -16047,6 +16356,56 @@ ${lines.join("\n")}
       "CATEGORY": "カテゴリー",
       "STATUS_ASSIGNEE": "作業者"
     };
+    const CHART_TYPE_LABEL = {
+      BAR: "横棒グラフ",
+      COLUMN: "縦棒グラフ",
+      LINE: "折れ線グラフ",
+      PIE: "円グラフ",
+      PIVOT_TABLE: "クロス集計表",
+      TABLE: "表",
+      AREA: "面グラフ",
+      SPLINE: "スプライン",
+      SPLINE_AREA: "スプライン面",
+      SCATTER: "散布図"
+    };
+    const CHART_MODE_LABEL = { NORMAL: "通常", STACKED: "積み上げ", PERCENTAGE: "100%積み上げ" };
+    const AGGREGATION_TYPE_LABEL = { COUNT: "件数", SUM: "合計", AVG: "平均", MAX: "最大値", MIN: "最小値" };
+    const GROUP_PER_LABEL = {
+      YEAR: "年",
+      QUARTER: "四半期",
+      MONTH: "月",
+      WEEK: "週",
+      DAY: "日",
+      HOUR: "時",
+      MINUTE: "分"
+    };
+    const ASSIGNEE_TYPE_LABEL = {
+      ONE: "1人選出（候補から1人）",
+      ANYONE: "候補の誰でも（先着）",
+      ALL: "全員（全員の処理が必要）"
+    };
+    const NOTIFICATION_TIMING_LABEL = {
+      CREATION: "レコード作成時",
+      DAYS_OF_WEEK: "曜日指定",
+      TIME: "時刻指定",
+      WEEKLY: "毎週",
+      MONTHLY: "毎月"
+    };
+    const RESOURCE_TYPE_LABEL = { URL: "URL指定", FILE: "ファイル指定" };
+    const PAGINATION_LABEL = { ROW: "行ページャ", PAGE: "ページ番号" };
+    const WEBHOOK_EVENT_LABEL = {
+      ADD_RECORD: "レコード追加",
+      UPDATE_RECORD: "レコード編集",
+      DELETE_RECORD: "レコード削除",
+      UPDATE_STATUS: "ステータス変更",
+      ADD_COMMENT: "コメント追加",
+      DELETE_COMMENT: "コメント削除"
+    };
+    const ENUM_LOOKUP = (map, value) => {
+      if (value == null || value === "") return "";
+      const key = String(value).trim().toUpperCase();
+      return map[key] || String(value);
+    };
     const SYSTEM_FIELDS = /* @__PURE__ */ new Set(["$id", "$revision", "status", "category", "assignee"]);
     class Semaphore {
       constructor(max) {
@@ -17391,7 +17750,7 @@ ${lines.join("\n")}
             fieldLabels.join("\n") || "-",
             UtilsX.formatFilterCond(v.filterCond),
             UtilsX.formatSort(v.sort),
-            v.paginationType || (v.pagination === false ? "無効" : "既定"),
+            v.paginationType ? PAGINATION_LABEL[String(v.paginationType).toUpperCase()] || v.paginationType : v.pagination === false ? "無効" : "既定",
             UtilsX.stripHtml(v.customView || v.html || v.builtinType || "")
           ];
         });
@@ -17401,10 +17760,10 @@ ${lines.join("\n")}
         const headers = ["グラフ名", "種別", "集計対象", "集計方法", "グループ化", "ソート", "フィルター"];
         const rows = Object.entries(reports.reports).sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0)).map(([name, r]) => [
           name,
-          r.chartType || r.type || "",
-          Array.isArray(r.aggregations) ? r.aggregations.map((a) => `${a.type || ""}:${a.code || ""}`).join("\n") : "",
-          r.chartMode || "",
-          Array.isArray(r.groups) ? r.groups.map((g) => `${g.code || ""}${g.per ? `(${g.per})` : ""}`).join("、") : "",
+          ENUM_LOOKUP(CHART_TYPE_LABEL, r.chartType || r.type) || r.chartType || r.type || "",
+          Array.isArray(r.aggregations) ? r.aggregations.map((a) => `${ENUM_LOOKUP(AGGREGATION_TYPE_LABEL, a.type) || a.type || ""}（${a.code || ""}）`).join("\n") : "",
+          ENUM_LOOKUP(CHART_MODE_LABEL, r.chartMode) || r.chartMode || "",
+          Array.isArray(r.groups) ? r.groups.map((g) => `${g.code || ""}${g.per ? `(${ENUM_LOOKUP(GROUP_PER_LABEL, g.per) || g.per})` : ""}`).join("、") : "",
           UtilsX.formatSort(Array.isArray(r.sorts) ? r.sorts.map((s) => `${s.by || ""} ${s.order || ""}`).join(", ") : ""),
           UtilsX.formatFilterCond(r.filterCond)
         ]);
@@ -17428,11 +17787,11 @@ ${lines.join("\n")}
         pEmptyRows.push(pAoa.length - 1);
         pAoa.push(["■ ステータス一覧"]);
         pSectionRows.push(pAoa.length - 1);
-        pAoa.push(["順序", "ステータス名", "作業者タイプ", "作業者", "入ってくる遷移数", "出て行く遷移数"]);
+        pAoa.push(["順序", "ステータス名", "作業者の選び方", "作業者候補", "入ってくる遷移数", "出て行く遷移数"]);
         pHeaderInfoRows.push(pAoa.length - 1);
         const stateEntries = Object.entries(status.states || {}).sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0));
         stateEntries.forEach(([name, st]) => {
-          const asgnType = st.assignee?.type || "-";
+          const asgnType = st.assignee?.type ? ENUM_LOOKUP(ASSIGNEE_TYPE_LABEL, st.assignee.type) || st.assignee.type : "-";
           const asgnList = Array.isArray(st.assignee?.entities) ? st.assignee.entities.map(UtilsX.formatEntityDetailed).join("\n") : "-";
           const inCount = (status.actions || []).filter((a) => a.to === name).length;
           const outCount = (status.actions || []).filter((a) => a.from === name).length;
@@ -17561,7 +17920,8 @@ ${lines.join("\n")}
           const list = [];
           ["js", "css"].forEach((kind) => {
             (obj?.[kind] || []).forEach((entry, i) => {
-              list.push([scope, kind.toUpperCase(), i + 1, entry.type || "", entry.file?.name || entry.url || "", entry.file?.fileKey || ""]);
+              const refType = entry.type ? ENUM_LOOKUP(RESOURCE_TYPE_LABEL, entry.type) || entry.type : "";
+              list.push([scope, kind.toUpperCase(), i + 1, refType, entry.file?.name || entry.url || "", entry.file?.fileKey || ""]);
             });
           });
           return list;
@@ -17603,7 +17963,7 @@ ${lines.join("\n")}
             return [
               i + 1,
               UtilsX.formatEntityDetailed(n.entity || n),
-              n.timing || "-",
+              n.timing ? typeof n.timing === "object" ? ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing.code) || n.timing.code || "-" : ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing) || n.timing : "-",
               baseLabel,
               n.daysLater != null || n.daysBefore != null ? `${n.daysLater != null ? `+${n.daysLater}` : ""}${n.daysBefore != null ? `-${n.daysBefore}` : ""}日` : "-",
               Array.isArray(n.weekdays) ? n.weekdays.join("、") : "-",
@@ -17648,7 +18008,7 @@ ${lines.join("\n")}
           UtilsX.formatBoolean(n.commentAdded ?? n.notifyOnComment),
           UtilsX.formatBoolean(n.statusChanged ?? n.notifyOnStatusChange),
           UtilsX.formatBoolean(n.fileImported),
-          UtilsX.formatFilterCond(n.filterCond || n.timing || "-"),
+          n.filterCond ? UtilsX.formatFilterCond(n.filterCond) : n.timing ? typeof n.timing === "object" ? ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing.code) || n.timing.code || "-" : ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing) || n.timing : "-",
           UtilsX.stripHtml(n.title || n.body || "-")
         ]);
         appendSheet(
@@ -17667,7 +18027,7 @@ ${lines.join("\n")}
           const rows = list.map((w) => [
             w.id || "",
             w.url || w.notifyUrl || "",
-            Array.isArray(w.notificationEvents || w.events) ? (w.notificationEvents || w.events).join(", ") : "",
+            Array.isArray(w.notificationEvents || w.events) ? (w.notificationEvents || w.events).map((ev) => ENUM_LOOKUP(WEBHOOK_EVENT_LABEL, ev) || ev).join(", ") : "",
             UtilsX.stripHtml(w.description || ""),
             UtilsX.formatBoolean(w.enabled !== false)
           ]);
@@ -21401,6 +21761,11 @@ ${lines.join("\n")}
 @keyframes kintone-unified-suite-v2-shimmer{100%{transform:translateX(100%)}}
 #kintone-unified-suite-v2 .feature-breadcrumb{font-size:10px;opacity:.9;margin-top:2px}
 #kintone-unified-suite-v2 .req{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:800;vertical-align:middle}
+#kintone-unified-suite-v2 .req-soft{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#fef3c7;color:#b45309;font-size:10px;font-weight:700;vertical-align:middle;cursor:help;border:1px solid #fde68a}
+#kintone-unified-suite-v2 .conn-label-hint{display:inline-block;margin-left:4px;padding:0 6px;border-radius:999px;background:#ecfdf5;color:#047857;font-size:10px;font-weight:700;vertical-align:middle;cursor:help;border:1px solid #a7f3d0}
+#kintone-unified-suite-v2 .connection-secondary-action--primary{background:#0ea5e9;color:#fff;border-color:#0284c7;font-weight:700}
+#kintone-unified-suite-v2 .connection-secondary-action--primary:hover{background:#0284c7;border-color:#0369a1}
+#kintone-unified-suite-v2:not(.tab-needs-target) .conn-target-action{display:none !important}
 #kintone-unified-suite-v2 .diff-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-height:26px;align-items:center}
 #kintone-unified-suite-v2 .diff-active-filters__lbl{font-size:10px;font-weight:800;color:#0f766e;letter-spacing:.04em;margin-right:2px}
 #kintone-unified-suite-v2 .diff-active-filters__hint{font-size:11px;color:#94a3b8;font-style:italic}
@@ -23268,6 +23633,664 @@ ${lines.join("\n")}
   width:1px;height:1px;
   overflow:hidden;clip:rect(0,0,0,0);
 }
+
+/* ========================================================================
+   表示設定ポップオーバー / 表示プリファレンス（87-90, 92-94 共通）
+   ======================================================================== */
+#kintone-unified-suite-v2 .kus-display-prefs{position:relative;display:inline-block}
+#kintone-unified-suite-v2 .kus-display-prefs > summary{
+  cursor:pointer;list-style:none;
+}
+#kintone-unified-suite-v2 .kus-display-prefs > summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .kus-display-prefs[open] > summary{background:rgba(15,23,42,.08)}
+#kintone-unified-suite-v2 .kus-display-prefs__panel{
+  position:absolute;right:0;top:calc(100% + 6px);z-index:120;
+  min-width:280px;padding:10px 12px;border-radius:10px;
+  background:#fff;color:#0f172a;border:1px solid #cbd5e1;
+  box-shadow:0 16px 40px rgba(15,23,42,.18);
+  display:flex;flex-direction:column;gap:10px;
+}
+#kintone-unified-suite-v2 .kus-display-prefs__group{display:flex;flex-direction:column;gap:4px}
+#kintone-unified-suite-v2 .kus-display-prefs__title{font-size:11px;font-weight:800;color:#475569;letter-spacing:.04em}
+#kintone-unified-suite-v2 .kus-display-prefs__row{display:flex;flex-wrap:wrap;gap:4px}
+#kintone-unified-suite-v2 .kus-display-prefs__row .btn{padding:3px 10px;font-size:11px}
+#kintone-unified-suite-v2 .kus-display-prefs__foot{
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+  margin-top:4px;padding-top:8px;border-top:1px solid #e2e8f0;font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-display-prefs__foot .muted{color:#64748b}
+
+/* === Active button highlight === */
+#kintone-unified-suite-v2.kus-pref-theme-light .kus-display-prefs__panel [data-pref="theme"][data-value="light"],
+#kintone-unified-suite-v2.kus-pref-theme-dark .kus-display-prefs__panel [data-pref="theme"][data-value="dark"],
+#kintone-unified-suite-v2.kus-pref-theme-contrast .kus-display-prefs__panel [data-pref="theme"][data-value="contrast"],
+#kintone-unified-suite-v2.kus-pref-fontSize-sm .kus-display-prefs__panel [data-pref="fontSize"][data-value="sm"],
+#kintone-unified-suite-v2.kus-pref-fontSize-md .kus-display-prefs__panel [data-pref="fontSize"][data-value="md"],
+#kintone-unified-suite-v2.kus-pref-fontSize-lg .kus-display-prefs__panel [data-pref="fontSize"][data-value="lg"],
+#kintone-unified-suite-v2.kus-pref-palette-default .kus-display-prefs__panel [data-pref="palette"][data-value="default"],
+#kintone-unified-suite-v2.kus-pref-palette-cb .kus-display-prefs__panel [data-pref="palette"][data-value="cb"],
+#kintone-unified-suite-v2.kus-pref-focusRing-default .kus-display-prefs__panel [data-pref="focusRing"][data-value="default"],
+#kintone-unified-suite-v2.kus-pref-focusRing-strong .kus-display-prefs__panel [data-pref="focusRing"][data-value="strong"],
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .kus-display-prefs__panel [data-pref="verbosity"][data-value="brief"],
+#kintone-unified-suite-v2.kus-pref-verbosity-normal .kus-display-prefs__panel [data-pref="verbosity"][data-value="normal"],
+#kintone-unified-suite-v2.kus-pref-verbosity-detail .kus-display-prefs__panel [data-pref="verbosity"][data-value="detail"],
+#kintone-unified-suite-v2.kus-dialog-align-left .kus-display-prefs__panel [data-act="setDialogAlign"][data-value="left"],
+#kintone-unified-suite-v2.kus-dialog-align-center .kus-display-prefs__panel [data-act="setDialogAlign"][data-value="center"],
+#kintone-unified-suite-v2.kus-dialog-align-right .kus-display-prefs__panel [data-act="setDialogAlign"][data-value="right"]{
+  background:#2563eb !important;color:#fff !important;border-color:#1d4ed8 !important;font-weight:800;
+}
+
+/* ----- 87/94: ダーク / 高コントラスト ----- */
+#kintone-unified-suite-v2.kus-pref-theme-dark{
+  --bg-app:#0f172a; --bg-card:#1e293b; --bg-soft:#1e293b; --bg-soft2:#0f172a;
+  --txt-1:#f1f5f9; --txt-2:#cbd5e1; --txt-3:#94a3b8; --txt-mute:#64748b;
+  --border-1:#334155; --border-2:#475569;
+  background:#0f172a !important;color:#f1f5f9;
+}
+#kintone-unified-suite-v2.kus-pref-theme-dark .body,
+#kintone-unified-suite-v2.kus-pref-theme-dark .card,
+#kintone-unified-suite-v2.kus-pref-theme-dark .tab-card{
+  background:#1e293b !important;color:#f1f5f9 !important;border-color:#334155 !important;
+}
+#kintone-unified-suite-v2.kus-pref-theme-dark input[type="text"],
+#kintone-unified-suite-v2.kus-pref-theme-dark input[type="search"],
+#kintone-unified-suite-v2.kus-pref-theme-dark input[type="number"],
+#kintone-unified-suite-v2.kus-pref-theme-dark textarea,
+#kintone-unified-suite-v2.kus-pref-theme-dark select{
+  background:#0f172a !important;color:#f1f5f9 !important;border-color:#475569 !important;
+}
+#kintone-unified-suite-v2.kus-pref-theme-dark .muted{color:#94a3b8 !important}
+#kintone-unified-suite-v2.kus-pref-theme-dark .feature-card{background:rgba(30,41,59,.85) !important;border-color:#475569 !important}
+#kintone-unified-suite-v2.kus-pref-theme-dark .feature-card-label{color:#f1f5f9 !important}
+#kintone-unified-suite-v2.kus-pref-theme-dark .feature-card-desc{color:#cbd5e1 !important}
+#kintone-unified-suite-v2.kus-pref-theme-dark .kus-display-prefs__panel{background:#1e293b;color:#f1f5f9;border-color:#475569}
+
+#kintone-unified-suite-v2.kus-pref-theme-contrast{
+  --bg-app:#ffffff; --bg-card:#ffffff; --bg-soft:#f8fafc; --bg-soft2:#ffffff;
+  --txt-1:#000; --txt-2:#000; --txt-3:#1f2937; --txt-mute:#374151;
+  --border-1:#000; --border-2:#000;
+  --accent:#0000ee; --accent-2:#0000aa;
+}
+#kintone-unified-suite-v2.kus-pref-theme-contrast input,
+#kintone-unified-suite-v2.kus-pref-theme-contrast textarea,
+#kintone-unified-suite-v2.kus-pref-theme-contrast select,
+#kintone-unified-suite-v2.kus-pref-theme-contrast .btn,
+#kintone-unified-suite-v2.kus-pref-theme-contrast .feature-card,
+#kintone-unified-suite-v2.kus-pref-theme-contrast .card{
+  border:1.5px solid #000 !important;
+}
+
+/* ----- 88: フォントサイズ ----- */
+#kintone-unified-suite-v2.kus-pref-fontSize-sm{
+  --fs-aux:10px; --fs-body:11px; --fs-head:14px;
+  font-size:11px;
+}
+#kintone-unified-suite-v2.kus-pref-fontSize-lg{
+  --fs-aux:13px; --fs-body:15px; --fs-head:18px;
+  font-size:15px;
+}
+#kintone-unified-suite-v2.kus-pref-fontSize-lg .feature-card-label{font-size:16px}
+#kintone-unified-suite-v2.kus-pref-fontSize-lg .feature-card-desc{font-size:13px}
+
+/* ----- 89: 色覚対応パレット（追加=青/削除=黄/変更=紫） ----- */
+#kintone-unified-suite-v2.kus-pref-palette-cb{
+  --sev-high:#0066cc; --sev-high-bg:#dbeafe; --sev-high-fg:#1e3a8a; --sev-high-border:#93c5fd;
+  --sev-mid:#a16207;  --sev-mid-bg:#fef9c3;  --sev-mid-fg:#713f12;  --sev-mid-border:#fde047;
+  --sev-low:#7c3aed;  --sev-low-bg:#ede9fe;  --sev-low-fg:#5b21b6;  --sev-low-border:#c4b5fd;
+}
+#kintone-unified-suite-v2.kus-pref-palette-cb .row.added,
+#kintone-unified-suite-v2.kus-pref-palette-cb .diff-row--added,
+#kintone-unified-suite-v2.kus-pref-palette-cb [data-diff-type="added"]{
+  background:#dbeafe !important;border-left:3px solid #2563eb !important;
+}
+#kintone-unified-suite-v2.kus-pref-palette-cb .row.removed,
+#kintone-unified-suite-v2.kus-pref-palette-cb .diff-row--removed,
+#kintone-unified-suite-v2.kus-pref-palette-cb [data-diff-type="removed"]{
+  background:#fef9c3 !important;border-left:3px solid #ca8a04 !important;
+}
+#kintone-unified-suite-v2.kus-pref-palette-cb .row.changed,
+#kintone-unified-suite-v2.kus-pref-palette-cb .diff-row--changed,
+#kintone-unified-suite-v2.kus-pref-palette-cb [data-diff-type="changed"]{
+  background:#ede9fe !important;border-left:3px solid #7c3aed !important;
+}
+
+/* ----- 90: 強調フォーカスリング ----- */
+#kintone-unified-suite-v2.kus-pref-focusRing-strong *:focus-visible{
+  outline:3px solid #f59e0b !important;outline-offset:2px !important;
+  box-shadow:0 0 0 4px rgba(245,158,11,.35) !important;
+}
+#kintone-unified-suite-v2.kus-pref-focusRing-strong button:focus-visible,
+#kintone-unified-suite-v2.kus-pref-focusRing-strong input:focus-visible,
+#kintone-unified-suite-v2.kus-pref-focusRing-strong select:focus-visible,
+#kintone-unified-suite-v2.kus-pref-focusRing-strong textarea:focus-visible{
+  outline:3px solid #f59e0b !important;outline-offset:2px !important;
+}
+
+/* ----- 93: 説明文の詳細度 ----- */
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .feature-card-desc,
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .connection-section-lead,
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .reflect-modal-sub,
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .launcher-section-desc,
+#kintone-unified-suite-v2.kus-pref-verbosity-brief .feature-conn{
+  display:none !important;
+}
+#kintone-unified-suite-v2.kus-pref-verbosity-detail .feature-card-desc{
+  display:block !important;font-size:12px;margin-bottom:8px;
+}
+
+/* ========================================================================
+   クリック可能パンくず（26）
+   ======================================================================== */
+#kintone-unified-suite-v2 .feature-breadcrumb{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+#kintone-unified-suite-v2 .feature-breadcrumb__link{
+  background:transparent;border:none;color:inherit;padding:0 4px;
+  font:inherit;cursor:pointer;border-radius:4px;
+  text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,.4);
+}
+#kintone-unified-suite-v2 .feature-breadcrumb__link:hover{
+  background:rgba(255,255,255,.15);text-decoration-color:rgba(255,255,255,.9);
+}
+#kintone-unified-suite-v2 .feature-breadcrumb__link:focus-visible{
+  outline:2px solid #f59e0b;outline-offset:1px;
+}
+#kintone-unified-suite-v2 .feature-breadcrumb__sep{opacity:.6;padding:0 2px}
+#kintone-unified-suite-v2 .feature-breadcrumb__current{font-weight:700}
+
+/* ========================================================================
+   反映ボタンの抑制（67）— チェック未完時は淡く・小さく
+   ======================================================================== */
+#kintone-unified-suite-v2 .reflect-apply-checklist:not(.is-complete) ~ .reflect-route-grid,
+#kintone-unified-suite-v2 .reflect-checklist-card .reflect-apply-checklist:not(.is-complete) + .reflect-apply-hint{display:block}
+#kintone-unified-suite-v2 .reflect-danger-zone:has(~ * .reflect-apply-checklist:not(.is-complete)) .btn.ok,
+#kintone-unified-suite-v2 .reflect-checklist-card:has(.reflect-apply-checklist:not(.is-complete)) ~ .reflect-danger-zone .btn.ok,
+#kintone-unified-suite-v2 .reflect-simple-shell:has(.reflect-apply-checklist:not(.is-complete)) .reflect-danger-zone .btn.ok#u_footerApply{
+  opacity:.55;transform:scale(.92);filter:grayscale(.3);
+  box-shadow:none !important;
+}
+#kintone-unified-suite-v2 .reflect-simple-shell:has(.reflect-apply-checklist.is-complete) .reflect-danger-zone .btn.ok#u_footerApply{
+  opacity:1;transform:scale(1);filter:none;
+  animation:kus-apply-pulse 2.4s ease-in-out infinite;
+}
+@keyframes kus-apply-pulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}
+  50%{box-shadow:0 0 0 6px rgba(34,197,94,.18)}
+}
+
+/* ========================================================================
+   反映スコープ選択数バッジ（66）
+   ======================================================================== */
+#kintone-unified-suite-v2 .reflect-route-card__count{
+  display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;
+  background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:800;
+  border:1px solid #bfdbfe;vertical-align:middle;
+}
+#kintone-unified-suite-v2 .reflect-route-card__count.is-empty{
+  background:#fee2e2;color:#b91c1c;border-color:#fecaca;
+}
+#kintone-unified-suite-v2 .reflect-route-card__count.is-full{
+  background:#dcfce7;color:#166534;border-color:#bbf7d0;
+}
+
+/* ========================================================================
+   差分ツールバー区切り
+   ======================================================================== */
+#kintone-unified-suite-v2 .diff-review-toolbar__sep{
+  display:inline-block;color:#cbd5e1;font-weight:400;padding:0 4px;
+  align-self:center;
+}
+
+/* ========================================================================
+   extras.ts 用スタイル — 35/37/39/41/44/47/49/51/52/55/60/70/78/80/84/85/86/...
+   ======================================================================== */
+
+/* 35: トーストスタック */
+#kintone-unified-suite-v2 .kus-toast-stack{
+  position:fixed;right:16px;bottom:16px;z-index:9000;
+  display:flex;flex-direction:column;gap:6px;pointer-events:none;
+}
+#kintone-unified-suite-v2 .kus-toast{
+  pointer-events:auto;cursor:pointer;
+  min-width:220px;max-width:380px;padding:8px 12px;border-radius:8px;
+  font-size:12px;line-height:1.5;
+  background:#1e293b;color:#f1f5f9;border:1px solid #334155;
+  box-shadow:0 8px 24px rgba(15,23,42,.18);
+  animation:kus-toast-in .18s ease-out;
+}
+#kintone-unified-suite-v2 .kus-toast.is-leaving{opacity:0;transform:translateY(8px);transition:opacity .2s,transform .2s}
+#kintone-unified-suite-v2 .kus-toast--ok{background:#065f46;border-color:#10b981;color:#ecfdf5}
+#kintone-unified-suite-v2 .kus-toast--warn{background:#78350f;border-color:#f59e0b;color:#fffbeb}
+#kintone-unified-suite-v2 .kus-toast--error{background:#7f1d1d;border-color:#ef4444;color:#fef2f2}
+@keyframes kus-toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* 39: 実行中タスクピル */
+#kintone-unified-suite-v2 .kus-active-task-pill{
+  display:inline-flex;align-items:center;gap:4px;padding:3px 10px;
+  border-radius:999px;border:1px solid #cbd5e1;background:#f1f5f9;color:#0f172a;
+  font-size:11px;font-weight:700;cursor:pointer;
+}
+#kintone-unified-suite-v2 .kus-active-task-pill.is-busy{
+  background:#fef3c7;border-color:#fbbf24;color:#78350f;
+  animation:kus-active-task-pulse 1.4s ease-in-out infinite;
+}
+@keyframes kus-active-task-pulse{0%,100%{box-shadow:0 0 0 0 rgba(251,191,36,0)}50%{box-shadow:0 0 0 5px rgba(251,191,36,.3)}}
+
+/* 37: 確認スライダー */
+.kus-confirm-overlay{
+  position:fixed;inset:0;z-index:10000;
+  background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;
+  animation:kus-confirm-fade .18s ease-out;
+}
+@keyframes kus-confirm-fade{from{opacity:0}to{opacity:1}}
+.kus-confirm-card{
+  background:#fff;border-radius:12px;padding:18px 20px;
+  width:min(420px,90vw);box-shadow:0 24px 60px rgba(15,23,42,.35);
+  display:flex;flex-direction:column;gap:12px;
+}
+.kus-confirm-card__title{font-size:14px;font-weight:800;color:#b45309}
+.kus-confirm-card__msg{font-size:12px;line-height:1.6;color:#334155}
+.kus-confirm-card__slider{display:flex;flex-direction:column;gap:4px}
+.kus-confirm-card__range{width:100%;accent-color:#dc2626}
+.kus-confirm-card__hint{font-size:10px;color:#94a3b8}
+.kus-confirm-card__btns{display:flex;justify-content:flex-end;gap:6px}
+
+/* 41: 差分上部固定サマリ */
+#kintone-unified-suite-v2 .kus-diff-fixed-summary{
+  position:sticky;top:0;z-index:5;
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+  padding:6px 8px;margin:0 0 6px;
+  background:linear-gradient(180deg,#fff,#f8fafc);
+  border-bottom:1px solid #e2e8f0;font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-diff-fixed-summary__pill{
+  display:inline-block;padding:2px 8px;border-radius:999px;font-weight:800;
+  border:1px solid;
+}
+#kintone-unified-suite-v2 .kus-diff-fixed-summary__pill--add{background:#ecfdf5;color:#065f46;border-color:#a7f3d0}
+#kintone-unified-suite-v2 .kus-diff-fixed-summary__pill--remove{background:#fef2f2;color:#991b1b;border-color:#fca5a5}
+#kintone-unified-suite-v2 .kus-diff-fixed-summary__pill--change{background:#fff7ed;color:#9a3412;border-color:#fdba74}
+#kintone-unified-suite-v2 .kus-diff-fixed-summary__pill--same{background:#f1f5f9;color:#475569;border-color:#cbd5e1}
+
+/* 44: 重要度しきい値 */
+#kintone-unified-suite-v2 .kus-sev-threshold{
+  display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-sev-threshold__lbl{color:#475569;font-weight:700}
+#kintone-unified-suite-v2 .kus-sev-threshold__sel{padding:2px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px}
+
+/* 47: ハイライト色選択 */
+#kintone-unified-suite-v2 .kus-highlight-picker{
+  margin-left:6px;padding:2px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px;
+}
+#kintone-unified-suite-v2 mark, #kintone-unified-suite-v2 .kus-hl{
+  background:var(--kus-highlight,#fde68a) !important;
+}
+
+/* 51: 行フォーカス / 承認 / 却下 */
+#kintone-unified-suite-v2 .kus-row-focused{outline:2px solid #2563eb;outline-offset:-2px}
+#kintone-unified-suite-v2 .kus-row-approved{background:rgba(34,197,94,.12) !important;border-left:3px solid #22c55e !important}
+#kintone-unified-suite-v2 .kus-row-rejected{background:rgba(239,68,68,.10) !important;border-left:3px solid #ef4444 !important;opacity:.6}
+
+/* 60: フィールド種別アイコン */
+#kintone-unified-suite-v2 .kus-field-type-icon{
+  display:inline-block;margin-right:4px;width:18px;height:18px;
+  text-align:center;line-height:18px;border-radius:4px;
+  background:#dbeafe;color:#1e40af;font-size:11px;font-weight:800;
+  border:1px solid #bfdbfe;
+}
+
+/* 70: ER フィルタバー */
+#kintone-unified-suite-v2 .kus-er-filter-bar{
+  display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;margin-bottom:8px;
+  border-bottom:1px solid #e2e8f0;
+}
+#kintone-unified-suite-v2 .kus-er-lookup-only [data-edge-type]:not([data-edge-type="lookup"]),
+#kintone-unified-suite-v2 .kus-er-ref-only [data-edge-type]:not([data-edge-type="reference"]){display:none}
+#kintone-unified-suite-v2 .kus-er-hide-orphan [data-orphan="true"]{display:none}
+
+/* 78: ダイアグラム出力 */
+#kintone-unified-suite-v2 .kus-diagram-export{
+  position:absolute;top:6px;right:6px;z-index:3;display:flex;gap:4px;
+}
+
+/* 80: ZIP 分割サイズ */
+#kintone-unified-suite-v2 .kus-zip-split{
+  display:flex;align-items:center;gap:6px;padding:6px 8px;
+  background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;
+  font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-zip-split__input{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;width:80px}
+
+/* 84: API レスポンス表示切替 */
+#kintone-unified-suite-v2 .kus-api-view-toggle{margin-bottom:6px}
+#kintone-unified-suite-v2 .kus-api-view-toggle .btn.is-active{background:#2563eb;color:#fff;border-color:#1d4ed8}
+#kintone-unified-suite-v2 .kus-api-raw{font-family:Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;background:#f8fafc;padding:8px;border-radius:6px;border:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .kus-api-tree{font-family:Menlo,Consolas,monospace;font-size:11px}
+#kintone-unified-suite-v2 .kus-api-tree__node summary{cursor:pointer;padding:2px 0}
+#kintone-unified-suite-v2 .kus-api-tree__leaf{padding-left:14px}
+#kintone-unified-suite-v2 .kus-api-tree__key{color:#0369a1;margin-right:4px}
+#kintone-unified-suite-v2 .kus-api-tree__val{color:#16a34a}
+#kintone-unified-suite-v2 .kus-api-table__t{border-collapse:collapse;font-size:11px}
+#kintone-unified-suite-v2 .kus-api-table__t th,
+#kintone-unified-suite-v2 .kus-api-table__t td{border:1px solid #e2e8f0;padding:3px 6px;vertical-align:top}
+#kintone-unified-suite-v2 .kus-api-table__t th{background:#f1f5f9;text-align:left}
+
+/* 85: 環境変数 */
+#kintone-unified-suite-v2 .kus-api-envvars{margin-bottom:8px;padding:6px 8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:11px}
+#kintone-unified-suite-v2 .kus-api-envvars summary{cursor:pointer;font-weight:700}
+#kintone-unified-suite-v2 .kus-api-envvars__ta{width:100%;padding:6px;border-radius:6px;border:1px solid #cbd5e1;font-family:Menlo,Consolas,monospace;font-size:11px}
+
+/* 86: cURL コピーボタン */
+#kintone-unified-suite-v2 .kus-curl-copy{margin-bottom:6px}
+
+/* 行コピーフォーマット */
+#kintone-unified-suite-v2 .kus-row-copy-format{display:inline-flex;gap:4px;align-items:center;margin-left:8px}
+#kintone-unified-suite-v2 .kus-row-copy-format__sel{padding:2px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px}
+
+/* 32: タブバー自動格納 */
+#kintone-unified-suite-v2 .kus-tabbar-collapse-toggle{margin-left:auto;font-size:10px;padding:2px 8px}
+#kintone-unified-suite-v2 .kus-tabbar-collapse-toggle.is-active{background:#2563eb;color:#fff;border-color:#1d4ed8}
+#kintone-unified-suite-v2.kus-tabs-auto-collapse .kus-tab-bar.is-collapsed{
+  transform:translateY(-100%);transition:transform .2s ease;
+  height:0;overflow:hidden;
+}
+#kintone-unified-suite-v2.kus-tabs-auto-collapse .kus-tab-bar{transition:transform .2s ease}
+
+/* 34: ステータスバー Undo */
+#kintone-unified-suite-v2 .kus-status-undo{
+  margin-left:auto;font-size:10px;padding:2px 8px;
+}
+
+/* 42: 右ペイン JSON 差分 */
+#kintone-unified-suite-v2 .kus-diff-with-side{display:grid;grid-template-columns:1fr 0;gap:0;transition:grid-template-columns .25s ease}
+#kintone-unified-suite-v2 .kus-diff-with-side:has(.kus-diff-side.is-open){grid-template-columns:1fr minmax(280px, 360px);gap:8px}
+#kintone-unified-suite-v2 .kus-diff-side{
+  position:sticky;top:0;align-self:start;
+  background:#fff;border:1px solid #e2e8f0;border-radius:8px;
+  display:none;flex-direction:column;max-height:calc(100vh - 160px);overflow:hidden;
+}
+#kintone-unified-suite-v2 .kus-diff-side.is-open{display:flex}
+#kintone-unified-suite-v2 .kus-diff-side__head{
+  display:flex;justify-content:space-between;align-items:center;padding:6px 10px;
+  background:#f8fafc;border-bottom:1px solid #e2e8f0;
+}
+#kintone-unified-suite-v2 .kus-diff-side__title{font-size:12px;font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .kus-diff-side__close{padding:0 8px;font-size:14px}
+#kintone-unified-suite-v2 .kus-diff-side__body{padding:8px 10px;overflow:auto;font-size:11px}
+#kintone-unified-suite-v2 .kus-diff-side__meta{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+#kintone-unified-suite-v2 .kus-diff-side__cols{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+#kintone-unified-suite-v2 .kus-diff-side__col-h{font-size:10px;font-weight:800;color:#475569;margin-bottom:2px}
+#kintone-unified-suite-v2 .kus-diff-side pre{
+  margin:0;padding:6px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;
+  font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-all;
+  max-height:50vh;overflow:auto;
+}
+
+/* 43: インラインメモ */
+#kintone-unified-suite-v2 .kus-row-memo-btn{
+  display:inline-block;margin-left:6px;padding:0 6px;background:transparent;border:1px dashed #cbd5e1;
+  border-radius:4px;cursor:pointer;font-size:11px;color:#64748b;
+}
+#kintone-unified-suite-v2 .kus-row-memo-btn[data-has-note="1"]{
+  background:#fef3c7;color:#b45309;border:1px solid #fbbf24;border-style:solid;
+}
+
+/* 63: 失敗のみ再送 */
+#kintone-unified-suite-v2 .kus-retry-failed{
+  margin-top:8px;background:#fef3c7;color:#92400e;border-color:#f59e0b;
+}
+
+/* 71: ER レイアウト切替 — SVG ノードを CSS 変換で並べ替え */
+#kintone-unified-suite-v2 .kus-er-layout-switch{display:flex;align-items:center;gap:4px;font-size:11px;padding:4px 0}
+#kintone-unified-suite-v2 .kus-er-layout-switch button{padding:2px 8px;font-size:10px}
+#kintone-unified-suite-v2 .kus-er-layout-switch button.is-active{background:#2563eb;color:#fff;border-color:#1d4ed8}
+
+/* Force レイアウト = 既定（描画側のレイアウト） */
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-force svg{filter:none}
+
+/* Tree レイアウト = 階層タイル化（DOM ベース） */
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-tree .er-fallback{
+  display:flex;flex-direction:column;gap:8px;
+}
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-tree .er-fallback .er-row{
+  display:flex;flex-wrap:wrap;gap:6px;justify-content:center;
+}
+
+/* Grid レイアウト = カード並べ替え（DOM ベース） */
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-grid .er-fallback{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;
+}
+
+/* SVG モード時の弱変換 — Tree は縦横比矯正、Grid は SVG を非表示にしてカードを表示 */
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-grid svg{display:none}
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-layout-tree svg{aspect-ratio:auto}
+
+/* ER フィルタ強化 */
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-lookup-only [data-edge-type]:not([data-edge-type="lookup"]),
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-lookup-only line:not([data-edge-type="lookup"]),
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-lookup-only path:not([data-edge-type="lookup"]){opacity:.1}
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-ref-only [data-edge-type]:not([data-edge-type="reference"]){opacity:.1}
+#kintone-unified-suite-v2 [data-pane="er"].kus-er-hide-orphan [data-orphan="true"]{display:none}
+
+/* 81: 件数差分 */
+#kintone-unified-suite-v2 .kus-record-delta{
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 8px;
+  background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;
+  font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-record-delta__lbl{color:#475569;font-weight:700}
+#kintone-unified-suite-v2 .kus-record-delta__before,
+#kintone-unified-suite-v2 .kus-record-delta__after{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1}
+#kintone-unified-suite-v2 .kus-record-delta__result.is-positive{color:#065f46;font-weight:800}
+#kintone-unified-suite-v2 .kus-record-delta__result.is-negative{color:#991b1b;font-weight:800}
+
+/* 83: API コレクション */
+#kintone-unified-suite-v2 .kus-api-collection{
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px;
+  padding:6px 8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;
+}
+#kintone-unified-suite-v2 .kus-api-collection__name{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px}
+#kintone-unified-suite-v2 .kus-api-collection__sel{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px;max-width:240px}
+
+/* 48: プロパティパネル左固定 */
+#kintone-unified-suite-v2 .kus-prop-dock-toggle{margin-right:6px;font-size:10px;padding:2px 8px}
+#kintone-unified-suite-v2 .kus-prop-dock-toggle.is-active{background:#2563eb;color:#fff;border-color:#1d4ed8}
+#kintone-unified-suite-v2.kus-prop-dock-left #u_nodePropertyPanel{
+  position:fixed;left:8px;top:140px;width:260px;max-height:70vh;overflow:auto;z-index:30;
+  background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 24px rgba(15,23,42,.18);
+}
+
+/* 57: API 差分プレビュー */
+#kintone-unified-suite-v2 .kus-api-diff__item{padding:8px 6px;border-top:1px solid #e2e8f0}
+#kintone-unified-suite-v2 .kus-api-diff__head{font-weight:800;font-size:12px;margin-bottom:4px}
+#kintone-unified-suite-v2 .kus-api-diff__cols{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+#kintone-unified-suite-v2 .kus-api-diff__col-h{font-size:10px;font-weight:800;color:#475569;margin-bottom:2px}
+#kintone-unified-suite-v2 .kus-api-diff pre{margin:0;padding:6px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:10px;line-height:1.4;white-space:pre-wrap;word-break:break-all;max-height:30vh;overflow:auto}
+
+/* 59: フィルタ付きスコープツリー */
+#kintone-unified-suite-v2 .kus-scope-tree-filter{display:flex;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid #e2e8f0;margin-bottom:6px}
+#kintone-unified-suite-v2 .kus-scope-tree-filter__q{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;flex:1;font-size:11px}
+
+/* 61: JSON 検証ボタン */
+#kintone-unified-suite-v2 .kus-validate-btn{margin-top:4px;font-size:11px}
+
+/* 68/69: 設計書テンプレート / TOC */
+#kintone-unified-suite-v2 .kus-design-templates{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-bottom:6px;padding:4px 0}
+#kintone-unified-suite-v2 .kus-design-templates button{padding:2px 8px;font-size:10px}
+#kintone-unified-suite-v2 .kus-design-templates button.is-active{background:#2563eb;color:#fff;border-color:#1d4ed8}
+#kintone-unified-suite-v2 [data-pane="design"].kus-design-a4-portrait .result{max-width:794px;margin:0 auto;background:#fff;padding:30px;box-shadow:0 4px 12px rgba(0,0,0,.08)}
+#kintone-unified-suite-v2 [data-pane="design"].kus-design-a4-landscape .result{max-width:1123px;margin:0 auto;background:#fff;padding:30px;box-shadow:0 4px 12px rgba(0,0,0,.08)}
+#kintone-unified-suite-v2 [data-pane="design"].kus-design-presentation .result{max-width:1280px;margin:0 auto;font-size:14px;background:#fff;padding:40px}
+#kintone-unified-suite-v2 [data-pane="design"].kus-design-compact .result{font-size:11px}
+#kintone-unified-suite-v2 [data-pane="design"].kus-design-compact .result h2{font-size:13px}
+#kintone-unified-suite-v2 .kus-design-toc{
+  position:fixed;right:12px;top:160px;width:220px;max-height:65vh;overflow:auto;z-index:25;
+  background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:8px;
+  box-shadow:0 8px 24px rgba(15,23,42,.16);font-size:11px;
+}
+#kintone-unified-suite-v2 .kus-design-toc__title{font-weight:800;margin-bottom:4px}
+#kintone-unified-suite-v2 .kus-design-toc__lnk{display:block;color:#0369a1;text-decoration:none;padding:2px 4px;border-radius:4px}
+#kintone-unified-suite-v2 .kus-design-toc__lnk:hover{background:#e0f2fe}
+#kintone-unified-suite-v2 .kus-design-toc__lnk[data-lvl="1"]{padding-left:12px}
+#kintone-unified-suite-v2 .kus-design-toc__lnk[data-lvl="2"]{padding-left:20px;color:#475569}
+
+/* 74: プロセス スナップ差分 */
+#kintone-unified-suite-v2 .kus-proc-screenshot{display:flex;gap:6px;padding:4px 0}
+
+/* 75: 設計書表紙 */
+#kintone-unified-suite-v2 .kus-design-cover summary{cursor:pointer;padding:4px;font-weight:700}
+#kintone-unified-suite-v2 .kus-design-cover__body{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0}
+#kintone-unified-suite-v2 .kus-design-cover__body input[type="text"]{padding:3px 6px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px}
+#kintone-unified-suite-v2 .kus-design-cover__preview{width:100%;font-size:11px;color:#64748b}
+
+/* 76: Excel シート分割 */
+#kintone-unified-suite-v2 .kus-excel-split summary{cursor:pointer;padding:4px;font-weight:700}
+#kintone-unified-suite-v2 .kus-excel-split__body{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0;font-size:11px}
+
+/* 79: CSV マッピング */
+#kintone-unified-suite-v2 .kus-csv-mapping summary{cursor:pointer;padding:4px;font-weight:700}
+#kintone-unified-suite-v2 .kus-csv-mapping__t{border-collapse:collapse;font-size:11px;margin-top:6px}
+#kintone-unified-suite-v2 .kus-csv-mapping__t th,
+#kintone-unified-suite-v2 .kus-csv-mapping__t td{border:1px solid #e2e8f0;padding:3px 6px}
+#kintone-unified-suite-v2 .kus-csv-mapping__t select{padding:2px 4px;border-radius:4px;border:1px solid #cbd5e1;font-size:11px}
+
+/* 82: クエリビルダ */
+#kintone-unified-suite-v2 .kus-query-builder summary{cursor:pointer;padding:4px;font-weight:700}
+#kintone-unified-suite-v2 .kus-query-builder__t{border-collapse:collapse;font-size:11px;margin:6px 0;width:100%}
+#kintone-unified-suite-v2 .kus-query-builder__t th,
+#kintone-unified-suite-v2 .kus-query-builder__t td{border:1px solid #e2e8f0;padding:3px 6px;vertical-align:middle}
+#kintone-unified-suite-v2 .kus-query-builder__t input{padding:2px 4px;border-radius:4px;border:1px solid #cbd5e1;font-size:11px}
+#kintone-unified-suite-v2 .kus-query-builder__t select{padding:2px 4px;border-radius:4px;border:1px solid #cbd5e1;font-size:11px}
+#kintone-unified-suite-v2 .kus-query-builder__out{padding:4px 8px;border-radius:6px;border:1px solid #cbd5e1;font-family:Menlo,Consolas,monospace;font-size:11px;background:#f8fafc}
+
+/* ========================================================================
+   JSON ルート（部分反映）の可視化
+   ======================================================================== */
+#kintone-unified-suite-v2 .patch-json-steps{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:8px;margin:0 0 12px;padding:10px 12px;
+  background:linear-gradient(135deg,#eff6ff,#f0fdfa);
+  border:1px solid #bfdbfe;border-radius:10px;list-style:none;font-size:11px;line-height:1.55;
+}
+#kintone-unified-suite-v2 .patch-json-steps li{
+  display:flex;gap:8px;align-items:flex-start;
+}
+#kintone-unified-suite-v2 .patch-json-step-no{
+  flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;border-radius:50%;
+  background:#2563eb;color:#fff;font-weight:900;font-size:11px;
+}
+#kintone-unified-suite-v2 .patch-json-toolbar{
+  display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+  padding:8px 10px;border:1px solid #dbe3ed;border-radius:8px;background:#fafbfc;
+}
+#kintone-unified-suite-v2 .patch-json-toolbar-label{
+  font-size:10px;font-weight:800;color:#475569;letter-spacing:.04em;text-transform:uppercase;
+}
+#kintone-unified-suite-v2 .patch-json-toolbar-sep{
+  color:#cbd5e1;font-weight:400;padding:0 4px;
+}
+#kintone-unified-suite-v2 .patch-json-summary-card{
+  padding:12px 14px;border:1px solid #bae6fd;border-radius:10px;
+  background:linear-gradient(180deg,#f0f9ff,#fff);box-shadow:0 1px 2px rgba(15,23,42,.04);
+}
+#kintone-unified-suite-v2 .patch-json-summary-head{
+  display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .patch-json-summary-title{
+  font-size:13px;font-weight:900;color:#0c4a6e;
+}
+#kintone-unified-suite-v2 .patch-json-summary-meta{
+  font-size:10px;color:#475569;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+#kintone-unified-suite-v2 .patch-json-summary-stats{
+  display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .patch-stat{
+  display:inline-flex;flex-direction:column;align-items:center;justify-content:center;
+  min-width:54px;padding:4px 10px;border-radius:8px;
+  background:#fff;border:1px solid #e2e8f0;
+}
+#kintone-unified-suite-v2 .patch-stat b{font-size:14px;font-weight:900;color:#0f172a;line-height:1.1}
+#kintone-unified-suite-v2 .patch-stat small{font-size:9px;font-weight:700;color:#64748b;letter-spacing:.04em;margin-top:2px}
+#kintone-unified-suite-v2 .patch-stat-total b{color:#1d4ed8}
+#kintone-unified-suite-v2 .patch-stat-added{background:#ecfdf5;border-color:#bbf7d0}
+#kintone-unified-suite-v2 .patch-stat-added b{color:#166534}
+#kintone-unified-suite-v2 .patch-stat-removed{background:#fef2f2;border-color:#fecaca}
+#kintone-unified-suite-v2 .patch-stat-removed b{color:#b91c1c}
+#kintone-unified-suite-v2 .patch-stat-changed{background:#fffbeb;border-color:#fde68a}
+#kintone-unified-suite-v2 .patch-stat-changed b{color:#92400e}
+#kintone-unified-suite-v2 .patch-stat-moved{background:#f5f3ff;border-color:#c4b5fd}
+#kintone-unified-suite-v2 .patch-stat-moved b{color:#6b21a8}
+#kintone-unified-suite-v2 .patch-stat-section{background:#f1f5f9;border-color:#cbd5e1}
+#kintone-unified-suite-v2 .patch-stat-section b{color:#334155}
+#kintone-unified-suite-v2 .patch-json-summary-sections{
+  display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;
+}
+#kintone-unified-suite-v2 .patch-section-chip{
+  display:inline-flex;align-items:center;gap:6px;padding:3px 9px;
+  border-radius:999px;background:#fff;border:1px solid #cbd5e1;
+  font-size:11px;color:#334155;
+}
+#kintone-unified-suite-v2 .patch-section-chip-name{font-weight:700}
+#kintone-unified-suite-v2 .patch-section-chip-count{
+  font-size:10px;font-weight:800;color:#1d4ed8;background:#dbeafe;
+  padding:1px 7px;border-radius:999px;
+}
+#kintone-unified-suite-v2 .patch-json-summary-hint{
+  font-size:11px;color:#0c4a6e;line-height:1.55;
+  padding:6px 10px;background:#dbeafe;border-radius:6px;border:1px dashed #93c5fd;
+}
+#kintone-unified-suite-v2 .patch-json-fold[open]{background:#fff}
+#kintone-unified-suite-v2 .patch-json-fold > summary{outline:none;list-style:none}
+#kintone-unified-suite-v2 .patch-json-fold > summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .patch-json-fold > summary::before{
+  content:"▸";display:inline-block;margin-right:6px;font-size:10px;color:#94a3b8;
+  transition:transform .15s;
+}
+#kintone-unified-suite-v2 .patch-json-fold[open] > summary::before{transform:rotate(90deg)}
+#kintone-unified-suite-v2 .patch-section{
+  margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed #e2e8f0;
+}
+#kintone-unified-suite-v2 .patch-section:last-child{margin-bottom:0;padding-bottom:0;border-bottom:none}
+#kintone-unified-suite-v2 .patch-section-head{
+  display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;
+}
+#kintone-unified-suite-v2 .patch-section-label{font-weight:800;color:#0f172a;font-size:12px}
+#kintone-unified-suite-v2 .patch-section-count{
+  font-size:10px;font-weight:800;color:#1d4ed8;
+  background:#dbeafe;padding:1px 8px;border-radius:999px;
+}
+#kintone-unified-suite-v2 .patch-row-list{
+  list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:3px;
+}
+#kintone-unified-suite-v2 .patch-row{
+  display:flex;align-items:flex-start;gap:6px;padding:5px 8px;
+  border-radius:6px;border:1px solid #e2e8f0;background:#fff;font-size:11px;
+}
+#kintone-unified-suite-v2 .patch-row-type{
+  flex-shrink:0;display:inline-block;min-width:36px;text-align:center;
+  font-size:10px;font-weight:800;padding:1px 5px;border-radius:4px;
+}
+#kintone-unified-suite-v2 .patch-row-added{border-left:3px solid #22c55e}
+#kintone-unified-suite-v2 .patch-row-added .patch-row-type{background:#dcfce7;color:#15803d}
+#kintone-unified-suite-v2 .patch-row-removed{border-left:3px solid #ef4444}
+#kintone-unified-suite-v2 .patch-row-removed .patch-row-type{background:#fee2e2;color:#b91c1c}
+#kintone-unified-suite-v2 .patch-row-changed{border-left:3px solid #eab308}
+#kintone-unified-suite-v2 .patch-row-changed .patch-row-type{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .patch-row-moved{border-left:3px solid #a855f7}
+#kintone-unified-suite-v2 .patch-row-moved .patch-row-type{background:#f3e8ff;color:#6b21a8}
+#kintone-unified-suite-v2 .patch-row-path{
+  flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:10px;color:#334155;word-break:break-all;
+}
+#kintone-unified-suite-v2 .patch-row-reason{
+  flex-shrink:0;font-size:10px;color:#475569;
+  background:#f1f5f9;padding:1px 6px;border-radius:4px;border:1px solid #cbd5e1;
+  max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+#kintone-unified-suite-v2 .patch-row-more{
+  margin-top:6px;font-size:10px;color:#64748b;text-align:center;
+}
 `;
 
   // src/ui/template.ts
@@ -23337,7 +24360,7 @@ ${lines.join("\n")}
             <button class="h-back" data-act="backToLauncher">← 戻る</button>
             <div class="h-title-feature-main">
               <div class="ht" id="u_featureTitle"></div>
-              <div class="feature-breadcrumb" id="u_featureBreadcrumb" aria-live="polite">ホーム / 機能</div>
+              <div class="feature-breadcrumb" id="u_featureBreadcrumb" aria-live="polite" role="navigation" aria-label="現在地">ホーム / 機能</div>
               <div class="feature-conn" id="u_featureConn" hidden></div>
             </div>
           </div>
@@ -23345,8 +24368,64 @@ ${lines.join("\n")}
             <span id="u_envBadge" class="kus-env-badge-host" aria-live="polite"></span>
             <button class="x size" data-act="startGuidedTour" title="初回: 全工程 / 復習: 差分のみ / 反映直前: 反映まで">操作ガイド</button>
             <button class="x size" data-act="openShortcutHelp" title="キーボードショートカット一覧 (?)" aria-label="キーボードショートカット一覧">?</button>
+            <details class="kus-display-prefs" id="u_displayPrefs">
+              <summary class="x size" title="ダーク/フォントサイズ/コントラスト/配色/フォーカスリング/ダイアログ位置/説明文の詳細度を切り替え">表示</summary>
+              <div class="kus-display-prefs__panel" role="dialog" aria-label="表示設定">
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">テーマ</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="theme" data-value="light">ライト</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="theme" data-value="dark">ダーク</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="theme" data-value="contrast">高コントラスト</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">フォントサイズ</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="fontSize" data-value="sm">小</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="fontSize" data-value="md">標準</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="fontSize" data-value="lg">大</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">差分カラーパレット</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="palette" data-value="default" title="追加=緑 / 削除=赤 / 変更=橙（標準）">標準</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="palette" data-value="cb" title="追加=青 / 削除=黄 / 変更=紫（色覚多様性配慮）">色覚対応</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">フォーカスリング</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="focusRing" data-value="default">標準</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="focusRing" data-value="strong">強調</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">ダイアログ位置</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDialogAlign" data-value="left">左</button>
+                    <button type="button" class="btn sub" data-act="setDialogAlign" data-value="center">中央</button>
+                    <button type="button" class="btn sub" data-act="setDialogAlign" data-value="right">右</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">説明文の詳細度</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="verbosity" data-value="brief">簡潔</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="verbosity" data-value="normal">標準</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="verbosity" data-value="detail">詳細</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__foot">
+                  <span class="muted">設定はセッション内のみ（タブを閉じるとリセット）</span>
+                  <button type="button" class="btn sub" data-act="resetDisplayPrefs">既定に戻す</button>
+                </div>
+              </div>
+            </details>
             <button class="x size" data-act="dialogSizeDefault">標準</button>
             <button class="x size" data-act="dialogSizeLarge">大</button>
+            <button class="x size" data-act="dialogSizeWide" title="2画面用ワイドサイズ">ワイド</button>
             <button class="x size" data-act="dialogSizeMax">最大</button>
             <button class="x size" data-act="toggleHeaderCollapse" id="u_headerCollapseBtn" title="ヘッダーを折りたたむ／展開する" aria-label="ヘッダーを折りたたむ">▲</button>
             <button class="x" data-act="close">閉じる</button>
@@ -23364,11 +24443,11 @@ ${lines.join("\n")}
                 <button type="button" class="connection-toggle-btn" data-act="toggleConnectionPanel" id="u_connectionToggleBtn" aria-expanded="true" aria-controls="u_connectionStep1Body" title="接続設定の表示/非表示を切り替え">設定を折りたたむ</button>
               </div>
               <div class="connection-step1-body" id="u_connectionStep1Body">
-              <p class="connection-section-lead" id="u_connectionLead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
+              <p class="connection-section-lead" id="u_connectionLead">動作対象のアプリIDを <strong>比較元</strong> に入力します。<br>差分比較・プレビュー反映を使う場合のみ <strong>比較先</strong> も入力してください（ER図／設計書／レコード管理／設定一括取得 などは比較元だけでOK）。</p>
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
               <div class="conn-source">
-                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span></label>
+                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span> <span class="conn-label-hint" title="このツール全体の動作対象アプリ。1アプリだけ操作する機能（ER図 / 設計書 / レコード管理 など）もここに入力します。">動作対象</span></label>
                 <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-source">
@@ -23376,7 +24455,7 @@ ${lines.join("\n")}
                 <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
               <div class="conn-target">
-                <label for="u_targetApp" id="u_targetAppLabel">比較先アプリID <span class="req">必須</span></label>
+                <label for="u_targetApp" id="u_targetAppLabel">比較先アプリID <span class="req-soft" title="差分比較・プレビュー反映を使うときに必須。1アプリだけ操作する機能では空のままで構いません。">差分比較時</span></label>
                 <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-target">
@@ -23385,9 +24464,10 @@ ${lines.join("\n")}
               </div>
             </div>
             <div class="btns connection-step-btns connection-quick-btns" style="margin-top:8px">
-              <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
-              <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
-              <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
+              <button type="button" class="btn sub connection-secondary-action connection-secondary-action--primary" data-act="setBothCurrent" title="今開いているアプリのIDを比較元と比較先の両方に一括セット（最も多いケース）">両方=現在アプリ</button>
+              <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元（動作対象）にセット">比較元=現在アプリ</button>
+              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
+              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
             </div>
             <div class="connection-preview-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
               <span class="muted" style="font-size:12px">取得環境</span>
@@ -23482,6 +24562,19 @@ ${lines.join("\n")}
                       <button type="button" class="btn sub" data-act="exportDiffJson">JSON</button>
                       <button type="button" class="btn sub" data-act="exportDiffHtml">HTML</button>
                       <button type="button" class="btn sub" data-act="exportPatchJson">パッチ</button>
+                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <button type="button" class="btn sub" data-act="kusExportDiffJson" title="差分スナップショット（rows / fetchIssues / filters）を JSON で保存">📸 差分スナップショット保存</button>
+                      <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffCsv" title="差分結果を Excel 用 CSV (UTF-8 BOM) で保存">📊 差分 CSV</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙・ロゴ付き PDF（設計書ペインの設定を使用）">📕 差分 PDF（表紙付き）</button>
+                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <button type="button" class="btn sub" data-act="kusExportPlanMd" title="現在の反映プランを Markdown で保存（PR 添付向け）">📝 反映プラン MD 保存</button>
+                      <button type="button" class="btn sub" data-act="kusExportPlanMermaid" title="反映プランを Mermaid フロー図として保存">📊 反映プラン Mermaid</button>
+                      <button type="button" class="btn sub" data-act="kusShowApiDiff" title="送信予定 API リクエストの旧/新差分プレビュー">🔍 API 差分プレビュー</button>
+                      <button type="button" class="btn sub" data-act="kusExportDryrunOverlay" title="ドライラン重ね差分 JSON を保存">🧪 ドライラン重ね差分</button>
+                      <button type="button" class="btn sub" data-act="kusCaptureSnapshot" title="現在の反映状態の HTML スナップショットを保存">📸 状態スナップショット</button>
                     </div>
                   </details>
                   <details class="diff-hero__pop diff-hero__pop--advanced">
@@ -23624,6 +24717,10 @@ ${lines.join("\n")}
                       <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_added" title="追加差分だけ">+ 追加</button>
                       <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_removed" title="削除差分だけ">− 削除</button>
                       <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_changed" title="変更差分だけ">~ 変更</button>
+                      <span class="diff-review-toolbar__sep" aria-hidden="true">|</span>
+                      <button type="button" class="btn sub" data-act="diffSectionsExpandAll" title="すべての差分セクションを展開">⇊ 全展開</button>
+                      <button type="button" class="btn sub" data-act="diffSectionsCollapseAll" title="すべての差分セクションを折りたたみ">⇈ 全折りたたみ</button>
+                      <button type="button" class="btn sub" data-act="copyDiffResult" title="現在表示している差分結果をクリップボードへコピー">📋 結果をコピー</button>
                     </div>
                   </div>
                   <div class="diff-active-filters" id="u_diffActiveFilters" aria-live="polite"></div>
@@ -23972,7 +25069,7 @@ ${lines.join("\n")}
                     <button type="button" class="reflect-route-card reflect-route-card--standard" data-act="openReflectScopePicker">
                       <div class="reflect-route-card__no">01</div>
                       <div class="reflect-route-card__body">
-                        <div class="reflect-route-card__title">標準ルート</div>
+                        <div class="reflect-route-card__title">標準ルート <span class="reflect-route-card__count" id="u_reflectScopeCountBadge" aria-label="選択中のセクション数">0</span></div>
                         <div class="reflect-route-card__desc">セクション単位で反映対象を選びます。まずはこちら。</div>
                         <div class="reflect-route-card__summary" id="u_reflectScopeSummary">読み込み中...</div>
                       </div>
@@ -24160,32 +25257,52 @@ ${lines.join("\n")}
               <!-- モーダル: JSON パッチ -->
               <div class="reflect-modal-overlay" id="u_reflectJsonModal" hidden>
                 <div class="reflect-modal-backdrop" data-act="closeReflectModal" data-modal="json"></div>
-                <div class="reflect-modal-card reflect-modal-card--lg" role="dialog" aria-modal="true" aria-labelledby="u_reflectJsonModalTitle">
+                <div class="reflect-modal-card reflect-modal-card--xl" role="dialog" aria-modal="true" aria-labelledby="u_reflectJsonModalTitle">
                   <header class="reflect-modal-head">
                     <div>
-                      <div class="reflect-modal-kicker">{ } JSON ルート</div>
-                      <h3 class="reflect-modal-title" id="u_reflectJsonModalTitle">パッチJSONを編集して反映</h3>
-                      <p class="reflect-modal-sub">差分比較結果を取り込んで調整するか、外部JSONを読み込んで反映できます。</p>
+                      <div class="reflect-modal-kicker">{ } JSON ルート（部分反映）</div>
+                      <h3 class="reflect-modal-title" id="u_reflectJsonModalTitle">本番に入れる差分だけをJSONで受け渡し</h3>
+                      <p class="reflect-modal-sub">「10個の修正のうち3個だけ本番に入れたい」用のメイン動線です。差分比較結果から絞り込んでJSON出力 → 別環境で取込 → 反映、までを1モーダル内で完結できます。</p>
                     </div>
                     <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="json" aria-label="閉じる">×</button>
                   </header>
                   <div class="reflect-modal-body">
+                    <ol class="patch-json-steps" aria-label="JSONルートのステップ">
+                      <li><span class="patch-json-step-no">1</span><span><strong>選ぶ</strong>: 差分比較で本番に入れたい行を選択／全件取込</span></li>
+                      <li><span class="patch-json-step-no">2</span><span><strong>出す</strong>: 選択範囲をパッチJSONとしてエクスポート（共有・レビュー可）</span></li>
+                      <li><span class="patch-json-step-no">3</span><span><strong>取込</strong>: 反映先の環境でこのモーダルにJSONを取り込み、内容を確認</span></li>
+                      <li><span class="patch-json-step-no">4</span><span><strong>反映</strong>: 内容OKなら「この内容で反映」で比較先プレビューに書き込み</span></li>
+                    </ol>
                     <div id="u_patchJsonPanel" style="display:block">
-                      <div class="btns" style="margin-bottom:6px">
-                        <button class="btn sub" data-act="patchJsonUseCurrentDiff">差分比較結果を読込</button>
-                        <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
+                      <div class="patch-json-toolbar btns" style="margin-bottom:6px;flex-wrap:wrap;gap:6px">
+                        <span class="patch-json-toolbar-label">入力:</span>
+                        <button class="btn sub" data-act="patchJsonUseCurrentDiff" title="現在の差分比較結果を全件パッチJSONとして取り込みます">📥 差分比較結果を全件取込</button>
+                        <button class="btn sub" data-act="patchJsonUseSelectedDiff" title="差分タブで選択中の行だけをパッチJSONとして取り込みます（部分反映の主動線）">⭐ 選択中の差分だけ取込</button>
+                        <button class="btn sub" data-act="patchJsonLoadFile" title="保存済みのパッチJSONファイルを読み込みます">📂 JSONファイル読込</button>
                         <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
-                        <button class="btn sub" data-act="patchJsonClear">クリア</button>
+                        <span class="patch-json-toolbar-sep" aria-hidden="true">|</span>
+                        <span class="patch-json-toolbar-label">出力:</span>
+                        <button class="btn sub" data-act="patchJsonExport" title="現在エディタにある内容をパッチJSONとしてダウンロードします">💾 JSONエクスポート</button>
+                        <button class="btn sub" data-act="patchJsonCopy" title="クリップボードにコピー">📋 コピー</button>
+                        <button class="btn sub" data-act="patchJsonClear" title="エディタを空にします">✕ クリア</button>
                       </div>
-                      <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
-                      <div id="u_patchJsonEditor" style="width:100%;height:360px;border-radius:6px;"></div>
-                      <div style="margin-top:10px;font-size:11px;font-weight:700;color:#334155">JSON差分比較</div>
-                      <div id="u_patchJsonDiff" style="margin-top:6px;min-height:120px;max-height:320px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
+                      <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px"></div>
+                      <details class="patch-json-fold" id="u_patchJsonRangeFold" style="display:none;margin:6px 0;border:1px solid #dbe3ed;border-radius:8px;background:#f8fafc">
+                        <summary style="cursor:pointer;padding:8px 10px;font-size:12px;font-weight:700;color:#0f172a">📋 このJSONに含まれる差分範囲（行一覧）</summary>
+                        <div id="u_patchJsonRangeBody" style="padding:8px 10px 10px;border-top:1px dashed #cbd5e1"></div>
+                      </details>
+                      <div style="margin-top:8px;font-size:11px;font-weight:700;color:#334155">JSON エディタ（編集可）</div>
+                      <div id="u_patchJsonEditor" style="width:100%;height:300px;border-radius:6px;"></div>
+                      <details class="patch-json-fold" style="margin-top:10px;border:1px solid #dbe3ed;border-radius:8px;background:#f8fafc">
+                        <summary style="cursor:pointer;padding:8px 10px;font-size:12px;font-weight:700;color:#0f172a">🔍 比較元 / 比較先 のリッチ差分プレビュー</summary>
+                        <div id="u_patchJsonDiff" style="margin:8px 10px 10px;min-height:120px;max-height:320px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
+                      </details>
                     </div>
                   </div>
                   <footer class="reflect-modal-foot">
                     <button type="button" class="btn sub" data-act="closeReflectModal" data-modal="json">閉じる</button>
-                    <button type="button" class="btn ok" data-act="applyPatchJson">この内容で反映</button>
+                    <button type="button" class="btn sub" data-act="patchJsonExport" title="このJSONをファイル保存（部分反映の受け渡し）">💾 JSONエクスポート</button>
+                    <button type="button" class="btn ok" data-act="applyPatchJson" title="現在のJSONの内容を比較先プレビューへ反映">この内容で反映</button>
                   </footer>
                 </div>
               </div>
@@ -28848,13 +29965,13 @@ ${lines.join("\n")}
   }
   function renderWorkHistoryPanel() {
     if (!ui.workHistoryList) return;
-    const history = Array.isArray(state.workHistory) ? state.workHistory : [];
-    if (ui.workHistorySummary) ui.workHistorySummary.textContent = history.length ? `${history.length}件保存` : "履歴なし";
-    if (!history.length) {
+    const history2 = Array.isArray(state.workHistory) ? state.workHistory : [];
+    if (ui.workHistorySummary) ui.workHistorySummary.textContent = history2.length ? `${history2.length}件保存` : "履歴なし";
+    if (!history2.length) {
       ui.workHistoryList.innerHTML = '<div class="work-history-empty">まだ保存された作業はありません</div>';
       return;
     }
-    ui.workHistoryList.innerHTML = history.map((entry) => {
+    ui.workHistoryList.innerHTML = history2.map((entry) => {
       const stamp = entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "-";
       const title = entry.label || getWorkHistoryKindLabel(entry.kind);
       const summary = entry.summary || getWorkHistorySummary(entry.snapshot || {});
@@ -29865,6 +30982,18 @@ ${lines.join("\n")}
         if (ui.shortcutHelpModal) ui.shortcutHelpModal.hidden = !ui.shortcutHelpModal.hidden;
         return;
       }
+      if (e.altKey && e.key === "ArrowLeft" && !editable) {
+        const r = getToolDocument().getElementById("kintone-unified-suite-v2");
+        if (r && r.classList.contains("screen-feature")) {
+          e.preventDefault();
+          showLauncherScreen({ persist: false });
+          updateLauncherToggleButton();
+          applyLauncherFilter();
+          saveCurrentDialogState2();
+          setStatus("ホームへ戻りました（Alt+←）");
+          return;
+        }
+      }
       if (state.guidedTourActive && !editable) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -30535,6 +31664,41 @@ ${lines.join("\n")}
         setStatus(`ランチャータブを切り替えました: ${actEl.textContent?.trim() || ""}`);
         return;
       }
+      if (act === "diffSectionsExpandAll") {
+        const doc = getToolDocument();
+        const els = [...doc.querySelectorAll("#u_result details, #u_result .row .fold, .diff-result-main details")];
+        let n = 0;
+        els.forEach((el) => {
+          if (el instanceof HTMLDetailsElement && !el.open) {
+            el.open = true;
+            n++;
+          }
+        });
+        setStatus(`差分セクションを ${n} 件展開しました`);
+        return;
+      }
+      if (act === "diffSectionsCollapseAll") {
+        const doc = getToolDocument();
+        const els = [...doc.querySelectorAll("#u_result details, #u_result .row .fold, .diff-result-main details")];
+        let n = 0;
+        els.forEach((el) => {
+          if (el instanceof HTMLDetailsElement && el.open) {
+            el.open = false;
+            n++;
+          }
+        });
+        setStatus(`差分セクションを ${n} 件折りたたみました`);
+        return;
+      }
+      if (act === "copyDiffResult") {
+        const text = (ui.result?.innerText || "").trim();
+        if (!text) {
+          setStatus("コピー対象の差分結果がありません", true);
+          return;
+        }
+        copyToClipboard(text, "差分結果（テキスト）をコピーしました", "差分結果のコピーに失敗しました");
+        return;
+      }
       if (act === "clearDiffFilters") {
         if (ui.diffFilterSection) ui.diffFilterSection.value = "";
         if (ui.diffFilterType) ui.diffFilterType.value = "";
@@ -30665,10 +31829,76 @@ ${lines.join("\n")}
         setStatus(`ダイアログを大きめサイズにしました (${next.width} x ${next.height})`);
         return;
       }
+      if (act === "dialogSizeWide") {
+        const bounds = getDialogSizeBounds();
+        const w = Math.min(bounds.maxWidth, Math.round(bounds.maxWidth * 0.9));
+        const h = Math.min(bounds.maxHeight, Math.round(bounds.maxHeight * 0.9));
+        const next = applyDialogSize(w, h);
+        saveCurrentDialogState2();
+        setStatus(`ダイアログをワイドサイズにしました (${next.width} x ${next.height})`);
+        return;
+      }
       if (act === "dialogSizeMax") {
         const next = applyDialogSizePreset("max");
         saveCurrentDialogState2();
         setStatus(`ダイアログを最大サイズにしました (${next.width} x ${next.height})`);
+        return;
+      }
+      if (act === "setDialogAlign") {
+        const align = actEl.dataset.value || "center";
+        const rectRoot = getToolDocument().getElementById("kintone-unified-suite-v2");
+        if (!rectRoot) return;
+        const rect = rectRoot.getBoundingClientRect();
+        const winWidth = (rectRoot.ownerDocument?.defaultView || window).innerWidth || rect.width;
+        let left = rect.left;
+        const margin = 16;
+        if (align === "left") left = margin;
+        else if (align === "right") left = Math.max(margin, winWidth - rect.width - margin);
+        else left = Math.max(margin, Math.round((winWidth - rect.width) / 2));
+        applyDialogPosition(left, rect.top);
+        saveCurrentDialogState2();
+        rectRoot.classList.remove("kus-dialog-align-left", "kus-dialog-align-center", "kus-dialog-align-right");
+        rectRoot.classList.add(`kus-dialog-align-${align}`);
+        setStatus(`ダイアログを${align === "left" ? "左" : align === "right" ? "右" : "中央"}に配置しました`);
+        return;
+      }
+      if (act === "setDisplayPref") {
+        const pref = String(actEl.dataset.pref || "");
+        const value = String(actEl.dataset.value || "");
+        const rootEl = getToolDocument().getElementById("kintone-unified-suite-v2");
+        if (!rootEl || !pref) return;
+        const prefix = `kus-pref-${pref}-`;
+        [...rootEl.classList].forEach((cls) => {
+          if (cls.startsWith(prefix)) rootEl.classList.remove(cls);
+        });
+        rootEl.classList.add(`${prefix}${value}`);
+        const labels = {
+          theme: { light: "ライト", dark: "ダーク", contrast: "高コントラスト" },
+          fontSize: { sm: "小", md: "標準", lg: "大" },
+          palette: { default: "標準", cb: "色覚対応" },
+          focusRing: { default: "標準", strong: "強調" },
+          verbosity: { brief: "簡潔", normal: "標準", detail: "詳細" }
+        };
+        const prefLabel = { theme: "テーマ", fontSize: "フォントサイズ", palette: "カラーパレット", focusRing: "フォーカスリング", verbosity: "説明文の詳細度" }[pref] || pref;
+        const valueLabel = labels[pref] && labels[pref][value] || value;
+        setStatus(`${prefLabel}を「${valueLabel}」にしました`);
+        return;
+      }
+      if (act === "resetDisplayPrefs") {
+        const rootEl = getToolDocument().getElementById("kintone-unified-suite-v2");
+        if (!rootEl) return;
+        [...rootEl.classList].forEach((cls) => {
+          if (cls.startsWith("kus-pref-") || cls.startsWith("kus-dialog-align-")) rootEl.classList.remove(cls);
+        });
+        setStatus("表示設定を既定に戻しました");
+        return;
+      }
+      if (act === "breadcrumbHome") {
+        showLauncherScreen({ persist: false });
+        updateLauncherToggleButton();
+        applyLauncherFilter();
+        saveCurrentDialogState2();
+        setStatus("ホームへ戻りました");
         return;
       }
       if (act === "goDiffReview") {
@@ -30731,6 +31961,19 @@ ${lines.join("\n")}
         }
         saveCurrentDialogState2();
         setStatus(`分析 > ${actEl.textContent?.trim() || "詳細"}へ移動しました`);
+        return;
+      }
+      if (act === "setBothCurrent") {
+        if (!DEFAULT_APP_ID) {
+          setStatus("現在アプリのIDを取得できませんでした（kintone のアプリ画面で開いてください）", true);
+          return;
+        }
+        ui.sourceApp.value = DEFAULT_APP_ID;
+        ui.targetApp.value = DEFAULT_APP_ID;
+        saveCurrentDialogState2();
+        updateConnectionStepIndicators();
+        renderBundleState();
+        setStatus(`比較元・比較先アプリIDを現在アプリ(${DEFAULT_APP_ID})に設定しました`);
         return;
       }
       if (act === "setSourceCurrent") {
@@ -31857,6 +33100,43 @@ ${lines.join("\n")}
         }
         return;
       }
+      if (act === "patchJsonUseSelectedDiff") {
+        const populateSelected = injected.populatePatchJsonFromSelectedDiff;
+        if (typeof populateSelected !== "function") {
+          setStatus("選択行からのパッチJSON生成は未対応です", true);
+          return;
+        }
+        try {
+          populateSelected({ force: true });
+        } catch (err) {
+          setStatus(err.message || String(err), true);
+          showToast(err.message || String(err), "warn").catch(() => {
+          });
+        }
+        return;
+      }
+      if (act === "patchJsonExport") {
+        const exportFn = injected.exportPatchJsonToFile;
+        if (typeof exportFn !== "function") {
+          setStatus("パッチJSONのエクスポートは未対応です", true);
+          return;
+        }
+        try {
+          exportFn();
+        } catch (err) {
+          setStatus(err.message || String(err), true);
+        }
+        return;
+      }
+      if (act === "patchJsonCopy") {
+        const copyFn = injected.copyPatchJsonToClipboard;
+        if (typeof copyFn !== "function") {
+          setStatus("クリップボードコピーは未対応です", true);
+          return;
+        }
+        withGuard(async () => copyFn());
+        return;
+      }
       if (act === "patchJsonClear") {
         state.importedPatchPayload = null;
         const editor = getToolDocument().getElementById("u_patchJsonEditor");
@@ -31947,6 +33227,2869 @@ ${lines.join("\n")}
 
   // src/boot.ts
   init_psychology();
+
+  // src/ui/extras.ts
+  init_state();
+  init_components();
+
+  // src/kintone-enums.ts
+  var FIELD_TYPE_JP = {
+    SINGLE_LINE_TEXT: "文字列(1行)",
+    MULTI_LINE_TEXT: "文字列(複数行)",
+    RICH_TEXT: "リッチエディター",
+    NUMBER: "数値",
+    CALC: "計算",
+    CHECK_BOX: "チェックボックス",
+    RADIO_BUTTON: "ラジオボタン",
+    DROP_DOWN: "ドロップダウン",
+    MULTI_SELECT: "複数選択",
+    DATE: "日付",
+    TIME: "時刻",
+    DATETIME: "日時",
+    LINK: "リンク",
+    FILE: "添付ファイル",
+    USER_SELECT: "ユーザー選択",
+    ORGANIZATION_SELECT: "組織選択",
+    GROUP_SELECT: "グループ選択",
+    CATEGORY: "カテゴリー",
+    STATUS: "ステータス",
+    STATUS_ASSIGNEE: "作業者",
+    SUBTABLE: "テーブル",
+    REFERENCE_TABLE: "関連レコード一覧",
+    RECORD_NUMBER: "レコード番号",
+    CREATOR: "作成者",
+    CREATED_TIME: "作成日時",
+    MODIFIER: "更新者",
+    UPDATED_TIME: "更新日時",
+    SPACER: "スペース",
+    HR: "罫線",
+    LABEL: "ラベル",
+    GROUP: "グループ",
+    LOOKUP: "ルックアップ"
+  };
+  var ENTITY_TYPE_JP = {
+    USER: "ユーザー",
+    GROUP: "グループ",
+    ORGANIZATION: "組織",
+    FIELD_ENTITY: "フィールド値",
+    CREATOR: "作成者",
+    MODIFIER: "更新者",
+    LOGIN_USER: "ログインユーザー",
+    ALL: "全員",
+    CUSTOM_FIELD: "カスタムフィールド"
+  };
+  var VIEW_TYPE_JP = {
+    LIST: "一覧",
+    CALENDAR: "カレンダー",
+    CUSTOM: "カスタマイズ"
+  };
+  var VIEW_BUILTIN_TYPE_JP = {
+    ASSIGNEE: "作業者ビュー"
+  };
+  var PAGINATION_TYPE_JP = {
+    ROW: "行ページャ",
+    PAGE: "ページ番号"
+  };
+  var CHART_TYPE_JP = {
+    BAR: "横棒グラフ",
+    COLUMN: "縦棒グラフ",
+    LINE: "折れ線グラフ",
+    PIE: "円グラフ",
+    PIVOT_TABLE: "クロス集計表",
+    TABLE: "表",
+    AREA: "面グラフ",
+    SPLINE: "スプライン",
+    SPLINE_AREA: "スプライン面",
+    SCATTER: "散布図"
+  };
+  var CHART_MODE_JP = {
+    NORMAL: "通常",
+    STACKED: "積み上げ",
+    PERCENTAGE: "100%積み上げ"
+  };
+  var AGGREGATION_TYPE_JP = {
+    COUNT: "件数",
+    SUM: "合計",
+    AVG: "平均",
+    MAX: "最大値",
+    MIN: "最小値"
+  };
+  var GROUP_PER_JP = {
+    YEAR: "年",
+    QUARTER: "四半期",
+    MONTH: "月",
+    WEEK: "週",
+    DAY: "日",
+    HOUR: "時",
+    MINUTE: "分"
+  };
+  var PROCESS_ASSIGNEE_TYPE_JP = {
+    ONE: "1人選出（候補から1人）",
+    ANYONE: "候補の誰でも（先着）",
+    ALL: "全員（全員の処理が必要）"
+  };
+  var NOTIFICATION_TIMING_JP = {
+    CREATION: "レコード作成時",
+    DAYS_OF_WEEK: "曜日指定",
+    TIME: "時刻指定",
+    WEEKLY: "毎週",
+    MONTHLY: "毎月"
+  };
+  var RESOURCE_TYPE_JP = {
+    URL: "URL指定",
+    FILE: "ファイル指定"
+  };
+  var CUSTOMIZE_SCOPE_JP = {
+    ALL: "全ユーザー",
+    ADMIN: "管理者のみ",
+    NONE: "無効"
+  };
+  var ICON_TYPE_JP = {
+    PRESET: "プリセット",
+    FILE: "アップロードファイル"
+  };
+  var WEBHOOK_EVENT_JP = {
+    ADD_RECORD: "レコード追加",
+    UPDATE_RECORD: "レコード編集",
+    DELETE_RECORD: "レコード削除",
+    UPDATE_STATUS: "ステータス変更",
+    ADD_COMMENT: "コメント追加",
+    DELETE_COMMENT: "コメント削除"
+  };
+  var NUMBER_FORMAT_JP = {
+    NUMBER: "数値",
+    NUMBER_DIGIT: "数値（桁区切り）",
+    PERCENT: "パーセント",
+    CURRENCY: "通貨",
+    DATE: "日付",
+    TIME: "時刻",
+    DATETIME: "日時",
+    HOUR_MINUTE: "時:分",
+    HOUR_MINUTE_SECOND: "時:分:秒"
+  };
+  var ALIGN_JP = {
+    HORIZONTAL: "横",
+    VERTICAL: "縦"
+  };
+  var UNIT_POSITION_JP = {
+    BEFORE: "前に付ける",
+    AFTER: "後ろに付ける"
+  };
+  var LINK_PROTOCOL_JP = {
+    WEB: "Web",
+    CALL: "電話",
+    MAIL: "メール"
+  };
+  function lookupEnum(map, value) {
+    if (value == null || value === "") return "";
+    const key = String(value).trim().toUpperCase();
+    return map[key] || String(value);
+  }
+  var ALL_ENUM_LABELS = (() => {
+    const out = {};
+    Object.assign(out, ENTITY_TYPE_JP, FIELD_TYPE_JP);
+    Object.assign(out, VIEW_TYPE_JP, VIEW_BUILTIN_TYPE_JP, PAGINATION_TYPE_JP);
+    Object.assign(out, CHART_TYPE_JP, CHART_MODE_JP, AGGREGATION_TYPE_JP, GROUP_PER_JP);
+    Object.assign(out, PROCESS_ASSIGNEE_TYPE_JP, NOTIFICATION_TIMING_JP);
+    Object.assign(out, RESOURCE_TYPE_JP, CUSTOMIZE_SCOPE_JP, ICON_TYPE_JP);
+    Object.assign(out, WEBHOOK_EVENT_JP, NUMBER_FORMAT_JP);
+    Object.assign(out, ALIGN_JP, UNIT_POSITION_JP, LINK_PROTOCOL_JP);
+    return out;
+  })();
+  function localizeKintoneEnumsInText(input) {
+    if (!input) return input;
+    let out = input;
+    const keys = Object.keys(ALL_ENUM_LABELS).sort((a, b) => b.length - a.length);
+    for (const key of keys) {
+      const jp = ALL_ENUM_LABELS[key];
+      out = out.split('"' + key + '"').join('"' + jp + '"');
+    }
+    return out;
+  }
+
+  // src/ui/extras.ts
+  var G = {};
+  function getRoot2() {
+    return document.getElementById("kintone-unified-suite-v2");
+  }
+  function pushToast(message, options = {}) {
+    const root2 = getRoot2();
+    if (!root2) return;
+    if (!G.toastStack) {
+      const stack = document.createElement("div");
+      stack.id = "u_toastStack";
+      stack.className = "kus-toast-stack";
+      stack.setAttribute("role", "log");
+      stack.setAttribute("aria-live", "polite");
+      root2.appendChild(stack);
+      G.toastStack = stack;
+    }
+    const ttl = options.ttl ?? 3500;
+    const el = document.createElement("div");
+    el.className = `kus-toast kus-toast--${options.tone || "info"}`;
+    el.textContent = message;
+    el.addEventListener("click", () => el.remove());
+    G.toastStack.appendChild(el);
+    while (G.toastStack.children.length > 6) {
+      G.toastStack.removeChild(G.toastStack.firstChild);
+    }
+    setTimeout(() => {
+      el.classList.add("is-leaving");
+      setTimeout(() => el.remove(), 220);
+    }, ttl);
+  }
+  function initActiveTaskPanel() {
+    const host = document.getElementById("u_envBadge");
+    if (!host) return;
+    const pill = document.createElement("button");
+    pill.type = "button";
+    pill.className = "kus-active-task-pill";
+    pill.setAttribute("aria-label", "実行中タスク");
+    pill.textContent = "⏱ 待機中";
+    pill.addEventListener("click", () => {
+      const label = state.runningTaskLabel || "実行中タスクはありません";
+      pushToast(label, { tone: state.running ? "info" : "ok" });
+    });
+    host.parentElement?.insertBefore(pill, host);
+    G.taskList = pill;
+    setInterval(() => {
+      if (!pill.isConnected) return;
+      if (state.running) {
+        pill.classList.add("is-busy");
+        pill.textContent = `⏳ ${state.runningTaskLabel || "実行中…"}`;
+      } else {
+        pill.classList.remove("is-busy");
+        pill.textContent = "✓ 待機中";
+      }
+    }, 600);
+  }
+  function initScrollMemory() {
+    G.scrollMap = /* @__PURE__ */ new Map();
+    const root2 = getRoot2();
+    if (!root2) return;
+    const body = root2.querySelector(".body");
+    if (!body) return;
+    const getKey = () => `${state.activeFeatureKey || "launcher"}::${state.activeTab || "home"}`;
+    body.addEventListener("scroll", () => {
+      G.scrollMap?.set(getKey(), body.scrollTop);
+    }, { passive: true });
+    const restore = () => {
+      const k = getKey();
+      const saved = G.scrollMap?.get(k) ?? 0;
+      requestAnimationFrame(() => {
+        body.scrollTop = saved;
+      });
+    };
+    root2.querySelectorAll(".tab[data-tab]").forEach((btn) => {
+      btn.addEventListener("click", () => setTimeout(restore, 30));
+    });
+    root2.querySelectorAll('[data-act="backToLauncher"], [data-act="breadcrumbHome"]').forEach((btn) => {
+      btn.addEventListener("click", () => setTimeout(restore, 30));
+    });
+  }
+  function initConfirmSlider() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    root2.addEventListener("click", (e) => {
+      const target = e.target?.closest?.("[data-confirm-slider]");
+      if (!target) return;
+      if (target.dataset.confirmSliderConfirmed === "1") {
+        target.dataset.confirmSliderConfirmed = "";
+        return;
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      showConfirmSlider(target.dataset.confirmSlider || "この操作は取り消せません", () => {
+        target.dataset.confirmSliderConfirmed = "1";
+        target.click();
+      });
+    }, true);
+  }
+  function showConfirmSlider(message, onConfirm) {
+    const overlay = document.createElement("div");
+    overlay.className = "kus-confirm-overlay";
+    overlay.innerHTML = `
+    <div class="kus-confirm-card" role="alertdialog" aria-label="確認">
+      <div class="kus-confirm-card__title">⚠ 危険な操作</div>
+      <div class="kus-confirm-card__msg"></div>
+      <div class="kus-confirm-card__slider">
+        <input type="range" min="0" max="100" value="0" class="kus-confirm-card__range" aria-label="右にスライドして確定">
+        <span class="kus-confirm-card__hint">右端まで 3 秒スライドで確定</span>
+      </div>
+      <div class="kus-confirm-card__btns">
+        <button type="button" class="btn sub kus-confirm-card__cancel">キャンセル</button>
+      </div>
+    </div>`;
+    overlay.querySelector(".kus-confirm-card__msg").textContent = message;
+    document.body.appendChild(overlay);
+    let startedAt = 0;
+    const range = overlay.querySelector(".kus-confirm-card__range");
+    range.addEventListener("input", () => {
+      if (!startedAt) startedAt = Date.now();
+    });
+    range.addEventListener("change", () => {
+      const v = Number(range.value || 0);
+      const elapsed = Date.now() - startedAt;
+      if (v >= 100 && elapsed >= 800) {
+        overlay.remove();
+        onConfirm();
+      } else {
+        range.value = "0";
+        startedAt = 0;
+        pushToast("スライダーは右端までゆっくり動かしてください", { tone: "warn" });
+      }
+    });
+    overlay.querySelector(".kus-confirm-card__cancel")?.addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  function initTabBarAutoCollapse() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const tabBar = root2.querySelector(".kus-tab-bar");
+    if (!tabBar) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "kus-tabbar-collapse-toggle btn sub";
+    btn.title = "タブバーをスクロール時に自動格納";
+    btn.textContent = "↕ 自動格納";
+    btn.addEventListener("click", () => {
+      root2.classList.toggle("kus-tabs-auto-collapse");
+      btn.classList.toggle("is-active", root2.classList.contains("kus-tabs-auto-collapse"));
+      pushToast(root2.classList.contains("kus-tabs-auto-collapse") ? "タブバー自動格納: ON" : "タブバー自動格納: OFF", { tone: "info" });
+    });
+    tabBar.appendChild(btn);
+    const body = root2.querySelector(".body");
+    if (body) {
+      let lastY = 0;
+      body.addEventListener("scroll", () => {
+        if (!root2.classList.contains("kus-tabs-auto-collapse")) return;
+        const y = body.scrollTop;
+        const goingDown = y > lastY + 8;
+        const goingUp = y < lastY - 8;
+        if (goingDown) tabBar.classList.add("is-collapsed");
+        else if (goingUp) tabBar.classList.remove("is-collapsed");
+        lastY = y;
+      }, { passive: true });
+    }
+  }
+  function renderDiffFixedSummary() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const host = root2.querySelector("#u_result")?.parentElement;
+    if (!host) return;
+    let bar = root2.querySelector("#u_diffFixedSummary");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "u_diffFixedSummary";
+      bar.className = "kus-diff-fixed-summary";
+      host.insertBefore(bar, host.firstChild);
+    }
+    const rows = state.lastDiffRows || [];
+    let added = 0, removed = 0, changed = 0, same = 0;
+    rows.forEach((r) => {
+      const t = String(r?.type || "").toLowerCase();
+      if (t === "added") added++;
+      else if (t === "removed") removed++;
+      else if (t === "changed") changed++;
+      else if (t === "same") same++;
+    });
+    if (!rows.length) {
+      bar.innerHTML = '<span class="muted">差分未取得</span>';
+      return;
+    }
+    bar.innerHTML = `
+    <span class="kus-diff-fixed-summary__pill kus-diff-fixed-summary__pill--add">+ ${added}</span>
+    <span class="kus-diff-fixed-summary__pill kus-diff-fixed-summary__pill--remove">- ${removed}</span>
+    <span class="kus-diff-fixed-summary__pill kus-diff-fixed-summary__pill--change">~ ${changed}</span>
+    <span class="kus-diff-fixed-summary__pill kus-diff-fixed-summary__pill--same">= ${same}</span>
+    <span class="kus-diff-fixed-summary__total muted">合計 ${rows.length} 件</span>
+  `;
+  }
+  function initHighlightColorPicker() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const search = root2.querySelector("#u_diffSearch");
+    if (!search) return;
+    const wrap = search.parentElement;
+    if (!wrap) return;
+    if (wrap.querySelector(".kus-highlight-picker")) return;
+    const picker = document.createElement("select");
+    picker.className = "kus-highlight-picker";
+    picker.title = "ハイライト色";
+    picker.innerHTML = `
+    <option value="#fde68a">黄</option>
+    <option value="#fbcfe8">桃</option>
+    <option value="#a7f3d0">緑</option>
+    <option value="#bfdbfe">青</option>
+    <option value="#fcd34d">橙</option>
+  `;
+    picker.addEventListener("change", () => {
+      G.highlightColor = picker.value;
+      document.documentElement.style.setProperty("--kus-highlight", picker.value);
+      pushToast(`ハイライト色を変更しました`, { tone: "info" });
+    });
+    G.highlightColor = "#fde68a";
+    document.documentElement.style.setProperty("--kus-highlight", "#fde68a");
+    wrap.appendChild(picker);
+  }
+  function initSeverityThreshold() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const filterBlock = root2.querySelector("#u_diffActiveFilters")?.parentElement;
+    if (!filterBlock) return;
+    if (filterBlock.querySelector(".kus-sev-threshold")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "kus-sev-threshold";
+    wrap.innerHTML = `
+    <label class="kus-sev-threshold__lbl">重要度しきい値:</label>
+    <select class="kus-sev-threshold__sel" aria-label="重要度しきい値">
+      <option value="all">すべて</option>
+      <option value="low">低以上</option>
+      <option value="mid">中以上</option>
+      <option value="high">高のみ</option>
+    </select>
+  `;
+    filterBlock.appendChild(wrap);
+    const sel = wrap.querySelector("select");
+    sel.addEventListener("change", () => {
+      G.severityThreshold = sel.value;
+      state.diffSeverityThreshold = sel.value;
+      const filterSev = ui.diffFilterSeverity;
+      if (filterSev) {
+        if (sel.value === "high") filterSev.value = "HIGH";
+        else if (sel.value === "mid") filterSev.value = "";
+        else filterSev.value = "";
+        filterSev.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      pushToast(`重要度しきい値: ${sel.options[sel.selectedIndex]?.text || ""}`, { tone: "info" });
+    });
+  }
+  function initOneTapFilterPresets() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const quick = root2.querySelector(".diff-review-toolbar__quick");
+    if (!quick) return;
+    if (quick.querySelector('[data-onetap="acl"]')) return;
+    const presets = [
+      { key: "acl", label: "🔒 権限のみ", act: "diffUiPreset", preset: "sec_acl", tip: "権限変更だけ表示" },
+      { key: "noAcl", label: "🚫 権限を隠す", act: "diffUiPreset", preset: "no_acl", tip: "アプリ/フィールド/レコード権限を除外" },
+      { key: "fields", label: "📐 フィールドのみ", act: "diffUiPreset", preset: "sec_field", tip: "フィールド設定だけ" },
+      { key: "view", label: "🪟 ビューのみ", act: "diffUiPreset", preset: "sec_view", tip: "ビュー設定だけ" }
+    ];
+    presets.forEach((p) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn sub";
+      btn.dataset.onetap = p.key;
+      btn.dataset.act = p.act;
+      btn.dataset.preset = p.preset;
+      btn.title = p.tip;
+      btn.textContent = p.label;
+      quick.appendChild(btn);
+    });
+  }
+  function initApproveRejectKeys() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    root2.addEventListener("keydown", (e) => {
+      const editable = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.target.isContentEditable);
+      if (editable) return;
+      if (state.activeTab !== "diff") return;
+      const rows = [...root2.querySelectorAll("#u_result .row[data-row-id]")];
+      if (!rows.length) return;
+      const focused = rows.findIndex((r) => r.classList.contains("kus-row-focused"));
+      const setFocus = (idx) => {
+        rows.forEach((r) => r.classList.remove("kus-row-focused"));
+        const i = Math.max(0, Math.min(rows.length - 1, idx));
+        rows[i]?.classList.add("kus-row-focused");
+        rows[i]?.scrollIntoView({ block: "nearest" });
+      };
+      if (e.key === "j" || e.key === "J") {
+        e.preventDefault();
+        setFocus((focused < 0 ? -1 : focused) + 1);
+        return;
+      }
+      if (e.key === "k" || e.key === "K") {
+        e.preventDefault();
+        setFocus((focused < 0 ? rows.length : focused) - 1);
+        return;
+      }
+      if (e.key === "a" || e.key === "A") {
+        e.preventDefault();
+        const cur = rows[focused] || null;
+        const id = cur?.dataset.rowId;
+        if (id) {
+          state.diffViewedKeys = state.diffViewedKeys || /* @__PURE__ */ new Set();
+          state.diffViewedKeys.add(id);
+          cur?.classList.add("kus-row-approved");
+          cur?.classList.remove("kus-row-rejected");
+          pushToast("行を承認 (✓) としました", { tone: "ok" });
+        }
+        return;
+      }
+      if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        const cur = rows[focused] || null;
+        const id = cur?.dataset.rowId;
+        if (id) {
+          cur?.classList.add("kus-row-rejected");
+          cur?.classList.remove("kus-row-approved");
+          pushToast("行を却下 (✗) としました", { tone: "warn" });
+        }
+        return;
+      }
+    });
+  }
+  function initUrlSync() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const targets = ["u_diffSearch", "u_diffFilterSection", "u_diffFilterType", "u_diffFilterSeverity"];
+    const writeHash = () => {
+      const params = new URLSearchParams();
+      targets.forEach((id) => {
+        const el = root2.querySelector(`#${id}`);
+        const v = el?.value || "";
+        if (v) params.set(id.replace("u_diff", "").toLowerCase(), v);
+      });
+      const hash = params.toString();
+      try {
+        const url = new URL(window.location.href);
+        url.hash = hash ? `#kus-diff:${hash}` : "";
+        history.replaceState(null, "", url.toString());
+      } catch (e) {
+      }
+    };
+    targets.forEach((id) => {
+      const el = root2.querySelector(`#${id}`);
+      if (!el) return;
+      el.addEventListener("change", writeHash);
+      el.addEventListener("input", writeHash);
+    });
+    try {
+      const url = new URL(window.location.href);
+      if (url.hash.startsWith("#kus-diff:")) {
+        const params = new URLSearchParams(url.hash.replace("#kus-diff:", ""));
+        params.forEach((v, k) => {
+          const id = `u_diff${k.charAt(0).toUpperCase()}${k.slice(1)}`;
+          const el = root2.querySelector(`#${id}`);
+          if (el) {
+            el.value = v;
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        });
+      }
+    } catch (e) {
+    }
+  }
+  function exportDiffStateToJson() {
+    const payload = {
+      tool: "kintone-unified-suite",
+      type: "diff-snapshot",
+      savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      rows: state.lastDiffRows || [],
+      fetchIssues: state.lastFetchIssues || [],
+      filters: {
+        section: state.diffFilterSection,
+        type: state.diffFilterType,
+        severity: state.diffFilterSeverity
+      }
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `kus-diff-snapshot_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 200);
+    pushToast("差分結果 JSON をダウンロードしました", { tone: "ok" });
+  }
+  function importDiffStateFromJson(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error);
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(String(reader.result || "{}"));
+          if (Array.isArray(data?.rows)) {
+            state.lastDiffRows = data.rows;
+            state.lastFetchIssues = Array.isArray(data.fetchIssues) ? data.fetchIssues : [];
+            renderDiffFixedSummary();
+            pushToast(`差分スナップショットを読み込みました (${data.rows.length} 件)`, { tone: "ok" });
+            resolve();
+          } else {
+            reject(new Error("rows 配列が見つかりません"));
+          }
+        } catch (e) {
+          reject(e);
+        }
+      };
+      reader.readAsText(file);
+    });
+  }
+  function adaptReflectChecklist() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const checklist = root2.querySelector("#u_reflectApplyChecklist .reflect-apply-checklist__items");
+    if (!checklist) return;
+    const total = (state.lastDiffRows || []).length;
+    const hasMany = total >= 30;
+    const hasNone = total === 0;
+    checklist.querySelectorAll('[data-reflect-apply-check="bigVolume"], [data-reflect-apply-check="emptyDiff"]').forEach((el) => (el.parentElement || el).remove());
+    if (hasMany) {
+      const lab = document.createElement("label");
+      lab.className = "reflect-apply-check";
+      lab.innerHTML = `<input type="checkbox" data-reflect-apply-check="bigVolume"> ${total} 件の差分量を確認した`;
+      checklist.appendChild(lab);
+    } else if (hasNone) {
+      const lab = document.createElement("label");
+      lab.className = "reflect-apply-check";
+      lab.innerHTML = `<input type="checkbox" data-reflect-apply-check="emptyDiff"> 差分なしの状態で反映することを承認`;
+      checklist.appendChild(lab);
+    }
+  }
+  var FIELD_TYPE_ICONS = {
+    SINGLE_LINE_TEXT: "🅰",
+    MULTI_LINE_TEXT: "¶",
+    RICH_TEXT: "📝",
+    NUMBER: "#",
+    CALC: "ƒ",
+    RADIO_BUTTON: "◉",
+    CHECK_BOX: "☑",
+    MULTI_SELECT: "▤",
+    DROP_DOWN: "▾",
+    DATE: "📅",
+    TIME: "⏰",
+    DATETIME: "🕒",
+    LINK: "🔗",
+    FILE: "📎",
+    USER_SELECT: "👤",
+    ORGANIZATION_SELECT: "🏢",
+    GROUP_SELECT: "👥",
+    REFERENCE_TABLE: "🔄",
+    LOOKUP: "🔍",
+    SUBTABLE: "⊞",
+    STATUS: "🚦",
+    CATEGORY: "🏷",
+    RECORD_NUMBER: "#"
+  };
+  function decorateFieldTypeIcons() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const cells = root2.querySelectorAll("[data-field-type]");
+    cells.forEach((el) => {
+      if (el.querySelector(".kus-field-type-icon")) return;
+      const t = String(el.dataset.fieldType || "").toUpperCase();
+      const icon = FIELD_TYPE_ICONS[t];
+      if (!icon) return;
+      const span = document.createElement("span");
+      span.className = "kus-field-type-icon";
+      span.title = t;
+      span.textContent = icon;
+      el.prepend(span);
+    });
+  }
+  function exportPlanMarkdown() {
+    const plan = state.lastApplyPlan;
+    if (!plan) {
+      pushToast("反映プランが未生成です。先に「実行前プラン確認」を実行してください", { tone: "warn" });
+      return;
+    }
+    const lines = [];
+    lines.push(`# kintone 反映プラン (${(/* @__PURE__ */ new Date()).toISOString()})`);
+    lines.push("");
+    lines.push(`- 反映先 App: \`${plan.targetAppId || "-"}\``);
+    lines.push(`- セクション数: ${plan.sections?.length || 0}`);
+    lines.push("");
+    (plan.sections || []).forEach((s) => {
+      lines.push(`## ${s.label || s.key}`);
+      lines.push(`- endpoint: \`${s.endpoint || ""}\``);
+      lines.push(`- method: \`${s.method || "PUT"}\``);
+      if (s.summary) lines.push(`- summary: ${s.summary}`);
+      lines.push("");
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `kus-apply-plan_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.md`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 200);
+    pushToast("反映プラン Markdown をダウンロードしました", { tone: "ok" });
+  }
+  function initErFilters() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const erHost = root2.querySelector('[data-pane="er"]');
+    if (!erHost) return;
+    if (erHost.querySelector(".kus-er-filter-bar")) return;
+    const bar = document.createElement("div");
+    bar.className = "kus-er-filter-bar";
+    bar.innerHTML = `
+    <label class="chip"><input type="checkbox" data-er-filter="lookupOnly"> ルックアップのみ</label>
+    <label class="chip"><input type="checkbox" data-er-filter="referenceOnly"> 関連レコードのみ</label>
+    <label class="chip"><input type="checkbox" data-er-filter="hideOrphan"> 関係のないアプリを隠す</label>
+  `;
+    erHost.insertBefore(bar, erHost.firstChild);
+    bar.addEventListener("change", () => {
+      const flags = [...bar.querySelectorAll("[data-er-filter]")].filter((el) => el.checked).map((el) => el.dataset.erFilter || "");
+      erHost.dataset.erFilters = flags.join(",");
+      erHost.classList.toggle("kus-er-lookup-only", flags.includes("lookupOnly"));
+      erHost.classList.toggle("kus-er-ref-only", flags.includes("referenceOnly"));
+      erHost.classList.toggle("kus-er-hide-orphan", flags.includes("hideOrphan"));
+      pushToast(`ER 図フィルタを更新しました (${flags.length} 項目)`, { tone: "info" });
+    });
+  }
+  function downloadDiagram(svg, baseName, format) {
+    if (format === "svg") {
+      const xml2 = new XMLSerializer().serializeToString(svg);
+      const blob2 = new Blob([xml2], { type: "image/svg+xml" });
+      triggerDownload2(blob2, `${baseName}.svg`);
+      return;
+    }
+    const xml = new XMLSerializer().serializeToString(svg);
+    const img = new Image();
+    const blob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = svg.viewBox?.baseVal?.width || svg.clientWidth || 1024;
+      canvas.height = svg.viewBox?.baseVal?.height || svg.clientHeight || 768;
+      const ctx = canvas.getContext("2d");
+      ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((b) => {
+        if (b) triggerDownload2(b, `${baseName}.png`);
+      });
+    };
+    img.src = url;
+  }
+  function triggerDownload2(blob, filename) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 200);
+  }
+  function initDiagramExportButtons() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    ["er", "processFlow"].forEach((paneKey) => {
+      const pane = root2.querySelector(`[data-pane="${paneKey}"]`);
+      if (!pane) return;
+      if (pane.querySelector(".kus-diagram-export")) return;
+      const bar = document.createElement("div");
+      bar.className = "kus-diagram-export btns";
+      bar.innerHTML = `
+      <button type="button" class="btn sub" data-act="exportDiagramSvg" data-pane-key="${paneKey}">SVG 保存</button>
+      <button type="button" class="btn sub" data-act="exportDiagramPng" data-pane-key="${paneKey}">PNG 保存</button>
+    `;
+      pane.insertBefore(bar, pane.firstChild);
+    });
+    root2.addEventListener("click", (e) => {
+      const target = e.target?.closest?.('[data-act="exportDiagramSvg"], [data-act="exportDiagramPng"]');
+      if (!target) return;
+      const paneKey = target.dataset.paneKey || "er";
+      const pane = root2.querySelector(`[data-pane="${paneKey}"]`);
+      const svg = pane?.querySelector("svg");
+      if (!svg) {
+        pushToast("SVG が見つかりません。先に図を描画してください", { tone: "warn" });
+        return;
+      }
+      const fmt = target.dataset.act === "exportDiagramSvg" ? "svg" : "png";
+      downloadDiagram(svg, `kus-${paneKey}_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`, fmt);
+      pushToast(`${fmt.toUpperCase()} を保存しました`, { tone: "ok" });
+    });
+  }
+  function initZipSplitSize() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const recordPane = root2.querySelector('[data-pane="recordMgr"]');
+    if (!recordPane) return;
+    if (recordPane.querySelector(".kus-zip-split")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "kus-zip-split";
+    wrap.innerHTML = `
+    <label class="kus-zip-split__lbl">添付 ZIP 分割サイズ:</label>
+    <input type="number" class="kus-zip-split__input" min="0" step="50" placeholder="0=分割なし" value="0">
+    <span class="muted">MB ごとに分割（0 で 1 ファイル）</span>
+  `;
+    recordPane.insertBefore(wrap, recordPane.firstChild);
+    const input = wrap.querySelector("input");
+    input.addEventListener("change", () => {
+      state.zipSplitMb = Number(input.value || 0);
+      pushToast(`ZIP 分割サイズ: ${state.zipSplitMb} MB`, { tone: "info" });
+    });
+  }
+  function initApiResponseViewToggle() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const apiPane = root2.querySelector('[data-pane="apiTester"]');
+    if (!apiPane) return;
+    if (apiPane.querySelector(".kus-api-view-toggle")) return;
+    const bar = document.createElement("div");
+    bar.className = "kus-api-view-toggle btns";
+    bar.innerHTML = `
+    <span class="muted">表示形式:</span>
+    <button type="button" class="btn sub is-active" data-act="apiViewMode" data-mode="raw">Raw</button>
+    <button type="button" class="btn sub" data-act="apiViewMode" data-mode="tree">Tree</button>
+    <button type="button" class="btn sub" data-act="apiViewMode" data-mode="table">Table</button>
+  `;
+    const target = apiPane.querySelector("#u_apiTesterResponse") || apiPane.querySelector(".result");
+    if (target) target.parentElement?.insertBefore(bar, target);
+    bar.addEventListener("click", (e) => {
+      const btn = e.target?.closest?.("button[data-mode]");
+      if (!btn) return;
+      bar.querySelectorAll("button").forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const mode = btn.dataset.mode;
+      if (target) renderApiResponseAs(target, mode);
+    });
+  }
+  function renderApiResponseAs(host, mode) {
+    const raw = host.dataset.kusRawJson || host.textContent || "";
+    if (!host.dataset.kusRawJson && raw) host.dataset.kusRawJson = raw;
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      host.textContent = raw;
+      return;
+    }
+    if (mode === "raw") {
+      host.innerHTML = `<pre class="kus-api-raw">${escapeHtml(JSON.stringify(parsed, null, 2))}</pre>`;
+      return;
+    }
+    if (mode === "tree") {
+      host.innerHTML = `<div class="kus-api-tree">${renderTree(parsed)}</div>`;
+      return;
+    }
+    if (mode === "table") {
+      host.innerHTML = `<div class="kus-api-table">${renderTable(parsed)}</div>`;
+      return;
+    }
+  }
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function renderTree(value, key) {
+    if (value === null || typeof value !== "object") {
+      return `<div class="kus-api-tree__leaf">${key ? `<span class="kus-api-tree__key">${escapeHtml(key)}:</span>` : ""}<span class="kus-api-tree__val">${escapeHtml(JSON.stringify(value))}</span></div>`;
+    }
+    if (Array.isArray(value)) {
+      return `<details open class="kus-api-tree__node"><summary>${escapeHtml(key || "")} <span class="muted">[${value.length}]</span></summary>${value.map((v, i) => renderTree(v, `[${i}]`)).join("")}</details>`;
+    }
+    const entries = Object.entries(value);
+    return `<details open class="kus-api-tree__node"><summary>${escapeHtml(key || "")} <span class="muted">{${entries.length}}</span></summary>${entries.map(([k, v]) => renderTree(v, k)).join("")}</details>`;
+  }
+  function renderTable(value) {
+    if (Array.isArray(value) && value.length && typeof value[0] === "object") {
+      const cols = [...new Set(value.flatMap((row) => Object.keys(row || {})))];
+      const head = `<tr>${cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
+      const body = value.slice(0, 200).map((row) => `<tr>${cols.map((c) => `<td>${escapeHtml(JSON.stringify(row?.[c]))}</td>`).join("")}</tr>`).join("");
+      return `<table class="kus-api-table__t"><thead>${head}</thead><tbody>${body}</tbody></table><div class="muted">表示は先頭 200 行まで</div>`;
+    }
+    return `<div class="muted">配列形式の JSON でない場合はテーブル表示できません</div>`;
+  }
+  function initApiEnvVars() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const apiPane = root2.querySelector('[data-pane="apiTester"]');
+    if (!apiPane) return;
+    if (apiPane.querySelector(".kus-api-envvars")) return;
+    const wrap = document.createElement("details");
+    wrap.className = "kus-api-envvars";
+    wrap.innerHTML = `
+    <summary>環境変数（{{key}} 置換）</summary>
+    <div class="kus-api-envvars__body">
+      <textarea rows="3" placeholder="appId=123
+guestId=99
+token=xxxx" class="kus-api-envvars__ta"></textarea>
+      <div class="muted">URL / ボディ内の <code>{{appId}}</code> 等を実行時に置換します（メモリ内のみ）</div>
+    </div>
+  `;
+    apiPane.insertBefore(wrap, apiPane.firstChild);
+    const ta = wrap.querySelector("textarea");
+    ta.addEventListener("input", () => {
+      const map = {};
+      ta.value.split("\n").forEach((line) => {
+        const m = line.match(/^\s*([\w.-]+)\s*=\s*(.*?)\s*$/);
+        if (m) map[m[1]] = m[2];
+      });
+      state.apiEnvVars = map;
+    });
+  }
+  function initCurlCopy() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const apiPane = root2.querySelector('[data-pane="apiTester"]');
+    if (!apiPane) return;
+    if (apiPane.querySelector('[data-act="copyAsCurl"]')) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn sub kus-curl-copy";
+    btn.dataset.act = "copyAsCurl";
+    btn.textContent = "📋 cURL でコピー";
+    apiPane.insertBefore(btn, apiPane.firstChild);
+    btn.addEventListener("click", () => {
+      const method = apiPane.querySelector("#u_apiTesterMethod")?.value || "GET";
+      const url = apiPane.querySelector("#u_apiTesterUrl")?.value || "";
+      const body = apiPane.querySelector("#u_apiTesterBody")?.value || "";
+      const fullUrl = url.startsWith("http") ? url : `${window.location.origin}${url}`;
+      const lines = [
+        `curl -X ${method} '${fullUrl}'`,
+        `  -H 'Content-Type: application/json'`,
+        `  -H 'X-Cybozu-API-Token: <YOUR_TOKEN>'`
+      ];
+      if (method !== "GET" && body.trim()) {
+        lines.push(`  --data-raw '${body.replace(/'/g, `'\\''`)}'`);
+      }
+      const cmd = lines.join(" \\\n");
+      navigator.clipboard?.writeText(cmd).then(
+        () => pushToast("cURL コマンドをクリップボードへコピーしました", { tone: "ok" }),
+        () => pushToast("クリップボードへの書き込みに失敗しました", { tone: "error" })
+      );
+    });
+  }
+  function initRowCopyFormat() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const toolbar = root2.querySelector(".diff-review-actions");
+    if (!toolbar) return;
+    if (toolbar.querySelector(".kus-row-copy-format")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "kus-row-copy-format";
+    wrap.innerHTML = `
+    <select class="kus-row-copy-format__sel" title="クリップボードへの整形形式">
+      <option value="text">テキスト</option>
+      <option value="md">Markdown</option>
+      <option value="csv">CSV</option>
+      <option value="tsv">TSV</option>
+    </select>
+    <button type="button" class="btn sub" data-act="kusCopyRows">📋 行をコピー</button>
+  `;
+    toolbar.appendChild(wrap);
+    const sel = wrap.querySelector("select");
+    wrap.querySelector("button")?.addEventListener("click", () => {
+      const fmt = sel.value;
+      const rows = state.lastDiffRows || [];
+      if (!rows.length) {
+        pushToast("差分が未取得です", { tone: "warn" });
+        return;
+      }
+      let text = "";
+      const localizedRows = rows.map((r) => ({
+        type: DIFF_TYPE_LABEL[r.type] || r.type,
+        section: r.section,
+        path: r.path,
+        oldStr: localizeKintoneEnumsInText2(JSON.stringify(r.oldValue)),
+        newStr: localizeKintoneEnumsInText2(JSON.stringify(r.newValue)),
+        severity: DIFF_SEVERITY_LABEL[r.severity] || r.severity
+      }));
+      if (fmt === "csv" || fmt === "tsv") {
+        const sep = fmt === "csv" ? "," : "	";
+        const head = ["種別", "セクション", "パス", "旧値", "新値", "重要度"].join(sep);
+        const body = localizedRows.map((r) => [r.type, r.section, r.path, r.oldStr, r.newStr, r.severity].map((c) => String(c ?? "").replace(/[\r\n]/g, " ")).join(sep)).join("\n");
+        text = `${head}
+${body}`;
+      } else if (fmt === "md") {
+        text = "| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n|---|---|---|---|---|---|\n" + localizedRows.map((r) => `| ${r.type} | ${r.section} | \`${r.path}\` | ${r.oldStr} | ${r.newStr} | ${r.severity} |`).join("\n");
+      } else {
+        text = localizedRows.map((r) => `[${r.type}] ${r.section} :: ${r.path}
+  - ${r.oldStr} → ${r.newStr}`).join("\n");
+      }
+      navigator.clipboard?.writeText(text).then(
+        () => pushToast(`行を ${fmt.toUpperCase()} 形式でコピーしました (${rows.length} 件)`, { tone: "ok" }),
+        () => pushToast("クリップボード書き込みに失敗", { tone: "error" })
+      );
+    });
+  }
+  var undoStack = [];
+  var redoStack = [];
+  var MAX_UNDO = 30;
+  function pushUndoEntry(label, undo) {
+    undoStack.push({ label, undo, ts: Date.now() });
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
+    refreshUndoUi();
+  }
+  function refreshUndoUi() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const btn = root2.querySelector("#u_kusUndoBtn");
+    if (btn) {
+      btn.disabled = undoStack.length === 0;
+      const last = undoStack[undoStack.length - 1];
+      btn.title = last ? `直前の操作を取り消し: ${last.label}` : "Undo (なし)";
+      btn.textContent = `↶ 取り消し${undoStack.length ? ` (${undoStack.length})` : ""}`;
+    }
+    const r = root2.querySelector("#u_kusRedoBtn");
+    if (r) {
+      r.disabled = redoStack.length === 0;
+      r.textContent = `↷ やり直し${redoStack.length ? ` (${redoStack.length})` : ""}`;
+    }
+  }
+  function performUndo() {
+    const e = undoStack.pop();
+    if (!e) {
+      pushToast("取り消せる操作がありません", { tone: "warn" });
+      return;
+    }
+    try {
+      e.undo();
+      redoStack.push(e);
+      if (redoStack.length > MAX_UNDO) redoStack.shift();
+      pushToast(`取り消しました: ${e.label}`, { tone: "ok" });
+    } catch (err) {
+      pushToast(`取り消し失敗: ${err?.message || err}`, { tone: "error" });
+    }
+    refreshUndoUi();
+  }
+  function initStatusUndo() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const status = root2.querySelector(".status-bar") || ui.status?.parentElement;
+    if (!status) return;
+    if (status.querySelector("#u_kusUndoBtn")) return;
+    const btn = document.createElement("button");
+    btn.id = "u_kusUndoBtn";
+    btn.type = "button";
+    btn.className = "btn sub kus-status-undo";
+    btn.textContent = "↶ 取り消し";
+    btn.disabled = true;
+    btn.title = "Undo (なし)";
+    btn.addEventListener("click", performUndo);
+    const redoBtn = document.createElement("button");
+    redoBtn.id = "u_kusRedoBtn";
+    redoBtn.type = "button";
+    redoBtn.className = "btn sub kus-status-undo";
+    redoBtn.textContent = "↷ やり直し";
+    redoBtn.disabled = true;
+    redoBtn.title = "Redo (なし)";
+    redoBtn.addEventListener("click", () => {
+      const e = redoStack.pop();
+      if (!e) return;
+      try {
+        e.undo();
+        undoStack.push(e);
+        pushToast(`やり直し: ${e.label}`, { tone: "ok" });
+      } catch (err) {
+        pushToast(`やり直し失敗: ${err?.message || err}`, { tone: "error" });
+      }
+      refreshUndoUi();
+    });
+    status.appendChild(btn);
+    status.appendChild(redoBtn);
+    root2.addEventListener("keydown", (e) => {
+      const editable = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable);
+      if (editable) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        if (e.shiftKey) redoBtn.click();
+        else performUndo();
+      }
+    });
+    const recordOn = [
+      { sel: "#u_diffFilterSection", label: "セクションフィルタ変更" },
+      { sel: "#u_diffFilterType", label: "種別フィルタ変更" },
+      { sel: "#u_diffFilterSeverity", label: "重要度フィルタ変更" },
+      { sel: "#u_diffSearch", label: "検索ワード変更" },
+      { sel: "#u_sourceApp", label: "比較元 App ID 変更" },
+      { sel: "#u_targetApp", label: "比較先 App ID 変更" }
+    ];
+    recordOn.forEach((r) => {
+      const el = root2.querySelector(r.sel);
+      if (!el) return;
+      let prev = el.value;
+      el.addEventListener("change", () => {
+        const before = prev;
+        const after = el.value;
+        if (before === after) return;
+        pushUndoEntry(`${r.label} (${before || "(空)"} → ${after || "(空)"})`, () => {
+          el.value = before;
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        prev = after;
+      });
+    });
+    root2.querySelectorAll('input[type="checkbox"][data-scope-key]').forEach((cb) => {
+      let prev = cb.checked;
+      cb.addEventListener("change", () => {
+        const before = prev;
+        const after = cb.checked;
+        pushUndoEntry(`スコープ ${cb.dataset.scopeKey} を ${after ? "選択" : "解除"}`, () => {
+          cb.checked = before;
+          cb.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        prev = after;
+      });
+    });
+  }
+  function initOfflineRetry() {
+    if (window.__kus_offline_hook__) return;
+    window.__kus_offline_hook__ = true;
+    const pending = [];
+    window.addEventListener("online", () => {
+      pushToast(`オンライン復帰: 待機中 ${pending.length} 件を再送します`, { tone: "ok" });
+      while (pending.length) {
+        const fn = pending.shift();
+        try {
+          fn?.();
+        } catch (e) {
+        }
+      }
+    });
+    window.addEventListener("offline", () => {
+      pushToast("オフラインです。通信は復帰後に自動再送します。", { tone: "warn", ttl: 6e3 });
+    });
+    if (window.__kus_fetch_wrapped__) return;
+    window.__kus_fetch_wrapped__ = true;
+    const origFetch = window.fetch.bind(window);
+    const RETRYABLE = (err) => !!err && (err.name === "TypeError" || /network|failed to fetch/i.test(String(err?.message || "")));
+    window.fetch = async function(input, init) {
+      let lastErr;
+      const url = typeof input === "string" ? input : input?.url || "";
+      const isInternal = !url || url.startsWith("/") || url.startsWith(window.location.origin);
+      const maxAttempts = isInternal ? 5 : 2;
+      for (let i = 0; i < maxAttempts; i++) {
+        try {
+          if (!navigator.onLine) {
+            await new Promise((resolve) => pending.push(resolve));
+          }
+          const res = await origFetch(input, init);
+          if (res.status >= 500 && i < maxAttempts - 1) {
+            await sleep(Math.min(8e3, 200 * Math.pow(2, i)));
+            continue;
+          }
+          return res;
+        } catch (err) {
+          lastErr = err;
+          if (i >= maxAttempts - 1 || !RETRYABLE(err)) throw err;
+          const backoff = Math.min(8e3, 200 * Math.pow(2, i)) + Math.floor(Math.random() * 200);
+          pushToast(`通信失敗。${Math.round(backoff)}ms 後に再試行 (${i + 2}/${maxAttempts})`, { tone: "warn", ttl: 2e3 });
+          await sleep(backoff);
+        }
+      }
+      throw lastErr;
+    };
+  }
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+  function initRightPaneJsonDiff() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const result = root2.querySelector("#u_result");
+    if (!result) return;
+    const wrap = result.parentElement;
+    if (!wrap || wrap.classList.contains("kus-diff-with-side")) {
+      return;
+    }
+    wrap.classList.add("kus-diff-with-side");
+    const side = document.createElement("aside");
+    side.id = "u_diffJsonSidePanel";
+    side.className = "kus-diff-side";
+    side.innerHTML = `
+    <header class="kus-diff-side__head">
+      <span class="kus-diff-side__title">JSON 差分プレビュー</span>
+      <button type="button" class="btn sub kus-diff-side__close" aria-label="閉じる">×</button>
+    </header>
+    <div class="kus-diff-side__body">
+      <div class="kus-diff-side__hint muted">差分行をクリックすると、ここに旧/新の JSON が並びます。</div>
+    </div>
+  `;
+    wrap.appendChild(side);
+    side.querySelector(".kus-diff-side__close")?.addEventListener("click", () => side.classList.remove("is-open"));
+    result.addEventListener("click", (e) => {
+      const row = e.target?.closest?.(".row[data-row-id]");
+      if (!row) return;
+      const id = row.dataset.rowId;
+      const r = (state.lastDiffRows || []).find((x) => String(x.id) === String(id) || String(x.path) === String(id));
+      if (!r) return;
+      renderJsonDiffSide(r);
+      side.classList.add("is-open");
+    });
+  }
+  function renderJsonDiffSide(row) {
+    const body = document.querySelector("#u_diffJsonSidePanel .kus-diff-side__body");
+    if (!body) return;
+    const old = JSON.stringify(row?.oldValue ?? null, null, 2);
+    const nu = JSON.stringify(row?.newValue ?? null, null, 2);
+    body.innerHTML = `
+    <div class="kus-diff-side__meta">
+      <span class="muted">${escapeHtml(String(row?.section || ""))} :: ${escapeHtml(String(row?.path || ""))}</span>
+      <span class="muted">type=${escapeHtml(String(row?.type || ""))} severity=${escapeHtml(String(row?.severity || ""))}</span>
+    </div>
+    <div class="kus-diff-side__cols">
+      <div class="kus-diff-side__col">
+        <div class="kus-diff-side__col-h">旧（比較元）</div>
+        <pre>${escapeHtml(old)}</pre>
+      </div>
+      <div class="kus-diff-side__col">
+        <div class="kus-diff-side__col-h">新（比較先）</div>
+        <pre>${escapeHtml(nu)}</pre>
+      </div>
+    </div>
+  `;
+  }
+  var inlineNotes = {};
+  function initInlineMemo() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    root2.addEventListener("click", (e) => {
+      const target = e.target?.closest?.(".kus-row-memo-btn");
+      if (!target) return;
+      e.stopPropagation();
+      const row = target.closest(".row[data-row-id]");
+      if (!row) return;
+      const id = row.dataset.rowId || "";
+      const cur = inlineNotes[id] || "";
+      const next = window.prompt(`メモを追加（${id}）`, cur);
+      if (next === null) return;
+      if (next.trim()) {
+        inlineNotes[id] = next;
+        target.dataset.hasNote = "1";
+        target.title = `メモ: ${next}`;
+        pushToast("メモを保存しました（メモリ内のみ）", { tone: "ok" });
+      } else {
+        delete inlineNotes[id];
+        target.dataset.hasNote = "";
+        target.title = "メモを追加";
+        pushToast("メモを削除しました", { tone: "info" });
+      }
+    });
+    document.addEventListener("kus:diffRendered", () => {
+      const rows = root2.querySelectorAll("#u_result .row[data-row-id]");
+      rows.forEach((r) => {
+        if (r.querySelector(".kus-row-memo-btn")) return;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "kus-row-memo-btn";
+        btn.title = "メモを追加";
+        btn.textContent = "🗒";
+        btn.dataset.hasNote = inlineNotes[r.dataset.rowId || ""] ? "1" : "";
+        r.appendChild(btn);
+      });
+    });
+  }
+  function initRetryFailedSectionsButton() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const reportHost = root2.querySelector("#u_reflectApplyReport")?.parentElement;
+    if (!reportHost) return;
+    if (reportHost.querySelector(".kus-retry-failed")) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn sub kus-retry-failed";
+    btn.textContent = "↻ 失敗セクションのみ再送";
+    btn.title = "直近の反映で失敗したセクションのみを再実行します";
+    btn.addEventListener("click", () => {
+      const report = state.lastApplyReport;
+      if (!report || !Array.isArray(report.sections)) {
+        pushToast("再送対象が見つかりません（直近の反映結果が必要）", { tone: "warn" });
+        return;
+      }
+      const failed = report.sections.filter((s) => s.error || s.status === "error");
+      if (!failed.length) {
+        pushToast("失敗したセクションはありません", { tone: "info" });
+        return;
+      }
+      state.kusRetryFailedKeys = failed.map((s) => s.key);
+      pushToast(`${failed.length} セクションを再送候補にマークしました。「プレビューへ反映」を再実行してください`, { tone: "info", ttl: 5e3 });
+      const reapply = root2.querySelector('[data-act="retryFailedSections"]');
+      if (reapply) reapply.click();
+    });
+    reportHost.appendChild(btn);
+  }
+  var generationCounters = {};
+  function downloadWithGeneration(blob, baseName) {
+    const slot = baseName;
+    const cur = (generationCounters[slot] || 0) + 1;
+    generationCounters[slot] = cur;
+    const ts = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const filename = `${baseName}_gen${String(cur).padStart(3, "0")}_${ts}.json`;
+    triggerDownload2(blob, filename);
+    pushToast(`バックアップを保存しました: ${filename}`, { tone: "ok" });
+  }
+  function initGenerationalBackupHook() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    root2.addEventListener("click", (e) => {
+      const t = e.target?.closest?.('[data-act="kusGenBackupTarget"]');
+      if (!t) return;
+      const payload = state.lastTargetBundle || state.lastPreviewBackupPayload;
+      if (!payload) {
+        pushToast("バックアップ対象がありません（先に比較先を取得してください）", { tone: "warn" });
+        return;
+      }
+      downloadWithGeneration(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), "kus-target-backup");
+    });
+  }
+  function initErLayoutSwitch() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const erHost = root2.querySelector('[data-pane="er"]');
+    if (!erHost) return;
+    if (erHost.querySelector(".kus-er-layout-switch")) return;
+    const sw = document.createElement("div");
+    sw.className = "kus-er-layout-switch btns";
+    sw.innerHTML = `
+    <span class="muted">レイアウト:</span>
+    <button type="button" class="btn sub is-active" data-layout="force">Force</button>
+    <button type="button" class="btn sub" data-layout="tree">Tree</button>
+    <button type="button" class="btn sub" data-layout="grid">Grid</button>
+  `;
+    erHost.insertBefore(sw, erHost.firstChild);
+    sw.addEventListener("click", (e) => {
+      const btn = e.target?.closest?.("button[data-layout]");
+      if (!btn) return;
+      sw.querySelectorAll("button").forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const layout = btn.dataset.layout || "force";
+      erHost.classList.remove("kus-er-layout-force", "kus-er-layout-tree", "kus-er-layout-grid");
+      erHost.classList.add(`kus-er-layout-${layout}`);
+      pushToast(`ER レイアウト: ${layout}`, { tone: "info" });
+    });
+  }
+  function initErDoubleClickNav() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const erHost = root2.querySelector('[data-pane="er"]');
+    if (!erHost) return;
+    erHost.addEventListener("dblclick", (e) => {
+      const node = e.target?.closest?.("[data-app-id]");
+      if (!node) return;
+      const appId = node.dataset.appId;
+      if (!appId) return;
+      const url = `${window.location.origin}/k/admin/app/flow?app=${encodeURIComponent(appId)}`;
+      pushToast(`App ${appId} の設定画面を開きます`, { tone: "info" });
+      window.open(url, "_blank", "noopener");
+    });
+  }
+  var processAnnotations = {};
+  function initProcessAnnotations() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const pPane = root2.querySelector('[data-pane="processFlow"]');
+    if (!pPane) return;
+    pPane.addEventListener("click", (e) => {
+      const node = e.target?.closest?.("[data-process-state]");
+      if (!node) return;
+      if (!(e.altKey || e.metaKey)) return;
+      const id = node.dataset.processState || "";
+      const cur = processAnnotations[id] || "";
+      const next = window.prompt(`状態 ${id} の注釈`, cur);
+      if (next === null) return;
+      if (next.trim()) processAnnotations[id] = next;
+      else delete processAnnotations[id];
+      node.dataset.kusAnnotation = next || "";
+      pushToast("注釈を更新しました（出力に反映）", { tone: "ok" });
+    });
+  }
+  function initRecordUpdateCountDelta() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const recordPane = root2.querySelector('[data-pane="recordMgr"]');
+    if (!recordPane) return;
+    if (recordPane.querySelector(".kus-record-delta")) return;
+    const bar = document.createElement("div");
+    bar.className = "kus-record-delta";
+    bar.innerHTML = `
+    <span class="kus-record-delta__lbl">更新前後の件数差:</span>
+    <input type="number" class="kus-record-delta__before" placeholder="更新前 件数" style="width:90px">
+    <span>→</span>
+    <input type="number" class="kus-record-delta__after" placeholder="更新後 件数" style="width:90px">
+    <span class="kus-record-delta__result muted">差分: -</span>
+  `;
+    recordPane.insertBefore(bar, recordPane.firstChild);
+    const before = bar.querySelector(".kus-record-delta__before");
+    const after = bar.querySelector(".kus-record-delta__after");
+    const result = bar.querySelector(".kus-record-delta__result");
+    const update = () => {
+      const a = Number(before.value || 0);
+      const b = Number(after.value || 0);
+      const d = b - a;
+      const sign = d > 0 ? "+" : "";
+      result.textContent = `差分: ${sign}${d} 件 (${a} → ${b})`;
+      result.classList.toggle("is-positive", d > 0);
+      result.classList.toggle("is-negative", d < 0);
+    };
+    before.addEventListener("input", update);
+    after.addEventListener("input", update);
+  }
+  var apiCollection = [];
+  function initApiCollection() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const apiPane = root2.querySelector('[data-pane="apiTester"]');
+    if (!apiPane) return;
+    if (apiPane.querySelector(".kus-api-collection")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "kus-api-collection btns";
+    wrap.innerHTML = `
+    <input type="text" class="kus-api-collection__name" placeholder="名前を付けて保存" style="max-width:200px">
+    <button type="button" class="btn sub" data-act="kusApiCollSave">＋ コレクションへ追加</button>
+    <button type="button" class="btn sub" data-act="kusApiCollExport">📤 JSON エクスポート</button>
+    <button type="button" class="btn sub" data-act="kusApiCollImport">📂 JSON インポート</button>
+    <select class="kus-api-collection__sel"><option value="">— 保存済み（メモリ内）—</option></select>
+  `;
+    apiPane.insertBefore(wrap, apiPane.firstChild);
+    const nameInput = wrap.querySelector(".kus-api-collection__name");
+    const sel = wrap.querySelector(".kus-api-collection__sel");
+    const refreshSel = () => {
+      sel.innerHTML = '<option value="">— 保存済み（メモリ内）—</option>' + apiCollection.map((c, i) => `<option value="${i}">${c.method} ${c.name}</option>`).join("");
+    };
+    refreshSel();
+    wrap.addEventListener("click", (e) => {
+      const btn = e.target?.closest?.("button[data-act]");
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const method = apiPane.querySelector("#u_apiTesterMethod")?.value || "GET";
+      const url = apiPane.querySelector("#u_apiTesterUrl")?.value || "";
+      const body = apiPane.querySelector("#u_apiTesterBody")?.value || "";
+      if (act === "kusApiCollSave") {
+        const name = nameInput.value.trim() || `${method} ${url}`.slice(0, 60);
+        apiCollection.push({ name, method, url, body });
+        refreshSel();
+        pushToast(`コレクションへ追加: ${name}`, { tone: "ok" });
+      } else if (act === "kusApiCollExport") {
+        const blob = new Blob([JSON.stringify(apiCollection, null, 2)], { type: "application/json" });
+        triggerDownload2(blob, `kus-api-collection_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`);
+        pushToast("コレクション JSON を保存しました", { tone: "ok" });
+      } else if (act === "kusApiCollImport") {
+        const inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = "application/json";
+        inp.onchange = () => {
+          const f = inp.files?.[0];
+          if (!f) return;
+          f.text().then((txt) => {
+            try {
+              const arr = JSON.parse(txt);
+              if (Array.isArray(arr)) {
+                apiCollection.length = 0;
+                arr.forEach((it) => apiCollection.push(it));
+                refreshSel();
+                pushToast(`コレクションを読込しました (${arr.length} 件)`, { tone: "ok" });
+              }
+            } catch (err) {
+              pushToast(`読込失敗: ${err?.message || err}`, { tone: "error" });
+            }
+          });
+        };
+        inp.click();
+      }
+    });
+    sel.addEventListener("change", () => {
+      const idx = Number(sel.value || -1);
+      if (idx < 0 || !apiCollection[idx]) return;
+      const it = apiCollection[idx];
+      const m = apiPane.querySelector("#u_apiTesterMethod");
+      const u = apiPane.querySelector("#u_apiTesterUrl");
+      const b = apiPane.querySelector("#u_apiTesterBody");
+      if (m) m.value = it.method;
+      if (u) u.value = it.url;
+      if (b) b.value = it.body || "";
+      pushToast(`コレクションを反映: ${it.name}`, { tone: "ok" });
+    });
+  }
+  var i18nMap = {
+    en: {
+      // Core nav
+      "kintone 統合変更ツール": "kintone Unified Suite",
+      "比較元アプリID": "Source App ID",
+      "比較先アプリID": "Target App ID",
+      "比較元 ゲストID": "Source Guest ID",
+      "比較先 ゲストID": "Target Guest ID",
+      "差分比較": "Compare Diff",
+      "プレビュー反映": "Apply to Preview",
+      "フィールド追加": "Add Field",
+      "JS/CSS設定": "JS/CSS Settings",
+      "ER図": "ER Diagram",
+      "設計書": "Design Doc",
+      "設定一括取得": "Bulk Settings Export",
+      "プロセス図": "Process Flow",
+      "レコード管理": "Record Manager",
+      "APIテスター": "API Tester",
+      "分析": "Analyze",
+      "ホーム": "Home",
+      "機能": "Feature",
+      "操作ガイド": "Guide",
+      "表示": "Display",
+      "標準": "Default",
+      "大": "Large",
+      "ワイド": "Wide",
+      "最大": "Max",
+      "閉じる": "Close",
+      "戻る": "Back",
+      "開く": "Open",
+      // Connection
+      "接続設定": "Connection",
+      "未入力": "Not set",
+      "比較元=現在アプリ": "Source = Current",
+      "両方=現在アプリ": "Both = Current",
+      "比較先←比較元": "Target ← Source",
+      "比較元/比較先入替": "Swap Source/Target",
+      "必須": "Required",
+      "差分比較時": "For Diff",
+      "動作対象": "Operation target",
+      "プリセット": "Preset",
+      "読み込み": "Load",
+      "プリセット名（任意）": "Preset name (optional)",
+      "現在の接続を保存": "Save current connection",
+      "アプリID検索・入力支援": "App ID search",
+      "ルックアップ参照先アプリID変換（任意）": "Lookup target app ID mapping (optional)",
+      // Tabs
+      "変更・反映": "Change & Apply",
+      "可視化・出力": "Visualize & Export",
+      "データ・保守": "Data & Maintenance",
+      "履歴・復元": "History & Restore",
+      "その他": "More",
+      // Diff
+      "差分": "Diff",
+      "差分一覧": "Diff list",
+      "差分なし": "No diff",
+      "取得失敗": "Fetch failed",
+      "追加": "Added",
+      "削除": "Delete / Removed",
+      "変更": "Changed",
+      "同一": "Same",
+      "重要度": "Severity",
+      "高": "High",
+      "中": "Medium",
+      "低": "Low",
+      "高のみ": "High only",
+      "高以上": "High+",
+      "中以上": "Medium+",
+      "低以上": "Low+",
+      "すべて": "All",
+      "クリア": "Clear",
+      "フィルタ": "Filter",
+      "検索": "Search",
+      "絞り込み": "Refine",
+      "全展開": "Expand all",
+      "全折りたたみ": "Collapse all",
+      "結果をコピー": "Copy result",
+      "行をコピー": "Copy rows",
+      "テキスト": "Text",
+      // Reflect
+      "反映": "Apply",
+      "反映先": "Target",
+      "状態": "Status",
+      "安全設定": "Safety",
+      "バックアップ自動保存": "Auto-backup",
+      "エラー時中断": "Stop on error",
+      "反映前チェック": "Pre-apply check",
+      "差分比較済み": "Diff compared",
+      "実行前プラン確認済み": "Plan reviewed",
+      "反映先は比較先プレビュー": "Target = Preview",
+      "反映する内容を決める": "Choose what to apply",
+      "標準ルート": "Standard route",
+      "詳細ルート": "Detail route",
+      "実行前プラン確認": "Review plan",
+      "プレビューへ反映": "Apply to preview",
+      "本番反映": "Production deploy",
+      "直近の反映結果": "Last apply result",
+      "反映履歴": "Apply history",
+      "バックアップ・復元・ドライラン": "Backup / Restore / Dry-run",
+      // Display prefs
+      "テーマ": "Theme",
+      "ライト": "Light",
+      "ダーク": "Dark",
+      "高コントラスト": "High contrast",
+      "フォントサイズ": "Font size",
+      "小": "Small",
+      "差分カラーパレット": "Diff palette",
+      "色覚対応": "Color-blind safe",
+      "フォーカスリング": "Focus ring",
+      "強調": "Strong",
+      "ダイアログ位置": "Dialog position",
+      "左": "Left",
+      "中央": "Center",
+      "右": "Right",
+      "説明文の詳細度": "Description verbosity",
+      "簡潔": "Brief",
+      "言語": "Language",
+      "日本語": "日本語",
+      "English": "English",
+      "既定に戻す": "Reset to default",
+      "設定はセッション内のみ（タブを閉じるとリセット）": "Settings are session-only (lost on tab close)",
+      // Toolbar
+      "実行": "Run",
+      "取得": "Fetch",
+      "読込": "Load",
+      "JSON": "JSON",
+      "HTML": "HTML",
+      "パッチ": "Patch",
+      "出力": "Export",
+      "詳細": "Details",
+      "読込解除": "Unload",
+      // Status
+      "待機中": "Idle",
+      "実行中…": "Running...",
+      "実行中": "Running",
+      "取り消し": "Undo",
+      "メモを追加": "Add memo",
+      "メモを保存しました（メモリ内のみ）": "Memo saved (in memory only)",
+      "メモを削除しました": "Memo deleted",
+      // Wizard / overlays / breadcrumbs
+      "変更作業ウィザード": "Change & Apply Wizard",
+      "可視化作業ウィザード": "Visualize & Export Wizard",
+      "データ作業ウィザード": "Data & Maintenance Wizard",
+      "履歴作業ウィザード": "History & Restore Wizard",
+      "作業ウィザード": "Wizard",
+      "接続確認": "Connection check",
+      "設定差分を取得": "Fetch settings diff",
+      "プラン確認": "Plan review",
+      "記録出力": "Save records",
+      "レコード差分": "Record diff",
+      "初回推奨": "Recommended first",
+      "要確認": "Review required",
+      "要注意": "Caution",
+      "おすすめ": "Recommended",
+      // Onboarding / hints
+      "使う機能のカードを押してください。進め方は右上の操作ガイドから。": "Pick a feature card to start. See top-right Guide for steps.",
+      "ホーム / 機能": "Home / Feature",
+      "機能を検索 (例: 差分 / レコード / 設計書)": "Search features (e.g. diff / record / design)",
+      "🔍 機能を検索  (例: 差分 / レコード / 設計書)": "🔍 Search features  (e.g. diff / record / design)",
+      "機能を検索": "Search features",
+      // Common placeholders
+      "空欄で通常スペース": "Leave blank for normal space",
+      "空で通常空間": "Empty = normal space",
+      "アプリ名 / アプリID / URL": "App name / App ID / URL",
+      "検索用ゲストID（任意）": "Search guest ID (optional)",
+      "キー名 / *At / a.b.c のパス": "Key name / *At / a.b.c path",
+      "パス/値で検索（Ctrl+F）": "Search by path/value (Ctrl+F)",
+      "テーブル名 / コードで絞り込み": "Filter by table name / code",
+      "パス / セクション名 / 理由 / 影響 で絞り込み": "Filter by path / section / reason / impact",
+      "コード/ラベルで検索...": "Search by code/label...",
+      "アプリ名で検索": "Search by app name",
+      "🔍 セクション名で絞り込み": "🔍 Filter by section name",
+      "名前を付けて保存": "Save as",
+      "表紙タイトル": "Cover title",
+      "作成者": "Author",
+      "更新前 件数": "Pre-update count",
+      "更新後 件数": "Post-update count",
+      "0=分割なし": "0 = no split",
+      "0で無制限": "0 = unlimited",
+      "0でOFF": "0 = OFF",
+      "一覧を選択 (APIから取得)": "Pick from list (loaded via API)",
+      "空ならレコード番号": "Empty = record number",
+      "ログイン名": "Login name",
+      "(ここに生成された where 句が表示されます)": "(Generated WHERE clause will appear here)",
+      // Connection wizard hints
+      "入力済み": "Filled",
+      "未設定": "Not configured",
+      "接続OK": "Connection OK",
+      "アプリのIDをテストID": "Test App ID for app",
+      "設定差分を確認": "Confirm settings diff",
+      "反映内容を確認": "Review apply content",
+      "差分付き保存": "Save with diff",
+      "設計書 / 差分資料": "Design doc / diff document",
+      // Feature card descriptions (full sentences from launcher)
+      "2アプリの設定差分を確認します。": "Compare settings between 2 apps.",
+      "差分を見ながら比較先プレビューへ反映します。": "Apply to target preview while reviewing diff.",
+      "フィールド定義の追加・編集とコード変換用JSONの作成を行います。": "Add / edit field definitions and build JSON for code conversion.",
+      "単一アプリの customize.json 編集と JS/CSS 実ファイル取得を行います。": "Edit a single app's customize.json and download JS / CSS files.",
+      "設計書や差分レポートを出力します。": "Export design docs and diff reports.",
+      "複数アプリの設定JSONをまとめて保存します（データ・添付は除く）。": "Save settings JSON for multiple apps at once (excludes records / attachments).",
+      "関連アプリの構造を ER 図で確認します。": "Inspect related-app structure via an ER diagram.",
+      "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。": "Aggregates impact analysis, dependency graph, notifications/permissions, and layout review.",
+      "プロセス管理をフロー図で確認します。": "Review process management as a flow diagram.",
+      "レコードデータのCSV・添付・コメント・状態更新を扱います。": "Handle records: CSV, attachments, comments, status updates.",
+      "REST APIを直接試します。": "Try the REST API directly.",
+      // Diff result toolbar
+      "表示中を選択": "Select displayed",
+      "全選択": "Select all",
+      "全解除": "Deselect all",
+      "差分結果": "Diff result",
+      "差分セクション": "Diff sections",
+      "反映プラン": "Apply plan",
+      "反映プラン MD 保存": "Save Apply Plan MD",
+      "スナップショット": "Snapshot",
+      "API差分プレビュー": "API diff preview",
+      "ドライラン重ね差分": "Dry-run overlay diff",
+      "状態スナップショット": "State snapshot",
+      "差分スナップショット保存": "Save diff snapshot",
+      "スナップショット読込": "Load snapshot",
+      "差分 MD": "Diff MD",
+      "差分 CSV": "Diff CSV",
+      "差分 PDF": "Diff PDF",
+      "差分 PDF（表紙付き）": "Diff PDF (with cover)",
+      "ヘッダーを開く": "Expand header",
+      "ヘッダーを折りたたむ": "Collapse header",
+      // Patch JSON modal
+      "本番に入れる差分だけをJSONで受け渡し": "Hand off only the diffs you want to deploy as JSON",
+      "JSON ルート（部分反映）": "JSON route (partial apply)",
+      "JSONエクスポート": "Export JSON",
+      "JSONファイル読込": "Load JSON file",
+      "差分比較結果を全件取込": "Import all diff results",
+      "選択中の差分だけ取込": "Import only selected diffs",
+      "コピー": "Copy",
+      "取込": "Import",
+      "出す": "Output",
+      "選ぶ": "Pick",
+      "この内容で反映": "Apply this content",
+      // Reflect statuses & severity
+      "危険": "Danger",
+      "安全": "Safe",
+      "注意": "Caution",
+      "成功": "Success",
+      "失敗": "Failed",
+      "完了": "Completed",
+      "中断": "Aborted",
+      "スキップ": "Skipped",
+      // Misc text fragments seen in UI
+      "今のアプリ": "Current app",
+      "同一接続": "Same connection",
+      "ヘッダーの表示メニュー": "Header display menu",
+      "比較元": "Source",
+      "比較先": "Target",
+      "接続checkから記録Exportまで順番に進めます。": "Step through from Connection check to Save records.",
+      "接続確認から記録出力まで順番に進めます。": "Step through from Connection check to Save records.",
+      "接続check": "Connection check",
+      "記録Export": "Save records"
+    }
+  };
+  var currentLang = "ja";
+  function initI18nSwitch() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const prefsPanel = root2.querySelector(".kus-display-prefs__panel");
+    if (!prefsPanel) return;
+    if (prefsPanel.querySelector("[data-i18n-group]")) return;
+    const group = document.createElement("div");
+    group.className = "kus-display-prefs__group";
+    group.dataset.i18nGroup = "1";
+    group.innerHTML = `
+    <div class="kus-display-prefs__title">言語</div>
+    <div class="kus-display-prefs__row">
+      <button type="button" class="btn sub" data-act="setI18n" data-lang="ja">日本語</button>
+      <button type="button" class="btn sub" data-act="setI18n" data-lang="en">English</button>
+    </div>
+  `;
+    prefsPanel.appendChild(group);
+    group.addEventListener("click", (e) => {
+      const btn = e.target?.closest?.("button[data-lang]");
+      if (!btn) return;
+      applyI18n(btn.dataset.lang || "ja");
+    });
+  }
+  function applyI18n(lang) {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const map = i18nMap[lang] || {};
+    if (!root2.__kus_i18n_orig__) {
+      root2.__kus_i18n_orig__ = { textNodes: /* @__PURE__ */ new Map(), attrs: /* @__PURE__ */ new Map() };
+    }
+    const orig = root2.__kus_i18n_orig__;
+    const walker = document.createTreeWalker(root2, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => {
+        const p = n.parentElement;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        if (["SCRIPT", "STYLE", "CODE", "PRE"].includes(p.tagName)) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    let node;
+    const keys = Object.keys(map).sort((a, b) => b.length - a.length);
+    while (node = walker.nextNode()) {
+      if (!orig.textNodes.has(node)) orig.textNodes.set(node, node.nodeValue || "");
+      const src = orig.textNodes.get(node) || "";
+      if (lang === "ja") {
+        node.nodeValue = src;
+      } else {
+        let t = src;
+        keys.forEach((k) => {
+          if (t.indexOf(k) >= 0) t = t.split(k).join(map[k]);
+        });
+        node.nodeValue = t;
+      }
+    }
+    const ATTRS = ["title", "placeholder", "aria-label", "value"];
+    root2.querySelectorAll("*").forEach((el) => {
+      let bag = orig.attrs.get(el);
+      if (!bag) {
+        bag = /* @__PURE__ */ new Map();
+        orig.attrs.set(el, bag);
+      }
+      ATTRS.forEach((a) => {
+        if (a === "value" && !(el.tagName === "BUTTON" || el.type === "submit" || el.type === "button")) return;
+        const cur = el.getAttribute(a);
+        if (cur == null) return;
+        if (!bag.has(a)) bag.set(a, cur);
+        const src = bag.get(a) || "";
+        if (lang === "ja") {
+          el.setAttribute(a, src);
+        } else {
+          let t = src;
+          keys.forEach((k) => {
+            if (t.indexOf(k) >= 0) t = t.split(k).join(map[k]);
+          });
+          el.setAttribute(a, t);
+        }
+      });
+    });
+    currentLang = lang;
+    state.kusLang = lang;
+    pushToast(`Language: ${lang.toUpperCase()}`, { tone: "info" });
+  }
+  var DIFF_TYPE_LABEL = { added: "追加", removed: "削除", changed: "変更", moved: "移動", same: "同一" };
+  var DIFF_SEVERITY_LABEL = { high: "高", mid: "中", low: "低", info: "情報" };
+  var localizeKintoneEnumsInText2 = localizeKintoneEnumsInText;
+  function exportDiffAsMarkdown() {
+    const rows = state.lastDiffRows || [];
+    if (!rows.length) {
+      pushToast("差分が未取得です", { tone: "warn" });
+      return;
+    }
+    const md = "# 差分レポート\n\n生成: " + (/* @__PURE__ */ new Date()).toISOString() + "\n\n| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n|---|---|---|---|---|---|\n" + rows.map((r) => {
+      const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
+      const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
+      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(r.oldValue));
+      const newStr = localizeKintoneEnumsInText2(JSON.stringify(r.newValue));
+      return `| ${typeLabel} | ${r.section} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
+    }).join("\n");
+    triggerDownload2(new Blob([md], { type: "text/markdown" }), `kus-diff_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`);
+    pushToast("Markdown を保存しました", { tone: "ok" });
+  }
+  function exportDiffAsCsvForExcel() {
+    const rows = state.lastDiffRows || [];
+    if (!rows.length) {
+      pushToast("差分が未取得です", { tone: "warn" });
+      return;
+    }
+    const head = ["種別", "セクション", "パス", "旧値", "新値", "重要度"].join(",");
+    const body = rows.map((r) => {
+      const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
+      const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
+      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(r.oldValue));
+      const newStr = localizeKintoneEnumsInText2(JSON.stringify(r.newValue));
+      return [typeLabel, r.section, r.path, oldStr, newStr, severityLabel].map((c) => `"${String(c ?? "").replace(/"/g, '""').replace(/[\r\n]/g, " ")}"`).join(",");
+    }).join("\n");
+    triggerDownload2(new Blob(["\uFEFF", head + "\n" + body], { type: "text/csv;charset=utf-8" }), `kus-diff_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.csv`);
+    pushToast("Excel 用 CSV を保存しました", { tone: "ok" });
+  }
+  function exportDiffAsPrintablePdf() {
+    const rows = state.lastDiffRows || [];
+    if (!rows.length) {
+      pushToast("差分が未取得です", { tone: "warn" });
+      return;
+    }
+    const win = window.open("", "_blank");
+    if (!win) {
+      pushToast("ポップアップがブロックされました", { tone: "error" });
+      return;
+    }
+    const css = `
+    body{font-family:-apple-system,Segoe UI,sans-serif;font-size:10px;color:#0f172a;padding:18px}
+    h1{font-size:16px;margin:0 0 8px}
+    .meta{font-size:10px;color:#64748b;margin-bottom:12px}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #cbd5e1;padding:4px 6px;vertical-align:top}
+    th{background:#f1f5f9;text-align:left}
+    .added{background:#ecfdf5}.removed{background:#fef2f2}.changed{background:#fff7ed}
+  `;
+    const tbody = rows.map((r) => {
+      const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
+      const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
+      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(r.oldValue));
+      const newStr = localizeKintoneEnumsInText2(JSON.stringify(r.newValue));
+      return `<tr class="${r.type}"><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(r.section)}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
+    }).join("");
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>kintone 差分レポート</title><style>${css}</style></head><body><h1>kintone 差分レポート</h1><div class="meta">生成: ${(/* @__PURE__ */ new Date()).toISOString()} / 件数: ${rows.length}</div><table><thead><tr><th>種別</th><th>セクション</th><th>パス</th><th>旧</th><th>新</th><th>重要度</th></tr></thead><tbody>${tbody}</tbody></table><script>window.onload=()=>{setTimeout(()=>window.print(),200)}<\/script></body></html>`);
+    win.document.close();
+    pushToast("印刷ダイアログを開きました（PDF として保存可）", { tone: "info" });
+  }
+  function initLeftDockProperties() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const propPanel = root2.querySelector("#u_nodePropertyPanel");
+    if (!propPanel) return;
+    const head = propPanel.parentElement;
+    if (!head || head.querySelector(".kus-prop-dock-toggle")) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn sub kus-prop-dock-toggle";
+    btn.textContent = "⫷ 左固定";
+    btn.title = "プロパティパネルを左サイドに固定";
+    btn.addEventListener("click", () => {
+      root2.classList.toggle("kus-prop-dock-left");
+      btn.classList.toggle("is-active", root2.classList.contains("kus-prop-dock-left"));
+      pushToast(root2.classList.contains("kus-prop-dock-left") ? "プロパティパネルを左固定" : "左固定を解除", { tone: "info" });
+    });
+    head.insertBefore(btn, head.firstChild);
+  }
+  function initVirtualScrollLite() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const result = root2.querySelector("#u_result");
+    if (!result) return;
+    let observer = null;
+    let measureH = 36;
+    const apply = () => {
+      const rows = [...result.querySelectorAll(".row[data-row-id]")];
+      if (rows.length <= 200) {
+        rows.forEach((r) => {
+          r.style.contentVisibility = "";
+          r.style.containIntrinsicSize = "";
+        });
+        observer?.disconnect();
+        observer = null;
+        return;
+      }
+      measureH = rows[0]?.offsetHeight || 36;
+      if (observer) observer.disconnect();
+      observer = new IntersectionObserver((entries) => {
+        entries.forEach((ent) => {
+          const r = ent.target;
+          if (ent.isIntersecting) {
+            r.style.contentVisibility = "visible";
+            r.style.containIntrinsicSize = "";
+          } else {
+            r.style.contentVisibility = "auto";
+            r.style.containIntrinsicSize = `${measureH}px`;
+          }
+        });
+      }, {
+        root: root2.querySelector(".body"),
+        rootMargin: "600px 0px 600px 0px",
+        threshold: 0
+      });
+      rows.forEach((r) => observer.observe(r));
+      pushToast(`仮想スクロール有効化: ${rows.length} 行`, { tone: "info", ttl: 1800 });
+    };
+    document.addEventListener("kus:diffRendered", () => requestAnimationFrame(apply));
+  }
+  var mermaidLoading = null;
+  function loadMermaid() {
+    if (window.mermaid) return Promise.resolve(window.mermaid);
+    if (mermaidLoading) return mermaidLoading;
+    mermaidLoading = new Promise((resolve, reject) => {
+      const sc = document.createElement("script");
+      sc.src = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js";
+      sc.onload = () => {
+        const m = window.mermaid;
+        try {
+          m.initialize({ startOnLoad: false, securityLevel: "loose", theme: "default" });
+        } catch (e) {
+        }
+        resolve(m);
+      };
+      sc.onerror = () => reject(new Error("mermaid のロードに失敗しました"));
+      document.head.appendChild(sc);
+    });
+    return mermaidLoading;
+  }
+  function buildPlanMermaid(plan) {
+    const lines = ["flowchart LR"];
+    lines.push(`Start([反映開始])-->Bk[/バックアップ/]`);
+    let prev = "Bk";
+    (plan?.sections || []).forEach((s, i) => {
+      const id = `S${i}`;
+      const label = String(s.label || s.key || `step${i}`).replace(/"/g, "'");
+      const status = s.error ? "❌" : s.changed ? "✏" : "·";
+      lines.push(`${prev}-->${id}["${status} ${label}"]`);
+      prev = id;
+    });
+    lines.push(`${prev}-->Done([完了])`);
+    return lines.join("\n");
+  }
+  async function showPlanMermaidInTool() {
+    const plan = state.lastApplyPlan;
+    if (!plan) {
+      pushToast("反映プランが未生成です", { tone: "warn" });
+      return;
+    }
+    pushToast("Mermaid 図を生成中…", { tone: "info", ttl: 1500 });
+    try {
+      const mermaid = await loadMermaid();
+      const code = buildPlanMermaid(plan);
+      const overlay = document.createElement("div");
+      overlay.className = "kus-confirm-overlay";
+      overlay.innerHTML = `
+      <div class="kus-confirm-card" style="width:min(960px,95vw);max-height:90vh;overflow:auto">
+        <div class="kus-confirm-card__title">📊 反映プラン Mermaid</div>
+        <div id="kus-plan-mermaid-host" style="background:#fff;padding:12px;border:1px solid #e2e8f0;border-radius:8px"></div>
+        <details style="margin-top:8px"><summary class="muted">Mermaid ソース</summary><pre style="font-size:10px;background:#f8fafc;padding:8px;border-radius:6px;white-space:pre-wrap">${escapeHtml(code)}</pre></details>
+        <div class="kus-confirm-card__btns">
+          <button type="button" class="btn sub" data-act="kusPlanMermaidDl">📥 Markdown 保存</button>
+          <button type="button" class="btn sub kus-confirm-card__cancel">閉じる</button>
+        </div>
+      </div>`;
+      document.body.appendChild(overlay);
+      const host = overlay.querySelector("#kus-plan-mermaid-host");
+      const id = `mer-${Date.now()}`;
+      const result = await mermaid.render(id, code);
+      host.innerHTML = result.svg || "";
+      overlay.querySelector(".kus-confirm-card__cancel")?.addEventListener("click", () => overlay.remove());
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) overlay.remove();
+      });
+      overlay.querySelector('[data-act="kusPlanMermaidDl"]')?.addEventListener("click", () => {
+        const md = "```mermaid\n" + code + "\n```\n";
+        triggerDownload2(new Blob([md], { type: "text/markdown" }), `kus-plan-mermaid_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`);
+        pushToast("Mermaid Markdown を保存しました", { tone: "ok" });
+      });
+    } catch (e) {
+      pushToast(`Mermaid 描画失敗: ${e?.message || e}（Markdown のみ保存します）`, { tone: "warn" });
+      exportPlanAsMermaid();
+    }
+  }
+  function exportPlanAsMermaid() {
+    const plan = state.lastApplyPlan;
+    if (!plan) {
+      pushToast("反映プランが未生成です", { tone: "warn" });
+      return;
+    }
+    const md = "```mermaid\n" + buildPlanMermaid(plan) + "\n```\n";
+    triggerDownload2(new Blob([md], { type: "text/markdown" }), `kus-plan-mermaid_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`);
+    pushToast("Mermaid 形式で保存しました", { tone: "ok" });
+  }
+  function showApiRequestDiffPreview() {
+    const plan = state.lastApplyPlan;
+    if (!plan || !plan.sections?.length) {
+      pushToast("反映プランが未生成です", { tone: "warn" });
+      return;
+    }
+    const overlay = document.createElement("div");
+    overlay.className = "kus-confirm-overlay";
+    const items = plan.sections.map((s) => {
+      const before = JSON.stringify(s.before ?? null, null, 2);
+      const after = JSON.stringify(s.after ?? s.payload ?? null, null, 2);
+      return `<div class="kus-api-diff__item">
+      <div class="kus-api-diff__head">${escapeHtml(s.label || s.key)} <span class="muted">${escapeHtml(s.method || "PUT")} ${escapeHtml(s.endpoint || "")}</span></div>
+      <div class="kus-api-diff__cols">
+        <div><div class="kus-api-diff__col-h">送信前 (現在)</div><pre>${escapeHtml(before)}</pre></div>
+        <div><div class="kus-api-diff__col-h">送信後 (予定)</div><pre>${escapeHtml(after)}</pre></div>
+      </div>
+    </div>`;
+    }).join("");
+    overlay.innerHTML = `
+    <div class="kus-confirm-card kus-api-diff" style="width:min(880px,95vw);max-height:85vh;overflow:auto">
+      <div class="kus-confirm-card__title">送信予定 API リクエスト差分</div>
+      ${items}
+      <div class="kus-confirm-card__btns"><button type="button" class="btn sub kus-confirm-card__cancel">閉じる</button></div>
+    </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector(".kus-confirm-card__cancel")?.addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  var html2canvasLoading = null;
+  function loadHtml2Canvas() {
+    if (window.html2canvas) return Promise.resolve(window.html2canvas);
+    if (html2canvasLoading) return html2canvasLoading;
+    html2canvasLoading = new Promise((resolve, reject) => {
+      const sc = document.createElement("script");
+      sc.src = "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js";
+      sc.onload = () => resolve(window.html2canvas);
+      sc.onerror = () => reject(new Error("html2canvas のロードに失敗しました"));
+      document.head.appendChild(sc);
+    });
+    return html2canvasLoading;
+  }
+  async function captureReflectScreenshot() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    pushToast("スクリーンショット取得中…", { tone: "info", ttl: 1500 });
+    try {
+      const h2c = await loadHtml2Canvas();
+      const canvas = await h2c(root2, { backgroundColor: "#fff", scale: window.devicePixelRatio || 1, logging: false });
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          pushToast("PNG 生成に失敗", { tone: "error" });
+          return;
+        }
+        triggerDownload2(blob, `kus-snapshot_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.png`);
+        pushToast("PNG スクリーンショットを保存しました", { tone: "ok" });
+      }, "image/png");
+    } catch (e) {
+      const html = root2.outerHTML;
+      const css = [...document.styleSheets].map((s) => {
+        try {
+          return [...s.cssRules].map((r) => r.cssText).join("\n");
+        } catch {
+          return "";
+        }
+      }).join("\n");
+      const doc = `<!doctype html><html><head><meta charset="utf-8"><title>kus-snapshot</title><style>${css}</style></head><body>${html}</body></html>`;
+      triggerDownload2(new Blob([doc], { type: "text/html" }), `kus-snapshot_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.html`);
+      pushToast(`PNG 失敗。HTML で保存しました (${e?.message || e})`, { tone: "warn" });
+    }
+  }
+  function initFilteredScopeTree() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const modal = root2.querySelector("#u_scopePickerModal");
+    if (!modal) return;
+    if (modal.querySelector(".kus-scope-tree-filter")) return;
+    const filter = document.createElement("div");
+    filter.className = "kus-scope-tree-filter";
+    filter.innerHTML = `
+    <input type="search" class="kus-scope-tree-filter__q" placeholder="🔍 セクション名で絞り込み">
+    <button type="button" class="btn sub" data-act="kusScopeAll">全選択</button>
+    <button type="button" class="btn sub" data-act="kusScopeNone">全解除</button>
+  `;
+    const body = modal.querySelector(".scope-picker-body, .scope-modal-body");
+    if (body) body.prepend(filter);
+    else modal.prepend(filter);
+    const q = filter.querySelector("input");
+    q.addEventListener("input", () => {
+      const v = q.value.trim().toLowerCase();
+      modal.querySelectorAll("label, .scope-item").forEach((row) => {
+        const txt = (row.textContent || "").toLowerCase();
+        row.style.display = !v || txt.includes(v) ? "" : "none";
+      });
+    });
+    filter.addEventListener("click", (e) => {
+      const btn = e.target?.closest?.("button[data-act]");
+      if (!btn) return;
+      const act = btn.dataset.act;
+      modal.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        if (cb.closest("label, .scope-item")?.parentElement?.style?.display === "none") return;
+        cb.checked = act === "kusScopeAll";
+        cb.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    });
+  }
+  var VALID_FIELD_TYPES = /* @__PURE__ */ new Set([
+    "SINGLE_LINE_TEXT",
+    "MULTI_LINE_TEXT",
+    "RICH_TEXT",
+    "NUMBER",
+    "CALC",
+    "RADIO_BUTTON",
+    "CHECK_BOX",
+    "MULTI_SELECT",
+    "DROP_DOWN",
+    "DATE",
+    "TIME",
+    "DATETIME",
+    "LINK",
+    "FILE",
+    "USER_SELECT",
+    "ORGANIZATION_SELECT",
+    "GROUP_SELECT",
+    "REFERENCE_TABLE",
+    "LOOKUP",
+    "SUBTABLE",
+    "STATUS",
+    "STATUS_ASSIGNEE",
+    "CATEGORY",
+    "RECORD_NUMBER",
+    "CREATED_TIME",
+    "UPDATED_TIME",
+    "CREATOR",
+    "MODIFIER",
+    "GROUP",
+    "SPACER",
+    "HR",
+    "LABEL"
+  ]);
+  var SCHEMAS = {
+    fields: (data) => {
+      const errors = [];
+      if (!data || typeof data !== "object") return ["オブジェクトが必要"];
+      const props = data.properties || data;
+      if (!props || typeof props !== "object") return ["properties オブジェクトが必要"];
+      Object.entries(props).forEach(([k, v]) => {
+        if (!v?.type) errors.push(`${k}: type が未定義`);
+        else if (!VALID_FIELD_TYPES.has(v.type)) errors.push(`${k}: 不明なフィールド種別 "${v.type}"`);
+        if (v?.code && v.code !== k) errors.push(`${k}: code がキーと一致しない (${v.code})`);
+        if (v?.type === "CALC" && !v.expression) errors.push(`${k}: CALC に expression がありません`);
+        if (v?.type === "LOOKUP" && !v.lookup) errors.push(`${k}: LOOKUP に lookup 設定がありません`);
+        if (v?.type === "SUBTABLE" && !v.fields) errors.push(`${k}: SUBTABLE に fields がありません`);
+        if (v?.required && v?.type === "CALC") errors.push(`${k}: CALC は required にできません`);
+      });
+      return errors;
+    },
+    views: (data) => {
+      const errors = [];
+      const views = data?.views || data;
+      if (!views || typeof views !== "object") return ["views オブジェクトが必要"];
+      Object.entries(views).forEach(([k, v]) => {
+        if (!v?.type) errors.push(`${k}: ビュー type が未定義`);
+        if (v?.type === "LIST" && !Array.isArray(v.fields)) errors.push(`${k}: LIST ビューに fields 配列が必要`);
+        if (v?.type === "CALENDAR" && !v.date) errors.push(`${k}: CALENDAR に date 設定が必要`);
+      });
+      return errors;
+    },
+    layout: (data) => {
+      const errors = [];
+      const layout = data?.layout || data;
+      if (!Array.isArray(layout)) return ["layout は配列である必要があります"];
+      layout.forEach((row, i) => {
+        if (!row?.type) errors.push(`row[${i}]: type 未定義`);
+        if (row?.type === "ROW" && !Array.isArray(row.fields)) errors.push(`row[${i}]: ROW に fields 配列が必要`);
+      });
+      return errors;
+    },
+    process: (data) => {
+      const errors = [];
+      if (!data) return ["プロセス管理オブジェクトが必要"];
+      if (data.enable && !data.states) errors.push("enable=true ですが states が未定義");
+      if (data.actions && !Array.isArray(data.actions)) errors.push("actions は配列である必要があります");
+      return errors;
+    },
+    acl: (data) => {
+      const errors = [];
+      const rights = data?.rights || data;
+      if (!Array.isArray(rights)) return ["rights は配列である必要があります"];
+      rights.forEach((r, i) => {
+        if (!r?.entity) errors.push(`rights[${i}]: entity 未定義`);
+      });
+      return errors;
+    },
+    notifications: (data) => {
+      const errors = [];
+      const list = data?.notifications || data;
+      if (!Array.isArray(list)) return ["notifications は配列である必要があります"];
+      list.forEach((n, i) => {
+        if (!n?.entity && !n?.entities) errors.push(`notifications[${i}]: 宛先(entity/entities) 未定義`);
+      });
+      return errors;
+    }
+  };
+  function detectSchema(data) {
+    if (!data) return null;
+    if (data.properties || typeof data === "object" && Object.values(data).some((v) => v?.type && VALID_FIELD_TYPES.has(v.type))) return "fields";
+    if (data.views) return "views";
+    if (Array.isArray(data.layout)) return "layout";
+    if (data.states || data.actions || typeof data.enable === "boolean") return "process";
+    if (Array.isArray(data.rights)) return "acl";
+    if (Array.isArray(data.notifications)) return "notifications";
+    return null;
+  }
+  function initJsonSchemaValidate() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const editors = root2.querySelectorAll('[id$="JsonEditor"], textarea[data-json-editor], textarea[id$="Json"]');
+    editors.forEach((ed) => {
+      if (ed.parentElement?.querySelector(".kus-validate-btn")) return;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn sub kus-validate-btn";
+      btn.textContent = "✓ 検証";
+      btn.title = "JSON 構造を検証（フィールド/ビュー/レイアウト/プロセス/権限/通知 を自動判別）";
+      btn.addEventListener("click", () => {
+        const text = ed.value || ed.textContent || "";
+        try {
+          const data = JSON.parse(text);
+          const kind = detectSchema(data);
+          if (!kind) {
+            pushToast("スキーマ判別不能（生 JSON）", { tone: "info" });
+            return;
+          }
+          const errors = SCHEMAS[kind](data);
+          if (errors.length) {
+            const more = errors.length > 5 ? ` ...他 ${errors.length - 5} 件` : "";
+            pushToast(`[${kind}] エラー ${errors.length} 件: ${errors.slice(0, 5).join(" / ")}${more}`, { tone: "warn", ttl: 8e3 });
+          } else {
+            pushToast(`[${kind}] 検証 OK`, { tone: "ok" });
+          }
+        } catch (e) {
+          pushToast(`JSON パース失敗: ${e?.message || e}`, { tone: "error" });
+        }
+      });
+      ed.parentElement?.appendChild(btn);
+    });
+  }
+  function exportDryRunOverlay() {
+    const plan = state.lastApplyPlan;
+    if (!plan) {
+      pushToast("プランがありません", { tone: "warn" });
+      return;
+    }
+    const overlay = (plan.sections || []).map((s) => ({
+      section: s.label || s.key,
+      method: s.method || "PUT",
+      endpoint: s.endpoint,
+      before: s.before ?? null,
+      after: s.after ?? s.payload ?? null
+    }));
+    triggerDownload2(new Blob([JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), overlay }, null, 2)], { type: "application/json" }), `kus-dryrun-overlay_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`);
+    pushToast("ドライラン重ね差分 JSON を保存しました", { tone: "ok" });
+  }
+  var DESIGN_TEMPLATES = [
+    { key: "a4-portrait", label: "A4 縦" },
+    { key: "a4-landscape", label: "A4 横" },
+    { key: "presentation", label: "プレゼン" },
+    { key: "compact", label: "コンパクト" }
+  ];
+  function initDesignTemplates() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const designPane = root2.querySelector('[data-pane="design"]');
+    if (!designPane) return;
+    if (designPane.querySelector(".kus-design-templates")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "kus-design-templates btns";
+    wrap.innerHTML = '<span class="muted">テンプレート:</span>' + DESIGN_TEMPLATES.map((t, i) => `<button type="button" class="btn sub${i === 0 ? " is-active" : ""}" data-template="${t.key}">${t.label}</button>`).join("");
+    designPane.insertBefore(wrap, designPane.firstChild);
+    wrap.addEventListener("click", (e) => {
+      const btn = e.target?.closest?.("button[data-template]");
+      if (!btn) return;
+      wrap.querySelectorAll("button").forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const t = btn.dataset.template || "";
+      designPane.dataset.kusTemplate = t;
+      DESIGN_TEMPLATES.forEach((x) => designPane.classList.remove(`kus-design-${x.key}`));
+      designPane.classList.add(`kus-design-${t}`);
+      state.kusDesignTemplate = t;
+      pushToast(`テンプレート: ${btn.textContent}`, { tone: "info" });
+    });
+  }
+  function initDesignToc() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const designPane = root2.querySelector('[data-pane="design"]');
+    if (!designPane) return;
+    if (designPane.querySelector(".kus-design-toc")) return;
+    const toc = document.createElement("aside");
+    toc.className = "kus-design-toc";
+    toc.innerHTML = '<div class="kus-design-toc__title">📑 目次</div><div class="kus-design-toc__body muted">設計書を生成すると、ここに目次が表示されます</div>';
+    designPane.appendChild(toc);
+    const obs = new MutationObserver(() => {
+      const body = toc.querySelector(".kus-design-toc__body");
+      const headings = [...designPane.querySelectorAll(".result h1, .result h2, .result h3")];
+      if (!headings.length) return;
+      body.innerHTML = headings.map((h, i) => {
+        h.id = h.id || `kus-toc-${i}`;
+        const lvl = h.tagName === "H1" ? 0 : h.tagName === "H2" ? 1 : 2;
+        return `<a class="kus-design-toc__lnk" data-lvl="${lvl}" href="#${h.id}">${h.textContent}</a>`;
+      }).join("");
+    });
+    const result = designPane.querySelector(".result");
+    if (result) obs.observe(result, { childList: true, subtree: true });
+  }
+  function initProcessScreenshotDiff() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const pPane = root2.querySelector('[data-pane="processFlow"]');
+    if (!pPane) return;
+    if (pPane.querySelector(".kus-proc-screenshot")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "kus-proc-screenshot btns";
+    wrap.innerHTML = `
+    <button type="button" class="btn sub" data-act="kusProcSnap">📸 現在の図を保存（HTML）</button>
+    <input type="file" accept=".html" class="kus-proc-screenshot__inp" hidden>
+    <button type="button" class="btn sub" data-act="kusProcCompare">⇄ 過去のスナップと比較</button>
+  `;
+    pPane.insertBefore(wrap, pPane.firstChild);
+    const fileInput = wrap.querySelector(".kus-proc-screenshot__inp");
+    wrap.addEventListener("click", (e) => {
+      const btn = e.target?.closest?.("button[data-act]");
+      if (!btn) return;
+      if (btn.dataset.act === "kusProcSnap") captureReflectScreenshot();
+      else if (btn.dataset.act === "kusProcCompare") fileInput.click();
+    });
+    fileInput.addEventListener("change", () => {
+      const f = fileInput.files?.[0];
+      if (!f) return;
+      pushToast(`比較ファイル: ${f.name} (差分は新規ウィンドウに表示)`, { tone: "info" });
+      f.text().then((txt) => {
+        const w = window.open("", "_blank");
+        if (!w) return;
+        w.document.write(`<!doctype html><html><body><h1>過去のスナップショット</h1>${txt}</body></html>`);
+      });
+    });
+  }
+  var designLogoDataUrl = null;
+  var designCoverTitle = "";
+  var designCoverAuthor = "";
+  function initDesignCoverInputs() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const designPane = root2.querySelector('[data-pane="design"]');
+    if (!designPane) return;
+    if (designPane.querySelector(".kus-design-cover")) return;
+    const wrap = document.createElement("details");
+    wrap.className = "kus-design-cover";
+    wrap.innerHTML = `
+    <summary>表紙・ロゴ設定</summary>
+    <div class="kus-design-cover__body">
+      <input type="text" class="kus-design-cover__title" placeholder="表紙タイトル">
+      <input type="text" class="kus-design-cover__author" placeholder="作成者">
+      <input type="file" accept="image/*" class="kus-design-cover__logo">
+      <div class="kus-design-cover__preview"></div>
+    </div>
+  `;
+    designPane.insertBefore(wrap, designPane.firstChild);
+    const titleInput = wrap.querySelector(".kus-design-cover__title");
+    const authorInput = wrap.querySelector(".kus-design-cover__author");
+    const logoInput = wrap.querySelector(".kus-design-cover__logo");
+    const preview = wrap.querySelector(".kus-design-cover__preview");
+    titleInput.addEventListener("input", () => {
+      designCoverTitle = titleInput.value;
+      state.kusDesignCoverTitle = titleInput.value;
+    });
+    authorInput.addEventListener("input", () => {
+      designCoverAuthor = authorInput.value;
+      state.kusDesignCoverAuthor = authorInput.value;
+    });
+    logoInput.addEventListener("change", () => {
+      const f = logoInput.files?.[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        designLogoDataUrl = String(reader.result || "");
+        state.kusDesignLogoDataUrl = designLogoDataUrl;
+        preview.innerHTML = `<img src="${designLogoDataUrl}" alt="logo" style="max-height:48px"> 読み込み済み`;
+      };
+      reader.readAsDataURL(f);
+    });
+  }
+  function getDesignCover() {
+    return { logo: designLogoDataUrl, title: designCoverTitle, author: designCoverAuthor };
+  }
+  function initExcelSheetSplit() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const designPane = root2.querySelector('[data-pane="design"]');
+    if (!designPane) return;
+    if (designPane.querySelector(".kus-excel-split")) return;
+    const wrap = document.createElement("details");
+    wrap.className = "kus-excel-split";
+    wrap.innerHTML = `
+    <summary>Excel 出力時のシート分割</summary>
+    <div class="kus-excel-split__body">
+      <label><input type="checkbox" data-sheet="fields" checked> フィールド</label>
+      <label><input type="checkbox" data-sheet="views" checked> ビュー</label>
+      <label><input type="checkbox" data-sheet="acl" checked> 権限</label>
+      <label><input type="checkbox" data-sheet="process" checked> プロセス管理</label>
+      <label><input type="checkbox" data-sheet="notifications"> 通知</label>
+      <label><input type="checkbox" data-sheet="layout"> レイアウト</label>
+    </div>
+  `;
+    designPane.insertBefore(wrap, designPane.firstChild);
+    const update = () => {
+      const sheets = [...wrap.querySelectorAll('input[type="checkbox"]')].filter((c) => c.checked).map((c) => c.dataset.sheet || "");
+      state.kusExcelSheets = sheets;
+    };
+    wrap.addEventListener("change", update);
+    update();
+  }
+  function exportDiffPdfWithCover() {
+    const rows = state.lastDiffRows || [];
+    const cover = getDesignCover();
+    const win = window.open("", "_blank");
+    if (!win) {
+      pushToast("ポップアップがブロックされました", { tone: "error" });
+      return;
+    }
+    const css = `
+    body{font-family:-apple-system,Segoe UI,sans-serif;color:#0f172a;padding:0;margin:0}
+    .cover{height:90vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:40px;border-bottom:2px solid #e2e8f0}
+    .cover img{max-height:120px;margin-bottom:20px}
+    .cover h1{font-size:28px;margin:8px 0}
+    .cover .meta{font-size:12px;color:#64748b}
+    .body{padding:24px}
+    table{border-collapse:collapse;width:100%;font-size:10px}
+    th,td{border:1px solid #cbd5e1;padding:4px 6px}
+    @page{size:A4;margin:18mm}
+  `;
+    const tbody = rows.map((r) => {
+      const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
+      const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
+      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(r.oldValue));
+      const newStr = localizeKintoneEnumsInText2(JSON.stringify(r.newValue));
+      return `<tr><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(r.section)}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
+    }).join("");
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(cover.title || "差分レポート")}</title><style>${css}</style></head><body>
+    <div class="cover">
+      ${cover.logo ? `<img src="${cover.logo}" alt="logo">` : ""}
+      <h1>${escapeHtml(cover.title || "kintone 差分レポート")}</h1>
+      <div class="meta">作成: ${escapeHtml(cover.author || "-")} / ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}</div>
+    </div>
+    <div class="body">
+      <h2>差分一覧 (${rows.length} 件)</h2>
+      <table><thead><tr><th>種別</th><th>セクション</th><th>パス</th><th>旧</th><th>新</th><th>重要度</th></tr></thead><tbody>${tbody}</tbody></table>
+    </div>
+    <script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script>
+    </body></html>`);
+    win.document.close();
+    pushToast("表紙付き PDF（印刷ダイアログ）を開きました", { tone: "info" });
+  }
+  function initCsvImportMapping() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const recordPane = root2.querySelector('[data-pane="recordMgr"]');
+    if (!recordPane) return;
+    if (recordPane.querySelector(".kus-csv-mapping")) return;
+    const wrap = document.createElement("details");
+    wrap.className = "kus-csv-mapping";
+    wrap.innerHTML = `
+    <summary>CSV インポート マッピング</summary>
+    <div class="kus-csv-mapping__body">
+      <input type="file" accept=".csv,.tsv,.txt" class="kus-csv-mapping__file">
+      <div class="kus-csv-mapping__panel"></div>
+    </div>
+  `;
+    recordPane.insertBefore(wrap, recordPane.firstChild);
+    const file = wrap.querySelector('input[type="file"]');
+    const panel = wrap.querySelector(".kus-csv-mapping__panel");
+    file.addEventListener("change", async () => {
+      const f = file.files?.[0];
+      if (!f) return;
+      const text = await f.text();
+      const sep = f.name.endsWith(".tsv") ? "	" : ",";
+      const firstLine = text.split("\n")[0] || "";
+      const cols = firstLine.split(sep).map((c) => c.replace(/^"|"$/g, ""));
+      const targets = ["(無視)", "$id", "recordId", "title", "status", "category", "... カスタム ..."];
+      panel.innerHTML = `<table class="kus-csv-mapping__t">
+      <thead><tr><th>CSV 列</th><th>→</th><th>kintone フィールド</th></tr></thead>
+      <tbody>${cols.map((c, i) => `<tr><td>${escapeHtml(c)}</td><td>→</td><td><select data-csv-col="${i}">${targets.map((t) => `<option>${escapeHtml(t)}</option>`).join("")}</select></td></tr>`).join("")}</tbody>
+    </table>
+    <div class="muted">マッピングは取り込み実行時に <code>state.kusCsvMapping</code> として参照されます</div>`;
+      panel.querySelectorAll("select").forEach((sel) => {
+        sel.addEventListener("change", () => {
+          const map = {};
+          panel.querySelectorAll("select[data-csv-col]").forEach((s) => {
+            const i = Number(s.dataset.csvCol || -1);
+            if (i >= 0 && s.value !== "(無視)") map[cols[i]] = s.value;
+          });
+          state.kusCsvMapping = map;
+        });
+      });
+      pushToast(`${cols.length} 列を読込しました。マッピングを設定してください`, { tone: "info" });
+    });
+  }
+  var queryRows = [];
+  function initQueryBuilder() {
+    const root2 = getRoot2();
+    if (!root2) return;
+    const recordPane = root2.querySelector('[data-pane="recordMgr"]');
+    if (!recordPane) return;
+    if (recordPane.querySelector(".kus-query-builder")) return;
+    const wrap = document.createElement("details");
+    wrap.className = "kus-query-builder";
+    wrap.innerHTML = `
+    <summary>クエリビルダ（GUI で where 句を組立）</summary>
+    <div class="kus-query-builder__body">
+      <table class="kus-query-builder__t"><thead><tr><th>フィールド</th><th>演算子</th><th>値</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="btns">
+        <button type="button" class="btn sub" data-act="kusQueryAdd">＋ 条件追加</button>
+        <button type="button" class="btn sub" data-act="kusQueryGen">⚙ クエリ生成</button>
+        <input type="text" class="kus-query-builder__out" readonly placeholder="(ここに生成された where 句が表示されます)" style="flex:1;min-width:240px">
+      </div>
+    </div>
+  `;
+    recordPane.insertBefore(wrap, recordPane.firstChild);
+    const tbody = wrap.querySelector("tbody");
+    const out = wrap.querySelector(".kus-query-builder__out");
+    const renderRows = () => {
+      tbody.innerHTML = queryRows.map((r, i) => `
+      <tr>
+        <td><input type="text" data-q-i="${i}" data-q-k="field" value="${escapeHtml(r.field)}" placeholder="フィールドコード"></td>
+        <td><select data-q-i="${i}" data-q-k="op"><option>=</option><option>!=</option><option>like</option><option>in</option><option>></option><option><</option></select></td>
+        <td><input type="text" data-q-i="${i}" data-q-k="value" value="${escapeHtml(r.value)}" placeholder="値"></td>
+        <td><button type="button" class="btn sub" data-q-del="${i}">×</button></td>
+      </tr>`).join("");
+      tbody.querySelectorAll("select[data-q-i]").forEach((s) => {
+        s.value = queryRows[Number(s.dataset.qI)].op;
+      });
+    };
+    wrap.addEventListener("click", (e) => {
+      const t = e.target;
+      if (t.dataset.act === "kusQueryAdd") {
+        queryRows.push({ field: "", op: "=", value: "" });
+        renderRows();
+      } else if (t.dataset.act === "kusQueryGen") {
+        const where = queryRows.filter((r) => r.field).map((r) => {
+          if (r.op === "in") return `${r.field} in (${r.value})`;
+          if (r.op === "like") return `${r.field} like "${r.value}"`;
+          return `${r.field} ${r.op} "${r.value}"`;
+        }).join(" and ");
+        out.value = where;
+        state.kusQueryWhere = where;
+        pushToast("クエリ where 句を生成しました", { tone: "ok" });
+      } else if (t.dataset.qDel) {
+        queryRows.splice(Number(t.dataset.qDel), 1);
+        renderRows();
+      }
+    });
+    wrap.addEventListener("input", (e) => {
+      const t = e.target;
+      if (!t.dataset.qI) return;
+      const i = Number(t.dataset.qI);
+      const k = t.dataset.qK;
+      if (queryRows[i]) queryRows[i][k] = t.value;
+    });
+    wrap.addEventListener("change", (e) => {
+      const t = e.target;
+      if (!t.dataset.qI || t.dataset.qK !== "op") return;
+      queryRows[Number(t.dataset.qI)].op = t.value;
+    });
+  }
+  function initExtras() {
+    try {
+      initScrollMemory();
+    } catch (e) {
+      console.warn("extras: scrollMemory", e);
+    }
+    try {
+      initActiveTaskPanel();
+    } catch (e) {
+      console.warn("extras: taskPanel", e);
+    }
+    try {
+      initConfirmSlider();
+    } catch (e) {
+      console.warn("extras: confirmSlider", e);
+    }
+    try {
+      initTabBarAutoCollapse();
+    } catch (e) {
+      console.warn("extras: tabBarAutoCollapse", e);
+    }
+    try {
+      initHighlightColorPicker();
+    } catch (e) {
+      console.warn("extras: highlightColor", e);
+    }
+    try {
+      initSeverityThreshold();
+    } catch (e) {
+      console.warn("extras: severityThreshold", e);
+    }
+    try {
+      initOneTapFilterPresets();
+    } catch (e) {
+      console.warn("extras: oneTapPresets", e);
+    }
+    try {
+      initApproveRejectKeys();
+    } catch (e) {
+      console.warn("extras: approveReject", e);
+    }
+    try {
+      initUrlSync();
+    } catch (e) {
+      console.warn("extras: urlSync", e);
+    }
+    try {
+      initErFilters();
+    } catch (e) {
+      console.warn("extras: erFilters", e);
+    }
+    try {
+      initDiagramExportButtons();
+    } catch (e) {
+      console.warn("extras: diagramExport", e);
+    }
+    try {
+      initZipSplitSize();
+    } catch (e) {
+      console.warn("extras: zipSplit", e);
+    }
+    try {
+      initApiResponseViewToggle();
+    } catch (e) {
+      console.warn("extras: apiViewToggle", e);
+    }
+    try {
+      initApiEnvVars();
+    } catch (e) {
+      console.warn("extras: apiEnvVars", e);
+    }
+    try {
+      initCurlCopy();
+    } catch (e) {
+      console.warn("extras: curlCopy", e);
+    }
+    try {
+      initRowCopyFormat();
+    } catch (e) {
+      console.warn("extras: rowCopyFormat", e);
+    }
+    try {
+      initStatusUndo();
+    } catch (e) {
+      console.warn("extras: statusUndo", e);
+    }
+    try {
+      initOfflineRetry();
+    } catch (e) {
+      console.warn("extras: offlineRetry", e);
+    }
+    try {
+      initRightPaneJsonDiff();
+    } catch (e) {
+      console.warn("extras: rightPaneJsonDiff", e);
+    }
+    try {
+      initInlineMemo();
+    } catch (e) {
+      console.warn("extras: inlineMemo", e);
+    }
+    try {
+      initRetryFailedSectionsButton();
+    } catch (e) {
+      console.warn("extras: retryFailed", e);
+    }
+    try {
+      initGenerationalBackupHook();
+    } catch (e) {
+      console.warn("extras: genBackup", e);
+    }
+    try {
+      initErLayoutSwitch();
+    } catch (e) {
+      console.warn("extras: erLayout", e);
+    }
+    try {
+      initErDoubleClickNav();
+    } catch (e) {
+      console.warn("extras: erDblClick", e);
+    }
+    try {
+      initProcessAnnotations();
+    } catch (e) {
+      console.warn("extras: processNote", e);
+    }
+    try {
+      initRecordUpdateCountDelta();
+    } catch (e) {
+      console.warn("extras: recordDelta", e);
+    }
+    try {
+      initApiCollection();
+    } catch (e) {
+      console.warn("extras: apiCollection", e);
+    }
+    try {
+      initI18nSwitch();
+    } catch (e) {
+      console.warn("extras: i18n", e);
+    }
+    try {
+      initLeftDockProperties();
+    } catch (e) {
+      console.warn("extras: leftDock", e);
+    }
+    try {
+      initVirtualScrollLite();
+    } catch (e) {
+      console.warn("extras: virtualScroll", e);
+    }
+    try {
+      initFilteredScopeTree();
+    } catch (e) {
+      console.warn("extras: filteredScope", e);
+    }
+    try {
+      initJsonSchemaValidate();
+    } catch (e) {
+      console.warn("extras: jsonSchema", e);
+    }
+    try {
+      initDesignTemplates();
+    } catch (e) {
+      console.warn("extras: designTemplates", e);
+    }
+    try {
+      initDesignToc();
+    } catch (e) {
+      console.warn("extras: designToc", e);
+    }
+    try {
+      initProcessScreenshotDiff();
+    } catch (e) {
+      console.warn("extras: procSnapshot", e);
+    }
+    try {
+      initDesignCoverInputs();
+    } catch (e) {
+      console.warn("extras: designCover", e);
+    }
+    try {
+      initExcelSheetSplit();
+    } catch (e) {
+      console.warn("extras: excelSplit", e);
+    }
+    try {
+      initCsvImportMapping();
+    } catch (e) {
+      console.warn("extras: csvMapping", e);
+    }
+    try {
+      initQueryBuilder();
+    } catch (e) {
+      console.warn("extras: queryBuilder", e);
+    }
+    try {
+      renderDiffFixedSummary();
+    } catch (e) {
+    }
+    try {
+      adaptReflectChecklist();
+    } catch (e) {
+    }
+    document.addEventListener("kus:diffRendered", () => {
+      try {
+        renderDiffFixedSummary();
+      } catch (e) {
+      }
+      try {
+        decorateFieldTypeIcons();
+      } catch (e) {
+      }
+      try {
+        adaptReflectChecklist();
+      } catch (e) {
+      }
+    });
+    document.addEventListener("click", (e) => {
+      const t = e.target?.closest?.("[data-act]");
+      if (!t) return;
+      const act = t.dataset.act;
+      if (act === "kusExportDiffJson") {
+        e.preventDefault();
+        exportDiffStateToJson();
+      } else if (act === "kusImportDiffJson") {
+        e.preventDefault();
+        const inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = "application/json";
+        inp.onchange = () => {
+          const f = inp.files?.[0];
+          if (f) importDiffStateFromJson(f).catch((err) => pushToast(`読み込み失敗: ${err.message || err}`, { tone: "error" }));
+        };
+        inp.click();
+      } else if (act === "kusExportPlanMd") {
+        e.preventDefault();
+        exportPlanMarkdown();
+      } else if (act === "kusExportPlanMermaid") {
+        e.preventDefault();
+        showPlanMermaidInTool();
+      } else if (act === "kusExportDiffMd") {
+        e.preventDefault();
+        exportDiffAsMarkdown();
+      } else if (act === "kusExportDiffCsv") {
+        e.preventDefault();
+        exportDiffAsCsvForExcel();
+      } else if (act === "kusExportDiffPdf") {
+        e.preventDefault();
+        exportDiffAsPrintablePdf();
+      } else if (act === "kusExportDiffPdfCover") {
+        e.preventDefault();
+        exportDiffPdfWithCover();
+      } else if (act === "kusShowApiDiff") {
+        e.preventDefault();
+        showApiRequestDiffPreview();
+      } else if (act === "kusCaptureSnapshot") {
+        e.preventDefault();
+        captureReflectScreenshot();
+      } else if (act === "kusExportDryrunOverlay") {
+        e.preventDefault();
+        exportDryRunOverlay();
+      }
+    });
+    setStatus("UI 拡張機能を有効化しました");
+  }
+
+  // src/boot.ts
   init_oss_integrations();
 
   // src/tabs/design.ts
@@ -32220,7 +36363,7 @@ ${diffMd}
       }
     };
   })();
-  var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  var sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
   var fetchAllApps = async (options) => {
     const prefix = buildApiPrefix(options?.source?.guestId, false);
     const apps = [];
@@ -32399,7 +36542,7 @@ ${diffMd}
           reverseLookupIndex.set(targetId, set);
         }
         if (i % 20 === 0) progressUi.update(3 + Math.min(20, Math.floor(i / Math.max(1, allApps.length) * 20)), `逆引き探索インデックス作成中... ${i + 1}/${allApps.length}`);
-        if (i % 25 === 0) await sleep(Math.max(10, Math.floor((options.sleepMs || ER_DEFAULTS.sleepMs) / 2)));
+        if (i % 25 === 0) await sleep2(Math.max(10, Math.floor((options.sleepMs || ER_DEFAULTS.sleepMs) / 2)));
       }
     }
     while (q.length) {
@@ -32413,7 +36556,7 @@ ${diffMd}
       apps.push(a);
       progressUi.update(Math.min(90, apps.length / Math.max(1, apps.length + q.length) * 100 | 0), `解析: ${a.name} / 深さ ${depth}`);
       if (options?.maxDepth > 0 && depth >= options.maxDepth) {
-        await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
+        await sleep2(options.sleepMs || ER_DEFAULTS.sleepMs);
         continue;
       }
       for (const r of a.relations) {
@@ -32426,7 +36569,7 @@ ${diffMd}
           enqueueIfNeeded(q, Number(srcId), depth + 1);
         }
       }
-      await sleep(options.sleepMs || ER_DEFAULTS.sleepMs);
+      await sleep2(options.sleepMs || ER_DEFAULTS.sleepMs);
     }
     return apps;
   };
@@ -33071,6 +37214,23 @@ function fieldIconForLabel(f){
   if(f.required) return "•";
   return "·";
 }
+// kintone API のフィールド ENUM を日本語化（ER 図側パネル表示用）
+const FIELD_TYPE_JP_LABEL = {
+  SINGLE_LINE_TEXT:"文字列(1行)", MULTI_LINE_TEXT:"文字列(複数行)", RICH_TEXT:"リッチエディター",
+  NUMBER:"数値", CALC:"計算", RADIO_BUTTON:"ラジオボタン", CHECK_BOX:"チェックボックス",
+  DROP_DOWN:"ドロップダウン", MULTI_SELECT:"複数選択", DATE:"日付", TIME:"時刻", DATETIME:"日時",
+  USER_SELECT:"ユーザー選択", ORGANIZATION_SELECT:"組織選択", GROUP_SELECT:"グループ選択",
+  LOOKUP:"ルックアップ", SUBTABLE:"テーブル", REFERENCE_TABLE:"関連レコード一覧",
+  RECORD_NUMBER:"レコード番号", CREATOR:"作成者", CREATED_TIME:"作成日時",
+  MODIFIER:"更新者", UPDATED_TIME:"更新日時", STATUS:"ステータス", STATUS_ASSIGNEE:"作業者",
+  CATEGORY:"カテゴリー", FILE:"添付ファイル", LINK:"リンク",
+  LABEL:"ラベル", SPACER:"スペース", HR:"罫線", GROUP:"グループ"
+};
+function fieldTypeJpLabel(type){
+  if(!type) return "-";
+  const key = String(type).trim().toUpperCase();
+  return FIELD_TYPE_JP_LABEL[key] || type;
+}
 function visibleFieldsForNode(app){
   return (app.fields || []).filter(f=>ER_OPTIONS.includeSubtableFields || !f.inSubtable);
 }
@@ -33099,7 +37259,7 @@ function buildFieldPreviewLine(field){
   if(ER_OPTIONS.fieldDensity === "full"){
     const extras = [];
     if(code && code !== label) extras.push("[" + code + "]");
-    if(type) extras.push(type);
+    if(type) extras.push(lookupEnum(FIELD_TYPE_JP, type) || type);
     return prefix + " " + label + (extras.length ? " • " + extras.join(" • ") : "");
   }
   return prefix + " " + label + (code && code !== label ? " [" + code + "]" : "");
@@ -33672,7 +37832,7 @@ function renderAppDetail(app){
         + '<div class="field-name">' + escapeHtml(fieldName) + tags + '</div>'
         + '<div class="field-sub">' + escapeHtml(meta.join(' / ')) + '</div>'
         + '</div>'
-        + '<span class="field-type">' + escapeHtml(field.type || "-") + '</span>'
+        + '<span class="field-type">' + escapeHtml(fieldTypeJpLabel(field.type)) + '</span>'
         + '</div>';
     });
   };
@@ -35938,15 +40098,16 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     }
     const csvRows = [];
     rows.forEach((row) => {
+      const typeJp = lookupEnum(FIELD_TYPE_JP, row.type) || row.type;
       if (!row.refs.length) {
-        csvRows.push([row.code, row.label, row.type, row.refCount, "", "", ""]);
+        csvRows.push([row.code, row.label, typeJp, row.refCount, "", "", ""]);
         return;
       }
       row.refs.forEach((ref) => {
         csvRows.push([
           row.code,
           row.label,
-          row.type,
+          typeJp,
           row.refCount,
           ref.section || sectionLabel(ref.sectionKey || ""),
           ref.kind || "",
@@ -37292,6 +41453,9 @@ ${field.label}` : code,
       parsePatchJsonPayload,
       renderPatchJsonSummary,
       populatePatchJsonFromCurrentDiff,
+      populatePatchJsonFromSelectedDiff,
+      exportPatchJsonToFile,
+      copyPatchJsonToClipboard,
       renderCustomizeResult,
       runBulkFieldRename,
       renderTemplateOptions,
@@ -37345,6 +41509,11 @@ ${field.label}` : code,
     initOssIntegrations().catch((e) => {
       console.warn("OSS integrations init skipped:", e.message || e);
     });
+    try {
+      initExtras();
+    } catch (e) {
+      console.warn("extras init skipped:", e?.message || e);
+    }
   }
   function stringifyEditorFallbackValue(value) {
     if (typeof value === "string") return value;

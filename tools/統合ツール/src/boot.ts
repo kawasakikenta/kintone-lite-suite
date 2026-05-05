@@ -23,7 +23,10 @@ import {
   importPatchJsonFromFile,
   parsePatchJsonPayload,
   renderPatchJsonSummary,
-  populatePatchJsonFromCurrentDiff
+  populatePatchJsonFromCurrentDiff,
+  populatePatchJsonFromSelectedDiff,
+  exportPatchJsonToFile,
+  copyPatchJsonToClipboard
 } from './reflect/apply.js';
 import { getActiveReflectRow, getSelectedReflectRows } from './tabs/reflect.js';
 import { resolveApplyScopes } from './reflect/helpers.js';
@@ -31,6 +34,7 @@ import { makeApplyPlanSignature, runPreviewApplyPlan, runExportDryRunPlan } from
 import { scheduleGuidedTourLayout } from './ui/tour.js';
 import { setupEventHandlers, forceReleaseRunningGuard } from './handlers.js';
 import { installPsychology } from './ui/psychology.js';
+import { initExtras } from './ui/extras.js';
 import { initJsonEditor, getJsonEditorInstance, startGuidedTour } from './oss_integrations.js';
 import { GUIDED_TOUR_STEPS } from './constants.js';
 
@@ -393,6 +397,9 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     parsePatchJsonPayload,
     renderPatchJsonSummary,
     populatePatchJsonFromCurrentDiff,
+    populatePatchJsonFromSelectedDiff,
+    exportPatchJsonToFile,
+    copyPatchJsonToClipboard,
     renderCustomizeResult,
     runBulkFieldRename,
     renderTemplateOptions,
@@ -455,6 +462,10 @@ export function runKintoneUnifiedSuite(options: any = {}) {
   initOssIntegrations().catch((e) => {
     console.warn('OSS integrations init skipped:', e.message || e);
   });
+
+  // --- UI 拡張モジュール（35/37/39/41/44/46/47/49/51/52/53/55/60/65/70/78/80/84/85/86/...） ---
+  try { initExtras(); }
+  catch (e) { console.warn('extras init skipped:', (e as any)?.message || e); }
 }
 
 function stringifyEditorFallbackValue(value) {

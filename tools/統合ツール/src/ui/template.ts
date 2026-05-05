@@ -78,7 +78,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
             <button class="h-back" data-act="backToLauncher">← 戻る</button>
             <div class="h-title-feature-main">
               <div class="ht" id="u_featureTitle"></div>
-              <div class="feature-breadcrumb" id="u_featureBreadcrumb" aria-live="polite">ホーム / 機能</div>
+              <div class="feature-breadcrumb" id="u_featureBreadcrumb" aria-live="polite" role="navigation" aria-label="現在地">ホーム / 機能</div>
               <div class="feature-conn" id="u_featureConn" hidden></div>
             </div>
           </div>
@@ -86,8 +86,64 @@ export function buildRoot(targetDocument = document, options: any = {}) {
             <span id="u_envBadge" class="kus-env-badge-host" aria-live="polite"></span>
             <button class="x size" data-act="startGuidedTour" title="初回: 全工程 / 復習: 差分のみ / 反映直前: 反映まで">操作ガイド</button>
             <button class="x size" data-act="openShortcutHelp" title="キーボードショートカット一覧 (?)" aria-label="キーボードショートカット一覧">?</button>
+            <details class="kus-display-prefs" id="u_displayPrefs">
+              <summary class="x size" title="ダーク/フォントサイズ/コントラスト/配色/フォーカスリング/ダイアログ位置/説明文の詳細度を切り替え">表示</summary>
+              <div class="kus-display-prefs__panel" role="dialog" aria-label="表示設定">
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">テーマ</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="theme" data-value="light">ライト</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="theme" data-value="dark">ダーク</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="theme" data-value="contrast">高コントラスト</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">フォントサイズ</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="fontSize" data-value="sm">小</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="fontSize" data-value="md">標準</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="fontSize" data-value="lg">大</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">差分カラーパレット</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="palette" data-value="default" title="追加=緑 / 削除=赤 / 変更=橙（標準）">標準</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="palette" data-value="cb" title="追加=青 / 削除=黄 / 変更=紫（色覚多様性配慮）">色覚対応</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">フォーカスリング</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="focusRing" data-value="default">標準</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="focusRing" data-value="strong">強調</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">ダイアログ位置</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDialogAlign" data-value="left">左</button>
+                    <button type="button" class="btn sub" data-act="setDialogAlign" data-value="center">中央</button>
+                    <button type="button" class="btn sub" data-act="setDialogAlign" data-value="right">右</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__group">
+                  <div class="kus-display-prefs__title">説明文の詳細度</div>
+                  <div class="kus-display-prefs__row">
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="verbosity" data-value="brief">簡潔</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="verbosity" data-value="normal">標準</button>
+                    <button type="button" class="btn sub" data-act="setDisplayPref" data-pref="verbosity" data-value="detail">詳細</button>
+                  </div>
+                </div>
+                <div class="kus-display-prefs__foot">
+                  <span class="muted">設定はセッション内のみ（タブを閉じるとリセット）</span>
+                  <button type="button" class="btn sub" data-act="resetDisplayPrefs">既定に戻す</button>
+                </div>
+              </div>
+            </details>
             <button class="x size" data-act="dialogSizeDefault">標準</button>
             <button class="x size" data-act="dialogSizeLarge">大</button>
+            <button class="x size" data-act="dialogSizeWide" title="2画面用ワイドサイズ">ワイド</button>
             <button class="x size" data-act="dialogSizeMax">最大</button>
             <button class="x size" data-act="toggleHeaderCollapse" id="u_headerCollapseBtn" title="ヘッダーを折りたたむ／展開する" aria-label="ヘッダーを折りたたむ">▲</button>
             <button class="x" data-act="close">閉じる</button>
@@ -105,11 +161,11 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <button type="button" class="connection-toggle-btn" data-act="toggleConnectionPanel" id="u_connectionToggleBtn" aria-expanded="true" aria-controls="u_connectionStep1Body" title="接続設定の表示/非表示を切り替え">設定を折りたたむ</button>
               </div>
               <div class="connection-step1-body" id="u_connectionStep1Body">
-              <p class="connection-section-lead" id="u_connectionLead">比較元・比較先の数値IDと、ゲストスペース利用時はゲストIDを入力します。</p>
+              <p class="connection-section-lead" id="u_connectionLead">動作対象のアプリIDを <strong>比較元</strong> に入力します。<br>差分比較・プレビュー反映を使う場合のみ <strong>比較先</strong> も入力してください（ER図／設計書／レコード管理／設定一括取得 などは比較元だけでOK）。</p>
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
               <div class="conn-source">
-                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span></label>
+                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span> <span class="conn-label-hint" title="このツール全体の動作対象アプリ。1アプリだけ操作する機能（ER図 / 設計書 / レコード管理 など）もここに入力します。">動作対象</span></label>
                 <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-source">
@@ -117,7 +173,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
               </div>
               <div class="conn-target">
-                <label for="u_targetApp" id="u_targetAppLabel">比較先アプリID <span class="req">必須</span></label>
+                <label for="u_targetApp" id="u_targetAppLabel">比較先アプリID <span class="req-soft" title="差分比較・プレビュー反映を使うときに必須。1アプリだけ操作する機能では空のままで構いません。">差分比較時</span></label>
                 <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-target">
@@ -126,9 +182,10 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               </div>
             </div>
             <div class="btns connection-step-btns connection-quick-btns" style="margin-top:8px">
-              <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元にセット">比較元=現在アプリ</button>
-              <button type="button" class="btn sub connection-secondary-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
-              <button type="button" class="btn sub connection-secondary-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
+              <button type="button" class="btn sub connection-secondary-action connection-secondary-action--primary" data-act="setBothCurrent" title="今開いているアプリのIDを比較元と比較先の両方に一括セット（最も多いケース）">両方=現在アプリ</button>
+              <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元（動作対象）にセット">比較元=現在アプリ</button>
+              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
+              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
             </div>
             <div class="connection-preview-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
               <span class="muted" style="font-size:12px">取得環境</span>
@@ -223,6 +280,19 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <button type="button" class="btn sub" data-act="exportDiffJson">JSON</button>
                       <button type="button" class="btn sub" data-act="exportDiffHtml">HTML</button>
                       <button type="button" class="btn sub" data-act="exportPatchJson">パッチ</button>
+                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <button type="button" class="btn sub" data-act="kusExportDiffJson" title="差分スナップショット（rows / fetchIssues / filters）を JSON で保存">📸 差分スナップショット保存</button>
+                      <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffCsv" title="差分結果を Excel 用 CSV (UTF-8 BOM) で保存">📊 差分 CSV</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙・ロゴ付き PDF（設計書ペインの設定を使用）">📕 差分 PDF（表紙付き）</button>
+                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <button type="button" class="btn sub" data-act="kusExportPlanMd" title="現在の反映プランを Markdown で保存（PR 添付向け）">📝 反映プラン MD 保存</button>
+                      <button type="button" class="btn sub" data-act="kusExportPlanMermaid" title="反映プランを Mermaid フロー図として保存">📊 反映プラン Mermaid</button>
+                      <button type="button" class="btn sub" data-act="kusShowApiDiff" title="送信予定 API リクエストの旧/新差分プレビュー">🔍 API 差分プレビュー</button>
+                      <button type="button" class="btn sub" data-act="kusExportDryrunOverlay" title="ドライラン重ね差分 JSON を保存">🧪 ドライラン重ね差分</button>
+                      <button type="button" class="btn sub" data-act="kusCaptureSnapshot" title="現在の反映状態の HTML スナップショットを保存">📸 状態スナップショット</button>
                     </div>
                   </details>
                   <details class="diff-hero__pop diff-hero__pop--advanced">
@@ -365,6 +435,10 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_added" title="追加差分だけ">+ 追加</button>
                       <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_removed" title="削除差分だけ">− 削除</button>
                       <button type="button" class="btn sub" data-act="diffUiPreset" data-preset="type_changed" title="変更差分だけ">~ 変更</button>
+                      <span class="diff-review-toolbar__sep" aria-hidden="true">|</span>
+                      <button type="button" class="btn sub" data-act="diffSectionsExpandAll" title="すべての差分セクションを展開">⇊ 全展開</button>
+                      <button type="button" class="btn sub" data-act="diffSectionsCollapseAll" title="すべての差分セクションを折りたたみ">⇈ 全折りたたみ</button>
+                      <button type="button" class="btn sub" data-act="copyDiffResult" title="現在表示している差分結果をクリップボードへコピー">📋 結果をコピー</button>
                     </div>
                   </div>
                   <div class="diff-active-filters" id="u_diffActiveFilters" aria-live="polite"></div>
@@ -713,7 +787,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                     <button type="button" class="reflect-route-card reflect-route-card--standard" data-act="openReflectScopePicker">
                       <div class="reflect-route-card__no">01</div>
                       <div class="reflect-route-card__body">
-                        <div class="reflect-route-card__title">標準ルート</div>
+                        <div class="reflect-route-card__title">標準ルート <span class="reflect-route-card__count" id="u_reflectScopeCountBadge" aria-label="選択中のセクション数">0</span></div>
                         <div class="reflect-route-card__desc">セクション単位で反映対象を選びます。まずはこちら。</div>
                         <div class="reflect-route-card__summary" id="u_reflectScopeSummary">読み込み中...</div>
                       </div>
@@ -901,32 +975,52 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <!-- モーダル: JSON パッチ -->
               <div class="reflect-modal-overlay" id="u_reflectJsonModal" hidden>
                 <div class="reflect-modal-backdrop" data-act="closeReflectModal" data-modal="json"></div>
-                <div class="reflect-modal-card reflect-modal-card--lg" role="dialog" aria-modal="true" aria-labelledby="u_reflectJsonModalTitle">
+                <div class="reflect-modal-card reflect-modal-card--xl" role="dialog" aria-modal="true" aria-labelledby="u_reflectJsonModalTitle">
                   <header class="reflect-modal-head">
                     <div>
-                      <div class="reflect-modal-kicker">{ } JSON ルート</div>
-                      <h3 class="reflect-modal-title" id="u_reflectJsonModalTitle">パッチJSONを編集して反映</h3>
-                      <p class="reflect-modal-sub">差分比較結果を取り込んで調整するか、外部JSONを読み込んで反映できます。</p>
+                      <div class="reflect-modal-kicker">{ } JSON ルート（部分反映）</div>
+                      <h3 class="reflect-modal-title" id="u_reflectJsonModalTitle">本番に入れる差分だけをJSONで受け渡し</h3>
+                      <p class="reflect-modal-sub">「10個の修正のうち3個だけ本番に入れたい」用のメイン動線です。差分比較結果から絞り込んでJSON出力 → 別環境で取込 → 反映、までを1モーダル内で完結できます。</p>
                     </div>
                     <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="json" aria-label="閉じる">×</button>
                   </header>
                   <div class="reflect-modal-body">
+                    <ol class="patch-json-steps" aria-label="JSONルートのステップ">
+                      <li><span class="patch-json-step-no">1</span><span><strong>選ぶ</strong>: 差分比較で本番に入れたい行を選択／全件取込</span></li>
+                      <li><span class="patch-json-step-no">2</span><span><strong>出す</strong>: 選択範囲をパッチJSONとしてエクスポート（共有・レビュー可）</span></li>
+                      <li><span class="patch-json-step-no">3</span><span><strong>取込</strong>: 反映先の環境でこのモーダルにJSONを取り込み、内容を確認</span></li>
+                      <li><span class="patch-json-step-no">4</span><span><strong>反映</strong>: 内容OKなら「この内容で反映」で比較先プレビューに書き込み</span></li>
+                    </ol>
                     <div id="u_patchJsonPanel" style="display:block">
-                      <div class="btns" style="margin-bottom:6px">
-                        <button class="btn sub" data-act="patchJsonUseCurrentDiff">差分比較結果を読込</button>
-                        <button class="btn sub" data-act="patchJsonLoadFile">JSONファイル読込</button>
+                      <div class="patch-json-toolbar btns" style="margin-bottom:6px;flex-wrap:wrap;gap:6px">
+                        <span class="patch-json-toolbar-label">入力:</span>
+                        <button class="btn sub" data-act="patchJsonUseCurrentDiff" title="現在の差分比較結果を全件パッチJSONとして取り込みます">📥 差分比較結果を全件取込</button>
+                        <button class="btn sub" data-act="patchJsonUseSelectedDiff" title="差分タブで選択中の行だけをパッチJSONとして取り込みます（部分反映の主動線）">⭐ 選択中の差分だけ取込</button>
+                        <button class="btn sub" data-act="patchJsonLoadFile" title="保存済みのパッチJSONファイルを読み込みます">📂 JSONファイル読込</button>
                         <input type="file" id="u_patchJsonFileInput" accept=".json" style="display:none">
-                        <button class="btn sub" data-act="patchJsonClear">クリア</button>
+                        <span class="patch-json-toolbar-sep" aria-hidden="true">|</span>
+                        <span class="patch-json-toolbar-label">出力:</span>
+                        <button class="btn sub" data-act="patchJsonExport" title="現在エディタにある内容をパッチJSONとしてダウンロードします">💾 JSONエクスポート</button>
+                        <button class="btn sub" data-act="patchJsonCopy" title="クリップボードにコピー">📋 コピー</button>
+                        <button class="btn sub" data-act="patchJsonClear" title="エディタを空にします">✕ クリア</button>
                       </div>
-                      <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px;padding:6px 10px;border-radius:6px;font-size:11px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af"></div>
-                      <div id="u_patchJsonEditor" style="width:100%;height:360px;border-radius:6px;"></div>
-                      <div style="margin-top:10px;font-size:11px;font-weight:700;color:#334155">JSON差分比較</div>
-                      <div id="u_patchJsonDiff" style="margin-top:6px;min-height:120px;max-height:320px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
+                      <div id="u_patchJsonSummary" style="display:none;margin-bottom:6px"></div>
+                      <details class="patch-json-fold" id="u_patchJsonRangeFold" style="display:none;margin:6px 0;border:1px solid #dbe3ed;border-radius:8px;background:#f8fafc">
+                        <summary style="cursor:pointer;padding:8px 10px;font-size:12px;font-weight:700;color:#0f172a">📋 このJSONに含まれる差分範囲（行一覧）</summary>
+                        <div id="u_patchJsonRangeBody" style="padding:8px 10px 10px;border-top:1px dashed #cbd5e1"></div>
+                      </details>
+                      <div style="margin-top:8px;font-size:11px;font-weight:700;color:#334155">JSON エディタ（編集可）</div>
+                      <div id="u_patchJsonEditor" style="width:100%;height:300px;border-radius:6px;"></div>
+                      <details class="patch-json-fold" style="margin-top:10px;border:1px solid #dbe3ed;border-radius:8px;background:#f8fafc">
+                        <summary style="cursor:pointer;padding:8px 10px;font-size:12px;font-weight:700;color:#0f172a">🔍 比較元 / 比較先 のリッチ差分プレビュー</summary>
+                        <div id="u_patchJsonDiff" style="margin:8px 10px 10px;min-height:120px;max-height:320px;overflow:auto;border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:8px;color:#64748b;font-size:11px">パッチJSONを読み込むと、比較元 / 比較先の差分比較をここに表示します。</div>
+                      </details>
                     </div>
                   </div>
                   <footer class="reflect-modal-foot">
                     <button type="button" class="btn sub" data-act="closeReflectModal" data-modal="json">閉じる</button>
-                    <button type="button" class="btn ok" data-act="applyPatchJson">この内容で反映</button>
+                    <button type="button" class="btn sub" data-act="patchJsonExport" title="このJSONをファイル保存（部分反映の受け渡し）">💾 JSONエクスポート</button>
+                    <button type="button" class="btn ok" data-act="applyPatchJson" title="現在のJSONの内容を比較先プレビューへ反映">この内容で反映</button>
                   </footer>
                 </div>
               </div>

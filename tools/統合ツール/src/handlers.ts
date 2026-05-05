@@ -69,6 +69,9 @@ import {
 import {
   fitDialogToViewport,
   applyDialogSizePreset,
+  applyDialogSize,
+  applyDialogPosition,
+  getDialogSizeBounds,
   getRoot,
   getToolDocument,
   getToolWindow,
@@ -947,6 +950,20 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
 
+    // Alt+← でランチャーへ戻る（機能画面のみ）
+    if (e.altKey && e.key === 'ArrowLeft' && !editable) {
+      const r = getToolDocument().getElementById('kintone-unified-suite-v2');
+      if (r && r.classList.contains('screen-feature')) {
+        e.preventDefault();
+        showLauncherScreen({ persist: false });
+        updateLauncherToggleButton();
+        applyLauncherFilter();
+        saveCurrentDialogState();
+        setStatus('ホームへ戻りました（Alt+←）');
+        return;
+      }
+    }
+
     if (state.guidedTourActive && !editable) {
       if (e.key === 'Escape') { e.preventDefault(); closeGuidedTour(); return; }
       if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); moveGuidedTour(1); return; }
@@ -1688,6 +1705,35 @@ export function setupEventHandlers(injected: any = {}) {
       setStatus(`ランチャータブを切り替えました: ${actEl.textContent?.trim() || ''}`);
       return;
     }
+    if (act === 'diffSectionsExpandAll') {
+      const doc = getToolDocument();
+      const els = [...doc.querySelectorAll<HTMLDetailsElement>('#u_result details, #u_result .row .fold, .diff-result-main details')];
+      let n = 0;
+      els.forEach((el) => {
+        if (el instanceof HTMLDetailsElement && !el.open) { el.open = true; n++; }
+      });
+      setStatus(`差分セクションを ${n} 件展開しました`);
+      return;
+    }
+    if (act === 'diffSectionsCollapseAll') {
+      const doc = getToolDocument();
+      const els = [...doc.querySelectorAll<HTMLDetailsElement>('#u_result details, #u_result .row .fold, .diff-result-main details')];
+      let n = 0;
+      els.forEach((el) => {
+        if (el instanceof HTMLDetailsElement && el.open) { el.open = false; n++; }
+      });
+      setStatus(`差分セクションを ${n} 件折りたたみました`);
+      return;
+    }
+    if (act === 'copyDiffResult') {
+      const text = (ui.result?.innerText || '').trim();
+      if (!text) {
+        setStatus('コピー対象の差分結果がありません', true);
+        return;
+      }
+      copyToClipboard(text, '差分結果（テキスト）をコピーしました', '差分結果のコピーに失敗しました');
+      return;
+    }
     if (act === 'clearDiffFilters') {
       if (ui.diffFilterSection) ui.diffFilterSection.value = '';
       if (ui.diffFilterType) ui.diffFilterType.value = '';
@@ -1799,10 +1845,76 @@ export function setupEventHandlers(injected: any = {}) {
       setStatus(`ダイアログを大きめサイズにしました (${next.width} x ${next.height})`);
       return;
     }
+    if (act === 'dialogSizeWide') {
+      const bounds = getDialogSizeBounds();
+      const w = Math.min(bounds.maxWidth, Math.round(bounds.maxWidth * 0.9));
+      const h = Math.min(bounds.maxHeight, Math.round(bounds.maxHeight * 0.9));
+      const next = applyDialogSize(w, h);
+      saveCurrentDialogState();
+      setStatus(`ダイアログをワイドサイズにしました (${next.width} x ${next.height})`);
+      return;
+    }
     if (act === 'dialogSizeMax') {
       const next = applyDialogSizePreset('max');
       saveCurrentDialogState();
       setStatus(`ダイアログを最大サイズにしました (${next.width} x ${next.height})`);
+      return;
+    }
+    if (act === 'setDialogAlign') {
+      const align = (actEl.dataset.value || 'center') as 'left' | 'center' | 'right';
+      const rectRoot = getToolDocument().getElementById('kintone-unified-suite-v2');
+      if (!rectRoot) return;
+      const rect = rectRoot.getBoundingClientRect();
+      const winWidth = (rectRoot.ownerDocument?.defaultView || window).innerWidth || rect.width;
+      let left = rect.left;
+      const margin = 16;
+      if (align === 'left') left = margin;
+      else if (align === 'right') left = Math.max(margin, winWidth - rect.width - margin);
+      else left = Math.max(margin, Math.round((winWidth - rect.width) / 2));
+      applyDialogPosition(left, rect.top);
+      saveCurrentDialogState();
+      rectRoot.classList.remove('kus-dialog-align-left', 'kus-dialog-align-center', 'kus-dialog-align-right');
+      rectRoot.classList.add(`kus-dialog-align-${align}`);
+      setStatus(`ダイアログを${align === 'left' ? '左' : align === 'right' ? '右' : '中央'}に配置しました`);
+      return;
+    }
+    if (act === 'setDisplayPref') {
+      const pref = String(actEl.dataset.pref || '');
+      const value = String(actEl.dataset.value || '');
+      const rootEl = getToolDocument().getElementById('kintone-unified-suite-v2');
+      if (!rootEl || !pref) return;
+      const prefix = `kus-pref-${pref}-`;
+      [...rootEl.classList].forEach((cls) => {
+        if (cls.startsWith(prefix)) rootEl.classList.remove(cls);
+      });
+      rootEl.classList.add(`${prefix}${value}`);
+      const labels: Record<string, Record<string, string>> = {
+        theme: { light: 'ライト', dark: 'ダーク', contrast: '高コントラスト' },
+        fontSize: { sm: '小', md: '標準', lg: '大' },
+        palette: { default: '標準', cb: '色覚対応' },
+        focusRing: { default: '標準', strong: '強調' },
+        verbosity: { brief: '簡潔', normal: '標準', detail: '詳細' }
+      };
+      const prefLabel = ({ theme: 'テーマ', fontSize: 'フォントサイズ', palette: 'カラーパレット', focusRing: 'フォーカスリング', verbosity: '説明文の詳細度' } as Record<string, string>)[pref] || pref;
+      const valueLabel = (labels[pref] && labels[pref][value]) || value;
+      setStatus(`${prefLabel}を「${valueLabel}」にしました`);
+      return;
+    }
+    if (act === 'resetDisplayPrefs') {
+      const rootEl = getToolDocument().getElementById('kintone-unified-suite-v2');
+      if (!rootEl) return;
+      [...rootEl.classList].forEach((cls) => {
+        if (cls.startsWith('kus-pref-') || cls.startsWith('kus-dialog-align-')) rootEl.classList.remove(cls);
+      });
+      setStatus('表示設定を既定に戻しました');
+      return;
+    }
+    if (act === 'breadcrumbHome') {
+      showLauncherScreen({ persist: false });
+      updateLauncherToggleButton();
+      applyLauncherFilter();
+      saveCurrentDialogState();
+      setStatus('ホームへ戻りました');
       return;
     }
 
@@ -1876,6 +1988,19 @@ export function setupEventHandlers(injected: any = {}) {
     }
 
     // ----- Source / Target quick actions -----
+    if (act === 'setBothCurrent') {
+      if (!DEFAULT_APP_ID) {
+        setStatus('現在アプリのIDを取得できませんでした（kintone のアプリ画面で開いてください）', true);
+        return;
+      }
+      ui.sourceApp.value = DEFAULT_APP_ID;
+      ui.targetApp.value = DEFAULT_APP_ID;
+      saveCurrentDialogState();
+      updateConnectionStepIndicators();
+      renderBundleState();
+      setStatus(`比較元・比較先アプリIDを現在アプリ(${DEFAULT_APP_ID})に設定しました`);
+      return;
+    }
     if (act === 'setSourceCurrent') {
       ui.sourceApp.value = DEFAULT_APP_ID;
       saveCurrentDialogState();
@@ -2968,6 +3093,42 @@ export function setupEventHandlers(injected: any = {}) {
       } catch (err) {
         setStatus(err.message || String(err), true);
       }
+      return;
+    }
+    if (act === 'patchJsonUseSelectedDiff') {
+      const populateSelected = (injected as any).populatePatchJsonFromSelectedDiff;
+      if (typeof populateSelected !== 'function') {
+        setStatus('選択行からのパッチJSON生成は未対応です', true);
+        return;
+      }
+      try {
+        populateSelected({ force: true });
+      } catch (err) {
+        setStatus(err.message || String(err), true);
+        showToast(err.message || String(err), 'warn').catch(() => {});
+      }
+      return;
+    }
+    if (act === 'patchJsonExport') {
+      const exportFn = (injected as any).exportPatchJsonToFile;
+      if (typeof exportFn !== 'function') {
+        setStatus('パッチJSONのエクスポートは未対応です', true);
+        return;
+      }
+      try {
+        exportFn();
+      } catch (err) {
+        setStatus(err.message || String(err), true);
+      }
+      return;
+    }
+    if (act === 'patchJsonCopy') {
+      const copyFn = (injected as any).copyPatchJsonToClipboard;
+      if (typeof copyFn !== 'function') {
+        setStatus('クリップボードコピーは未対応です', true);
+        return;
+      }
+      withGuard(async () => copyFn());
       return;
     }
     if (act === 'patchJsonClear') {
