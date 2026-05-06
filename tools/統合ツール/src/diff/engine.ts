@@ -944,11 +944,11 @@ const SUBTABLE_ROOT_PATH_RE = /^fieldSettings\.properties\.([^.[\]]+)$/;
 // 既存の SUBTABLE 展開と同じ方針で、エンティティ単位の表示行を生成する。
 // 親行は元のまま残し、子行に `_displayOnly:true` を付ける。
 // ---------------------------------------------------------------------------
-function tokenizeForExpansion(path) {
+function tokenizeForExpansion(path: string | null | undefined): Array<string | number> {
   if (!path) return [];
-  const out = [];
+  const out: Array<string | number> = [];
   const re = /([^[.\]]+)|\[(\d+)\]/g;
-  let m;
+  let m: RegExpExecArray | null;
   while ((m = re.exec(path)) !== null) {
     if (m[1] != null) out.push(m[1]);
     else out.push(Number(m[2]));
@@ -973,7 +973,7 @@ interface EntityChildSpec {
   reasonNoun: string;
 }
 
-function enumerateNamedMap(obj, basePath, kind, kindLabel): EntityChildSpec[] {
+function enumerateNamedMap(obj: any, basePath: string, kind: string, kindLabel: string): EntityChildSpec[] {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return [];
   return Object.keys(obj).map((name) => ({
     path: `${basePath}.${name}`,
@@ -1041,7 +1041,7 @@ function enumerateArray(arr, basePath, kind, kindLabel, options: { keyField?: st
   });
 }
 
-function computeSectionWideEntityChildren(sectionKey, payload): EntityChildSpec[] {
+function computeSectionWideEntityChildren(sectionKey: string, payload: any): EntityChildSpec[] {
   if (!payload || typeof payload !== 'object') return [];
   switch (sectionKey) {
     case 'viewSettings':
@@ -1098,9 +1098,9 @@ function computeSectionWideEntityChildren(sectionKey, payload): EntityChildSpec[
 
 const ENTITY_EXPAND_LIMIT = 200;
 
-export function expandEntityRowsForDisplay(rows) {
+export function expandEntityRowsForDisplay(rows: DiffRow[] | null | undefined): DiffRow[] {
   if (!Array.isArray(rows) || !rows.length) return rows || [];
-  const out = [];
+  const out: DiffRow[] = [];
   rows.forEach((row, idx) => {
     out.push(row);
     if (!row || row._displayOnly) return;
@@ -1153,7 +1153,7 @@ export function expandEntityRowsForDisplay(rows) {
   return out;
 }
 
-export function expandSubtableRowsForDisplay(rows) {
+export function expandSubtableRowsForDisplay(rows: DiffRow[] | null | undefined): DiffRow[] {
   if (!Array.isArray(rows) || !rows.length) return rows || [];
   const out: DiffRow[] = [];
   rows.forEach((row, idx) => {

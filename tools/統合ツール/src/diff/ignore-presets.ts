@@ -25,7 +25,8 @@ function loadRaw(): DiffIgnorePreset[] {
       }))
       .filter((entry: DiffIgnorePreset) => entry.name.length > 0)
       .slice(0, MAX_PRESETS);
-  } catch {
+  } catch (error) {
+    console.warn('差分無視プリセットの読み込みに失敗しました', error);
     return [];
   }
 }
@@ -33,7 +34,16 @@ function loadRaw(): DiffIgnorePreset[] {
 function saveRaw(list: DiffIgnorePreset[]): void {
   try {
     localStorage.setItem(DIFF_IGNORE_PRESETS_KEY, JSON.stringify(list.slice(0, MAX_PRESETS)));
-  } catch { /* ignore */ }
+  } catch (error) {
+    console.warn('差分無視プリセットの保存に失敗しました', error);
+    try {
+      const detail = { operation: 'save', key: DIFF_IGNORE_PRESETS_KEY, message: (error as any)?.message || String(error) };
+      window.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
+      document.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
+      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
+      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
+    } catch { /* noop */ }
+  }
 }
 
 function escapeAttr(s: unknown): string {

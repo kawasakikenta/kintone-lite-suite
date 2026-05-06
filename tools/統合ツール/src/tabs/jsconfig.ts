@@ -156,7 +156,12 @@ export async function runBatchJsConfigDownload() {
       continue;
     }
 
-    const files = [...(customize?.desktop?.js || []), ...(customize?.mobile?.js || [])];
+    const files = [
+      ...(customize?.desktop?.js || []),
+      ...(customize?.desktop?.css || []),
+      ...(customize?.mobile?.js || []),
+      ...(customize?.mobile?.css || [])
+    ];
     const fileTargets = files.filter(f => f.type === 'FILE');
 
     if (fileTargets.length === 0) continue;

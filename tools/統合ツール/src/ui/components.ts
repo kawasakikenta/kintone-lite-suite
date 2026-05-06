@@ -81,8 +81,13 @@ export function setStatus(msg, isError = false) {
   if (bar) bar.classList.toggle('status-bar--error', !!isError);
 }
 
+function cssEscapeLiteral(value) {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+}
+
 export function setBusy(isBusy, message = '') {
-  const root = ui.status?.closest(`#${CSS.escape?.('kintone-unified-suite-v2') || 'kintone-unified-suite-v2'}`);
+  const root = ui.status?.closest(`#${cssEscapeLiteral('kintone-unified-suite-v2')}`);
   if (message && ui.busyText) ui.busyText.textContent = message;
   if (root) root.classList.toggle('busy', !!isBusy);
 }
@@ -222,16 +227,25 @@ function snapshotCurrentTabResult() {
   if (!state.lastResultByTab || typeof state.lastResultByTab !== 'object') {
     state.lastResultByTab = {};
   }
-  if (html && html !== '<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア</p><p class="main-result-placeholder-body">このタブの操作結果やログがここに表示されます。</p></div>') {
+  if (html && html !== MAIN_RESULT_PLACEHOLDER_HTML && isRestorableResultHtml(html)) {
     state.lastResultByTab[prevTab] = html;
   }
+}
+
+const MAIN_RESULT_PLACEHOLDER_HTML = '<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア</p><p class="main-result-placeholder-body">このタブの操作結果やログがここに表示されます。</p></div>';
+const RESTORABLE_RESULT_HTML_MAX = 500_000;
+
+function isRestorableResultHtml(html) {
+  const text = String(html || '');
+  if (!text || text.length > RESTORABLE_RESULT_HTML_MAX) return false;
+  return !/(<script\b|<iframe\b|<object\b|<embed\b|<link\b|<meta\b|\son[a-z]+\s*=|javascript:)/i.test(text);
 }
 
 function restoreTabResult(nextKey) {
   if (!ui.result) return;
   if (nextKey === 'diff') return; // diff タブは renderResultRows 側で描画
   const stored = state.lastResultByTab && state.lastResultByTab[nextKey];
-  if (typeof stored === 'string' && stored.length) {
+  if (typeof stored === 'string' && stored.length && isRestorableResultHtml(stored)) {
     ui.result.innerHTML = stored;
   }
 }

@@ -307,14 +307,16 @@ export function getSeverityDisplayLabel(severity: string): string {
 }
 
 function triggerDownload(filename: string, blob: Blob): void {
+  const doc = getToolDocumentSafe();
+  const win = getToolWindowSafe();
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  const a = doc.createElement('a');
   a.href = url;
   a.download = filename;
   a.style.display = 'none';
-  document.body.appendChild(a);
+  doc.body.appendChild(a);
   a.click();
-  window.setTimeout(() => {
+  win.setTimeout(() => {
     try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ }
     try { a.remove(); } catch (e) { /* ignore */ }
   }, 0);

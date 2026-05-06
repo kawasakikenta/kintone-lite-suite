@@ -420,13 +420,32 @@
   });
 
   // src/state.ts
+  function reportStorageFailure(operation, key, error) {
+    try {
+      console.warn(`[${TOOL_ID}] storage ${operation} failed: ${key}`, error);
+    } catch {
+    }
+    try {
+      const detail = {
+        operation,
+        key,
+        message: error?.message || String(error)
+      };
+      window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
+      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+    } catch {
+    }
+  }
   function loadReflectApplyHistory() {
     try {
       const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY) ?? sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", REFLECT_APPLY_HISTORY_KEY, error);
       return [];
     }
   }
@@ -436,7 +455,8 @@
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", WORK_HISTORY_KEY, error);
       return [];
     }
   }
@@ -466,7 +486,8 @@
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
       return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", CONNECTION_PRESETS_KEY, error);
       return [];
     }
   }
@@ -560,6 +581,28 @@
   });
 
   // src/utils.ts
+  function getToolWindowSafe() {
+    try {
+      const popWin = window.__KUS_TOOL_WINDOW__;
+      if (popWin && !popWin.closed && popWin.document) return popWin;
+    } catch (e) {
+    }
+    return window;
+  }
+  function getToolDocumentSafe() {
+    try {
+      return getToolWindowSafe().document || document;
+    } catch (e) {
+      return document;
+    }
+  }
+  function kusConfirm(message) {
+    try {
+      return getToolWindowSafe().confirm(message);
+    } catch (e) {
+      return window.confirm(message);
+    }
+  }
   function compactForLog(value, max = 220) {
     try {
       const raw = typeof value === "string" ? value : JSON.stringify(value);
@@ -590,6 +633,30 @@ ${contextLine}`);
     if (err?.stack) wrapped.stack = err.stack;
     return wrapped;
   }
+  function triggerDownload(filename, blob) {
+    const doc = getToolDocumentSafe();
+    const win = getToolWindowSafe();
+    const url = URL.createObjectURL(blob);
+    const a = doc.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    doc.body.appendChild(a);
+    a.click();
+    win.setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (e) {
+      }
+      try {
+        a.remove();
+      } catch (e) {
+      }
+    }, 0);
+  }
+  function downloadBlob(filename, blob) {
+    triggerDownload(filename, blob);
+  }
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
@@ -616,6 +683,15 @@ ${contextLine}`);
   function isPreviewRestPrefix(prefix) {
     return String(prefix || "").includes("/v1/preview");
   }
+  function normalizeApiResourcePath(path) {
+    const raw = String(path || "").replace(/\\/g, "/").split("?")[0];
+    const match = raw.match(/\/k(?:\/guest\/[^/]+)?\/v1(?:\/preview)?(\/.*)$/);
+    const resource = match ? match[1] : raw;
+    return resource.startsWith("/") ? resource : `/${resource}`;
+  }
+  function isRecordDataMutationPath(path) {
+    return RECORD_DATA_MUTATION_PATHS.has(normalizeApiResourcePath(path));
+  }
   function assertAllowsMutatingRestCall(prefix, path, method) {
     const m = String(method || "").toUpperCase();
     if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
@@ -623,6 +699,10 @@ ${contextLine}`);
     const rel = String(path || "").replace(/\\/g, "/");
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
       throw new Error(ERR_NO_DEPLOY_API);
+    }
+    if (isRecordDataMutationPath(rel)) {
+      if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+      return;
     }
     if (!isPreviewRestPrefix(prefix)) {
       throw new Error(ERR_NO_PROD_WRITE);
@@ -713,7 +793,7 @@ ${contextLine}`);
       throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
     }
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -723,10 +803,17 @@ ${contextLine}`);
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
       ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+      ERR_NO_RECORD_PREVIEW_API = "レコードAPIにはプレビュー用の追加・更新・削除エンドポイントがありません。レコード操作は本番REST APIを明示的な確認付きで実行します。";
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+      RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
+        "/record.json",
+        "/records.json",
+        "/record/status.json",
+        "/records/status.json"
+      ]);
       apiGetMetrics = {
         calls: 0,
         retries: 0,
@@ -748,6 +835,20 @@ ${contextLine}`);
     }
   });
 
+  // src/ui/dialog.ts
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
   // src/diff/export.ts
   var init_export = __esm({
     "src/diff/export.ts"() {
@@ -758,6 +859,7 @@ ${contextLine}`);
       init_enrich();
       init_filter();
       init_api();
+      init_dialog();
     }
   });
 
@@ -774,20 +876,6 @@ ${contextLine}`);
       SECTION_LABEL_BY_KEY = new Map(
         SECTION_DEFS.map((s) => [s.key, s.label])
       );
-    }
-  });
-
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
     }
   });
 
@@ -850,17 +938,48 @@ ${contextLine}`);
   });
 
   // src/tabs/record-standalone.ts
+  init_utils();
   init_api();
+  function hasOrderByClause(query) {
+    return /\border\s+by\b/i.test(String(query || ""));
+  }
+  function hasPagingClause(query) {
+    return /\blimit\s+\d+/i.test(String(query || "")) || /\boffset\s+\d+/i.test(String(query || ""));
+  }
+  function buildPagedQuery(query, offset) {
+    const base = String(query || "").trim();
+    if (hasPagingClause(base)) {
+      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
+    }
+    const parts = [];
+    if (base) parts.push(base);
+    if (!hasOrderByClause(base)) parts.push("order by $id asc");
+    parts.push("limit 500");
+    parts.push(`offset ${Number(offset || 0)}`);
+    return parts.join(" ");
+  }
+  function buildKeysetQuery(query, lastRecordId) {
+    const base = String(query || "").trim();
+    if (hasPagingClause(base)) {
+      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
+    }
+    const idCond = `$id > ${Number(lastRecordId || 0)}`;
+    if (!base) return `${idCond} order by $id asc limit 500`;
+    if (hasOrderByClause(base)) return null;
+    return `(${base}) and ${idCond} order by $id asc limit 500`;
+  }
   async function fetchAllRecords(prefix, app, query, setStatus2) {
     let all = [];
     let offset = 0;
+    let lastRecordId = 0;
     while (true) {
       setStatus2(`レコード取得中... (${all.length}件取得済)`);
-      const q = query ? `${query} order by $id asc limit 500 offset ${offset}` : `$id > 0 order by $id asc limit 500 offset ${offset}`;
+      const q = buildKeysetQuery(query, lastRecordId) || buildPagedQuery(query, offset);
       const resp = await apiGet(prefix, "/records.json", { app, query: q });
       const batch = resp.records || [];
       all = all.concat(batch);
       if (batch.length < 500) break;
+      lastRecordId = Number(batch[batch.length - 1]?.$id?.value || lastRecordId);
       offset += 500;
     }
     return all;
@@ -868,15 +987,16 @@ ${contextLine}`);
   async function fetchRecordIds(prefix, app, query, setStatus2) {
     const ids = [];
     let offset = 0;
+    let lastRecordId = 0;
     while (true) {
       setStatus2(`対象レコード取得中... (${ids.length}件)`);
-      let q = query ? `${query} ` : "";
-      q += `order by $id asc limit 500 offset ${offset}`;
+      const q = buildKeysetQuery(query, lastRecordId) || buildPagedQuery(query, offset);
       const resp = await apiGet(prefix, "/records.json", { app, query: q, fields: ["$id"] });
       const batch = resp.records || [];
       if (!batch.length) break;
       batch.forEach((r) => ids.push(Number(r.$id.value)));
       if (batch.length < 500) break;
+      lastRecordId = Number(batch[batch.length - 1]?.$id?.value || lastRecordId);
       offset += 500;
     }
     return ids;
@@ -910,12 +1030,59 @@ ${contextLine}`);
     for (const rec of records) lines.push(propKeys.map((k) => esc2(extractValue(rec, k))).join(","));
     const csvStr = "\uFEFF" + lines.join("\n");
     const blob = new Blob([csvStr], { type: "text/csv;charset=utf-8;" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = filename || "records.csv";
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5e3);
+    downloadBlob(filename || "records.csv", blob);
     setStatus2(`CSV出力完了 (${records.length}件)`);
+  }
+  var CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
+    "RECORD_NUMBER",
+    "CREATOR",
+    "CREATED_TIME",
+    "MODIFIER",
+    "UPDATED_TIME",
+    "STATUS",
+    "STATUS_ASSIGNEE",
+    "CALC",
+    "CATEGORY",
+    "__ID__",
+    "__REVISION__",
+    "FILE",
+    "SUBTABLE",
+    "REFERENCE_TABLE",
+    "LABEL",
+    "HR",
+    "SPACER"
+  ]);
+  function splitCsvListValue(value) {
+    const text = String(value == null ? "" : "").trim();
+    if (!text) return [];
+    return text.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  function coerceCsvImportValue(rawValue, fieldDef) {
+    const type = String(fieldDef?.type || "");
+    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return splitCsvListValue(rawValue);
+    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT") {
+      return splitCsvListValue(rawValue).map((code) => ({ code }));
+    }
+    if (type === "NUMBER") return String(rawValue == null ? "" : rawValue).trim();
+    return rawValue;
+  }
+  function validateCsvImportHeader(header, properties) {
+    if (header.includes("$id")) throw new Error("CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。");
+    const unknown = [];
+    const unsupported = [];
+    for (const code of header) {
+      if (!code) continue;
+      const def = properties?.[code];
+      if (!def) {
+        unknown.push(code);
+        continue;
+      }
+      if (CSV_IMPORT_UNSUPPORTED_FIELD_TYPES.has(String(def.type || ""))) {
+        unsupported.push(`${code}(${def.type})`);
+      }
+    }
+    if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(", ")}`);
+    if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(", ")}`);
   }
   async function runCsvImportStandalone(opts, setStatus2) {
     const { appId, guestId, file } = opts;
@@ -964,18 +1131,23 @@ ${contextLine}`);
     const rows = parseCsv(text.replace(/^\uFEFF/, ""));
     if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
     const header = rows[0].map((h) => h.trim());
+    setStatus2("フィールド情報を確認中...");
+    const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
+    const properties = fields?.properties || {};
+    validateCsvImportHeader(header, properties);
     const records = [];
     for (let i = 1; i < rows.length; i++) {
       if (rows[i].length === 1 && rows[i][0] === "") continue;
       const rec = {};
       for (let j = 0; j < header.length; j++) {
-        if (!header[j] || header[j] === "$id") continue;
-        rec[header[j]] = { value: rows[i][j] !== void 0 ? rows[i][j] : "" };
+        if (!header[j]) continue;
+        const val = rows[i][j] !== void 0 ? rows[i][j] : "";
+        rec[header[j]] = { value: coerceCsvImportValue(val, properties[header[j]]) };
       }
       records.push(rec);
     }
     if (!records.length) throw new Error("登録するデータがありません");
-    if (!confirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) return;
+    if (!kusConfirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) return;
     let ok = 0;
     for (let i = 0; i < records.length; i += 100) {
       const batch = records.slice(i, i + 100);
@@ -992,7 +1164,7 @@ ${contextLine}`);
     const prefix = buildApiPrefix(guestId || "", false);
     const ids = await fetchRecordIds(prefix, appId, query || "", setStatus2);
     if (!ids.length) throw new Error("処理対象のレコードが0件です");
-    if (!confirm(`${ids.length}件にアクション「${action}」を実行しますか？`)) return;
+    if (!kusConfirm(`${ids.length}件にアクション「${action}」を実行しますか？`)) return;
     let ok = 0;
     for (let i = 0; i < ids.length; i += 100) {
       const batch = ids.slice(i, i + 100);
@@ -1017,19 +1189,26 @@ ${contextLine}`);
       setStatus2("コピー対象のレコードがありません");
       return;
     }
-    if (!confirm(`${records.length}件を比較先(${targetAppId})へコピーしますか？`)) return;
-    const systemTypes = /* @__PURE__ */ new Set(["RECORD_NUMBER", "CREATOR", "CREATED_TIME", "MODIFIER", "UPDATED_TIME", "STATUS", "STATUS_ASSIGNEE", "CALC"]);
+    if (!kusConfirm(`${records.length}件を比較先(${targetAppId})へコピーしますか？`)) return;
+    const systemTypes = /* @__PURE__ */ new Set(["RECORD_NUMBER", "CREATOR", "CREATED_TIME", "MODIFIER", "UPDATED_TIME", "STATUS", "STATUS_ASSIGNEE", "CALC", "CATEGORY", "__ID__", "__REVISION__"]);
     const systemFields = /* @__PURE__ */ new Set(["$id", "$revision", "作成者", "作成日時", "更新者", "更新日時", "レコード番号", "ステータス", "作業者"]);
     const clean = records.map((rec) => {
       const out = {};
       for (const [k, v] of Object.entries(rec)) {
         if (systemFields.has(k) || systemTypes.has(v.type)) continue;
         if (v.type === "SUBTABLE") {
-          out[k] = { value: v.value.map((sr) => {
+          const rows = Array.isArray(v.value) ? v.value : [];
+          out[k] = { value: rows.map((sr) => {
             const c = {};
-            for (const [sk, sv] of Object.entries(sr.value)) c[sk] = { value: sv.value };
+            const inner = sr && typeof sr === "object" && sr.value && typeof sr.value === "object" ? sr.value : {};
+            for (const [sk, sv] of Object.entries(inner)) {
+              if (systemFields.has(sk) || systemTypes.has(sv.type) || sv.type === "FILE") continue;
+              c[sk] = { value: sv.value };
+            }
             return { value: c };
           }) };
+        } else if (v.type === "FILE") {
+          continue;
         } else {
           out[k] = { value: v.value };
         }

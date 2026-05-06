@@ -59,30 +59,6 @@ const API_TESTER_PRESETS = [
       query: 'order by $id desc limit 10'
     },
     hint: '大量取得時は limit/offset や query を調整してください。'
-  },
-  {
-    id: 'record-post-preview',
-    label: 'レコード追加（POST / preview）',
-    method: 'POST',
-    path: '/k/v1/preview/record.json',
-    body: {
-      app: 1,
-      record: {
-        text_0: { value: 'sample' }
-      }
-    },
-    hint: '書き込み系APIの参考値です。フィールドコード(text_0など)は実アプリに合わせて変更してください。'
-  },
-  {
-    id: 'record-delete-preview',
-    label: 'レコード削除（DELETE / preview）',
-    method: 'DELETE',
-    path: '/k/v1/preview/records.json',
-    body: {
-      app: 1,
-      ids: [1]
-    },
-    hint: '削除系APIのため preview パスを使用します。対象IDを十分確認してから実行してください。'
   }
 ];
 
@@ -117,8 +93,11 @@ export async function runApiTester() {
   resEl.innerHTML = '<div style="color:#64748b">実行中...</div>';
 
   try {
+    if (/^https?:\/\//i.test(path)) {
+      throw new Error('kintone.api には /k/v1/... または /k/guest/... の相対パスを指定してください。完全URLは実行できません。');
+    }
     let finalPath = path;
-    if (!path.startsWith('http') && !path.startsWith('/k/v1/') && !path.startsWith('/k/guest/')) {
+    if (!path.startsWith('/k/v1/') && !path.startsWith('/k/guest/')) {
       const g = (getToolDocument().getElementById('u_sourceGuest') as HTMLInputElement | null)?.value?.trim();
       const prefix = g ? `/k/guest/${g}/v1` : '/k/v1';
       finalPath = prefix + (path.startsWith('/') ? path : `/${path}`);
@@ -131,8 +110,8 @@ export async function runApiTester() {
     setStatus(`API実行成功: ${method} ${finalPath}`);
     saveApiTesterHistory(method, path, bodyStr);
   } catch (e) {
-    let errMsg = String(e.message || e);
-    if (typeof e === 'object' && e !== null) {
+    let errMsg = e instanceof Error ? e.message : String((e as any)?.message || e);
+    if (!(e instanceof Error) && typeof e === 'object' && e !== null) {
       try { errMsg = JSON.stringify(e, null, 2); } catch (_) { }
     }
     resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">${esc(errMsg)}</pre>`;
@@ -143,7 +122,6 @@ export async function runApiTester() {
 }
 
 const API_HISTORY_KEY = 'KUS_API_TESTER_HISTORY';
-let apiTesterEnhanced = false;
 
 function prettyJson(value) {
   try {
@@ -172,13 +150,19 @@ function applyApiTesterPreset(presetId: string) {
 }
 
 export function initApiTesterEnhancements() {
-  if (apiTesterEnhanced) return;
-  apiTesterEnhanced = true;
+  const doc = getToolDocument();
+  const root = doc.getElementById('kintone-unified-suite-v2') || doc.body;
+  if ((root as any).__apiTesterEnhanced) {
+    renderApiTesterHistory();
+    return;
+  }
+  (root as any).__apiTesterEnhanced = true;
 
-  const presetEl = getToolDocument().getElementById('u_apiTesterPreset') as HTMLSelectElement | null;
-  const suggestEl = getToolDocument().getElementById('u_apiTesterPathSuggest') as HTMLDataListElement | null;
+  const presetEl = doc.getElementById('u_apiTesterPreset') as HTMLSelectElement | null;
+  const suggestEl = doc.getElementById('u_apiTesterPathSuggest') as HTMLDataListElement | null;
   if (presetEl) {
-    const options = API_TESTER_PRESETS.map((preset) => `<option value="${esc(preset.id)}">${esc(preset.label)}</option>`).join('');
+    presetEl.querySelectorAll('option[data-api-tester-preset]').forEach((option) => option.remove());
+    const options = API_TESTER_PRESETS.map((preset) => `<option data-api-tester-preset="1" value="${esc(preset.id)}">${esc(preset.label)}</option>`).join('');
     presetEl.insertAdjacentHTML('beforeend', options);
     presetEl.addEventListener('change', () => {
       const presetId = presetEl.value;
@@ -201,9 +185,9 @@ export function initApiTesterEnhancements() {
       .join('');
   }
 
-  const methodEl = getToolDocument().getElementById('u_apiTesterMethod') as HTMLInputElement | HTMLSelectElement | null;
-  const pathEl = getToolDocument().getElementById('u_apiTesterPath') as HTMLInputElement | null;
-  const bodyEl = getToolDocument().getElementById('u_apiTesterBody') as HTMLTextAreaElement | null;
+  const methodEl = doc.getElementById('u_apiTesterMethod') as HTMLInputElement | HTMLSelectElement | null;
+  const pathEl = doc.getElementById('u_apiTesterPath') as HTMLInputElement | null;
+  const bodyEl = doc.getElementById('u_apiTesterBody') as HTMLTextAreaElement | null;
   if (methodEl && pathEl && bodyEl) {
     const getPresetByMethod = (method: string) => API_TESTER_PRESETS.find((preset) => preset.method === method);
     methodEl.addEventListener('change', () => {
@@ -224,11 +208,19 @@ export function saveApiTesterHistory(method: string, path: string, bodyStr: stri
     if (hist.length > 15) hist = hist.slice(0, 15);
     localStorage.setItem(API_HISTORY_KEY, JSON.stringify(hist));
     renderApiTesterHistory();
-  } catch (e) { console.error('History save failed', e); }
+  } catch (e) {
+    console.error('History save failed', e);
+    showToast('API履歴の保存に失敗しました。ブラウザの保存容量や権限を確認してください。', 'warn');
+  }
 }
 
 export function clearApiTesterHistory() {
-  localStorage.removeItem(API_HISTORY_KEY);
+  try {
+    localStorage.removeItem(API_HISTORY_KEY);
+  } catch (e) {
+    console.error('History clear failed', e);
+    showToast('API履歴の削除に失敗しました。', 'warn');
+  }
   renderApiTesterHistory();
 }
 
@@ -290,6 +282,7 @@ export function renderApiTesterHistory() {
       item.addEventListener('mouseout', () => { item.style.borderColor = '#e2e8f0'; item.style.backgroundColor = '#fff'; });
     });
   } catch (e) {
+    console.error('History load failed', e);
     listEl.innerHTML = '<div style="color:#ef4444;font-size:11px;">履歴読込エラー</div>';
   }
 }

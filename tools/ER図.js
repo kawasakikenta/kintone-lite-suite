@@ -420,13 +420,32 @@
   });
 
   // src/state.ts
+  function reportStorageFailure(operation, key, error) {
+    try {
+      console.warn(`[${TOOL_ID}] storage ${operation} failed: ${key}`, error);
+    } catch {
+    }
+    try {
+      const detail = {
+        operation,
+        key,
+        message: error?.message || String(error)
+      };
+      window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
+      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+    } catch {
+    }
+  }
   function loadReflectApplyHistory() {
     try {
       const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY) ?? sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", REFLECT_APPLY_HISTORY_KEY, error);
       return [];
     }
   }
@@ -436,7 +455,8 @@
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", WORK_HISTORY_KEY, error);
       return [];
     }
   }
@@ -466,7 +486,8 @@
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
       return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", CONNECTION_PRESETS_KEY, error);
       return [];
     }
   }
@@ -560,6 +581,21 @@
   });
 
   // src/utils.ts
+  function getToolWindowSafe() {
+    try {
+      const popWin = window.__KUS_TOOL_WINDOW__;
+      if (popWin && !popWin.closed && popWin.document) return popWin;
+    } catch (e) {
+    }
+    return window;
+  }
+  function getToolDocumentSafe() {
+    try {
+      return getToolWindowSafe().document || document;
+    } catch (e) {
+      return document;
+    }
+  }
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -602,14 +638,16 @@ ${contextLine}`);
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
   }
   function triggerDownload(filename, blob) {
+    const doc = getToolDocumentSafe();
+    const win = getToolWindowSafe();
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const a = doc.createElement("a");
     a.href = url;
     a.download = filename;
     a.style.display = "none";
-    document.body.appendChild(a);
+    doc.body.appendChild(a);
     a.click();
-    window.setTimeout(() => {
+    win.setTimeout(() => {
       try {
         URL.revokeObjectURL(url);
       } catch (e) {
@@ -747,6 +785,23 @@ ${contextLine}`);
     }
   });
 
+  // src/ui/dialog.ts
+  function getToolDocument() {
+    return root?.ownerDocument || document;
+  }
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
   // src/diff/export.ts
   var init_export = __esm({
     "src/diff/export.ts"() {
@@ -757,6 +812,7 @@ ${contextLine}`);
       init_enrich();
       init_filter();
       init_api();
+      init_dialog();
     }
   });
 
@@ -790,23 +846,6 @@ ${contextLine}`);
     "src/reflect/nodeModeUi.ts"() {
       "use strict";
       init_state();
-    }
-  });
-
-  // src/ui/dialog.ts
-  function getToolDocument() {
-    return root?.ownerDocument || document;
-  }
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
     }
   });
 

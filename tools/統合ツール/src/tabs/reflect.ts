@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, REFLECT_PRESETS_KEY, REFLECT_QUICK_PRESETS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, deepClone, normalize, downloadText, nowStamp, readTextFile, kusConfirm } from '../utils.js';
+import { esc, deepClone, normalize, downloadText, nowStamp, readTextFile, kusConfirm, showToast } from '../utils.js';
 import { apiGet, fetchBundle, buildApiPrefix } from '../api.js';
 import {
   getActualDiffRows,
@@ -394,6 +394,8 @@ export function loadReflectPresets() {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
+    console.warn('反映プリセットの読み込みに失敗しました', e);
+    showToast('反映プリセットの読み込みに失敗しました。保存データが破損している可能性があります。', 'warn');
     return [];
   }
 }
@@ -401,8 +403,11 @@ export function loadReflectPresets() {
 function persistReflectPresets(presets) {
   try {
     localStorage.setItem(REFLECT_PRESETS_KEY, JSON.stringify(presets || []));
+    return true;
   } catch (e) {
-    /* localStorage full */
+    console.warn('反映プリセットの保存に失敗しました', e);
+    showToast('反映プリセットの保存に失敗しました。ブラウザの保存容量や権限を確認してください。', 'warn');
+    return false;
   }
 }
 
@@ -431,7 +436,7 @@ export function saveReflectPreset(name) {
   };
   const presets = loadReflectPresets().filter((p) => p && p.name !== trimmed);
   presets.unshift(preset);
-  persistReflectPresets(presets.slice(0, 30));
+  if (!persistReflectPresets(presets.slice(0, 30))) throw new Error('反映プリセットを保存できませんでした');
   return preset;
 }
 
@@ -456,7 +461,7 @@ export function applyReflectPreset(name) {
 
 export function deleteReflectPreset(name) {
   const presets = loadReflectPresets().filter((p) => p && p.name !== name);
-  persistReflectPresets(presets);
+  if (!persistReflectPresets(presets)) throw new Error('反映プリセットを削除できませんでした');
 }
 
 // ---------------------------------------------------------------------------

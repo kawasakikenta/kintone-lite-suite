@@ -431,13 +431,32 @@
   });
 
   // src/state.ts
+  function reportStorageFailure(operation, key, error) {
+    try {
+      console.warn(`[${TOOL_ID}] storage ${operation} failed: ${key}`, error);
+    } catch {
+    }
+    try {
+      const detail = {
+        operation,
+        key,
+        message: error?.message || String(error)
+      };
+      window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
+      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+    } catch {
+    }
+  }
   function loadReflectApplyHistory() {
     try {
       const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY) ?? sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", REFLECT_APPLY_HISTORY_KEY, error);
       return [];
     }
   }
@@ -447,7 +466,8 @@
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", WORK_HISTORY_KEY, error);
       return [];
     }
   }
@@ -477,7 +497,8 @@
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
       return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", CONNECTION_PRESETS_KEY, error);
       return [];
     }
   }
@@ -642,6 +663,15 @@ ${contextLine}`);
   function isPreviewRestPrefix(prefix) {
     return String(prefix || "").includes("/v1/preview");
   }
+  function normalizeApiResourcePath(path) {
+    const raw = String(path || "").replace(/\\/g, "/").split("?")[0];
+    const match = raw.match(/\/k(?:\/guest\/[^/]+)?\/v1(?:\/preview)?(\/.*)$/);
+    const resource = match ? match[1] : raw;
+    return resource.startsWith("/") ? resource : `/${resource}`;
+  }
+  function isRecordDataMutationPath(path) {
+    return RECORD_DATA_MUTATION_PATHS.has(normalizeApiResourcePath(path));
+  }
   function assertAllowsMutatingRestCall(prefix, path, method) {
     const m = String(method || "").toUpperCase();
     if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
@@ -649,6 +679,10 @@ ${contextLine}`);
     const rel = String(path || "").replace(/\\/g, "/");
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
       throw new Error(ERR_NO_DEPLOY_API);
+    }
+    if (isRecordDataMutationPath(rel)) {
+      if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+      return;
     }
     if (!isPreviewRestPrefix(prefix)) {
       throw new Error(ERR_NO_PROD_WRITE);
@@ -868,8 +902,8 @@ ${contextLine}`);
       if (sections.includes("customizeSettings")) {
         const cust = bundle.sections.customizeSettings;
         if (cust && !cust._fetchError) {
-          const prefix = buildApiPrefix(guestId, preview);
-          await fetchCustomizeFileBodies(cust, prefix);
+          const prefix = buildApiPrefix(guestId, false);
+          cust._bodyFetchStats = await fetchCustomizeFileBodies(cust, prefix);
         }
       }
     } catch {
@@ -878,15 +912,15 @@ ${contextLine}`);
       if (sections.includes("pluginSettings")) {
         const plug = bundle.sections.pluginSettings;
         if (plug && !plug._fetchError) {
-          const prefix = buildApiPrefix(guestId, preview);
-          await fetchPluginConfigs(plug, prefix, app);
+          const prefix = buildApiPrefix(guestId, false);
+          plug._configFetchStats = await fetchPluginConfigs(plug, prefix, app);
         }
       }
     } catch {
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -896,10 +930,17 @@ ${contextLine}`);
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
       ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+      ERR_NO_RECORD_PREVIEW_API = "レコードAPIにはプレビュー用の追加・更新・削除エンドポイントがありません。レコード操作は本番REST APIを明示的な確認付きで実行します。";
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+      RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
+        "/record.json",
+        "/records.json",
+        "/record/status.json",
+        "/records/status.json"
+      ]);
       apiGetMetrics = {
         calls: 0,
         retries: 0,
@@ -922,6 +963,20 @@ ${contextLine}`);
     }
   });
 
+  // src/ui/dialog.ts
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
+    }
+  });
+
   // src/diff/export.ts
   var init_export = __esm({
     "src/diff/export.ts"() {
@@ -932,6 +987,7 @@ ${contextLine}`);
       init_enrich();
       init_filter();
       init_api();
+      init_dialog();
     }
   });
 
@@ -948,20 +1004,6 @@ ${contextLine}`);
       SECTION_LABEL_BY_KEY = new Map(
         SECTION_DEFS.map((s) => [s.key, s.label])
       );
-    }
-  });
-
-  // src/ui/dialog.ts
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
     }
   });
 

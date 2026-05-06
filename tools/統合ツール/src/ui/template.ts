@@ -1506,8 +1506,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <div class="muted" style="margin-top:8px;line-height:1.55">CSVファイルからレコードを一括登録します。1行目がフィールドコードのヘッダ行である必要があります。</div>
               <div class="grid2" style="margin-top:8px">
                 <div style="display:flex;align-items:center">
-                  <input type="file" id="u_csvImportFile" accept=".csv" style="display:none" onchange="document.getElementById('u_csvImportFileName').textContent=this.files[0]?this.files[0].name:'未選択'">
-                  <button type="button" class="btn sm" onclick="document.getElementById('u_csvImportFile').click()">CSVファイルを選択</button>
+                  <input type="file" id="u_csvImportFile" accept=".csv" style="display:none">
+                  <button type="button" class="btn sm" data-act="selectCsvImportFile">CSVファイルを選択</button>
                   <span id="u_csvImportFileName" class="muted" style="margin-left:8px;font-size:12px">未選択</span>
                 </div>
               </div>

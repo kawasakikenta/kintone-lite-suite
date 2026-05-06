@@ -15,6 +15,38 @@ export function getSideApiPrefix(isSource, preview) {
   return buildApiPrefix(side.guestId, !!preview);
 }
 
+function hasOrderByClause(query) {
+  return /\border\s+by\b/i.test(String(query || ''));
+}
+
+function hasPagingClause(query) {
+  return /\blimit\s+\d+/i.test(String(query || '')) || /\boffset\s+\d+/i.test(String(query || ''));
+}
+
+function buildPagedRecordsQuery(query, offset, options: { includeOrder?: boolean; limit?: number } = {}) {
+  const base = String(query || '').trim();
+  if (hasPagingClause(base)) {
+    throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
+  }
+  const parts = [];
+  if (base) parts.push(base);
+  if (options.includeOrder !== false && !hasOrderByClause(base)) parts.push('order by $id asc');
+  parts.push(`limit ${Number(options.limit || 500)}`);
+  parts.push(`offset ${Number(offset || 0)}`);
+  return parts.join(' ');
+}
+
+function buildKeysetRecordsQuery(query, lastRecordId, limit = 500) {
+  const base = String(query || '').trim();
+  if (hasPagingClause(base)) {
+    throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
+  }
+  const idCond = `$id > ${Number(lastRecordId || 0)}`;
+  if (!base) return `${idCond} order by $id asc limit ${Number(limit || 500)}`;
+  if (hasOrderByClause(base)) return null;
+  return `(${base}) and ${idCond} order by $id asc limit ${Number(limit || 500)}`;
+}
+
 export async function loadViewsForSelect(selectId: string, inputId: string) {
   const tApp = (getToolDocument().getElementById('u_targetApp') as HTMLInputElement).value.trim();
   if (!tApp) throw new Error('比較先アプリIDを設定してください。');
@@ -29,7 +61,7 @@ export async function loadViewsForSelect(selectId: string, inputId: string) {
   if (!sel) return;
   sel.innerHTML = '<option value="">-- 一覧を選択 --</option>';
   for (const v of views) {
-    const opt = document.createElement('option');
+    const opt = getToolDocument().createElement('option');
     opt.value = v.id;
     opt.dataset.q = encodeURIComponent(v.filterCond || '');
     opt.textContent = v.name;
@@ -49,14 +81,16 @@ export async function getRecordIdsByQuery(app, query, isSource) {
   const prefix = getSideApiPrefix(isSource, false);
   const ids = [];
   let offset = 0;
+  let lastRecordId = 0;
   while (true) {
-    let q = query ? `${query} ` : '';
-    q += `order by $id asc limit 500 offset ${offset}`;
+    const keysetQuery = buildKeysetRecordsQuery(query, lastRecordId);
+    const q = keysetQuery || buildPagedRecordsQuery(query, offset, { includeOrder: true });
     const resp = await apiGet(prefix, '/records.json', { app, query: q, fields: ['$id'] });
     const records = resp.records || [];
     if (records.length === 0) break;
     records.forEach(r => ids.push(Number(r.$id.value)));
     if (records.length < 500) break;
+    lastRecordId = Number(records[records.length - 1]?.$id?.value || lastRecordId);
     offset += 500;
   }
   return ids;
@@ -66,14 +100,16 @@ export async function getFullRecordsByQuery(app, query, isSource) {
   const prefix = getSideApiPrefix(isSource, false);
   let allRecords = [];
   let offset = 0;
+  let lastRecordId = 0;
   while (true) {
-    let q = query ? `${query} ` : '';
-    q += `limit 500 offset ${offset}`;
+    const keysetQuery = buildKeysetRecordsQuery(query, lastRecordId);
+    const q = keysetQuery || buildPagedRecordsQuery(query, offset, { includeOrder: true });
     const resp = await apiGet(prefix, '/records.json', { app, query: q });
     const records = resp.records || [];
     if (records.length === 0) break;
     allRecords = allRecords.concat(records);
     if (records.length < 500) break;
+    lastRecordId = Number(records[records.length - 1]?.$id?.value || lastRecordId);
     offset += 500;
   }
   return allRecords;
@@ -130,21 +166,25 @@ export async function runBatchProcess() {
 }
 
 export async function loadJSZip() {
+  const doc = getToolDocument();
+  const win = doc.defaultView || window;
+  if (typeof (win as any).JSZip !== 'undefined') return (win as any).JSZip;
   if (typeof globalThis.JSZip !== 'undefined') return globalThis.JSZip;
   setStatus('JSZipを動的ロード中...');
   return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
+    const script = doc.createElement("script");
     script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
     script.onload = () => {
-      if (typeof globalThis.JSZip === 'undefined') {
+      const ctor = (win as any).JSZip || globalThis.JSZip;
+      if (typeof ctor === 'undefined') {
         reject(new Error('JSZipのロード後もグローバル変数が見つかりません'));
         return;
       }
       setStatus('JSZipのロード完了');
-      resolve(globalThis.JSZip);
+      resolve(ctor);
     };
     script.onerror = () => { reject(new Error('JSZipの読み込みに失敗しました')); };
-    document.head.appendChild(script);
+    doc.head.appendChild(script);
   });
 }
 
@@ -185,11 +225,12 @@ export async function runBatchFileDownload() {
       let folderName = folderCode && rec[folderCode] ? rec[folderCode].value : '';
       if (!folderName) folderName = `Record_${rec.$id.value}`;
 
-      const recordFolder = zip.folder(folderName);
+      const recordFolder = zip.folder(sanitizeZipPathSegment(folderName, `Record_${rec.$id.value}`));
+      const usedNames = new Set<string>();
       for (const f of fileList) {
         const blob = await downloadTargetFile(f.fileKey);
         if (blob) {
-          recordFolder.file(f.name, blob);
+          recordFolder.file(uniqueZipFileName(usedNames, f.name, f.fileKey, fileCount), blob);
           fileCount++;
         }
       }
@@ -203,13 +244,14 @@ export async function runBatchFileDownload() {
 
   setStatus(`ZIP圧縮中 (計${fileCount}ファイル)...`);
   const zipBlob = await zip.generateAsync({ type: "blob" });
-  const a = document.createElement("a");
+  const doc = getToolDocument();
+  const a = doc.createElement("a");
   const u = URL.createObjectURL(zipBlob);
   a.href = u;
   a.download = zipName;
-  document.body.appendChild(a);
+  doc.body.appendChild(a);
   a.click();
-  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(u); }, 100);
+  setTimeout(() => { doc.body.removeChild(a); URL.revokeObjectURL(u); }, 100);
   setStatus(`添付ファイル一括DL完了 (${fileCount}ファイル)`);
 }
 
@@ -263,10 +305,14 @@ async function fetchAllRecordsForExport(prefix, appId, condition) {
   let lastRecordId = '0';
   const limit = 500;
   const baseQuery = String(condition || '').trim();
-  const queryHasOrder = baseQuery.toLowerCase().includes('order by');
-  const queryHasLimit = baseQuery.toLowerCase().includes('limit');
+  const queryHasOrder = hasOrderByClause(baseQuery);
+  const queryHasLimit = /\blimit\s+\d+/i.test(baseQuery);
+  const queryHasOffset = /\boffset\s+\d+/i.test(baseQuery);
 
-  if (queryHasLimit) {
+  if (queryHasLimit || queryHasOffset) {
+    if (queryHasOffset && !queryHasLimit) {
+      throw new Error('クエリ内の offset は limit と併用してください。自動ページングする場合は limit/offset を取り除いてください。');
+    }
     const resp = await apiGet(prefix, '/records.json', { app: appId, query: baseQuery });
     return resp.records || [];
   }
@@ -274,8 +320,10 @@ async function fetchAllRecordsForExport(prefix, appId, condition) {
   while (true) {
     setBusy(true, `レコード取得中... (${allRecords.length}件取得済)`);
     let loopQuery = '';
-    if (baseQuery) {
+    if (baseQuery && queryHasOrder) {
       loopQuery = `${baseQuery} ${queryHasOrder ? '' : 'order by $id asc'} limit ${limit} offset ${allRecords.length}`;
+    } else if (baseQuery) {
+      loopQuery = `(${baseQuery}) and $id > ${lastRecordId} order by $id asc limit ${limit}`;
     } else {
       loopQuery = `$id > ${lastRecordId} order by $id asc limit ${limit}`;
     }
@@ -319,6 +367,46 @@ function extractCsvFieldValue(rec, code) {
   return field.value;
 }
 
+const CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = new Set([
+  'RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME',
+  'STATUS', 'STATUS_ASSIGNEE', 'CALC', 'CATEGORY', '__ID__', '__REVISION__',
+  'FILE', 'SUBTABLE', 'REFERENCE_TABLE', 'LABEL', 'HR', 'SPACER'
+]);
+
+function splitCsvListValue(value) {
+  const text = String(value == null ? '' : '').trim();
+  if (!text) return [];
+  return text.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function coerceCsvImportValue(rawValue, fieldDef) {
+  const type = String(fieldDef?.type || '');
+  if (type === 'CHECK_BOX' || type === 'MULTI_SELECT') return splitCsvListValue(rawValue);
+  if (type === 'USER_SELECT' || type === 'ORGANIZATION_SELECT' || type === 'GROUP_SELECT') {
+    return splitCsvListValue(rawValue).map((code) => ({ code }));
+  }
+  if (type === 'NUMBER') return String(rawValue == null ? '' : rawValue).trim();
+  return rawValue;
+}
+
+function assertCsvImportHeaderSupported(header, properties) {
+  const unknown = [];
+  const unsupported = [];
+  for (const code of header) {
+    if (!code) continue;
+    const def = properties?.[code];
+    if (!def) {
+      unknown.push(code);
+      continue;
+    }
+    if (CSV_IMPORT_UNSUPPORTED_FIELD_TYPES.has(String(def.type || ''))) {
+      unsupported.push(`${code}(${def.type})`);
+    }
+  }
+  if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(', ')}`);
+  if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(', ')}`);
+}
+
 function buildRecordsCsvString(records, propKeys) {
   const lines = [];
   lines.push(propKeys.map(escapeCsvCell).join(','));
@@ -334,6 +422,22 @@ function sanitizeZipPathSegment(value, fallback = 'item') {
     .replace(/[\u0000-\u001f]/g, '')
     .trim();
   return cleaned || fallback;
+}
+
+function uniqueZipFileName(usedNames, rawName, fileKey = '', index = 0) {
+  const safeName = sanitizeZipPathSegment(rawName || 'file.bin', 'file.bin');
+  const safePrefix = sanitizeZipPathSegment(String(fileKey || '').slice(0, 12) || String(Number(index) + 1), 'file');
+  const candidateBase = `${safePrefix}_${safeName}`;
+  let candidate = candidateBase;
+  let suffix = 2;
+  while (usedNames.has(candidate)) {
+    const dot = candidateBase.lastIndexOf('.');
+    if (dot > 0) candidate = `${candidateBase.slice(0, dot)}_${suffix}${candidateBase.slice(dot)}`;
+    else candidate = `${candidateBase}_${suffix}`;
+    suffix++;
+  }
+  usedNames.add(candidate);
+  return candidate;
 }
 
 function getRecordNumberValue(record: any): string {
@@ -541,12 +645,13 @@ export async function runCsvExport() {
   const csvStr = buildRecordsCsvString(allRecords, propKeys);
   const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  const doc = getToolDocument();
+  const a = doc.createElement('a');
   a.href = url;
   a.download = filename;
-  document.body.appendChild(a);
+  doc.body.appendChild(a);
   a.click();
-  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  setTimeout(() => { doc.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
 
   setBusy(false);
   setStatus(`CSVを出力しました (${allRecords.length}件)`);
@@ -618,6 +723,10 @@ export async function runCsvImport() {
   const header = rows[0].map(h => h.trim());
   if (header.includes('$id')) throw new Error('CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。');
 
+  setBusy(true, 'フィールド情報を確認中...');
+  const { properties } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId);
+  assertCsvImportHeaderSupported(header, properties);
+
   const records = [];
   for (let i = 1; i < rows.length; i++) {
     if (rows[i].length === 1 && rows[i][0] === '') continue;
@@ -625,7 +734,7 @@ export async function runCsvImport() {
     for (let j = 0; j < header.length; j++) {
       if (!header[j]) continue;
       const val = rows[i][j] !== undefined ? rows[i][j] : '';
-      rec[header[j]] = { value: val };
+      rec[header[j]] = { value: coerceCsvImportValue(val, properties[header[j]]) };
     }
     records.push(rec);
   }
@@ -935,8 +1044,8 @@ export async function runRecordCopy() {
   let totalFetched = 0;
   const records = [];
   const userQueryHasOrder = /\border\s+by\b/i.test(query);
-  const userQueryHasLimit = /\blimit\s+\d+/i.test(query);
-  if (userQueryHasLimit) {
+  const userQueryHasPaging = hasPagingClause(query);
+  if (userQueryHasPaging) {
     showToast('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。', 'warn');
     setBusy(false);
     return;
@@ -975,6 +1084,10 @@ export async function runRecordCopy() {
           const inner = sRow && typeof sRow === 'object' && sRow.value && typeof sRow.value === 'object' ? sRow.value : {};
           const cleanSRow = {};
           for (const [sk, sv] of Object.entries(inner) as Array<[string, any]>) {
+            if (systemKeys.has(sk)) continue;
+            if (!sv || typeof sv !== 'object') continue;
+            if (systemTypes.has(sv.type)) continue;
+            if (sv.type === 'FILE') continue;
             if (sv && typeof sv === 'object') cleanSRow[sk] = { value: sv.value };
           }
           return { value: cleanSRow };
@@ -1021,7 +1134,11 @@ const TEMPLATE_STATE_KEY = 'kintoneSuperApp_Templates';
 
 function getTemplates() {
   try { return JSON.parse(localStorage.getItem(TEMPLATE_STATE_KEY) || '{}'); }
-  catch { return {}; }
+  catch (error) {
+    console.warn('テンプレートの読み込みに失敗しました', error);
+    showToast('テンプレートの読み込みに失敗しました。保存データが破損している可能性があります。', 'warn');
+    return {};
+  }
 }
 
 export function renderTemplateOptions() {
@@ -1084,7 +1201,12 @@ export function deleteTemplate() {
   if (!kusConfirm(`テンプレート「${name}」を削除しますか？`)) return;
   const tpls = getTemplates();
   delete tpls[name];
-  localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
+  try {
+    localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
+  } catch (e) {
+    showToast('テンプレートの削除状態を保存できませんでした。ブラウザの保存容量や権限を確認してください。', 'error');
+    throw e;
+  }
   renderTemplateOptions();
   setStatus(`テンプレート「${name}」を削除しました`);
 }

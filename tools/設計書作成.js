@@ -424,13 +424,32 @@
   });
 
   // src/state.ts
+  function reportStorageFailure(operation, key, error) {
+    try {
+      console.warn(`[${TOOL_ID}] storage ${operation} failed: ${key}`, error);
+    } catch {
+    }
+    try {
+      const detail = {
+        operation,
+        key,
+        message: error?.message || String(error)
+      };
+      window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
+      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+    } catch {
+    }
+  }
   function loadReflectApplyHistory() {
     try {
       const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY) ?? sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", REFLECT_APPLY_HISTORY_KEY, error);
       return [];
     }
   }
@@ -440,7 +459,8 @@
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", WORK_HISTORY_KEY, error);
       return [];
     }
   }
@@ -470,7 +490,8 @@
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
       return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", CONNECTION_PRESETS_KEY, error);
       return [];
     }
   }
@@ -635,14 +656,16 @@ ${contextLine}`);
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
   }
   function triggerDownload(filename, blob) {
+    const doc = getToolDocumentSafe();
+    const win = getToolWindowSafe();
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const a = doc.createElement("a");
     a.href = url;
     a.download = filename;
     a.style.display = "none";
-    document.body.appendChild(a);
+    doc.body.appendChild(a);
     a.click();
-    window.setTimeout(() => {
+    win.setTimeout(() => {
       try {
         URL.revokeObjectURL(url);
       } catch (e) {
@@ -941,8 +964,8 @@ ${contextLine}`);
       if (sections.includes("customizeSettings")) {
         const cust = bundle.sections.customizeSettings;
         if (cust && !cust._fetchError) {
-          const prefix = buildApiPrefix(guestId, preview);
-          await fetchCustomizeFileBodies(cust, prefix);
+          const prefix = buildApiPrefix(guestId, false);
+          cust._bodyFetchStats = await fetchCustomizeFileBodies(cust, prefix);
         }
       }
     } catch {
@@ -951,8 +974,8 @@ ${contextLine}`);
       if (sections.includes("pluginSettings")) {
         const plug = bundle.sections.pluginSettings;
         if (plug && !plug._fetchError) {
-          const prefix = buildApiPrefix(guestId, preview);
-          await fetchPluginConfigs(plug, prefix, app);
+          const prefix = buildApiPrefix(guestId, false);
+          plug._configFetchStats = await fetchPluginConfigs(plug, prefix, app);
         }
       }
     } catch {
@@ -989,6 +1012,23 @@ ${contextLine}`);
       "use strict";
       init_constants();
       init_utils();
+    }
+  });
+
+  // src/ui/dialog.ts
+  function getToolDocument() {
+    return root?.ownerDocument || document;
+  }
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
+  var init_dialog = __esm({
+    "src/ui/dialog.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      root = null;
     }
   });
 
@@ -1553,6 +1593,7 @@ ${body}`;
       init_enrich();
       init_filter();
       init_api();
+      init_dialog();
       MD_FIELD_TYPE_LABELS = {
         SINGLE_LINE_TEXT: "文字列（1行）",
         MULTI_LINE_TEXT: "文字列（複数行）",
@@ -1701,23 +1742,6 @@ ${body}`;
       SECTION_LABEL_BY_KEY = new Map(
         SECTION_DEFS.map((s) => [s.key, s.label])
       );
-    }
-  });
-
-  // src/ui/dialog.ts
-  function getToolDocument() {
-    return root?.ownerDocument || document;
-  }
-  function setRootElement(el) {
-    root = el;
-  }
-  var root;
-  var init_dialog = __esm({
-    "src/ui/dialog.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      root = null;
     }
   });
 

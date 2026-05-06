@@ -123,19 +123,21 @@ export function runKintoneUnifiedSuite(options: any = {}) {
   // 「⋯ その他」ドロップダウン body を summary 直下に配置（position:fixed）
   try {
     const moreFold = root.querySelector('#u_kusTabMore') as HTMLDetailsElement | null;
-    if (moreFold) {
+    if (moreFold && root.dataset.kusMoreDropdownBound !== '1') {
+      root.dataset.kusMoreDropdownBound = '1';
+      const ownerWin = (root.ownerDocument && root.ownerDocument.defaultView) || window;
       const summary = moreFold.querySelector('.kus-tab-more__summary') as HTMLElement | null;
       const body = moreFold.querySelector('.kus-tab-more__body') as HTMLElement | null;
       const positionBody = () => {
         if (!summary || !body || !moreFold.open) return;
         const r = summary.getBoundingClientRect();
         body.style.top = `${r.bottom + 4}px`;
-        body.style.right = `${(window.innerWidth - r.right)}px`;
+        body.style.right = `${(ownerWin.innerWidth - r.right)}px`;
         body.style.left = 'auto';
       };
       moreFold.addEventListener('toggle', () => positionBody());
-      window.addEventListener('resize', positionBody);
-      window.addEventListener('scroll', positionBody, true);
+      ownerWin.addEventListener('resize', positionBody);
+      ownerWin.addEventListener('scroll', positionBody, true);
     }
   } catch (e) { /* ignore */ }
 

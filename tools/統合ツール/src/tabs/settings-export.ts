@@ -141,12 +141,14 @@ function formatPluginConfigSummary(backup) {
 }
 
 async function fetchPluginConfigBackup({ appId, guestId, preview, existingPluginList, onProgress }: { appId: any; guestId: any; preview: boolean; existingPluginList?: any[] | null; onProgress?: (idx: number, total: number, plugin: any) => void }) {
-  const prefix = buildApiPrefix(guestId, preview);
+  const prefix = buildApiPrefix(guestId, false);
   const result: any = {
     requested: true,
     endpoint: '/app/plugin/config.json',
     source: 'api-lab',
     experimental: true,
+    previewRequested: !!preview,
+    previewUsed: false,
     totalPlugins: 0,
     okCount: 0,
     ngCount: 0,

@@ -21,6 +21,7 @@ import {
 import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './enrich.js';
 import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter } from './filter.js';
 import { resolveBundleRevision, pickBundleSections } from '../api.js';
+import { getToolDocument } from '../ui/dialog.js';
 
 // ---------------------------------------------------------------------------
 // Diff display helpers
@@ -5101,6 +5102,6 @@ export function renderResultRows(rows) {
     </div>`;
   scheduleDiffPopoutSync();
   try {
-    document.dispatchEvent(new CustomEvent('kus:diffRendered', { detail: { count: rows.length } }));
+    getToolDocument().dispatchEvent(new CustomEvent('kus:diffRendered', { detail: { count: rows.length } }));
   } catch (e) { /* ignore */ }
 }

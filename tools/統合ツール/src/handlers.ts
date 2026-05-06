@@ -388,7 +388,12 @@ export function setupEventHandlers(injected: any = {}) {
   function syncDiffOnboardingVisibility() {
     const el = ui.diffOnboarding;
     if (!el) return;
-    const dismissed = !!localStorage.getItem(DIFF_ONBOARDING_DISMISSED_KEY);
+    let dismissed = false;
+    try {
+      dismissed = !!localStorage.getItem(DIFF_ONBOARDING_DISMISSED_KEY);
+    } catch (error) {
+      console.warn('差分オンボーディング状態の読み込みに失敗しました', error);
+    }
     const rootEl = getRoot();
     const onDiffArea = rootEl?.classList.contains('tab-is-diff');
     const hasDiffState = !!state.lastDiffAt || !!state.lastDiffRows.length || !!state.lastFetchIssues.length;
@@ -596,6 +601,12 @@ export function setupEventHandlers(injected: any = {}) {
       : '<span class="muted diff-active-filters__hint">🔍 上で絞り込み条件を選ぶと、ここに適用中のフィルタが表示されます</span>';
   }
 
+  function isRestorableResultHtml(html) {
+    const text = String(html || '');
+    if (!text || text.length > 500_000) return false;
+    return !/(<script\b|<iframe\b|<object\b|<embed\b|<link\b|<meta\b|\son[a-z]+\s*=|javascript:)/i.test(text);
+  }
+
   function syncMainResultForFeature(featureKey) {
     if (!ui.result) return;
     const key = String(featureKey || state.activeFeatureKey || state.activeTab || '').trim();
@@ -604,7 +615,7 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
     const stored = state.lastResultByTab && state.lastResultByTab[key];
-    if (typeof stored === 'string' && stored.length) {
+    if (typeof stored === 'string' && stored.length && isRestorableResultHtml(stored)) {
       ui.result.innerHTML = stored;
       return;
     }
@@ -1184,6 +1195,12 @@ export function setupEventHandlers(injected: any = {}) {
   // -------------------------------------------------------------------
 
   root.addEventListener('change', (e) => {
+    if ((e.target as HTMLElement | null)?.id === 'u_csvImportFile') {
+      const input = e.target as HTMLInputElement;
+      const label = getToolDocument().getElementById('u_csvImportFileName');
+      if (label) label.textContent = input.files?.[0]?.name || '未選択';
+      return;
+    }
     if (e.target === ui.sourceApp || e.target === ui.targetApp) {
       const pastedGuestId = extractGuestIdFromInput((e.target as HTMLInputElement).value);
       const extracted = extractAppIdFromInput((e.target as HTMLInputElement).value);
@@ -2269,7 +2286,11 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
     if (act === 'dismissDiffOnboarding') {
-      try { localStorage.setItem(DIFF_ONBOARDING_DISMISSED_KEY, '1'); } catch (err) { /* ignore */ }
+      try { localStorage.setItem(DIFF_ONBOARDING_DISMISSED_KEY, '1'); }
+      catch (err) {
+        console.warn('差分オンボーディング状態の保存に失敗しました', err);
+        showToast('表示状態の保存に失敗しました。ブラウザの保存権限を確認してください。', 'warn');
+      }
       syncDiffOnboardingVisibility();
       return;
     }
@@ -2687,7 +2708,11 @@ export function setupEventHandlers(injected: any = {}) {
       const root = doc.getElementById('kintone-unified-suite-v2');
       if (!root) return;
       const collapsed = root.classList.toggle('header-collapsed');
-      try { (doc.defaultView || window).localStorage.setItem('kus:headerCollapsed', collapsed ? '1' : '0'); } catch (e) { /* ignore */ }
+      try { (doc.defaultView || window).localStorage.setItem('kus:headerCollapsed', collapsed ? '1' : '0'); }
+      catch (e) {
+        console.warn('ヘッダー折りたたみ状態の保存に失敗しました', e);
+        showToast('ヘッダー状態の保存に失敗しました。', 'warn');
+      }
       const btn = doc.getElementById('u_headerCollapseBtn');
       if (btn) {
         btn.textContent = collapsed ? '▼' : '▲';
@@ -3195,6 +3220,11 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'loadViewsForDl' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_batchDlViewSelect', 'u_batchDlView'));
     if (act === 'loadViewsForCsv' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_csvExportViewSelect', 'u_csvExportView'));
     if (act === 'loadViewsForBackup' && typeof loadViewsForSelect === 'function') return withGuard(async () => loadViewsForSelect('u_recordBackupViewSelect', 'u_recordBackupView'));
+    if (act === 'selectCsvImportFile') {
+      const input = getToolDocument().getElementById('u_csvImportFile') as HTMLInputElement | null;
+      input?.click();
+      return;
+    }
     if (act === 'runCsvExport' && typeof runCsvExport === 'function') return withGuard(runCsvExport);
     if (act === 'runCsvImport' && typeof runCsvImport === 'function') return withGuard(runCsvImport);
     if (act === 'runRecordBackup' && typeof runRecordBackup === 'function') return withGuard(runRecordBackup);

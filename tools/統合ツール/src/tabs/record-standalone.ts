@@ -1,21 +1,52 @@
 'use strict';
 
-import { EXTERNAL_LIBRARIES } from '../constants.js';
-import { esc } from '../utils.js';
+import { downloadBlob, kusConfirm } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix } from '../api.js';
+
+function hasOrderByClause(query) {
+  return /\border\s+by\b/i.test(String(query || ''));
+}
+
+function hasPagingClause(query) {
+  return /\blimit\s+\d+/i.test(String(query || '')) || /\boffset\s+\d+/i.test(String(query || ''));
+}
+
+function buildPagedQuery(query, offset) {
+  const base = String(query || '').trim();
+  if (hasPagingClause(base)) {
+    throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
+  }
+  const parts = [];
+  if (base) parts.push(base);
+  if (!hasOrderByClause(base)) parts.push('order by $id asc');
+  parts.push('limit 500');
+  parts.push(`offset ${Number(offset || 0)}`);
+  return parts.join(' ');
+}
+
+function buildKeysetQuery(query, lastRecordId) {
+  const base = String(query || '').trim();
+  if (hasPagingClause(base)) {
+    throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
+  }
+  const idCond = `$id > ${Number(lastRecordId || 0)}`;
+  if (!base) return `${idCond} order by $id asc limit 500`;
+  if (hasOrderByClause(base)) return null;
+  return `(${base}) and ${idCond} order by $id asc limit 500`;
+}
 
 async function fetchAllRecords(prefix, app, query, setStatus) {
   let all = [];
   let offset = 0;
+  let lastRecordId = 0;
   while (true) {
     setStatus(`レコード取得中... (${all.length}件取得済)`);
-    const q = query
-      ? `${query} order by $id asc limit 500 offset ${offset}`
-      : `$id > 0 order by $id asc limit 500 offset ${offset}`;
+    const q = buildKeysetQuery(query, lastRecordId) || buildPagedQuery(query, offset);
     const resp = await apiGet(prefix, '/records.json', { app, query: q });
     const batch = resp.records || [];
     all = all.concat(batch);
     if (batch.length < 500) break;
+    lastRecordId = Number(batch[batch.length - 1]?.$id?.value || lastRecordId);
     offset += 500;
   }
   return all;
@@ -24,15 +55,16 @@ async function fetchAllRecords(prefix, app, query, setStatus) {
 async function fetchRecordIds(prefix, app, query, setStatus) {
   const ids = [];
   let offset = 0;
+  let lastRecordId = 0;
   while (true) {
     setStatus(`対象レコード取得中... (${ids.length}件)`);
-    let q = query ? `${query} ` : '';
-    q += `order by $id asc limit 500 offset ${offset}`;
+    const q = buildKeysetQuery(query, lastRecordId) || buildPagedQuery(query, offset);
     const resp = await apiGet(prefix, '/records.json', { app, query: q, fields: ['$id'] });
     const batch = resp.records || [];
     if (!batch.length) break;
     batch.forEach((r) => ids.push(Number(r.$id.value)));
     if (batch.length < 500) break;
+    lastRecordId = Number(batch[batch.length - 1]?.$id?.value || lastRecordId);
     offset += 500;
   }
   return ids;
@@ -71,12 +103,49 @@ export async function runCsvExportStandalone(opts, setStatus) {
   for (const rec of records) lines.push(propKeys.map(k => esc(extractValue(rec, k))).join(','));
   const csvStr = '\uFEFF' + lines.join('\n');
   const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename || 'records.csv';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  downloadBlob(filename || 'records.csv', blob);
   setStatus(`CSV出力完了 (${records.length}件)`);
+}
+
+const CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = new Set([
+  'RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME',
+  'STATUS', 'STATUS_ASSIGNEE', 'CALC', 'CATEGORY', '__ID__', '__REVISION__',
+  'FILE', 'SUBTABLE', 'REFERENCE_TABLE', 'LABEL', 'HR', 'SPACER'
+]);
+
+function splitCsvListValue(value) {
+  const text = String(value == null ? '' : '').trim();
+  if (!text) return [];
+  return text.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function coerceCsvImportValue(rawValue, fieldDef) {
+  const type = String(fieldDef?.type || '');
+  if (type === 'CHECK_BOX' || type === 'MULTI_SELECT') return splitCsvListValue(rawValue);
+  if (type === 'USER_SELECT' || type === 'ORGANIZATION_SELECT' || type === 'GROUP_SELECT') {
+    return splitCsvListValue(rawValue).map((code) => ({ code }));
+  }
+  if (type === 'NUMBER') return String(rawValue == null ? '' : rawValue).trim();
+  return rawValue;
+}
+
+function validateCsvImportHeader(header, properties) {
+  if (header.includes('$id')) throw new Error('CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。');
+  const unknown = [];
+  const unsupported = [];
+  for (const code of header) {
+    if (!code) continue;
+    const def = properties?.[code];
+    if (!def) {
+      unknown.push(code);
+      continue;
+    }
+    if (CSV_IMPORT_UNSUPPORTED_FIELD_TYPES.has(String(def.type || ''))) {
+      unsupported.push(`${code}(${def.type})`);
+    }
+  }
+  if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(', ')}`);
+  if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(', ')}`);
 }
 
 export async function runCsvImportStandalone(opts, setStatus) {
@@ -108,19 +177,24 @@ export async function runCsvImportStandalone(opts, setStatus) {
   const rows = parseCsv(text.replace(/^\uFEFF/, ''));
   if (rows.length < 2) throw new Error('ヘッダ行とデータ行が必要です');
   const header = rows[0].map((h) => h.trim());
+  setStatus('フィールド情報を確認中...');
+  const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId });
+  const properties = fields?.properties || ({} as any);
+  validateCsvImportHeader(header, properties);
 
   const records: any[] = [];
   for (let i = 1; i < rows.length; i++) {
     if (rows[i].length === 1 && rows[i][0] === '') continue;
     const rec: Record<string, any> = {};
     for (let j = 0; j < header.length; j++) {
-      if (!header[j] || header[j] === '$id') continue;
-      rec[header[j]] = { value: rows[i][j] !== undefined ? rows[i][j] : '' };
+      if (!header[j]) continue;
+      const val = rows[i][j] !== undefined ? rows[i][j] : '';
+      rec[header[j]] = { value: coerceCsvImportValue(val, properties[header[j]]) };
     }
     records.push(rec);
   }
   if (!records.length) throw new Error('登録するデータがありません');
-  if (!confirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) return;
+  if (!kusConfirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) return;
 
   let ok = 0;
   for (let i = 0; i < records.length; i += 100) {
@@ -140,7 +214,7 @@ export async function runBatchProcessStandalone(opts, setStatus) {
 
   const ids = await fetchRecordIds(prefix, appId, query || '', setStatus);
   if (!ids.length) throw new Error('処理対象のレコードが0件です');
-  if (!confirm(`${ids.length}件にアクション「${action}」を実行しますか？`)) return;
+  if (!kusConfirm(`${ids.length}件にアクション「${action}」を実行しますか？`)) return;
 
   let ok = 0;
   for (let i = 0; i < ids.length; i += 100) {
@@ -161,16 +235,27 @@ export async function runRecordCopyStandalone(opts, setStatus) {
 
   const records = await fetchAllRecords(srcPrefix, sourceAppId, query || '', setStatus);
   if (!records.length) { setStatus('コピー対象のレコードがありません'); return; }
-  if (!confirm(`${records.length}件を比較先(${targetAppId})へコピーしますか？`)) return;
+  if (!kusConfirm(`${records.length}件を比較先(${targetAppId})へコピーしますか？`)) return;
 
-  const systemTypes = new Set(['RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME', 'STATUS', 'STATUS_ASSIGNEE', 'CALC']);
+  const systemTypes = new Set(['RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME', 'STATUS', 'STATUS_ASSIGNEE', 'CALC', 'CATEGORY', '__ID__', '__REVISION__']);
   const systemFields = new Set(['$id', '$revision', '作成者', '作成日時', '更新者', '更新日時', 'レコード番号', 'ステータス', '作業者']);
   const clean = records.map((rec) => {
     const out = {};
     for (const [k, v] of Object.entries(rec) as Array<[string, any]>) {
       if (systemFields.has(k) || systemTypes.has(v.type)) continue;
       if (v.type === 'SUBTABLE') {
-        out[k] = { value: v.value.map((sr) => { const c = {}; for (const [sk, sv] of Object.entries(sr.value) as Array<[string, any]>) c[sk] = { value: sv.value }; return { value: c }; }) };
+        const rows = Array.isArray(v.value) ? v.value : [];
+        out[k] = { value: rows.map((sr) => {
+          const c = {};
+          const inner = sr && typeof sr === 'object' && sr.value && typeof sr.value === 'object' ? sr.value : {};
+          for (const [sk, sv] of Object.entries(inner) as Array<[string, any]>) {
+            if (systemFields.has(sk) || systemTypes.has(sv.type) || sv.type === 'FILE') continue;
+            c[sk] = { value: sv.value };
+          }
+          return { value: c };
+        }) };
+      } else if (v.type === 'FILE') {
+        continue;
       } else {
         out[k] = { value: v.value };
       }

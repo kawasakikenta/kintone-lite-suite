@@ -16,10 +16,20 @@ const ERR_NO_PROD_WRITE =
   '本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。';
 const ERR_NO_DEPLOY_API =
   'デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。';
+const ERR_NO_RECORD_PREVIEW_API =
+  'レコードAPIにはプレビュー用の追加・更新・削除エンドポイントがありません。レコード操作は本番REST APIを明示的な確認付きで実行します。';
+const ERR_NO_API_TESTER_RECORD_WRITE =
+  'APIテスターではレコードの追加・更新・削除を実行できません。レコード管理タブの確認付き操作を使用してください。';
 const DEFAULT_API_GET_RETRIES = 3;
 const DEFAULT_RETRY_BASE_DELAY_MS = 500;
 const DEFAULT_RETRY_MAX_DELAY_MS = 3000;
 const RETRIABLE_STATUS_CODES: ReadonlySet<number> = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+const RECORD_DATA_MUTATION_PATHS: ReadonlySet<string> = new Set([
+  '/record.json',
+  '/records.json',
+  '/record/status.json',
+  '/records/status.json'
+]);
 
 export interface ApiPathMetric {
   calls: number;
@@ -51,6 +61,17 @@ export function isPreviewRestPrefix(prefix: string | null | undefined): boolean 
   return String(prefix || '').includes('/v1/preview');
 }
 
+function normalizeApiResourcePath(path: string | null | undefined): string {
+  const raw = String(path || '').replace(/\\/g, '/').split('?')[0];
+  const match = raw.match(/\/k(?:\/guest\/[^/]+)?\/v1(?:\/preview)?(\/.*)$/);
+  const resource = match ? match[1] : raw;
+  return resource.startsWith('/') ? resource : `/${resource}`;
+}
+
+function isRecordDataMutationPath(path: string | null | undefined): boolean {
+  return RECORD_DATA_MUTATION_PATHS.has(normalizeApiResourcePath(path));
+}
+
 /**
  * prefix + path への POST/PUT/DELETE を許可するか検査（GET は呼ばない想定）
  */
@@ -62,6 +83,10 @@ export function assertAllowsMutatingRestCall(prefix: string, path: string, metho
   const rel = String(path || '').replace(/\\/g, '/');
   if (rel.includes(DEPLOY_PATH_SNIPPET)) {
     throw new Error(ERR_NO_DEPLOY_API);
+  }
+  if (isRecordDataMutationPath(rel)) {
+    if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+    return;
   }
   if (!isPreviewRestPrefix(prefix)) {
     throw new Error(ERR_NO_PROD_WRITE);
@@ -79,6 +104,10 @@ export function assertAllowsMutatingApiUrl(fullPath: string, method: string): vo
   const fp = String(fullPath || '').replace(/\\/g, '/');
   if (fp.includes(DEPLOY_PATH_SNIPPET)) {
     throw new Error(ERR_NO_DEPLOY_API);
+  }
+  if (isRecordDataMutationPath(fp)) {
+    if (/\/v1\/preview(\/|$)/.test(fp)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+    throw new Error(ERR_NO_API_TESTER_RECORD_WRITE);
   }
   if (!/\/v1\/preview(\/|$)/.test(fp)) {
     throw new Error(ERR_NO_PROD_WRITE);
@@ -422,8 +451,8 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
     if (sections.includes('customizeSettings')) {
       const cust = bundle.sections.customizeSettings;
       if (cust && !cust._fetchError) {
-        const prefix = buildApiPrefix(guestId, preview);
-        await fetchCustomizeFileBodies(cust, prefix);
+        const prefix = buildApiPrefix(guestId, false);
+        cust._bodyFetchStats = await fetchCustomizeFileBodies(cust, prefix);
       }
     }
   } catch { /* ignore: 本文取得失敗は致命的ではない */ }
@@ -431,8 +460,8 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
     if (sections.includes('pluginSettings')) {
       const plug = bundle.sections.pluginSettings;
       if (plug && !plug._fetchError) {
-        const prefix = buildApiPrefix(guestId, preview);
-        await fetchPluginConfigs(plug, prefix, app);
+        const prefix = buildApiPrefix(guestId, false);
+        plug._configFetchStats = await fetchPluginConfigs(plug, prefix, app);
       }
     }
   } catch { /* ignore: プラグイン設定取得失敗は致命的ではない */ }

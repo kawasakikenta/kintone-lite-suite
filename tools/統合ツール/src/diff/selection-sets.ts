@@ -25,7 +25,8 @@ function loadRaw(): DiffSelectionSet[] {
   try {
     const raw = JSON.parse(localStorage.getItem(DIFF_SELECTION_SETS_KEY) || '[]');
     return Array.isArray(raw) ? raw as DiffSelectionSet[] : [];
-  } catch {
+  } catch (error) {
+    console.warn('差分選択セットの読み込みに失敗しました', error);
     return [];
   }
 }
@@ -33,7 +34,16 @@ function loadRaw(): DiffSelectionSet[] {
 function saveRaw(list: DiffSelectionSet[]): void {
   try {
     localStorage.setItem(DIFF_SELECTION_SETS_KEY, JSON.stringify(list.slice(0, MAX_SETS)));
-  } catch { /* ignore */ }
+  } catch (error) {
+    console.warn('差分選択セットの保存に失敗しました', error);
+    try {
+      const detail = { operation: 'save', key: DIFF_SELECTION_SETS_KEY, message: (error as any)?.message || String(error) };
+      window.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
+      document.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
+      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
+      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
+    } catch { /* noop */ }
+  }
 }
 
 export function listDiffSelectionSets(): DiffSelectionSet[] {

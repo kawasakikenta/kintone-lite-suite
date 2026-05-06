@@ -176,12 +176,15 @@ export const state: AppState = {
 
 export function loadDialogState(): Record<string, any> {
   try { return JSON.parse(localStorage.getItem(DIALOG_STATE_KEY) || '{}'); }
-  catch { return {}; }
+  catch (error) {
+    reportStorageFailure('load', DIALOG_STATE_KEY, error);
+    return {};
+  }
 }
 
 export function saveDialogState(dialogState: Record<string, any> | null | undefined): void {
   try { localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(dialogState || {})); }
-  catch { /* noop */ }
+  catch (error) { reportStorageFailure('save', DIALOG_STATE_KEY, error); }
 }
 
 const REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
@@ -191,6 +194,25 @@ const WORK_HISTORY_LIMIT = 20;
 const CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
 const CONNECTION_PRESETS_LIMIT = 30;
 
+function reportStorageFailure(operation: 'load' | 'save' | 'remove', key: string, error: any): void {
+  try {
+    console.warn(`[${TOOL_ID}] storage ${operation} failed: ${key}`, error);
+  } catch { /* noop */ }
+  try {
+    const detail = {
+      operation,
+      key,
+      message: error?.message || String(error)
+    };
+    window.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
+    document.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
+    const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed
+      ? window.__KUS_TOOL_WINDOW__.document
+      : null;
+    if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
+  } catch { /* noop */ }
+}
+
 export function loadReflectApplyHistory(): any[] {
   try {
     const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY)
@@ -198,7 +220,8 @@ export function loadReflectApplyHistory(): any[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
-  } catch {
+  } catch (error) {
+    reportStorageFailure('load', REFLECT_APPLY_HISTORY_KEY, error);
     return [];
   }
 }
@@ -208,11 +231,11 @@ export function persistReflectApplyHistory(entries: any[] | null | undefined): v
     const list = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
     const text = JSON.stringify(list);
     localStorage.setItem(REFLECT_APPLY_HISTORY_KEY, text);
-  } catch { /* noop */ }
+  } catch (error) { reportStorageFailure('save', REFLECT_APPLY_HISTORY_KEY, error); }
   try {
     // 旧セッション保存があれば掃除（移行）。
     sessionStorage.removeItem(REFLECT_APPLY_HISTORY_KEY);
-  } catch { /* noop */ }
+  } catch (error) { reportStorageFailure('remove', REFLECT_APPLY_HISTORY_KEY, error); }
 }
 
 export function pushReflectApplyHistoryEntry(entry: any): void {
@@ -248,7 +271,8 @@ export function loadWorkHistory(): any[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
-  } catch {
+  } catch (error) {
+    reportStorageFailure('load', WORK_HISTORY_KEY, error);
     return [];
   }
 }
@@ -257,7 +281,7 @@ export function persistWorkHistory(entries: any[] | null | undefined): void {
   try {
     const list = Array.isArray(entries) ? entries.slice(0, WORK_HISTORY_LIMIT) : [];
     localStorage.setItem(WORK_HISTORY_KEY, JSON.stringify(list));
-  } catch { /* noop */ }
+  } catch (error) { reportStorageFailure('save', WORK_HISTORY_KEY, error); }
 }
 
 export function pushWorkHistoryEntry(entry: any): void {
@@ -310,7 +334,8 @@ export function loadConnectionPresets(): ConnectionPreset[] {
       .map(normalizeConnectionPreset)
       .filter((x): x is ConnectionPreset => x !== null)
       .slice(0, CONNECTION_PRESETS_LIMIT);
-  } catch {
+  } catch (error) {
+    reportStorageFailure('load', CONNECTION_PRESETS_KEY, error);
     return [];
   }
 }
@@ -321,7 +346,7 @@ export function persistConnectionPresets(entries: Array<Partial<ConnectionPreset
       ? entries.map(normalizeConnectionPreset).filter((x): x is ConnectionPreset => x !== null).slice(0, CONNECTION_PRESETS_LIMIT)
       : [];
     localStorage.setItem(CONNECTION_PRESETS_KEY, JSON.stringify(list));
-  } catch { /* noop */ }
+  } catch (error) { reportStorageFailure('save', CONNECTION_PRESETS_KEY, error); }
 }
 
 export function upsertConnectionPreset(entry: Partial<ConnectionPreset>): ConnectionPreset | null {

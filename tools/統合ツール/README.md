@@ -59,42 +59,42 @@ npm run watch
 ```
 tools/統合ツール/
 ├── src/
-│   ├── index.js              # エントリポイント（環境チェック → DOM生成 → 初期化）
-│   ├── constants.js          # 定数定義（TOOL_ID, SECTION_DEFS, META_KEYS 等）
-│   ├── state.js              # グローバルstate, localStorage永続化, ui参照
-│   ├── api.js                # kintone API ラッパー（GET/PUT/POST, fetchBundle）
-│   ├── utils.js              # 汎用ユーティリティ（escape, clone, normalize, download等）
-│   ├── handlers.js           # イベント委譲ディスパッチ（data-act, キーボードショートカット）
+│   ├── index.ts              # エントリポイント（環境チェック → DOM生成 → 初期化）
+│   ├── constants.ts          # 定数定義（TOOL_ID, SECTION_DEFS, META_KEYS 等）
+│   ├── state.ts              # グローバルstate, localStorage永続化, ui参照
+│   ├── api.ts                # kintone API ラッパー（GET/PUT/POST, fetchBundle）
+│   ├── utils.ts              # 汎用ユーティリティ（escape, clone, normalize, download等）
+│   ├── handlers.ts           # イベント委譲ディスパッチ（data-act, キーボードショートカット）
 │   │
 │   ├── diff/                 # 差分エンジン
-│   │   ├── engine.js         # コア差分アルゴリズム（deepDiff, LCS, objectKey比較）
-│   │   ├── enrich.js         # 差分行の補強（重要度, リネーム検出, 影響分析）
-│   │   ├── filter.js         # フィルタリング, エクスポート条件解決
-│   │   └── export.js         # HTML/Excel/Markdown/パッチ出力, 差分表示レンダリング
+│   │   ├── engine.ts         # コア差分アルゴリズム（deepDiff, LCS, objectKey比較）
+│   │   ├── enrich.ts         # 差分行の補強（重要度, リネーム検出, 影響分析）
+│   │   ├── filter.ts         # フィルタリング, エクスポート条件解決
+│   │   └── export.ts         # HTML/Excel/Markdown/パッチ出力, 差分表示レンダリング
 │   │
 │   ├── reflect/              # プレビュー反映
-│   │   ├── plan.js           # 反映プラン構築, 確認UI, セクション別差分計画
-│   │   ├── apply.js          # 反映実行, バックアップ, デプロイ
-│   │   └── helpers.js        # 反映共通ヘルパー（進捗表示, スコープ解決等）
+│   │   ├── plan.ts           # 反映プラン構築, 確認UI, セクション別差分計画
+│   │   ├── apply.ts          # 反映実行, バックアップ, デプロイ
+│   │   └── helpers.ts        # 反映共通ヘルパー（進捗表示, スコープ解決等）
 │   │
 │   ├── ui/                   # UI層
 │   │   ├── styles.css        # 全CSS（カスタムプロパティでテーマ管理, ライト/ダーク対応）
-│   │   ├── template.js       # メインHTML構築（buildRoot）
-│   │   ├── dialog.js         # ダイアログ制御（ドラッグ, リサイズ, 位置記憶）
-│   │   ├── components.js     # 共通UIコンポーネント（ステータス, チップ, サイドバー等）
-│   │   └── tour.js           # ガイドツアー機能
+│   │   ├── template.ts       # メインHTML構築（buildRoot）
+│   │   ├── dialog.ts         # ダイアログ制御（ドラッグ, リサイズ, 位置記憶）
+│   │   ├── components.ts     # 共通UIコンポーネント（ステータス, チップ, サイドバー等）
+│   │   └── tour.ts           # ガイドツアー機能
 │   │
 │   └── tabs/                 # タブ別ロジック
-│       ├── diff.js           # 差分比較タブ
-│       ├── reflect.js        # プレビュー反映タブ
-│       ├── field.js          # フィールド追加タブ
-│       ├── jsconfig.js       # JS/CSS設定タブ
-│       ├── design.js         # 設計書タブ
-│       ├── er.js             # ER図タブ
-│       ├── process.js        # プロセス図タブ
-│       ├── settings-export.js# 設定一括取得タブ
-│       ├── record.js         # レコード管理タブ
-│       └── api-tester.js     # APIテスタータブ
+│       ├── diff.ts           # 差分比較タブ
+│       ├── reflect.ts        # プレビュー反映タブ
+│       ├── field.ts          # フィールド追加タブ
+│       ├── jsconfig.ts       # JS/CSS設定タブ
+│       ├── design.ts         # 設計書タブ
+│       ├── er.ts             # ER図タブ
+│       ├── process.ts        # プロセス図タブ
+│       ├── settings-export.ts# 設定一括取得タブ
+│       ├── record.ts         # レコード管理タブ
+│       └── api-tester.ts     # APIテスタータブ
 │
 ├── build.js                  # esbuild バンドルスクリプト
 ├── package.json
@@ -105,7 +105,7 @@ tools/統合ツール/
 
 [esbuild](https://esbuild.github.io/) でモジュールを単一 IIFE にバンドルします。
 
-- エントリポイント: `src/index.js`
+- エントリポイント: `src/index.ts`（ソース内の `.js` import 指定はビルド時に `.ts` へ解決）
 - 出力形式: IIFE（即時実行関数）
 - CSS: カスタム esbuild プラグインで `.css` ファイルを JS 文字列としてインライン化し、実行時に `<style>` タグとして注入
 - ターゲット: ES2020
@@ -166,21 +166,21 @@ tools/統合ツール/
 
 ## 正規実装と単機能スクリプト
 
-統合後の運用では、機能ロジックは `src/tabs/*.js` を正規実装とし、`tools/*.js` は単機能用の出力として管理します。単機能スクリプトは `src/entries/*-lite-entry.js` を esbuild した自己完結バンドルで、`統合ツール.js` を別途読み込む必要はありません。
+統合後の運用では、機能ロジックは `src/tabs/*.ts` を正規実装とし、`tools/*.js` は単機能用の出力として管理します。単機能スクリプトは `src/entries/*-lite-entry.ts` を esbuild した自己完結バンドルで、`統合ツール.js` を別途読み込む必要はありません。
 
-プログラムから差分 API を使う場合: `統合ツール.js` 実行後に `window.__KUS__.runDiffStandalone`（`register-api.js`）。差分専用ブックマーク `差分比較.js` を使う場合も同 API が同梱されます。
+プログラムから差分 API を使う場合: `統合ツール.js` 実行後に `window.__KUS__.runDiffStandalone`（`register-api.ts`）。差分専用ブックマーク `差分比較.js` を使う場合も同 API が同梱されます。
 
 | 機能名 | 正規モジュール | 単機能スクリプト |
 |---|---|---|
-| 差分比較 | `src/tabs/diff.js` | `../差分比較.js`（lite バンドル） |
-| プレビュー反映 | `src/tabs/reflect.js` | `../プレビュー反映.js`（lite バンドル） |
-| フィールド追加 | `src/tabs/field.js` | `../フィールド追加.js`（lite バンドル） |
-| JS/CSS設定 | `src/tabs/jsconfig.js` | `../kintoneJS取得.js`（lite バンドル） |
-| 設定一括取得 | `src/tabs/settings-export.js` | `../設定取得.js`（lite バンドル） |
-| 設計書 | `src/tabs/design.js` | `../設計書作成.js`（同上） |
-| ER図 | `src/tabs/er.js` | `../ER図.js`（同上） |
-| プロセス図 | `src/tabs/process.js` | `../プロセス実行.js`（同上） |
-| レコード管理 | `src/tabs/record.js` | `../kintoneレコード取得.js`（同上） |
+| 差分比較 | `src/tabs/diff.ts` | `../差分比較.js`（lite バンドル） |
+| プレビュー反映 | `src/tabs/reflect.ts` | `../プレビュー反映.js`（lite バンドル） |
+| フィールド追加 | `src/tabs/field.ts` | `../フィールド追加.js`（lite バンドル） |
+| JS/CSS設定 | `src/tabs/jsconfig.ts` | `../kintoneJS取得.js`（lite バンドル） |
+| 設定一括取得 | `src/tabs/settings-export.ts` | `../設定取得.js`（lite バンドル） |
+| 設計書 | `src/tabs/design.ts` | `../設計書作成.js`（同上） |
+| ER図 | `src/tabs/er.ts` | `../ER図.js`（同上） |
+| プロセス図 | `src/tabs/process.ts` | `../プロセス実行.js`（同上） |
+| レコード管理 | `src/tabs/record.ts` | `../kintoneレコード取得.js`（同上） |
 
 `SQL実行` は統合ツールから除外し、`tools/standalone/kintoneSQL.js` として独立運用します（ビルド対象外、手書き）。
 

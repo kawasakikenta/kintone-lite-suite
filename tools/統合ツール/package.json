@@ -6,7 +6,9 @@
     "build": "node build.js",
     "watch": "node build.js --watch",
     "typecheck": "tsc --noEmit",
-    "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json"
+    "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
+    "check": "npm run typecheck && npm run typecheck:strict && npm run build",
+    "test": "npm run check"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

@@ -35,6 +35,7 @@
 
 import { state, ui } from '../state.js';
 import { setStatus } from './components.js';
+import { getToolDocument } from './dialog.js';
 import { localizeKintoneEnumsInText as kusEnumsLocalize } from '../kintone-enums.js';
 
 interface ExtrasGlobal {
@@ -43,12 +44,36 @@ interface ExtrasGlobal {
   scrollMap?: Map<string, number>;
   highlightColor?: string;
   severityThreshold?: 'all' | 'low' | 'mid' | 'high';
+  taskTimer?: any;
+  boundDocEvents?: WeakMap<Document, Set<string>>;
 }
 
 const G: ExtrasGlobal = {};
 
 function getRoot(): HTMLElement | null {
-  return document.getElementById('kintone-unified-suite-v2');
+  return getToolDocument().getElementById('kintone-unified-suite-v2');
+}
+
+function getDoc(): Document {
+  return getRoot()?.ownerDocument || getToolDocument();
+}
+
+function getWin(): Window {
+  return getDoc().defaultView || window;
+}
+
+function bindToolDocumentEvent(key: string, type: string, handler: EventListener, options?: AddEventListenerOptions): void {
+  const doc = getDoc();
+  const marker = `${key}:${type}`;
+  if (!G.boundDocEvents) G.boundDocEvents = new WeakMap();
+  let docEvents = G.boundDocEvents.get(doc);
+  if (!docEvents) {
+    docEvents = new Set();
+    G.boundDocEvents.set(doc, docEvents);
+  }
+  if (docEvents.has(marker)) return;
+  doc.addEventListener(type, handler, options);
+  docEvents.add(marker);
 }
 
 /* ============================================================
@@ -57,8 +82,8 @@ function getRoot(): HTMLElement | null {
 export function pushToast(message: string, options: { tone?: 'info' | 'ok' | 'warn' | 'error'; ttl?: number } = {}): void {
   const root = getRoot();
   if (!root) return;
-  if (!G.toastStack) {
-    const stack = document.createElement('div');
+  if (!G.toastStack || !G.toastStack.isConnected || G.toastStack.ownerDocument !== root.ownerDocument) {
+    const stack = root.ownerDocument.createElement('div');
     stack.id = 'u_toastStack';
     stack.className = 'kus-toast-stack';
     stack.setAttribute('role', 'log');
@@ -67,7 +92,7 @@ export function pushToast(message: string, options: { tone?: 'info' | 'ok' | 'wa
     G.toastStack = stack;
   }
   const ttl = options.ttl ?? 3500;
-  const el = document.createElement('div');
+  const el = root.ownerDocument.createElement('div');
   el.className = `kus-toast kus-toast--${options.tone || 'info'}`;
   el.textContent = message;
   el.addEventListener('click', () => el.remove());
@@ -76,9 +101,9 @@ export function pushToast(message: string, options: { tone?: 'info' | 'ok' | 'wa
   while (G.toastStack.children.length > 6) {
     G.toastStack.removeChild(G.toastStack.firstChild as Node);
   }
-  setTimeout(() => {
+  getWin().setTimeout(() => {
     el.classList.add('is-leaving');
-    setTimeout(() => el.remove(), 220);
+    getWin().setTimeout(() => el.remove(), 220);
   }, ttl);
 }
 
@@ -86,9 +111,22 @@ export function pushToast(message: string, options: { tone?: 'info' | 'ok' | 'wa
  * 39: 実行中タスク一覧（ヘッダーピル）
  * ============================================================ */
 export function initActiveTaskPanel(): void {
-  const host = document.getElementById('u_envBadge');
+  const root = getRoot();
+  const host = root?.querySelector('#u_envBadge') as HTMLElement | null;
   if (!host) return;
-  const pill = document.createElement('button');
+  if (G.taskList?.isConnected) return;
+  const existing = host.parentElement?.querySelector('.kus-active-task-pill') as HTMLButtonElement | null;
+  if (existing) {
+    G.taskList = existing as any;
+    return;
+  }
+  const doc = host.ownerDocument;
+  const win = doc.defaultView || window;
+  if (G.taskTimer) {
+    win.clearInterval(G.taskTimer);
+    G.taskTimer = null;
+  }
+  const pill = doc.createElement('button');
   pill.type = 'button';
   pill.className = 'kus-active-task-pill';
   pill.setAttribute('aria-label', '実行中タスク');
@@ -100,8 +138,12 @@ export function initActiveTaskPanel(): void {
   host.parentElement?.insertBefore(pill, host);
   G.taskList = pill as any;
   // observer-like polling (cheap, every 600ms)
-  setInterval(() => {
-    if (!pill.isConnected) return;
+  G.taskTimer = win.setInterval(() => {
+    if (!pill.isConnected) {
+      win.clearInterval(G.taskTimer);
+      G.taskTimer = null;
+      return;
+    }
     if (state.running) {
       pill.classList.add('is-busy');
       pill.textContent = `⏳ ${state.runningTaskLabel || '実行中…'}`;
@@ -688,11 +730,16 @@ export function downloadDiagram(svg: SVGSVGElement, baseName: string, format: 's
   img.src = url;
 }
 function triggerDownload(blob: Blob, filename: string): void {
-  const a = document.createElement('a');
+  const doc = getDoc();
+  const a = doc.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;
+  doc.body.appendChild(a);
   a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 200);
+  getWin().setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  }, 200);
 }
 export function initDiagramExportButtons(): void {
   const root = getRoot();
@@ -797,8 +844,21 @@ function renderApiResponseAs(host: HTMLElement, mode: 'raw' | 'tree' | 'table'):
   }
 }
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
+function diffLeftValue(row: any): any {
+  return row?.left ?? row?.oldValue ?? null;
+}
+
+function diffRightValue(row: any): any {
+  return row?.right ?? row?.newValue ?? null;
+}
+
+function diffSectionLabel(row: any): string {
+  return String(row?.section || row?.sectionKey || '');
+}
+
 function renderTree(value: any, key?: string): string {
   if (value === null || typeof value !== 'object') {
     return `<div class="kus-api-tree__leaf">${key ? `<span class="kus-api-tree__key">${escapeHtml(key)}:</span>` : ''}<span class="kus-api-tree__val">${escapeHtml(JSON.stringify(value))}</span></div>`;
@@ -917,10 +977,10 @@ export function initRowCopyFormat(): void {
     let text = '';
     const localizedRows = rows.map((r: any) => ({
       type: DIFF_TYPE_LABEL[r.type] || r.type,
-      section: r.section,
+      section: diffSectionLabel(r),
       path: r.path,
-      oldStr: localizeKintoneEnumsInText(JSON.stringify(r.oldValue)),
-      newStr: localizeKintoneEnumsInText(JSON.stringify(r.newValue)),
+      oldStr: localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r))),
+      newStr: localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r))),
       severity: DIFF_SEVERITY_LABEL[r.severity] || r.severity
     }));
     if (fmt === 'csv' || fmt === 'tsv') {
@@ -1082,31 +1142,32 @@ export function initStatusUndo(): void {
  * 40: オフライン自動リトライ（指数バックオフ + 最大 5 回）
  * ============================================================ */
 export function initOfflineRetry(): void {
-  if ((window as any).__kus_offline_hook__) return;
-  (window as any).__kus_offline_hook__ = true;
+  const win = getWin() as any;
+  if (win.__kus_offline_hook__) return;
+  win.__kus_offline_hook__ = true;
   const pending: Array<() => void> = [];
-  window.addEventListener('online', () => {
+  win.addEventListener('online', () => {
     pushToast(`オンライン復帰: 待機中 ${pending.length} 件を再送します`, { tone: 'ok' });
     while (pending.length) {
       const fn = pending.shift();
       try { fn?.(); } catch (e) { /* ignore */ }
     }
   });
-  window.addEventListener('offline', () => {
+  win.addEventListener('offline', () => {
     pushToast('オフラインです。通信は復帰後に自動再送します。', { tone: 'warn', ttl: 6000 });
   });
-  if ((window as any).__kus_fetch_wrapped__) return;
-  (window as any).__kus_fetch_wrapped__ = true;
-  const origFetch = window.fetch.bind(window);
+  if (win.__kus_fetch_wrapped__) return;
+  win.__kus_fetch_wrapped__ = true;
+  const origFetch = win.fetch.bind(win);
   const RETRYABLE = (err: any) => !!err && (err.name === 'TypeError' || /network|failed to fetch/i.test(String(err?.message || '')));
-  window.fetch = async function (input: any, init?: any) {
+  win.fetch = async function (input: any, init?: any) {
     let lastErr: any;
     const url = typeof input === 'string' ? input : (input?.url || '');
-    const isInternal = !url || url.startsWith('/') || url.startsWith(window.location.origin);
+    const isInternal = !url || url.startsWith('/') || url.startsWith(win.location.origin);
     const maxAttempts = isInternal ? 5 : 2;
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        if (!navigator.onLine) {
+        if (!win.navigator.onLine) {
           await new Promise<void>((resolve) => pending.push(resolve));
         }
         const res = await origFetch(input, init);
@@ -1144,7 +1205,7 @@ export function initRightPaneJsonDiff(): void {
     /* already wrapped */ return;
   }
   wrap.classList.add('kus-diff-with-side');
-  const side = document.createElement('aside');
+  const side = root.ownerDocument.createElement('aside');
   side.id = 'u_diffJsonSidePanel';
   side.className = 'kus-diff-side';
   side.innerHTML = `
@@ -1159,23 +1220,23 @@ export function initRightPaneJsonDiff(): void {
   wrap.appendChild(side);
   side.querySelector('.kus-diff-side__close')?.addEventListener('click', () => side.classList.remove('is-open'));
   result.addEventListener('click', (e) => {
-    const row = (e.target as HTMLElement)?.closest?.('.row[data-row-id]') as HTMLElement | null;
+    const row = (e.target as HTMLElement)?.closest?.('[data-diff-row-tr], .row[data-row-id]') as HTMLElement | null;
     if (!row) return;
-    const id = row.dataset.rowId;
-    const r = (state.lastDiffRows || []).find((x: any) => String(x.id) === String(id) || String(x.path) === String(id));
+    const id = row.getAttribute('data-diff-row-tr') || row.dataset.rowId || '';
+    const r = (state.lastDiffRows || []).find((x: any) => String(x._id || x.id) === String(id) || String(x.path) === String(id));
     if (!r) return;
     renderJsonDiffSide(r);
     side.classList.add('is-open');
   });
 }
 function renderJsonDiffSide(row: any): void {
-  const body = document.querySelector('#u_diffJsonSidePanel .kus-diff-side__body') as HTMLElement | null;
+  const body = getDoc().querySelector('#u_diffJsonSidePanel .kus-diff-side__body') as HTMLElement | null;
   if (!body) return;
-  const old = JSON.stringify(row?.oldValue ?? null, null, 2);
-  const nu = JSON.stringify(row?.newValue ?? null, null, 2);
+  const old = JSON.stringify(diffLeftValue(row), null, 2);
+  const nu = JSON.stringify(diffRightValue(row), null, 2);
   body.innerHTML = `
     <div class="kus-diff-side__meta">
-      <span class="muted">${escapeHtml(String(row?.section || ''))} :: ${escapeHtml(String(row?.path || ''))}</span>
+      <span class="muted">${escapeHtml(diffSectionLabel(row))} :: ${escapeHtml(String(row?.path || ''))}</span>
       <span class="muted">type=${escapeHtml(String(row?.type || ''))} severity=${escapeHtml(String(row?.severity || ''))}</span>
     </div>
     <div class="kus-diff-side__cols">
@@ -1198,16 +1259,18 @@ const inlineNotes: Record<string, string> = {};
 export function initInlineMemo(): void {
   const root = getRoot();
   if (!root) return;
+  if (root.dataset.kusInlineMemoBound === '1') return;
+  root.dataset.kusInlineMemoBound = '1';
   // Add a small note button per diff row via delegation
   root.addEventListener('click', (e) => {
     const target = (e.target as HTMLElement)?.closest?.('.kus-row-memo-btn') as HTMLElement | null;
     if (!target) return;
     e.stopPropagation();
-    const row = target.closest('.row[data-row-id]') as HTMLElement | null;
+    const row = target.closest('[data-diff-row-tr], .row[data-row-id]') as HTMLElement | null;
     if (!row) return;
-    const id = row.dataset.rowId || '';
+    const id = row.getAttribute('data-diff-row-tr') || row.dataset.rowId || '';
     const cur = inlineNotes[id] || '';
-    const next = window.prompt(`メモを追加（${id}）`, cur);
+    const next = getWin().prompt(`メモを追加（${id}）`, cur);
     if (next === null) return;
     if (next.trim()) {
       inlineNotes[id] = next;
@@ -1222,16 +1285,19 @@ export function initInlineMemo(): void {
     }
   });
   // Decorate rows on render
-  document.addEventListener('kus:diffRendered', () => {
-    const rows = root.querySelectorAll<HTMLElement>('#u_result .row[data-row-id]');
+  bindToolDocumentEvent('inlineMemo', 'kus:diffRendered', () => {
+    const currentRoot = getRoot();
+    if (!currentRoot) return;
+    const rows = currentRoot.querySelectorAll<HTMLElement>('#u_result [data-diff-row-tr], #u_result .row[data-row-id]');
     rows.forEach((r) => {
       if (r.querySelector('.kus-row-memo-btn')) return;
-      const btn = document.createElement('button');
+      const btn = r.ownerDocument.createElement('button');
       btn.type = 'button';
       btn.className = 'kus-row-memo-btn';
       btn.title = 'メモを追加';
       btn.textContent = '🗒';
-      btn.dataset.hasNote = inlineNotes[r.dataset.rowId || ''] ? '1' : '';
+      const id = r.getAttribute('data-diff-row-tr') || r.dataset.rowId || '';
+      btn.dataset.hasNote = inlineNotes[id] ? '1' : '';
       r.appendChild(btn);
     });
   });
@@ -1740,10 +1806,10 @@ export function exportDiffAsMarkdown(): void {
     + rows.map((r: any) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-      const oldStr = localizeKintoneEnumsInText(JSON.stringify(r.oldValue));
-      const newStr = localizeKintoneEnumsInText(JSON.stringify(r.newValue));
-      return `| ${typeLabel} | ${r.section} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
-    }).join('\n');
+    const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
+    const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
+    return `| ${typeLabel} | ${diffSectionLabel(r)} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
+  }).join('\n');
   triggerDownload(new Blob([md], { type: 'text/markdown' }), `kus-diff_${new Date().toISOString().slice(0, 10)}.md`);
   pushToast('Markdown を保存しました', { tone: 'ok' });
 }
@@ -1754,9 +1820,9 @@ export function exportDiffAsCsvForExcel(): void {
   const body = rows.map((r: any) => {
     const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
     const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-    const oldStr = localizeKintoneEnumsInText(JSON.stringify(r.oldValue));
-    const newStr = localizeKintoneEnumsInText(JSON.stringify(r.newValue));
-    return [typeLabel, r.section, r.path, oldStr, newStr, severityLabel]
+    const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
+    const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
+    return [typeLabel, diffSectionLabel(r), r.path, oldStr, newStr, severityLabel]
       .map((c) => `"${String(c ?? '').replace(/"/g, '""').replace(/[\r\n]/g, ' ')}"`).join(',');
   }).join('\n');
   // BOM for Excel
@@ -1780,9 +1846,9 @@ export function exportDiffAsPrintablePdf(): void {
   const tbody = rows.map((r: any) => {
     const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
     const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-    const oldStr = localizeKintoneEnumsInText(JSON.stringify(r.oldValue));
-    const newStr = localizeKintoneEnumsInText(JSON.stringify(r.newValue));
-    return `<tr class="${r.type}"><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(r.section)}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
+    const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
+    const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
+    return `<tr class="${r.type}"><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(diffSectionLabel(r))}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
   }).join('');
   win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>kintone 差分レポート</title><style>${css}</style></head><body><h1>kintone 差分レポート</h1><div class="meta">生成: ${new Date().toISOString()} / 件数: ${rows.length}</div><table><thead><tr><th>種別</th><th>セクション</th><th>パス</th><th>旧</th><th>新</th><th>重要度</th></tr></thead><tbody>${tbody}</tbody></table><script>window.onload=()=>{setTimeout(()=>window.print(),200)}</script></body></html>`);
   win.document.close();
@@ -1818,12 +1884,17 @@ export function initLeftDockProperties(): void {
 export function initVirtualScrollLite(): void {
   const root = getRoot();
   if (!root) return;
+  if (root.dataset.kusVirtualScrollBound === '1') return;
+  root.dataset.kusVirtualScrollBound = '1';
   const result = root.querySelector('#u_result') as HTMLElement | null;
   if (!result) return;
   let observer: IntersectionObserver | null = null;
   let measureH = 36;
   const apply = () => {
-    const rows = [...result.querySelectorAll<HTMLElement>('.row[data-row-id]')];
+    const currentRoot = getRoot();
+    const currentResult = currentRoot?.querySelector('#u_result') as HTMLElement | null;
+    if (!currentRoot || !currentResult) return;
+    const rows = [...currentResult.querySelectorAll<HTMLElement>('[data-diff-row-tr], .row[data-row-id]')];
     if (rows.length <= 200) {
       // 少件数では何もしない
       rows.forEach((r) => {
@@ -1837,7 +1908,8 @@ export function initVirtualScrollLite(): void {
     // 計測サンプル
     measureH = rows[0]?.offsetHeight || 36;
     if (observer) observer.disconnect();
-    observer = new IntersectionObserver((entries) => {
+    const win = currentRoot.ownerDocument.defaultView || window;
+    observer = new win.IntersectionObserver((entries) => {
       entries.forEach((ent) => {
         const r = ent.target as HTMLElement;
         if (ent.isIntersecting) {
@@ -1849,14 +1921,14 @@ export function initVirtualScrollLite(): void {
         }
       });
     }, {
-      root: root.querySelector('.body') as Element,
+      root: currentRoot.querySelector('.body') as Element,
       rootMargin: '600px 0px 600px 0px',
       threshold: 0
     });
     rows.forEach((r) => observer!.observe(r));
     pushToast(`仮想スクロール有効化: ${rows.length} 行`, { tone: 'info', ttl: 1800 });
   };
-  document.addEventListener('kus:diffRendered', () => requestAnimationFrame(apply));
+  bindToolDocumentEvent('virtualScroll', 'kus:diffRendered', () => getWin().requestAnimationFrame(apply));
 }
 
 /* ============================================================
@@ -1864,18 +1936,20 @@ export function initVirtualScrollLite(): void {
  * ============================================================ */
 let mermaidLoading: Promise<any> | null = null;
 function loadMermaid(): Promise<any> {
-  if ((window as any).mermaid) return Promise.resolve((window as any).mermaid);
+  const doc = getDoc();
+  const win = doc.defaultView || window;
+  if ((win as any).mermaid) return Promise.resolve((win as any).mermaid);
   if (mermaidLoading) return mermaidLoading;
   mermaidLoading = new Promise((resolve, reject) => {
-    const sc = document.createElement('script');
+    const sc = doc.createElement('script');
     sc.src = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';
     sc.onload = () => {
-      const m = (window as any).mermaid;
+      const m = (win as any).mermaid;
       try { m.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'default' }); } catch (e) { /* ignore */ }
       resolve(m);
     };
     sc.onerror = () => reject(new Error('mermaid のロードに失敗しました'));
-    document.head.appendChild(sc);
+    doc.head.appendChild(sc);
   });
   return mermaidLoading;
 }
@@ -2271,7 +2345,8 @@ export function initProcessScreenshotDiff(): void {
     f.text().then((txt) => {
       const w = window.open('', '_blank');
       if (!w) return;
-      w.document.write(`<!doctype html><html><body><h1>過去のスナップショット</h1>${txt}</body></html>`);
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>過去のスナップショット</title></head><body><h1>過去のスナップショット</h1><pre style="white-space:pre-wrap">${escapeHtml(txt)}</pre></body></html>`);
+      w.document.close();
     });
   });
 }
@@ -2376,9 +2451,9 @@ export function exportDiffPdfWithCover(): void {
   const tbody = rows.map((r: any) => {
     const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
     const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-    const oldStr = localizeKintoneEnumsInText(JSON.stringify(r.oldValue));
-    const newStr = localizeKintoneEnumsInText(JSON.stringify(r.newValue));
-    return `<tr><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(r.section)}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
+    const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
+    const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
+    return `<tr><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(diffSectionLabel(r))}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
   }).join('');
   win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(cover.title || '差分レポート')}</title><style>${css}</style></head><body>
     <div class="cover">
@@ -2560,13 +2635,17 @@ export function initExtras(): void {
   try { renderDiffFixedSummary(); } catch (e) { /* ignore */ }
   try { adaptReflectChecklist(); } catch (e) { /* ignore */ }
   // hook to status changes
-  document.addEventListener('kus:diffRendered', () => {
+  bindToolDocumentEvent('extrasDiffRendered', 'kus:diffRendered', () => {
     try { renderDiffFixedSummary(); } catch (e) { /* ignore */ }
     try { decorateFieldTypeIcons(); } catch (e) { /* ignore */ }
     try { adaptReflectChecklist(); } catch (e) { /* ignore */ }
   });
+  bindToolDocumentEvent('storageErrorToast', 'kus:storageError', ((e: CustomEvent) => {
+    const detail = e.detail || {};
+    pushToast(`ブラウザ保存に失敗しました: ${detail.key || ''}`, { tone: 'warn', ttl: 6000 });
+  }) as EventListener);
   // wire export/import buttons via delegation
-  document.addEventListener('click', (e) => {
+  bindToolDocumentEvent('extrasActionDelegation', 'click', (e) => {
     const t = (e.target as HTMLElement)?.closest?.('[data-act]') as HTMLElement | null;
     if (!t) return;
     const act = t.dataset.act;
@@ -2575,7 +2654,7 @@ export function initExtras(): void {
       exportDiffStateToJson();
     } else if (act === 'kusImportDiffJson') {
       e.preventDefault();
-      const inp = document.createElement('input');
+      const inp = getDoc().createElement('input');
       inp.type = 'file';
       inp.accept = 'application/json';
       inp.onchange = () => {

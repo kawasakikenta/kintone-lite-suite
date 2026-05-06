@@ -847,14 +847,16 @@ ${contextLine}`);
     return String(severity || "-");
   }
   function triggerDownload(filename, blob) {
+    const doc = getToolDocumentSafe();
+    const win = getToolWindowSafe();
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const a = doc.createElement("a");
     a.href = url;
     a.download = filename;
     a.style.display = "none";
-    document.body.appendChild(a);
+    doc.body.appendChild(a);
     a.click();
-    window.setTimeout(() => {
+    win.setTimeout(() => {
       try {
         URL.revokeObjectURL(url);
       } catch (e) {
@@ -1141,13 +1143,33 @@ ${contextLine}`);
   function loadDialogState() {
     try {
       return JSON.parse(localStorage.getItem(DIALOG_STATE_KEY) || "{}");
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", DIALOG_STATE_KEY, error);
       return {};
     }
   }
   function saveDialogState(dialogState) {
     try {
       localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(dialogState || {}));
+    } catch (error) {
+      reportStorageFailure("save", DIALOG_STATE_KEY, error);
+    }
+  }
+  function reportStorageFailure(operation, key, error) {
+    try {
+      console.warn(`[${TOOL_ID}] storage ${operation} failed: ${key}`, error);
+    } catch {
+    }
+    try {
+      const detail = {
+        operation,
+        key,
+        message: error?.message || String(error)
+      };
+      window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
+      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
     } catch {
     }
   }
@@ -1157,7 +1179,8 @@ ${contextLine}`);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", REFLECT_APPLY_HISTORY_KEY, error);
       return [];
     }
   }
@@ -1166,11 +1189,13 @@ ${contextLine}`);
       const list = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
       const text = JSON.stringify(list);
       localStorage.setItem(REFLECT_APPLY_HISTORY_KEY, text);
-    } catch {
+    } catch (error) {
+      reportStorageFailure("save", REFLECT_APPLY_HISTORY_KEY, error);
     }
     try {
       sessionStorage.removeItem(REFLECT_APPLY_HISTORY_KEY);
-    } catch {
+    } catch (error) {
+      reportStorageFailure("remove", REFLECT_APPLY_HISTORY_KEY, error);
     }
   }
   function pushReflectApplyHistoryEntry(entry) {
@@ -1199,7 +1224,8 @@ ${contextLine}`);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", WORK_HISTORY_KEY, error);
       return [];
     }
   }
@@ -1207,7 +1233,8 @@ ${contextLine}`);
     try {
       const list = Array.isArray(entries) ? entries.slice(0, WORK_HISTORY_LIMIT) : [];
       localStorage.setItem(WORK_HISTORY_KEY, JSON.stringify(list));
-    } catch {
+    } catch (error) {
+      reportStorageFailure("save", WORK_HISTORY_KEY, error);
     }
   }
   function pushWorkHistoryEntry(entry) {
@@ -1253,7 +1280,8 @@ ${contextLine}`);
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
       return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
-    } catch {
+    } catch (error) {
+      reportStorageFailure("load", CONNECTION_PRESETS_KEY, error);
       return [];
     }
   }
@@ -1261,7 +1289,8 @@ ${contextLine}`);
     try {
       const list = Array.isArray(entries) ? entries.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT) : [];
       localStorage.setItem(CONNECTION_PRESETS_KEY, JSON.stringify(list));
-    } catch {
+    } catch (error) {
+      reportStorageFailure("save", CONNECTION_PRESETS_KEY, error);
     }
   }
   function upsertConnectionPreset(entry) {
@@ -1387,6 +1416,15 @@ ${contextLine}`);
   function isPreviewRestPrefix(prefix) {
     return String(prefix || "").includes("/v1/preview");
   }
+  function normalizeApiResourcePath(path) {
+    const raw = String(path || "").replace(/\\/g, "/").split("?")[0];
+    const match = raw.match(/\/k(?:\/guest\/[^/]+)?\/v1(?:\/preview)?(\/.*)$/);
+    const resource = match ? match[1] : raw;
+    return resource.startsWith("/") ? resource : `/${resource}`;
+  }
+  function isRecordDataMutationPath(path) {
+    return RECORD_DATA_MUTATION_PATHS.has(normalizeApiResourcePath(path));
+  }
   function assertAllowsMutatingRestCall(prefix, path, method) {
     const m = String(method || "").toUpperCase();
     if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
@@ -1394,6 +1432,10 @@ ${contextLine}`);
     const rel = String(path || "").replace(/\\/g, "/");
     if (rel.includes(DEPLOY_PATH_SNIPPET)) {
       throw new Error(ERR_NO_DEPLOY_API);
+    }
+    if (isRecordDataMutationPath(rel)) {
+      if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+      return;
     }
     if (!isPreviewRestPrefix(prefix)) {
       throw new Error(ERR_NO_PROD_WRITE);
@@ -1406,6 +1448,10 @@ ${contextLine}`);
     const fp = String(fullPath || "").replace(/\\/g, "/");
     if (fp.includes(DEPLOY_PATH_SNIPPET)) {
       throw new Error(ERR_NO_DEPLOY_API);
+    }
+    if (isRecordDataMutationPath(fp)) {
+      if (/\/v1\/preview(\/|$)/.test(fp)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
+      throw new Error(ERR_NO_API_TESTER_RECORD_WRITE);
     }
     if (!/\/v1\/preview(\/|$)/.test(fp)) {
       throw new Error(ERR_NO_PROD_WRITE);
@@ -1679,8 +1725,8 @@ ${contextLine}`);
       if (sections.includes("customizeSettings")) {
         const cust = bundle.sections.customizeSettings;
         if (cust && !cust._fetchError) {
-          const prefix = buildApiPrefix(guestId, preview);
-          await fetchCustomizeFileBodies(cust, prefix);
+          const prefix = buildApiPrefix(guestId, false);
+          cust._bodyFetchStats = await fetchCustomizeFileBodies(cust, prefix);
         }
       }
     } catch {
@@ -1689,8 +1735,8 @@ ${contextLine}`);
       if (sections.includes("pluginSettings")) {
         const plug = bundle.sections.pluginSettings;
         if (plug && !plug._fetchError) {
-          const prefix = buildApiPrefix(guestId, preview);
-          await fetchPluginConfigs(plug, prefix, app);
+          const prefix = buildApiPrefix(guestId, false);
+          plug._configFetchStats = await fetchPluginConfigs(plug, prefix, app);
         }
       }
     } catch {
@@ -1706,7 +1752,7 @@ ${contextLine}`);
     const first = Object.values(revisions).find((value) => value != null && value !== "");
     return first != null ? String(first) : "";
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, ERR_NO_API_TESTER_RECORD_WRITE, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -1716,10 +1762,18 @@ ${contextLine}`);
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
       ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
+      ERR_NO_RECORD_PREVIEW_API = "レコードAPIにはプレビュー用の追加・更新・削除エンドポイントがありません。レコード操作は本番REST APIを明示的な確認付きで実行します。";
+      ERR_NO_API_TESTER_RECORD_WRITE = "APIテスターではレコードの追加・更新・削除を実行できません。レコード管理タブの確認付き操作を使用してください。";
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+      RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
+        "/record.json",
+        "/records.json",
+        "/record/status.json",
+        "/records/status.json"
+      ]);
       apiGetMetrics = {
         calls: 0,
         retries: 0,
@@ -8753,7 +8807,7 @@ ${body}`;
     </div>`;
     scheduleDiffPopoutSync();
     try {
-      document.dispatchEvent(new CustomEvent("kus:diffRendered", { detail: { count: rows.length } }));
+      getToolDocument().dispatchEvent(new CustomEvent("kus:diffRendered", { detail: { count: rows.length } }));
     } catch (e) {
     }
   }
@@ -8767,6 +8821,7 @@ ${body}`;
       init_enrich();
       init_filter();
       init_api();
+      init_dialog();
       FIELD_CHANGE_PROP_LABELS = {
         label: "フィールド名",
         noLabel: "フィールド名を表示しない",
@@ -9175,14 +9230,24 @@ ${body}`;
         keys: Array.isArray(entry?.keys) ? entry.keys.map((k) => String(k || "").trim()).filter(Boolean) : [],
         savedAt: Number(entry?.savedAt) || 0
       })).filter((entry) => entry.name.length > 0).slice(0, MAX_PRESETS);
-    } catch {
+    } catch (error) {
+      console.warn("差分無視プリセットの読み込みに失敗しました", error);
       return [];
     }
   }
   function saveRaw(list) {
     try {
       localStorage.setItem(DIFF_IGNORE_PRESETS_KEY, JSON.stringify(list.slice(0, MAX_PRESETS)));
-    } catch {
+    } catch (error) {
+      console.warn("差分無視プリセットの保存に失敗しました", error);
+      try {
+        const detail = { operation: "save", key: DIFF_IGNORE_PRESETS_KEY, message: error?.message || String(error) };
+        window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+        document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+        const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
+        if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      } catch {
+      }
     }
   }
   function escapeAttr(s) {
@@ -9688,8 +9753,12 @@ ${body}`;
     const bar = ui3.status.closest?.(".status-bar");
     if (bar) bar.classList.toggle("status-bar--error", !!isError);
   }
+  function cssEscapeLiteral(value) {
+    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  }
   function setBusy(isBusy, message = "") {
-    const root2 = ui3.status?.closest(`#${CSS.escape?.("kintone-unified-suite-v2") || "kintone-unified-suite-v2"}`);
+    const root2 = ui3.status?.closest(`#${cssEscapeLiteral("kintone-unified-suite-v2")}`);
     if (message && ui3.busyText) ui3.busyText.textContent = message;
     if (root2) root2.classList.toggle("busy", !!isBusy);
   }
@@ -9811,15 +9880,20 @@ ${body}`;
     if (!state.lastResultByTab || typeof state.lastResultByTab !== "object") {
       state.lastResultByTab = {};
     }
-    if (html && html !== '<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア</p><p class="main-result-placeholder-body">このタブの操作結果やログがここに表示されます。</p></div>') {
+    if (html && html !== MAIN_RESULT_PLACEHOLDER_HTML && isRestorableResultHtml(html)) {
       state.lastResultByTab[prevTab] = html;
     }
+  }
+  function isRestorableResultHtml(html) {
+    const text = String(html || "");
+    if (!text || text.length > RESTORABLE_RESULT_HTML_MAX) return false;
+    return !/(<script\b|<iframe\b|<object\b|<embed\b|<link\b|<meta\b|\son[a-z]+\s*=|javascript:)/i.test(text);
   }
   function restoreTabResult(nextKey) {
     if (!ui3.result) return;
     if (nextKey === "diff") return;
     const stored = state.lastResultByTab && state.lastResultByTab[nextKey];
-    if (typeof stored === "string" && stored.length) {
+    if (typeof stored === "string" && stored.length && isRestorableResultHtml(stored)) {
       ui3.result.innerHTML = stored;
     }
   }
@@ -11762,7 +11836,7 @@ ${tgt.full}`);
     </div>
   </div>`;
   }
-  var ui3, deps, SCOPE_PICKER_META;
+  var ui3, deps, MAIN_RESULT_PLACEHOLDER_HTML, RESTORABLE_RESULT_HTML_MAX, SCOPE_PICKER_META;
   var init_components = __esm({
     "src/ui/components.ts"() {
       "use strict";
@@ -11796,6 +11870,8 @@ ${tgt.full}`);
         scheduleGuidedTourLayout: null,
         stableStringify: null
       };
+      MAIN_RESULT_PLACEHOLDER_HTML = '<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア</p><p class="main-result-placeholder-body">このタブの操作結果やログがここに表示されます。</p></div>';
+      RESTORABLE_RESULT_HTML_MAX = 5e5;
       SCOPE_PICKER_META = Object.freeze({
         diff: Object.freeze({
           title: "比較対象セクション",
@@ -11952,7 +12028,8 @@ ${tgt.full}`);
     const elapsedEl = overlay.querySelector(".kus-progress-elapsed");
     let totalRef = Number(total) || 0;
     let currentRef = 0;
-    const elapsedTimer = setInterval(() => {
+    const win = doc.defaultView || window;
+    const elapsedTimer = win.setInterval(() => {
       if (!elapsedEl) return;
       const sec = Math.max(0, Math.round((Date.now() - startedAt) / 1e3));
       elapsedEl.textContent = `${sec}秒`;
@@ -11970,7 +12047,7 @@ ${tgt.full}`);
     }
     update();
     function dispose() {
-      clearInterval(elapsedTimer);
+      win.clearInterval(elapsedTimer);
       overlay.remove();
     }
     return {
@@ -12935,13 +13012,19 @@ ${tgt.full}`);
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch (e) {
+      console.warn("反映プリセットの読み込みに失敗しました", e);
+      showToast("反映プリセットの読み込みに失敗しました。保存データが破損している可能性があります。", "warn");
       return [];
     }
   }
   function persistReflectPresets(presets) {
     try {
       localStorage.setItem(REFLECT_PRESETS_KEY, JSON.stringify(presets || []));
+      return true;
     } catch (e) {
+      console.warn("反映プリセットの保存に失敗しました", e);
+      showToast("反映プリセットの保存に失敗しました。ブラウザの保存容量や権限を確認してください。", "warn");
+      return false;
     }
   }
   function saveReflectPreset(name) {
@@ -12967,7 +13050,7 @@ ${tgt.full}`);
     };
     const presets = loadReflectPresets().filter((p) => p && p.name !== trimmed);
     presets.unshift(preset);
-    persistReflectPresets(presets.slice(0, 30));
+    if (!persistReflectPresets(presets.slice(0, 30))) throw new Error("反映プリセットを保存できませんでした");
     return preset;
   }
   function applyReflectPreset(name) {
@@ -12990,7 +13073,7 @@ ${tgt.full}`);
   }
   function deleteReflectPreset(name) {
     const presets = loadReflectPresets().filter((p) => p && p.name !== name);
-    persistReflectPresets(presets);
+    if (!persistReflectPresets(presets)) throw new Error("反映プリセットを削除できませんでした");
   }
   function exportReflectSelectionJson() {
     const rows = state.reflectRows || [];
@@ -25788,8 +25871,8 @@ ${lines.join("\n")}
               <div class="muted" style="margin-top:8px;line-height:1.55">CSVファイルからレコードを一括登録します。1行目がフィールドコードのヘッダ行である必要があります。</div>
               <div class="grid2" style="margin-top:8px">
                 <div style="display:flex;align-items:center">
-                  <input type="file" id="u_csvImportFile" accept=".csv" style="display:none" onchange="document.getElementById('u_csvImportFileName').textContent=this.files[0]?this.files[0].name:'未選択'">
-                  <button type="button" class="btn sm" onclick="document.getElementById('u_csvImportFile').click()">CSVファイルを選択</button>
+                  <input type="file" id="u_csvImportFile" accept=".csv" style="display:none">
+                  <button type="button" class="btn sm" data-act="selectCsvImportFile">CSVファイルを選択</button>
                   <span id="u_csvImportFileName" class="muted" style="margin-left:8px;font-size:12px">未選択</span>
                 </div>
               </div>
@@ -26816,14 +26899,24 @@ ${lines.join("\n")}
     try {
       const raw = JSON.parse(localStorage.getItem(DIFF_SELECTION_SETS_KEY) || "[]");
       return Array.isArray(raw) ? raw : [];
-    } catch {
+    } catch (error) {
+      console.warn("差分選択セットの読み込みに失敗しました", error);
       return [];
     }
   }
   function saveRaw2(list) {
     try {
       localStorage.setItem(DIFF_SELECTION_SETS_KEY, JSON.stringify(list.slice(0, MAX_SETS)));
-    } catch {
+    } catch (error) {
+      console.warn("差分選択セットの保存に失敗しました", error);
+      try {
+        const detail = { operation: "save", key: DIFF_SELECTION_SETS_KEY, message: error?.message || String(error) };
+        window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+        document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+        const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
+        if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
+      } catch {
+      }
     }
   }
   function refreshDiffSelectionSetDropdown() {
@@ -28542,6 +28635,34 @@ ${lines.join("\n")}
     const side = isSource ? c.source : c.target;
     return buildApiPrefix(side.guestId, !!preview);
   }
+  function hasOrderByClause(query) {
+    return /\border\s+by\b/i.test(String(query || ""));
+  }
+  function hasPagingClause(query) {
+    return /\blimit\s+\d+/i.test(String(query || "")) || /\boffset\s+\d+/i.test(String(query || ""));
+  }
+  function buildPagedRecordsQuery(query, offset, options = {}) {
+    const base = String(query || "").trim();
+    if (hasPagingClause(base)) {
+      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
+    }
+    const parts = [];
+    if (base) parts.push(base);
+    if (options.includeOrder !== false && !hasOrderByClause(base)) parts.push("order by $id asc");
+    parts.push(`limit ${Number(options.limit || 500)}`);
+    parts.push(`offset ${Number(offset || 0)}`);
+    return parts.join(" ");
+  }
+  function buildKeysetRecordsQuery(query, lastRecordId, limit = 500) {
+    const base = String(query || "").trim();
+    if (hasPagingClause(base)) {
+      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
+    }
+    const idCond = `$id > ${Number(lastRecordId || 0)}`;
+    if (!base) return `${idCond} order by $id asc limit ${Number(limit || 500)}`;
+    if (hasOrderByClause(base)) return null;
+    return `(${base}) and ${idCond} order by $id asc limit ${Number(limit || 500)}`;
+  }
   async function loadViewsForSelect(selectId, inputId) {
     const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
     if (!tApp) throw new Error("比較先アプリIDを設定してください。");
@@ -28552,7 +28673,7 @@ ${lines.join("\n")}
     if (!sel) return;
     sel.innerHTML = '<option value="">-- 一覧を選択 --</option>';
     for (const v of views) {
-      const opt = document.createElement("option");
+      const opt = getToolDocument().createElement("option");
       opt.value = v.id;
       opt.dataset.q = encodeURIComponent(v.filterCond || "");
       opt.textContent = v.name;
@@ -28571,14 +28692,16 @@ ${lines.join("\n")}
     const prefix = getSideApiPrefix(isSource, false);
     const ids = [];
     let offset = 0;
+    let lastRecordId = 0;
     while (true) {
-      let q = query ? `${query} ` : "";
-      q += `order by $id asc limit 500 offset ${offset}`;
+      const keysetQuery = buildKeysetRecordsQuery(query, lastRecordId);
+      const q = keysetQuery || buildPagedRecordsQuery(query, offset, { includeOrder: true });
       const resp = await apiGet(prefix, "/records.json", { app, query: q, fields: ["$id"] });
       const records = resp.records || [];
       if (records.length === 0) break;
       records.forEach((r) => ids.push(Number(r.$id.value)));
       if (records.length < 500) break;
+      lastRecordId = Number(records[records.length - 1]?.$id?.value || lastRecordId);
       offset += 500;
     }
     return ids;
@@ -28587,14 +28710,16 @@ ${lines.join("\n")}
     const prefix = getSideApiPrefix(isSource, false);
     let allRecords = [];
     let offset = 0;
+    let lastRecordId = 0;
     while (true) {
-      let q = query ? `${query} ` : "";
-      q += `limit 500 offset ${offset}`;
+      const keysetQuery = buildKeysetRecordsQuery(query, lastRecordId);
+      const q = keysetQuery || buildPagedRecordsQuery(query, offset, { includeOrder: true });
       const resp = await apiGet(prefix, "/records.json", { app, query: q });
       const records = resp.records || [];
       if (records.length === 0) break;
       allRecords = allRecords.concat(records);
       if (records.length < 500) break;
+      lastRecordId = Number(records[records.length - 1]?.$id?.value || lastRecordId);
       offset += 500;
     }
     return allRecords;
@@ -28646,23 +28771,27 @@ ${lines.join("\n")}
     setStatus(`ステータス一括更新が完了しました（全${okCount}件）`, false);
   }
   async function loadJSZip() {
+    const doc = getToolDocument();
+    const win = doc.defaultView || window;
+    if (typeof win.JSZip !== "undefined") return win.JSZip;
     if (typeof globalThis.JSZip !== "undefined") return globalThis.JSZip;
     setStatus("JSZipを動的ロード中...");
     return new Promise((resolve, reject) => {
-      const script = document.createElement("script");
+      const script = doc.createElement("script");
       script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
       script.onload = () => {
-        if (typeof globalThis.JSZip === "undefined") {
+        const ctor = win.JSZip || globalThis.JSZip;
+        if (typeof ctor === "undefined") {
           reject(new Error("JSZipのロード後もグローバル変数が見つかりません"));
           return;
         }
         setStatus("JSZipのロード完了");
-        resolve(globalThis.JSZip);
+        resolve(ctor);
       };
       script.onerror = () => {
         reject(new Error("JSZipの読み込みに失敗しました"));
       };
-      document.head.appendChild(script);
+      doc.head.appendChild(script);
     });
   }
   async function downloadTargetFile(fileKey) {
@@ -28694,11 +28823,12 @@ ${lines.join("\n")}
       if (fileList.length > 0) {
         let folderName = folderCode && rec[folderCode] ? rec[folderCode].value : "";
         if (!folderName) folderName = `Record_${rec.$id.value}`;
-        const recordFolder = zip.folder(folderName);
+        const recordFolder = zip.folder(sanitizeZipPathSegment(folderName, `Record_${rec.$id.value}`));
+        const usedNames = /* @__PURE__ */ new Set();
         for (const f of fileList) {
           const blob = await downloadTargetFile(f.fileKey);
           if (blob) {
-            recordFolder.file(f.name, blob);
+            recordFolder.file(uniqueZipFileName(usedNames, f.name, f.fileKey, fileCount), blob);
             fileCount++;
           }
         }
@@ -28710,14 +28840,15 @@ ${lines.join("\n")}
     }
     setStatus(`ZIP圧縮中 (計${fileCount}ファイル)...`);
     const zipBlob = await zip.generateAsync({ type: "blob" });
-    const a = document.createElement("a");
+    const doc = getToolDocument();
+    const a = doc.createElement("a");
     const u = URL.createObjectURL(zipBlob);
     a.href = u;
     a.download = zipName;
-    document.body.appendChild(a);
+    doc.body.appendChild(a);
     a.click();
     setTimeout(() => {
-      document.body.removeChild(a);
+      doc.body.removeChild(a);
       URL.revokeObjectURL(u);
     }, 100);
     setStatus(`添付ファイル一括DL完了 (${fileCount}ファイル)`);
@@ -28768,17 +28899,23 @@ ${lines.join("\n")}
     let lastRecordId = "0";
     const limit = 500;
     const baseQuery = String(condition || "").trim();
-    const queryHasOrder = baseQuery.toLowerCase().includes("order by");
-    const queryHasLimit = baseQuery.toLowerCase().includes("limit");
-    if (queryHasLimit) {
+    const queryHasOrder = hasOrderByClause(baseQuery);
+    const queryHasLimit = /\blimit\s+\d+/i.test(baseQuery);
+    const queryHasOffset = /\boffset\s+\d+/i.test(baseQuery);
+    if (queryHasLimit || queryHasOffset) {
+      if (queryHasOffset && !queryHasLimit) {
+        throw new Error("クエリ内の offset は limit と併用してください。自動ページングする場合は limit/offset を取り除いてください。");
+      }
       const resp = await apiGet(prefix, "/records.json", { app: appId, query: baseQuery });
       return resp.records || [];
     }
     while (true) {
       setBusy(true, `レコード取得中... (${allRecords.length}件取得済)`);
       let loopQuery = "";
-      if (baseQuery) {
+      if (baseQuery && queryHasOrder) {
         loopQuery = `${baseQuery} ${queryHasOrder ? "" : "order by $id asc"} limit ${limit} offset ${allRecords.length}`;
+      } else if (baseQuery) {
+        loopQuery = `(${baseQuery}) and $id > ${lastRecordId} order by $id asc limit ${limit}`;
       } else {
         loopQuery = `$id > ${lastRecordId} order by $id asc limit ${limit}`;
       }
@@ -28817,6 +28954,56 @@ ${lines.join("\n")}
     }
     return field.value;
   }
+  var CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
+    "RECORD_NUMBER",
+    "CREATOR",
+    "CREATED_TIME",
+    "MODIFIER",
+    "UPDATED_TIME",
+    "STATUS",
+    "STATUS_ASSIGNEE",
+    "CALC",
+    "CATEGORY",
+    "__ID__",
+    "__REVISION__",
+    "FILE",
+    "SUBTABLE",
+    "REFERENCE_TABLE",
+    "LABEL",
+    "HR",
+    "SPACER"
+  ]);
+  function splitCsvListValue(value) {
+    const text = String(value == null ? "" : "").trim();
+    if (!text) return [];
+    return text.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  function coerceCsvImportValue(rawValue, fieldDef) {
+    const type = String(fieldDef?.type || "");
+    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return splitCsvListValue(rawValue);
+    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT") {
+      return splitCsvListValue(rawValue).map((code) => ({ code }));
+    }
+    if (type === "NUMBER") return String(rawValue == null ? "" : rawValue).trim();
+    return rawValue;
+  }
+  function assertCsvImportHeaderSupported(header, properties) {
+    const unknown = [];
+    const unsupported = [];
+    for (const code of header) {
+      if (!code) continue;
+      const def = properties?.[code];
+      if (!def) {
+        unknown.push(code);
+        continue;
+      }
+      if (CSV_IMPORT_UNSUPPORTED_FIELD_TYPES.has(String(def.type || ""))) {
+        unsupported.push(`${code}(${def.type})`);
+      }
+    }
+    if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(", ")}`);
+    if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(", ")}`);
+  }
   function buildRecordsCsvString(records, propKeys) {
     const lines = [];
     lines.push(propKeys.map(escapeCsvCell).join(","));
@@ -28828,6 +29015,21 @@ ${lines.join("\n")}
   function sanitizeZipPathSegment(value, fallback = "item") {
     const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
     return cleaned || fallback;
+  }
+  function uniqueZipFileName(usedNames, rawName, fileKey = "", index = 0) {
+    const safeName = sanitizeZipPathSegment(rawName || "file.bin", "file.bin");
+    const safePrefix = sanitizeZipPathSegment(String(fileKey || "").slice(0, 12) || String(Number(index) + 1), "file");
+    const candidateBase = `${safePrefix}_${safeName}`;
+    let candidate = candidateBase;
+    let suffix = 2;
+    while (usedNames.has(candidate)) {
+      const dot = candidateBase.lastIndexOf(".");
+      if (dot > 0) candidate = `${candidateBase.slice(0, dot)}_${suffix}${candidateBase.slice(dot)}`;
+      else candidate = `${candidateBase}_${suffix}`;
+      suffix++;
+    }
+    usedNames.add(candidate);
+    return candidate;
   }
   function getRecordNumberValue(record) {
     const match = Object.values(record || {}).find((field) => field?.type === "RECORD_NUMBER");
@@ -29014,13 +29216,14 @@ ${lines.join("\n")}
     const csvStr = buildRecordsCsvString(allRecords, propKeys);
     const blob = new Blob([csvStr], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const doc = getToolDocument();
+    const a = doc.createElement("a");
     a.href = url;
     a.download = filename;
-    document.body.appendChild(a);
+    doc.body.appendChild(a);
     a.click();
     setTimeout(() => {
-      document.body.removeChild(a);
+      doc.body.removeChild(a);
       URL.revokeObjectURL(url);
     }, 100);
     setBusy(false);
@@ -29090,6 +29293,9 @@ ${lines.join("\n")}
     if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
     const header = rows[0].map((h) => h.trim());
     if (header.includes("$id")) throw new Error("CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。");
+    setBusy(true, "フィールド情報を確認中...");
+    const { properties } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId);
+    assertCsvImportHeaderSupported(header, properties);
     const records = [];
     for (let i = 1; i < rows.length; i++) {
       if (rows[i].length === 1 && rows[i][0] === "") continue;
@@ -29097,7 +29303,7 @@ ${lines.join("\n")}
       for (let j = 0; j < header.length; j++) {
         if (!header[j]) continue;
         const val = rows[i][j] !== void 0 ? rows[i][j] : "";
-        rec[header[j]] = { value: val };
+        rec[header[j]] = { value: coerceCsvImportValue(val, properties[header[j]]) };
       }
       records.push(rec);
     }
@@ -29382,8 +29588,8 @@ ${lines.join("\n")}
     let totalFetched = 0;
     const records = [];
     const userQueryHasOrder = /\border\s+by\b/i.test(query);
-    const userQueryHasLimit = /\blimit\s+\d+/i.test(query);
-    if (userQueryHasLimit) {
+    const userQueryHasPaging = hasPagingClause(query);
+    if (userQueryHasPaging) {
       showToast("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。", "warn");
       setBusy(false);
       return;
@@ -29429,6 +29635,10 @@ ${lines.join("\n")}
             const inner = sRow && typeof sRow === "object" && sRow.value && typeof sRow.value === "object" ? sRow.value : {};
             const cleanSRow = {};
             for (const [sk, sv] of Object.entries(inner)) {
+              if (systemKeys.has(sk)) continue;
+              if (!sv || typeof sv !== "object") continue;
+              if (systemTypes.has(sv.type)) continue;
+              if (sv.type === "FILE") continue;
               if (sv && typeof sv === "object") cleanSRow[sk] = { value: sv.value };
             }
             return { value: cleanSRow };
@@ -29472,7 +29682,9 @@ ${lines.join("\n")}
   function getTemplates() {
     try {
       return JSON.parse(localStorage.getItem(TEMPLATE_STATE_KEY) || "{}");
-    } catch {
+    } catch (error) {
+      console.warn("テンプレートの読み込みに失敗しました", error);
+      showToast("テンプレートの読み込みに失敗しました。保存データが破損している可能性があります。", "warn");
       return {};
     }
   }
@@ -29527,7 +29739,12 @@ ${lines.join("\n")}
     if (!kusConfirm(`テンプレート「${name}」を削除しますか？`)) return;
     const tpls = getTemplates();
     delete tpls[name];
-    localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
+    try {
+      localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
+    } catch (e) {
+      showToast("テンプレートの削除状態を保存できませんでした。ブラウザの保存容量や権限を確認してください。", "error");
+      throw e;
+    }
     renderTemplateOptions();
     setStatus(`テンプレート「${name}」を削除しました`);
   }
@@ -29633,12 +29850,14 @@ ${lines.join("\n")}
     return `OK ${backup.okCount} / NG ${backup.ngCount}`;
   }
   async function fetchPluginConfigBackup({ appId, guestId, preview, existingPluginList, onProgress }) {
-    const prefix = buildApiPrefix(guestId, preview);
+    const prefix = buildApiPrefix(guestId, false);
     const result = {
       requested: true,
       endpoint: "/app/plugin/config.json",
       source: "api-lab",
       experimental: true,
+      previewRequested: !!preview,
+      previewUsed: false,
       totalPlugins: 0,
       okCount: 0,
       ngCount: 0,
@@ -30477,7 +30696,12 @@ ${lines.join("\n")}
     function syncDiffOnboardingVisibility() {
       const el = ui.diffOnboarding;
       if (!el) return;
-      const dismissed = !!localStorage.getItem(DIFF_ONBOARDING_DISMISSED_KEY);
+      let dismissed = false;
+      try {
+        dismissed = !!localStorage.getItem(DIFF_ONBOARDING_DISMISSED_KEY);
+      } catch (error) {
+        console.warn("差分オンボーディング状態の読み込みに失敗しました", error);
+      }
       const rootEl = getRoot();
       const onDiffArea = rootEl?.classList.contains("tab-is-diff");
       const hasDiffState = !!state.lastDiffAt || !!state.lastDiffRows.length || !!state.lastFetchIssues.length;
@@ -30670,6 +30894,11 @@ ${lines.join("\n")}
       if (search) chips.push(`<span class="chip chip-active-filter">検索: ${esc(search)}</span>`);
       ui.diffActiveFilters.innerHTML = chips.length ? `<span class="diff-active-filters__lbl">適用中:</span>${chips.join("")}` : '<span class="muted diff-active-filters__hint">🔍 上で絞り込み条件を選ぶと、ここに適用中のフィルタが表示されます</span>';
     }
+    function isRestorableResultHtml2(html) {
+      const text = String(html || "");
+      if (!text || text.length > 5e5) return false;
+      return !/(<script\b|<iframe\b|<object\b|<embed\b|<link\b|<meta\b|\son[a-z]+\s*=|javascript:)/i.test(text);
+    }
     function syncMainResultForFeature(featureKey) {
       if (!ui.result) return;
       const key = String(featureKey || state.activeFeatureKey || state.activeTab || "").trim();
@@ -30678,7 +30907,7 @@ ${lines.join("\n")}
         return;
       }
       const stored = state.lastResultByTab && state.lastResultByTab[key];
-      if (typeof stored === "string" && stored.length) {
+      if (typeof stored === "string" && stored.length && isRestorableResultHtml2(stored)) {
         ui.result.innerHTML = stored;
         return;
       }
@@ -31201,6 +31430,12 @@ ${lines.join("\n")}
       withGuard(runSettingsExportSearchApps);
     });
     root2.addEventListener("change", (e) => {
+      if (e.target?.id === "u_csvImportFile") {
+        const input = e.target;
+        const label = getToolDocument().getElementById("u_csvImportFileName");
+        if (label) label.textContent = input.files?.[0]?.name || "未選択";
+        return;
+      }
       if (e.target === ui.sourceApp || e.target === ui.targetApp) {
         const pastedGuestId = extractGuestIdFromInput(e.target.value);
         const extracted = extractAppIdFromInput(e.target.value);
@@ -32270,6 +32505,8 @@ ${lines.join("\n")}
         try {
           localStorage.setItem(DIFF_ONBOARDING_DISMISSED_KEY, "1");
         } catch (err) {
+          console.warn("差分オンボーディング状態の保存に失敗しました", err);
+          showToast("表示状態の保存に失敗しました。ブラウザの保存権限を確認してください。", "warn");
         }
         syncDiffOnboardingVisibility();
         return;
@@ -32675,6 +32912,8 @@ ${lines.join("\n")}
         try {
           (doc.defaultView || window).localStorage.setItem("kus:headerCollapsed", collapsed ? "1" : "0");
         } catch (e2) {
+          console.warn("ヘッダー折りたたみ状態の保存に失敗しました", e2);
+          showToast("ヘッダー状態の保存に失敗しました。", "warn");
         }
         const btn = doc.getElementById("u_headerCollapseBtn");
         if (btn) {
@@ -33196,6 +33435,11 @@ ${lines.join("\n")}
       if (act === "loadViewsForDl" && typeof loadViewsForSelect2 === "function") return withGuard(async () => loadViewsForSelect2("u_batchDlViewSelect", "u_batchDlView"));
       if (act === "loadViewsForCsv" && typeof loadViewsForSelect2 === "function") return withGuard(async () => loadViewsForSelect2("u_csvExportViewSelect", "u_csvExportView"));
       if (act === "loadViewsForBackup" && typeof loadViewsForSelect2 === "function") return withGuard(async () => loadViewsForSelect2("u_recordBackupViewSelect", "u_recordBackupView"));
+      if (act === "selectCsvImportFile") {
+        const input = getToolDocument().getElementById("u_csvImportFile");
+        input?.click();
+        return;
+      }
       if (act === "runCsvExport" && typeof runCsvExport2 === "function") return withGuard(runCsvExport2);
       if (act === "runCsvImport" && typeof runCsvImport2 === "function") return withGuard(runCsvImport2);
       if (act === "runRecordBackup" && typeof runRecordBackup2 === "function") return withGuard(runRecordBackup2);
@@ -33231,6 +33475,7 @@ ${lines.join("\n")}
   // src/ui/extras.ts
   init_state();
   init_components();
+  init_dialog();
 
   // src/kintone-enums.ts
   var FIELD_TYPE_JP = {
@@ -33410,13 +33655,32 @@ ${lines.join("\n")}
   // src/ui/extras.ts
   var G = {};
   function getRoot2() {
-    return document.getElementById("kintone-unified-suite-v2");
+    return getToolDocument().getElementById("kintone-unified-suite-v2");
+  }
+  function getDoc() {
+    return getRoot2()?.ownerDocument || getToolDocument();
+  }
+  function getWin() {
+    return getDoc().defaultView || window;
+  }
+  function bindToolDocumentEvent(key, type, handler, options) {
+    const doc = getDoc();
+    const marker = `${key}:${type}`;
+    if (!G.boundDocEvents) G.boundDocEvents = /* @__PURE__ */ new WeakMap();
+    let docEvents = G.boundDocEvents.get(doc);
+    if (!docEvents) {
+      docEvents = /* @__PURE__ */ new Set();
+      G.boundDocEvents.set(doc, docEvents);
+    }
+    if (docEvents.has(marker)) return;
+    doc.addEventListener(type, handler, options);
+    docEvents.add(marker);
   }
   function pushToast(message, options = {}) {
     const root2 = getRoot2();
     if (!root2) return;
-    if (!G.toastStack) {
-      const stack = document.createElement("div");
+    if (!G.toastStack || !G.toastStack.isConnected || G.toastStack.ownerDocument !== root2.ownerDocument) {
+      const stack = root2.ownerDocument.createElement("div");
       stack.id = "u_toastStack";
       stack.className = "kus-toast-stack";
       stack.setAttribute("role", "log");
@@ -33425,7 +33689,7 @@ ${lines.join("\n")}
       G.toastStack = stack;
     }
     const ttl = options.ttl ?? 3500;
-    const el = document.createElement("div");
+    const el = root2.ownerDocument.createElement("div");
     el.className = `kus-toast kus-toast--${options.tone || "info"}`;
     el.textContent = message;
     el.addEventListener("click", () => el.remove());
@@ -33433,15 +33697,28 @@ ${lines.join("\n")}
     while (G.toastStack.children.length > 6) {
       G.toastStack.removeChild(G.toastStack.firstChild);
     }
-    setTimeout(() => {
+    getWin().setTimeout(() => {
       el.classList.add("is-leaving");
-      setTimeout(() => el.remove(), 220);
+      getWin().setTimeout(() => el.remove(), 220);
     }, ttl);
   }
   function initActiveTaskPanel() {
-    const host = document.getElementById("u_envBadge");
+    const root2 = getRoot2();
+    const host = root2?.querySelector("#u_envBadge");
     if (!host) return;
-    const pill = document.createElement("button");
+    if (G.taskList?.isConnected) return;
+    const existing = host.parentElement?.querySelector(".kus-active-task-pill");
+    if (existing) {
+      G.taskList = existing;
+      return;
+    }
+    const doc = host.ownerDocument;
+    const win = doc.defaultView || window;
+    if (G.taskTimer) {
+      win.clearInterval(G.taskTimer);
+      G.taskTimer = null;
+    }
+    const pill = doc.createElement("button");
     pill.type = "button";
     pill.className = "kus-active-task-pill";
     pill.setAttribute("aria-label", "実行中タスク");
@@ -33452,8 +33729,12 @@ ${lines.join("\n")}
     });
     host.parentElement?.insertBefore(pill, host);
     G.taskList = pill;
-    setInterval(() => {
-      if (!pill.isConnected) return;
+    G.taskTimer = win.setInterval(() => {
+      if (!pill.isConnected) {
+        win.clearInterval(G.taskTimer);
+        G.taskTimer = null;
+        return;
+      }
       if (state.running) {
         pill.classList.add("is-busy");
         pill.textContent = `⏳ ${state.runningTaskLabel || "実行中…"}`;
@@ -33964,11 +34245,16 @@ ${lines.join("\n")}
     img.src = url;
   }
   function triggerDownload2(blob, filename) {
-    const a = document.createElement("a");
+    const doc = getDoc();
+    const a = doc.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = filename;
+    doc.body.appendChild(a);
     a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 200);
+    getWin().setTimeout(() => {
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    }, 200);
   }
   function initDiagramExportButtons() {
     const root2 = getRoot2();
@@ -34069,7 +34355,16 @@ ${lines.join("\n")}
     }
   }
   function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function diffLeftValue(row) {
+    return row?.left ?? row?.oldValue ?? null;
+  }
+  function diffRightValue(row) {
+    return row?.right ?? row?.newValue ?? null;
+  }
+  function diffSectionLabel(row) {
+    return String(row?.section || row?.sectionKey || "");
   }
   function renderTree(value, key) {
     if (value === null || typeof value !== "object") {
@@ -34179,10 +34474,10 @@ token=xxxx" class="kus-api-envvars__ta"></textarea>
       let text = "";
       const localizedRows = rows.map((r) => ({
         type: DIFF_TYPE_LABEL[r.type] || r.type,
-        section: r.section,
+        section: diffSectionLabel(r),
         path: r.path,
-        oldStr: localizeKintoneEnumsInText2(JSON.stringify(r.oldValue)),
-        newStr: localizeKintoneEnumsInText2(JSON.stringify(r.newValue)),
+        oldStr: localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r))),
+        newStr: localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r))),
         severity: DIFF_SEVERITY_LABEL[r.severity] || r.severity
       }));
       if (fmt === "csv" || fmt === "tsv") {
@@ -34325,10 +34620,11 @@ ${body}`;
     });
   }
   function initOfflineRetry() {
-    if (window.__kus_offline_hook__) return;
-    window.__kus_offline_hook__ = true;
+    const win = getWin();
+    if (win.__kus_offline_hook__) return;
+    win.__kus_offline_hook__ = true;
     const pending = [];
-    window.addEventListener("online", () => {
+    win.addEventListener("online", () => {
       pushToast(`オンライン復帰: 待機中 ${pending.length} 件を再送します`, { tone: "ok" });
       while (pending.length) {
         const fn = pending.shift();
@@ -34338,21 +34634,21 @@ ${body}`;
         }
       }
     });
-    window.addEventListener("offline", () => {
+    win.addEventListener("offline", () => {
       pushToast("オフラインです。通信は復帰後に自動再送します。", { tone: "warn", ttl: 6e3 });
     });
-    if (window.__kus_fetch_wrapped__) return;
-    window.__kus_fetch_wrapped__ = true;
-    const origFetch = window.fetch.bind(window);
+    if (win.__kus_fetch_wrapped__) return;
+    win.__kus_fetch_wrapped__ = true;
+    const origFetch = win.fetch.bind(win);
     const RETRYABLE = (err) => !!err && (err.name === "TypeError" || /network|failed to fetch/i.test(String(err?.message || "")));
-    window.fetch = async function(input, init) {
+    win.fetch = async function(input, init) {
       let lastErr;
       const url = typeof input === "string" ? input : input?.url || "";
-      const isInternal = !url || url.startsWith("/") || url.startsWith(window.location.origin);
+      const isInternal = !url || url.startsWith("/") || url.startsWith(win.location.origin);
       const maxAttempts = isInternal ? 5 : 2;
       for (let i = 0; i < maxAttempts; i++) {
         try {
-          if (!navigator.onLine) {
+          if (!win.navigator.onLine) {
             await new Promise((resolve) => pending.push(resolve));
           }
           const res = await origFetch(input, init);
@@ -34385,7 +34681,7 @@ ${body}`;
       return;
     }
     wrap.classList.add("kus-diff-with-side");
-    const side = document.createElement("aside");
+    const side = root2.ownerDocument.createElement("aside");
     side.id = "u_diffJsonSidePanel";
     side.className = "kus-diff-side";
     side.innerHTML = `
@@ -34400,23 +34696,23 @@ ${body}`;
     wrap.appendChild(side);
     side.querySelector(".kus-diff-side__close")?.addEventListener("click", () => side.classList.remove("is-open"));
     result.addEventListener("click", (e) => {
-      const row = e.target?.closest?.(".row[data-row-id]");
+      const row = e.target?.closest?.("[data-diff-row-tr], .row[data-row-id]");
       if (!row) return;
-      const id = row.dataset.rowId;
-      const r = (state.lastDiffRows || []).find((x) => String(x.id) === String(id) || String(x.path) === String(id));
+      const id = row.getAttribute("data-diff-row-tr") || row.dataset.rowId || "";
+      const r = (state.lastDiffRows || []).find((x) => String(x._id || x.id) === String(id) || String(x.path) === String(id));
       if (!r) return;
       renderJsonDiffSide(r);
       side.classList.add("is-open");
     });
   }
   function renderJsonDiffSide(row) {
-    const body = document.querySelector("#u_diffJsonSidePanel .kus-diff-side__body");
+    const body = getDoc().querySelector("#u_diffJsonSidePanel .kus-diff-side__body");
     if (!body) return;
-    const old = JSON.stringify(row?.oldValue ?? null, null, 2);
-    const nu = JSON.stringify(row?.newValue ?? null, null, 2);
+    const old = JSON.stringify(diffLeftValue(row), null, 2);
+    const nu = JSON.stringify(diffRightValue(row), null, 2);
     body.innerHTML = `
     <div class="kus-diff-side__meta">
-      <span class="muted">${escapeHtml(String(row?.section || ""))} :: ${escapeHtml(String(row?.path || ""))}</span>
+      <span class="muted">${escapeHtml(diffSectionLabel(row))} :: ${escapeHtml(String(row?.path || ""))}</span>
       <span class="muted">type=${escapeHtml(String(row?.type || ""))} severity=${escapeHtml(String(row?.severity || ""))}</span>
     </div>
     <div class="kus-diff-side__cols">
@@ -34435,15 +34731,17 @@ ${body}`;
   function initInlineMemo() {
     const root2 = getRoot2();
     if (!root2) return;
+    if (root2.dataset.kusInlineMemoBound === "1") return;
+    root2.dataset.kusInlineMemoBound = "1";
     root2.addEventListener("click", (e) => {
       const target = e.target?.closest?.(".kus-row-memo-btn");
       if (!target) return;
       e.stopPropagation();
-      const row = target.closest(".row[data-row-id]");
+      const row = target.closest("[data-diff-row-tr], .row[data-row-id]");
       if (!row) return;
-      const id = row.dataset.rowId || "";
+      const id = row.getAttribute("data-diff-row-tr") || row.dataset.rowId || "";
       const cur = inlineNotes[id] || "";
-      const next = window.prompt(`メモを追加（${id}）`, cur);
+      const next = getWin().prompt(`メモを追加（${id}）`, cur);
       if (next === null) return;
       if (next.trim()) {
         inlineNotes[id] = next;
@@ -34457,16 +34755,19 @@ ${body}`;
         pushToast("メモを削除しました", { tone: "info" });
       }
     });
-    document.addEventListener("kus:diffRendered", () => {
-      const rows = root2.querySelectorAll("#u_result .row[data-row-id]");
+    bindToolDocumentEvent("inlineMemo", "kus:diffRendered", () => {
+      const currentRoot = getRoot2();
+      if (!currentRoot) return;
+      const rows = currentRoot.querySelectorAll("#u_result [data-diff-row-tr], #u_result .row[data-row-id]");
       rows.forEach((r) => {
         if (r.querySelector(".kus-row-memo-btn")) return;
-        const btn = document.createElement("button");
+        const btn = r.ownerDocument.createElement("button");
         btn.type = "button";
         btn.className = "kus-row-memo-btn";
         btn.title = "メモを追加";
         btn.textContent = "🗒";
-        btn.dataset.hasNote = inlineNotes[r.dataset.rowId || ""] ? "1" : "";
+        const id = r.getAttribute("data-diff-row-tr") || r.dataset.rowId || "";
+        btn.dataset.hasNote = inlineNotes[id] ? "1" : "";
         r.appendChild(btn);
       });
     });
@@ -35045,9 +35346,9 @@ ${body}`;
     const md = "# 差分レポート\n\n生成: " + (/* @__PURE__ */ new Date()).toISOString() + "\n\n| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n|---|---|---|---|---|---|\n" + rows.map((r) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(r.oldValue));
-      const newStr = localizeKintoneEnumsInText2(JSON.stringify(r.newValue));
-      return `| ${typeLabel} | ${r.section} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
+      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r)));
+      const newStr = localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r)));
+      return `| ${typeLabel} | ${diffSectionLabel(r)} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
     }).join("\n");
     triggerDownload2(new Blob([md], { type: "text/markdown" }), `kus-diff_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`);
     pushToast("Markdown を保存しました", { tone: "ok" });
@@ -35062,9 +35363,9 @@ ${body}`;
     const body = rows.map((r) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(r.oldValue));
-      const newStr = localizeKintoneEnumsInText2(JSON.stringify(r.newValue));
-      return [typeLabel, r.section, r.path, oldStr, newStr, severityLabel].map((c) => `"${String(c ?? "").replace(/"/g, '""').replace(/[\r\n]/g, " ")}"`).join(",");
+      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r)));
+      const newStr = localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r)));
+      return [typeLabel, diffSectionLabel(r), r.path, oldStr, newStr, severityLabel].map((c) => `"${String(c ?? "").replace(/"/g, '""').replace(/[\r\n]/g, " ")}"`).join(",");
     }).join("\n");
     triggerDownload2(new Blob(["\uFEFF", head + "\n" + body], { type: "text/csv;charset=utf-8" }), `kus-diff_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.csv`);
     pushToast("Excel 用 CSV を保存しました", { tone: "ok" });
@@ -35092,9 +35393,9 @@ ${body}`;
     const tbody = rows.map((r) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(r.oldValue));
-      const newStr = localizeKintoneEnumsInText2(JSON.stringify(r.newValue));
-      return `<tr class="${r.type}"><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(r.section)}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
+      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r)));
+      const newStr = localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r)));
+      return `<tr class="${r.type}"><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(diffSectionLabel(r))}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
     }).join("");
     win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>kintone 差分レポート</title><style>${css}</style></head><body><h1>kintone 差分レポート</h1><div class="meta">生成: ${(/* @__PURE__ */ new Date()).toISOString()} / 件数: ${rows.length}</div><table><thead><tr><th>種別</th><th>セクション</th><th>パス</th><th>旧</th><th>新</th><th>重要度</th></tr></thead><tbody>${tbody}</tbody></table><script>window.onload=()=>{setTimeout(()=>window.print(),200)}<\/script></body></html>`);
     win.document.close();
@@ -35122,12 +35423,17 @@ ${body}`;
   function initVirtualScrollLite() {
     const root2 = getRoot2();
     if (!root2) return;
+    if (root2.dataset.kusVirtualScrollBound === "1") return;
+    root2.dataset.kusVirtualScrollBound = "1";
     const result = root2.querySelector("#u_result");
     if (!result) return;
     let observer = null;
     let measureH = 36;
     const apply = () => {
-      const rows = [...result.querySelectorAll(".row[data-row-id]")];
+      const currentRoot = getRoot2();
+      const currentResult = currentRoot?.querySelector("#u_result");
+      if (!currentRoot || !currentResult) return;
+      const rows = [...currentResult.querySelectorAll("[data-diff-row-tr], .row[data-row-id]")];
       if (rows.length <= 200) {
         rows.forEach((r) => {
           r.style.contentVisibility = "";
@@ -35139,7 +35445,8 @@ ${body}`;
       }
       measureH = rows[0]?.offsetHeight || 36;
       if (observer) observer.disconnect();
-      observer = new IntersectionObserver((entries) => {
+      const win = currentRoot.ownerDocument.defaultView || window;
+      observer = new win.IntersectionObserver((entries) => {
         entries.forEach((ent) => {
           const r = ent.target;
           if (ent.isIntersecting) {
@@ -35151,24 +35458,26 @@ ${body}`;
           }
         });
       }, {
-        root: root2.querySelector(".body"),
+        root: currentRoot.querySelector(".body"),
         rootMargin: "600px 0px 600px 0px",
         threshold: 0
       });
       rows.forEach((r) => observer.observe(r));
       pushToast(`仮想スクロール有効化: ${rows.length} 行`, { tone: "info", ttl: 1800 });
     };
-    document.addEventListener("kus:diffRendered", () => requestAnimationFrame(apply));
+    bindToolDocumentEvent("virtualScroll", "kus:diffRendered", () => getWin().requestAnimationFrame(apply));
   }
   var mermaidLoading = null;
   function loadMermaid() {
-    if (window.mermaid) return Promise.resolve(window.mermaid);
+    const doc = getDoc();
+    const win = doc.defaultView || window;
+    if (win.mermaid) return Promise.resolve(win.mermaid);
     if (mermaidLoading) return mermaidLoading;
     mermaidLoading = new Promise((resolve, reject) => {
-      const sc = document.createElement("script");
+      const sc = doc.createElement("script");
       sc.src = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js";
       sc.onload = () => {
-        const m = window.mermaid;
+        const m = win.mermaid;
         try {
           m.initialize({ startOnLoad: false, securityLevel: "loose", theme: "default" });
         } catch (e) {
@@ -35176,7 +35485,7 @@ ${body}`;
         resolve(m);
       };
       sc.onerror = () => reject(new Error("mermaid のロードに失敗しました"));
-      document.head.appendChild(sc);
+      doc.head.appendChild(sc);
     });
     return mermaidLoading;
   }
@@ -35591,7 +35900,8 @@ ${body}`;
       f.text().then((txt) => {
         const w = window.open("", "_blank");
         if (!w) return;
-        w.document.write(`<!doctype html><html><body><h1>過去のスナップショット</h1>${txt}</body></html>`);
+        w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>過去のスナップショット</title></head><body><h1>過去のスナップショット</h1><pre style="white-space:pre-wrap">${escapeHtml(txt)}</pre></body></html>`);
+        w.document.close();
       });
     });
   }
@@ -35692,9 +36002,9 @@ ${body}`;
     const tbody = rows.map((r) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(r.oldValue));
-      const newStr = localizeKintoneEnumsInText2(JSON.stringify(r.newValue));
-      return `<tr><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(r.section)}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
+      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r)));
+      const newStr = localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r)));
+      return `<tr><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(diffSectionLabel(r))}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
     }).join("");
     win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(cover.title || "差分レポート")}</title><style>${css}</style></head><body>
     <div class="cover">
@@ -36026,7 +36336,7 @@ ${body}`;
       adaptReflectChecklist();
     } catch (e) {
     }
-    document.addEventListener("kus:diffRendered", () => {
+    bindToolDocumentEvent("extrasDiffRendered", "kus:diffRendered", () => {
       try {
         renderDiffFixedSummary();
       } catch (e) {
@@ -36040,7 +36350,11 @@ ${body}`;
       } catch (e) {
       }
     });
-    document.addEventListener("click", (e) => {
+    bindToolDocumentEvent("storageErrorToast", "kus:storageError", ((e) => {
+      const detail = e.detail || {};
+      pushToast(`ブラウザ保存に失敗しました: ${detail.key || ""}`, { tone: "warn", ttl: 6e3 });
+    }));
+    bindToolDocumentEvent("extrasActionDelegation", "click", (e) => {
       const t = e.target?.closest?.("[data-act]");
       if (!t) return;
       const act = t.dataset.act;
@@ -36049,7 +36363,7 @@ ${body}`;
         exportDiffStateToJson();
       } else if (act === "kusImportDiffJson") {
         e.preventDefault();
-        const inp = document.createElement("input");
+        const inp = getDoc().createElement("input");
         inp.type = "file";
         inp.accept = "application/json";
         inp.onchange = () => {
@@ -38722,7 +39036,12 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         failedCount++;
         continue;
       }
-      const files = [...customize?.desktop?.js || [], ...customize?.mobile?.js || []];
+      const files = [
+        ...customize?.desktop?.js || [],
+        ...customize?.desktop?.css || [],
+        ...customize?.mobile?.js || [],
+        ...customize?.mobile?.css || []
+      ];
       const fileTargets = files.filter((f) => f.type === "FILE");
       if (fileTargets.length === 0) continue;
       const folderName = guestSpaceId ? `guest${guestSpaceId}_${appId}_${safeName}` : `${appId}_${safeName}`;
@@ -39067,30 +39386,6 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         query: "order by $id desc limit 10"
       },
       hint: "大量取得時は limit/offset や query を調整してください。"
-    },
-    {
-      id: "record-post-preview",
-      label: "レコード追加（POST / preview）",
-      method: "POST",
-      path: "/k/v1/preview/record.json",
-      body: {
-        app: 1,
-        record: {
-          text_0: { value: "sample" }
-        }
-      },
-      hint: "書き込み系APIの参考値です。フィールドコード(text_0など)は実アプリに合わせて変更してください。"
-    },
-    {
-      id: "record-delete-preview",
-      label: "レコード削除（DELETE / preview）",
-      method: "DELETE",
-      path: "/k/v1/preview/records.json",
-      body: {
-        app: 1,
-        ids: [1]
-      },
-      hint: "削除系APIのため preview パスを使用します。対象IDを十分確認してから実行してください。"
     }
   ];
   async function runApiTester() {
@@ -39119,8 +39414,11 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setBusy(true, `API実行中 (${method}) ...`);
     resEl.innerHTML = '<div style="color:#64748b">実行中...</div>';
     try {
+      if (/^https?:\/\//i.test(path)) {
+        throw new Error("kintone.api には /k/v1/... または /k/guest/... の相対パスを指定してください。完全URLは実行できません。");
+      }
       let finalPath = path;
-      if (!path.startsWith("http") && !path.startsWith("/k/v1/") && !path.startsWith("/k/guest/")) {
+      if (!path.startsWith("/k/v1/") && !path.startsWith("/k/guest/")) {
         const g = getToolDocument().getElementById("u_sourceGuest")?.value?.trim();
         const prefix = g ? `/k/guest/${g}/v1` : "/k/v1";
         finalPath = prefix + (path.startsWith("/") ? path : `/${path}`);
@@ -39131,8 +39429,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       setStatus(`API実行成功: ${method} ${finalPath}`);
       saveApiTesterHistory(method, path, bodyStr);
     } catch (e) {
-      let errMsg = String(e.message || e);
-      if (typeof e === "object" && e !== null) {
+      let errMsg = e instanceof Error ? e.message : String(e?.message || e);
+      if (!(e instanceof Error) && typeof e === "object" && e !== null) {
         try {
           errMsg = JSON.stringify(e, null, 2);
         } catch (_) {
@@ -39145,7 +39443,6 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     }
   }
   var API_HISTORY_KEY = "KUS_API_TESTER_HISTORY";
-  var apiTesterEnhanced = false;
   function prettyJson(value) {
     try {
       return JSON.stringify(value, null, 2);
@@ -39170,12 +39467,18 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     setPresetHint(preset.hint);
   }
   function initApiTesterEnhancements() {
-    if (apiTesterEnhanced) return;
-    apiTesterEnhanced = true;
-    const presetEl = getToolDocument().getElementById("u_apiTesterPreset");
-    const suggestEl = getToolDocument().getElementById("u_apiTesterPathSuggest");
+    const doc = getToolDocument();
+    const root2 = doc.getElementById("kintone-unified-suite-v2") || doc.body;
+    if (root2.__apiTesterEnhanced) {
+      renderApiTesterHistory();
+      return;
+    }
+    root2.__apiTesterEnhanced = true;
+    const presetEl = doc.getElementById("u_apiTesterPreset");
+    const suggestEl = doc.getElementById("u_apiTesterPathSuggest");
     if (presetEl) {
-      const options = API_TESTER_PRESETS.map((preset) => `<option value="${esc(preset.id)}">${esc(preset.label)}</option>`).join("");
+      presetEl.querySelectorAll("option[data-api-tester-preset]").forEach((option) => option.remove());
+      const options = API_TESTER_PRESETS.map((preset) => `<option data-api-tester-preset="1" value="${esc(preset.id)}">${esc(preset.label)}</option>`).join("");
       presetEl.insertAdjacentHTML("beforeend", options);
       presetEl.addEventListener("change", () => {
         const presetId = presetEl.value;
@@ -39194,9 +39497,9 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         return true;
       }).map((preset) => `<option value="${esc(preset.path)}"></option>`).join("");
     }
-    const methodEl = getToolDocument().getElementById("u_apiTesterMethod");
-    const pathEl = getToolDocument().getElementById("u_apiTesterPath");
-    const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
+    const methodEl = doc.getElementById("u_apiTesterMethod");
+    const pathEl = doc.getElementById("u_apiTesterPath");
+    const bodyEl = doc.getElementById("u_apiTesterBody");
     if (methodEl && pathEl && bodyEl) {
       const getPresetByMethod = (method) => API_TESTER_PRESETS.find((preset) => preset.method === method);
       methodEl.addEventListener("change", () => {
@@ -39218,10 +39521,16 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       renderApiTesterHistory();
     } catch (e) {
       console.error("History save failed", e);
+      showToast("API履歴の保存に失敗しました。ブラウザの保存容量や権限を確認してください。", "warn");
     }
   }
   function clearApiTesterHistory() {
-    localStorage.removeItem(API_HISTORY_KEY);
+    try {
+      localStorage.removeItem(API_HISTORY_KEY);
+    } catch (e) {
+      console.error("History clear failed", e);
+      showToast("API履歴の削除に失敗しました。", "warn");
+    }
     renderApiTesterHistory();
   }
   function renderApiTesterHistory() {
@@ -39289,6 +39598,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         });
       });
     } catch (e) {
+      console.error("History load failed", e);
       listEl.innerHTML = '<div style="color:#ef4444;font-size:11px;">履歴読込エラー</div>';
     }
   }
@@ -41183,19 +41493,21 @@ ${field.label}` : code,
     setRootElement(root2);
     try {
       const moreFold = root2.querySelector("#u_kusTabMore");
-      if (moreFold) {
+      if (moreFold && root2.dataset.kusMoreDropdownBound !== "1") {
+        root2.dataset.kusMoreDropdownBound = "1";
+        const ownerWin = root2.ownerDocument && root2.ownerDocument.defaultView || window;
         const summary = moreFold.querySelector(".kus-tab-more__summary");
         const body = moreFold.querySelector(".kus-tab-more__body");
         const positionBody = () => {
           if (!summary || !body || !moreFold.open) return;
           const r = summary.getBoundingClientRect();
           body.style.top = `${r.bottom + 4}px`;
-          body.style.right = `${window.innerWidth - r.right}px`;
+          body.style.right = `${ownerWin.innerWidth - r.right}px`;
           body.style.left = "auto";
         };
         moreFold.addEventListener("toggle", () => positionBody());
-        window.addEventListener("resize", positionBody);
-        window.addEventListener("scroll", positionBody, true);
+        ownerWin.addEventListener("resize", positionBody);
+        ownerWin.addEventListener("scroll", positionBody, true);
       }
     } catch (e) {
     }

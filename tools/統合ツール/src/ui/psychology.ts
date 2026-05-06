@@ -254,7 +254,8 @@ export function startProgress(initialLabel: string, total = 0): ProgressHandle {
 
   let totalRef = Number(total) || 0;
   let currentRef = 0;
-  const elapsedTimer = setInterval(() => {
+  const win = doc.defaultView || window;
+  const elapsedTimer = win.setInterval(() => {
     if (!elapsedEl) return;
     const sec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
     elapsedEl.textContent = `${sec}秒`;
@@ -274,7 +275,7 @@ export function startProgress(initialLabel: string, total = 0): ProgressHandle {
   update();
 
   function dispose() {
-    clearInterval(elapsedTimer);
+    win.clearInterval(elapsedTimer);
     overlay.remove();
   }
 

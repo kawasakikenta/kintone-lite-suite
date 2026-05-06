@@ -5,20 +5,9 @@ node_modules/
 *.ppk
 *.zip
 plugins/KintoneCalendar/tests/preview.html
-{
-  "permissions": {
-    "allow": [
-      "mcp__playwright__browser_navigate",
-      "mcp__playwright__browser_snapshot",
-      "mcp__playwright__browser_click",
-      "mcp__playwright__browser_type",
-      "mcp__playwright__browser_fill_form",
-      "mcp__playwright__browser_file_upload",
-      "mcp__playwright__browser_press_key",
-      "mcp__playwright__browser_evaluate",
-      "mcp__playwright__browser_wait_for",
-      "mcp__playwright__browser_take_screenshot",
-      "mcp__playwright__browser_console_messages"
-    ]
-  }
-}
+
+# AI 作業の一時成果物（再発防止）
+.iter-browser/
+.iter-shots/
+.kus-chunks-tmp/
+.agents/
