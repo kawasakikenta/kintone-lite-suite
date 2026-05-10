@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import {
-  deepClone, normalize, stableStringify, downloadText, apiErrorWithContext, esc, readTextFile,
+  deepClone, normalize, stableStringify, downloadText, downloadBlob, apiErrorWithContext, esc, readTextFile,
   relativePathFromRow, tokenizePath, kusConfirm, buildExportFilename, buildAppFilenameLabel, extractAppNameFromBundle,
   showToast
 } from '../utils.js';
@@ -13,7 +13,10 @@ import {
   buildApiPrefix,
   fetchBundle,
   extractSectionRevision,
-  ensureBundleShape
+  ensureBundleShape,
+  isRetriableMutation,
+  computeRetryDelayMs,
+  resolveHttpStatus
 } from '../api.js';
 import { buildPatchPayload } from '../diff/export.js';
 import {
@@ -51,6 +54,7 @@ import { isReflectNodeModeEffective } from './nodeModeUi.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { getJsonEditorInstance, renderRichDiff } from '../oss_integrations.js';
 import { confirmDestructive, bumpSessionMetric, startProgress, renderHumanizedError } from '../ui/psychology.js';
+import { loadJSZip } from '../tabs/record.js';
 
 export { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
 
@@ -59,12 +63,34 @@ let patchJsonDiffSeq = 0;
 const APPLY_GUARD_DIFF_THRESHOLD = 100;
 const APPLY_GUARD_REQUEST_THRESHOLD = 80;
 
-// Lookup 変換ルール（変換先アプリ）の存在確認 — リリース直前の typo を検知
-const _lookupPreflightCache = new Map();
+// Lookup 変換ルール（変換先アプリ）の存在確認 — リリース直前の typo を検知。
+// セッションをまたいだ古いキャッシュで誤検知しないよう TTL 付きにし、
+// 失敗側だけ TTL を短く（=リトライしやすく）する。
+const LOOKUP_CACHE_TTL_OK_MS = 5 * 60 * 1000;   // 5 分
+const LOOKUP_CACHE_TTL_NG_MS = 60 * 1000;       // 1 分（typo 修正後すぐに再試行できる）
+interface LookupCacheEntry { ok: boolean; at: number; }
+const _lookupPreflightCache = new Map<string, LookupCacheEntry>();
+
+export function clearLookupPreflightCache(): void {
+  _lookupPreflightCache.clear();
+}
+
+function getLookupCache(cacheKey: string, now: number): LookupCacheEntry | undefined {
+  const hit = _lookupPreflightCache.get(cacheKey);
+  if (!hit) return undefined;
+  const ttl = hit.ok ? LOOKUP_CACHE_TTL_OK_MS : LOOKUP_CACHE_TTL_NG_MS;
+  if (now - hit.at > ttl) {
+    _lookupPreflightCache.delete(cacheKey);
+    return undefined;
+  }
+  return hit;
+}
+
 async function preflightLookupMap(lookupMap, prefix) {
   const entries = Object.entries(lookupMap || ({} as any));
   if (!entries.length) return { ok: true, missing: [] };
   const missing: any[] = [];
+  const now = Date.now();
   for (const [from, to] of entries) {
     const target = String(to || '').trim();
     if (!target || !/^\d+$/.test(target)) {
@@ -72,17 +98,18 @@ async function preflightLookupMap(lookupMap, prefix) {
       continue;
     }
     const cacheKey = `${prefix}::${target}`;
-    if (_lookupPreflightCache.has(cacheKey)) {
-      if (_lookupPreflightCache.get(cacheKey) === false) {
-        missing.push({ from, to: target, reason: '変換先アプリが見つかりません' });
+    const cached = getLookupCache(cacheKey, now);
+    if (cached) {
+      if (cached.ok === false) {
+        missing.push({ from, to: target, reason: '変換先アプリが見つかりません（キャッシュ）' });
       }
       continue;
     }
     try {
       await apiGet(prefix, '/app.json', { id: target });
-      _lookupPreflightCache.set(cacheKey, true);
+      _lookupPreflightCache.set(cacheKey, { ok: true, at: Date.now() });
     } catch (e) {
-      _lookupPreflightCache.set(cacheKey, false);
+      _lookupPreflightCache.set(cacheKey, { ok: false, at: Date.now() });
       missing.push({ from, to: target, reason: `取得失敗: ${e?.message || String(e)}` });
     }
   }
@@ -93,7 +120,7 @@ async function assertLookupMapPreflight(lookupMap, prefix) {
   const result = await preflightLookupMap(lookupMap, prefix);
   if (result.ok) return;
   const lines = result.missing.map((m) => ` - ${m.from} → ${m.to || '(空)'}: ${m.reason}`);
-  const message = `Lookup 変換ルールに問題があります:\n${lines.join('\n')}\n\nそれでも続行しますか？`;
+  const message = `Lookup 変換ルールに問題があります:\n${lines.join('\n')}\n\n[OK] 続行 / [キャンセル] 中断（キャッシュをクリアして再判定するには clearLookupPreflightCache() を呼んでください）`;
   if (!kusConfirm(message)) {
     throw new Error('Lookup 変換ルールのプリフライトで中断しました');
   }
@@ -382,6 +409,10 @@ export function extractFieldCodeFromRowPath(row) {
   return tokens[1];
 }
 
+const APPLY_RETRY_MAX_ATTEMPTS = 3;
+const APPLY_RETRY_BASE_DELAY_MS = 600;
+const APPLY_RETRY_MAX_DELAY_MS = 4000;
+
 export async function executeRequestPlan(prefix, requests, logs, stopOnError) {
   const list = Array.isArray(requests) ? requests : [];
   for (let i = 0; i < list.length; i++) {
@@ -389,8 +420,10 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError) {
     try {
       // Permission check is synchronous and not retriable — fail fast.
       assertAllowsMutatingRestCall(prefix, req.path, req.method);
-      let _err;
-      for (let _r = 0; _r <= 2; _r++) {
+      let _err: any = null;
+      let _attempts = 0;
+      for (let _r = 0; _r < APPLY_RETRY_MAX_ATTEMPTS; _r++) {
+        _attempts = _r + 1;
         try {
           await (kintone as any).api(`${prefix}${req.path}`, req.method, req.body);
           _err = null;
@@ -398,11 +431,20 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError) {
         }
         catch (re) {
           _err = re;
-          if (_r < 2) await new Promise((r) => setTimeout(r, 700 * (_r + 1)));
+          // 4xx は副作用が確定している可能性があるため一律リトライ不可（POST/DELETE）。
+          // 5xx / ネットワーク系のみリトライ。PUT は冪等のため 408/429 もリトライ可。
+          const canRetry = (_r < APPLY_RETRY_MAX_ATTEMPTS - 1) && isRetriableMutation(req.method, re);
+          if (!canRetry) break;
+          const waitMs = computeRetryDelayMs(_r, APPLY_RETRY_BASE_DELAY_MS, APPLY_RETRY_MAX_DELAY_MS);
+          if (logs) logs.push(`  - retry ${req.method} ${req.path} (attempt ${_r + 2}/${APPLY_RETRY_MAX_ATTEMPTS}, status ${resolveHttpStatus(re) || 'n/a'}, wait ${waitMs}ms)`);
+          await new Promise((r) => setTimeout(r, waitMs));
         }
       }
       if (_err) throw apiErrorWithContext(_err, { method: req.method, prefix, path: req.path, payload: req.body });
-      if (logs) logs.push(`  - OK ${req.method} ${req.path}${req.note ? ` (${req.note})` : ''}`);
+      if (logs) {
+        const retrySuffix = _attempts > 1 ? ` (retried ${_attempts - 1}回)` : '';
+        logs.push(`  - OK ${req.method} ${req.path}${req.note ? ` (${req.note})` : ''}${retrySuffix}`);
+      }
     } catch (e) {
       if (logs) logs.push(`  - NG ${req.method} ${req.path}: ${e.message || String(e)}`);
       if (stopOnError) throw e;
@@ -459,39 +501,31 @@ export async function applySectionsLoop(prefix: string, app: string | number, so
     setStatus(`${phaseLabel}中 ${i + 1}/${scopes.length}: ${def.label}`);
     if (onProgress) onProgress(i, scopes.length);
     try {
+      // セクション反映は「current = before, sourceSec から構築した after = patched」を applySectionDiffByKey に渡す。
+      // fieldSettings は after を filterWritableFieldProps で絞り込むため、ここで wrap する。
+      let before: any = null;
+      let patched: any = null;
       if (secKey === 'fieldSettings') {
         const current = await apiGet(prefix, '/app/form/fields.json', { app });
-        const beforeProps = current.properties || ({} as any);
-        const afterProps = filterWritableFieldProps(sourceSec.properties || sourceSec, true);
-        await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, null, stopOnError);
-        logs.push(`OK ${def.label}`);
-        recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
-        continue;
-      }
-      if (secKey === 'viewSettings') {
+        before = current;
+        patched = { properties: filterWritableFieldProps(sourceSec.properties || sourceSec, true) };
+      } else if (secKey === 'viewSettings') {
         const current = await apiGet(prefix, '/app/views.json', { app });
-        await applyViewsSectionDiff(prefix, app, current.views || ({} as any), sourceSec.views || sourceSec || ({} as any), logs, stopOnError);
-        logs.push(`OK ${def.label}`);
-        recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
-        continue;
-      }
-      if (secKey === 'reportSettings') {
+        before = current;
+        patched = { views: sourceSec.views || sourceSec || ({} as any) };
+      } else if (secKey === 'reportSettings') {
         const current = await apiGet(prefix, '/app/reports.json', { app });
-        await applyReportsSectionDiff(prefix, app, current.reports || ({} as any), sourceSec.reports || sourceSec || ({} as any), logs, stopOnError);
-        logs.push(`OK ${def.label}`);
-        recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
-        continue;
-      }
-      if (secKey === 'actionSettings') {
+        before = current;
+        patched = { reports: sourceSec.reports || sourceSec || ({} as any) };
+      } else if (secKey === 'actionSettings') {
         const current = await apiGet(prefix, '/app/actions.json', { app });
-        await applyActionsSectionDiff(prefix, app, current.actions || ({} as any), sourceSec.actions || sourceSec || ({} as any), logs, stopOnError);
-        logs.push(`OK ${def.label}`);
-        recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
-        continue;
+        before = current;
+        patched = { actions: sourceSec.actions || sourceSec || ({} as any) };
+      } else {
+        before = null;
+        patched = sourceSec;
       }
-      const reqs = [{ method: 'PUT', path: def.endpoint, body: { app, ...((def.putBuilder as any)?.(sourceSec) || {}) }, note: `${def.label} put` }];
-      appendRequestPlanLogs(logs, { requests: reqs });
-      await executeRequestPlan(prefix, reqs, logs, stopOnError);
+      await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes: null, stopOnError });
       logs.push(`OK ${def.label}`);
       recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
     } catch (e) {
@@ -527,6 +561,8 @@ function recordSectionResult(results, sectionKey, label, status, message) {
 
 // 反映完了直後に「反映前バックアップ」と「反映後の比較先プレビュー」を比較し、
 // バックアップ時点から変化したセクションをログに追記する。
+// プラン (state.lastApplyPlan.plannedRequests) と突き合わせて、想定通りの変化と
+// 想定外の変化（=他者による同時編集や副作用の疑い）を分離して報告する。
 async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, logs }: { targetGuestId: string; targetAppId: string; scopes: string[]; logs: string[] }) {
   const backup = state.lastPreviewBackupPayload;
   if (!backup?.bundle?.sections) return null;
@@ -536,6 +572,14 @@ async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, 
   const backupScopes = Array.isArray(backup?.scopes) ? backup.scopes : Object.keys(backup.bundle.sections || ({} as any));
   const checkable = targetScopes.filter((key) => backupScopes.includes(key));
   if (!checkable.length) return null;
+
+  const expectedSectionKeys = new Set<string>(
+    Array.isArray(state.lastApplyPlan?.plannedRequests)
+      ? state.lastApplyPlan.plannedRequests
+        .map((r: any) => String(r?.sectionKey || ''))
+        .filter(Boolean)
+      : []
+  );
 
   const prefix = buildApiPrefix(targetGuestId, true);
   const findings: any[] = [];
@@ -551,7 +595,8 @@ async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, 
       if (beforeText !== afterText) {
         findings.push({
           sectionKey: secKey,
-          label: def.label || secKey
+          label: def.label || secKey,
+          expected: expectedSectionKeys.has(secKey)
         });
       }
     } catch (e) {
@@ -563,18 +608,182 @@ async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, 
     }
   }
 
+  const expectedChanges = findings.filter((x) => !x.error && x.expected);
+  const unexpectedChanges = findings.filter((x) => !x.error && !x.expected);
+  const fetchErrors = findings.filter((x) => !!x.error);
+
   if (Array.isArray(logs)) {
     if (!findings.length) {
       logs.push('反映後検証: バックアップ時点からの変化は検出されませんでした');
     } else {
-      logs.push(`反映後検証: ${findings.length}セクションがバックアップ時点から変化しました`);
-      for (const item of findings) {
-        if (item.error) logs.push(`  - ${item.label}: 取得失敗 ${item.error}`);
-        else logs.push(`  - ${item.label}: バックアップ時点から内容が変化`);
+      if (expectedChanges.length) {
+        logs.push(`反映後検証: 想定通りの変化 ${expectedChanges.length} セクション`);
+        for (const item of expectedChanges) {
+          logs.push(`  - ${item.label}: プラン通りに変化（OK）`);
+        }
+      }
+      if (unexpectedChanges.length) {
+        logs.push(`反映後検証: ⚠ 想定外の変化 ${unexpectedChanges.length} セクション（同時編集の疑い）`);
+        for (const item of unexpectedChanges) {
+          logs.push(`  - ${item.label}: プランに含まれていないが内容が変化`);
+        }
+      }
+      if (fetchErrors.length) {
+        logs.push(`反映後検証: 取得失敗 ${fetchErrors.length} セクション`);
+        for (const item of fetchErrors) {
+          logs.push(`  - ${item.label}: ${item.error}`);
+        }
       }
     }
   }
-  return { checked: checkable.length, findings };
+  return {
+    checked: checkable.length,
+    findings,
+    expectedCount: expectedChanges.length,
+    unexpectedCount: unexpectedChanges.length,
+    errorCount: fetchErrors.length
+  };
+}
+
+/**
+ * セクションキーごとの「before / patched」を受け取り、適切な applyXxxSectionDiff
+ * 呼び出しに振り分ける共通処理。runApplyPatchJson / runApplyPreviewByNodes が
+ * 個別に持っていた巨大な if-else の重複を解消するためのヘルパー。
+ */
+async function applySectionDiffByKey(opts: {
+  secKey: string;
+  def: any;
+  prefix: string;
+  app: string | number;
+  before: any;
+  patched: any;
+  logs: string[];
+  lookupMap: any;
+  sourceModeCodes: Set<string> | null;
+  stopOnError: boolean;
+}): Promise<void> {
+  const { secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError } = opts;
+  if (secKey === 'fieldSettings') {
+    const beforeProps = before?.properties || before || ({} as any);
+    const afterProps = patched?.properties || patched || ({} as any);
+    await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
+    return;
+  }
+  if (secKey === 'viewSettings') {
+    const beforeViews = before?.views || before || ({} as any);
+    const afterViews = patched?.views || patched || ({} as any);
+    await applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError);
+    return;
+  }
+  if (secKey === 'reportSettings') {
+    const beforeReports = before?.reports || before || ({} as any);
+    const afterReports = patched?.reports || patched || ({} as any);
+    await applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError);
+    return;
+  }
+  if (secKey === 'actionSettings') {
+    const beforeActions = before?.actions || before || ({} as any);
+    const afterActions = patched?.actions || patched || ({} as any);
+    await applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError);
+    return;
+  }
+  const reqs = [{
+    method: 'PUT',
+    path: def.endpoint,
+    body: { app, ...((def.putBuilder as any)?.(patched) || {}) },
+    note: `${def.label} put`
+  }];
+  appendRequestPlanLogs(logs, { requests: reqs });
+  await executeRequestPlan(prefix, reqs, logs, stopOnError);
+}
+
+/**
+ * 反映完了直後の共通仕上げ処理（バックアップ突合 → 進捗集計 → レポート確定 → UI 再描画）。
+ * ノード反映 / セクション反映 / パッチ反映の終端がほぼ同じだったため共通化。
+ */
+async function finalizeApplyResult(opts: {
+  mode: string;
+  c: any;
+  app: string | number;
+  scopes: string[];
+  sectionResults: any[];
+  hadError: boolean;
+  logs: string[];
+  progress?: any;
+  backupFilename?: string;
+  phaseLabel?: string;
+  finishMetrics?: Array<{ label: string; value: string; tone?: string }>;
+}): Promise<void> {
+  const { mode, c, app, scopes, sectionResults, hadError, logs, progress, backupFilename, phaseLabel, finishMetrics } = opts;
+  // verifyAppliedAgainstBackup の失敗で commitApplyReport がスキップされないように保護する。
+  // 反映自体は完了している可能性があるため、検証失敗はログに残すだけで処理は継続する。
+  try {
+    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app as any, scopes, logs });
+  } catch (verifyErr: any) {
+    if (Array.isArray(logs)) {
+      logs.push(`反映後検証: ⚠ 検証中にエラーが発生しました: ${verifyErr?.message || String(verifyErr)}`);
+    }
+  }
+  appendProgressSummary(logs);
+  renderProgressLog(logs, { phase: phaseLabel || '反映完了', scopes });
+  commitApplyReport({
+    mode,
+    appId: app,
+    scopes,
+    sectionResults,
+    hadError,
+    sourceAppId: c.source?.appId,
+    sourceGuestId: c.source?.guestId,
+    targetGuestId: c.target?.guestId
+  });
+  renderReflectAssistPanel();
+  renderReflectMainPanel();
+  if (progress) {
+    progress.finish({
+      title: hadError ? `${phaseLabel || '反映'} 完了（一部エラー）` : `${phaseLabel || '反映'} 完了`,
+      hasError: hadError,
+      metrics: finishMetrics || [
+        { label: '比較先アプリ', value: `#${app}` },
+        { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
+      ],
+      hint: backupFilename
+        ? `バックアップ保存先: ${backupFilename}\n本番デプロイは kintone 管理画面から手動で実施してください。`
+        : '本番デプロイは kintone 管理画面から手動で実施してください。'
+    });
+  }
+}
+
+/**
+ * 反映処理の途中で例外を吐いて outer catch まで飛んだ場合に、
+ * その時点までに成功したセクション情報を「部分反映レポート」として確定させる。
+ * 何も触っていない場合（sectionResults 空）はレポートは作らない。
+ */
+function commitPartialApplyOnError(opts: {
+  mode: string;
+  c: any;
+  app: string | number | undefined;
+  scopes: string[];
+  sectionResults: any[];
+  err: any;
+  logs?: string[];
+}): void {
+  const { mode, c, app, scopes, sectionResults, err, logs } = opts;
+  if (!Array.isArray(sectionResults) || !sectionResults.length) return;
+  if (Array.isArray(logs)) {
+    logs.push(`NG 反映処理が中断されました: ${err?.message || String(err)}`);
+  }
+  try {
+    commitApplyReport({
+      mode,
+      appId: app || '',
+      scopes,
+      sectionResults,
+      hadError: true,
+      sourceAppId: c?.source?.appId,
+      sourceGuestId: c?.source?.guestId,
+      targetGuestId: c?.target?.guestId
+    });
+  } catch (_e) { /* レポート確定で更にエラーは握り潰す */ }
 }
 
 function commitApplyReport({ mode, appId, scopes, sectionResults, hadError, sourceAppId, sourceGuestId, targetGuestId }) {
@@ -707,12 +916,27 @@ export async function backupTargetPreviewSettings(c: any, scopes: string[], opti
     },
     bundle
   };
-  const filename = buildExportFilename('比較先プレビュー_バックアップ', 'json', {
+  const jsonFilename = buildExportFilename('比較先プレビュー_バックアップ', 'json', {
     appLabel: buildAppFilenameLabel(target.appId, extractAppNameFromBundle(bundle))
   });
+  const filename = jsonFilename.replace(/\.json$/i, '.zip');
   state.lastPreviewBackupPayload = deepClone(payload);
   state.lastPreviewBackupFilename = filename;
-  downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
+  const JSZipCtor = await loadJSZip();
+  const zip = new JSZipCtor();
+  zip.file(jsonFilename, JSON.stringify(payload, null, 2));
+  zip.file('README.txt', [
+    'kintone 統合ツール 比較先プレビューバックアップ',
+    `generatedAt: ${payload.generatedAt}`,
+    `targetAppId: ${target.appId}`,
+    `targetGuestId: ${target.guestId || ''}`,
+    `scopes: ${actualScopes.join(', ')}`,
+    `health: ${formatBackupHealthSummary(health)}`,
+    '',
+    'このZIPはブラウザストレージに保存せず、取得直後に明示ダウンロードしています。'
+  ].join('\n'));
+  const blob = await zip.generateAsync({ type: 'blob' });
+  downloadBlob(filename, blob);
   const statusMessage = `比較先(プレビュー)バックアップ保存: ${filename} (${formatBackupHealthSummary(health)} / ${scopeSummary || '-'})`;
   if (!options?.silentStatus) setStatus(statusMessage, health.ngCount > 0);
   renderBackupStatus(filename, actualScopes, health);
@@ -772,7 +996,7 @@ async function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGua
     issues.push(`APIリクエスト予定数が多いです（${requestCount}件 / しきい値 ${APPLY_GUARD_REQUEST_THRESHOLD}件）`);
   }
 
-  if (!issues.length) return true;
+  // 注意点が無くても最終確認は必ず表示する（3 ルート間で確認 UI を統一するため）。
   if (Array.isArray(options.scopeLabels) && options.scopeLabels.length) {
     labels.push(`対象セクション: ${options.scopeLabels.join(', ')}`);
   }
@@ -781,19 +1005,19 @@ async function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGua
 
   const modeLabel = mode === 'nodes' ? 'ノード反映' : (mode === 'patch' ? 'JSONパッチ反映' : 'プレビュー反映');
   const targetAppId = String(c?.target?.appId || '').trim();
-  const body = [
-    `【安全確認: ${modeLabel}】`,
+  const bodyLines = [
+    `【最終確認: ${modeLabel}】`,
     `比較先アプリ: ${targetAppId || '-'}`,
-    ...labels,
-    '',
-    '注意点:',
-    ...issues.map((line) => ` - ${line}`)
-  ].join('\n');
+    ...labels
+  ];
+  if (issues.length) {
+    bodyLines.push('', '注意点:', ...issues.map((line) => ` - ${line}`));
+  }
   // 高リスク（高重要度差分 or 同一接続）はアプリID 入力での確認、それ以外は固定キーワード。
   const highRisk = isSameConnectionPair(c) || diffSummary.high > 0;
   return confirmDestructive({
     title: `${modeLabel} の最終確認`,
-    body,
+    body: bodyLines.join('\n'),
     keyword: highRisk && targetAppId ? targetAppId : '実行する',
     okLabel: `${modeLabel}を実行`,
     riskTone: highRisk ? 'danger' : 'warning'
@@ -1304,10 +1528,7 @@ export async function runApplyPatchJson() {
   const sectionKeys = Object.keys(payload.sections).filter((key) => SECTION_DEFS.find((item) => item.key === key)?.put);
   if (!sectionKeys.length) throw new Error('適用可能なパッチセクションがありません');
   renderPatchJsonSummary(payload);
-  if (!kusConfirm(`JSONパッチを比較先(プレビュー)へ反映しますか？\n比較先アプリ: ${c.target.appId}\n対象セクション: ${sectionKeys.length}件`)) {
-    setStatus('JSONパッチ反映をキャンセルしました');
-    return;
-  }
+  // confirmApplyRiskGuard 側で最終確認モーダルを必ず出すため、ここでの kusConfirm は廃止。
   const patchRows = Object.values(payload.sections || ({} as any)).flat().filter(Boolean);
   const patchSummary = summarizeRowsBySeverity(patchRows);
   const planReqCount = Number(state.lastApplyPlan?.totalReq || 0);
@@ -1348,23 +1569,10 @@ export async function runApplyPatchJson() {
       const current = normalize(await apiGet(prefix, def.endpoint, { app }));
       const before = deepClone(current);
       const { patched, appliedCount, rows: sortedRows } = applyPatchRowsToSection(current, rows, secKey);
-
-      if (secKey === 'fieldSettings') {
-        const beforeProps = before.properties || before || ({} as any);
-        const afterProps = patched.properties || patched || ({} as any);
-        const sourceModeCodes = new Set<string>(sortedRows.map(extractFieldCodeFromRowPath).filter((code: any): code is string => !!code));
-        await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
-      } else if (secKey === 'viewSettings') {
-        await applyViewsSectionDiff(prefix, app, before.views || before || ({} as any), patched.views || patched || ({} as any), logs, stopOnError);
-      } else if (secKey === 'reportSettings') {
-        await applyReportsSectionDiff(prefix, app, before.reports || before || ({} as any), patched.reports || patched || ({} as any), logs, stopOnError);
-      } else if (secKey === 'actionSettings') {
-        await applyActionsSectionDiff(prefix, app, before.actions || before || ({} as any), patched.actions || patched || ({} as any), logs, stopOnError);
-      } else {
-        const reqs = [{ method: 'PUT', path: def.endpoint, body: { app, ...((def.putBuilder as any)?.(patched) || {}) }, note: `${def.label} put` }];
-        appendRequestPlanLogs(logs, { requests: reqs });
-        await executeRequestPlan(prefix, reqs, logs, stopOnError);
-      }
+      const sourceModeCodes = secKey === 'fieldSettings'
+        ? new Set<string>(sortedRows.map(extractFieldCodeFromRowPath).filter((code: any): code is string => !!code))
+        : null;
+      await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError });
       logs.push(`OK ${def.label}: patch ${appliedCount}/${sortedRows.length}`);
       recordSectionResult(sectionResults, secKey, def.label, 'ok', `${appliedCount}/${sortedRows.length}`);
     } catch (e) {
@@ -1379,21 +1587,16 @@ export async function runApplyPatchJson() {
     }
   }
 
-  await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: sectionKeys, logs });
-  appendProgressSummary(logs);
-  renderProgressLog(logs, { phase: 'JSONパッチ反映完了' });
-  commitApplyReport({
+  await finalizeApplyResult({
     mode: 'patch',
-    appId: app,
+    c,
+    app,
     scopes: sectionKeys,
     sectionResults,
     hadError,
-    sourceAppId: c.source.appId,
-    sourceGuestId: c.source.guestId,
-    targetGuestId: c.target.guestId
+    logs,
+    phaseLabel: 'JSONパッチ反映完了'
   });
-  renderReflectAssistPanel();
-  renderReflectMainPanel();
   setStatus(hadError ? 'JSONパッチ反映完了（一部エラーあり）' : 'JSONパッチ反映完了');
 }
 
@@ -1448,9 +1651,22 @@ export async function runApplyPreviewByNodes() {
     setStatus('反映をキャンセルしました');
     return;
   }
-  const nodeSummary = summarizeRowsBySeverity(rows);
+  // プラン確認モーダルでユーザーが除外したセクションのノードを取り除く
+  const excludedSetN = new Set<string>(
+    (state.lastApplyPlan?.signature === planSignature && Array.isArray(state.lastApplyPlan?.excludedSectionKeys))
+      ? state.lastApplyPlan.excludedSectionKeys
+      : []
+  );
+  const excludedNodeScopes = nodeScopes.filter((k) => excludedSetN.has(k));
+  const effectiveRows = rows.filter((r) => !excludedSetN.has(r.sectionKey));
+  if (!effectiveRows.length) {
+    setStatus('全セクションが除外されているため反映できません。プラン画面で除外を解除してください', true);
+    return;
+  }
+  const effectiveNodeScopes = [...new Set(effectiveRows.map((r) => r.sectionKey).filter(Boolean))];
+  const nodeSummary = summarizeRowsBySeverity(effectiveRows);
   const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
-  const nodeScopeLabels = nodeScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
+  const nodeScopeLabels = effectiveNodeScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
   if (!(await confirmApplyRiskGuard('nodes', c, { diffSummary: nodeSummary, requestCount: plannedReq, scopeLabels: nodeScopeLabels }))) {
     setStatus('反映をキャンセルしました（安全確認）');
     return;
@@ -1463,7 +1679,7 @@ export async function runApplyPreviewByNodes() {
   let hadError = false;
   let backupFilename = '';
   const bySection: Record<string, any[]> = {};
-  for (const row of rows) {
+  for (const row of effectiveRows) {
     if (!row.sectionKey) continue;
     if (!bySection[row.sectionKey]) bySection[row.sectionKey] = [];
     bySection[row.sectionKey].push(row);
@@ -1471,19 +1687,25 @@ export async function runApplyPreviewByNodes() {
   const sectionKeys = Object.keys(bySection);
   const progress = startProgress('反映前チェック中...', sectionKeys.length);
   setStatus('反映前チェック中...');
+  // 部分反映レポート確定用に try の外で宣言する
+  const sectionResults: any[] = [];
   try {
-    const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, nodeScopes);
-    const srcModeCount = rows.filter((r) => reflectRowModeById(r._id) === 'src').length;
-    const tgtModeCount = rows.length - srcModeCount;
+    const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, effectiveNodeScopes);
+    const srcModeCount = effectiveRows.filter((r) => reflectRowModeById(r._id) === 'src').length;
+    const tgtModeCount = effectiveRows.length - srcModeCount;
     logs.push(`比較先アプリ: ${app}`);
-    logs.push(`ノードモード選択数: ${rows.length}`);
+    logs.push(`ノードモード選択数: ${effectiveRows.length}${effectiveRows.length !== rows.length ? `（除外 ${rows.length - effectiveRows.length}件）` : ''}`);
     logs.push(`モード内訳: 比較元採用 ${srcModeCount} / 比較先維持 ${tgtModeCount}`);
+    if (excludedNodeScopes.length) {
+      const excludedLabels = excludedNodeScopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ');
+      logs.push(`プラン画面で除外されたセクション: ${excludedLabels}`);
+    }
     logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
     if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
     if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
     if (ui.autoBackupPreview?.checked) {
       progress.setLabel('バックアップ保存中...');
-      const backupScopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
+      const backupScopes = [...new Set(effectiveRows.map((r) => r.sectionKey).filter(Boolean))];
       const backup = await backupTargetPreviewSettings(c, backupScopes, { silentStatus: true });
       logs.push(`バックアップ保存: ${backup.filename}`);
       assertBackupHealthOk(backup, 'ノード反映');
@@ -1492,7 +1714,6 @@ export async function runApplyPreviewByNodes() {
     logs.push('');
 
     progress.setLabel('差分選択モードで反映中...');
-    const sectionResults: any[] = [];
     for (let i = 0; i < sectionKeys.length; i++) {
       const secKey = sectionKeys[i];
       const def = SECTION_DEFS.find((d) => d.key === secKey);
@@ -1520,38 +1741,16 @@ export async function runApplyPreviewByNodes() {
           if (r.applied) appliedCount += 1;
         }
 
-        if (secKey === 'fieldSettings') {
-          const beforeProps = before.properties || before || ({} as any);
-          const afterProps = patched.properties || patched || ({} as any);
-          const sourceModeCodes = new Set<string>(
-            rowsInSection
-              .filter((row) => reflectRowModeById(row._id) === 'src')
-              .map(extractFieldCodeFromRowPath)
-              .filter((code): code is string => !!code)
-          );
-          await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
-          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-        } else if (secKey === 'viewSettings') {
-          const beforeViews = before.views || before || ({} as any);
-          const afterViews = patched.views || patched || ({} as any);
-          await applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError);
-          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-        } else if (secKey === 'reportSettings') {
-          const beforeReports = before.reports || before || ({} as any);
-          const afterReports = patched.reports || patched || ({} as any);
-          await applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError);
-          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-        } else if (secKey === 'actionSettings') {
-          const beforeActions = before.actions || before || ({} as any);
-          const afterActions = patched.actions || patched || ({} as any);
-          await applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError);
-          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-        } else {
-          const reqs = [{ method: 'PUT', path: def.endpoint, body: { app, ...((def.putBuilder as any)?.(patched) || {}) }, note: `${def.label} put` }];
-          appendRequestPlanLogs(logs, { requests: reqs });
-          await executeRequestPlan(prefix, reqs, logs, stopOnError);
-          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-        }
+        const sourceModeCodes = secKey === 'fieldSettings'
+          ? new Set<string>(
+              rowsInSection
+                .filter((row) => reflectRowModeById(row._id) === 'src')
+                .map(extractFieldCodeFromRowPath)
+                .filter((code): code is string => !!code)
+            )
+          : null;
+        await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError });
+        logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
         recordSectionResult(sectionResults, secKey, def.label, 'ok', `${appliedCount}/${rowsInSection.length}`);
       } catch (e) {
         hadError = true;
@@ -1566,37 +1765,28 @@ export async function runApplyPreviewByNodes() {
     }
 
     progress.setProgress(sectionKeys.length, sectionKeys.length);
-    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: sectionKeys, logs });
-    appendProgressSummary(logs);
-    renderProgressLog(logs, { phase: 'ノード反映完了', scopes: sectionKeys });
-    commitApplyReport({
+    setStatus(hadError ? 'ノード反映処理完了（一部エラーあり）' : 'ノード反映処理完了');
+    await finalizeApplyResult({
       mode: 'nodes',
-      appId: app,
+      c,
+      app,
       scopes: sectionKeys,
       sectionResults,
       hadError,
-      sourceAppId: c.source.appId,
-      sourceGuestId: c.source.guestId,
-      targetGuestId: c.target.guestId
-    });
-    renderReflectAssistPanel();
-    renderReflectMainPanel();
-    setStatus(hadError ? 'ノード反映処理完了（一部エラーあり）' : 'ノード反映処理完了');
-    progress.finish({
-      title: hadError ? 'ノード反映 完了（一部エラー）' : 'ノード反映 完了',
-      hasError: hadError,
-      metrics: [
+      logs,
+      progress,
+      backupFilename,
+      phaseLabel: 'ノード反映',
+      finishMetrics: [
         { label: '比較先アプリ', value: `#${app}` },
-        { label: '反映ノード数', value: `${rows.length}件（比較元採用 ${srcModeCount} / 比較先維持 ${tgtModeCount}）` },
+        { label: '反映ノード数', value: `${effectiveRows.length}件（比較元採用 ${srcModeCount} / 比較先維持 ${tgtModeCount}）${excludedNodeScopes.length ? ` / 除外セクション ${excludedNodeScopes.length}件` : ''}` },
         { label: '対象セクション', value: `${sectionKeys.length}件` },
         { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
-      ],
-      hint: backupFilename
-        ? `バックアップ保存先: ${backupFilename}\n本番デプロイは kintone 管理画面から手動で実施してください。`
-        : '本番デプロイは kintone 管理画面から手動で実施してください。'
+      ]
     });
   } catch (err) {
     progress.cancel();
+    commitPartialApplyOnError({ mode: 'nodes', c, app, scopes: sectionKeys, sectionResults, err, logs });
     const host = ui.result || ui.status;
     if (host) {
       const div = (host.ownerDocument || document).createElement('div');
@@ -1631,17 +1821,29 @@ export async function runApplyPreview() {
     setStatus('反映をキャンセルしました');
     return;
   }
-  const actualRows = (state.lastDiffRows || []).filter((row) => row && !row._displayOnly && scopes.includes(row.sectionKey));
+  // プラン確認モーダルでユーザーが除外したセクションをここで取り除く
+  const excludedSet = new Set<string>(
+    (state.lastApplyPlan?.signature === planSignature && Array.isArray(state.lastApplyPlan?.excludedSectionKeys))
+      ? state.lastApplyPlan.excludedSectionKeys
+      : []
+  );
+  const excludedScopes = scopes.filter((k) => excludedSet.has(k));
+  const effectiveScopes = scopes.filter((k) => !excludedSet.has(k));
+  if (!effectiveScopes.length) {
+    setStatus('全セクションが除外されているため反映できません。プラン画面で除外を解除してください', true);
+    return;
+  }
+  const actualRows = (state.lastDiffRows || []).filter((row) => row && !row._displayOnly && effectiveScopes.includes(row.sectionKey));
   const sectionSummary = summarizeRowsBySeverity(actualRows);
   const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
-  const scopeLabels = scopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
+  const scopeLabels = effectiveScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
   if (!(await confirmApplyRiskGuard('section', c, { diffSummary: sectionSummary, requestCount: plannedReq, scopeLabels }))) {
     setStatus('反映をキャンセルしました（安全確認）');
     return;
   }
   bumpSessionMetric('applyRun');
   saveCurrentDialogState();
-  const sourceBundle = await getSourceBundleForApply(c, scopes);
+  const sourceBundle = await getSourceBundleForApply(c, effectiveScopes);
 
   const prefix = buildApiPrefix(c.target.guestId, true);
   const app = c.target.appId;
@@ -1649,18 +1851,24 @@ export async function runApplyPreview() {
   const logs: string[] = [];
   let hadError = false;
   let backupFilename = '';
-  const progress = startProgress('反映前チェック中...', scopes.length);
+  const progress = startProgress('反映前チェック中...', effectiveScopes.length);
   setStatus('反映前チェック中...');
+  // 部分反映レポート確定用に try の外で宣言する
+  const sectionResults: any[] = [];
   try {
-    const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, scopes);
+    const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, effectiveScopes);
     logs.push(`比較先アプリ: ${app}`);
-    logs.push(`適用セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
+    logs.push(`適用セクション: ${effectiveScopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
+    if (excludedScopes.length) {
+      const excludedLabels = excludedScopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ');
+      logs.push(`プラン画面で除外されたセクション: ${excludedLabels}`);
+    }
     logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
     if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
     if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
     if (ui.autoBackupPreview?.checked) {
       progress.setLabel('バックアップ保存中...');
-      const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
+      const backup = await backupTargetPreviewSettings(c, effectiveScopes, { silentStatus: true });
       logs.push(`バックアップ保存: ${backup.filename}`);
       assertBackupHealthOk(backup, 'プレビュー反映');
       backupFilename = backup.filename || '';
@@ -1668,46 +1876,36 @@ export async function runApplyPreview() {
     logs.push('');
 
     progress.setLabel('プレビュー反映を実行中...');
-    const sectionResults: any[] = [];
-    hadError = await applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, {
+    hadError = await applySectionsLoop(prefix, app, sourceBundle, effectiveScopes, logs, lookupMap, stopOnError, {
       phaseLabel: '反映',
       onProgress: (i, total) => {
-        renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total, scopes });
+        renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total, scopes: effectiveScopes });
         progress.setProgress(i, total);
       },
       sectionResults
     });
 
-    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes, logs });
-    appendProgressSummary(logs);
-    renderProgressLog(logs, { phase: 'プレビュー反映完了', scopes });
-    commitApplyReport({
+    setStatus('プレビュー反映処理完了');
+    await finalizeApplyResult({
       mode: 'section',
-      appId: app,
-      scopes,
+      c,
+      app,
+      scopes: effectiveScopes,
       sectionResults,
       hadError,
-      sourceAppId: c.source.appId,
-      sourceGuestId: c.source.guestId,
-      targetGuestId: c.target.guestId
-    });
-    renderReflectAssistPanel();
-    renderReflectMainPanel();
-    setStatus('プレビュー反映処理完了');
-    progress.finish({
-      title: hadError ? 'プレビュー反映 完了（一部エラー）' : 'プレビュー反映 完了',
-      hasError: hadError,
-      metrics: [
+      logs,
+      progress,
+      backupFilename,
+      phaseLabel: 'プレビュー反映',
+      finishMetrics: [
         { label: '比較先アプリ', value: `#${app}` },
-        { label: '適用セクション', value: `${scopes.length}件` },
+        { label: '適用セクション', value: excludedScopes.length ? `${effectiveScopes.length}件（除外 ${excludedScopes.length}件）` : `${effectiveScopes.length}件` },
         { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
-      ],
-      hint: backupFilename
-        ? `バックアップ保存先: ${backupFilename}\n本番デプロイは kintone 管理画面から手動で実施してください。`
-        : '本番デプロイは kintone 管理画面から手動で実施してください。'
+      ]
     });
   } catch (err) {
     progress.cancel();
+    commitPartialApplyOnError({ mode: 'section', c, app, scopes: effectiveScopes, sectionResults, err, logs });
     const host = ui.result || ui.status;
     if (host) {
       const div = (host.ownerDocument || document).createElement('div');

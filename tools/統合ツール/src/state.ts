@@ -18,6 +18,7 @@ export interface ConnectionPreset {
 export interface ReflectApplyChecklist {
   diff: boolean;
   plan: boolean;
+  preview: boolean;
   target: boolean;
 }
 
@@ -46,6 +47,8 @@ export interface AppState {
   reflectPlanPreviewKeyword: string;
   reflectPlanPreviewChangedOnly: boolean;
   reflectApplyChecklist: ReflectApplyChecklist;
+  reflectPreviewOpened: boolean;
+  reflectPreviewOpenedFor: string;
   lastPreviewBackupPayload: any;
   lastPreviewBackupFilename: string;
   diffViewTheme: 'light' | 'dark';
@@ -88,6 +91,14 @@ export interface AppState {
   lastSettingsExportBundles: any[];
   patchJsonPanelOpen: boolean;
   importedPatchPayload: any;
+  // プレビュー vs 本番 差分結果（reflect/previewProdDiff.ts）
+  reflectPreviewProdDiff: {
+    lastResult: any;
+    appId: string;
+    guestId: string;
+    runAt: string | number | null;
+    filters: { section: string; type: string; severity: string; keyword: string };
+  } | null;
   guidedTourActive: boolean;
   guidedTourIndex: number;
   running: boolean;
@@ -123,7 +134,9 @@ export const state: AppState = {
   connectionPresets: [],
   reflectPlanPreviewKeyword: '',
   reflectPlanPreviewChangedOnly: false,
-  reflectApplyChecklist: { diff: false, plan: false, target: false },
+  reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
+  reflectPreviewOpened: false,
+  reflectPreviewOpenedFor: '',
   lastPreviewBackupPayload: null,
   lastPreviewBackupFilename: '',
   diffViewTheme: 'light',
@@ -165,6 +178,7 @@ export const state: AppState = {
   lastSettingsExportBundles: [],
   patchJsonPanelOpen: false,
   importedPatchPayload: null,
+  reflectPreviewProdDiff: null,
   guidedTourActive: false,
   guidedTourIndex: 0,
   running: false,
@@ -175,16 +189,11 @@ export const state: AppState = {
 };
 
 export function loadDialogState(): Record<string, any> {
-  try { return JSON.parse(localStorage.getItem(DIALOG_STATE_KEY) || '{}'); }
-  catch (error) {
-    reportStorageFailure('load', DIALOG_STATE_KEY, error);
-    return {};
-  }
+  return {};
 }
 
 export function saveDialogState(dialogState: Record<string, any> | null | undefined): void {
-  try { localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(dialogState || {})); }
-  catch (error) { reportStorageFailure('save', DIALOG_STATE_KEY, error); }
+  void dialogState;
 }
 
 const REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
@@ -214,28 +223,11 @@ function reportStorageFailure(operation: 'load' | 'save' | 'remove', key: string
 }
 
 export function loadReflectApplyHistory(): any[] {
-  try {
-    const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY)
-      ?? sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    reportStorageFailure('load', REFLECT_APPLY_HISTORY_KEY, error);
-    return [];
-  }
+  return [];
 }
 
 export function persistReflectApplyHistory(entries: any[] | null | undefined): void {
-  try {
-    const list = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
-    const text = JSON.stringify(list);
-    localStorage.setItem(REFLECT_APPLY_HISTORY_KEY, text);
-  } catch (error) { reportStorageFailure('save', REFLECT_APPLY_HISTORY_KEY, error); }
-  try {
-    // 旧セッション保存があれば掃除（移行）。
-    sessionStorage.removeItem(REFLECT_APPLY_HISTORY_KEY);
-  } catch (error) { reportStorageFailure('remove', REFLECT_APPLY_HISTORY_KEY, error); }
+  state.reflectApplyHistory = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
 }
 
 export function pushReflectApplyHistoryEntry(entry: any): void {
@@ -266,22 +258,11 @@ export function snapshotReflectApplyHistoryExport(): {
 }
 
 export function loadWorkHistory(): any[] {
-  try {
-    const raw = localStorage.getItem(WORK_HISTORY_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    reportStorageFailure('load', WORK_HISTORY_KEY, error);
-    return [];
-  }
+  return [];
 }
 
 export function persistWorkHistory(entries: any[] | null | undefined): void {
-  try {
-    const list = Array.isArray(entries) ? entries.slice(0, WORK_HISTORY_LIMIT) : [];
-    localStorage.setItem(WORK_HISTORY_KEY, JSON.stringify(list));
-  } catch (error) { reportStorageFailure('save', WORK_HISTORY_KEY, error); }
+  state.workHistory = Array.isArray(entries) ? entries.slice(0, WORK_HISTORY_LIMIT) : [];
 }
 
 export function pushWorkHistoryEntry(entry: any): void {
@@ -325,28 +306,13 @@ function normalizeConnectionPreset(entry: Partial<ConnectionPreset> | null | und
 }
 
 export function loadConnectionPresets(): ConnectionPreset[] {
-  try {
-    const raw = localStorage.getItem(CONNECTION_PRESETS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map(normalizeConnectionPreset)
-      .filter((x): x is ConnectionPreset => x !== null)
-      .slice(0, CONNECTION_PRESETS_LIMIT);
-  } catch (error) {
-    reportStorageFailure('load', CONNECTION_PRESETS_KEY, error);
-    return [];
-  }
+  return [];
 }
 
 export function persistConnectionPresets(entries: Array<Partial<ConnectionPreset>> | null | undefined): void {
-  try {
-    const list = Array.isArray(entries)
-      ? entries.map(normalizeConnectionPreset).filter((x): x is ConnectionPreset => x !== null).slice(0, CONNECTION_PRESETS_LIMIT)
-      : [];
-    localStorage.setItem(CONNECTION_PRESETS_KEY, JSON.stringify(list));
-  } catch (error) { reportStorageFailure('save', CONNECTION_PRESETS_KEY, error); }
+  state.connectionPresets = Array.isArray(entries)
+    ? entries.map(normalizeConnectionPreset).filter((x): x is ConnectionPreset => x !== null).slice(0, CONNECTION_PRESETS_LIMIT)
+    : [];
 }
 
 export function upsertConnectionPreset(entry: Partial<ConnectionPreset>): ConnectionPreset | null {

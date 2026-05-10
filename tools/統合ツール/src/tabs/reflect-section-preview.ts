@@ -1,10 +1,16 @@
 'use strict';
 
 import { SECTION_DEFS } from '../constants.js';
-import { deepClone, esc, downloadText, stableStringify } from '../utils.js';
+import { deepClone, esc, downloadText, stableStringify, deepEqual as deepEqualShared } from '../utils.js';
 import { state } from '../state.js';
 import { apiGet, buildApiPrefix } from '../api.js';
 import { getSectionRenderer } from '../reflect/sectionRenderers/registry.js';
+import {
+  SECTION_WRAPPER_MAP as WRAPPER_MAP,
+  isMapSectionKey,
+  unwrapSectionData,
+  rewrapSectionData
+} from '../reflect/sectionRenderers/sectionData.js';
 
 /**
  * セクション汎用プレビューエディタ
@@ -14,42 +20,14 @@ import { getSectionRenderer } from '../reflect/sectionRenderers/registry.js';
 
 const PUT_SECTIONS = SECTION_DEFS.filter((d) => d.put && d.key !== 'fieldSettings');
 
-/** セクションデータの主キー wrapper プロパティ */
-const WRAPPER_MAP = {
-  viewSettings: 'views',
-  reportSettings: 'reports',
-  actionSettings: 'actions',
-  categories: 'categories',
-  layoutSettings: 'layout',
-  pluginSettings: 'plugins',
-  appAcl: 'rights',
-  fieldAcl: 'rights',
-  recordPermissions: 'rights',
-  notifications: 'notifications',
-  perRecordNotifications: 'notifications',
-  reminderNotifications: 'notifications'
-};
+// 旧来のローカル定義は sectionRenderers/sectionData.ts に集約済み。
+// 関数名互換のため、薄いエイリアスでこのファイル内のコードからは旧名で呼ぶ。
+const isMapSection = isMapSectionKey;
+const unwrap = unwrapSectionData;
+const rewrap = rewrapSectionData;
 
-/** map 型セクション（キー = 名前）のキー一覧 */
-const MAP_SECTIONS = new Set(['viewSettings', 'reportSettings', 'actionSettings', 'categories']);
-
-function isMapSection(key) { return MAP_SECTIONS.has(key); }
-
-function unwrap(data, sectionKey) {
-  const w = WRAPPER_MAP[sectionKey];
-  if (w && data && typeof data === 'object' && Object.prototype.hasOwnProperty.call(data, w)) return data[w];
-  return data;
-}
-
-function rewrap(items, sectionKey) {
-  const w = WRAPPER_MAP[sectionKey];
-  if (w) return { [w]: items };
-  return items;
-}
-
-function deepEqual(a, b) {
-  return stableStringify(a) === stableStringify(b);
-}
+// utils.ts の共有実装に揃える（normalize 経由の比較で META_キーやキー順序差を無視）
+const deepEqual = deepEqualShared;
 
 function formatJson(v) {
   if (v === undefined || v === null) return '(なし)';

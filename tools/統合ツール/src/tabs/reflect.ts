@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS, REFLECT_PRESETS_KEY, REFLECT_QUICK_PRESETS, SYSTEM_FIELD_TYPES } from '../constants.js';
+import { SECTION_DEFS, REFLECT_QUICK_PRESETS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, deepClone, normalize, downloadText, nowStamp, readTextFile, kusConfirm, showToast } from '../utils.js';
 import { apiGet, fetchBundle, buildApiPrefix } from '../api.js';
@@ -387,28 +387,15 @@ export async function runPrefetchCommonData() {
 // Reflect presets (environment profile x section scope)
 // ---------------------------------------------------------------------------
 
+let reflectPresetsMemory: any[] = [];
+
 export function loadReflectPresets() {
-  try {
-    const raw = localStorage.getItem(REFLECT_PRESETS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    console.warn('反映プリセットの読み込みに失敗しました', e);
-    showToast('反映プリセットの読み込みに失敗しました。保存データが破損している可能性があります。', 'warn');
-    return [];
-  }
+  return reflectPresetsMemory.slice();
 }
 
 function persistReflectPresets(presets) {
-  try {
-    localStorage.setItem(REFLECT_PRESETS_KEY, JSON.stringify(presets || []));
-    return true;
-  } catch (e) {
-    console.warn('反映プリセットの保存に失敗しました', e);
-    showToast('反映プリセットの保存に失敗しました。ブラウザの保存容量や権限を確認してください。', 'warn');
-    return false;
-  }
+  reflectPresetsMemory = Array.isArray(presets) ? presets.slice(0, 30) : [];
+  return true;
 }
 
 export function saveReflectPreset(name) {

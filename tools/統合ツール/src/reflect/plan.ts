@@ -1,14 +1,17 @@
 'use strict';
 
-import { SECTION_DEFS, HIGH_IMPACT_SECTIONS } from '../constants.js';
+import { SECTION_DEFS, HIGH_IMPACT_SECTIONS, SECTION_APPLY_HINTS } from '../constants.js';
 import {
   deepClone,
   stableStringify,
+  stableStringifyMemo,
   esc,
   normalize,
   downloadText,
   buildExportFilename,
   buildAppFilenameLabel,
+  extractAppNameFromBundle,
+  kusPrompt,
   renderSectionIconHtml
 } from '../utils.js';
 import { state, ui } from '../state.js';
@@ -24,6 +27,7 @@ import {
   extractFieldCodeFromRowPath
 } from './apply.js';
 import { reflectRowModeById } from './rowMode.js';
+import { buildPlanRequestSummary } from './progress-pure.js';
 import {
   commonParams,
   setStatus,
@@ -39,6 +43,9 @@ import {
   renderReflectAssistPanel,
   renderReflectMainPanel
 } from './helpers.js';
+import { buildPatchPayload, buildDiffHtml } from '../diff/export.js';
+import { getDiffNormalizationPresetState } from '../diff/engine.js';
+import { loadJSZip } from '../tabs/record.js';
 
 /**
  * 現状の差分・選択・接続情報からプラン署名を計算する。
@@ -181,7 +188,7 @@ export function splitMapSectionDiff(beforeMap, afterMap) {
   for (const [k, v] of Object.entries(after) as Array<[string, any]>) {
     if (!Object.prototype.hasOwnProperty.call(before, k)) {
       add[k] = deepClone(v);
-    } else if (stableStringify(before[k]) !== stableStringify(v)) {
+    } else if (stableStringifyMemo(before[k]) !== stableStringifyMemo(v)) {
       update[k] = deepClone(v);
     }
   }
@@ -215,7 +222,7 @@ export function buildMapSectionPreview(beforeMap: any, afterMap: any, options: {
   for (const [k, v] of Object.entries(after) as Array<[string, any]>) {
     if (!Object.prototype.hasOwnProperty.call(before, k)) {
       added.push({ key: k, after: truncateForPreview(v) });
-    } else if (stableStringify(before[k]) !== stableStringify(v)) {
+    } else if (stableStringifyMemo(before[k]) !== stableStringifyMemo(v)) {
       updated.push({ key: k, before: truncateForPreview(before[k]), after: truncateForPreview(v) });
     }
   }
@@ -245,10 +252,336 @@ export function buildWholeSectionPreview(before, after) {
   return { beforeText, afterText, changed };
 }
 
-// 大量差分時にPUT/POST/DELETEがエラーになりやすいため、安全側のチャンクサイズで分割する
-export const APPLY_REQUEST_CHUNK_SIZE = 100;
+// ------------------------------------------------------------
+// whole-PUT セクションの「人が読めるアイテム単位プレビュー」生成
+// notifications / acl / customize / plugin / categories / process など、
+// 1リクエストで全置換するセクションでも、内部の追加/更新/削除を行単位で見せる。
+// ------------------------------------------------------------
 
-function chunkObjectEntries(obj, size = APPLY_REQUEST_CHUNK_SIZE) {
+const ENTITY_TYPE_LABEL_MAP: Record<string, string> = {
+  USER: 'ユーザー',
+  GROUP: 'グループ',
+  ORGANIZATION: '組織',
+  FIELD_ENTITY: 'フィールド値',
+  CREATOR: '作成者',
+  MODIFIER: '更新者',
+  LOGIN_USER: 'ログインユーザー',
+  ALL: '全員'
+};
+
+function formatEntityRef(entityWrap: any): string {
+  if (!entityWrap) return '-';
+  const e = entityWrap.entity || entityWrap;
+  const t = String(e?.type || '').toUpperCase();
+  const typeLabel = ENTITY_TYPE_LABEL_MAP[t] || t || '不明';
+  const id = e?.name || e?.code || '';
+  return id ? `${typeLabel}:${id}` : typeLabel;
+}
+
+interface ItemizedPreviewItem {
+  status: 'added' | 'updated' | 'removed';
+  key: string;        // 一意キー（除外用）
+  label: string;      // 1行サマリ
+  beforeText?: string;
+  afterText?: string;
+  detail?: string;    // 追加メタ（リクエスト先など）
+}
+
+export interface ItemizedSectionPreview {
+  items: ItemizedPreviewItem[];
+  addedCount: number;
+  updatedCount: number;
+  removedCount: number;
+  totalCount: number;
+  truncated: boolean;
+  notes?: string[];   // ユーザーへの注意書き（プラグインの config 同期されない等）
+}
+
+const ITEM_PREVIEW_CAP = 60;
+
+function diffArrayByKey(
+  before: any[],
+  after: any[],
+  keyFn: (item: any, idx: number) => string,
+  labelFn: (item: any, idx: number) => string
+): ItemizedPreviewItem[] {
+  const beforeList = Array.isArray(before) ? before : [];
+  const afterList = Array.isArray(after) ? after : [];
+  const beforeMap = new Map<string, { val: any; idx: number }>();
+  beforeList.forEach((it, i) => beforeMap.set(keyFn(it, i), { val: it, idx: i }));
+  const afterMap = new Map<string, { val: any; idx: number }>();
+  afterList.forEach((it, i) => afterMap.set(keyFn(it, i), { val: it, idx: i }));
+  const out: ItemizedPreviewItem[] = [];
+  for (const [k, entry] of afterMap) {
+    const v = entry.val;
+    if (!beforeMap.has(k)) {
+      out.push({ status: 'added', key: k, label: labelFn(v, entry.idx), afterText: truncateForPreview(v) });
+    } else {
+      const bv = beforeMap.get(k)!.val;
+      if (stableStringifyMemo(bv) !== stableStringifyMemo(v)) {
+        out.push({ status: 'updated', key: k, label: labelFn(v, entry.idx), beforeText: truncateForPreview(bv), afterText: truncateForPreview(v) });
+      }
+    }
+  }
+  for (const [k, entry] of beforeMap) {
+    if (!afterMap.has(k)) {
+      out.push({ status: 'removed', key: k, label: labelFn(entry.val, entry.idx), beforeText: truncateForPreview(entry.val) });
+    }
+  }
+  return out;
+}
+
+function diffMapByKey(
+  before: Record<string, any>,
+  after: Record<string, any>,
+  labelFn: (key: string, val: any) => string
+): ItemizedPreviewItem[] {
+  const out: ItemizedPreviewItem[] = [];
+  const beforeMap = (before && typeof before === 'object' && !Array.isArray(before)) ? before : {};
+  const afterMap = (after && typeof after === 'object' && !Array.isArray(after)) ? after : {};
+  for (const [k, v] of Object.entries(afterMap)) {
+    if (!Object.prototype.hasOwnProperty.call(beforeMap, k)) {
+      out.push({ status: 'added', key: k, label: labelFn(k, v), afterText: truncateForPreview(v) });
+    } else if (stableStringify(beforeMap[k]) !== stableStringify(v)) {
+      out.push({ status: 'updated', key: k, label: labelFn(k, v), beforeText: truncateForPreview(beforeMap[k]), afterText: truncateForPreview(v) });
+    }
+  }
+  for (const k of Object.keys(beforeMap)) {
+    if (!Object.prototype.hasOwnProperty.call(afterMap, k)) {
+      out.push({ status: 'removed', key: k, label: labelFn(k, beforeMap[k]), beforeText: truncateForPreview(beforeMap[k]) });
+    }
+  }
+  return out;
+}
+
+function summarizeItems(items: ItemizedPreviewItem[]): ItemizedSectionPreview {
+  const addedCount = items.filter((i) => i.status === 'added').length;
+  const updatedCount = items.filter((i) => i.status === 'updated').length;
+  const removedCount = items.filter((i) => i.status === 'removed').length;
+  const totalCount = items.length;
+  const truncated = totalCount > ITEM_PREVIEW_CAP;
+  return {
+    items: items.slice(0, ITEM_PREVIEW_CAP),
+    addedCount,
+    updatedCount,
+    removedCount,
+    totalCount,
+    truncated
+  };
+}
+
+/**
+ * whole-PUT セクションの「比較先 current」と「適用後 after」から、人が読めるアイテム単位プレビューを生成する。
+ * 既知のセクション形状（通知 / ACL / JS-CSS / プラグイン / カテゴリ / プロセス管理 など）に対応。
+ * 未知のセクション/データ破損時は null を返し、呼び出し側は wholePreview にフォールバックする。
+ */
+export function buildItemizedSectionPreview(secKey: string, before: any, after: any): ItemizedSectionPreview | null {
+  try {
+    if (secKey === 'notifications') {
+      const items = diffArrayByKey(
+        before?.notifications || [],
+        after?.notifications || [],
+        (it, i) => `${it?.entity?.type || '?'}:${it?.entity?.code || it?.entity?.name || `#${i}`}`,
+        (it) => {
+          const recipients = Array.isArray(it?.recipients) ? it.recipients.join(', ') : '';
+          return `${formatEntityRef(it)}${recipients ? ` → ${recipients}` : ''}`;
+        }
+      );
+      // 通知本体の要素以外（notifyToCommenter 等）の差分も拾う
+      if (stableStringify(before?.notifyToCommenter) !== stableStringify(after?.notifyToCommenter)) {
+        items.unshift({
+          status: 'updated',
+          key: '__notifyToCommenter__',
+          label: 'コメント通知設定',
+          beforeText: String(before?.notifyToCommenter ?? ''),
+          afterText: String(after?.notifyToCommenter ?? '')
+        });
+      }
+      return summarizeItems(items);
+    }
+
+    if (secKey === 'perRecordNotifications' || secKey === 'reminderNotifications') {
+      const items = diffArrayByKey(
+        before?.notifications || [],
+        after?.notifications || [],
+        (it, i) => `${String(it?.title || '')}#${i}`,
+        (it) => {
+          const t = String(it?.title || '(無題)');
+          const cond = it?.filterCond ? ` [条件: ${String(it.filterCond).slice(0, 40)}${String(it.filterCond).length > 40 ? '…' : ''}]` : '';
+          return `${t}${cond}`;
+        }
+      );
+      if (secKey === 'reminderNotifications' && stableStringify(before?.timezone) !== stableStringify(after?.timezone)) {
+        items.unshift({
+          status: 'updated',
+          key: '__timezone__',
+          label: `タイムゾーン: ${String(before?.timezone || '-')} → ${String(after?.timezone || '-')}`,
+          beforeText: String(before?.timezone || ''),
+          afterText: String(after?.timezone || '')
+        });
+      }
+      return summarizeItems(items);
+    }
+
+    if (secKey === 'appAcl') {
+      const items = diffArrayByKey(
+        before?.rights || [],
+        after?.rights || [],
+        (it, i) => `${it?.entity?.type || '?'}:${it?.entity?.code || it?.entity?.name || `#${i}`}`,
+        (it) => {
+          const flags = ['appEditable', 'recordViewable', 'recordAddable', 'recordEditable', 'recordDeletable', 'recordImportable', 'recordExportable']
+            .filter((k) => it?.[k]);
+          return `${formatEntityRef(it)} (${flags.length ? flags.join(', ') : '権限なし'})`;
+        }
+      );
+      return summarizeItems(items);
+    }
+
+    if (secKey === 'fieldAcl') {
+      const items = diffArrayByKey(
+        before?.rights || [],
+        after?.rights || [],
+        (it, i) => String(it?.code || `#${i}`),
+        (it) => {
+          const ents = Array.isArray(it?.entities) ? it.entities.length : 0;
+          return `フィールド ${String(it?.code || '?')}（権限定義: ${ents} 件）`;
+        }
+      );
+      return summarizeItems(items);
+    }
+
+    if (secKey === 'recordPermissions') {
+      const items = diffArrayByKey(
+        before?.rights || [],
+        after?.rights || [],
+        (it, i) => `${String(it?.filterCond || '(全レコード)')}#${i}`,
+        (it) => {
+          const cond = it?.filterCond ? `条件: ${String(it.filterCond).slice(0, 40)}${String(it.filterCond).length > 40 ? '…' : ''}` : '(全レコード)';
+          const ents = Array.isArray(it?.entities) ? it.entities.length : 0;
+          return `${cond} → 権限定義 ${ents} 件`;
+        }
+      );
+      return summarizeItems(items);
+    }
+
+    if (secKey === 'customizeSettings') {
+      const collect = (root: any) => {
+        const out: Array<{ loc: string; type: string; ident: string; raw: any }> = [];
+        const sides: Array<['desktop' | 'mobile', any]> = [['desktop', root?.desktop], ['mobile', root?.mobile]];
+        for (const [side, group] of sides) {
+          for (const kind of ['js', 'css'] as const) {
+            const list = Array.isArray(group?.[kind]) ? group[kind] : [];
+            list.forEach((entry: any, idx: number) => {
+              const ident = String(entry?.url || entry?.file?.name || entry?.file?.fileKey || `#${idx}`);
+              out.push({ loc: side, type: kind, ident, raw: entry });
+            });
+          }
+        }
+        return out;
+      };
+      const beforeList = collect(before);
+      const afterList = collect(after);
+      const items = diffArrayByKey(
+        beforeList,
+        afterList,
+        (it) => `${it.loc}/${it.type}|${it.ident}`,
+        (it) => `[${it.loc}.${it.type}] ${it.ident}`
+      );
+      return summarizeItems(items);
+    }
+
+    if (secKey === 'pluginSettings') {
+      const beforePlugins = Array.isArray(before?.plugins) ? before.plugins : [];
+      const afterPlugins = Array.isArray(after?.plugins) ? after.plugins : [];
+      // PUT body は pluginIds のみ送るため、id 集合の差分を見る
+      const items = diffArrayByKey(
+        beforePlugins,
+        afterPlugins,
+        (it, i) => String(it?.id || `#${i}`),
+        (it) => `${String(it?.name || it?.id || '?')}${it?.version ? ` (v${it.version})` : ''}`
+      );
+      const result = summarizeItems(items);
+      result.notes = ['※ プラグイン本体の有効化のみ同期します。各プラグインの設定 (plugin/config) は別途反映が必要です。'];
+      return result;
+    }
+
+    if (secKey === 'categories') {
+      const items = diffMapByKey(
+        before?.categories || {},
+        after?.categories || {},
+        (key, val) => `${String(val?.name || key)}（コード: ${key}）`
+      );
+      return summarizeItems(items);
+    }
+
+    if (secKey === 'processSettings') {
+      const stateItems = diffMapByKey(
+        before?.states || {},
+        after?.states || {},
+        (key, val) => `[状態] ${String(val?.name || key)}`
+      );
+      const actionItems = diffArrayByKey(
+        before?.actions || [],
+        after?.actions || [],
+        (it, i) => `[action]${String(it?.name || `#${i}`)}`,
+        (it) => `[アクション] ${String(it?.name || '?')} (${String(it?.from || '?')} → ${String(it?.to || '?')})`
+      );
+      const enableChange = stableStringify(before?.enable) !== stableStringify(after?.enable)
+        ? [{
+            status: 'updated' as const,
+            key: '__enable__',
+            label: `プロセス管理 ${before?.enable ? 'ON' : 'OFF'} → ${after?.enable ? 'ON' : 'OFF'}`
+          }]
+        : [];
+      return summarizeItems([...enableChange, ...stateItems, ...actionItems]);
+    }
+
+    if (secKey === 'layoutSettings') {
+      // レイアウトは行（ROW/GROUP/SUBTABLE）単位の構造変化が分かるとうれしいので、
+      // type+先頭フィールドコードで識別して行単位の差分を出す。詳細プレビューは既存ヒートマップで補完。
+      const summarizeRow = (row: any, idx: number): string => {
+        const t = String(row?.type || 'ROW');
+        if (t === 'GROUP') return `行 ${idx + 1} [GROUP] ${String(row?.code || '')}`;
+        if (t === 'SUBTABLE') return `行 ${idx + 1} [SUBTABLE] ${String(row?.code || '')}`;
+        const codes = Array.isArray(row?.fields) ? row.fields.map((f: any) => String(f?.code || f?.type || '?')).join(', ') : '';
+        return `行 ${idx + 1} [ROW] ${codes || '(空)'}`;
+      };
+      const items = diffArrayByKey(
+        before?.layout || [],
+        after?.layout || [],
+        (row, i) => {
+          // 同じ位置の行を同一視するため index ベースのキー
+          const t = String(row?.type || 'ROW');
+          const head = Array.isArray(row?.fields) && row.fields[0] ? String(row.fields[0].code || row.fields[0].type || '') : (row?.code || '');
+          return `#${i}|${t}|${head}`;
+        },
+        summarizeRow
+      );
+      return summarizeItems(items);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// 大量差分時にPUT/POST/DELETEがエラーになりやすいため、安全側のチャンクサイズで分割する。
+// fallback として旧来の 100 を残しつつ、API パスごとに実運用で安定する値に下げる。
+// （views/reports/actions は 1 件あたりの設定が大きく 100 件投げると制限に当たることがある）
+export const APPLY_REQUEST_CHUNK_SIZE = 100;
+const CHUNK_SIZE_BY_PATH: Record<string, number> = {
+  '/app/form/fields.json': 100,
+  '/app/views.json': 20,
+  '/app/reports.json': 20,
+  '/app/actions.json': 20
+};
+
+function resolveChunkSize(path: string | undefined): number {
+  if (!path) return APPLY_REQUEST_CHUNK_SIZE;
+  return CHUNK_SIZE_BY_PATH[path] ?? APPLY_REQUEST_CHUNK_SIZE;
+}
+
+function chunkObjectEntries(obj, size: number) {
   const entries = Object.entries(obj || ({} as any));
   if (entries.length <= size) return entries.length ? [Object.fromEntries(entries)] : [];
   const out: any[] = [];
@@ -258,7 +591,7 @@ function chunkObjectEntries(obj, size = APPLY_REQUEST_CHUNK_SIZE) {
   return out;
 }
 
-function chunkArray(arr, size = APPLY_REQUEST_CHUNK_SIZE) {
+function chunkArray(arr, size: number) {
   const list = Array.isArray(arr) ? arr : [];
   if (list.length <= size) return list.length ? [list] : [];
   const out: any[] = [];
@@ -267,7 +600,8 @@ function chunkArray(arr, size = APPLY_REQUEST_CHUNK_SIZE) {
 }
 
 function pushChunkedMapRequests(requests, { method, path, app, key, map, label }) {
-  const chunks = chunkObjectEntries(map);
+  const size = resolveChunkSize(path);
+  const chunks = chunkObjectEntries(map, size);
   if (!chunks.length) return;
   const total = Object.keys(map).length;
   chunks.forEach((chunk, idx) => {
@@ -282,7 +616,8 @@ function pushChunkedMapRequests(requests, { method, path, app, key, map, label }
 }
 
 function pushChunkedArrayRequests(requests, { method, path, app, key, list, label }) {
-  const chunks = chunkArray(list);
+  const size = resolveChunkSize(path);
+  const chunks = chunkArray(list, size);
   if (!chunks.length) return;
   const total = list.length;
   chunks.forEach((chunk, idx) => {
@@ -311,7 +646,7 @@ export function planFieldSectionDiffRequests(app: any, beforeProps: any, afterPr
     const outDef = converted.def;
     if (!beforeMap || !beforeMap[code]) {
       add[code] = outDef;
-    } else if (stableStringify(beforeMap[code]) !== stableStringify(outDef)) {
+    } else if (stableStringifyMemo(beforeMap[code]) !== stableStringifyMemo(outDef)) {
       update[code] = outDef;
     }
   }
@@ -385,33 +720,7 @@ function makeSectionPlanBaseline(response) {
   };
 }
 
-function buildPlanRequestSummary(requests) {
-  const list = Array.isArray(requests) ? requests : [];
-  const methods = { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 };
-  const sections = new Map<string, any>();
-  for (const req of list) {
-    const method = String(req?.method || '').toUpperCase();
-    if (method === 'POST' || method === 'PUT' || method === 'DELETE') methods[method] += 1;
-    else methods.OTHER += 1;
-    const sectionKey = String(req?.sectionKey || '');
-    const sectionLabel = String(req?.sectionLabel || sectionKey || '-');
-    const row = sections.get(sectionKey) || { sectionKey, sectionLabel, count: 0, methods: { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 } };
-    row.count += 1;
-    if (method === 'POST' || method === 'PUT' || method === 'DELETE') row.methods[method] += 1;
-    else row.methods.OTHER += 1;
-    sections.set(sectionKey, row);
-  }
-  const sectionRows = [...sections.values()].sort((a, b) => b.count - a.count);
-  const highImpact = sectionRows.filter((row) => HIGH_IMPACT_SECTIONS.has(row.sectionKey));
-  return {
-    totalRequests: list.length,
-    methods,
-    sectionRows,
-    sectionCount: sectionRows.length,
-    highImpactCount: highImpact.length,
-    highImpactLabels: highImpact.map((row) => row.sectionLabel)
-  };
-}
+// buildPlanRequestSummary は副作用ゼロのため progress-pure.ts に移動した。
 
 function renderPlanRequestSummary(plan) {
   const summary = plan?.requestSummary || buildPlanRequestSummary(plan?.plannedRequests || []);
@@ -430,6 +739,19 @@ function renderPlanRequestSummary(plan) {
 
 export function markApplyPlan(signature, mode, totalReq, lines, extra: any = {}) {
   const requestSummary = buildPlanRequestSummary(extra.plannedRequests || []);
+  // 同一プラン署名の場合は「セクション除外」選択を保持（プラン再生成での意図しないリセット防止）
+  const prev = state.lastApplyPlan;
+  const preservedExcludes: string[] = (() => {
+    if (!prev || prev.signature !== signature) return [];
+    const arr = Array.isArray(prev.excludedSectionKeys) ? prev.excludedSectionKeys : [];
+    // 新プランに存在しないセクションキーは取り除く
+    const validKeys = new Set<string>(
+      Array.isArray(extra.plannedRequests)
+        ? extra.plannedRequests.map((r: any) => String(r?.sectionKey || '')).filter(Boolean)
+        : []
+    );
+    return arr.filter((k: string) => validKeys.has(k));
+  })();
   state.lastApplyPlan = {
     signature,
     mode,
@@ -438,8 +760,101 @@ export function markApplyPlan(signature, mode, totalReq, lines, extra: any = {})
     summary: (lines || []).slice(0, 16).join('\n'),
     logs: lines || [],
     requestSummary,
+    excludedSectionKeys: preservedExcludes,
     ...extra
   };
+}
+
+/**
+ * プラン確認画面で「このセクションだけ除外」チェックの状態を切り替える。
+ * 状態は `state.lastApplyPlan.excludedSectionKeys` (string[]) に保持される。
+ * 反映実行時に runApplyPreview / runApplyPreviewByNodes が参照して該当セクションを除外する。
+ */
+export function togglePlanSectionExclude(sectionKey: string): void {
+  const key = String(sectionKey || '').trim();
+  if (!key) return;
+  const plan = state.lastApplyPlan;
+  if (!plan) return;
+  const cur: string[] = Array.isArray(plan.excludedSectionKeys) ? plan.excludedSectionKeys.slice() : [];
+  const idx = cur.indexOf(key);
+  if (idx >= 0) cur.splice(idx, 1);
+  else cur.push(key);
+  plan.excludedSectionKeys = cur;
+  // 部分DOM更新で十分な箇所（カード自体の状態クラス・ラベル・ヘッダのカウンタ）は
+  // 該当ノードだけ書き換える。詳細パネル内に展開した <details> は維持される。
+  // 失敗したらモーダル全体を再描画するフォールバックに切り替える。
+  const updated = updatePlanCardExcludeStateInDom(plan, key);
+  if (!updated) {
+    try {
+      renderPlanIntoModal(plan, Array.isArray(plan.plannedRequests) ? plan.plannedRequests : []);
+    } catch (_e) { /* noop */ }
+  }
+  const label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
+  setStatus(idx >= 0
+    ? `セクション除外を解除しました: ${label}`
+    : `セクションを反映対象から除外しました: ${label}`);
+}
+
+/**
+ * `togglePlanSectionExclude` の DOM 反映を、innerHTML 全置換ではなくピンポイント
+ * 更新する。展開済みのプレビューや詳細 <details> の状態を保ちながら、
+ * 状態クラス・除外ラベル・上部カウンタだけを書き換える。
+ *
+ * 想定される DOM 構造が見つからなければ false を返してフォールバックを促す。
+ */
+function updatePlanCardExcludeStateInDom(plan: any, sectionKey: string): boolean {
+  try {
+    const doc = getToolDocument();
+    const root = doc.querySelector('#u_reflectPlanModal .reflect-modal-body') as HTMLElement | null
+      || (ui.result as HTMLElement | null);
+    if (!root) return false;
+
+    const safeKey = String(sectionKey).replace(/"/g, '\\"');
+    const cardSelector = `.plan-card .plan-card__exclude input[data-section-key="${safeKey}"]`;
+    const checkbox = root.querySelector(cardSelector) as HTMLInputElement | null;
+    if (!checkbox) return false;
+    const card = checkbox.closest('.plan-card') as HTMLElement | null;
+    const labelWrap = checkbox.closest('.plan-card__exclude') as HTMLElement | null;
+    if (!card || !labelWrap) return false;
+
+    const excludedKeys: string[] = Array.isArray(plan?.excludedSectionKeys) ? plan.excludedSectionKeys : [];
+    const isExcluded = excludedKeys.includes(String(sectionKey));
+
+    card.classList.toggle('plan-card--excluded', isExcluded);
+    if (isExcluded) card.removeAttribute('open');
+    else card.setAttribute('open', '');
+    labelWrap.classList.toggle('is-excluded', isExcluded);
+    checkbox.checked = isExcluded;
+    const labelText = labelWrap.querySelector('span');
+    if (labelText) labelText.textContent = isExcluded ? '除外中' : '除外';
+
+    // 上部カウンタを再計算
+    const reqs: any[] = Array.isArray(plan?.plannedRequests) ? plan.plannedRequests : [];
+    const totalReqAll = reqs.length;
+    const excludedSet = new Set<string>(excludedKeys);
+    const remainingReq = reqs.reduce((s, r) => s + (excludedSet.has(String(r?.sectionKey || '')) ? 0 : 1), 0);
+    const sectionKeysOfReqs = new Set<string>(reqs.map((r) => String(r?.sectionKey || '')).filter(Boolean));
+    const excludedCount = [...sectionKeysOfReqs].filter((k) => excludedSet.has(k)).length;
+
+    const meta = root.querySelector('.plan-confirm-head__meta') as HTMLElement | null;
+    if (meta) {
+      const stamp = new Date(plan?.createdAt || Date.now()).toLocaleString();
+      const remainingMeta = excludedCount > 0
+        ? ` ／ <span class="plan-confirm-head__remaining">実行対象 ${remainingReq} / ${totalReqAll} 件（除外 ${excludedCount} セクション）</span>`
+        : '';
+      meta.innerHTML = `予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}${remainingMeta}`;
+    }
+
+    const applyBtnLabel = root.querySelector('[data-act="applyPreview"] span:nth-of-type(2)') as HTMLElement | null;
+    if (applyBtnLabel) {
+      applyBtnLabel.textContent = excludedCount > 0
+        ? `このプランで反映する（${remainingReq}/${totalReqAll}件）`
+        : 'このプランで反映する';
+    }
+    return true;
+  } catch (_e) {
+    return false;
+  }
 }
 
 export function showInlineConfirmation(plan, options) {
@@ -448,6 +863,15 @@ export function showInlineConfirmation(plan, options) {
     const stamp = new Date(plan.createdAt).toLocaleString();
     const planText = (plan.logs || []).join('\n') || '(プラン詳細なし)';
     const appIdSection = renderAppIdConfirmSection(appIdRefs);
+    const baselineErrors: Array<{ sectionKey: string; label: string; message: string }> = Array.isArray(plan?.baselineErrors) ? plan.baselineErrors : [];
+    const baselineWarning = baselineErrors.length
+      ? `<div class="plan-baseline-warning" style="margin:8px 0;padding:8px 10px;border:1px solid #d97706;background:#fef3c7;color:#92400e;border-radius:6px;font-size:12px">
+          <div style="font-weight:700;margin-bottom:4px">⚠ ベースライン取得失敗 ${baselineErrors.length} セクション</div>
+          <div style="margin-bottom:4px">該当セクションは同時編集検出が無効化されます。続行する場合は内容を確認のうえチェックを入れてください。</div>
+          <ul style="margin:4px 0 6px 16px;padding:0">${baselineErrors.map((e) => `<li>${esc(e.label)}: ${esc(e.message)}</li>`).join('')}</ul>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600"><input type="checkbox" id="u_planBaselineAck"> ベースライン未取得セクションを承知のうえ続行する</label>
+        </div>`
+      : '';
     const doc = getToolDocument();
     const modalEl = doc.getElementById('u_reflectPlanModal') as HTMLElement | null;
     const modalBody = modalEl?.querySelector('.reflect-modal-body') as HTMLElement | null;
@@ -456,17 +880,26 @@ export function showInlineConfirmation(plan, options) {
     const previousHtml = fallbackHost.innerHTML;
     const previousScrollTop = (fallbackHost as any).scrollTop || 0;
     if (modalEl) modalEl.hidden = false;
+    const execDisabled = baselineErrors.length ? 'disabled' : '';
     fallbackHost.innerHTML = `<div class="plan-confirm-panel">
       <div style="font-weight:700;font-size:13px;margin-bottom:8px">実行前プラン確認</div>
       ${renderPlanRequestSummary(plan)}
+      ${baselineWarning}
       ${appIdSection}
       <div class="plan-summary">${esc(planText)}</div>
       <div class="plan-actions">
         <span class="plan-meta">予定リクエスト: ${plan.totalReq || 0}件 | 作成: ${esc(stamp)}</span>
         <button class="btn sub" id="u_planCancel">キャンセル</button>
-        <button class="btn ok" id="u_planExecute">このまま実行</button>
+        <button class="btn ok" id="u_planExecute" ${execDisabled}>このまま実行</button>
       </div>
     </div>`;
+    if (baselineErrors.length) {
+      const ack = doc.getElementById('u_planBaselineAck') as HTMLInputElement | null;
+      const exec = doc.getElementById('u_planExecute') as HTMLButtonElement | null;
+      ack?.addEventListener('change', () => {
+        if (exec) exec.disabled = !ack.checked;
+      });
+    }
     (fallbackHost as any).scrollTop = 0;
     const cleanup = () => {
       const execBtn = doc.getElementById('u_planExecute');
@@ -562,6 +995,7 @@ export async function runPreviewApplyPlanNodes() {
 
   let totalReq = 0;
   const targetSectionBaselines: Record<string, any> = {};
+  const baselineErrors: Array<{ sectionKey: string; label: string; message: string }> = [];
   const sectionPreviews: Record<string, any> = {};
   const plannedRequests: any[] = [];
   const sectionKeys = Object.keys(bySection);
@@ -571,7 +1005,15 @@ export async function runPreviewApplyPlanNodes() {
     if (!def || !def.put) continue;
     try {
       setStatus(`ノード反映プラン計算中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
-      const currentRes = await apiGet(prefix, def.endpoint, { app });
+      let currentRes;
+      try {
+        currentRes = await apiGet(prefix, def.endpoint, { app });
+      } catch (be) {
+        const message = be?.message || String(be);
+        baselineErrors.push({ sectionKey: secKey, label: def.label, message });
+        lines.push(`PLAN NG ${def.label}: ベースライン取得失敗 ${message}`);
+        continue;
+      }
       targetSectionBaselines[secKey] = makeSectionPlanBaseline(currentRes);
       const current = normalize(currentRes);
       const before = deepClone(current);
@@ -598,17 +1040,21 @@ export async function runPreviewApplyPlanNodes() {
       } else if (secKey === 'actionSettings') {
         plan = planActionsSectionDiffRequests(app, before.actions || before || ({} as any), patched.actions || patched || ({} as any));
       } else {
+        const itemized = buildItemizedSectionPreview(secKey, before, patched);
         plan = {
           requests: [{ method: 'PUT', path: def.endpoint, body: { app, ...((def.putBuilder as any)?.(patched) || {}) }, note: `${def.label} put` }],
-          wholePreview: buildWholeSectionPreview(before, patched)
+          wholePreview: buildWholeSectionPreview(before, patched),
+          itemized: (itemized && (itemized.totalCount > 0 || itemized.notes?.length)) ? itemized : null
         };
       }
 
-      if (plan.preview || plan.wholePreview) {
+      if (plan.preview || plan.wholePreview || plan.itemized) {
+        const shape: 'map' | 'items' | 'whole' = plan.preview ? 'map' : (plan.itemized ? 'items' : 'whole');
         sectionPreviews[secKey] = {
           label: def.label,
-          shape: plan.preview ? 'map' : 'whole',
+          shape,
           preview: plan.preview || null,
+          itemized: plan.itemized || null,
           wholePreview: plan.wholePreview || null,
           requestCount: (plan.requests || []).length
         };
@@ -626,9 +1072,16 @@ export async function runPreviewApplyPlanNodes() {
   }
 
   lines.push('');
+  if (baselineErrors.length) {
+    lines.push(`⚠ ベースライン取得失敗: ${baselineErrors.length} セクション（同時編集検出が無効化されます）`);
+    for (const be of baselineErrors) {
+      lines.push(`  - ${be.label}: ${be.message}`);
+    }
+    lines.push('');
+  }
   lines.push(`合計予定リクエスト数: ${totalReq}`);
   lines.push('※ ノードモードは差分パスをもとに比較先プレビューへ反映します。');
-  markApplyPlan(planSignature, 'nodes', totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests });
+  markApplyPlan(planSignature, 'nodes', totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors });
 
   // プラン確認モーダル本体に描画（無ければ result にフォールバック）
   renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
@@ -662,8 +1115,22 @@ export async function runPreviewApplyPlan() {
   const app = c.target.appId;
   const logs: string[] = [];
   const targetSectionBaselines: Record<string, any> = {};
+  const baselineErrors: Array<{ sectionKey: string; label: string; message: string }> = [];
   const sectionPreviews: Record<string, any> = {};
   const plannedRequests: any[] = [];
+
+  const fetchBaselineSafe = async (secKey: string, label: string, endpoint: string) => {
+    try {
+      const res = await apiGet(prefix, endpoint, { app });
+      targetSectionBaselines[secKey] = makeSectionPlanBaseline(res);
+      return res;
+    } catch (be) {
+      const message = be?.message || String(be);
+      baselineErrors.push({ sectionKey: secKey, label, message });
+      logs.push(`PLAN NG ${label}: ベースライン取得失敗 ${message}`);
+      return null;
+    }
+  };
   logs.push('=== 反映プラン（ドライラン）===');
   logs.push(`比較先アプリ: ${app}`);
   logs.push(`対象セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ')}`);
@@ -680,13 +1147,27 @@ export async function runPreviewApplyPlan() {
         requestCount: (plan.requests || []).length
       };
     } else {
-      sectionPreviews[secKey] = {
-        label,
-        shape: 'whole',
-        preview: null,
-        wholePreview: buildWholeSectionPreview(wholeBefore, wholeAfter),
-        requestCount: (plan.requests || []).length
-      };
+      // whole-PUT セクションは可能ならアイテム単位プレビューに変換、未対応なら従来の wholePreview にフォールバック
+      const itemized = buildItemizedSectionPreview(secKey, wholeBefore, wholeAfter);
+      if (itemized && (itemized.totalCount > 0 || itemized.notes?.length)) {
+        sectionPreviews[secKey] = {
+          label,
+          shape: 'items',
+          preview: null,
+          itemized,
+          wholePreview: buildWholeSectionPreview(wholeBefore, wholeAfter),
+          requestCount: (plan.requests || []).length
+        };
+      } else {
+        sectionPreviews[secKey] = {
+          label,
+          shape: 'whole',
+          preview: null,
+          itemized: null,
+          wholePreview: buildWholeSectionPreview(wholeBefore, wholeAfter),
+          requestCount: (plan.requests || []).length
+        };
+      }
     }
     for (const req of plan.requests || []) {
       plannedRequests.push({ sectionKey: secKey, sectionLabel: label, ...req });
@@ -707,8 +1188,8 @@ export async function runPreviewApplyPlan() {
     }
 
     if (secKey === 'fieldSettings') {
-      const current = await apiGet(prefix, '/app/form/fields.json', { app });
-      targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
+      const current = await fetchBaselineSafe(secKey, def.label, '/app/form/fields.json');
+      if (!current) continue;
       const plan = planFieldSectionDiffRequests(app, current.properties || ({} as any), sourceSec.properties || sourceSec || ({} as any), lookupMap);
       capturePreview(secKey, def.label, plan);
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
@@ -718,8 +1199,8 @@ export async function runPreviewApplyPlan() {
       continue;
     }
     if (secKey === 'viewSettings') {
-      const current = await apiGet(prefix, '/app/views.json', { app });
-      targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
+      const current = await fetchBaselineSafe(secKey, def.label, '/app/views.json');
+      if (!current) continue;
       const plan = planViewsSectionDiffRequests(app, current.views || ({} as any), sourceSec.views || sourceSec || ({} as any));
       capturePreview(secKey, def.label, plan);
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
@@ -729,8 +1210,8 @@ export async function runPreviewApplyPlan() {
       continue;
     }
     if (secKey === 'reportSettings') {
-      const current = await apiGet(prefix, '/app/reports.json', { app });
-      targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
+      const current = await fetchBaselineSafe(secKey, def.label, '/app/reports.json');
+      if (!current) continue;
       const plan = planReportsSectionDiffRequests(app, current.reports || ({} as any), sourceSec.reports || sourceSec || ({} as any));
       capturePreview(secKey, def.label, plan);
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
@@ -739,8 +1220,8 @@ export async function runPreviewApplyPlan() {
       continue;
     }
     if (secKey === 'actionSettings') {
-      const current = await apiGet(prefix, '/app/actions.json', { app });
-      targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
+      const current = await fetchBaselineSafe(secKey, def.label, '/app/actions.json');
+      if (!current) continue;
       const plan = planActionsSectionDiffRequests(app, current.actions || ({} as any), sourceSec.actions || sourceSec || ({} as any));
       capturePreview(secKey, def.label, plan);
       logs.push(`PLAN ${def.label}: ${plan.requests.length} request(s)`);
@@ -749,8 +1230,8 @@ export async function runPreviewApplyPlan() {
       totalReq += plan.requests.length;
       continue;
     }
-    const current = await apiGet(prefix, def.endpoint, { app });
-    targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
+    const current = await fetchBaselineSafe(secKey, def.label, def.endpoint);
+    if (!current) continue;
     const afterWhole = (def.putBuilder as any)?.(sourceSec) || {};
     const plan = { requests: [{ method: 'PUT', path: def.endpoint, body: { app, ...afterWhole }, note: `${def.label} put` }] };
     capturePreview(secKey, def.label, plan, current, afterWhole);
@@ -759,8 +1240,15 @@ export async function runPreviewApplyPlan() {
     totalReq += plan.requests.length;
   }
   logs.push('');
+  if (baselineErrors.length) {
+    logs.push(`⚠ ベースライン取得失敗: ${baselineErrors.length} セクション（同時編集検出が無効化されます）`);
+    for (const be of baselineErrors) {
+      logs.push(`  - ${be.label}: ${be.message}`);
+    }
+    logs.push('');
+  }
   logs.push(`合計予定リクエスト数: ${totalReq}`);
-  markApplyPlan(planSignature, 'section', totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests });
+  markApplyPlan(planSignature, 'section', totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors });
   // プラン確認モーダル本体に描画（無ければ result にフォールバック）
   renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
   renderReflectAssistPanel();
@@ -785,6 +1273,9 @@ function renderPlanIntoModal(plan: any, plannedRequests: any[]): void {
 function renderPlanConfirmPanelHtml(plan: any, plannedRequests: any[]): string {
   const reqs = Array.isArray(plannedRequests) ? plannedRequests : [];
   const sectionPreviews = (plan?.sectionPreviews || ({} as any)) as Record<string, any>;
+  const excluded: Set<string> = new Set<string>(
+    Array.isArray(plan?.excludedSectionKeys) ? plan.excludedSectionKeys : []
+  );
   const sectionMap = new Map<string, { sectionKey: string; sectionLabel: string; reqs: any[]; methods: { POST: number; PUT: number; DELETE: number; OTHER: number } }>();
   for (const req of reqs) {
     const key = String(req?.sectionKey || '');
@@ -797,7 +1288,11 @@ function renderPlanConfirmPanelHtml(plan: any, plannedRequests: any[]): string {
     sectionMap.set(key, slot);
   }
   const sections = [...sectionMap.values()].sort((a, b) => b.reqs.length - a.reqs.length);
+  const totalReqAll = sections.reduce((s, sec) => s + sec.reqs.length, 0);
+  const remainingReq = sections.reduce((s, sec) => s + (excluded.has(sec.sectionKey) ? 0 : sec.reqs.length), 0);
+  const excludedCount = sections.filter((sec) => excluded.has(sec.sectionKey)).length;
   const cards = sections.map((sec) => {
+    const isExcluded = excluded.has(sec.sectionKey);
     const methodChips = (['POST', 'PUT', 'DELETE'] as const)
       .filter((m) => sec.methods[m] > 0)
       .map((m) => `<span class="plan-card-chip plan-card-chip--${m.toLowerCase()}">${m} ${sec.methods[m]}</span>`)
@@ -817,11 +1312,38 @@ function renderPlanConfirmPanelHtml(plan: any, plannedRequests: any[]): string {
       if (upds) parts.push(`<span class="plan-card-delta plan-card-delta--neutral" title="更新">~${upds}</span>`);
       if (rms) parts.push(`<span class="plan-card-delta plan-card-delta--remove" title="削除">−${rms}</span>`);
       deltaHtml = parts.join('');
+    } else if (preview?.shape === 'items' && preview.itemized) {
+      const it = preview.itemized;
+      const parts: string[] = [];
+      if (it.addedCount) parts.push(`<span class="plan-card-delta plan-card-delta--add" title="追加">+${it.addedCount}</span>`);
+      if (it.updatedCount) parts.push(`<span class="plan-card-delta plan-card-delta--neutral" title="更新">~${it.updatedCount}</span>`);
+      if (it.removedCount) parts.push(`<span class="plan-card-delta plan-card-delta--remove" title="削除">−${it.removedCount}</span>`);
+      deltaHtml = parts.join('') || `<span class="plan-card-delta plan-card-delta--neutral" title="セクション全体更新">⇄ 全体更新</span>`;
     } else if (preview?.shape === 'whole' && preview.wholePreview) {
       deltaHtml = `<span class="plan-card-delta plan-card-delta--neutral" title="セクション全体更新">⇄ 全体更新</span>`;
     }
     // S10 + S1: section icon + severity class on the card
     const sectionIcon = renderSectionIconHtml(sec.sectionKey, { withTooltip: sec.sectionLabel });
+    const applyHint = SECTION_APPLY_HINTS[sec.sectionKey] || '';
+    // items プレビューがあれば各アイテムを直接プランカード本体に展開（モーダル内で完結）
+    let itemSummaryHtml = '';
+    if (preview?.shape === 'items' && preview.itemized && (preview.itemized.totalCount > 0 || (preview.itemized.notes && preview.itemized.notes.length))) {
+      const STATUS_CLASS: Record<string, string> = { added: 'add', updated: 'upd', removed: 'rm' };
+      const STATUS_LABEL: Record<string, string> = { added: '追加', updated: '更新', removed: '削除' };
+      const itemRows = (preview.itemized.items || []).slice(0, 30).map((item: any) => {
+        const cls = STATUS_CLASS[item.status] || 'upd';
+        const lab = STATUS_LABEL[item.status] || item.status;
+        return `<div class="plan-card-item plan-card-item--${cls}">
+          <span class="plan-card-item__badge plan-card-item__badge--${cls}">${lab}</span>
+          <span class="plan-card-item__label">${esc(item.label || item.key)}</span>
+        </div>`;
+      }).join('');
+      const itemMore = preview.itemized.items && preview.itemized.items.length > 30
+        ? `<div class="plan-card-item plan-card-item--more">…他 ${preview.itemized.items.length - 30} 件</div>`
+        : '';
+      const noteLines = (preview.itemized.notes || []).map((n: string) => `<div class="plan-card-note">${esc(n)}</div>`).join('');
+      itemSummaryHtml = `<div class="plan-card__items">${noteLines}${itemRows}${itemMore}</div>`;
+    }
     const detailRows = sec.reqs.slice(0, 12).map((req) => {
       const note = String(req?.note || '').trim();
       const path = String(req?.path || '');
@@ -832,7 +1354,15 @@ function renderPlanConfirmPanelHtml(plan: any, plannedRequests: any[]): string {
       </div>`;
     }).join('');
     const more = sec.reqs.length > 12 ? `<div class="plan-card-row plan-card-row--more">…他 ${sec.reqs.length - 12} 件</div>` : '';
-    return `<details class="plan-card ${sevClass}${isHigh ? ' plan-card--high' : ''}" open>
+    const hintHtml = applyHint ? `<div class="plan-card__hint">💡 ${esc(applyHint)}</div>` : '';
+    // 「この変更だけ除外」チェックボックス。
+    // data-act は data-act-event="change" にして change イベントで拾う。
+    // click をそのまま使うと、<summary> 配下では details の開閉も連動して走るため。
+    const excludeLabel = `<label class="plan-card__exclude${isExcluded ? ' is-excluded' : ''}" title="このセクションを反映対象から除外します（プラン本体は再生成されません）">
+      <input type="checkbox" data-act="togglePlanSectionExclude" data-act-event="change" data-section-key="${esc(sec.sectionKey)}" ${isExcluded ? 'checked' : ''}>
+      <span>${isExcluded ? '除外中' : '除外'}</span>
+    </label>`;
+    return `<details class="plan-card ${sevClass}${isHigh ? ' plan-card--high' : ''}${isExcluded ? ' plan-card--excluded' : ''}"${isExcluded ? '' : ' open'}>
       <summary class="plan-card__head">
         ${sectionIcon}
         <span class="plan-card__title">${esc(sec.sectionLabel)}</span>
@@ -840,24 +1370,29 @@ function renderPlanConfirmPanelHtml(plan: any, plannedRequests: any[]): string {
         <span class="plan-card__chips">${methodChips}</span>
         ${deltaHtml}
         ${isHigh ? '<span class="plan-card__risk">高リスク</span>' : ''}
+        ${excludeLabel}
       </summary>
-      <div class="plan-card__body">${detailRows}${more}</div>
+      <div class="plan-card__body">${hintHtml}${itemSummaryHtml}${detailRows}${more}</div>
     </details>`;
   }).join('');
   const stamp = new Date(plan?.createdAt || Date.now()).toLocaleString();
+  const remainingMeta = excludedCount > 0
+    ? ` ／ <span class="plan-confirm-head__remaining">実行対象 ${remainingReq} / ${totalReqAll} 件（除外 ${excludedCount} セクション）</span>`
+    : '';
   return `<div class="plan-confirm-panel">
     <div class="plan-confirm-head">
       <div class="plan-confirm-head__title">実行前プラン確認</div>
-      <div class="plan-confirm-head__meta">予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}</div>
+      <div class="plan-confirm-head__meta">予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}${remainingMeta}</div>
     </div>
     ${renderPlanRequestSummary(plan)}
     <div class="plan-confirm-cards">${cards || '<div class="muted">予定リクエストがありません</div>'}</div>
     <div class="plan-confirm-actions">
-      <button type="button" class="btn-stage" data-stage="apply" data-act="applyPreview" title="このプランの内容で比較先プレビューへ反映します">
-        <span class="btn-stage__icon">🚀</span><span>このプランで反映する</span>
+      <button type="button" class="btn-stage" data-stage="apply" data-act="applyPreview" title="このプランの内容で比較先プレビューへ反映します（チェックを入れたセクションは除外されます）">
+        <span class="btn-stage__icon">🚀</span><span>このプランで反映する${excludedCount > 0 ? `（${remainingReq}/${totalReqAll}件）` : ''}</span>
         <span class="btn-stage__shortcut">Ctrl+Shift+Enter</span>
       </button>
       <button type="button" class="btn sub" data-act="exportDryRunPlan" title="APIを実行せずプランをJSONで保存">ドライランJSONを保存</button>
+      <button type="button" class="btn sub" data-act="exportReviewZip" title="プラン・差分HTML・パッチJSON・申請メタ情報を1つのZIPにまとめてレビュー依頼用に書き出します">📦 レビュー依頼ZIPを書き出す</button>
     </div>
     <details class="plan-confirm-rawlogs"><summary>テキストログを表示</summary><div class="plan-summary">${esc((plan?.logs || []).join('\n'))}</div></details>
   </div>`;
@@ -916,4 +1451,151 @@ export async function runExportDryRunPlan() {
   });
   downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
   setStatus(`ドライランJSONを保存しました: ${filename}（APIは送信していません）`);
+}
+
+/**
+ * レビュー依頼用ZIPを書き出す。
+ * 同梱物:
+ *   - plan.json   ドライランプラン（APIは送信されない、レビュー時に追跡可能なメタ情報付き）
+ *   - diff.html   現在の差分一覧をHTML化（オフライン閲覧可能、ブラウザで開ける）
+ *   - patch.json  差分のパッチJSON（レビュー後に他環境で再適用も可能）
+ *   - meta.json   申請者・理由・参照番号・除外セクション・接続情報を集約
+ *   - README.md   レビュアー向けの読み方ガイド
+ * 申請者と申請理由は kusPrompt で都度入力する（レビュー文化の押しつけにならないよう必須化はしない）。
+ */
+export async function runExportReviewZip(): Promise<void> {
+  const plan = state.lastApplyPlan;
+  const expectedSignature = computeCurrentReflectPlanSignature();
+  const planIsFresh = !!(
+    plan &&
+    Array.isArray(plan.plannedRequests) &&
+    plan.plannedRequests.length &&
+    expectedSignature &&
+    plan.signature === expectedSignature
+  );
+  if (!planIsFresh) {
+    setStatus('プランが古いためレビュー依頼ZIPの書き出し前に再生成します');
+    await runPreviewApplyPlan();
+  }
+  const latest = state.lastApplyPlan;
+  if (!latest || !Array.isArray(latest.plannedRequests) || !latest.plannedRequests.length) {
+    throw new Error('レビュー依頼ZIPに同梱できる計画がありません。先に「実行前プラン確認」を実行してください。');
+  }
+  if (expectedSignature && latest.signature !== expectedSignature) {
+    throw new Error('プランが現在の条件と一致しません。再度「実行前プラン確認」を実行してください。');
+  }
+  if (!Array.isArray(state.lastDiffRows) || !state.lastDiffRows.length) {
+    throw new Error('レビュー依頼ZIPには差分データが必要です。先に「差分比較」を実行してください。');
+  }
+
+  const c = commonParams();
+  const reason = (kusPrompt('レビュー依頼の理由・概要を入力してください（任意）\n例: 検証環境で確認済み、本番反映の承認をお願いします', '') || '').trim();
+  const applicant = (kusPrompt('申請者名を入力してください（任意・空欄可）', '') || '').trim();
+  const refNo = (kusPrompt('参照番号（チケット番号 等）を入力してください（任意・空欄可）', '') || '').trim();
+
+  const excludedSectionKeys = Array.isArray(latest.excludedSectionKeys) ? latest.excludedSectionKeys.slice() : [];
+  const excludedLabels = excludedSectionKeys.map((k: string) => SECTION_DEFS.find((d) => d.key === k)?.label || k);
+  const includedRequests = latest.plannedRequests.filter((r: any) => !excludedSectionKeys.includes(String(r?.sectionKey || '')));
+
+  const planPayload = {
+    generatedAt: new Date().toISOString(),
+    kind: 'reflect-review-bundle-plan',
+    mode: latest.mode,
+    target: { appId: c.target.appId, guestId: c.target.guestId || '', preview: true },
+    source: { appId: c.source.appId, guestId: c.source.guestId || '' },
+    totalRequests: includedRequests.length,
+    excludedSectionKeys,
+    excludedSectionLabels: excludedLabels,
+    plannedRequests: includedRequests.map((r: any) => ({
+      sectionKey: r.sectionKey,
+      sectionLabel: r.sectionLabel,
+      method: r.method,
+      path: r.path,
+      note: r.note || '',
+      body: r.body
+    })),
+    sectionPreviews: latest.sectionPreviews || ({} as any),
+    logs: latest.logs || []
+  };
+
+  const meta = {
+    generatedAt: new Date().toISOString(),
+    kind: 'reflect-review-bundle',
+    schemaVersion: 1,
+    applicant,
+    reason,
+    referenceNumber: refNo,
+    target: { appId: c.target.appId, guestId: c.target.guestId || '', preview: true },
+    source: { appId: c.source.appId, guestId: c.source.guestId || '' },
+    excludedSectionKeys,
+    excludedSectionLabels: excludedLabels,
+    totalPlannedRequests: includedRequests.length,
+    diffRowCount: (state.lastDiffRows || []).filter((row: any) => row && !row._displayOnly).length
+  };
+
+  const exportRows = state.lastDiffRows;
+  const scopes = [...new Set((exportRows || []).map((r: any) => r?.sectionKey).filter(Boolean))];
+  const diffHtml = buildDiffHtml(state.lastSourceBundle, state.lastTargetBundle, exportRows, scopes, ui.ignoreKeys?.value || '', {
+    fetchIssues: state.lastFetchIssues || [],
+    exportMode: 'all',
+    exportLabel: 'レビュー依頼一括（全件）',
+    exportContentMode: 'diffOnly',
+    exportContentLabel: '差分のみ',
+    normalizationState: getDiffNormalizationPresetState()
+  });
+  const patchPayload = buildPatchPayload(exportRows, state.lastSourceBundle, state.lastTargetBundle);
+
+  const sourceLabel = buildAppFilenameLabel(c.source.appId || 'src', extractAppNameFromBundle(state.lastSourceBundle));
+  const targetLabel = buildAppFilenameLabel(c.target.appId || 'tgt', extractAppNameFromBundle(state.lastTargetBundle));
+  const baseLabel = `${sourceLabel}_to_${targetLabel}`;
+  const readme = [
+    '# プレビュー反映 レビュー依頼パッケージ',
+    '',
+    `生成日時: ${meta.generatedAt}`,
+    applicant ? `申請者: ${applicant}` : '',
+    refNo ? `参照番号: ${refNo}` : '',
+    reason ? `理由・概要:\n${reason}` : '',
+    '',
+    `比較元アプリ: ${meta.source.appId || '-'}${meta.source.guestId ? ` (guest ${meta.source.guestId})` : ''}`,
+    `比較先アプリ: ${meta.target.appId || '-'}${meta.target.guestId ? ` (guest ${meta.target.guestId})` : ''} (preview)`,
+    `予定リクエスト数: ${meta.totalPlannedRequests}`,
+    `差分行数: ${meta.diffRowCount}`,
+    excludedLabels.length ? `プラン画面で除外されたセクション: ${excludedLabels.join(', ')}` : '除外セクション: なし',
+    '',
+    '## 同梱ファイル',
+    '- meta.json   ... 申請者・理由・参照番号・接続情報・除外セクションを集約',
+    '- plan.json   ... ドライラン形式の予定リクエスト一覧（APIは未送信）',
+    '- diff.html   ... 差分一覧（ブラウザで開けます）',
+    '- patch.json  ... 差分のパッチJSON（同型のkintoneアプリへ再適用も可能）',
+    '',
+    '## レビュー手順の例',
+    '1. diff.html をブラウザで開いて差分を確認します。',
+    '2. plan.json の plannedRequests で実際に送信されるAPI内容を確認します。',
+    '3. 問題なければ統合ツール上で「実行前プラン確認 → このプランで反映する」を実行してもらいます。',
+    '',
+    '※ このパッケージは「比較先プレビュー」への反映プランです。本番デプロイは kintone 管理画面から手動で行ってください。'
+  ].filter(Boolean).join('\n');
+
+  const JSZip: any = await loadJSZip();
+  const zip = new JSZip();
+  zip.file('meta.json', JSON.stringify(meta, null, 2));
+  zip.file('plan.json', JSON.stringify(planPayload, null, 2));
+  zip.file('diff.html', diffHtml);
+  zip.file('patch.json', JSON.stringify(patchPayload, null, 2));
+  zip.file('README.md', readme);
+
+  const blob: Blob = await zip.generateAsync({ type: 'blob' });
+  const filename = buildExportFilename('レビュー依頼パッケージ', 'zip', { appLabel: baseLabel });
+  const doc = getToolDocument();
+  const win = doc.defaultView || window;
+  const url = win.URL.createObjectURL(blob);
+  const a = doc.createElement('a');
+  a.href = url;
+  a.download = filename;
+  doc.body.appendChild(a);
+  a.click();
+  doc.body.removeChild(a);
+  setTimeout(() => { try { win.URL.revokeObjectURL(url); } catch (_e) { /* noop */ } }, 1000);
+
+  setStatus(`レビュー依頼ZIPを保存しました: ${filename}（APIは送信していません）`);
 }

@@ -30,7 +30,7 @@ import {
 } from './reflect/apply.js';
 import { getActiveReflectRow, getSelectedReflectRows } from './tabs/reflect.js';
 import { resolveApplyScopes } from './reflect/helpers.js';
-import { makeApplyPlanSignature, runPreviewApplyPlan, runExportDryRunPlan } from './reflect/plan.js';
+import { makeApplyPlanSignature, runPreviewApplyPlan, runExportDryRunPlan, runExportReviewZip, togglePlanSectionExclude } from './reflect/plan.js';
 import { scheduleGuidedTourLayout } from './ui/tour.js';
 import { setupEventHandlers, forceReleaseRunningGuard } from './handlers.js';
 import { installPsychology } from './ui/psychology.js';
@@ -66,7 +66,7 @@ import {
   loadViewsForSelect,
   renderTemplateOptions
 } from './tabs/record.js';
-import { runApiTester, clearApiTesterHistory, renderApiTesterHistory, initApiTesterEnhancements } from './tabs/api-tester.js';
+import { runApiTester, clearApiTesterHistory, copyApiTesterCurl, renderApiTesterHistory, initApiTesterEnhancements } from './tabs/api-tester.js';
 import {
   runAnalyzeDashboard,
   runFieldImpactAnalysis,
@@ -141,19 +141,14 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     }
   } catch (e) { /* ignore */ }
 
-  // ヘッダーの折りたたみ状態を localStorage から復元（デフォルトは折りたたみ）
+  // ブラウザストレージを使わず、起動時は常に既定の折りたたみ状態にする。
   try {
-    const ownerWin = (root.ownerDocument && root.ownerDocument.defaultView) || window;
-    const stored = ownerWin.localStorage.getItem('kus:headerCollapsed');
-    const collapsed = stored == null ? true : stored === '1';
-    if (collapsed) {
-      root.classList.add('header-collapsed');
-      const btn = root.querySelector('#u_headerCollapseBtn') as HTMLElement | null;
-      if (btn) {
-        btn.textContent = '▼';
-        btn.setAttribute('aria-label', 'ヘッダーを展開');
-        btn.setAttribute('title', 'ヘッダーを展開');
-      }
+    root.classList.add('header-collapsed');
+    const btn = root.querySelector('#u_headerCollapseBtn') as HTMLElement | null;
+    if (btn) {
+      btn.textContent = '▼';
+      btn.setAttribute('aria-label', 'ヘッダーを展開');
+      btn.setAttribute('title', 'ヘッダーを展開');
     }
   } catch (e) { /* ignore */ }
 
@@ -386,8 +381,11 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     runSimExecuteAction,
     runApiTester,
     clearApiTesterHistory,
+    copyApiTesterCurl,
     runPreviewApplyPlan,
     runExportDryRunPlan,
+    runExportReviewZip,
+    togglePlanSectionExclude,
     runBackupTargetPreview,
     runRestoreTargetPreviewBackup,
     importTargetPreviewBackupFromFile,

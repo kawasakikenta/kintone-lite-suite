@@ -42,6 +42,54 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     SANITIZE_LABEL_HTML_IN_LAYOUT: true
   };
 
+  // ヘッダー名 → その列の最大幅（半角換算）。
+  // autosizeCols が見出し行を見て一致したらこの値で個別クランプする。
+  // ここに無い列は CONFIG.MAX_COL_WIDTH (48) が上限。
+  const MAX_COL_WIDTH_BY_HEADER: Record<string, number> = {
+    // 共通の長文系
+    '説明': 60, 'description': 60,
+    '計算式': 80, 'expression': 80,
+    '選択肢/式': 50,
+    'ルックアップ設定': 90, '関連レコード設定': 90, '関連レコード一覧設定': 90,
+    '依存/参照': 70,
+    '備考': 60, 'メモ': 60, '内容': 80,
+    '値': 80, '初期値': 30, '入力制約': 30,
+    // ビュー
+    '表示フィールド': 60, '表示フィールド（ラベル）': 60,
+    '絞り込み条件': 70, 'フィルター条件': 70, 'ソート': 50,
+    // グラフ
+    '集計対象': 60, 'グループ化': 50, 'モード': 18, 'チャート': 22,
+    // プロセス管理
+    'アクション名': 30, '遷移元（From）': 40, '遷移先（To）': 40,
+    '作業者候補': 60, '作業者の選び方': 26,
+    // 通知
+    '本文/備考': 70, 'タイミング/条件': 60, '宛先': 50, '通知タイミング': 32, '通知先': 50,
+    // 権限
+    '対象': 40, '範囲': 14, '許可': 24,
+    // JS/CSS
+    '名前/URL': 80, 'fileKey': 50, '参照方法': 14,
+    // 依存関係
+    '詳細': 80, '依存種別': 22, '参照先': 60,
+    // フィールド名／コード
+    'フィールド名': 28, 'フィールドコード': 28, 'コード': 24,
+    'CSV 列': 24, 'kintone フィールド': 28,
+    // タイプ系
+    'タイプ': 20, '種別': 18, 'ビュー種別': 18, '表示形式': 18,
+    'プラグインID': 20, 'バージョン': 14, 'ID': 12,
+    // 短いフラグ系
+    '必須': 8, '重複禁止': 10,
+    '閲覧': 8, '編集': 8, '削除': 8, '管理': 10, '追加': 10,
+    '読込': 10, '書出': 10, '読込/書出': 14,
+    'サブ組織含': 12, 'サブ組織含む': 12, 'グループ': 16,
+    // インデックス系
+    'No.': 6, 'No': 6, '#': 4, '行': 6, '列': 6, '区分': 12,
+    '階層': 8, '表示': 8, '幅': 8, '表示順': 10,
+    // サマリー系
+    '項目': 32, '件数': 14,
+    // フォームレイアウト
+    'タイトル': 30, 'シート名': 26
+  };
+
   const FIELD_TYPE = {
     'LABEL': 'ラベル', 'HR': '罫線', 'SPACER': 'スペース', 'GROUP': 'グループ',
     'FILE': '添付ファイル', 'LINK': 'リンク', 'REFERENCE_TABLE': '関連レコード一覧',
@@ -611,15 +659,42 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       zebraOdd: () => ({ fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.ZEBRA_ODD } } })
     };
 
-    const autosizeCols = (ws, aoa) => {
-      const widths = [];
+    const autosizeCols = (ws, aoa, options: any = {}) => {
+      const headerRowIdx = options.headerRowIndex;
+      const headerInfoRows = Array.isArray(options.headerInfoRows) ? options.headerInfoRows : [];
+      const headerCandidates: number[] = [];
+      if (typeof headerRowIdx === 'number' && headerRowIdx >= 0) headerCandidates.push(headerRowIdx);
+      headerInfoRows.forEach((idx: number) => {
+        if (typeof idx === 'number' && idx >= 0 && !headerCandidates.includes(idx)) headerCandidates.push(idx);
+      });
+      const perColMax: number[] = [];
+      for (const idx of headerCandidates) {
+        const headerRow = aoa[idx] || [];
+        headerRow.forEach((h: any, i: number) => {
+          const text = String(h ?? '').trim();
+          if (!text) return;
+          const max = MAX_COL_WIDTH_BY_HEADER[text];
+          if (max != null && (perColMax[i] == null || max > perColMax[i])) perColMax[i] = max;
+        });
+      }
+      if (Array.isArray(options.colMax)) {
+        options.colMax.forEach((m: any, i: number) => {
+          if (typeof m === 'number' && m > 0) perColMax[i] = m;
+        });
+      }
+      const widths: number[] = [];
       for (const row of aoa) {
-        (row || []).forEach((v, i) => {
+        (row || []).forEach((v: any, i: number) => {
           const w = UtilsX.calculateCellWidth(v);
           widths[i] = Math.max(widths[i] || CONFIG.MIN_COL_WIDTH, w);
         });
       }
-      ws['!cols'] = widths.map((w) => ({ wch: UtilsX.clampColumnWidth(w || CONFIG.DEFAULT_COL_WIDTH) }));
+      ws['!cols'] = widths.map((w, i) => {
+        const colMax = perColMax[i] != null ? perColMax[i] : CONFIG.MAX_COL_WIDTH;
+        const base = w || CONFIG.DEFAULT_COL_WIDTH;
+        const clamped = Math.max(CONFIG.MIN_COL_WIDTH, Math.min(colMax, base));
+        return { wch: clamped };
+      });
     };
 
     const applyStyles = (ws, aoa, options: any = {}) => {
@@ -737,7 +812,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     const appendSheet = (name, data, meta: any = {}) => {
       if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return null;
       const ws = XLSX.utils.aoa_to_sheet(data.aoa);
-      autosizeCols(ws, data.aoa);
+      autosizeCols(ws, data.aoa, data.options || ({} as any));
       applyStyles(ws, data.aoa, data.options || ({} as any));
       if (data.mergeRanges) applyCellMerges(ws, data.mergeRanges);
       applyRowHeights(ws, data.aoa, data.options || ({} as any));
@@ -1703,8 +1778,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         tocAoa.push([String(i + 1), m.name, m.description || '-', String(m.recordCount)]);
       });
       const tocWs = XLSX.utils.aoa_to_sheet(tocAoa);
-      autosizeCols(tocWs, tocAoa);
-      applyStyles(tocWs, tocAoa, {
+      const tocStyleOptions = {
         headerRowIndex: 8,
         titleRows: [0, 1],
         sectionRows: [2],
@@ -1713,7 +1787,9 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         freezeRows: 9,
         centerCols: [0, 3],
         enableAutoFilter: false
-      });
+      };
+      autosizeCols(tocWs, tocAoa, tocStyleOptions);
+      applyStyles(tocWs, tocAoa, tocStyleOptions);
       applyCellMerges(tocWs, [
         { startRow: 0, endRow: 0, startCol: 0, endCol: 3 },
         { startRow: 1, endRow: 1, startCol: 0, endCol: 3 },

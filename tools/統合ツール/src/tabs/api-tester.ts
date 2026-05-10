@@ -62,6 +62,46 @@ const API_TESTER_PRESETS = [
   }
 ];
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitLike(error: any): boolean {
+  const text = `${error?.code || ''} ${error?.message || ''} ${error?.status || ''}`.toLowerCase();
+  return error?.status === 429 || text.includes('limit') || text.includes('too many') || text.includes('rate');
+}
+
+function formatApiTesterError(error: any): string {
+  if (!error || typeof error !== 'object') return String(error);
+  const lines = [
+    error.message ? `message: ${error.message}` : '',
+    error.code ? `code: ${error.code}` : '',
+    error.id ? `id: ${error.id}` : '',
+    error.status ? `status: ${error.status}` : ''
+  ].filter(Boolean);
+  if (error.errors && typeof error.errors === 'object') {
+    lines.push('errors:');
+    for (const [key, value] of Object.entries(error.errors) as Array<[string, any]>) {
+      lines.push(`  ${key}: ${value?.messages?.join(', ') || JSON.stringify(value)}`);
+    }
+  }
+  if (!lines.length) {
+    try { return JSON.stringify(error, null, 2); } catch (_) { return String(error); }
+  }
+  return lines.join('\n');
+}
+
+async function runKintoneApiWithSingleRetry(path: string, method: string, payload: any) {
+  try {
+    return await kintone.api(path, method, payload);
+  } catch (error) {
+    if (!isRateLimitLike(error)) throw error;
+    setStatus('API制限の可能性があるため、1.5秒待って再試行します...', true);
+    await sleep(1500);
+    return await kintone.api(path, method, payload);
+  }
+}
+
 export async function runApiTester() {
   bumpSessionMetric('apiTesterRun');
   const method = (getToolDocument().getElementById('u_apiTesterMethod') as HTMLInputElement | null)?.value || 'GET';
@@ -105,15 +145,12 @@ export async function runApiTester() {
 
     assertAllowsMutatingApiUrl(finalPath, method);
 
-    const res = await kintone.api(finalPath, method, payload);
+    const res = await runKintoneApiWithSingleRetry(finalPath, method, payload);
     resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(JSON.stringify(res, null, 2))}</pre>`;
     setStatus(`API実行成功: ${method} ${finalPath}`);
     saveApiTesterHistory(method, path, bodyStr);
   } catch (e) {
-    let errMsg = e instanceof Error ? e.message : String((e as any)?.message || e);
-    if (!(e instanceof Error) && typeof e === 'object' && e !== null) {
-      try { errMsg = JSON.stringify(e, null, 2); } catch (_) { }
-    }
+    let errMsg = formatApiTesterError(e);
     resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">${esc(errMsg)}</pre>`;
     setStatus(`API実行エラー: ${method} ${path}`, true);
   } finally {
@@ -121,7 +158,7 @@ export async function runApiTester() {
   }
 }
 
-const API_HISTORY_KEY = 'KUS_API_TESTER_HISTORY';
+let apiTesterHistoryMemory: any[] = [];
 
 function prettyJson(value) {
   try {
@@ -201,34 +238,49 @@ export function initApiTesterEnhancements() {
 }
 
 export function saveApiTesterHistory(method: string, path: string, bodyStr: string) {
-  try {
-    let hist: any[] = JSON.parse(localStorage.getItem(API_HISTORY_KEY) || '[]');
-    hist = hist.filter((h: any) => !(h.method === method && h.path === path && h.body === bodyStr));
-    hist.unshift({ method, path, body: bodyStr, time: new Date().toISOString() });
-    if (hist.length > 15) hist = hist.slice(0, 15);
-    localStorage.setItem(API_HISTORY_KEY, JSON.stringify(hist));
-    renderApiTesterHistory();
-  } catch (e) {
-    console.error('History save failed', e);
-    showToast('API履歴の保存に失敗しました。ブラウザの保存容量や権限を確認してください。', 'warn');
-  }
+  let hist = apiTesterHistoryMemory.filter((h: any) => !(h.method === method && h.path === path && h.body === bodyStr));
+  hist.unshift({ method, path, body: bodyStr, time: new Date().toISOString() });
+  apiTesterHistoryMemory = hist.slice(0, 15);
+  renderApiTesterHistory();
 }
 
 export function clearApiTesterHistory() {
-  try {
-    localStorage.removeItem(API_HISTORY_KEY);
-  } catch (e) {
-    console.error('History clear failed', e);
-    showToast('API履歴の削除に失敗しました。', 'warn');
-  }
+  apiTesterHistoryMemory = [];
   renderApiTesterHistory();
+}
+
+export async function copyApiTesterCurl() {
+  const doc = getToolDocument();
+  const method = (doc.getElementById('u_apiTesterMethod') as HTMLInputElement | HTMLSelectElement | null)?.value || 'GET';
+  const path = (doc.getElementById('u_apiTesterPath') as HTMLInputElement | null)?.value?.trim() || '';
+  const body = (doc.getElementById('u_apiTesterBody') as HTMLTextAreaElement | null)?.value?.trim() || '{}';
+  if (!path) {
+    showToast('エンドポイントを指定してください', 'warn');
+    return;
+  }
+  const escapedBody = body.replace(/'/g, "'\\''");
+  const command = [
+    'curl',
+    '-X', method,
+    `'${path}'`,
+    '-H', "'Content-Type: application/json'",
+    method === 'GET' ? '' : `--data '${escapedBody}'`
+  ].filter(Boolean).join(' ');
+  try {
+    await navigator.clipboard.writeText(command);
+    setStatus('APIリクエストのcurl例をコピーしました');
+  } catch (e) {
+    const resEl = doc.getElementById('u_apiTesterResult');
+    if (resEl) resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(command)}</pre>`;
+    setStatus('クリップボードへコピーできないため、結果欄にcurl例を表示しました', true);
+  }
 }
 
 export function renderApiTesterHistory() {
   const listEl = getToolDocument().getElementById('u_apiTesterHistoryList');
   if (!listEl) return;
   try {
-    const hist = JSON.parse(localStorage.getItem(API_HISTORY_KEY) || '[]');
+    const hist = apiTesterHistoryMemory.slice();
     if (!hist.length) {
       listEl.innerHTML = '<div style="color:#94a3b8;font-size:11px;font-style:italic;padding:8px;">履歴はありません</div>';
       return;

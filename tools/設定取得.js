@@ -91,6 +91,7 @@
         },
         {
           key: "jsconfig",
+          hidden: true,
           group: "change",
           groupLabel: "変更・反映",
           icon: ICONS.jsconfig,
@@ -109,6 +110,7 @@
         },
         {
           key: "design",
+          hidden: true,
           group: "vis",
           groupLabel: "可視化・出力",
           icon: ICONS.design,
@@ -126,6 +128,7 @@
         },
         {
           key: "settingsExport",
+          hidden: true,
           group: "vis",
           groupLabel: "可視化・出力",
           icon: ICONS.settingsExport,
@@ -145,7 +148,7 @@
         {
           key: "er",
           group: "vis",
-          groupLabel: "可視化・出力",
+          groupLabel: "可視化・分析",
           icon: ICONS.er,
           label: "ER図",
           desc: "関連アプリの構造を ER 図で確認します。",
@@ -163,7 +166,7 @@
         {
           key: "processFlow",
           group: "vis",
-          groupLabel: "可視化・出力",
+          groupLabel: "可視化・分析",
           icon: ICONS.processFlow,
           label: "プロセス図",
           desc: "プロセス管理をフロー図で確認します。",
@@ -179,6 +182,7 @@
         },
         {
           key: "recordMgr",
+          hidden: true,
           group: "data",
           groupLabel: "データ・保守",
           icon: ICONS.recordMgr,
@@ -198,7 +202,7 @@
         {
           key: "apiTester",
           group: "data",
-          groupLabel: "データ・保守",
+          groupLabel: "API・検証",
           icon: ICONS.apiTester,
           label: "APIテスター",
           desc: "REST APIを直接試します。",
@@ -215,7 +219,7 @@
         {
           key: "analyze",
           group: "vis",
-          groupLabel: "可視化・出力",
+          groupLabel: "可視化・分析",
           icon: ICONS.analyze,
           label: "分析",
           desc: "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。",
@@ -422,78 +426,16 @@
   });
 
   // src/state.ts
-  function reportStorageFailure(operation, key, error) {
-    try {
-      console.warn(`[${TOOL_ID}] storage ${operation} failed: ${key}`, error);
-    } catch {
-    }
-    try {
-      const detail = {
-        operation,
-        key,
-        message: error?.message || String(error)
-      };
-      window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-      document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
-      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-    } catch {
-    }
-  }
   function loadReflectApplyHistory() {
-    try {
-      const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY) ?? sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      reportStorageFailure("load", REFLECT_APPLY_HISTORY_KEY, error);
-      return [];
-    }
+    return [];
   }
   function loadWorkHistory() {
-    try {
-      const raw = localStorage.getItem(WORK_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      reportStorageFailure("load", WORK_HISTORY_KEY, error);
-      return [];
-    }
-  }
-  function normalizeConnectionPreset(entry) {
-    if (!entry || typeof entry !== "object") return null;
-    const sourceAppId = String(entry.sourceAppId || "").trim();
-    const targetAppId = String(entry.targetAppId || "").trim();
-    if (!sourceAppId && !targetAppId) return null;
-    const id = String(entry.id || "").trim() || `conn-${Date.now()}`;
-    const name = String(entry.name || "").trim() || `${sourceAppId || "-"} -> ${targetAppId || "-"}`;
-    return {
-      id,
-      name,
-      sourceAppId,
-      sourceGuestId: String(entry.sourceGuestId || "").trim(),
-      sourcePreview: !!entry.sourcePreview,
-      targetAppId,
-      targetGuestId: String(entry.targetGuestId || "").trim(),
-      targetPreview: entry.targetPreview == null ? true : !!entry.targetPreview,
-      savedAt: Number(entry.savedAt || Date.now()) || Date.now()
-    };
+    return [];
   }
   function loadConnectionPresets() {
-    try {
-      const raw = localStorage.getItem(CONNECTION_PRESETS_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
-    } catch (error) {
-      reportStorageFailure("load", CONNECTION_PRESETS_KEY, error);
-      return [];
-    }
+    return [];
   }
-  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY, CONNECTION_PRESETS_LIMIT;
+  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY;
   var init_state = __esm({
     "src/state.ts"() {
       "use strict";
@@ -522,7 +464,9 @@
         connectionPresets: [],
         reflectPlanPreviewKeyword: "",
         reflectPlanPreviewChangedOnly: false,
-        reflectApplyChecklist: { diff: false, plan: false, target: false },
+        reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
+        reflectPreviewOpened: false,
+        reflectPreviewOpenedFor: "",
         lastPreviewBackupPayload: null,
         lastPreviewBackupFilename: "",
         diffViewTheme: "light",
@@ -564,6 +508,7 @@
         lastSettingsExportBundles: [],
         patchJsonPanelOpen: false,
         importedPatchPayload: null,
+        reflectPreviewProdDiff: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
         running: false,
@@ -575,7 +520,6 @@
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
       WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
       CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
-      CONNECTION_PRESETS_LIMIT = 30;
       state.reflectApplyHistory = loadReflectApplyHistory();
       state.workHistory = loadWorkHistory();
       state.connectionPresets = loadConnectionPresets();
@@ -1001,7 +945,6 @@ ${contextLine}`);
   var init_ignore_presets = __esm({
     "src/diff/ignore-presets.ts"() {
       "use strict";
-      init_constants();
       init_state();
     }
   });
@@ -1107,24 +1050,7 @@ ${contextLine}`);
     }
   });
 
-  // src/entries/settings-export-lite-ui.ts
-  init_constants();
-  init_components();
-
-  // src/tabs/settings-export-standalone.ts
-  init_constants();
-  init_utils();
-  init_api();
-
   // src/tabs/record.ts
-  init_constants();
-  init_state();
-  init_utils();
-  init_psychology();
-  init_api();
-  init_components();
-  init_diff();
-  init_dialog();
   async function loadJSZip() {
     const doc = getToolDocument();
     const win = doc.defaultView || window;
@@ -1133,7 +1059,7 @@ ${contextLine}`);
     setStatus("JSZipを動的ロード中...");
     return new Promise((resolve, reject) => {
       const script = doc.createElement("script");
-      script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
+      script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
       script.onload = () => {
         const ctor = win.JSZip || globalThis.JSZip;
         if (typeof ctor === "undefined") {
@@ -1149,8 +1075,29 @@ ${contextLine}`);
       doc.head.appendChild(script);
     });
   }
+  var init_record = __esm({
+    "src/tabs/record.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      init_utils();
+      init_psychology();
+      init_api();
+      init_components();
+      init_diff();
+      init_dialog();
+    }
+  });
+
+  // src/entries/settings-export-lite-ui.ts
+  init_constants();
+  init_components();
 
   // src/tabs/settings-export-standalone.ts
+  init_constants();
+  init_utils();
+  init_api();
+  init_record();
   function parseAppIdList(text) {
     const tokens = String(text || "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
     const out = [];

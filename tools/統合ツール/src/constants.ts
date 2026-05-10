@@ -138,6 +138,29 @@ export const SECTION_DEFS: readonly SectionDef[] = [
 
 export const SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS;
 
+/**
+ * 各セクションを「比較先プレビューに反映」したときに何が起きるかを 1 行で説明。
+ * プラン確認画面のカードヘッダーに表示し、初見ユーザーがマージ/上書き/削除挙動を
+ * 事前に把握できるようにする目的。網羅されないキーは未表示のまま。
+ */
+export const SECTION_APPLY_HINTS: Record<string, string> = {
+  fieldSettings: '比較元のフィールド定義を追加・更新します（比較先のみに存在するフィールドはノードモード以外では削除されません）。',
+  layoutSettings: 'フォームのレイアウトを比較元の配置で全置換します。フィールド反映後に実行する必要があります。',
+  viewSettings: '比較元のビューを追加・更新します（互換モードでは削除しません）。',
+  reportSettings: '比較元のグラフを追加・更新します。比較先のみに存在するグラフは削除されます。',
+  processSettings: 'プロセス管理（状態・アクション）を比較元の内容で全置換します。実行中の運用に影響するため要注意。',
+  pluginSettings: 'プラグインの「有効化」のみ同期します。各プラグインの設定 (plugin/config) は別途反映が必要です。',
+  customizeSettings: 'JS/CSSのファイル一覧（desktop / mobile）を比較元の内容で全置換します。比較先のみに存在するファイルは外れます。',
+  actionSettings: '比較元のアクション設定を追加・更新します（互換モードでは削除しません）。',
+  appAcl: 'アプリ権限を比較元の rights で全置換します。比較先のみに存在する権限エントリは消えるため注意。',
+  fieldAcl: 'フィールド権限を比較元の rights で全置換します。比較先のみに存在するフィールド権限は消えます。',
+  recordPermissions: 'レコード権限（条件＋エンティティ）を比較元で全置換します。比較先で追加した行は消えます。',
+  notifications: '通知（一般）の rules を比較元で全置換します。比較先のみに存在する通知は消えます。',
+  perRecordNotifications: 'レコード条件通知を比較元で全置換します。比較先のみに存在するルールは消えます。',
+  reminderNotifications: 'リマインダー通知を比較元で全置換します。timezone も比較元の値で上書きされます。',
+  categories: 'カテゴリ定義を比較元で全置換します。比較先のみに存在するカテゴリは消えます。'
+};
+
 export { FEATURE_DEFS, TAB_TO_FEATURE } from './featureDefs.mjs';
 
 export interface TabConnectionNeed {

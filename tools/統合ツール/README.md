@@ -61,7 +61,7 @@ tools/統合ツール/
 ├── src/
 │   ├── index.ts              # エントリポイント（環境チェック → DOM生成 → 初期化）
 │   ├── constants.ts          # 定数定義（TOOL_ID, SECTION_DEFS, META_KEYS 等）
-│   ├── state.ts              # グローバルstate, localStorage永続化, ui参照
+│   ├── state.ts              # グローバルstate, セッション内メモリ, ui参照
 │   ├── api.ts                # kintone API ラッパー（GET/PUT/POST, fetchBundle）
 │   ├── utils.ts              # 汎用ユーティリティ（escape, clone, normalize, download等）
 │   ├── handlers.ts           # イベント委譲ディスパッチ（data-act, キーボードショートカット）

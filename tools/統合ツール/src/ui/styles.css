@@ -1004,6 +1004,8 @@
 #kintone-unified-suite-v2 .reflect-target-badge__app{font-weight:900;font-size:11px}
 #kintone-unified-suite-v2 .reflect-target-badge__name{font-weight:700;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #kintone-unified-suite-v2 .reflect-target-badge__guest{font-size:10px;opacity:.85}
+#kintone-unified-suite-v2 .reflect-target-badge__open{appearance:none;border:1px solid rgba(124,45,18,.24);background:rgba(255,255,255,.72);color:#7c2d12;border-radius:6px;padding:2px 7px;font:inherit;font-size:10px;font-weight:900;line-height:1.3;cursor:pointer}
+#kintone-unified-suite-v2 .reflect-target-badge__open:hover{background:#fff;border-color:rgba(124,45,18,.45)}
 /* === V4 Result log === */
 #kintone-unified-suite-v2 .reflect-log-host{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 #kintone-unified-suite-v2 .reflect-log-phase{font-weight:800;padding:10px 12px;background:#0f172a;color:#fff;font-size:12px;border-radius:6px 6px 0 0;display:flex;align-items:center;gap:8px}
@@ -1065,6 +1067,35 @@
 #kintone-unified-suite-v2 .plan-confirm-apply:hover:not(:disabled){box-shadow:0 4px 10px rgba(22,163,74,.4);transform:translateY(-1px)}
 #kintone-unified-suite-v2 .plan-confirm-rawlogs > summary{cursor:pointer;font-size:11px;color:#64748b;padding:6px 10px}
 #kintone-unified-suite-v2 .plan-confirm-rawlogs[open] > summary{margin-bottom:6px}
+/* === Plan-confirm: per-section exclude toggle (UX) === */
+#kintone-unified-suite-v2 .plan-confirm-head__remaining{font-weight:800;color:#b45309}
+#kintone-unified-suite-v2 .plan-card__exclude{display:inline-flex;align-items:center;gap:4px;margin-left:auto;padding:2px 8px;border:1px solid #e2e8f0;border-radius:999px;background:#fff;font-size:10px;font-weight:700;color:#475569;cursor:pointer;user-select:none;line-height:1}
+#kintone-unified-suite-v2 .plan-card__exclude:hover{border-color:#fca5a5;color:#b91c1c;background:#fff5f5}
+#kintone-unified-suite-v2 .plan-card__exclude input{margin:0;cursor:pointer}
+#kintone-unified-suite-v2 .plan-card__exclude.is-excluded{border-color:#dc2626;background:#fef2f2;color:#991b1b}
+#kintone-unified-suite-v2 .plan-card--excluded{opacity:.55;background:repeating-linear-gradient(135deg,#fff,#fff 8px,#fef2f2 8px,#fef2f2 14px)}
+#kintone-unified-suite-v2 .plan-card--excluded .plan-card__title{text-decoration:line-through;text-decoration-color:#dc2626}
+#kintone-unified-suite-v2 .plan-card--excluded .plan-card__count{background:#fee2e2;color:#7f1d1d}
+/* === Plan-card: 1行解説 + アイテム単位プレビュー === */
+#kintone-unified-suite-v2 .plan-card__hint{margin:0 0 6px;padding:6px 10px;border-radius:6px;background:#f0f9ff;border-left:3px solid #38bdf8;font-size:11px;color:#0c4a6e;line-height:1.5}
+#kintone-unified-suite-v2 .plan-card__items{display:flex;flex-direction:column;gap:3px;margin:0 0 8px;padding:6px 8px;border:1px dashed #e2e8f0;border-radius:6px;background:#fafbfc;max-height:280px;overflow-y:auto}
+#kintone-unified-suite-v2 .plan-card-item{display:flex;align-items:center;gap:6px;font-size:11px;line-height:1.4;padding:1px 0}
+#kintone-unified-suite-v2 .plan-card-item--more{color:#94a3b8;font-style:italic;padding-left:8px}
+#kintone-unified-suite-v2 .plan-card-item__badge{flex-shrink:0;display:inline-block;width:30px;padding:1px 4px;font-size:9px;font-weight:900;border-radius:3px;text-align:center;letter-spacing:.02em}
+#kintone-unified-suite-v2 .plan-card-item__badge--add{background:#dcfce7;color:#15803d}
+#kintone-unified-suite-v2 .plan-card-item__badge--upd{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .plan-card-item__badge--rm{background:#fee2e2;color:#b91c1c}
+#kintone-unified-suite-v2 .plan-card-item__label{color:#0f172a;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .plan-card-item--add .plan-card-item__label{color:#14532d}
+#kintone-unified-suite-v2 .plan-card-item--rm .plan-card-item__label{color:#7f1d1d;text-decoration:line-through;text-decoration-color:#dc2626}
+#kintone-unified-suite-v2 .plan-card-note{padding:4px 8px;font-size:10px;color:#92400e;background:#fffbeb;border-left:2px solid #fbbf24;border-radius:4px;margin-bottom:4px}
+/* === Reflect plan preview card: 'items' shape rows === */
+#kintone-unified-suite-v2 .reflect-preview-row__badge{display:inline-block;width:34px;padding:1px 4px;margin-right:6px;font-size:9px;font-weight:900;border-radius:3px;text-align:center;letter-spacing:.02em;vertical-align:middle}
+#kintone-unified-suite-v2 .reflect-preview-row__badge--add{background:#dcfce7;color:#15803d}
+#kintone-unified-suite-v2 .reflect-preview-row__badge--upd{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .reflect-preview-row__badge--rm{background:#fee2e2;color:#b91c1c}
+#kintone-unified-suite-v2 .reflect-preview-card__notes{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+#kintone-unified-suite-v2 .reflect-preview-card__note{padding:5px 9px;font-size:11px;color:#92400e;background:#fffbeb;border-left:3px solid #fbbf24;border-radius:4px}
 /* === U4 Node bulk-select toolbar === */
 #kintone-unified-suite-v2 .reflect-node-bulk-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;border-radius:6px 6px 0 0;position:sticky;top:0;z-index:2}
 #kintone-unified-suite-v2 .reflect-node-bulk-toolbar__label{font-size:11px;font-weight:800;color:#475569;margin-right:4px}
@@ -3682,6 +3713,23 @@
   background:#0f766e;color:#fff;border-color:#0f766e;
 }
 #kintone-unified-suite-v2 .launcher-flow-step.is-primary .launcher-flow-main{font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .launcher-flow-step.is-done{
+  border-color:#86efac;
+  background:linear-gradient(180deg,#f0fdf4,#fff);
+}
+#kintone-unified-suite-v2 .launcher-flow-step.is-done .launcher-flow-no{
+  background:#22c55e;color:#fff;border-color:#16a34a;
+}
+#kintone-unified-suite-v2 .launcher-flow-step.is-done::after{
+  content:"✓";
+  position:absolute;top:-6px;right:8px;
+  width:16px;height:16px;
+  display:flex;align-items:center;justify-content:center;
+  background:#16a34a;color:#fff;
+  font-size:10px;font-weight:900;border-radius:50%;
+  box-shadow:0 1px 3px rgba(22,163,74,.4);
+}
+#kintone-unified-suite-v2 .launcher-flow-step.is-done.is-primary::after{display:none}
 #kintone-unified-suite-v2 .launcher-flow-step:hover{
   transform:translateY(-1px);
   border-color:#5eead4;
@@ -4476,6 +4524,16 @@
 #kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step::after{
   display:none;
 }
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step.is-done::after{
+  content:"✓";
+  position:absolute;top:-6px;right:8px;
+  width:16px;height:16px;
+  display:flex;align-items:center;justify-content:center;
+  background:#16a34a;color:#fff;
+  font-size:10px;font-weight:900;border-radius:50%;
+  box-shadow:0 1px 3px rgba(22,163,74,.4);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step.is-done.is-primary::after{display:none}
 #kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step:hover{
   background:#eff6ff;
   border-color:#93c5fd;
@@ -5955,4 +6013,657 @@
 }
 #kintone-unified-suite-v2 .patch-row-more{
   margin-top:6px;font-size:10px;color:#64748b;text-align:center;
+}
+
+/* ========================================================================
+   2026 design polish for the trimmed integration tool
+   ======================================================================== */
+#kintone-unified-suite-v2{
+  --shell-bg:#eef4f8;
+  --surface:#ffffff;
+  --surface-raised:#fbfdff;
+  --ink:#102033;
+  --ink-soft:#425466;
+  --ink-muted:#6b7d90;
+  --line:#d6e0ea;
+  --line-strong:#b7c6d6;
+  --blue:#1f6feb;
+  --teal:#0f9f8f;
+  --violet:#7557d8;
+  --amber:#b7791f;
+  --red:#c2413a;
+  background:var(--shell-bg);
+  border-color:#c6d3df;
+  box-shadow:0 24px 70px rgba(16,32,51,.30),0 2px 10px rgba(16,32,51,.12);
+}
+
+#kintone-unified-suite-v2 .h{
+  background:linear-gradient(135deg,#12324b 0%,#1f6feb 58%,#0f9f8f 100%);
+  box-shadow:inset 0 -1px 0 rgba(255,255,255,.18),0 8px 24px rgba(16,32,51,.18);
+}
+#kintone-unified-suite-v2 .suite-mark{
+  box-shadow:0 0 0 1px rgba(255,255,255,.4),0 10px 24px rgba(0,0,0,.18);
+}
+#kintone-unified-suite-v2 .body{
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.58),rgba(255,255,255,0) 160px),
+    var(--shell-bg);
+}
+#kintone-unified-suite-v2 .card,
+#kintone-unified-suite-v2 .tab-card,
+#kintone-unified-suite-v2 .diff-fold,
+#kintone-unified-suite-v2 .opt-card{
+  border-color:var(--line);
+  background:var(--surface);
+  box-shadow:0 1px 2px rgba(16,32,51,.05),0 10px 28px rgba(16,32,51,.06);
+}
+#kintone-unified-suite-v2 .diff-fold-summary{
+  background:linear-gradient(180deg,#fbfdff,#f4f8fb);
+  border-radius:8px;
+}
+#kintone-unified-suite-v2 .diff-fold[open] > .diff-fold-summary{
+  border-bottom:1px solid var(--line);
+  border-radius:8px 8px 0 0;
+}
+#kintone-unified-suite-v2 .diff-fold-title{
+  color:var(--ink);
+  font-weight:850;
+}
+#kintone-unified-suite-v2 .diff-fold-sub,
+#kintone-unified-suite-v2 .muted,
+#kintone-unified-suite-v2 .subpane-note{
+  color:var(--ink-muted);
+}
+
+#kintone-unified-suite-v2 input[type="text"],
+#kintone-unified-suite-v2 input[type="search"],
+#kintone-unified-suite-v2 textarea,
+#kintone-unified-suite-v2 select{
+  border-color:var(--line-strong);
+  background:#fff;
+  color:var(--ink);
+  min-height:34px;
+}
+#kintone-unified-suite-v2 input[type="text"]:focus,
+#kintone-unified-suite-v2 input[type="search"]:focus,
+#kintone-unified-suite-v2 textarea:focus,
+#kintone-unified-suite-v2 select:focus{
+  border-color:var(--blue);
+  box-shadow:0 0 0 3px rgba(31,111,235,.14);
+  outline:none;
+}
+#kintone-unified-suite-v2 label{
+  color:#2c3e50;
+  font-weight:780;
+}
+
+#kintone-unified-suite-v2 .btn{
+  border-radius:7px;
+  border-color:var(--line-strong);
+  font-weight:760;
+}
+#kintone-unified-suite-v2 .btn.sub{
+  background:#f7fafc;
+}
+#kintone-unified-suite-v2 .btn.sub:hover{
+  background:#edf4fb;
+}
+#kintone-unified-suite-v2 .btn.warn{
+  background:#fff7ed;
+  color:#92400e;
+  border-color:#f5c16c;
+}
+#kintone-unified-suite-v2 .btn.warn:hover{
+  background:#ffedd5;
+}
+#kintone-unified-suite-v2 .btn.ok,
+#kintone-unified-suite-v2 .btn.dark{
+  background:linear-gradient(180deg,#2b7fff,#1f6feb);
+  border-color:#1d5fd2;
+  color:#fff;
+}
+
+/* Launcher: calmer dashboard with stronger hierarchy */
+#kintone-unified-suite-v2.launcher-tabbed .launcher-menu{
+  gap:10px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-nav{
+  background:#dbe7f0;
+  border:1px solid #c2d1de;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.65);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn{
+  min-height:38px;
+  border-radius:7px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn.is-active{
+  background:#ffffff;
+  color:#14324a;
+  border-color:#ffffff;
+  box-shadow:0 3px 10px rgba(16,32,51,.12);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn__meta{
+  background:#edf4fb;
+  color:#24506f;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-filter-bar{
+  background:var(--surface-raised);
+  border-color:var(--line);
+  box-shadow:0 1px 2px rgba(16,32,51,.04);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-search-input{
+  height:38px;
+  font-size:13px;
+  padding-left:12px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .change-wizard{
+  background:linear-gradient(180deg,#ffffff,#f7fbff);
+  border-color:#cfe0ef;
+  box-shadow:0 12px 30px rgba(16,32,51,.08);
+}
+#kintone-unified-suite-v2.launcher-tabbed .change-wizard-title{
+  color:#12324b;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step{
+  background:#fff;
+  border-color:#d2dee9;
+  min-height:56px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step:hover{
+  border-color:#8eb8df;
+  box-shadow:0 8px 20px rgba(31,111,235,.12);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-no{
+  background:#eef4f8;
+  color:#24506f;
+  border-color:#cbd9e6;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step.is-primary{
+  background:#f0f8ff;
+  border-color:#8eb8df;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-grid--launcher{
+  gap:10px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card{
+  min-height:150px;
+  border-color:#d1dde8;
+  background:linear-gradient(180deg,#fff,#fbfdff);
+  box-shadow:0 1px 2px rgba(16,32,51,.04);
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card:hover{
+  border-color:#8eb8df;
+  box-shadow:0 14px 32px rgba(16,32,51,.12);
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-icon{
+  background:#eef6ff;
+  color:#1d5fd2;
+  border:1px solid #cfe0ef;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="reflect"] .feature-card-icon{
+  background:#ecfdf5;color:#047857;border-color:#b7e4d3;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="field"] .feature-card-icon{
+  background:#f4f0ff;color:#5b3abf;border-color:#d7ccff;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="er"] .feature-card-icon{
+  background:#eef2ff;color:#4338ca;border-color:#c7d2fe;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="processFlow"] .feature-card-icon{
+  background:#ecfeff;color:#0e7490;border-color:#a5f3fc;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="analyze"] .feature-card-icon{
+  background:#fff7ed;color:#9a3412;border-color:#fed7aa;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="apiTester"] .feature-card-icon{
+  background:#fef2f2;color:#b42318;border-color:#fecaca;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-label{
+  color:var(--ink);
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-desc{
+  color:var(--ink-soft);
+}
+
+/* Feature navigation */
+#kintone-unified-suite-v2 .kus-tab-bar{
+  background:rgba(238,244,248,.92);
+  backdrop-filter:blur(8px);
+  border-bottom-color:#c6d3df;
+}
+#kintone-unified-suite-v2 .kus-tab-bar .tab-group--primary{
+  background:#dbe7f0;
+  border:1px solid #c2d1de;
+}
+#kintone-unified-suite-v2 .kus-tab-bar .tab{
+  border-color:transparent;
+  background:transparent;
+  color:#31506a;
+}
+#kintone-unified-suite-v2 .kus-tab-bar .tab:hover{
+  background:#fff;
+  color:#14324a;
+}
+#kintone-unified-suite-v2 .kus-tab-bar .tab.active,
+#kintone-unified-suite-v2 .kus-tab-more__group .tab.active{
+  background:#12324b;
+  border-color:#12324b;
+  color:#fff;
+  box-shadow:0 3px 9px rgba(18,50,75,.18);
+}
+#kintone-unified-suite-v2 .kus-tab-more__summary{
+  background:#fff;
+  color:#24506f;
+  border-color:#c2d1de;
+}
+#kintone-unified-suite-v2 .kus-tab-more__body{
+  border-color:#c2d1de;
+  border-radius:8px;
+  box-shadow:0 18px 48px rgba(16,32,51,.22);
+}
+#kintone-unified-suite-v2.screen-feature.feat-data .kus-tab-more__group:not(:has([data-tab="apiTester"])){display:none}
+#kintone-unified-suite-v2.screen-feature.feat-data .kus-tab-more__group:has([data-tab="apiTester"]){
+  display:flex;
+}
+
+/* Connection panel */
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel{
+  border-color:#c6d3df;
+  background:linear-gradient(180deg,#ffffff,#f7fbff);
+}
+#kintone-unified-suite-v2 .connection-step-banner--step1{
+  background:#f3f8fc;
+  border-color:#d1dde8;
+}
+#kintone-unified-suite-v2 .connection-step-title{
+  color:#12324b;
+}
+#kintone-unified-suite-v2 .connection-step-indicator{
+  border-radius:999px;
+}
+#kintone-unified-suite-v2 .connection-grid input{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:13px;
+}
+#kintone-unified-suite-v2 .connection-preset-panel,
+#kintone-unified-suite-v2 .connection-app-search,
+#kintone-unified-suite-v2 .diff-fold--lookup{
+  background:#fbfdff;
+  border-color:#d6e0ea;
+}
+
+/* Field tab */
+#kintone-unified-suite-v2 [data-pane="field"] .subtabs{
+  background:#edf4fb;
+  border-color:#d1dde8;
+}
+#kintone-unified-suite-v2 [data-pane="field"] .subtab.active{
+  background:#5b3abf;
+  border-color:#5b3abf;
+}
+#kintone-unified-suite-v2 [data-pane="field"] #u_fieldJson{
+  border:1px solid #b7c6d6 !important;
+  background:#fbfdff;
+  box-shadow:inset 0 1px 2px rgba(16,32,51,.06);
+}
+#kintone-unified-suite-v2 .diff-fold--field-json .diff-fold-body::before{
+  content:"反映前に code 重複、計算式参照、Lookup 参照先、レイアウト未配置をチェックします。";
+  display:block;
+  margin:0 0 10px;
+  padding:8px 10px;
+  border:1px solid #d7ccff;
+  border-radius:7px;
+  background:#f7f4ff;
+  color:#4c2fa8;
+  font-size:12px;
+  line-height:1.55;
+}
+
+/* API tester */
+#kintone-unified-suite-v2 .diff-fold--api .diff-fold-body{
+  background:linear-gradient(180deg,#fff,#fbfdff);
+}
+#kintone-unified-suite-v2 .api-tester-layout{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 250px;
+  gap:12px;
+  align-items:start;
+}
+#kintone-unified-suite-v2 .api-tester-main{
+  min-width:0;
+}
+#kintone-unified-suite-v2 .api-tester-side{
+  border:1px solid #d6e0ea;
+  border-radius:8px;
+  background:#f8fbfd;
+  padding:10px;
+  position:sticky;
+  top:54px;
+}
+#kintone-unified-suite-v2 .api-tester-side-title{
+  font-size:11px;
+  font-weight:850;
+  color:#12324b;
+  margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .api-tester-history-list{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  max-height:270px;
+  overflow:auto;
+}
+#kintone-unified-suite-v2 #u_apiTesterPresetHint{
+  background:#f7fbff !important;
+  border-color:#bfd7ec !important;
+  color:#425466 !important;
+}
+#kintone-unified-suite-v2 #u_apiTesterBody{
+  min-height:150px !important;
+  line-height:1.55;
+}
+#kintone-unified-suite-v2 #u_apiTesterResult{
+  border-color:#d6e0ea;
+  background:#fbfdff;
+}
+
+/* ER/process/analyze visual consistency */
+#kintone-unified-suite-v2 [data-pane="er"] .result,
+#kintone-unified-suite-v2 [data-pane="processFlow"] .result,
+#kintone-unified-suite-v2 [data-pane="analyze"] .result{
+  border-color:#d6e0ea;
+  background:#fbfdff;
+}
+
+@media (max-width:900px){
+  #kintone-unified-suite-v2 .api-tester-layout{
+    grid-template-columns:1fr;
+  }
+  #kintone-unified-suite-v2 .api-tester-side{
+    position:static;
+  }
+}
+
+@media (max-width:640px){
+  #kintone-unified-suite-v2 .h{
+    flex-wrap:wrap;
+    align-items:center;
+    gap:8px;
+    padding:10px;
+  }
+  #kintone-unified-suite-v2 .h-brand{
+    order:1;
+  }
+  #kintone-unified-suite-v2 .suite-mark{
+    width:24px;
+    height:24px;
+    border-radius:7px;
+  }
+  #kintone-unified-suite-v2 .suite-mark::after{
+    inset:6px;
+    border-width:1px;
+  }
+  #kintone-unified-suite-v2 .h-title-launcher,
+  #kintone-unified-suite-v2 .h-title-feature{
+    order:2;
+    flex:1 1 calc(100% - 40px);
+    width:auto;
+    min-width:0;
+  }
+  #kintone-unified-suite-v2 .h .ht,
+  #kintone-unified-suite-v2 .ht{
+    font-size:13px;
+    line-height:1.25;
+    white-space:normal;
+    word-break:keep-all;
+  }
+  #kintone-unified-suite-v2 .h .hs,
+  #kintone-unified-suite-v2 .hs{
+    display:none;
+  }
+  #kintone-unified-suite-v2 .h-actions{
+    order:3;
+    width:100%;
+    display:flex;
+    gap:6px;
+    justify-content:flex-start;
+    overflow-x:auto;
+    padding-bottom:2px;
+  }
+  #kintone-unified-suite-v2 .h-actions .x,
+  #kintone-unified-suite-v2 .h-actions .x.size{
+    flex:0 0 auto;
+    padding:5px 9px;
+    font-size:11px;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-tab-nav{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    overflow:visible;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn{
+    min-width:0;
+    width:100%;
+    justify-content:center;
+  }
+}
+
+/* Preview reflection: keep the decision path visible and compact */
+#kintone-unified-suite-v2 .reflect-simple-shell{
+  gap:10px;
+  padding:2px 0 16px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px 16px;
+  padding:14px 16px;
+  border-radius:12px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__step{
+  margin-bottom:2px;
+  font-size:10px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__title{
+  margin-bottom:2px;
+  font-size:17px;
+  line-height:1.3;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__desc{
+  margin:0;
+  font-size:11px;
+  line-height:1.5;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__action{
+  justify-content:flex-end;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__action .btn{
+  min-height:34px;
+  padding:7px 14px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__progress{
+  grid-column:1 / -1;
+  margin-top:4px;
+}
+#kintone-unified-suite-v2 .reflect-status-grid{
+  grid-template-columns:1.1fr 1fr .9fr;
+  gap:8px;
+  padding:10px 12px;
+}
+#kintone-unified-suite-v2 .reflect-status-grid__label{
+  margin-bottom:4px;
+}
+#kintone-unified-suite-v2 .reflect-status-grid__safety{
+  gap:5px;
+}
+#kintone-unified-suite-v2 .reflect-status-grid__safety .chip{
+  min-height:28px;
+  padding:5px 10px;
+  font-size:11px;
+}
+#kintone-unified-suite-v2 .reflect-apply-checklist{
+  padding:8px 10px;
+  margin:0;
+}
+#kintone-unified-suite-v2 .reflect-apply-checklist__head{
+  margin-bottom:6px;
+}
+#kintone-unified-suite-v2 .reflect-apply-checklist__items{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  gap:6px;
+}
+#kintone-unified-suite-v2 .reflect-apply-check{
+  min-height:30px;
+  padding:5px 8px;
+  white-space:normal;
+}
+#kintone-unified-suite-v2 .reflect-route-grid{
+  padding:12px;
+}
+#kintone-unified-suite-v2 .reflect-route-grid__title{
+  margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .reflect-route-grid__cards{
+  gap:8px;
+}
+#kintone-unified-suite-v2 .reflect-route-card{
+  min-height:88px;
+  padding:10px 12px;
+}
+#kintone-unified-suite-v2 .reflect-route-card__no{
+  width:32px;
+  height:32px;
+  border-radius:8px;
+}
+#kintone-unified-suite-v2 .reflect-route-card__desc{
+  display:-webkit-box;
+  overflow:hidden;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+}
+#kintone-unified-suite-v2 .reflect-route-card__summary{
+  margin-top:4px;
+}
+#kintone-unified-suite-v2 .reflect-detail-review{
+  padding:12px;
+}
+#kintone-unified-suite-v2 .reflect-detail-review__head{
+  margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone{
+  position:sticky;
+  bottom:0;
+  z-index:8;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px 12px;
+  margin-top:0;
+  padding:10px 12px;
+  box-shadow:0 -10px 26px rgba(15,23,42,.12),0 4px 12px rgba(220,38,38,.08);
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__head{
+  margin:0;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__buttons{
+  justify-content:flex-end;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__buttons .btn{
+  min-height:34px;
+  padding:7px 14px;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__prod-note{
+  grid-column:1 / -1;
+  margin-top:0;
+  padding:5px 8px;
+}
+
+@media (max-width:860px){
+  #kintone-unified-suite-v2 .reflect-hero-card,
+  #kintone-unified-suite-v2 .reflect-status-grid,
+  #kintone-unified-suite-v2 .reflect-danger-zone{
+    grid-template-columns:1fr;
+  }
+  #kintone-unified-suite-v2 .reflect-hero-card__action,
+  #kintone-unified-suite-v2 .reflect-danger-zone__buttons{
+    justify-content:flex-start;
+  }
+  #kintone-unified-suite-v2 .reflect-detail-review__sub{
+    max-width:none;
+    text-align:left;
+  }
+}
+
+@media (max-width:520px){
+  #kintone-unified-suite-v2 .reflect-hero-card{
+    padding:12px;
+  }
+  #kintone-unified-suite-v2 .reflect-hero-card__action .btn,
+  #kintone-unified-suite-v2 .reflect-danger-zone__buttons .btn{
+    flex:1 1 140px;
+  }
+  #kintone-unified-suite-v2 .reflect-apply-checklist__items{
+    grid-template-columns:1fr;
+  }
+}
+
+/* ========================================================================
+   2026 mobile polish: keep header / search / tabs to one row each
+   These rules sit after the earlier @media (max-width:640px) and
+   @media (max-width:720px) blocks so they win the cascade for narrow
+   popout windows where the dialog already fills the viewport.
+   ======================================================================== */
+@media (max-width:640px){
+  /* h-actions: scroll horizontally instead of wrapping to multiple rows */
+  #kintone-unified-suite-v2 .h-actions{
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:thin;
+  }
+  #kintone-unified-suite-v2 .h-actions::-webkit-scrollbar{height:3px}
+  #kintone-unified-suite-v2 .h-actions::-webkit-scrollbar-thumb{background:rgba(255,255,255,.35);border-radius:2px}
+
+  /* Drop chrome that has no purpose when the dialog is already full-width */
+  #kintone-unified-suite-v2 .h-actions .x.size[data-act="dialogSizeWide"],
+  #kintone-unified-suite-v2 .h-actions .x.size[data-act="dialogSizeMax"],
+  #kintone-unified-suite-v2 .h-actions #u_headerCollapseBtn{
+    display:none !important;
+  }
+
+  /* Compact env badge so the action row doesn't spill out of view */
+  #kintone-unified-suite-v2 .h-actions .kus-env-badge{
+    padding:2px 7px;
+    font-size:10px;
+    margin-right:2px;
+    flex:0 0 auto;
+  }
+  #kintone-unified-suite-v2 .h-actions .kus-env-badge__dir{font-size:10px}
+  #kintone-unified-suite-v2 .h-actions .kus-env-badge__icon{width:14px;height:14px;font-size:10px}
+
+  /* Tab nav on mobile: hide the "一時" meta on the session tab — a label,
+     not a count, that wraps weirdly when the tab gets squashed. */
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn[data-group="history"] .launcher-tab-btn__meta{
+    display:none;
+  }
+}
+
+@media (max-width:720px){
+  /* Keep the launcher search input + クリア on the same row instead of stacking. */
+  #kintone-unified-suite-v2 .launcher-command-row{
+    flex-direction:row;
+    align-items:center;
+    flex-wrap:nowrap;
+  }
+  #kintone-unified-suite-v2 .launcher-search-input{
+    flex:1 1 auto;
+    min-width:0;
+  }
+  #kintone-unified-suite-v2 .launcher-clear-btn{
+    flex:0 0 auto;
+    padding:6px 10px;
+    font-size:12px;
+  }
 }

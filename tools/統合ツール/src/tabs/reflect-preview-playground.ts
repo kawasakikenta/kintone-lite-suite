@@ -1,6 +1,6 @@
 'use strict';
 
-import { deepClone, esc, downloadText } from '../utils.js';
+import { deepClone, esc, downloadText, deepEqual as deepEqualShared } from '../utils.js';
 import { state } from '../state.js';
 
 const SAMPLE_BEFORE = {
@@ -86,15 +86,8 @@ function formatUnitPosition(value) {
   return value;
 }
 
-function deepEqual(a, b) {
-  if (a === b) return true;
-  if (a == null || b == null) return a === b;
-  if (typeof a !== typeof b || typeof a !== 'object') return false;
-  const ka = Object.keys(a);
-  const kb = Object.keys(b);
-  if (ka.length !== kb.length) return false;
-  return ka.every((k) => deepEqual(a[k], b[k]));
-}
+// utils.ts の共有実装を使用（旧実装は配列を正しく扱えなかったため置き換え）
+const deepEqual = deepEqualShared;
 
 function formatValue(v) {
   if (v === undefined || v === null) return '—';

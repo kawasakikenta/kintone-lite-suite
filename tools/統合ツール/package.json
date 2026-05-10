@@ -7,7 +7,8 @@
     "watch": "node build.js --watch",
     "typecheck": "tsc --noEmit",
     "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
-    "check": "npm run typecheck && npm run typecheck:strict && npm run build",
+    "check:no-browser-storage": "node scripts/check-no-browser-storage.cjs",
+    "check": "npm run check:no-browser-storage && npm run typecheck && npm run typecheck:strict && npm run build",
     "test": "npm run check"
   },
   "devDependencies": {

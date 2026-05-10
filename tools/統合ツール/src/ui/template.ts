@@ -19,7 +19,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
     ? 'screen-launcher launcher-tabbed launcher-show-advanced suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions'
     : 'screen-launcher launcher-tabbed launcher-show-advanced tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions';
   const getRiskLabel = (riskLevel) => riskLevel === 'warning' ? '要注意' : '比較的安全';
-  const launcherFeatures = [...FEATURE_DEFS].sort((a, b) => {
+  const launcherFeatures = [...FEATURE_DEFS].filter((feature) => !feature.hidden).sort((a, b) => {
     const aOrder = Number.isFinite(a.usageOrder) ? a.usageOrder : 999;
     const bOrder = Number.isFinite(b.usageOrder) ? b.usageOrder : 999;
     if (aOrder !== bOrder) return aOrder - bOrder;
@@ -32,8 +32,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
   );
   const launcherGroupDefs = [
     { key: 'change', label: '変更・反映', desc: '差分確認からプレビュー反映まで' },
-    { key: 'vis', label: '可視化・出力', desc: '設計書、図、分析、設定保存' },
-    { key: 'data', label: 'データ・保守', desc: 'レコード操作とAPI調査' }
+    { key: 'vis', label: '可視化・分析', desc: 'ER図、プロセス図、影響分析' },
+    { key: 'data', label: 'API・検証', desc: 'API調査とレスポンス確認' }
   ];
   const launcherFeaturesByGroup: Record<string, any[]> = launcherGroupDefs.reduce((acc: Record<string, any[]>, group) => {
     acc[group.key] = launcherFeatures.filter((feature) => feature.group === group.key);
@@ -161,11 +161,11 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <button type="button" class="connection-toggle-btn" data-act="toggleConnectionPanel" id="u_connectionToggleBtn" aria-expanded="true" aria-controls="u_connectionStep1Body" title="接続設定の表示/非表示を切り替え">設定を折りたたむ</button>
               </div>
               <div class="connection-step1-body" id="u_connectionStep1Body">
-              <p class="connection-section-lead" id="u_connectionLead">動作対象のアプリIDを <strong>比較元</strong> に入力します。<br>差分比較・プレビュー反映を使う場合のみ <strong>比較先</strong> も入力してください（ER図／設計書／レコード管理／設定一括取得 などは比較元だけでOK）。</p>
+              <p class="connection-section-lead" id="u_connectionLead">動作対象のアプリIDを <strong>比較元</strong> に入力します。<br>プレビュー反映を使う場合のみ <strong>比較先</strong> も入力してください（ER図／プロセス図／分析は比較元だけでOK）。</p>
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
               <div class="conn-source">
-                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span> <span class="conn-label-hint" title="このツール全体の動作対象アプリ。1アプリだけ操作する機能（ER図 / 設計書 / レコード管理 など）もここに入力します。">動作対象</span></label>
+                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span> <span class="conn-label-hint" title="このツール全体の動作対象アプリ。1アプリだけ操作する機能（ER図 / プロセス図 / 分析など）もここに入力します。">動作対象</span></label>
                 <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-source">
@@ -196,7 +196,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <div class="connection-preset-head">
                 <div>
                   <div class="connection-preset-title" id="conn-preset-heading">接続プリセット</div>
-                  <div class="connection-preset-desc">よく使う比較元・比較先・ゲスト設定を保存して、次回すぐ呼び出せます。</div>
+                  <div class="connection-preset-desc">よく使う比較元・比較先・ゲスト設定を、このセッション内だけで呼び出せます。</div>
                 </div>
                 <div class="connection-preset-count" id="u_connectionPresetSummary">保存なし</div>
               </div>
@@ -225,7 +225,6 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                     <option value="source">比較元に設定</option>
                     <option value="target">比較先に設定</option>
                     <option value="diffMulti">複数比較先へ追加</option>
-                    <option value="settingsExport">設定一括取得へ追加</option>
                   </select>
                   <button type="button" class="btn sub" data-act="connectionSearchApps">検索</button>
                 </div>
@@ -286,7 +285,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffCsv" title="差分結果を Excel 用 CSV (UTF-8 BOM) で保存">📊 差分 CSV</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
-                      <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙・ロゴ付き PDF（設計書ペインの設定を使用）">📕 差分 PDF（表紙付き）</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙付きPDFとして印刷ダイアログを開きます">📕 差分 PDF（表紙付き）</button>
                       <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
                       <button type="button" class="btn sub" data-act="kusExportPlanMd" title="現在の反映プランを Markdown で保存（PR 添付向け）">📝 反映プラン MD 保存</button>
                       <button type="button" class="btn sub" data-act="kusExportPlanMermaid" title="反映プランを Mermaid フロー図として保存">📊 反映プラン Mermaid</button>
@@ -557,8 +556,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 </button>
               `).join('')}
               <button type="button" class="chip launcher-tab-btn" data-act="setLauncherGroup" data-group="history" role="tab" aria-selected="false" aria-pressed="false" aria-controls="u_launcherPanel_history" tabindex="-1">
-                <span class="launcher-tab-btn__label">履歴・復元</span>
-                <span class="launcher-tab-btn__meta">作業</span>
+                <span class="launcher-tab-btn__label">セッション</span>
+                <span class="launcher-tab-btn__meta">一時</span>
               </button>
             </div>
 
@@ -568,7 +567,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   type="search"
                   id="u_launcherSearch"
                   class="launcher-search-input"
-                  placeholder="🔍 機能を検索  (例: 差分 / レコード / 設計書)"
+                  placeholder="機能を検索 (例: 反映 / フィールド / 分析)"
                   autocomplete="off"
                   aria-label="機能検索">
                 <button type="button" class="btn sub launcher-clear-btn" data-act="clearLauncherFilter">クリア</button>
@@ -589,12 +588,12 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <div class="change-wizard-head">
                     <div>
                       <p class="change-wizard-title">変更作業ウィザード</p>
-                      <p class="change-wizard-desc">接続確認から記録出力まで順番に進めます。</p>
+                      <p class="change-wizard-desc">接続確認から影響確認まで順番に進めます。</p>
                     </div>
                     <button type="button" class="btn change-wizard-start" data-act="startChangeWizard">開始</button>
                   </div>
-                  <div class="launcher-flow" aria-label="基本フロー">
-                    <button type="button" class="launcher-flow-step is-primary" data-act="openWizardStep" data-wizard-step="connection">
+                  <div class="launcher-flow" aria-label="基本フロー" id="u_launcherFlow">
+                    <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="connection">
                       <span class="launcher-flow-no">01</span>
                       <span class="launcher-flow-copy">
                         <span class="launcher-flow-main">接続確認</span>
@@ -622,11 +621,11 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                         <span class="launcher-flow-sub">比較先へ書き込み</span>
                       </span>
                     </button>
-                    <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="design">
+                    <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="analyze">
                       <span class="launcher-flow-no">05</span>
                       <span class="launcher-flow-copy">
-                        <span class="launcher-flow-main">記録出力</span>
-                        <span class="launcher-flow-sub">設計書・差分資料</span>
+                        <span class="launcher-flow-main">影響確認</span>
+                        <span class="launcher-flow-sub">分析・依存関係</span>
                       </span>
                     </button>
                   </div>
@@ -639,8 +638,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <section class="launcher-panel" data-launcher-panel="vis" id="u_launcherPanel_vis" role="tabpanel" aria-label="可視化・出力">
                 <div class="launcher-panel-head">
                   <div>
-                    <p class="launcher-section-title">可視化・出力</p>
-                    <p class="launcher-section-desc">設計書、ER図、プロセス図、影響分析、設定バックアップをまとめています。</p>
+                    <p class="launcher-section-title">可視化・分析</p>
+                    <p class="launcher-section-desc">ER図、プロセス図、影響分析をまとめています。</p>
                   </div>
                 </div>
                 <div class="feature-grid feature-grid--launcher">
@@ -651,8 +650,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <section class="launcher-panel" data-launcher-panel="data" id="u_launcherPanel_data" role="tabpanel" aria-label="データ・保守">
                 <div class="launcher-panel-head">
                   <div>
-                    <p class="launcher-section-title">データ・保守</p>
-                    <p class="launcher-section-desc">レコード操作やAPI調査など、保守寄りの機能を分けて配置します。</p>
+                    <p class="launcher-section-title">API・検証</p>
+                    <p class="launcher-section-desc">API調査とレスポンス確認だけを配置します。</p>
                   </div>
                 </div>
                 <div class="feature-grid feature-grid--launcher">
@@ -670,15 +669,15 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   </div>
                   <div id="u_sessionSummary" class="kus-session-summary" aria-live="polite"></div>
                 </section>
-                <section class="work-history-panel" id="u_workHistoryPanel" aria-label="作業履歴・復元">
+                <section class="work-history-panel" id="u_workHistoryPanel" aria-label="一時作業メモ">
                   <div class="work-history-head">
                     <div>
-                      <p class="work-history-title">作業履歴・復元</p>
-                      <p class="work-history-desc">接続先、スコープ、フィルタ、レビュー状態を保存して、あとから同じ条件へ戻します。</p>
+                      <p class="work-history-title">一時作業メモ</p>
+                      <p class="work-history-desc">保存はブラウザストレージではなく、この画面を開いている間のメモリだけです。</p>
                     </div>
                     <div class="work-history-actions">
                       <span class="work-history-summary" id="u_workHistorySummary">履歴なし</span>
-                      <button type="button" class="btn sub" data-act="saveWorkHistory">現在の作業を保存</button>
+                      <button type="button" class="btn sub" data-act="saveWorkHistory">現在の作業を一時メモ</button>
                       <button type="button" class="btn sub" data-act="clearWorkHistory">クリア</button>
                     </div>
                   </div>
@@ -694,30 +693,26 @@ export function buildRoot(targetDocument = document, options: any = {}) {
             </div>
           </div>
 
-          <!-- タブナビゲーション（ヘッダー直下に sticky 配置・主要4タブのみ常時表示） -->
+          <!-- タブナビゲーション（ヘッダー直下に sticky 配置） -->
           <div class="kus-tab-bar" id="u_kusTabBar">
             <div class="tabs">
               <div class="tab-group tab-group--primary" data-group="change">
                 <button class="tab" data-tab="diff" data-state="idle">差分比較</button>
                 <button class="tab active" data-tab="reflect" data-state="selected">プレビュー反映</button>
                 <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
-                <button class="tab" data-tab="jsconfig" data-state="idle">JS/CSS設定</button>
               </div>
 
               <details class="kus-tab-more" id="u_kusTabMore">
                 <summary class="kus-tab-more__summary" title="可視化・出力 / データ・保守 系の補助機能">⋯ その他</summary>
                 <div class="kus-tab-more__body">
                   <div class="kus-tab-more__group">
-                    <div class="kus-tab-more__group-lbl">可視化・出力</div>
+                    <div class="kus-tab-more__group-lbl">可視化・分析</div>
                     <button class="tab" data-tab="er" data-state="idle">ER図</button>
                     <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
-                    <button class="tab" data-tab="design" data-state="idle">設計書</button>
-                    <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
                     <button class="tab" data-tab="analyze" data-state="idle">分析</button>
                   </div>
                   <div class="kus-tab-more__group">
-                    <div class="kus-tab-more__group-lbl">データ・保守</div>
-                    <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
+                    <div class="kus-tab-more__group-lbl">API・検証</div>
                     <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
                   </div>
                 </div>
@@ -770,11 +765,12 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <div class="reflect-apply-checklist" id="u_reflectApplyChecklist" aria-label="反映前チェックリスト">
                     <div class="reflect-apply-checklist__head">
                       <span>反映前チェック</span>
-                      <span id="u_reflectChecklistStatus">0 / 3</span>
+                      <span id="u_reflectChecklistStatus">0 / 4</span>
                     </div>
                     <div class="reflect-apply-checklist__items">
                       <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="diff"> 差分比較済み</label>
                       <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="plan"> 実行前プラン確認済み</label>
+                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="preview"> プレビュー画面確認済み</label>
                       <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="target"> 反映先は比較先プレビュー</label>
                     </div>
                   </div>
@@ -1057,7 +1053,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                     <div>
                       <div class="reflect-modal-kicker">🕘 履歴</div>
                       <h3 class="reflect-modal-title" id="u_reflectHistoryModalTitle">反映履歴</h3>
-                      <p class="reflect-modal-sub">この端末（localStorage）に保存された反映ログを確認できます。</p>
+                      <p class="reflect-modal-sub">このセッション内だけの反映ログを確認できます。</p>
                     </div>
                     <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="history" aria-label="閉じる">×</button>
                   </header>
@@ -1707,6 +1703,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   </div>
                   <div class="btns" style="margin-top:10px;display:flex;">
                     <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ">APIを実行</button>
+                    <button type="button" class="btn sub" data-act="copyApiTesterCurl" title="現在の入力からcurl例をコピー">curlコピー</button>
                     <button type="button" class="btn sub" data-act="clearApiTesterHistory" style="margin-left:auto;">履歴クリア</button>
                   </div>
                   <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>
@@ -1852,7 +1849,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <div>
                   <label>保存済みデータ一覧</label>
                   <div style="display:flex;gap:4px">
-                    <select id="u_templateSelect" style="flex:1" title="localStorage に保存したテンプレート"><option value="">-- 保存済なし --</option></select>
+                    <select id="u_templateSelect" style="flex:1" title="このセッション内のテンプレート"><option value="">-- 保存済なし --</option></select>
                     <button type="button" class="btn ok" data-act="loadTemplate" title="比較元バンドルとして読み込み">設定復元</button>
                     <button type="button" class="btn sub" data-act="deleteTemplate">削除</button>
                   </div>

@@ -97,6 +97,7 @@
         },
         {
           key: "jsconfig",
+          hidden: true,
           group: "change",
           groupLabel: "変更・反映",
           icon: ICONS.jsconfig,
@@ -115,6 +116,7 @@
         },
         {
           key: "design",
+          hidden: true,
           group: "vis",
           groupLabel: "可視化・出力",
           icon: ICONS.design,
@@ -132,6 +134,7 @@
         },
         {
           key: "settingsExport",
+          hidden: true,
           group: "vis",
           groupLabel: "可視化・出力",
           icon: ICONS.settingsExport,
@@ -151,7 +154,7 @@
         {
           key: "er",
           group: "vis",
-          groupLabel: "可視化・出力",
+          groupLabel: "可視化・分析",
           icon: ICONS.er,
           label: "ER図",
           desc: "関連アプリの構造を ER 図で確認します。",
@@ -169,7 +172,7 @@
         {
           key: "processFlow",
           group: "vis",
-          groupLabel: "可視化・出力",
+          groupLabel: "可視化・分析",
           icon: ICONS.processFlow,
           label: "プロセス図",
           desc: "プロセス管理をフロー図で確認します。",
@@ -185,6 +188,7 @@
         },
         {
           key: "recordMgr",
+          hidden: true,
           group: "data",
           groupLabel: "データ・保守",
           icon: ICONS.recordMgr,
@@ -204,7 +208,7 @@
         {
           key: "apiTester",
           group: "data",
-          groupLabel: "データ・保守",
+          groupLabel: "API・検証",
           icon: ICONS.apiTester,
           label: "APIテスター",
           desc: "REST APIを直接試します。",
@@ -221,7 +225,7 @@
         {
           key: "analyze",
           group: "vis",
-          groupLabel: "可視化・出力",
+          groupLabel: "可視化・分析",
           icon: ICONS.analyze,
           label: "分析",
           desc: "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。",
@@ -254,7 +258,7 @@
     }
     return "";
   }
-  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_DEFAULT_COURSE, GUIDED_TOUR_STEPS, HIGH_IMPACT_SECTIONS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, SECTION_APPLY_HINTS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_DEFAULT_COURSE, GUIDED_TOUR_STEPS, HIGH_IMPACT_SECTIONS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -341,6 +345,23 @@
         { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
       ];
       SETTINGS_EXPORT_SCOPE_DEFS = SECTION_DEFS;
+      SECTION_APPLY_HINTS = {
+        fieldSettings: "比較元のフィールド定義を追加・更新します（比較先のみに存在するフィールドはノードモード以外では削除されません）。",
+        layoutSettings: "フォームのレイアウトを比較元の配置で全置換します。フィールド反映後に実行する必要があります。",
+        viewSettings: "比較元のビューを追加・更新します（互換モードでは削除しません）。",
+        reportSettings: "比較元のグラフを追加・更新します。比較先のみに存在するグラフは削除されます。",
+        processSettings: "プロセス管理（状態・アクション）を比較元の内容で全置換します。実行中の運用に影響するため要注意。",
+        pluginSettings: "プラグインの「有効化」のみ同期します。各プラグインの設定 (plugin/config) は別途反映が必要です。",
+        customizeSettings: "JS/CSSのファイル一覧（desktop / mobile）を比較元の内容で全置換します。比較先のみに存在するファイルは外れます。",
+        actionSettings: "比較元のアクション設定を追加・更新します（互換モードでは削除しません）。",
+        appAcl: "アプリ権限を比較元の rights で全置換します。比較先のみに存在する権限エントリは消えるため注意。",
+        fieldAcl: "フィールド権限を比較元の rights で全置換します。比較先のみに存在するフィールド権限は消えます。",
+        recordPermissions: "レコード権限（条件＋エンティティ）を比較元で全置換します。比較先で追加した行は消えます。",
+        notifications: "通知（一般）の rules を比較元で全置換します。比較先のみに存在する通知は消えます。",
+        perRecordNotifications: "レコード条件通知を比較元で全置換します。比較先のみに存在するルールは消えます。",
+        reminderNotifications: "リマインダー通知を比較元で全置換します。timezone も比較元の値で上書きされます。",
+        categories: "カテゴリ定義を比較元で全置換します。比較先のみに存在するカテゴリは消えます。"
+      };
       TAB_CONNECTION_NEEDS = {
         diff: { appInputs: true, target: true, connectionActions: true },
         reflect: { appInputs: true, target: true, connectionActions: true },
@@ -584,6 +605,7 @@
     classifyStage: () => classifyStage,
     compactForLog: () => compactForLog,
     deepClone: () => deepClone,
+    deepEqual: () => deepEqual,
     downloadBlob: () => downloadBlob,
     downloadText: () => downloadText,
     esc: () => esc,
@@ -615,6 +637,7 @@
     severityToneOf: () => severityToneOf,
     showToast: () => showToast,
     stableStringify: () => stableStringify,
+    stableStringifyMemo: () => stableStringifyMemo,
     stageIconChar: () => stageIconChar,
     tokenizePath: () => tokenizePath
   });
@@ -685,6 +708,20 @@
   }
   function stableStringify(v) {
     return JSON.stringify(normalize(v));
+  }
+  function deepEqual(a, b) {
+    if (a === b) return true;
+    if (a == null || b == null) return a === b;
+    if (typeof a !== "object" || typeof b !== "object") return false;
+    return stableStringify(a) === stableStringify(b);
+  }
+  function stableStringifyMemo(v) {
+    if (v === null || typeof v !== "object") return stableStringify(v);
+    const cached = _stableStringifyCache.get(v);
+    if (cached !== void 0) return cached;
+    const out = stableStringify(v);
+    _stableStringifyCache.set(v, out);
+    return out;
   }
   function relativePathFromRow(path, secKey) {
     if (!path) return "";
@@ -1107,11 +1144,12 @@ ${contextLine}`);
       console.log(`[Toast ${type}] ${message}`);
     }
   }
-  var SECTION_ICONS, loadedScripts, loadedStyles, loadingScripts, loadingStyles;
+  var _stableStringifyCache, SECTION_ICONS, loadedScripts, loadedStyles, loadingScripts, loadingStyles;
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
       init_constants();
+      _stableStringifyCache = /* @__PURE__ */ new WeakMap();
       SECTION_ICONS = {
         fieldSettings: "▦",
         layoutSettings: "☰",
@@ -1141,62 +1179,16 @@ ${contextLine}`);
 
   // src/state.ts
   function loadDialogState() {
-    try {
-      return JSON.parse(localStorage.getItem(DIALOG_STATE_KEY) || "{}");
-    } catch (error) {
-      reportStorageFailure("load", DIALOG_STATE_KEY, error);
-      return {};
-    }
+    return {};
   }
   function saveDialogState(dialogState) {
-    try {
-      localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(dialogState || {}));
-    } catch (error) {
-      reportStorageFailure("save", DIALOG_STATE_KEY, error);
-    }
-  }
-  function reportStorageFailure(operation, key, error) {
-    try {
-      console.warn(`[${TOOL_ID}] storage ${operation} failed: ${key}`, error);
-    } catch {
-    }
-    try {
-      const detail = {
-        operation,
-        key,
-        message: error?.message || String(error)
-      };
-      window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-      document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
-      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-    } catch {
-    }
+    void dialogState;
   }
   function loadReflectApplyHistory() {
-    try {
-      const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY) ?? sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      reportStorageFailure("load", REFLECT_APPLY_HISTORY_KEY, error);
-      return [];
-    }
+    return [];
   }
   function persistReflectApplyHistory(entries) {
-    try {
-      const list = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
-      const text = JSON.stringify(list);
-      localStorage.setItem(REFLECT_APPLY_HISTORY_KEY, text);
-    } catch (error) {
-      reportStorageFailure("save", REFLECT_APPLY_HISTORY_KEY, error);
-    }
-    try {
-      sessionStorage.removeItem(REFLECT_APPLY_HISTORY_KEY);
-    } catch (error) {
-      reportStorageFailure("remove", REFLECT_APPLY_HISTORY_KEY, error);
-    }
+    state.reflectApplyHistory = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
   }
   function pushReflectApplyHistoryEntry(entry) {
     if (!entry || typeof entry !== "object") return;
@@ -1219,23 +1211,10 @@ ${contextLine}`);
     };
   }
   function loadWorkHistory() {
-    try {
-      const raw = localStorage.getItem(WORK_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      reportStorageFailure("load", WORK_HISTORY_KEY, error);
-      return [];
-    }
+    return [];
   }
   function persistWorkHistory(entries) {
-    try {
-      const list = Array.isArray(entries) ? entries.slice(0, WORK_HISTORY_LIMIT) : [];
-      localStorage.setItem(WORK_HISTORY_KEY, JSON.stringify(list));
-    } catch (error) {
-      reportStorageFailure("save", WORK_HISTORY_KEY, error);
-    }
+    state.workHistory = Array.isArray(entries) ? entries.slice(0, WORK_HISTORY_LIMIT) : [];
   }
   function pushWorkHistoryEntry(entry) {
     if (!entry || typeof entry !== "object") return;
@@ -1274,24 +1253,10 @@ ${contextLine}`);
     };
   }
   function loadConnectionPresets() {
-    try {
-      const raw = localStorage.getItem(CONNECTION_PRESETS_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
-    } catch (error) {
-      reportStorageFailure("load", CONNECTION_PRESETS_KEY, error);
-      return [];
-    }
+    return [];
   }
   function persistConnectionPresets(entries) {
-    try {
-      const list = Array.isArray(entries) ? entries.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT) : [];
-      localStorage.setItem(CONNECTION_PRESETS_KEY, JSON.stringify(list));
-    } catch (error) {
-      reportStorageFailure("save", CONNECTION_PRESETS_KEY, error);
-    }
+    state.connectionPresets = Array.isArray(entries) ? entries.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT) : [];
   }
   function upsertConnectionPreset(entry) {
     const normalized = normalizeConnectionPreset({ ...entry, savedAt: Date.now() });
@@ -1344,7 +1309,9 @@ ${contextLine}`);
         connectionPresets: [],
         reflectPlanPreviewKeyword: "",
         reflectPlanPreviewChangedOnly: false,
-        reflectApplyChecklist: { diff: false, plan: false, target: false },
+        reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
+        reflectPreviewOpened: false,
+        reflectPreviewOpenedFor: "",
         lastPreviewBackupPayload: null,
         lastPreviewBackupFilename: "",
         diffViewTheme: "light",
@@ -1386,6 +1353,7 @@ ${contextLine}`);
         lastSettingsExportBundles: [],
         patchJsonPanelOpen: false,
         importedPatchPayload: null,
+        reflectPreviewProdDiff: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
         running: false,
@@ -1482,6 +1450,17 @@ ${contextLine}`);
     const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
     const jitter = Math.random() * Math.min(200, baseDelayMs);
     return Math.round(expDelay + jitter);
+  }
+  function isRetriableMutation(method, error) {
+    if (!error) return false;
+    const m = String(method || "").toUpperCase();
+    const status = resolveHttpStatus(error);
+    if (status >= 400 && status < 500) {
+      if (m === "PUT" && (status === 408 || status === 429)) return true;
+      return false;
+    }
+    if (status >= 500 && status < 600) return true;
+    return isRetriableApiError(error);
   }
   function touchApiPathMetric(path, field) {
     const key = String(path || "");
@@ -5853,19 +5832,14 @@ ${body}`;
   const FLAT_FIELD_PROPS_TGT = collectFlatFieldMap(FIELD_PROPS_TGT);
   let activeFieldCode = '';
   let detailModalOpen = false;
+  const reportMemory = new Map();
 
   function safeStorageGet(key) {
-    try {
-      return window.localStorage ? localStorage.getItem(key) : null;
-    } catch (e) {
-      return null;
-    }
+    return reportMemory.has(key) ? reportMemory.get(key) : null;
   }
 
   function safeStorageSet(key, value) {
-    try {
-      if (window.localStorage) localStorage.setItem(key, value);
-    } catch (e) {}
+    reportMemory.set(key, String(value));
   }
 
   function escHtml(v) {
@@ -9222,33 +9196,14 @@ ${body}`;
 
   // src/diff/ignore-presets.ts
   function loadRaw() {
-    try {
-      const raw = JSON.parse(localStorage.getItem(DIFF_IGNORE_PRESETS_KEY) || "[]");
-      if (!Array.isArray(raw)) return [];
-      return raw.map((entry) => ({
-        name: String(entry?.name || "").trim(),
-        keys: Array.isArray(entry?.keys) ? entry.keys.map((k) => String(k || "").trim()).filter(Boolean) : [],
-        savedAt: Number(entry?.savedAt) || 0
-      })).filter((entry) => entry.name.length > 0).slice(0, MAX_PRESETS);
-    } catch (error) {
-      console.warn("差分無視プリセットの読み込みに失敗しました", error);
-      return [];
-    }
+    return ignorePresetsMemory.slice(0, MAX_PRESETS);
   }
   function saveRaw(list) {
-    try {
-      localStorage.setItem(DIFF_IGNORE_PRESETS_KEY, JSON.stringify(list.slice(0, MAX_PRESETS)));
-    } catch (error) {
-      console.warn("差分無視プリセットの保存に失敗しました", error);
-      try {
-        const detail = { operation: "save", key: DIFF_IGNORE_PRESETS_KEY, message: error?.message || String(error) };
-        window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-        document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-        const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
-        if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-      } catch {
-      }
-    }
+    ignorePresetsMemory = list.map((entry) => ({
+      name: String(entry?.name || "").trim(),
+      keys: Array.isArray(entry?.keys) ? entry.keys.map((k) => String(k || "").trim()).filter(Boolean) : [],
+      savedAt: Number(entry?.savedAt) || 0
+    })).filter((entry) => entry.name.length > 0).slice(0, MAX_PRESETS);
   }
   function escapeAttr(s) {
     return String(s || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -9305,13 +9260,13 @@ ${body}`;
     refreshIgnorePresetDropdown();
     return true;
   }
-  var MAX_PRESETS;
+  var MAX_PRESETS, ignorePresetsMemory;
   var init_ignore_presets = __esm({
     "src/diff/ignore-presets.ts"() {
       "use strict";
-      init_constants();
       init_state();
       MAX_PRESETS = 24;
+      ignorePresetsMemory = [];
     }
   });
 
@@ -9735,6 +9690,7 @@ ${body}`;
     syncApplyScopesFromSidebar: () => syncApplyScopesFromSidebar,
     syncLookupMapFromRows: () => syncLookupMapFromRows,
     syncReflectSimpleLayout: () => syncReflectSimpleLayout,
+    updateChangeWizardCurrentStep: () => updateChangeWizardCurrentStep,
     updateConnectionStepIndicators: () => updateConnectionStepIndicators
   });
   function setComponentUi(uiRefs) {
@@ -10020,6 +9976,32 @@ ${body}`;
         summaryInline.innerHTML = `<span class="cs-label">対象</span> ${fmt(sourceApp, sourceGuest)}`;
       }
     }
+    updateChangeWizardCurrentStep();
+  }
+  function updateChangeWizardCurrentStep() {
+    const flow = getToolDocument().getElementById("u_launcherFlow");
+    if (!flow) return;
+    const sourceApp = (ui3.sourceApp?.value || "").trim();
+    const targetApp = (ui3.targetApp?.value || "").trim();
+    const connDone = !!sourceApp && !!targetApp;
+    const diffDone = Array.isArray(state.lastDiffRows) && state.lastDiffRows.length > 0;
+    const planDone = !!state.lastApplyPlan;
+    const applyDone = !!state.lastApplyCompletedAt;
+    const doneByStep = {
+      connection: connDone,
+      diff: diffDone,
+      plan: planDone,
+      apply: applyDone,
+      analyze: false
+    };
+    const order = ["connection", "diff", "plan", "apply", "analyze"];
+    let current = order.find((key) => !doneByStep[key]) || "analyze";
+    flow.querySelectorAll(".launcher-flow-step").forEach((step) => {
+      const key = step.dataset.wizardStep || "";
+      step.classList.toggle("is-primary", key === current);
+      step.classList.toggle("is-done", !!doneByStep[key]);
+      step.setAttribute("aria-current", key === current ? "step" : "false");
+    });
   }
   function setConnectionPanelCollapsed(collapsed) {
     const panel = ui3.connectionPanel;
@@ -10435,18 +10417,21 @@ ${tgt.full}`);
     const stopOnError = !!ui3.stopOnError?.checked;
     const backupState = ui3.backupStatus && ui3.backupStatus.style.display !== "none" ? String(ui3.backupStatus.textContent || "").trim() : "";
     const checklist = state.reflectApplyChecklist && typeof state.reflectApplyChecklist === "object" ? state.reflectApplyChecklist : {};
-    const checklistDone = ["diff", "plan", "target"].filter((key) => !!checklist[key]).length;
+    const checklistKeys = ["diff", "plan", "preview", "target"];
+    const checklistTotal = checklistKeys.length;
+    const checklistDone = checklistKeys.filter((key) => !!checklist[key]).length;
     const targetCountLabel = isNode ? "選んだ差分" : "選んだセクション";
     const targetCountValue = isNode ? selectedNodeRows.length : scopeInfo.effectiveScopes.length;
     const nonFieldScopes = scopeInfo.effectiveScopes.filter((key) => key && key !== "fieldSettings");
     const firstNonFieldScope = nonFieldScopes[0] || "";
-    const safetyLabel = checklistDone === 3 && backupReady && stopOnError ? "準備OK" : "要見直し";
+    const checklistComplete = checklistDone === checklistTotal;
+    const safetyLabel = checklistComplete && backupReady && stopOnError ? "準備OK" : "要見直し";
     const warnings = [];
     if (!diffReady) warnings.push("差分比較がまだ最新ではありません。「差分比較」または「差分比較して候補作成」から最新化してください。");
     if (!scopeInfo.baseScopes.length && !isNode) warnings.push("「反映セクションを選ぶ」から、今回まとめて反映するセクションを選んでください。");
     if (scopeInfo.warning) warnings.push(scopeInfo.warning);
     if (isNode && !state.reflectRows.length) warnings.push("差分を選んで反映モードです。まず「差分比較して候補作成」で候補を出してください。");
-    if (checklistDone < 3) warnings.push("画面下の反映前チェックを完了してください。");
+    if (!checklistComplete) warnings.push("画面下の反映前チェックを完了してください。");
     if (!backupReady) warnings.push("バックアップ自動保存がOFFです。反映前に「今の比較先を保存」をおすすめします。");
     const nodeLoadAction = isNode && !state.reflectRows.length ? `<button class="btn sub" data-act="${diffReady ? "loadReflectNodes" : "runDiffLoadReflectNodes"}">${diffReady ? "差分候補を読込" : "差分比較して候補作成"}</button>` : "";
     const scopeDiffAction = !isNode && actualDiffRows.length ? '<button class="btn sub" data-act="applyScopeDiffOnly">差分があるセクションだけ選ぶ</button>' : "";
@@ -10464,7 +10449,7 @@ ${tgt.full}`);
       { no: 1, title: "差分を作る", meta: diffReady ? `最新差分 ${actualDiffRows.length}件` : "未実行または条件変更あり", done: diffReady },
       { no: 2, title: "対象を選ぶ", meta: targetCountValue ? `${targetCountLabel} ${targetCountValue}件` : "反映対象が未選択", done: targetCountValue > 0 },
       { no: 3, title: "プラン確認", meta: planReady ? `確認済み ${state.lastApplyPlan?.totalReq || 0}req` : "未確認", done: planReady },
-      { no: 4, title: "プレビュー反映", meta: checklistDone === 3 ? "チェック完了" : `チェック ${checklistDone}/3`, done: checklistDone === 3 && planReady }
+      { no: 4, title: "プレビュー反映", meta: checklistComplete ? "チェック完了" : `チェック ${checklistDone}/${checklistTotal}`, done: checklistComplete && planReady }
     ].map((step) => `<div class="reflect-flow-step${step.done ? " is-done" : ""}${currentStep === step.no ? " is-current" : ""}">
       <div class="reflect-flow-step__no">${String(step.no).padStart(2, "0")}</div>
       <div class="reflect-flow-step__body">
@@ -10531,8 +10516,8 @@ ${tgt.full}`);
       <div class="stat-chip__num">${sev.low}</div>
       <div class="stat-chip__label">低</div>
     </div>
-    <div class="stat-chip ${checklistDone === 3 ? "stat-chip--ok" : "stat-chip--warn"}" title="反映前チェックリスト">
-      <div class="stat-chip__num">${checklistDone}<span style="font-size:11px;color:var(--txt-3)">/3</span></div>
+    <div class="stat-chip ${checklistComplete ? "stat-chip--ok" : "stat-chip--warn"}" title="反映前チェックリスト">
+      <div class="stat-chip__num">${checklistDone}<span style="font-size:11px;color:var(--txt-3)">/${checklistTotal}</span></div>
       <div class="stat-chip__label">安全</div>
     </div>
     <div class="stat-chip ${planReady ? "stat-chip--ok" : ""}" title="${planReady ? "最新条件と一致" : "まだ未確認"}">
@@ -10630,7 +10615,7 @@ ${tgt.full}`);
         ${warnings.length > 1 ? `<ul class="reflect-detail-fold__warns">${warnings.slice(1).map((msg) => `<li>${esc(msg)}</li>`).join("")}</ul>` : ""}
         ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? " / 必要なら「直前保存を戻す」で元に戻せます。" : ""}</div>` : ""}
         <div class="reflect-detail-fold__small">
-          反映前チェック ${checklistDone}/3 ／ バックアップ ${backupReady ? "ON" : "OFF"} ／ エラー時 ${stopOnError ? "中断" : "継続"}
+          反映前チェック ${checklistDone}/${checklistTotal} ／ バックアップ ${backupReady ? "ON" : "OFF"} ／ エラー時 ${stopOnError ? "中断" : "継続"}
           ${planReady ? `／ プラン: ${esc(planTime)}` : ""}
         </div>
       </div>
@@ -10800,6 +10785,35 @@ ${tgt.full}`);
       </div>
     </details>`;
     }
+    if (shape === "items" && info.itemized) {
+      const it = info.itemized;
+      const counter = `<span class="reflect-preview-counter reflect-preview-counter--add">追加 ${it.addedCount}</span><span class="reflect-preview-counter reflect-preview-counter--upd">更新 ${it.updatedCount}</span><span class="reflect-preview-counter reflect-preview-counter--rm">削除 ${it.removedCount}</span>`;
+      if (!it.totalCount && !(it.notes && it.notes.length)) {
+        return `<details class="reflect-preview-card"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span>${counter}<span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
+      }
+      const STATUS_CLASS = { added: "add", updated: "upd", removed: "rm" };
+      const STATUS_LABEL = { added: "追加", updated: "更新", removed: "削除" };
+      const itemRows = (it.items || []).map((item) => {
+        const cls = STATUS_CLASS[item.status] || "upd";
+        const lab = STATUS_LABEL[item.status] || item.status;
+        const beforeAfter = item.status === "updated" ? `<div class="reflect-preview-row__grid">
+            <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更前</div><pre class="reflect-preview-col__pre">${esc(item.beforeText ?? "(なし)")}</pre></div>
+            <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更後</div><pre class="reflect-preview-col__pre">${esc(item.afterText ?? "(なし)")}</pre></div>
+          </div>` : `<pre class="reflect-preview-row__pre">${esc(item.afterText ?? item.beforeText ?? "")}</pre>`;
+        return `<div class="reflect-preview-row reflect-preview-row--${cls}">
+        <div class="reflect-preview-row__key"><span class="reflect-preview-row__badge reflect-preview-row__badge--${cls}">${lab}</span> ${esc(item.label || item.key)}</div>
+        ${beforeAfter}
+      </div>`;
+      }).join("");
+      const truncated = it.truncated ? `<div class="reflect-preview-card__muted">…一部省略（全${it.totalCount}件のうち先頭のみ表示）</div>` : "";
+      const notesHtml = it.notes && it.notes.length ? `<div class="reflect-preview-card__notes">${it.notes.map((n) => `<div class="reflect-preview-card__note">${esc(n)}</div>`).join("")}</div>` : "";
+      return `<details class="reflect-preview-card"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span>${counter}</summary>
+      <div class="reflect-preview-card__body">
+        ${notesHtml}
+        ${itemRows}${truncated}
+      </div>
+    </details>`;
+    }
     if (shape === "whole" && info.wholePreview) {
       const w = info.wholePreview;
       if (!w.changed) {
@@ -10844,11 +10858,13 @@ ${tgt.full}`);
     }
     const changedEntries = entries.filter(([, info]) => {
       if (info?.shape === "map") return (info.preview?.totalCount || 0) > 0;
+      if (info?.shape === "items") return (info.itemized?.totalCount || 0) > 0 || (info.itemized?.notes?.length || 0) > 0;
       if (info?.shape === "whole") return !!info.wholePreview?.changed;
       return false;
     });
     const totalChanges = changedEntries.reduce((acc, [, info]) => {
       if (info?.shape === "map") return acc + (info.preview?.totalCount || 0);
+      if (info?.shape === "items") return acc + (info.itemized?.totalCount || 0);
       return acc + 1;
     }, 0);
     const keyword = String(state.reflectPlanPreviewKeyword || "").toLowerCase();
@@ -10859,6 +10875,7 @@ ${tgt.full}`);
     const changedOnly = !!state.reflectPlanPreviewChangedOnly;
     const filteredEntries = changedOnly ? visibleEntries.filter(([, info]) => {
       if (info?.shape === "map") return (info.preview?.totalCount || 0) > 0;
+      if (info?.shape === "items") return (info.itemized?.totalCount || 0) > 0 || (info.itemized?.notes?.length || 0) > 0;
       if (info?.shape === "whole") return !!info.wholePreview?.changed;
       return false;
     }) : visibleEntries;
@@ -10969,6 +10986,7 @@ ${tgt.full}`);
     const previewLabel = isPreview ? "プレビュー" : "本番";
     const previewClass = isPreview ? "is-preview" : "is-prod";
     const guestSuffix = guestId ? ` / ゲスト${esc(guestId)}` : "";
+    const appPath = guestId ? `/k/guest/${encodeURIComponent(guestId)}/${encodeURIComponent(appId)}/` : `/k/${encodeURIComponent(appId)}/`;
     if (!appId) {
       el.innerHTML = `<div class="reflect-target-badge__inner" data-state="empty">
       <span class="reflect-target-badge__label">反映先未設定</span>
@@ -10980,6 +10998,7 @@ ${tgt.full}`);
     <span class="reflect-target-badge__app">App ${esc(appId)}</span>
     ${appLabel ? `<span class="reflect-target-badge__name" title="${esc(appLabel)}">${esc(appLabel)}</span>` : ""}
     ${guestSuffix ? `<span class="reflect-target-badge__guest">${guestSuffix}</span>` : ""}
+    <button type="button" class="reflect-target-badge__open" data-act="openTargetPreviewApp" data-preview-url="${esc(appPath)}" title="比較先アプリのプレビュー確認画面を開き、チェックリストに反映します">開く</button>
   </div>`;
   }
   function getReflectNextAction() {
@@ -10993,7 +11012,9 @@ ${tgt.full}`);
     const plan = state.lastApplyPlan;
     const planReady = !!(plan && planSig && plan.signature === planSig);
     const checklist = state.reflectApplyChecklist || {};
-    const checklistDone = ["diff", "plan", "target"].filter((k) => !!checklist[k]).length;
+    const checklistKeys = ["diff", "plan", "preview", "target"];
+    const checklistDone = checklistKeys.filter((k) => !!checklist[k]).length;
+    const checklistTotal = checklistKeys.length;
     if (!diffReady) {
       return {
         act: isNode ? "runDiffLoadReflectNodes" : "runDiff",
@@ -11014,7 +11035,7 @@ ${tgt.full}`);
     return {
       act: "applyPreview",
       label: "プレビューへ反映",
-      hint: checklistDone === 3 ? "反映を実行します" : `安全チェック ${checklistDone}/3`,
+      hint: checklistDone === checklistTotal ? "反映を実行します" : `安全チェック ${checklistDone}/${checklistTotal}`,
       disabled: false
     };
   }
@@ -11112,11 +11133,13 @@ ${tgt.full}`);
     const plan = state.lastApplyPlan;
     const planReady = !!(plan && plan.totalReq);
     const checklist = state.reflectApplyChecklist || {};
-    const checklistDone = ["diff", "plan", "target"].filter((k) => !!checklist[k]).length;
+    const checklistKeys = ["diff", "plan", "preview", "target"];
+    const checklistDone = checklistKeys.filter((k) => !!checklist[k]).length;
+    const checklistTotal = checklistKeys.length;
     const stepNo = !diffReady ? 1 : !targetCount ? 2 : !planReady ? 3 : 4;
     const stepTitles = ["差分を作る", "反映する内容を決める", "プラン確認", "プレビュー反映"];
-    const tone = info.disabled ? "warn" : stepNo === 4 && checklistDone === 3 ? "ok" : stepNo === 1 ? "" : "";
-    const desc = !diffReady ? "まずは差分比較を実行して、反映する変更を取得します。" : !targetCount ? "標準ルートまたは詳細ルートで、反映するセクション/差分を選びます。" : !planReady ? "APIに送信される予定のリクエスト内容を、プラン確認モーダルで見ます。" : checklistDone === 3 ? "すべての準備が完了しました。下の赤いボタンから反映を実行できます。" : "反映前チェックリストを確認してから反映してください。";
+    const tone = info.disabled ? "warn" : stepNo === 4 && checklistDone === checklistTotal ? "ok" : stepNo === 1 ? "" : "";
+    const desc = !diffReady ? "まずは差分比較を実行して、反映する変更を取得します。" : !targetCount ? "標準ルートまたは詳細ルートで、反映するセクション/差分を選びます。" : !planReady ? "APIに送信される予定のリクエスト内容を、プラン確認モーダルで見ます。" : checklistDone === checklistTotal ? "すべての準備が完了しました。下の赤いボタンから反映を実行できます。" : "反映前チェックリストを確認してから反映してください。";
     const actionBtn = info.act ? `<button type="button" class="btn" data-act="${esc(info.act)}" data-reflect-next="1" ${info.disabled ? "disabled" : ""}>
         ▶ ${esc(info.label)}
       </button>` : `<span style="opacity:.85;font-size:12px">${esc(info.label || "次のアクションはありません")}</span>`;
@@ -12251,6 +12274,93 @@ ${tgt.full}`);
     }
   });
 
+  // src/reflect/progress-pure.ts
+  function classifyLogLine(line) {
+    if (line.startsWith("OK ")) return { tone: "ok", icon: "✓", rest: line.slice(3) };
+    if (line.startsWith("NG ")) return { tone: "ng", icon: "✗", rest: line.slice(3) };
+    if (line.startsWith("SKIP ")) return { tone: "skip", icon: "⊘", rest: line.slice(5) };
+    if (line.startsWith("START ")) return { tone: "start", icon: "▶", rest: line.slice(6) };
+    if (line.startsWith("PLAN ")) return { tone: "plan", icon: "📋", rest: line.slice(5) };
+    if (/^=+/.test(line)) return { tone: "head", icon: "", rest: line };
+    if (line.trim() === "") return { tone: "blank", icon: "", rest: "" };
+    return { tone: "plain", icon: "", rest: line };
+  }
+  function deriveGanttRows(logs, scopes) {
+    if (!Array.isArray(scopes) || !scopes.length) return [];
+    const rows = scopes.map((k) => ({
+      sectionKey: String(k),
+      label: SECTION_DEFS.find((d) => d.key === k)?.label || k,
+      status: "pending"
+    }));
+    let runningKey = "";
+    for (const line of logs) {
+      const text = String(line);
+      for (const r of rows) {
+        if (text.startsWith(`OK ${r.label}`)) r.status = "ok";
+        else if (text.startsWith(`NG ${r.label}`)) r.status = "ng";
+        else if (text.startsWith(`SKIP ${r.label}`)) r.status = "skip";
+        else if (text.startsWith(`START ${r.label}`)) {
+          r.status = "running";
+          runningKey = r.sectionKey;
+        }
+      }
+    }
+    if (!runningKey) {
+      const firstPending = rows.find((r) => r.status === "pending");
+      if (firstPending) firstPending.status = "running";
+    }
+    return rows;
+  }
+  function buildGanttHtmlFromLogs(logs, scopes) {
+    const rows = deriveGanttRows(logs, scopes);
+    if (!rows.length) return "";
+    const rowsHtml = rows.map((r) => {
+      const pct = r.status === "ok" ? 100 : r.status === "ng" ? 100 : r.status === "skip" ? 100 : r.status === "running" ? 60 : 0;
+      const barCls = r.status === "ok" ? "apply-gantt__bar--ok" : r.status === "ng" ? "apply-gantt__bar--ng" : r.status === "running" ? "apply-gantt__bar--running" : "";
+      const statusGlyph = r.status === "ok" ? "✓" : r.status === "ng" ? "✗" : r.status === "skip" ? "⊘" : r.status === "running" ? "⏳" : "";
+      return `<div class="apply-gantt__row" data-status="${r.status}">
+      <div class="apply-gantt__label">${renderSectionIconHtml(r.sectionKey)}<span>${esc(r.label)}</span></div>
+      <div class="apply-gantt__track"><div class="apply-gantt__bar ${barCls}" style="width:${pct}%"></div></div>
+      <div class="apply-gantt__time">${statusGlyph}</div>
+    </div>`;
+    }).join("");
+    return `<div class="apply-gantt" aria-label="セクション別進捗">${rowsHtml}</div>`;
+  }
+  function buildPlanRequestSummary(requests) {
+    const list = Array.isArray(requests) ? requests : [];
+    const methods = { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 };
+    const sections = /* @__PURE__ */ new Map();
+    for (const req of list) {
+      const method = String(req?.method || "").toUpperCase();
+      if (method === "POST" || method === "PUT" || method === "DELETE") methods[method] += 1;
+      else methods.OTHER += 1;
+      const sectionKey = String(req?.sectionKey || "");
+      const sectionLabel2 = String(req?.sectionLabel || sectionKey || "-");
+      const row = sections.get(sectionKey) || { sectionKey, sectionLabel: sectionLabel2, count: 0, methods: { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 } };
+      row.count += 1;
+      if (method === "POST" || method === "PUT" || method === "DELETE") row.methods[method] += 1;
+      else row.methods.OTHER += 1;
+      sections.set(sectionKey, row);
+    }
+    const sectionRows = [...sections.values()].sort((a, b) => b.count - a.count);
+    const highImpact = sectionRows.filter((row) => HIGH_IMPACT_SECTIONS.has(row.sectionKey));
+    return {
+      totalRequests: list.length,
+      methods,
+      sectionRows,
+      sectionCount: sectionRows.length,
+      highImpactCount: highImpact.length,
+      highImpactLabels: highImpact.map((row) => row.sectionLabel)
+    };
+  }
+  var init_progress_pure = __esm({
+    "src/reflect/progress-pure.ts"() {
+      "use strict";
+      init_constants();
+      init_utils();
+    }
+  });
+
   // src/tabs/field.ts
   function parseFieldInput(text) {
     const obj = JSON.parse(text);
@@ -12359,6 +12469,73 @@ ${tgt.full}`);
     }
     return out;
   }
+  function collectFieldValidationIssues(props) {
+    const issues = [];
+    const seenCodes = /* @__PURE__ */ new Set();
+    const visit = (fieldMap, path) => {
+      for (const [key, def] of Object.entries(fieldMap || {})) {
+        const code = String(def?.code || key || "").trim();
+        const label = String(def?.label || "").trim();
+        const type = String(def?.type || "").trim();
+        const fieldPath = path ? `${path}.${key}` : key;
+        if (!code) issues.push(`${fieldPath}: code が空です`);
+        if (code && seenCodes.has(code)) issues.push(`${fieldPath}: code "${code}" が重複しています`);
+        if (code) seenCodes.add(code);
+        if (code && String(key) !== code) issues.push(`${fieldPath}: JSONキー "${key}" と code "${code}" が一致していません`);
+        if (!type) issues.push(`${fieldPath}: type がありません`);
+        if (!label && type !== "SPACER" && type !== "HR" && type !== "LABEL") issues.push(`${fieldPath}: label がありません`);
+        if (def?.lookup && !def.lookup.relatedApp?.app) issues.push(`${fieldPath}: lookup.relatedApp.app がありません`);
+        if (def?.referenceTable && !def.referenceTable.relatedApp?.app) issues.push(`${fieldPath}: referenceTable.relatedApp.app がありません`);
+        if (type === "SUBTABLE" && (!def.fields || typeof def.fields !== "object")) issues.push(`${fieldPath}: SUBTABLE に fields がありません`);
+        if (type === "SUBTABLE") visit(def.fields, fieldPath);
+      }
+    };
+    visit(props, "");
+    return issues;
+  }
+  function collectFormulaRefs(expression) {
+    const refs = /* @__PURE__ */ new Set();
+    String(expression || "").replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (token) => {
+      if (!FORMULA_WORDS.has(token.toUpperCase())) refs.add(token);
+      return token;
+    });
+    return [...refs];
+  }
+  function collectFieldApplyWarnings(incomingProps, currentProps, lookupMap) {
+    const warnings = [];
+    const currentCodes = new Set(Object.keys(currentProps || {}));
+    const incomingCodes = new Set(Object.keys(incomingProps || {}));
+    const allCodes = /* @__PURE__ */ new Set([...currentCodes, ...incomingCodes]);
+    const conflicts = [...incomingCodes].filter((code) => currentCodes.has(code));
+    if (conflicts.length) {
+      warnings.push(`既存フィールドと同じ code が ${conflicts.length} 件あります: ${conflicts.slice(0, 12).join(", ")}${conflicts.length > 12 ? " ..." : ""}`);
+    }
+    const converted = [];
+    const unconvertedRefs = [];
+    const walk = (fieldMap, parent = "") => {
+      for (const [key, def] of Object.entries(fieldMap || {})) {
+        const label = parent ? `${parent}.${key}` : key;
+        const relatedApp = def?.lookup?.relatedApp?.app ?? def?.referenceTable?.relatedApp?.app;
+        if (relatedApp != null) {
+          const before = String(relatedApp);
+          if (lookupMap[before]) converted.push(`${label}: ${before} -> ${lookupMap[before]}`);
+          else unconvertedRefs.push(`${label}: ${before}`);
+        }
+        if (def?.expression) {
+          const missing = collectFormulaRefs(def.expression).filter((code) => !allCodes.has(code));
+          if (missing.length) warnings.push(`${label}: 計算式の参照候補が見つかりません: ${missing.join(", ")}`);
+        }
+        if (def?.type === "SUBTABLE") walk(def.fields, label);
+      }
+    };
+    walk(incomingProps);
+    if (converted.length) warnings.push(`参照先アプリID変換: ${converted.slice(0, 8).join(" / ")}${converted.length > 8 ? " ..." : ""}`);
+    if (unconvertedRefs.length) warnings.push(`変換されない参照先アプリIDがあります: ${unconvertedRefs.slice(0, 8).join(" / ")}${unconvertedRefs.length > 8 ? " ..." : ""}`);
+    if ([...incomingCodes].some((code) => !currentCodes.has(code))) {
+      warnings.push("新規追加フィールドはフォームレイアウトには自動配置されません。必要に応じてkintoneのフォーム設定で配置してください。");
+    }
+    return warnings;
+  }
   async function upsertFields(prefix, app, incomingProps, options) {
     const writableIncoming = filterWritableFieldProps(incomingProps, options && options.skipSystem);
     const lookupMap = options && options.lookupMap || {};
@@ -12368,6 +12545,14 @@ ${tgt.full}`);
       convertedIncoming[code] = converted.def;
     }
     const current = await apiGet(prefix, "/app/form/fields.json", { app });
+    const warnings = collectFieldApplyWarnings(convertedIncoming, current.properties || {}, lookupMap);
+    if (warnings.length && !kusConfirm(`フィールド反映前の確認:
+
+${warnings.join("\n")}
+
+続行しますか？`)) {
+      throw new Error("フィールド反映前の確認で中断しました");
+    }
     const split = splitUpsertMap(current.properties || {}, convertedIncoming || {}, {
       overwrite: options && options.overwrite,
       renameOnConflict: options && options.renameOnConflict,
@@ -12390,6 +12575,11 @@ ${tgt.full}`);
     const input = fieldJson.value.trim();
     if (!input) throw new Error("フィールドJSONを入力してください");
     const incoming = parseFieldInput(input);
+    const validationIssues = collectFieldValidationIssues(incoming);
+    if (validationIssues.length) {
+      resultEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">${esc(validationIssues.join("\n"))}</pre>`;
+      throw new Error(`フィールドJSONの事前検証で ${validationIssues.length} 件の問題を検出しました`);
+    }
     const lookupMap = parseLookupMapInput(lookupMapEl.value);
     const prefix = buildApiPrefix(c.target.guestId, true);
     const app = c.target.appId;
@@ -12519,6 +12709,7 @@ ${tgt.full}`);
     }
     setBusy(false);
   }
+  var FORMULA_WORDS;
   var init_field = __esm({
     "src/tabs/field.ts"() {
       "use strict";
@@ -12529,6 +12720,25 @@ ${tgt.full}`);
       init_components();
       init_diff();
       init_dialog();
+      FORMULA_WORDS = /* @__PURE__ */ new Set([
+        "IF",
+        "AND",
+        "OR",
+        "NOT",
+        "SUM",
+        "ROUND",
+        "ROUNDDOWN",
+        "ROUNDUP",
+        "DATE_FORMAT",
+        "DATE",
+        "TIME",
+        "DATETIME_FORMAT",
+        "CONTAINS",
+        "NUMBER",
+        "VALUE",
+        "TRUE",
+        "FALSE"
+      ]);
     }
   });
 
@@ -12578,52 +12788,6 @@ ${tgt.full}`);
     }
     return sourceBundle;
   }
-  function classifyLogLine(line) {
-    if (line.startsWith("OK ")) return { tone: "ok", icon: "✓", rest: line.slice(3) };
-    if (line.startsWith("NG ")) return { tone: "ng", icon: "✗", rest: line.slice(3) };
-    if (line.startsWith("SKIP ")) return { tone: "skip", icon: "⊘", rest: line.slice(5) };
-    if (line.startsWith("START ")) return { tone: "start", icon: "▶", rest: line.slice(6) };
-    if (line.startsWith("PLAN ")) return { tone: "plan", icon: "📋", rest: line.slice(5) };
-    if (/^=+/.test(line)) return { tone: "head", icon: "", rest: line };
-    if (line.trim() === "") return { tone: "blank", icon: "", rest: "" };
-    return { tone: "plain", icon: "", rest: line };
-  }
-  function buildGanttHtmlFromLogs(logs, scopes) {
-    if (!Array.isArray(scopes) || !scopes.length) return "";
-    const rows = scopes.map((k) => ({
-      sectionKey: String(k),
-      label: SECTION_DEFS.find((d) => d.key === k)?.label || k,
-      status: "pending"
-    }));
-    let runningKey = "";
-    for (const line of logs) {
-      const text = String(line);
-      for (const r of rows) {
-        if (text.startsWith(`OK ${r.label}`)) r.status = "ok";
-        else if (text.startsWith(`NG ${r.label}`)) r.status = "ng";
-        else if (text.startsWith(`SKIP ${r.label}`)) r.status = "skip";
-        else if (text.startsWith(`START ${r.label}`)) {
-          r.status = "running";
-          runningKey = r.sectionKey;
-        }
-      }
-    }
-    if (!runningKey) {
-      const firstPending = rows.find((r) => r.status === "pending");
-      if (firstPending) firstPending.status = "running";
-    }
-    const rowsHtml = rows.map((r) => {
-      const pct = r.status === "ok" ? 100 : r.status === "ng" ? 100 : r.status === "skip" ? 100 : r.status === "running" ? 60 : 0;
-      const barCls = r.status === "ok" ? "apply-gantt__bar--ok" : r.status === "ng" ? "apply-gantt__bar--ng" : r.status === "running" ? "apply-gantt__bar--running" : "";
-      const statusGlyph = r.status === "ok" ? "✓" : r.status === "ng" ? "✗" : r.status === "skip" ? "⊘" : r.status === "running" ? "⏳" : "";
-      return `<div class="apply-gantt__row" data-status="${r.status}">
-      <div class="apply-gantt__label">${renderSectionIconHtml(r.sectionKey)}<span>${esc(r.label)}</span></div>
-      <div class="apply-gantt__track"><div class="apply-gantt__bar ${barCls}" style="width:${pct}%"></div></div>
-      <div class="apply-gantt__time">${statusGlyph}</div>
-    </div>`;
-    }).join("");
-    return `<div class="apply-gantt" aria-label="セクション別進捗">${rowsHtml}</div>`;
-  }
   function renderProgressLog(logs, options = {}) {
     const { phase, current, total, scopes } = options;
     const progressBar = typeof current === "number" && typeof total === "number" && total > 0 ? `<div class="reflect-log-progress"><div class="reflect-log-progress__bar" style="width:${Math.round((current + 1) / total * 100)}%"></div><span class="reflect-log-progress__text">${Math.min(current + 1, total)} / ${total}</span></div>` : "";
@@ -12665,6 +12829,7 @@ ${tgt.full}`);
       init_constants();
       init_state();
       init_utils();
+      init_progress_pure();
       init_api();
       init_engine();
       init_components();
@@ -13006,26 +13171,11 @@ ${tgt.full}`);
     setStatus(`共通データ取得完了: 比較元 ${sections.length}セクション(NG ${sourceErr}) / 比較先 ${sections.length}セクション(NG ${targetErr})`);
   }
   function loadReflectPresets() {
-    try {
-      const raw = localStorage.getItem(REFLECT_PRESETS_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      console.warn("反映プリセットの読み込みに失敗しました", e);
-      showToast("反映プリセットの読み込みに失敗しました。保存データが破損している可能性があります。", "warn");
-      return [];
-    }
+    return reflectPresetsMemory.slice();
   }
   function persistReflectPresets(presets) {
-    try {
-      localStorage.setItem(REFLECT_PRESETS_KEY, JSON.stringify(presets || []));
-      return true;
-    } catch (e) {
-      console.warn("反映プリセットの保存に失敗しました", e);
-      showToast("反映プリセットの保存に失敗しました。ブラウザの保存容量や権限を確認してください。", "warn");
-      return false;
-    }
+    reflectPresetsMemory = Array.isArray(presets) ? presets.slice(0, 30) : [];
+    return true;
   }
   function saveReflectPreset(name) {
     const trimmed = String(name || "").trim();
@@ -13197,7 +13347,7 @@ ${tgt.full}`);
       total: rows.length
     };
   }
-  var BULK_MODE_CONFIRM_THRESHOLD;
+  var BULK_MODE_CONFIRM_THRESHOLD, reflectPresetsMemory;
   var init_reflect = __esm({
     "src/tabs/reflect.ts"() {
       "use strict";
@@ -13215,14 +13365,1145 @@ ${tgt.full}`);
       init_helpers();
       init_rowMode();
       BULK_MODE_CONFIRM_THRESHOLD = 5;
+      reflectPresetsMemory = [];
+    }
+  });
+
+  // src/tabs/record.ts
+  function getSideApiPrefix(isSource, preview) {
+    const c = commonParams();
+    const side = isSource ? c.source : c.target;
+    return buildApiPrefix(side.guestId, !!preview);
+  }
+  function hasOrderByClause(query) {
+    return /\border\s+by\b/i.test(String(query || ""));
+  }
+  function hasPagingClause(query) {
+    return /\blimit\s+\d+/i.test(String(query || "")) || /\boffset\s+\d+/i.test(String(query || ""));
+  }
+  function buildPagedRecordsQuery(query, offset, options = {}) {
+    const base = String(query || "").trim();
+    if (hasPagingClause(base)) {
+      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
+    }
+    const parts = [];
+    if (base) parts.push(base);
+    if (options.includeOrder !== false && !hasOrderByClause(base)) parts.push("order by $id asc");
+    parts.push(`limit ${Number(options.limit || 500)}`);
+    parts.push(`offset ${Number(offset || 0)}`);
+    return parts.join(" ");
+  }
+  function buildKeysetRecordsQuery(query, lastRecordId, limit = 500) {
+    const base = String(query || "").trim();
+    if (hasPagingClause(base)) {
+      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
+    }
+    const idCond = `$id > ${Number(lastRecordId || 0)}`;
+    if (!base) return `${idCond} order by $id asc limit ${Number(limit || 500)}`;
+    if (hasOrderByClause(base)) return null;
+    return `(${base}) and ${idCond} order by $id asc limit ${Number(limit || 500)}`;
+  }
+  async function loadViewsForSelect(selectId, inputId) {
+    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
+    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
+    const prefix = getSideApiPrefix(false, false);
+    const resp = await apiGet(prefix, "/app/views.json", { app: tApp });
+    const views = Object.entries(resp.views).map(([name, v]) => ({ name, ...v })).filter((v) => v.type === "LIST").sort((a, b) => Number(a.index) - Number(b.index));
+    const sel = getToolDocument().getElementById(selectId);
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- 一覧を選択 --</option>';
+    for (const v of views) {
+      const opt = getToolDocument().createElement("option");
+      opt.value = v.id;
+      opt.dataset.q = encodeURIComponent(v.filterCond || "");
+      opt.textContent = v.name;
+      sel.appendChild(opt);
+    }
+    sel.style.display = "block";
+    sel.onchange = () => {
+      const o = sel.options[sel.selectedIndex];
+      if (o && o.value) {
+        getToolDocument().getElementById(inputId).value = decodeURIComponent(o.dataset.q || "");
+      }
+    };
+    setStatus("比較先アプリの一覧リストを取得しました");
+  }
+  async function getRecordIdsByQuery(app, query, isSource) {
+    const prefix = getSideApiPrefix(isSource, false);
+    const ids = [];
+    let offset = 0;
+    let lastRecordId = 0;
+    while (true) {
+      const keysetQuery = buildKeysetRecordsQuery(query, lastRecordId);
+      const q = keysetQuery || buildPagedRecordsQuery(query, offset, { includeOrder: true });
+      const resp = await apiGet(prefix, "/records.json", { app, query: q, fields: ["$id"] });
+      const records = resp.records || [];
+      if (records.length === 0) break;
+      records.forEach((r) => ids.push(Number(r.$id.value)));
+      if (records.length < 500) break;
+      lastRecordId = Number(records[records.length - 1]?.$id?.value || lastRecordId);
+      offset += 500;
+    }
+    return ids;
+  }
+  async function getFullRecordsByQuery(app, query, isSource) {
+    const prefix = getSideApiPrefix(isSource, false);
+    let allRecords = [];
+    let offset = 0;
+    let lastRecordId = 0;
+    while (true) {
+      const keysetQuery = buildKeysetRecordsQuery(query, lastRecordId);
+      const q = keysetQuery || buildPagedRecordsQuery(query, offset, { includeOrder: true });
+      const resp = await apiGet(prefix, "/records.json", { app, query: q });
+      const records = resp.records || [];
+      if (records.length === 0) break;
+      allRecords = allRecords.concat(records);
+      if (records.length < 500) break;
+      lastRecordId = Number(records[records.length - 1]?.$id?.value || lastRecordId);
+      offset += 500;
+    }
+    return allRecords;
+  }
+  async function runBatchProcess() {
+    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
+    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
+    const query = getToolDocument().getElementById("u_batchProcView").value;
+    const action = getToolDocument().getElementById("u_batchProcAction").value.trim();
+    const assignee = getToolDocument().getElementById("u_batchProcAssignee").value.trim() || null;
+    if (!action) throw new Error("アクション名を入力してください。");
+    setStatus("対象レコードを取得中...");
+    const ids = await getRecordIdsByQuery(tApp, query, false);
+    if (ids.length === 0) throw new Error("処理対象のレコードが0件です。");
+    if (!await confirmDestructive({
+      title: `ステータス一括更新の最終確認`,
+      body: `比較先アプリ ${tApp} の ${ids.length} 件のレコードに対し、アクション「${action}」を実行します。
+
+この処理は元に戻せません。`,
+      keyword: tApp,
+      okLabel: "ステータスを更新",
+      riskTone: "danger"
+    })) return;
+    bumpSessionMetric("recordDelete", 0);
+    setStatus("ステータス一括更新を開始...");
+    const prefix = getSideApiPrefix(false, false);
+    const batches = chunkArray(ids, 100);
+    let okCount = 0;
+    for (let i = 0; i < batches.length; i++) {
+      const batchIds = batches[i];
+      const body = {
+        app: tApp,
+        records: batchIds.map((id) => {
+          const r = { id, action };
+          if (assignee) r.assignee = assignee;
+          return r;
+        })
+      };
+      await apiPut(prefix, "/records/status.json", body);
+      okCount += batchIds.length;
+      setStatus(`進捗: ${okCount}/${ids.length}件 完了...`);
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    setStatus(`ステータス一括更新が完了しました（全${okCount}件）`, false);
+  }
+  async function loadJSZip() {
+    const doc = getToolDocument();
+    const win = doc.defaultView || window;
+    if (typeof win.JSZip !== "undefined") return win.JSZip;
+    if (typeof globalThis.JSZip !== "undefined") return globalThis.JSZip;
+    setStatus("JSZipを動的ロード中...");
+    return new Promise((resolve, reject) => {
+      const script = doc.createElement("script");
+      script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl || "";
+      script.onload = () => {
+        const ctor = win.JSZip || globalThis.JSZip;
+        if (typeof ctor === "undefined") {
+          reject(new Error("JSZipのロード後もグローバル変数が見つかりません"));
+          return;
+        }
+        setStatus("JSZipのロード完了");
+        resolve(ctor);
+      };
+      script.onerror = () => {
+        reject(new Error("JSZipの読み込みに失敗しました"));
+      };
+      doc.head.appendChild(script);
+    });
+  }
+  async function downloadTargetFile(fileKey) {
+    const prefix = getSideApiPrefix(false, false);
+    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    const resp = await fetch(url, { method: "GET", headers });
+    if (resp.status === 403) return null;
+    return await resp.blob();
+  }
+  async function runBatchFileDownload() {
+    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
+    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
+    const query = getToolDocument().getElementById("u_batchDlView").value;
+    const fileCode = getToolDocument().getElementById("u_batchDlFileCode").value.trim();
+    const folderCode = getToolDocument().getElementById("u_batchDlFolderCode").value.trim();
+    const zipName = getToolDocument().getElementById("u_batchDlZipName").value.trim() || "download.zip";
+    if (!fileCode) throw new Error("ファイルフィールドコードを入力してください。");
+    setStatus("対象レコードを取得中...");
+    const records = await getFullRecordsByQuery(tApp, query, false);
+    if (records.length === 0) throw new Error("処理対象のレコードが0件です。");
+    const JSZipCtor = await loadJSZip();
+    const zip = new JSZipCtor();
+    let fileCount = 0;
+    for (let i = 0; i < records.length; i++) {
+      const rec = records[i];
+      setStatus(`ファイルダウンロード中 (レコード ${i + 1}/${records.length})...`);
+      const fileList = rec[fileCode]?.value || [];
+      if (fileList.length > 0) {
+        let folderName = folderCode && rec[folderCode] ? rec[folderCode].value : "";
+        if (!folderName) folderName = `Record_${rec.$id.value}`;
+        const recordFolder = zip.folder(sanitizeZipPathSegment(folderName, `Record_${rec.$id.value}`));
+        const usedNames = /* @__PURE__ */ new Set();
+        for (const f of fileList) {
+          const blob = await downloadTargetFile(f.fileKey);
+          if (blob) {
+            recordFolder.file(uniqueZipFileName(usedNames, f.name, f.fileKey, fileCount), blob);
+            fileCount++;
+          }
+        }
+      }
+    }
+    if (fileCount === 0) {
+      setStatus("ダウンロード対象が見つかりませんでした。", true);
+      return;
+    }
+    setStatus(`ZIP圧縮中 (計${fileCount}ファイル)...`);
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    const doc = getToolDocument();
+    const a = doc.createElement("a");
+    const u = URL.createObjectURL(zipBlob);
+    a.href = u;
+    a.download = zipName;
+    doc.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      doc.body.removeChild(a);
+      URL.revokeObjectURL(u);
+    }, 100);
+    setStatus(`添付ファイル一括DL完了 (${fileCount}ファイル)`);
+  }
+  async function getAllAppsInSpace(isSource) {
+    const prefix = getSideApiPrefix(isSource, false);
+    let allApps = [];
+    let offset = 0;
+    while (true) {
+      const resp = await apiGet(prefix, "/apps.json", { limit: 100, offset });
+      const apps = resp.apps || [];
+      allApps = allApps.concat(apps);
+      if (apps.length < 100) break;
+      offset += 100;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return allApps;
+  }
+  async function downloadBlobWithRetry(fileKey, isSource, guestSpaceId) {
+    let prefix = getSideApiPrefix(isSource, false);
+    if (guestSpaceId) {
+      prefix = `/k/guest/${guestSpaceId}/v1`;
+    }
+    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const resp = await fetch(url, { method: "GET", headers });
+        if (resp.status === 403) return null;
+        if (!resp.ok) throw new Error("Download failed: " + resp.status);
+        return await resp.blob();
+      } catch (e) {
+        console.warn("File download failed, retrying...", e);
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    return null;
+  }
+  async function fetchFieldDefinitionsForExport(prefix, appId) {
+    const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
+    const properties = fields?.properties || {};
+    const propKeys = Object.keys(properties);
+    if (!propKeys.length) throw new Error("出力できるフィールドがありません");
+    return { fields, properties, propKeys };
+  }
+  async function fetchAllRecordsForExport(prefix, appId, condition) {
+    let allRecords = [];
+    let lastRecordId = "0";
+    const limit = 500;
+    const baseQuery = String(condition || "").trim();
+    const queryHasOrder = hasOrderByClause(baseQuery);
+    const queryHasLimit = /\blimit\s+\d+/i.test(baseQuery);
+    const queryHasOffset = /\boffset\s+\d+/i.test(baseQuery);
+    if (queryHasLimit || queryHasOffset) {
+      if (queryHasOffset && !queryHasLimit) {
+        throw new Error("クエリ内の offset は limit と併用してください。自動ページングする場合は limit/offset を取り除いてください。");
+      }
+      const resp = await apiGet(prefix, "/records.json", { app: appId, query: baseQuery });
+      return resp.records || [];
+    }
+    while (true) {
+      setBusy(true, `レコード取得中... (${allRecords.length}件取得済)`);
+      let loopQuery = "";
+      if (baseQuery && queryHasOrder) {
+        loopQuery = `${baseQuery} ${queryHasOrder ? "" : "order by $id asc"} limit ${limit} offset ${allRecords.length}`;
+      } else if (baseQuery) {
+        loopQuery = `(${baseQuery}) and $id > ${lastRecordId} order by $id asc limit ${limit}`;
+      } else {
+        loopQuery = `$id > ${lastRecordId} order by $id asc limit ${limit}`;
+      }
+      const resp = await apiGet(prefix, "/records.json", { app: appId, query: loopQuery });
+      const batch = resp.records || [];
+      allRecords = allRecords.concat(batch);
+      if (batch.length < limit) break;
+      lastRecordId = batch[batch.length - 1].$id.value;
+    }
+    return allRecords;
+  }
+  function escapeCsvCell(val) {
+    const s = String(val == null ? "" : val);
+    if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+  function extractCsvFieldValue(rec, code) {
+    const field = rec[code];
+    if (!field) return "";
+    if (field.type === "USER_SELECT" || field.type === "ORGANIZATION_SELECT" || field.type === "GROUP_SELECT") {
+      return (field.value || []).map((v) => v.code || v.name).join(",");
+    }
+    if (field.type === "CHECK_BOX" || field.type === "MULTI_SELECT") {
+      return (field.value || []).join(",");
+    }
+    if (field.type === "FILE") {
+      return (field.value || []).map((file) => file.name).join(",");
+    }
+    if (field.type === "SUBTABLE") {
+      return (field.value || []).length + "行";
+    }
+    if (typeof field.value === "object" && field.value !== null) {
+      return JSON.stringify(field.value);
+    }
+    return field.value;
+  }
+  function splitCsvListValue(value) {
+    const text = String(value == null ? "" : "").trim();
+    if (!text) return [];
+    return text.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  function coerceCsvImportValue(rawValue, fieldDef) {
+    const type = String(fieldDef?.type || "");
+    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return splitCsvListValue(rawValue);
+    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT") {
+      return splitCsvListValue(rawValue).map((code) => ({ code }));
+    }
+    if (type === "NUMBER") return String(rawValue == null ? "" : rawValue).trim();
+    return rawValue;
+  }
+  function assertCsvImportHeaderSupported(header, properties) {
+    const unknown = [];
+    const unsupported = [];
+    for (const code of header) {
+      if (!code) continue;
+      const def = properties?.[code];
+      if (!def) {
+        unknown.push(code);
+        continue;
+      }
+      if (CSV_IMPORT_UNSUPPORTED_FIELD_TYPES.has(String(def.type || ""))) {
+        unsupported.push(`${code}(${def.type})`);
+      }
+    }
+    if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(", ")}`);
+    if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(", ")}`);
+  }
+  function buildRecordsCsvString(records, propKeys) {
+    const lines = [];
+    lines.push(propKeys.map(escapeCsvCell).join(","));
+    for (const rec of records) {
+      lines.push(propKeys.map((key) => escapeCsvCell(extractCsvFieldValue(rec, key))).join(","));
+    }
+    return "\uFEFF" + lines.join("\n");
+  }
+  function sanitizeZipPathSegment(value, fallback = "item") {
+    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
+    return cleaned || fallback;
+  }
+  function uniqueZipFileName(usedNames, rawName, fileKey = "", index = 0) {
+    const safeName = sanitizeZipPathSegment(rawName || "file.bin", "file.bin");
+    const safePrefix = sanitizeZipPathSegment(String(fileKey || "").slice(0, 12) || String(Number(index) + 1), "file");
+    const candidateBase = `${safePrefix}_${safeName}`;
+    let candidate = candidateBase;
+    let suffix = 2;
+    while (usedNames.has(candidate)) {
+      const dot = candidateBase.lastIndexOf(".");
+      if (dot > 0) candidate = `${candidateBase.slice(0, dot)}_${suffix}${candidateBase.slice(dot)}`;
+      else candidate = `${candidateBase}_${suffix}`;
+      suffix++;
+    }
+    usedNames.add(candidate);
+    return candidate;
+  }
+  function getRecordNumberValue(record) {
+    const match = Object.values(record || {}).find((field) => field?.type === "RECORD_NUMBER");
+    return String(match?.value || record?.$id?.value || "");
+  }
+  function collectRecordFileEntries(record) {
+    const entries = [];
+    const recordId = String(record?.$id?.value || "").trim();
+    const recordNumber = getRecordNumberValue(record);
+    Object.entries(record || {}).forEach(([fieldCode, field]) => {
+      if (!field || typeof field !== "object") return;
+      if (field.type === "FILE") {
+        (field.value || []).forEach((file, fileIndex) => {
+          entries.push({
+            recordId,
+            recordNumber,
+            fieldCode,
+            fileIndex,
+            fileKey: String(file?.fileKey || ""),
+            name: String(file?.name || ""),
+            size: file?.size != null ? Number(file.size) : null,
+            contentType: String(file?.contentType || "")
+          });
+        });
+        return;
+      }
+      if (field.type !== "SUBTABLE") return;
+      (field.value || []).forEach((row, rowIndex) => {
+        Object.entries(row?.value || {}).forEach(([childFieldCode, childField]) => {
+          if (childField?.type !== "FILE") return;
+          (childField.value || []).forEach((file, fileIndex) => {
+            entries.push({
+              recordId,
+              recordNumber,
+              fieldCode,
+              childFieldCode,
+              rowIndex,
+              fileIndex,
+              fileKey: String(file?.fileKey || ""),
+              name: String(file?.name || ""),
+              size: file?.size != null ? Number(file.size) : null,
+              contentType: String(file?.contentType || "")
+            });
+          });
+        });
+      });
+    });
+    return entries.filter((entry) => entry.fileKey);
+  }
+  function buildAttachmentZipPath(entry) {
+    const parts = [
+      "attachments",
+      `record_${sanitizeZipPathSegment(entry.recordId || entry.recordNumber || "unknown")}`
+    ];
+    if (entry.childFieldCode) {
+      parts.push(sanitizeZipPathSegment(entry.fieldCode || "subtable"));
+      parts.push(`row_${Number(entry.rowIndex) + 1}`);
+      parts.push(sanitizeZipPathSegment(entry.childFieldCode));
+    } else {
+      parts.push(sanitizeZipPathSegment(entry.fieldCode || "files"));
+    }
+    const filePrefix = sanitizeZipPathSegment((entry.fileKey || "").slice(0, 12) || String(entry.fileIndex + 1));
+    parts.push(`${filePrefix}_${sanitizeZipPathSegment(entry.name || "file.bin", "file.bin")}`);
+    return parts.join("/");
+  }
+  async function fetchRecordComments(prefix, appId, recordId) {
+    const comments = [];
+    const limit = 10;
+    let offset = 0;
+    while (true) {
+      const resp = await apiGet(prefix, "/record/comments.json", {
+        app: appId,
+        record: recordId,
+        order: "asc",
+        offset,
+        limit
+      });
+      const batch = resp.comments || [];
+      comments.push(...batch);
+      if (batch.length < limit) break;
+      offset += batch.length;
+    }
+    return comments;
+  }
+  function renderRecordBackupSummary(summary) {
+    const notes = Array.isArray(summary?.notes) ? summary.notes : [];
+    const appScopeLabels = Array.isArray(summary?.appScopeLabels) ? summary.appScopeLabels : [];
+    const appSettingsLabel = summary?.includeAppSettings ? `${String(summary?.appOkCount || 0)}/${String(summary?.appTotalCount || 0)}セクション OK${appScopeLabels.length ? ` / ${appScopeLabels.join(", ")}` : ""}` : "未取得";
+    const pluginConfigLabel = summary?.includeAppSettings ? summary?.includePluginConfig ? String(summary?.pluginConfigLabel || "-") : "未取得" : "未取得";
+    return `
+    <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">
+      ZIP: ${esc(summary?.zipName || "-")} / レコード: ${esc(String(summary?.recordCount || 0))}
+    </div>
+    <table>
+      <tbody>
+        <tr><th style="width:140px">CSV</th><td>${esc(summary?.csvName || "-")}</td></tr>
+        <tr><th>添付ファイル</th><td>${esc(String(summary?.fileCount || 0))}件 ${summary?.includeFiles ? "" : "(未取得)"}</td></tr>
+        <tr><th>コメント</th><td>${esc(String(summary?.commentCount || 0))}件 / コメントあり ${esc(String(summary?.commentRecordCount || 0))}レコード ${summary?.includeComments ? "" : "(未取得)"}</td></tr>
+        <tr><th>アプリ設定JSON</th><td>${esc(appSettingsLabel)}</td></tr>
+        <tr><th>プラグイン設定</th><td>${esc(pluginConfigLabel)}</td></tr>
+        <tr><th>注意</th><td>${esc(notes.length ? notes.join(" / ") : "なし")}</td></tr>
+      </tbody>
+    </table>
+  `;
+  }
+  function formatPluginConfigSummary(backup) {
+    if (!backup || !backup.requested) return "-";
+    if (backup._fetchError) return "一覧取得NG";
+    if (!backup.totalPlugins) return "0件";
+    return `OK ${backup.okCount} / NG ${backup.ngCount}`;
+  }
+  async function fetchPluginConfigBackupForRecord({ appId, guestId, existingPluginList, onProgress }) {
+    const prefix = buildApiPrefix(guestId, false);
+    const result = {
+      requested: true,
+      endpoint: "/app/plugin/config.json",
+      source: "api-lab",
+      experimental: true,
+      totalPlugins: 0,
+      okCount: 0,
+      ngCount: 0,
+      plugins: []
+    };
+    let plugins = Array.isArray(existingPluginList) ? existingPluginList : [];
+    if (!Array.isArray(existingPluginList)) {
+      try {
+        const res = await apiGet(prefix, "/app/plugins.json", { app: appId });
+        plugins = Array.isArray(res?.plugins) ? res.plugins : [];
+      } catch (error) {
+        result._fetchError = error?.message || String(error);
+        return result;
+      }
+    }
+    result.totalPlugins = plugins.length;
+    if (!plugins.length) return result;
+    for (let i = 0; i < plugins.length; i++) {
+      const plugin = plugins[i] || {};
+      const pluginId = String(plugin.id || "").trim();
+      if (!pluginId) continue;
+      if (typeof onProgress === "function") onProgress(i, plugins.length, plugin);
+      try {
+        const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id: pluginId });
+        result.plugins.push({
+          ...plugin,
+          id: pluginId,
+          config: res?.config || {},
+          revision: res?.revision != null ? String(res.revision) : ""
+        });
+        result.okCount += 1;
+      } catch (error) {
+        result.plugins.push({
+          ...plugin,
+          id: pluginId,
+          _fetchError: error?.message || String(error)
+        });
+        result.ngCount += 1;
+      }
+    }
+    return result;
+  }
+  function collectRecordBackupAppScopeKeys() {
+    const container = getToolDocument().getElementById("u_recordBackupAppScopes");
+    if (!container) return [];
+    return [...new Set(selectedScopeKeys(container).filter(Boolean))];
+  }
+  async function runCsvExport() {
+    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
+    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
+    const tgtGuestId = getToolDocument().getElementById("u_targetGuest")?.value?.trim();
+    const guestPrefix = tgtGuestId ? `/k/guest/${tgtGuestId}/v1` : "/k/v1";
+    const condition = getToolDocument().getElementById("u_csvExportView")?.value || "";
+    const filename = getToolDocument().getElementById("u_csvExportName")?.value?.trim() || "records.csv";
+    setBusy(true, "フィールド情報取得中...");
+    let propKeys = [];
+    try {
+      ({ propKeys } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId));
+    } catch (e) {
+      throw new Error("フィールド情報の取得に失敗: " + (e?.message || e));
+    }
+    setBusy(true, "レコード取得中...");
+    const allRecords = await fetchAllRecordsForExport(guestPrefix, tgtAppId, condition);
+    if (!allRecords.length) throw new Error("出力するレコードがありません");
+    setStatus(`CSV生成中... (${allRecords.length}件)`);
+    const csvStr = buildRecordsCsvString(allRecords, propKeys);
+    const blob = new Blob([csvStr], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const doc = getToolDocument();
+    const a = doc.createElement("a");
+    a.href = url;
+    a.download = filename;
+    doc.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      doc.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    setBusy(false);
+    setStatus(`CSVを出力しました (${allRecords.length}件)`);
+  }
+  async function runCsvImport() {
+    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
+    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
+    const guestPrefix = getToolDocument().getElementById("u_targetGuest")?.value?.trim() ? `/k/guest/${getToolDocument().getElementById("u_targetGuest").value.trim()}/v1` : "/k/v1";
+    const fileInput = getToolDocument().getElementById("u_csvImportFile");
+    if (!fileInput || !fileInput.files || !fileInput.files.length) {
+      throw new Error("CSVファイルを選択してください");
+    }
+    const file = fileInput.files[0];
+    setBusy(true, "CSVファイルを読み込み中...");
+    const text = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(String(e.target.result || ""));
+      reader.onerror = (e) => reject(new Error("ファイルの読み取りに失敗しました"));
+      reader.readAsText(file);
+    });
+    if (!text) throw new Error("ファイルが空です");
+    setBusy(true, "CSVをパース中...");
+    const parseCsv = (csvText) => {
+      const rows2 = [];
+      let current = [];
+      let cell = "";
+      let inQuotes = false;
+      for (let i = 0; i < csvText.length; i++) {
+        const char = csvText[i];
+        const nextChar = csvText[i + 1];
+        if (inQuotes) {
+          if (char === '"') {
+            if (nextChar === '"') {
+              cell += '"';
+              i++;
+            } else {
+              inQuotes = false;
+            }
+          } else {
+            cell += char;
+          }
+        } else {
+          if (char === '"') {
+            inQuotes = true;
+          } else if (char === ",") {
+            current.push(cell);
+            cell = "";
+          } else if (char === "\n" || char === "\r") {
+            if (char === "\r" && nextChar === "\n") i++;
+            current.push(cell);
+            rows2.push(current);
+            current = [];
+            cell = "";
+          } else {
+            cell += char;
+          }
+        }
+      }
+      if (cell !== "" || current.length > 0) {
+        current.push(cell);
+        rows2.push(current);
+      }
+      return rows2;
+    };
+    const rows = parseCsv(text.replace(/^\uFEFF/, ""));
+    if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
+    const header = rows[0].map((h) => h.trim());
+    if (header.includes("$id")) throw new Error("CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。");
+    setBusy(true, "フィールド情報を確認中...");
+    const { properties } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId);
+    assertCsvImportHeaderSupported(header, properties);
+    const records = [];
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i].length === 1 && rows[i][0] === "") continue;
+      const rec = {};
+      for (let j = 0; j < header.length; j++) {
+        if (!header[j]) continue;
+        const val = rows[i][j] !== void 0 ? rows[i][j] : "";
+        rec[header[j]] = { value: coerceCsvImportValue(val, properties[header[j]]) };
+      }
+      records.push(rec);
+    }
+    if (!records.length) throw new Error("登録するデータが見つかりませんでした");
+    if (!await confirmDestructive({
+      title: "CSVインポートの最終確認",
+      body: `比較先アプリ ${tgtAppId} に CSV から ${records.length} 件のレコードを登録します。
+この処理は元に戻せません。`,
+      keyword: tgtAppId,
+      okLabel: "CSVをインポート",
+      riskTone: "danger"
+    })) {
+      setBusy(false);
+      return;
+    }
+    setBusy(true, `インポート開始... (対象 ${records.length}件)`);
+    const batchSize = 100;
+    let successCount = 0;
+    for (let i = 0; i < records.length; i += batchSize) {
+      const batch = records.slice(i, i + batchSize);
+      setBusy(true, `インポート実行中... (${i + 1} ～ ${i + batch.length} / ${records.length} 件目)`);
+      try {
+        await apiPost(guestPrefix, "/records.json", { app: tgtAppId, records: batch });
+        successCount += batch.length;
+      } catch (e) {
+        setBusy(false);
+        throw new Error(`レコード登録エラー（${i + 1}～${i + batch.length}件目付近 / 既に成功 ${successCount}件）: ${e && e.message || e}`);
+      }
+    }
+    setBusy(false);
+    showToast(`完了: ${successCount}件のレコードを登録しました。`, "success");
+    fileInput.value = "";
+    const fnEl = getToolDocument().getElementById("u_csvImportFileName");
+    if (fnEl) fnEl.textContent = "未選択";
+  }
+  async function runRecordBackup() {
+    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
+    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
+    const tgtGuestId = getToolDocument().getElementById("u_targetGuest")?.value?.trim();
+    const guestPrefix = tgtGuestId ? `/k/guest/${tgtGuestId}/v1` : "/k/v1";
+    const condition = getToolDocument().getElementById("u_recordBackupView")?.value || "";
+    const zipName = getToolDocument().getElementById("u_recordBackupZipName")?.value?.trim() || `record_backup_${tgtAppId}_${nowStamp()}.zip`;
+    const includeFiles = !!getToolDocument().getElementById("u_recordBackupIncludeFiles")?.checked;
+    const includeComments = !!getToolDocument().getElementById("u_recordBackupIncludeComments")?.checked;
+    const includeAppSettings = !!getToolDocument().getElementById("u_recordBackupIncludeAppSettings")?.checked;
+    const includePluginConfig = includeAppSettings && !!getToolDocument().getElementById("u_recordBackupIncludePluginConfig")?.checked;
+    const appScopes = includeAppSettings ? collectRecordBackupAppScopeKeys() : [];
+    if (includeAppSettings && !appScopes.length) throw new Error("同梱するアプリ設定セクションを1つ以上選択してください");
+    setBusy(true, "バックアップ対象のフィールドを取得中...");
+    const { propKeys } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId);
+    setBusy(true, "バックアップ対象レコードを取得中...");
+    const records = await fetchAllRecordsForExport(guestPrefix, tgtAppId, condition);
+    if (!records.length) throw new Error("バックアップ対象のレコードがありません");
+    const JSZipCtor = await loadJSZip();
+    const zip = new JSZipCtor();
+    const generatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const csvName = "records.csv";
+    const notes = [];
+    const csvStr = buildRecordsCsvString(records, propKeys);
+    zip.file(csvName, csvStr);
+    let fileCount = 0;
+    const attachmentEntries = records.flatMap((record) => collectRecordFileEntries(record));
+    const attachmentManifest = {
+      generatedAt,
+      appId: tgtAppId,
+      recordCount: records.length,
+      totalEntries: attachmentEntries.length,
+      downloadedCount: 0,
+      skippedCount: 0,
+      files: []
+    };
+    if (includeFiles) {
+      const blobCache = /* @__PURE__ */ new Map();
+      for (let i = 0; i < attachmentEntries.length; i++) {
+        const entry = attachmentEntries[i];
+        setStatus(`添付ファイル取得中... (${i + 1}/${attachmentEntries.length})`);
+        let blob = blobCache.get(entry.fileKey);
+        if (blob === void 0) {
+          blob = await downloadBlobWithRetry(entry.fileKey, false, tgtGuestId);
+          blobCache.set(entry.fileKey, blob || null);
+        }
+        if (blob) {
+          zip.file(buildAttachmentZipPath(entry), blob);
+          attachmentManifest.downloadedCount += 1;
+          fileCount += 1;
+        } else {
+          attachmentManifest.skippedCount += 1;
+        }
+        attachmentManifest.files.push({
+          ...entry,
+          zipPath: buildAttachmentZipPath(entry),
+          downloaded: !!blob
+        });
+      }
+      if (!attachmentEntries.length) notes.push("添付ファイルなし");
+      else if (attachmentManifest.skippedCount) notes.push(`添付 ${attachmentManifest.skippedCount}件取得失敗`);
+      zip.file("attachments_manifest.json", JSON.stringify(attachmentManifest, null, 2));
+    } else {
+      notes.push("添付ファイル未取得");
+    }
+    let commentCount = 0;
+    let commentRecordCount = 0;
+    const commentsPayload = {
+      generatedAt,
+      appId: tgtAppId,
+      guestId: tgtGuestId || "",
+      recordCount: records.length,
+      records: [],
+      commentCount: 0,
+      _fetchError: ""
+    };
+    if (includeComments) {
+      for (let i = 0; i < records.length; i++) {
+        const record = records[i];
+        const recordId = String(record?.$id?.value || "").trim();
+        if (!recordId) continue;
+        setStatus(`コメント取得中... (${i + 1}/${records.length})`);
+        try {
+          const comments = await fetchRecordComments(guestPrefix, tgtAppId, recordId);
+          if (comments.length) {
+            commentsPayload.records.push({
+              recordId,
+              recordNumber: getRecordNumberValue(record),
+              comments
+            });
+            commentRecordCount += 1;
+            commentCount += comments.length;
+          }
+        } catch (error) {
+          commentsPayload._fetchError = error?.message || String(error);
+          notes.push("コメント取得に失敗したため一部スキップ");
+          break;
+        }
+      }
+      commentsPayload.commentCount = commentCount;
+      zip.file("comments/comments.json", JSON.stringify(commentsPayload, null, 2));
+      if (!commentCount && !commentsPayload._fetchError) notes.push("コメントなし");
+    } else {
+      notes.push("コメント未取得");
+    }
+    let appOkCount = 0;
+    let appNgCount = 0;
+    let appScopeLabels = [];
+    let pluginConfigLabel = "未取得";
+    if (includeAppSettings) {
+      appScopeLabels = appScopes.map((key) => SECTION_DEFS.find((section) => section.key === key)?.label || key);
+      setStatus(`アプリ設定取得中... (0/${appScopes.length})`);
+      const settingsBundle = await fetchBundle({
+        appId: tgtAppId,
+        guestId: tgtGuestId || "",
+        preview: false,
+        sections: appScopes,
+        onProgress: (p, label) => setStatus(`アプリ設定取得中 ${Math.round(p * 100)}% (${label})`)
+      });
+      for (const key of appScopes) {
+        const sec = settingsBundle.sections[key];
+        if (sec && sec._fetchError) appNgCount += 1;
+        else appOkCount += 1;
+      }
+      const appSettingsPayload = {
+        generatedAt,
+        appId: tgtAppId,
+        guestId: tgtGuestId || "",
+        preview: false,
+        scopes: appScopes,
+        scopeLabels: appScopeLabels,
+        bundle: settingsBundle
+      };
+      zip.file(`app_settings/app_${tgtAppId}.json`, JSON.stringify(appSettingsPayload, null, 2));
+      let pluginConfigBackup = null;
+      if (includePluginConfig) {
+        pluginConfigBackup = await fetchPluginConfigBackupForRecord({
+          appId: tgtAppId,
+          guestId: tgtGuestId || "",
+          existingPluginList: settingsBundle?.sections?.pluginSettings?.plugins,
+          onProgress: (pluginIndex, pluginTotal, plugin) => {
+            const pluginName = String(plugin?.name || plugin?.id || "");
+            setStatus(`プラグイン設定取得中 ${pluginIndex + 1}/${pluginTotal}${pluginName ? ` (${pluginName})` : ""}`);
+          }
+        });
+        pluginConfigLabel = formatPluginConfigSummary(pluginConfigBackup);
+        zip.file("app_settings/plugin_config.json", JSON.stringify(pluginConfigBackup, null, 2));
+        if (pluginConfigBackup?._fetchError) notes.push("プラグイン一覧取得失敗");
+        else if (pluginConfigBackup?.ngCount) notes.push("プラグイン設定一部取得失敗");
+      }
+      zip.file("app_settings/manifest.json", JSON.stringify({
+        generatedAt,
+        appId: tgtAppId,
+        guestId: tgtGuestId || "",
+        preview: false,
+        scopes: appScopes,
+        scopeLabels: appScopeLabels,
+        okCount: appOkCount,
+        ngCount: appNgCount,
+        pluginConfig: {
+          included: includePluginConfig,
+          label: pluginConfigLabel,
+          totalPlugins: pluginConfigBackup?.totalPlugins || 0,
+          okCount: pluginConfigBackup?.okCount || 0,
+          ngCount: pluginConfigBackup?.ngCount || 0,
+          fetchError: pluginConfigBackup?._fetchError || ""
+        }
+      }, null, 2));
+      if (appNgCount) notes.push("アプリ設定一部取得失敗");
+    }
+    const manifest = {
+      generatedAt,
+      appId: tgtAppId,
+      guestId: tgtGuestId || "",
+      query: condition,
+      csv: {
+        name: csvName,
+        recordCount: records.length
+      },
+      attachments: {
+        included: includeFiles,
+        totalEntries: attachmentEntries.length,
+        downloadedCount: attachmentManifest.downloadedCount,
+        skippedCount: attachmentManifest.skippedCount
+      },
+      comments: {
+        included: includeComments,
+        commentCount,
+        recordCount: commentRecordCount,
+        fetchError: commentsPayload._fetchError || ""
+      },
+      appSettings: {
+        included: includeAppSettings,
+        scopes: appScopes,
+        scopeLabels: appScopeLabels,
+        okCount: appOkCount,
+        ngCount: appNgCount,
+        pluginConfig: {
+          included: includePluginConfig,
+          label: pluginConfigLabel
+        }
+      }
+    };
+    zip.file("manifest.json", JSON.stringify(manifest, null, 2));
+    setStatus("バックアップZIPを生成中...");
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    downloadBlob(zipName, zipBlob);
+    if (ui.recordBackupResult) {
+      ui.recordBackupResult.innerHTML = renderRecordBackupSummary({
+        zipName,
+        recordCount: records.length,
+        csvName,
+        includeFiles,
+        fileCount,
+        includeComments,
+        commentCount,
+        commentRecordCount,
+        includeAppSettings,
+        appOkCount,
+        appTotalCount: appScopes.length,
+        appScopeLabels,
+        includePluginConfig,
+        pluginConfigLabel,
+        notes
+      });
+    }
+    setStatus(`データバックアップZIPを保存しました（${records.length}件 / 添付${fileCount}件 / コメント${commentCount}件${includeAppSettings ? ` / 設定${appOkCount}/${appScopes.length}セクション` : ""}）`);
+  }
+  async function runRecordCopy() {
+    const srcApp = getToolDocument().getElementById("u_sourceApp")?.value?.trim();
+    const tgtApp = getToolDocument().getElementById("u_targetApp")?.value?.trim();
+    if (!srcApp || !tgtApp) throw new Error("比較元と比較先の両方のアプリIDを指定してください");
+    const srcGuestStr = getToolDocument().getElementById("u_sourceGuest")?.value?.trim() || null;
+    const tgtGuestStr = getToolDocument().getElementById("u_targetGuest")?.value?.trim() || null;
+    const srcGuest = srcGuestStr ? `/k/guest/${srcGuestStr}/v1` : "/k/v1";
+    const tgtGuest = tgtGuestStr ? `/k/guest/${tgtGuestStr}/v1` : "/k/v1";
+    const query = getToolDocument().getElementById("u_recordCopyQuery")?.value || "";
+    if (!await confirmDestructive({
+      title: "レコードコピーの最終確認",
+      body: `比較元 ${srcApp} → 比較先 ${tgtApp} へレコードをコピーします。
+この処理は元に戻せません。`,
+      keyword: tgtApp,
+      okLabel: "レコードをコピー",
+      riskTone: "danger"
+    })) return;
+    setBusy(true, "比較元のレコードを取得中...");
+    let totalFetched = 0;
+    const records = [];
+    const userQueryHasOrder = /\border\s+by\b/i.test(query);
+    const userQueryHasPaging = hasPagingClause(query);
+    if (userQueryHasPaging) {
+      showToast("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。", "warn");
+      setBusy(false);
+      return;
+    }
+    const baseQuery = userQueryHasOrder ? query : `${query} order by $id asc`;
+    while (true) {
+      const q = `${baseQuery} limit 500 offset ${totalFetched}`;
+      const res = await apiGet(srcGuest, "/records.json", { app: srcApp, query: q });
+      if (!res.records || res.records.length === 0) break;
+      records.push(...res.records);
+      totalFetched += res.records.length;
+      if (res.records.length < 500) break;
+      setStatus(`取得中... (${totalFetched}件)`);
+    }
+    if (!records.length) {
+      showToast("コピー対象のレコードが見つかりませんでした", "warn");
+      setBusy(false);
+      return;
+    }
+    const systemTypes = /* @__PURE__ */ new Set([
+      "RECORD_NUMBER",
+      "CREATOR",
+      "CREATED_TIME",
+      "MODIFIER",
+      "UPDATED_TIME",
+      "STATUS",
+      "STATUS_ASSIGNEE",
+      "CALC",
+      "CATEGORY",
+      "__ID__",
+      "__REVISION__"
+    ]);
+    const systemKeys = /* @__PURE__ */ new Set(["$id", "$revision"]);
+    const cleanRecords = records.map((rec) => {
+      const clean = {};
+      for (const [k, v] of Object.entries(rec)) {
+        if (!v || typeof v !== "object") continue;
+        if (systemKeys.has(k)) continue;
+        if (systemTypes.has(v.type)) continue;
+        if (v.type === "SUBTABLE") {
+          const rows = Array.isArray(v.value) ? v.value : [];
+          const cleanSub = rows.map((sRow) => {
+            const inner = sRow && typeof sRow === "object" && sRow.value && typeof sRow.value === "object" ? sRow.value : {};
+            const cleanSRow = {};
+            for (const [sk, sv] of Object.entries(inner)) {
+              if (systemKeys.has(sk)) continue;
+              if (!sv || typeof sv !== "object") continue;
+              if (systemTypes.has(sv.type)) continue;
+              if (sv.type === "FILE") continue;
+              if (sv && typeof sv === "object") cleanSRow[sk] = { value: sv.value };
+            }
+            return { value: cleanSRow };
+          });
+          clean[k] = { value: cleanSub };
+        } else {
+          clean[k] = { value: v.value };
+        }
+      }
+      return clean;
+    });
+    if (!await confirmDestructive({
+      title: "レコード登録の最終確認",
+      body: `${records.length} 件のレコードを比較先 (AppID: ${tgtApp}) へ登録します。
+この処理は元に戻せません。`,
+      keyword: tgtApp,
+      okLabel: "レコードを登録",
+      riskTone: "danger"
+    })) {
+      setBusy(false);
+      return;
+    }
+    setBusy(true, `インポート開始... (対象 ${records.length}件)`);
+    const batchSize = 100;
+    let successCount = 0;
+    for (let i = 0; i < cleanRecords.length; i += batchSize) {
+      const batch = cleanRecords.slice(i, i + batchSize);
+      setBusy(true, `登録実行中... (${i + 1} ～ ${i + batch.length} / ${cleanRecords.length} 件目)`);
+      try {
+        await apiPost(tgtGuest, "/records.json", { app: tgtApp, records: batch });
+        successCount += batch.length;
+      } catch (e) {
+        setBusy(false);
+        throw new Error(`レコード登録エラー（${i + 1}～${i + batch.length}件目付近 / 既に成功 ${successCount}件）: ${e && e.message || e}`);
+      }
+    }
+    setBusy(false);
+    showToast(`完了: ${successCount}件のレコードを比較先へコピーしました。`, "success");
+  }
+  function getTemplates() {
+    return { ...templateMemory };
+  }
+  function renderTemplateOptions() {
+    const sel = getToolDocument().getElementById("u_templateSelect");
+    if (!sel) return;
+    const tpls = getTemplates();
+    const current = sel.value;
+    const keys = Object.keys(tpls).sort((a, b) => tpls[b].savedAt - tpls[a].savedAt);
+    if (!keys.length) {
+      sel.innerHTML = '<option value="">-- 保存済なし --</option>';
+      return;
+    }
+    sel.innerHTML = keys.map((k) => `<option value="${esc(k)}">${esc(k)} (${new Date(tpls[k].savedAt).toLocaleDateString()})</option>`).join("");
+    if (tpls[current]) sel.value = current;
+  }
+  async function saveTemplate() {
+    const name = getToolDocument().getElementById("u_templateSaveName")?.value?.trim();
+    if (!name) throw new Error("保存するデータ名を入力してください");
+    const c = commonParams();
+    if (!c.source.appId) throw new Error("テンプレートとして保存する比較元のアプリIDを指定してください");
+    const scopes = SECTION_DEFS.map((s) => s.key);
+    const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
+    const tpls = getTemplates();
+    tpls[name] = { savedAt: Date.now(), bundle };
+    templateMemory = tpls;
+    renderTemplateOptions();
+    getToolDocument().getElementById("u_templateSaveName").value = "";
+    showToast(`データ「${name}」を保存しました。`, "success");
+  }
+  function loadTemplate() {
+    const name = getToolDocument().getElementById("u_templateSelect")?.value;
+    if (!name) return;
+    const tpls = getTemplates();
+    const tpl = tpls[name];
+    if (!tpl || !tpl.bundle) {
+      showToast("指定されたデータが存在しません", "error");
+      return;
+    }
+    state.importedSourceBundle = tpl.bundle;
+    state.importedSourceName = `[テンプレート] ${name}`;
+    renderBundleState();
+    showToast(`テンプレート「${name}」を比較元としてセットしました。差分比較を実行してください。`, "success");
+  }
+  function deleteTemplate() {
+    const name = getToolDocument().getElementById("u_templateSelect")?.value;
+    if (!name) return;
+    if (!kusConfirm(`テンプレート「${name}」を削除しますか？`)) return;
+    const tpls = getTemplates();
+    delete tpls[name];
+    templateMemory = tpls;
+    renderTemplateOptions();
+    setStatus(`テンプレート「${name}」を削除しました`);
+  }
+  var chunkArray, CSV_IMPORT_UNSUPPORTED_FIELD_TYPES, templateMemory;
+  var init_record = __esm({
+    "src/tabs/record.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      init_utils();
+      init_psychology();
+      init_api();
+      init_components();
+      init_diff();
+      init_dialog();
+      chunkArray = (arr, size) => {
+        const out = [];
+        for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+        return out;
+      };
+      CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
+        "RECORD_NUMBER",
+        "CREATOR",
+        "CREATED_TIME",
+        "MODIFIER",
+        "UPDATED_TIME",
+        "STATUS",
+        "STATUS_ASSIGNEE",
+        "CALC",
+        "CATEGORY",
+        "__ID__",
+        "__REVISION__",
+        "FILE",
+        "SUBTABLE",
+        "REFERENCE_TABLE",
+        "LABEL",
+        "HR",
+        "SPACER"
+      ]);
+      templateMemory = {};
     }
   });
 
   // src/reflect/apply.ts
+  function getLookupCache(cacheKey, now) {
+    const hit = _lookupPreflightCache.get(cacheKey);
+    if (!hit) return void 0;
+    const ttl = hit.ok ? LOOKUP_CACHE_TTL_OK_MS : LOOKUP_CACHE_TTL_NG_MS;
+    if (now - hit.at > ttl) {
+      _lookupPreflightCache.delete(cacheKey);
+      return void 0;
+    }
+    return hit;
+  }
   async function preflightLookupMap(lookupMap, prefix) {
     const entries = Object.entries(lookupMap || {});
     if (!entries.length) return { ok: true, missing: [] };
     const missing = [];
+    const now = Date.now();
     for (const [from, to] of entries) {
       const target = String(to || "").trim();
       if (!target || !/^\d+$/.test(target)) {
@@ -13230,17 +14511,18 @@ ${tgt.full}`);
         continue;
       }
       const cacheKey = `${prefix}::${target}`;
-      if (_lookupPreflightCache.has(cacheKey)) {
-        if (_lookupPreflightCache.get(cacheKey) === false) {
-          missing.push({ from, to: target, reason: "変換先アプリが見つかりません" });
+      const cached = getLookupCache(cacheKey, now);
+      if (cached) {
+        if (cached.ok === false) {
+          missing.push({ from, to: target, reason: "変換先アプリが見つかりません（キャッシュ）" });
         }
         continue;
       }
       try {
         await apiGet(prefix, "/app.json", { id: target });
-        _lookupPreflightCache.set(cacheKey, true);
+        _lookupPreflightCache.set(cacheKey, { ok: true, at: Date.now() });
       } catch (e) {
-        _lookupPreflightCache.set(cacheKey, false);
+        _lookupPreflightCache.set(cacheKey, { ok: false, at: Date.now() });
         missing.push({ from, to: target, reason: `取得失敗: ${e?.message || String(e)}` });
       }
     }
@@ -13253,7 +14535,7 @@ ${tgt.full}`);
     const message = `Lookup 変換ルールに問題があります:
 ${lines.join("\n")}
 
-それでも続行しますか？`;
+[OK] 続行 / [キャンセル] 中断（キャッシュをクリアして再判定するには clearLookupPreflightCache() を呼んでください）`;
     if (!kusConfirm(message)) {
       throw new Error("Lookup 変換ルールのプリフライトで中断しました");
     }
@@ -13519,19 +14801,28 @@ ${lines.join("\n")}
       const req = list[i];
       try {
         assertAllowsMutatingRestCall(prefix, req.path, req.method);
-        let _err;
-        for (let _r = 0; _r <= 2; _r++) {
+        let _err = null;
+        let _attempts = 0;
+        for (let _r = 0; _r < APPLY_RETRY_MAX_ATTEMPTS; _r++) {
+          _attempts = _r + 1;
           try {
             await kintone.api(`${prefix}${req.path}`, req.method, req.body);
             _err = null;
             break;
           } catch (re) {
             _err = re;
-            if (_r < 2) await new Promise((r) => setTimeout(r, 700 * (_r + 1)));
+            const canRetry = _r < APPLY_RETRY_MAX_ATTEMPTS - 1 && isRetriableMutation(req.method, re);
+            if (!canRetry) break;
+            const waitMs = computeRetryDelayMs(_r, APPLY_RETRY_BASE_DELAY_MS, APPLY_RETRY_MAX_DELAY_MS);
+            if (logs) logs.push(`  - retry ${req.method} ${req.path} (attempt ${_r + 2}/${APPLY_RETRY_MAX_ATTEMPTS}, status ${resolveHttpStatus(re) || "n/a"}, wait ${waitMs}ms)`);
+            await new Promise((r) => setTimeout(r, waitMs));
           }
         }
         if (_err) throw apiErrorWithContext(_err, { method: req.method, prefix, path: req.path, payload: req.body });
-        if (logs) logs.push(`  - OK ${req.method} ${req.path}${req.note ? ` (${req.note})` : ""}`);
+        if (logs) {
+          const retrySuffix = _attempts > 1 ? ` (retried ${_attempts - 1}回)` : "";
+          logs.push(`  - OK ${req.method} ${req.path}${req.note ? ` (${req.note})` : ""}${retrySuffix}`);
+        }
       } catch (e) {
         if (logs) logs.push(`  - NG ${req.method} ${req.path}: ${e.message || String(e)}`);
         if (stopOnError) throw e;
@@ -13577,39 +14868,29 @@ ${lines.join("\n")}
       setStatus(`${phaseLabel}中 ${i + 1}/${scopes.length}: ${def.label}`);
       if (onProgress) onProgress(i, scopes.length);
       try {
+        let before = null;
+        let patched = null;
         if (secKey === "fieldSettings") {
           const current = await apiGet(prefix, "/app/form/fields.json", { app });
-          const beforeProps = current.properties || {};
-          const afterProps = filterWritableFieldProps2(sourceSec.properties || sourceSec, true);
-          await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, null, stopOnError);
-          logs.push(`OK ${def.label}`);
-          recordSectionResult(sectionResults, secKey, def.label, "ok", "");
-          continue;
-        }
-        if (secKey === "viewSettings") {
+          before = current;
+          patched = { properties: filterWritableFieldProps2(sourceSec.properties || sourceSec, true) };
+        } else if (secKey === "viewSettings") {
           const current = await apiGet(prefix, "/app/views.json", { app });
-          await applyViewsSectionDiff(prefix, app, current.views || {}, sourceSec.views || sourceSec || {}, logs, stopOnError);
-          logs.push(`OK ${def.label}`);
-          recordSectionResult(sectionResults, secKey, def.label, "ok", "");
-          continue;
-        }
-        if (secKey === "reportSettings") {
+          before = current;
+          patched = { views: sourceSec.views || sourceSec || {} };
+        } else if (secKey === "reportSettings") {
           const current = await apiGet(prefix, "/app/reports.json", { app });
-          await applyReportsSectionDiff(prefix, app, current.reports || {}, sourceSec.reports || sourceSec || {}, logs, stopOnError);
-          logs.push(`OK ${def.label}`);
-          recordSectionResult(sectionResults, secKey, def.label, "ok", "");
-          continue;
-        }
-        if (secKey === "actionSettings") {
+          before = current;
+          patched = { reports: sourceSec.reports || sourceSec || {} };
+        } else if (secKey === "actionSettings") {
           const current = await apiGet(prefix, "/app/actions.json", { app });
-          await applyActionsSectionDiff(prefix, app, current.actions || {}, sourceSec.actions || sourceSec || {}, logs, stopOnError);
-          logs.push(`OK ${def.label}`);
-          recordSectionResult(sectionResults, secKey, def.label, "ok", "");
-          continue;
+          before = current;
+          patched = { actions: sourceSec.actions || sourceSec || {} };
+        } else {
+          before = null;
+          patched = sourceSec;
         }
-        const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder?.(sourceSec) || {} }, note: `${def.label} put` }];
-        appendRequestPlanLogs(logs, { requests: reqs });
-        await executeRequestPlan(prefix, reqs, logs, stopOnError);
+        await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes: null, stopOnError });
         logs.push(`OK ${def.label}`);
         recordSectionResult(sectionResults, secKey, def.label, "ok", "");
       } catch (e) {
@@ -13650,6 +14931,9 @@ ${lines.join("\n")}
     const backupScopes = Array.isArray(backup?.scopes) ? backup.scopes : Object.keys(backup.bundle.sections || {});
     const checkable = targetScopes.filter((key) => backupScopes.includes(key));
     if (!checkable.length) return null;
+    const expectedSectionKeys = new Set(
+      Array.isArray(state.lastApplyPlan?.plannedRequests) ? state.lastApplyPlan.plannedRequests.map((r) => String(r?.sectionKey || "")).filter(Boolean) : []
+    );
     const prefix = buildApiPrefix(targetGuestId, true);
     const findings = [];
     for (const secKey of checkable) {
@@ -13664,7 +14948,8 @@ ${lines.join("\n")}
         if (beforeText !== afterText) {
           findings.push({
             sectionKey: secKey,
-            label: def.label || secKey
+            label: def.label || secKey,
+            expected: expectedSectionKeys.has(secKey)
           });
         }
       } catch (e) {
@@ -13675,18 +14960,131 @@ ${lines.join("\n")}
         });
       }
     }
+    const expectedChanges = findings.filter((x) => !x.error && x.expected);
+    const unexpectedChanges = findings.filter((x) => !x.error && !x.expected);
+    const fetchErrors = findings.filter((x) => !!x.error);
     if (Array.isArray(logs)) {
       if (!findings.length) {
         logs.push("反映後検証: バックアップ時点からの変化は検出されませんでした");
       } else {
-        logs.push(`反映後検証: ${findings.length}セクションがバックアップ時点から変化しました`);
-        for (const item of findings) {
-          if (item.error) logs.push(`  - ${item.label}: 取得失敗 ${item.error}`);
-          else logs.push(`  - ${item.label}: バックアップ時点から内容が変化`);
+        if (expectedChanges.length) {
+          logs.push(`反映後検証: 想定通りの変化 ${expectedChanges.length} セクション`);
+          for (const item of expectedChanges) {
+            logs.push(`  - ${item.label}: プラン通りに変化（OK）`);
+          }
+        }
+        if (unexpectedChanges.length) {
+          logs.push(`反映後検証: ⚠ 想定外の変化 ${unexpectedChanges.length} セクション（同時編集の疑い）`);
+          for (const item of unexpectedChanges) {
+            logs.push(`  - ${item.label}: プランに含まれていないが内容が変化`);
+          }
+        }
+        if (fetchErrors.length) {
+          logs.push(`反映後検証: 取得失敗 ${fetchErrors.length} セクション`);
+          for (const item of fetchErrors) {
+            logs.push(`  - ${item.label}: ${item.error}`);
+          }
         }
       }
     }
-    return { checked: checkable.length, findings };
+    return {
+      checked: checkable.length,
+      findings,
+      expectedCount: expectedChanges.length,
+      unexpectedCount: unexpectedChanges.length,
+      errorCount: fetchErrors.length
+    };
+  }
+  async function applySectionDiffByKey(opts) {
+    const { secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError } = opts;
+    if (secKey === "fieldSettings") {
+      const beforeProps = before?.properties || before || {};
+      const afterProps = patched?.properties || patched || {};
+      await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
+      return;
+    }
+    if (secKey === "viewSettings") {
+      const beforeViews = before?.views || before || {};
+      const afterViews = patched?.views || patched || {};
+      await applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError);
+      return;
+    }
+    if (secKey === "reportSettings") {
+      const beforeReports = before?.reports || before || {};
+      const afterReports = patched?.reports || patched || {};
+      await applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError);
+      return;
+    }
+    if (secKey === "actionSettings") {
+      const beforeActions = before?.actions || before || {};
+      const afterActions = patched?.actions || patched || {};
+      await applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError);
+      return;
+    }
+    const reqs = [{
+      method: "PUT",
+      path: def.endpoint,
+      body: { app, ...def.putBuilder?.(patched) || {} },
+      note: `${def.label} put`
+    }];
+    appendRequestPlanLogs(logs, { requests: reqs });
+    await executeRequestPlan(prefix, reqs, logs, stopOnError);
+  }
+  async function finalizeApplyResult(opts) {
+    const { mode, c, app, scopes, sectionResults, hadError, logs, progress, backupFilename, phaseLabel, finishMetrics } = opts;
+    try {
+      await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes, logs });
+    } catch (verifyErr) {
+      if (Array.isArray(logs)) {
+        logs.push(`反映後検証: ⚠ 検証中にエラーが発生しました: ${verifyErr?.message || String(verifyErr)}`);
+      }
+    }
+    appendProgressSummary(logs);
+    renderProgressLog(logs, { phase: phaseLabel || "反映完了", scopes });
+    commitApplyReport({
+      mode,
+      appId: app,
+      scopes,
+      sectionResults,
+      hadError,
+      sourceAppId: c.source?.appId,
+      sourceGuestId: c.source?.guestId,
+      targetGuestId: c.target?.guestId
+    });
+    renderReflectAssistPanel();
+    renderReflectMainPanel();
+    if (progress) {
+      progress.finish({
+        title: hadError ? `${phaseLabel || "反映"} 完了（一部エラー）` : `${phaseLabel || "反映"} 完了`,
+        hasError: hadError,
+        metrics: finishMetrics || [
+          { label: "比較先アプリ", value: `#${app}` },
+          { label: "結果", value: hadError ? "一部失敗" : "全成功", tone: hadError ? "warn" : "ok" }
+        ],
+        hint: backupFilename ? `バックアップ保存先: ${backupFilename}
+本番デプロイは kintone 管理画面から手動で実施してください。` : "本番デプロイは kintone 管理画面から手動で実施してください。"
+      });
+    }
+  }
+  function commitPartialApplyOnError(opts) {
+    const { mode, c, app, scopes, sectionResults, err, logs } = opts;
+    if (!Array.isArray(sectionResults) || !sectionResults.length) return;
+    if (Array.isArray(logs)) {
+      logs.push(`NG 反映処理が中断されました: ${err?.message || String(err)}`);
+    }
+    try {
+      commitApplyReport({
+        mode,
+        appId: app || "",
+        scopes,
+        sectionResults,
+        hadError: true,
+        sourceAppId: c?.source?.appId,
+        sourceGuestId: c?.source?.guestId,
+        targetGuestId: c?.target?.guestId
+      });
+    } catch (_e) {
+    }
   }
   function commitApplyReport({ mode, appId, scopes, sectionResults, hadError, sourceAppId, sourceGuestId, targetGuestId }) {
     const now = Date.now();
@@ -13804,12 +15202,27 @@ ${lines.join("\n")}
       },
       bundle
     };
-    const filename = buildExportFilename("比較先プレビュー_バックアップ", "json", {
+    const jsonFilename = buildExportFilename("比較先プレビュー_バックアップ", "json", {
       appLabel: buildAppFilenameLabel(target.appId, extractAppNameFromBundle(bundle))
     });
+    const filename = jsonFilename.replace(/\.json$/i, ".zip");
     state.lastPreviewBackupPayload = deepClone(payload);
     state.lastPreviewBackupFilename = filename;
-    downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
+    const JSZipCtor = await loadJSZip();
+    const zip = new JSZipCtor();
+    zip.file(jsonFilename, JSON.stringify(payload, null, 2));
+    zip.file("README.txt", [
+      "kintone 統合ツール 比較先プレビューバックアップ",
+      `generatedAt: ${payload.generatedAt}`,
+      `targetAppId: ${target.appId}`,
+      `targetGuestId: ${target.guestId || ""}`,
+      `scopes: ${actualScopes.join(", ")}`,
+      `health: ${formatBackupHealthSummary(health)}`,
+      "",
+      "このZIPはブラウザストレージに保存せず、取得直後に明示ダウンロードしています。"
+    ].join("\n"));
+    const blob = await zip.generateAsync({ type: "blob" });
+    downloadBlob(filename, blob);
     const statusMessage = `比較先(プレビュー)バックアップ保存: ${filename} (${formatBackupHealthSummary(health)} / ${scopeSummary || "-"})`;
     if (!options?.silentStatus) setStatus(statusMessage, health.ngCount > 0);
     renderBackupStatus(filename, actualScopes, health);
@@ -13856,7 +15269,6 @@ ${lines.join("\n")}
     if (requestCount >= APPLY_GUARD_REQUEST_THRESHOLD) {
       issues.push(`APIリクエスト予定数が多いです（${requestCount}件 / しきい値 ${APPLY_GUARD_REQUEST_THRESHOLD}件）`);
     }
-    if (!issues.length) return true;
     if (Array.isArray(options.scopeLabels) && options.scopeLabels.length) {
       labels.push(`対象セクション: ${options.scopeLabels.join(", ")}`);
     }
@@ -13864,18 +15276,18 @@ ${lines.join("\n")}
     if (requestCount > 0) labels.push(`予定リクエスト: ${requestCount}件`);
     const modeLabel = mode === "nodes" ? "ノード反映" : mode === "patch" ? "JSONパッチ反映" : "プレビュー反映";
     const targetAppId = String(c?.target?.appId || "").trim();
-    const body = [
-      `【安全確認: ${modeLabel}】`,
+    const bodyLines = [
+      `【最終確認: ${modeLabel}】`,
       `比較先アプリ: ${targetAppId || "-"}`,
-      ...labels,
-      "",
-      "注意点:",
-      ...issues.map((line) => ` - ${line}`)
-    ].join("\n");
+      ...labels
+    ];
+    if (issues.length) {
+      bodyLines.push("", "注意点:", ...issues.map((line) => ` - ${line}`));
+    }
     const highRisk = isSameConnectionPair(c) || diffSummary.high > 0;
     return confirmDestructive({
       title: `${modeLabel} の最終確認`,
-      body,
+      body: bodyLines.join("\n"),
       keyword: highRisk && targetAppId ? targetAppId : "実行する",
       okLabel: `${modeLabel}を実行`,
       riskTone: highRisk ? "danger" : "warning"
@@ -14342,12 +15754,6 @@ ${lines.join("\n")}
     const sectionKeys = Object.keys(payload.sections).filter((key) => SECTION_DEFS.find((item) => item.key === key)?.put);
     if (!sectionKeys.length) throw new Error("適用可能なパッチセクションがありません");
     renderPatchJsonSummary(payload);
-    if (!kusConfirm(`JSONパッチを比較先(プレビュー)へ反映しますか？
-比較先アプリ: ${c.target.appId}
-対象セクション: ${sectionKeys.length}件`)) {
-      setStatus("JSONパッチ反映をキャンセルしました");
-      return;
-    }
     const patchRows = Object.values(payload.sections || {}).flat().filter(Boolean);
     const patchSummary = summarizeRowsBySeverity(patchRows);
     const planReqCount = Number(state.lastApplyPlan?.totalReq || 0);
@@ -14385,22 +15791,8 @@ ${lines.join("\n")}
         const current = normalize(await apiGet(prefix, def.endpoint, { app }));
         const before = deepClone(current);
         const { patched, appliedCount, rows: sortedRows } = applyPatchRowsToSection(current, rows, secKey);
-        if (secKey === "fieldSettings") {
-          const beforeProps = before.properties || before || {};
-          const afterProps = patched.properties || patched || {};
-          const sourceModeCodes = new Set(sortedRows.map(extractFieldCodeFromRowPath).filter((code) => !!code));
-          await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
-        } else if (secKey === "viewSettings") {
-          await applyViewsSectionDiff(prefix, app, before.views || before || {}, patched.views || patched || {}, logs, stopOnError);
-        } else if (secKey === "reportSettings") {
-          await applyReportsSectionDiff(prefix, app, before.reports || before || {}, patched.reports || patched || {}, logs, stopOnError);
-        } else if (secKey === "actionSettings") {
-          await applyActionsSectionDiff(prefix, app, before.actions || before || {}, patched.actions || patched || {}, logs, stopOnError);
-        } else {
-          const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder?.(patched) || {} }, note: `${def.label} put` }];
-          appendRequestPlanLogs(logs, { requests: reqs });
-          await executeRequestPlan(prefix, reqs, logs, stopOnError);
-        }
+        const sourceModeCodes = secKey === "fieldSettings" ? new Set(sortedRows.map(extractFieldCodeFromRowPath).filter((code) => !!code)) : null;
+        await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError });
         logs.push(`OK ${def.label}: patch ${appliedCount}/${sortedRows.length}`);
         recordSectionResult(sectionResults, secKey, def.label, "ok", `${appliedCount}/${sortedRows.length}`);
       } catch (e) {
@@ -14414,21 +15806,16 @@ ${lines.join("\n")}
         }
       }
     }
-    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: sectionKeys, logs });
-    appendProgressSummary(logs);
-    renderProgressLog(logs, { phase: "JSONパッチ反映完了" });
-    commitApplyReport({
+    await finalizeApplyResult({
       mode: "patch",
-      appId: app,
+      c,
+      app,
       scopes: sectionKeys,
       sectionResults,
       hadError,
-      sourceAppId: c.source.appId,
-      sourceGuestId: c.source.guestId,
-      targetGuestId: c.target.guestId
+      logs,
+      phaseLabel: "JSONパッチ反映完了"
     });
-    renderReflectAssistPanel();
-    renderReflectMainPanel();
     setStatus(hadError ? "JSONパッチ反映完了（一部エラーあり）" : "JSONパッチ反映完了");
   }
   async function runApplyPreviewByNodes() {
@@ -14458,9 +15845,19 @@ ${lines.join("\n")}
       setStatus("反映をキャンセルしました");
       return;
     }
-    const nodeSummary = summarizeRowsBySeverity(rows);
+    const excludedSetN = new Set(
+      state.lastApplyPlan?.signature === planSignature && Array.isArray(state.lastApplyPlan?.excludedSectionKeys) ? state.lastApplyPlan.excludedSectionKeys : []
+    );
+    const excludedNodeScopes = nodeScopes.filter((k) => excludedSetN.has(k));
+    const effectiveRows = rows.filter((r) => !excludedSetN.has(r.sectionKey));
+    if (!effectiveRows.length) {
+      setStatus("全セクションが除外されているため反映できません。プラン画面で除外を解除してください", true);
+      return;
+    }
+    const effectiveNodeScopes = [...new Set(effectiveRows.map((r) => r.sectionKey).filter(Boolean))];
+    const nodeSummary = summarizeRowsBySeverity(effectiveRows);
     const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
-    const nodeScopeLabels = nodeScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
+    const nodeScopeLabels = effectiveNodeScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
     if (!await confirmApplyRiskGuard("nodes", c, { diffSummary: nodeSummary, requestCount: plannedReq, scopeLabels: nodeScopeLabels })) {
       setStatus("反映をキャンセルしました（安全確認）");
       return;
@@ -14472,7 +15869,7 @@ ${lines.join("\n")}
     let hadError = false;
     let backupFilename = "";
     const bySection = {};
-    for (const row of rows) {
+    for (const row of effectiveRows) {
       if (!row.sectionKey) continue;
       if (!bySection[row.sectionKey]) bySection[row.sectionKey] = [];
       bySection[row.sectionKey].push(row);
@@ -14480,19 +15877,24 @@ ${lines.join("\n")}
     const sectionKeys = Object.keys(bySection);
     const progress = startProgress("反映前チェック中...", sectionKeys.length);
     setStatus("反映前チェック中...");
+    const sectionResults = [];
     try {
-      const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, nodeScopes);
-      const srcModeCount = rows.filter((r) => reflectRowModeById(r._id) === "src").length;
-      const tgtModeCount = rows.length - srcModeCount;
+      const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, effectiveNodeScopes);
+      const srcModeCount = effectiveRows.filter((r) => reflectRowModeById(r._id) === "src").length;
+      const tgtModeCount = effectiveRows.length - srcModeCount;
       logs.push(`比較先アプリ: ${app}`);
-      logs.push(`ノードモード選択数: ${rows.length}`);
+      logs.push(`ノードモード選択数: ${effectiveRows.length}${effectiveRows.length !== rows.length ? `（除外 ${rows.length - effectiveRows.length}件）` : ""}`);
       logs.push(`モード内訳: 比較元採用 ${srcModeCount} / 比較先維持 ${tgtModeCount}`);
+      if (excludedNodeScopes.length) {
+        const excludedLabels = excludedNodeScopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ");
+        logs.push(`プラン画面で除外されたセクション: ${excludedLabels}`);
+      }
       logs.push(`エラー時動作: ${stopOnError ? "中断" : "継続"}`);
       if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
       if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
       if (ui.autoBackupPreview?.checked) {
         progress.setLabel("バックアップ保存中...");
-        const backupScopes = [...new Set(rows.map((r) => r.sectionKey).filter(Boolean))];
+        const backupScopes = [...new Set(effectiveRows.map((r) => r.sectionKey).filter(Boolean))];
         const backup = await backupTargetPreviewSettings(c, backupScopes, { silentStatus: true });
         logs.push(`バックアップ保存: ${backup.filename}`);
         assertBackupHealthOk(backup, "ノード反映");
@@ -14500,7 +15902,6 @@ ${lines.join("\n")}
       }
       logs.push("");
       progress.setLabel("差分選択モードで反映中...");
-      const sectionResults = [];
       for (let i = 0; i < sectionKeys.length; i++) {
         const secKey = sectionKeys[i];
         const def = SECTION_DEFS.find((d) => d.key === secKey);
@@ -14525,35 +15926,11 @@ ${lines.join("\n")}
             patched = r.section;
             if (r.applied) appliedCount += 1;
           }
-          if (secKey === "fieldSettings") {
-            const beforeProps = before.properties || before || {};
-            const afterProps = patched.properties || patched || {};
-            const sourceModeCodes = new Set(
-              rowsInSection.filter((row) => reflectRowModeById(row._id) === "src").map(extractFieldCodeFromRowPath).filter((code) => !!code)
-            );
-            await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
-            logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-          } else if (secKey === "viewSettings") {
-            const beforeViews = before.views || before || {};
-            const afterViews = patched.views || patched || {};
-            await applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError);
-            logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-          } else if (secKey === "reportSettings") {
-            const beforeReports = before.reports || before || {};
-            const afterReports = patched.reports || patched || {};
-            await applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError);
-            logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-          } else if (secKey === "actionSettings") {
-            const beforeActions = before.actions || before || {};
-            const afterActions = patched.actions || patched || {};
-            await applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError);
-            logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-          } else {
-            const reqs = [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder?.(patched) || {} }, note: `${def.label} put` }];
-            appendRequestPlanLogs(logs, { requests: reqs });
-            await executeRequestPlan(prefix, reqs, logs, stopOnError);
-            logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-          }
+          const sourceModeCodes = secKey === "fieldSettings" ? new Set(
+            rowsInSection.filter((row) => reflectRowModeById(row._id) === "src").map(extractFieldCodeFromRowPath).filter((code) => !!code)
+          ) : null;
+          await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError });
+          logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
           recordSectionResult(sectionResults, secKey, def.label, "ok", `${appliedCount}/${rowsInSection.length}`);
         } catch (e) {
           hadError = true;
@@ -14567,36 +15944,28 @@ ${lines.join("\n")}
         }
       }
       progress.setProgress(sectionKeys.length, sectionKeys.length);
-      await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: sectionKeys, logs });
-      appendProgressSummary(logs);
-      renderProgressLog(logs, { phase: "ノード反映完了", scopes: sectionKeys });
-      commitApplyReport({
+      setStatus(hadError ? "ノード反映処理完了（一部エラーあり）" : "ノード反映処理完了");
+      await finalizeApplyResult({
         mode: "nodes",
-        appId: app,
+        c,
+        app,
         scopes: sectionKeys,
         sectionResults,
         hadError,
-        sourceAppId: c.source.appId,
-        sourceGuestId: c.source.guestId,
-        targetGuestId: c.target.guestId
-      });
-      renderReflectAssistPanel();
-      renderReflectMainPanel();
-      setStatus(hadError ? "ノード反映処理完了（一部エラーあり）" : "ノード反映処理完了");
-      progress.finish({
-        title: hadError ? "ノード反映 完了（一部エラー）" : "ノード反映 完了",
-        hasError: hadError,
-        metrics: [
+        logs,
+        progress,
+        backupFilename,
+        phaseLabel: "ノード反映",
+        finishMetrics: [
           { label: "比較先アプリ", value: `#${app}` },
-          { label: "反映ノード数", value: `${rows.length}件（比較元採用 ${srcModeCount} / 比較先維持 ${tgtModeCount}）` },
+          { label: "反映ノード数", value: `${effectiveRows.length}件（比較元採用 ${srcModeCount} / 比較先維持 ${tgtModeCount}）${excludedNodeScopes.length ? ` / 除外セクション ${excludedNodeScopes.length}件` : ""}` },
           { label: "対象セクション", value: `${sectionKeys.length}件` },
           { label: "結果", value: hadError ? "一部失敗" : "全成功", tone: hadError ? "warn" : "ok" }
-        ],
-        hint: backupFilename ? `バックアップ保存先: ${backupFilename}
-本番デプロイは kintone 管理画面から手動で実施してください。` : "本番デプロイは kintone 管理画面から手動で実施してください。"
+        ]
       });
     } catch (err) {
       progress.cancel();
+      commitPartialApplyOnError({ mode: "nodes", c, app, scopes: sectionKeys, sectionResults, err, logs });
       const host = ui.result || ui.status;
       if (host) {
         const div = (host.ownerDocument || document).createElement("div");
@@ -14630,79 +15999,84 @@ ${lines.join("\n")}
       setStatus("反映をキャンセルしました");
       return;
     }
-    const actualRows = (state.lastDiffRows || []).filter((row) => row && !row._displayOnly && scopes.includes(row.sectionKey));
+    const excludedSet = new Set(
+      state.lastApplyPlan?.signature === planSignature && Array.isArray(state.lastApplyPlan?.excludedSectionKeys) ? state.lastApplyPlan.excludedSectionKeys : []
+    );
+    const excludedScopes = scopes.filter((k) => excludedSet.has(k));
+    const effectiveScopes = scopes.filter((k) => !excludedSet.has(k));
+    if (!effectiveScopes.length) {
+      setStatus("全セクションが除外されているため反映できません。プラン画面で除外を解除してください", true);
+      return;
+    }
+    const actualRows = (state.lastDiffRows || []).filter((row) => row && !row._displayOnly && effectiveScopes.includes(row.sectionKey));
     const sectionSummary = summarizeRowsBySeverity(actualRows);
     const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
-    const scopeLabels = scopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
+    const scopeLabels = effectiveScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
     if (!await confirmApplyRiskGuard("section", c, { diffSummary: sectionSummary, requestCount: plannedReq, scopeLabels })) {
       setStatus("反映をキャンセルしました（安全確認）");
       return;
     }
     bumpSessionMetric("applyRun");
     saveCurrentDialogState2();
-    const sourceBundle = await getSourceBundleForApply(c, scopes);
+    const sourceBundle = await getSourceBundleForApply(c, effectiveScopes);
     const prefix = buildApiPrefix(c.target.guestId, true);
     const app = c.target.appId;
     const stopOnError = !!ui.stopOnError.checked;
     const logs = [];
     let hadError = false;
     let backupFilename = "";
-    const progress = startProgress("反映前チェック中...", scopes.length);
+    const progress = startProgress("反映前チェック中...", effectiveScopes.length);
     setStatus("反映前チェック中...");
+    const sectionResults = [];
     try {
-      const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, scopes);
+      const recheck = await assertTargetPreviewMatchesPlannedBaseline(prefix, app, effectiveScopes);
       logs.push(`比較先アプリ: ${app}`);
-      logs.push(`適用セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ")}`);
+      logs.push(`適用セクション: ${effectiveScopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ")}`);
+      if (excludedScopes.length) {
+        const excludedLabels = excludedScopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ");
+        logs.push(`プラン画面で除外されたセクション: ${excludedLabels}`);
+      }
       logs.push(`エラー時動作: ${stopOnError ? "中断" : "継続"}`);
       if (recheck.checked.length) logs.push(`反映前チェック: ${formatSectionList(recheck.checked)} はプラン確認時から変更なし`);
       if (recheck.skipped.length) logs.push(`反映前チェック(未判定): ${formatSectionList(recheck.skipped)}`);
       if (ui.autoBackupPreview?.checked) {
         progress.setLabel("バックアップ保存中...");
-        const backup = await backupTargetPreviewSettings(c, scopes, { silentStatus: true });
+        const backup = await backupTargetPreviewSettings(c, effectiveScopes, { silentStatus: true });
         logs.push(`バックアップ保存: ${backup.filename}`);
         assertBackupHealthOk(backup, "プレビュー反映");
         backupFilename = backup.filename || "";
       }
       logs.push("");
       progress.setLabel("プレビュー反映を実行中...");
-      const sectionResults = [];
-      hadError = await applySectionsLoop(prefix, app, sourceBundle, scopes, logs, lookupMap, stopOnError, {
+      hadError = await applySectionsLoop(prefix, app, sourceBundle, effectiveScopes, logs, lookupMap, stopOnError, {
         phaseLabel: "反映",
         onProgress: (i, total) => {
-          renderProgressLog(logs, { phase: "プレビュー反映実行中", current: i, total, scopes });
+          renderProgressLog(logs, { phase: "プレビュー反映実行中", current: i, total, scopes: effectiveScopes });
           progress.setProgress(i, total);
         },
         sectionResults
       });
-      await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes, logs });
-      appendProgressSummary(logs);
-      renderProgressLog(logs, { phase: "プレビュー反映完了", scopes });
-      commitApplyReport({
+      setStatus("プレビュー反映処理完了");
+      await finalizeApplyResult({
         mode: "section",
-        appId: app,
-        scopes,
+        c,
+        app,
+        scopes: effectiveScopes,
         sectionResults,
         hadError,
-        sourceAppId: c.source.appId,
-        sourceGuestId: c.source.guestId,
-        targetGuestId: c.target.guestId
-      });
-      renderReflectAssistPanel();
-      renderReflectMainPanel();
-      setStatus("プレビュー反映処理完了");
-      progress.finish({
-        title: hadError ? "プレビュー反映 完了（一部エラー）" : "プレビュー反映 完了",
-        hasError: hadError,
-        metrics: [
+        logs,
+        progress,
+        backupFilename,
+        phaseLabel: "プレビュー反映",
+        finishMetrics: [
           { label: "比較先アプリ", value: `#${app}` },
-          { label: "適用セクション", value: `${scopes.length}件` },
+          { label: "適用セクション", value: excludedScopes.length ? `${effectiveScopes.length}件（除外 ${excludedScopes.length}件）` : `${effectiveScopes.length}件` },
           { label: "結果", value: hadError ? "一部失敗" : "全成功", tone: hadError ? "warn" : "ok" }
-        ],
-        hint: backupFilename ? `バックアップ保存先: ${backupFilename}
-本番デプロイは kintone 管理画面から手動で実施してください。` : "本番デプロイは kintone 管理画面から手動で実施してください。"
+        ]
       });
     } catch (err) {
       progress.cancel();
+      commitPartialApplyOnError({ mode: "section", c, app, scopes: effectiveScopes, sectionResults, err, logs });
       const host = ui.result || ui.status;
       if (host) {
         const div = (host.ownerDocument || document).createElement("div");
@@ -14962,7 +16336,7 @@ ${lines.join("\n")}
       throw err;
     }
   }
-  var patchJsonDiffTimer, patchJsonDiffSeq, APPLY_GUARD_DIFF_THRESHOLD, APPLY_GUARD_REQUEST_THRESHOLD, _lookupPreflightCache, ARRAY_KEY_FALLBACK_CANDIDATES;
+  var patchJsonDiffTimer, patchJsonDiffSeq, APPLY_GUARD_DIFF_THRESHOLD, APPLY_GUARD_REQUEST_THRESHOLD, LOOKUP_CACHE_TTL_OK_MS, LOOKUP_CACHE_TTL_NG_MS, _lookupPreflightCache, ARRAY_KEY_FALLBACK_CANDIDATES, APPLY_RETRY_MAX_ATTEMPTS, APPLY_RETRY_BASE_DELAY_MS, APPLY_RETRY_MAX_DELAY_MS;
   var init_apply = __esm({
     "src/reflect/apply.ts"() {
       "use strict";
@@ -14978,13 +16352,19 @@ ${lines.join("\n")}
       init_dialog();
       init_oss_integrations();
       init_psychology();
+      init_record();
       init_rowMode();
       patchJsonDiffTimer = 0;
       patchJsonDiffSeq = 0;
       APPLY_GUARD_DIFF_THRESHOLD = 100;
       APPLY_GUARD_REQUEST_THRESHOLD = 80;
+      LOOKUP_CACHE_TTL_OK_MS = 5 * 60 * 1e3;
+      LOOKUP_CACHE_TTL_NG_MS = 60 * 1e3;
       _lookupPreflightCache = /* @__PURE__ */ new Map();
       ARRAY_KEY_FALLBACK_CANDIDATES = ["code", "id", "name", "entity", "field", "status", "state", "app", "from", "to", "key"];
+      APPLY_RETRY_MAX_ATTEMPTS = 3;
+      APPLY_RETRY_BASE_DELAY_MS = 600;
+      APPLY_RETRY_MAX_DELAY_MS = 4e3;
     }
   });
 
@@ -14993,6 +16373,7 @@ ${lines.join("\n")}
   __export(plan_exports, {
     APPLY_REQUEST_CHUNK_SIZE: () => APPLY_REQUEST_CHUNK_SIZE,
     appendRequestPlanLogs: () => appendRequestPlanLogs,
+    buildItemizedSectionPreview: () => buildItemizedSectionPreview,
     buildMapSectionPreview: () => buildMapSectionPreview,
     buildWholeSectionPreview: () => buildWholeSectionPreview,
     ensureApplyPlanApproved: () => ensureApplyPlanApproved,
@@ -15004,11 +16385,13 @@ ${lines.join("\n")}
     planViewsSectionDiffRequests: () => planViewsSectionDiffRequests,
     renderAppIdConfirmSection: () => renderAppIdConfirmSection2,
     runExportDryRunPlan: () => runExportDryRunPlan,
+    runExportReviewZip: () => runExportReviewZip,
     runPreviewApplyPlan: () => runPreviewApplyPlan,
     runPreviewApplyPlanNodes: () => runPreviewApplyPlanNodes,
     showInlineConfirmation: () => showInlineConfirmation,
     splitMapSectionDiff: () => splitMapSectionDiff,
     splitUpsertMap: () => splitUpsertMap3,
+    togglePlanSectionExclude: () => togglePlanSectionExclude,
     upsertFields: () => upsertFields2
   });
   function computeCurrentReflectPlanSignature() {
@@ -15131,7 +16514,7 @@ ${lines.join("\n")}
     for (const [k, v] of Object.entries(after)) {
       if (!Object.prototype.hasOwnProperty.call(before, k)) {
         add[k] = deepClone(v);
-      } else if (stableStringify(before[k]) !== stableStringify(v)) {
+      } else if (stableStringifyMemo(before[k]) !== stableStringifyMemo(v)) {
         update[k] = deepClone(v);
       }
     }
@@ -15159,7 +16542,7 @@ ${lines.join("\n")}
     for (const [k, v] of Object.entries(after)) {
       if (!Object.prototype.hasOwnProperty.call(before, k)) {
         added.push({ key: k, after: truncateForPreview(v) });
-      } else if (stableStringify(before[k]) !== stableStringify(v)) {
+      } else if (stableStringifyMemo(before[k]) !== stableStringifyMemo(v)) {
         updated.push({ key: k, before: truncateForPreview(before[k]), after: truncateForPreview(v) });
       }
     }
@@ -15187,7 +16570,250 @@ ${lines.join("\n")}
     const changed = stableStringify(before) !== stableStringify(after);
     return { beforeText, afterText, changed };
   }
-  function chunkObjectEntries(obj, size = APPLY_REQUEST_CHUNK_SIZE) {
+  function formatEntityRef(entityWrap) {
+    if (!entityWrap) return "-";
+    const e = entityWrap.entity || entityWrap;
+    const t = String(e?.type || "").toUpperCase();
+    const typeLabel = ENTITY_TYPE_LABEL_MAP[t] || t || "不明";
+    const id = e?.name || e?.code || "";
+    return id ? `${typeLabel}:${id}` : typeLabel;
+  }
+  function diffArrayByKey(before, after, keyFn, labelFn) {
+    const beforeList = Array.isArray(before) ? before : [];
+    const afterList = Array.isArray(after) ? after : [];
+    const beforeMap = /* @__PURE__ */ new Map();
+    beforeList.forEach((it, i) => beforeMap.set(keyFn(it, i), { val: it, idx: i }));
+    const afterMap = /* @__PURE__ */ new Map();
+    afterList.forEach((it, i) => afterMap.set(keyFn(it, i), { val: it, idx: i }));
+    const out = [];
+    for (const [k, entry] of afterMap) {
+      const v = entry.val;
+      if (!beforeMap.has(k)) {
+        out.push({ status: "added", key: k, label: labelFn(v, entry.idx), afterText: truncateForPreview(v) });
+      } else {
+        const bv = beforeMap.get(k).val;
+        if (stableStringifyMemo(bv) !== stableStringifyMemo(v)) {
+          out.push({ status: "updated", key: k, label: labelFn(v, entry.idx), beforeText: truncateForPreview(bv), afterText: truncateForPreview(v) });
+        }
+      }
+    }
+    for (const [k, entry] of beforeMap) {
+      if (!afterMap.has(k)) {
+        out.push({ status: "removed", key: k, label: labelFn(entry.val, entry.idx), beforeText: truncateForPreview(entry.val) });
+      }
+    }
+    return out;
+  }
+  function diffMapByKey(before, after, labelFn) {
+    const out = [];
+    const beforeMap = before && typeof before === "object" && !Array.isArray(before) ? before : {};
+    const afterMap = after && typeof after === "object" && !Array.isArray(after) ? after : {};
+    for (const [k, v] of Object.entries(afterMap)) {
+      if (!Object.prototype.hasOwnProperty.call(beforeMap, k)) {
+        out.push({ status: "added", key: k, label: labelFn(k, v), afterText: truncateForPreview(v) });
+      } else if (stableStringify(beforeMap[k]) !== stableStringify(v)) {
+        out.push({ status: "updated", key: k, label: labelFn(k, v), beforeText: truncateForPreview(beforeMap[k]), afterText: truncateForPreview(v) });
+      }
+    }
+    for (const k of Object.keys(beforeMap)) {
+      if (!Object.prototype.hasOwnProperty.call(afterMap, k)) {
+        out.push({ status: "removed", key: k, label: labelFn(k, beforeMap[k]), beforeText: truncateForPreview(beforeMap[k]) });
+      }
+    }
+    return out;
+  }
+  function summarizeItems(items) {
+    const addedCount = items.filter((i) => i.status === "added").length;
+    const updatedCount = items.filter((i) => i.status === "updated").length;
+    const removedCount = items.filter((i) => i.status === "removed").length;
+    const totalCount = items.length;
+    const truncated = totalCount > ITEM_PREVIEW_CAP;
+    return {
+      items: items.slice(0, ITEM_PREVIEW_CAP),
+      addedCount,
+      updatedCount,
+      removedCount,
+      totalCount,
+      truncated
+    };
+  }
+  function buildItemizedSectionPreview(secKey, before, after) {
+    try {
+      if (secKey === "notifications") {
+        const items = diffArrayByKey(
+          before?.notifications || [],
+          after?.notifications || [],
+          (it, i) => `${it?.entity?.type || "?"}:${it?.entity?.code || it?.entity?.name || `#${i}`}`,
+          (it) => {
+            const recipients = Array.isArray(it?.recipients) ? it.recipients.join(", ") : "";
+            return `${formatEntityRef(it)}${recipients ? ` → ${recipients}` : ""}`;
+          }
+        );
+        if (stableStringify(before?.notifyToCommenter) !== stableStringify(after?.notifyToCommenter)) {
+          items.unshift({
+            status: "updated",
+            key: "__notifyToCommenter__",
+            label: "コメント通知設定",
+            beforeText: String(before?.notifyToCommenter ?? ""),
+            afterText: String(after?.notifyToCommenter ?? "")
+          });
+        }
+        return summarizeItems(items);
+      }
+      if (secKey === "perRecordNotifications" || secKey === "reminderNotifications") {
+        const items = diffArrayByKey(
+          before?.notifications || [],
+          after?.notifications || [],
+          (it, i) => `${String(it?.title || "")}#${i}`,
+          (it) => {
+            const t = String(it?.title || "(無題)");
+            const cond = it?.filterCond ? ` [条件: ${String(it.filterCond).slice(0, 40)}${String(it.filterCond).length > 40 ? "…" : ""}]` : "";
+            return `${t}${cond}`;
+          }
+        );
+        if (secKey === "reminderNotifications" && stableStringify(before?.timezone) !== stableStringify(after?.timezone)) {
+          items.unshift({
+            status: "updated",
+            key: "__timezone__",
+            label: `タイムゾーン: ${String(before?.timezone || "-")} → ${String(after?.timezone || "-")}`,
+            beforeText: String(before?.timezone || ""),
+            afterText: String(after?.timezone || "")
+          });
+        }
+        return summarizeItems(items);
+      }
+      if (secKey === "appAcl") {
+        const items = diffArrayByKey(
+          before?.rights || [],
+          after?.rights || [],
+          (it, i) => `${it?.entity?.type || "?"}:${it?.entity?.code || it?.entity?.name || `#${i}`}`,
+          (it) => {
+            const flags = ["appEditable", "recordViewable", "recordAddable", "recordEditable", "recordDeletable", "recordImportable", "recordExportable"].filter((k) => it?.[k]);
+            return `${formatEntityRef(it)} (${flags.length ? flags.join(", ") : "権限なし"})`;
+          }
+        );
+        return summarizeItems(items);
+      }
+      if (secKey === "fieldAcl") {
+        const items = diffArrayByKey(
+          before?.rights || [],
+          after?.rights || [],
+          (it, i) => String(it?.code || `#${i}`),
+          (it) => {
+            const ents = Array.isArray(it?.entities) ? it.entities.length : 0;
+            return `フィールド ${String(it?.code || "?")}（権限定義: ${ents} 件）`;
+          }
+        );
+        return summarizeItems(items);
+      }
+      if (secKey === "recordPermissions") {
+        const items = diffArrayByKey(
+          before?.rights || [],
+          after?.rights || [],
+          (it, i) => `${String(it?.filterCond || "(全レコード)")}#${i}`,
+          (it) => {
+            const cond = it?.filterCond ? `条件: ${String(it.filterCond).slice(0, 40)}${String(it.filterCond).length > 40 ? "…" : ""}` : "(全レコード)";
+            const ents = Array.isArray(it?.entities) ? it.entities.length : 0;
+            return `${cond} → 権限定義 ${ents} 件`;
+          }
+        );
+        return summarizeItems(items);
+      }
+      if (secKey === "customizeSettings") {
+        const collect = (root2) => {
+          const out = [];
+          const sides = [["desktop", root2?.desktop], ["mobile", root2?.mobile]];
+          for (const [side, group] of sides) {
+            for (const kind of ["js", "css"]) {
+              const list = Array.isArray(group?.[kind]) ? group[kind] : [];
+              list.forEach((entry, idx) => {
+                const ident = String(entry?.url || entry?.file?.name || entry?.file?.fileKey || `#${idx}`);
+                out.push({ loc: side, type: kind, ident, raw: entry });
+              });
+            }
+          }
+          return out;
+        };
+        const beforeList = collect(before);
+        const afterList = collect(after);
+        const items = diffArrayByKey(
+          beforeList,
+          afterList,
+          (it) => `${it.loc}/${it.type}|${it.ident}`,
+          (it) => `[${it.loc}.${it.type}] ${it.ident}`
+        );
+        return summarizeItems(items);
+      }
+      if (secKey === "pluginSettings") {
+        const beforePlugins = Array.isArray(before?.plugins) ? before.plugins : [];
+        const afterPlugins = Array.isArray(after?.plugins) ? after.plugins : [];
+        const items = diffArrayByKey(
+          beforePlugins,
+          afterPlugins,
+          (it, i) => String(it?.id || `#${i}`),
+          (it) => `${String(it?.name || it?.id || "?")}${it?.version ? ` (v${it.version})` : ""}`
+        );
+        const result = summarizeItems(items);
+        result.notes = ["※ プラグイン本体の有効化のみ同期します。各プラグインの設定 (plugin/config) は別途反映が必要です。"];
+        return result;
+      }
+      if (secKey === "categories") {
+        const items = diffMapByKey(
+          before?.categories || {},
+          after?.categories || {},
+          (key, val) => `${String(val?.name || key)}（コード: ${key}）`
+        );
+        return summarizeItems(items);
+      }
+      if (secKey === "processSettings") {
+        const stateItems = diffMapByKey(
+          before?.states || {},
+          after?.states || {},
+          (key, val) => `[状態] ${String(val?.name || key)}`
+        );
+        const actionItems = diffArrayByKey(
+          before?.actions || [],
+          after?.actions || [],
+          (it, i) => `[action]${String(it?.name || `#${i}`)}`,
+          (it) => `[アクション] ${String(it?.name || "?")} (${String(it?.from || "?")} → ${String(it?.to || "?")})`
+        );
+        const enableChange = stableStringify(before?.enable) !== stableStringify(after?.enable) ? [{
+          status: "updated",
+          key: "__enable__",
+          label: `プロセス管理 ${before?.enable ? "ON" : "OFF"} → ${after?.enable ? "ON" : "OFF"}`
+        }] : [];
+        return summarizeItems([...enableChange, ...stateItems, ...actionItems]);
+      }
+      if (secKey === "layoutSettings") {
+        const summarizeRow = (row, idx) => {
+          const t = String(row?.type || "ROW");
+          if (t === "GROUP") return `行 ${idx + 1} [GROUP] ${String(row?.code || "")}`;
+          if (t === "SUBTABLE") return `行 ${idx + 1} [SUBTABLE] ${String(row?.code || "")}`;
+          const codes = Array.isArray(row?.fields) ? row.fields.map((f) => String(f?.code || f?.type || "?")).join(", ") : "";
+          return `行 ${idx + 1} [ROW] ${codes || "(空)"}`;
+        };
+        const items = diffArrayByKey(
+          before?.layout || [],
+          after?.layout || [],
+          (row, i) => {
+            const t = String(row?.type || "ROW");
+            const head = Array.isArray(row?.fields) && row.fields[0] ? String(row.fields[0].code || row.fields[0].type || "") : row?.code || "";
+            return `#${i}|${t}|${head}`;
+          },
+          summarizeRow
+        );
+        return summarizeItems(items);
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+  function resolveChunkSize(path) {
+    if (!path) return APPLY_REQUEST_CHUNK_SIZE;
+    return CHUNK_SIZE_BY_PATH[path] ?? APPLY_REQUEST_CHUNK_SIZE;
+  }
+  function chunkObjectEntries(obj, size) {
     const entries = Object.entries(obj || {});
     if (entries.length <= size) return entries.length ? [Object.fromEntries(entries)] : [];
     const out = [];
@@ -15196,7 +16822,7 @@ ${lines.join("\n")}
     }
     return out;
   }
-  function chunkArray(arr, size = APPLY_REQUEST_CHUNK_SIZE) {
+  function chunkArray2(arr, size) {
     const list = Array.isArray(arr) ? arr : [];
     if (list.length <= size) return list.length ? [list] : [];
     const out = [];
@@ -15204,7 +16830,8 @@ ${lines.join("\n")}
     return out;
   }
   function pushChunkedMapRequests(requests, { method, path, app, key, map, label }) {
-    const chunks = chunkObjectEntries(map);
+    const size = resolveChunkSize(path);
+    const chunks = chunkObjectEntries(map, size);
     if (!chunks.length) return;
     const total = Object.keys(map).length;
     chunks.forEach((chunk, idx) => {
@@ -15218,7 +16845,8 @@ ${lines.join("\n")}
     });
   }
   function pushChunkedArrayRequests(requests, { method, path, app, key, list, label }) {
-    const chunks = chunkArray(list);
+    const size = resolveChunkSize(path);
+    const chunks = chunkArray2(list, size);
     if (!chunks.length) return;
     const total = list.length;
     chunks.forEach((chunk, idx) => {
@@ -15245,7 +16873,7 @@ ${lines.join("\n")}
       const outDef = converted.def;
       if (!beforeMap || !beforeMap[code]) {
         add[code] = outDef;
-      } else if (stableStringify(beforeMap[code]) !== stableStringify(outDef)) {
+      } else if (stableStringifyMemo(beforeMap[code]) !== stableStringifyMemo(outDef)) {
         update[code] = outDef;
       }
     }
@@ -15311,33 +16939,6 @@ ${lines.join("\n")}
       fingerprint: stableStringify(response)
     };
   }
-  function buildPlanRequestSummary(requests) {
-    const list = Array.isArray(requests) ? requests : [];
-    const methods = { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 };
-    const sections = /* @__PURE__ */ new Map();
-    for (const req of list) {
-      const method = String(req?.method || "").toUpperCase();
-      if (method === "POST" || method === "PUT" || method === "DELETE") methods[method] += 1;
-      else methods.OTHER += 1;
-      const sectionKey = String(req?.sectionKey || "");
-      const sectionLabel2 = String(req?.sectionLabel || sectionKey || "-");
-      const row = sections.get(sectionKey) || { sectionKey, sectionLabel: sectionLabel2, count: 0, methods: { POST: 0, PUT: 0, DELETE: 0, OTHER: 0 } };
-      row.count += 1;
-      if (method === "POST" || method === "PUT" || method === "DELETE") row.methods[method] += 1;
-      else row.methods.OTHER += 1;
-      sections.set(sectionKey, row);
-    }
-    const sectionRows = [...sections.values()].sort((a, b) => b.count - a.count);
-    const highImpact = sectionRows.filter((row) => HIGH_IMPACT_SECTIONS.has(row.sectionKey));
-    return {
-      totalRequests: list.length,
-      methods,
-      sectionRows,
-      sectionCount: sectionRows.length,
-      highImpactCount: highImpact.length,
-      highImpactLabels: highImpact.map((row) => row.sectionLabel)
-    };
-  }
   function renderPlanRequestSummary(plan) {
     const summary = plan?.requestSummary || buildPlanRequestSummary(plan?.plannedRequests || []);
     const methods = summary.methods || {};
@@ -15352,6 +16953,15 @@ ${lines.join("\n")}
   }
   function markApplyPlan(signature, mode, totalReq, lines, extra = {}) {
     const requestSummary = buildPlanRequestSummary(extra.plannedRequests || []);
+    const prev = state.lastApplyPlan;
+    const preservedExcludes = (() => {
+      if (!prev || prev.signature !== signature) return [];
+      const arr = Array.isArray(prev.excludedSectionKeys) ? prev.excludedSectionKeys : [];
+      const validKeys = new Set(
+        Array.isArray(extra.plannedRequests) ? extra.plannedRequests.map((r) => String(r?.sectionKey || "")).filter(Boolean) : []
+      );
+      return arr.filter((k) => validKeys.has(k));
+    })();
     state.lastApplyPlan = {
       signature,
       mode,
@@ -15360,8 +16970,71 @@ ${lines.join("\n")}
       summary: (lines || []).slice(0, 16).join("\n"),
       logs: lines || [],
       requestSummary,
+      excludedSectionKeys: preservedExcludes,
       ...extra
     };
+  }
+  function togglePlanSectionExclude(sectionKey) {
+    const key = String(sectionKey || "").trim();
+    if (!key) return;
+    const plan = state.lastApplyPlan;
+    if (!plan) return;
+    const cur = Array.isArray(plan.excludedSectionKeys) ? plan.excludedSectionKeys.slice() : [];
+    const idx = cur.indexOf(key);
+    if (idx >= 0) cur.splice(idx, 1);
+    else cur.push(key);
+    plan.excludedSectionKeys = cur;
+    const updated = updatePlanCardExcludeStateInDom(plan, key);
+    if (!updated) {
+      try {
+        renderPlanIntoModal(plan, Array.isArray(plan.plannedRequests) ? plan.plannedRequests : []);
+      } catch (_e) {
+      }
+    }
+    const label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
+    setStatus(idx >= 0 ? `セクション除外を解除しました: ${label}` : `セクションを反映対象から除外しました: ${label}`);
+  }
+  function updatePlanCardExcludeStateInDom(plan, sectionKey) {
+    try {
+      const doc = getToolDocument();
+      const root2 = doc.querySelector("#u_reflectPlanModal .reflect-modal-body") || ui.result;
+      if (!root2) return false;
+      const safeKey = String(sectionKey).replace(/"/g, '\\"');
+      const cardSelector = `.plan-card .plan-card__exclude input[data-section-key="${safeKey}"]`;
+      const checkbox = root2.querySelector(cardSelector);
+      if (!checkbox) return false;
+      const card = checkbox.closest(".plan-card");
+      const labelWrap = checkbox.closest(".plan-card__exclude");
+      if (!card || !labelWrap) return false;
+      const excludedKeys = Array.isArray(plan?.excludedSectionKeys) ? plan.excludedSectionKeys : [];
+      const isExcluded = excludedKeys.includes(String(sectionKey));
+      card.classList.toggle("plan-card--excluded", isExcluded);
+      if (isExcluded) card.removeAttribute("open");
+      else card.setAttribute("open", "");
+      labelWrap.classList.toggle("is-excluded", isExcluded);
+      checkbox.checked = isExcluded;
+      const labelText = labelWrap.querySelector("span");
+      if (labelText) labelText.textContent = isExcluded ? "除外中" : "除外";
+      const reqs = Array.isArray(plan?.plannedRequests) ? plan.plannedRequests : [];
+      const totalReqAll = reqs.length;
+      const excludedSet = new Set(excludedKeys);
+      const remainingReq = reqs.reduce((s, r) => s + (excludedSet.has(String(r?.sectionKey || "")) ? 0 : 1), 0);
+      const sectionKeysOfReqs = new Set(reqs.map((r) => String(r?.sectionKey || "")).filter(Boolean));
+      const excludedCount = [...sectionKeysOfReqs].filter((k) => excludedSet.has(k)).length;
+      const meta = root2.querySelector(".plan-confirm-head__meta");
+      if (meta) {
+        const stamp = new Date(plan?.createdAt || Date.now()).toLocaleString();
+        const remainingMeta = excludedCount > 0 ? ` ／ <span class="plan-confirm-head__remaining">実行対象 ${remainingReq} / ${totalReqAll} 件（除外 ${excludedCount} セクション）</span>` : "";
+        meta.innerHTML = `予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}${remainingMeta}`;
+      }
+      const applyBtnLabel = root2.querySelector('[data-act="applyPreview"] span:nth-of-type(2)');
+      if (applyBtnLabel) {
+        applyBtnLabel.textContent = excludedCount > 0 ? `このプランで反映する（${remainingReq}/${totalReqAll}件）` : "このプランで反映する";
+      }
+      return true;
+    } catch (_e) {
+      return false;
+    }
   }
   function showInlineConfirmation(plan, options) {
     const appIdRefs = options && options.appIdRefs || [];
@@ -15369,6 +17042,13 @@ ${lines.join("\n")}
       const stamp = new Date(plan.createdAt).toLocaleString();
       const planText = (plan.logs || []).join("\n") || "(プラン詳細なし)";
       const appIdSection = renderAppIdConfirmSection2(appIdRefs);
+      const baselineErrors = Array.isArray(plan?.baselineErrors) ? plan.baselineErrors : [];
+      const baselineWarning = baselineErrors.length ? `<div class="plan-baseline-warning" style="margin:8px 0;padding:8px 10px;border:1px solid #d97706;background:#fef3c7;color:#92400e;border-radius:6px;font-size:12px">
+          <div style="font-weight:700;margin-bottom:4px">⚠ ベースライン取得失敗 ${baselineErrors.length} セクション</div>
+          <div style="margin-bottom:4px">該当セクションは同時編集検出が無効化されます。続行する場合は内容を確認のうえチェックを入れてください。</div>
+          <ul style="margin:4px 0 6px 16px;padding:0">${baselineErrors.map((e) => `<li>${esc(e.label)}: ${esc(e.message)}</li>`).join("")}</ul>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:600"><input type="checkbox" id="u_planBaselineAck"> ベースライン未取得セクションを承知のうえ続行する</label>
+        </div>` : "";
       const doc = getToolDocument();
       const modalEl = doc.getElementById("u_reflectPlanModal");
       const modalBody = modalEl?.querySelector(".reflect-modal-body");
@@ -15380,17 +17060,26 @@ ${lines.join("\n")}
       const previousHtml = fallbackHost.innerHTML;
       const previousScrollTop = fallbackHost.scrollTop || 0;
       if (modalEl) modalEl.hidden = false;
+      const execDisabled = baselineErrors.length ? "disabled" : "";
       fallbackHost.innerHTML = `<div class="plan-confirm-panel">
       <div style="font-weight:700;font-size:13px;margin-bottom:8px">実行前プラン確認</div>
       ${renderPlanRequestSummary(plan)}
+      ${baselineWarning}
       ${appIdSection}
       <div class="plan-summary">${esc(planText)}</div>
       <div class="plan-actions">
         <span class="plan-meta">予定リクエスト: ${plan.totalReq || 0}件 | 作成: ${esc(stamp)}</span>
         <button class="btn sub" id="u_planCancel">キャンセル</button>
-        <button class="btn ok" id="u_planExecute">このまま実行</button>
+        <button class="btn ok" id="u_planExecute" ${execDisabled}>このまま実行</button>
       </div>
     </div>`;
+      if (baselineErrors.length) {
+        const ack = doc.getElementById("u_planBaselineAck");
+        const exec = doc.getElementById("u_planExecute");
+        ack?.addEventListener("change", () => {
+          if (exec) exec.disabled = !ack.checked;
+        });
+      }
       fallbackHost.scrollTop = 0;
       const cleanup = () => {
         const execBtn = doc.getElementById("u_planExecute");
@@ -15477,6 +17166,7 @@ ${lines.join("\n")}
     }
     let totalReq = 0;
     const targetSectionBaselines = {};
+    const baselineErrors = [];
     const sectionPreviews = {};
     const plannedRequests = [];
     const sectionKeys = Object.keys(bySection);
@@ -15486,7 +17176,15 @@ ${lines.join("\n")}
       if (!def || !def.put) continue;
       try {
         setStatus(`ノード反映プラン計算中 ${i + 1}/${sectionKeys.length}: ${def.label}`);
-        const currentRes = await apiGet(prefix, def.endpoint, { app });
+        let currentRes;
+        try {
+          currentRes = await apiGet(prefix, def.endpoint, { app });
+        } catch (be) {
+          const message = be?.message || String(be);
+          baselineErrors.push({ sectionKey: secKey, label: def.label, message });
+          lines.push(`PLAN NG ${def.label}: ベースライン取得失敗 ${message}`);
+          continue;
+        }
         targetSectionBaselines[secKey] = makeSectionPlanBaseline(currentRes);
         const current = normalize(currentRes);
         const before = deepClone(current);
@@ -15509,16 +17207,20 @@ ${lines.join("\n")}
         } else if (secKey === "actionSettings") {
           plan = planActionsSectionDiffRequests(app, before.actions || before || {}, patched.actions || patched || {});
         } else {
+          const itemized = buildItemizedSectionPreview(secKey, before, patched);
           plan = {
             requests: [{ method: "PUT", path: def.endpoint, body: { app, ...def.putBuilder?.(patched) || {} }, note: `${def.label} put` }],
-            wholePreview: buildWholeSectionPreview(before, patched)
+            wholePreview: buildWholeSectionPreview(before, patched),
+            itemized: itemized && (itemized.totalCount > 0 || itemized.notes?.length) ? itemized : null
           };
         }
-        if (plan.preview || plan.wholePreview) {
+        if (plan.preview || plan.wholePreview || plan.itemized) {
+          const shape = plan.preview ? "map" : plan.itemized ? "items" : "whole";
           sectionPreviews[secKey] = {
             label: def.label,
-            shape: plan.preview ? "map" : "whole",
+            shape,
             preview: plan.preview || null,
+            itemized: plan.itemized || null,
             wholePreview: plan.wholePreview || null,
             requestCount: (plan.requests || []).length
           };
@@ -15534,9 +17236,16 @@ ${lines.join("\n")}
       }
     }
     lines.push("");
+    if (baselineErrors.length) {
+      lines.push(`⚠ ベースライン取得失敗: ${baselineErrors.length} セクション（同時編集検出が無効化されます）`);
+      for (const be of baselineErrors) {
+        lines.push(`  - ${be.label}: ${be.message}`);
+      }
+      lines.push("");
+    }
     lines.push(`合計予定リクエスト数: ${totalReq}`);
     lines.push("※ ノードモードは差分パスをもとに比較先プレビューへ反映します。");
-    markApplyPlan(planSignature, "nodes", totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests });
+    markApplyPlan(planSignature, "nodes", totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors });
     renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
     renderReflectAssistPanel();
     renderReflectMainPanel();
@@ -15566,8 +17275,21 @@ ${lines.join("\n")}
     const app = c.target.appId;
     const logs = [];
     const targetSectionBaselines = {};
+    const baselineErrors = [];
     const sectionPreviews = {};
     const plannedRequests = [];
+    const fetchBaselineSafe = async (secKey, label, endpoint) => {
+      try {
+        const res = await apiGet(prefix, endpoint, { app });
+        targetSectionBaselines[secKey] = makeSectionPlanBaseline(res);
+        return res;
+      } catch (be) {
+        const message = be?.message || String(be);
+        baselineErrors.push({ sectionKey: secKey, label, message });
+        logs.push(`PLAN NG ${label}: ベースライン取得失敗 ${message}`);
+        return null;
+      }
+    };
     logs.push("=== 反映プラン（ドライラン）===");
     logs.push(`比較先アプリ: ${app}`);
     logs.push(`対象セクション: ${scopes.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ")}`);
@@ -15583,13 +17305,26 @@ ${lines.join("\n")}
           requestCount: (plan.requests || []).length
         };
       } else {
-        sectionPreviews[secKey] = {
-          label,
-          shape: "whole",
-          preview: null,
-          wholePreview: buildWholeSectionPreview(wholeBefore, wholeAfter),
-          requestCount: (plan.requests || []).length
-        };
+        const itemized = buildItemizedSectionPreview(secKey, wholeBefore, wholeAfter);
+        if (itemized && (itemized.totalCount > 0 || itemized.notes?.length)) {
+          sectionPreviews[secKey] = {
+            label,
+            shape: "items",
+            preview: null,
+            itemized,
+            wholePreview: buildWholeSectionPreview(wholeBefore, wholeAfter),
+            requestCount: (plan.requests || []).length
+          };
+        } else {
+          sectionPreviews[secKey] = {
+            label,
+            shape: "whole",
+            preview: null,
+            itemized: null,
+            wholePreview: buildWholeSectionPreview(wholeBefore, wholeAfter),
+            requestCount: (plan.requests || []).length
+          };
+        }
       }
       for (const req of plan.requests || []) {
         plannedRequests.push({ sectionKey: secKey, sectionLabel: label, ...req });
@@ -15608,8 +17343,8 @@ ${lines.join("\n")}
         continue;
       }
       if (secKey === "fieldSettings") {
-        const current2 = await apiGet(prefix, "/app/form/fields.json", { app });
-        targetSectionBaselines[secKey] = makeSectionPlanBaseline(current2);
+        const current2 = await fetchBaselineSafe(secKey, def.label, "/app/form/fields.json");
+        if (!current2) continue;
         const plan2 = planFieldSectionDiffRequests(app, current2.properties || {}, sourceSec.properties || sourceSec || {}, lookupMap);
         capturePreview(secKey, def.label, plan2);
         logs.push(`PLAN ${def.label}: ${plan2.requests.length} request(s)`);
@@ -15619,8 +17354,8 @@ ${lines.join("\n")}
         continue;
       }
       if (secKey === "viewSettings") {
-        const current2 = await apiGet(prefix, "/app/views.json", { app });
-        targetSectionBaselines[secKey] = makeSectionPlanBaseline(current2);
+        const current2 = await fetchBaselineSafe(secKey, def.label, "/app/views.json");
+        if (!current2) continue;
         const plan2 = planViewsSectionDiffRequests(app, current2.views || {}, sourceSec.views || sourceSec || {});
         capturePreview(secKey, def.label, plan2);
         logs.push(`PLAN ${def.label}: ${plan2.requests.length} request(s)`);
@@ -15630,8 +17365,8 @@ ${lines.join("\n")}
         continue;
       }
       if (secKey === "reportSettings") {
-        const current2 = await apiGet(prefix, "/app/reports.json", { app });
-        targetSectionBaselines[secKey] = makeSectionPlanBaseline(current2);
+        const current2 = await fetchBaselineSafe(secKey, def.label, "/app/reports.json");
+        if (!current2) continue;
         const plan2 = planReportsSectionDiffRequests(app, current2.reports || {}, sourceSec.reports || sourceSec || {});
         capturePreview(secKey, def.label, plan2);
         logs.push(`PLAN ${def.label}: ${plan2.requests.length} request(s)`);
@@ -15640,8 +17375,8 @@ ${lines.join("\n")}
         continue;
       }
       if (secKey === "actionSettings") {
-        const current2 = await apiGet(prefix, "/app/actions.json", { app });
-        targetSectionBaselines[secKey] = makeSectionPlanBaseline(current2);
+        const current2 = await fetchBaselineSafe(secKey, def.label, "/app/actions.json");
+        if (!current2) continue;
         const plan2 = planActionsSectionDiffRequests(app, current2.actions || {}, sourceSec.actions || sourceSec || {});
         capturePreview(secKey, def.label, plan2);
         logs.push(`PLAN ${def.label}: ${plan2.requests.length} request(s)`);
@@ -15650,8 +17385,8 @@ ${lines.join("\n")}
         totalReq += plan2.requests.length;
         continue;
       }
-      const current = await apiGet(prefix, def.endpoint, { app });
-      targetSectionBaselines[secKey] = makeSectionPlanBaseline(current);
+      const current = await fetchBaselineSafe(secKey, def.label, def.endpoint);
+      if (!current) continue;
       const afterWhole = def.putBuilder?.(sourceSec) || {};
       const plan = { requests: [{ method: "PUT", path: def.endpoint, body: { app, ...afterWhole }, note: `${def.label} put` }] };
       capturePreview(secKey, def.label, plan, current, afterWhole);
@@ -15660,8 +17395,15 @@ ${lines.join("\n")}
       totalReq += plan.requests.length;
     }
     logs.push("");
+    if (baselineErrors.length) {
+      logs.push(`⚠ ベースライン取得失敗: ${baselineErrors.length} セクション（同時編集検出が無効化されます）`);
+      for (const be of baselineErrors) {
+        logs.push(`  - ${be.label}: ${be.message}`);
+      }
+      logs.push("");
+    }
     logs.push(`合計予定リクエスト数: ${totalReq}`);
-    markApplyPlan(planSignature, "section", totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests });
+    markApplyPlan(planSignature, "section", totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors });
     renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
     renderReflectAssistPanel();
     renderReflectMainPanel();
@@ -15680,6 +17422,9 @@ ${lines.join("\n")}
   function renderPlanConfirmPanelHtml(plan, plannedRequests) {
     const reqs = Array.isArray(plannedRequests) ? plannedRequests : [];
     const sectionPreviews = plan?.sectionPreviews || {};
+    const excluded = new Set(
+      Array.isArray(plan?.excludedSectionKeys) ? plan.excludedSectionKeys : []
+    );
     const sectionMap = /* @__PURE__ */ new Map();
     for (const req of reqs) {
       const key = String(req?.sectionKey || "");
@@ -15692,7 +17437,11 @@ ${lines.join("\n")}
       sectionMap.set(key, slot);
     }
     const sections = [...sectionMap.values()].sort((a, b) => b.reqs.length - a.reqs.length);
+    const totalReqAll = sections.reduce((s, sec) => s + sec.reqs.length, 0);
+    const remainingReq = sections.reduce((s, sec) => s + (excluded.has(sec.sectionKey) ? 0 : sec.reqs.length), 0);
+    const excludedCount = sections.filter((sec) => excluded.has(sec.sectionKey)).length;
     const cards = sections.map((sec) => {
+      const isExcluded = excluded.has(sec.sectionKey);
       const methodChips = ["POST", "PUT", "DELETE"].filter((m) => sec.methods[m] > 0).map((m) => `<span class="plan-card-chip plan-card-chip--${m.toLowerCase()}">${m} ${sec.methods[m]}</span>`).join("");
       const isHigh = HIGH_IMPACT_SECTIONS.has(sec.sectionKey);
       const sevClass = isHigh ? "sev-high" : "sev-medium";
@@ -15708,10 +17457,34 @@ ${lines.join("\n")}
         if (upds) parts.push(`<span class="plan-card-delta plan-card-delta--neutral" title="更新">~${upds}</span>`);
         if (rms) parts.push(`<span class="plan-card-delta plan-card-delta--remove" title="削除">−${rms}</span>`);
         deltaHtml = parts.join("");
+      } else if (preview?.shape === "items" && preview.itemized) {
+        const it = preview.itemized;
+        const parts = [];
+        if (it.addedCount) parts.push(`<span class="plan-card-delta plan-card-delta--add" title="追加">+${it.addedCount}</span>`);
+        if (it.updatedCount) parts.push(`<span class="plan-card-delta plan-card-delta--neutral" title="更新">~${it.updatedCount}</span>`);
+        if (it.removedCount) parts.push(`<span class="plan-card-delta plan-card-delta--remove" title="削除">−${it.removedCount}</span>`);
+        deltaHtml = parts.join("") || `<span class="plan-card-delta plan-card-delta--neutral" title="セクション全体更新">⇄ 全体更新</span>`;
       } else if (preview?.shape === "whole" && preview.wholePreview) {
         deltaHtml = `<span class="plan-card-delta plan-card-delta--neutral" title="セクション全体更新">⇄ 全体更新</span>`;
       }
       const sectionIcon = renderSectionIconHtml(sec.sectionKey, { withTooltip: sec.sectionLabel });
+      const applyHint = SECTION_APPLY_HINTS[sec.sectionKey] || "";
+      let itemSummaryHtml = "";
+      if (preview?.shape === "items" && preview.itemized && (preview.itemized.totalCount > 0 || preview.itemized.notes && preview.itemized.notes.length)) {
+        const STATUS_CLASS = { added: "add", updated: "upd", removed: "rm" };
+        const STATUS_LABEL = { added: "追加", updated: "更新", removed: "削除" };
+        const itemRows = (preview.itemized.items || []).slice(0, 30).map((item) => {
+          const cls = STATUS_CLASS[item.status] || "upd";
+          const lab = STATUS_LABEL[item.status] || item.status;
+          return `<div class="plan-card-item plan-card-item--${cls}">
+          <span class="plan-card-item__badge plan-card-item__badge--${cls}">${lab}</span>
+          <span class="plan-card-item__label">${esc(item.label || item.key)}</span>
+        </div>`;
+        }).join("");
+        const itemMore = preview.itemized.items && preview.itemized.items.length > 30 ? `<div class="plan-card-item plan-card-item--more">…他 ${preview.itemized.items.length - 30} 件</div>` : "";
+        const noteLines = (preview.itemized.notes || []).map((n) => `<div class="plan-card-note">${esc(n)}</div>`).join("");
+        itemSummaryHtml = `<div class="plan-card__items">${noteLines}${itemRows}${itemMore}</div>`;
+      }
       const detailRows = sec.reqs.slice(0, 12).map((req) => {
         const note = String(req?.note || "").trim();
         const path = String(req?.path || "");
@@ -15722,7 +17495,12 @@ ${lines.join("\n")}
       </div>`;
       }).join("");
       const more = sec.reqs.length > 12 ? `<div class="plan-card-row plan-card-row--more">…他 ${sec.reqs.length - 12} 件</div>` : "";
-      return `<details class="plan-card ${sevClass}${isHigh ? " plan-card--high" : ""}" open>
+      const hintHtml = applyHint ? `<div class="plan-card__hint">💡 ${esc(applyHint)}</div>` : "";
+      const excludeLabel = `<label class="plan-card__exclude${isExcluded ? " is-excluded" : ""}" title="このセクションを反映対象から除外します（プラン本体は再生成されません）">
+      <input type="checkbox" data-act="togglePlanSectionExclude" data-act-event="change" data-section-key="${esc(sec.sectionKey)}" ${isExcluded ? "checked" : ""}>
+      <span>${isExcluded ? "除外中" : "除外"}</span>
+    </label>`;
+      return `<details class="plan-card ${sevClass}${isHigh ? " plan-card--high" : ""}${isExcluded ? " plan-card--excluded" : ""}"${isExcluded ? "" : " open"}>
       <summary class="plan-card__head">
         ${sectionIcon}
         <span class="plan-card__title">${esc(sec.sectionLabel)}</span>
@@ -15730,24 +17508,27 @@ ${lines.join("\n")}
         <span class="plan-card__chips">${methodChips}</span>
         ${deltaHtml}
         ${isHigh ? '<span class="plan-card__risk">高リスク</span>' : ""}
+        ${excludeLabel}
       </summary>
-      <div class="plan-card__body">${detailRows}${more}</div>
+      <div class="plan-card__body">${hintHtml}${itemSummaryHtml}${detailRows}${more}</div>
     </details>`;
     }).join("");
     const stamp = new Date(plan?.createdAt || Date.now()).toLocaleString();
+    const remainingMeta = excludedCount > 0 ? ` ／ <span class="plan-confirm-head__remaining">実行対象 ${remainingReq} / ${totalReqAll} 件（除外 ${excludedCount} セクション）</span>` : "";
     return `<div class="plan-confirm-panel">
     <div class="plan-confirm-head">
       <div class="plan-confirm-head__title">実行前プラン確認</div>
-      <div class="plan-confirm-head__meta">予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}</div>
+      <div class="plan-confirm-head__meta">予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}${remainingMeta}</div>
     </div>
     ${renderPlanRequestSummary(plan)}
     <div class="plan-confirm-cards">${cards || '<div class="muted">予定リクエストがありません</div>'}</div>
     <div class="plan-confirm-actions">
-      <button type="button" class="btn-stage" data-stage="apply" data-act="applyPreview" title="このプランの内容で比較先プレビューへ反映します">
-        <span class="btn-stage__icon">🚀</span><span>このプランで反映する</span>
+      <button type="button" class="btn-stage" data-stage="apply" data-act="applyPreview" title="このプランの内容で比較先プレビューへ反映します（チェックを入れたセクションは除外されます）">
+        <span class="btn-stage__icon">🚀</span><span>このプランで反映する${excludedCount > 0 ? `（${remainingReq}/${totalReqAll}件）` : ""}</span>
         <span class="btn-stage__shortcut">Ctrl+Shift+Enter</span>
       </button>
       <button type="button" class="btn sub" data-act="exportDryRunPlan" title="APIを実行せずプランをJSONで保存">ドライランJSONを保存</button>
+      <button type="button" class="btn sub" data-act="exportReviewZip" title="プラン・差分HTML・パッチJSON・申請メタ情報を1つのZIPにまとめてレビュー依頼用に書き出します">📦 レビュー依頼ZIPを書き出す</button>
     </div>
     <details class="plan-confirm-rawlogs"><summary>テキストログを表示</summary><div class="plan-summary">${esc((plan?.logs || []).join("\n"))}</div></details>
   </div>`;
@@ -15800,7 +17581,134 @@ ${lines.join("\n")}
     downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
     setStatus(`ドライランJSONを保存しました: ${filename}（APIは送信していません）`);
   }
-  var PREVIEW_MAX_ENTRIES, PREVIEW_SNIPPET_MAX, APPLY_REQUEST_CHUNK_SIZE;
+  async function runExportReviewZip() {
+    const plan = state.lastApplyPlan;
+    const expectedSignature = computeCurrentReflectPlanSignature();
+    const planIsFresh = !!(plan && Array.isArray(plan.plannedRequests) && plan.plannedRequests.length && expectedSignature && plan.signature === expectedSignature);
+    if (!planIsFresh) {
+      setStatus("プランが古いためレビュー依頼ZIPの書き出し前に再生成します");
+      await runPreviewApplyPlan();
+    }
+    const latest = state.lastApplyPlan;
+    if (!latest || !Array.isArray(latest.plannedRequests) || !latest.plannedRequests.length) {
+      throw new Error("レビュー依頼ZIPに同梱できる計画がありません。先に「実行前プラン確認」を実行してください。");
+    }
+    if (expectedSignature && latest.signature !== expectedSignature) {
+      throw new Error("プランが現在の条件と一致しません。再度「実行前プラン確認」を実行してください。");
+    }
+    if (!Array.isArray(state.lastDiffRows) || !state.lastDiffRows.length) {
+      throw new Error("レビュー依頼ZIPには差分データが必要です。先に「差分比較」を実行してください。");
+    }
+    const c = commonParams();
+    const reason = (kusPrompt("レビュー依頼の理由・概要を入力してください（任意）\n例: 検証環境で確認済み、本番反映の承認をお願いします", "") || "").trim();
+    const applicant = (kusPrompt("申請者名を入力してください（任意・空欄可）", "") || "").trim();
+    const refNo = (kusPrompt("参照番号（チケット番号 等）を入力してください（任意・空欄可）", "") || "").trim();
+    const excludedSectionKeys = Array.isArray(latest.excludedSectionKeys) ? latest.excludedSectionKeys.slice() : [];
+    const excludedLabels = excludedSectionKeys.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k);
+    const includedRequests = latest.plannedRequests.filter((r) => !excludedSectionKeys.includes(String(r?.sectionKey || "")));
+    const planPayload = {
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      kind: "reflect-review-bundle-plan",
+      mode: latest.mode,
+      target: { appId: c.target.appId, guestId: c.target.guestId || "", preview: true },
+      source: { appId: c.source.appId, guestId: c.source.guestId || "" },
+      totalRequests: includedRequests.length,
+      excludedSectionKeys,
+      excludedSectionLabels: excludedLabels,
+      plannedRequests: includedRequests.map((r) => ({
+        sectionKey: r.sectionKey,
+        sectionLabel: r.sectionLabel,
+        method: r.method,
+        path: r.path,
+        note: r.note || "",
+        body: r.body
+      })),
+      sectionPreviews: latest.sectionPreviews || {},
+      logs: latest.logs || []
+    };
+    const meta = {
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      kind: "reflect-review-bundle",
+      schemaVersion: 1,
+      applicant,
+      reason,
+      referenceNumber: refNo,
+      target: { appId: c.target.appId, guestId: c.target.guestId || "", preview: true },
+      source: { appId: c.source.appId, guestId: c.source.guestId || "" },
+      excludedSectionKeys,
+      excludedSectionLabels: excludedLabels,
+      totalPlannedRequests: includedRequests.length,
+      diffRowCount: (state.lastDiffRows || []).filter((row) => row && !row._displayOnly).length
+    };
+    const exportRows = state.lastDiffRows;
+    const scopes = [...new Set((exportRows || []).map((r) => r?.sectionKey).filter(Boolean))];
+    const diffHtml = buildDiffHtml(state.lastSourceBundle, state.lastTargetBundle, exportRows, scopes, ui.ignoreKeys?.value || "", {
+      fetchIssues: state.lastFetchIssues || [],
+      exportMode: "all",
+      exportLabel: "レビュー依頼一括（全件）",
+      exportContentMode: "diffOnly",
+      exportContentLabel: "差分のみ",
+      normalizationState: getDiffNormalizationPresetState()
+    });
+    const patchPayload = buildPatchPayload(exportRows, state.lastSourceBundle, state.lastTargetBundle);
+    const sourceLabel = buildAppFilenameLabel(c.source.appId || "src", extractAppNameFromBundle(state.lastSourceBundle));
+    const targetLabel = buildAppFilenameLabel(c.target.appId || "tgt", extractAppNameFromBundle(state.lastTargetBundle));
+    const baseLabel = `${sourceLabel}_to_${targetLabel}`;
+    const readme = [
+      "# プレビュー反映 レビュー依頼パッケージ",
+      "",
+      `生成日時: ${meta.generatedAt}`,
+      applicant ? `申請者: ${applicant}` : "",
+      refNo ? `参照番号: ${refNo}` : "",
+      reason ? `理由・概要:
+${reason}` : "",
+      "",
+      `比較元アプリ: ${meta.source.appId || "-"}${meta.source.guestId ? ` (guest ${meta.source.guestId})` : ""}`,
+      `比較先アプリ: ${meta.target.appId || "-"}${meta.target.guestId ? ` (guest ${meta.target.guestId})` : ""} (preview)`,
+      `予定リクエスト数: ${meta.totalPlannedRequests}`,
+      `差分行数: ${meta.diffRowCount}`,
+      excludedLabels.length ? `プラン画面で除外されたセクション: ${excludedLabels.join(", ")}` : "除外セクション: なし",
+      "",
+      "## 同梱ファイル",
+      "- meta.json   ... 申請者・理由・参照番号・接続情報・除外セクションを集約",
+      "- plan.json   ... ドライラン形式の予定リクエスト一覧（APIは未送信）",
+      "- diff.html   ... 差分一覧（ブラウザで開けます）",
+      "- patch.json  ... 差分のパッチJSON（同型のkintoneアプリへ再適用も可能）",
+      "",
+      "## レビュー手順の例",
+      "1. diff.html をブラウザで開いて差分を確認します。",
+      "2. plan.json の plannedRequests で実際に送信されるAPI内容を確認します。",
+      "3. 問題なければ統合ツール上で「実行前プラン確認 → このプランで反映する」を実行してもらいます。",
+      "",
+      "※ このパッケージは「比較先プレビュー」への反映プランです。本番デプロイは kintone 管理画面から手動で行ってください。"
+    ].filter(Boolean).join("\n");
+    const JSZip = await loadJSZip();
+    const zip = new JSZip();
+    zip.file("meta.json", JSON.stringify(meta, null, 2));
+    zip.file("plan.json", JSON.stringify(planPayload, null, 2));
+    zip.file("diff.html", diffHtml);
+    zip.file("patch.json", JSON.stringify(patchPayload, null, 2));
+    zip.file("README.md", readme);
+    const blob = await zip.generateAsync({ type: "blob" });
+    const filename = buildExportFilename("レビュー依頼パッケージ", "zip", { appLabel: baseLabel });
+    const doc = getToolDocument();
+    const win = doc.defaultView || window;
+    const url = win.URL.createObjectURL(blob);
+    const a = doc.createElement("a");
+    a.href = url;
+    a.download = filename;
+    doc.body.appendChild(a);
+    a.click();
+    doc.body.removeChild(a);
+    setTimeout(() => {
+      try {
+        win.URL.revokeObjectURL(url);
+      } catch (_e) {
+      }
+    }, 1e3);
+    setStatus(`レビュー依頼ZIPを保存しました: ${filename}（APIは送信していません）`);
+  }
+  var PREVIEW_MAX_ENTRIES, PREVIEW_SNIPPET_MAX, ENTITY_TYPE_LABEL_MAP, ITEM_PREVIEW_CAP, APPLY_REQUEST_CHUNK_SIZE, CHUNK_SIZE_BY_PATH;
   var init_plan = __esm({
     "src/reflect/plan.ts"() {
       "use strict";
@@ -15813,10 +17721,31 @@ ${lines.join("\n")}
       init_api();
       init_apply();
       init_rowMode();
+      init_progress_pure();
       init_helpers();
+      init_export();
+      init_engine();
+      init_record();
       PREVIEW_MAX_ENTRIES = 40;
       PREVIEW_SNIPPET_MAX = 600;
+      ENTITY_TYPE_LABEL_MAP = {
+        USER: "ユーザー",
+        GROUP: "グループ",
+        ORGANIZATION: "組織",
+        FIELD_ENTITY: "フィールド値",
+        CREATOR: "作成者",
+        MODIFIER: "更新者",
+        LOGIN_USER: "ログインユーザー",
+        ALL: "全員"
+      };
+      ITEM_PREVIEW_CAP = 60;
       APPLY_REQUEST_CHUNK_SIZE = 100;
+      CHUNK_SIZE_BY_PATH = {
+        "/app/form/fields.json": 100,
+        "/app/views.json": 20,
+        "/app/reports.json": 20,
+        "/app/actions.json": 20
+      };
     }
   });
 
@@ -16150,6 +18079,7 @@ ${lines.join("\n")}
       reflectApplyChecklist: {
         diff: !!state.reflectApplyChecklist?.diff,
         plan: !!state.reflectApplyChecklist?.plan,
+        preview: !!state.reflectApplyChecklist?.preview,
         target: !!state.reflectApplyChecklist?.target
       },
       doDeploy: ui.doDeploy.checked,
@@ -16256,8 +18186,10 @@ ${lines.join("\n")}
       state.reflectApplyChecklist = {
         diff: !!saved.reflectApplyChecklist.diff,
         plan: !!saved.reflectApplyChecklist.plan,
+        preview: !!saved.reflectApplyChecklist.preview,
         target: !!saved.reflectApplyChecklist.target
       };
+      state.reflectPreviewOpened = !!saved.reflectApplyChecklist.preview;
     }
     if (saved.doDeploy != null) ui.doDeploy.checked = !!saved.doDeploy;
     if (saved.overwriteField != null) ui.overwriteField.checked = !!saved.overwriteField;
@@ -16404,6 +18336,104 @@ ${lines.join("\n")}
         DEPENDENCY_BG: "FFFCE4EC"
       },
       SANITIZE_LABEL_HTML_IN_LAYOUT: true
+    };
+    const MAX_COL_WIDTH_BY_HEADER = {
+      // 共通の長文系
+      "説明": 60,
+      "description": 60,
+      "計算式": 80,
+      "expression": 80,
+      "選択肢/式": 50,
+      "ルックアップ設定": 90,
+      "関連レコード設定": 90,
+      "関連レコード一覧設定": 90,
+      "依存/参照": 70,
+      "備考": 60,
+      "メモ": 60,
+      "内容": 80,
+      "値": 80,
+      "初期値": 30,
+      "入力制約": 30,
+      // ビュー
+      "表示フィールド": 60,
+      "表示フィールド（ラベル）": 60,
+      "絞り込み条件": 70,
+      "フィルター条件": 70,
+      "ソート": 50,
+      // グラフ
+      "集計対象": 60,
+      "グループ化": 50,
+      "モード": 18,
+      "チャート": 22,
+      // プロセス管理
+      "アクション名": 30,
+      "遷移元（From）": 40,
+      "遷移先（To）": 40,
+      "作業者候補": 60,
+      "作業者の選び方": 26,
+      // 通知
+      "本文/備考": 70,
+      "タイミング/条件": 60,
+      "宛先": 50,
+      "通知タイミング": 32,
+      "通知先": 50,
+      // 権限
+      "対象": 40,
+      "範囲": 14,
+      "許可": 24,
+      // JS/CSS
+      "名前/URL": 80,
+      "fileKey": 50,
+      "参照方法": 14,
+      // 依存関係
+      "詳細": 80,
+      "依存種別": 22,
+      "参照先": 60,
+      // フィールド名／コード
+      "フィールド名": 28,
+      "フィールドコード": 28,
+      "コード": 24,
+      "CSV 列": 24,
+      "kintone フィールド": 28,
+      // タイプ系
+      "タイプ": 20,
+      "種別": 18,
+      "ビュー種別": 18,
+      "表示形式": 18,
+      "プラグインID": 20,
+      "バージョン": 14,
+      "ID": 12,
+      // 短いフラグ系
+      "必須": 8,
+      "重複禁止": 10,
+      "閲覧": 8,
+      "編集": 8,
+      "削除": 8,
+      "管理": 10,
+      "追加": 10,
+      "読込": 10,
+      "書出": 10,
+      "読込/書出": 14,
+      "サブ組織含": 12,
+      "サブ組織含む": 12,
+      "グループ": 16,
+      // インデックス系
+      "No.": 6,
+      "No": 6,
+      "#": 4,
+      "行": 6,
+      "列": 6,
+      "区分": 12,
+      "階層": 8,
+      "表示": 8,
+      "幅": 8,
+      "表示順": 10,
+      // サマリー系
+      "項目": 32,
+      "件数": 14,
+      // フォームレイアウト
+      "タイトル": 30,
+      "シート名": 26
     };
     const FIELD_TYPE = {
       "LABEL": "ラベル",
@@ -17175,7 +19205,29 @@ ${lines.join("\n")}
         zebraEven: () => ({ fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.ZEBRA_EVEN } } }),
         zebraOdd: () => ({ fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.ZEBRA_ODD } } })
       };
-      const autosizeCols = (ws, aoa) => {
+      const autosizeCols = (ws, aoa, options = {}) => {
+        const headerRowIdx = options.headerRowIndex;
+        const headerInfoRows = Array.isArray(options.headerInfoRows) ? options.headerInfoRows : [];
+        const headerCandidates = [];
+        if (typeof headerRowIdx === "number" && headerRowIdx >= 0) headerCandidates.push(headerRowIdx);
+        headerInfoRows.forEach((idx) => {
+          if (typeof idx === "number" && idx >= 0 && !headerCandidates.includes(idx)) headerCandidates.push(idx);
+        });
+        const perColMax = [];
+        for (const idx of headerCandidates) {
+          const headerRow = aoa[idx] || [];
+          headerRow.forEach((h, i) => {
+            const text = String(h ?? "").trim();
+            if (!text) return;
+            const max = MAX_COL_WIDTH_BY_HEADER[text];
+            if (max != null && (perColMax[i] == null || max > perColMax[i])) perColMax[i] = max;
+          });
+        }
+        if (Array.isArray(options.colMax)) {
+          options.colMax.forEach((m, i) => {
+            if (typeof m === "number" && m > 0) perColMax[i] = m;
+          });
+        }
         const widths = [];
         for (const row of aoa) {
           (row || []).forEach((v, i) => {
@@ -17183,7 +19235,12 @@ ${lines.join("\n")}
             widths[i] = Math.max(widths[i] || CONFIG.MIN_COL_WIDTH, w);
           });
         }
-        ws["!cols"] = widths.map((w) => ({ wch: UtilsX.clampColumnWidth(w || CONFIG.DEFAULT_COL_WIDTH) }));
+        ws["!cols"] = widths.map((w, i) => {
+          const colMax = perColMax[i] != null ? perColMax[i] : CONFIG.MAX_COL_WIDTH;
+          const base = w || CONFIG.DEFAULT_COL_WIDTH;
+          const clamped = Math.max(CONFIG.MIN_COL_WIDTH, Math.min(colMax, base));
+          return { wch: clamped };
+        });
       };
       const applyStyles = (ws, aoa, options = {}) => {
         if (!styled) return;
@@ -17292,7 +19349,7 @@ ${lines.join("\n")}
       const appendSheet = (name, data, meta = {}) => {
         if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return null;
         const ws = XLSX.utils.aoa_to_sheet(data.aoa);
-        autosizeCols(ws, data.aoa);
+        autosizeCols(ws, data.aoa, data.options || {});
         applyStyles(ws, data.aoa, data.options || {});
         if (data.mergeRanges) applyCellMerges(ws, data.mergeRanges);
         applyRowHeights(ws, data.aoa, data.options || {});
@@ -18235,8 +20292,7 @@ ${lines.join("\n")}
           tocAoa.push([String(i + 1), m.name, m.description || "-", String(m.recordCount)]);
         });
         const tocWs = XLSX.utils.aoa_to_sheet(tocAoa);
-        autosizeCols(tocWs, tocAoa);
-        applyStyles(tocWs, tocAoa, {
+        const tocStyleOptions = {
           headerRowIndex: 8,
           titleRows: [0, 1],
           sectionRows: [2],
@@ -18245,7 +20301,9 @@ ${lines.join("\n")}
           freezeRows: 9,
           centerCols: [0, 3],
           enableAutoFilter: false
-        });
+        };
+        autosizeCols(tocWs, tocAoa, tocStyleOptions);
+        applyStyles(tocWs, tocAoa, tocStyleOptions);
         applyCellMerges(tocWs, [
           { startRow: 0, endRow: 0, startCol: 0, endCol: 3 },
           { startRow: 1, endRow: 1, startCol: 0, endCol: 3 },
@@ -19422,6 +21480,8 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .reflect-target-badge__app{font-weight:900;font-size:11px}
 #kintone-unified-suite-v2 .reflect-target-badge__name{font-weight:700;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #kintone-unified-suite-v2 .reflect-target-badge__guest{font-size:10px;opacity:.85}
+#kintone-unified-suite-v2 .reflect-target-badge__open{appearance:none;border:1px solid rgba(124,45,18,.24);background:rgba(255,255,255,.72);color:#7c2d12;border-radius:6px;padding:2px 7px;font:inherit;font-size:10px;font-weight:900;line-height:1.3;cursor:pointer}
+#kintone-unified-suite-v2 .reflect-target-badge__open:hover{background:#fff;border-color:rgba(124,45,18,.45)}
 /* === V4 Result log === */
 #kintone-unified-suite-v2 .reflect-log-host{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 #kintone-unified-suite-v2 .reflect-log-phase{font-weight:800;padding:10px 12px;background:#0f172a;color:#fff;font-size:12px;border-radius:6px 6px 0 0;display:flex;align-items:center;gap:8px}
@@ -19483,6 +21543,35 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .plan-confirm-apply:hover:not(:disabled){box-shadow:0 4px 10px rgba(22,163,74,.4);transform:translateY(-1px)}
 #kintone-unified-suite-v2 .plan-confirm-rawlogs > summary{cursor:pointer;font-size:11px;color:#64748b;padding:6px 10px}
 #kintone-unified-suite-v2 .plan-confirm-rawlogs[open] > summary{margin-bottom:6px}
+/* === Plan-confirm: per-section exclude toggle (UX) === */
+#kintone-unified-suite-v2 .plan-confirm-head__remaining{font-weight:800;color:#b45309}
+#kintone-unified-suite-v2 .plan-card__exclude{display:inline-flex;align-items:center;gap:4px;margin-left:auto;padding:2px 8px;border:1px solid #e2e8f0;border-radius:999px;background:#fff;font-size:10px;font-weight:700;color:#475569;cursor:pointer;user-select:none;line-height:1}
+#kintone-unified-suite-v2 .plan-card__exclude:hover{border-color:#fca5a5;color:#b91c1c;background:#fff5f5}
+#kintone-unified-suite-v2 .plan-card__exclude input{margin:0;cursor:pointer}
+#kintone-unified-suite-v2 .plan-card__exclude.is-excluded{border-color:#dc2626;background:#fef2f2;color:#991b1b}
+#kintone-unified-suite-v2 .plan-card--excluded{opacity:.55;background:repeating-linear-gradient(135deg,#fff,#fff 8px,#fef2f2 8px,#fef2f2 14px)}
+#kintone-unified-suite-v2 .plan-card--excluded .plan-card__title{text-decoration:line-through;text-decoration-color:#dc2626}
+#kintone-unified-suite-v2 .plan-card--excluded .plan-card__count{background:#fee2e2;color:#7f1d1d}
+/* === Plan-card: 1行解説 + アイテム単位プレビュー === */
+#kintone-unified-suite-v2 .plan-card__hint{margin:0 0 6px;padding:6px 10px;border-radius:6px;background:#f0f9ff;border-left:3px solid #38bdf8;font-size:11px;color:#0c4a6e;line-height:1.5}
+#kintone-unified-suite-v2 .plan-card__items{display:flex;flex-direction:column;gap:3px;margin:0 0 8px;padding:6px 8px;border:1px dashed #e2e8f0;border-radius:6px;background:#fafbfc;max-height:280px;overflow-y:auto}
+#kintone-unified-suite-v2 .plan-card-item{display:flex;align-items:center;gap:6px;font-size:11px;line-height:1.4;padding:1px 0}
+#kintone-unified-suite-v2 .plan-card-item--more{color:#94a3b8;font-style:italic;padding-left:8px}
+#kintone-unified-suite-v2 .plan-card-item__badge{flex-shrink:0;display:inline-block;width:30px;padding:1px 4px;font-size:9px;font-weight:900;border-radius:3px;text-align:center;letter-spacing:.02em}
+#kintone-unified-suite-v2 .plan-card-item__badge--add{background:#dcfce7;color:#15803d}
+#kintone-unified-suite-v2 .plan-card-item__badge--upd{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .plan-card-item__badge--rm{background:#fee2e2;color:#b91c1c}
+#kintone-unified-suite-v2 .plan-card-item__label{color:#0f172a;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .plan-card-item--add .plan-card-item__label{color:#14532d}
+#kintone-unified-suite-v2 .plan-card-item--rm .plan-card-item__label{color:#7f1d1d;text-decoration:line-through;text-decoration-color:#dc2626}
+#kintone-unified-suite-v2 .plan-card-note{padding:4px 8px;font-size:10px;color:#92400e;background:#fffbeb;border-left:2px solid #fbbf24;border-radius:4px;margin-bottom:4px}
+/* === Reflect plan preview card: 'items' shape rows === */
+#kintone-unified-suite-v2 .reflect-preview-row__badge{display:inline-block;width:34px;padding:1px 4px;margin-right:6px;font-size:9px;font-weight:900;border-radius:3px;text-align:center;letter-spacing:.02em;vertical-align:middle}
+#kintone-unified-suite-v2 .reflect-preview-row__badge--add{background:#dcfce7;color:#15803d}
+#kintone-unified-suite-v2 .reflect-preview-row__badge--upd{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .reflect-preview-row__badge--rm{background:#fee2e2;color:#b91c1c}
+#kintone-unified-suite-v2 .reflect-preview-card__notes{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+#kintone-unified-suite-v2 .reflect-preview-card__note{padding:5px 9px;font-size:11px;color:#92400e;background:#fffbeb;border-left:3px solid #fbbf24;border-radius:4px}
 /* === U4 Node bulk-select toolbar === */
 #kintone-unified-suite-v2 .reflect-node-bulk-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;border-radius:6px 6px 0 0;position:sticky;top:0;z-index:2}
 #kintone-unified-suite-v2 .reflect-node-bulk-toolbar__label{font-size:11px;font-weight:800;color:#475569;margin-right:4px}
@@ -22100,6 +24189,23 @@ ${lines.join("\n")}
   background:#0f766e;color:#fff;border-color:#0f766e;
 }
 #kintone-unified-suite-v2 .launcher-flow-step.is-primary .launcher-flow-main{font-weight:800;color:#0f172a}
+#kintone-unified-suite-v2 .launcher-flow-step.is-done{
+  border-color:#86efac;
+  background:linear-gradient(180deg,#f0fdf4,#fff);
+}
+#kintone-unified-suite-v2 .launcher-flow-step.is-done .launcher-flow-no{
+  background:#22c55e;color:#fff;border-color:#16a34a;
+}
+#kintone-unified-suite-v2 .launcher-flow-step.is-done::after{
+  content:"✓";
+  position:absolute;top:-6px;right:8px;
+  width:16px;height:16px;
+  display:flex;align-items:center;justify-content:center;
+  background:#16a34a;color:#fff;
+  font-size:10px;font-weight:900;border-radius:50%;
+  box-shadow:0 1px 3px rgba(22,163,74,.4);
+}
+#kintone-unified-suite-v2 .launcher-flow-step.is-done.is-primary::after{display:none}
 #kintone-unified-suite-v2 .launcher-flow-step:hover{
   transform:translateY(-1px);
   border-color:#5eead4;
@@ -22894,6 +25000,16 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step::after{
   display:none;
 }
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step.is-done::after{
+  content:"✓";
+  position:absolute;top:-6px;right:8px;
+  width:16px;height:16px;
+  display:flex;align-items:center;justify-content:center;
+  background:#16a34a;color:#fff;
+  font-size:10px;font-weight:900;border-radius:50%;
+  box-shadow:0 1px 3px rgba(22,163,74,.4);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step.is-done.is-primary::after{display:none}
 #kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step:hover{
   background:#eff6ff;
   border-color:#93c5fd;
@@ -24374,6 +26490,659 @@ ${lines.join("\n")}
 #kintone-unified-suite-v2 .patch-row-more{
   margin-top:6px;font-size:10px;color:#64748b;text-align:center;
 }
+
+/* ========================================================================
+   2026 design polish for the trimmed integration tool
+   ======================================================================== */
+#kintone-unified-suite-v2{
+  --shell-bg:#eef4f8;
+  --surface:#ffffff;
+  --surface-raised:#fbfdff;
+  --ink:#102033;
+  --ink-soft:#425466;
+  --ink-muted:#6b7d90;
+  --line:#d6e0ea;
+  --line-strong:#b7c6d6;
+  --blue:#1f6feb;
+  --teal:#0f9f8f;
+  --violet:#7557d8;
+  --amber:#b7791f;
+  --red:#c2413a;
+  background:var(--shell-bg);
+  border-color:#c6d3df;
+  box-shadow:0 24px 70px rgba(16,32,51,.30),0 2px 10px rgba(16,32,51,.12);
+}
+
+#kintone-unified-suite-v2 .h{
+  background:linear-gradient(135deg,#12324b 0%,#1f6feb 58%,#0f9f8f 100%);
+  box-shadow:inset 0 -1px 0 rgba(255,255,255,.18),0 8px 24px rgba(16,32,51,.18);
+}
+#kintone-unified-suite-v2 .suite-mark{
+  box-shadow:0 0 0 1px rgba(255,255,255,.4),0 10px 24px rgba(0,0,0,.18);
+}
+#kintone-unified-suite-v2 .body{
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.58),rgba(255,255,255,0) 160px),
+    var(--shell-bg);
+}
+#kintone-unified-suite-v2 .card,
+#kintone-unified-suite-v2 .tab-card,
+#kintone-unified-suite-v2 .diff-fold,
+#kintone-unified-suite-v2 .opt-card{
+  border-color:var(--line);
+  background:var(--surface);
+  box-shadow:0 1px 2px rgba(16,32,51,.05),0 10px 28px rgba(16,32,51,.06);
+}
+#kintone-unified-suite-v2 .diff-fold-summary{
+  background:linear-gradient(180deg,#fbfdff,#f4f8fb);
+  border-radius:8px;
+}
+#kintone-unified-suite-v2 .diff-fold[open] > .diff-fold-summary{
+  border-bottom:1px solid var(--line);
+  border-radius:8px 8px 0 0;
+}
+#kintone-unified-suite-v2 .diff-fold-title{
+  color:var(--ink);
+  font-weight:850;
+}
+#kintone-unified-suite-v2 .diff-fold-sub,
+#kintone-unified-suite-v2 .muted,
+#kintone-unified-suite-v2 .subpane-note{
+  color:var(--ink-muted);
+}
+
+#kintone-unified-suite-v2 input[type="text"],
+#kintone-unified-suite-v2 input[type="search"],
+#kintone-unified-suite-v2 textarea,
+#kintone-unified-suite-v2 select{
+  border-color:var(--line-strong);
+  background:#fff;
+  color:var(--ink);
+  min-height:34px;
+}
+#kintone-unified-suite-v2 input[type="text"]:focus,
+#kintone-unified-suite-v2 input[type="search"]:focus,
+#kintone-unified-suite-v2 textarea:focus,
+#kintone-unified-suite-v2 select:focus{
+  border-color:var(--blue);
+  box-shadow:0 0 0 3px rgba(31,111,235,.14);
+  outline:none;
+}
+#kintone-unified-suite-v2 label{
+  color:#2c3e50;
+  font-weight:780;
+}
+
+#kintone-unified-suite-v2 .btn{
+  border-radius:7px;
+  border-color:var(--line-strong);
+  font-weight:760;
+}
+#kintone-unified-suite-v2 .btn.sub{
+  background:#f7fafc;
+}
+#kintone-unified-suite-v2 .btn.sub:hover{
+  background:#edf4fb;
+}
+#kintone-unified-suite-v2 .btn.warn{
+  background:#fff7ed;
+  color:#92400e;
+  border-color:#f5c16c;
+}
+#kintone-unified-suite-v2 .btn.warn:hover{
+  background:#ffedd5;
+}
+#kintone-unified-suite-v2 .btn.ok,
+#kintone-unified-suite-v2 .btn.dark{
+  background:linear-gradient(180deg,#2b7fff,#1f6feb);
+  border-color:#1d5fd2;
+  color:#fff;
+}
+
+/* Launcher: calmer dashboard with stronger hierarchy */
+#kintone-unified-suite-v2.launcher-tabbed .launcher-menu{
+  gap:10px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-nav{
+  background:#dbe7f0;
+  border:1px solid #c2d1de;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.65);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn{
+  min-height:38px;
+  border-radius:7px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn.is-active{
+  background:#ffffff;
+  color:#14324a;
+  border-color:#ffffff;
+  box-shadow:0 3px 10px rgba(16,32,51,.12);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn__meta{
+  background:#edf4fb;
+  color:#24506f;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-filter-bar{
+  background:var(--surface-raised);
+  border-color:var(--line);
+  box-shadow:0 1px 2px rgba(16,32,51,.04);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-search-input{
+  height:38px;
+  font-size:13px;
+  padding-left:12px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .change-wizard{
+  background:linear-gradient(180deg,#ffffff,#f7fbff);
+  border-color:#cfe0ef;
+  box-shadow:0 12px 30px rgba(16,32,51,.08);
+}
+#kintone-unified-suite-v2.launcher-tabbed .change-wizard-title{
+  color:#12324b;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step{
+  background:#fff;
+  border-color:#d2dee9;
+  min-height:56px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step:hover{
+  border-color:#8eb8df;
+  box-shadow:0 8px 20px rgba(31,111,235,.12);
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-no{
+  background:#eef4f8;
+  color:#24506f;
+  border-color:#cbd9e6;
+}
+#kintone-unified-suite-v2.launcher-tabbed .launcher-flow-step.is-primary{
+  background:#f0f8ff;
+  border-color:#8eb8df;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-grid--launcher{
+  gap:10px;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card{
+  min-height:150px;
+  border-color:#d1dde8;
+  background:linear-gradient(180deg,#fff,#fbfdff);
+  box-shadow:0 1px 2px rgba(16,32,51,.04);
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card:hover{
+  border-color:#8eb8df;
+  box-shadow:0 14px 32px rgba(16,32,51,.12);
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-icon{
+  background:#eef6ff;
+  color:#1d5fd2;
+  border:1px solid #cfe0ef;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="reflect"] .feature-card-icon{
+  background:#ecfdf5;color:#047857;border-color:#b7e4d3;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="field"] .feature-card-icon{
+  background:#f4f0ff;color:#5b3abf;border-color:#d7ccff;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="er"] .feature-card-icon{
+  background:#eef2ff;color:#4338ca;border-color:#c7d2fe;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="processFlow"] .feature-card-icon{
+  background:#ecfeff;color:#0e7490;border-color:#a5f3fc;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="analyze"] .feature-card-icon{
+  background:#fff7ed;color:#9a3412;border-color:#fed7aa;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card[data-feature="apiTester"] .feature-card-icon{
+  background:#fef2f2;color:#b42318;border-color:#fecaca;
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-label{
+  color:var(--ink);
+}
+#kintone-unified-suite-v2.launcher-tabbed .feature-card-desc{
+  color:var(--ink-soft);
+}
+
+/* Feature navigation */
+#kintone-unified-suite-v2 .kus-tab-bar{
+  background:rgba(238,244,248,.92);
+  backdrop-filter:blur(8px);
+  border-bottom-color:#c6d3df;
+}
+#kintone-unified-suite-v2 .kus-tab-bar .tab-group--primary{
+  background:#dbe7f0;
+  border:1px solid #c2d1de;
+}
+#kintone-unified-suite-v2 .kus-tab-bar .tab{
+  border-color:transparent;
+  background:transparent;
+  color:#31506a;
+}
+#kintone-unified-suite-v2 .kus-tab-bar .tab:hover{
+  background:#fff;
+  color:#14324a;
+}
+#kintone-unified-suite-v2 .kus-tab-bar .tab.active,
+#kintone-unified-suite-v2 .kus-tab-more__group .tab.active{
+  background:#12324b;
+  border-color:#12324b;
+  color:#fff;
+  box-shadow:0 3px 9px rgba(18,50,75,.18);
+}
+#kintone-unified-suite-v2 .kus-tab-more__summary{
+  background:#fff;
+  color:#24506f;
+  border-color:#c2d1de;
+}
+#kintone-unified-suite-v2 .kus-tab-more__body{
+  border-color:#c2d1de;
+  border-radius:8px;
+  box-shadow:0 18px 48px rgba(16,32,51,.22);
+}
+#kintone-unified-suite-v2.screen-feature.feat-data .kus-tab-more__group:not(:has([data-tab="apiTester"])){display:none}
+#kintone-unified-suite-v2.screen-feature.feat-data .kus-tab-more__group:has([data-tab="apiTester"]){
+  display:flex;
+}
+
+/* Connection panel */
+#kintone-unified-suite-v2.screen-feature #u_connectionPanel{
+  border-color:#c6d3df;
+  background:linear-gradient(180deg,#ffffff,#f7fbff);
+}
+#kintone-unified-suite-v2 .connection-step-banner--step1{
+  background:#f3f8fc;
+  border-color:#d1dde8;
+}
+#kintone-unified-suite-v2 .connection-step-title{
+  color:#12324b;
+}
+#kintone-unified-suite-v2 .connection-step-indicator{
+  border-radius:999px;
+}
+#kintone-unified-suite-v2 .connection-grid input{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:13px;
+}
+#kintone-unified-suite-v2 .connection-preset-panel,
+#kintone-unified-suite-v2 .connection-app-search,
+#kintone-unified-suite-v2 .diff-fold--lookup{
+  background:#fbfdff;
+  border-color:#d6e0ea;
+}
+
+/* Field tab */
+#kintone-unified-suite-v2 [data-pane="field"] .subtabs{
+  background:#edf4fb;
+  border-color:#d1dde8;
+}
+#kintone-unified-suite-v2 [data-pane="field"] .subtab.active{
+  background:#5b3abf;
+  border-color:#5b3abf;
+}
+#kintone-unified-suite-v2 [data-pane="field"] #u_fieldJson{
+  border:1px solid #b7c6d6 !important;
+  background:#fbfdff;
+  box-shadow:inset 0 1px 2px rgba(16,32,51,.06);
+}
+#kintone-unified-suite-v2 .diff-fold--field-json .diff-fold-body::before{
+  content:"反映前に code 重複、計算式参照、Lookup 参照先、レイアウト未配置をチェックします。";
+  display:block;
+  margin:0 0 10px;
+  padding:8px 10px;
+  border:1px solid #d7ccff;
+  border-radius:7px;
+  background:#f7f4ff;
+  color:#4c2fa8;
+  font-size:12px;
+  line-height:1.55;
+}
+
+/* API tester */
+#kintone-unified-suite-v2 .diff-fold--api .diff-fold-body{
+  background:linear-gradient(180deg,#fff,#fbfdff);
+}
+#kintone-unified-suite-v2 .api-tester-layout{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 250px;
+  gap:12px;
+  align-items:start;
+}
+#kintone-unified-suite-v2 .api-tester-main{
+  min-width:0;
+}
+#kintone-unified-suite-v2 .api-tester-side{
+  border:1px solid #d6e0ea;
+  border-radius:8px;
+  background:#f8fbfd;
+  padding:10px;
+  position:sticky;
+  top:54px;
+}
+#kintone-unified-suite-v2 .api-tester-side-title{
+  font-size:11px;
+  font-weight:850;
+  color:#12324b;
+  margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .api-tester-history-list{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  max-height:270px;
+  overflow:auto;
+}
+#kintone-unified-suite-v2 #u_apiTesterPresetHint{
+  background:#f7fbff !important;
+  border-color:#bfd7ec !important;
+  color:#425466 !important;
+}
+#kintone-unified-suite-v2 #u_apiTesterBody{
+  min-height:150px !important;
+  line-height:1.55;
+}
+#kintone-unified-suite-v2 #u_apiTesterResult{
+  border-color:#d6e0ea;
+  background:#fbfdff;
+}
+
+/* ER/process/analyze visual consistency */
+#kintone-unified-suite-v2 [data-pane="er"] .result,
+#kintone-unified-suite-v2 [data-pane="processFlow"] .result,
+#kintone-unified-suite-v2 [data-pane="analyze"] .result{
+  border-color:#d6e0ea;
+  background:#fbfdff;
+}
+
+@media (max-width:900px){
+  #kintone-unified-suite-v2 .api-tester-layout{
+    grid-template-columns:1fr;
+  }
+  #kintone-unified-suite-v2 .api-tester-side{
+    position:static;
+  }
+}
+
+@media (max-width:640px){
+  #kintone-unified-suite-v2 .h{
+    flex-wrap:wrap;
+    align-items:center;
+    gap:8px;
+    padding:10px;
+  }
+  #kintone-unified-suite-v2 .h-brand{
+    order:1;
+  }
+  #kintone-unified-suite-v2 .suite-mark{
+    width:24px;
+    height:24px;
+    border-radius:7px;
+  }
+  #kintone-unified-suite-v2 .suite-mark::after{
+    inset:6px;
+    border-width:1px;
+  }
+  #kintone-unified-suite-v2 .h-title-launcher,
+  #kintone-unified-suite-v2 .h-title-feature{
+    order:2;
+    flex:1 1 calc(100% - 40px);
+    width:auto;
+    min-width:0;
+  }
+  #kintone-unified-suite-v2 .h .ht,
+  #kintone-unified-suite-v2 .ht{
+    font-size:13px;
+    line-height:1.25;
+    white-space:normal;
+    word-break:keep-all;
+  }
+  #kintone-unified-suite-v2 .h .hs,
+  #kintone-unified-suite-v2 .hs{
+    display:none;
+  }
+  #kintone-unified-suite-v2 .h-actions{
+    order:3;
+    width:100%;
+    display:flex;
+    gap:6px;
+    justify-content:flex-start;
+    overflow-x:auto;
+    padding-bottom:2px;
+  }
+  #kintone-unified-suite-v2 .h-actions .x,
+  #kintone-unified-suite-v2 .h-actions .x.size{
+    flex:0 0 auto;
+    padding:5px 9px;
+    font-size:11px;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-tab-nav{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    overflow:visible;
+  }
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn{
+    min-width:0;
+    width:100%;
+    justify-content:center;
+  }
+}
+
+/* Preview reflection: keep the decision path visible and compact */
+#kintone-unified-suite-v2 .reflect-simple-shell{
+  gap:10px;
+  padding:2px 0 16px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px 16px;
+  padding:14px 16px;
+  border-radius:12px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__step{
+  margin-bottom:2px;
+  font-size:10px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__title{
+  margin-bottom:2px;
+  font-size:17px;
+  line-height:1.3;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__desc{
+  margin:0;
+  font-size:11px;
+  line-height:1.5;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__action{
+  justify-content:flex-end;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__action .btn{
+  min-height:34px;
+  padding:7px 14px;
+}
+#kintone-unified-suite-v2 .reflect-hero-card__progress{
+  grid-column:1 / -1;
+  margin-top:4px;
+}
+#kintone-unified-suite-v2 .reflect-status-grid{
+  grid-template-columns:1.1fr 1fr .9fr;
+  gap:8px;
+  padding:10px 12px;
+}
+#kintone-unified-suite-v2 .reflect-status-grid__label{
+  margin-bottom:4px;
+}
+#kintone-unified-suite-v2 .reflect-status-grid__safety{
+  gap:5px;
+}
+#kintone-unified-suite-v2 .reflect-status-grid__safety .chip{
+  min-height:28px;
+  padding:5px 10px;
+  font-size:11px;
+}
+#kintone-unified-suite-v2 .reflect-apply-checklist{
+  padding:8px 10px;
+  margin:0;
+}
+#kintone-unified-suite-v2 .reflect-apply-checklist__head{
+  margin-bottom:6px;
+}
+#kintone-unified-suite-v2 .reflect-apply-checklist__items{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  gap:6px;
+}
+#kintone-unified-suite-v2 .reflect-apply-check{
+  min-height:30px;
+  padding:5px 8px;
+  white-space:normal;
+}
+#kintone-unified-suite-v2 .reflect-route-grid{
+  padding:12px;
+}
+#kintone-unified-suite-v2 .reflect-route-grid__title{
+  margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .reflect-route-grid__cards{
+  gap:8px;
+}
+#kintone-unified-suite-v2 .reflect-route-card{
+  min-height:88px;
+  padding:10px 12px;
+}
+#kintone-unified-suite-v2 .reflect-route-card__no{
+  width:32px;
+  height:32px;
+  border-radius:8px;
+}
+#kintone-unified-suite-v2 .reflect-route-card__desc{
+  display:-webkit-box;
+  overflow:hidden;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+}
+#kintone-unified-suite-v2 .reflect-route-card__summary{
+  margin-top:4px;
+}
+#kintone-unified-suite-v2 .reflect-detail-review{
+  padding:12px;
+}
+#kintone-unified-suite-v2 .reflect-detail-review__head{
+  margin-bottom:8px;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone{
+  position:sticky;
+  bottom:0;
+  z-index:8;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px 12px;
+  margin-top:0;
+  padding:10px 12px;
+  box-shadow:0 -10px 26px rgba(15,23,42,.12),0 4px 12px rgba(220,38,38,.08);
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__head{
+  margin:0;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__buttons{
+  justify-content:flex-end;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__buttons .btn{
+  min-height:34px;
+  padding:7px 14px;
+}
+#kintone-unified-suite-v2 .reflect-danger-zone__prod-note{
+  grid-column:1 / -1;
+  margin-top:0;
+  padding:5px 8px;
+}
+
+@media (max-width:860px){
+  #kintone-unified-suite-v2 .reflect-hero-card,
+  #kintone-unified-suite-v2 .reflect-status-grid,
+  #kintone-unified-suite-v2 .reflect-danger-zone{
+    grid-template-columns:1fr;
+  }
+  #kintone-unified-suite-v2 .reflect-hero-card__action,
+  #kintone-unified-suite-v2 .reflect-danger-zone__buttons{
+    justify-content:flex-start;
+  }
+  #kintone-unified-suite-v2 .reflect-detail-review__sub{
+    max-width:none;
+    text-align:left;
+  }
+}
+
+@media (max-width:520px){
+  #kintone-unified-suite-v2 .reflect-hero-card{
+    padding:12px;
+  }
+  #kintone-unified-suite-v2 .reflect-hero-card__action .btn,
+  #kintone-unified-suite-v2 .reflect-danger-zone__buttons .btn{
+    flex:1 1 140px;
+  }
+  #kintone-unified-suite-v2 .reflect-apply-checklist__items{
+    grid-template-columns:1fr;
+  }
+}
+
+/* ========================================================================
+   2026 mobile polish: keep header / search / tabs to one row each
+   These rules sit after the earlier @media (max-width:640px) and
+   @media (max-width:720px) blocks so they win the cascade for narrow
+   popout windows where the dialog already fills the viewport.
+   ======================================================================== */
+@media (max-width:640px){
+  /* h-actions: scroll horizontally instead of wrapping to multiple rows */
+  #kintone-unified-suite-v2 .h-actions{
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:thin;
+  }
+  #kintone-unified-suite-v2 .h-actions::-webkit-scrollbar{height:3px}
+  #kintone-unified-suite-v2 .h-actions::-webkit-scrollbar-thumb{background:rgba(255,255,255,.35);border-radius:2px}
+
+  /* Drop chrome that has no purpose when the dialog is already full-width */
+  #kintone-unified-suite-v2 .h-actions .x.size[data-act="dialogSizeWide"],
+  #kintone-unified-suite-v2 .h-actions .x.size[data-act="dialogSizeMax"],
+  #kintone-unified-suite-v2 .h-actions #u_headerCollapseBtn{
+    display:none !important;
+  }
+
+  /* Compact env badge so the action row doesn't spill out of view */
+  #kintone-unified-suite-v2 .h-actions .kus-env-badge{
+    padding:2px 7px;
+    font-size:10px;
+    margin-right:2px;
+    flex:0 0 auto;
+  }
+  #kintone-unified-suite-v2 .h-actions .kus-env-badge__dir{font-size:10px}
+  #kintone-unified-suite-v2 .h-actions .kus-env-badge__icon{width:14px;height:14px;font-size:10px}
+
+  /* Tab nav on mobile: hide the "一時" meta on the session tab — a label,
+     not a count, that wraps weirdly when the tab gets squashed. */
+  #kintone-unified-suite-v2.launcher-tabbed .launcher-tab-btn[data-group="history"] .launcher-tab-btn__meta{
+    display:none;
+  }
+}
+
+@media (max-width:720px){
+  /* Keep the launcher search input + クリア on the same row instead of stacking. */
+  #kintone-unified-suite-v2 .launcher-command-row{
+    flex-direction:row;
+    align-items:center;
+    flex-wrap:nowrap;
+  }
+  #kintone-unified-suite-v2 .launcher-search-input{
+    flex:1 1 auto;
+    min-width:0;
+  }
+  #kintone-unified-suite-v2 .launcher-clear-btn{
+    flex:0 0 auto;
+    padding:6px 10px;
+    font-size:12px;
+  }
+}
 `;
 
   // src/ui/template.ts
@@ -24386,7 +27155,7 @@ ${lines.join("\n")}
     root2.id = TOOL_ID;
     root2.className = options.popout ? "screen-launcher launcher-tabbed launcher-show-advanced suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions" : "screen-launcher launcher-tabbed launcher-show-advanced tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions";
     const getRiskLabel = (riskLevel) => riskLevel === "warning" ? "要注意" : "比較的安全";
-    const launcherFeatures = [...FEATURE_DEFS].sort((a, b) => {
+    const launcherFeatures = [...FEATURE_DEFS].filter((feature) => !feature.hidden).sort((a, b) => {
       const aOrder = Number.isFinite(a.usageOrder) ? a.usageOrder : 999;
       const bOrder = Number.isFinite(b.usageOrder) ? b.usageOrder : 999;
       if (aOrder !== bOrder) return aOrder - bOrder;
@@ -24397,8 +27166,8 @@ ${lines.join("\n")}
     );
     const launcherGroupDefs = [
       { key: "change", label: "変更・反映", desc: "差分確認からプレビュー反映まで" },
-      { key: "vis", label: "可視化・出力", desc: "設計書、図、分析、設定保存" },
-      { key: "data", label: "データ・保守", desc: "レコード操作とAPI調査" }
+      { key: "vis", label: "可視化・分析", desc: "ER図、プロセス図、影響分析" },
+      { key: "data", label: "API・検証", desc: "API調査とレスポンス確認" }
     ];
     const launcherFeaturesByGroup = launcherGroupDefs.reduce((acc, group) => {
       acc[group.key] = launcherFeatures.filter((feature) => feature.group === group.key);
@@ -24526,11 +27295,11 @@ ${lines.join("\n")}
                 <button type="button" class="connection-toggle-btn" data-act="toggleConnectionPanel" id="u_connectionToggleBtn" aria-expanded="true" aria-controls="u_connectionStep1Body" title="接続設定の表示/非表示を切り替え">設定を折りたたむ</button>
               </div>
               <div class="connection-step1-body" id="u_connectionStep1Body">
-              <p class="connection-section-lead" id="u_connectionLead">動作対象のアプリIDを <strong>比較元</strong> に入力します。<br>差分比較・プレビュー反映を使う場合のみ <strong>比較先</strong> も入力してください（ER図／設計書／レコード管理／設定一括取得 などは比較元だけでOK）。</p>
+              <p class="connection-section-lead" id="u_connectionLead">動作対象のアプリIDを <strong>比較元</strong> に入力します。<br>プレビュー反映を使う場合のみ <strong>比較先</strong> も入力してください（ER図／プロセス図／分析は比較元だけでOK）。</p>
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
               <div class="grid connection-grid">
               <div class="conn-source">
-                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span> <span class="conn-label-hint" title="このツール全体の動作対象アプリ。1アプリだけ操作する機能（ER図 / 設計書 / レコード管理 など）もここに入力します。">動作対象</span></label>
+                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span> <span class="conn-label-hint" title="このツール全体の動作対象アプリ。1アプリだけ操作する機能（ER図 / プロセス図 / 分析など）もここに入力します。">動作対象</span></label>
                 <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
               </div>
               <div class="conn-source">
@@ -24561,7 +27330,7 @@ ${lines.join("\n")}
               <div class="connection-preset-head">
                 <div>
                   <div class="connection-preset-title" id="conn-preset-heading">接続プリセット</div>
-                  <div class="connection-preset-desc">よく使う比較元・比較先・ゲスト設定を保存して、次回すぐ呼び出せます。</div>
+                  <div class="connection-preset-desc">よく使う比較元・比較先・ゲスト設定を、このセッション内だけで呼び出せます。</div>
                 </div>
                 <div class="connection-preset-count" id="u_connectionPresetSummary">保存なし</div>
               </div>
@@ -24590,7 +27359,6 @@ ${lines.join("\n")}
                     <option value="source">比較元に設定</option>
                     <option value="target">比較先に設定</option>
                     <option value="diffMulti">複数比較先へ追加</option>
-                    <option value="settingsExport">設定一括取得へ追加</option>
                   </select>
                   <button type="button" class="btn sub" data-act="connectionSearchApps">検索</button>
                 </div>
@@ -24651,7 +27419,7 @@ ${lines.join("\n")}
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffCsv" title="差分結果を Excel 用 CSV (UTF-8 BOM) で保存">📊 差分 CSV</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
-                      <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙・ロゴ付き PDF（設計書ペインの設定を使用）">📕 差分 PDF（表紙付き）</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙付きPDFとして印刷ダイアログを開きます">📕 差分 PDF（表紙付き）</button>
                       <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
                       <button type="button" class="btn sub" data-act="kusExportPlanMd" title="現在の反映プランを Markdown で保存（PR 添付向け）">📝 反映プラン MD 保存</button>
                       <button type="button" class="btn sub" data-act="kusExportPlanMermaid" title="反映プランを Mermaid フロー図として保存">📊 反映プラン Mermaid</button>
@@ -24922,8 +27690,8 @@ ${lines.join("\n")}
                 </button>
               `).join("")}
               <button type="button" class="chip launcher-tab-btn" data-act="setLauncherGroup" data-group="history" role="tab" aria-selected="false" aria-pressed="false" aria-controls="u_launcherPanel_history" tabindex="-1">
-                <span class="launcher-tab-btn__label">履歴・復元</span>
-                <span class="launcher-tab-btn__meta">作業</span>
+                <span class="launcher-tab-btn__label">セッション</span>
+                <span class="launcher-tab-btn__meta">一時</span>
               </button>
             </div>
 
@@ -24933,7 +27701,7 @@ ${lines.join("\n")}
                   type="search"
                   id="u_launcherSearch"
                   class="launcher-search-input"
-                  placeholder="🔍 機能を検索  (例: 差分 / レコード / 設計書)"
+                  placeholder="機能を検索 (例: 反映 / フィールド / 分析)"
                   autocomplete="off"
                   aria-label="機能検索">
                 <button type="button" class="btn sub launcher-clear-btn" data-act="clearLauncherFilter">クリア</button>
@@ -24954,12 +27722,12 @@ ${lines.join("\n")}
                   <div class="change-wizard-head">
                     <div>
                       <p class="change-wizard-title">変更作業ウィザード</p>
-                      <p class="change-wizard-desc">接続確認から記録出力まで順番に進めます。</p>
+                      <p class="change-wizard-desc">接続確認から影響確認まで順番に進めます。</p>
                     </div>
                     <button type="button" class="btn change-wizard-start" data-act="startChangeWizard">開始</button>
                   </div>
-                  <div class="launcher-flow" aria-label="基本フロー">
-                    <button type="button" class="launcher-flow-step is-primary" data-act="openWizardStep" data-wizard-step="connection">
+                  <div class="launcher-flow" aria-label="基本フロー" id="u_launcherFlow">
+                    <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="connection">
                       <span class="launcher-flow-no">01</span>
                       <span class="launcher-flow-copy">
                         <span class="launcher-flow-main">接続確認</span>
@@ -24987,11 +27755,11 @@ ${lines.join("\n")}
                         <span class="launcher-flow-sub">比較先へ書き込み</span>
                       </span>
                     </button>
-                    <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="design">
+                    <button type="button" class="launcher-flow-step" data-act="openWizardStep" data-wizard-step="analyze">
                       <span class="launcher-flow-no">05</span>
                       <span class="launcher-flow-copy">
-                        <span class="launcher-flow-main">記録出力</span>
-                        <span class="launcher-flow-sub">設計書・差分資料</span>
+                        <span class="launcher-flow-main">影響確認</span>
+                        <span class="launcher-flow-sub">分析・依存関係</span>
                       </span>
                     </button>
                   </div>
@@ -25004,8 +27772,8 @@ ${lines.join("\n")}
               <section class="launcher-panel" data-launcher-panel="vis" id="u_launcherPanel_vis" role="tabpanel" aria-label="可視化・出力">
                 <div class="launcher-panel-head">
                   <div>
-                    <p class="launcher-section-title">可視化・出力</p>
-                    <p class="launcher-section-desc">設計書、ER図、プロセス図、影響分析、設定バックアップをまとめています。</p>
+                    <p class="launcher-section-title">可視化・分析</p>
+                    <p class="launcher-section-desc">ER図、プロセス図、影響分析をまとめています。</p>
                   </div>
                 </div>
                 <div class="feature-grid feature-grid--launcher">
@@ -25016,8 +27784,8 @@ ${lines.join("\n")}
               <section class="launcher-panel" data-launcher-panel="data" id="u_launcherPanel_data" role="tabpanel" aria-label="データ・保守">
                 <div class="launcher-panel-head">
                   <div>
-                    <p class="launcher-section-title">データ・保守</p>
-                    <p class="launcher-section-desc">レコード操作やAPI調査など、保守寄りの機能を分けて配置します。</p>
+                    <p class="launcher-section-title">API・検証</p>
+                    <p class="launcher-section-desc">API調査とレスポンス確認だけを配置します。</p>
                   </div>
                 </div>
                 <div class="feature-grid feature-grid--launcher">
@@ -25035,15 +27803,15 @@ ${lines.join("\n")}
                   </div>
                   <div id="u_sessionSummary" class="kus-session-summary" aria-live="polite"></div>
                 </section>
-                <section class="work-history-panel" id="u_workHistoryPanel" aria-label="作業履歴・復元">
+                <section class="work-history-panel" id="u_workHistoryPanel" aria-label="一時作業メモ">
                   <div class="work-history-head">
                     <div>
-                      <p class="work-history-title">作業履歴・復元</p>
-                      <p class="work-history-desc">接続先、スコープ、フィルタ、レビュー状態を保存して、あとから同じ条件へ戻します。</p>
+                      <p class="work-history-title">一時作業メモ</p>
+                      <p class="work-history-desc">保存はブラウザストレージではなく、この画面を開いている間のメモリだけです。</p>
                     </div>
                     <div class="work-history-actions">
                       <span class="work-history-summary" id="u_workHistorySummary">履歴なし</span>
-                      <button type="button" class="btn sub" data-act="saveWorkHistory">現在の作業を保存</button>
+                      <button type="button" class="btn sub" data-act="saveWorkHistory">現在の作業を一時メモ</button>
                       <button type="button" class="btn sub" data-act="clearWorkHistory">クリア</button>
                     </div>
                   </div>
@@ -25059,30 +27827,26 @@ ${lines.join("\n")}
             </div>
           </div>
 
-          <!-- タブナビゲーション（ヘッダー直下に sticky 配置・主要4タブのみ常時表示） -->
+          <!-- タブナビゲーション（ヘッダー直下に sticky 配置） -->
           <div class="kus-tab-bar" id="u_kusTabBar">
             <div class="tabs">
               <div class="tab-group tab-group--primary" data-group="change">
                 <button class="tab" data-tab="diff" data-state="idle">差分比較</button>
                 <button class="tab active" data-tab="reflect" data-state="selected">プレビュー反映</button>
                 <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
-                <button class="tab" data-tab="jsconfig" data-state="idle">JS/CSS設定</button>
               </div>
 
               <details class="kus-tab-more" id="u_kusTabMore">
                 <summary class="kus-tab-more__summary" title="可視化・出力 / データ・保守 系の補助機能">⋯ その他</summary>
                 <div class="kus-tab-more__body">
                   <div class="kus-tab-more__group">
-                    <div class="kus-tab-more__group-lbl">可視化・出力</div>
+                    <div class="kus-tab-more__group-lbl">可視化・分析</div>
                     <button class="tab" data-tab="er" data-state="idle">ER図</button>
                     <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
-                    <button class="tab" data-tab="design" data-state="idle">設計書</button>
-                    <button class="tab" data-tab="settingsExport" data-state="idle">設定一括取得</button>
                     <button class="tab" data-tab="analyze" data-state="idle">分析</button>
                   </div>
                   <div class="kus-tab-more__group">
-                    <div class="kus-tab-more__group-lbl">データ・保守</div>
-                    <button class="tab" data-tab="recordMgr" data-state="idle">レコード管理</button>
+                    <div class="kus-tab-more__group-lbl">API・検証</div>
                     <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
                   </div>
                 </div>
@@ -25135,11 +27899,12 @@ ${lines.join("\n")}
                   <div class="reflect-apply-checklist" id="u_reflectApplyChecklist" aria-label="反映前チェックリスト">
                     <div class="reflect-apply-checklist__head">
                       <span>反映前チェック</span>
-                      <span id="u_reflectChecklistStatus">0 / 3</span>
+                      <span id="u_reflectChecklistStatus">0 / 4</span>
                     </div>
                     <div class="reflect-apply-checklist__items">
                       <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="diff"> 差分比較済み</label>
                       <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="plan"> 実行前プラン確認済み</label>
+                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="preview"> プレビュー画面確認済み</label>
                       <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="target"> 反映先は比較先プレビュー</label>
                     </div>
                   </div>
@@ -25422,7 +28187,7 @@ ${lines.join("\n")}
                     <div>
                       <div class="reflect-modal-kicker">🕘 履歴</div>
                       <h3 class="reflect-modal-title" id="u_reflectHistoryModalTitle">反映履歴</h3>
-                      <p class="reflect-modal-sub">この端末（localStorage）に保存された反映ログを確認できます。</p>
+                      <p class="reflect-modal-sub">このセッション内だけの反映ログを確認できます。</p>
                     </div>
                     <button type="button" class="reflect-modal-close" data-act="closeReflectModal" data-modal="history" aria-label="閉じる">×</button>
                   </header>
@@ -26072,6 +28837,7 @@ ${lines.join("\n")}
                   </div>
                   <div class="btns" style="margin-top:10px;display:flex;">
                     <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ">APIを実行</button>
+                    <button type="button" class="btn sub" data-act="copyApiTesterCurl" title="現在の入力からcurl例をコピー">curlコピー</button>
                     <button type="button" class="btn sub" data-act="clearApiTesterHistory" style="margin-left:auto;">履歴クリア</button>
                   </div>
                   <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>
@@ -26217,7 +28983,7 @@ ${lines.join("\n")}
                 <div>
                   <label>保存済みデータ一覧</label>
                   <div style="display:flex;gap:4px">
-                    <select id="u_templateSelect" style="flex:1" title="localStorage に保存したテンプレート"><option value="">-- 保存済なし --</option></select>
+                    <select id="u_templateSelect" style="flex:1" title="このセッション内のテンプレート"><option value="">-- 保存済なし --</option></select>
                     <button type="button" class="btn ok" data-act="loadTemplate" title="比較元バンドルとして読み込み">設定復元</button>
                     <button type="button" class="btn sub" data-act="deleteTemplate">削除</button>
                   </div>
@@ -26890,34 +29656,16 @@ ${lines.join("\n")}
   }
 
   // src/diff/selection-sets.ts
-  init_constants();
   init_state();
   init_diff();
   init_export();
   var MAX_SETS = 24;
+  var selectionSetsMemory = [];
   function loadRaw2() {
-    try {
-      const raw = JSON.parse(localStorage.getItem(DIFF_SELECTION_SETS_KEY) || "[]");
-      return Array.isArray(raw) ? raw : [];
-    } catch (error) {
-      console.warn("差分選択セットの読み込みに失敗しました", error);
-      return [];
-    }
+    return selectionSetsMemory.slice(0, MAX_SETS);
   }
   function saveRaw2(list) {
-    try {
-      localStorage.setItem(DIFF_SELECTION_SETS_KEY, JSON.stringify(list.slice(0, MAX_SETS)));
-    } catch (error) {
-      console.warn("差分選択セットの保存に失敗しました", error);
-      try {
-        const detail = { operation: "save", key: DIFF_SELECTION_SETS_KEY, message: error?.message || String(error) };
-        window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-        document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-        const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
-        if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-      } catch {
-      }
-    }
+    selectionSetsMemory = list.slice(0, MAX_SETS);
   }
   function refreshDiffSelectionSetDropdown() {
     const sel = ui.diffSelectionSetSelect;
@@ -27056,15 +29804,7 @@ ${lines.join("\n")}
     if (value === "AFTER") return "後";
     return value;
   }
-  function deepEqual(a, b) {
-    if (a === b) return true;
-    if (a == null || b == null) return a === b;
-    if (typeof a !== typeof b || typeof a !== "object") return false;
-    const ka = Object.keys(a);
-    const kb = Object.keys(b);
-    if (ka.length !== kb.length) return false;
-    return ka.every((k) => deepEqual(a[k], b[k]));
-  }
+  var deepEqual2 = deepEqual;
   function formatValue(v) {
     if (v === void 0 || v === null) return "—";
     if (typeof v === "boolean") return v ? "はい" : "いいえ";
@@ -27084,7 +29824,7 @@ ${lines.join("\n")}
         const props = /* @__PURE__ */ new Set([...Object.keys(bf || {}), ...Object.keys(af || {})]);
         const changes = [];
         props.forEach((prop) => {
-          if (!deepEqual(bf[prop], af[prop])) changes.push({ prop, before: bf[prop], after: af[prop] });
+          if (!deepEqual2(bf[prop], af[prop])) changes.push({ prop, before: bf[prop], after: af[prop] });
         });
         rows.push({ code, status: changes.length ? "modified" : "unchanged", before: bf, after: af, changes });
       }
@@ -27586,9 +30326,8 @@ ${lines.join("\n")}
     return REGISTRY.get(sectionKey) || defaultRenderer;
   }
 
-  // src/tabs/reflect-section-preview.ts
-  var PUT_SECTIONS = SECTION_DEFS.filter((d) => d.put && d.key !== "fieldSettings");
-  var WRAPPER_MAP = {
+  // src/reflect/sectionRenderers/sectionData.ts
+  var SECTION_WRAPPER_MAP = {
     viewSettings: "views",
     reportSettings: "reports",
     actionSettings: "actions",
@@ -27602,23 +30341,32 @@ ${lines.join("\n")}
     perRecordNotifications: "notifications",
     reminderNotifications: "notifications"
   };
-  var MAP_SECTIONS = /* @__PURE__ */ new Set(["viewSettings", "reportSettings", "actionSettings", "categories"]);
-  function isMapSection(key) {
-    return MAP_SECTIONS.has(key);
+  var SECTION_MAP_KEYS = /* @__PURE__ */ new Set([
+    "viewSettings",
+    "reportSettings",
+    "actionSettings",
+    "categories"
+  ]);
+  function isMapSectionKey(key) {
+    return SECTION_MAP_KEYS.has(key);
   }
-  function unwrap(data, sectionKey) {
-    const w = WRAPPER_MAP[sectionKey];
+  function unwrapSectionData(data, sectionKey) {
+    const w = SECTION_WRAPPER_MAP[sectionKey];
     if (w && data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, w)) return data[w];
     return data;
   }
-  function rewrap(items, sectionKey) {
-    const w = WRAPPER_MAP[sectionKey];
+  function rewrapSectionData(items, sectionKey) {
+    const w = SECTION_WRAPPER_MAP[sectionKey];
     if (w) return { [w]: items };
     return items;
   }
-  function deepEqual2(a, b) {
-    return stableStringify(a) === stableStringify(b);
-  }
+
+  // src/tabs/reflect-section-preview.ts
+  var PUT_SECTIONS = SECTION_DEFS.filter((d) => d.put && d.key !== "fieldSettings");
+  var isMapSection = isMapSectionKey;
+  var unwrap = unwrapSectionData;
+  var rewrap = rewrapSectionData;
+  var deepEqual3 = deepEqual;
   function formatJson(v) {
     if (v === void 0 || v === null) return "(なし)";
     return JSON.stringify(v, null, 2);
@@ -27637,7 +30385,7 @@ ${lines.join("\n")}
         const allProps = /* @__PURE__ */ new Set([...bfKeys, ...afKeys]);
         const changes = [];
         allProps.forEach((prop) => {
-          if (!deepEqual2((bf || {})[prop], (af || {})[prop])) {
+          if (!deepEqual3((bf || {})[prop], (af || {})[prop])) {
             changes.push({ prop, before: (bf || {})[prop], after: (af || {})[prop] });
           }
         });
@@ -27709,7 +30457,7 @@ ${lines.join("\n")}
     const keys = /* @__PURE__ */ new Set([...Object.keys(beforeVal), ...Object.keys(afterVal)]);
     const changes = [];
     keys.forEach((prop) => {
-      if (!deepEqual2(beforeVal[prop], afterVal[prop])) changes.push({ prop, before: beforeVal[prop], after: afterVal[prop] });
+      if (!deepEqual3(beforeVal[prop], afterVal[prop])) changes.push({ prop, before: beforeVal[prop], after: afterVal[prop] });
     });
     return changes;
   }
@@ -27757,7 +30505,7 @@ ${lines.join("\n")}
           rows2.push({ key: id, status: "removed", before: bEntry.item, after: null, changes: [], indexBefore: bEntry.idx, indexAfter: null, identifier: id });
         } else if (bEntry && aEntry) {
           const moved = bEntry.idx !== aEntry.idx;
-          if (!deepEqual2(bEntry.item, aEntry.item)) {
+          if (!deepEqual3(bEntry.item, aEntry.item)) {
             rows2.push({
               key: id,
               status: "modified",
@@ -27800,7 +30548,7 @@ ${lines.join("\n")}
       const key = `[${i}]`;
       if (bItem === void 0) rows.push({ key, status: "added", before: null, after: aItem, changes: [], indexBefore: null, indexAfter: i });
       else if (aItem === void 0) rows.push({ key, status: "removed", before: bItem, after: null, changes: [], indexBefore: i, indexAfter: null });
-      else if (!deepEqual2(bItem, aItem)) rows.push({ key, status: "modified", before: bItem, after: aItem, changes: buildChanges(bItem, aItem), indexBefore: i, indexAfter: i });
+      else if (!deepEqual3(bItem, aItem)) rows.push({ key, status: "modified", before: bItem, after: aItem, changes: buildChanges(bItem, aItem), indexBefore: i, indexAfter: i });
       else rows.push({ key, status: "unchanged", before: bItem, after: aItem, changes: [], indexBefore: i, indexAfter: i });
     }
     return rows;
@@ -27814,7 +30562,7 @@ ${lines.join("\n")}
     if (Array.isArray(bData) || Array.isArray(aData)) {
       return computeArrayDiff(bData, aData, sectionKey);
     }
-    if (!deepEqual2(bData, aData)) {
+    if (!deepEqual3(bData, aData)) {
       return [{ key: "（ルート）", status: "modified", before: bData, after: aData, changes: [] }];
     }
     return [{ key: "（ルート）", status: "unchanged", before: bData, after: aData, changes: [] }];
@@ -27906,7 +30654,7 @@ ${lines.join("\n")}
       const helpers = {
         computeDiff: computeDiff2,
         itemLabel,
-        deepEqual: deepEqual2,
+        deepEqual: deepEqual3,
         formatJson
       };
       if (st.view === "preview") return renderer.renderPreview({ row, sectionKey: st.sectionKey, helpers });
@@ -28170,10 +30918,9 @@ ${lines.join("\n")}
   init_components();
   init_dialog();
   var RESULT_HOST_ID = "u_reflectPreviewProdDiff";
-  var PREVIEW_PROD_STATE_KEY = Symbol.for("kus.reflect.previewProdDiff");
   function getPreviewProdState() {
-    if (!state[PREVIEW_PROD_STATE_KEY]) {
-      state[PREVIEW_PROD_STATE_KEY] = {
+    if (!state.reflectPreviewProdDiff) {
+      state.reflectPreviewProdDiff = {
         lastResult: null,
         appId: "",
         guestId: "",
@@ -28186,7 +30933,7 @@ ${lines.join("\n")}
         }
       };
     }
-    return state[PREVIEW_PROD_STATE_KEY];
+    return state.reflectPreviewProdDiff;
   }
   function resolveReflectScopes() {
     const selected = selectedScopeKeys(ui.applyScopes);
@@ -28620,1136 +31367,7 @@ ${lines.join("\n")}
   init_components();
   init_diff();
   init_field();
-
-  // src/tabs/record.ts
-  init_constants();
-  init_state();
-  init_utils();
-  init_psychology();
-  init_api();
-  init_components();
-  init_diff();
-  init_dialog();
-  function getSideApiPrefix(isSource, preview) {
-    const c = commonParams();
-    const side = isSource ? c.source : c.target;
-    return buildApiPrefix(side.guestId, !!preview);
-  }
-  function hasOrderByClause(query) {
-    return /\border\s+by\b/i.test(String(query || ""));
-  }
-  function hasPagingClause(query) {
-    return /\blimit\s+\d+/i.test(String(query || "")) || /\boffset\s+\d+/i.test(String(query || ""));
-  }
-  function buildPagedRecordsQuery(query, offset, options = {}) {
-    const base = String(query || "").trim();
-    if (hasPagingClause(base)) {
-      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
-    }
-    const parts = [];
-    if (base) parts.push(base);
-    if (options.includeOrder !== false && !hasOrderByClause(base)) parts.push("order by $id asc");
-    parts.push(`limit ${Number(options.limit || 500)}`);
-    parts.push(`offset ${Number(offset || 0)}`);
-    return parts.join(" ");
-  }
-  function buildKeysetRecordsQuery(query, lastRecordId, limit = 500) {
-    const base = String(query || "").trim();
-    if (hasPagingClause(base)) {
-      throw new Error("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。");
-    }
-    const idCond = `$id > ${Number(lastRecordId || 0)}`;
-    if (!base) return `${idCond} order by $id asc limit ${Number(limit || 500)}`;
-    if (hasOrderByClause(base)) return null;
-    return `(${base}) and ${idCond} order by $id asc limit ${Number(limit || 500)}`;
-  }
-  async function loadViewsForSelect(selectId, inputId) {
-    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
-    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
-    const prefix = getSideApiPrefix(false, false);
-    const resp = await apiGet(prefix, "/app/views.json", { app: tApp });
-    const views = Object.entries(resp.views).map(([name, v]) => ({ name, ...v })).filter((v) => v.type === "LIST").sort((a, b) => Number(a.index) - Number(b.index));
-    const sel = getToolDocument().getElementById(selectId);
-    if (!sel) return;
-    sel.innerHTML = '<option value="">-- 一覧を選択 --</option>';
-    for (const v of views) {
-      const opt = getToolDocument().createElement("option");
-      opt.value = v.id;
-      opt.dataset.q = encodeURIComponent(v.filterCond || "");
-      opt.textContent = v.name;
-      sel.appendChild(opt);
-    }
-    sel.style.display = "block";
-    sel.onchange = () => {
-      const o = sel.options[sel.selectedIndex];
-      if (o && o.value) {
-        getToolDocument().getElementById(inputId).value = decodeURIComponent(o.dataset.q || "");
-      }
-    };
-    setStatus("比較先アプリの一覧リストを取得しました");
-  }
-  async function getRecordIdsByQuery(app, query, isSource) {
-    const prefix = getSideApiPrefix(isSource, false);
-    const ids = [];
-    let offset = 0;
-    let lastRecordId = 0;
-    while (true) {
-      const keysetQuery = buildKeysetRecordsQuery(query, lastRecordId);
-      const q = keysetQuery || buildPagedRecordsQuery(query, offset, { includeOrder: true });
-      const resp = await apiGet(prefix, "/records.json", { app, query: q, fields: ["$id"] });
-      const records = resp.records || [];
-      if (records.length === 0) break;
-      records.forEach((r) => ids.push(Number(r.$id.value)));
-      if (records.length < 500) break;
-      lastRecordId = Number(records[records.length - 1]?.$id?.value || lastRecordId);
-      offset += 500;
-    }
-    return ids;
-  }
-  async function getFullRecordsByQuery(app, query, isSource) {
-    const prefix = getSideApiPrefix(isSource, false);
-    let allRecords = [];
-    let offset = 0;
-    let lastRecordId = 0;
-    while (true) {
-      const keysetQuery = buildKeysetRecordsQuery(query, lastRecordId);
-      const q = keysetQuery || buildPagedRecordsQuery(query, offset, { includeOrder: true });
-      const resp = await apiGet(prefix, "/records.json", { app, query: q });
-      const records = resp.records || [];
-      if (records.length === 0) break;
-      allRecords = allRecords.concat(records);
-      if (records.length < 500) break;
-      lastRecordId = Number(records[records.length - 1]?.$id?.value || lastRecordId);
-      offset += 500;
-    }
-    return allRecords;
-  }
-  var chunkArray2 = (arr, size) => {
-    const out = [];
-    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-    return out;
-  };
-  async function runBatchProcess() {
-    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
-    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
-    const query = getToolDocument().getElementById("u_batchProcView").value;
-    const action = getToolDocument().getElementById("u_batchProcAction").value.trim();
-    const assignee = getToolDocument().getElementById("u_batchProcAssignee").value.trim() || null;
-    if (!action) throw new Error("アクション名を入力してください。");
-    setStatus("対象レコードを取得中...");
-    const ids = await getRecordIdsByQuery(tApp, query, false);
-    if (ids.length === 0) throw new Error("処理対象のレコードが0件です。");
-    if (!await confirmDestructive({
-      title: `ステータス一括更新の最終確認`,
-      body: `比較先アプリ ${tApp} の ${ids.length} 件のレコードに対し、アクション「${action}」を実行します。
-
-この処理は元に戻せません。`,
-      keyword: tApp,
-      okLabel: "ステータスを更新",
-      riskTone: "danger"
-    })) return;
-    bumpSessionMetric("recordDelete", 0);
-    setStatus("ステータス一括更新を開始...");
-    const prefix = getSideApiPrefix(false, false);
-    const batches = chunkArray2(ids, 100);
-    let okCount = 0;
-    for (let i = 0; i < batches.length; i++) {
-      const batchIds = batches[i];
-      const body = {
-        app: tApp,
-        records: batchIds.map((id) => {
-          const r = { id, action };
-          if (assignee) r.assignee = assignee;
-          return r;
-        })
-      };
-      await apiPut(prefix, "/records/status.json", body);
-      okCount += batchIds.length;
-      setStatus(`進捗: ${okCount}/${ids.length}件 完了...`);
-      await new Promise((r) => setTimeout(r, 150));
-    }
-    setStatus(`ステータス一括更新が完了しました（全${okCount}件）`, false);
-  }
-  async function loadJSZip() {
-    const doc = getToolDocument();
-    const win = doc.defaultView || window;
-    if (typeof win.JSZip !== "undefined") return win.JSZip;
-    if (typeof globalThis.JSZip !== "undefined") return globalThis.JSZip;
-    setStatus("JSZipを動的ロード中...");
-    return new Promise((resolve, reject) => {
-      const script = doc.createElement("script");
-      script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
-      script.onload = () => {
-        const ctor = win.JSZip || globalThis.JSZip;
-        if (typeof ctor === "undefined") {
-          reject(new Error("JSZipのロード後もグローバル変数が見つかりません"));
-          return;
-        }
-        setStatus("JSZipのロード完了");
-        resolve(ctor);
-      };
-      script.onerror = () => {
-        reject(new Error("JSZipの読み込みに失敗しました"));
-      };
-      doc.head.appendChild(script);
-    });
-  }
-  async function downloadTargetFile(fileKey) {
-    const prefix = getSideApiPrefix(false, false);
-    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
-    const headers = { "X-Requested-With": "XMLHttpRequest" };
-    const resp = await fetch(url, { method: "GET", headers });
-    if (resp.status === 403) return null;
-    return await resp.blob();
-  }
-  async function runBatchFileDownload() {
-    const tApp = getToolDocument().getElementById("u_targetApp").value.trim();
-    if (!tApp) throw new Error("比較先アプリIDを設定してください。");
-    const query = getToolDocument().getElementById("u_batchDlView").value;
-    const fileCode = getToolDocument().getElementById("u_batchDlFileCode").value.trim();
-    const folderCode = getToolDocument().getElementById("u_batchDlFolderCode").value.trim();
-    const zipName = getToolDocument().getElementById("u_batchDlZipName").value.trim() || "download.zip";
-    if (!fileCode) throw new Error("ファイルフィールドコードを入力してください。");
-    setStatus("対象レコードを取得中...");
-    const records = await getFullRecordsByQuery(tApp, query, false);
-    if (records.length === 0) throw new Error("処理対象のレコードが0件です。");
-    const JSZipCtor = await loadJSZip();
-    const zip = new JSZipCtor();
-    let fileCount = 0;
-    for (let i = 0; i < records.length; i++) {
-      const rec = records[i];
-      setStatus(`ファイルダウンロード中 (レコード ${i + 1}/${records.length})...`);
-      const fileList = rec[fileCode]?.value || [];
-      if (fileList.length > 0) {
-        let folderName = folderCode && rec[folderCode] ? rec[folderCode].value : "";
-        if (!folderName) folderName = `Record_${rec.$id.value}`;
-        const recordFolder = zip.folder(sanitizeZipPathSegment(folderName, `Record_${rec.$id.value}`));
-        const usedNames = /* @__PURE__ */ new Set();
-        for (const f of fileList) {
-          const blob = await downloadTargetFile(f.fileKey);
-          if (blob) {
-            recordFolder.file(uniqueZipFileName(usedNames, f.name, f.fileKey, fileCount), blob);
-            fileCount++;
-          }
-        }
-      }
-    }
-    if (fileCount === 0) {
-      setStatus("ダウンロード対象が見つかりませんでした。", true);
-      return;
-    }
-    setStatus(`ZIP圧縮中 (計${fileCount}ファイル)...`);
-    const zipBlob = await zip.generateAsync({ type: "blob" });
-    const doc = getToolDocument();
-    const a = doc.createElement("a");
-    const u = URL.createObjectURL(zipBlob);
-    a.href = u;
-    a.download = zipName;
-    doc.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      doc.body.removeChild(a);
-      URL.revokeObjectURL(u);
-    }, 100);
-    setStatus(`添付ファイル一括DL完了 (${fileCount}ファイル)`);
-  }
-  async function getAllAppsInSpace(isSource) {
-    const prefix = getSideApiPrefix(isSource, false);
-    let allApps = [];
-    let offset = 0;
-    while (true) {
-      const resp = await apiGet(prefix, "/apps.json", { limit: 100, offset });
-      const apps = resp.apps || [];
-      allApps = allApps.concat(apps);
-      if (apps.length < 100) break;
-      offset += 100;
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    return allApps;
-  }
-  async function downloadBlobWithRetry(fileKey, isSource, guestSpaceId) {
-    let prefix = getSideApiPrefix(isSource, false);
-    if (guestSpaceId) {
-      prefix = `/k/guest/${guestSpaceId}/v1`;
-    }
-    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
-    const headers = { "X-Requested-With": "XMLHttpRequest" };
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const resp = await fetch(url, { method: "GET", headers });
-        if (resp.status === 403) return null;
-        if (!resp.ok) throw new Error("Download failed: " + resp.status);
-        return await resp.blob();
-      } catch (e) {
-        console.warn("File download failed, retrying...", e);
-        await new Promise((r) => setTimeout(r, 500));
-      }
-    }
-    return null;
-  }
-  async function fetchFieldDefinitionsForExport(prefix, appId) {
-    const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
-    const properties = fields?.properties || {};
-    const propKeys = Object.keys(properties);
-    if (!propKeys.length) throw new Error("出力できるフィールドがありません");
-    return { fields, properties, propKeys };
-  }
-  async function fetchAllRecordsForExport(prefix, appId, condition) {
-    let allRecords = [];
-    let lastRecordId = "0";
-    const limit = 500;
-    const baseQuery = String(condition || "").trim();
-    const queryHasOrder = hasOrderByClause(baseQuery);
-    const queryHasLimit = /\blimit\s+\d+/i.test(baseQuery);
-    const queryHasOffset = /\boffset\s+\d+/i.test(baseQuery);
-    if (queryHasLimit || queryHasOffset) {
-      if (queryHasOffset && !queryHasLimit) {
-        throw new Error("クエリ内の offset は limit と併用してください。自動ページングする場合は limit/offset を取り除いてください。");
-      }
-      const resp = await apiGet(prefix, "/records.json", { app: appId, query: baseQuery });
-      return resp.records || [];
-    }
-    while (true) {
-      setBusy(true, `レコード取得中... (${allRecords.length}件取得済)`);
-      let loopQuery = "";
-      if (baseQuery && queryHasOrder) {
-        loopQuery = `${baseQuery} ${queryHasOrder ? "" : "order by $id asc"} limit ${limit} offset ${allRecords.length}`;
-      } else if (baseQuery) {
-        loopQuery = `(${baseQuery}) and $id > ${lastRecordId} order by $id asc limit ${limit}`;
-      } else {
-        loopQuery = `$id > ${lastRecordId} order by $id asc limit ${limit}`;
-      }
-      const resp = await apiGet(prefix, "/records.json", { app: appId, query: loopQuery });
-      const batch = resp.records || [];
-      allRecords = allRecords.concat(batch);
-      if (batch.length < limit) break;
-      lastRecordId = batch[batch.length - 1].$id.value;
-    }
-    return allRecords;
-  }
-  function escapeCsvCell(val) {
-    const s = String(val == null ? "" : val);
-    if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-      return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
-  }
-  function extractCsvFieldValue(rec, code) {
-    const field = rec[code];
-    if (!field) return "";
-    if (field.type === "USER_SELECT" || field.type === "ORGANIZATION_SELECT" || field.type === "GROUP_SELECT") {
-      return (field.value || []).map((v) => v.code || v.name).join(",");
-    }
-    if (field.type === "CHECK_BOX" || field.type === "MULTI_SELECT") {
-      return (field.value || []).join(",");
-    }
-    if (field.type === "FILE") {
-      return (field.value || []).map((file) => file.name).join(",");
-    }
-    if (field.type === "SUBTABLE") {
-      return (field.value || []).length + "行";
-    }
-    if (typeof field.value === "object" && field.value !== null) {
-      return JSON.stringify(field.value);
-    }
-    return field.value;
-  }
-  var CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
-    "RECORD_NUMBER",
-    "CREATOR",
-    "CREATED_TIME",
-    "MODIFIER",
-    "UPDATED_TIME",
-    "STATUS",
-    "STATUS_ASSIGNEE",
-    "CALC",
-    "CATEGORY",
-    "__ID__",
-    "__REVISION__",
-    "FILE",
-    "SUBTABLE",
-    "REFERENCE_TABLE",
-    "LABEL",
-    "HR",
-    "SPACER"
-  ]);
-  function splitCsvListValue(value) {
-    const text = String(value == null ? "" : "").trim();
-    if (!text) return [];
-    return text.split(",").map((item) => item.trim()).filter(Boolean);
-  }
-  function coerceCsvImportValue(rawValue, fieldDef) {
-    const type = String(fieldDef?.type || "");
-    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return splitCsvListValue(rawValue);
-    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT") {
-      return splitCsvListValue(rawValue).map((code) => ({ code }));
-    }
-    if (type === "NUMBER") return String(rawValue == null ? "" : rawValue).trim();
-    return rawValue;
-  }
-  function assertCsvImportHeaderSupported(header, properties) {
-    const unknown = [];
-    const unsupported = [];
-    for (const code of header) {
-      if (!code) continue;
-      const def = properties?.[code];
-      if (!def) {
-        unknown.push(code);
-        continue;
-      }
-      if (CSV_IMPORT_UNSUPPORTED_FIELD_TYPES.has(String(def.type || ""))) {
-        unsupported.push(`${code}(${def.type})`);
-      }
-    }
-    if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(", ")}`);
-    if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(", ")}`);
-  }
-  function buildRecordsCsvString(records, propKeys) {
-    const lines = [];
-    lines.push(propKeys.map(escapeCsvCell).join(","));
-    for (const rec of records) {
-      lines.push(propKeys.map((key) => escapeCsvCell(extractCsvFieldValue(rec, key))).join(","));
-    }
-    return "\uFEFF" + lines.join("\n");
-  }
-  function sanitizeZipPathSegment(value, fallback = "item") {
-    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
-    return cleaned || fallback;
-  }
-  function uniqueZipFileName(usedNames, rawName, fileKey = "", index = 0) {
-    const safeName = sanitizeZipPathSegment(rawName || "file.bin", "file.bin");
-    const safePrefix = sanitizeZipPathSegment(String(fileKey || "").slice(0, 12) || String(Number(index) + 1), "file");
-    const candidateBase = `${safePrefix}_${safeName}`;
-    let candidate = candidateBase;
-    let suffix = 2;
-    while (usedNames.has(candidate)) {
-      const dot = candidateBase.lastIndexOf(".");
-      if (dot > 0) candidate = `${candidateBase.slice(0, dot)}_${suffix}${candidateBase.slice(dot)}`;
-      else candidate = `${candidateBase}_${suffix}`;
-      suffix++;
-    }
-    usedNames.add(candidate);
-    return candidate;
-  }
-  function getRecordNumberValue(record) {
-    const match = Object.values(record || {}).find((field) => field?.type === "RECORD_NUMBER");
-    return String(match?.value || record?.$id?.value || "");
-  }
-  function collectRecordFileEntries(record) {
-    const entries = [];
-    const recordId = String(record?.$id?.value || "").trim();
-    const recordNumber = getRecordNumberValue(record);
-    Object.entries(record || {}).forEach(([fieldCode, field]) => {
-      if (!field || typeof field !== "object") return;
-      if (field.type === "FILE") {
-        (field.value || []).forEach((file, fileIndex) => {
-          entries.push({
-            recordId,
-            recordNumber,
-            fieldCode,
-            fileIndex,
-            fileKey: String(file?.fileKey || ""),
-            name: String(file?.name || ""),
-            size: file?.size != null ? Number(file.size) : null,
-            contentType: String(file?.contentType || "")
-          });
-        });
-        return;
-      }
-      if (field.type !== "SUBTABLE") return;
-      (field.value || []).forEach((row, rowIndex) => {
-        Object.entries(row?.value || {}).forEach(([childFieldCode, childField]) => {
-          if (childField?.type !== "FILE") return;
-          (childField.value || []).forEach((file, fileIndex) => {
-            entries.push({
-              recordId,
-              recordNumber,
-              fieldCode,
-              childFieldCode,
-              rowIndex,
-              fileIndex,
-              fileKey: String(file?.fileKey || ""),
-              name: String(file?.name || ""),
-              size: file?.size != null ? Number(file.size) : null,
-              contentType: String(file?.contentType || "")
-            });
-          });
-        });
-      });
-    });
-    return entries.filter((entry) => entry.fileKey);
-  }
-  function buildAttachmentZipPath(entry) {
-    const parts = [
-      "attachments",
-      `record_${sanitizeZipPathSegment(entry.recordId || entry.recordNumber || "unknown")}`
-    ];
-    if (entry.childFieldCode) {
-      parts.push(sanitizeZipPathSegment(entry.fieldCode || "subtable"));
-      parts.push(`row_${Number(entry.rowIndex) + 1}`);
-      parts.push(sanitizeZipPathSegment(entry.childFieldCode));
-    } else {
-      parts.push(sanitizeZipPathSegment(entry.fieldCode || "files"));
-    }
-    const filePrefix = sanitizeZipPathSegment((entry.fileKey || "").slice(0, 12) || String(entry.fileIndex + 1));
-    parts.push(`${filePrefix}_${sanitizeZipPathSegment(entry.name || "file.bin", "file.bin")}`);
-    return parts.join("/");
-  }
-  async function fetchRecordComments(prefix, appId, recordId) {
-    const comments = [];
-    const limit = 10;
-    let offset = 0;
-    while (true) {
-      const resp = await apiGet(prefix, "/record/comments.json", {
-        app: appId,
-        record: recordId,
-        order: "asc",
-        offset,
-        limit
-      });
-      const batch = resp.comments || [];
-      comments.push(...batch);
-      if (batch.length < limit) break;
-      offset += batch.length;
-    }
-    return comments;
-  }
-  function renderRecordBackupSummary(summary) {
-    const notes = Array.isArray(summary?.notes) ? summary.notes : [];
-    const appScopeLabels = Array.isArray(summary?.appScopeLabels) ? summary.appScopeLabels : [];
-    const appSettingsLabel = summary?.includeAppSettings ? `${String(summary?.appOkCount || 0)}/${String(summary?.appTotalCount || 0)}セクション OK${appScopeLabels.length ? ` / ${appScopeLabels.join(", ")}` : ""}` : "未取得";
-    const pluginConfigLabel = summary?.includeAppSettings ? summary?.includePluginConfig ? String(summary?.pluginConfigLabel || "-") : "未取得" : "未取得";
-    return `
-    <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">
-      ZIP: ${esc(summary?.zipName || "-")} / レコード: ${esc(String(summary?.recordCount || 0))}
-    </div>
-    <table>
-      <tbody>
-        <tr><th style="width:140px">CSV</th><td>${esc(summary?.csvName || "-")}</td></tr>
-        <tr><th>添付ファイル</th><td>${esc(String(summary?.fileCount || 0))}件 ${summary?.includeFiles ? "" : "(未取得)"}</td></tr>
-        <tr><th>コメント</th><td>${esc(String(summary?.commentCount || 0))}件 / コメントあり ${esc(String(summary?.commentRecordCount || 0))}レコード ${summary?.includeComments ? "" : "(未取得)"}</td></tr>
-        <tr><th>アプリ設定JSON</th><td>${esc(appSettingsLabel)}</td></tr>
-        <tr><th>プラグイン設定</th><td>${esc(pluginConfigLabel)}</td></tr>
-        <tr><th>注意</th><td>${esc(notes.length ? notes.join(" / ") : "なし")}</td></tr>
-      </tbody>
-    </table>
-  `;
-  }
-  function formatPluginConfigSummary(backup) {
-    if (!backup || !backup.requested) return "-";
-    if (backup._fetchError) return "一覧取得NG";
-    if (!backup.totalPlugins) return "0件";
-    return `OK ${backup.okCount} / NG ${backup.ngCount}`;
-  }
-  async function fetchPluginConfigBackupForRecord({ appId, guestId, existingPluginList, onProgress }) {
-    const prefix = buildApiPrefix(guestId, false);
-    const result = {
-      requested: true,
-      endpoint: "/app/plugin/config.json",
-      source: "api-lab",
-      experimental: true,
-      totalPlugins: 0,
-      okCount: 0,
-      ngCount: 0,
-      plugins: []
-    };
-    let plugins = Array.isArray(existingPluginList) ? existingPluginList : null;
-    if (!plugins) {
-      try {
-        const res = await apiGet(prefix, "/app/plugins.json", { app: appId });
-        plugins = Array.isArray(res?.plugins) ? res.plugins : [];
-      } catch (error) {
-        result._fetchError = error?.message || String(error);
-        return result;
-      }
-    }
-    result.totalPlugins = plugins.length;
-    if (!plugins.length) return result;
-    for (let i = 0; i < plugins.length; i++) {
-      const plugin = plugins[i] || {};
-      const pluginId = String(plugin.id || "").trim();
-      if (!pluginId) continue;
-      if (typeof onProgress === "function") onProgress(i, plugins.length, plugin);
-      try {
-        const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id: pluginId });
-        result.plugins.push({
-          ...plugin,
-          id: pluginId,
-          config: res?.config || {},
-          revision: res?.revision != null ? String(res.revision) : ""
-        });
-        result.okCount += 1;
-      } catch (error) {
-        result.plugins.push({
-          ...plugin,
-          id: pluginId,
-          _fetchError: error.message || String(error)
-        });
-        result.ngCount += 1;
-      }
-    }
-    return result;
-  }
-  function collectRecordBackupAppScopeKeys() {
-    const container = getToolDocument().getElementById("u_recordBackupAppScopes");
-    if (!container) return [];
-    return [...new Set(selectedScopeKeys(container).filter(Boolean))];
-  }
-  async function runCsvExport() {
-    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
-    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
-    const tgtGuestId = getToolDocument().getElementById("u_targetGuest")?.value?.trim();
-    const guestPrefix = tgtGuestId ? `/k/guest/${tgtGuestId}/v1` : "/k/v1";
-    const condition = getToolDocument().getElementById("u_csvExportView")?.value || "";
-    const filename = getToolDocument().getElementById("u_csvExportName")?.value?.trim() || "records.csv";
-    setBusy(true, "フィールド情報取得中...");
-    let propKeys = [];
-    try {
-      ({ propKeys } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId));
-    } catch (e) {
-      throw new Error("フィールド情報の取得に失敗: " + e.message);
-    }
-    setBusy(true, "レコード取得中...");
-    const allRecords = await fetchAllRecordsForExport(guestPrefix, tgtAppId, condition);
-    if (!allRecords.length) throw new Error("出力するレコードがありません");
-    setStatus(`CSV生成中... (${allRecords.length}件)`);
-    const csvStr = buildRecordsCsvString(allRecords, propKeys);
-    const blob = new Blob([csvStr], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const doc = getToolDocument();
-    const a = doc.createElement("a");
-    a.href = url;
-    a.download = filename;
-    doc.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      doc.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
-    setBusy(false);
-    setStatus(`CSVを出力しました (${allRecords.length}件)`);
-  }
-  async function runCsvImport() {
-    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
-    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
-    const guestPrefix = getToolDocument().getElementById("u_targetGuest")?.value?.trim() ? `/k/guest/${getToolDocument().getElementById("u_targetGuest").value.trim()}/v1` : "/k/v1";
-    const fileInput = getToolDocument().getElementById("u_csvImportFile");
-    if (!fileInput || !fileInput.files || !fileInput.files.length) {
-      throw new Error("CSVファイルを選択してください");
-    }
-    const file = fileInput.files[0];
-    setBusy(true, "CSVファイルを読み込み中...");
-    const text = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(String(e.target.result || ""));
-      reader.onerror = (e) => reject(new Error("ファイルの読み取りに失敗しました"));
-      reader.readAsText(file);
-    });
-    if (!text) throw new Error("ファイルが空です");
-    setBusy(true, "CSVをパース中...");
-    const parseCsv = (csvText) => {
-      const rows2 = [];
-      let current = [];
-      let cell = "";
-      let inQuotes = false;
-      for (let i = 0; i < csvText.length; i++) {
-        const char = csvText[i];
-        const nextChar = csvText[i + 1];
-        if (inQuotes) {
-          if (char === '"') {
-            if (nextChar === '"') {
-              cell += '"';
-              i++;
-            } else {
-              inQuotes = false;
-            }
-          } else {
-            cell += char;
-          }
-        } else {
-          if (char === '"') {
-            inQuotes = true;
-          } else if (char === ",") {
-            current.push(cell);
-            cell = "";
-          } else if (char === "\n" || char === "\r") {
-            if (char === "\r" && nextChar === "\n") i++;
-            current.push(cell);
-            rows2.push(current);
-            current = [];
-            cell = "";
-          } else {
-            cell += char;
-          }
-        }
-      }
-      if (cell !== "" || current.length > 0) {
-        current.push(cell);
-        rows2.push(current);
-      }
-      return rows2;
-    };
-    const rows = parseCsv(text.replace(/^\uFEFF/, ""));
-    if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
-    const header = rows[0].map((h) => h.trim());
-    if (header.includes("$id")) throw new Error("CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。");
-    setBusy(true, "フィールド情報を確認中...");
-    const { properties } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId);
-    assertCsvImportHeaderSupported(header, properties);
-    const records = [];
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i].length === 1 && rows[i][0] === "") continue;
-      const rec = {};
-      for (let j = 0; j < header.length; j++) {
-        if (!header[j]) continue;
-        const val = rows[i][j] !== void 0 ? rows[i][j] : "";
-        rec[header[j]] = { value: coerceCsvImportValue(val, properties[header[j]]) };
-      }
-      records.push(rec);
-    }
-    if (!records.length) throw new Error("登録するデータが見つかりませんでした");
-    if (!await confirmDestructive({
-      title: "CSVインポートの最終確認",
-      body: `比較先アプリ ${tgtAppId} に CSV から ${records.length} 件のレコードを登録します。
-この処理は元に戻せません。`,
-      keyword: tgtAppId,
-      okLabel: "CSVをインポート",
-      riskTone: "danger"
-    })) {
-      setBusy(false);
-      return;
-    }
-    setBusy(true, `インポート開始... (対象 ${records.length}件)`);
-    const batchSize = 100;
-    let successCount = 0;
-    for (let i = 0; i < records.length; i += batchSize) {
-      const batch = records.slice(i, i + batchSize);
-      setBusy(true, `インポート実行中... (${i + 1} ～ ${i + batch.length} / ${records.length} 件目)`);
-      try {
-        await apiPost(guestPrefix, "/records.json", { app: tgtAppId, records: batch });
-        successCount += batch.length;
-      } catch (e) {
-        setBusy(false);
-        throw new Error(`レコード登録エラー（${i + 1}～${i + batch.length}件目付近 / 既に成功 ${successCount}件）: ${e && e.message || e}`);
-      }
-    }
-    setBusy(false);
-    showToast(`完了: ${successCount}件のレコードを登録しました。`, "success");
-    fileInput.value = "";
-    const fnEl = getToolDocument().getElementById("u_csvImportFileName");
-    if (fnEl) fnEl.textContent = "未選択";
-  }
-  async function runRecordBackup() {
-    const tgtAppId = getToolDocument().getElementById("u_targetApp")?.value?.trim();
-    if (!tgtAppId) throw new Error("比較先アプリIDが指定されていません");
-    const tgtGuestId = getToolDocument().getElementById("u_targetGuest")?.value?.trim();
-    const guestPrefix = tgtGuestId ? `/k/guest/${tgtGuestId}/v1` : "/k/v1";
-    const condition = getToolDocument().getElementById("u_recordBackupView")?.value || "";
-    const zipName = getToolDocument().getElementById("u_recordBackupZipName")?.value?.trim() || `record_backup_${tgtAppId}_${nowStamp()}.zip`;
-    const includeFiles = !!getToolDocument().getElementById("u_recordBackupIncludeFiles")?.checked;
-    const includeComments = !!getToolDocument().getElementById("u_recordBackupIncludeComments")?.checked;
-    const includeAppSettings = !!getToolDocument().getElementById("u_recordBackupIncludeAppSettings")?.checked;
-    const includePluginConfig = includeAppSettings && !!getToolDocument().getElementById("u_recordBackupIncludePluginConfig")?.checked;
-    const appScopes = includeAppSettings ? collectRecordBackupAppScopeKeys() : [];
-    if (includeAppSettings && !appScopes.length) throw new Error("同梱するアプリ設定セクションを1つ以上選択してください");
-    setBusy(true, "バックアップ対象のフィールドを取得中...");
-    const { propKeys } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId);
-    setBusy(true, "バックアップ対象レコードを取得中...");
-    const records = await fetchAllRecordsForExport(guestPrefix, tgtAppId, condition);
-    if (!records.length) throw new Error("バックアップ対象のレコードがありません");
-    const JSZipCtor = await loadJSZip();
-    const zip = new JSZipCtor();
-    const generatedAt = (/* @__PURE__ */ new Date()).toISOString();
-    const csvName = "records.csv";
-    const notes = [];
-    const csvStr = buildRecordsCsvString(records, propKeys);
-    zip.file(csvName, csvStr);
-    let fileCount = 0;
-    const attachmentEntries = records.flatMap((record) => collectRecordFileEntries(record));
-    const attachmentManifest = {
-      generatedAt,
-      appId: tgtAppId,
-      recordCount: records.length,
-      totalEntries: attachmentEntries.length,
-      downloadedCount: 0,
-      skippedCount: 0,
-      files: []
-    };
-    if (includeFiles) {
-      const blobCache = /* @__PURE__ */ new Map();
-      for (let i = 0; i < attachmentEntries.length; i++) {
-        const entry = attachmentEntries[i];
-        setStatus(`添付ファイル取得中... (${i + 1}/${attachmentEntries.length})`);
-        let blob = blobCache.get(entry.fileKey);
-        if (blob === void 0) {
-          blob = await downloadBlobWithRetry(entry.fileKey, false, tgtGuestId);
-          blobCache.set(entry.fileKey, blob || null);
-        }
-        if (blob) {
-          zip.file(buildAttachmentZipPath(entry), blob);
-          attachmentManifest.downloadedCount += 1;
-          fileCount += 1;
-        } else {
-          attachmentManifest.skippedCount += 1;
-        }
-        attachmentManifest.files.push({
-          ...entry,
-          zipPath: buildAttachmentZipPath(entry),
-          downloaded: !!blob
-        });
-      }
-      if (!attachmentEntries.length) notes.push("添付ファイルなし");
-      else if (attachmentManifest.skippedCount) notes.push(`添付 ${attachmentManifest.skippedCount}件取得失敗`);
-      zip.file("attachments_manifest.json", JSON.stringify(attachmentManifest, null, 2));
-    } else {
-      notes.push("添付ファイル未取得");
-    }
-    let commentCount = 0;
-    let commentRecordCount = 0;
-    const commentsPayload = {
-      generatedAt,
-      appId: tgtAppId,
-      guestId: tgtGuestId || "",
-      recordCount: records.length,
-      records: [],
-      commentCount: 0,
-      _fetchError: ""
-    };
-    if (includeComments) {
-      for (let i = 0; i < records.length; i++) {
-        const record = records[i];
-        const recordId = String(record?.$id?.value || "").trim();
-        if (!recordId) continue;
-        setStatus(`コメント取得中... (${i + 1}/${records.length})`);
-        try {
-          const comments = await fetchRecordComments(guestPrefix, tgtAppId, recordId);
-          if (comments.length) {
-            commentsPayload.records.push({
-              recordId,
-              recordNumber: getRecordNumberValue(record),
-              comments
-            });
-            commentRecordCount += 1;
-            commentCount += comments.length;
-          }
-        } catch (error) {
-          commentsPayload._fetchError = error.message || String(error);
-          notes.push("コメント取得に失敗したため一部スキップ");
-          break;
-        }
-      }
-      commentsPayload.commentCount = commentCount;
-      zip.file("comments/comments.json", JSON.stringify(commentsPayload, null, 2));
-      if (!commentCount && !commentsPayload._fetchError) notes.push("コメントなし");
-    } else {
-      notes.push("コメント未取得");
-    }
-    let appOkCount = 0;
-    let appNgCount = 0;
-    let appScopeLabels = [];
-    let pluginConfigLabel = "未取得";
-    if (includeAppSettings) {
-      appScopeLabels = appScopes.map((key) => SECTION_DEFS.find((section) => section.key === key)?.label || key);
-      setStatus(`アプリ設定取得中... (0/${appScopes.length})`);
-      const settingsBundle = await fetchBundle({
-        appId: tgtAppId,
-        guestId: tgtGuestId || "",
-        preview: false,
-        sections: appScopes,
-        onProgress: (p, label) => setStatus(`アプリ設定取得中 ${Math.round(p * 100)}% (${label})`)
-      });
-      for (const key of appScopes) {
-        const sec = settingsBundle.sections[key];
-        if (sec && sec._fetchError) appNgCount += 1;
-        else appOkCount += 1;
-      }
-      const appSettingsPayload = {
-        generatedAt,
-        appId: tgtAppId,
-        guestId: tgtGuestId || "",
-        preview: false,
-        scopes: appScopes,
-        scopeLabels: appScopeLabels,
-        bundle: settingsBundle
-      };
-      zip.file(`app_settings/app_${tgtAppId}.json`, JSON.stringify(appSettingsPayload, null, 2));
-      let pluginConfigBackup = null;
-      if (includePluginConfig) {
-        pluginConfigBackup = await fetchPluginConfigBackupForRecord({
-          appId: tgtAppId,
-          guestId: tgtGuestId || "",
-          existingPluginList: settingsBundle?.sections?.pluginSettings?.plugins,
-          onProgress: (pluginIndex, pluginTotal, plugin) => {
-            const pluginName = String(plugin?.name || plugin?.id || "");
-            setStatus(`プラグイン設定取得中 ${pluginIndex + 1}/${pluginTotal}${pluginName ? ` (${pluginName})` : ""}`);
-          }
-        });
-        pluginConfigLabel = formatPluginConfigSummary(pluginConfigBackup);
-        zip.file("app_settings/plugin_config.json", JSON.stringify(pluginConfigBackup, null, 2));
-        if (pluginConfigBackup?._fetchError) notes.push("プラグイン一覧取得失敗");
-        else if (pluginConfigBackup?.ngCount) notes.push("プラグイン設定一部取得失敗");
-      }
-      zip.file("app_settings/manifest.json", JSON.stringify({
-        generatedAt,
-        appId: tgtAppId,
-        guestId: tgtGuestId || "",
-        preview: false,
-        scopes: appScopes,
-        scopeLabels: appScopeLabels,
-        okCount: appOkCount,
-        ngCount: appNgCount,
-        pluginConfig: {
-          included: includePluginConfig,
-          label: pluginConfigLabel,
-          totalPlugins: pluginConfigBackup?.totalPlugins || 0,
-          okCount: pluginConfigBackup?.okCount || 0,
-          ngCount: pluginConfigBackup?.ngCount || 0,
-          fetchError: pluginConfigBackup?._fetchError || ""
-        }
-      }, null, 2));
-      if (appNgCount) notes.push("アプリ設定一部取得失敗");
-    }
-    const manifest = {
-      generatedAt,
-      appId: tgtAppId,
-      guestId: tgtGuestId || "",
-      query: condition,
-      csv: {
-        name: csvName,
-        recordCount: records.length
-      },
-      attachments: {
-        included: includeFiles,
-        totalEntries: attachmentEntries.length,
-        downloadedCount: attachmentManifest.downloadedCount,
-        skippedCount: attachmentManifest.skippedCount
-      },
-      comments: {
-        included: includeComments,
-        commentCount,
-        recordCount: commentRecordCount,
-        fetchError: commentsPayload._fetchError || ""
-      },
-      appSettings: {
-        included: includeAppSettings,
-        scopes: appScopes,
-        scopeLabels: appScopeLabels,
-        okCount: appOkCount,
-        ngCount: appNgCount,
-        pluginConfig: {
-          included: includePluginConfig,
-          label: pluginConfigLabel
-        }
-      }
-    };
-    zip.file("manifest.json", JSON.stringify(manifest, null, 2));
-    setStatus("バックアップZIPを生成中...");
-    const zipBlob = await zip.generateAsync({ type: "blob" });
-    downloadBlob(zipName, zipBlob);
-    if (ui.recordBackupResult) {
-      ui.recordBackupResult.innerHTML = renderRecordBackupSummary({
-        zipName,
-        recordCount: records.length,
-        csvName,
-        includeFiles,
-        fileCount,
-        includeComments,
-        commentCount,
-        commentRecordCount,
-        includeAppSettings,
-        appOkCount,
-        appTotalCount: appScopes.length,
-        appScopeLabels,
-        includePluginConfig,
-        pluginConfigLabel,
-        notes
-      });
-    }
-    setStatus(`データバックアップZIPを保存しました（${records.length}件 / 添付${fileCount}件 / コメント${commentCount}件${includeAppSettings ? ` / 設定${appOkCount}/${appScopes.length}セクション` : ""}）`);
-  }
-  async function runRecordCopy() {
-    const srcApp = getToolDocument().getElementById("u_sourceApp")?.value?.trim();
-    const tgtApp = getToolDocument().getElementById("u_targetApp")?.value?.trim();
-    if (!srcApp || !tgtApp) throw new Error("比較元と比較先の両方のアプリIDを指定してください");
-    const srcGuestStr = getToolDocument().getElementById("u_sourceGuest")?.value?.trim() || null;
-    const tgtGuestStr = getToolDocument().getElementById("u_targetGuest")?.value?.trim() || null;
-    const srcGuest = srcGuestStr ? `/k/guest/${srcGuestStr}/v1` : "/k/v1";
-    const tgtGuest = tgtGuestStr ? `/k/guest/${tgtGuestStr}/v1` : "/k/v1";
-    const query = getToolDocument().getElementById("u_recordCopyQuery")?.value || "";
-    if (!await confirmDestructive({
-      title: "レコードコピーの最終確認",
-      body: `比較元 ${srcApp} → 比較先 ${tgtApp} へレコードをコピーします。
-この処理は元に戻せません。`,
-      keyword: tgtApp,
-      okLabel: "レコードをコピー",
-      riskTone: "danger"
-    })) return;
-    setBusy(true, "比較元のレコードを取得中...");
-    let totalFetched = 0;
-    const records = [];
-    const userQueryHasOrder = /\border\s+by\b/i.test(query);
-    const userQueryHasPaging = hasPagingClause(query);
-    if (userQueryHasPaging) {
-      showToast("クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。", "warn");
-      setBusy(false);
-      return;
-    }
-    const baseQuery = userQueryHasOrder ? query : `${query} order by $id asc`;
-    while (true) {
-      const q = `${baseQuery} limit 500 offset ${totalFetched}`;
-      const res = await apiGet(srcGuest, "/records.json", { app: srcApp, query: q });
-      if (!res.records || res.records.length === 0) break;
-      records.push(...res.records);
-      totalFetched += res.records.length;
-      if (res.records.length < 500) break;
-      setStatus(`取得中... (${totalFetched}件)`);
-    }
-    if (!records.length) {
-      showToast("コピー対象のレコードが見つかりませんでした", "warn");
-      setBusy(false);
-      return;
-    }
-    const systemTypes = /* @__PURE__ */ new Set([
-      "RECORD_NUMBER",
-      "CREATOR",
-      "CREATED_TIME",
-      "MODIFIER",
-      "UPDATED_TIME",
-      "STATUS",
-      "STATUS_ASSIGNEE",
-      "CALC",
-      "CATEGORY",
-      "__ID__",
-      "__REVISION__"
-    ]);
-    const systemKeys = /* @__PURE__ */ new Set(["$id", "$revision"]);
-    const cleanRecords = records.map((rec) => {
-      const clean = {};
-      for (const [k, v] of Object.entries(rec)) {
-        if (!v || typeof v !== "object") continue;
-        if (systemKeys.has(k)) continue;
-        if (systemTypes.has(v.type)) continue;
-        if (v.type === "SUBTABLE") {
-          const rows = Array.isArray(v.value) ? v.value : [];
-          const cleanSub = rows.map((sRow) => {
-            const inner = sRow && typeof sRow === "object" && sRow.value && typeof sRow.value === "object" ? sRow.value : {};
-            const cleanSRow = {};
-            for (const [sk, sv] of Object.entries(inner)) {
-              if (systemKeys.has(sk)) continue;
-              if (!sv || typeof sv !== "object") continue;
-              if (systemTypes.has(sv.type)) continue;
-              if (sv.type === "FILE") continue;
-              if (sv && typeof sv === "object") cleanSRow[sk] = { value: sv.value };
-            }
-            return { value: cleanSRow };
-          });
-          clean[k] = { value: cleanSub };
-        } else {
-          clean[k] = { value: v.value };
-        }
-      }
-      return clean;
-    });
-    if (!await confirmDestructive({
-      title: "レコード登録の最終確認",
-      body: `${records.length} 件のレコードを比較先 (AppID: ${tgtApp}) へ登録します。
-この処理は元に戻せません。`,
-      keyword: tgtApp,
-      okLabel: "レコードを登録",
-      riskTone: "danger"
-    })) {
-      setBusy(false);
-      return;
-    }
-    setBusy(true, `インポート開始... (対象 ${records.length}件)`);
-    const batchSize = 100;
-    let successCount = 0;
-    for (let i = 0; i < cleanRecords.length; i += batchSize) {
-      const batch = cleanRecords.slice(i, i + batchSize);
-      setBusy(true, `登録実行中... (${i + 1} ～ ${i + batch.length} / ${cleanRecords.length} 件目)`);
-      try {
-        await apiPost(tgtGuest, "/records.json", { app: tgtApp, records: batch });
-        successCount += batch.length;
-      } catch (e) {
-        setBusy(false);
-        throw new Error(`レコード登録エラー（${i + 1}～${i + batch.length}件目付近 / 既に成功 ${successCount}件）: ${e && e.message || e}`);
-      }
-    }
-    setBusy(false);
-    showToast(`完了: ${successCount}件のレコードを比較先へコピーしました。`, "success");
-  }
-  var TEMPLATE_STATE_KEY = "kintoneSuperApp_Templates";
-  function getTemplates() {
-    try {
-      return JSON.parse(localStorage.getItem(TEMPLATE_STATE_KEY) || "{}");
-    } catch (error) {
-      console.warn("テンプレートの読み込みに失敗しました", error);
-      showToast("テンプレートの読み込みに失敗しました。保存データが破損している可能性があります。", "warn");
-      return {};
-    }
-  }
-  function renderTemplateOptions() {
-    const sel = getToolDocument().getElementById("u_templateSelect");
-    if (!sel) return;
-    const tpls = getTemplates();
-    const current = sel.value;
-    const keys = Object.keys(tpls).sort((a, b) => tpls[b].savedAt - tpls[a].savedAt);
-    if (!keys.length) {
-      sel.innerHTML = '<option value="">-- 保存済なし --</option>';
-      return;
-    }
-    sel.innerHTML = keys.map((k) => `<option value="${esc(k)}">${esc(k)} (${new Date(tpls[k].savedAt).toLocaleDateString()})</option>`).join("");
-    if (tpls[current]) sel.value = current;
-  }
-  async function saveTemplate() {
-    const name = getToolDocument().getElementById("u_templateSaveName")?.value?.trim();
-    if (!name) throw new Error("保存するデータ名を入力してください");
-    const c = commonParams();
-    if (!c.source.appId) throw new Error("テンプレートとして保存する比較元のアプリIDを指定してください");
-    const scopes = SECTION_DEFS.map((s) => s.key);
-    const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
-    const tpls = getTemplates();
-    tpls[name] = { savedAt: Date.now(), bundle };
-    try {
-      localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
-    } catch (e) {
-      throw new Error("保存に失敗しました。LocalStorageの容量制限(5MB等)に達した可能性があります。不要な履歴を削除してください。");
-    }
-    renderTemplateOptions();
-    getToolDocument().getElementById("u_templateSaveName").value = "";
-    showToast(`データ「${name}」を保存しました。`, "success");
-  }
-  function loadTemplate() {
-    const name = getToolDocument().getElementById("u_templateSelect")?.value;
-    if (!name) return;
-    const tpls = getTemplates();
-    const tpl = tpls[name];
-    if (!tpl || !tpl.bundle) {
-      showToast("指定されたデータが存在しません", "error");
-      return;
-    }
-    state.importedSourceBundle = tpl.bundle;
-    state.importedSourceName = `[テンプレート] ${name}`;
-    renderBundleState();
-    showToast(`テンプレート「${name}」を比較元としてセットしました。差分比較を実行してください。`, "success");
-  }
-  function deleteTemplate() {
-    const name = getToolDocument().getElementById("u_templateSelect")?.value;
-    if (!name) return;
-    if (!kusConfirm(`テンプレート「${name}」を削除しますか？`)) return;
-    const tpls = getTemplates();
-    delete tpls[name];
-    try {
-      localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
-    } catch (e) {
-      showToast("テンプレートの削除状態を保存できませんでした。ブラウザの保存容量や権限を確認してください。", "error");
-      throw e;
-    }
-    renderTemplateOptions();
-    setStatus(`テンプレート「${name}」を削除しました`);
-  }
-
-  // src/tabs/settings-export.ts
+  init_record();
   function addAppIdToSettingsExport(appId, appName) {
     if (!/^\d+$/.test(String(appId || "").trim())) return;
     const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
@@ -30003,14 +31621,51 @@ ${lines.join("\n")}
   var REFLECT_APPLY_CHECKS = [
     { key: "diff", label: "差分比較済み" },
     { key: "plan", label: "実行前プラン確認済み" },
+    { key: "preview", label: "プレビュー画面確認済み" },
     { key: "target", label: "反映先は比較先プレビュー" }
   ];
+  function getCurrentReflectApplyChecks() {
+    const doc = getToolDocument();
+    const boxes = [...doc.querySelectorAll("[data-reflect-apply-check]")];
+    if (!boxes.length) return [...REFLECT_APPLY_CHECKS];
+    const seen = /* @__PURE__ */ new Set();
+    return boxes.reduce((items, box) => {
+      const key = box.dataset.reflectApplyCheck || "";
+      if (!key || seen.has(key)) return items;
+      seen.add(key);
+      const label = (box.closest(".reflect-apply-check")?.textContent || key).replace(/\s+/g, " ").trim();
+      items.push({ key, label });
+      return items;
+    }, []);
+  }
+  function deriveReflectApplyCheckState() {
+    const result = { diff: false, plan: false, preview: false, target: false };
+    try {
+      const sigNow = currentDiffSignature();
+      result.diff = !!state.lastDiffAt && !!sigNow && String(state.lastDiffSignature || "") === String(sigNow);
+    } catch (_e) {
+    }
+    try {
+      const c = commonParams();
+      const appId = String(c?.target?.appId || "").trim();
+      const guestId = String(c?.target?.guestId || "").trim();
+      const previewKey = `${appId}::${guestId}`;
+      result.preview = !!state.reflectPreviewOpened && !!appId && state.reflectPreviewOpenedFor === previewKey;
+      result.target = !!c?.target?.preview;
+    } catch (_e) {
+      result.target = true;
+    }
+    result.plan = !!state.lastApplyPlan && !!state.lastApplyPlan.signature;
+    return result;
+  }
   function normalizeReflectApplyChecklist() {
     if (!state.reflectApplyChecklist || typeof state.reflectApplyChecklist !== "object" || Array.isArray(state.reflectApplyChecklist)) {
-      state.reflectApplyChecklist = { diff: false, plan: false, target: false };
+      state.reflectApplyChecklist = { diff: false, plan: false, preview: false, target: false };
     }
-    REFLECT_APPLY_CHECKS.forEach((item) => {
-      state.reflectApplyChecklist[item.key] = !!state.reflectApplyChecklist[item.key];
+    const auto = deriveReflectApplyCheckState();
+    getCurrentReflectApplyChecks().forEach((item) => {
+      const cur = !!state.reflectApplyChecklist[item.key];
+      state.reflectApplyChecklist[item.key] = item.key === "preview" ? !!auto[item.key] : !!auto[item.key] || cur;
     });
     return state.reflectApplyChecklist;
   }
@@ -30024,12 +31679,13 @@ ${lines.join("\n")}
       box.checked = checked;
       box.closest(".reflect-apply-check")?.classList.toggle("is-checked", checked);
     });
-    const done = REFLECT_APPLY_CHECKS.filter((item) => !!store[item.key]).length;
-    if (ui.reflectChecklistStatus) ui.reflectChecklistStatus.textContent = `${done} / ${REFLECT_APPLY_CHECKS.length}`;
-    if (ui.reflectApplyChecklist) ui.reflectApplyChecklist.classList.toggle("is-complete", done === REFLECT_APPLY_CHECKS.length);
+    const currentItems = getCurrentReflectApplyChecks();
+    const done = currentItems.filter((item) => !!store[item.key]).length;
+    if (ui.reflectChecklistStatus) ui.reflectChecklistStatus.textContent = `${done} / ${currentItems.length}`;
+    if (ui.reflectApplyChecklist) ui.reflectApplyChecklist.classList.toggle("is-complete", done === currentItems.length);
   }
   function setReflectApplyCheck(key, checked, options = {}) {
-    const item = REFLECT_APPLY_CHECKS.find((entry) => entry.key === key);
+    const item = getCurrentReflectApplyChecks().find((entry) => entry.key === key);
     if (!item) return false;
     normalizeReflectApplyChecklist()[item.key] = !!checked;
     renderReflectApplyChecklistStatus();
@@ -30041,7 +31697,7 @@ ${lines.join("\n")}
     const list = Array.isArray(keys) ? keys : [keys];
     let changed = false;
     list.forEach((key) => {
-      const item = REFLECT_APPLY_CHECKS.find((entry) => entry.key === key);
+      const item = getCurrentReflectApplyChecks().find((entry) => entry.key === key);
       if (!item) return;
       normalizeReflectApplyChecklist()[item.key] = true;
       changed = true;
@@ -30052,10 +31708,10 @@ ${lines.join("\n")}
     saveCurrentDialogState2();
   }
   function resetReflectApplyChecks(keys) {
-    const list = Array.isArray(keys) && keys.length ? keys : REFLECT_APPLY_CHECKS.map((item) => item.key);
+    const list = Array.isArray(keys) && keys.length ? keys : getCurrentReflectApplyChecks().map((item) => item.key);
     let changed = false;
     list.forEach((key) => {
-      const item = REFLECT_APPLY_CHECKS.find((entry) => entry.key === key);
+      const item = getCurrentReflectApplyChecks().find((entry) => entry.key === key);
       if (!item) return;
       if (normalizeReflectApplyChecklist()[item.key]) changed = true;
       normalizeReflectApplyChecklist()[item.key] = false;
@@ -30066,8 +31722,8 @@ ${lines.join("\n")}
     saveCurrentDialogState2();
   }
   function getMissingReflectApplyChecks() {
-    const store = normalizeReflectApplyChecklist();
-    return REFLECT_APPLY_CHECKS.filter((item) => !store[item.key]);
+    const auto = deriveReflectApplyCheckState();
+    return getCurrentReflectApplyChecks().filter((item) => !auto[item.key]);
   }
   function ensureReflectApplyChecklistReady() {
     const missing = getMissingReflectApplyChecks();
@@ -30156,6 +31812,7 @@ ${lines.join("\n")}
       reflectApplyChecklist: {
         diff: !!state.reflectApplyChecklist?.diff,
         plan: !!state.reflectApplyChecklist?.plan,
+        preview: !!state.reflectApplyChecklist?.preview,
         target: !!state.reflectApplyChecklist?.target
       },
       reflectDetailTab: state.reflectDetailTab,
@@ -30179,8 +31836,9 @@ ${lines.join("\n")}
     const diffScopes = Array.isArray(snapshot?.diffScopes) ? snapshot.diffScopes.length : 0;
     const applyScopes = Array.isArray(snapshot?.applyScopes) ? snapshot.applyScopes.length : 0;
     const checks = snapshot?.reflectApplyChecklist || {};
-    const checked = ["diff", "plan", "target"].filter((key) => !!checks[key]).length;
-    return `比較元 ${src} / 比較先 ${tgt} / 差分 ${diffScopes}項目 / 反映 ${applyScopes}項目 / チェック ${checked}/3`;
+    const checkKeys = ["diff", "plan", "preview", "target"];
+    const checked = checkKeys.filter((key) => !!checks[key]).length;
+    return `比較元 ${src} / 比較先 ${tgt} / 差分 ${diffScopes}項目 / 反映 ${applyScopes}項目 / チェック ${checked}/${checkKeys.length}`;
   }
   function renderWorkHistoryPanel() {
     if (!ui.workHistoryList) return;
@@ -30278,8 +31936,10 @@ ${lines.join("\n")}
     state.reflectApplyChecklist = {
       diff: !!snapshot.reflectApplyChecklist?.diff,
       plan: !!snapshot.reflectApplyChecklist?.plan,
+      preview: !!snapshot.reflectApplyChecklist?.preview,
       target: !!snapshot.reflectApplyChecklist?.target
     };
+    state.reflectPreviewOpened = !!snapshot.reflectApplyChecklist?.preview;
     state.reflectDetailTab = String(snapshot.reflectDetailTab || "diff");
     state.reflectSelectedIds = new Set(Array.isArray(snapshot.reflectSelectedIds) ? snapshot.reflectSelectedIds : []);
     state.reflectNodeModes = snapshot.reflectNodeModes && typeof snapshot.reflectNodeModes === "object" ? { ...snapshot.reflectNodeModes } : {};
@@ -30693,19 +32353,14 @@ ${lines.join("\n")}
   function setupEventHandlers(injected = {}) {
     const root2 = getRoot();
     if (!root2) return;
+    let diffOnboardingDismissed = false;
     function syncDiffOnboardingVisibility() {
       const el = ui.diffOnboarding;
       if (!el) return;
-      let dismissed = false;
-      try {
-        dismissed = !!localStorage.getItem(DIFF_ONBOARDING_DISMISSED_KEY);
-      } catch (error) {
-        console.warn("差分オンボーディング状態の読み込みに失敗しました", error);
-      }
       const rootEl = getRoot();
       const onDiffArea = rootEl?.classList.contains("tab-is-diff");
       const hasDiffState = !!state.lastDiffAt || !!state.lastDiffRows.length || !!state.lastFetchIssues.length;
-      el.style.display = !dismissed && onDiffArea && hasDiffState ? "block" : "none";
+      el.style.display = !diffOnboardingDismissed && onDiffArea && hasDiffState ? "block" : "none";
     }
     const {
       runDesignExport: runDesignExport2,
@@ -30733,8 +32388,11 @@ ${lines.join("\n")}
       runSimExecuteAction: runSimExecuteAction2,
       runApiTester: runApiTester2,
       clearApiTesterHistory: clearApiTesterHistory2,
+      copyApiTesterCurl: copyApiTesterCurl2,
       runPreviewApplyPlan: runPreviewApplyPlan2,
       runExportDryRunPlan: runExportDryRunPlan2,
+      runExportReviewZip: runExportReviewZip2,
+      togglePlanSectionExclude: togglePlanSectionExclude2,
       runBackupTargetPreview: runBackupTargetPreview2,
       runRestoreTargetPreviewBackup: runRestoreTargetPreviewBackup2,
       importTargetPreviewBackupFromFile: importTargetPreviewBackupFromFile2,
@@ -30812,6 +32470,7 @@ ${lines.join("\n")}
       }
       if (ui.launcherEmptyState) ui.launcherEmptyState.hidden = group === "history" || visibleCount !== 0;
       renderLauncherActiveFilters(group, searchText);
+      updateChangeWizardCurrentStep();
     }
     function focusWizardTarget(selector, options = {}) {
       if (!selector) return;
@@ -30863,11 +32522,12 @@ ${lines.join("\n")}
             focusWizardTarget("#u_footerApply");
           }
         },
-        design: {
-          title: "記録出力",
+        analyze: {
+          title: "影響確認",
           run() {
-            openFeatureScreen("design", { persist: false, focus: false });
-            focusWizardTarget('[data-act="exportDesignXlsx"]');
+            openFeatureScreen("analyze", { persist: false, focus: false });
+            switchSubTab("analyze", "dashboard", { persist: false });
+            focusWizardTarget('[data-act="runAnalyzeDashboard"]');
           }
         }
       };
@@ -31288,14 +32948,10 @@ ${lines.join("\n")}
           "1": "diff",
           "2": "reflect",
           "3": "field",
-          "4": "jsconfig",
-          "5": "er",
-          "6": "processFlow",
-          "7": "design",
-          "8": "settingsExport",
-          "9": "analyze",
-          "0": "recordMgr",
-          "-": "apiTester"
+          "4": "er",
+          "5": "processFlow",
+          "6": "analyze",
+          "7": "apiTester"
         };
         const target = tabByKey[e.key];
         if (target) {
@@ -31430,6 +33086,14 @@ ${lines.join("\n")}
       withGuard(runSettingsExportSearchApps);
     });
     root2.addEventListener("change", (e) => {
+      const planExcludeEl = e.target?.closest('input[data-act="togglePlanSectionExclude"][data-act-event="change"]');
+      if (planExcludeEl) {
+        const key = planExcludeEl.dataset.sectionKey || "";
+        if (key && typeof togglePlanSectionExclude2 === "function") {
+          togglePlanSectionExclude2(key);
+        }
+        return;
+      }
       if (e.target?.id === "u_csvImportFile") {
         const input = e.target;
         const label = getToolDocument().getElementById("u_csvImportFileName");
@@ -31665,7 +33329,6 @@ ${lines.join("\n")}
         state.reflectActiveSidebarSection = state.reflectActiveSidebarSection === secKey ? null : secKey;
         renderReflectSidebar();
         renderReflectMainPanel();
-        if (ui.scopePickerModal?.dataset?.scopePickerKind === "reflect") closeScopePicker();
         return;
       }
       const overviewNav = e.target?.closest("[data-sidebar-nav]");
@@ -31675,7 +33338,6 @@ ${lines.join("\n")}
           state.reflectActiveSidebarSection = secKey;
           renderReflectSidebar();
           renderReflectMainPanel();
-          if (ui.scopePickerModal?.dataset?.scopePickerKind === "reflect") closeScopePicker();
         }
         return;
       }
@@ -32502,12 +34164,7 @@ ${lines.join("\n")}
         return;
       }
       if (act === "dismissDiffOnboarding") {
-        try {
-          localStorage.setItem(DIFF_ONBOARDING_DISMISSED_KEY, "1");
-        } catch (err) {
-          console.warn("差分オンボーディング状態の保存に失敗しました", err);
-          showToast("表示状態の保存に失敗しました。ブラウザの保存権限を確認してください。", "warn");
-        }
+        diffOnboardingDismissed = true;
         syncDiffOnboardingVisibility();
         return;
       }
@@ -32909,12 +34566,6 @@ ${lines.join("\n")}
         const root3 = doc.getElementById("kintone-unified-suite-v2");
         if (!root3) return;
         const collapsed = root3.classList.toggle("header-collapsed");
-        try {
-          (doc.defaultView || window).localStorage.setItem("kus:headerCollapsed", collapsed ? "1" : "0");
-        } catch (e2) {
-          console.warn("ヘッダー折りたたみ状態の保存に失敗しました", e2);
-          showToast("ヘッダー状態の保存に失敗しました。", "warn");
-        }
         const btn = doc.getElementById("u_headerCollapseBtn");
         if (btn) {
           btn.textContent = collapsed ? "▼" : "▲";
@@ -33189,7 +34840,30 @@ ${lines.join("\n")}
         setStatus("反映先が比較先プレビューであることを確認済みにしました");
         return;
       }
+      if (act === "openTargetPreviewApp") {
+        const rawUrl = actEl.dataset.previewUrl || "";
+        if (!rawUrl) {
+          setStatus("比較先アプリIDを入力するとプレビュー確認を開けます", true);
+          return;
+        }
+        const targetWindow = getToolWindow() || window;
+        const href = new URL(rawUrl, targetWindow.location.origin).toString();
+        targetWindow.open(href, "_blank", "noopener");
+        state.reflectPreviewOpened = true;
+        try {
+          const c = commonParams();
+          state.reflectPreviewOpenedFor = `${String(c.target?.appId || "").trim()}::${String(c.target?.guestId || "").trim()}`;
+        } catch (_e) {
+          state.reflectPreviewOpenedFor = "";
+        }
+        markReflectApplyChecks(["preview", "target"]);
+        renderReflectAssistPanel();
+        setStatus("比較先アプリを開きました。プレビュー内容を確認してから反映してください");
+        return;
+      }
       if (act === "exportDryRunPlan" && typeof runExportDryRunPlan2 === "function") return withGuard(runExportDryRunPlan2);
+      if (act === "exportReviewZip" && typeof runExportReviewZip2 === "function") return withGuard(runExportReviewZip2);
+      if (act === "togglePlanSectionExclude") return;
       if (act === "backupTargetPreview" && typeof runBackupTargetPreview2 === "function") return withGuard(runBackupTargetPreview2);
       if (act === "importTargetPreviewBackupFile") {
         const input = getToolDocument().getElementById("u_targetPreviewBackupFileInput");
@@ -33280,7 +34954,7 @@ ${lines.join("\n")}
         return;
       }
       if (act === "clearApplyHistory") {
-        if (!kusConfirm("反映履歴を全て削除しますか？（端末（localStorage）に保存された履歴のみ）")) return;
+        if (!kusConfirm("このセッション中の反映履歴を全て削除しますか？")) return;
         if (typeof clearReflectApplyHistory === "function") clearReflectApplyHistory();
         renderReflectAssistPanel();
         setStatus("反映履歴をクリアしました");
@@ -33463,6 +35137,7 @@ ${lines.join("\n")}
         setStatus("APIテスターの履歴をクリアしました");
         return;
       }
+      if (act === "copyApiTesterCurl" && typeof copyApiTesterCurl2 === "function") return copyApiTesterCurl2();
       if (act === "runApiTester" && typeof runApiTester2 === "function") return runApiTester2();
     });
     refreshDiffSelectionSetDropdown();
@@ -34128,6 +35803,7 @@ ${lines.join("\n")}
       lab.innerHTML = `<input type="checkbox" data-reflect-apply-check="emptyDiff"> 差分なしの状態で反映することを承認`;
       checklist.appendChild(lab);
     }
+    renderReflectApplyChecklistStatus();
   }
   var FIELD_TYPE_ICONS = {
     SINGLE_LINE_TEXT: "🅰",
@@ -35655,8 +37331,15 @@ ${body}`;
       const btn = e.target?.closest?.("button[data-act]");
       if (!btn) return;
       const act = btn.dataset.act;
-      modal.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-        if (cb.closest("label, .scope-item")?.parentElement?.style?.display === "none") return;
+      const activePanel = modal.querySelector(".scope-picker-panel.active") || modal.querySelector(".scope-picker-panel");
+      if (!activePanel) return;
+      const selector = [
+        '.scope-picker-chips input[type="checkbox"]',
+        "#u_reflectSidebarSections [data-apply-scope]"
+      ].join(",");
+      activePanel.querySelectorAll(selector).forEach((cb) => {
+        const row = cb.closest("label, .scope-item, .sidebar-item");
+        if (row?.style?.display === "none") return;
         cb.checked = act === "kusScopeAll";
         cb.dispatchEvent(new Event("change", { bubbles: true }));
       });
@@ -37492,8 +39175,7 @@ function escapeHtml(value){
 }
 
 // ─── Theme ───
-const THEME_KEY = "kintone-erd-theme";
-let isDark = localStorage.getItem(THEME_KEY) !== "light";
+let isDark = true;
 function readCssVar(name, fallback){
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
@@ -37694,7 +39376,6 @@ function toggleTheme(){
   isDark=!isDark;
   applyTheme();
   applyCyTheme();
-  localStorage.setItem(THEME_KEY, isDark ? "dark" : "light");
   toast(isDark?"ダークモード":"ライトモード");
 }
 applyTheme();
@@ -38911,6 +40592,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   init_components();
   init_dialog();
   init_diff();
+  init_record();
   function renderCustomizeResult(data) {
     if (!data) {
       ui.jsconfigResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">データがありません</div>';
@@ -39327,6 +41009,9 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     }
   }
 
+  // src/boot.ts
+  init_record();
+
   // src/tabs/api-tester.ts
   init_utils();
   init_api();
@@ -39388,6 +41073,46 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       hint: "大量取得時は limit/offset や query を調整してください。"
     }
   ];
+  function sleep3(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  function isRateLimitLike(error) {
+    const text = `${error?.code || ""} ${error?.message || ""} ${error?.status || ""}`.toLowerCase();
+    return error?.status === 429 || text.includes("limit") || text.includes("too many") || text.includes("rate");
+  }
+  function formatApiTesterError(error) {
+    if (!error || typeof error !== "object") return String(error);
+    const lines = [
+      error.message ? `message: ${error.message}` : "",
+      error.code ? `code: ${error.code}` : "",
+      error.id ? `id: ${error.id}` : "",
+      error.status ? `status: ${error.status}` : ""
+    ].filter(Boolean);
+    if (error.errors && typeof error.errors === "object") {
+      lines.push("errors:");
+      for (const [key, value] of Object.entries(error.errors)) {
+        lines.push(`  ${key}: ${value?.messages?.join(", ") || JSON.stringify(value)}`);
+      }
+    }
+    if (!lines.length) {
+      try {
+        return JSON.stringify(error, null, 2);
+      } catch (_) {
+        return String(error);
+      }
+    }
+    return lines.join("\n");
+  }
+  async function runKintoneApiWithSingleRetry(path, method, payload) {
+    try {
+      return await kintone.api(path, method, payload);
+    } catch (error) {
+      if (!isRateLimitLike(error)) throw error;
+      setStatus("API制限の可能性があるため、1.5秒待って再試行します...", true);
+      await sleep3(1500);
+      return await kintone.api(path, method, payload);
+    }
+  }
   async function runApiTester() {
     bumpSessionMetric("apiTesterRun");
     const method = getToolDocument().getElementById("u_apiTesterMethod")?.value || "GET";
@@ -39424,25 +41149,19 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         finalPath = prefix + (path.startsWith("/") ? path : `/${path}`);
       }
       assertAllowsMutatingApiUrl(finalPath, method);
-      const res = await kintone.api(finalPath, method, payload);
+      const res = await runKintoneApiWithSingleRetry(finalPath, method, payload);
       resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(JSON.stringify(res, null, 2))}</pre>`;
       setStatus(`API実行成功: ${method} ${finalPath}`);
       saveApiTesterHistory(method, path, bodyStr);
     } catch (e) {
-      let errMsg = e instanceof Error ? e.message : String(e?.message || e);
-      if (!(e instanceof Error) && typeof e === "object" && e !== null) {
-        try {
-          errMsg = JSON.stringify(e, null, 2);
-        } catch (_) {
-        }
-      }
+      let errMsg = formatApiTesterError(e);
       resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">${esc(errMsg)}</pre>`;
       setStatus(`API実行エラー: ${method} ${path}`, true);
     } finally {
       setBusy(false);
     }
   }
-  var API_HISTORY_KEY = "KUS_API_TESTER_HISTORY";
+  var apiTesterHistoryMemory = [];
   function prettyJson(value) {
     try {
       return JSON.stringify(value, null, 2);
@@ -39512,32 +41231,48 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     }
   }
   function saveApiTesterHistory(method, path, bodyStr) {
-    try {
-      let hist = JSON.parse(localStorage.getItem(API_HISTORY_KEY) || "[]");
-      hist = hist.filter((h) => !(h.method === method && h.path === path && h.body === bodyStr));
-      hist.unshift({ method, path, body: bodyStr, time: (/* @__PURE__ */ new Date()).toISOString() });
-      if (hist.length > 15) hist = hist.slice(0, 15);
-      localStorage.setItem(API_HISTORY_KEY, JSON.stringify(hist));
-      renderApiTesterHistory();
-    } catch (e) {
-      console.error("History save failed", e);
-      showToast("API履歴の保存に失敗しました。ブラウザの保存容量や権限を確認してください。", "warn");
-    }
+    let hist = apiTesterHistoryMemory.filter((h) => !(h.method === method && h.path === path && h.body === bodyStr));
+    hist.unshift({ method, path, body: bodyStr, time: (/* @__PURE__ */ new Date()).toISOString() });
+    apiTesterHistoryMemory = hist.slice(0, 15);
+    renderApiTesterHistory();
   }
   function clearApiTesterHistory() {
-    try {
-      localStorage.removeItem(API_HISTORY_KEY);
-    } catch (e) {
-      console.error("History clear failed", e);
-      showToast("API履歴の削除に失敗しました。", "warn");
-    }
+    apiTesterHistoryMemory = [];
     renderApiTesterHistory();
+  }
+  async function copyApiTesterCurl() {
+    const doc = getToolDocument();
+    const method = doc.getElementById("u_apiTesterMethod")?.value || "GET";
+    const path = doc.getElementById("u_apiTesterPath")?.value?.trim() || "";
+    const body = doc.getElementById("u_apiTesterBody")?.value?.trim() || "{}";
+    if (!path) {
+      showToast("エンドポイントを指定してください", "warn");
+      return;
+    }
+    const escapedBody = body.replace(/'/g, "'\\''");
+    const command = [
+      "curl",
+      "-X",
+      method,
+      `'${path}'`,
+      "-H",
+      "'Content-Type: application/json'",
+      method === "GET" ? "" : `--data '${escapedBody}'`
+    ].filter(Boolean).join(" ");
+    try {
+      await navigator.clipboard.writeText(command);
+      setStatus("APIリクエストのcurl例をコピーしました");
+    } catch (e) {
+      const resEl = doc.getElementById("u_apiTesterResult");
+      if (resEl) resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(command)}</pre>`;
+      setStatus("クリップボードへコピーできないため、結果欄にcurl例を表示しました", true);
+    }
   }
   function renderApiTesterHistory() {
     const listEl = getToolDocument().getElementById("u_apiTesterHistoryList");
     if (!listEl) return;
     try {
-      const hist = JSON.parse(localStorage.getItem(API_HISTORY_KEY) || "[]");
+      const hist = apiTesterHistoryMemory.slice();
       if (!hist.length) {
         listEl.innerHTML = '<div style="color:#94a3b8;font-size:11px;font-style:italic;padding:8px;">履歴はありません</div>';
         return;
@@ -41512,17 +43247,12 @@ ${field.label}` : code,
     } catch (e) {
     }
     try {
-      const ownerWin = root2.ownerDocument && root2.ownerDocument.defaultView || window;
-      const stored = ownerWin.localStorage.getItem("kus:headerCollapsed");
-      const collapsed = stored == null ? true : stored === "1";
-      if (collapsed) {
-        root2.classList.add("header-collapsed");
-        const btn = root2.querySelector("#u_headerCollapseBtn");
-        if (btn) {
-          btn.textContent = "▼";
-          btn.setAttribute("aria-label", "ヘッダーを展開");
-          btn.setAttribute("title", "ヘッダーを展開");
-        }
+      root2.classList.add("header-collapsed");
+      const btn = root2.querySelector("#u_headerCollapseBtn");
+      if (btn) {
+        btn.textContent = "▼";
+        btn.setAttribute("aria-label", "ヘッダーを展開");
+        btn.setAttribute("title", "ヘッダーを展開");
       }
     } catch (e) {
     }
@@ -41752,8 +43482,11 @@ ${field.label}` : code,
       runSimExecuteAction,
       runApiTester,
       clearApiTesterHistory,
+      copyApiTesterCurl,
       runPreviewApplyPlan,
       runExportDryRunPlan,
+      runExportReviewZip,
+      togglePlanSectionExclude,
       runBackupTargetPreview,
       runRestoreTargetPreviewBackup,
       importTargetPreviewBackupFromFile,

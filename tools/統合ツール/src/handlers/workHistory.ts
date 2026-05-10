@@ -3,7 +3,7 @@
 /**
  * 作業履歴（接続情報・差分フィルタ・反映選択などの一括スナップショット）の
  * 構築・保存・復元・パネル描画を担う。元は handlers.ts にインライン定義されて
- * いたが、UI 状態と localStorage 永続化の橋渡しが多く、独立モジュールに切り出
+ * いたが、UI 状態と一時メモリ保存の橋渡しが多く、独立モジュールに切り出
  * すことで setupEventHandlers の見通しを改善する。
  */
 
@@ -108,6 +108,7 @@ export function buildWorkHistorySnapshot(): Record<string, any> {
     reflectApplyChecklist: {
       diff: !!state.reflectApplyChecklist?.diff,
       plan: !!state.reflectApplyChecklist?.plan,
+      preview: !!state.reflectApplyChecklist?.preview,
       target: !!state.reflectApplyChecklist?.target
     },
     reflectDetailTab: state.reflectDetailTab,
@@ -132,8 +133,9 @@ export function getWorkHistorySummary(snapshot: any): string {
   const diffScopes = Array.isArray(snapshot?.diffScopes) ? snapshot.diffScopes.length : 0;
   const applyScopes = Array.isArray(snapshot?.applyScopes) ? snapshot.applyScopes.length : 0;
   const checks = snapshot?.reflectApplyChecklist || ({} as any);
-  const checked = ['diff', 'plan', 'target'].filter((key) => !!checks[key]).length;
-  return `比較元 ${src} / 比較先 ${tgt} / 差分 ${diffScopes}項目 / 反映 ${applyScopes}項目 / チェック ${checked}/3`;
+  const checkKeys = ['diff', 'plan', 'preview', 'target'];
+  const checked = checkKeys.filter((key) => !!checks[key]).length;
+  return `比較元 ${src} / 比較先 ${tgt} / 差分 ${diffScopes}項目 / 反映 ${applyScopes}項目 / チェック ${checked}/${checkKeys.length}`;
 }
 
 export function renderWorkHistoryPanel(): void {
@@ -240,8 +242,10 @@ export function restoreWorkHistorySnapshot(snapshot: any): boolean {
   state.reflectApplyChecklist = {
     diff: !!snapshot.reflectApplyChecklist?.diff,
     plan: !!snapshot.reflectApplyChecklist?.plan,
+    preview: !!snapshot.reflectApplyChecklist?.preview,
     target: !!snapshot.reflectApplyChecklist?.target
   };
+  state.reflectPreviewOpened = !!snapshot.reflectApplyChecklist?.preview;
   state.reflectDetailTab = String(snapshot.reflectDetailTab || 'diff');
   state.reflectSelectedIds = new Set(Array.isArray(snapshot.reflectSelectedIds) ? snapshot.reflectSelectedIds : []);
   state.reflectNodeModes = snapshot.reflectNodeModes && typeof snapshot.reflectNodeModes === 'object' ? { ...snapshot.reflectNodeModes } : {};

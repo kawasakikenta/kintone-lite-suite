@@ -75,6 +75,7 @@ export const FEATURE_DEFS = [
   },
   {
     key: 'jsconfig',
+    hidden: true,
     group: 'change',
     groupLabel: '変更・反映',
     icon: ICONS.jsconfig,
@@ -93,6 +94,7 @@ export const FEATURE_DEFS = [
   },
   {
     key: 'design',
+    hidden: true,
     group: 'vis',
     groupLabel: '可視化・出力',
     icon: ICONS.design,
@@ -110,6 +112,7 @@ export const FEATURE_DEFS = [
   },
   {
     key: 'settingsExport',
+    hidden: true,
     group: 'vis',
     groupLabel: '可視化・出力',
     icon: ICONS.settingsExport,
@@ -129,7 +132,7 @@ export const FEATURE_DEFS = [
   {
     key: 'er',
     group: 'vis',
-    groupLabel: '可視化・出力',
+    groupLabel: '可視化・分析',
     icon: ICONS.er,
     label: 'ER図',
     desc: '関連アプリの構造を ER 図で確認します。',
@@ -147,7 +150,7 @@ export const FEATURE_DEFS = [
   {
     key: 'processFlow',
     group: 'vis',
-    groupLabel: '可視化・出力',
+    groupLabel: '可視化・分析',
     icon: ICONS.processFlow,
     label: 'プロセス図',
     desc: 'プロセス管理をフロー図で確認します。',
@@ -163,6 +166,7 @@ export const FEATURE_DEFS = [
   },
   {
     key: 'recordMgr',
+    hidden: true,
     group: 'data',
     groupLabel: 'データ・保守',
     icon: ICONS.recordMgr,
@@ -182,7 +186,7 @@ export const FEATURE_DEFS = [
   {
     key: 'apiTester',
     group: 'data',
-    groupLabel: 'データ・保守',
+    groupLabel: 'API・検証',
     icon: ICONS.apiTester,
     label: 'APIテスター',
     desc: 'REST APIを直接試します。',
@@ -199,7 +203,7 @@ export const FEATURE_DEFS = [
   {
     key: 'analyze',
     group: 'vis',
-    groupLabel: '可視化・出力',
+    groupLabel: '可視化・分析',
     icon: ICONS.analyze,
     label: '分析',
     desc: '影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。',

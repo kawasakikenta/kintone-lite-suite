@@ -25,11 +25,10 @@ import { setStatus } from '../ui/components.js';
 import { getToolDocument } from '../ui/dialog.js';
 
 const RESULT_HOST_ID = 'u_reflectPreviewProdDiff';
-const PREVIEW_PROD_STATE_KEY = Symbol.for('kus.reflect.previewProdDiff');
 
 function getPreviewProdState() {
-  if (!(state as any)[PREVIEW_PROD_STATE_KEY]) {
-    (state as any)[PREVIEW_PROD_STATE_KEY] = {
+  if (!state.reflectPreviewProdDiff) {
+    state.reflectPreviewProdDiff = {
       lastResult: null,
       appId: '',
       guestId: '',
@@ -42,7 +41,7 @@ function getPreviewProdState() {
       }
     };
   }
-  return (state as any)[PREVIEW_PROD_STATE_KEY];
+  return state.reflectPreviewProdDiff;
 }
 
 function resolveReflectScopes() {

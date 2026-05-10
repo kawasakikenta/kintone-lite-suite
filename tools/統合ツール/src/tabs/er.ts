@@ -940,8 +940,7 @@ function escapeHtml(value){
 }
 
 // ─── Theme ───
-const THEME_KEY = "kintone-erd-theme";
-let isDark = localStorage.getItem(THEME_KEY) !== "light";
+let isDark = true;
 function readCssVar(name, fallback){
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
@@ -1142,7 +1141,6 @@ function toggleTheme(){
   isDark=!isDark;
   applyTheme();
   applyCyTheme();
-  localStorage.setItem(THEME_KEY, isDark ? "dark" : "light");
   toast(isDark?"ダークモード":"ライトモード");
 }
 applyTheme();

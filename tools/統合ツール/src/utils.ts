@@ -77,6 +77,36 @@ export function stableStringify(v: unknown): string {
   return JSON.stringify(normalize(v));
 }
 
+/**
+ * normalize を介した値同士の同値性比較。
+ * 配列・オブジェクトのキー順序差・META_KEYS は無視する。
+ * セクションエディタ等で個別に書かれていた deepEqual の置き換え用。
+ */
+export function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return a === b;
+  if (typeof a !== 'object' || typeof b !== 'object') return false;
+  return stableStringify(a) === stableStringify(b);
+}
+
+/**
+ * オブジェクト/配列入力に限定した stableStringify の WeakMap キャッシュ。
+ * プラン生成（planFieldSectionDiffRequests など）では同じ before/after 参照に対して
+ * stableStringify が複数回呼ばれるため、再計算を抑える。
+ *
+ * 注意: 入力オブジェクトをミューテートすると古い文字列が返るため、
+ * 「処理中に変更されない」スナップショットに対してのみ使うこと。
+ */
+const _stableStringifyCache = new WeakMap<object, string>();
+export function stableStringifyMemo(v: unknown): string {
+  if (v === null || typeof v !== 'object') return stableStringify(v);
+  const cached = _stableStringifyCache.get(v as object);
+  if (cached !== undefined) return cached;
+  const out = stableStringify(v);
+  _stableStringifyCache.set(v as object, out);
+  return out;
+}
+
 /** diff/reflect 共通: 行パスからセクション接頭辞を除いた相対パス */
 export function relativePathFromRow(path: string, secKey: string): string | null {
   if (!path) return '';

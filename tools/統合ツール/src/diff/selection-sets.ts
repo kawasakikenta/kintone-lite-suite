@@ -1,11 +1,11 @@
 'use strict';
 
-import { DIFF_SELECTION_SETS_KEY } from '../constants.js';
 import { state, ui } from '../state.js';
 import { currentDiffSignature } from '../tabs/diff.js';
 import { renderResultRows } from './export.js';
 
 const MAX_SETS = 24;
+let selectionSetsMemory: DiffSelectionSet[] = [];
 
 export interface DiffSelectionSet {
   name: string;
@@ -22,28 +22,11 @@ export interface LoadDiffSelectionSetResult {
 }
 
 function loadRaw(): DiffSelectionSet[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(DIFF_SELECTION_SETS_KEY) || '[]');
-    return Array.isArray(raw) ? raw as DiffSelectionSet[] : [];
-  } catch (error) {
-    console.warn('差分選択セットの読み込みに失敗しました', error);
-    return [];
-  }
+  return selectionSetsMemory.slice(0, MAX_SETS);
 }
 
 function saveRaw(list: DiffSelectionSet[]): void {
-  try {
-    localStorage.setItem(DIFF_SELECTION_SETS_KEY, JSON.stringify(list.slice(0, MAX_SETS)));
-  } catch (error) {
-    console.warn('差分選択セットの保存に失敗しました', error);
-    try {
-      const detail = { operation: 'save', key: DIFF_SELECTION_SETS_KEY, message: (error as any)?.message || String(error) };
-      window.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
-      document.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
-      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
-      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
-    } catch { /* noop */ }
-  }
+  selectionSetsMemory = list.slice(0, MAX_SETS);
 }
 
 export function listDiffSelectionSets(): DiffSelectionSet[] {

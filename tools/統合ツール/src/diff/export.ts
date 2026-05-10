@@ -2057,19 +2057,14 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const FLAT_FIELD_PROPS_TGT = collectFlatFieldMap(FIELD_PROPS_TGT);
   let activeFieldCode = '';
   let detailModalOpen = false;
+  const reportMemory = new Map();
 
   function safeStorageGet(key) {
-    try {
-      return window.localStorage ? localStorage.getItem(key) : null;
-    } catch (e) {
-      return null;
-    }
+    return reportMemory.has(key) ? reportMemory.get(key) : null;
   }
 
   function safeStorageSet(key, value) {
-    try {
-      if (window.localStorage) localStorage.setItem(key, value);
-    } catch (e) {}
+    reportMemory.set(key, String(value));
   }
 
   function escHtml(v) {

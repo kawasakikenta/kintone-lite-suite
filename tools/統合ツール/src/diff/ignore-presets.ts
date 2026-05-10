@@ -1,9 +1,9 @@
 'use strict';
 
-import { DIFF_IGNORE_PRESETS_KEY } from '../constants.js';
 import { ui } from '../state.js';
 
 const MAX_PRESETS = 24;
+let ignorePresetsMemory: DiffIgnorePreset[] = [];
 
 export interface DiffIgnorePreset {
   name: string;
@@ -12,38 +12,20 @@ export interface DiffIgnorePreset {
 }
 
 function loadRaw(): DiffIgnorePreset[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(DIFF_IGNORE_PRESETS_KEY) || '[]');
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((entry: any) => ({
-        name: String(entry?.name || '').trim(),
-        keys: Array.isArray(entry?.keys)
-          ? entry.keys.map((k: any) => String(k || '').trim()).filter(Boolean)
-          : [],
-        savedAt: Number(entry?.savedAt) || 0
-      }))
-      .filter((entry: DiffIgnorePreset) => entry.name.length > 0)
-      .slice(0, MAX_PRESETS);
-  } catch (error) {
-    console.warn('差分無視プリセットの読み込みに失敗しました', error);
-    return [];
-  }
+  return ignorePresetsMemory.slice(0, MAX_PRESETS);
 }
 
 function saveRaw(list: DiffIgnorePreset[]): void {
-  try {
-    localStorage.setItem(DIFF_IGNORE_PRESETS_KEY, JSON.stringify(list.slice(0, MAX_PRESETS)));
-  } catch (error) {
-    console.warn('差分無視プリセットの保存に失敗しました', error);
-    try {
-      const detail = { operation: 'save', key: DIFF_IGNORE_PRESETS_KEY, message: (error as any)?.message || String(error) };
-      window.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
-      document.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
-      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
-      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent('kus:storageError', { detail }));
-    } catch { /* noop */ }
-  }
+  ignorePresetsMemory = list
+    .map((entry: any) => ({
+      name: String(entry?.name || '').trim(),
+      keys: Array.isArray(entry?.keys)
+        ? entry.keys.map((k: any) => String(k || '').trim()).filter(Boolean)
+        : [],
+      savedAt: Number(entry?.savedAt) || 0
+    }))
+    .filter((entry: DiffIgnorePreset) => entry.name.length > 0)
+    .slice(0, MAX_PRESETS);
 }
 
 function escapeAttr(s: unknown): string {

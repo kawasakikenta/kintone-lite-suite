@@ -28,7 +28,7 @@ function buildPagedRecordsQuery(query, offset, options: { includeOrder?: boolean
   if (hasPagingClause(base)) {
     throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
   }
-  const parts = [];
+  const parts: string[] = [];
   if (base) parts.push(base);
   if (options.includeOrder !== false && !hasOrderByClause(base)) parts.push('order by $id asc');
   parts.push(`limit ${Number(options.limit || 500)}`);
@@ -79,16 +79,16 @@ export async function loadViewsForSelect(selectId: string, inputId: string) {
 
 export async function getRecordIdsByQuery(app, query, isSource) {
   const prefix = getSideApiPrefix(isSource, false);
-  const ids = [];
+  const ids: number[] = [];
   let offset = 0;
   let lastRecordId = 0;
   while (true) {
     const keysetQuery = buildKeysetRecordsQuery(query, lastRecordId);
     const q = keysetQuery || buildPagedRecordsQuery(query, offset, { includeOrder: true });
     const resp = await apiGet(prefix, '/records.json', { app, query: q, fields: ['$id'] });
-    const records = resp.records || [];
+    const records: any[] = resp.records || [];
     if (records.length === 0) break;
-    records.forEach(r => ids.push(Number(r.$id.value)));
+    records.forEach((r: any) => ids.push(Number(r.$id.value)));
     if (records.length < 500) break;
     lastRecordId = Number(records[records.length - 1]?.$id?.value || lastRecordId);
     offset += 500;
@@ -98,14 +98,14 @@ export async function getRecordIdsByQuery(app, query, isSource) {
 
 export async function getFullRecordsByQuery(app, query, isSource) {
   const prefix = getSideApiPrefix(isSource, false);
-  let allRecords = [];
+  let allRecords: any[] = [];
   let offset = 0;
   let lastRecordId = 0;
   while (true) {
     const keysetQuery = buildKeysetRecordsQuery(query, lastRecordId);
     const q = keysetQuery || buildPagedRecordsQuery(query, offset, { includeOrder: true });
     const resp = await apiGet(prefix, '/records.json', { app, query: q });
-    const records = resp.records || [];
+    const records: any[] = resp.records || [];
     if (records.length === 0) break;
     allRecords = allRecords.concat(records);
     if (records.length < 500) break;
@@ -115,8 +115,8 @@ export async function getFullRecordsByQuery(app, query, isSource) {
   return allRecords;
 }
 
-const chunkArray = (arr, size) => {
-  const out = [];
+const chunkArray = <T>(arr: T[], size: number): T[][] => {
+  const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 };
@@ -173,7 +173,7 @@ export async function loadJSZip() {
   setStatus('JSZipを動的ロード中...');
   return new Promise((resolve, reject) => {
     const script = doc.createElement("script");
-    script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl;
+    script.src = EXTERNAL_LIBRARIES.jszip.cdnUrl || '';
     script.onload = () => {
       const ctor = (win as any).JSZip || globalThis.JSZip;
       if (typeof ctor === 'undefined') {
@@ -220,12 +220,12 @@ export async function runBatchFileDownload() {
     const rec = records[i];
     setStatus(`ファイルダウンロード中 (レコード ${i + 1}/${records.length})...`);
 
-    const fileList = rec[fileCode]?.value || [];
+    const fileList: any[] = (rec as any)[fileCode]?.value || [];
     if (fileList.length > 0) {
-      let folderName = folderCode && rec[folderCode] ? rec[folderCode].value : '';
-      if (!folderName) folderName = `Record_${rec.$id.value}`;
+      let folderName = folderCode && (rec as any)[folderCode] ? (rec as any)[folderCode].value : '';
+      if (!folderName) folderName = `Record_${(rec as any).$id.value}`;
 
-      const recordFolder = zip.folder(sanitizeZipPathSegment(folderName, `Record_${rec.$id.value}`));
+      const recordFolder = zip.folder(sanitizeZipPathSegment(folderName, `Record_${(rec as any).$id.value}`));
       const usedNames = new Set<string>();
       for (const f of fileList) {
         const blob = await downloadTargetFile(f.fileKey);
@@ -390,8 +390,8 @@ function coerceCsvImportValue(rawValue, fieldDef) {
 }
 
 function assertCsvImportHeaderSupported(header, properties) {
-  const unknown = [];
-  const unsupported = [];
+  const unknown: string[] = [];
+  const unsupported: string[] = [];
   for (const code of header) {
     if (!code) continue;
     const def = properties?.[code];
@@ -408,7 +408,7 @@ function assertCsvImportHeaderSupported(header, properties) {
 }
 
 function buildRecordsCsvString(records, propKeys) {
-  const lines = [];
+  const lines: string[] = [];
   lines.push(propKeys.map(escapeCsvCell).join(','));
   for (const rec of records) {
     lines.push(propKeys.map(key => escapeCsvCell(extractCsvFieldValue(rec, key))).join(','));
@@ -508,7 +508,7 @@ function buildAttachmentZipPath(entry) {
 }
 
 async function fetchRecordComments(prefix, appId, recordId) {
-  const comments = [];
+  const comments: any[] = [];
   const limit = 10;
   let offset = 0;
   while (true) {
@@ -573,8 +573,8 @@ async function fetchPluginConfigBackupForRecord({ appId, guestId, existingPlugin
     plugins: []
   };
 
-  let plugins: any[] | null = Array.isArray(existingPluginList) ? existingPluginList : null;
-  if (!plugins) {
+  let plugins: any[] = Array.isArray(existingPluginList) ? existingPluginList : [];
+  if (!Array.isArray(existingPluginList)) {
     try {
       const res = await apiGet(prefix, '/app/plugins.json', { app: appId });
       plugins = Array.isArray(res?.plugins) ? res.plugins : [];
@@ -601,11 +601,11 @@ async function fetchPluginConfigBackupForRecord({ appId, guestId, existingPlugin
         revision: res?.revision != null ? String(res.revision) : ''
       });
       result.okCount += 1;
-    } catch (error) {
+    } catch (error: any) {
       result.plugins.push({
         ...plugin,
         id: pluginId,
-        _fetchError: error.message || String(error)
+        _fetchError: error?.message || String(error)
       });
       result.ngCount += 1;
     }
@@ -630,11 +630,11 @@ export async function runCsvExport() {
   const filename = (getToolDocument().getElementById('u_csvExportName') as HTMLInputElement | null)?.value?.trim() || 'records.csv';
 
   setBusy(true, 'フィールド情報取得中...');
-  let propKeys = [];
+  let propKeys: string[] = [];
   try {
     ({ propKeys } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId));
-  } catch (e) {
-    throw new Error('フィールド情報の取得に失敗: ' + e.message);
+  } catch (e: any) {
+    throw new Error('フィールド情報の取得に失敗: ' + (e?.message || e));
   }
 
   setBusy(true, 'レコード取得中...');
@@ -683,7 +683,7 @@ export async function runCsvImport() {
 
   const parseCsv = (csvText: string): string[][] => {
     const rows: string[][] = [];
-    let current = [];
+    let current: string[] = [];
     let cell = '';
     let inQuotes = false;
     for (let i = 0; i < csvText.length; i++) {
@@ -727,10 +727,10 @@ export async function runCsvImport() {
   const { properties } = await fetchFieldDefinitionsForExport(guestPrefix, tgtAppId);
   assertCsvImportHeaderSupported(header, properties);
 
-  const records = [];
+  const records: any[] = [];
   for (let i = 1; i < rows.length; i++) {
     if (rows[i].length === 1 && rows[i][0] === '') continue;
-    const rec = {};
+    const rec: any = {};
     for (let j = 0; j < header.length; j++) {
       if (!header[j]) continue;
       const val = rows[i][j] !== undefined ? rows[i][j] : '';
@@ -800,13 +800,21 @@ export async function runRecordBackup() {
   const zip = new JSZipCtor();
   const generatedAt = new Date().toISOString();
   const csvName = 'records.csv';
-  const notes = [];
+  const notes: string[] = [];
   const csvStr = buildRecordsCsvString(records, propKeys);
   zip.file(csvName, csvStr);
 
   let fileCount = 0;
   const attachmentEntries = records.flatMap((record) => collectRecordFileEntries(record));
-  const attachmentManifest = {
+  const attachmentManifest: {
+    generatedAt: string;
+    appId: string;
+    recordCount: number;
+    totalEntries: number;
+    downloadedCount: number;
+    skippedCount: number;
+    files: any[];
+  } = {
     generatedAt,
     appId: tgtAppId,
     recordCount: records.length,
@@ -848,7 +856,15 @@ export async function runRecordBackup() {
 
   let commentCount = 0;
   let commentRecordCount = 0;
-  const commentsPayload = {
+  const commentsPayload: {
+    generatedAt: string;
+    appId: string;
+    guestId: string;
+    recordCount: number;
+    records: any[];
+    commentCount: number;
+    _fetchError: string;
+  } = {
     generatedAt,
     appId: tgtAppId,
     guestId: tgtGuestId || '',
@@ -875,8 +891,8 @@ export async function runRecordBackup() {
           commentRecordCount += 1;
           commentCount += comments.length;
         }
-      } catch (error) {
-        commentsPayload._fetchError = error.message || String(error);
+      } catch (error: any) {
+        commentsPayload._fetchError = error?.message || String(error);
         notes.push('コメント取得に失敗したため一部スキップ');
         break;
       }
@@ -890,7 +906,7 @@ export async function runRecordBackup() {
 
   let appOkCount = 0;
   let appNgCount = 0;
-  let appScopeLabels = [];
+  let appScopeLabels: string[] = [];
   let pluginConfigLabel = '未取得';
   if (includeAppSettings) {
     appScopeLabels = appScopes.map((key) => SECTION_DEFS.find((section) => section.key === key)?.label || key);
@@ -920,7 +936,7 @@ export async function runRecordBackup() {
     };
     zip.file(`app_settings/app_${tgtAppId}.json`, JSON.stringify(appSettingsPayload, null, 2));
 
-    let pluginConfigBackup = null;
+    let pluginConfigBackup: any = null;
     if (includePluginConfig) {
       pluginConfigBackup = await fetchPluginConfigBackupForRecord({
         appId: tgtAppId,
@@ -1042,7 +1058,7 @@ export async function runRecordCopy() {
 
   setBusy(true, '比較元のレコードを取得中...');
   let totalFetched = 0;
-  const records = [];
+  const records: any[] = [];
   const userQueryHasOrder = /\border\s+by\b/i.test(query);
   const userQueryHasPaging = hasPagingClause(query);
   if (userQueryHasPaging) {
@@ -1130,15 +1146,10 @@ export async function runRecordCopy() {
   showToast(`完了: ${successCount}件のレコードを比較先へコピーしました。`, 'success');
 }
 
-const TEMPLATE_STATE_KEY = 'kintoneSuperApp_Templates';
+let templateMemory: Record<string, any> = {};
 
 function getTemplates() {
-  try { return JSON.parse(localStorage.getItem(TEMPLATE_STATE_KEY) || '{}'); }
-  catch (error) {
-    console.warn('テンプレートの読み込みに失敗しました', error);
-    showToast('テンプレートの読み込みに失敗しました。保存データが破損している可能性があります。', 'warn');
-    return {};
-  }
+  return { ...templateMemory };
 }
 
 export function renderTemplateOptions() {
@@ -1167,11 +1178,7 @@ export async function saveTemplate() {
 
   const tpls = getTemplates();
   tpls[name] = { savedAt: Date.now(), bundle: bundle };
-  try {
-    localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
-  } catch (e) {
-    throw new Error('保存に失敗しました。LocalStorageの容量制限(5MB等)に達した可能性があります。不要な履歴を削除してください。');
-  }
+  templateMemory = tpls;
 
   renderTemplateOptions();
   (getToolDocument().getElementById('u_templateSaveName') as HTMLInputElement).value = '';
@@ -1201,12 +1208,7 @@ export function deleteTemplate() {
   if (!kusConfirm(`テンプレート「${name}」を削除しますか？`)) return;
   const tpls = getTemplates();
   delete tpls[name];
-  try {
-    localStorage.setItem(TEMPLATE_STATE_KEY, JSON.stringify(tpls));
-  } catch (e) {
-    showToast('テンプレートの削除状態を保存できませんでした。ブラウザの保存容量や権限を確認してください。', 'error');
-    throw e;
-  }
+  templateMemory = tpls;
   renderTemplateOptions();
   setStatus(`テンプレート「${name}」を削除しました`);
 }

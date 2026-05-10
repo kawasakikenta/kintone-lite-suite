@@ -1,6 +1,6 @@
 'use strict';
 
-import { SECTION_DEFS, DEFAULT_APP_ID, DIFF_ONBOARDING_DISMISSED_KEY, TOOL_ID, TOOL_VERSION } from './constants.js';
+import { SECTION_DEFS, DEFAULT_APP_ID, TOOL_ID, TOOL_VERSION } from './constants.js';
 import {
   state,
   ui,
@@ -57,6 +57,7 @@ import {
   setSettingsExportScopeSelection,
   syncApplyScopesFromSidebar,
   updateConnectionStepIndicators,
+  updateChangeWizardCurrentStep,
   setConnectionPanelCollapsed,
   openScopePicker,
   closeScopePicker,
@@ -384,20 +385,15 @@ function activateReflectInnerTab(inner) {
 export function setupEventHandlers(injected: any = {}) {
   const root = getRoot();
   if (!root) return;
+  let diffOnboardingDismissed = false;
 
   function syncDiffOnboardingVisibility() {
     const el = ui.diffOnboarding;
     if (!el) return;
-    let dismissed = false;
-    try {
-      dismissed = !!localStorage.getItem(DIFF_ONBOARDING_DISMISSED_KEY);
-    } catch (error) {
-      console.warn('差分オンボーディング状態の読み込みに失敗しました', error);
-    }
     const rootEl = getRoot();
     const onDiffArea = rootEl?.classList.contains('tab-is-diff');
     const hasDiffState = !!state.lastDiffAt || !!state.lastDiffRows.length || !!state.lastFetchIssues.length;
-    el.style.display = !dismissed && onDiffArea && hasDiffState ? 'block' : 'none';
+    el.style.display = !diffOnboardingDismissed && onDiffArea && hasDiffState ? 'block' : 'none';
   }
 
   const {
@@ -426,8 +422,11 @@ export function setupEventHandlers(injected: any = {}) {
     runSimExecuteAction,
     runApiTester,
     clearApiTesterHistory,
+    copyApiTesterCurl,
     runPreviewApplyPlan,
     runExportDryRunPlan,
+    runExportReviewZip,
+    togglePlanSectionExclude,
     runBackupTargetPreview,
     runRestoreTargetPreviewBackup,
     importTargetPreviewBackupFromFile,
@@ -515,6 +514,7 @@ export function setupEventHandlers(injected: any = {}) {
     }
     if (ui.launcherEmptyState) ui.launcherEmptyState.hidden = group === 'history' || visibleCount !== 0;
     renderLauncherActiveFilters(group, searchText);
+    updateChangeWizardCurrentStep();
   }
 
   interface FocusWizardOptions { block?: ScrollLogicalPosition; focus?: boolean }
@@ -566,11 +566,12 @@ export function setupEventHandlers(injected: any = {}) {
           focusWizardTarget('#u_footerApply');
         }
       },
-      design: {
-        title: '記録出力',
+      analyze: {
+        title: '影響確認',
         run() {
-          openFeatureScreen('design', { persist: false, focus: false });
-          focusWizardTarget('[data-act="exportDesignXlsx"]');
+          openFeatureScreen('analyze', { persist: false, focus: false });
+          switchSubTab('analyze', 'dashboard', { persist: false });
+          focusWizardTarget('[data-act="runAnalyzeDashboard"]');
         }
       }
     };
@@ -1035,9 +1036,8 @@ export function setupEventHandlers(injected: any = {}) {
       root.classList.contains('screen-feature')
     ) {
       const tabByKey: Record<string, string> = {
-        '1': 'diff', '2': 'reflect', '3': 'field', '4': 'jsconfig',
-        '5': 'er', '6': 'processFlow', '7': 'design', '8': 'settingsExport',
-        '9': 'analyze', '0': 'recordMgr', '-': 'apiTester'
+        '1': 'diff', '2': 'reflect', '3': 'field', '4': 'er',
+        '5': 'processFlow', '6': 'analyze', '7': 'apiTester'
       };
       const target = tabByKey[e.key];
       if (target) {
@@ -1195,6 +1195,16 @@ export function setupEventHandlers(injected: any = {}) {
   // -------------------------------------------------------------------
 
   root.addEventListener('change', (e) => {
+    // プラン確認モーダルの「除外」チェックボックス（data-act-event="change"）。
+    // <summary> 配下の click でフックすると details の開閉とぶつかるため change で拾う。
+    const planExcludeEl = ((e.target as Element | null)?.closest('input[data-act="togglePlanSectionExclude"][data-act-event="change"]') as HTMLInputElement | null);
+    if (planExcludeEl) {
+      const key = planExcludeEl.dataset.sectionKey || '';
+      if (key && typeof togglePlanSectionExclude === 'function') {
+        togglePlanSectionExclude(key);
+      }
+      return;
+    }
     if ((e.target as HTMLElement | null)?.id === 'u_csvImportFile') {
       const input = e.target as HTMLInputElement;
       const label = getToolDocument().getElementById('u_csvImportFileName');
@@ -1463,7 +1473,6 @@ export function setupEventHandlers(injected: any = {}) {
       state.reflectActiveSidebarSection = (state.reflectActiveSidebarSection === secKey) ? null : secKey;
       renderReflectSidebar();
       renderReflectMainPanel();
-      if (ui.scopePickerModal?.dataset?.scopePickerKind === 'reflect') closeScopePicker();
       return;
     }
 
@@ -1475,7 +1484,6 @@ export function setupEventHandlers(injected: any = {}) {
         state.reflectActiveSidebarSection = secKey;
         renderReflectSidebar();
         renderReflectMainPanel();
-        if (ui.scopePickerModal?.dataset?.scopePickerKind === 'reflect') closeScopePicker();
       }
       return;
     }
@@ -2286,11 +2294,7 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
     if (act === 'dismissDiffOnboarding') {
-      try { localStorage.setItem(DIFF_ONBOARDING_DISMISSED_KEY, '1'); }
-      catch (err) {
-        console.warn('差分オンボーディング状態の保存に失敗しました', err);
-        showToast('表示状態の保存に失敗しました。ブラウザの保存権限を確認してください。', 'warn');
-      }
+      diffOnboardingDismissed = true;
       syncDiffOnboardingVisibility();
       return;
     }
@@ -2708,11 +2712,6 @@ export function setupEventHandlers(injected: any = {}) {
       const root = doc.getElementById('kintone-unified-suite-v2');
       if (!root) return;
       const collapsed = root.classList.toggle('header-collapsed');
-      try { (doc.defaultView || window).localStorage.setItem('kus:headerCollapsed', collapsed ? '1' : '0'); }
-      catch (e) {
-        console.warn('ヘッダー折りたたみ状態の保存に失敗しました', e);
-        showToast('ヘッダー状態の保存に失敗しました。', 'warn');
-      }
       const btn = doc.getElementById('u_headerCollapseBtn');
       if (btn) {
         btn.textContent = collapsed ? '▼' : '▲';
@@ -2986,7 +2985,32 @@ export function setupEventHandlers(injected: any = {}) {
       setStatus('反映先が比較先プレビューであることを確認済みにしました');
       return;
     }
+    if (act === 'openTargetPreviewApp') {
+      const rawUrl = actEl.dataset.previewUrl || '';
+      if (!rawUrl) {
+        setStatus('比較先アプリIDを入力するとプレビュー確認を開けます', true);
+        return;
+      }
+      const targetWindow = getToolWindow() || window;
+      const href = new URL(rawUrl, targetWindow.location.origin).toString();
+      targetWindow.open(href, '_blank', 'noopener');
+      state.reflectPreviewOpened = true;
+      try {
+        const c = commonParams();
+        state.reflectPreviewOpenedFor = `${String(c.target?.appId || '').trim()}::${String(c.target?.guestId || '').trim()}`;
+      } catch (_e) {
+        state.reflectPreviewOpenedFor = '';
+      }
+      markReflectApplyChecks(['preview', 'target']);
+      renderReflectAssistPanel();
+      setStatus('比較先アプリを開きました。プレビュー内容を確認してから反映してください');
+      return;
+    }
     if (act === 'exportDryRunPlan' && typeof runExportDryRunPlan === 'function') return withGuard(runExportDryRunPlan);
+    if (act === 'exportReviewZip' && typeof runExportReviewZip === 'function') return withGuard(runExportReviewZip);
+    // togglePlanSectionExclude はチェックボックスの change イベント側で処理するため、
+    // ここで click 経由のフォールバックは不要（重複発火を避ける）。
+    if (act === 'togglePlanSectionExclude') return;
     if (act === 'backupTargetPreview' && typeof runBackupTargetPreview === 'function') return withGuard(runBackupTargetPreview);
     if (act === 'importTargetPreviewBackupFile') {
       const input = getToolDocument().getElementById('u_targetPreviewBackupFileInput') as HTMLInputElement | null;
@@ -3065,7 +3089,7 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
     if (act === 'clearApplyHistory') {
-      if (!kusConfirm('反映履歴を全て削除しますか？（端末（localStorage）に保存された履歴のみ）')) return;
+      if (!kusConfirm('このセッション中の反映履歴を全て削除しますか？')) return;
       if (typeof clearReflectApplyHistory === 'function') clearReflectApplyHistory();
       renderReflectAssistPanel();
       setStatus('反映履歴をクリアしました');
@@ -3256,6 +3280,7 @@ export function setupEventHandlers(injected: any = {}) {
       setStatus('APIテスターの履歴をクリアしました');
       return;
     }
+    if (act === 'copyApiTesterCurl' && typeof copyApiTesterCurl === 'function') return copyApiTesterCurl();
     if (act === 'runApiTester' && typeof runApiTester === 'function') return runApiTester();
   });
 

@@ -94,6 +94,7 @@
         },
         {
           key: "jsconfig",
+          hidden: true,
           group: "change",
           groupLabel: "変更・反映",
           icon: ICONS.jsconfig,
@@ -112,6 +113,7 @@
         },
         {
           key: "design",
+          hidden: true,
           group: "vis",
           groupLabel: "可視化・出力",
           icon: ICONS.design,
@@ -129,6 +131,7 @@
         },
         {
           key: "settingsExport",
+          hidden: true,
           group: "vis",
           groupLabel: "可視化・出力",
           icon: ICONS.settingsExport,
@@ -148,7 +151,7 @@
         {
           key: "er",
           group: "vis",
-          groupLabel: "可視化・出力",
+          groupLabel: "可視化・分析",
           icon: ICONS.er,
           label: "ER図",
           desc: "関連アプリの構造を ER 図で確認します。",
@@ -166,7 +169,7 @@
         {
           key: "processFlow",
           group: "vis",
-          groupLabel: "可視化・出力",
+          groupLabel: "可視化・分析",
           icon: ICONS.processFlow,
           label: "プロセス図",
           desc: "プロセス管理をフロー図で確認します。",
@@ -182,6 +185,7 @@
         },
         {
           key: "recordMgr",
+          hidden: true,
           group: "data",
           groupLabel: "データ・保守",
           icon: ICONS.recordMgr,
@@ -201,7 +205,7 @@
         {
           key: "apiTester",
           group: "data",
-          groupLabel: "データ・保守",
+          groupLabel: "API・検証",
           icon: ICONS.apiTester,
           label: "APIテスター",
           desc: "REST APIを直接試します。",
@@ -218,7 +222,7 @@
         {
           key: "analyze",
           group: "vis",
-          groupLabel: "可視化・出力",
+          groupLabel: "可視化・分析",
           icon: ICONS.analyze,
           label: "分析",
           desc: "影響分析、依存グラフ、通知/権限、レイアウト確認を集約しています。",
@@ -424,78 +428,16 @@
   });
 
   // src/state.ts
-  function reportStorageFailure(operation, key, error) {
-    try {
-      console.warn(`[${TOOL_ID}] storage ${operation} failed: ${key}`, error);
-    } catch {
-    }
-    try {
-      const detail = {
-        operation,
-        key,
-        message: error?.message || String(error)
-      };
-      window.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-      document.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-      const toolDoc = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__.document : null;
-      if (toolDoc && toolDoc !== document) toolDoc.dispatchEvent(new CustomEvent("kus:storageError", { detail }));
-    } catch {
-    }
-  }
   function loadReflectApplyHistory() {
-    try {
-      const raw = localStorage.getItem(REFLECT_APPLY_HISTORY_KEY) ?? sessionStorage.getItem(REFLECT_APPLY_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      reportStorageFailure("load", REFLECT_APPLY_HISTORY_KEY, error);
-      return [];
-    }
+    return [];
   }
   function loadWorkHistory() {
-    try {
-      const raw = localStorage.getItem(WORK_HISTORY_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      reportStorageFailure("load", WORK_HISTORY_KEY, error);
-      return [];
-    }
-  }
-  function normalizeConnectionPreset(entry) {
-    if (!entry || typeof entry !== "object") return null;
-    const sourceAppId = String(entry.sourceAppId || "").trim();
-    const targetAppId = String(entry.targetAppId || "").trim();
-    if (!sourceAppId && !targetAppId) return null;
-    const id = String(entry.id || "").trim() || `conn-${Date.now()}`;
-    const name = String(entry.name || "").trim() || `${sourceAppId || "-"} -> ${targetAppId || "-"}`;
-    return {
-      id,
-      name,
-      sourceAppId,
-      sourceGuestId: String(entry.sourceGuestId || "").trim(),
-      sourcePreview: !!entry.sourcePreview,
-      targetAppId,
-      targetGuestId: String(entry.targetGuestId || "").trim(),
-      targetPreview: entry.targetPreview == null ? true : !!entry.targetPreview,
-      savedAt: Number(entry.savedAt || Date.now()) || Date.now()
-    };
+    return [];
   }
   function loadConnectionPresets() {
-    try {
-      const raw = localStorage.getItem(CONNECTION_PRESETS_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT);
-    } catch (error) {
-      reportStorageFailure("load", CONNECTION_PRESETS_KEY, error);
-      return [];
-    }
+    return [];
   }
-  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY, CONNECTION_PRESETS_LIMIT;
+  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY;
   var init_state = __esm({
     "src/state.ts"() {
       "use strict";
@@ -524,7 +466,9 @@
         connectionPresets: [],
         reflectPlanPreviewKeyword: "",
         reflectPlanPreviewChangedOnly: false,
-        reflectApplyChecklist: { diff: false, plan: false, target: false },
+        reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
+        reflectPreviewOpened: false,
+        reflectPreviewOpenedFor: "",
         lastPreviewBackupPayload: null,
         lastPreviewBackupFilename: "",
         diffViewTheme: "light",
@@ -566,6 +510,7 @@
         lastSettingsExportBundles: [],
         patchJsonPanelOpen: false,
         importedPatchPayload: null,
+        reflectPreviewProdDiff: null,
         guidedTourActive: false,
         guidedTourIndex: 0,
         running: false,
@@ -577,7 +522,6 @@
       REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
       WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
       CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
-      CONNECTION_PRESETS_LIMIT = 30;
       state.reflectApplyHistory = loadReflectApplyHistory();
       state.workHistory = loadWorkHistory();
       state.connectionPresets = loadConnectionPresets();
@@ -1755,7 +1699,6 @@ ${body}`;
   init_filter();
 
   // src/diff/ignore-presets.ts
-  init_constants();
   init_state();
 
   // src/ui/components.ts
@@ -1856,6 +1799,104 @@ ${body}`;
         DEPENDENCY_BG: "FFFCE4EC"
       },
       SANITIZE_LABEL_HTML_IN_LAYOUT: true
+    };
+    const MAX_COL_WIDTH_BY_HEADER = {
+      // 共通の長文系
+      "説明": 60,
+      "description": 60,
+      "計算式": 80,
+      "expression": 80,
+      "選択肢/式": 50,
+      "ルックアップ設定": 90,
+      "関連レコード設定": 90,
+      "関連レコード一覧設定": 90,
+      "依存/参照": 70,
+      "備考": 60,
+      "メモ": 60,
+      "内容": 80,
+      "値": 80,
+      "初期値": 30,
+      "入力制約": 30,
+      // ビュー
+      "表示フィールド": 60,
+      "表示フィールド（ラベル）": 60,
+      "絞り込み条件": 70,
+      "フィルター条件": 70,
+      "ソート": 50,
+      // グラフ
+      "集計対象": 60,
+      "グループ化": 50,
+      "モード": 18,
+      "チャート": 22,
+      // プロセス管理
+      "アクション名": 30,
+      "遷移元（From）": 40,
+      "遷移先（To）": 40,
+      "作業者候補": 60,
+      "作業者の選び方": 26,
+      // 通知
+      "本文/備考": 70,
+      "タイミング/条件": 60,
+      "宛先": 50,
+      "通知タイミング": 32,
+      "通知先": 50,
+      // 権限
+      "対象": 40,
+      "範囲": 14,
+      "許可": 24,
+      // JS/CSS
+      "名前/URL": 80,
+      "fileKey": 50,
+      "参照方法": 14,
+      // 依存関係
+      "詳細": 80,
+      "依存種別": 22,
+      "参照先": 60,
+      // フィールド名／コード
+      "フィールド名": 28,
+      "フィールドコード": 28,
+      "コード": 24,
+      "CSV 列": 24,
+      "kintone フィールド": 28,
+      // タイプ系
+      "タイプ": 20,
+      "種別": 18,
+      "ビュー種別": 18,
+      "表示形式": 18,
+      "プラグインID": 20,
+      "バージョン": 14,
+      "ID": 12,
+      // 短いフラグ系
+      "必須": 8,
+      "重複禁止": 10,
+      "閲覧": 8,
+      "編集": 8,
+      "削除": 8,
+      "管理": 10,
+      "追加": 10,
+      "読込": 10,
+      "書出": 10,
+      "読込/書出": 14,
+      "サブ組織含": 12,
+      "サブ組織含む": 12,
+      "グループ": 16,
+      // インデックス系
+      "No.": 6,
+      "No": 6,
+      "#": 4,
+      "行": 6,
+      "列": 6,
+      "区分": 12,
+      "階層": 8,
+      "表示": 8,
+      "幅": 8,
+      "表示順": 10,
+      // サマリー系
+      "項目": 32,
+      "件数": 14,
+      // フォームレイアウト
+      "タイトル": 30,
+      "シート名": 26
     };
     const FIELD_TYPE = {
       "LABEL": "ラベル",
@@ -2627,7 +2668,29 @@ ${body}`;
         zebraEven: () => ({ fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.ZEBRA_EVEN } } }),
         zebraOdd: () => ({ fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.ZEBRA_ODD } } })
       };
-      const autosizeCols = (ws, aoa) => {
+      const autosizeCols = (ws, aoa, options = {}) => {
+        const headerRowIdx = options.headerRowIndex;
+        const headerInfoRows = Array.isArray(options.headerInfoRows) ? options.headerInfoRows : [];
+        const headerCandidates = [];
+        if (typeof headerRowIdx === "number" && headerRowIdx >= 0) headerCandidates.push(headerRowIdx);
+        headerInfoRows.forEach((idx) => {
+          if (typeof idx === "number" && idx >= 0 && !headerCandidates.includes(idx)) headerCandidates.push(idx);
+        });
+        const perColMax = [];
+        for (const idx of headerCandidates) {
+          const headerRow = aoa[idx] || [];
+          headerRow.forEach((h, i) => {
+            const text = String(h ?? "").trim();
+            if (!text) return;
+            const max = MAX_COL_WIDTH_BY_HEADER[text];
+            if (max != null && (perColMax[i] == null || max > perColMax[i])) perColMax[i] = max;
+          });
+        }
+        if (Array.isArray(options.colMax)) {
+          options.colMax.forEach((m, i) => {
+            if (typeof m === "number" && m > 0) perColMax[i] = m;
+          });
+        }
         const widths = [];
         for (const row2 of aoa) {
           (row2 || []).forEach((v, i) => {
@@ -2635,7 +2698,12 @@ ${body}`;
             widths[i] = Math.max(widths[i] || CONFIG.MIN_COL_WIDTH, w);
           });
         }
-        ws["!cols"] = widths.map((w) => ({ wch: UtilsX.clampColumnWidth(w || CONFIG.DEFAULT_COL_WIDTH) }));
+        ws["!cols"] = widths.map((w, i) => {
+          const colMax = perColMax[i] != null ? perColMax[i] : CONFIG.MAX_COL_WIDTH;
+          const base = w || CONFIG.DEFAULT_COL_WIDTH;
+          const clamped = Math.max(CONFIG.MIN_COL_WIDTH, Math.min(colMax, base));
+          return { wch: clamped };
+        });
       };
       const applyStyles = (ws, aoa, options = {}) => {
         if (!styled) return;
@@ -2744,7 +2812,7 @@ ${body}`;
       const appendSheet = (name, data, meta = {}) => {
         if (!data || !Array.isArray(data.aoa) || data.aoa.length === 0) return null;
         const ws = XLSX.utils.aoa_to_sheet(data.aoa);
-        autosizeCols(ws, data.aoa);
+        autosizeCols(ws, data.aoa, data.options || {});
         applyStyles(ws, data.aoa, data.options || {});
         if (data.mergeRanges) applyCellMerges(ws, data.mergeRanges);
         applyRowHeights(ws, data.aoa, data.options || {});
@@ -3687,8 +3755,7 @@ ${body}`;
           tocAoa.push([String(i + 1), m.name, m.description || "-", String(m.recordCount)]);
         });
         const tocWs = XLSX.utils.aoa_to_sheet(tocAoa);
-        autosizeCols(tocWs, tocAoa);
-        applyStyles(tocWs, tocAoa, {
+        const tocStyleOptions = {
           headerRowIndex: 8,
           titleRows: [0, 1],
           sectionRows: [2],
@@ -3697,7 +3764,9 @@ ${body}`;
           freezeRows: 9,
           centerCols: [0, 3],
           enableAutoFilter: false
-        });
+        };
+        autosizeCols(tocWs, tocAoa, tocStyleOptions);
+        applyStyles(tocWs, tocAoa, tocStyleOptions);
         applyCellMerges(tocWs, [
           { startRow: 0, endRow: 0, startCol: 0, endCol: 3 },
           { startRow: 1, endRow: 1, startCol: 0, endCol: 3 },

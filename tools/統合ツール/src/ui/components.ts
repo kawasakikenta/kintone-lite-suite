@@ -379,6 +379,46 @@ export function updateConnectionStepIndicators() {
       summaryInline.innerHTML = `<span class="cs-label">対象</span> ${fmt(sourceApp, sourceGuest)}`;
     }
   }
+  updateChangeWizardCurrentStep();
+}
+
+/**
+ * 変更作業ウィザード: 5 ステップのうち「次にやること」を `is-primary` で示す。
+ * 完了済みステップには `is-done` を付け、戻ってクリックできる目印にする。
+ *
+ * 進行判定:
+ *  01 connection → 比較元/比較先のアプリIDが入力されたら done
+ *  02 diff       → 差分比較が一度実行されたら done
+ *  03 plan       → 反映プランが確認されたら done
+ *  04 apply      → プレビュー反映が完了したら done
+ *  05 analyze    → 最終ステップなので done 扱いはしない
+ *
+ * `is-primary` は最初の未完了ステップに付く。すべて済みなら 05 (影響確認) を指す。
+ */
+export function updateChangeWizardCurrentStep() {
+  const flow = getToolDocument().getElementById('u_launcherFlow');
+  if (!flow) return;
+  const sourceApp = (ui.sourceApp?.value || '').trim();
+  const targetApp = (ui.targetApp?.value || '').trim();
+  const connDone = !!sourceApp && !!targetApp;
+  const diffDone = Array.isArray(state.lastDiffRows) && state.lastDiffRows.length > 0;
+  const planDone = !!state.lastApplyPlan;
+  const applyDone = !!state.lastApplyCompletedAt;
+  const doneByStep: Record<string, boolean> = {
+    connection: connDone,
+    diff: diffDone,
+    plan: planDone,
+    apply: applyDone,
+    analyze: false
+  };
+  const order = ['connection', 'diff', 'plan', 'apply', 'analyze'];
+  let current = order.find((key) => !doneByStep[key]) || 'analyze';
+  flow.querySelectorAll<HTMLElement>('.launcher-flow-step').forEach((step) => {
+    const key = step.dataset.wizardStep || '';
+    step.classList.toggle('is-primary', key === current);
+    step.classList.toggle('is-done', !!doneByStep[key]);
+    step.setAttribute('aria-current', key === current ? 'step' : 'false');
+  });
 }
 
 export function setConnectionPanelCollapsed(collapsed) {
@@ -856,18 +896,21 @@ export function buildReflectAssistHtml() {
   const checklist = state.reflectApplyChecklist && typeof state.reflectApplyChecklist === 'object'
     ? state.reflectApplyChecklist
     : {};
-  const checklistDone = ['diff', 'plan', 'target'].filter((key) => !!checklist[key]).length;
+  const checklistKeys = ['diff', 'plan', 'preview', 'target'];
+  const checklistTotal = checklistKeys.length;
+  const checklistDone = checklistKeys.filter((key) => !!checklist[key]).length;
   const targetCountLabel = isNode ? '選んだ差分' : '選んだセクション';
   const targetCountValue = isNode ? selectedNodeRows.length : scopeInfo.effectiveScopes.length;
   const nonFieldScopes = scopeInfo.effectiveScopes.filter((key) => key && key !== 'fieldSettings');
   const firstNonFieldScope = nonFieldScopes[0] || '';
-  const safetyLabel = (checklistDone === 3 && backupReady && stopOnError) ? '準備OK' : '要見直し';
+  const checklistComplete = checklistDone === checklistTotal;
+  const safetyLabel = (checklistComplete && backupReady && stopOnError) ? '準備OK' : '要見直し';
   const warnings: string[] = [];
   if (!diffReady) warnings.push('差分比較がまだ最新ではありません。「差分比較」または「差分比較して候補作成」から最新化してください。');
   if (!scopeInfo.baseScopes.length && !isNode) warnings.push('「反映セクションを選ぶ」から、今回まとめて反映するセクションを選んでください。');
   if (scopeInfo.warning) warnings.push(scopeInfo.warning);
   if (isNode && !state.reflectRows.length) warnings.push('差分を選んで反映モードです。まず「差分比較して候補作成」で候補を出してください。');
-  if (checklistDone < 3) warnings.push('画面下の反映前チェックを完了してください。');
+  if (!checklistComplete) warnings.push('画面下の反映前チェックを完了してください。');
   if (!backupReady) warnings.push('バックアップ自動保存がOFFです。反映前に「今の比較先を保存」をおすすめします。');
 
   const nodeLoadAction = isNode && !state.reflectRows.length
@@ -900,7 +943,7 @@ export function buildReflectAssistHtml() {
     { no: 1, title: '差分を作る', meta: diffReady ? `最新差分 ${actualDiffRows.length}件` : '未実行または条件変更あり', done: diffReady },
     { no: 2, title: '対象を選ぶ', meta: targetCountValue ? `${targetCountLabel} ${targetCountValue}件` : '反映対象が未選択', done: targetCountValue > 0 },
     { no: 3, title: 'プラン確認', meta: planReady ? `確認済み ${state.lastApplyPlan?.totalReq || 0}req` : '未確認', done: planReady },
-    { no: 4, title: 'プレビュー反映', meta: checklistDone === 3 ? 'チェック完了' : `チェック ${checklistDone}/3`, done: checklistDone === 3 && planReady }
+    { no: 4, title: 'プレビュー反映', meta: checklistComplete ? 'チェック完了' : `チェック ${checklistDone}/${checklistTotal}`, done: checklistComplete && planReady }
   ].map((step) => `<div class="reflect-flow-step${step.done ? ' is-done' : ''}${currentStep === step.no ? ' is-current' : ''}">
       <div class="reflect-flow-step__no">${String(step.no).padStart(2, '0')}</div>
       <div class="reflect-flow-step__body">
@@ -989,8 +1032,8 @@ export function buildReflectAssistHtml() {
       <div class="stat-chip__num">${sev.low}</div>
       <div class="stat-chip__label">低</div>
     </div>
-    <div class="stat-chip ${checklistDone === 3 ? 'stat-chip--ok' : 'stat-chip--warn'}" title="反映前チェックリスト">
-      <div class="stat-chip__num">${checklistDone}<span style="font-size:11px;color:var(--txt-3)">/3</span></div>
+    <div class="stat-chip ${checklistComplete ? 'stat-chip--ok' : 'stat-chip--warn'}" title="反映前チェックリスト">
+      <div class="stat-chip__num">${checklistDone}<span style="font-size:11px;color:var(--txt-3)">/${checklistTotal}</span></div>
       <div class="stat-chip__label">安全</div>
     </div>
     <div class="stat-chip ${planReady ? 'stat-chip--ok' : ''}" title="${planReady ? '最新条件と一致' : 'まだ未確認'}">
@@ -1094,7 +1137,7 @@ export function buildReflectAssistHtml() {
         ${warnings.length > 1 ? `<ul class="reflect-detail-fold__warns">${warnings.slice(1).map((msg) => `<li>${esc(msg)}</li>`).join('')}</ul>` : ''}
         ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? ' / 必要なら「直前保存を戻す」で元に戻せます。' : ''}</div>` : ''}
         <div class="reflect-detail-fold__small">
-          反映前チェック ${checklistDone}/3 ／ バックアップ ${backupReady ? 'ON' : 'OFF'} ／ エラー時 ${stopOnError ? '中断' : '継続'}
+          反映前チェック ${checklistDone}/${checklistTotal} ／ バックアップ ${backupReady ? 'ON' : 'OFF'} ／ エラー時 ${stopOnError ? '中断' : '継続'}
           ${planReady ? `／ プラン: ${esc(planTime)}` : ''}
         </div>
       </div>
@@ -1271,6 +1314,41 @@ function buildSectionPreviewCardHtml(secKey, info) {
       </div>
     </details>`;
   }
+  if (shape === 'items' && info.itemized) {
+    const it = info.itemized;
+    const counter = `<span class="reflect-preview-counter reflect-preview-counter--add">追加 ${it.addedCount}</span>` +
+      `<span class="reflect-preview-counter reflect-preview-counter--upd">更新 ${it.updatedCount}</span>` +
+      `<span class="reflect-preview-counter reflect-preview-counter--rm">削除 ${it.removedCount}</span>`;
+    if (!it.totalCount && !(it.notes && it.notes.length)) {
+      return `<details class="reflect-preview-card"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span>${counter}<span class="reflect-preview-card__muted">変更なし</span></summary></details>`;
+    }
+    const STATUS_CLASS: Record<string, string> = { added: 'add', updated: 'upd', removed: 'rm' };
+    const STATUS_LABEL: Record<string, string> = { added: '追加', updated: '更新', removed: '削除' };
+    const itemRows = (it.items || []).map((item: any) => {
+      const cls = STATUS_CLASS[item.status] || 'upd';
+      const lab = STATUS_LABEL[item.status] || item.status;
+      const beforeAfter = item.status === 'updated'
+        ? `<div class="reflect-preview-row__grid">
+            <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更前</div><pre class="reflect-preview-col__pre">${esc(item.beforeText ?? '(なし)')}</pre></div>
+            <div class="reflect-preview-col"><div class="reflect-preview-col__label">変更後</div><pre class="reflect-preview-col__pre">${esc(item.afterText ?? '(なし)')}</pre></div>
+          </div>`
+        : `<pre class="reflect-preview-row__pre">${esc(item.afterText ?? item.beforeText ?? '')}</pre>`;
+      return `<div class="reflect-preview-row reflect-preview-row--${cls}">
+        <div class="reflect-preview-row__key"><span class="reflect-preview-row__badge reflect-preview-row__badge--${cls}">${lab}</span> ${esc(item.label || item.key)}</div>
+        ${beforeAfter}
+      </div>`;
+    }).join('');
+    const truncated = it.truncated ? `<div class="reflect-preview-card__muted">…一部省略（全${it.totalCount}件のうち先頭のみ表示）</div>` : '';
+    const notesHtml = (it.notes && it.notes.length)
+      ? `<div class="reflect-preview-card__notes">${(it.notes as string[]).map((n) => `<div class="reflect-preview-card__note">${esc(n)}</div>`).join('')}</div>`
+      : '';
+    return `<details class="reflect-preview-card"><summary>${renderSectionIconHtml(secKey)}<span class="reflect-preview-card__label">${label}</span>${counter}</summary>
+      <div class="reflect-preview-card__body">
+        ${notesHtml}
+        ${itemRows}${truncated}
+      </div>
+    </details>`;
+  }
   if (shape === 'whole' && info.wholePreview) {
     const w = info.wholePreview;
     if (!w.changed) {
@@ -1317,11 +1395,13 @@ export function renderReflectPlanPreview() {
   }
   const changedEntries = entries.filter(([, info]) => {
     if (info?.shape === 'map') return (info.preview?.totalCount || 0) > 0;
+    if (info?.shape === 'items') return (info.itemized?.totalCount || 0) > 0 || (info.itemized?.notes?.length || 0) > 0;
     if (info?.shape === 'whole') return !!info.wholePreview?.changed;
     return false;
   });
   const totalChanges = changedEntries.reduce((acc, [, info]) => {
     if (info?.shape === 'map') return acc + (info.preview?.totalCount || 0);
+    if (info?.shape === 'items') return acc + (info.itemized?.totalCount || 0);
     return acc + 1;
   }, 0);
   const keyword = String(state.reflectPlanPreviewKeyword || '').toLowerCase();
@@ -1335,7 +1415,8 @@ export function renderReflectPlanPreview() {
   const filteredEntries = changedOnly
     ? visibleEntries.filter(([, info]) => {
         if (info?.shape === 'map') return (info.preview?.totalCount || 0) > 0;
-        if (info?.shape === 'whole') return !!info.wholePreview?.changed;
+        if (info?.shape === 'items') return (info.itemized?.totalCount || 0) > 0 || (info.itemized?.notes?.length || 0) > 0;
+    if (info?.shape === 'whole') return !!info.wholePreview?.changed;
         return false;
       })
     : visibleEntries;
@@ -1454,6 +1535,7 @@ export function renderReflectTargetBadge() {
   const previewLabel = isPreview ? 'プレビュー' : '本番';
   const previewClass = isPreview ? 'is-preview' : 'is-prod';
   const guestSuffix = guestId ? ` / ゲスト${esc(guestId)}` : '';
+  const appPath = guestId ? `/k/guest/${encodeURIComponent(guestId)}/${encodeURIComponent(appId)}/` : `/k/${encodeURIComponent(appId)}/`;
   if (!appId) {
     el.innerHTML = `<div class="reflect-target-badge__inner" data-state="empty">
       <span class="reflect-target-badge__label">反映先未設定</span>
@@ -1465,6 +1547,7 @@ export function renderReflectTargetBadge() {
     <span class="reflect-target-badge__app">App ${esc(appId)}</span>
     ${appLabel ? `<span class="reflect-target-badge__name" title="${esc(appLabel)}">${esc(appLabel)}</span>` : ''}
     ${guestSuffix ? `<span class="reflect-target-badge__guest">${guestSuffix}</span>` : ''}
+    <button type="button" class="reflect-target-badge__open" data-act="openTargetPreviewApp" data-preview-url="${esc(appPath)}" title="比較先アプリのプレビュー確認画面を開き、チェックリストに反映します">開く</button>
   </div>`;
 }
 
@@ -1487,7 +1570,9 @@ export function getReflectNextAction(): ReflectNextActionInfo {
   const plan = state.lastApplyPlan;
   const planReady = !!(plan && planSig && plan.signature === planSig);
   const checklist = state.reflectApplyChecklist || ({} as any);
-  const checklistDone = ['diff', 'plan', 'target'].filter((k) => !!checklist[k]).length;
+  const checklistKeys = ['diff', 'plan', 'preview', 'target'];
+  const checklistDone = checklistKeys.filter((k) => !!checklist[k]).length;
+  const checklistTotal = checklistKeys.length;
 
   if (!diffReady) {
     return {
@@ -1513,7 +1598,7 @@ export function getReflectNextAction(): ReflectNextActionInfo {
   return {
     act: 'applyPreview',
     label: 'プレビューへ反映',
-    hint: checklistDone === 3 ? '反映を実行します' : `安全チェック ${checklistDone}/3`,
+    hint: checklistDone === checklistTotal ? '反映を実行します' : `安全チェック ${checklistDone}/${checklistTotal}`,
     disabled: false
   };
 }
@@ -1630,11 +1715,13 @@ export function renderReflectHeroCard() {
   const plan = state.lastApplyPlan;
   const planReady = !!(plan && plan.totalReq);
   const checklist = state.reflectApplyChecklist || {};
-  const checklistDone = ['diff','plan','target'].filter((k) => !!checklist[k]).length;
+  const checklistKeys = ['diff', 'plan', 'preview', 'target'];
+  const checklistDone = checklistKeys.filter((k) => !!checklist[k]).length;
+  const checklistTotal = checklistKeys.length;
 
   const stepNo = !diffReady ? 1 : !targetCount ? 2 : !planReady ? 3 : 4;
   const stepTitles = ['差分を作る', '反映する内容を決める', 'プラン確認', 'プレビュー反映'];
-  const tone = info.disabled ? 'warn' : (stepNo === 4 && checklistDone === 3) ? 'ok' : (stepNo === 1 ? '' : '');
+  const tone = info.disabled ? 'warn' : (stepNo === 4 && checklistDone === checklistTotal) ? 'ok' : (stepNo === 1 ? '' : '');
 
   const desc = !diffReady
     ? 'まずは差分比較を実行して、反映する変更を取得します。'
@@ -1642,7 +1729,7 @@ export function renderReflectHeroCard() {
       ? '標準ルートまたは詳細ルートで、反映するセクション/差分を選びます。'
       : !planReady
         ? 'APIに送信される予定のリクエスト内容を、プラン確認モーダルで見ます。'
-        : checklistDone === 3
+        : checklistDone === checklistTotal
           ? 'すべての準備が完了しました。下の赤いボタンから反映を実行できます。'
           : '反映前チェックリストを確認してから反映してください。';
 

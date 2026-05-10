@@ -16,7 +16,14 @@
     "test:field-transfer": "npm --prefix plugins/FieldTransfer test",
     "package:field-transfer": "npm run build:field-transfer && kintone-plugin-packer --ppk plugins/FieldTransfer.ppk plugins/FieldTransfer --out plugins/FieldTransfer.zip",
     "build:simple-task-board": "node plugins/SimpleTaskBoard/build-desktop.js",
-    "package:simple-task-board": "npm run build:simple-task-board && kintone-plugin-packer --ppk plugins/SimpleTaskBoard.ppk plugins/SimpleTaskBoard --out plugins/SimpleTaskBoard.zip"
+    "package:simple-task-board": "npm run build:simple-task-board && kintone-plugin-packer --ppk plugins/SimpleTaskBoard.ppk plugins/SimpleTaskBoard --out plugins/SimpleTaskBoard.zip",
+    "build:kintone-lookup-filter": "npm --prefix plugins/KintoneLookupFilter run build",
+    "test:kintone-lookup-filter": "npm --prefix plugins/KintoneLookupFilter test",
+    "package:kintone-lookup-filter": "npm run build:kintone-lookup-filter && kintone-plugin-packer --ppk plugins/KintoneLookupFilter.ppk plugins/KintoneLookupFilter --out plugins/KintoneLookupFilter.zip",
+    "check:attachment-name-guard": "node --check plugins/AttachmentNameGuard/js/config.js && node --check plugins/AttachmentNameGuard/js/desktop.js",
+    "package:attachment-name-guard": "npm run check:attachment-name-guard && kintone-plugin-packer --ppk plugins/AttachmentNameGuard.ppk plugins/AttachmentNameGuard --out plugins/AttachmentNameGuard.zip",
+    "check:comment-reply-label": "node --check plugins/CommentReplyLabel/js/config.js && node --check plugins/CommentReplyLabel/js/desktop.js",
+    "package:comment-reply-label": "npm run check:comment-reply-label && kintone-plugin-packer --ppk plugins/CommentReplyLabel.ppk plugins/CommentReplyLabel --out plugins/CommentReplyLabel.zip"
   },
   "repository": {
     "type": "git",
@@ -31,7 +38,7 @@
   },
   "homepage": "https://github.com/kawasakikenta/kintone#readme",
   "devDependencies": {
-    "@kintone/plugin-packer": "^9.1.0",
+    "@kintone/plugin-packer": "^9.1.1",
     "@playwright/mcp": "^0.0.70",
     "typescript": "^6.0.3",
     "vite": "^8.0.10"

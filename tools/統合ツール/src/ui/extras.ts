@@ -37,6 +37,7 @@ import { state, ui } from '../state.js';
 import { setStatus } from './components.js';
 import { getToolDocument } from './dialog.js';
 import { localizeKintoneEnumsInText as kusEnumsLocalize } from '../kintone-enums.js';
+import { renderReflectApplyChecklistStatus } from '../handlers/checklist.js';
 
 interface ExtrasGlobal {
   toastStack?: HTMLDivElement;
@@ -595,6 +596,7 @@ export function adaptReflectChecklist(): void {
     lab.innerHTML = `<input type="checkbox" data-reflect-apply-check="emptyDiff"> 差分なしの状態で反映することを承認`;
     checklist.appendChild(lab);
   }
+  renderReflectApplyChecklistStatus();
 }
 
 /* ============================================================
@@ -2112,8 +2114,15 @@ export function initFilteredScopeTree(): void {
     const btn = (e.target as HTMLElement)?.closest?.('button[data-act]') as HTMLElement | null;
     if (!btn) return;
     const act = btn.dataset.act;
-    modal.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((cb) => {
-      if (cb.closest('label, .scope-item')?.parentElement?.style?.display === 'none') return;
+    const activePanel = modal.querySelector<HTMLElement>('.scope-picker-panel.active') || modal.querySelector<HTMLElement>('.scope-picker-panel');
+    if (!activePanel) return;
+    const selector = [
+      '.scope-picker-chips input[type="checkbox"]',
+      '#u_reflectSidebarSections [data-apply-scope]'
+    ].join(',');
+    activePanel.querySelectorAll<HTMLInputElement>(selector).forEach((cb) => {
+      const row = cb.closest<HTMLElement>('label, .scope-item, .sidebar-item');
+      if (row?.style?.display === 'none') return;
       cb.checked = act === 'kusScopeAll';
       cb.dispatchEvent(new Event('change', { bubbles: true }));
     });

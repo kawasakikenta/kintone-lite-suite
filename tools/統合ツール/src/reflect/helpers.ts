@@ -3,6 +3,7 @@
 import { SECTION_DEFS } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, selectedScopeKeys, renderSectionIconHtml } from '../utils.js';
+import { classifyLogLine, buildGanttHtmlFromLogs } from './progress-pure.js';
 import { fetchBundle, pickBundleSections } from '../api.js';
 import { getActualDiffRows } from '../diff/engine.js';
 import { setStatus } from '../ui/components.js';
@@ -106,62 +107,8 @@ export interface ProgressLogOptions {
   perSection?: ReadonlyArray<{ sectionKey: string; label?: string; status: 'pending' | 'running' | 'ok' | 'ng' | 'skip'; durationMs?: number }>;
 }
 
-function classifyLogLine(line: string): { tone: string; icon: string; rest: string } {
-  if (line.startsWith('OK ')) return { tone: 'ok', icon: '✓', rest: line.slice(3) };
-  if (line.startsWith('NG ')) return { tone: 'ng', icon: '✗', rest: line.slice(3) };
-  if (line.startsWith('SKIP ')) return { tone: 'skip', icon: '⊘', rest: line.slice(5) };
-  if (line.startsWith('START ')) return { tone: 'start', icon: '▶', rest: line.slice(6) };
-  if (line.startsWith('PLAN ')) return { tone: 'plan', icon: '📋', rest: line.slice(5) };
-  if (/^=+/.test(line)) return { tone: 'head', icon: '', rest: line };
-  if (line.trim() === '') return { tone: 'blank', icon: '', rest: '' };
-  return { tone: 'plain', icon: '', rest: line };
-}
-
-// S6: ガント形式の進捗。logs から各セクションの状態を推定して横棒で可視化
-function buildGanttHtmlFromLogs(logs: string[], scopes: readonly string[] | undefined): string {
-  if (!Array.isArray(scopes) || !scopes.length) return '';
-  // セクションごとの状態を集約
-  type Row = { sectionKey: string; label: string; status: 'pending' | 'running' | 'ok' | 'ng' | 'skip' };
-  const rows: Row[] = scopes.map((k) => ({
-    sectionKey: String(k),
-    label: SECTION_DEFS.find((d) => d.key === k)?.label || k,
-    status: 'pending'
-  }));
-  let runningKey = '';
-  for (const line of logs) {
-    const text = String(line);
-    // OK/NG/SKIP のセクション名検出
-    for (const r of rows) {
-      if (text.startsWith(`OK ${r.label}`)) r.status = 'ok';
-      else if (text.startsWith(`NG ${r.label}`)) r.status = 'ng';
-      else if (text.startsWith(`SKIP ${r.label}`)) r.status = 'skip';
-      else if (text.startsWith(`START ${r.label}`)) { r.status = 'running'; runningKey = r.sectionKey; }
-    }
-  }
-  // 実行中行が無く、未確定の最初の pending を「running」とみなす
-  if (!runningKey) {
-    const firstPending = rows.find((r) => r.status === 'pending');
-    if (firstPending) firstPending.status = 'running';
-  }
-  const rowsHtml = rows.map((r) => {
-    const pct = r.status === 'ok' ? 100
-      : r.status === 'ng' ? 100
-      : r.status === 'skip' ? 100
-      : r.status === 'running' ? 60
-      : 0;
-    const barCls = r.status === 'ok' ? 'apply-gantt__bar--ok'
-      : r.status === 'ng' ? 'apply-gantt__bar--ng'
-      : r.status === 'running' ? 'apply-gantt__bar--running'
-      : '';
-    const statusGlyph = r.status === 'ok' ? '✓' : r.status === 'ng' ? '✗' : r.status === 'skip' ? '⊘' : r.status === 'running' ? '⏳' : '';
-    return `<div class="apply-gantt__row" data-status="${r.status}">
-      <div class="apply-gantt__label">${renderSectionIconHtml(r.sectionKey)}<span>${esc(r.label)}</span></div>
-      <div class="apply-gantt__track"><div class="apply-gantt__bar ${barCls}" style="width:${pct}%"></div></div>
-      <div class="apply-gantt__time">${statusGlyph}</div>
-    </div>`;
-  }).join('');
-  return `<div class="apply-gantt" aria-label="セクション別進捗">${rowsHtml}</div>`;
-}
+// classifyLogLine / buildGanttHtmlFromLogs は副作用のない純粋関数として
+// progress-pure.ts に分離した（DOM 書き込み層から切り離して再利用しやすくするため）。
 
 export function renderProgressLog(logs: string[], options: ProgressLogOptions = {}): void {
   const { phase, current, total, scopes } = options;

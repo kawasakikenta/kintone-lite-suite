@@ -6,7 +6,7 @@ import { runApplyPreviewStandalone } from '../tabs/reflect-standalone.js';
 import { mountKusLitePanel } from './liteMount.js';
 import { row, mkInput, mkOption, liteRun } from './litePanelHelpers.js';
 
-const REFLECT_LITE_STATE_KEY = 'kus_reflect_lite_state_v1';
+let reflectLiteStateMemory: any = {};
 
 export function mountReflectLitePanel() {
   const { bodySlot } = mountKusLitePanel({
@@ -15,13 +15,7 @@ export function mountReflectLitePanel() {
     note: '比較元アプリの設定を比較先プレビュー環境へ一括反映します。統合ツール.js は不要です。'
   });
 
-  let savedState: any = {};
-  try {
-    const raw = localStorage.getItem(REFLECT_LITE_STATE_KEY) || '';
-    savedState = raw ? JSON.parse(raw) : {};
-  } catch (_) {
-    savedState = {};
-  }
+  let savedState: any = { ...reflectLiteStateMemory };
 
   const srcApp = mkInput('比較元アプリID', { value: savedState.sourceAppId || DEFAULT_APP_ID || '' });
   const srcGuest = mkInput('ゲストID（任意）', { value: savedState.sourceGuestId || '' });
@@ -123,11 +117,7 @@ export function mountReflectLitePanel() {
       sourcePreview: srcPreviewCb.checked,
       stopOnError: stopCb.checked
     };
-    try {
-      localStorage.setItem(REFLECT_LITE_STATE_KEY, JSON.stringify(payload));
-    } catch (_) {
-      // ignore quota / private browsing errors
-    }
+    reflectLiteStateMemory = { ...payload };
   };
 
   copySrcToTgtBtn.addEventListener('click', () => {

@@ -464,6 +464,7 @@ export function saveCurrentDialogState() {
     reflectApplyChecklist: {
       diff: !!state.reflectApplyChecklist?.diff,
       plan: !!state.reflectApplyChecklist?.plan,
+      preview: !!state.reflectApplyChecklist?.preview,
       target: !!state.reflectApplyChecklist?.target
     },
     doDeploy: ui.doDeploy.checked,
@@ -572,8 +573,10 @@ export function restoreDialogState() {
     state.reflectApplyChecklist = {
       diff: !!saved.reflectApplyChecklist.diff,
       plan: !!saved.reflectApplyChecklist.plan,
+      preview: !!saved.reflectApplyChecklist.preview,
       target: !!saved.reflectApplyChecklist.target
     };
+    state.reflectPreviewOpened = !!saved.reflectApplyChecklist.preview;
   }
   if (saved.doDeploy != null) ui.doDeploy.checked = !!saved.doDeploy;
   if (saved.overwriteField != null) ui.overwriteField.checked = !!saved.overwriteField;

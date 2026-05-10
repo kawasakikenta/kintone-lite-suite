@@ -126,7 +126,7 @@ function normalizeApiGetOptions(optionsOrRetries: ApiGetOptions | number | undef
   return optionsOrRetries;
 }
 
-function resolveHttpStatus(error: any): number {
+export function resolveHttpStatus(error: any): number {
   const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
   if (Number.isFinite(direct) && direct > 0) return direct;
   const text = String(error?.message || '');
@@ -134,7 +134,7 @@ function resolveHttpStatus(error: any): number {
   return matched ? Number(matched[1]) : 0;
 }
 
-function isRetriableApiError(error: any): boolean {
+export function isRetriableApiError(error: any): boolean {
   if (!error) return false;
   const status = resolveHttpStatus(error);
   if (RETRIABLE_STATUS_CODES.has(status)) return true;
@@ -144,10 +144,30 @@ function isRetriableApiError(error: any): boolean {
   return message.includes('network') || message.includes('timeout');
 }
 
-function computeRetryDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
+export function computeRetryDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
   const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
   const jitter = Math.random() * Math.min(200, baseDelayMs);
   return Math.round(expDelay + jitter);
+}
+
+/**
+ * 書き込み系（POST/PUT/DELETE）のリトライ可否判定。
+ * - 5xx / ネットワーク系エラーは方法に関わらずリトライ可。
+ * - 4xx は副作用が確定している可能性があるため一律リトライ不可。
+ * - PUT は冪等のため 408/429 もリトライ可（apiGet と同じ判定）。
+ * - POST/DELETE は冪等でないため、4xx 全般を弾き、5xx/ネットワーク系のみリトライ可。
+ */
+export function isRetriableMutation(method: string, error: any): boolean {
+  if (!error) return false;
+  const m = String(method || '').toUpperCase();
+  const status = resolveHttpStatus(error);
+  if (status >= 400 && status < 500) {
+    if (m === 'PUT' && (status === 408 || status === 429)) return true;
+    return false;
+  }
+  if (status >= 500 && status < 600) return true;
+  // status===0 または 5xx でないネットワーク/タイムアウト
+  return isRetriableApiError(error);
 }
 
 function touchApiPathMetric(path: string, field: 'calls' | 'retries' | 'failures'): ApiPathMetric {
