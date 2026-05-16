@@ -534,6 +534,41 @@ export async function resolveBundle(
   return fetchBundle({ ...params, sections, onProgress });
 }
 
+export interface SpaceAppInfo {
+  appId: string;
+  name: string;
+  spaceId: string;
+}
+
+/**
+ * 指定スペースに属する全アプリを取得する（ページング対応）。
+ * kintone の `/apps.json` に `spaceIds` を渡してスペース絞り込みする。
+ */
+export async function fetchAppsInSpace(
+  spaceId: string | number,
+  guestId?: string | number
+): Promise<SpaceAppInfo[]> {
+  const sid = String(spaceId || '').trim();
+  if (!/^\d+$/.test(sid)) throw new Error('スペースIDは数値で入力してください');
+  const prefix = buildApiPrefix(guestId, false);
+  const apps: SpaceAppInfo[] = [];
+  const seen = new Set<string>();
+  const limit = 100;
+  for (let offset = 0; ; offset += limit) {
+    const resp = await apiGet(prefix, '/apps.json', { spaceIds: [sid], limit, offset });
+    const chunk = Array.isArray(resp?.apps) ? resp.apps : [];
+    for (const a of chunk) {
+      const appId = String(a?.appId || '').trim();
+      if (!/^\d+$/.test(appId) || seen.has(appId)) continue;
+      seen.add(appId);
+      apps.push({ appId, name: String(a?.name || ''), spaceId: String(a?.spaceId || sid) });
+    }
+    if (chunk.length < limit) break;
+  }
+  apps.sort((a, b) => Number(a.appId) - Number(b.appId));
+  return apps;
+}
+
 export function resolveBundleRevision(bundle: any): string {
   const revisions = bundle?.meta?.sectionRevisions || {};
   for (const key of ['appSettings', 'fieldSettings', 'layoutSettings', 'viewSettings', 'processSettings']) {

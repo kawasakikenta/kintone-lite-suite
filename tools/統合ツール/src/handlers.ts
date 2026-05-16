@@ -149,6 +149,7 @@ import {
   runSettingsExport,
   runSettingsExportSearchApps,
   addAppIdToSettingsExport,
+  addSpaceAppsToSettingsExport,
   loadSettingsExportBundleToDiff
 } from './tabs/settings-export.js';
 
@@ -2123,6 +2124,7 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
     if (act === 'settingsExportSearchApps') return withGuard(runSettingsExportSearchApps);
+    if (act === 'settingsExportAddSpace') return withGuard(addSpaceAppsToSettingsExport);
     if (act === 'connectionSearchApps') return withGuard(runConnectionSearchApps);
     if (act === 'addConnectionSearchApp') {
       const appId = actEl.dataset.appId || '';

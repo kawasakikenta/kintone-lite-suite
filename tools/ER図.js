@@ -1229,6 +1229,8 @@ ${contextLine}`);
       maxDepth: options.maxDepth || 0,
       includeSubtableFields: !!options.includeSubtableFields,
       includeReverseLookup: !!options.includeReverseLookup,
+      spaceId: options.spaceId || "",
+      spaceAppIds: Array.isArray(options.spaceAppIds) ? options.spaceAppIds.map((v) => String(v)) : [],
       sourceGuestId: options.source?.guestId || "",
       sourcePreview: !!options.source?.preview
     });
@@ -1243,6 +1245,10 @@ ${contextLine}`);
       return acc;
     }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
     const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", ");
+    const erSpaceId = String(options.spaceId || "");
+    const spaceAppIdSet = new Set((Array.isArray(options.spaceAppIds) ? options.spaceAppIds : []).map((v) => String(v)));
+    const spaceAppCount = erSpaceId ? safeApps.filter((app) => spaceAppIdSet.has(String(app?.id)) || String(app?.spaceId || "") === erSpaceId).length : 0;
+    const spacePill = erSpaceId ? `<span class="meta-pill" title="このスペースに属するアプリは二重枠で表示されます"><b>スペース</b> #${esc(erSpaceId)} (${esc(String(spaceAppCount))}アプリ)</span>` : "";
     const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
     const cytoscapeScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscape.cdnUrl, EXTERNAL_LIBRARIES.cytoscape.altCdnUrl);
     const dagreScript = buildScriptTag(EXTERNAL_LIBRARIES.dagre.cdnUrl);
@@ -1566,6 +1572,7 @@ body{font-family:'DM Sans',sans-serif;background:
     <span class="meta-pill" id="layout-pill"><b>配置</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
     <span class="meta-pill" id="density-pill"><b>密度</b> ${esc(densityLabel)}</span>
     <span class="meta-pill"><b>深さ</b> ${esc(String(options.maxDepth || 0))}</span>
+    ${spacePill}
   </div>
 
   <div class="sep"></div>
@@ -1977,6 +1984,7 @@ function buildCyStyle(palette){
     }},
     {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
     {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":4,"background-color":isDark ? "#11162d" : "#eef2ff"}},
+    {selector:"node[?inSpace]",style:{"border-color":"#0ea5a4","border-width":4,"border-style":"double","background-color":isDark ? "#06231f" : "#ecfdf5"}},
     {selector:"node:selected",style:{"border-color":palette.accent,"border-width":4,"overlay-color":"transparent"}},
     {selector:"node.highlighted",style:{"border-color":palette.pk,"border-width":3,"background-color":isDark ? "#1a1805" : "#fffbeb"}},
     {selector:"node.path-node",style:{"border-color":"#f472b6","border-width":4,"background-color":isDark ? "#1a0a12" : "#fdf2f8"}},
@@ -2031,6 +2039,9 @@ applyTheme();
 
 // ─── Cytoscape Init ───
 const startAppIdSet = new Set((ER_OPTIONS.startAppIds || []).map((id)=>String(id)));
+const spaceAppIdSet = new Set((ER_OPTIONS.spaceAppIds || []).map((id)=>String(id)));
+const erSpaceId = String(ER_OPTIONS.spaceId || "");
+const isInSpaceApp = (app)=> !!erSpaceId && (spaceAppIdSet.has(String(app.id)) || String(app.spaceId || "") === erSpaceId);
 const elements=[];
 APPS.forEach(app=>{
   elements.push({data:{
@@ -2039,6 +2050,7 @@ APPS.forEach(app=>{
     appId:app.id,
     isError:!app.ok,
     isStart:startAppIdSet.has(String(app.id)),
+    inSpace:isInSpaceApp(app),
     fieldCount:visibleFieldsForNode(app).length,
     relCount:app.relations.length,
     depth:app.depth || 0
