@@ -1645,6 +1645,10 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                         <label title="カンマ区切りで複数指定">追加の起点アプリID</label>
                         <input type="text" id="u_erExtraApps" value="" placeholder="例: 123, 456, 789">
                       </div>
+                      <div>
+                        <label title="指定スペース内の全アプリを起点に追加し、スペース所属アプリを二重枠で表示します">スペースID（任意）</label>
+                        <input type="text" id="u_erSpaceId" value="" placeholder="スペース全体をER化">
+                      </div>
                     </div>
                     <div class="er-option-chips">
                       <label class="chip" title="サブテーブル内フィールドもERに含めます"><input type="checkbox" id="u_erIncludeSubtable" checked> サブテーブル項目を含める</label>
@@ -1792,6 +1796,10 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <div class="inline" style="margin-top:8px">
                     <input type="text" id="u_settingsExportSearchKeyword" placeholder="アプリ名で検索" style="flex:1" title="スペース内のアプリを名前で検索し結果からIDを選べます">
                     <button type="button" class="btn sub" data-act="settingsExportSearchApps">検索</button>
+                  </div>
+                  <div class="inline" style="margin-top:8px">
+                    <input type="text" id="u_settingsExportSpaceId" placeholder="スペースID" style="flex:1" title="指定スペース内の全アプリIDを一括で対象リストに追加します">
+                    <button type="button" class="btn sub" data-act="settingsExportAddSpace" title="スペースに属する全アプリを対象リストへ追加">スペース内全アプリを追加</button>
                   </div>
                   <div class="result" id="u_settingsExportSearchResult" style="max-height:140px;margin-top:6px"></div>
                 </div>

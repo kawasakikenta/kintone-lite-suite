@@ -3,7 +3,7 @@
 import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, safeJsonForScript, nowStamp, downloadText, showToast } from '../utils.js';
-import { apiGet, buildApiPrefix } from '../api.js';
+import { apiGet, buildApiPrefix, fetchAppsInSpace } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { getToolWindow, getToolDocument } from '../ui/dialog.js';
 import { commonParams } from './diff.js';
@@ -43,9 +43,11 @@ export function readErDiagramOptions() {
     .map((v) => v.trim())
     .filter((v) => /^\d+$/.test(v));
   const startAppIds = [startAppId, ...extraAppIds].filter((v, i, arr) => /^\d+$/.test(v) && arr.indexOf(v) === i);
+  const spaceId = String(ui.erSpaceId?.value || '').trim();
   return {
     startAppId,
     startAppIds,
+    spaceId: /^\d+$/.test(spaceId) ? spaceId : '',
     layoutName,
     fieldDensity: ['compact', 'standard', 'full'].includes(fieldDensity) ? fieldDensity : ER_DEFAULTS.fieldDensity,
     maxDepth: Number.isFinite(maxDepthNum) && maxDepthNum >= 0 ? Math.floor(maxDepthNum) : ER_DEFAULTS.maxDepth,
@@ -347,6 +349,8 @@ export const buildHTML = (apps, options: any = {}) => {
     maxDepth: options.maxDepth || 0,
     includeSubtableFields: !!options.includeSubtableFields,
     includeReverseLookup: !!options.includeReverseLookup,
+    spaceId: options.spaceId || '',
+    spaceAppIds: Array.isArray(options.spaceAppIds) ? options.spaceAppIds.map((v) => String(v)) : [],
     sourceGuestId: options.source?.guestId || '',
     sourcePreview: !!options.source?.preview
   });
@@ -361,6 +365,14 @@ export const buildHTML = (apps, options: any = {}) => {
     return acc;
   }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
   const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || '']).filter(Boolean).join(', ');
+  const erSpaceId = String(options.spaceId || '');
+  const spaceAppIdSet = new Set((Array.isArray(options.spaceAppIds) ? options.spaceAppIds : []).map((v) => String(v)));
+  const spaceAppCount = erSpaceId
+    ? safeApps.filter((app) => spaceAppIdSet.has(String(app?.id)) || String(app?.spaceId || '') === erSpaceId).length
+    : 0;
+  const spacePill = erSpaceId
+    ? `<span class="meta-pill" title="このスペースに属するアプリは二重枠で表示されます"><b>スペース</b> #${esc(erSpaceId)} (${esc(String(spaceAppCount))}アプリ)</span>`
+    : '';
   const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || '-');
   const cytoscapeScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscape.cdnUrl, EXTERNAL_LIBRARIES.cytoscape.altCdnUrl);
   const dagreScript = buildScriptTag(EXTERNAL_LIBRARIES.dagre.cdnUrl);
@@ -644,7 +656,10 @@ body{font-family:'DM Sans',sans-serif;background:
   box-shadow:0 18px 40px rgba(0,0,0,0.22);backdrop-filter:blur(12px);
 }
 #overview.collapsed .ov-sub,#overview.collapsed .ov-grid,#overview.collapsed .ov-tip-row{display:none;}
+#overview.hidden{display:none;}
 .ov-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;}
+.ov-close{flex:0 0 auto;background:none;border:1px solid transparent;color:var(--dim);font-size:14px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:8px;transition:.12s;}
+.ov-close:hover{background:var(--surface2);border-color:var(--border);color:var(--text);}
 .ov-title{font-size:14px;font-weight:700;color:var(--text);}
 .ov-sub{margin-top:4px;font-size:11px;line-height:1.6;color:var(--dim);}
 .ov-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;}
@@ -682,6 +697,7 @@ body{font-family:'DM Sans',sans-serif;background:
     <span class="meta-pill" id="layout-pill"><b>配置</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
     <span class="meta-pill" id="density-pill"><b>密度</b> ${esc(densityLabel)}</span>
     <span class="meta-pill"><b>深さ</b> ${esc(String(options.maxDepth || 0))}</span>
+    ${spacePill}
   </div>
 
   <div class="sep"></div>
@@ -812,6 +828,7 @@ body{font-family:'DM Sans',sans-serif;background:
       <div class="ov-title">見方のガイド</div>
       <div class="ov-sub">開始アプリの周辺から追って、検索と関連強調で範囲を絞ると読みやすくなります。詳細度は上部の「密度」でその場で切り替えできます。</div>
     </div>
+    <button class="ov-close" onclick="hideOverview()" title="ガイドを閉じる（🧭 で再表示）" aria-label="ガイドを閉じる">✕</button>
   </div>
   <div class="ov-grid">
     <div class="ov-card"><span class="ov-kpi">${safeApps.length}</span><span class="ov-label">アプリ</span></div>
@@ -1093,6 +1110,7 @@ function buildCyStyle(palette){
     }},
     {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
     {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":4,"background-color":isDark ? "#11162d" : "#eef2ff"}},
+    {selector:"node[?inSpace]",style:{"border-color":"#0ea5a4","border-width":4,"border-style":"double","background-color":isDark ? "#06231f" : "#ecfdf5"}},
     {selector:"node:selected",style:{"border-color":palette.accent,"border-width":4,"overlay-color":"transparent"}},
     {selector:"node.highlighted",style:{"border-color":palette.pk,"border-width":3,"background-color":isDark ? "#1a1805" : "#fffbeb"}},
     {selector:"node.path-node",style:{"border-color":"#f472b6","border-width":4,"background-color":isDark ? "#1a0a12" : "#fdf2f8"}},
@@ -1147,6 +1165,9 @@ applyTheme();
 
 // ─── Cytoscape Init ───
 const startAppIdSet = new Set((ER_OPTIONS.startAppIds || []).map((id)=>String(id)));
+const spaceAppIdSet = new Set((ER_OPTIONS.spaceAppIds || []).map((id)=>String(id)));
+const erSpaceId = String(ER_OPTIONS.spaceId || "");
+const isInSpaceApp = (app)=> !!erSpaceId && (spaceAppIdSet.has(String(app.id)) || String(app.spaceId || "") === erSpaceId);
 const elements=[];
 APPS.forEach(app=>{
   elements.push({data:{
@@ -1155,6 +1176,7 @@ APPS.forEach(app=>{
     appId:app.id,
     isError:!app.ok,
     isStart:startAppIdSet.has(String(app.id)),
+    inSpace:isInSpaceApp(app),
     fieldCount:visibleFieldsForNode(app).length,
     relCount:app.relations.length,
     depth:app.depth || 0
@@ -1205,10 +1227,25 @@ function setDensity(value){
   syncDensityControl();
   toast("表示密度: " + formatFieldDensityLabel(next));
 }
+function hideOverview(){
+  const panel = document.getElementById("overview");
+  const btn = document.getElementById("overview-toggle-btn");
+  if(!panel) return;
+  panel.classList.add("hidden");
+  if(btn){
+    btn.classList.remove("active");
+    btn.title = "ガイドを開く";
+  }
+}
 function toggleOverview(){
   const panel = document.getElementById("overview");
   const btn = document.getElementById("overview-toggle-btn");
   if(!panel) return;
+  if(panel.classList.contains("hidden")){
+    panel.classList.remove("hidden","collapsed");
+    if(btn){ btn.classList.add("active"); btn.title = "ガイドを隠す"; }
+    return;
+  }
   const nextCollapsed = !panel.classList.contains("collapsed");
   panel.classList.toggle("collapsed", nextCollapsed);
   if(btn){
@@ -2287,9 +2324,25 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 };
 
 
+/**
+ * スペースID指定時は当該スペースの全アプリを起点に追加し、
+ * スペース内アプリ集合を options.spaceAppIds に格納する（ER 描画でのスペース表現用）。
+ */
+async function resolveErStartAppIds(options: any): Promise<void> {
+  if (!options.spaceId) return;
+  setStatus(`スペース ${options.spaceId} のアプリ一覧を取得中...`);
+  progressUi.update(2, `スペース ${options.spaceId} のアプリ一覧を取得中...`);
+  const apps = await fetchAppsInSpace(options.spaceId, options.source?.guestId);
+  const spaceIds = apps.map((a) => String(a.appId));
+  options.spaceAppIds = spaceIds;
+  const merged = [...(Array.isArray(options.startAppIds) ? options.startAppIds : []), ...spaceIds];
+  options.startAppIds = merged.filter((v, i, arr) => /^\d+$/.test(String(v)) && arr.indexOf(v) === i);
+}
+
 export async function runGenerateERDiagram() {
   const options = readErDiagramOptions();
-  if (!options.startAppIds?.length) throw new Error('比較元アプリID（および追加起点ID）を入力してください');
+  await resolveErStartAppIds(options);
+  if (!options.startAppIds?.length) throw new Error('比較元アプリID（または追加起点ID / スペースID）を入力してください');
   const popup = getToolWindow().open('', '_blank');
   if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
   popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
@@ -2328,7 +2381,8 @@ export async function runGenerateERDiagram() {
 
 export async function runExportERDiagramHtml() {
   const options = readErDiagramOptions();
-  if (!options.startAppIds?.length) throw new Error('比較元アプリID（および追加起点ID）を入力してください');
+  await resolveErStartAppIds(options);
+  if (!options.startAppIds?.length) throw new Error('比較元アプリID（または追加起点ID / スペースID）を入力してください');
   setStatus(`ER図HTMLを生成します... 起点 ${options.startAppIds.join(",")}`);
   progressUi.init();
   progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);

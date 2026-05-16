@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS } from '../constants.js';
 import { esc, nowStamp, downloadText, downloadBlob, selectedScopeKeys } from '../utils.js';
-import { fetchBundle, buildApiPrefix, apiGet } from '../api.js';
+import { fetchBundle, buildApiPrefix, apiGet, fetchAppsInSpace } from '../api.js';
 import { loadJSZip } from './record.js';
 
 function parseAppIdList(text) {
@@ -76,6 +76,32 @@ export async function runSettingsExportSearchStandalone(keyword: any, guestId: a
     .sort((a: { appId: string }, b: { appId: string }) => Number(a.appId) - Number(b.appId));
   setStatus(`アプリ検索完了: ${apps.length}件`);
   return apps;
+}
+
+/**
+ * スペース内全アプリIDを既存の対象テキストにマージして返す。
+ */
+export async function runSettingsExportAddSpaceStandalone(
+  spaceId: any,
+  guestId: any,
+  currentText: any,
+  setStatus: (msg: string, isError?: boolean) => void
+): Promise<string> {
+  const sid = String(spaceId || '').trim();
+  if (!/^\d+$/.test(sid)) throw new Error('スペースIDを数値で入力してください');
+  setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
+  const apps = await fetchAppsInSpace(sid, guestId);
+  if (!apps.length) {
+    setStatus(`スペース ${sid} に取得対象アプリがありませんでした`, true);
+    return String(currentText || '');
+  }
+  const set = new Set(parseAppIdList(currentText));
+  const before = set.size;
+  apps.forEach((a) => set.add(a.appId));
+  const ordered = [...set].sort((a, b) => Number(a) - Number(b));
+  const added = set.size - before;
+  setStatus(`スペース ${sid} のアプリ ${apps.length}件を読み込みました（新規追加 ${added}件 / 合計 ${set.size}件）`);
+  return ordered.join('\n');
 }
 
 export async function runSettingsExportStandalone(mode: string, opts: any, setStatus: (msg: string, isError?: boolean) => void) {

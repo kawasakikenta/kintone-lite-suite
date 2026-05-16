@@ -861,6 +861,27 @@ ${contextLine}`);
     }
     return bundle;
   }
+  async function fetchAppsInSpace(spaceId, guestId) {
+    const sid = String(spaceId || "").trim();
+    if (!/^\d+$/.test(sid)) throw new Error("スペースIDは数値で入力してください");
+    const prefix = buildApiPrefix(guestId, false);
+    const apps = [];
+    const seen = /* @__PURE__ */ new Set();
+    const limit = 100;
+    for (let offset = 0; ; offset += limit) {
+      const resp = await apiGet(prefix, "/apps.json", { spaceIds: [sid], limit, offset });
+      const chunk = Array.isArray(resp?.apps) ? resp.apps : [];
+      for (const a of chunk) {
+        const appId = String(a?.appId || "").trim();
+        if (!/^\d+$/.test(appId) || seen.has(appId)) continue;
+        seen.add(appId);
+        apps.push({ appId, name: String(a?.name || ""), spaceId: String(a?.spaceId || sid) });
+      }
+      if (chunk.length < limit) break;
+    }
+    apps.sort((a, b) => Number(a.appId) - Number(b.appId));
+    return apps;
+  }
   var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
@@ -1157,6 +1178,23 @@ ${contextLine}`);
     setStatus2(`アプリ検索完了: ${apps.length}件`);
     return apps;
   }
+  async function runSettingsExportAddSpaceStandalone(spaceId, guestId, currentText, setStatus2) {
+    const sid = String(spaceId || "").trim();
+    if (!/^\d+$/.test(sid)) throw new Error("スペースIDを数値で入力してください");
+    setStatus2(`スペース ${sid} のアプリ一覧を取得中...`);
+    const apps = await fetchAppsInSpace(sid, guestId);
+    if (!apps.length) {
+      setStatus2(`スペース ${sid} に取得対象アプリがありませんでした`, true);
+      return String(currentText || "");
+    }
+    const set = new Set(parseAppIdList(currentText));
+    const before = set.size;
+    apps.forEach((a) => set.add(a.appId));
+    const ordered = [...set].sort((a, b) => Number(a) - Number(b));
+    const added = set.size - before;
+    setStatus2(`スペース ${sid} のアプリ ${apps.length}件を読み込みました（新規追加 ${added}件 / 合計 ${set.size}件）`);
+    return ordered.join("\n");
+  }
   async function runSettingsExportStandalone(mode, opts, setStatus2) {
     const appIds = parseAppIdList(opts.appIdsText);
     if (!appIds.length) throw new Error("対象アプリIDを1件以上入力してください");
@@ -1347,6 +1385,16 @@ ${contextLine}`);
     searchRow.appendChild(searchBtn);
     const searchOut = document.createElement("div");
     searchOut.style.cssText = "max-height:140px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;margin-top:6px;background:#fff";
+    const spaceKw = mkInput("スペースID");
+    spaceKw.style.cssText = "flex:1;min-width:120px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
+    const spaceRow = document.createElement("div");
+    spaceRow.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center";
+    const spaceBtn = document.createElement("button");
+    spaceBtn.type = "button";
+    spaceBtn.textContent = "スペース内全アプリを追加";
+    spaceBtn.style.cssText = "padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer";
+    spaceRow.appendChild(spaceKw);
+    spaceRow.appendChild(spaceBtn);
     const guestInp = mkInput("ゲストID（任意）");
     guestInp.style.cssText = "width:min(140px,44vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
     const prev = mkOption("プレビュー");
@@ -1387,6 +1435,7 @@ ${contextLine}`);
     bodySlot.appendChild(row("対象アプリID", appTa));
     bodySlot.appendChild(row("アプリ検索", searchRow));
     bodySlot.appendChild(searchOut);
+    bodySlot.appendChild(row("スペース指定", spaceRow));
     bodySlot.appendChild(row("ゲスト / 環境", (() => {
       const w = document.createElement("div");
       w.style.cssText = "display:flex;flex-wrap:wrap;gap:10px;align-items:center";
@@ -1430,6 +1479,14 @@ ${contextLine}`);
 ${id}` : id;
       appTa.value = next;
     });
+    spaceBtn.addEventListener("click", () => liteRun(async () => {
+      appTa.value = await runSettingsExportAddSpaceStandalone(
+        spaceKw.value.trim(),
+        guestInp.value.trim(),
+        appTa.value,
+        (m, e) => setStatus(m, e)
+      );
+    }));
     selectAllBtn.addEventListener("click", () => {
       scopeRoot.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
         cb.checked = true;

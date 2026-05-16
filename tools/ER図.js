@@ -697,6 +697,27 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
+  async function fetchAppsInSpace(spaceId, guestId) {
+    const sid = String(spaceId || "").trim();
+    if (!/^\d+$/.test(sid)) throw new Error("スペースIDは数値で入力してください");
+    const prefix = buildApiPrefix(guestId, false);
+    const apps = [];
+    const seen = /* @__PURE__ */ new Set();
+    const limit = 100;
+    for (let offset = 0; ; offset += limit) {
+      const resp = await apiGet(prefix, "/apps.json", { spaceIds: [sid], limit, offset });
+      const chunk = Array.isArray(resp?.apps) ? resp.apps : [];
+      for (const a of chunk) {
+        const appId = String(a?.appId || "").trim();
+        if (!/^\d+$/.test(appId) || seen.has(appId)) continue;
+        seen.add(appId);
+        apps.push({ appId, name: String(a?.name || ""), spaceId: String(a?.spaceId || sid) });
+      }
+      if (chunk.length < limit) break;
+    }
+    apps.sort((a, b) => Number(a.appId) - Number(b.appId));
+    return apps;
+  }
   var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
@@ -1229,6 +1250,8 @@ ${contextLine}`);
       maxDepth: options.maxDepth || 0,
       includeSubtableFields: !!options.includeSubtableFields,
       includeReverseLookup: !!options.includeReverseLookup,
+      spaceId: options.spaceId || "",
+      spaceAppIds: Array.isArray(options.spaceAppIds) ? options.spaceAppIds.map((v) => String(v)) : [],
       sourceGuestId: options.source?.guestId || "",
       sourcePreview: !!options.source?.preview
     });
@@ -1243,6 +1266,10 @@ ${contextLine}`);
       return acc;
     }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
     const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", ");
+    const erSpaceId = String(options.spaceId || "");
+    const spaceAppIdSet = new Set((Array.isArray(options.spaceAppIds) ? options.spaceAppIds : []).map((v) => String(v)));
+    const spaceAppCount = erSpaceId ? safeApps.filter((app) => spaceAppIdSet.has(String(app?.id)) || String(app?.spaceId || "") === erSpaceId).length : 0;
+    const spacePill = erSpaceId ? `<span class="meta-pill" title="このスペースに属するアプリは二重枠で表示されます"><b>スペース</b> #${esc(erSpaceId)} (${esc(String(spaceAppCount))}アプリ)</span>` : "";
     const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
     const cytoscapeScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscape.cdnUrl, EXTERNAL_LIBRARIES.cytoscape.altCdnUrl);
     const dagreScript = buildScriptTag(EXTERNAL_LIBRARIES.dagre.cdnUrl);
@@ -1528,7 +1555,10 @@ body{font-family:'DM Sans',sans-serif;background:
   box-shadow:0 18px 40px rgba(0,0,0,0.22);backdrop-filter:blur(12px);
 }
 #overview.collapsed .ov-sub,#overview.collapsed .ov-grid,#overview.collapsed .ov-tip-row{display:none;}
+#overview.hidden{display:none;}
 .ov-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;}
+.ov-close{flex:0 0 auto;background:none;border:1px solid transparent;color:var(--dim);font-size:14px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:8px;transition:.12s;}
+.ov-close:hover{background:var(--surface2);border-color:var(--border);color:var(--text);}
 .ov-title{font-size:14px;font-weight:700;color:var(--text);}
 .ov-sub{margin-top:4px;font-size:11px;line-height:1.6;color:var(--dim);}
 .ov-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;}
@@ -1566,6 +1596,7 @@ body{font-family:'DM Sans',sans-serif;background:
     <span class="meta-pill" id="layout-pill"><b>配置</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
     <span class="meta-pill" id="density-pill"><b>密度</b> ${esc(densityLabel)}</span>
     <span class="meta-pill"><b>深さ</b> ${esc(String(options.maxDepth || 0))}</span>
+    ${spacePill}
   </div>
 
   <div class="sep"></div>
@@ -1696,6 +1727,7 @@ body{font-family:'DM Sans',sans-serif;background:
       <div class="ov-title">見方のガイド</div>
       <div class="ov-sub">開始アプリの周辺から追って、検索と関連強調で範囲を絞ると読みやすくなります。詳細度は上部の「密度」でその場で切り替えできます。</div>
     </div>
+    <button class="ov-close" onclick="hideOverview()" title="ガイドを閉じる（🧭 で再表示）" aria-label="ガイドを閉じる">✕</button>
   </div>
   <div class="ov-grid">
     <div class="ov-card"><span class="ov-kpi">${safeApps.length}</span><span class="ov-label">アプリ</span></div>
@@ -1977,6 +2009,7 @@ function buildCyStyle(palette){
     }},
     {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
     {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":4,"background-color":isDark ? "#11162d" : "#eef2ff"}},
+    {selector:"node[?inSpace]",style:{"border-color":"#0ea5a4","border-width":4,"border-style":"double","background-color":isDark ? "#06231f" : "#ecfdf5"}},
     {selector:"node:selected",style:{"border-color":palette.accent,"border-width":4,"overlay-color":"transparent"}},
     {selector:"node.highlighted",style:{"border-color":palette.pk,"border-width":3,"background-color":isDark ? "#1a1805" : "#fffbeb"}},
     {selector:"node.path-node",style:{"border-color":"#f472b6","border-width":4,"background-color":isDark ? "#1a0a12" : "#fdf2f8"}},
@@ -2031,6 +2064,9 @@ applyTheme();
 
 // ─── Cytoscape Init ───
 const startAppIdSet = new Set((ER_OPTIONS.startAppIds || []).map((id)=>String(id)));
+const spaceAppIdSet = new Set((ER_OPTIONS.spaceAppIds || []).map((id)=>String(id)));
+const erSpaceId = String(ER_OPTIONS.spaceId || "");
+const isInSpaceApp = (app)=> !!erSpaceId && (spaceAppIdSet.has(String(app.id)) || String(app.spaceId || "") === erSpaceId);
 const elements=[];
 APPS.forEach(app=>{
   elements.push({data:{
@@ -2039,6 +2075,7 @@ APPS.forEach(app=>{
     appId:app.id,
     isError:!app.ok,
     isStart:startAppIdSet.has(String(app.id)),
+    inSpace:isInSpaceApp(app),
     fieldCount:visibleFieldsForNode(app).length,
     relCount:app.relations.length,
     depth:app.depth || 0
@@ -2089,10 +2126,25 @@ function setDensity(value){
   syncDensityControl();
   toast("表示密度: " + formatFieldDensityLabel(next));
 }
+function hideOverview(){
+  const panel = document.getElementById("overview");
+  const btn = document.getElementById("overview-toggle-btn");
+  if(!panel) return;
+  panel.classList.add("hidden");
+  if(btn){
+    btn.classList.remove("active");
+    btn.title = "ガイドを開く";
+  }
+}
 function toggleOverview(){
   const panel = document.getElementById("overview");
   const btn = document.getElementById("overview-toggle-btn");
   if(!panel) return;
+  if(panel.classList.contains("hidden")){
+    panel.classList.remove("hidden","collapsed");
+    if(btn){ btn.classList.add("active"); btn.title = "ガイドを隠す"; }
+    return;
+  }
   const nextCollapsed = !panel.classList.contains("collapsed");
   panel.classList.toggle("collapsed", nextCollapsed);
   if(btn){
@@ -3172,10 +3224,24 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   };
 
   // src/tabs/er-standalone.ts
+  init_api();
   init_utils();
+  async function applySpaceToErOptions(opts, options, setStatus2) {
+    const spaceId = String(opts.spaceId || "").trim();
+    if (!/^\d+$/.test(spaceId)) return;
+    setStatus2(`スペース ${spaceId} のアプリ一覧を取得中...`);
+    const apps = await fetchAppsInSpace(spaceId, opts.guestId);
+    const spaceIds = apps.map((a) => String(a.appId));
+    options.spaceId = spaceId;
+    options.spaceAppIds = spaceIds;
+    options.startAppIds = [...options.startAppIds, ...spaceIds].filter(
+      (v, i, a) => /^\d+$/.test(String(v)) && a.indexOf(v) === i
+    );
+  }
   async function runGenerateERDiagramStandalone(opts, setStatus2) {
     const appId = String(opts.appId || "").trim();
-    if (!appId) throw new Error("アプリIDを入力してください");
+    const spaceId = String(opts.spaceId || "").trim();
+    if (!appId && !spaceId) throw new Error("アプリID または スペースID を入力してください");
     const startAppIds = [appId, ...opts.extraAppIds || []].filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
     const options = {
       startAppId: appId,
@@ -3189,14 +3255,16 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       sleepMs: ER_DEFAULTS.sleepMs,
       source: { guestId: opts.guestId || "", preview: !!opts.preview }
     };
+    await applySpaceToErOptions(opts, options, setStatus2);
+    if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
     const popup = window.open("", "_blank");
     if (!popup) throw new Error("別タブを開けませんでした。ポップアップブロックを確認してください");
     popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
-    setStatus2(`ER図を生成中... 起点 ${startAppIds.join(",")}`);
+    setStatus2(`ER図を生成中... 起点 ${options.startAppIds.join(",")}`);
     progressUi.init();
-    progressUi.update(4, `開始: 起点 ${startAppIds.join(",")}`);
+    progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
     try {
-      const apps = await crawl(startAppIds, options);
+      const apps = await crawl(options.startAppIds, options);
       progressUi.update(94, "HTML生成中...");
       const html = buildHTML(apps, options);
       const blob = new Blob([html], { type: "text/html" });
@@ -3216,7 +3284,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   }
   async function runExportERDiagramHtmlStandalone(opts, setStatus2) {
     const appId = String(opts.appId || "").trim();
-    if (!appId) throw new Error("アプリIDを入力してください");
+    const spaceId = String(opts.spaceId || "").trim();
+    if (!appId && !spaceId) throw new Error("アプリID または スペースID を入力してください");
     const startAppIds = [appId, ...opts.extraAppIds || []].filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
     const options = {
       startAppId: appId,
@@ -3230,17 +3299,20 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       sleepMs: ER_DEFAULTS.sleepMs,
       source: { guestId: opts.guestId || "", preview: !!opts.preview }
     };
-    setStatus2(`ER図HTMLを生成中... 起点 ${startAppIds.join(",")}`);
+    await applySpaceToErOptions(opts, options, setStatus2);
+    if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
+    setStatus2(`ER図HTMLを生成中... 起点 ${options.startAppIds.join(",")}`);
     progressUi.init();
-    progressUi.update(4, `開始: 起点 ${startAppIds.join(",")}`);
+    progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
     try {
-      const apps = await crawl(startAppIds, options);
+      const apps = await crawl(options.startAppIds, options);
       progressUi.update(94, "HTML保存データ生成中...");
       const html = buildHTML(apps, options);
       const guestSuffix = opts.guestId ? `_guest${opts.guestId}` : "";
       const previewSuffix = opts.preview ? "_preview" : "_prod";
+      const baseName = appId || `space${spaceId}`;
       downloadText(
-        `kintone_erd_app${appId}${guestSuffix}${previewSuffix}_${nowStamp()}.html`,
+        `kintone_erd_app${baseName}${guestSuffix}${previewSuffix}_${nowStamp()}.html`,
         html,
         "text/html"
       );
@@ -3361,6 +3433,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     });
     const appInp = mkInput("アプリID", { value: DEFAULT_APP_ID || "" });
     const extraInp = mkInput("追加起点ID (カンマ区切り)", { width: "wide" });
+    const spaceInp = mkInput("スペースID（任意）");
     const guestInp = mkInput("ゲストID（任意）");
     const layoutSel = mkSelect([
       ["dagre", "Dagre (推奨)"],
@@ -3408,7 +3481,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         maxDepth: Number(depthInp.value) || 0,
         includeSubtableFields: subtableCb.checked,
         includeReverseLookup: reverseCb.checked,
-        extraAppIds: extraInp.value.split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean)
+        extraAppIds: extraInp.value.split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean),
+        spaceId: spaceInp.value.trim()
       };
     }
     const btnRow = document.createElement("div");
@@ -3454,6 +3528,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     const detailBody = document.createElement("div");
     detailBody.style.cssText = "padding:0 10px 10px";
     detailBody.appendChild(row("追加起点", extraInp));
+    detailBody.appendChild(row("スペースID", spaceInp));
     detailBody.appendChild(row("ゲスト", guestInp));
     detailBody.appendChild(row("レイアウト", layoutSel));
     detailBody.appendChild(row("表示密度", densitySel));

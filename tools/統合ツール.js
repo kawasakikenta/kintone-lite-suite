@@ -1722,6 +1722,27 @@ ${contextLine}`);
     }
     return bundle;
   }
+  async function fetchAppsInSpace(spaceId, guestId) {
+    const sid = String(spaceId || "").trim();
+    if (!/^\d+$/.test(sid)) throw new Error("スペースIDは数値で入力してください");
+    const prefix = buildApiPrefix(guestId, false);
+    const apps = [];
+    const seen = /* @__PURE__ */ new Set();
+    const limit = 100;
+    for (let offset = 0; ; offset += limit) {
+      const resp = await apiGet(prefix, "/apps.json", { spaceIds: [sid], limit, offset });
+      const chunk = Array.isArray(resp?.apps) ? resp.apps : [];
+      for (const a of chunk) {
+        const appId = String(a?.appId || "").trim();
+        if (!/^\d+$/.test(appId) || seen.has(appId)) continue;
+        seen.add(appId);
+        apps.push({ appId, name: String(a?.name || ""), spaceId: String(a?.spaceId || sid) });
+      }
+      if (chunk.length < limit) break;
+    }
+    apps.sort((a, b) => Number(a.appId) - Number(b.appId));
+    return apps;
+  }
   function resolveBundleRevision(bundle) {
     const revisions = bundle?.meta?.sectionRevisions || {};
     for (const key of ["appSettings", "fieldSettings", "layoutSettings", "viewSettings", "processSettings"]) {
@@ -28779,6 +28800,10 @@ ${reason}` : "",
                         <label title="カンマ区切りで複数指定">追加の起点アプリID</label>
                         <input type="text" id="u_erExtraApps" value="" placeholder="例: 123, 456, 789">
                       </div>
+                      <div>
+                        <label title="指定スペース内の全アプリを起点に追加し、スペース所属アプリを二重枠で表示します">スペースID（任意）</label>
+                        <input type="text" id="u_erSpaceId" value="" placeholder="スペース全体をER化">
+                      </div>
                     </div>
                     <div class="er-option-chips">
                       <label class="chip" title="サブテーブル内フィールドもERに含めます"><input type="checkbox" id="u_erIncludeSubtable" checked> サブテーブル項目を含める</label>
@@ -28926,6 +28951,10 @@ ${reason}` : "",
                   <div class="inline" style="margin-top:8px">
                     <input type="text" id="u_settingsExportSearchKeyword" placeholder="アプリ名で検索" style="flex:1" title="スペース内のアプリを名前で検索し結果からIDを選べます">
                     <button type="button" class="btn sub" data-act="settingsExportSearchApps">検索</button>
+                  </div>
+                  <div class="inline" style="margin-top:8px">
+                    <input type="text" id="u_settingsExportSpaceId" placeholder="スペースID" style="flex:1" title="指定スペース内の全アプリIDを一括で対象リストに追加します">
+                    <button type="button" class="btn sub" data-act="settingsExportAddSpace" title="スペースに属する全アプリを対象リストへ追加">スペース内全アプリを追加</button>
                   </div>
                   <div class="result" id="u_settingsExportSearchResult" style="max-height:140px;margin-top:6px"></div>
                 </div>
@@ -31403,6 +31432,27 @@ ${reason}` : "",
     const apps = (res.apps || []).map((a) => ({ appId: String(a.appId || ""), name: String(a.name || "") })).filter((a) => /^\d+$/.test(a.appId)).sort((a, b) => Number(a.appId) - Number(b.appId));
     renderSettingsExportSearchResults(apps);
     setStatus(`アプリ検索完了: ${apps.length}件`);
+  }
+  async function addSpaceAppsToSettingsExport() {
+    const spaceId = String(ui.settingsExportSpaceId?.value || "").trim();
+    if (!/^\d+$/.test(spaceId)) {
+      throw new Error("スペースIDを数値で入力してください");
+    }
+    const guestId = ui.settingsExportGuest.value.trim();
+    setStatus(`スペース ${spaceId} のアプリ一覧を取得中...`);
+    const apps = await fetchAppsInSpace(spaceId, guestId);
+    if (!apps.length) {
+      setStatus(`スペース ${spaceId} に取得対象アプリがありませんでした`, true);
+      return;
+    }
+    const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+    const before = set.size;
+    apps.forEach((a) => set.add(a.appId));
+    const ordered = [...set].sort((a, b) => Number(a) - Number(b));
+    ui.settingsExportAppIds.value = ordered.join(", ");
+    saveCurrentDialogState2();
+    const added = set.size - before;
+    setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を読み込みました（新規追加 ${added}件 / 合計 ${set.size}件）`);
   }
   function renderSettingsExportSummary(rows, scopes) {
     const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(", ");
@@ -33991,6 +34041,7 @@ ${reason}` : "",
         return;
       }
       if (act === "settingsExportSearchApps") return withGuard(runSettingsExportSearchApps);
+      if (act === "settingsExportAddSpace") return withGuard(addSpaceAppsToSettingsExport);
       if (act === "connectionSearchApps") return withGuard(runConnectionSearchApps);
       if (act === "addConnectionSearchApp") {
         const appId = actEl.dataset.appId || "";
@@ -38255,9 +38306,11 @@ ${diffMd}
     const maxDepthNum = Number(maxDepthRaw);
     const extraAppIds = String(ui.erExtraApps?.value || "").split(/[\s,，]+/).map((v) => v.trim()).filter((v) => /^\d+$/.test(v));
     const startAppIds = [startAppId, ...extraAppIds].filter((v, i, arr) => /^\d+$/.test(v) && arr.indexOf(v) === i);
+    const spaceId = String(ui.erSpaceId?.value || "").trim();
     return {
       startAppId,
       startAppIds,
+      spaceId: /^\d+$/.test(spaceId) ? spaceId : "",
       layoutName,
       fieldDensity: ["compact", "standard", "full"].includes(fieldDensity) ? fieldDensity : ER_DEFAULTS.fieldDensity,
       maxDepth: Number.isFinite(maxDepthNum) && maxDepthNum >= 0 ? Math.floor(maxDepthNum) : ER_DEFAULTS.maxDepth,
@@ -38580,6 +38633,8 @@ ${diffMd}
       maxDepth: options.maxDepth || 0,
       includeSubtableFields: !!options.includeSubtableFields,
       includeReverseLookup: !!options.includeReverseLookup,
+      spaceId: options.spaceId || "",
+      spaceAppIds: Array.isArray(options.spaceAppIds) ? options.spaceAppIds.map((v) => String(v)) : [],
       sourceGuestId: options.source?.guestId || "",
       sourcePreview: !!options.source?.preview
     });
@@ -38594,6 +38649,10 @@ ${diffMd}
       return acc;
     }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
     const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", ");
+    const erSpaceId = String(options.spaceId || "");
+    const spaceAppIdSet = new Set((Array.isArray(options.spaceAppIds) ? options.spaceAppIds : []).map((v) => String(v)));
+    const spaceAppCount = erSpaceId ? safeApps.filter((app) => spaceAppIdSet.has(String(app?.id)) || String(app?.spaceId || "") === erSpaceId).length : 0;
+    const spacePill = erSpaceId ? `<span class="meta-pill" title="このスペースに属するアプリは二重枠で表示されます"><b>スペース</b> #${esc(erSpaceId)} (${esc(String(spaceAppCount))}アプリ)</span>` : "";
     const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
     const cytoscapeScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscape.cdnUrl, EXTERNAL_LIBRARIES.cytoscape.altCdnUrl);
     const dagreScript = buildScriptTag(EXTERNAL_LIBRARIES.dagre.cdnUrl);
@@ -38879,7 +38938,10 @@ body{font-family:'DM Sans',sans-serif;background:
   box-shadow:0 18px 40px rgba(0,0,0,0.22);backdrop-filter:blur(12px);
 }
 #overview.collapsed .ov-sub,#overview.collapsed .ov-grid,#overview.collapsed .ov-tip-row{display:none;}
+#overview.hidden{display:none;}
 .ov-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;}
+.ov-close{flex:0 0 auto;background:none;border:1px solid transparent;color:var(--dim);font-size:14px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:8px;transition:.12s;}
+.ov-close:hover{background:var(--surface2);border-color:var(--border);color:var(--text);}
 .ov-title{font-size:14px;font-weight:700;color:var(--text);}
 .ov-sub{margin-top:4px;font-size:11px;line-height:1.6;color:var(--dim);}
 .ov-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;}
@@ -38917,6 +38979,7 @@ body{font-family:'DM Sans',sans-serif;background:
     <span class="meta-pill" id="layout-pill"><b>配置</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
     <span class="meta-pill" id="density-pill"><b>密度</b> ${esc(densityLabel)}</span>
     <span class="meta-pill"><b>深さ</b> ${esc(String(options.maxDepth || 0))}</span>
+    ${spacePill}
   </div>
 
   <div class="sep"></div>
@@ -39047,6 +39110,7 @@ body{font-family:'DM Sans',sans-serif;background:
       <div class="ov-title">見方のガイド</div>
       <div class="ov-sub">開始アプリの周辺から追って、検索と関連強調で範囲を絞ると読みやすくなります。詳細度は上部の「密度」でその場で切り替えできます。</div>
     </div>
+    <button class="ov-close" onclick="hideOverview()" title="ガイドを閉じる（🧭 で再表示）" aria-label="ガイドを閉じる">✕</button>
   </div>
   <div class="ov-grid">
     <div class="ov-card"><span class="ov-kpi">${safeApps.length}</span><span class="ov-label">アプリ</span></div>
@@ -39328,6 +39392,7 @@ function buildCyStyle(palette){
     }},
     {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
     {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":4,"background-color":isDark ? "#11162d" : "#eef2ff"}},
+    {selector:"node[?inSpace]",style:{"border-color":"#0ea5a4","border-width":4,"border-style":"double","background-color":isDark ? "#06231f" : "#ecfdf5"}},
     {selector:"node:selected",style:{"border-color":palette.accent,"border-width":4,"overlay-color":"transparent"}},
     {selector:"node.highlighted",style:{"border-color":palette.pk,"border-width":3,"background-color":isDark ? "#1a1805" : "#fffbeb"}},
     {selector:"node.path-node",style:{"border-color":"#f472b6","border-width":4,"background-color":isDark ? "#1a0a12" : "#fdf2f8"}},
@@ -39382,6 +39447,9 @@ applyTheme();
 
 // ─── Cytoscape Init ───
 const startAppIdSet = new Set((ER_OPTIONS.startAppIds || []).map((id)=>String(id)));
+const spaceAppIdSet = new Set((ER_OPTIONS.spaceAppIds || []).map((id)=>String(id)));
+const erSpaceId = String(ER_OPTIONS.spaceId || "");
+const isInSpaceApp = (app)=> !!erSpaceId && (spaceAppIdSet.has(String(app.id)) || String(app.spaceId || "") === erSpaceId);
 const elements=[];
 APPS.forEach(app=>{
   elements.push({data:{
@@ -39390,6 +39458,7 @@ APPS.forEach(app=>{
     appId:app.id,
     isError:!app.ok,
     isStart:startAppIdSet.has(String(app.id)),
+    inSpace:isInSpaceApp(app),
     fieldCount:visibleFieldsForNode(app).length,
     relCount:app.relations.length,
     depth:app.depth || 0
@@ -39440,10 +39509,25 @@ function setDensity(value){
   syncDensityControl();
   toast("表示密度: " + formatFieldDensityLabel(next));
 }
+function hideOverview(){
+  const panel = document.getElementById("overview");
+  const btn = document.getElementById("overview-toggle-btn");
+  if(!panel) return;
+  panel.classList.add("hidden");
+  if(btn){
+    btn.classList.remove("active");
+    btn.title = "ガイドを開く";
+  }
+}
 function toggleOverview(){
   const panel = document.getElementById("overview");
   const btn = document.getElementById("overview-toggle-btn");
   if(!panel) return;
+  if(panel.classList.contains("hidden")){
+    panel.classList.remove("hidden","collapsed");
+    if(btn){ btn.classList.add("active"); btn.title = "ガイドを隠す"; }
+    return;
+  }
   const nextCollapsed = !panel.classList.contains("collapsed");
   panel.classList.toggle("collapsed", nextCollapsed);
   if(btn){
@@ -40521,9 +40605,20 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 </html>`
     );
   };
+  async function resolveErStartAppIds(options) {
+    if (!options.spaceId) return;
+    setStatus(`スペース ${options.spaceId} のアプリ一覧を取得中...`);
+    progressUi.update(2, `スペース ${options.spaceId} のアプリ一覧を取得中...`);
+    const apps = await fetchAppsInSpace(options.spaceId, options.source?.guestId);
+    const spaceIds = apps.map((a) => String(a.appId));
+    options.spaceAppIds = spaceIds;
+    const merged = [...Array.isArray(options.startAppIds) ? options.startAppIds : [], ...spaceIds];
+    options.startAppIds = merged.filter((v, i, arr) => /^\d+$/.test(String(v)) && arr.indexOf(v) === i);
+  }
   async function runGenerateERDiagram() {
     const options = readErDiagramOptions();
-    if (!options.startAppIds?.length) throw new Error("比較元アプリID（および追加起点ID）を入力してください");
+    await resolveErStartAppIds(options);
+    if (!options.startAppIds?.length) throw new Error("比較元アプリID（または追加起点ID / スペースID）を入力してください");
     const popup = getToolWindow().open("", "_blank");
     if (!popup) throw new Error("別タブを開けませんでした。ポップアップブロックを確認してください");
     popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
@@ -40562,7 +40657,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   }
   async function runExportERDiagramHtml() {
     const options = readErDiagramOptions();
-    if (!options.startAppIds?.length) throw new Error("比較元アプリID（および追加起点ID）を入力してください");
+    await resolveErStartAppIds(options);
+    if (!options.startAppIds?.length) throw new Error("比較元アプリID（または追加起点ID / スペースID）を入力してください");
     setStatus(`ER図HTMLを生成します... 起点 ${options.startAppIds.join(",")}`);
     progressUi.init();
     progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
@@ -43384,6 +43480,7 @@ ${field.label}` : code,
       jsconfigDeployAfter: $("#u_jsconfigDeployAfter"),
       settingsExportAppIds: $("#u_settingsExportAppIds"),
       settingsExportSearchKeyword: $("#u_settingsExportSearchKeyword"),
+      settingsExportSpaceId: $("#u_settingsExportSpaceId"),
       settingsExportSearchResult: $("#u_settingsExportSearchResult"),
       settingsExportGuest: $("#u_settingsExportGuest"),
       settingsExportPreview: $("#u_settingsExportPreview"),
@@ -43405,6 +43502,7 @@ ${field.label}` : code,
       erFieldDensity: $("#u_erFieldDensity"),
       erMaxDepth: $("#u_erMaxDepth"),
       erExtraApps: $("#u_erExtraApps"),
+      erSpaceId: $("#u_erSpaceId"),
       erIncludeSubtable: $("#u_erIncludeSubtable"),
       erIncludeReverseLookup: $("#u_erIncludeReverseLookup"),
       busyOverlay: $("#u_busyOverlay"),

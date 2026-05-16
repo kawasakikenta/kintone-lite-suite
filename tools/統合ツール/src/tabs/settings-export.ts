@@ -3,7 +3,7 @@
 import { SECTION_DEFS } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, nowStamp, downloadText, downloadBlob } from '../utils.js';
-import { apiGet, fetchBundle, buildApiPrefix } from '../api.js';
+import { apiGet, fetchBundle, buildApiPrefix, fetchAppsInSpace } from '../api.js';
 import { selectedScopeKeys } from '../utils.js';
 import { setStatus } from '../ui/components.js';
 import { commonParams, saveCurrentDialogState } from './diff.js';
@@ -62,6 +62,32 @@ export async function runSettingsExportSearchApps() {
     .sort((a: { appId: string }, b: { appId: string }) => Number(a.appId) - Number(b.appId));
   renderSettingsExportSearchResults(apps);
   setStatus(`アプリ検索完了: ${apps.length}件`);
+}
+
+// ---------------------------------------------------------------------------
+// Add all apps in a space to the settings export list
+// ---------------------------------------------------------------------------
+
+export async function addSpaceAppsToSettingsExport() {
+  const spaceId = String(ui.settingsExportSpaceId?.value || '').trim();
+  if (!/^\d+$/.test(spaceId)) {
+    throw new Error('スペースIDを数値で入力してください');
+  }
+  const guestId = ui.settingsExportGuest.value.trim();
+  setStatus(`スペース ${spaceId} のアプリ一覧を取得中...`);
+  const apps = await fetchAppsInSpace(spaceId, guestId);
+  if (!apps.length) {
+    setStatus(`スペース ${spaceId} に取得対象アプリがありませんでした`, true);
+    return;
+  }
+  const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+  const before = set.size;
+  apps.forEach((a) => set.add(a.appId));
+  const ordered = [...set].sort((a, b) => Number(a) - Number(b));
+  ui.settingsExportAppIds.value = ordered.join(', ');
+  saveCurrentDialogState();
+  const added = set.size - before;
+  setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を読み込みました（新規追加 ${added}件 / 合計 ${set.size}件）`);
 }
 
 // ---------------------------------------------------------------------------

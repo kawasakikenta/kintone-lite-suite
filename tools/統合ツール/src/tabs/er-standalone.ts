@@ -1,7 +1,25 @@
 'use strict';
 
 import { crawl, buildHTML, progressUi, ER_DEFAULTS, formatErLayoutLabel } from './er.js';
+import { fetchAppsInSpace } from '../api.js';
 import { nowStamp, downloadText } from '../utils.js';
+
+/**
+ * スペースID指定時、スペース内全アプリを起点に追加し、
+ * options.spaceId / options.spaceAppIds をセットする（ER 描画のスペース表現用）。
+ */
+async function applySpaceToErOptions(opts: any, options: any, setStatus: (msg: string, err?: boolean) => void): Promise<void> {
+  const spaceId = String(opts.spaceId || '').trim();
+  if (!/^\d+$/.test(spaceId)) return;
+  setStatus(`スペース ${spaceId} のアプリ一覧を取得中...`);
+  const apps = await fetchAppsInSpace(spaceId, opts.guestId);
+  const spaceIds = apps.map((a) => String(a.appId));
+  options.spaceId = spaceId;
+  options.spaceAppIds = spaceIds;
+  options.startAppIds = [...options.startAppIds, ...spaceIds].filter(
+    (v: string, i: number, a: string[]) => /^\d+$/.test(String(v)) && a.indexOf(v) === i
+  );
+}
 
 /**
  * @param {object} opts
@@ -18,7 +36,8 @@ import { nowStamp, downloadText } from '../utils.js';
  */
 export async function runGenerateERDiagramStandalone(opts, setStatus) {
   const appId = String(opts.appId || '').trim();
-  if (!appId) throw new Error('アプリIDを入力してください');
+  const spaceId = String(opts.spaceId || '').trim();
+  if (!appId && !spaceId) throw new Error('アプリID または スペースID を入力してください');
 
   const startAppIds = [appId, ...(opts.extraAppIds || [])].filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
   const options = {
@@ -33,17 +52,19 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
     sleepMs: ER_DEFAULTS.sleepMs,
     source: { guestId: opts.guestId || '', preview: !!opts.preview }
   };
+  await applySpaceToErOptions(opts, options, setStatus);
+  if (!options.startAppIds.length) throw new Error('対象アプリが見つかりませんでした');
 
   const popup = window.open('', '_blank');
   if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
   popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
 
-  setStatus(`ER図を生成中... 起点 ${startAppIds.join(',')}`);
+  setStatus(`ER図を生成中... 起点 ${options.startAppIds.join(',')}`);
   progressUi.init();
-  progressUi.update(4, `開始: 起点 ${startAppIds.join(',')}`);
+  progressUi.update(4, `開始: 起点 ${options.startAppIds.join(',')}`);
 
   try {
-    const apps = await crawl(startAppIds, options);
+    const apps = await crawl(options.startAppIds, options);
     progressUi.update(94, 'HTML生成中...');
     const html = buildHTML(apps, options);
     const blob = new Blob([html], { type: 'text/html' });
@@ -61,7 +82,8 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
 
 export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
   const appId = String(opts.appId || '').trim();
-  if (!appId) throw new Error('アプリIDを入力してください');
+  const spaceId = String(opts.spaceId || '').trim();
+  if (!appId && !spaceId) throw new Error('アプリID または スペースID を入力してください');
 
   const startAppIds = [appId, ...(opts.extraAppIds || [])].filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
   const options = {
@@ -76,19 +98,22 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
     sleepMs: ER_DEFAULTS.sleepMs,
     source: { guestId: opts.guestId || '', preview: !!opts.preview }
   };
+  await applySpaceToErOptions(opts, options, setStatus);
+  if (!options.startAppIds.length) throw new Error('対象アプリが見つかりませんでした');
 
-  setStatus(`ER図HTMLを生成中... 起点 ${startAppIds.join(',')}`);
+  setStatus(`ER図HTMLを生成中... 起点 ${options.startAppIds.join(',')}`);
   progressUi.init();
-  progressUi.update(4, `開始: 起点 ${startAppIds.join(',')}`);
+  progressUi.update(4, `開始: 起点 ${options.startAppIds.join(',')}`);
 
   try {
-    const apps = await crawl(startAppIds, options);
+    const apps = await crawl(options.startAppIds, options);
     progressUi.update(94, 'HTML保存データ生成中...');
     const html = buildHTML(apps, options);
     const guestSuffix = opts.guestId ? `_guest${opts.guestId}` : '';
     const previewSuffix = opts.preview ? '_preview' : '_prod';
+    const baseName = appId || `space${spaceId}`;
     downloadText(
-      `kintone_erd_app${appId}${guestSuffix}${previewSuffix}_${nowStamp()}.html`,
+      `kintone_erd_app${baseName}${guestSuffix}${previewSuffix}_${nowStamp()}.html`,
       html,
       'text/html'
     );

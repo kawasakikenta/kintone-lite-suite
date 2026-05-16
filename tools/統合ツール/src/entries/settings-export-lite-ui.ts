@@ -5,6 +5,7 @@ import { setStatus } from '../ui/components.js';
 import {
   runSettingsExportSearchStandalone,
   runSettingsExportStandalone,
+  runSettingsExportAddSpaceStandalone,
   renderSettingsExportSearchResultsHtml
 } from '../tabs/settings-export-standalone.js';
 import { mountKusLitePanel } from './liteMount.js';
@@ -53,6 +54,18 @@ export function mountSettingsExportLitePanel() {
   const searchOut = document.createElement('div');
   searchOut.style.cssText =
     'max-height:140px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;margin-top:6px;background:#fff';
+
+  const spaceKw = mkInput('スペースID');
+  spaceKw.style.cssText = 'flex:1;min-width:120px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
+  const spaceRow = document.createElement('div');
+  spaceRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center';
+  const spaceBtn = document.createElement('button');
+  spaceBtn.type = 'button';
+  spaceBtn.textContent = 'スペース内全アプリを追加';
+  spaceBtn.style.cssText =
+    'padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer';
+  spaceRow.appendChild(spaceKw);
+  spaceRow.appendChild(spaceBtn);
 
   const guestInp = mkInput('ゲストID（任意）');
   guestInp.style.cssText = 'width:min(140px,44vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
@@ -103,6 +116,7 @@ export function mountSettingsExportLitePanel() {
   bodySlot.appendChild(row('対象アプリID', appTa));
   bodySlot.appendChild(row('アプリ検索', searchRow));
   bodySlot.appendChild(searchOut);
+  bodySlot.appendChild(row('スペース指定', spaceRow));
   bodySlot.appendChild(row('ゲスト / 環境', (() => {
     const w = document.createElement('div');
     w.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;align-items:center';
@@ -148,6 +162,15 @@ export function mountSettingsExportLitePanel() {
     const next = cur ? `${cur}\n${id}` : id;
     appTa.value = next;
   });
+
+  spaceBtn.addEventListener('click', () => liteRun(async () => {
+    appTa.value = await runSettingsExportAddSpaceStandalone(
+      spaceKw.value.trim(),
+      guestInp.value.trim(),
+      appTa.value,
+      (m, e) => setStatus(m, e)
+    );
+  }));
 
   selectAllBtn.addEventListener('click', () => {
     scopeRoot.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((cb) => { cb.checked = true; });
