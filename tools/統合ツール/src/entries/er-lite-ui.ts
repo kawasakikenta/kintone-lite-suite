@@ -31,6 +31,7 @@ export function mountErLitePanel() {
 
   const appInp = mkInput('アプリID', { value: DEFAULT_APP_ID || '' });
   const extraInp = mkInput('追加起点ID (カンマ区切り)', { width: 'wide' });
+  const spaceInp = mkInput('スペースID（任意）');
   const guestInp = mkInput('ゲストID（任意）');
 
   const layoutSel = mkSelect([
@@ -86,7 +87,8 @@ export function mountErLitePanel() {
       maxDepth: Number(depthInp.value) || 0,
       includeSubtableFields: subtableCb.checked,
       includeReverseLookup: reverseCb.checked,
-      extraAppIds: extraInp.value.split(/[\s,，]+/).map(v => v.trim()).filter(Boolean)
+      extraAppIds: extraInp.value.split(/[\s,，]+/).map(v => v.trim()).filter(Boolean),
+      spaceId: spaceInp.value.trim()
     };
   }
 
@@ -140,6 +142,7 @@ export function mountErLitePanel() {
   const detailBody = document.createElement('div');
   detailBody.style.cssText = 'padding:0 10px 10px';
   detailBody.appendChild(row('追加起点', extraInp));
+  detailBody.appendChild(row('スペースID', spaceInp));
   detailBody.appendChild(row('ゲスト', guestInp));
   detailBody.appendChild(row('レイアウト', layoutSel));
   detailBody.appendChild(row('表示密度', densitySel));
