@@ -222,6 +222,21 @@ const erHtml = api.buildErHtml(erApps, { startAppId: '100', layoutName: 'dagre',
 writeFileSync(resolve(outDir, 'er-diagram.html'), erHtml, 'utf8');
 console.log(`[harness] wrote er-diagram.html (${(erHtml.length / 1024).toFixed(1)} KB)`);
 
+// ------------ 5b) ER HTML viewer: スペース指定（スペース内アプリ二重枠表現） --
+const erSpaceApps = erApps.map((a) => (
+  a.id === '102' ? a : { ...a, spaceId: '9' }
+));
+const erSpaceHtml = api.buildErHtml(erSpaceApps, {
+  startAppId: '100',
+  startAppIds: ['100', '101'],
+  layoutName: 'dagre',
+  fieldDensity: 'standard',
+  spaceId: '9',
+  spaceAppIds: ['100', '101']
+});
+writeFileSync(resolve(outDir, 'er-diagram-space.html'), erSpaceHtml, 'utf8');
+console.log(`[harness] wrote er-diagram-space.html (${(erSpaceHtml.length / 1024).toFixed(1)} KB)`);
+
 // ------------ 6) Records CSV (replicated builder; private in record.ts) -----
 function escapeCsvCell(value) {
   if (value === null || value === undefined) return '';
