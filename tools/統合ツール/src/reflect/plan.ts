@@ -53,7 +53,7 @@ import { loadJSZip } from '../tabs/record.js';
  * Section/Node どちらのモードでも対応する。
  * 計算不能な状況（接続未設定など）では '' を返す。
  */
-function computeCurrentReflectPlanSignature(): string {
+export function computeCurrentReflectPlanSignature(): string {
   try {
     const c = commonParams();
     if (!c?.target?.appId) return '';

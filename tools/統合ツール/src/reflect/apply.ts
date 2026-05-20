@@ -60,8 +60,8 @@ export { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
 
 let patchJsonDiffTimer = 0;
 let patchJsonDiffSeq = 0;
-const APPLY_GUARD_DIFF_THRESHOLD = 100;
-const APPLY_GUARD_REQUEST_THRESHOLD = 80;
+export const APPLY_GUARD_DIFF_THRESHOLD = 100;
+export const APPLY_GUARD_REQUEST_THRESHOLD = 80;
 
 // Lookup 変換ルール（変換先アプリ）の存在確認 — リリース直前の typo を検知。
 // セッションをまたいだ古いキャッシュで誤検知しないよう TTL 付きにし、
@@ -1002,6 +1002,7 @@ async function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGua
   }
   labels.push(`差分件数: ${diffSummary.total}件（高 ${diffSummary.high} / 中 ${diffSummary.medium} / 低 ${diffSummary.low}）`);
   if (requestCount > 0) labels.push(`予定リクエスト: ${requestCount}件`);
+  labels.push(`しきい値: 差分${APPLY_GUARD_DIFF_THRESHOLD}件 / リクエスト${APPLY_GUARD_REQUEST_THRESHOLD}件を超えると警告`);
 
   const modeLabel = mode === 'nodes' ? 'ノード反映' : (mode === 'patch' ? 'JSONパッチ反映' : 'プレビュー反映');
   const targetAppId = String(c?.target?.appId || '').trim();
@@ -1012,6 +1013,8 @@ async function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGua
   ];
   if (issues.length) {
     bodyLines.push('', '注意点:', ...issues.map((line) => ` - ${line}`));
+  } else {
+    bodyLines.push('', '注意点: なし（しきい値以下）');
   }
   // 高リスク（高重要度差分 or 同一接続）はアプリID 入力での確認、それ以外は固定キーワード。
   const highRisk = isSameConnectionPair(c) || diffSummary.high > 0;

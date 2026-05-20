@@ -12140,12 +12140,16 @@ ${tgt.full}`);
     </div>`;
       return;
     }
+    const previewKey = `${appId}::${guestId}`;
+    const previewOpened = !!state.reflectPreviewOpened && state.reflectPreviewOpenedFor === previewKey;
+    const pendingClass = previewOpened ? "" : " reflect-target-badge__open--pending";
+    const pendingLabel = previewOpened ? "開く" : "画面を開く ▸";
     el.innerHTML = `<div class="reflect-target-badge__inner ${previewClass}">
     <span class="reflect-target-badge__chip">${esc(previewLabel)}</span>
     <span class="reflect-target-badge__app">App ${esc(appId)}</span>
     ${appLabel2 ? `<span class="reflect-target-badge__name" title="${esc(appLabel2)}">${esc(appLabel2)}</span>` : ""}
     ${guestSuffix ? `<span class="reflect-target-badge__guest">${guestSuffix}</span>` : ""}
-    <button type="button" class="reflect-target-badge__open" data-act="openTargetPreviewApp" data-preview-url="${esc(appPath)}" title="比較先アプリのプレビュー確認画面を開き、チェックリストに反映します">開く</button>
+    <button type="button" class="reflect-target-badge__open${pendingClass}" data-act="openTargetPreviewApp" data-preview-url="${esc(appPath)}" title="比較先アプリのプレビュー確認画面を開き、チェックリスト「プレビュー画面確認済み」を満たします">${esc(pendingLabel)}</button>
   </div>`;
   }
   function getReflectNextAction() {
@@ -12279,6 +12283,16 @@ ${tgt.full}`);
     const planSig = typeof deps.makeApplyPlanSignature === "function" ? "" : "";
     const plan = state.lastApplyPlan;
     const planReady = !!(plan && plan.totalReq);
+    let planStale = false;
+    let planStaleReason = "";
+    try {
+      const currentSig = getCurrentReflectPlanSignature();
+      if (planReady && currentSig && plan?.signature && currentSig !== plan.signature) {
+        planStale = true;
+        planStaleReason = plan?.mode === "nodes" ? "ノード選択/モードが変わったため" : "セクション選択が変わったため";
+      }
+    } catch (e) {
+    }
     const checklist = state.reflectApplyChecklist || {};
     const checklistKeys = ["diff", "plan", "preview", "target"];
     const checklistDone = checklistKeys.filter((k) => !!checklist[k]).length;
@@ -12294,11 +12308,17 @@ ${tgt.full}`);
       const cls = n < stepNo ? "is-done" : n === stepNo ? "is-current" : "";
       return `<span class="reflect-hero-card__progress-step ${cls}"></span>`;
     }).join("");
-    host.dataset.tone = tone;
+    host.dataset.tone = planStale ? "warn" : tone;
+    const staleBannerHtml = planStale ? `<div class="reflect-hero-card__stale" role="alert">
+        <span class="reflect-hero-card__stale-icon" aria-hidden="true">⚠</span>
+        <span class="reflect-hero-card__stale-msg">プランが古い可能性: ${esc(planStaleReason)}。実行前に再生成してください。</span>
+        <button type="button" class="btn sub reflect-hero-card__stale-btn" data-act="previewApplyPlan" title="プランを再生成してモーダルを開きます">▶ プラン再生成</button>
+      </div>` : "";
     host.innerHTML = `
     <div class="reflect-hero-card__step">STEP ${stepNo} / 4</div>
     <div class="reflect-hero-card__title">${esc(stepTitles[stepNo - 1])}</div>
     <div class="reflect-hero-card__desc">${esc(desc)}</div>
+    ${staleBannerHtml}
     <div class="reflect-hero-card__action">${actionBtn}<span style="font-size:11px;opacity:.85">${esc(info.hint || "")}</span></div>
     <div class="reflect-hero-card__progress" aria-label="進行ステップ">${progress}</div>
   `;
@@ -16421,6 +16441,7 @@ ${lines.join("\n")}
     }
     labels.push(`差分件数: ${diffSummary.total}件（高 ${diffSummary.high} / 中 ${diffSummary.medium} / 低 ${diffSummary.low}）`);
     if (requestCount > 0) labels.push(`予定リクエスト: ${requestCount}件`);
+    labels.push(`しきい値: 差分${APPLY_GUARD_DIFF_THRESHOLD}件 / リクエスト${APPLY_GUARD_REQUEST_THRESHOLD}件を超えると警告`);
     const modeLabel = mode === "nodes" ? "ノード反映" : mode === "patch" ? "JSONパッチ反映" : "プレビュー反映";
     const targetAppId = String(c?.target?.appId || "").trim();
     const bodyLines = [
@@ -16430,6 +16451,8 @@ ${lines.join("\n")}
     ];
     if (issues.length) {
       bodyLines.push("", "注意点:", ...issues.map((line) => ` - ${line}`));
+    } else {
+      bodyLines.push("", "注意点: なし（しきい値以下）");
     }
     const highRisk = isSameConnectionPair(c) || diffSummary.high > 0;
     return confirmDestructive({
@@ -17523,6 +17546,7 @@ ${lines.join("\n")}
     buildItemizedSectionPreview: () => buildItemizedSectionPreview,
     buildMapSectionPreview: () => buildMapSectionPreview,
     buildWholeSectionPreview: () => buildWholeSectionPreview,
+    computeCurrentReflectPlanSignature: () => computeCurrentReflectPlanSignature,
     ensureApplyPlanApproved: () => ensureApplyPlanApproved,
     makeApplyPlanSignature: () => makeApplyPlanSignature,
     markApplyPlan: () => markApplyPlan,
@@ -22939,6 +22963,13 @@ ${detail}`);
 #kintone-unified-suite-v2 .reflect-target-badge__guest{font-size:10px;opacity:.85}
 #kintone-unified-suite-v2 .reflect-target-badge__open{appearance:none;border:1px solid rgba(124,45,18,.24);background:rgba(255,255,255,.72);color:#7c2d12;border-radius:6px;padding:2px 7px;font:inherit;font-size:10px;font-weight:900;line-height:1.3;cursor:pointer}
 #kintone-unified-suite-v2 .reflect-target-badge__open:hover{background:#fff;border-color:rgba(124,45,18,.45)}
+#kintone-unified-suite-v2 .reflect-target-badge__open--pending{background:#fff;border-color:#f59e0b;color:#92400e;box-shadow:0 0 0 0 rgba(245,158,11,.55);animation:kus-preview-pulse 2.2s ease-in-out infinite}
+#kintone-unified-suite-v2 .reflect-target-badge__open--pending:hover{background:#fef3c7;border-color:#d97706}
+@keyframes kus-preview-pulse{
+  0%   {box-shadow:0 0 0 0 rgba(245,158,11,.55)}
+  60%  {box-shadow:0 0 0 6px rgba(245,158,11,0)}
+  100% {box-shadow:0 0 0 0 rgba(245,158,11,0)}
+}
 /* === V4 Result log === */
 #kintone-unified-suite-v2 .reflect-log-host{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 #kintone-unified-suite-v2 .reflect-log-phase{font-weight:800;padding:10px 12px;background:#0f172a;color:#fff;font-size:12px;border-radius:6px 6px 0 0;display:flex;align-items:center;gap:8px}
@@ -28786,6 +28817,20 @@ ${detail}`);
   #kintone-unified-suite-v2 details > *:not(summary){display:block !important}
 }
 
+/* =========================================================================
+   反映タブ: プラン古さバナー + チェックリスト自動判定バッジ
+   ========================================================================= */
+#kintone-unified-suite-v2 .reflect-hero-card__stale{display:flex;align-items:center;gap:10px;background:#fef3c7;border:1px solid #f59e0b;color:#7c2d12;border-radius:8px;padding:8px 12px;margin:6px 0;font-size:12px;font-weight:600;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-hero-card__stale-icon{font-size:16px;flex-shrink:0}
+#kintone-unified-suite-v2 .reflect-hero-card__stale-msg{flex:1;min-width:0;line-height:1.5}
+#kintone-unified-suite-v2 .reflect-hero-card__stale-btn{margin-left:auto;background:#fff;border:1px solid #f59e0b;color:#7c2d12;font-weight:700;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;transition:background .15s,border-color .15s}
+#kintone-unified-suite-v2 .reflect-hero-card__stale-btn:hover{background:#fde68a;border-color:#d97706}
+
+#kintone-unified-suite-v2 .reflect-apply-check{position:relative}
+#kintone-unified-suite-v2 .reflect-apply-check__auto{display:inline-block;font-size:9px;font-weight:800;color:#0369a1;background:#e0f2fe;padding:1px 6px;border-radius:9px;margin-left:6px;letter-spacing:.04em;text-transform:uppercase;vertical-align:middle;opacity:.7}
+#kintone-unified-suite-v2 .reflect-apply-check.is-checked .reflect-apply-check__auto{background:#dcfce7;color:#166534;opacity:1}
+#kintone-unified-suite-v2 .reflect-apply-check:hover .reflect-apply-check__auto{opacity:1}
+
 `;
 
   // src/ui/template.ts
@@ -29545,10 +29590,22 @@ ${detail}`);
                       <span id="u_reflectChecklistStatus">0 / 4</span>
                     </div>
                     <div class="reflect-apply-checklist__items">
-                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="diff"> 差分比較済み</label>
-                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="plan"> 実行前プラン確認済み</label>
-                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="preview"> プレビュー画面確認済み</label>
-                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="target"> 反映先は比較先プレビュー</label>
+                      <label class="reflect-apply-check" title="現在の比較元・比較先と同条件で差分比較を実行済みかを自動判定します（条件を変えると再実行が必要）">
+                        <input type="checkbox" data-reflect-apply-check="diff"> 差分比較済み
+                        <span class="reflect-apply-check__auto" aria-hidden="true">自動</span>
+                      </label>
+                      <label class="reflect-apply-check" title="プラン確認モーダルでプランを生成済みかを自動判定します（選択を変えると古い扱いになります）">
+                        <input type="checkbox" data-reflect-apply-check="plan"> 実行前プラン確認済み
+                        <span class="reflect-apply-check__auto" aria-hidden="true">自動</span>
+                      </label>
+                      <label class="reflect-apply-check" title="比較先プレビュー画面をブラウザで開いたかを自動判定します（このセッション中の操作のみカウント）">
+                        <input type="checkbox" data-reflect-apply-check="preview"> プレビュー画面確認済み
+                        <span class="reflect-apply-check__auto" aria-hidden="true">自動</span>
+                      </label>
+                      <label class="reflect-apply-check" title="反映先がプレビューであることを確認します。本ツールは常にプレビュー宛のため常時 true">
+                        <input type="checkbox" data-reflect-apply-check="target"> 反映先は比較先プレビュー
+                        <span class="reflect-apply-check__auto" aria-hidden="true">自動</span>
+                      </label>
                     </div>
                   </div>
                 </section>

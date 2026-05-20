@@ -1542,12 +1542,18 @@ export function renderReflectTargetBadge() {
     </div>`;
     return;
   }
+  // プレビュー画面をまだ開いていない場合は「開く」ボタンを強調して、
+  // チェックリスト「プレビュー画面確認済み」を満たすための導線を分かりやすくする。
+  const previewKey = `${appId}::${guestId}`;
+  const previewOpened = !!state.reflectPreviewOpened && state.reflectPreviewOpenedFor === previewKey;
+  const pendingClass = previewOpened ? '' : ' reflect-target-badge__open--pending';
+  const pendingLabel = previewOpened ? '開く' : '画面を開く ▸';
   el.innerHTML = `<div class="reflect-target-badge__inner ${previewClass}">
     <span class="reflect-target-badge__chip">${esc(previewLabel)}</span>
     <span class="reflect-target-badge__app">App ${esc(appId)}</span>
     ${appLabel ? `<span class="reflect-target-badge__name" title="${esc(appLabel)}">${esc(appLabel)}</span>` : ''}
     ${guestSuffix ? `<span class="reflect-target-badge__guest">${guestSuffix}</span>` : ''}
-    <button type="button" class="reflect-target-badge__open" data-act="openTargetPreviewApp" data-preview-url="${esc(appPath)}" title="比較先アプリのプレビュー確認画面を開き、チェックリストに反映します">開く</button>
+    <button type="button" class="reflect-target-badge__open${pendingClass}" data-act="openTargetPreviewApp" data-preview-url="${esc(appPath)}" title="比較先アプリのプレビュー確認画面を開き、チェックリスト「プレビュー画面確認済み」を満たします">${esc(pendingLabel)}</button>
   </div>`;
 }
 
@@ -1714,6 +1720,17 @@ export function renderReflectHeroCard() {
   const planSig = (typeof deps.makeApplyPlanSignature === 'function') ? '' : '';
   const plan = state.lastApplyPlan;
   const planReady = !!(plan && plan.totalReq);
+  // プランの署名と現在の選択署名がずれている場合、ユーザーがプラン作成後に
+  // 反映対象を変えた可能性が高い。バナーで「プラン再生成」を促す。
+  let planStale = false;
+  let planStaleReason = '';
+  try {
+    const currentSig = getCurrentReflectPlanSignature();
+    if (planReady && currentSig && plan?.signature && currentSig !== plan.signature) {
+      planStale = true;
+      planStaleReason = plan?.mode === 'nodes' ? 'ノード選択/モードが変わったため' : 'セクション選択が変わったため';
+    }
+  } catch (e) { /* noop */ }
   const checklist = state.reflectApplyChecklist || {};
   const checklistKeys = ['diff', 'plan', 'preview', 'target'];
   const checklistDone = checklistKeys.filter((k) => !!checklist[k]).length;
@@ -1744,11 +1761,19 @@ export function renderReflectHeroCard() {
     return `<span class="reflect-hero-card__progress-step ${cls}"></span>`;
   }).join('');
 
-  host.dataset.tone = tone;
+  host.dataset.tone = planStale ? 'warn' : tone;
+  const staleBannerHtml = planStale
+    ? `<div class="reflect-hero-card__stale" role="alert">
+        <span class="reflect-hero-card__stale-icon" aria-hidden="true">⚠</span>
+        <span class="reflect-hero-card__stale-msg">プランが古い可能性: ${esc(planStaleReason)}。実行前に再生成してください。</span>
+        <button type="button" class="btn sub reflect-hero-card__stale-btn" data-act="previewApplyPlan" title="プランを再生成してモーダルを開きます">▶ プラン再生成</button>
+      </div>`
+    : '';
   host.innerHTML = `
     <div class="reflect-hero-card__step">STEP ${stepNo} / 4</div>
     <div class="reflect-hero-card__title">${esc(stepTitles[stepNo - 1])}</div>
     <div class="reflect-hero-card__desc">${esc(desc)}</div>
+    ${staleBannerHtml}
     <div class="reflect-hero-card__action">${actionBtn}<span style="font-size:11px;opacity:.85">${esc(info.hint || '')}</span></div>
     <div class="reflect-hero-card__progress" aria-label="進行ステップ">${progress}</div>
   `;

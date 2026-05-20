@@ -768,10 +768,22 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <span id="u_reflectChecklistStatus">0 / 4</span>
                     </div>
                     <div class="reflect-apply-checklist__items">
-                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="diff"> 差分比較済み</label>
-                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="plan"> 実行前プラン確認済み</label>
-                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="preview"> プレビュー画面確認済み</label>
-                      <label class="reflect-apply-check"><input type="checkbox" data-reflect-apply-check="target"> 反映先は比較先プレビュー</label>
+                      <label class="reflect-apply-check" title="現在の比較元・比較先と同条件で差分比較を実行済みかを自動判定します（条件を変えると再実行が必要）">
+                        <input type="checkbox" data-reflect-apply-check="diff"> 差分比較済み
+                        <span class="reflect-apply-check__auto" aria-hidden="true">自動</span>
+                      </label>
+                      <label class="reflect-apply-check" title="プラン確認モーダルでプランを生成済みかを自動判定します（選択を変えると古い扱いになります）">
+                        <input type="checkbox" data-reflect-apply-check="plan"> 実行前プラン確認済み
+                        <span class="reflect-apply-check__auto" aria-hidden="true">自動</span>
+                      </label>
+                      <label class="reflect-apply-check" title="比較先プレビュー画面をブラウザで開いたかを自動判定します（このセッション中の操作のみカウント）">
+                        <input type="checkbox" data-reflect-apply-check="preview"> プレビュー画面確認済み
+                        <span class="reflect-apply-check__auto" aria-hidden="true">自動</span>
+                      </label>
+                      <label class="reflect-apply-check" title="反映先がプレビューであることを確認します。本ツールは常にプレビュー宛のため常時 true">
+                        <input type="checkbox" data-reflect-apply-check="target"> 反映先は比較先プレビュー
+                        <span class="reflect-apply-check__auto" aria-hidden="true">自動</span>
+                      </label>
                     </div>
                   </div>
                 </section>
