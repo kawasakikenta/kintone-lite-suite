@@ -1757,10 +1757,203 @@ ${body}`;
   init_constants();
   init_dialog();
   init_utils();
+  var SHEETLIB_PRIMARY_URL = "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js";
+  var SHEETLIB_FALLBACK_URL = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+  var EXPORT_SHEET_DEFS = [
+    { key: "summary", label: "サマリー", default: true },
+    { key: "fields", label: "項目定義", default: true },
+    { key: "layout", label: "フォームレイアウト", default: true },
+    { key: "views", label: "一覧", default: true },
+    { key: "reports", label: "グラフ", default: true },
+    { key: "status", label: "プロセス管理", default: true },
+    { key: "statusMatrix", label: "遷移マトリクス", default: true },
+    { key: "appAcl", label: "アプリ権限", default: true },
+    { key: "recordAcl", label: "レコード権限", default: true },
+    { key: "fieldAcl", label: "フィールド権限", default: true },
+    { key: "customize", label: "JS/CSSカスタマイズ", default: true },
+    { key: "actions", label: "アクション", default: true },
+    { key: "plugins", label: "プラグイン", default: true },
+    { key: "genNotif", label: "通知(一般)", default: true },
+    { key: "recNotif", label: "通知(レコード)", default: true },
+    { key: "remNotif", label: "通知(リマインダー)", default: true },
+    { key: "webhook", label: "Webhook", default: true },
+    { key: "adminNotes", label: "管理者メモ", default: true },
+    { key: "dependencies", label: "フィールド依存関係", default: true }
+  ];
+  function getExporterOverlayZIndex() {
+    const main = getToolDocument().getElementById(TOOL_ID);
+    const raw = main ? Number(window.getComputedStyle(main).zIndex) : NaN;
+    const base = Number.isFinite(raw) ? raw : 2147483646;
+    return String(Math.min(2147483647, Math.max(2e9, base + 1)));
+  }
+  async function loadSheetLibOnce() {
+    if (typeof window.XLSX !== "undefined") return { styled: true };
+    const loadScriptLocal = (src, timeout = 15e3) => new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.async = true;
+      let done = false;
+      const timer = setTimeout(() => {
+        if (!done) {
+          done = true;
+          reject(new Error(`Timeout: ${src}`));
+        }
+      }, timeout);
+      s.onload = () => {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          resolve(true);
+        }
+      };
+      s.onerror = () => {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          reject(new Error(`Failed: ${src}`));
+        }
+      };
+      document.head.appendChild(s);
+    });
+    try {
+      await loadScriptLocal(SHEETLIB_PRIMARY_URL);
+      return { styled: true };
+    } catch {
+      await loadScriptLocal(SHEETLIB_FALLBACK_URL);
+      return { styled: false };
+    }
+  }
+  async function loadJSZipOnce() {
+    if (typeof window.JSZip !== "undefined") return window.JSZip;
+    const url = EXTERNAL_LIBRARIES.jszip?.cdnUrl;
+    if (!url) throw new Error("JSZip の CDN URL が設定されていません");
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = url;
+      s.async = true;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error("JSZip の読み込みに失敗しました"));
+      document.head.appendChild(s);
+    });
+    if (typeof window.JSZip === "undefined") {
+      throw new Error("JSZip のロード後もグローバル変数が見つかりません");
+    }
+    return window.JSZip;
+  }
+  function showDesignExportOptionsDialog() {
+    return new Promise((resolve) => {
+      const overlay = getToolDocument().createElement("div");
+      Object.assign(overlay.style, {
+        position: "fixed",
+        top: "0",
+        left: "0",
+        width: "100%",
+        height: "100%",
+        backgroundColor: "rgba(0,0,0,0.6)",
+        zIndex: getExporterOverlayZIndex(),
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        fontFamily: '"Meiryo", sans-serif'
+      });
+      const checkboxes = EXPORT_SHEET_DEFS.map(
+        (s) => `<label style="display:block;margin:3px 0;font-size:13px;cursor:${s.required ? "default" : "pointer"};"><input type="checkbox" value="${s.key}" ${s.default ? "checked" : ""} ${s.required ? "disabled" : ""} style="margin-right:6px;">${s.label}${s.required ? " (必須)" : ""}</label>`
+      ).join("");
+      overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:460px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.3);"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:16px;">📊 エクスポート設定</div><div style="font-size:12px;color:#666;margin-bottom:12px;">出力するシートを選択してください</div><div style="display:flex;gap:8px;margin-bottom:12px;"><button id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div><div id="kex-sheet-options" style="max-height:340px;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${checkboxes}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;"><button id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
+      getToolDocument().body.appendChild(overlay);
+      overlay.querySelector("#kex-select-all").onclick = () => {
+        overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]').forEach((cb) => {
+          cb.checked = true;
+        });
+      };
+      overlay.querySelector("#kex-select-none").onclick = () => {
+        overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])').forEach((cb) => {
+          cb.checked = false;
+        });
+      };
+      overlay.querySelector("#kex-cancel").onclick = () => {
+        getToolDocument().body.removeChild(overlay);
+        resolve(null);
+      };
+      overlay.querySelector("#kex-export").onclick = () => {
+        const selected = /* @__PURE__ */ new Set();
+        overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:checked').forEach((cb) => selected.add(cb.value));
+        getToolDocument().body.removeChild(overlay);
+        resolve(selected);
+      };
+    });
+  }
+  function createBatchExporterUI() {
+    const id = "kintone-exporter-overlay";
+    let totalSteps = 1;
+    let currentStep = 0;
+    const failedAPIs = [];
+    return {
+      show(msg, total) {
+        totalSteps = Math.max(1, total);
+        currentStep = 0;
+        const doc = getToolDocument();
+        let el = doc.getElementById(id);
+        if (!el) {
+          el = doc.createElement("div");
+          el.id = id;
+          Object.assign(el.style, {
+            position: "fixed",
+            top: "0",
+            left: "0",
+            width: "100%",
+            height: "100%",
+            backgroundColor: "rgba(0,0,0,0.7)",
+            zIndex: getExporterOverlayZIndex(),
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            color: "#fff",
+            fontSize: "16px",
+            fontFamily: '"Meiryo", sans-serif'
+          });
+          doc.body.appendChild(el);
+        }
+        el.style.zIndex = getExporterOverlayZIndex();
+        el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:440px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📦 設計書一括エクスポーター (ZIP)</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div></div>`;
+      },
+      update(msg, step) {
+        if (step != null) currentStep = step;
+        else currentStep++;
+        const pct = Math.min(100, Math.round(currentStep / totalSteps * 100));
+        const doc = getToolDocument();
+        const statusEl = doc.getElementById("kex-status");
+        const barEl = doc.getElementById("kex-progress-bar");
+        const pctEl = doc.getElementById("kex-percent");
+        if (statusEl) statusEl.textContent = msg;
+        if (barEl) barEl.style.width = `${pct}%`;
+        if (pctEl) pctEl.textContent = `${pct}%`;
+      },
+      addFailedAPIs(app, list) {
+        list.forEach((f) => failedAPIs.push({ app, name: f.name, error: f.error }));
+        const doc = getToolDocument();
+        const errEl = doc.getElementById("kex-errors");
+        if (errEl && failedAPIs.length) errEl.textContent = `⚠ ${failedAPIs.length}件のAPI取得に失敗`;
+      },
+      getFailedAPIs() {
+        return failedAPIs;
+      },
+      hide() {
+        const doc = getToolDocument();
+        const el = doc.getElementById(id);
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      }
+    };
+  }
   async function runAdvancedDesignExporter(params = {}) {
     const sourceAppId = Number(params.appId);
     if (!sourceAppId) throw new Error("有効な比較元アプリIDが指定されませんでした。");
     const sourceGuestId = String(params.guestId || "").trim();
+    const preselectedSheets = params.preselectedSheets instanceof Set ? params.preselectedSheets : null;
+    const returnWorkbook = !!params.returnWorkbook;
+    const progressLabel = params.progressLabel ? String(params.progressLabel) : "";
+    const suppressToast = !!params.suppressToast;
     const CONFIG = {
       SHEETLIB_PRIMARY_URL: "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js",
       SHEETLIB_FALLBACK_URL: "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
@@ -2017,7 +2210,7 @@ ${body}`;
       }
     }
     const apiSemaphore = new Semaphore(CONFIG.API_CONCURRENCY);
-    function getExporterOverlayZIndex() {
+    function getExporterOverlayZIndex2() {
       const main = getToolDocument().getElementById(TOOL_ID);
       const raw = main ? Number(window.getComputedStyle(main).zIndex) : NaN;
       const base = Number.isFinite(raw) ? raw : 2147483646;
@@ -2037,10 +2230,10 @@ ${body}`;
         if (!el) {
           el = doc.createElement("div");
           el.id = UI.id;
-          Object.assign(el.style, { position: "fixed", top: "0", left: "0", width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.7)", zIndex: getExporterOverlayZIndex(), display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", color: "#fff", fontSize: "16px", fontFamily: '"Meiryo", sans-serif' });
+          Object.assign(el.style, { position: "fixed", top: "0", left: "0", width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.7)", zIndex: getExporterOverlayZIndex2(), display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", color: "#fff", fontSize: "16px", fontFamily: '"Meiryo", sans-serif' });
           doc.body.appendChild(el);
         }
-        el.style.zIndex = getExporterOverlayZIndex();
+        el.style.zIndex = getExporterOverlayZIndex2();
         el.innerHTML = `<div style="background:rgba(255,255,255,0.1);border-radius:12px;padding:32px 48px;text-align:center;min-width:400px;"><div style="font-size:20px;font-weight:bold;margin-bottom:16px;">📊 kintone 設計書エクスポーター v2.1</div><div id="kex-status" style="margin-bottom:12px;font-size:14px;color:#ccc;">${msg}</div><div style="background:rgba(255,255,255,0.2);border-radius:8px;height:24px;overflow:hidden;margin-bottom:8px;"><div id="kex-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4A90E2,#7B68EE);border-radius:8px;transition:width 0.3s ease;"></div></div><div id="kex-percent" style="font-size:12px;color:#aaa;">0%</div><div id="kex-errors" style="font-size:11px;color:#f99;margin-top:8px;max-height:60px;overflow-y:auto;"></div></div>`;
       },
       update(msg, step) {
@@ -2414,43 +2607,7 @@ ${body}`;
       }
       return filtered;
     };
-    async function loadSheetLib() {
-      if (typeof window.XLSX !== "undefined") return { styled: true };
-      const loadScriptLocal = (src, timeout = 15e3) => new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = src;
-        s.async = true;
-        let done = false;
-        const timer = setTimeout(() => {
-          if (!done) {
-            done = true;
-            reject(new Error(`Timeout: ${src}`));
-          }
-        }, timeout);
-        s.onload = () => {
-          if (!done) {
-            done = true;
-            clearTimeout(timer);
-            resolve(true);
-          }
-        };
-        s.onerror = () => {
-          if (!done) {
-            done = true;
-            clearTimeout(timer);
-            reject(new Error(`Failed: ${src}`));
-          }
-        };
-        document.head.appendChild(s);
-      });
-      try {
-        await loadScriptLocal(CONFIG.SHEETLIB_PRIMARY_URL);
-        return { styled: true };
-      } catch {
-        await loadScriptLocal(CONFIG.SHEETLIB_FALLBACK_URL);
-        return { styled: false };
-      }
-    }
+    const loadSheetLib = loadSheetLibOnce;
     async function retry(fn, max = CONFIG.MAX_RETRIES) {
       let lastErr;
       for (let i = 0; i < max; i++) {
@@ -2476,7 +2633,7 @@ ${body}`;
     function showExportOptionsDialog() {
       return new Promise((resolve) => {
         const overlay = getToolDocument().createElement("div");
-        Object.assign(overlay.style, { position: "fixed", top: "0", left: "0", width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.6)", zIndex: getExporterOverlayZIndex(), display: "flex", justifyContent: "center", alignItems: "center", fontFamily: '"Meiryo", sans-serif' });
+        Object.assign(overlay.style, { position: "fixed", top: "0", left: "0", width: "100%", height: "100%", backgroundColor: "rgba(0,0,0,0.6)", zIndex: getExporterOverlayZIndex2(), display: "flex", justifyContent: "center", alignItems: "center", fontFamily: '"Meiryo", sans-serif' });
         const sheets = [
           { key: "summary", label: "サマリー", default: true },
           { key: "fields", label: "項目定義", default: true },
@@ -2526,8 +2683,15 @@ ${body}`;
     try {
       const APP_ID = Number(sourceAppId);
       if (!APP_ID) throw new Error("有効な比較元アプリIDが指定されませんでした。");
-      const selectedSheets = await showExportOptionsDialog();
+      const selectedSheets = preselectedSheets || await showExportOptionsDialog();
       if (!selectedSheets) return false;
+      if (progressLabel) {
+        const prefix = `${progressLabel} `;
+        const origShow = UI.show.bind(UI);
+        const origUpdate = UI.update.bind(UI);
+        UI.show = ((msg, totalSteps) => origShow(`${prefix}${msg}`, totalSteps));
+        UI.update = ((msg, step) => origUpdate(`${prefix}${msg}`, step));
+      }
       UI.show("ライブラリ読み込み中...", 12);
       const { styled } = await loadSheetLib();
       const api = kintone.api;
@@ -3805,32 +3969,171 @@ ${body}`;
           });
         }
       }
-      UI.update("ダウンロード中...", 12);
+      UI.update(returnWorkbook ? "生成完了" : "ダウンロード中...", 12);
       const safeAppName = String(appSettings?.name || `App${APP_ID}`).replace(/[\\/:*?"<>|]/g, "_");
-      const downloadExcel = (wb2, filename) => {
+      const filename = `${safeAppName}_設計書_v2.1.xlsx`;
+      if (returnWorkbook) {
+        return {
+          wb,
+          filename,
+          appId: APP_ID,
+          appName: appSettings?.name || `App${APP_ID}`,
+          failedAPIs: UI.failedAPIs.slice()
+        };
+      }
+      const downloadExcel = (wb2, fname) => {
         const out = XLSX.write(wb2, { bookType: "xlsx", type: "array", cellStyles: true });
         const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
         const a = getToolDocument().createElement("a");
         const url = URL.createObjectURL(blob);
         a.href = url;
-        a.download = filename;
+        a.download = fname;
         getToolDocument().body.appendChild(a);
         a.click();
         getToolDocument().body.removeChild(a);
         URL.revokeObjectURL(url);
       };
-      downloadExcel(wb, `${safeAppName}_設計書_v2.1.xlsx`);
+      downloadExcel(wb, filename);
       UI.hide();
-      const errorMsg = UI.failedAPIs.length > 0 ? `
+      if (!suppressToast) {
+        const errorMsg = UI.failedAPIs.length > 0 ? `
 ⚠ ${UI.failedAPIs.length}件のAPI取得に失敗しました` : "";
-      showToast(`✅ エクスポート完了${errorMsg}`, UI.failedAPIs.length > 0 ? "warn" : "success");
+        showToast(`✅ エクスポート完了${errorMsg}`, UI.failedAPIs.length > 0 ? "warn" : "success");
+      }
       return true;
     } catch (e) {
       UI.hide();
       console.error("kintone設計書エクスポートエラー:", e);
-      showToast(`❌ エラーが発生しました: ${e.message}`, "error");
+      if (!suppressToast) showToast(`❌ エラーが発生しました: ${e.message}`, "error");
       throw e;
     }
+  }
+  function pad2(n) {
+    return n.toString().padStart(2, "0");
+  }
+  function nowStampZip(d = /* @__PURE__ */ new Date()) {
+    return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+  }
+  function sanitizeFilename(name) {
+    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[ -]/g, "").trim() || "untitled";
+  }
+  async function runBatchDesignExportXlsxZip(params) {
+    const seen = /* @__PURE__ */ new Set();
+    const appIds = [];
+    for (const v of params.appIds || []) {
+      const id = String(v ?? "").trim();
+      if (!id || !/^\d+$/.test(id) || seen.has(id)) continue;
+      seen.add(id);
+      appIds.push(id);
+    }
+    if (appIds.length === 0) throw new Error("有効なアプリIDが1件もありません。");
+    const guestId = String(params.guestId || "").trim();
+    const selectedSheets = await showDesignExportOptionsDialog();
+    if (!selectedSheets) return false;
+    const batchUi = createBatchExporterUI();
+    batchUi.show("ライブラリ読み込み中...", appIds.length + 2);
+    let JSZipCtor;
+    try {
+      await loadSheetLibOnce();
+      JSZipCtor = await loadJSZipOnce();
+    } catch (e) {
+      batchUi.hide();
+      showToast(`❌ ライブラリの読み込みに失敗しました: ${e?.message || e}`, "error");
+      throw e;
+    }
+    batchUi.update("アプリの設計書を順次生成します...", 1);
+    const results = [];
+    const zip = new JSZipCtor();
+    const usedFilenames = /* @__PURE__ */ new Set();
+    for (let i = 0; i < appIds.length; i++) {
+      const appId = appIds[i];
+      const label = `(${i + 1}/${appIds.length}) アプリ ${appId}:`;
+      batchUi.update(`${label} 設計書を生成中...`, i + 2);
+      try {
+        const ret = await runAdvancedDesignExporter({
+          appId,
+          guestId,
+          preselectedSheets: selectedSheets,
+          returnWorkbook: true,
+          progressLabel: label,
+          suppressToast: true
+        });
+        if (!ret || ret === true) {
+          throw new Error("ワークブックが生成できませんでした");
+        }
+        const { wb, filename, appName, failedAPIs: failedAPIs2 } = ret;
+        const doc2 = getToolDocument();
+        const innerOverlay = doc2.getElementById("kintone-exporter-overlay");
+        if (innerOverlay && innerOverlay !== doc2.getElementById("kintone-exporter-overlay")) {
+        }
+        batchUi.show(`${label} ZIP に追加中...`, appIds.length + 2);
+        batchUi.update(`${label} ZIP に追加中...`, i + 2);
+        const baseName = sanitizeFilename(filename);
+        let uniqueName = baseName;
+        let n = 2;
+        while (usedFilenames.has(uniqueName)) {
+          const dot = baseName.lastIndexOf(".");
+          const stem = dot > 0 ? baseName.slice(0, dot) : baseName;
+          const ext = dot > 0 ? baseName.slice(dot) : "";
+          uniqueName = `${stem}(${n})${ext}`;
+          n++;
+        }
+        usedFilenames.add(uniqueName);
+        const buf = window.XLSX.write(wb, { bookType: "xlsx", type: "array", cellStyles: true });
+        zip.file(uniqueName, buf);
+        if (failedAPIs2 && failedAPIs2.length) batchUi.addFailedAPIs(`App ${appId}`, failedAPIs2);
+        results.push({ appId, appName, filename: uniqueName, ok: true });
+      } catch (e) {
+        console.error(`[batch design xlsx] app ${appId} failed:`, e);
+        results.push({ appId, appName: "", filename: "", ok: false, error: e?.message || String(e) });
+        batchUi.show(`(${i + 1}/${appIds.length}) アプリ ${appId} の生成に失敗`, appIds.length + 2);
+        batchUi.update(`(${i + 1}/${appIds.length}) アプリ ${appId} の生成に失敗: ${e?.message || e}`, i + 2);
+      }
+    }
+    const successCount = results.filter((r) => r.ok).length;
+    if (successCount === 0) {
+      batchUi.hide();
+      const detail = results.map((r) => `- App ${r.appId}: ${r.error || "(原因不明)"}`).join("\n");
+      showToast(`❌ すべてのアプリで生成に失敗しました`, "error");
+      throw new Error(`設計書ZIPの生成に失敗しました
+${detail}`);
+    }
+    const manifestLines = [];
+    manifestLines.push("kintone 設計書 一括出力マニフェスト");
+    manifestLines.push(`出力日時: ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`);
+    manifestLines.push(`対象アプリ数: ${appIds.length}（成功 ${successCount} / 失敗 ${appIds.length - successCount}）`);
+    if (guestId) manifestLines.push(`ゲストスペース: ${guestId}`);
+    manifestLines.push("");
+    manifestLines.push("## 出力ファイル");
+    for (const r of results) {
+      if (r.ok) manifestLines.push(`- [OK] App ${r.appId} (${r.appName}) → ${r.filename}`);
+      else manifestLines.push(`- [NG] App ${r.appId}: ${r.error}`);
+    }
+    const failedAPIs = batchUi.getFailedAPIs();
+    if (failedAPIs.length) {
+      manifestLines.push("");
+      manifestLines.push("## API 取得失敗");
+      for (const f of failedAPIs) manifestLines.push(`- ${f.app}: ${f.name} - ${f.error}`);
+    }
+    zip.file("_manifest.txt", manifestLines.join("\n") + "\n");
+    batchUi.update("ZIPファイルを生成中...", appIds.length + 2);
+    const blob = await zip.generateAsync({ type: "blob" });
+    const zipName = `kintone設計書_${appIds.length}件_${nowStampZip()}.zip`;
+    const doc = getToolDocument();
+    const a = doc.createElement("a");
+    const url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = zipName;
+    doc.body.appendChild(a);
+    a.click();
+    doc.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    batchUi.hide();
+    const ngCount = appIds.length - successCount;
+    const tone = ngCount > 0 ? "warn" : "success";
+    const suffix = ngCount > 0 ? `（成功 ${successCount} / 失敗 ${ngCount}）` : "";
+    showToast(`✅ 設計書ZIPを保存しました${suffix}`, tone);
+    return true;
   }
 
   // src/tabs/design-standalone.ts
@@ -3890,6 +4193,18 @@ ${body}`;
       return;
     }
     setStatus2("設計書Excel出力完了");
+  }
+  async function runBatchDesignExportXlsxZipStandalone(source, setStatus2) {
+    const appIds = String(source.appIdsText || "").split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
+    if (appIds.length === 0) throw new Error("アプリIDを1件以上入力してください（数値のみ、改行/カンマ/スペース区切り）");
+    const guestId = String(source.guestId || "").trim();
+    setStatus2(`設計書ZIP出力を開始（${appIds.length}件）...`);
+    const done = await runBatchDesignExportXlsxZip({ appIds, guestId });
+    if (done === false) {
+      setStatus2("設計書ZIP出力をキャンセルしました");
+      return;
+    }
+    setStatus2(`設計書ZIP出力完了（${appIds.length}件）`);
   }
 
   // src/entries/liteMount.ts
@@ -4046,6 +4361,29 @@ ${body}`;
     btnRow.appendChild(bCopy);
     btnRow.appendChild(bXlsx);
     bodySlot.appendChild(btnRow);
+    const batchWrap = document.createElement("div");
+    batchWrap.style.cssText = "margin-top:14px;padding:10px;border:1px dashed #94a3b8;border-radius:10px;background:#f8fafc";
+    const batchTitle = document.createElement("div");
+    batchTitle.textContent = "複数アプリの一括出力 (ZIP)";
+    batchTitle.style.cssText = "font-size:12px;font-weight:700;color:#0f172a;margin-bottom:6px";
+    const batchNote = document.createElement("div");
+    batchNote.style.cssText = "font-size:11px;color:#475569;line-height:1.5;margin-bottom:8px";
+    batchNote.textContent = "対象アプリIDを改行/カンマ/スペース区切りで指定すると、各アプリの設計書Excelをまとめて1つのZIPに保存します。シート選択は最初に1回だけ表示し、全アプリに適用されます。";
+    const batchIds = document.createElement("textarea");
+    batchIds.placeholder = "例: 74, 120, 305";
+    batchIds.style.cssText = "width:100%;box-sizing:border-box;min-height:64px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace";
+    const bBatchZip = bigBtn("複数アプリの設計書ZIPを保存", "linear-gradient(180deg,#0f766e,#0d544f)");
+    bBatchZip.addEventListener("click", () => liteRun(async () => {
+      await runBatchDesignExportXlsxZipStandalone(
+        { appIdsText: batchIds.value, guestId: guestInp.value.trim() },
+        (m, e) => setStatus(m, e)
+      );
+    }));
+    batchWrap.appendChild(batchTitle);
+    batchWrap.appendChild(batchNote);
+    batchWrap.appendChild(batchIds);
+    batchWrap.appendChild(bBatchZip);
+    bodySlot.appendChild(batchWrap);
   }
 
   // src/entries/design-lite-entry.ts

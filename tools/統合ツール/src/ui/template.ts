@@ -1315,6 +1315,22 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               </div>
                 </div>
               </details>
+              <details class="diff-fold diff-fold--design-batch-zip">
+                <summary class="diff-fold-summary">
+                  <span class="diff-fold-title">複数アプリの一括Excel出力 (ZIP)</span>
+                  <span class="diff-fold-sub">対象アプリIDを並べて指定し、1つのZIPにまとめて保存</span>
+                </summary>
+                <div class="diff-fold-body">
+              <div class="muted" style="margin-top:0;line-height:1.6">対象アプリIDを改行・カンマ・スペース区切りで指定します。シート選択ダイアログは最初に1回だけ表示し、すべてのアプリに同じ設定が適用されます。ゲストスペースIDは比較元と同じ値が使われます。</div>
+              <div class="row" style="margin-top:8px">
+                <label for="u_designBatchAppIds">対象アプリID</label>
+                <textarea id="u_designBatchAppIds" style="min-height:80px" placeholder="74, 120, 305" title="カンマ・改行・スペース区切りで複数指定"></textarea>
+              </div>
+              <div class="btns" style="margin-top:8px">
+                <button type="button" class="btn dark" data-act="exportDesignXlsxBatchZip" title="指定アプリの設計書ExcelをまとめてZIPで保存します">設計書ZIP出力（一括）</button>
+              </div>
+                </div>
+              </details>
               <details class="diff-fold diff-fold--design-diff">
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">設計書差分レポート</span>

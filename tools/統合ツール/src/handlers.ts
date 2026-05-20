@@ -401,6 +401,7 @@ export function setupEventHandlers(injected: any = {}) {
     runDesignExport,
     runDesignCopyMd,
     runDesignExportXlsx,
+    runDesignExportXlsxBatchZip,
     runDesignDiffMd,
     runFetchJsConfig,
     runExportJsConfig,
@@ -3227,6 +3228,7 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'exportDesignMd' && typeof runDesignExport === 'function') return withGuard(() => runDesignExport('md'));
     if (act === 'copyDesignMd' && typeof runDesignCopyMd === 'function') return withGuard(runDesignCopyMd);
     if (act === 'exportDesignXlsx' && typeof runDesignExportXlsx === 'function') return withGuard(runDesignExportXlsx);
+    if (act === 'exportDesignXlsxBatchZip' && typeof runDesignExportXlsxBatchZip === 'function') return withGuard(runDesignExportXlsxBatchZip);
     if (act === 'exportDesignDiffMd' && typeof runDesignDiffMd === 'function') return withGuard(runDesignDiffMd);
 
     // ----- JS/CSS config -----
