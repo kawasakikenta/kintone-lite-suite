@@ -254,3 +254,28 @@ export async function runDesignExportXlsx() {
   }
   setStatus('設計書Excel出力完了');
 }
+
+/**
+ * 設計書タブ内の「複数アプリの設計書ZIP出力」UIから呼び出す。
+ * 入力欄 #u_designBatchAppIds（改行/カンマ/スペース区切り）を読み、guestId は比較元と同じ値を使用する。
+ */
+export async function runDesignExportXlsxBatchZip() {
+  const { runBatchDesignExportXlsxZip } = await import('./design-xlsx.js');
+  const c = commonParams();
+  const ta = getToolDocument().getElementById('u_designBatchAppIds') as HTMLTextAreaElement | null;
+  const raw = ta?.value || '';
+  const appIds = raw.split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
+  if (appIds.length === 0) {
+    throw new Error('対象アプリIDを1件以上入力してください（数値のみ、改行/カンマ/スペース区切り）');
+  }
+  setStatus(`設計書ZIP出力を開始（${appIds.length}件）...`);
+  const done = await runBatchDesignExportXlsxZip({
+    appIds,
+    guestId: c.source.guestId
+  });
+  if (done === false) {
+    setStatus('設計書ZIP出力をキャンセルしました');
+    return;
+  }
+  setStatus(`設計書ZIP出力完了（${appIds.length}件）`);
+}

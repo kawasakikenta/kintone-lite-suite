@@ -5,7 +5,7 @@ import { state } from '../state.js';
 import { nowStamp, downloadText } from '../utils.js';
 import { fetchBundle } from '../api.js';
 import { bundleToMarkdown } from '../diff/export.js';
-import { runAdvancedDesignExporter } from './design-xlsx.js';
+import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip } from './design-xlsx.js';
 
 /**
  * @param {'md'|'json'} kind
@@ -80,4 +80,29 @@ export async function runDesignExportXlsxStandalone(source, setStatus) {
     return;
   }
   setStatus('設計書Excel出力完了');
+}
+
+/**
+ * 複数アプリの設計書を1つの ZIP にまとめて出力する（Lite パネル用）。
+ * @param source.appIdsText 改行/カンマ/スペース区切りのアプリID一覧
+ * @param source.guestId ゲストスペースID（任意）
+ * @param setStatus 進捗メッセージ
+ */
+export async function runBatchDesignExportXlsxZipStandalone(
+  source: { appIdsText: string; guestId?: string },
+  setStatus: (msg: string, err?: boolean) => void
+) {
+  const appIds = String(source.appIdsText || '')
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter((s) => /^\d+$/.test(s));
+  if (appIds.length === 0) throw new Error('アプリIDを1件以上入力してください（数値のみ、改行/カンマ/スペース区切り）');
+  const guestId = String(source.guestId || '').trim();
+  setStatus(`設計書ZIP出力を開始（${appIds.length}件）...`);
+  const done = await runBatchDesignExportXlsxZip({ appIds, guestId });
+  if (done === false) {
+    setStatus('設計書ZIP出力をキャンセルしました');
+    return;
+  }
+  setStatus(`設計書ZIP出力完了（${appIds.length}件）`);
 }
