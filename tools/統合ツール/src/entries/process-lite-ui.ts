@@ -1,95 +1,99 @@
 'use strict';
 
 import { DEFAULT_APP_ID } from '../constants.js';
-import { setStatus } from '../ui/components.js';
 import { runRenderProcessFlowStandalone } from '../tabs/process-standalone.js';
-import { mountKusLitePanel } from './liteMount.js';
-import { row, mkInput, mkBtn, liteRun } from './litePanelHelpers.js';
+import {
+  createLitePanel,
+  makeRow,
+  makeInput,
+  makeButton,
+  makeCard,
+  makeNote,
+  liteRun
+} from './litePanelTheme.js';
 
 export function mountProcessLitePanel() {
-  const { bodySlot } = mountKusLitePanel({
+  const panel = createLitePanel({
     id: 'kus-process-lite',
-    title: 'プロセス実行',
-    note: 'プロセス管理のフロー図を Mermaid で描画し、シミュレーションも可能です。統合ツール.js は不要です。'
+    title: 'プロセス図',
+    subtitle: 'プロセス管理を Mermaid フロー図で描画し、シミュレーションで動きを確認します。',
+    accent: 'process',
+    badges: [{ label: 'Lite' }, { label: 'シミュレーション可' }],
+    hint: 'Mermaid.js を CDN から動的読込し、状態遷移図を描画します。CSP で読込できない場合は簡易テーブル表示にフォールバックします。'
   });
 
-  const appInp = mkInput('アプリID', { value: DEFAULT_APP_ID || '' });
-  const guestInp = mkInput('ゲストID（任意）');
+  // ---- 入力 ----
+  const cardApp = makeCard({ title: '対象アプリ', number: 1 });
+  const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
+  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  cardApp.body.appendChild(makeRow([appInp, guestInp], { label: 'アプリ' }));
 
-  bodySlot.appendChild(row('アプリID', appInp));
-  bodySlot.appendChild(row('ゲスト', guestInp));
+  const runBtn = makeButton('フロー図を描画', 'run', { icon: '◐' });
+  cardApp.body.appendChild(runBtn);
+  panel.body.insertBefore(cardApp.card, panel.status);
 
-  const runBtn = mkBtn('フロー図を描画', { bg: 'linear-gradient(180deg,#f97316,#ea580c)', marginTop: '0' });
-  runBtn.style.cssText += ';padding:10px 14px;font-size:13px;margin-bottom:14px';
-  bodySlot.appendChild(runBtn);
-
+  // ---- 描画 ----
+  const cardDiag = makeCard({ title: 'プロセス図', number: 2, soft: true });
   const viewEl = document.createElement('div');
-  viewEl.style.cssText =
-    'min-height:60px;border:1px solid #e2e8f0;border-radius:8px;background:#fafafa;padding:8px;overflow:auto;max-height:320px;margin-bottom:8px';
-  viewEl.innerHTML = '<span style="color:#94a3b8;font-size:11px">描画結果がここに表示されます</span>';
-  bodySlot.appendChild(viewEl);
+  viewEl.style.cssText = 'min-height:64px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px;overflow:auto;max-height:340px';
+  viewEl.innerHTML = '<span class="kus-lp__small">描画結果がここに表示されます</span>';
+  cardDiag.body.appendChild(viewEl);
+  panel.body.insertBefore(cardDiag.card, panel.status);
 
+  // ---- Mermaid テキスト ----
+  const cardText = makeCard({ title: 'Mermaid ソース', soft: true });
   const textEl = document.createElement('textarea');
-  textEl.rows = 4;
+  textEl.className = 'kus-lp__textarea kus-lp__textarea--code';
+  textEl.rows = 5;
   textEl.readOnly = true;
-  textEl.style.cssText =
-    'width:100%;font-size:11px;font-family:monospace;border:1px solid #e2e8f0;border-radius:8px;padding:8px;margin-bottom:8px;resize:vertical;background:#f8fafc;color:#334155';
-  textEl.placeholder = 'Mermaid ソースがここに表示されます';
-  bodySlot.appendChild(textEl);
+  textEl.placeholder = 'Mermaid 用ソースがここに表示されます';
+  cardText.body.appendChild(textEl);
+  panel.body.insertBefore(cardText.card, panel.status);
 
-  const simContainer = document.createElement('div');
-  simContainer.style.cssText = 'display:none;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:4px;background:#f0fdf4';
-
-  const simTitle = document.createElement('div');
-  simTitle.style.cssText = 'font-size:11px;font-weight:700;color:#166534;margin-bottom:6px';
-  simTitle.textContent = 'シミュレーション';
-  simContainer.appendChild(simTitle);
-
-  const simCurEl = document.createElement('span');
-  simCurEl.style.cssText = 'display:inline-block;padding:3px 8px;font-size:11px;border-radius:6px;margin-bottom:8px;background:#e2e8f0;color:#1e293b;font-weight:600';
-  simCurEl.textContent = '未開始';
-  simContainer.appendChild(simCurEl);
+  // ---- シミュレーション ----
+  const cardSim = makeCard({ title: 'シミュレーション', number: 3 });
+  cardSim.card.style.display = 'none';
+  const curRow = document.createElement('div');
+  curRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px';
+  const curLabel = document.createElement('span');
+  curLabel.className = 'kus-lp__label';
+  curLabel.textContent = '現在状態';
+  const curEl = document.createElement('span');
+  curEl.style.cssText = 'display:inline-block;padding:4px 10px;font-size:11.5px;border-radius:6px;background:#e2e8f0;color:#1e293b;font-weight:600';
+  curEl.textContent = '未開始';
+  curRow.appendChild(curLabel);
+  curRow.appendChild(curEl);
+  cardSim.body.appendChild(curRow);
 
   const simSelect = document.createElement('select');
-  simSelect.style.cssText = 'display:block;width:100%;padding:6px 10px;font-size:12px;border:1px solid #d1d5db;border-radius:8px;margin-bottom:8px;background:#fff';
+  simSelect.className = 'kus-lp__select kus-lp__input--full';
   simSelect.innerHTML = '<option value="">--</option>';
-  simContainer.appendChild(simSelect);
+  cardSim.body.appendChild(makeRow(simSelect, { label: 'アクション' }));
 
-  const simBtnRow = document.createElement('div');
-  simBtnRow.style.cssText = 'display:flex;gap:8px';
+  const simStartBtn = makeButton('最初から開始', 'sub', { icon: '⟲' });
+  const simExecBtn = makeButton('アクション実行', 'primary', { icon: '▶' });
+  cardSim.body.appendChild(makeRow([simStartBtn, simExecBtn]));
+  cardSim.body.appendChild(makeNote('シミュレーションは実データを変更しません。状態遷移の確認用です。'));
+  panel.body.insertBefore(cardSim.card, panel.status);
 
-  const simStartBtn = document.createElement('button');
-  simStartBtn.type = 'button';
-  simStartBtn.textContent = '最初から開始';
-  simStartBtn.style.cssText =
-    'padding:6px 12px;font-size:11px;font-weight:600;border:1px solid #16a34a;border-radius:8px;background:#dcfce7;color:#166534;cursor:pointer';
-  simBtnRow.appendChild(simStartBtn);
-
-  const simExecBtn = document.createElement('button');
-  simExecBtn.type = 'button';
-  simExecBtn.textContent = 'アクション実行';
-  simExecBtn.style.cssText =
-    'padding:6px 12px;font-size:11px;font-weight:600;border:1px solid #2563eb;border-radius:8px;background:#dbeafe;color:#1e40af;cursor:pointer';
-  simBtnRow.appendChild(simExecBtn);
-
-  simContainer.appendChild(simBtnRow);
-  bodySlot.appendChild(simContainer);
-
-  runBtn.addEventListener('click', () => liteRun(async () => {
-    await runRenderProcessFlowStandalone(
+  runBtn.addEventListener('click', () => liteRun(panel, 'プロセスフロー生成中…', async () => {
+    const result = await runRenderProcessFlowStandalone(
       { appId: appInp.value.trim(), guestId: guestInp.value.trim() },
-      (m, e) => setStatus(m, e),
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
       {
         textEl,
         viewEl,
         simUi: {
-          container: simContainer,
-          current: simCurEl,
+          container: cardSim.card,
+          current: curEl,
           select: simSelect,
           startBtn: simStartBtn,
           execBtn: simExecBtn
         }
       }
     );
+    if (result) {
+      panel.setStatus(`プロセスフロー生成完了（状態 ${Object.keys(result.states || {}).length}件 / アクション ${(result.actions || []).length}件）`, 'ok');
+    }
   }));
 }

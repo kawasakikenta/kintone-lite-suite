@@ -3044,11 +3044,16 @@ ${contextLine}`);
   });
 
   // src/ui/dialog.ts
+  function setRootElement(el) {
+    root = el;
+  }
+  var root;
   var init_dialog = __esm({
     "src/ui/dialog.ts"() {
       "use strict";
       init_constants();
       init_state();
+      root = null;
     }
   });
 
@@ -6194,6 +6199,590 @@ ${contextLine}`);
     downloadText(`patch_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
   }
 
+  // src/ui/components.ts
+  init_constants();
+  init_state();
+  init_utils();
+  init_filter();
+
+  // src/diff/ignore-presets.ts
+  init_state();
+
+  // src/ui/components.ts
+  init_engine();
+  init_enrich();
+
+  // src/reflect/nodeModeUi.ts
+  init_state();
+
+  // src/ui/components.ts
+  init_constants();
+  init_dialog();
+
+  // src/oss_integrations.ts
+  init_utils();
+  init_dialog();
+
+  // src/ui/components.ts
+  var ui2 = {};
+  function setComponentUi(uiRefs) {
+    ui2 = uiRefs;
+  }
+  var SCOPE_PICKER_META = Object.freeze({
+    diff: Object.freeze({
+      title: "比較対象セクション",
+      sub: "差分比較で取得する API 設定を選びます。"
+    }),
+    reflect: Object.freeze({
+      title: "反映するセクション",
+      sub: "プレビュー反映でまとめて適用するセクションを選びます。"
+    }),
+    settingsExport: Object.freeze({
+      title: "取得対象セクション",
+      sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
+    })
+  });
+
+  // src/entries/litePanelTheme.ts
+  init_dialog();
+  var STYLE_ID = "kus-lp-theme-styles";
+  var ACCENTS = {
+    diff: { from: "#1d4ed8", via: "#2563eb", to: "#0ea5e9", chip: "#dbeafe", ring: "rgba(37,99,235,.16)" },
+    reflect: { from: "#b91c1c", via: "#dc2626", to: "#f97316", chip: "#fee2e2", ring: "rgba(220,38,38,.18)" },
+    field: { from: "#6d28d9", via: "#7c3aed", to: "#a855f7", chip: "#ede9fe", ring: "rgba(124,58,237,.18)" },
+    jsconfig: { from: "#0f766e", via: "#0d9488", to: "#22d3ee", chip: "#ccfbf1", ring: "rgba(13,148,136,.18)" },
+    settings: { from: "#0369a1", via: "#0284c7", to: "#22d3ee", chip: "#e0f2fe", ring: "rgba(2,132,199,.18)" },
+    design: { from: "#854d0e", via: "#a16207", to: "#facc15", chip: "#fef9c3", ring: "rgba(161,98,7,.18)" },
+    er: { from: "#0f766e", via: "#15803d", to: "#84cc16", chip: "#dcfce7", ring: "rgba(21,128,61,.18)" },
+    process: { from: "#9a3412", via: "#ea580c", to: "#f59e0b", chip: "#ffedd5", ring: "rgba(234,88,12,.18)" },
+    record: { from: "#1e293b", via: "#334155", to: "#64748b", chip: "#e2e8f0", ring: "rgba(51,65,85,.18)" }
+  };
+  var THEME_CSS = `
+@keyframes kus-lp-spin { to { transform: rotate(360deg); } }
+@keyframes kus-lp-fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+.kus-lp{
+  --c-bg:#ffffff;
+  --c-surface:#f8fafc;
+  --c-surface-2:#f1f5f9;
+  --c-border:#e2e8f0;
+  --c-border-strong:#cbd5e1;
+  --c-text:#0f172a;
+  --c-text-2:#334155;
+  --c-muted:#64748b;
+  --c-link:#2563eb;
+  --c-ok-bg:#ecfdf5;
+  --c-ok-fg:#065f46;
+  --c-ok-bd:#a7f3d0;
+  --c-err-bg:#fef2f2;
+  --c-err-fg:#991b1b;
+  --c-err-bd:#fecaca;
+  --c-warn-bg:#fffbeb;
+  --c-warn-fg:#92400e;
+  --c-warn-bd:#fde68a;
+  --c-info-bg:#eff6ff;
+  --c-info-fg:#1e3a8a;
+  --c-info-bd:#bfdbfe;
+  --c-accent-from:#1d4ed8;
+  --c-accent-via:#2563eb;
+  --c-accent-to:#0ea5e9;
+  --c-accent-chip:#dbeafe;
+  --c-accent-ring:rgba(37,99,235,.16);
+
+  position:fixed;
+  z-index:999999;
+  top:max(16px,2vh);
+  right:max(16px,2vw);
+  width:min(520px,96vw);
+  max-height:min(92vh,920px);
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  background:var(--c-bg);
+  border:1px solid var(--c-border);
+  border-radius:18px;
+  box-shadow:0 4px 6px -1px rgba(15,23,42,.08),0 28px 60px -12px rgba(15,23,42,.30);
+  font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  color:var(--c-text);
+  animation:kus-lp-fade-in .18s ease-out;
+}
+
+.kus-lp__hero{
+  flex-shrink:0;
+  position:relative;
+  padding:16px 18px 18px;
+  color:#fff;
+  background:linear-gradient(125deg,var(--c-accent-from) 0%,var(--c-accent-via) 45%,var(--c-accent-to) 100%);
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+}
+.kus-lp__hero-main{min-width:0;flex:1}
+.kus-lp__title{margin:0;font-size:17px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
+.kus-lp__title-icon{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:rgba(255,255,255,.22);border-radius:7px}
+.kus-lp__subtitle{margin:4px 0 0;font-size:12px;color:rgba(255,255,255,.85);line-height:1.45}
+.kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
+.kus-lp__badge{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
+}
+.kus-lp__close{
+  flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
+  color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  transition:background .12s ease;
+}
+.kus-lp__close:hover{background:rgba(255,255,255,.24)}
+
+.kus-lp__body{padding:16px 18px 18px;overflow-y:auto;flex:1;min-height:0}
+.kus-lp__body::-webkit-scrollbar{width:10px;height:10px}
+.kus-lp__body::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+.kus-lp__body::-webkit-scrollbar-thumb:hover{background:#94a3b8;background-clip:padding-box;border:2px solid transparent}
+
+.kus-lp__hint{
+  font-size:12px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
+  padding:10px 12px;background:var(--c-surface);border-radius:10px;border:1px solid var(--c-border);
+}
+.kus-lp__hint strong{color:var(--c-text-2)}
+
+/* ===== Tab bar (lite 内タブ) ===== */
+.kus-lp__tabs{
+  display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--c-border);
+  margin:0 0 14px;padding:0;
+}
+.kus-lp__tab{
+  position:relative;background:transparent;border:none;cursor:pointer;
+  padding:8px 12px 9px;font-size:12px;font-weight:600;color:var(--c-muted);
+  border-radius:8px 8px 0 0;
+}
+.kus-lp__tab:hover{color:var(--c-text-2);background:var(--c-surface)}
+.kus-lp__tab[aria-selected="true"]{color:var(--c-accent-via);background:transparent}
+.kus-lp__tab[aria-selected="true"]::after{
+  content:'';position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,var(--c-accent-via),var(--c-accent-to));
+}
+.kus-lp__tab-panel[hidden]{display:none}
+
+/* ===== Card ===== */
+.kus-lp__card{
+  background:var(--c-bg);
+  border:1px solid var(--c-border);
+  border-radius:12px;
+  padding:14px 16px;
+  margin-bottom:12px;
+}
+.kus-lp__card--soft{background:var(--c-surface)}
+.kus-lp__card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-2px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__card-title{font-size:11.5px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
+.kus-lp__card-num{
+  display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:11px;font-weight:700;border-radius:999px;
+}
+.kus-lp__card-actions{display:flex;gap:6px}
+
+/* ===== Row (label + control) ===== */
+.kus-lp__row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-bottom:10px}
+.kus-lp__row:last-child{margin-bottom:0}
+.kus-lp__row--block{display:block}
+.kus-lp__row--block > .kus-lp__label{display:block;margin-bottom:5px}
+.kus-lp__label{font-size:12px;font-weight:600;color:var(--c-text-2);min-width:5em}
+
+/* ===== Inputs ===== */
+.kus-lp__input,.kus-lp__textarea,.kus-lp__select{
+  appearance:none;
+  border:1px solid var(--c-border);
+  border-radius:8px;padding:7px 10px;font-size:12.5px;
+  background:var(--c-bg);color:var(--c-text);
+  outline:none;transition:border-color .15s,box-shadow .15s;
+  font-family:inherit;
+}
+.kus-lp__input:focus,.kus-lp__textarea:focus,.kus-lp__select:focus{
+  border-color:var(--c-accent-via);box-shadow:0 0 0 3px var(--c-accent-ring);
+}
+.kus-lp__input--id{width:min(120px,36vw)}
+.kus-lp__input--guest{width:min(110px,32vw)}
+.kus-lp__input--narrow{width:min(120px,40vw)}
+.kus-lp__input--medium{width:min(180px,52vw)}
+.kus-lp__input--wide{flex:1;min-width:160px}
+.kus-lp__input--full{width:100%;box-sizing:border-box}
+.kus-lp__textarea{width:100%;box-sizing:border-box;min-height:60px;resize:vertical}
+.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;background:var(--c-surface)}
+.kus-lp__file{font-size:12px;padding:5px 0}
+
+/* ===== Checkbox / chip ===== */
+.kus-lp__check{font-size:12px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.kus-lp__check input{width:14px;height:14px;accent-color:var(--c-accent-via);margin:0}
+.kus-lp__check-grid{display:flex;flex-wrap:wrap;gap:8px 12px;margin-bottom:10px}
+
+.kus-lp__chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.kus-lp__chip{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:11.5px;color:var(--c-text-2);
+  background:var(--c-bg);border:1px solid var(--c-border-strong);
+  border-radius:999px;padding:4px 10px 4px 7px;cursor:pointer;user-select:none;
+  transition:background .12s,border-color .12s;
+}
+.kus-lp__chip:hover{background:var(--c-surface);border-color:#94a3b8}
+.kus-lp__chip input{accent-color:var(--c-accent-via);width:13px;height:13px;margin:0}
+.kus-lp__chip:has(input:checked){background:var(--c-accent-chip);border-color:var(--c-accent-via);color:var(--c-accent-from);font-weight:600}
+
+/* ===== Buttons ===== */
+.kus-lp__btn{
+  appearance:none;border:1px solid transparent;border-radius:10px;
+  font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+  padding:8px 14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  transition:filter .12s,transform .04s,background .12s,border-color .12s;
+}
+.kus-lp__btn:active{transform:scale(.98)}
+.kus-lp__btn[disabled],.kus-lp__btn:disabled{opacity:.55;cursor:not-allowed}
+
+.kus-lp__btn--primary{background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 4px var(--c-accent-ring)}
+.kus-lp__btn--primary:hover:not(:disabled){filter:brightness(1.06)}
+
+.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:13px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
+.kus-lp__btn--run:hover:not(:disabled){filter:brightness(1.07)}
+
+.kus-lp__btn--ghost{background:var(--c-surface);color:var(--c-text-2);border-color:var(--c-border-strong)}
+.kus-lp__btn--ghost:hover:not(:disabled){background:#fff;border-color:#94a3b8}
+
+.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:11.5px;padding:7px 10px}
+.kus-lp__btn--sub:hover:not(:disabled){background:#fff;border-color:#94a3b8}
+
+.kus-lp__btn--danger{background:linear-gradient(180deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 2px 4px rgba(220,38,38,.25)}
+.kus-lp__btn--danger:hover:not(:disabled){filter:brightness(1.05)}
+
+.kus-lp__btn-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.kus-lp__btn-row--stack{flex-direction:column}
+.kus-lp__btn-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:380px){.kus-lp__btn-grid{grid-template-columns:1fr}}
+
+/* ===== Status ===== */
+.kus-lp__status{
+  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;
+  border:1px solid var(--c-border);background:var(--c-surface-2);color:var(--c-text-2);
+  min-height:2.6em;display:flex;align-items:flex-start;gap:8px;
+}
+.kus-lp__status--ok{background:var(--c-ok-bg);color:var(--c-ok-fg);border-color:var(--c-ok-bd)}
+.kus-lp__status--err{background:var(--c-err-bg);color:var(--c-err-fg);border-color:var(--c-err-bd)}
+.kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
+.kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
+.kus-lp__status-icon{font-size:14px;line-height:1.2}
+.kus-lp__status-busy::before{
+  content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
+  border:2px solid var(--c-muted);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
+}
+
+/* ===== Result / Log ===== */
+.kus-lp__result{
+  margin-top:10px;padding:11px 13px;background:#0f172a;color:#e2e8f0;border-radius:10px;
+  font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;
+  border:1px solid #1e293b;
+}
+.kus-lp__result--empty{display:none}
+.kus-lp__panel-html{
+  margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
+  background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
+}
+.kus-lp__panel-html--empty{display:none}
+.kus-lp__panel-html table{border-collapse:collapse;width:100%}
+.kus-lp__panel-html th,.kus-lp__panel-html td{padding:6px 8px;border-bottom:1px solid var(--c-border);text-align:left}
+.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:11px;color:var(--c-text-2)}
+
+/* ===== Misc ===== */
+.kus-lp__note{font-size:11.5px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
+.kus-lp__note--warn{color:var(--c-warn-fg);padding:7px 10px;background:var(--c-warn-bg);border:1px solid var(--c-warn-bd);border-radius:8px;margin:6px 0}
+.kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
+.kus-lp__small{font-size:11px;color:var(--c-muted)}
+.kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
+
+/* セクション折りたたみ (details) */
+.kus-lp__details{
+  border:1px solid var(--c-border);border-radius:10px;background:var(--c-bg);
+  margin-bottom:10px;overflow:hidden;
+}
+.kus-lp__details > summary{
+  list-style:none;cursor:pointer;padding:10px 14px;
+  font-size:12.5px;font-weight:600;color:var(--c-text-2);
+  display:flex;align-items:center;gap:8px;
+}
+.kus-lp__details > summary::-webkit-details-marker{display:none}
+.kus-lp__details > summary::before{
+  content:'';width:8px;height:8px;border-right:2px solid var(--c-muted);border-bottom:2px solid var(--c-muted);
+  transform:rotate(-45deg);transition:transform .15s;display:inline-block;
+}
+.kus-lp__details[open] > summary::before{transform:rotate(45deg)}
+.kus-lp__details > summary:hover{background:var(--c-surface)}
+.kus-lp__details-body{padding:0 14px 12px}
+
+/* Wide variant (一部 lite 用に幅広にしたい場合) */
+.kus-lp--wide{width:min(640px,96vw)}
+`;
+  function ensureThemeStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const s = document.createElement("style");
+    s.id = STYLE_ID;
+    s.textContent = THEME_CSS;
+    document.head.appendChild(s);
+  }
+  function applyAccentVars(root2, accentKey) {
+    const a = ACCENTS[accentKey] || ACCENTS.diff;
+    root2.style.setProperty("--c-accent-from", a.from);
+    root2.style.setProperty("--c-accent-via", a.via);
+    root2.style.setProperty("--c-accent-to", a.to);
+    root2.style.setProperty("--c-accent-chip", a.chip);
+    root2.style.setProperty("--c-accent-ring", a.ring);
+  }
+  function createLitePanel(opts) {
+    ensureThemeStyles();
+    const old = document.getElementById(opts.id);
+    if (old) old.remove();
+    const root2 = document.createElement("div");
+    root2.id = opts.id;
+    root2.className = `kus-lp${opts.wide ? " kus-lp--wide" : ""}`;
+    applyAccentVars(root2, opts.accent);
+    const hero = document.createElement("div");
+    hero.className = "kus-lp__hero";
+    const heroMain = document.createElement("div");
+    heroMain.className = "kus-lp__hero-main";
+    const titleEl = document.createElement("h1");
+    titleEl.className = "kus-lp__title";
+    titleEl.textContent = opts.title;
+    heroMain.appendChild(titleEl);
+    if (opts.subtitle) {
+      const subEl = document.createElement("p");
+      subEl.className = "kus-lp__subtitle";
+      subEl.textContent = opts.subtitle;
+      heroMain.appendChild(subEl);
+    }
+    const badgesEl = document.createElement("div");
+    badgesEl.className = "kus-lp__badge-row";
+    const badges = opts.badges || [{ label: "Lite" }];
+    for (const b of badges) {
+      const span = document.createElement("span");
+      span.className = "kus-lp__badge";
+      span.textContent = b.label;
+      badgesEl.appendChild(span);
+    }
+    heroMain.appendChild(badgesEl);
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "kus-lp__close";
+    closeBtn.textContent = "閉じる";
+    hero.appendChild(heroMain);
+    hero.appendChild(closeBtn);
+    root2.appendChild(hero);
+    const body = document.createElement("div");
+    body.className = "kus-lp__body";
+    if (opts.hint) {
+      const hint = document.createElement("div");
+      hint.className = "kus-lp__hint";
+      hint.innerHTML = opts.hint;
+      body.appendChild(hint);
+    }
+    const status = document.createElement("div");
+    status.className = "kus-lp__status";
+    status.dataset.tone = "neutral";
+    status.innerHTML = '<span class="kus-lp__status-icon">·</span><span class="kus-lp__status-text">準備完了</span>';
+    const result = document.createElement("pre");
+    result.className = "kus-lp__result kus-lp__result--empty";
+    root2.appendChild(body);
+    document.body.appendChild(root2);
+    body.appendChild(status);
+    body.appendChild(result);
+    function setStatus(msg, tone = "neutral") {
+      status.dataset.tone = tone;
+      status.className = "kus-lp__status" + (tone !== "neutral" && tone !== "busy" ? ` kus-lp__status--${tone}` : "");
+      const icon = tone === "ok" ? "✓" : tone === "err" ? "⚠" : tone === "warn" ? "!" : tone === "info" ? "i" : tone === "busy" ? "" : "·";
+      const iconCls = tone === "busy" ? "kus-lp__status-icon kus-lp__status-busy" : "kus-lp__status-icon";
+      status.innerHTML = `<span class="${iconCls}">${icon}</span><span class="kus-lp__status-text"></span>`;
+      status.querySelector(".kus-lp__status-text").textContent = msg || "";
+    }
+    function setResult(text) {
+      if (!text) {
+        result.textContent = "";
+        result.classList.add("kus-lp__result--empty");
+        return;
+      }
+      result.textContent = text;
+      result.classList.remove("kus-lp__result--empty");
+    }
+    function setResultHtml(html) {
+      if (!html) {
+        result.innerHTML = "";
+        result.classList.add("kus-lp__result--empty");
+        return;
+      }
+      result.innerHTML = html;
+      result.classList.remove("kus-lp__result--empty");
+    }
+    function setBusy(busy) {
+      closeBtn.disabled = busy;
+      root2.style.cursor = busy ? "progress" : "";
+    }
+    function close() {
+      root2.remove();
+      setRootElement(null);
+    }
+    closeBtn.addEventListener("click", close);
+    setRootElement(root2);
+    setComponentUi({ status, result, busyText: document.createElement("span") });
+    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close };
+  }
+  function makeRow(child, opts = {}) {
+    const wrap = document.createElement("div");
+    wrap.className = "kus-lp__row" + (opts.block ? " kus-lp__row--block" : "");
+    if (opts.label) {
+      const lab = document.createElement("span");
+      lab.className = "kus-lp__label";
+      lab.textContent = opts.label;
+      wrap.appendChild(lab);
+    }
+    if (Array.isArray(child)) child.forEach((c) => wrap.appendChild(c));
+    else wrap.appendChild(child);
+    if (opts.help) {
+      const h = document.createElement("div");
+      h.className = "kus-lp__small";
+      h.style.width = "100%";
+      h.textContent = opts.help;
+      wrap.appendChild(h);
+    }
+    return wrap;
+  }
+  function makeInput(opts = {}) {
+    const inp = document.createElement("input");
+    inp.type = opts.type || "text";
+    if (opts.placeholder) inp.placeholder = opts.placeholder;
+    if (opts.value) inp.value = opts.value;
+    if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
+    inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
+    return inp;
+  }
+  function makeTextarea(opts = {}) {
+    const t = document.createElement("textarea");
+    t.className = "kus-lp__textarea" + (opts.code ? " kus-lp__textarea--code" : "");
+    if (opts.rows) t.rows = opts.rows;
+    if (opts.placeholder) t.placeholder = opts.placeholder;
+    if (opts.value) t.value = opts.value;
+    return t;
+  }
+  function makeSelect(options, defaultValue) {
+    const sel = document.createElement("select");
+    sel.className = "kus-lp__select";
+    for (const [v, t] of options) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = t;
+      if (defaultValue !== void 0 && v === defaultValue) o.selected = true;
+      sel.appendChild(o);
+    }
+    return sel;
+  }
+  function makeButton(label, variant = "primary", opts = {}) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `kus-lp__btn kus-lp__btn--${variant}`;
+    if (opts.icon) {
+      const i = document.createElement("span");
+      i.textContent = opts.icon;
+      i.style.cssText = "font-size:14px;line-height:1";
+      b.appendChild(i);
+    }
+    const t = document.createElement("span");
+    t.textContent = label;
+    b.appendChild(t);
+    return b;
+  }
+  function makeCheck(opts) {
+    const lab = document.createElement("label");
+    lab.className = "kus-lp__check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    if (opts.checked) cb.checked = true;
+    if (opts.value !== void 0) cb.value = opts.value;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(opts.label));
+    if (opts.help) lab.title = opts.help;
+    return { label: lab, checkbox: cb };
+  }
+  function makeChip(opts) {
+    const lab = document.createElement("label");
+    lab.className = "kus-lp__chip";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    if (opts.checked) cb.checked = true;
+    if (opts.value !== void 0) cb.value = opts.value;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(opts.label));
+    if (opts.help) lab.title = opts.help;
+    return { label: lab, checkbox: cb };
+  }
+  function makeCard(opts = {}) {
+    const card = document.createElement("div");
+    card.className = "kus-lp__card" + (opts.soft ? " kus-lp__card--soft" : "");
+    const head = document.createElement("div");
+    head.className = "kus-lp__card-head";
+    if (opts.title || opts.number) {
+      const t = document.createElement("div");
+      t.className = "kus-lp__card-title";
+      if (opts.number) {
+        const n = document.createElement("span");
+        n.className = "kus-lp__card-num";
+        n.textContent = String(opts.number);
+        t.appendChild(n);
+      }
+      if (opts.title) t.appendChild(document.createTextNode(opts.title));
+      head.appendChild(t);
+    }
+    const actions = document.createElement("div");
+    actions.className = "kus-lp__card-actions";
+    head.appendChild(actions);
+    card.appendChild(head);
+    const body = document.createElement("div");
+    card.appendChild(body);
+    if (opts.subtitle) {
+      const s = document.createElement("div");
+      s.className = "kus-lp__small";
+      s.style.cssText = "margin:-4px 0 8px";
+      s.textContent = opts.subtitle;
+      body.appendChild(s);
+    }
+    return { card, body, actions };
+  }
+  function makeNote(text, kind = "plain") {
+    const n = document.createElement("div");
+    n.className = kind === "warn" ? "kus-lp__note--warn" : "kus-lp__note";
+    n.textContent = text;
+    return n;
+  }
+  function makeDetails(title, opts = {}) {
+    const d = document.createElement("details");
+    d.className = "kus-lp__details";
+    if (opts.open) d.open = true;
+    const s = document.createElement("summary");
+    s.textContent = title;
+    const b = document.createElement("div");
+    b.className = "kus-lp__details-body";
+    d.appendChild(s);
+    d.appendChild(b);
+    return { details: d, body: b };
+  }
+  async function liteRun(panel, busyMsg, fn, okMsg) {
+    panel.setStatus(busyMsg, "busy");
+    panel.setBusy(true);
+    try {
+      const out = await fn();
+      if (okMsg) panel.setStatus(okMsg, "ok");
+      return out;
+    } catch (e) {
+      panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
+      return void 0;
+    } finally {
+      panel.setBusy(false);
+    }
+  }
+
   // src/entries/diff-lite-ui.ts
   var SCOPE_OPTS = [
     ["fieldSettings", "フィールド", true],
@@ -6214,403 +6803,127 @@ ${contextLine}`);
     ["reminderNotifications", "リマインダー", false],
     ["categories", "カテゴリ", false]
   ];
-  var STYLE_ID = "kus-diff-lite-styles";
-  function ensureDiffLiteStyles() {
-    if (document.getElementById(STYLE_ID)) return;
-    const s = document.createElement("style");
-    s.id = STYLE_ID;
-    s.textContent = `
-#kus-diff-lite-root.kus-dlite{
-  --kus-accent:#2563eb;
-  --kus-accent2:#0ea5e9;
-  --kus-border:#e2e8f0;
-  --kus-muted:#64748b;
-  --kus-text:#0f172a;
-  position:fixed;z-index:999999;top:max(16px,2vh);right:max(16px,2vw);
-  width:min(480px,96vw);max-height:min(92vh,900px);overflow:hidden;
-  display:flex;flex-direction:column;
-  background:#fff;border-radius:16px;
-  border:1px solid var(--kus-border);
-  box-shadow:0 4px 6px -1px rgba(15,23,42,.08),0 25px 50px -12px rgba(15,23,42,.28);
-  font:13px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  color:var(--kus-text);
-}
-.kus-dlite__hero{
-  flex-shrink:0;
-  background:linear-gradient(125deg,#1d4ed8 0%,var(--kus-accent) 42%,var(--kus-accent2) 100%);
-  color:#fff;padding:14px 16px 16px;
-  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
-}
-.kus-dlite__hero-main{min-width:0}
-.kus-dlite__title{margin:0;font-size:16px;font-weight:700;letter-spacing:.02em;line-height:1.25}
-.kus-dlite__badge{
-  display:inline-block;margin-top:8px;font-size:10px;font-weight:600;letter-spacing:.04em;
-  text-transform:uppercase;background:rgba(255,255,255,.22);padding:3px 10px;border-radius:999px;
-}
-.kus-dlite__close{
-  flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
-  color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
-}
-.kus-dlite__close:hover{background:rgba(255,255,255,.22)}
-.kus-dlite__body{padding:14px 16px 16px;overflow-y:auto;flex:1;min-height:0}
-.kus-dlite__info{
-  font-size:12px;color:var(--kus-muted);line-height:1.55;margin:0 0 14px;
-  padding:10px 12px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;
-}
-.kus-dlite__card{
-  background:#fafbfc;border:1px solid var(--kus-border);border-radius:12px;padding:12px 14px;margin-bottom:12px;
-}
-.kus-dlite__card-title{
-  font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px;
-  padding-bottom:6px;border-bottom:1px solid #e2e8f0;
-}
-.kus-dlite__row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-bottom:8px}
-.kus-dlite__row:last-child{margin-bottom:0}
-.kus-dlite__label{font-size:12px;font-weight:600;color:#334155;min-width:4.5em}
-.kus-dlite__input,.kus-dlite__textarea,.kus-dlite__select{
-  border:1px solid var(--kus-border);border-radius:8px;padding:7px 10px;font-size:12px;
-  background:#fff;color:var(--kus-text);outline:none;transition:border-color .15s,box-shadow .15s;
-}
-.kus-dlite__input:focus,.kus-dlite__textarea:focus,.kus-dlite__select:focus{
-  border-color:var(--kus-accent);box-shadow:0 0 0 3px rgba(37,99,235,.15);
-}
-.kus-dlite__input--id{width:min(120px,36vw)}
-.kus-dlite__input--guest{width:min(108px,32vw)}
-.kus-dlite__check{font-size:12px;color:#475569;display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
-.kus-dlite__check input{width:14px;height:14px;accent-color:var(--kus-accent)}
-.kus-dlite__chips{display:flex;flex-wrap:wrap;gap:6px}
-.kus-dlite__chip{
-  display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#334155;
-  background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:4px 10px 4px 6px;cursor:pointer;user-select:none;
-}
-.kus-dlite__chip input{accent-color:var(--kus-accent);width:13px;height:13px}
-.kus-dlite__chip:hover{border-color:#94a3b8;background:#f8fafc}
-.kus-dlite__textarea{width:100%;box-sizing:border-box;min-height:52px;resize:vertical;font-family:inherit}
-.kus-dlite__norms{display:flex;flex-wrap:wrap;gap:10px 14px}
-.kus-dlite__btn-run{
-  width:100%;margin-top:4px;padding:11px 16px;font-size:13px;font-weight:700;border:none;border-radius:10px;
-  background:linear-gradient(180deg,#3b82f6 0%,var(--kus-accent) 100%);color:#fff;cursor:pointer;
-  box-shadow:0 2px 4px rgba(37,99,235,.35);transition:filter .15s,transform .05s;
-}
-.kus-dlite__btn-run:hover{filter:brightness(1.06)}
-.kus-dlite__btn-run:active{transform:scale(.99)}
-.kus-dlite__export-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-@media(max-width:380px){.kus-dlite__export-grid{grid-template-columns:1fr}}
-.kus-dlite__btn-sub{
-  padding:8px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:10px;
-  background:linear-gradient(180deg,#fff,#f1f5f9);color:#334155;cursor:pointer;
-}
-.kus-dlite__btn-sub:hover{border-color:#94a3b8;background:#fff}
-.kus-dlite__status{
-  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.45;min-height:2.8em;
-  border:1px solid transparent;
-}
-.kus-dlite__status--neutral{background:#f1f5f9;color:#334155;border-color:#e2e8f0}
-.kus-dlite__status--ok{background:#ecfdf5;color:#065f46;border-color:#a7f3d0}
-.kus-dlite__status--err{background:#fef2f2;color:#991b1b;border-color:#fecaca}
-.kus-dlite__result{
-  margin-top:10px;padding:10px 12px;background:#0f172a;color:#e2e8f0;border-radius:10px;
-  font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;
-  border:1px solid #1e293b;
-}
-`;
-    document.head.appendChild(s);
-  }
-  function setStatusBar(el, text, tone) {
-    el.textContent = text || "";
-    el.classList.remove("kus-dlite__status--neutral", "kus-dlite__status--ok", "kus-dlite__status--err");
-    el.classList.add(
-      tone === "ok" ? "kus-dlite__status--ok" : tone === "err" ? "kus-dlite__status--err" : "kus-dlite__status--neutral"
-    );
-  }
-  function renderPanel() {
-    ensureDiffLiteStyles();
-    const old = document.getElementById("kus-diff-lite-root");
-    if (old) old.remove();
-    const root = document.createElement("div");
-    root.id = "kus-diff-lite-root";
-    root.className = "kus-dlite";
-    const hero = document.createElement("div");
-    hero.className = "kus-dlite__hero";
-    const heroMain = document.createElement("div");
-    heroMain.className = "kus-dlite__hero-main";
-    const title = document.createElement("h1");
-    title.className = "kus-dlite__title";
-    title.textContent = "差分比較";
-    const badge = document.createElement("div");
-    badge.className = "kus-dlite__badge";
-    badge.textContent = "軽量版 · 出力対応";
-    heroMain.appendChild(title);
-    heroMain.appendChild(badge);
-    const close = document.createElement("button");
-    close.id = "kus-close";
-    close.type = "button";
-    close.className = "kus-dlite__close";
-    close.textContent = "閉じる";
-    hero.appendChild(heroMain);
-    hero.appendChild(close);
-    root.appendChild(hero);
-    const body = document.createElement("div");
-    body.className = "kus-dlite__body";
-    const info = document.createElement("p");
-    info.className = "kus-dlite__info";
-    info.textContent = "API 取得と差分計算はこのスクリプトに同梱されています（統合ツール.js は不要）。実行後に JSON / HTML / バンドル / パッチを保存できます。";
-    body.appendChild(info);
-    function card(titleText) {
-      const c = document.createElement("div");
-      c.className = "kus-dlite__card";
-      const tt = document.createElement("div");
-      tt.className = "kus-dlite__card-title";
-      tt.textContent = titleText;
-      c.appendChild(tt);
-      return c;
-    }
-    const cApp = card("アプリと環境");
-    const rowSrc = document.createElement("div");
-    rowSrc.className = "kus-dlite__row";
-    const ls = document.createElement("span");
-    ls.className = "kus-dlite__label";
-    ls.textContent = "比較元";
-    const srcApp = document.createElement("input");
-    srcApp.id = "kus-src-app";
-    srcApp.type = "text";
-    srcApp.placeholder = "アプリID";
-    srcApp.className = "kus-dlite__input kus-dlite__input--id";
-    const srcGuest = document.createElement("input");
-    srcGuest.id = "kus-src-guest";
-    srcGuest.type = "text";
-    srcGuest.placeholder = "ゲストID";
-    srcGuest.className = "kus-dlite__input kus-dlite__input--guest";
-    const srcPrv = document.createElement("input");
-    srcPrv.id = "kus-src-preview";
-    srcPrv.type = "checkbox";
-    const srcPrvL = document.createElement("label");
-    srcPrvL.className = "kus-dlite__check";
-    srcPrvL.appendChild(srcPrv);
-    srcPrvL.appendChild(document.createTextNode("プレビューで取得"));
-    rowSrc.appendChild(ls);
-    rowSrc.appendChild(srcApp);
-    rowSrc.appendChild(srcGuest);
-    rowSrc.appendChild(srcPrvL);
-    cApp.appendChild(rowSrc);
-    const rowTgt = document.createElement("div");
-    rowTgt.className = "kus-dlite__row";
-    const lt = document.createElement("span");
-    lt.className = "kus-dlite__label";
-    lt.textContent = "比較先";
-    const tgtApp = document.createElement("input");
-    tgtApp.id = "kus-tgt-app";
-    tgtApp.type = "text";
-    tgtApp.placeholder = "アプリID";
-    tgtApp.className = "kus-dlite__input kus-dlite__input--id";
-    const tgtGuest = document.createElement("input");
-    tgtGuest.id = "kus-tgt-guest";
-    tgtGuest.type = "text";
-    tgtGuest.placeholder = "ゲストID";
-    tgtGuest.className = "kus-dlite__input kus-dlite__input--guest";
-    const tgtPrv = document.createElement("input");
-    tgtPrv.id = "kus-tgt-preview";
-    tgtPrv.type = "checkbox";
-    const tgtPrvL = document.createElement("label");
-    tgtPrvL.className = "kus-dlite__check";
-    tgtPrvL.appendChild(tgtPrv);
-    tgtPrvL.appendChild(document.createTextNode("プレビューで取得"));
-    rowTgt.appendChild(lt);
-    rowTgt.appendChild(tgtApp);
-    rowTgt.appendChild(tgtGuest);
-    rowTgt.appendChild(tgtPrvL);
-    cApp.appendChild(rowTgt);
-    body.appendChild(cApp);
-    const cScope = card("比較セクション");
-    const scBox = document.createElement("div");
-    scBox.className = "kus-dlite__chips";
-    for (const kv of SCOPE_OPTS) {
-      const lb = document.createElement("label");
-      lb.className = "kus-dlite__chip";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.className = "kus-scope";
-      cb.value = kv[0];
-      cb.checked = !!kv[2];
-      lb.appendChild(cb);
-      lb.appendChild(document.createTextNode(kv[1]));
-      scBox.appendChild(lb);
-    }
-    cScope.appendChild(scBox);
-    body.appendChild(cScope);
-    const cAdv = card("詳細オプション");
-    const ign = document.createElement("textarea");
-    ign.id = "kus-ignore";
-    ign.rows = 2;
-    ign.placeholder = "無視キー（カンマ区切り）";
-    ign.className = "kus-dlite__textarea";
-    const ignLab = document.createElement("div");
-    ignLab.className = "kus-dlite__row";
-    ignLab.style.marginBottom = "8px";
-    const ignL = document.createElement("span");
-    ignL.className = "kus-dlite__label";
-    ignL.textContent = "無視キー";
-    ignLab.appendChild(ignL);
-    cAdv.appendChild(ignLab);
-    cAdv.appendChild(ign);
-    const inc = document.createElement("input");
-    inc.id = "kus-include-same";
-    inc.type = "checkbox";
-    const incL = document.createElement("label");
-    incL.className = "kus-dlite__check";
-    incL.style.marginTop = "10px";
-    incL.style.display = "inline-flex";
-    incL.appendChild(inc);
-    incL.appendChild(document.createTextNode("同一行も差分行に含める"));
-    cAdv.appendChild(incL);
-    const n1 = document.createElement("input");
-    n1.id = "kus-norm-view";
-    n1.type = "checkbox";
-    const n2 = document.createElement("input");
-    n2.id = "kus-norm-perm";
-    n2.type = "checkbox";
-    const n3 = document.createElement("input");
-    n3.id = "kus-norm-all";
-    n3.type = "checkbox";
-    const norm = document.createElement("div");
-    norm.className = "kus-dlite__norms";
-    norm.style.marginTop = "12px";
-    function normLab(el, t) {
-      const x = document.createElement("label");
-      x.className = "kus-dlite__check";
-      x.appendChild(el);
-      x.appendChild(document.createTextNode(t));
-      return x;
-    }
-    norm.appendChild(normLab(n1, "ビュー順序を正規化"));
-    norm.appendChild(normLab(n2, "権限順序を正規化"));
-    norm.appendChild(normLab(n3, "配列順序を無視"));
-    cAdv.appendChild(norm);
-    body.appendChild(cAdv);
-    const run = document.createElement("button");
-    run.id = "kus-run";
-    run.type = "button";
-    run.className = "kus-dlite__btn-run";
-    run.textContent = "差分比較を実行";
-    body.appendChild(run);
-    const cOut = card("ファイル出力");
-    const hint = document.createElement("div");
-    hint.style.cssText = "font-size:11px;color:#64748b;margin-bottom:10px;line-height:1.45";
-    hint.textContent = "比較完了後に利用できます。レポートに生設定を含めるか選べます。";
-    cOut.appendChild(hint);
-    const expRow = document.createElement("div");
-    expRow.className = "kus-dlite__row";
-    const expLab = document.createElement("span");
-    expLab.className = "kus-dlite__label";
-    expLab.textContent = "レポート";
-    const expMode = document.createElement("select");
-    expMode.className = "kus-dlite__select";
-    expMode.style.flex = "1";
-    expMode.style.minWidth = "0";
-    [["diffOnly", "行データのみ"], ["withCompared", "行データ + 比較セクションの設定"]].forEach(([v, t]) => {
-      const o = document.createElement("option");
-      o.value = v;
-      o.textContent = t;
-      expMode.appendChild(o);
+  function mountDiffLitePanel(runDiffStandalone2) {
+    const panel = createLitePanel({
+      id: "kus-diff-lite",
+      title: "差分比較",
+      subtitle: "2 アプリの設定差分を取得し、JSON / HTML / バンドル / パッチで保存",
+      accent: "diff",
+      badges: [{ label: "Lite" }, { label: "出力対応" }],
+      hint: "API 取得・差分計算・出力をこのスクリプトに同梱しています。<strong>統合ツール.js は不要</strong>。"
     });
-    expRow.appendChild(expLab);
-    expRow.appendChild(expMode);
-    cOut.appendChild(expRow);
+    const srcApp = makeInput({ placeholder: "アプリID", width: "id" });
+    const srcGuest = makeInput({ placeholder: "ゲストID", width: "guest" });
+    const srcPrev = makeCheck({ label: "プレビューで取得" });
+    const tgtApp = makeInput({ placeholder: "アプリID", width: "id" });
+    const tgtGuest = makeInput({ placeholder: "ゲストID", width: "guest" });
+    const tgtPrev = makeCheck({ label: "プレビューで取得" });
+    const cardApp = makeCard({ title: "アプリと環境", number: 1 });
+    cardApp.body.appendChild(makeRow([srcApp, srcGuest, srcPrev.label], { label: "比較元" }));
+    cardApp.body.appendChild(makeRow([tgtApp, tgtGuest, tgtPrev.label], { label: "比較先" }));
+    panel.body.insertBefore(cardApp.card, panel.status);
+    const cardScope = makeCard({ title: "比較セクション", number: 2 });
+    const chipBox = document.createElement("div");
+    chipBox.className = "kus-lp__chips";
+    const chips = SCOPE_OPTS.map(([key, label, def]) => makeChip({ label, value: key, checked: def }));
+    chips.forEach((c) => chipBox.appendChild(c.label));
+    cardScope.body.appendChild(chipBox);
+    const allBtn = makeButton("全選択", "sub");
+    const noneBtn = makeButton("全解除", "sub");
+    cardScope.actions.appendChild(allBtn);
+    cardScope.actions.appendChild(noneBtn);
+    allBtn.addEventListener("click", () => chips.forEach((c) => {
+      c.checkbox.checked = true;
+    }));
+    noneBtn.addEventListener("click", () => chips.forEach((c) => {
+      c.checkbox.checked = false;
+    }));
+    panel.body.insertBefore(cardScope.card, panel.status);
+    const advDetails = makeDetails("詳細オプション");
+    const ignTa = makeTextarea({ rows: 2, code: true, placeholder: "無視キー（カンマ区切り）" });
+    advDetails.body.appendChild(makeRow(ignTa, { label: "無視キー", block: true }));
+    const includeSame = makeCheck({ label: "同一行も差分行に含める" });
+    const nView = makeCheck({ label: "ビュー順序を正規化", checked: false });
+    const nPerm = makeCheck({ label: "権限順序を正規化", checked: false });
+    const nAll = makeCheck({ label: "配列順序を無視", checked: false });
+    const normGrid = document.createElement("div");
+    normGrid.className = "kus-lp__check-grid";
+    normGrid.appendChild(includeSame.label);
+    normGrid.appendChild(nView.label);
+    normGrid.appendChild(nPerm.label);
+    normGrid.appendChild(nAll.label);
+    advDetails.body.appendChild(normGrid);
+    panel.body.insertBefore(advDetails.details, panel.status);
+    const runBtn = makeButton("差分比較を実行", "run", { icon: "◎" });
+    panel.body.insertBefore(runBtn, panel.status);
+    const cardOut = makeCard({ title: "ファイル出力", number: 3, soft: true });
+    cardOut.body.appendChild(makeNote("比較完了後に利用できます。レポートに生設定を含めるか選べます。"));
+    const expMode = makeSelect([
+      ["diffOnly", "行データのみ"],
+      ["withCompared", "行データ + 比較セクションの設定"]
+    ], "diffOnly");
+    cardOut.body.appendChild(makeRow(expMode, { label: "レポート" }));
     const grid = document.createElement("div");
-    grid.className = "kus-dlite__export-grid";
-    function mkSubBtn(text) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "kus-dlite__btn-sub";
-      b.textContent = text;
-      return b;
-    }
-    const bJson = mkSubBtn("差分 JSON");
-    const bHtml = mkSubBtn("差分 HTML");
-    const bBundle = mkSubBtn("バンドル JSON");
-    const bPatch = mkSubBtn("パッチ JSON");
+    grid.className = "kus-lp__btn-grid";
+    const bJson = makeButton("差分 JSON", "sub", { icon: "↓" });
+    const bHtml = makeButton("差分 HTML", "sub", { icon: "↓" });
+    const bBundle = makeButton("バンドル JSON", "sub", { icon: "↓" });
+    const bPatch = makeButton("パッチ JSON", "sub", { icon: "↓" });
     grid.appendChild(bJson);
     grid.appendChild(bHtml);
     grid.appendChild(bBundle);
     grid.appendChild(bPatch);
-    cOut.appendChild(grid);
-    body.appendChild(cOut);
-    const st = document.createElement("div");
-    st.id = "kus-status";
-    st.className = "kus-dlite__status kus-dlite__status--neutral";
-    st.textContent = "比較元・比較先のアプリIDを入力して実行してください。";
-    body.appendChild(st);
-    const res = document.createElement("pre");
-    res.id = "kus-result";
-    res.className = "kus-dlite__result";
-    res.textContent = "";
-    body.appendChild(res);
-    root.appendChild(body);
-    document.body.appendChild(root);
-    return { root, bJson, bHtml, bBundle, bPatch, expMode, st, res };
-  }
-  function readForm(root) {
-    const q = (id) => root.querySelector(`#${id}`);
-    const scopes = [...root.querySelectorAll("input.kus-scope:checked")].map((x) => x.value);
-    return {
-      source: {
-        appId: q("kus-src-app").value.trim(),
-        guestId: q("kus-src-guest").value.trim(),
-        preview: q("kus-src-preview").checked
-      },
-      target: {
-        appId: q("kus-tgt-app").value.trim(),
-        guestId: q("kus-tgt-guest").value.trim(),
-        preview: q("kus-tgt-preview").checked
-      },
-      scopes,
-      ignoreKeys: q("kus-ignore").value,
-      includeSame: q("kus-include-same").checked,
-      normalizationPresetState: {
-        viewOrder: q("kus-norm-view").checked,
-        permissionOrder: q("kus-norm-perm").checked,
-        generalArrayOrder: q("kus-norm-all").checked
-      }
-    };
-  }
-  function printRows(rows, el) {
-    const max = 400;
-    const lines = [];
-    for (let i = 0; i < rows.length && i < max; i++) {
-      const r = rows[i];
-      lines.push(`${r.sectionKey || ""}	${r.type || ""}	${r.path || ""}	${r.label || ""}`);
-    }
-    el.textContent = lines.join("\n");
-    if (rows.length > max) el.textContent += `
-... 他 ${rows.length - max} 件`;
-  }
-  function mountDiffLitePanel(runDiffStandalone2) {
-    const { root, bJson, bHtml, bBundle, bPatch, expMode, st, res } = renderPanel();
+    cardOut.body.appendChild(grid);
+    panel.body.insertBefore(cardOut.card, panel.status);
     let cache = null;
-    function exportCtx() {
-      if (!cache) throw new Error("先に差分比較を実行してください");
+    function readForm() {
       return {
-        ...cache,
-        exportContentMode: expMode.value || "diffOnly"
+        source: { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked },
+        target: { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), preview: tgtPrev.checkbox.checked },
+        scopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value),
+        ignoreKeys: ignTa.value,
+        includeSame: includeSame.checkbox.checked,
+        normalizationPresetState: {
+          viewOrder: nView.checkbox.checked,
+          permissionOrder: nPerm.checkbox.checked,
+          generalArrayOrder: nAll.checkbox.checked
+        }
       };
     }
-    root.querySelector("#kus-run").onclick = () => {
-      setStatusBar(st, "実行中…", "neutral");
-      res.textContent = "";
+    function printRows(rows) {
+      const max = 400;
+      const lines = [];
+      for (let i = 0; i < rows.length && i < max; i++) {
+        const r = rows[i];
+        lines.push(`${r.sectionKey || ""}	${r.type || ""}	${r.path || ""}	${r.label || ""}`);
+      }
+      let txt = lines.join("\n");
+      if (rows.length > max) txt += `
+... 他 ${rows.length - max} 件`;
+      panel.setResult(txt || "差分はありません");
+    }
+    function exportCtx() {
+      if (!cache) throw new Error("先に差分比較を実行してください");
+      return { ...cache, exportContentMode: expMode.value || "diffOnly" };
+    }
+    runBtn.addEventListener("click", () => {
       cache = null;
-      const f = readForm(root);
-      runDiffStandalone2({
-        source: f.source,
-        target: f.target,
-        scopes: f.scopes,
-        ignoreKeys: f.ignoreKeys,
-        includeSame: f.includeSame,
-        normalizationPresetState: f.normalizationPresetState,
-        onStatus: (m) => {
-          setStatusBar(st, m, "neutral");
-        }
-      }).then((out) => {
+      panel.setResult("");
+      const f = readForm();
+      if (!f.scopes.length) {
+        panel.setStatus("比較セクションを 1 つ以上選択してください", "warn");
+        return;
+      }
+      liteRun(panel, "差分比較を実行中…", async () => {
+        const out = await runDiffStandalone2({
+          source: f.source,
+          target: f.target,
+          scopes: f.scopes,
+          ignoreKeys: f.ignoreKeys,
+          includeSame: f.includeSame,
+          normalizationPresetState: f.normalizationPresetState,
+          onStatus: (m) => panel.setStatus(m, "busy")
+        });
         cache = {
           rows: out.rows,
           fetchIssues: out.fetchIssues || [],
@@ -6620,53 +6933,44 @@ ${contextLine}`);
           ignoreKeys: f.ignoreKeys,
           normalizationPresetState: f.normalizationPresetState
         };
-        printRows(out.rows, res);
-        setStatusBar(
-          st,
-          `${out.summary?.text || "完了"} — ファイル出力ボタンから保存できます。`,
-          "ok"
-        );
-      }).catch((e) => {
-        setStatusBar(st, `エラー: ${e && e.message ? e.message : String(e)}`, "err");
+        printRows(out.rows);
+        panel.setStatus(`${out.summary?.text || "完了"} — ファイル出力ボタンから保存できます`, "ok");
       });
-    };
-    bJson.onclick = () => {
+    });
+    bJson.addEventListener("click", () => {
       try {
         runExportDiffJsonStandalone(exportCtx());
-        setStatusBar(st, "差分 JSON をダウンロードしました。", "ok");
+        panel.setStatus("差分 JSON をダウンロードしました", "ok");
       } catch (e) {
-        setStatusBar(st, `エラー: ${e.message || String(e)}`, "err");
+        panel.setStatus(`エラー: ${e.message || String(e)}`, "err");
       }
-    };
-    bHtml.onclick = () => {
+    });
+    bHtml.addEventListener("click", () => {
       try {
         runExportDiffHtmlStandalone(exportCtx());
-        setStatusBar(st, "差分 HTML をダウンロードしました。", "ok");
+        panel.setStatus("差分 HTML をダウンロードしました", "ok");
       } catch (e) {
-        setStatusBar(st, `エラー: ${e.message || String(e)}`, "err");
+        panel.setStatus(`エラー: ${e.message || String(e)}`, "err");
       }
-    };
-    bBundle.onclick = () => {
+    });
+    bBundle.addEventListener("click", () => {
       try {
         if (!cache) throw new Error("先に差分比較を実行してください");
         runExportBundleJsonStandalone(cache.sourceBundle, cache.targetBundle);
-        setStatusBar(st, "バンドル JSON をダウンロードしました。", "ok");
+        panel.setStatus("バンドル JSON をダウンロードしました", "ok");
       } catch (e) {
-        setStatusBar(st, `エラー: ${e.message || String(e)}`, "err");
+        panel.setStatus(`エラー: ${e.message || String(e)}`, "err");
       }
-    };
-    bPatch.onclick = () => {
+    });
+    bPatch.addEventListener("click", () => {
       try {
         if (!cache) throw new Error("先に差分比較を実行してください");
         runExportPatchJsonStandalone(cache.rows, cache.sourceBundle, cache.targetBundle);
-        setStatusBar(st, "パッチ JSON をダウンロードしました。", "ok");
+        panel.setStatus("パッチ JSON をダウンロードしました", "ok");
       } catch (e) {
-        setStatusBar(st, `エラー: ${e.message || String(e)}`, "err");
+        panel.setStatus(`エラー: ${e.message || String(e)}`, "err");
       }
-    };
-    root.querySelector("#kus-close").onclick = () => {
-      root.remove();
-    };
+    });
   }
 
   // src/entries/diff-lite-entry.ts

@@ -1,171 +1,175 @@
 'use strict';
 
 import { DEFAULT_APP_ID, SECTION_DEFS } from '../constants.js';
-import { setStatus } from '../ui/components.js';
 import { runApplyPreviewStandalone } from '../tabs/reflect-standalone.js';
-import { mountKusLitePanel } from './liteMount.js';
-import { row, mkInput, mkOption, liteRun } from './litePanelHelpers.js';
+import {
+  createLitePanel,
+  makeRow,
+  makeInput,
+  makeButton,
+  makeCheck,
+  makeChip,
+  makeCard,
+  makeTextarea,
+  makeDetails,
+  liteRun
+} from './litePanelTheme.js';
 
-let reflectLiteStateMemory: any = {};
+let memoryState: any = {};
 
 export function mountReflectLitePanel() {
-  const { bodySlot } = mountKusLitePanel({
+  const panel = createLitePanel({
     id: 'kus-reflect-lite',
     title: 'プレビュー反映',
-    note: '比較元アプリの設定を比較先プレビュー環境へ一括反映します。統合ツール.js は不要です。'
+    subtitle: '比較元アプリの設定を比較先プレビューへ一括反映します。',
+    accent: 'reflect',
+    badges: [{ label: 'Lite' }, { label: '比較先プレビューへ' }],
+    hint: '<strong>反映先は常にプレビュー</strong>環境です。本番デプロイはツールから行いません。'
   });
 
-  let savedState: any = { ...reflectLiteStateMemory };
+  // ---- アプリ ----
+  const srcApp = makeInput({ placeholder: '比較元アプリID', value: memoryState.sourceAppId || DEFAULT_APP_ID || '', width: 'id' });
+  const srcGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.sourceGuestId || '', width: 'guest' });
+  const tgtApp = makeInput({ placeholder: '比較先アプリID', value: memoryState.targetAppId || DEFAULT_APP_ID || '', width: 'id' });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.targetGuestId || '', width: 'guest' });
 
-  const srcApp = mkInput('比較元アプリID', { value: savedState.sourceAppId || DEFAULT_APP_ID || '' });
-  const srcGuest = mkInput('ゲストID（任意）', { value: savedState.sourceGuestId || '' });
-  const tgtApp = mkInput('比較先アプリID', { value: savedState.targetAppId || DEFAULT_APP_ID || '' });
-  const tgtGuest = mkInput('ゲストID（任意）', { value: savedState.targetGuestId || '' });
+  const copyBtn = makeButton('比較元 → 比較先', 'sub');
+  const currentBtn = makeButton('現在のアプリを比較先', 'sub');
 
-  bodySlot.appendChild(row('比較元ID', srcApp));
-  bodySlot.appendChild(row('元ゲスト', srcGuest));
-  bodySlot.appendChild(row('比較先ID', tgtApp));
-  bodySlot.appendChild(row('先ゲスト', tgtGuest));
+  const cardApp = makeCard({ title: 'アプリ', number: 1 });
+  cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: '比較元' }));
+  cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '比較先' }));
+  const quickRow = makeRow([copyBtn, currentBtn]);
+  quickRow.style.marginTop = '4px';
+  cardApp.body.appendChild(quickRow);
+  panel.body.insertBefore(cardApp.card, panel.status);
 
-  const quickRow = document.createElement('div');
-  quickRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin:-2px 0 10px';
-  const mkQuickBtn = (text) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.textContent = text;
-    btn.style.cssText =
-      'padding:5px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;color:#334155;cursor:pointer';
-    quickRow.appendChild(btn);
-    return btn;
-  };
-  const copySrcToTgtBtn = mkQuickBtn('比較元→比較先をコピー');
-  const setCurrentToTgtBtn = mkQuickBtn('現在のアプリを比較先にセット');
-  bodySlot.appendChild(quickRow);
+  copyBtn.addEventListener('click', () => {
+    tgtApp.value = srcApp.value.trim();
+    tgtGuest.value = srcGuest.value.trim();
+    saveState();
+    panel.setStatus('比較元IDを比較先へコピーしました', 'info');
+  });
+  currentBtn.addEventListener('click', () => {
+    tgtApp.value = DEFAULT_APP_ID || '';
+    saveState();
+    panel.setStatus('現在のアプリIDを比較先にセットしました', 'info');
+  });
 
-  const scopeBox = document.createElement('div');
-  scopeBox.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px';
+  // ---- セクション選択 ----
+  const cardScope = makeCard({ title: '反映するセクション', number: 2 });
   const putSections = SECTION_DEFS.filter((d) => d.put);
-  const scopeChecks = putSections.map((d) => {
-    const label = document.createElement('label');
-    label.style.cssText = 'font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;padding:3px 6px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = true;
-    cb.dataset.key = d.key;
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(d.label));
-    scopeBox.appendChild(label);
-    return cb;
-  });
+  const chips = putSections.map((d) => makeChip({ label: d.label, checked: true, value: d.key }));
+  const chipBox = document.createElement('div');
+  chipBox.className = 'kus-lp__chips';
+  chips.forEach((c) => chipBox.appendChild(c.label));
+  cardScope.body.appendChild(chipBox);
 
-  const scopeLabel = document.createElement('div');
-  scopeLabel.style.cssText = 'font-size:12px;font-weight:600;color:#334155;margin-bottom:6px';
-  scopeLabel.textContent = '反映するセクション:';
-  bodySlot.appendChild(scopeLabel);
-  const scopeActionRow = document.createElement('div');
-  scopeActionRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin:0 0 6px';
-  const selectAllBtn = document.createElement('button');
-  selectAllBtn.type = 'button';
-  selectAllBtn.textContent = '全選択';
-  selectAllBtn.style.cssText =
-    'padding:5px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer';
-  const clearAllBtn = document.createElement('button');
-  clearAllBtn.type = 'button';
-  clearAllBtn.textContent = '全解除';
-  clearAllBtn.style.cssText =
-    'padding:5px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer';
-  scopeActionRow.appendChild(selectAllBtn);
-  scopeActionRow.appendChild(clearAllBtn);
-  bodySlot.appendChild(scopeActionRow);
-  bodySlot.appendChild(scopeBox);
+  const allBtn = makeButton('全選択', 'sub');
+  const noneBtn = makeButton('全解除', 'sub');
+  cardScope.actions.appendChild(allBtn);
+  cardScope.actions.appendChild(noneBtn);
+  allBtn.addEventListener('click', () => chips.forEach((c) => { c.checkbox.checked = true; }));
+  noneBtn.addEventListener('click', () => chips.forEach((c) => { c.checkbox.checked = false; }));
+  panel.body.insertBefore(cardScope.card, panel.status);
 
-  const optRow = document.createElement('div');
-  optRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px';
-  const addOpt = (text: string) => {
-    const opt = mkOption(text);
-    optRow.appendChild(opt.label);
-    return opt.checkbox;
-  };
-  const backupCb = addOpt('バックアップ保存');
-  backupCb.checked = true;
-  const srcPreviewCb = addOpt('比較元をプレビューから取得');
-  srcPreviewCb.checked = savedState.sourcePreview !== false;
-  const stopCb = addOpt('エラー時中断');
-  stopCb.checked = !!savedState.stopOnError;
-  bodySlot.appendChild(optRow);
-  const deployNote = document.createElement('div');
-  deployNote.style.cssText = 'font-size:11px;color:#64748b;margin:-4px 0 10px;line-height:1.45';
-  deployNote.textContent = '本番デプロイはツールから実行できません。プレビュー反映後、kintone管理画面から手動でデプロイしてください。';
-  bodySlot.appendChild(deployNote);
+  // ---- オプション ----
+  const cardOpt = makeCard({ title: '実行オプション', number: 3, soft: true });
+  const backup = makeCheck({ label: '比較先プレビューのバックアップを保存', checked: true });
+  const srcPreview = makeCheck({ label: '比較元をプレビューから取得', checked: memoryState.sourcePreview !== false });
+  const stop = makeCheck({ label: 'エラー時に中断する', checked: !!memoryState.stopOnError });
+  const optGrid = document.createElement('div');
+  optGrid.className = 'kus-lp__check-grid';
+  optGrid.appendChild(backup.label);
+  optGrid.appendChild(srcPreview.label);
+  optGrid.appendChild(stop.label);
+  cardOpt.body.appendChild(optGrid);
 
-  const logArea = document.createElement('pre');
-  logArea.style.cssText = 'margin:0;padding:10px;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;max-height:200px;overflow:auto;white-space:pre-wrap;display:none';
-  bodySlot.appendChild(logArea);
+  // Lookup mapping
+  const lookupDetails = makeDetails('Lookup AppID マッピング（任意）');
+  const lookupTa = makeTextarea({ rows: 3, code: true, placeholder: '{"旧AppID":"新AppID", ...}' });
+  lookupDetails.body.appendChild(lookupTa);
+  cardOpt.body.appendChild(lookupDetails.details);
+  panel.body.insertBefore(cardOpt.card, panel.status);
 
-  const runBtn = document.createElement('button');
-  runBtn.type = 'button';
-  runBtn.textContent = 'プレビュー反映を実行';
-  runBtn.style.cssText =
-    'padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:linear-gradient(180deg,#dc2626,#b91c1c);color:#fff;cursor:pointer;margin-top:4px';
+  // ---- 実行 ----
+  const runBtn = makeButton('プレビュー反映を実行', 'run', { icon: '⤴' });
+  runBtn.classList.add('kus-lp__btn--danger');
+  runBtn.classList.remove('kus-lp__btn--run');
+  runBtn.style.cssText = ''; // クラスのみ反映
+  // 反映は破壊的なので danger 色のまま run 同等の幅を与える
+  runBtn.classList.add('kus-lp__btn--danger');
+  runBtn.style.width = '100%';
+  runBtn.style.padding = '11px 16px';
+  runBtn.style.fontSize = '13px';
+  runBtn.style.fontWeight = '700';
+  panel.body.insertBefore(runBtn, panel.status);
 
-  const saveState = () => {
-    const payload = {
+  // 反映ログ表示
+  const logCard = makeCard({ title: '実行ログ', soft: true });
+  const logPre = document.createElement('pre');
+  logPre.style.cssText = 'margin:0;padding:8px 10px;font:11.5px/1.5 ui-monospace,monospace;background:#0f172a;color:#e2e8f0;border-radius:8px;max-height:240px;overflow:auto;white-space:pre-wrap;display:none';
+  logCard.body.appendChild(logPre);
+  logCard.card.style.display = 'none';
+  panel.body.insertBefore(logCard.card, panel.status);
+
+  function saveState() {
+    memoryState = {
       sourceAppId: srcApp.value.trim(),
       sourceGuestId: srcGuest.value.trim(),
       targetAppId: tgtApp.value.trim(),
       targetGuestId: tgtGuest.value.trim(),
-      sourcePreview: srcPreviewCb.checked,
-      stopOnError: stopCb.checked
+      sourcePreview: srcPreview.checkbox.checked,
+      stopOnError: stop.checkbox.checked
     };
-    reflectLiteStateMemory = { ...payload };
-  };
+  }
 
-  copySrcToTgtBtn.addEventListener('click', () => {
-    tgtApp.value = srcApp.value.trim();
-    tgtGuest.value = srcGuest.value.trim();
-    saveState();
-    setStatus('比較元IDを比較先へコピーしました');
-  });
-
-  setCurrentToTgtBtn.addEventListener('click', () => {
-    tgtApp.value = DEFAULT_APP_ID || '';
-    saveState();
-    setStatus('現在のアプリIDを比較先にセットしました');
-  });
-
-  selectAllBtn.addEventListener('click', () => {
-    scopeChecks.forEach((cb) => { cb.checked = true; });
-  });
-  clearAllBtn.addEventListener('click', () => {
-    scopeChecks.forEach((cb) => { cb.checked = false; });
-  });
+  function parseLookupMap(text: string): Record<string, string> {
+    const t = text.trim();
+    if (!t) return {};
+    try {
+      const parsed = JSON.parse(t);
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed || {})) {
+        if (k && v != null) out[String(k).trim()] = String(v).trim();
+      }
+      return out;
+    } catch {
+      throw new Error('Lookup マッピング JSON が壊れています');
+    }
+  }
 
   runBtn.addEventListener('click', () => {
-    const scopes = scopeChecks.filter((cb) => cb.checked).map((cb) => cb.dataset.key);
-    logArea.style.display = 'block';
-    logArea.textContent = '';
+    const scopes = chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value);
+    if (!scopes.length) {
+      panel.setStatus('反映するセクションを選択してください', 'warn');
+      return;
+    }
     saveState();
-    return liteRun(async () => {
+    logCard.card.style.display = 'block';
+    logPre.style.display = 'block';
+    logPre.textContent = '';
+    return liteRun(panel, 'プレビュー反映 実行中…', async () => {
+      const lookupMap = parseLookupMap(lookupTa.value);
       await runApplyPreviewStandalone(
         {
           sourceAppId: srcApp.value.trim(),
           sourceGuestId: srcGuest.value.trim(),
-          sourcePreview: srcPreviewCb.checked,
+          sourcePreview: srcPreview.checkbox.checked,
           targetAppId: tgtApp.value.trim(),
           targetGuestId: tgtGuest.value.trim(),
           scopes,
+          lookupMap,
           doDeploy: false,
-          doBackup: backupCb.checked,
-          stopOnError: stopCb.checked
+          doBackup: backup.checkbox.checked,
+          stopOnError: stop.checkbox.checked
         },
-        (m, e) => setStatus(m, e),
+        (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
         (logs: string[]) => {
-          logArea.textContent = logs.join('\n');
-          logArea.scrollTop = logArea.scrollHeight;
+          logPre.textContent = logs.join('\n');
+          logPre.scrollTop = logPre.scrollHeight;
         }
       );
-    });
+    }, 'プレビュー反映が完了しました（kintone管理画面でデプロイ実行してください）');
   });
-
-  bodySlot.appendChild(runBtn);
 }

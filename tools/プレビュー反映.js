@@ -434,6 +434,59 @@
     }
   });
 
+  // src/utils.ts
+  function deepClone(v) {
+    return v == null ? v : JSON.parse(JSON.stringify(v));
+  }
+  function normalize(v) {
+    if (Array.isArray(v)) return v.map(normalize);
+    if (v && typeof v === "object") {
+      const o = {};
+      Object.keys(v).sort().forEach((k) => {
+        if (META_KEYS.has(k)) return;
+        o[k] = normalize(v[k]);
+      });
+      return o;
+    }
+    return v;
+  }
+  function compactForLog(value, max = 220) {
+    try {
+      const raw = typeof value === "string" ? value : JSON.stringify(value);
+      if (!raw) return "";
+      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
+    } catch (e) {
+      const raw = String(value ?? "");
+      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
+    }
+  }
+  function apiErrorWithContext(err, meta) {
+    if (err && err.__apiDiag) return err;
+    const method = meta?.method || "GET";
+    const prefix = meta?.prefix || "";
+    const path = meta?.path || "";
+    const bodyOrParams = meta?.payload;
+    const app = bodyOrParams?.app ?? bodyOrParams?.id ?? bodyOrParams?.apps?.[0] ?? "";
+    const bodySummary = compactForLog(bodyOrParams);
+    const endpoint = `${prefix}${path}`;
+    const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
+    const baseMessage = err?.message || String(err);
+    const wrapped = new Error(`${baseMessage}
+${contextLine}`);
+    wrapped.__apiDiag = true;
+    wrapped.original = err;
+    if (err?.code) wrapped.code = err.code;
+    if (err?.id) wrapped.id = err.id;
+    if (err?.stack) wrapped.stack = err.stack;
+    return wrapped;
+  }
+  var init_utils = __esm({
+    "src/utils.ts"() {
+      "use strict";
+      init_constants();
+    }
+  });
+
   // src/state.ts
   function loadReflectApplyHistory() {
     return [];
@@ -535,69 +588,6 @@
     }
   });
 
-  // src/utils.ts
-  function deepClone(v) {
-    return v == null ? v : JSON.parse(JSON.stringify(v));
-  }
-  function normalize(v) {
-    if (Array.isArray(v)) return v.map(normalize);
-    if (v && typeof v === "object") {
-      const o = {};
-      Object.keys(v).sort().forEach((k) => {
-        if (META_KEYS.has(k)) return;
-        o[k] = normalize(v[k]);
-      });
-      return o;
-    }
-    return v;
-  }
-  function compactForLog(value, max = 220) {
-    try {
-      const raw = typeof value === "string" ? value : JSON.stringify(value);
-      if (!raw) return "";
-      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
-    } catch (e) {
-      const raw = String(value ?? "");
-      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
-    }
-  }
-  function apiErrorWithContext(err, meta) {
-    if (err && err.__apiDiag) return err;
-    const method = meta?.method || "GET";
-    const prefix = meta?.prefix || "";
-    const path = meta?.path || "";
-    const bodyOrParams = meta?.payload;
-    const app = bodyOrParams?.app ?? bodyOrParams?.id ?? bodyOrParams?.apps?.[0] ?? "";
-    const bodySummary = compactForLog(bodyOrParams);
-    const endpoint = `${prefix}${path}`;
-    const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
-    const baseMessage = err?.message || String(err);
-    const wrapped = new Error(`${baseMessage}
-${contextLine}`);
-    wrapped.__apiDiag = true;
-    wrapped.original = err;
-    if (err?.code) wrapped.code = err.code;
-    if (err?.id) wrapped.id = err.id;
-    if (err?.stack) wrapped.stack = err.stack;
-    return wrapped;
-  }
-  var init_utils = __esm({
-    "src/utils.ts"() {
-      "use strict";
-      init_constants();
-    }
-  });
-
-  // src/diff/engine.ts
-  var init_engine = __esm({
-    "src/diff/engine.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_utils();
-    }
-  });
-
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -660,10 +650,10 @@ ${contextLine}`);
   }
   function touchApiPathMetric(path, field) {
     const key = String(path || "");
-    const row2 = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
-    row2[field] += 1;
-    apiGetMetrics.byPath[key] = row2;
-    return row2;
+    const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
+    row[field] += 1;
+    apiGetMetrics.byPath[key] = row;
+    return row;
   }
   async function apiGet(prefix, path, params, optionsOrRetries) {
     const options = normalizeApiGetOptions(optionsOrRetries);
@@ -898,6 +888,16 @@ ${contextLine}`);
     }
   });
 
+  // src/diff/engine.ts
+  var init_engine = __esm({
+    "src/diff/engine.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      init_utils();
+    }
+  });
+
   // src/diff/enrich.ts
   var init_enrich = __esm({
     "src/diff/enrich.ts"() {
@@ -953,60 +953,6 @@ ${contextLine}`);
 
   // src/entries/reflect-lite-ui.ts
   init_constants();
-
-  // src/ui/components.ts
-  init_constants();
-  init_state();
-  init_utils();
-  init_filter();
-
-  // src/diff/ignore-presets.ts
-  init_state();
-
-  // src/ui/components.ts
-  init_engine();
-  init_enrich();
-
-  // src/reflect/nodeModeUi.ts
-  init_state();
-
-  // src/ui/components.ts
-  init_constants();
-  init_dialog();
-
-  // src/oss_integrations.ts
-  init_utils();
-  init_dialog();
-
-  // src/ui/components.ts
-  var ui2 = {};
-  function setComponentUi(uiRefs) {
-    ui2 = uiRefs;
-  }
-  function setStatus(msg, isError = false) {
-    if (!ui2.status) return;
-    ui2.status.textContent = msg;
-    ui2.status.style.background = "";
-    ui2.status.style.color = "";
-    ui2.status.classList.remove("status--neutral", "status--error");
-    ui2.status.classList.add(isError ? "status--error" : "status--neutral");
-    const bar = ui2.status.closest?.(".status-bar");
-    if (bar) bar.classList.toggle("status-bar--error", !!isError);
-  }
-  var SCOPE_PICKER_META = Object.freeze({
-    diff: Object.freeze({
-      title: "比較対象セクション",
-      sub: "差分比較で取得する API 設定を選びます。"
-    }),
-    reflect: Object.freeze({
-      title: "反映するセクション",
-      sub: "プレビュー反映でまとめて適用するセクションを選びます。"
-    }),
-    settingsExport: Object.freeze({
-      title: "取得対象セクション",
-      sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
-    })
-  });
 
   // src/tabs/reflect-standalone.ts
   init_constants();
@@ -1078,7 +1024,7 @@ ${contextLine}`);
       if (stopOnError) throw e;
     }
   }
-  async function runApplyPreviewStandalone(opts, setStatus2, onProgress) {
+  async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
     const { sourceAppId, sourceGuestId, sourcePreview, targetAppId, targetGuestId } = opts;
     if (!sourceAppId) throw new Error("比較元アプリIDを入力してください");
     if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
@@ -1087,22 +1033,22 @@ ${contextLine}`);
     const lookupMap = opts.lookupMap || {};
     const stopOnError = !!opts.stopOnError;
     const logs = [];
-    setStatus2("比較元設定を取得中...");
+    setStatus("比較元設定を取得中...");
     const sourceBundle = await fetchBundle({
       appId: sourceAppId,
       guestId: sourceGuestId || "",
       preview: !!sourcePreview,
       sections: scopes,
-      onProgress: (p, l) => setStatus2(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
+      onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
     });
     if (opts.doBackup) {
-      setStatus2("比較先プレビューのバックアップ取得中...");
+      setStatus("比較先プレビューのバックアップ取得中...");
       const backup = await fetchBundle({
         appId: targetAppId,
         guestId: targetGuestId || "",
         preview: true,
         sections: scopes,
-        onProgress: (p, l) => setStatus2(`バックアップ取得 ${Math.round(p * 100)}% (${l})`)
+        onProgress: (p, l) => setStatus(`バックアップ取得 ${Math.round(p * 100)}% (${l})`)
       });
       const payload = JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), scopes, bundle: backup }, null, 2);
       const blob = new Blob([payload], { type: "application/json" });
@@ -1132,7 +1078,7 @@ ${contextLine}`);
         onProgress(logs);
         continue;
       }
-      setStatus2(`反映中 ${i + 1}/${scopes.length}: ${def.label}`);
+      setStatus(`反映中 ${i + 1}/${scopes.length}: ${def.label}`);
       try {
         if (secKey === "fieldSettings") {
           await applyFieldSection(prefix, app, sourceSec.properties || sourceSec, logs, lookupMap, stopOnError);
@@ -1159,253 +1105,717 @@ ${contextLine}`);
     logs.push("");
     logs.push(`=== 完了: OK ${ok} / NG ${ng} ===`);
     onProgress(logs);
-    setStatus2(hadError ? "反映完了（一部エラーあり）" : "反映完了");
+    setStatus(hadError ? "反映完了（一部エラーあり）" : "反映完了");
     return logs;
   }
 
-  // src/entries/liteMount.ts
+  // src/ui/components.ts
+  init_constants();
+  init_state();
+  init_utils();
+  init_filter();
+
+  // src/diff/ignore-presets.ts
+  init_state();
+
+  // src/ui/components.ts
+  init_engine();
+  init_enrich();
+
+  // src/reflect/nodeModeUi.ts
+  init_state();
+
+  // src/ui/components.ts
+  init_constants();
   init_dialog();
-  var PANEL_STYLE = "position:fixed;z-index:999999;top:max(16px,2vh);right:max(16px,2vw);width:min(440px,94vw);max-height:min(92vh,880px);overflow:hidden;display:flex;flex-direction:column;background:#fff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 12px 40px rgba(15,23,42,.2);font:12px/1.5 system-ui,sans-serif;";
-  function mountKusLitePanel(opts) {
-    const { id, title, note } = opts;
-    const old = document.getElementById(id);
+
+  // src/oss_integrations.ts
+  init_utils();
+  init_dialog();
+
+  // src/ui/components.ts
+  var ui2 = {};
+  function setComponentUi(uiRefs) {
+    ui2 = uiRefs;
+  }
+  var SCOPE_PICKER_META = Object.freeze({
+    diff: Object.freeze({
+      title: "比較対象セクション",
+      sub: "差分比較で取得する API 設定を選びます。"
+    }),
+    reflect: Object.freeze({
+      title: "反映するセクション",
+      sub: "プレビュー反映でまとめて適用するセクションを選びます。"
+    }),
+    settingsExport: Object.freeze({
+      title: "取得対象セクション",
+      sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
+    })
+  });
+
+  // src/entries/litePanelTheme.ts
+  init_dialog();
+  var STYLE_ID = "kus-lp-theme-styles";
+  var ACCENTS = {
+    diff: { from: "#1d4ed8", via: "#2563eb", to: "#0ea5e9", chip: "#dbeafe", ring: "rgba(37,99,235,.16)" },
+    reflect: { from: "#b91c1c", via: "#dc2626", to: "#f97316", chip: "#fee2e2", ring: "rgba(220,38,38,.18)" },
+    field: { from: "#6d28d9", via: "#7c3aed", to: "#a855f7", chip: "#ede9fe", ring: "rgba(124,58,237,.18)" },
+    jsconfig: { from: "#0f766e", via: "#0d9488", to: "#22d3ee", chip: "#ccfbf1", ring: "rgba(13,148,136,.18)" },
+    settings: { from: "#0369a1", via: "#0284c7", to: "#22d3ee", chip: "#e0f2fe", ring: "rgba(2,132,199,.18)" },
+    design: { from: "#854d0e", via: "#a16207", to: "#facc15", chip: "#fef9c3", ring: "rgba(161,98,7,.18)" },
+    er: { from: "#0f766e", via: "#15803d", to: "#84cc16", chip: "#dcfce7", ring: "rgba(21,128,61,.18)" },
+    process: { from: "#9a3412", via: "#ea580c", to: "#f59e0b", chip: "#ffedd5", ring: "rgba(234,88,12,.18)" },
+    record: { from: "#1e293b", via: "#334155", to: "#64748b", chip: "#e2e8f0", ring: "rgba(51,65,85,.18)" }
+  };
+  var THEME_CSS = `
+@keyframes kus-lp-spin { to { transform: rotate(360deg); } }
+@keyframes kus-lp-fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+.kus-lp{
+  --c-bg:#ffffff;
+  --c-surface:#f8fafc;
+  --c-surface-2:#f1f5f9;
+  --c-border:#e2e8f0;
+  --c-border-strong:#cbd5e1;
+  --c-text:#0f172a;
+  --c-text-2:#334155;
+  --c-muted:#64748b;
+  --c-link:#2563eb;
+  --c-ok-bg:#ecfdf5;
+  --c-ok-fg:#065f46;
+  --c-ok-bd:#a7f3d0;
+  --c-err-bg:#fef2f2;
+  --c-err-fg:#991b1b;
+  --c-err-bd:#fecaca;
+  --c-warn-bg:#fffbeb;
+  --c-warn-fg:#92400e;
+  --c-warn-bd:#fde68a;
+  --c-info-bg:#eff6ff;
+  --c-info-fg:#1e3a8a;
+  --c-info-bd:#bfdbfe;
+  --c-accent-from:#1d4ed8;
+  --c-accent-via:#2563eb;
+  --c-accent-to:#0ea5e9;
+  --c-accent-chip:#dbeafe;
+  --c-accent-ring:rgba(37,99,235,.16);
+
+  position:fixed;
+  z-index:999999;
+  top:max(16px,2vh);
+  right:max(16px,2vw);
+  width:min(520px,96vw);
+  max-height:min(92vh,920px);
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  background:var(--c-bg);
+  border:1px solid var(--c-border);
+  border-radius:18px;
+  box-shadow:0 4px 6px -1px rgba(15,23,42,.08),0 28px 60px -12px rgba(15,23,42,.30);
+  font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  color:var(--c-text);
+  animation:kus-lp-fade-in .18s ease-out;
+}
+
+.kus-lp__hero{
+  flex-shrink:0;
+  position:relative;
+  padding:16px 18px 18px;
+  color:#fff;
+  background:linear-gradient(125deg,var(--c-accent-from) 0%,var(--c-accent-via) 45%,var(--c-accent-to) 100%);
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+}
+.kus-lp__hero-main{min-width:0;flex:1}
+.kus-lp__title{margin:0;font-size:17px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
+.kus-lp__title-icon{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:rgba(255,255,255,.22);border-radius:7px}
+.kus-lp__subtitle{margin:4px 0 0;font-size:12px;color:rgba(255,255,255,.85);line-height:1.45}
+.kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
+.kus-lp__badge{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
+}
+.kus-lp__close{
+  flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
+  color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  transition:background .12s ease;
+}
+.kus-lp__close:hover{background:rgba(255,255,255,.24)}
+
+.kus-lp__body{padding:16px 18px 18px;overflow-y:auto;flex:1;min-height:0}
+.kus-lp__body::-webkit-scrollbar{width:10px;height:10px}
+.kus-lp__body::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+.kus-lp__body::-webkit-scrollbar-thumb:hover{background:#94a3b8;background-clip:padding-box;border:2px solid transparent}
+
+.kus-lp__hint{
+  font-size:12px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
+  padding:10px 12px;background:var(--c-surface);border-radius:10px;border:1px solid var(--c-border);
+}
+.kus-lp__hint strong{color:var(--c-text-2)}
+
+/* ===== Tab bar (lite 内タブ) ===== */
+.kus-lp__tabs{
+  display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--c-border);
+  margin:0 0 14px;padding:0;
+}
+.kus-lp__tab{
+  position:relative;background:transparent;border:none;cursor:pointer;
+  padding:8px 12px 9px;font-size:12px;font-weight:600;color:var(--c-muted);
+  border-radius:8px 8px 0 0;
+}
+.kus-lp__tab:hover{color:var(--c-text-2);background:var(--c-surface)}
+.kus-lp__tab[aria-selected="true"]{color:var(--c-accent-via);background:transparent}
+.kus-lp__tab[aria-selected="true"]::after{
+  content:'';position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,var(--c-accent-via),var(--c-accent-to));
+}
+.kus-lp__tab-panel[hidden]{display:none}
+
+/* ===== Card ===== */
+.kus-lp__card{
+  background:var(--c-bg);
+  border:1px solid var(--c-border);
+  border-radius:12px;
+  padding:14px 16px;
+  margin-bottom:12px;
+}
+.kus-lp__card--soft{background:var(--c-surface)}
+.kus-lp__card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-2px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__card-title{font-size:11.5px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
+.kus-lp__card-num{
+  display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:11px;font-weight:700;border-radius:999px;
+}
+.kus-lp__card-actions{display:flex;gap:6px}
+
+/* ===== Row (label + control) ===== */
+.kus-lp__row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-bottom:10px}
+.kus-lp__row:last-child{margin-bottom:0}
+.kus-lp__row--block{display:block}
+.kus-lp__row--block > .kus-lp__label{display:block;margin-bottom:5px}
+.kus-lp__label{font-size:12px;font-weight:600;color:var(--c-text-2);min-width:5em}
+
+/* ===== Inputs ===== */
+.kus-lp__input,.kus-lp__textarea,.kus-lp__select{
+  appearance:none;
+  border:1px solid var(--c-border);
+  border-radius:8px;padding:7px 10px;font-size:12.5px;
+  background:var(--c-bg);color:var(--c-text);
+  outline:none;transition:border-color .15s,box-shadow .15s;
+  font-family:inherit;
+}
+.kus-lp__input:focus,.kus-lp__textarea:focus,.kus-lp__select:focus{
+  border-color:var(--c-accent-via);box-shadow:0 0 0 3px var(--c-accent-ring);
+}
+.kus-lp__input--id{width:min(120px,36vw)}
+.kus-lp__input--guest{width:min(110px,32vw)}
+.kus-lp__input--narrow{width:min(120px,40vw)}
+.kus-lp__input--medium{width:min(180px,52vw)}
+.kus-lp__input--wide{flex:1;min-width:160px}
+.kus-lp__input--full{width:100%;box-sizing:border-box}
+.kus-lp__textarea{width:100%;box-sizing:border-box;min-height:60px;resize:vertical}
+.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;background:var(--c-surface)}
+.kus-lp__file{font-size:12px;padding:5px 0}
+
+/* ===== Checkbox / chip ===== */
+.kus-lp__check{font-size:12px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.kus-lp__check input{width:14px;height:14px;accent-color:var(--c-accent-via);margin:0}
+.kus-lp__check-grid{display:flex;flex-wrap:wrap;gap:8px 12px;margin-bottom:10px}
+
+.kus-lp__chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.kus-lp__chip{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:11.5px;color:var(--c-text-2);
+  background:var(--c-bg);border:1px solid var(--c-border-strong);
+  border-radius:999px;padding:4px 10px 4px 7px;cursor:pointer;user-select:none;
+  transition:background .12s,border-color .12s;
+}
+.kus-lp__chip:hover{background:var(--c-surface);border-color:#94a3b8}
+.kus-lp__chip input{accent-color:var(--c-accent-via);width:13px;height:13px;margin:0}
+.kus-lp__chip:has(input:checked){background:var(--c-accent-chip);border-color:var(--c-accent-via);color:var(--c-accent-from);font-weight:600}
+
+/* ===== Buttons ===== */
+.kus-lp__btn{
+  appearance:none;border:1px solid transparent;border-radius:10px;
+  font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+  padding:8px 14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  transition:filter .12s,transform .04s,background .12s,border-color .12s;
+}
+.kus-lp__btn:active{transform:scale(.98)}
+.kus-lp__btn[disabled],.kus-lp__btn:disabled{opacity:.55;cursor:not-allowed}
+
+.kus-lp__btn--primary{background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 4px var(--c-accent-ring)}
+.kus-lp__btn--primary:hover:not(:disabled){filter:brightness(1.06)}
+
+.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:13px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
+.kus-lp__btn--run:hover:not(:disabled){filter:brightness(1.07)}
+
+.kus-lp__btn--ghost{background:var(--c-surface);color:var(--c-text-2);border-color:var(--c-border-strong)}
+.kus-lp__btn--ghost:hover:not(:disabled){background:#fff;border-color:#94a3b8}
+
+.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:11.5px;padding:7px 10px}
+.kus-lp__btn--sub:hover:not(:disabled){background:#fff;border-color:#94a3b8}
+
+.kus-lp__btn--danger{background:linear-gradient(180deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 2px 4px rgba(220,38,38,.25)}
+.kus-lp__btn--danger:hover:not(:disabled){filter:brightness(1.05)}
+
+.kus-lp__btn-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.kus-lp__btn-row--stack{flex-direction:column}
+.kus-lp__btn-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:380px){.kus-lp__btn-grid{grid-template-columns:1fr}}
+
+/* ===== Status ===== */
+.kus-lp__status{
+  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;
+  border:1px solid var(--c-border);background:var(--c-surface-2);color:var(--c-text-2);
+  min-height:2.6em;display:flex;align-items:flex-start;gap:8px;
+}
+.kus-lp__status--ok{background:var(--c-ok-bg);color:var(--c-ok-fg);border-color:var(--c-ok-bd)}
+.kus-lp__status--err{background:var(--c-err-bg);color:var(--c-err-fg);border-color:var(--c-err-bd)}
+.kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
+.kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
+.kus-lp__status-icon{font-size:14px;line-height:1.2}
+.kus-lp__status-busy::before{
+  content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
+  border:2px solid var(--c-muted);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
+}
+
+/* ===== Result / Log ===== */
+.kus-lp__result{
+  margin-top:10px;padding:11px 13px;background:#0f172a;color:#e2e8f0;border-radius:10px;
+  font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;
+  border:1px solid #1e293b;
+}
+.kus-lp__result--empty{display:none}
+.kus-lp__panel-html{
+  margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
+  background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
+}
+.kus-lp__panel-html--empty{display:none}
+.kus-lp__panel-html table{border-collapse:collapse;width:100%}
+.kus-lp__panel-html th,.kus-lp__panel-html td{padding:6px 8px;border-bottom:1px solid var(--c-border);text-align:left}
+.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:11px;color:var(--c-text-2)}
+
+/* ===== Misc ===== */
+.kus-lp__note{font-size:11.5px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
+.kus-lp__note--warn{color:var(--c-warn-fg);padding:7px 10px;background:var(--c-warn-bg);border:1px solid var(--c-warn-bd);border-radius:8px;margin:6px 0}
+.kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
+.kus-lp__small{font-size:11px;color:var(--c-muted)}
+.kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
+
+/* セクション折りたたみ (details) */
+.kus-lp__details{
+  border:1px solid var(--c-border);border-radius:10px;background:var(--c-bg);
+  margin-bottom:10px;overflow:hidden;
+}
+.kus-lp__details > summary{
+  list-style:none;cursor:pointer;padding:10px 14px;
+  font-size:12.5px;font-weight:600;color:var(--c-text-2);
+  display:flex;align-items:center;gap:8px;
+}
+.kus-lp__details > summary::-webkit-details-marker{display:none}
+.kus-lp__details > summary::before{
+  content:'';width:8px;height:8px;border-right:2px solid var(--c-muted);border-bottom:2px solid var(--c-muted);
+  transform:rotate(-45deg);transition:transform .15s;display:inline-block;
+}
+.kus-lp__details[open] > summary::before{transform:rotate(45deg)}
+.kus-lp__details > summary:hover{background:var(--c-surface)}
+.kus-lp__details-body{padding:0 14px 12px}
+
+/* Wide variant (一部 lite 用に幅広にしたい場合) */
+.kus-lp--wide{width:min(640px,96vw)}
+`;
+  function ensureThemeStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const s = document.createElement("style");
+    s.id = STYLE_ID;
+    s.textContent = THEME_CSS;
+    document.head.appendChild(s);
+  }
+  function applyAccentVars(root2, accentKey) {
+    const a = ACCENTS[accentKey] || ACCENTS.diff;
+    root2.style.setProperty("--c-accent-from", a.from);
+    root2.style.setProperty("--c-accent-via", a.via);
+    root2.style.setProperty("--c-accent-to", a.to);
+    root2.style.setProperty("--c-accent-chip", a.chip);
+    root2.style.setProperty("--c-accent-ring", a.ring);
+  }
+  function createLitePanel(opts) {
+    ensureThemeStyles();
+    const old = document.getElementById(opts.id);
     if (old) old.remove();
     const root2 = document.createElement("div");
-    root2.id = id;
-    root2.style.cssText = PANEL_STYLE;
-    const head = document.createElement("div");
-    head.style.cssText = "flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;background:linear-gradient(125deg,#1d4ed8,#2563eb);color:#fff";
-    const t = document.createElement("div");
-    t.textContent = title;
-    t.style.cssText = "font-weight:700;font-size:14px";
-    const close = document.createElement("button");
-    close.type = "button";
-    close.textContent = "閉じる";
-    close.style.cssText = "padding:5px 10px;font-size:11px;border:1px solid rgba(255,255,255,.5);border-radius:8px;background:rgba(255,255,255,.15);color:#fff;cursor:pointer;font-weight:600";
-    close.addEventListener("click", () => {
-      root2.remove();
-      setRootElement(null);
-    });
-    head.appendChild(t);
-    head.appendChild(close);
-    root2.appendChild(head);
-    const scroll = document.createElement("div");
-    scroll.style.cssText = "padding:12px 14px 14px;overflow-y:auto;flex:1;min-height:0";
-    if (note) {
-      const n = document.createElement("div");
-      n.style.cssText = "color:#64748b;font-size:11px;line-height:1.5;margin-bottom:10px;padding:8px 10px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0";
-      n.textContent = note;
-      scroll.appendChild(n);
+    root2.id = opts.id;
+    root2.className = `kus-lp${opts.wide ? " kus-lp--wide" : ""}`;
+    applyAccentVars(root2, opts.accent);
+    const hero = document.createElement("div");
+    hero.className = "kus-lp__hero";
+    const heroMain = document.createElement("div");
+    heroMain.className = "kus-lp__hero-main";
+    const titleEl = document.createElement("h1");
+    titleEl.className = "kus-lp__title";
+    titleEl.textContent = opts.title;
+    heroMain.appendChild(titleEl);
+    if (opts.subtitle) {
+      const subEl = document.createElement("p");
+      subEl.className = "kus-lp__subtitle";
+      subEl.textContent = opts.subtitle;
+      heroMain.appendChild(subEl);
+    }
+    const badgesEl = document.createElement("div");
+    badgesEl.className = "kus-lp__badge-row";
+    const badges = opts.badges || [{ label: "Lite" }];
+    for (const b of badges) {
+      const span = document.createElement("span");
+      span.className = "kus-lp__badge";
+      span.textContent = b.label;
+      badgesEl.appendChild(span);
+    }
+    heroMain.appendChild(badgesEl);
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "kus-lp__close";
+    closeBtn.textContent = "閉じる";
+    hero.appendChild(heroMain);
+    hero.appendChild(closeBtn);
+    root2.appendChild(hero);
+    const body = document.createElement("div");
+    body.className = "kus-lp__body";
+    if (opts.hint) {
+      const hint = document.createElement("div");
+      hint.className = "kus-lp__hint";
+      hint.innerHTML = opts.hint;
+      body.appendChild(hint);
     }
     const status = document.createElement("div");
-    status.style.cssText = "padding:8px 10px;font-size:11px;background:#f1f5f9;border-radius:8px;margin-bottom:8px;min-height:1.2em;color:#0f172a";
-    const bodySlot = document.createElement("div");
-    scroll.appendChild(status);
-    scroll.appendChild(bodySlot);
-    const result = document.createElement("div");
-    result.style.cssText = "margin-top:8px;max-height:180px;overflow:auto;font-size:11px;border:1px solid #e2e8f0;border-radius:8px;background:#fafafa;display:none";
-    scroll.appendChild(result);
-    const busyText = document.createElement("span");
-    setComponentUi({ status, result, busyText });
-    setRootElement(root2);
-    root2.appendChild(scroll);
+    status.className = "kus-lp__status";
+    status.dataset.tone = "neutral";
+    status.innerHTML = '<span class="kus-lp__status-icon">·</span><span class="kus-lp__status-text">準備完了</span>';
+    const result = document.createElement("pre");
+    result.className = "kus-lp__result kus-lp__result--empty";
+    root2.appendChild(body);
     document.body.appendChild(root2);
-    return { root: root2, status, bodySlot, result };
+    body.appendChild(status);
+    body.appendChild(result);
+    function setStatus(msg, tone = "neutral") {
+      status.dataset.tone = tone;
+      status.className = "kus-lp__status" + (tone !== "neutral" && tone !== "busy" ? ` kus-lp__status--${tone}` : "");
+      const icon = tone === "ok" ? "✓" : tone === "err" ? "⚠" : tone === "warn" ? "!" : tone === "info" ? "i" : tone === "busy" ? "" : "·";
+      const iconCls = tone === "busy" ? "kus-lp__status-icon kus-lp__status-busy" : "kus-lp__status-icon";
+      status.innerHTML = `<span class="${iconCls}">${icon}</span><span class="kus-lp__status-text"></span>`;
+      status.querySelector(".kus-lp__status-text").textContent = msg || "";
+    }
+    function setResult(text) {
+      if (!text) {
+        result.textContent = "";
+        result.classList.add("kus-lp__result--empty");
+        return;
+      }
+      result.textContent = text;
+      result.classList.remove("kus-lp__result--empty");
+    }
+    function setResultHtml(html) {
+      if (!html) {
+        result.innerHTML = "";
+        result.classList.add("kus-lp__result--empty");
+        return;
+      }
+      result.innerHTML = html;
+      result.classList.remove("kus-lp__result--empty");
+    }
+    function setBusy(busy) {
+      closeBtn.disabled = busy;
+      root2.style.cursor = busy ? "progress" : "";
+    }
+    function close() {
+      root2.remove();
+      setRootElement(null);
+    }
+    closeBtn.addEventListener("click", close);
+    setRootElement(root2);
+    setComponentUi({ status, result, busyText: document.createElement("span") });
+    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close };
   }
-
-  // src/entries/litePanelHelpers.ts
-  var INPUT_BASE = "padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-  var ROW_BASE = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px";
-  var ROW_LABEL_BASE = "font-size:12px;font-weight:600;color:#334155;min-width:6em";
-  function row(labelHtml, child, options = {}) {
+  function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
-    wrap.style.cssText = ROW_BASE;
-    const lab = document.createElement("span");
-    const minWidth = options.labelMinWidth ? `min-width:${options.labelMinWidth}` : ROW_LABEL_BASE.split(";").slice(-1)[0];
-    lab.style.cssText = `${ROW_LABEL_BASE.split(";").slice(0, -1).join(";")};${minWidth}`;
-    lab.innerHTML = labelHtml;
-    wrap.appendChild(lab);
-    wrap.appendChild(child);
+    wrap.className = "kus-lp__row" + (opts.block ? " kus-lp__row--block" : "");
+    if (opts.label) {
+      const lab = document.createElement("span");
+      lab.className = "kus-lp__label";
+      lab.textContent = opts.label;
+      wrap.appendChild(lab);
+    }
+    if (Array.isArray(child)) child.forEach((c) => wrap.appendChild(c));
+    else wrap.appendChild(child);
+    if (opts.help) {
+      const h = document.createElement("div");
+      h.className = "kus-lp__small";
+      h.style.width = "100%";
+      h.textContent = opts.help;
+      wrap.appendChild(h);
+    }
     return wrap;
   }
-  function mkInput(placeholder, options = {}) {
+  function makeInput(opts = {}) {
     const inp = document.createElement("input");
-    inp.type = options.type || "text";
-    inp.placeholder = placeholder;
-    if (options.value) inp.value = options.value;
-    let widthCss;
-    if (options.width === "wide") widthCss = "width:min(260px,80vw)";
-    else if (options.width === "full") widthCss = "width:100%;box-sizing:border-box";
-    else widthCss = "width:min(120px,40vw)";
-    inp.style.cssText = `${widthCss};${INPUT_BASE}`;
+    inp.type = opts.type || "text";
+    if (opts.placeholder) inp.placeholder = opts.placeholder;
+    if (opts.value) inp.value = opts.value;
+    if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
+    inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
-  function mkOption(text) {
-    const label = document.createElement("label");
-    label.style.cssText = "font-size:11px;color:#475569;display:inline-flex;align-items:center;gap:4px;cursor:pointer";
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    label.appendChild(checkbox);
-    label.appendChild(document.createTextNode(text));
-    return { label, checkbox };
+  function makeTextarea(opts = {}) {
+    const t = document.createElement("textarea");
+    t.className = "kus-lp__textarea" + (opts.code ? " kus-lp__textarea--code" : "");
+    if (opts.rows) t.rows = opts.rows;
+    if (opts.placeholder) t.placeholder = opts.placeholder;
+    if (opts.value) t.value = opts.value;
+    return t;
   }
-  async function liteRun(fn, busyMessage) {
-    if (busyMessage) setStatus(busyMessage);
+  function makeButton(label, variant = "primary", opts = {}) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `kus-lp__btn kus-lp__btn--${variant}`;
+    if (opts.icon) {
+      const i = document.createElement("span");
+      i.textContent = opts.icon;
+      i.style.cssText = "font-size:14px;line-height:1";
+      b.appendChild(i);
+    }
+    const t = document.createElement("span");
+    t.textContent = label;
+    b.appendChild(t);
+    return b;
+  }
+  function makeCheck(opts) {
+    const lab = document.createElement("label");
+    lab.className = "kus-lp__check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    if (opts.checked) cb.checked = true;
+    if (opts.value !== void 0) cb.value = opts.value;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(opts.label));
+    if (opts.help) lab.title = opts.help;
+    return { label: lab, checkbox: cb };
+  }
+  function makeChip(opts) {
+    const lab = document.createElement("label");
+    lab.className = "kus-lp__chip";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    if (opts.checked) cb.checked = true;
+    if (opts.value !== void 0) cb.value = opts.value;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(opts.label));
+    if (opts.help) lab.title = opts.help;
+    return { label: lab, checkbox: cb };
+  }
+  function makeCard(opts = {}) {
+    const card = document.createElement("div");
+    card.className = "kus-lp__card" + (opts.soft ? " kus-lp__card--soft" : "");
+    const head = document.createElement("div");
+    head.className = "kus-lp__card-head";
+    if (opts.title || opts.number) {
+      const t = document.createElement("div");
+      t.className = "kus-lp__card-title";
+      if (opts.number) {
+        const n = document.createElement("span");
+        n.className = "kus-lp__card-num";
+        n.textContent = String(opts.number);
+        t.appendChild(n);
+      }
+      if (opts.title) t.appendChild(document.createTextNode(opts.title));
+      head.appendChild(t);
+    }
+    const actions = document.createElement("div");
+    actions.className = "kus-lp__card-actions";
+    head.appendChild(actions);
+    card.appendChild(head);
+    const body = document.createElement("div");
+    card.appendChild(body);
+    if (opts.subtitle) {
+      const s = document.createElement("div");
+      s.className = "kus-lp__small";
+      s.style.cssText = "margin:-4px 0 8px";
+      s.textContent = opts.subtitle;
+      body.appendChild(s);
+    }
+    return { card, body, actions };
+  }
+  function makeDetails(title, opts = {}) {
+    const d = document.createElement("details");
+    d.className = "kus-lp__details";
+    if (opts.open) d.open = true;
+    const s = document.createElement("summary");
+    s.textContent = title;
+    const b = document.createElement("div");
+    b.className = "kus-lp__details-body";
+    d.appendChild(s);
+    d.appendChild(b);
+    return { details: d, body: b };
+  }
+  async function liteRun(panel, busyMsg, fn, okMsg) {
+    panel.setStatus(busyMsg, "busy");
+    panel.setBusy(true);
     try {
-      return await fn();
+      const out = await fn();
+      if (okMsg) panel.setStatus(okMsg, "ok");
+      return out;
     } catch (e) {
-      setStatus(e?.message || String(e), true);
+      panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
       return void 0;
+    } finally {
+      panel.setBusy(false);
     }
   }
 
   // src/entries/reflect-lite-ui.ts
-  var reflectLiteStateMemory = {};
+  var memoryState = {};
   function mountReflectLitePanel() {
-    const { bodySlot } = mountKusLitePanel({
+    const panel = createLitePanel({
       id: "kus-reflect-lite",
       title: "プレビュー反映",
-      note: "比較元アプリの設定を比較先プレビュー環境へ一括反映します。統合ツール.js は不要です。"
+      subtitle: "比較元アプリの設定を比較先プレビューへ一括反映します。",
+      accent: "reflect",
+      badges: [{ label: "Lite" }, { label: "比較先プレビューへ" }],
+      hint: "<strong>反映先は常にプレビュー</strong>環境です。本番デプロイはツールから行いません。"
     });
-    let savedState = { ...reflectLiteStateMemory };
-    const srcApp = mkInput("比較元アプリID", { value: savedState.sourceAppId || DEFAULT_APP_ID || "" });
-    const srcGuest = mkInput("ゲストID（任意）", { value: savedState.sourceGuestId || "" });
-    const tgtApp = mkInput("比較先アプリID", { value: savedState.targetAppId || DEFAULT_APP_ID || "" });
-    const tgtGuest = mkInput("ゲストID（任意）", { value: savedState.targetGuestId || "" });
-    bodySlot.appendChild(row("比較元ID", srcApp));
-    bodySlot.appendChild(row("元ゲスト", srcGuest));
-    bodySlot.appendChild(row("比較先ID", tgtApp));
-    bodySlot.appendChild(row("先ゲスト", tgtGuest));
-    const quickRow = document.createElement("div");
-    quickRow.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin:-2px 0 10px";
-    const mkQuickBtn = (text) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = text;
-      btn.style.cssText = "padding:5px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;color:#334155;cursor:pointer";
-      quickRow.appendChild(btn);
-      return btn;
-    };
-    const copySrcToTgtBtn = mkQuickBtn("比較元→比較先をコピー");
-    const setCurrentToTgtBtn = mkQuickBtn("現在のアプリを比較先にセット");
-    bodySlot.appendChild(quickRow);
-    const scopeBox = document.createElement("div");
-    scopeBox.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px";
+    const srcApp = makeInput({ placeholder: "比較元アプリID", value: memoryState.sourceAppId || DEFAULT_APP_ID || "", width: "id" });
+    const srcGuest = makeInput({ placeholder: "ゲストID", value: memoryState.sourceGuestId || "", width: "guest" });
+    const tgtApp = makeInput({ placeholder: "比較先アプリID", value: memoryState.targetAppId || DEFAULT_APP_ID || "", width: "id" });
+    const tgtGuest = makeInput({ placeholder: "ゲストID", value: memoryState.targetGuestId || "", width: "guest" });
+    const copyBtn = makeButton("比較元 → 比較先", "sub");
+    const currentBtn = makeButton("現在のアプリを比較先", "sub");
+    const cardApp = makeCard({ title: "アプリ", number: 1 });
+    cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: "比較元" }));
+    cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "比較先" }));
+    const quickRow = makeRow([copyBtn, currentBtn]);
+    quickRow.style.marginTop = "4px";
+    cardApp.body.appendChild(quickRow);
+    panel.body.insertBefore(cardApp.card, panel.status);
+    copyBtn.addEventListener("click", () => {
+      tgtApp.value = srcApp.value.trim();
+      tgtGuest.value = srcGuest.value.trim();
+      saveState();
+      panel.setStatus("比較元IDを比較先へコピーしました", "info");
+    });
+    currentBtn.addEventListener("click", () => {
+      tgtApp.value = DEFAULT_APP_ID || "";
+      saveState();
+      panel.setStatus("現在のアプリIDを比較先にセットしました", "info");
+    });
+    const cardScope = makeCard({ title: "反映するセクション", number: 2 });
     const putSections = SECTION_DEFS.filter((d) => d.put);
-    const scopeChecks = putSections.map((d) => {
-      const label = document.createElement("label");
-      label.style.cssText = "font-size:11px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;padding:3px 6px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = true;
-      cb.dataset.key = d.key;
-      label.appendChild(cb);
-      label.appendChild(document.createTextNode(d.label));
-      scopeBox.appendChild(label);
-      return cb;
-    });
-    const scopeLabel = document.createElement("div");
-    scopeLabel.style.cssText = "font-size:12px;font-weight:600;color:#334155;margin-bottom:6px";
-    scopeLabel.textContent = "反映するセクション:";
-    bodySlot.appendChild(scopeLabel);
-    const scopeActionRow = document.createElement("div");
-    scopeActionRow.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin:0 0 6px";
-    const selectAllBtn = document.createElement("button");
-    selectAllBtn.type = "button";
-    selectAllBtn.textContent = "全選択";
-    selectAllBtn.style.cssText = "padding:5px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer";
-    const clearAllBtn = document.createElement("button");
-    clearAllBtn.type = "button";
-    clearAllBtn.textContent = "全解除";
-    clearAllBtn.style.cssText = "padding:5px 10px;font-size:11px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer";
-    scopeActionRow.appendChild(selectAllBtn);
-    scopeActionRow.appendChild(clearAllBtn);
-    bodySlot.appendChild(scopeActionRow);
-    bodySlot.appendChild(scopeBox);
-    const optRow = document.createElement("div");
-    optRow.style.cssText = "display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px";
-    const addOpt = (text) => {
-      const opt = mkOption(text);
-      optRow.appendChild(opt.label);
-      return opt.checkbox;
-    };
-    const backupCb = addOpt("バックアップ保存");
-    backupCb.checked = true;
-    const srcPreviewCb = addOpt("比較元をプレビューから取得");
-    srcPreviewCb.checked = savedState.sourcePreview !== false;
-    const stopCb = addOpt("エラー時中断");
-    stopCb.checked = !!savedState.stopOnError;
-    bodySlot.appendChild(optRow);
-    const deployNote = document.createElement("div");
-    deployNote.style.cssText = "font-size:11px;color:#64748b;margin:-4px 0 10px;line-height:1.45";
-    deployNote.textContent = "本番デプロイはツールから実行できません。プレビュー反映後、kintone管理画面から手動でデプロイしてください。";
-    bodySlot.appendChild(deployNote);
-    const logArea = document.createElement("pre");
-    logArea.style.cssText = "margin:0;padding:10px;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;max-height:200px;overflow:auto;white-space:pre-wrap;display:none";
-    bodySlot.appendChild(logArea);
-    const runBtn = document.createElement("button");
-    runBtn.type = "button";
-    runBtn.textContent = "プレビュー反映を実行";
-    runBtn.style.cssText = "padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:linear-gradient(180deg,#dc2626,#b91c1c);color:#fff;cursor:pointer;margin-top:4px";
-    const saveState = () => {
-      const payload = {
+    const chips = putSections.map((d) => makeChip({ label: d.label, checked: true, value: d.key }));
+    const chipBox = document.createElement("div");
+    chipBox.className = "kus-lp__chips";
+    chips.forEach((c) => chipBox.appendChild(c.label));
+    cardScope.body.appendChild(chipBox);
+    const allBtn = makeButton("全選択", "sub");
+    const noneBtn = makeButton("全解除", "sub");
+    cardScope.actions.appendChild(allBtn);
+    cardScope.actions.appendChild(noneBtn);
+    allBtn.addEventListener("click", () => chips.forEach((c) => {
+      c.checkbox.checked = true;
+    }));
+    noneBtn.addEventListener("click", () => chips.forEach((c) => {
+      c.checkbox.checked = false;
+    }));
+    panel.body.insertBefore(cardScope.card, panel.status);
+    const cardOpt = makeCard({ title: "実行オプション", number: 3, soft: true });
+    const backup = makeCheck({ label: "比較先プレビューのバックアップを保存", checked: true });
+    const srcPreview = makeCheck({ label: "比較元をプレビューから取得", checked: memoryState.sourcePreview !== false });
+    const stop = makeCheck({ label: "エラー時に中断する", checked: !!memoryState.stopOnError });
+    const optGrid = document.createElement("div");
+    optGrid.className = "kus-lp__check-grid";
+    optGrid.appendChild(backup.label);
+    optGrid.appendChild(srcPreview.label);
+    optGrid.appendChild(stop.label);
+    cardOpt.body.appendChild(optGrid);
+    const lookupDetails = makeDetails("Lookup AppID マッピング（任意）");
+    const lookupTa = makeTextarea({ rows: 3, code: true, placeholder: '{"旧AppID":"新AppID", ...}' });
+    lookupDetails.body.appendChild(lookupTa);
+    cardOpt.body.appendChild(lookupDetails.details);
+    panel.body.insertBefore(cardOpt.card, panel.status);
+    const runBtn = makeButton("プレビュー反映を実行", "run", { icon: "⤴" });
+    runBtn.classList.add("kus-lp__btn--danger");
+    runBtn.classList.remove("kus-lp__btn--run");
+    runBtn.style.cssText = "";
+    runBtn.classList.add("kus-lp__btn--danger");
+    runBtn.style.width = "100%";
+    runBtn.style.padding = "11px 16px";
+    runBtn.style.fontSize = "13px";
+    runBtn.style.fontWeight = "700";
+    panel.body.insertBefore(runBtn, panel.status);
+    const logCard = makeCard({ title: "実行ログ", soft: true });
+    const logPre = document.createElement("pre");
+    logPre.style.cssText = "margin:0;padding:8px 10px;font:11.5px/1.5 ui-monospace,monospace;background:#0f172a;color:#e2e8f0;border-radius:8px;max-height:240px;overflow:auto;white-space:pre-wrap;display:none";
+    logCard.body.appendChild(logPre);
+    logCard.card.style.display = "none";
+    panel.body.insertBefore(logCard.card, panel.status);
+    function saveState() {
+      memoryState = {
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
-        sourcePreview: srcPreviewCb.checked,
-        stopOnError: stopCb.checked
+        sourcePreview: srcPreview.checkbox.checked,
+        stopOnError: stop.checkbox.checked
       };
-      reflectLiteStateMemory = { ...payload };
-    };
-    copySrcToTgtBtn.addEventListener("click", () => {
-      tgtApp.value = srcApp.value.trim();
-      tgtGuest.value = srcGuest.value.trim();
-      saveState();
-      setStatus("比較元IDを比較先へコピーしました");
-    });
-    setCurrentToTgtBtn.addEventListener("click", () => {
-      tgtApp.value = DEFAULT_APP_ID || "";
-      saveState();
-      setStatus("現在のアプリIDを比較先にセットしました");
-    });
-    selectAllBtn.addEventListener("click", () => {
-      scopeChecks.forEach((cb) => {
-        cb.checked = true;
-      });
-    });
-    clearAllBtn.addEventListener("click", () => {
-      scopeChecks.forEach((cb) => {
-        cb.checked = false;
-      });
-    });
+    }
+    function parseLookupMap(text) {
+      const t = text.trim();
+      if (!t) return {};
+      try {
+        const parsed = JSON.parse(t);
+        const out = {};
+        for (const [k, v] of Object.entries(parsed || {})) {
+          if (k && v != null) out[String(k).trim()] = String(v).trim();
+        }
+        return out;
+      } catch {
+        throw new Error("Lookup マッピング JSON が壊れています");
+      }
+    }
     runBtn.addEventListener("click", () => {
-      const scopes = scopeChecks.filter((cb) => cb.checked).map((cb) => cb.dataset.key);
-      logArea.style.display = "block";
-      logArea.textContent = "";
+      const scopes = chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value);
+      if (!scopes.length) {
+        panel.setStatus("反映するセクションを選択してください", "warn");
+        return;
+      }
       saveState();
-      return liteRun(async () => {
+      logCard.card.style.display = "block";
+      logPre.style.display = "block";
+      logPre.textContent = "";
+      return liteRun(panel, "プレビュー反映 実行中…", async () => {
+        const lookupMap = parseLookupMap(lookupTa.value);
         await runApplyPreviewStandalone(
           {
             sourceAppId: srcApp.value.trim(),
             sourceGuestId: srcGuest.value.trim(),
-            sourcePreview: srcPreviewCb.checked,
+            sourcePreview: srcPreview.checkbox.checked,
             targetAppId: tgtApp.value.trim(),
             targetGuestId: tgtGuest.value.trim(),
             scopes,
+            lookupMap,
             doDeploy: false,
-            doBackup: backupCb.checked,
-            stopOnError: stopCb.checked
+            doBackup: backup.checkbox.checked,
+            stopOnError: stop.checkbox.checked
           },
-          (m, e) => setStatus(m, e),
+          (m, e) => panel.setStatus(m, e ? "err" : "busy"),
           (logs) => {
-            logArea.textContent = logs.join("\n");
-            logArea.scrollTop = logArea.scrollHeight;
+            logPre.textContent = logs.join("\n");
+            logPre.scrollTop = logPre.scrollHeight;
           }
         );
-      });
+      }, "プレビュー反映が完了しました（kintone管理画面でデプロイ実行してください）");
     });
-    bodySlot.appendChild(runBtn);
   }
 
   // src/entries/reflect-lite-entry.ts

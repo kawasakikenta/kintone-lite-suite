@@ -1,120 +1,105 @@
 'use strict';
 
 import { DEFAULT_APP_ID } from '../constants.js';
-import { setStatus } from '../ui/components.js';
 import {
   runApplyJsConfigStandalone,
   runExportJsConfigStandalone,
   runFetchJsConfigStandalone
 } from '../tabs/jsconfig-standalone.js';
-import { mountKusLitePanel } from './liteMount.js';
-import { mkInput, mkOption, liteRun } from './litePanelHelpers.js';
+import {
+  createLitePanel,
+  makeRow,
+  makeInput,
+  makeButton,
+  makeCheck,
+  makeTextarea,
+  makeCard,
+  makeNote,
+  liteRun
+} from './litePanelTheme.js';
 
 export function mountJsconfigLitePanel() {
-  const { bodySlot, result } = mountKusLitePanel({
+  const panel = createLitePanel({
     id: 'kus-jsconfig-lite',
-    title: 'JS/CSS設定',
-    note: 'カスタマイズの取得・JSON保存・比較先プレビューへの反映。統合ツール.js は不要です。'
+    title: 'JS / CSS 設定',
+    subtitle: 'カスタマイズの取得・編集・JSON 保存・比較先プレビューへの反映',
+    accent: 'jsconfig',
+    badges: [{ label: 'Lite' }, { label: '取得 + 反映' }],
+    hint: 'プレビュー環境への反映後、本番デプロイは kintone 管理画面から手動で行ってください。'
   });
 
-  const srcApp = mkInput('取得元アプリID', { value: DEFAULT_APP_ID || '' });
-  const srcGuest = mkInput('ゲスト（任意）');
-  srcGuest.style.cssText = 'width:min(100px,36vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-  const srcPrev = mkOption('プレビューで取得');
+  // 取得
+  const cardFetch = makeCard({ title: '取得', number: 1 });
+  const srcApp = makeInput({ placeholder: '取得元アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
+  const srcGuest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
+  const srcPrev = makeCheck({ label: 'プレビュー環境から取得' });
+  cardFetch.body.appendChild(makeRow([srcApp, srcGuest, srcPrev.label], { label: '取得元' }));
+  const fetchBtn = makeButton('JS/CSS を取得', 'primary', { icon: '⤓' });
+  cardFetch.body.appendChild(makeRow(fetchBtn));
+  panel.body.insertBefore(cardFetch.card, panel.status);
 
-  const row1 = document.createElement('div');
-  row1.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px';
-  row1.appendChild(srcApp);
-  row1.appendChild(srcGuest);
-  row1.appendChild(srcPrev.label);
+  // 編集
+  const cardJson = makeCard({ title: 'カスタマイズ JSON', number: 2 });
+  const jsonTa = makeTextarea({ rows: 9, code: true, placeholder: '取得結果の JSON（手入力も可）' });
+  cardJson.body.appendChild(jsonTa);
+  const exportBtn = makeButton('JSON ファイル保存', 'sub');
+  const formatBtn = makeButton('整形', 'sub');
+  formatBtn.addEventListener('click', () => {
+    try {
+      const parsed = JSON.parse(jsonTa.value);
+      jsonTa.value = JSON.stringify(parsed, null, 2);
+      panel.setStatus('JSON を整形しました', 'ok');
+    } catch (e: any) {
+      panel.setStatus('JSON が壊れています: ' + e.message, 'err');
+    }
+  });
+  cardJson.actions.appendChild(formatBtn);
+  cardJson.actions.appendChild(exportBtn);
+  panel.body.insertBefore(cardJson.card, panel.status);
 
-  const fetchBtn = document.createElement('button');
-  fetchBtn.type = 'button';
-  fetchBtn.textContent = 'JS/CSS を取得';
-  fetchBtn.style.cssText =
-    'padding:8px 14px;font-size:12px;font-weight:700;border:none;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer;margin-bottom:10px';
-
-  const jsonTa = document.createElement('textarea');
-  jsonTa.rows = 8;
-  jsonTa.placeholder = '取得結果の JSON（手入力も可）';
-  jsonTa.style.cssText =
-    'width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:11px;padding:8px;border:1px solid #e2e8f0;border-radius:8px;resize:vertical';
-
+  // プレビュー（取得済みファイルの一覧）
+  const cardPreview = makeCard({ title: '取得結果プレビュー', soft: true });
   const previewBox = document.createElement('div');
-  previewBox.style.cssText =
-    'max-height:120px;overflow:auto;margin-top:8px;font-size:11px;border:1px solid #e2e8f0;border-radius:8px;background:#fafafa';
+  previewBox.className = 'kus-lp__panel-html kus-lp__panel-html--empty';
+  cardPreview.body.appendChild(previewBox);
+  panel.body.insertBefore(cardPreview.card, panel.status);
 
-  const exportBtn = document.createElement('button');
-  exportBtn.type = 'button';
-  exportBtn.textContent = 'JSON をファイル保存';
-  exportBtn.style.cssText =
-    'margin-top:8px;padding:8px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer';
-
-  const tgtApp = mkInput('反映先アプリID（プレビュー）');
-  tgtApp.style.cssText = 'width:min(140px,44vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-  const tgtGuest = mkInput('ゲスト（任意）');
-  tgtGuest.style.cssText = 'width:min(100px,36vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-
-  const applyBtn = document.createElement('button');
-  applyBtn.type = 'button';
-  applyBtn.textContent = '比較先プレビューへ反映';
-  applyBtn.style.cssText =
-    'margin-top:10px;width:100%;padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:linear-gradient(180deg,#16a34a,#15803d);color:#fff;cursor:pointer';
-
-  bodySlot.appendChild(row1);
-  bodySlot.appendChild(fetchBtn);
-  bodySlot.appendChild(jsonTa);
-  bodySlot.appendChild(previewBox);
-  bodySlot.appendChild(exportBtn);
-
-  const sep = document.createElement('div');
-  sep.style.cssText = 'margin:14px 0 8px;padding-top:10px;border-top:1px solid #e2e8f0;font-size:11px;font-weight:700;color:#475569';
-  sep.textContent = '反映（プレビュー環境）';
-  bodySlot.appendChild(sep);
-
-  const row2 = document.createElement('div');
-  row2.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px';
-  row2.appendChild(tgtApp);
-  row2.appendChild(tgtGuest);
-  bodySlot.appendChild(row2);
-  const deployNote = document.createElement('div');
-  deployNote.style.cssText = 'font-size:11px;color:#64748b;margin-bottom:6px;line-height:1.45';
-  deployNote.textContent = '反映後の本番デプロイは管理画面で手動行ってください。';
-  bodySlot.appendChild(deployNote);
-  bodySlot.appendChild(applyBtn);
+  // 反映
+  const cardApply = makeCard({ title: '比較先プレビューへ反映', number: 3 });
+  const tgtApp = makeInput({ placeholder: '反映先アプリID', width: 'id' });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
+  cardApply.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '反映先' }));
+  cardApply.body.appendChild(makeNote('反映先は常にプレビュー環境。デプロイは管理画面から手動で行ってください。'));
+  const applyBtn = makeButton('比較先プレビューへ反映', 'run', { icon: '⤴' });
+  cardApply.body.appendChild(applyBtn);
+  panel.body.insertBefore(cardApply.card, panel.status);
 
   const uiApi = {
     setJson: (t: string) => { jsonTa.value = t; },
-    setCustomizeHtml: (h: string) => { previewBox.innerHTML = h; }
+    setCustomizeHtml: (h: string) => {
+      previewBox.innerHTML = h;
+      if (h && !h.includes('データがありません')) previewBox.classList.remove('kus-lp__panel-html--empty');
+      else previewBox.classList.add('kus-lp__panel-html--empty');
+    }
   };
 
-  fetchBtn.addEventListener('click', () => liteRun(async () => {
+  fetchBtn.addEventListener('click', () => liteRun(panel, 'JS/CSS設定を取得中…', async () => {
     await runFetchJsConfigStandalone(
-      {
-        sourceAppId: srcApp.value.trim(),
-        sourceGuestId: srcGuest.value.trim(),
-        preview: srcPrev.checkbox.checked
-      },
-      (m, e) => setStatus(m, e),
+      { sourceAppId: srcApp.value.trim(), sourceGuestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked },
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
       uiApi
     );
   }));
 
-  exportBtn.addEventListener('click', () => liteRun(async () => {
-    runExportJsConfigStandalone(jsonTa.value, srcApp.value.trim(), (m, e) => setStatus(m, e));
+  exportBtn.addEventListener('click', () => liteRun(panel, 'JSON 保存中…', async () => {
+    runExportJsConfigStandalone(jsonTa.value, srcApp.value.trim(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }));
 
-  applyBtn.addEventListener('click', () => liteRun(async () => {
-    result.style.display = 'block';
+  applyBtn.addEventListener('click', () => liteRun(panel, 'JS/CSS 設定を比較先へ反映中…', async () => {
     await runApplyJsConfigStandalone(
-      {
-        targetAppId: tgtApp.value.trim(),
-        targetGuestId: tgtGuest.value.trim(),
-        jsonText: jsonTa.value,
-        deployAfter: false
-      },
-      (m, e) => setStatus(m, e),
-      (html: string) => { result.innerHTML = html; }
+      { targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), jsonText: jsonTa.value, deployAfter: false },
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
+      (html: string) => { panel.setResultHtml(html); }
     );
   }));
 }

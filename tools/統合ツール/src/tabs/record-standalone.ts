@@ -1,7 +1,67 @@
 'use strict';
 
 import { downloadBlob, kusConfirm } from '../utils.js';
-import { apiGet, apiPost, apiPut, buildApiPrefix } from '../api.js';
+import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle } from '../api.js';
+
+const JSZIP_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+
+function loadJSZipLite(): Promise<any> {
+  const w = window as any;
+  if (w.JSZip) return Promise.resolve(w.JSZip);
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${JSZIP_CDN}"]`) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => resolve((window as any).JSZip));
+      existing.addEventListener('error', () => reject(new Error('JSZipの読み込みに失敗')));
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = JSZIP_CDN;
+    s.onload = () => resolve((window as any).JSZip);
+    s.onerror = () => reject(new Error('JSZipの読み込みに失敗'));
+    document.head.appendChild(s);
+  });
+}
+
+function sanitizeZipSegment(value: any, fallback = 'item'): string {
+  const cleaned = String(value == null ? '' : value)
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/[\u0000-\u001f]/g, '')
+    .trim();
+  return cleaned || fallback;
+}
+
+function uniqueZipName(used: Set<string>, raw: string, fileKey: string, idx: number): string {
+  const safeName = sanitizeZipSegment(raw || 'file.bin', 'file.bin');
+  const safePrefix = sanitizeZipSegment(String(fileKey || '').slice(0, 12) || String(idx + 1), 'file');
+  const base = `${safePrefix}_${safeName}`;
+  let cand = base;
+  let n = 2;
+  while (used.has(cand)) {
+    const dot = base.lastIndexOf('.');
+    if (dot > 0) cand = `${base.slice(0, dot)}_${n}${base.slice(dot)}`;
+    else cand = `${base}_${n}`;
+    n++;
+  }
+  used.add(cand);
+  return cand;
+}
+
+async function downloadFileBlob(prefix: string, fileKey: string): Promise<Blob | null> {
+  const url = prefix + '/file.json?fileKey=' + encodeURIComponent(fileKey);
+  const headers = { 'X-Requested-With': 'XMLHttpRequest' };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch(url, { method: 'GET', headers });
+      if (resp.status === 403) return null;
+      if (!resp.ok) throw new Error('ダウンロード失敗: ' + resp.status);
+      return await resp.blob();
+    } catch (e) {
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  return null;
+}
 
 function hasOrderByClause(query) {
   return /\border\s+by\b/i.test(String(query || ''));
@@ -271,4 +331,241 @@ export async function runRecordCopyStandalone(opts, setStatus) {
     ok += batch.length;
   }
   setStatus(`レコードコピー完了: ${ok}件`);
+}
+
+/** 添付ファイル一括ダウンロード（条件で絞り、指定したファイルフィールドの中身を ZIP 化） */
+export async function runAttachmentDownloadStandalone(opts, setStatus) {
+  const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
+  if (!appId) throw new Error('アプリIDを入力してください');
+  if (!fileFieldCode) throw new Error('ファイルフィールドコードを入力してください');
+  const prefix = buildApiPrefix(guestId || '', false);
+
+  const records = await fetchAllRecords(prefix, appId, query || '', setStatus);
+  if (!records.length) throw new Error('対象レコードが0件です');
+
+  const JSZipCtor = await loadJSZipLite();
+  const zip = new JSZipCtor();
+  let fileCount = 0;
+
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i];
+    setStatus(`添付DL中 (${i + 1}/${records.length})`);
+    const files: any[] = rec?.[fileFieldCode]?.value || [];
+    if (!files.length) continue;
+    let folderName = folderFieldCode && rec[folderFieldCode]?.value;
+    if (!folderName) folderName = `Record_${rec.$id?.value || i + 1}`;
+    const folder = zip.folder(sanitizeZipSegment(folderName, `Record_${rec.$id?.value || i + 1}`));
+    const used = new Set<string>();
+    for (const f of files) {
+      const blob = await downloadFileBlob(prefix, f.fileKey);
+      if (blob) {
+        folder.file(uniqueZipName(used, f.name || 'file.bin', f.fileKey, fileCount), blob);
+        fileCount++;
+      }
+    }
+  }
+  if (!fileCount) {
+    setStatus('ダウンロード対象の添付がありませんでした', true);
+    return;
+  }
+  setStatus(`ZIP生成中 (${fileCount}ファイル)`);
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  downloadBlob(zipName || `attachments_${appId}_${Date.now()}.zip`, zipBlob);
+  setStatus(`添付一括DL完了: ${fileCount}ファイル`);
+}
+
+/**
+ * 軽量レコードバックアップ:
+ *  - CSV（全フィールド）
+ *  - 任意で添付ファイル（添付フィールド/サブテーブル内ファイル）
+ *  - 任意でコメント
+ *  - 任意でアプリ設定（fetchBundle）
+ * を1つのZIPに格納する。フル版の plugin_config までは取らない。
+ */
+export async function runRecordBackupStandalone(opts, setStatus) {
+  const { appId, guestId, query, zipName, includeFiles, includeComments, includeAppSettings, appScopes } = opts;
+  if (!appId) throw new Error('アプリIDを入力してください');
+  const prefix = buildApiPrefix(guestId || '', false);
+
+  setStatus('フィールド情報取得中...');
+  const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId });
+  const propKeys = Object.keys(fields.properties || ({} as any));
+  if (!propKeys.length) throw new Error('出力できるフィールドがありません');
+
+  const records = await fetchAllRecords(prefix, appId, query || '', setStatus);
+  if (!records.length) throw new Error('対象レコードが0件です');
+
+  const JSZipCtor = await loadJSZipLite();
+  const zip = new JSZipCtor();
+  const notes: string[] = [];
+
+  // CSV
+  const esc = (v: any) => {
+    const s = String(v == null ? '' : v);
+    return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const extract = (rec: any, code: string) => {
+    const f = rec[code];
+    if (!f) return '';
+    if (['USER_SELECT', 'ORGANIZATION_SELECT', 'GROUP_SELECT'].includes(f.type)) return (f.value || []).map((v: any) => v.code || v.name).join(',');
+    if (['CHECK_BOX', 'MULTI_SELECT'].includes(f.type)) return (f.value || []).join(',');
+    if (f.type === 'FILE') return (f.value || []).map((file: any) => file.name).join(',');
+    if (f.type === 'SUBTABLE') return (f.value || []).length + '行';
+    if (typeof f.value === 'object' && f.value !== null) return JSON.stringify(f.value);
+    return f.value;
+  };
+  const lines = [propKeys.map(esc).join(',')];
+  for (const rec of records) lines.push(propKeys.map((k) => esc(extract(rec, k))).join(','));
+  zip.file('records.csv', '﻿' + lines.join('\n'));
+
+  // JSON (raw)
+  zip.file('records.json', JSON.stringify({ generatedAt: new Date().toISOString(), appId, recordCount: records.length, records }, null, 2));
+
+  let fileCount = 0;
+  if (includeFiles) {
+    const collected: Array<{ rec: any; fieldCode: string; childCode?: string; rowIndex?: number; fileIndex: number; file: any }> = [];
+    for (const rec of records) {
+      for (const [code, field] of Object.entries(rec) as Array<[string, any]>) {
+        if (!field || typeof field !== 'object') continue;
+        if (field.type === 'FILE') {
+          (field.value || []).forEach((file: any, idx: number) => collected.push({ rec, fieldCode: code, fileIndex: idx, file }));
+        } else if (field.type === 'SUBTABLE') {
+          (field.value || []).forEach((subRow: any, rowIdx: number) => {
+            for (const [childCode, childField] of Object.entries(subRow.value || ({} as any)) as Array<[string, any]>) {
+              if (childField?.type !== 'FILE') continue;
+              (childField.value || []).forEach((file: any, idx: number) => collected.push({ rec, fieldCode: code, childCode, rowIndex: rowIdx, fileIndex: idx, file }));
+            }
+          });
+        }
+      }
+    }
+    if (!collected.length) notes.push('添付ファイルなし');
+    const blobCache = new Map<string, Blob | null>();
+    for (let i = 0; i < collected.length; i++) {
+      const ent = collected[i];
+      setStatus(`添付ファイル取得中 (${i + 1}/${collected.length})`);
+      let blob = blobCache.get(ent.file.fileKey);
+      if (blob === undefined) {
+        blob = await downloadFileBlob(prefix, ent.file.fileKey);
+        blobCache.set(ent.file.fileKey, blob || null);
+      }
+      if (!blob) continue;
+      const recordId = String(ent.rec?.$id?.value || 'unknown');
+      const parts = ['attachments', `record_${sanitizeZipSegment(recordId)}`];
+      if (ent.childCode) {
+        parts.push(sanitizeZipSegment(ent.fieldCode || 'subtable'));
+        parts.push(`row_${(ent.rowIndex || 0) + 1}`);
+        parts.push(sanitizeZipSegment(ent.childCode));
+      } else {
+        parts.push(sanitizeZipSegment(ent.fieldCode || 'files'));
+      }
+      const filePrefix = sanitizeZipSegment(String(ent.file.fileKey || '').slice(0, 12) || String(ent.fileIndex + 1));
+      parts.push(`${filePrefix}_${sanitizeZipSegment(ent.file.name || 'file.bin', 'file.bin')}`);
+      zip.file(parts.join('/'), blob);
+      fileCount++;
+    }
+  } else {
+    notes.push('添付ファイル未取得');
+  }
+
+  let commentCount = 0;
+  if (includeComments) {
+    const out: any[] = [];
+    for (let i = 0; i < records.length; i++) {
+      const rec = records[i];
+      const recordId = String(rec?.$id?.value || '').trim();
+      if (!recordId) continue;
+      setStatus(`コメント取得中 (${i + 1}/${records.length})`);
+      try {
+        const comments: any[] = [];
+        let offset = 0;
+        const limit = 10;
+        while (true) {
+          const resp = await apiGet(prefix, '/record/comments.json', { app: appId, record: recordId, order: 'asc', offset, limit });
+          const batch = resp.comments || [];
+          comments.push(...batch);
+          if (batch.length < limit) break;
+          offset += batch.length;
+        }
+        if (comments.length) {
+          out.push({ recordId, comments });
+          commentCount += comments.length;
+        }
+      } catch (e: any) {
+        notes.push('コメント取得失敗で中断');
+        break;
+      }
+    }
+    zip.file('comments.json', JSON.stringify({ generatedAt: new Date().toISOString(), appId, commentCount, records: out }, null, 2));
+  } else {
+    notes.push('コメント未取得');
+  }
+
+  let appOk = 0;
+  let appNg = 0;
+  if (includeAppSettings && appScopes && appScopes.length) {
+    setStatus('アプリ設定取得中...');
+    const settings = await fetchBundle({
+      appId,
+      guestId: guestId || '',
+      preview: false,
+      sections: appScopes,
+      onProgress: (p: number, l: string) => setStatus(`アプリ設定取得中 ${Math.round(p * 100)}% (${l})`)
+    });
+    for (const key of appScopes) {
+      const sec = settings.sections[key];
+      if (sec && sec._fetchError) appNg++;
+      else appOk++;
+    }
+    zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
+  } else if (!includeAppSettings) {
+    notes.push('アプリ設定未取得');
+  }
+
+  zip.file('manifest.json', JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    appId,
+    recordCount: records.length,
+    fileCount,
+    commentCount,
+    appSettings: { ok: appOk, ng: appNg, scopes: appScopes || [] },
+    notes
+  }, null, 2));
+
+  setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
+  const blob = await zip.generateAsync({ type: 'blob' });
+  downloadBlob(zipName || `record_backup_${appId}_${Date.now()}.zip`, blob);
+  setStatus(`バックアップ完了: ${records.length}件 / 添付 ${fileCount} / コメント ${commentCount}`);
+}
+
+/** ステータス管理（アクション/状態リスト）を取得 — シミュレーション/プルダウン用 */
+export async function runLoadStatusActionsStandalone(opts, setStatus) {
+  const { appId, guestId } = opts;
+  if (!appId) throw new Error('アプリIDを入力してください');
+  const prefix = buildApiPrefix(guestId || '', false);
+  setStatus('プロセス管理情報を取得中...');
+  const res = await apiGet(prefix, '/app/status.json', { app: appId });
+  if (!res.enable) {
+    setStatus('プロセス管理は無効です', true);
+    return { enabled: false, states: [], actions: [] };
+  }
+  const states = Object.keys(res.states || ({} as any));
+  const actions = (res.actions || []).map((a: any) => ({ name: a.name, from: a.from, to: a.to }));
+  setStatus(`プロセス管理: 状態 ${states.length}件 / アクション ${actions.length}件`);
+  return { enabled: true, states, actions };
+}
+
+/** 一覧（views）を取得 — クエリ補助用 */
+export async function runLoadViewsStandalone(opts, setStatus) {
+  const { appId, guestId } = opts;
+  if (!appId) throw new Error('アプリIDを入力してください');
+  const prefix = buildApiPrefix(guestId || '', false);
+  setStatus('一覧情報を取得中...');
+  const resp = await apiGet(prefix, '/app/views.json', { app: appId });
+  const views = (Object.entries(resp.views || ({} as any)) as Array<[string, any]>)
+    .map(([name, v]) => ({ name, id: String(v.id), filter: String(v.filterCond || ''), type: String(v.type), index: Number(v.index || 0) }))
+    .filter((v) => v.type === 'LIST')
+    .sort((a, b) => a.index - b.index);
+  setStatus(`一覧: ${views.length}件`);
+  return views;
 }
