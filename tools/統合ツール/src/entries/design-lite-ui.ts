@@ -1,96 +1,88 @@
 'use strict';
 
 import { DEFAULT_APP_ID } from '../constants.js';
-import { setStatus } from '../ui/components.js';
 import {
   runDesignCopyMdStandalone,
   runDesignExportStandalone,
   runDesignExportXlsxStandalone,
   runBatchDesignExportXlsxZipStandalone
 } from '../tabs/design-standalone.js';
-import { mountKusLitePanel } from './liteMount.js';
-import { row, mkInput, mkBtn, mkOption, liteRun } from './litePanelHelpers.js';
+import {
+  createLitePanel,
+  makeRow,
+  makeInput,
+  makeButton,
+  makeCheck,
+  makeTextarea,
+  makeCard,
+  makeDetails,
+  makeNote,
+  liteRun
+} from './litePanelTheme.js';
 
 export function mountDesignLitePanel() {
-  const { bodySlot } = mountKusLitePanel({
+  const panel = createLitePanel({
     id: 'kus-design-lite',
     title: '設計書',
-    note: 'アプリ設定を取得し、Markdown または JSON で保存します。統合ツール.js は不要です。'
+    subtitle: 'アプリ設定を取得し、Markdown / JSON / Excel で設計書を出力します。',
+    accent: 'design',
+    badges: [{ label: 'Lite' }, { label: '4 形式出力' }],
+    hint: 'Excel 出力は SheetJS / 設計書テンプレートを内蔵。ZIP 一括出力で多アプリを一度に処理できます。'
   });
 
-  const appInp = mkInput('アプリID', { value: DEFAULT_APP_ID || '' });
-  const guestInp = mkInput('ゲストID（任意）');
-  const prev = mkOption('プレビュー環境');
+  // ---- 単アプリ ----
+  const cardSingle = makeCard({ title: '単アプリ出力', number: 1 });
+  const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
+  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  const prev = makeCheck({ label: 'プレビュー環境から取得' });
+  cardSingle.body.appendChild(makeRow([appInp, guestInp, prev.label], { label: '対象' }));
 
-  bodySlot.appendChild(row('アプリID', appInp));
-  bodySlot.appendChild(row('ゲスト', guestInp));
-  bodySlot.appendChild(row('', prev.label));
+  const source = () => ({
+    appId: appInp.value.trim(),
+    guestId: guestInp.value.trim(),
+    preview: prev.checkbox.checked
+  });
 
-  const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:12px';
+  const grid = document.createElement('div');
+  grid.className = 'kus-lp__btn-grid';
 
-  function source() {
-    return {
-      appId: appInp.value.trim(),
-      guestId: guestInp.value.trim(),
-      preview: prev.checkbox.checked
-    };
-  }
+  const bMd = makeButton('Markdown 保存', 'primary', { icon: '↓' });
+  const bJson = makeButton('JSON 保存', 'ghost', { icon: '↓' });
+  const bCopy = makeButton('Markdown クリップボード', 'sub', { icon: '⎘' });
+  const bXlsx = makeButton('Excel (.xlsx) 保存', 'primary', { icon: '↓' });
+  grid.appendChild(bMd);
+  grid.appendChild(bXlsx);
+  grid.appendChild(bJson);
+  grid.appendChild(bCopy);
+  cardSingle.body.appendChild(grid);
 
-  const bigBtn = (text: string, bg?: string) => {
-    const b = mkBtn(text, { bg, marginTop: '0' });
-    b.style.cssText += ';padding:10px 14px;font-size:13px';
-    return b;
-  };
-
-  const bMd = bigBtn('Markdown を保存');
-  bMd.addEventListener('click', () => liteRun(async () => {
-    await runDesignExportStandalone('md', source(), (m, e) => setStatus(m, e));
+  bMd.addEventListener('click', () => liteRun(panel, '設計書 Markdown 生成中…', async () => {
+    await runDesignExportStandalone('md', source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }));
-
-  const bJson = bigBtn('JSON を保存', 'linear-gradient(180deg,#64748b,#475569)');
-  bJson.addEventListener('click', () => liteRun(async () => {
-    await runDesignExportStandalone('json', source(), (m, e) => setStatus(m, e));
+  bJson.addEventListener('click', () => liteRun(panel, '設計書 JSON 生成中…', async () => {
+    await runDesignExportStandalone('json', source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }));
-
-  const bCopy = bigBtn('Markdown をクリップボードへ', 'linear-gradient(180deg,#0ea5e9,#0284c7)');
-  bCopy.addEventListener('click', () => liteRun(async () => {
-    await runDesignCopyMdStandalone(source(), (m, e) => setStatus(m, e));
+  bCopy.addEventListener('click', () => liteRun(panel, 'Markdown コピー中…', async () => {
+    await runDesignCopyMdStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }));
-
-  const bXlsx = bigBtn('Excel (.xlsx) を保存', 'linear-gradient(180deg,#16a34a,#15803d)');
-  bXlsx.addEventListener('click', () => liteRun(async () => {
-    await runDesignExportXlsxStandalone(source(), (m, e) => setStatus(m, e));
+  bXlsx.addEventListener('click', () => liteRun(panel, 'Excel 生成中…', async () => {
+    await runDesignExportXlsxStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }));
+  panel.body.insertBefore(cardSingle.card, panel.status);
 
-  btnRow.appendChild(bMd);
-  btnRow.appendChild(bJson);
-  btnRow.appendChild(bCopy);
-  btnRow.appendChild(bXlsx);
-  bodySlot.appendChild(btnRow);
-
-  // ----- 複数アプリ一括Excel出力 (ZIP) -----
-  const batchWrap = document.createElement('div');
-  batchWrap.style.cssText = 'margin-top:14px;padding:10px;border:1px dashed #94a3b8;border-radius:10px;background:#f8fafc';
-  const batchTitle = document.createElement('div');
-  batchTitle.textContent = '複数アプリの一括出力 (ZIP)';
-  batchTitle.style.cssText = 'font-size:12px;font-weight:700;color:#0f172a;margin-bottom:6px';
-  const batchNote = document.createElement('div');
-  batchNote.style.cssText = 'font-size:11px;color:#475569;line-height:1.5;margin-bottom:8px';
-  batchNote.textContent = '対象アプリIDを改行/カンマ/スペース区切りで指定すると、各アプリの設計書Excelをまとめて1つのZIPに保存します。シート選択は最初に1回だけ表示し、全アプリに適用されます。';
-  const batchIds = document.createElement('textarea');
-  batchIds.placeholder = '例: 74, 120, 305';
-  batchIds.style.cssText = 'width:100%;box-sizing:border-box;min-height:64px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace';
-  const bBatchZip = bigBtn('複数アプリの設計書ZIPを保存', 'linear-gradient(180deg,#0f766e,#0d544f)');
-  bBatchZip.addEventListener('click', () => liteRun(async () => {
+  // ---- 複数アプリ ZIP ----
+  const batchDetails = makeDetails('複数アプリ一括 ZIP 出力（Excel）');
+  const batchIds = makeTextarea({ rows: 3, code: true, placeholder: '例: 74, 120, 305  （カンマ・改行・スペース区切り）' });
+  batchDetails.body.appendChild(batchIds);
+  batchDetails.body.appendChild(makeNote('シート選択は最初の 1 アプリで 1 回だけ表示し、以降は同じ設定を全アプリに適用します。'));
+  const bBatchZip = makeButton('複数アプリの設計書 ZIP を保存', 'primary', { icon: '↓' });
+  bBatchZip.style.width = '100%';
+  batchDetails.body.appendChild(bBatchZip);
+  bBatchZip.addEventListener('click', () => liteRun(panel, '複数アプリ Excel 生成中…', async () => {
     await runBatchDesignExportXlsxZipStandalone(
       { appIdsText: batchIds.value, guestId: guestInp.value.trim() },
-      (m, e) => setStatus(m, e)
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
   }));
-  batchWrap.appendChild(batchTitle);
-  batchWrap.appendChild(batchNote);
-  batchWrap.appendChild(batchIds);
-  batchWrap.appendChild(bBatchZip);
-  bodySlot.appendChild(batchWrap);
+  panel.body.insertBefore(batchDetails.details, panel.status);
 }

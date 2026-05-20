@@ -252,7 +252,7 @@
     }
     return "";
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -330,6 +330,7 @@
         } },
         { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
       ];
+      META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
         reflect: "settings",
@@ -420,6 +421,102 @@
         }
       });
       GUIDED_TOUR_STEPS = Object.freeze(GUIDED_TOUR_COURSES.full.steps);
+    }
+  });
+
+  // src/utils.ts
+  function getToolWindowSafe() {
+    try {
+      const popWin = window.__KUS_TOOL_WINDOW__;
+      if (popWin && !popWin.closed && popWin.document) return popWin;
+    } catch (e) {
+    }
+    return window;
+  }
+  function getToolDocumentSafe() {
+    try {
+      return getToolWindowSafe().document || document;
+    } catch (e) {
+      return document;
+    }
+  }
+  function kusConfirm(message) {
+    try {
+      return getToolWindowSafe().confirm(message);
+    } catch (e) {
+      return window.confirm(message);
+    }
+  }
+  function normalize(v) {
+    if (Array.isArray(v)) return v.map(normalize);
+    if (v && typeof v === "object") {
+      const o = {};
+      Object.keys(v).sort().forEach((k) => {
+        if (META_KEYS.has(k)) return;
+        o[k] = normalize(v[k]);
+      });
+      return o;
+    }
+    return v;
+  }
+  function compactForLog(value, max = 220) {
+    try {
+      const raw = typeof value === "string" ? value : JSON.stringify(value);
+      if (!raw) return "";
+      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
+    } catch (e) {
+      const raw = String(value ?? "");
+      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
+    }
+  }
+  function apiErrorWithContext(err, meta) {
+    if (err && err.__apiDiag) return err;
+    const method = meta?.method || "GET";
+    const prefix = meta?.prefix || "";
+    const path = meta?.path || "";
+    const bodyOrParams = meta?.payload;
+    const app = bodyOrParams?.app ?? bodyOrParams?.id ?? bodyOrParams?.apps?.[0] ?? "";
+    const bodySummary = compactForLog(bodyOrParams);
+    const endpoint = `${prefix}${path}`;
+    const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
+    const baseMessage = err?.message || String(err);
+    const wrapped = new Error(`${baseMessage}
+${contextLine}`);
+    wrapped.__apiDiag = true;
+    wrapped.original = err;
+    if (err?.code) wrapped.code = err.code;
+    if (err?.id) wrapped.id = err.id;
+    if (err?.stack) wrapped.stack = err.stack;
+    return wrapped;
+  }
+  function triggerDownload(filename, blob) {
+    const doc = getToolDocumentSafe();
+    const win = getToolWindowSafe();
+    const url = URL.createObjectURL(blob);
+    const a = doc.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    doc.body.appendChild(a);
+    a.click();
+    win.setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (e) {
+      }
+      try {
+        a.remove();
+      } catch (e) {
+      }
+    }, 0);
+  }
+  function downloadBlob(filename, blob) {
+    triggerDownload(filename, blob);
+  }
+  var init_utils = __esm({
+    "src/utils.ts"() {
+      "use strict";
+      init_constants();
     }
   });
 
@@ -524,100 +621,6 @@
     }
   });
 
-  // src/utils.ts
-  function getToolWindowSafe() {
-    try {
-      const popWin = window.__KUS_TOOL_WINDOW__;
-      if (popWin && !popWin.closed && popWin.document) return popWin;
-    } catch (e) {
-    }
-    return window;
-  }
-  function getToolDocumentSafe() {
-    try {
-      return getToolWindowSafe().document || document;
-    } catch (e) {
-      return document;
-    }
-  }
-  function kusConfirm(message) {
-    try {
-      return getToolWindowSafe().confirm(message);
-    } catch (e) {
-      return window.confirm(message);
-    }
-  }
-  function compactForLog(value, max = 220) {
-    try {
-      const raw = typeof value === "string" ? value : JSON.stringify(value);
-      if (!raw) return "";
-      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
-    } catch (e) {
-      const raw = String(value ?? "");
-      return raw.length > max ? `${raw.slice(0, max)}...` : raw;
-    }
-  }
-  function apiErrorWithContext(err, meta) {
-    if (err && err.__apiDiag) return err;
-    const method = meta?.method || "GET";
-    const prefix = meta?.prefix || "";
-    const path = meta?.path || "";
-    const bodyOrParams = meta?.payload;
-    const app = bodyOrParams?.app ?? bodyOrParams?.id ?? bodyOrParams?.apps?.[0] ?? "";
-    const bodySummary = compactForLog(bodyOrParams);
-    const endpoint = `${prefix}${path}`;
-    const contextLine = `[API] ${method} ${endpoint}${app ? ` app=${app}` : ""}${bodySummary ? ` payload=${bodySummary}` : ""}`;
-    const baseMessage = err?.message || String(err);
-    const wrapped = new Error(`${baseMessage}
-${contextLine}`);
-    wrapped.__apiDiag = true;
-    wrapped.original = err;
-    if (err?.code) wrapped.code = err.code;
-    if (err?.id) wrapped.id = err.id;
-    if (err?.stack) wrapped.stack = err.stack;
-    return wrapped;
-  }
-  function triggerDownload(filename, blob) {
-    const doc = getToolDocumentSafe();
-    const win = getToolWindowSafe();
-    const url = URL.createObjectURL(blob);
-    const a = doc.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.style.display = "none";
-    doc.body.appendChild(a);
-    a.click();
-    win.setTimeout(() => {
-      try {
-        URL.revokeObjectURL(url);
-      } catch (e) {
-      }
-      try {
-        a.remove();
-      } catch (e) {
-      }
-    }, 0);
-  }
-  function downloadBlob(filename, blob) {
-    triggerDownload(filename, blob);
-  }
-  var init_utils = __esm({
-    "src/utils.ts"() {
-      "use strict";
-      init_constants();
-    }
-  });
-
-  // src/diff/engine.ts
-  var init_engine = __esm({
-    "src/diff/engine.ts"() {
-      "use strict";
-      init_constants();
-      init_state();
-      init_utils();
-    }
-  });
-
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -680,10 +683,10 @@ ${contextLine}`);
   }
   function touchApiPathMetric(path, field) {
     const key = String(path || "");
-    const row2 = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
-    row2[field] += 1;
-    apiGetMetrics.byPath[key] = row2;
-    return row2;
+    const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
+    row[field] += 1;
+    apiGetMetrics.byPath[key] = row;
+    return row;
   }
   async function apiGet(prefix, path, params, optionsOrRetries) {
     const options = normalizeApiGetOptions(optionsOrRetries);
@@ -737,7 +740,154 @@ ${contextLine}`);
       throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
     }
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
+  function extractSectionRevision(res) {
+    if (!res || typeof res !== "object") return "";
+    const candidates = [res.revision, res.appRevision, res.revisionNo, res.app?.revision];
+    for (const value of candidates) {
+      if (value == null || value === "") continue;
+      return String(value);
+    }
+    return "";
+  }
+  function fnv1aHashString(text) {
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+    }
+    return h.toString(16).padStart(8, "0");
+  }
+  async function fetchTextFileBody(prefix, fileKey) {
+    if (!fileKey) return null;
+    const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    try {
+      const resp = await fetch(url, { method: "GET", headers });
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      if (blob.size > CUSTOMIZE_BODY_MAX_BYTES) return null;
+      return await blob.text();
+    } catch {
+      return null;
+    }
+  }
+  async function fetchCustomizeFileBodies(customizeSection, prefix) {
+    const stats = { fetched: 0, skipped: 0, failed: 0 };
+    if (!customizeSection || typeof customizeSection !== "object") return stats;
+    const tasks = [];
+    for (const platform of ["desktop", "mobile"]) {
+      for (const kind of ["js", "css"]) {
+        const arr = customizeSection?.[platform]?.[kind];
+        if (!Array.isArray(arr)) continue;
+        for (const item of arr) {
+          if (!item || typeof item !== "object" || item.type !== "FILE") continue;
+          const fileKey = item?.file?.fileKey;
+          const fileName = String(item?.file?.name || "");
+          if (!fileKey) {
+            stats.skipped += 1;
+            continue;
+          }
+          if (fileName && !TEXT_LIKE_EXT.test(fileName)) {
+            stats.skipped += 1;
+            continue;
+          }
+          tasks.push((async () => {
+            const text = await fetchTextFileBody(prefix, fileKey);
+            if (text == null) {
+              stats.failed += 1;
+              return;
+            }
+            item._bodyText = text;
+            item._bodyHash = fnv1aHashString(text);
+            stats.fetched += 1;
+          })());
+        }
+      }
+    }
+    await Promise.all(tasks);
+    return stats;
+  }
+  async function fetchPluginConfigs(pluginSection, prefix, appId) {
+    const stats = { fetched: 0, skipped: 0, failed: 0 };
+    if (!pluginSection || typeof pluginSection !== "object") return stats;
+    const plugins = Array.isArray(pluginSection.plugins) ? pluginSection.plugins : [];
+    if (!plugins.length) return stats;
+    const tasks = [];
+    for (const plugin of plugins) {
+      if (!plugin || typeof plugin !== "object") continue;
+      const id = String(plugin.id || "").trim();
+      if (!id) {
+        stats.skipped += 1;
+        continue;
+      }
+      tasks.push((async () => {
+        try {
+          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
+          if (res && typeof res === "object") {
+            plugin._config = res?.config != null ? res.config : res;
+            stats.fetched += 1;
+          } else {
+            stats.skipped += 1;
+          }
+        } catch {
+          stats.failed += 1;
+        }
+      })());
+    }
+    await Promise.all(tasks);
+    return stats;
+  }
+  async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
+    const app = String(appId || "").trim();
+    if (!app) throw new Error("アプリIDが必要です");
+    const bundle = {
+      appId: app,
+      guestId: String(guestId || "").trim(),
+      preview: !!preview,
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      meta: { sectionRevisions: {} },
+      sections: {}
+    };
+    for (let i = 0; i < sections.length; i++) {
+      const sec = sections[i];
+      const def = SECTION_DEFS.find((x) => x.key === sec);
+      if (!def) continue;
+      try {
+        const sectionPreview = def.previewEndpoint === false ? false : preview;
+        const prefix = buildApiPrefix(guestId, sectionPreview);
+        const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
+        const res = await apiGet(prefix, def.endpoint, params);
+        const revision = extractSectionRevision(res);
+        if (revision) bundle.meta.sectionRevisions[sec] = revision;
+        bundle.sections[sec] = normalize(res);
+      } catch (e) {
+        bundle.sections[sec] = { _fetchError: e?.message || String(e) };
+      }
+      if (onProgress) onProgress((i + 1) / sections.length, def.label);
+    }
+    try {
+      if (sections.includes("customizeSettings")) {
+        const cust = bundle.sections.customizeSettings;
+        if (cust && !cust._fetchError) {
+          const prefix = buildApiPrefix(guestId, false);
+          cust._bodyFetchStats = await fetchCustomizeFileBodies(cust, prefix);
+        }
+      }
+    } catch {
+    }
+    try {
+      if (sections.includes("pluginSettings")) {
+        const plug = bundle.sections.pluginSettings;
+        if (plug && !plug._fetchError) {
+          const prefix = buildApiPrefix(guestId, false);
+          plug._configFetchStats = await fetchPluginConfigs(plug, prefix, app);
+        }
+      }
+    } catch {
+    }
+    return bundle;
+  }
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -767,6 +917,17 @@ ${contextLine}`);
         byPath: {}
       };
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+      TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
+    }
+  });
+
+  // src/diff/engine.ts
+  var init_engine = __esm({
+    "src/diff/engine.ts"() {
+      "use strict";
+      init_constants();
+      init_state();
+      init_utils();
     }
   });
 
@@ -826,63 +987,61 @@ ${contextLine}`);
   // src/entries/record-lite-ui.ts
   init_constants();
 
-  // src/ui/components.ts
-  init_constants();
-  init_state();
-  init_utils();
-  init_filter();
-
-  // src/diff/ignore-presets.ts
-  init_state();
-
-  // src/ui/components.ts
-  init_engine();
-  init_enrich();
-
-  // src/reflect/nodeModeUi.ts
-  init_state();
-
-  // src/ui/components.ts
-  init_constants();
-  init_dialog();
-
-  // src/oss_integrations.ts
-  init_utils();
-  init_dialog();
-
-  // src/ui/components.ts
-  var ui2 = {};
-  function setComponentUi(uiRefs) {
-    ui2 = uiRefs;
-  }
-  function setStatus(msg, isError = false) {
-    if (!ui2.status) return;
-    ui2.status.textContent = msg;
-    ui2.status.style.background = "";
-    ui2.status.style.color = "";
-    ui2.status.classList.remove("status--neutral", "status--error");
-    ui2.status.classList.add(isError ? "status--error" : "status--neutral");
-    const bar = ui2.status.closest?.(".status-bar");
-    if (bar) bar.classList.toggle("status-bar--error", !!isError);
-  }
-  var SCOPE_PICKER_META = Object.freeze({
-    diff: Object.freeze({
-      title: "比較対象セクション",
-      sub: "差分比較で取得する API 設定を選びます。"
-    }),
-    reflect: Object.freeze({
-      title: "反映するセクション",
-      sub: "プレビュー反映でまとめて適用するセクションを選びます。"
-    }),
-    settingsExport: Object.freeze({
-      title: "取得対象セクション",
-      sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
-    })
-  });
-
   // src/tabs/record-standalone.ts
   init_utils();
   init_api();
+  var JSZIP_CDN = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+  function loadJSZipLite() {
+    const w = window;
+    if (w.JSZip) return Promise.resolve(w.JSZip);
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${JSZIP_CDN}"]`);
+      if (existing) {
+        existing.addEventListener("load", () => resolve(window.JSZip));
+        existing.addEventListener("error", () => reject(new Error("JSZipの読み込みに失敗")));
+        return;
+      }
+      const s = document.createElement("script");
+      s.src = JSZIP_CDN;
+      s.onload = () => resolve(window.JSZip);
+      s.onerror = () => reject(new Error("JSZipの読み込みに失敗"));
+      document.head.appendChild(s);
+    });
+  }
+  function sanitizeZipSegment(value, fallback = "item") {
+    const cleaned = String(value == null ? "" : value).replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim();
+    return cleaned || fallback;
+  }
+  function uniqueZipName(used, raw, fileKey, idx) {
+    const safeName = sanitizeZipSegment(raw || "file.bin", "file.bin");
+    const safePrefix = sanitizeZipSegment(String(fileKey || "").slice(0, 12) || String(idx + 1), "file");
+    const base = `${safePrefix}_${safeName}`;
+    let cand = base;
+    let n = 2;
+    while (used.has(cand)) {
+      const dot = base.lastIndexOf(".");
+      if (dot > 0) cand = `${base.slice(0, dot)}_${n}${base.slice(dot)}`;
+      else cand = `${base}_${n}`;
+      n++;
+    }
+    used.add(cand);
+    return cand;
+  }
+  async function downloadFileBlob(prefix, fileKey) {
+    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const resp = await fetch(url, { method: "GET", headers });
+        if (resp.status === 403) return null;
+        if (!resp.ok) throw new Error("ダウンロード失敗: " + resp.status);
+        return await resp.blob();
+      } catch (e) {
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    return null;
+  }
   function hasOrderByClause(query) {
     return /\border\s+by\b/i.test(String(query || ""));
   }
@@ -911,12 +1070,12 @@ ${contextLine}`);
     if (hasOrderByClause(base)) return null;
     return `(${base}) and ${idCond} order by $id asc limit 500`;
   }
-  async function fetchAllRecords(prefix, app, query, setStatus2) {
+  async function fetchAllRecords(prefix, app, query, setStatus) {
     let all = [];
     let offset = 0;
     let lastRecordId = 0;
     while (true) {
-      setStatus2(`レコード取得中... (${all.length}件取得済)`);
+      setStatus(`レコード取得中... (${all.length}件取得済)`);
       const q = buildKeysetQuery(query, lastRecordId) || buildPagedQuery(query, offset);
       const resp = await apiGet(prefix, "/records.json", { app, query: q });
       const batch = resp.records || [];
@@ -927,12 +1086,12 @@ ${contextLine}`);
     }
     return all;
   }
-  async function fetchRecordIds(prefix, app, query, setStatus2) {
+  async function fetchRecordIds(prefix, app, query, setStatus) {
     const ids = [];
     let offset = 0;
     let lastRecordId = 0;
     while (true) {
-      setStatus2(`対象レコード取得中... (${ids.length}件)`);
+      setStatus(`対象レコード取得中... (${ids.length}件)`);
       const q = buildKeysetQuery(query, lastRecordId) || buildPagedQuery(query, offset);
       const resp = await apiGet(prefix, "/records.json", { app, query: q, fields: ["$id"] });
       const batch = resp.records || [];
@@ -944,17 +1103,17 @@ ${contextLine}`);
     }
     return ids;
   }
-  async function runCsvExportStandalone(opts, setStatus2) {
+  async function runCsvExportStandalone(opts, setStatus) {
     const { appId, guestId, query, filename } = opts;
     if (!appId) throw new Error("アプリIDを入力してください");
     const prefix = buildApiPrefix(guestId || "", false);
-    setStatus2("フィールド情報取得中...");
+    setStatus("フィールド情報取得中...");
     const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
     const propKeys = Object.keys(fields.properties || {});
     if (!propKeys.length) throw new Error("出力できるフィールドがありません");
-    const records = await fetchAllRecords(prefix, appId, query || "", setStatus2);
+    const records = await fetchAllRecords(prefix, appId, query || "", setStatus);
     if (!records.length) throw new Error("出力するレコードがありません");
-    setStatus2(`CSV生成中... (${records.length}件)`);
+    setStatus(`CSV生成中... (${records.length}件)`);
     const esc2 = (val) => {
       const s = String(val == null ? "" : val);
       return s.includes(",") || s.includes('"') || s.includes("\n") ? '"' + s.replace(/"/g, '""') + '"' : s;
@@ -974,7 +1133,7 @@ ${contextLine}`);
     const csvStr = "\uFEFF" + lines.join("\n");
     const blob = new Blob([csvStr], { type: "text/csv;charset=utf-8;" });
     downloadBlob(filename || "records.csv", blob);
-    setStatus2(`CSV出力完了 (${records.length}件)`);
+    setStatus(`CSV出力完了 (${records.length}件)`);
   }
   var CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
     "RECORD_NUMBER",
@@ -1027,12 +1186,12 @@ ${contextLine}`);
     if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(", ")}`);
     if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(", ")}`);
   }
-  async function runCsvImportStandalone(opts, setStatus2) {
+  async function runCsvImportStandalone(opts, setStatus) {
     const { appId, guestId, file } = opts;
     if (!appId) throw new Error("アプリIDを入力してください");
     if (!file) throw new Error("CSVファイルを選択してください");
     const prefix = buildApiPrefix(guestId || "", false);
-    setStatus2("CSVファイルを読み込み中...");
+    setStatus("CSVファイルを読み込み中...");
     const text = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve(String(e.target.result || ""));
@@ -1074,7 +1233,7 @@ ${contextLine}`);
     const rows = parseCsv(text.replace(/^\uFEFF/, ""));
     if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
     const header = rows[0].map((h) => h.trim());
-    setStatus2("フィールド情報を確認中...");
+    setStatus("フィールド情報を確認中...");
     const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
     const properties = fields?.properties || {};
     validateCsvImportHeader(header, properties);
@@ -1094,18 +1253,18 @@ ${contextLine}`);
     let ok = 0;
     for (let i = 0; i < records.length; i += 100) {
       const batch = records.slice(i, i + 100);
-      setStatus2(`インポート中... (${i + 1}～${i + batch.length} / ${records.length}件)`);
+      setStatus(`インポート中... (${i + 1}～${i + batch.length} / ${records.length}件)`);
       await apiPost(prefix, "/records.json", { app: appId, records: batch });
       ok += batch.length;
     }
-    setStatus2(`インポート完了: ${ok}件`);
+    setStatus(`インポート完了: ${ok}件`);
   }
-  async function runBatchProcessStandalone(opts, setStatus2) {
+  async function runBatchProcessStandalone(opts, setStatus) {
     const { appId, guestId, query, action, assignee } = opts;
     if (!appId) throw new Error("アプリIDを入力してください");
     if (!action) throw new Error("アクション名を入力してください");
     const prefix = buildApiPrefix(guestId || "", false);
-    const ids = await fetchRecordIds(prefix, appId, query || "", setStatus2);
+    const ids = await fetchRecordIds(prefix, appId, query || "", setStatus);
     if (!ids.length) throw new Error("処理対象のレコードが0件です");
     if (!kusConfirm(`${ids.length}件にアクション「${action}」を実行しますか？`)) return;
     let ok = 0;
@@ -1118,18 +1277,18 @@ ${contextLine}`);
       }) };
       await apiPut(prefix, "/records/status.json", body);
       ok += batch.length;
-      setStatus2(`ステータス更新中... ${ok}/${ids.length}件`);
+      setStatus(`ステータス更新中... ${ok}/${ids.length}件`);
     }
-    setStatus2(`ステータス一括更新完了 (${ok}件)`);
+    setStatus(`ステータス一括更新完了 (${ok}件)`);
   }
-  async function runRecordCopyStandalone(opts, setStatus2) {
+  async function runRecordCopyStandalone(opts, setStatus) {
     const { sourceAppId, sourceGuestId, targetAppId, targetGuestId, query } = opts;
     if (!sourceAppId || !targetAppId) throw new Error("比較元と比較先のアプリIDを指定してください");
     const srcPrefix = buildApiPrefix(sourceGuestId || "", false);
     const tgtPrefix = buildApiPrefix(targetGuestId || "", false);
-    const records = await fetchAllRecords(srcPrefix, sourceAppId, query || "", setStatus2);
+    const records = await fetchAllRecords(srcPrefix, sourceAppId, query || "", setStatus);
     if (!records.length) {
-      setStatus2("コピー対象のレコードがありません");
+      setStatus("コピー対象のレコードがありません");
       return;
     }
     if (!kusConfirm(`${records.length}件を比較先(${targetAppId})へコピーしますか？`)) return;
@@ -1161,202 +1320,1056 @@ ${contextLine}`);
     let ok = 0;
     for (let i = 0; i < clean.length; i += 100) {
       const batch = clean.slice(i, i + 100);
-      setStatus2(`コピー中... ${i + 1}～${i + batch.length} / ${clean.length}件`);
+      setStatus(`コピー中... ${i + 1}～${i + batch.length} / ${clean.length}件`);
       await apiPost(tgtPrefix, "/records.json", { app: targetAppId, records: batch });
       ok += batch.length;
     }
-    setStatus2(`レコードコピー完了: ${ok}件`);
+    setStatus(`レコードコピー完了: ${ok}件`);
+  }
+  async function runAttachmentDownloadStandalone(opts, setStatus) {
+    const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
+    if (!appId) throw new Error("アプリIDを入力してください");
+    if (!fileFieldCode) throw new Error("ファイルフィールドコードを入力してください");
+    const prefix = buildApiPrefix(guestId || "", false);
+    const records = await fetchAllRecords(prefix, appId, query || "", setStatus);
+    if (!records.length) throw new Error("対象レコードが0件です");
+    const JSZipCtor = await loadJSZipLite();
+    const zip = new JSZipCtor();
+    let fileCount = 0;
+    for (let i = 0; i < records.length; i++) {
+      const rec = records[i];
+      setStatus(`添付DL中 (${i + 1}/${records.length})`);
+      const files = rec?.[fileFieldCode]?.value || [];
+      if (!files.length) continue;
+      let folderName = folderFieldCode && rec[folderFieldCode]?.value;
+      if (!folderName) folderName = `Record_${rec.$id?.value || i + 1}`;
+      const folder = zip.folder(sanitizeZipSegment(folderName, `Record_${rec.$id?.value || i + 1}`));
+      const used = /* @__PURE__ */ new Set();
+      for (const f of files) {
+        const blob = await downloadFileBlob(prefix, f.fileKey);
+        if (blob) {
+          folder.file(uniqueZipName(used, f.name || "file.bin", f.fileKey, fileCount), blob);
+          fileCount++;
+        }
+      }
+    }
+    if (!fileCount) {
+      setStatus("ダウンロード対象の添付がありませんでした", true);
+      return;
+    }
+    setStatus(`ZIP生成中 (${fileCount}ファイル)`);
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    downloadBlob(zipName || `attachments_${appId}_${Date.now()}.zip`, zipBlob);
+    setStatus(`添付一括DL完了: ${fileCount}ファイル`);
+  }
+  async function runRecordBackupStandalone(opts, setStatus) {
+    const { appId, guestId, query, zipName, includeFiles, includeComments, includeAppSettings, appScopes } = opts;
+    if (!appId) throw new Error("アプリIDを入力してください");
+    const prefix = buildApiPrefix(guestId || "", false);
+    setStatus("フィールド情報取得中...");
+    const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
+    const propKeys = Object.keys(fields.properties || {});
+    if (!propKeys.length) throw new Error("出力できるフィールドがありません");
+    const records = await fetchAllRecords(prefix, appId, query || "", setStatus);
+    if (!records.length) throw new Error("対象レコードが0件です");
+    const JSZipCtor = await loadJSZipLite();
+    const zip = new JSZipCtor();
+    const notes = [];
+    const esc2 = (v) => {
+      const s = String(v == null ? "" : v);
+      return s.includes(",") || s.includes('"') || s.includes("\n") ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const extract = (rec, code) => {
+      const f = rec[code];
+      if (!f) return "";
+      if (["USER_SELECT", "ORGANIZATION_SELECT", "GROUP_SELECT"].includes(f.type)) return (f.value || []).map((v) => v.code || v.name).join(",");
+      if (["CHECK_BOX", "MULTI_SELECT"].includes(f.type)) return (f.value || []).join(",");
+      if (f.type === "FILE") return (f.value || []).map((file) => file.name).join(",");
+      if (f.type === "SUBTABLE") return (f.value || []).length + "行";
+      if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
+      return f.value;
+    };
+    const lines = [propKeys.map(esc2).join(",")];
+    for (const rec of records) lines.push(propKeys.map((k) => esc2(extract(rec, k))).join(","));
+    zip.file("records.csv", "\uFEFF" + lines.join("\n"));
+    zip.file("records.json", JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, recordCount: records.length, records }, null, 2));
+    let fileCount = 0;
+    if (includeFiles) {
+      const collected = [];
+      for (const rec of records) {
+        for (const [code, field] of Object.entries(rec)) {
+          if (!field || typeof field !== "object") continue;
+          if (field.type === "FILE") {
+            (field.value || []).forEach((file, idx) => collected.push({ rec, fieldCode: code, fileIndex: idx, file }));
+          } else if (field.type === "SUBTABLE") {
+            (field.value || []).forEach((subRow, rowIdx) => {
+              for (const [childCode, childField] of Object.entries(subRow.value || {})) {
+                if (childField?.type !== "FILE") continue;
+                (childField.value || []).forEach((file, idx) => collected.push({ rec, fieldCode: code, childCode, rowIndex: rowIdx, fileIndex: idx, file }));
+              }
+            });
+          }
+        }
+      }
+      if (!collected.length) notes.push("添付ファイルなし");
+      const blobCache = /* @__PURE__ */ new Map();
+      for (let i = 0; i < collected.length; i++) {
+        const ent = collected[i];
+        setStatus(`添付ファイル取得中 (${i + 1}/${collected.length})`);
+        let blob2 = blobCache.get(ent.file.fileKey);
+        if (blob2 === void 0) {
+          blob2 = await downloadFileBlob(prefix, ent.file.fileKey);
+          blobCache.set(ent.file.fileKey, blob2 || null);
+        }
+        if (!blob2) continue;
+        const recordId = String(ent.rec?.$id?.value || "unknown");
+        const parts = ["attachments", `record_${sanitizeZipSegment(recordId)}`];
+        if (ent.childCode) {
+          parts.push(sanitizeZipSegment(ent.fieldCode || "subtable"));
+          parts.push(`row_${(ent.rowIndex || 0) + 1}`);
+          parts.push(sanitizeZipSegment(ent.childCode));
+        } else {
+          parts.push(sanitizeZipSegment(ent.fieldCode || "files"));
+        }
+        const filePrefix = sanitizeZipSegment(String(ent.file.fileKey || "").slice(0, 12) || String(ent.fileIndex + 1));
+        parts.push(`${filePrefix}_${sanitizeZipSegment(ent.file.name || "file.bin", "file.bin")}`);
+        zip.file(parts.join("/"), blob2);
+        fileCount++;
+      }
+    } else {
+      notes.push("添付ファイル未取得");
+    }
+    let commentCount = 0;
+    if (includeComments) {
+      const out = [];
+      for (let i = 0; i < records.length; i++) {
+        const rec = records[i];
+        const recordId = String(rec?.$id?.value || "").trim();
+        if (!recordId) continue;
+        setStatus(`コメント取得中 (${i + 1}/${records.length})`);
+        try {
+          const comments = [];
+          let offset = 0;
+          const limit = 10;
+          while (true) {
+            const resp = await apiGet(prefix, "/record/comments.json", { app: appId, record: recordId, order: "asc", offset, limit });
+            const batch = resp.comments || [];
+            comments.push(...batch);
+            if (batch.length < limit) break;
+            offset += batch.length;
+          }
+          if (comments.length) {
+            out.push({ recordId, comments });
+            commentCount += comments.length;
+          }
+        } catch (e) {
+          notes.push("コメント取得失敗で中断");
+          break;
+        }
+      }
+      zip.file("comments.json", JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, commentCount, records: out }, null, 2));
+    } else {
+      notes.push("コメント未取得");
+    }
+    let appOk = 0;
+    let appNg = 0;
+    if (includeAppSettings && appScopes && appScopes.length) {
+      setStatus("アプリ設定取得中...");
+      const settings = await fetchBundle({
+        appId,
+        guestId: guestId || "",
+        preview: false,
+        sections: appScopes,
+        onProgress: (p, l) => setStatus(`アプリ設定取得中 ${Math.round(p * 100)}% (${l})`)
+      });
+      for (const key of appScopes) {
+        const sec = settings.sections[key];
+        if (sec && sec._fetchError) appNg++;
+        else appOk++;
+      }
+      zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
+    } else if (!includeAppSettings) {
+      notes.push("アプリ設定未取得");
+    }
+    zip.file("manifest.json", JSON.stringify({
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      appId,
+      recordCount: records.length,
+      fileCount,
+      commentCount,
+      appSettings: { ok: appOk, ng: appNg, scopes: appScopes || [] },
+      notes
+    }, null, 2));
+    setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
+    const blob = await zip.generateAsync({ type: "blob" });
+    downloadBlob(zipName || `record_backup_${appId}_${Date.now()}.zip`, blob);
+    setStatus(`バックアップ完了: ${records.length}件 / 添付 ${fileCount} / コメント ${commentCount}`);
+  }
+  async function runLoadStatusActionsStandalone(opts, setStatus) {
+    const { appId, guestId } = opts;
+    if (!appId) throw new Error("アプリIDを入力してください");
+    const prefix = buildApiPrefix(guestId || "", false);
+    setStatus("プロセス管理情報を取得中...");
+    const res = await apiGet(prefix, "/app/status.json", { app: appId });
+    if (!res.enable) {
+      setStatus("プロセス管理は無効です", true);
+      return { enabled: false, states: [], actions: [] };
+    }
+    const states = Object.keys(res.states || {});
+    const actions = (res.actions || []).map((a) => ({ name: a.name, from: a.from, to: a.to }));
+    setStatus(`プロセス管理: 状態 ${states.length}件 / アクション ${actions.length}件`);
+    return { enabled: true, states, actions };
+  }
+  async function runLoadViewsStandalone(opts, setStatus) {
+    const { appId, guestId } = opts;
+    if (!appId) throw new Error("アプリIDを入力してください");
+    const prefix = buildApiPrefix(guestId || "", false);
+    setStatus("一覧情報を取得中...");
+    const resp = await apiGet(prefix, "/app/views.json", { app: appId });
+    const views = Object.entries(resp.views || {}).map(([name, v]) => ({ name, id: String(v.id), filter: String(v.filterCond || ""), type: String(v.type), index: Number(v.index || 0) })).filter((v) => v.type === "LIST").sort((a, b) => a.index - b.index);
+    setStatus(`一覧: ${views.length}件`);
+    return views;
   }
 
-  // src/entries/liteMount.ts
+  // src/ui/components.ts
+  init_constants();
+  init_state();
+  init_utils();
+  init_filter();
+
+  // src/diff/ignore-presets.ts
+  init_state();
+
+  // src/ui/components.ts
+  init_engine();
+  init_enrich();
+
+  // src/reflect/nodeModeUi.ts
+  init_state();
+
+  // src/ui/components.ts
+  init_constants();
   init_dialog();
-  var PANEL_STYLE = "position:fixed;z-index:999999;top:max(16px,2vh);right:max(16px,2vw);width:min(440px,94vw);max-height:min(92vh,880px);overflow:hidden;display:flex;flex-direction:column;background:#fff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 12px 40px rgba(15,23,42,.2);font:12px/1.5 system-ui,sans-serif;";
-  function mountKusLitePanel(opts) {
-    const { id, title, note } = opts;
-    const old = document.getElementById(id);
+
+  // src/oss_integrations.ts
+  init_utils();
+  init_dialog();
+
+  // src/ui/components.ts
+  var ui2 = {};
+  function setComponentUi(uiRefs) {
+    ui2 = uiRefs;
+  }
+  var SCOPE_PICKER_META = Object.freeze({
+    diff: Object.freeze({
+      title: "比較対象セクション",
+      sub: "差分比較で取得する API 設定を選びます。"
+    }),
+    reflect: Object.freeze({
+      title: "反映するセクション",
+      sub: "プレビュー反映でまとめて適用するセクションを選びます。"
+    }),
+    settingsExport: Object.freeze({
+      title: "取得対象セクション",
+      sub: "設定一括取得で保存する API 設定を、JS/CSS設定も含めて選びます。"
+    })
+  });
+
+  // src/entries/litePanelTheme.ts
+  init_dialog();
+  var STYLE_ID = "kus-lp-theme-styles";
+  var ACCENTS = {
+    diff: { from: "#1d4ed8", via: "#2563eb", to: "#0ea5e9", chip: "#dbeafe", ring: "rgba(37,99,235,.16)" },
+    reflect: { from: "#b91c1c", via: "#dc2626", to: "#f97316", chip: "#fee2e2", ring: "rgba(220,38,38,.18)" },
+    field: { from: "#6d28d9", via: "#7c3aed", to: "#a855f7", chip: "#ede9fe", ring: "rgba(124,58,237,.18)" },
+    jsconfig: { from: "#0f766e", via: "#0d9488", to: "#22d3ee", chip: "#ccfbf1", ring: "rgba(13,148,136,.18)" },
+    settings: { from: "#0369a1", via: "#0284c7", to: "#22d3ee", chip: "#e0f2fe", ring: "rgba(2,132,199,.18)" },
+    design: { from: "#854d0e", via: "#a16207", to: "#facc15", chip: "#fef9c3", ring: "rgba(161,98,7,.18)" },
+    er: { from: "#0f766e", via: "#15803d", to: "#84cc16", chip: "#dcfce7", ring: "rgba(21,128,61,.18)" },
+    process: { from: "#9a3412", via: "#ea580c", to: "#f59e0b", chip: "#ffedd5", ring: "rgba(234,88,12,.18)" },
+    record: { from: "#1e293b", via: "#334155", to: "#64748b", chip: "#e2e8f0", ring: "rgba(51,65,85,.18)" }
+  };
+  var THEME_CSS = `
+@keyframes kus-lp-spin { to { transform: rotate(360deg); } }
+@keyframes kus-lp-fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+.kus-lp{
+  --c-bg:#ffffff;
+  --c-surface:#f8fafc;
+  --c-surface-2:#f1f5f9;
+  --c-border:#e2e8f0;
+  --c-border-strong:#cbd5e1;
+  --c-text:#0f172a;
+  --c-text-2:#334155;
+  --c-muted:#64748b;
+  --c-link:#2563eb;
+  --c-ok-bg:#ecfdf5;
+  --c-ok-fg:#065f46;
+  --c-ok-bd:#a7f3d0;
+  --c-err-bg:#fef2f2;
+  --c-err-fg:#991b1b;
+  --c-err-bd:#fecaca;
+  --c-warn-bg:#fffbeb;
+  --c-warn-fg:#92400e;
+  --c-warn-bd:#fde68a;
+  --c-info-bg:#eff6ff;
+  --c-info-fg:#1e3a8a;
+  --c-info-bd:#bfdbfe;
+  --c-accent-from:#1d4ed8;
+  --c-accent-via:#2563eb;
+  --c-accent-to:#0ea5e9;
+  --c-accent-chip:#dbeafe;
+  --c-accent-ring:rgba(37,99,235,.16);
+
+  position:fixed;
+  z-index:999999;
+  top:max(16px,2vh);
+  right:max(16px,2vw);
+  width:min(520px,96vw);
+  max-height:min(92vh,920px);
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  background:var(--c-bg);
+  border:1px solid var(--c-border);
+  border-radius:18px;
+  box-shadow:0 4px 6px -1px rgba(15,23,42,.08),0 28px 60px -12px rgba(15,23,42,.30);
+  font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  color:var(--c-text);
+  animation:kus-lp-fade-in .18s ease-out;
+}
+
+.kus-lp__hero{
+  flex-shrink:0;
+  position:relative;
+  padding:16px 18px 18px;
+  color:#fff;
+  background:linear-gradient(125deg,var(--c-accent-from) 0%,var(--c-accent-via) 45%,var(--c-accent-to) 100%);
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+}
+.kus-lp__hero-main{min-width:0;flex:1}
+.kus-lp__title{margin:0;font-size:17px;font-weight:700;line-height:1.25;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
+.kus-lp__title-icon{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;background:rgba(255,255,255,.22);border-radius:7px}
+.kus-lp__subtitle{margin:4px 0 0;font-size:12px;color:rgba(255,255,255,.85);line-height:1.45}
+.kus-lp__badge-row{margin-top:8px;display:flex;flex-wrap:wrap;gap:5px}
+.kus-lp__badge{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  background:rgba(255,255,255,.22);padding:3px 9px;border-radius:999px;color:#fff;
+}
+.kus-lp__close{
+  flex-shrink:0;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);
+  color:#fff;border-radius:10px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  transition:background .12s ease;
+}
+.kus-lp__close:hover{background:rgba(255,255,255,.24)}
+
+.kus-lp__body{padding:16px 18px 18px;overflow-y:auto;flex:1;min-height:0}
+.kus-lp__body::-webkit-scrollbar{width:10px;height:10px}
+.kus-lp__body::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+.kus-lp__body::-webkit-scrollbar-thumb:hover{background:#94a3b8;background-clip:padding-box;border:2px solid transparent}
+
+.kus-lp__hint{
+  font-size:12px;color:var(--c-muted);line-height:1.55;margin:0 0 14px;
+  padding:10px 12px;background:var(--c-surface);border-radius:10px;border:1px solid var(--c-border);
+}
+.kus-lp__hint strong{color:var(--c-text-2)}
+
+/* ===== Tab bar (lite 内タブ) ===== */
+.kus-lp__tabs{
+  display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--c-border);
+  margin:0 0 14px;padding:0;
+}
+.kus-lp__tab{
+  position:relative;background:transparent;border:none;cursor:pointer;
+  padding:8px 12px 9px;font-size:12px;font-weight:600;color:var(--c-muted);
+  border-radius:8px 8px 0 0;
+}
+.kus-lp__tab:hover{color:var(--c-text-2);background:var(--c-surface)}
+.kus-lp__tab[aria-selected="true"]{color:var(--c-accent-via);background:transparent}
+.kus-lp__tab[aria-selected="true"]::after{
+  content:'';position:absolute;left:8px;right:8px;bottom:-1px;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,var(--c-accent-via),var(--c-accent-to));
+}
+.kus-lp__tab-panel[hidden]{display:none}
+
+/* ===== Card ===== */
+.kus-lp__card{
+  background:var(--c-bg);
+  border:1px solid var(--c-border);
+  border-radius:12px;
+  padding:14px 16px;
+  margin-bottom:12px;
+}
+.kus-lp__card--soft{background:var(--c-surface)}
+.kus-lp__card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-2px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__card-title{font-size:11.5px;font-weight:700;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.06em;margin:0;display:flex;align-items:center;gap:6px}
+.kus-lp__card-num{
+  display:inline-flex;width:18px;height:18px;align-items:center;justify-content:center;
+  background:var(--c-accent-chip);color:var(--c-accent-via);font-size:11px;font-weight:700;border-radius:999px;
+}
+.kus-lp__card-actions{display:flex;gap:6px}
+
+/* ===== Row (label + control) ===== */
+.kus-lp__row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-bottom:10px}
+.kus-lp__row:last-child{margin-bottom:0}
+.kus-lp__row--block{display:block}
+.kus-lp__row--block > .kus-lp__label{display:block;margin-bottom:5px}
+.kus-lp__label{font-size:12px;font-weight:600;color:var(--c-text-2);min-width:5em}
+
+/* ===== Inputs ===== */
+.kus-lp__input,.kus-lp__textarea,.kus-lp__select{
+  appearance:none;
+  border:1px solid var(--c-border);
+  border-radius:8px;padding:7px 10px;font-size:12.5px;
+  background:var(--c-bg);color:var(--c-text);
+  outline:none;transition:border-color .15s,box-shadow .15s;
+  font-family:inherit;
+}
+.kus-lp__input:focus,.kus-lp__textarea:focus,.kus-lp__select:focus{
+  border-color:var(--c-accent-via);box-shadow:0 0 0 3px var(--c-accent-ring);
+}
+.kus-lp__input--id{width:min(120px,36vw)}
+.kus-lp__input--guest{width:min(110px,32vw)}
+.kus-lp__input--narrow{width:min(120px,40vw)}
+.kus-lp__input--medium{width:min(180px,52vw)}
+.kus-lp__input--wide{flex:1;min-width:160px}
+.kus-lp__input--full{width:100%;box-sizing:border-box}
+.kus-lp__textarea{width:100%;box-sizing:border-box;min-height:60px;resize:vertical}
+.kus-lp__textarea--code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;background:var(--c-surface)}
+.kus-lp__file{font-size:12px;padding:5px 0}
+
+/* ===== Checkbox / chip ===== */
+.kus-lp__check{font-size:12px;color:var(--c-text-2);display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.kus-lp__check input{width:14px;height:14px;accent-color:var(--c-accent-via);margin:0}
+.kus-lp__check-grid{display:flex;flex-wrap:wrap;gap:8px 12px;margin-bottom:10px}
+
+.kus-lp__chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.kus-lp__chip{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:11.5px;color:var(--c-text-2);
+  background:var(--c-bg);border:1px solid var(--c-border-strong);
+  border-radius:999px;padding:4px 10px 4px 7px;cursor:pointer;user-select:none;
+  transition:background .12s,border-color .12s;
+}
+.kus-lp__chip:hover{background:var(--c-surface);border-color:#94a3b8}
+.kus-lp__chip input{accent-color:var(--c-accent-via);width:13px;height:13px;margin:0}
+.kus-lp__chip:has(input:checked){background:var(--c-accent-chip);border-color:var(--c-accent-via);color:var(--c-accent-from);font-weight:600}
+
+/* ===== Buttons ===== */
+.kus-lp__btn{
+  appearance:none;border:1px solid transparent;border-radius:10px;
+  font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+  padding:8px 14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  transition:filter .12s,transform .04s,background .12s,border-color .12s;
+}
+.kus-lp__btn:active{transform:scale(.98)}
+.kus-lp__btn[disabled],.kus-lp__btn:disabled{opacity:.55;cursor:not-allowed}
+
+.kus-lp__btn--primary{background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 4px var(--c-accent-ring)}
+.kus-lp__btn--primary:hover:not(:disabled){filter:brightness(1.06)}
+
+.kus-lp__btn--run{width:100%;padding:11px 16px;font-size:13px;font-weight:700;background:linear-gradient(180deg,var(--c-accent-via),var(--c-accent-from));color:#fff;box-shadow:0 2px 6px var(--c-accent-ring)}
+.kus-lp__btn--run:hover:not(:disabled){filter:brightness(1.07)}
+
+.kus-lp__btn--ghost{background:var(--c-surface);color:var(--c-text-2);border-color:var(--c-border-strong)}
+.kus-lp__btn--ghost:hover:not(:disabled){background:#fff;border-color:#94a3b8}
+
+.kus-lp__btn--sub{background:linear-gradient(180deg,#fff,var(--c-surface-2));color:var(--c-text-2);border-color:var(--c-border-strong);font-size:11.5px;padding:7px 10px}
+.kus-lp__btn--sub:hover:not(:disabled){background:#fff;border-color:#94a3b8}
+
+.kus-lp__btn--danger{background:linear-gradient(180deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 2px 4px rgba(220,38,38,.25)}
+.kus-lp__btn--danger:hover:not(:disabled){filter:brightness(1.05)}
+
+.kus-lp__btn-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.kus-lp__btn-row--stack{flex-direction:column}
+.kus-lp__btn-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:380px){.kus-lp__btn-grid{grid-template-columns:1fr}}
+
+/* ===== Status ===== */
+.kus-lp__status{
+  margin-top:12px;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;
+  border:1px solid var(--c-border);background:var(--c-surface-2);color:var(--c-text-2);
+  min-height:2.6em;display:flex;align-items:flex-start;gap:8px;
+}
+.kus-lp__status--ok{background:var(--c-ok-bg);color:var(--c-ok-fg);border-color:var(--c-ok-bd)}
+.kus-lp__status--err{background:var(--c-err-bg);color:var(--c-err-fg);border-color:var(--c-err-bd)}
+.kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
+.kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
+.kus-lp__status-icon{font-size:14px;line-height:1.2}
+.kus-lp__status-busy::before{
+  content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
+  border:2px solid var(--c-muted);border-top-color:transparent;animation:kus-lp-spin .8s linear infinite;
+}
+
+/* ===== Result / Log ===== */
+.kus-lp__result{
+  margin-top:10px;padding:11px 13px;background:#0f172a;color:#e2e8f0;border-radius:10px;
+  font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;
+  border:1px solid #1e293b;
+}
+.kus-lp__result--empty{display:none}
+.kus-lp__panel-html{
+  margin-top:10px;border:1px solid var(--c-border);border-radius:10px;
+  background:var(--c-surface);max-height:240px;overflow:auto;font-size:11.5px;
+}
+.kus-lp__panel-html--empty{display:none}
+.kus-lp__panel-html table{border-collapse:collapse;width:100%}
+.kus-lp__panel-html th,.kus-lp__panel-html td{padding:6px 8px;border-bottom:1px solid var(--c-border);text-align:left}
+.kus-lp__panel-html th{background:var(--c-surface-2);font-weight:600;font-size:11px;color:var(--c-text-2)}
+
+/* ===== Misc ===== */
+.kus-lp__note{font-size:11.5px;color:var(--c-muted);line-height:1.5;margin:-4px 0 10px}
+.kus-lp__note--warn{color:var(--c-warn-fg);padding:7px 10px;background:var(--c-warn-bg);border:1px solid var(--c-warn-bd);border-radius:8px;margin:6px 0}
+.kus-lp__divider{margin:12px 0;border:none;border-top:1px solid var(--c-border)}
+.kus-lp__small{font-size:11px;color:var(--c-muted)}
+.kus-lp__kbd{display:inline-block;padding:1px 6px;border:1px solid var(--c-border-strong);border-radius:4px;background:var(--c-surface);font:11px ui-monospace,monospace;color:var(--c-text-2)}
+
+/* セクション折りたたみ (details) */
+.kus-lp__details{
+  border:1px solid var(--c-border);border-radius:10px;background:var(--c-bg);
+  margin-bottom:10px;overflow:hidden;
+}
+.kus-lp__details > summary{
+  list-style:none;cursor:pointer;padding:10px 14px;
+  font-size:12.5px;font-weight:600;color:var(--c-text-2);
+  display:flex;align-items:center;gap:8px;
+}
+.kus-lp__details > summary::-webkit-details-marker{display:none}
+.kus-lp__details > summary::before{
+  content:'';width:8px;height:8px;border-right:2px solid var(--c-muted);border-bottom:2px solid var(--c-muted);
+  transform:rotate(-45deg);transition:transform .15s;display:inline-block;
+}
+.kus-lp__details[open] > summary::before{transform:rotate(45deg)}
+.kus-lp__details > summary:hover{background:var(--c-surface)}
+.kus-lp__details-body{padding:0 14px 12px}
+
+/* Wide variant (一部 lite 用に幅広にしたい場合) */
+.kus-lp--wide{width:min(640px,96vw)}
+`;
+  function ensureThemeStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const s = document.createElement("style");
+    s.id = STYLE_ID;
+    s.textContent = THEME_CSS;
+    document.head.appendChild(s);
+  }
+  function applyAccentVars(root2, accentKey) {
+    const a = ACCENTS[accentKey] || ACCENTS.diff;
+    root2.style.setProperty("--c-accent-from", a.from);
+    root2.style.setProperty("--c-accent-via", a.via);
+    root2.style.setProperty("--c-accent-to", a.to);
+    root2.style.setProperty("--c-accent-chip", a.chip);
+    root2.style.setProperty("--c-accent-ring", a.ring);
+  }
+  function createLitePanel(opts) {
+    ensureThemeStyles();
+    const old = document.getElementById(opts.id);
     if (old) old.remove();
     const root2 = document.createElement("div");
-    root2.id = id;
-    root2.style.cssText = PANEL_STYLE;
-    const head = document.createElement("div");
-    head.style.cssText = "flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;background:linear-gradient(125deg,#1d4ed8,#2563eb);color:#fff";
-    const t = document.createElement("div");
-    t.textContent = title;
-    t.style.cssText = "font-weight:700;font-size:14px";
-    const close = document.createElement("button");
-    close.type = "button";
-    close.textContent = "閉じる";
-    close.style.cssText = "padding:5px 10px;font-size:11px;border:1px solid rgba(255,255,255,.5);border-radius:8px;background:rgba(255,255,255,.15);color:#fff;cursor:pointer;font-weight:600";
-    close.addEventListener("click", () => {
-      root2.remove();
-      setRootElement(null);
-    });
-    head.appendChild(t);
-    head.appendChild(close);
-    root2.appendChild(head);
-    const scroll = document.createElement("div");
-    scroll.style.cssText = "padding:12px 14px 14px;overflow-y:auto;flex:1;min-height:0";
-    if (note) {
-      const n = document.createElement("div");
-      n.style.cssText = "color:#64748b;font-size:11px;line-height:1.5;margin-bottom:10px;padding:8px 10px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0";
-      n.textContent = note;
-      scroll.appendChild(n);
+    root2.id = opts.id;
+    root2.className = `kus-lp${opts.wide ? " kus-lp--wide" : ""}`;
+    applyAccentVars(root2, opts.accent);
+    const hero = document.createElement("div");
+    hero.className = "kus-lp__hero";
+    const heroMain = document.createElement("div");
+    heroMain.className = "kus-lp__hero-main";
+    const titleEl = document.createElement("h1");
+    titleEl.className = "kus-lp__title";
+    titleEl.textContent = opts.title;
+    heroMain.appendChild(titleEl);
+    if (opts.subtitle) {
+      const subEl = document.createElement("p");
+      subEl.className = "kus-lp__subtitle";
+      subEl.textContent = opts.subtitle;
+      heroMain.appendChild(subEl);
+    }
+    const badgesEl = document.createElement("div");
+    badgesEl.className = "kus-lp__badge-row";
+    const badges = opts.badges || [{ label: "Lite" }];
+    for (const b of badges) {
+      const span = document.createElement("span");
+      span.className = "kus-lp__badge";
+      span.textContent = b.label;
+      badgesEl.appendChild(span);
+    }
+    heroMain.appendChild(badgesEl);
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "kus-lp__close";
+    closeBtn.textContent = "閉じる";
+    hero.appendChild(heroMain);
+    hero.appendChild(closeBtn);
+    root2.appendChild(hero);
+    const body = document.createElement("div");
+    body.className = "kus-lp__body";
+    if (opts.hint) {
+      const hint = document.createElement("div");
+      hint.className = "kus-lp__hint";
+      hint.innerHTML = opts.hint;
+      body.appendChild(hint);
     }
     const status = document.createElement("div");
-    status.style.cssText = "padding:8px 10px;font-size:11px;background:#f1f5f9;border-radius:8px;margin-bottom:8px;min-height:1.2em;color:#0f172a";
-    const bodySlot = document.createElement("div");
-    scroll.appendChild(status);
-    scroll.appendChild(bodySlot);
-    const result = document.createElement("div");
-    result.style.cssText = "margin-top:8px;max-height:180px;overflow:auto;font-size:11px;border:1px solid #e2e8f0;border-radius:8px;background:#fafafa;display:none";
-    scroll.appendChild(result);
-    const busyText = document.createElement("span");
-    setComponentUi({ status, result, busyText });
-    setRootElement(root2);
-    root2.appendChild(scroll);
+    status.className = "kus-lp__status";
+    status.dataset.tone = "neutral";
+    status.innerHTML = '<span class="kus-lp__status-icon">·</span><span class="kus-lp__status-text">準備完了</span>';
+    const result = document.createElement("pre");
+    result.className = "kus-lp__result kus-lp__result--empty";
+    root2.appendChild(body);
     document.body.appendChild(root2);
-    return { root: root2, status, bodySlot, result };
+    body.appendChild(status);
+    body.appendChild(result);
+    function setStatus(msg, tone = "neutral") {
+      status.dataset.tone = tone;
+      status.className = "kus-lp__status" + (tone !== "neutral" && tone !== "busy" ? ` kus-lp__status--${tone}` : "");
+      const icon = tone === "ok" ? "✓" : tone === "err" ? "⚠" : tone === "warn" ? "!" : tone === "info" ? "i" : tone === "busy" ? "" : "·";
+      const iconCls = tone === "busy" ? "kus-lp__status-icon kus-lp__status-busy" : "kus-lp__status-icon";
+      status.innerHTML = `<span class="${iconCls}">${icon}</span><span class="kus-lp__status-text"></span>`;
+      status.querySelector(".kus-lp__status-text").textContent = msg || "";
+    }
+    function setResult(text) {
+      if (!text) {
+        result.textContent = "";
+        result.classList.add("kus-lp__result--empty");
+        return;
+      }
+      result.textContent = text;
+      result.classList.remove("kus-lp__result--empty");
+    }
+    function setResultHtml(html) {
+      if (!html) {
+        result.innerHTML = "";
+        result.classList.add("kus-lp__result--empty");
+        return;
+      }
+      result.innerHTML = html;
+      result.classList.remove("kus-lp__result--empty");
+    }
+    function setBusy(busy) {
+      closeBtn.disabled = busy;
+      root2.style.cursor = busy ? "progress" : "";
+    }
+    function close() {
+      root2.remove();
+      setRootElement(null);
+    }
+    closeBtn.addEventListener("click", close);
+    setRootElement(root2);
+    setComponentUi({ status, result, busyText: document.createElement("span") });
+    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close };
   }
-
-  // src/entries/litePanelHelpers.ts
-  var INPUT_BASE = "padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px";
-  var BTN_BASE = "padding:8px 14px;font-size:12px;font-weight:700;border:none;border-radius:10px;color:#fff;cursor:pointer";
-  var ROW_BASE = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px";
-  var ROW_LABEL_BASE = "font-size:12px;font-weight:600;color:#334155;min-width:6em";
-  function row(labelHtml, child, options = {}) {
+  function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
-    wrap.style.cssText = ROW_BASE;
-    const lab = document.createElement("span");
-    const minWidth = options.labelMinWidth ? `min-width:${options.labelMinWidth}` : ROW_LABEL_BASE.split(";").slice(-1)[0];
-    lab.style.cssText = `${ROW_LABEL_BASE.split(";").slice(0, -1).join(";")};${minWidth}`;
-    lab.innerHTML = labelHtml;
-    wrap.appendChild(lab);
-    wrap.appendChild(child);
+    wrap.className = "kus-lp__row" + (opts.block ? " kus-lp__row--block" : "");
+    if (opts.label) {
+      const lab = document.createElement("span");
+      lab.className = "kus-lp__label";
+      lab.textContent = opts.label;
+      wrap.appendChild(lab);
+    }
+    if (Array.isArray(child)) child.forEach((c) => wrap.appendChild(c));
+    else wrap.appendChild(child);
+    if (opts.help) {
+      const h = document.createElement("div");
+      h.className = "kus-lp__small";
+      h.style.width = "100%";
+      h.textContent = opts.help;
+      wrap.appendChild(h);
+    }
     return wrap;
   }
-  function mkInput(placeholder, options = {}) {
+  function makeInput(opts = {}) {
     const inp = document.createElement("input");
-    inp.type = options.type || "text";
-    inp.placeholder = placeholder;
-    if (options.value) inp.value = options.value;
-    let widthCss;
-    if (options.width === "wide") widthCss = "width:min(260px,80vw)";
-    else if (options.width === "full") widthCss = "width:100%;box-sizing:border-box";
-    else widthCss = "width:min(120px,40vw)";
-    inp.style.cssText = `${widthCss};${INPUT_BASE}`;
+    inp.type = opts.type || "text";
+    if (opts.placeholder) inp.placeholder = opts.placeholder;
+    if (opts.value) inp.value = opts.value;
+    if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
+    inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
-  function mkBtn(text, options = {}) {
+  function makeSelect(options, defaultValue) {
+    const sel = document.createElement("select");
+    sel.className = "kus-lp__select";
+    for (const [v, t] of options) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = t;
+      if (defaultValue !== void 0 && v === defaultValue) o.selected = true;
+      sel.appendChild(o);
+    }
+    return sel;
+  }
+  function makeButton(label, variant = "primary", opts = {}) {
     const b = document.createElement("button");
     b.type = "button";
-    b.textContent = text;
-    const bg = options.bg || "linear-gradient(180deg,#3b82f6,#2563eb)";
-    const mt = options.marginTop || "6px";
-    b.style.cssText = `${BTN_BASE};background:${bg};margin-top:${mt}`;
+    b.className = `kus-lp__btn kus-lp__btn--${variant}`;
+    if (opts.icon) {
+      const i = document.createElement("span");
+      i.textContent = opts.icon;
+      i.style.cssText = "font-size:14px;line-height:1";
+      b.appendChild(i);
+    }
+    const t = document.createElement("span");
+    t.textContent = label;
+    b.appendChild(t);
     return b;
   }
-  function mkSection(title) {
-    const sec = document.createElement("details");
-    sec.style.cssText = "border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:10px;background:#fafafa";
-    const sum = document.createElement("summary");
-    sum.style.cssText = "font-size:12px;font-weight:700;cursor:pointer;color:#1e293b";
-    sum.textContent = title;
-    sec.appendChild(sum);
-    const body = document.createElement("div");
-    body.style.cssText = "margin-top:10px";
-    sec.appendChild(body);
-    return { sec, body };
+  function makeCheck(opts) {
+    const lab = document.createElement("label");
+    lab.className = "kus-lp__check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    if (opts.checked) cb.checked = true;
+    if (opts.value !== void 0) cb.value = opts.value;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(opts.label));
+    if (opts.help) lab.title = opts.help;
+    return { label: lab, checkbox: cb };
   }
-  async function liteRun(fn, busyMessage) {
-    if (busyMessage) setStatus(busyMessage);
+  function makeChip(opts) {
+    const lab = document.createElement("label");
+    lab.className = "kus-lp__chip";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    if (opts.checked) cb.checked = true;
+    if (opts.value !== void 0) cb.value = opts.value;
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(opts.label));
+    if (opts.help) lab.title = opts.help;
+    return { label: lab, checkbox: cb };
+  }
+  function makeCard(opts = {}) {
+    const card = document.createElement("div");
+    card.className = "kus-lp__card" + (opts.soft ? " kus-lp__card--soft" : "");
+    const head = document.createElement("div");
+    head.className = "kus-lp__card-head";
+    if (opts.title || opts.number) {
+      const t = document.createElement("div");
+      t.className = "kus-lp__card-title";
+      if (opts.number) {
+        const n = document.createElement("span");
+        n.className = "kus-lp__card-num";
+        n.textContent = String(opts.number);
+        t.appendChild(n);
+      }
+      if (opts.title) t.appendChild(document.createTextNode(opts.title));
+      head.appendChild(t);
+    }
+    const actions = document.createElement("div");
+    actions.className = "kus-lp__card-actions";
+    head.appendChild(actions);
+    card.appendChild(head);
+    const body = document.createElement("div");
+    card.appendChild(body);
+    if (opts.subtitle) {
+      const s = document.createElement("div");
+      s.className = "kus-lp__small";
+      s.style.cssText = "margin:-4px 0 8px";
+      s.textContent = opts.subtitle;
+      body.appendChild(s);
+    }
+    return { card, body, actions };
+  }
+  function makeNote(text, kind = "plain") {
+    const n = document.createElement("div");
+    n.className = kind === "warn" ? "kus-lp__note--warn" : "kus-lp__note";
+    n.textContent = text;
+    return n;
+  }
+  function makeTabs(specs, opts = {}) {
+    const bar = document.createElement("div");
+    bar.className = "kus-lp__tabs";
+    bar.setAttribute("role", "tablist");
+    const panels = document.createElement("div");
+    panels.className = "kus-lp__tab-panels";
+    const tabBtns = [];
+    const tabPanels = [];
+    function activate(id) {
+      specs.forEach((spec, i) => {
+        const on = spec.id === id;
+        tabBtns[i].setAttribute("aria-selected", on ? "true" : "false");
+        tabPanels[i].hidden = !on;
+      });
+    }
+    specs.forEach((spec) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "kus-lp__tab";
+      btn.setAttribute("role", "tab");
+      btn.textContent = spec.label;
+      btn.dataset.tab = spec.id;
+      btn.addEventListener("click", () => activate(spec.id));
+      bar.appendChild(btn);
+      tabBtns.push(btn);
+      const panel = document.createElement("div");
+      panel.className = "kus-lp__tab-panel";
+      panel.setAttribute("role", "tabpanel");
+      panel.hidden = true;
+      spec.build(panel);
+      panels.appendChild(panel);
+      tabPanels.push(panel);
+    });
+    const initial = opts.initial || specs[0]?.id;
+    if (initial) activate(initial);
+    return { bar, panels };
+  }
+  async function liteRun(panel, busyMsg, fn, okMsg) {
+    panel.setStatus(busyMsg, "busy");
+    panel.setBusy(true);
     try {
-      return await fn();
+      const out = await fn();
+      if (okMsg) panel.setStatus(okMsg, "ok");
+      return out;
     } catch (e) {
-      setStatus(e?.message || String(e), true);
+      panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
       return void 0;
+    } finally {
+      panel.setBusy(false);
     }
   }
 
   // src/entries/record-lite-ui.ts
   function mountRecordLitePanel() {
-    const { bodySlot } = mountKusLitePanel({
+    const panel = createLitePanel({
       id: "kus-record-lite",
       title: "レコード管理",
-      note: "CSVエクスポート/インポート、バッチ処理、レコードコピーを実行します。統合ツール.js は不要です。"
+      subtitle: "CSV / バッチ更新 / 添付DL / コピー / バックアップを 1 つにまとめた lite 版",
+      accent: "record",
+      badges: [{ label: "Lite" }, { label: "本番データ操作あり" }],
+      hint: "<strong>本番データに直接書き込み・更新・コピーします。</strong>バックアップ取得を強く推奨します。",
+      wide: true
     });
-    const tgtApp = mkInput("アプリID", { value: DEFAULT_APP_ID || "" });
-    const tgtGuest = mkInput("ゲストID（任意）");
-    bodySlot.appendChild(row("アプリID", tgtApp));
-    bodySlot.appendChild(row("ゲスト", tgtGuest));
-    {
-      const { sec, body } = mkSection("CSV エクスポート");
-      const query = mkInput("絞り込み条件 (任意)", { width: "wide" });
-      const fname = mkInput("ファイル名", { value: "records.csv" });
-      body.appendChild(row("条件", query));
-      body.appendChild(row("ファイル名", fname));
-      const btn = mkBtn("CSV出力");
-      btn.addEventListener("click", () => liteRun(async () => {
-        await runCsvExportStandalone(
-          { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), filename: fname.value.trim() },
-          (m, e) => setStatus(m, e)
-        );
-      }));
-      body.appendChild(btn);
-      bodySlot.appendChild(sec);
+    const tgtApp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id", ariaLabel: "対象アプリID" });
+    const tgtGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
+    const cardApp = makeCard({ title: "接続情報", number: 1 });
+    cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "対象アプリ" }));
+    panel.body.insertBefore(cardApp.card, panel.status);
+    const viewSelect = makeSelect([["", "一覧を選択（任意）"]]);
+    const loadViewsBtn = makeButton("一覧読込", "sub");
+    cardApp.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: "一覧から条件" }));
+    loadViewsBtn.addEventListener("click", () => liteRun(panel, "一覧情報を取得中…", async () => {
+      const views = await runLoadViewsStandalone(
+        { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim() },
+        (m, e) => panel.setStatus(m, e ? "err" : "busy")
+      );
+      viewSelect.innerHTML = '<option value="">一覧を選択（任意）</option>';
+      for (const v of views) {
+        const opt = document.createElement("option");
+        opt.value = v.filter;
+        opt.textContent = `${v.name} ${v.filter ? `(${v.filter.slice(0, 60)})` : ""}`;
+        viewSelect.appendChild(opt);
+      }
+    }, "一覧を読み込みました。プルダウンから条件を選択できます"));
+    function applyViewQuery(target) {
+      const q = viewSelect.value;
+      if (q) target.value = q;
     }
-    {
-      const { sec, body } = mkSection("CSV インポート");
-      const fileInput = document.createElement("input");
-      fileInput.type = "file";
-      fileInput.accept = ".csv";
-      fileInput.style.cssText = "font-size:12px";
-      body.appendChild(row("CSVファイル", fileInput));
-      const btn = mkBtn("インポート実行", { bg: "linear-gradient(180deg,#16a34a,#15803d)" });
-      btn.addEventListener("click", () => liteRun(async () => {
-        await runCsvImportStandalone(
-          { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
-          (m, e) => setStatus(m, e)
-        );
-      }));
-      body.appendChild(btn);
-      bodySlot.appendChild(sec);
-    }
-    {
-      const { sec, body } = mkSection("ステータス一括更新");
-      const query = mkInput("絞り込み条件 (任意)", { width: "wide" });
-      const action = mkInput("アクション名");
-      const assignee = mkInput("作業者 (任意)");
-      body.appendChild(row("条件", query));
-      body.appendChild(row("アクション", action));
-      body.appendChild(row("作業者", assignee));
-      const btn = mkBtn("一括更新", { bg: "linear-gradient(180deg,#f97316,#ea580c)" });
-      btn.addEventListener("click", () => liteRun(async () => {
-        await runBatchProcessStandalone(
-          { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
-          (m, e) => setStatus(m, e)
-        );
-      }));
-      body.appendChild(btn);
-      bodySlot.appendChild(sec);
-    }
-    {
-      const { sec, body } = mkSection("レコードコピー");
-      const srcApp = mkInput("比較元アプリID");
-      const srcGuest = mkInput("ゲストID（任意）");
-      const query = mkInput("絞り込み条件 (任意)", { width: "wide" });
-      body.appendChild(row("比較元ID", srcApp));
-      body.appendChild(row("元ゲスト", srcGuest));
-      body.appendChild(row("条件", query));
-      const btn = mkBtn("コピー実行", { bg: "linear-gradient(180deg,#7c3aed,#6d28d9)" });
-      btn.addEventListener("click", () => liteRun(async () => {
-        await runRecordCopyStandalone(
-          { sourceAppId: srcApp.value.trim(), sourceGuestId: srcGuest.value.trim(), targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), query: query.value.trim() },
-          (m, e) => setStatus(m, e)
-        );
-      }));
-      body.appendChild(btn);
-      bodySlot.appendChild(sec);
-    }
+    const tabHost = document.createElement("div");
+    panel.body.insertBefore(tabHost, panel.status);
+    const tabs = makeTabs([
+      {
+        id: "csv-export",
+        label: "CSV出力",
+        build: (root2) => {
+          const query = makeInput({ placeholder: "absent", width: "wide" });
+          const fname = makeInput({ placeholder: "records.csv", value: "records.csv", width: "medium" });
+          const useView = makeButton("▼ 一覧から", "sub");
+          useView.addEventListener("click", () => applyViewQuery(query));
+          root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
+          root2.appendChild(makeRow(fname, { label: "ファイル名" }));
+          const run = makeButton("CSVを出力", "primary", { icon: "↓" });
+          run.style.width = "100%";
+          run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
+            await runCsvExportStandalone(
+              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), filename: fname.value.trim() },
+              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+            );
+          }));
+          root2.appendChild(makeRow(run));
+        }
+      },
+      {
+        id: "csv-import",
+        label: "CSV取込",
+        build: (root2) => {
+          const fileInput = document.createElement("input");
+          fileInput.type = "file";
+          fileInput.accept = ".csv";
+          fileInput.className = "kus-lp__file";
+          root2.appendChild(makeRow(fileInput, { label: "CSV" }));
+          root2.appendChild(makeNote("UTF-8 / Excel BOM 対応。ファイル・サブテーブル・ステータスは取込対象外です。"));
+          const run = makeButton("レコードを取込", "primary", { icon: "↑" });
+          run.style.width = "100%";
+          run.addEventListener("click", () => liteRun(panel, "CSV取込中…", async () => {
+            await runCsvImportStandalone(
+              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
+              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+            );
+          }));
+          root2.appendChild(makeRow(run));
+        }
+      },
+      {
+        id: "status",
+        label: "ステータス",
+        build: (root2) => {
+          const query = makeInput({ placeholder: '条件 (例: status = "新規")', width: "wide" });
+          const action = makeInput({ placeholder: "アクション名", width: "medium" });
+          const assignee = makeInput({ placeholder: "作業者ログイン名 (任意)", width: "medium" });
+          const actionSelect = makeSelect([["", "--"]]);
+          const loadActions = makeButton("読込", "sub");
+          const useView = makeButton("▼ 一覧から", "sub");
+          useView.addEventListener("click", () => applyViewQuery(query));
+          root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
+          root2.appendChild(makeRow([action, actionSelect, loadActions], { label: "アクション" }));
+          actionSelect.addEventListener("change", () => {
+            if (actionSelect.value) action.value = actionSelect.value;
+          });
+          loadActions.addEventListener("click", () => liteRun(panel, "プロセス管理を取得中…", async () => {
+            const info = await runLoadStatusActionsStandalone(
+              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim() },
+              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+            );
+            actionSelect.innerHTML = '<option value="">--</option>';
+            const seen = /* @__PURE__ */ new Set();
+            for (const a of info.actions) {
+              if (seen.has(a.name)) continue;
+              seen.add(a.name);
+              const opt = document.createElement("option");
+              opt.value = a.name;
+              opt.textContent = `${a.name} (${a.from} → ${a.to})`;
+              actionSelect.appendChild(opt);
+            }
+          }));
+          root2.appendChild(makeRow(assignee, { label: "作業者" }));
+          root2.appendChild(makeNote("対象 100 件単位でステータス更新します。元に戻せません。"));
+          const run = makeButton("ステータスを一括更新", "primary");
+          run.style.width = "100%";
+          run.classList.add("kus-lp__btn--danger");
+          run.addEventListener("click", () => liteRun(panel, "ステータス一括更新中…", async () => {
+            await runBatchProcessStandalone(
+              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
+              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+            );
+          }));
+          root2.appendChild(makeRow(run));
+        }
+      },
+      {
+        id: "attach",
+        label: "添付DL",
+        build: (root2) => {
+          const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
+          const fileCode = makeInput({ placeholder: "例: attached_file", width: "medium" });
+          const folderCode = makeInput({ placeholder: "任意（フォルダ名にするフィールド）", width: "medium" });
+          const zipName = makeInput({ placeholder: "attachments.zip", width: "medium" });
+          const useView = makeButton("▼ 一覧から", "sub");
+          useView.addEventListener("click", () => applyViewQuery(query));
+          root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
+          root2.appendChild(makeRow(fileCode, { label: "ファイル" }));
+          root2.appendChild(makeRow(folderCode, { label: "フォルダ" }));
+          root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
+          const run = makeButton("添付ファイルをZIPで保存", "primary", { icon: "↓" });
+          run.style.width = "100%";
+          run.addEventListener("click", () => liteRun(panel, "添付ファイル取得中…", async () => {
+            await runAttachmentDownloadStandalone(
+              {
+                appId: tgtApp.value.trim(),
+                guestId: tgtGuest.value.trim(),
+                query: query.value.trim(),
+                fileFieldCode: fileCode.value.trim(),
+                folderFieldCode: folderCode.value.trim(),
+                zipName: zipName.value.trim()
+              },
+              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+            );
+          }));
+          root2.appendChild(makeRow(run));
+        }
+      },
+      {
+        id: "copy",
+        label: "コピー",
+        build: (root2) => {
+          const srcApp = makeInput({ placeholder: "コピー元アプリID", width: "id" });
+          const srcGuest = makeInput({ placeholder: "ゲスト (任意)", width: "guest" });
+          const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
+          root2.appendChild(makeRow([srcApp, srcGuest], { label: "コピー元" }));
+          root2.appendChild(makeRow(query, { label: "クエリ" }));
+          root2.appendChild(makeNote("元アプリの絞り込んだレコードを、対象アプリへ POST で追加します。ファイル/システム項目は除外されます。"));
+          const run = makeButton("レコードをコピー実行", "primary");
+          run.style.width = "100%";
+          run.classList.add("kus-lp__btn--danger");
+          run.addEventListener("click", () => liteRun(panel, "レコードコピー中…", async () => {
+            await runRecordCopyStandalone(
+              {
+                sourceAppId: srcApp.value.trim(),
+                sourceGuestId: srcGuest.value.trim(),
+                targetAppId: tgtApp.value.trim(),
+                targetGuestId: tgtGuest.value.trim(),
+                query: query.value.trim()
+              },
+              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+            );
+          }));
+          root2.appendChild(makeRow(run));
+        }
+      },
+      {
+        id: "backup",
+        label: "バックアップ",
+        build: (root2) => {
+          const query = makeInput({ placeholder: "条件 (任意・全件は空)", width: "wide" });
+          const zipName = makeInput({ placeholder: "record_backup_<app>_<ts>.zip", width: "wide" });
+          const useView = makeButton("▼ 一覧から", "sub");
+          useView.addEventListener("click", () => applyViewQuery(query));
+          root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
+          root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
+          const incFiles = makeCheck({ label: "添付ファイルも保存", checked: true });
+          const incComments = makeCheck({ label: "コメントも保存", checked: true });
+          const incSettings = makeCheck({ label: "アプリ設定も保存", checked: false });
+          const optGrid = document.createElement("div");
+          optGrid.className = "kus-lp__check-grid";
+          optGrid.appendChild(incFiles.label);
+          optGrid.appendChild(incComments.label);
+          optGrid.appendChild(incSettings.label);
+          root2.appendChild(optGrid);
+          const scopeBox = document.createElement("div");
+          scopeBox.className = "kus-lp__chips";
+          scopeBox.style.display = "none";
+          const chips = SECTION_DEFS.map((d) => makeChip({ label: d.label, value: d.key, checked: ["fieldSettings", "layoutSettings", "viewSettings", "processSettings"].includes(d.key) }));
+          chips.forEach((c) => scopeBox.appendChild(c.label));
+          root2.appendChild(scopeBox);
+          incSettings.checkbox.addEventListener("change", () => {
+            scopeBox.style.display = incSettings.checkbox.checked ? "flex" : "none";
+          });
+          const run = makeButton("バックアップ ZIP を保存", "primary", { icon: "↓" });
+          run.style.width = "100%";
+          run.addEventListener("click", () => liteRun(panel, "レコードバックアップ中…", async () => {
+            await runRecordBackupStandalone(
+              {
+                appId: tgtApp.value.trim(),
+                guestId: tgtGuest.value.trim(),
+                query: query.value.trim(),
+                zipName: zipName.value.trim(),
+                includeFiles: incFiles.checkbox.checked,
+                includeComments: incComments.checkbox.checked,
+                includeAppSettings: incSettings.checkbox.checked,
+                appScopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value)
+              },
+              (m, e) => panel.setStatus(m, e ? "err" : "busy")
+            );
+          }));
+          root2.appendChild(makeRow(run));
+        }
+      }
+    ]);
+    tabHost.appendChild(tabs.bar);
+    tabHost.appendChild(tabs.panels);
   }
 
   // src/entries/record-lite-entry.ts

@@ -1,154 +1,121 @@
 'use strict';
 
 import { SETTINGS_EXPORT_SCOPE_DEFS } from '../constants.js';
-import { setStatus } from '../ui/components.js';
 import {
   runSettingsExportSearchStandalone,
   runSettingsExportStandalone,
   runSettingsExportAddSpaceStandalone,
   renderSettingsExportSearchResultsHtml
 } from '../tabs/settings-export-standalone.js';
-import { mountKusLitePanel } from './liteMount.js';
-import { mkInput, mkOption, liteRun } from './litePanelHelpers.js';
-
-// 設定一括取得タブ専用の縦積みラベル row（litePanelHelpers の row は横並び）。
-function row(labelText: string, child: HTMLElement): HTMLElement {
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'margin-bottom:10px';
-  if (labelText) {
-    const lab = document.createElement('div');
-    lab.style.cssText = 'font-size:11px;font-weight:700;color:#475569;margin-bottom:4px';
-    lab.textContent = labelText;
-    wrap.appendChild(lab);
-  }
-  wrap.appendChild(child);
-  return wrap;
-}
+import {
+  createLitePanel,
+  makeRow,
+  makeInput,
+  makeButton,
+  makeCheck,
+  makeChip,
+  makeTextarea,
+  makeCard,
+  makeNote,
+  liteRun
+} from './litePanelTheme.js';
 
 export function mountSettingsExportLitePanel() {
-  const { bodySlot, result } = mountKusLitePanel({
+  const panel = createLitePanel({
     id: 'kus-settings-export-lite',
     title: '設定一括取得',
-    note: '複数アプリの設定を JSON または ZIP で保存します。統合ツール.js は不要です。'
+    subtitle: '複数アプリの設定を JSON または ZIP（1アプリ=1JSON）で保存します。',
+    accent: 'settings',
+    badges: [{ label: 'Lite' }, { label: '複数アプリ対応' }],
+    hint: 'アプリ検索／スペース内アプリ自動追加に対応。ZIP は manifest 付きで保存します。',
+    wide: true
   });
 
-  const appTa = document.createElement('textarea');
-  appTa.rows = 3;
-  appTa.placeholder = 'アプリID（カンマ・改行区切り）';
-  appTa.style.cssText =
-    'width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px;resize:vertical';
+  // ---- 対象アプリ ----
+  const cardTarget = makeCard({ title: '対象アプリ', number: 1 });
+  const appTa = makeTextarea({ rows: 3, code: true, placeholder: 'アプリID（カンマ・改行・スペース区切り）' });
+  cardTarget.body.appendChild(appTa);
 
-  const searchKw = mkInput('アプリ名の一部');
-  searchKw.style.cssText = 'flex:1;min-width:120px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-
-  const searchRow = document.createElement('div');
-  searchRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center';
-  const searchBtn = document.createElement('button');
-  searchBtn.type = 'button';
-  searchBtn.textContent = '検索';
-  searchBtn.style.cssText =
-    'padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer';
-  searchRow.appendChild(searchKw);
-  searchRow.appendChild(searchBtn);
+  const searchKw = makeInput({ placeholder: 'アプリ名の一部', width: 'wide' });
+  const searchBtn = makeButton('検索', 'sub');
+  cardTarget.body.appendChild(makeRow([searchKw, searchBtn], { label: 'アプリ検索' }));
 
   const searchOut = document.createElement('div');
-  searchOut.style.cssText =
-    'max-height:140px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;margin-top:6px;background:#fff';
+  searchOut.className = 'kus-lp__panel-html kus-lp__panel-html--empty';
+  searchOut.style.maxHeight = '180px';
+  cardTarget.body.appendChild(searchOut);
 
-  const spaceKw = mkInput('スペースID');
-  spaceKw.style.cssText = 'flex:1;min-width:120px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-  const spaceRow = document.createElement('div');
-  spaceRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center';
-  const spaceBtn = document.createElement('button');
-  spaceBtn.type = 'button';
-  spaceBtn.textContent = 'スペース内全アプリを追加';
-  spaceBtn.style.cssText =
-    'padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer';
-  spaceRow.appendChild(spaceKw);
-  spaceRow.appendChild(spaceBtn);
+  const spaceKw = makeInput({ placeholder: 'スペースID', width: 'narrow' });
+  const spaceBtn = makeButton('スペース内アプリを追加', 'sub');
+  cardTarget.body.appendChild(makeRow([spaceKw, spaceBtn], { label: 'スペース' }));
+  panel.body.insertBefore(cardTarget.card, panel.status);
 
-  const guestInp = mkInput('ゲストID（任意）');
-  guestInp.style.cssText = 'width:min(140px,44vw);padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:12px';
-  const prev = mkOption('プレビュー');
-  const prevCb = prev.checkbox;
+  // ---- 取得セクション ----
+  const cardScope = makeCard({ title: '取得セクション', number: 2 });
+  const chipBox = document.createElement('div');
+  chipBox.className = 'kus-lp__chips';
+  const chips = SETTINGS_EXPORT_SCOPE_DEFS.map((s) => makeChip({ label: s.label, value: s.key, checked: true }));
+  chips.forEach((c) => chipBox.appendChild(c.label));
+  cardScope.body.appendChild(chipBox);
 
+  const allBtn = makeButton('全選択', 'sub');
+  const noneBtn = makeButton('全解除', 'sub');
+  cardScope.actions.appendChild(allBtn);
+  cardScope.actions.appendChild(noneBtn);
+  allBtn.addEventListener('click', () => chips.forEach((c) => { c.checkbox.checked = true; }));
+  noneBtn.addEventListener('click', () => chips.forEach((c) => { c.checkbox.checked = false; }));
+
+  // Scope-root として既存 standalone 関数に合うように DOM ラッパを作る
   const scopeRoot = document.createElement('div');
-  scopeRoot.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px 10px;padding:8px 0';
-  for (const s of SETTINGS_EXPORT_SCOPE_DEFS) {
-    const lab = document.createElement('label');
-    lab.style.cssText = 'font-size:11px;color:#334155;display:inline-flex;align-items:center;gap:4px;cursor:pointer';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = s.key;
-    cb.checked = true;
-    lab.appendChild(cb);
-    lab.appendChild(document.createTextNode(s.label));
-    scopeRoot.appendChild(lab);
+  scopeRoot.style.display = 'none';
+  for (const c of chips) {
+    // 既存 selectedScopeKeys() は input[type=checkbox][value] を集計する設計
+    const inp = c.checkbox.cloneNode(true) as HTMLInputElement;
+    inp.checked = c.checkbox.checked;
+    c.checkbox.addEventListener('change', () => { inp.checked = c.checkbox.checked; });
+    scopeRoot.appendChild(inp);
   }
+  cardScope.body.appendChild(scopeRoot);
+  panel.body.insertBefore(cardScope.card, panel.status);
 
-  const scopeActions = document.createElement('div');
-  scopeActions.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 8px';
-  const selectAllBtn = document.createElement('button');
-  selectAllBtn.type = 'button';
-  selectAllBtn.textContent = '全選択';
-  selectAllBtn.style.cssText =
-    'padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer';
-  const clearAllBtn = document.createElement('button');
-  clearAllBtn.type = 'button';
-  clearAllBtn.textContent = '全解除';
-  clearAllBtn.style.cssText =
-    'padding:6px 12px;font-size:12px;font-weight:600;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer';
-  scopeActions.appendChild(selectAllBtn);
-  scopeActions.appendChild(clearAllBtn);
+  // ---- ゲスト / プレビュー ----
+  const cardOpt = makeCard({ title: '接続・出力', number: 3, soft: true });
+  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  const prev = makeCheck({ label: 'プレビュー環境から取得' });
+  cardOpt.body.appendChild(makeRow([guestInp, prev.label], { label: '接続' }));
 
-  const btnJson = document.createElement('button');
-  btnJson.type = 'button';
-  btnJson.textContent = 'JSON で保存';
-  btnJson.style.cssText =
-    'width:100%;margin-top:8px;padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:linear-gradient(180deg,#3b82f6,#2563eb);color:#fff;cursor:pointer';
+  const btnJson = makeButton('JSON で保存', 'primary', { icon: '↓' });
+  const btnZip = makeButton('ZIP で保存', 'primary', { icon: '↓' });
+  const btnGrid = document.createElement('div');
+  btnGrid.className = 'kus-lp__btn-grid';
+  btnGrid.appendChild(btnJson);
+  btnGrid.appendChild(btnZip);
+  cardOpt.body.appendChild(btnGrid);
+  cardOpt.body.appendChild(makeNote('JSON は全アプリを 1 ファイルに、ZIP は app_<id>.json + manifest.json で個別保存します。'));
+  panel.body.insertBefore(cardOpt.card, panel.status);
 
-  const btnZip = document.createElement('button');
-  btnZip.type = 'button';
-  btnZip.textContent = 'ZIP で保存';
-  btnZip.style.cssText =
-    'width:100%;margin-top:8px;padding:10px 14px;font-size:13px;font-weight:700;border:none;border-radius:10px;background:linear-gradient(180deg,#64748b,#475569);color:#fff;cursor:pointer';
-
-  bodySlot.appendChild(row('対象アプリID', appTa));
-  bodySlot.appendChild(row('アプリ検索', searchRow));
-  bodySlot.appendChild(searchOut);
-  bodySlot.appendChild(row('スペース指定', spaceRow));
-  bodySlot.appendChild(row('ゲスト / 環境', (() => {
-    const w = document.createElement('div');
-    w.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;align-items:center';
-    w.appendChild(guestInp);
-    w.appendChild(prev.label);
-    return w;
-  })()));
-  bodySlot.appendChild(row('取得セクション', (() => {
-    const w = document.createElement('div');
-    w.appendChild(scopeActions);
-    w.appendChild(scopeRoot);
-    return w;
-  })()));
-  bodySlot.appendChild(btnJson);
-  bodySlot.appendChild(btnZip);
+  // ---- 結果サマリ ----
+  const summary = document.createElement('div');
+  summary.className = 'kus-lp__panel-html kus-lp__panel-html--empty';
+  panel.body.insertBefore(summary, panel.status);
 
   function opts() {
     return {
       appIdsText: appTa.value,
       guestId: guestInp.value.trim(),
-      preview: prevCb.checked,
+      preview: prev.checkbox.checked,
       scopeRoot
     };
   }
 
-  searchBtn.addEventListener('click', () => liteRun(async () => {
+  searchBtn.addEventListener('click', () => liteRun(panel, 'アプリ検索中…', async () => {
     const apps = await runSettingsExportSearchStandalone(
       searchKw.value,
       guestInp.value.trim(),
-      (m, e) => setStatus(m, e)
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
     searchOut.innerHTML = renderSettingsExportSearchResultsHtml(apps);
+    searchOut.classList.toggle('kus-lp__panel-html--empty', !apps.length);
   }));
 
   searchOut.addEventListener('click', (ev) => {
@@ -159,36 +126,35 @@ export function mountSettingsExportLitePanel() {
     const id = btn.getAttribute('data-app');
     if (!id) return;
     const cur = appTa.value.trim();
-    const next = cur ? `${cur}\n${id}` : id;
-    appTa.value = next;
+    appTa.value = cur ? `${cur}\n${id}` : id;
   });
 
-  spaceBtn.addEventListener('click', () => liteRun(async () => {
+  spaceBtn.addEventListener('click', () => liteRun(panel, 'スペース内アプリ取得中…', async () => {
     appTa.value = await runSettingsExportAddSpaceStandalone(
       spaceKw.value.trim(),
       guestInp.value.trim(),
       appTa.value,
-      (m, e) => setStatus(m, e)
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
   }));
 
-  selectAllBtn.addEventListener('click', () => {
-    scopeRoot.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((cb) => { cb.checked = true; });
-  });
-
-  clearAllBtn.addEventListener('click', () => {
-    scopeRoot.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((cb) => { cb.checked = false; });
-  });
-
-  btnJson.addEventListener('click', () => liteRun(async () => {
-    result.style.display = 'block';
-    const { summaryHtml } = await runSettingsExportStandalone('json', opts(), (m, e) => setStatus(m, e));
-    result.innerHTML = summaryHtml;
+  btnJson.addEventListener('click', () => liteRun(panel, '設定一括取得（JSON）中…', async () => {
+    const { summaryHtml } = await runSettingsExportStandalone(
+      'json',
+      opts(),
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+    );
+    summary.innerHTML = summaryHtml;
+    summary.classList.remove('kus-lp__panel-html--empty');
   }));
 
-  btnZip.addEventListener('click', () => liteRun(async () => {
-    result.style.display = 'block';
-    const { summaryHtml } = await runSettingsExportStandalone('zip', opts(), (m, e) => setStatus(m, e));
-    result.innerHTML = summaryHtml;
+  btnZip.addEventListener('click', () => liteRun(panel, '設定一括取得（ZIP）中…', async () => {
+    const { summaryHtml } = await runSettingsExportStandalone(
+      'zip',
+      opts(),
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+    );
+    summary.innerHTML = summaryHtml;
+    summary.classList.remove('kus-lp__panel-html--empty');
   }));
 }

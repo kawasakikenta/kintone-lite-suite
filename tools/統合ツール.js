@@ -20552,7 +20552,7 @@ ${reason}` : "",
     return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
   }
   function sanitizeFilename(name) {
-    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[ -]/g, "").trim() || "untitled";
+    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim() || "untitled";
   }
   async function runBatchDesignExportXlsxZip(params) {
     const seen = /* @__PURE__ */ new Set();

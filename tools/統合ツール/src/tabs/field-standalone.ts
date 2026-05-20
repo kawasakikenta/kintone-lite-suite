@@ -93,3 +93,43 @@ export async function runLoadFieldsStandalone(opts, setStatus) {
   setStatus('フィールド取得完了');
   return res.properties || ({} as any);
 }
+
+const RENAME_EXCLUDED_TYPES = new Set([
+  'RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME',
+  'STATUS', 'STATUS_ASSIGNEE', 'CATEGORY'
+]);
+
+/**
+ * 比較先プレビューのフィールドコードに対し、プレフィックスを一括付与/除去した
+ * 新しい properties JSON を返す（書き換え結果はテキストエリアに反映する想定。
+ * 反映自体は別途 runFieldApplyStandalone で実行）。
+ */
+export async function runBulkRenameFieldStandalone(opts, setStatus) {
+  const { targetAppId, targetGuestId, prefix, removeMode } = opts;
+  if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
+  if (!prefix || !String(prefix).trim()) throw new Error('プレフィックス文字列を入力してください');
+  const apiPrefix = buildApiPrefix(targetGuestId || '', true);
+  setStatus('比較先フィールドを取得中...');
+  const fieldsResp = await apiGet(apiPrefix, '/app/form/fields.json', { app: targetAppId });
+  const props = fieldsResp.properties || ({} as any);
+  const trimmed = String(prefix).trim();
+
+  let modifiedCount = 0;
+  const newProps: Record<string, any> = {};
+  const renamePairs: Array<{ from: string; to: string }> = [];
+  for (const [code, field] of Object.entries(props) as Array<[string, any]>) {
+    if (RENAME_EXCLUDED_TYPES.has(field.type)) continue;
+    let newCode = code;
+    if (removeMode && code.startsWith(trimmed)) newCode = code.slice(trimmed.length);
+    else if (!removeMode && !code.startsWith(trimmed)) newCode = trimmed + code;
+    if (newCode !== code) {
+      const cloned = deepClone(field);
+      cloned.code = newCode;
+      newProps[newCode] = cloned;
+      modifiedCount++;
+      renamePairs.push({ from: code, to: newCode });
+    }
+  }
+  setStatus(`プレフィックス${removeMode ? '除去' : '付与'}完了: ${modifiedCount}件`);
+  return { properties: newProps, modifiedCount, renamePairs };
+}

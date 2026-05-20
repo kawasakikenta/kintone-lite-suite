@@ -1,102 +1,265 @@
 'use strict';
 
-import { DEFAULT_APP_ID } from '../constants.js';
-import { setStatus } from '../ui/components.js';
+import { DEFAULT_APP_ID, SECTION_DEFS } from '../constants.js';
 import {
   runCsvExportStandalone,
   runCsvImportStandalone,
   runBatchProcessStandalone,
-  runRecordCopyStandalone
+  runRecordCopyStandalone,
+  runAttachmentDownloadStandalone,
+  runRecordBackupStandalone,
+  runLoadStatusActionsStandalone,
+  runLoadViewsStandalone
 } from '../tabs/record-standalone.js';
-import { mountKusLitePanel } from './liteMount.js';
-import { row, mkInput, mkBtn, mkSection, liteRun } from './litePanelHelpers.js';
+import {
+  createLitePanel,
+  makeRow,
+  makeInput,
+  makeButton,
+  makeCheck,
+  makeChip,
+  makeSelect,
+  makeCard,
+  makeTabs,
+  makeNote,
+  liteRun
+} from './litePanelTheme.js';
 
 export function mountRecordLitePanel() {
-  const { bodySlot } = mountKusLitePanel({
+  const panel = createLitePanel({
     id: 'kus-record-lite',
     title: 'レコード管理',
-    note: 'CSVエクスポート/インポート、バッチ処理、レコードコピーを実行します。統合ツール.js は不要です。'
+    subtitle: 'CSV / バッチ更新 / 添付DL / コピー / バックアップを 1 つにまとめた lite 版',
+    accent: 'record',
+    badges: [{ label: 'Lite' }, { label: '本番データ操作あり' }],
+    hint: '<strong>本番データに直接書き込み・更新・コピーします。</strong>バックアップ取得を強く推奨します。',
+    wide: true
   });
 
-  const tgtApp = mkInput('アプリID', { value: DEFAULT_APP_ID || '' });
-  const tgtGuest = mkInput('ゲストID（任意）');
-  bodySlot.appendChild(row('アプリID', tgtApp));
-  bodySlot.appendChild(row('ゲスト', tgtGuest));
+  // ---- 接続情報（共通） ----
+  const tgtApp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id', ariaLabel: '対象アプリID' });
+  const tgtGuest = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  const cardApp = makeCard({ title: '接続情報', number: 1 });
+  cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '対象アプリ' }));
+  panel.body.insertBefore(cardApp.card, panel.status);
 
-  // --- CSV Export ---
-  {
-    const { sec, body } = mkSection('CSV エクスポート');
-    const query = mkInput('絞り込み条件 (任意)', { width: 'wide' });
-    const fname = mkInput('ファイル名', { value: 'records.csv' });
-    body.appendChild(row('条件', query));
-    body.appendChild(row('ファイル名', fname));
-    const btn = mkBtn('CSV出力');
-    btn.addEventListener('click', () => liteRun(async () => {
-      await runCsvExportStandalone(
-        { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), filename: fname.value.trim() },
-        (m, e) => setStatus(m, e)
-      );
-    }));
-    body.appendChild(btn);
-    bodySlot.appendChild(sec);
+  // 一覧ロード補助
+  const viewSelect = makeSelect([['', '一覧を選択（任意）']]);
+  const loadViewsBtn = makeButton('一覧読込', 'sub');
+  cardApp.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: '一覧から条件' }));
+
+  loadViewsBtn.addEventListener('click', () => liteRun(panel, '一覧情報を取得中…', async () => {
+    const views = await runLoadViewsStandalone(
+      { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim() },
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+    );
+    viewSelect.innerHTML = '<option value="">一覧を選択（任意）</option>';
+    for (const v of views) {
+      const opt = document.createElement('option');
+      opt.value = v.filter;
+      opt.textContent = `${v.name} ${v.filter ? `(${v.filter.slice(0, 60)})` : ''}`;
+      viewSelect.appendChild(opt);
+    }
+  }, '一覧を読み込みました。プルダウンから条件を選択できます'));
+
+  function applyViewQuery(target: HTMLInputElement) {
+    const q = viewSelect.value;
+    if (q) target.value = q;
   }
 
-  // --- CSV Import ---
-  {
-    const { sec, body } = mkSection('CSV インポート');
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = '.csv';
-    fileInput.style.cssText = 'font-size:12px';
-    body.appendChild(row('CSVファイル', fileInput));
-    const btn = mkBtn('インポート実行', { bg: 'linear-gradient(180deg,#16a34a,#15803d)' });
-    btn.addEventListener('click', () => liteRun(async () => {
-      await runCsvImportStandalone(
-        { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
-        (m, e) => setStatus(m, e)
-      );
-    }));
-    body.appendChild(btn);
-    bodySlot.appendChild(sec);
-  }
+  // ---- タブ式UI ----
+  const tabHost = document.createElement('div');
+  panel.body.insertBefore(tabHost, panel.status);
 
-  // --- Batch Process ---
-  {
-    const { sec, body } = mkSection('ステータス一括更新');
-    const query = mkInput('絞り込み条件 (任意)', { width: 'wide' });
-    const action = mkInput('アクション名');
-    const assignee = mkInput('作業者 (任意)');
-    body.appendChild(row('条件', query));
-    body.appendChild(row('アクション', action));
-    body.appendChild(row('作業者', assignee));
-    const btn = mkBtn('一括更新', { bg: 'linear-gradient(180deg,#f97316,#ea580c)' });
-    btn.addEventListener('click', () => liteRun(async () => {
-      await runBatchProcessStandalone(
-        { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
-        (m, e) => setStatus(m, e)
-      );
-    }));
-    body.appendChild(btn);
-    bodySlot.appendChild(sec);
-  }
+  const tabs = makeTabs([
+    {
+      id: 'csv-export', label: 'CSV出力', build: (root) => {
+        const query = makeInput({ placeholder: 'absent', width: 'wide' });
+        const fname = makeInput({ placeholder: 'records.csv', value: 'records.csv', width: 'medium' });
+        const useView = makeButton('▼ 一覧から', 'sub');
+        useView.addEventListener('click', () => applyViewQuery(query));
+        root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
+        root.appendChild(makeRow(fname, { label: 'ファイル名' }));
+        const run = makeButton('CSVを出力', 'primary', { icon: '↓' });
+        run.style.width = '100%';
+        run.addEventListener('click', () => liteRun(panel, 'CSV出力中…', async () => {
+          await runCsvExportStandalone(
+            { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), filename: fname.value.trim() },
+            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+          );
+        }));
+        root.appendChild(makeRow(run));
+      }
+    },
+    {
+      id: 'csv-import', label: 'CSV取込', build: (root) => {
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.csv';
+        fileInput.className = 'kus-lp__file';
+        root.appendChild(makeRow(fileInput, { label: 'CSV' }));
+        root.appendChild(makeNote('UTF-8 / Excel BOM 対応。ファイル・サブテーブル・ステータスは取込対象外です。'));
+        const run = makeButton('レコードを取込', 'primary', { icon: '↑' });
+        run.style.width = '100%';
+        run.addEventListener('click', () => liteRun(panel, 'CSV取込中…', async () => {
+          await runCsvImportStandalone(
+            { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
+            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+          );
+        }));
+        root.appendChild(makeRow(run));
+      }
+    },
+    {
+      id: 'status', label: 'ステータス', build: (root) => {
+        const query = makeInput({ placeholder: '条件 (例: status = "新規")', width: 'wide' });
+        const action = makeInput({ placeholder: 'アクション名', width: 'medium' });
+        const assignee = makeInput({ placeholder: '作業者ログイン名 (任意)', width: 'medium' });
+        const actionSelect = makeSelect([['', '--']]);
+        const loadActions = makeButton('読込', 'sub');
+        const useView = makeButton('▼ 一覧から', 'sub');
+        useView.addEventListener('click', () => applyViewQuery(query));
 
-  // --- Record Copy ---
-  {
-    const { sec, body } = mkSection('レコードコピー');
-    const srcApp = mkInput('比較元アプリID');
-    const srcGuest = mkInput('ゲストID（任意）');
-    const query = mkInput('絞り込み条件 (任意)', { width: 'wide' });
-    body.appendChild(row('比較元ID', srcApp));
-    body.appendChild(row('元ゲスト', srcGuest));
-    body.appendChild(row('条件', query));
-    const btn = mkBtn('コピー実行', { bg: 'linear-gradient(180deg,#7c3aed,#6d28d9)' });
-    btn.addEventListener('click', () => liteRun(async () => {
-      await runRecordCopyStandalone(
-        { sourceAppId: srcApp.value.trim(), sourceGuestId: srcGuest.value.trim(), targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), query: query.value.trim() },
-        (m, e) => setStatus(m, e)
-      );
-    }));
-    body.appendChild(btn);
-    bodySlot.appendChild(sec);
-  }
+        root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
+        root.appendChild(makeRow([action, actionSelect, loadActions], { label: 'アクション' }));
+        actionSelect.addEventListener('change', () => { if (actionSelect.value) action.value = actionSelect.value; });
+        loadActions.addEventListener('click', () => liteRun(panel, 'プロセス管理を取得中…', async () => {
+          const info = await runLoadStatusActionsStandalone(
+            { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim() },
+            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+          );
+          actionSelect.innerHTML = '<option value="">--</option>';
+          const seen = new Set<string>();
+          for (const a of info.actions) {
+            if (seen.has(a.name)) continue;
+            seen.add(a.name);
+            const opt = document.createElement('option');
+            opt.value = a.name;
+            opt.textContent = `${a.name} (${a.from} → ${a.to})`;
+            actionSelect.appendChild(opt);
+          }
+        }));
+        root.appendChild(makeRow(assignee, { label: '作業者' }));
+        root.appendChild(makeNote('対象 100 件単位でステータス更新します。元に戻せません。'));
+        const run = makeButton('ステータスを一括更新', 'primary');
+        run.style.width = '100%';
+        run.classList.add('kus-lp__btn--danger');
+        run.addEventListener('click', () => liteRun(panel, 'ステータス一括更新中…', async () => {
+          await runBatchProcessStandalone(
+            { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
+            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+          );
+        }));
+        root.appendChild(makeRow(run));
+      }
+    },
+    {
+      id: 'attach', label: '添付DL', build: (root) => {
+        const query = makeInput({ placeholder: '条件 (任意)', width: 'wide' });
+        const fileCode = makeInput({ placeholder: '例: attached_file', width: 'medium' });
+        const folderCode = makeInput({ placeholder: '任意（フォルダ名にするフィールド）', width: 'medium' });
+        const zipName = makeInput({ placeholder: 'attachments.zip', width: 'medium' });
+        const useView = makeButton('▼ 一覧から', 'sub');
+        useView.addEventListener('click', () => applyViewQuery(query));
+        root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
+        root.appendChild(makeRow(fileCode, { label: 'ファイル' }));
+        root.appendChild(makeRow(folderCode, { label: 'フォルダ' }));
+        root.appendChild(makeRow(zipName, { label: 'ZIP名' }));
+        const run = makeButton('添付ファイルをZIPで保存', 'primary', { icon: '↓' });
+        run.style.width = '100%';
+        run.addEventListener('click', () => liteRun(panel, '添付ファイル取得中…', async () => {
+          await runAttachmentDownloadStandalone(
+            {
+              appId: tgtApp.value.trim(),
+              guestId: tgtGuest.value.trim(),
+              query: query.value.trim(),
+              fileFieldCode: fileCode.value.trim(),
+              folderFieldCode: folderCode.value.trim(),
+              zipName: zipName.value.trim()
+            },
+            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+          );
+        }));
+        root.appendChild(makeRow(run));
+      }
+    },
+    {
+      id: 'copy', label: 'コピー', build: (root) => {
+        const srcApp = makeInput({ placeholder: 'コピー元アプリID', width: 'id' });
+        const srcGuest = makeInput({ placeholder: 'ゲスト (任意)', width: 'guest' });
+        const query = makeInput({ placeholder: '条件 (任意)', width: 'wide' });
+        root.appendChild(makeRow([srcApp, srcGuest], { label: 'コピー元' }));
+        root.appendChild(makeRow(query, { label: 'クエリ' }));
+        root.appendChild(makeNote('元アプリの絞り込んだレコードを、対象アプリへ POST で追加します。ファイル/システム項目は除外されます。'));
+        const run = makeButton('レコードをコピー実行', 'primary');
+        run.style.width = '100%';
+        run.classList.add('kus-lp__btn--danger');
+        run.addEventListener('click', () => liteRun(panel, 'レコードコピー中…', async () => {
+          await runRecordCopyStandalone(
+            {
+              sourceAppId: srcApp.value.trim(),
+              sourceGuestId: srcGuest.value.trim(),
+              targetAppId: tgtApp.value.trim(),
+              targetGuestId: tgtGuest.value.trim(),
+              query: query.value.trim()
+            },
+            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+          );
+        }));
+        root.appendChild(makeRow(run));
+      }
+    },
+    {
+      id: 'backup', label: 'バックアップ', build: (root) => {
+        const query = makeInput({ placeholder: '条件 (任意・全件は空)', width: 'wide' });
+        const zipName = makeInput({ placeholder: 'record_backup_<app>_<ts>.zip', width: 'wide' });
+        const useView = makeButton('▼ 一覧から', 'sub');
+        useView.addEventListener('click', () => applyViewQuery(query));
+        root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
+        root.appendChild(makeRow(zipName, { label: 'ZIP名' }));
+
+        const incFiles = makeCheck({ label: '添付ファイルも保存', checked: true });
+        const incComments = makeCheck({ label: 'コメントも保存', checked: true });
+        const incSettings = makeCheck({ label: 'アプリ設定も保存', checked: false });
+        const optGrid = document.createElement('div');
+        optGrid.className = 'kus-lp__check-grid';
+        optGrid.appendChild(incFiles.label);
+        optGrid.appendChild(incComments.label);
+        optGrid.appendChild(incSettings.label);
+        root.appendChild(optGrid);
+
+        const scopeBox = document.createElement('div');
+        scopeBox.className = 'kus-lp__chips';
+        scopeBox.style.display = 'none';
+        const chips = SECTION_DEFS.map((d) => makeChip({ label: d.label, value: d.key, checked: ['fieldSettings', 'layoutSettings', 'viewSettings', 'processSettings'].includes(d.key) }));
+        chips.forEach((c) => scopeBox.appendChild(c.label));
+        root.appendChild(scopeBox);
+        incSettings.checkbox.addEventListener('change', () => {
+          scopeBox.style.display = incSettings.checkbox.checked ? 'flex' : 'none';
+        });
+
+        const run = makeButton('バックアップ ZIP を保存', 'primary', { icon: '↓' });
+        run.style.width = '100%';
+        run.addEventListener('click', () => liteRun(panel, 'レコードバックアップ中…', async () => {
+          await runRecordBackupStandalone(
+            {
+              appId: tgtApp.value.trim(),
+              guestId: tgtGuest.value.trim(),
+              query: query.value.trim(),
+              zipName: zipName.value.trim(),
+              includeFiles: incFiles.checkbox.checked,
+              includeComments: incComments.checkbox.checked,
+              includeAppSettings: incSettings.checkbox.checked,
+              appScopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value)
+            },
+            (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+          );
+        }));
+        root.appendChild(makeRow(run));
+      }
+    }
+  ]);
+
+  tabHost.appendChild(tabs.bar);
+  tabHost.appendChild(tabs.panels);
 }
