@@ -1779,12 +1779,12 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       });
       const tocWs = XLSX.utils.aoa_to_sheet(tocAoa);
       const tocStyleOptions = {
-        headerRowIndex: 8,
+        headerRowIndex: 9,
         titleRows: [0, 1],
         sectionRows: [2],
-        headerInfoRows: [4, 8],
-        emptyRows: [3, 7],
-        freezeRows: 9,
+        headerInfoRows: [4, 9],
+        emptyRows: [3, 8],
+        freezeRows: 10,
         centerCols: [0, 3],
         enableAutoFilter: false
       };
@@ -1795,10 +1795,10 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         { startRow: 1, endRow: 1, startCol: 0, endCol: 3 },
         { startRow: 2, endRow: 2, startCol: 0, endCol: 3 }
       ]);
-      applyRowHeights(tocWs, tocAoa, { titleRows: [0, 1], emptyRows: [3, 7] });
-      applyPageSetup(tocWs, { orientation: 'portrait', printTitleRows: 9 });
+      applyRowHeights(tocWs, tocAoa, { titleRows: [0, 1], emptyRows: [3, 8] });
+      applyPageSetup(tocWs, { orientation: 'portrait', printTitleRows: 10 });
       sheetMetadata.forEach((m, i) => {
-        const row = i + 10;
+        const row = i + 11;
         const nameAddr = UtilsX.a1(row, 2);
         if (tocWs[nameAddr]) {
           tocWs[nameAddr].l = { Target: `#'${m.name.replace(/'/g, "''")}'!A1`, Tooltip: `${m.name}へ移動` };
@@ -1813,7 +1813,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       const tocName = makeSafeSheetName('目次', new Set(wb.SheetNames));
       wb.Sheets[tocName] = tocWs;
       wb.SheetNames.unshift(tocName);
-      printTitleConfigs.push({ sheetName: tocName, rows: 9 });
+      printTitleConfigs.push({ sheetName: tocName, rows: 10 });
     }
 
     // 全シートの印刷タイトル(繰り返し行)を定義済み名前として登録
