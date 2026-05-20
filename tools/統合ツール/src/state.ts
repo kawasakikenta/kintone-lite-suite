@@ -52,6 +52,10 @@ export interface AppState {
   lastPreviewBackupPayload: any;
   lastPreviewBackupFilename: string;
   diffViewTheme: 'light' | 'dark';
+  /** 差分結果の表示モード ('table' = 既存の行一覧 / 'category' = セクション別ビュー) */
+  diffViewMode: 'table' | 'category';
+  /** 'category' モード時に開いているカテゴリ (DIFF_CATEGORIES.key) */
+  diffCategoryView: string;
   diffCollapsedSections: Set<string>;
   diffSectionVisibleCounts: Record<string, number>;
   diffSelectedIds: Set<string>;
@@ -140,6 +144,8 @@ export const state: AppState = {
   lastPreviewBackupPayload: null,
   lastPreviewBackupFilename: '',
   diffViewTheme: 'light',
+  diffViewMode: 'table',
+  diffCategoryView: '',
   diffCollapsedSections: new Set(),
   diffSectionVisibleCounts: {},
   diffSelectedIds: new Set(),

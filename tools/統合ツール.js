@@ -1315,6 +1315,8 @@ ${contextLine}`);
         lastPreviewBackupPayload: null,
         lastPreviewBackupFilename: "",
         diffViewTheme: "light",
+        diffViewMode: "table",
+        diffCategoryView: "",
         diffCollapsedSections: /* @__PURE__ */ new Set(),
         diffSectionVisibleCounts: {},
         diffSelectedIds: /* @__PURE__ */ new Set(),
@@ -4064,6 +4066,996 @@ ${contextLine}`);
       dialogDragMoveHandler = null;
       dialogDragEndHandler = null;
       scheduleGuidedTourLayoutFn = null;
+    }
+  });
+
+  // src/diff/category-view.ts
+  function countRowSummary(rows) {
+    const s = { total: 0, added: 0, removed: 0, changed: 0, high: 0, medium: 0, low: 0 };
+    for (const r of rows || []) {
+      if (!r || r.type === "same") continue;
+      s.total += 1;
+      if (r.type === "added") s.added += 1;
+      else if (r.type === "removed") s.removed += 1;
+      else if (r.type === "changed") s.changed += 1;
+      const sev = String(r.severity || "low").toLowerCase();
+      if (sev === "high") s.high += 1;
+      else if (sev === "medium") s.medium += 1;
+      else s.low += 1;
+    }
+    return s;
+  }
+  function diffBadge(s) {
+    const items = [
+      s.added ? `<span class="diff-cat-stat diff-cat-stat--add" title="追加">+${s.added}</span>` : "",
+      s.removed ? `<span class="diff-cat-stat diff-cat-stat--rm" title="削除">−${s.removed}</span>` : "",
+      s.changed ? `<span class="diff-cat-stat diff-cat-stat--chg" title="変更">~${s.changed}</span>` : "",
+      s.high ? `<span class="diff-cat-stat diff-cat-stat--high" title="重要度高">⚠${s.high}</span>` : ""
+    ].filter(Boolean).join("");
+    return items;
+  }
+  function getRowsBySection(rows) {
+    const m = /* @__PURE__ */ new Map();
+    for (const r of rows || []) {
+      if (!r || r.type === "same") continue;
+      const k = r.sectionKey || "";
+      if (!k) continue;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(r);
+    }
+    return m;
+  }
+  function getSection(bundle, key) {
+    return bundle?.sections?.[key];
+  }
+  function emptyState(message) {
+    return `<div class="diff-cat-empty">${esc(message)}</div>`;
+  }
+  function shortList(items, max = 5) {
+    const list = (items || []).filter(Boolean);
+    if (!list.length) return '<span class="diff-cat-muted">-</span>';
+    const head = list.slice(0, max).map((x) => `<span class="diff-cat-tag">${esc(x)}</span>`).join("");
+    const rest = list.length > max ? `<span class="diff-cat-tag diff-cat-tag--more">+${list.length - max}</span>` : "";
+    return head + rest;
+  }
+  function statusLabel(present) {
+    if (present.left && present.right) return { cls: "diff-cat-status--chg", label: "変更" };
+    if (!present.left && present.right) return { cls: "diff-cat-status--add", label: "追加" };
+    if (present.left && !present.right) return { cls: "diff-cat-status--rm", label: "削除" };
+    return { cls: "diff-cat-status--same", label: "同一" };
+  }
+  function valueChanged(a, b) {
+    try {
+      return JSON.stringify(a) !== JSON.stringify(b);
+    } catch {
+      return a !== b;
+    }
+  }
+  function safeStringify(v) {
+    if (v === void 0) return "（未定義）";
+    if (v == null) return "-";
+    if (typeof v === "string") return v;
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
+  function entityKey(entity) {
+    if (!entity) return "";
+    return `${entity.type || ""}:${entity.code || entity.id || entity.login || ""}`;
+  }
+  function entityLabel(entity) {
+    if (!entity) return "-";
+    const type = entity.type || "";
+    const code = entity.code || entity.login || entity.id || "";
+    const name = entity.name || "";
+    const typeIcon = type === "USER" ? "👤" : type === "GROUP" ? "👥" : type === "ORGANIZATION" ? "🏢" : type === "CREATOR" ? "✏️" : type === "FIELD_ENTITY" ? "🔗" : "·";
+    return `${typeIcon} ${name || code || "(未設定)"}${code && name ? ` <span class="diff-cat-muted">${esc(code)}</span>` : ""}`;
+  }
+  function appAclRowsByEntity(rights) {
+    const m = /* @__PURE__ */ new Map();
+    for (const r of rights || []) {
+      const k = entityKey(r?.entity);
+      if (!k) continue;
+      m.set(k, r);
+    }
+    return m;
+  }
+  function renderAppAclMatrix(srcRights, tgtRights) {
+    const sm = appAclRowsByEntity(srcRights);
+    const tm = appAclRowsByEntity(tgtRights);
+    const keys = /* @__PURE__ */ new Set([...sm.keys(), ...tm.keys()]);
+    if (!keys.size) return emptyState("アプリ権限の設定がありません");
+    const headerCells = APP_ACL_PERMISSIONS.map((p) => `<th title="${esc(p.label)}">${esc(p.label)}</th>`).join("");
+    const rows = [];
+    for (const key of keys) {
+      const s = sm.get(key);
+      const t = tm.get(key);
+      const status = statusLabel({ left: !!s, right: !!t });
+      const entity = (t || s)?.entity;
+      const cells = APP_ACL_PERMISSIONS.map((p) => {
+        const lv = !!s?.[p.key];
+        const rv = !!t?.[p.key];
+        const cls = !s || !t ? rv ? "diff-cat-cell--grant-new" : lv ? "diff-cat-cell--deny-new" : "diff-cat-cell--off" : lv === rv ? rv ? "diff-cat-cell--on" : "diff-cat-cell--off" : rv ? "diff-cat-cell--grant" : "diff-cat-cell--deny";
+        const glyph = lv === rv ? rv ? "●" : "○" : rv ? "↑●" : "↓○";
+        const title = `${p.label}: ${lv ? "許可" : "不許可"} → ${rv ? "許可" : "不許可"}`;
+        return `<td class="diff-cat-cell ${cls}" title="${esc(title)}">${glyph}</td>`;
+      }).join("");
+      rows.push(`<tr>
+      <td class="diff-cat-entity"><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
+      <td class="diff-cat-entity">${entityLabel(entity)}</td>
+      ${cells}
+      <td class="diff-cat-entity diff-cat-muted">${esc(t?.filterCond || s?.filterCond || "-")}</td>
+    </tr>`);
+    }
+    return `<div class="diff-cat-table-wrap"><table class="diff-cat-matrix">
+    <thead><tr>
+      <th style="width:60px">状態</th>
+      <th style="width:200px">対象</th>
+      ${headerCells}
+      <th style="min-width:140px">フィルタ条件</th>
+    </tr></thead>
+    <tbody>${rows.join("")}</tbody>
+  </table></div>
+  <div class="diff-cat-legend">
+    <span><span class="diff-cat-cell diff-cat-cell--on diff-cat-legend-cell">●</span> 許可</span>
+    <span><span class="diff-cat-cell diff-cat-cell--off diff-cat-legend-cell">○</span> 不許可</span>
+    <span><span class="diff-cat-cell diff-cat-cell--grant diff-cat-legend-cell">↑●</span> 拡大</span>
+    <span><span class="diff-cat-cell diff-cat-cell--deny diff-cat-legend-cell">↓○</span> 縮小</span>
+  </div>`;
+  }
+  function fieldAclRowsByCode(rights) {
+    const m = /* @__PURE__ */ new Map();
+    for (const r of rights || []) {
+      const code = String(r?.code || "");
+      if (!code) continue;
+      m.set(code, r);
+    }
+    return m;
+  }
+  function renderFieldAclTable(srcRights, tgtRights) {
+    const sm = fieldAclRowsByCode(srcRights);
+    const tm = fieldAclRowsByCode(tgtRights);
+    const codes = /* @__PURE__ */ new Set([...sm.keys(), ...tm.keys()]);
+    if (!codes.size) return emptyState("フィールド権限の設定がありません");
+    const rows = [];
+    for (const code of codes) {
+      const s = sm.get(code);
+      const t = tm.get(code);
+      const entries = /* @__PURE__ */ new Map();
+      for (const e of s?.entities || []) {
+        const k = entityKey(e?.entity);
+        entries.set(k, { left: e?.accessibility || "NONE", right: "NONE" });
+      }
+      for (const e of t?.entities || []) {
+        const k = entityKey(e?.entity);
+        const cur = entries.get(k) || { left: "NONE", right: "NONE" };
+        cur.right = e?.accessibility || "NONE";
+        entries.set(k, cur);
+      }
+      const entityHtml = [...entries.entries()].map(([k, v]) => {
+        const ent = (t?.entities || []).find((e) => entityKey(e?.entity) === k)?.entity || (s?.entities || []).find((e) => entityKey(e?.entity) === k)?.entity;
+        const lvL = FIELD_ACL_LEVELS.indexOf(v.left);
+        const lvR = FIELD_ACL_LEVELS.indexOf(v.right);
+        const cls = lvR < lvL ? "diff-cat-acl-down" : lvR > lvL ? "diff-cat-acl-up" : "";
+        const arrow = v.left === v.right ? "" : " → ";
+        const rightLabel = v.left === v.right ? "" : esc(v.right);
+        return `<div class="diff-cat-acl-row ${cls}">
+        <span class="diff-cat-acl-entity">${entityLabel(ent)}</span>
+        <span class="diff-cat-acl-level">${esc(v.left)}${arrow}${rightLabel}</span>
+      </div>`;
+      }).join("");
+      rows.push(`<section class="diff-cat-acl-block">
+      <header class="diff-cat-acl-header">
+        <span class="diff-cat-tag">${esc(code)}</span>
+        <span class="diff-cat-muted">${entries.size} 件のエンティティ</span>
+      </header>
+      ${entityHtml || emptyState("エンティティ設定なし")}
+    </section>`);
+    }
+    return rows.join("");
+  }
+  function renderRecordPermissionMatrix(srcRights, tgtRights) {
+    const list = (rights) => (rights || []).map((r, idx) => ({
+      key: `${r?.filterCond || ""}:${idx}`,
+      cond: r?.filterCond || "(条件なし)",
+      rights: r
+    }));
+    const slist = list(srcRights);
+    const tlist = list(tgtRights);
+    const maxLen = Math.max(slist.length, tlist.length);
+    if (!maxLen) return emptyState("レコード権限の設定がありません");
+    const blocks = [];
+    for (let i = 0; i < maxLen; i++) {
+      const s = slist[i];
+      const t = tlist[i];
+      const cond = t?.cond || s?.cond || "-";
+      const matrix = renderAppAclMatrix(s?.rights?.entities || [], t?.rights?.entities || []);
+      blocks.push(`<section class="diff-cat-acl-block">
+      <header class="diff-cat-acl-header">
+        <span class="diff-cat-acl-condition">条件: <code>${esc(cond)}</code></span>
+      </header>
+      ${matrix}
+    </section>`);
+    }
+    return blocks.join("");
+  }
+  function renderAclCategory(src, tgt, rowsBySection) {
+    const blocks = [];
+    const has = (k) => rowsBySection.has(k);
+    if (has("appAcl") || getSection(src, "appAcl") || getSection(tgt, "appAcl")) {
+      const srcRights = getSection(src, "appAcl")?.rights || [];
+      const tgtRights = getSection(tgt, "appAcl")?.rights || [];
+      blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml("appAcl")}</span>
+        <span class="diff-cat-sec-title">アプリ権限</span>
+        <span class="diff-cat-sec-sub">エンティティ × 操作のマトリクス</span>
+      </header>
+      ${renderAppAclMatrix(srcRights, tgtRights)}
+    </section>`);
+    }
+    if (has("fieldAcl") || getSection(src, "fieldAcl") || getSection(tgt, "fieldAcl")) {
+      const srcRights = getSection(src, "fieldAcl")?.rights || [];
+      const tgtRights = getSection(tgt, "fieldAcl")?.rights || [];
+      blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml("fieldAcl")}</span>
+        <span class="diff-cat-sec-title">フィールド権限</span>
+        <span class="diff-cat-sec-sub">NONE / READ / READ_WRITE の昇降</span>
+      </header>
+      ${renderFieldAclTable(srcRights, tgtRights)}
+    </section>`);
+    }
+    if (has("recordPermissions") || getSection(src, "recordPermissions") || getSection(tgt, "recordPermissions")) {
+      const srcRights = getSection(src, "recordPermissions")?.rights || [];
+      const tgtRights = getSection(tgt, "recordPermissions")?.rights || [];
+      blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml("recordPermissions")}</span>
+        <span class="diff-cat-sec-title">レコード権限</span>
+        <span class="diff-cat-sec-sub">filterCond ごとに権限を比較</span>
+      </header>
+      ${renderRecordPermissionMatrix(srcRights, tgtRights)}
+    </section>`);
+    }
+    return blocks.length ? blocks.join("") : emptyState("権限セクションのデータがありません");
+  }
+  function processStates(p) {
+    if (!p) return [];
+    if (Array.isArray(p.states)) return p.states.map((s) => String(s?.name || s));
+    if (p.states && typeof p.states === "object") return Object.keys(p.states);
+    return [];
+  }
+  function processActions(p) {
+    if (!p || !Array.isArray(p.actions)) return [];
+    return p.actions.map((a) => ({
+      name: String(a?.name || ""),
+      from: String(a?.from || ""),
+      to: String(a?.to || "")
+    }));
+  }
+  function renderProcessStates(src, tgt) {
+    const all = /* @__PURE__ */ new Set([...src, ...tgt]);
+    if (!all.size) return emptyState("ステータスがありません");
+    const chips = [...all].map((name) => {
+      const inS = src.includes(name);
+      const inT = tgt.includes(name);
+      const cls = inS && inT ? "diff-cat-state-same" : inT ? "diff-cat-state-add" : "diff-cat-state-rm";
+      const icon = inS && inT ? "＝" : inT ? "＋" : "−";
+      return `<span class="diff-cat-state ${cls}" title="${esc(name)}">${icon} ${esc(name)}</span>`;
+    }).join("");
+    return `<div class="diff-cat-state-row">${chips}</div>`;
+  }
+  function renderProcessActions(srcActs, tgtActs) {
+    const keyOf = (a) => `${a.from}→${a.to}|${a.name}`;
+    const sm = new Map(srcActs.map((a) => [keyOf(a), a]));
+    const tm = new Map(tgtActs.map((a) => [keyOf(a), a]));
+    const keys = /* @__PURE__ */ new Set([...sm.keys(), ...tm.keys()]);
+    if (!keys.size) return emptyState("アクションがありません");
+    const rows = [...keys].map((k) => {
+      const s = sm.get(k);
+      const t = tm.get(k);
+      const status = statusLabel({ left: !!s, right: !!t });
+      const ref = t || s;
+      return `<tr>
+      <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
+      <td class="diff-cat-process-name">${esc(ref.name || "(無名)")}</td>
+      <td><span class="diff-cat-tag">${esc(ref.from || "(未設定)")}</span></td>
+      <td class="diff-cat-arrow">→</td>
+      <td><span class="diff-cat-tag">${esc(ref.to || "(未設定)")}</span></td>
+    </tr>`;
+    }).join("");
+    return `<div class="diff-cat-table-wrap"><table class="diff-cat-table">
+    <thead><tr>
+      <th style="width:60px">状態</th>
+      <th>アクション名</th>
+      <th>遷移元</th>
+      <th></th>
+      <th>遷移先</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+  }
+  function renderProcessFlowDiagram(srcActs, tgtActs) {
+    const states = /* @__PURE__ */ new Set();
+    srcActs.forEach((a) => {
+      states.add(a.from);
+      states.add(a.to);
+    });
+    tgtActs.forEach((a) => {
+      states.add(a.from);
+      states.add(a.to);
+    });
+    const stateList = [...states].filter(Boolean);
+    if (stateList.length < 2) return "";
+    const W = 640;
+    const colW = 220;
+    const rowH = 56;
+    const padY = 24;
+    const H = padY * 2 + stateList.length * rowH;
+    const stateY = (s) => padY + stateList.indexOf(s) * rowH + rowH / 2;
+    const stateNodes = stateList.map((s) => {
+      const y = stateY(s);
+      return `<g><rect x="${(W - colW) / 2}" y="${y - 18}" width="${colW}" height="36" rx="18" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <text x="${W / 2}" y="${y + 5}" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">${esc(s)}</text></g>`;
+    }).join("");
+    const keyOf = (a) => `${a.from}→${a.to}|${a.name}`;
+    const sm = new Map(srcActs.map((a) => [keyOf(a), a]));
+    const tm = new Map(tgtActs.map((a) => [keyOf(a), a]));
+    const allActs = /* @__PURE__ */ new Set([...sm.keys(), ...tm.keys()]);
+    let curve = 0;
+    const arrows = [...allActs].map((k) => {
+      const a = tm.get(k) || sm.get(k);
+      if (!a.from || !a.to || a.from === a.to) return "";
+      const y1 = stateY(a.from);
+      const y2 = stateY(a.to);
+      const x1 = W / 2 + colW / 2;
+      const x2 = W / 2 + colW / 2;
+      const off = 30 + curve % 4 * 24;
+      curve += 1;
+      const cx = x1 + off;
+      const inSrc = sm.has(k);
+      const inTgt = tm.has(k);
+      const color = inSrc && inTgt ? "#64748b" : inTgt ? "#16a34a" : "#dc2626";
+      const dash = inSrc && inTgt ? "" : ' stroke-dasharray="5,3"';
+      const labelY = (y1 + y2) / 2;
+      return `<g>
+      <path d="M${x1},${y1} Q${cx},${labelY} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="1.8"${dash} marker-end="url(#diff-cat-arrow)"/>
+      <text x="${cx + 6}" y="${labelY}" font-size="11" fill="${color}">${esc(a.name || "")}</text>
+    </g>`;
+    }).join("");
+    return `<svg class="diff-cat-flow-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="プロセス遷移図">
+    <defs>
+      <marker id="diff-cat-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+      </marker>
+    </defs>
+    ${arrows}
+    ${stateNodes}
+  </svg>
+  <div class="diff-cat-legend">
+    <span><svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="#64748b" stroke-width="2"/></svg> 不変</span>
+    <span><svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="#16a34a" stroke-width="2" stroke-dasharray="5,3"/></svg> 追加</span>
+    <span><svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="#dc2626" stroke-width="2" stroke-dasharray="5,3"/></svg> 削除</span>
+  </div>`;
+  }
+  function renderActionSettings(src, tgt) {
+    const ss = Array.isArray(src?.actions) ? src.actions : Array.isArray(src) ? src : [];
+    const tt = Array.isArray(tgt?.actions) ? tgt.actions : Array.isArray(tgt) ? tgt : [];
+    const keyOf = (a) => `${a?.name || ""}|${a?.app || ""}`;
+    const sm = new Map(ss.map((a) => [keyOf(a), a]));
+    const tm = new Map(tt.map((a) => [keyOf(a), a]));
+    const keys = /* @__PURE__ */ new Set([...sm.keys(), ...tm.keys()]);
+    if (!keys.size) return emptyState("アクション設定がありません");
+    const cards = [...keys].map((k) => {
+      const s = sm.get(k);
+      const t = tm.get(k);
+      const ref = t || s;
+      const status = statusLabel({ left: !!s, right: !!t });
+      const targetApp = ref?.app?.app || ref?.app?.code || ref?.app || "-";
+      return `<div class="diff-cat-card">
+      <header class="diff-cat-card-head">
+        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
+        <span class="diff-cat-card-title">${esc(ref?.name || "(無名アクション)")}</span>
+      </header>
+      <div class="diff-cat-card-body">
+        <div class="diff-cat-kv"><span class="diff-cat-k">対象アプリ</span><span class="diff-cat-v">${esc(String(targetApp))}</span></div>
+        <div class="diff-cat-kv"><span class="diff-cat-k">フィールド対応</span><span class="diff-cat-v">${esc(String((ref?.mappings || []).length + " 件"))}</span></div>
+      </div>
+    </div>`;
+    }).join("");
+    return `<div class="diff-cat-card-grid">${cards}</div>`;
+  }
+  function renderProcessCategory(src, tgt) {
+    const blocks = [];
+    const sp = getSection(src, "processSettings");
+    const tp = getSection(tgt, "processSettings");
+    if (sp || tp) {
+      const srcStates = processStates(sp);
+      const tgtStates = processStates(tp);
+      const srcActs = processActions(sp);
+      const tgtActs = processActions(tp);
+      const enableChanged = (sp?.enable ?? null) !== (tp?.enable ?? null);
+      const enableBadge = enableChanged ? `<span class="diff-cat-tag diff-cat-tag--warn">プロセス有効化: ${sp?.enable ? "有" : "無"} → ${tp?.enable ? "有" : "無"}</span>` : `<span class="diff-cat-tag">プロセス有効化: ${tp?.enable ?? sp?.enable ? "有" : "無"}</span>`;
+      blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml("processSettings")}</span>
+        <span class="diff-cat-sec-title">プロセス管理</span>
+        <span class="diff-cat-sec-sub">ステータスとアクション</span>
+      </header>
+      <div class="diff-cat-process-meta">${enableBadge}</div>
+      <h4 class="diff-cat-h4">ステータス一覧</h4>
+      ${renderProcessStates(srcStates, tgtStates)}
+      <h4 class="diff-cat-h4">アクション一覧</h4>
+      ${renderProcessActions(srcActs, tgtActs)}
+      <h4 class="diff-cat-h4">遷移図</h4>
+      ${renderProcessFlowDiagram(srcActs, tgtActs)}
+    </section>`);
+    }
+    const sa = getSection(src, "actionSettings");
+    const ta = getSection(tgt, "actionSettings");
+    if (sa || ta) {
+      blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml("actionSettings")}</span>
+        <span class="diff-cat-sec-title">アクション設定</span>
+        <span class="diff-cat-sec-sub">アプリ間アクション</span>
+      </header>
+      ${renderActionSettings(sa, ta)}
+    </section>`);
+    }
+    return blocks.length ? blocks.join("") : emptyState("プロセス/アクション設定のデータがありません");
+  }
+  function notificationKey(n) {
+    return JSON.stringify({
+      cond: n?.filterCond || "",
+      name: n?.name || "",
+      when: n?.when || n?.event || "",
+      timing: n?.timing || ""
+    });
+  }
+  function renderNotificationCard(rule, status) {
+    const recipients = (rule?.recipients || rule?.targets || []).map((r) => `${r?.entity?.type || ""}:${r?.entity?.code || r?.entity?.login || r?.entity?.id || "-"}`).filter((x) => x !== ":-");
+    const condition = rule?.filterCond || rule?.condition || "";
+    return `<div class="diff-cat-card">
+    <header class="diff-cat-card-head">
+      <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
+      <span class="diff-cat-card-title">${esc(rule?.name || "(無名通知)")}</span>
+    </header>
+    <div class="diff-cat-card-body">
+      ${condition ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(condition)}</code></div>` : ""}
+      ${rule?.timing ? `<div class="diff-cat-kv"><span class="diff-cat-k">タイミング</span><span class="diff-cat-v">${esc(rule.timing)}</span></div>` : ""}
+      ${rule?.when ? `<div class="diff-cat-kv"><span class="diff-cat-k">トリガー</span><span class="diff-cat-v">${esc(rule.when)}</span></div>` : ""}
+      <div class="diff-cat-kv"><span class="diff-cat-k">宛先</span><span class="diff-cat-v">${shortList(recipients, 8)}</span></div>
+    </div>
+  </div>`;
+  }
+  function renderNotificationGroup(label, srcRules, tgtRules) {
+    const sm = /* @__PURE__ */ new Map();
+    const tm = /* @__PURE__ */ new Map();
+    (srcRules || []).forEach((r) => sm.set(notificationKey(r), r));
+    (tgtRules || []).forEach((r) => tm.set(notificationKey(r), r));
+    const keys = /* @__PURE__ */ new Set([...sm.keys(), ...tm.keys()]);
+    if (!keys.size) return "";
+    const cards = [...keys].map((k) => {
+      const s = sm.get(k);
+      const t = tm.get(k);
+      const status = statusLabel({ left: !!s, right: !!t });
+      return renderNotificationCard(t || s, status);
+    }).join("");
+    return `<section class="diff-cat-sec">
+    <header class="diff-cat-sec-head">
+      <span class="diff-cat-sec-title">${esc(label)}</span>
+      <span class="diff-cat-sec-sub">${keys.size}件のルール</span>
+    </header>
+    <div class="diff-cat-card-grid">${cards}</div>
+  </section>`;
+  }
+  function renderNotifyCategory(src, tgt) {
+    const blocks = [];
+    const sn = getSection(src, "notifications");
+    const tn = getSection(tgt, "notifications");
+    const srcG = Array.isArray(sn?.notifications) ? sn.notifications : Array.isArray(sn) ? sn : [];
+    const tgtG = Array.isArray(tn?.notifications) ? tn.notifications : Array.isArray(tn) ? tn : [];
+    if (srcG.length || tgtG.length) blocks.push(renderNotificationGroup("一般通知", srcG, tgtG));
+    const sp = getSection(src, "perRecordNotifications");
+    const tp = getSection(tgt, "perRecordNotifications");
+    const sPR = Array.isArray(sp?.notifications) ? sp.notifications : Array.isArray(sp) ? sp : [];
+    const tPR = Array.isArray(tp?.notifications) ? tp.notifications : Array.isArray(tp) ? tp : [];
+    if (sPR.length || tPR.length) blocks.push(renderNotificationGroup("レコード条件通知", sPR, tPR));
+    const sr = getSection(src, "reminderNotifications");
+    const tr = getSection(tgt, "reminderNotifications");
+    const sRM = Array.isArray(sr?.notifications) ? sr.notifications : Array.isArray(sr) ? sr : [];
+    const tRM = Array.isArray(tr?.notifications) ? tr.notifications : Array.isArray(tr) ? tr : [];
+    if (sRM.length || tRM.length) blocks.push(renderNotificationGroup("リマインダー通知", sRM, tRM));
+    if ((sr?.timezone || tr?.timezone) && sr?.timezone !== tr?.timezone) {
+      blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-title">タイムゾーン</span>
+      </header>
+      <div class="diff-cat-kv-row">
+        <span class="diff-cat-tag">${esc(sr?.timezone || "-")}</span>
+        <span class="diff-cat-arrow">→</span>
+        <span class="diff-cat-tag">${esc(tr?.timezone || "-")}</span>
+      </div>
+    </section>`);
+    }
+    return blocks.length ? blocks.join("") : emptyState("通知設定のデータがありません");
+  }
+  function renderViewCards(srcViews, tgtViews) {
+    const sm = srcViews && typeof srcViews === "object" ? srcViews : {};
+    const tm = tgtViews && typeof tgtViews === "object" ? tgtViews : {};
+    const keys = /* @__PURE__ */ new Set([...Object.keys(sm), ...Object.keys(tm)]);
+    if (!keys.size) return emptyState("ビューがありません");
+    const cards = [...keys].map((k) => {
+      const s = sm[k];
+      const t = tm[k];
+      const ref = t || s;
+      const status = statusLabel({ left: !!s, right: !!t });
+      const changed = !!s && !!t && valueChanged(s, t);
+      const type = ref?.type || "LIST";
+      const fields = Array.isArray(ref?.fields) ? ref.fields : ref?.fields ? Object.keys(ref.fields) : [];
+      const filter = ref?.filterCond || "";
+      const sort = ref?.sort || "";
+      return `<div class="diff-cat-card ${changed ? "diff-cat-card--chg" : ""}">
+      <header class="diff-cat-card-head">
+        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
+        <span class="diff-cat-card-title">${esc(ref?.name || k)}</span>
+        <span class="diff-cat-tag diff-cat-tag--type">${esc(type)}</span>
+      </header>
+      <div class="diff-cat-card-body">
+        <div class="diff-cat-kv"><span class="diff-cat-k">表示項目</span><span class="diff-cat-v">${shortList(fields, 6)}</span></div>
+        ${filter ? `<div class="diff-cat-kv"><span class="diff-cat-k">絞込</span><code class="diff-cat-code">${esc(filter)}</code></div>` : ""}
+        ${sort ? `<div class="diff-cat-kv"><span class="diff-cat-k">ソート</span><code class="diff-cat-code">${esc(sort)}</code></div>` : ""}
+        ${changed ? renderViewChangedDetail(s, t) : ""}
+      </div>
+    </div>`;
+    }).join("");
+    return `<div class="diff-cat-card-grid">${cards}</div>`;
+  }
+  function renderViewChangedDetail(s, t) {
+    const checks = [
+      { key: "name", label: "名前" },
+      { key: "type", label: "種別" },
+      { key: "filterCond", label: "絞込条件" },
+      { key: "sort", label: "ソート" },
+      { key: "index", label: "表示順" },
+      { key: "paginationStyle", label: "ページ送り" }
+    ];
+    const items = [];
+    for (const c of checks) {
+      if (valueChanged(s?.[c.key], t?.[c.key])) {
+        items.push(`<li><span class="diff-cat-k">${esc(c.label)}</span>: <span class="diff-cat-old">${esc(safeStringify(s?.[c.key]))}</span> → <span class="diff-cat-new">${esc(safeStringify(t?.[c.key]))}</span></li>`);
+      }
+    }
+    const sf = Array.isArray(s?.fields) ? s.fields : [];
+    const tf = Array.isArray(t?.fields) ? t.fields : [];
+    if (valueChanged(sf, tf)) {
+      const added = tf.filter((x) => !sf.includes(x));
+      const removed = sf.filter((x) => !tf.includes(x));
+      if (added.length || removed.length) {
+        items.push(`<li><span class="diff-cat-k">表示項目</span>: ${added.length ? `<span class="diff-cat-new">+${added.length}件 (${added.slice(0, 3).map(esc).join(", ")}${added.length > 3 ? "…" : ""})</span>` : ""}${removed.length ? ` <span class="diff-cat-old">-${removed.length}件 (${removed.slice(0, 3).map(esc).join(", ")}${removed.length > 3 ? "…" : ""})</span>` : ""}</li>`);
+      }
+    }
+    return items.length ? `<details class="diff-cat-changed-detail"><summary>変更詳細 (${items.length})</summary><ul>${items.join("")}</ul></details>` : "";
+  }
+  function renderReportCards(srcReports, tgtReports) {
+    const sm = srcReports && typeof srcReports === "object" ? srcReports : {};
+    const tm = tgtReports && typeof tgtReports === "object" ? tgtReports : {};
+    const keys = /* @__PURE__ */ new Set([...Object.keys(sm), ...Object.keys(tm)]);
+    if (!keys.size) return emptyState("グラフ設定がありません");
+    const cards = [...keys].map((k) => {
+      const s = sm[k];
+      const t = tm[k];
+      const ref = t || s;
+      const status = statusLabel({ left: !!s, right: !!t });
+      return `<div class="diff-cat-card">
+      <header class="diff-cat-card-head">
+        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
+        <span class="diff-cat-card-title">${esc(ref?.name || k)}</span>
+        <span class="diff-cat-tag diff-cat-tag--type">${esc(ref?.chartType || ref?.type || "GRAPH")}</span>
+      </header>
+      <div class="diff-cat-card-body">
+        ${ref?.filterCond ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(ref.filterCond)}</code></div>` : ""}
+        ${ref?.groups ? `<div class="diff-cat-kv"><span class="diff-cat-k">分類</span><span class="diff-cat-v">${shortList((ref.groups || []).map((g) => g?.code || g), 6)}</span></div>` : ""}
+        ${ref?.aggregations ? `<div class="diff-cat-kv"><span class="diff-cat-k">集計</span><span class="diff-cat-v">${shortList((ref.aggregations || []).map((a) => `${a?.type || ""}(${a?.code || "-"})`), 6)}</span></div>` : ""}
+      </div>
+    </div>`;
+    }).join("");
+    return `<div class="diff-cat-card-grid">${cards}</div>`;
+  }
+  function renderViewsCategory(src, tgt) {
+    const blocks = [];
+    const sv = getSection(src, "viewSettings");
+    const tv = getSection(tgt, "viewSettings");
+    if (sv || tv) {
+      const srcViews = sv?.views || sv;
+      const tgtViews = tv?.views || tv;
+      blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml("viewSettings")}</span>
+        <span class="diff-cat-sec-title">ビュー設定</span>
+        <span class="diff-cat-sec-sub">一覧の表示項目・絞込・ソート</span>
+      </header>
+      ${renderViewCards(srcViews, tgtViews)}
+    </section>`);
+    }
+    const sr = getSection(src, "reportSettings");
+    const tr = getSection(tgt, "reportSettings");
+    if (sr || tr) {
+      const srcR = sr?.reports || sr;
+      const tgtR = tr?.reports || tr;
+      blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml("reportSettings")}</span>
+        <span class="diff-cat-sec-title">グラフ設定</span>
+        <span class="diff-cat-sec-sub">レポートの種別・分類・集計</span>
+      </header>
+      ${renderReportCards(srcR, tgtR)}
+    </section>`);
+    }
+    return blocks.length ? blocks.join("") : emptyState("ビュー/グラフのデータがありません");
+  }
+  function flatLayout(layout) {
+    if (!Array.isArray(layout)) return [];
+    const out = [];
+    layout.forEach((row, rIdx) => {
+      if (row?.type === "GROUP") {
+        const groupCode = row.code || `_group${rIdx}`;
+        out.push({ row: rIdx, col: 0, code: groupCode, type: "GROUP", label: row.label });
+        (row.layout || []).forEach((inner, riIdx) => {
+          (inner?.fields || []).forEach((f, cIdx) => {
+            out.push({ row: rIdx + 0.1 * (riIdx + 1), col: cIdx, code: f?.code || `_${f?.type}_${rIdx}_${riIdx}_${cIdx}`, type: f?.type || "", label: f?.label });
+          });
+        });
+      } else {
+        (row?.fields || []).forEach((f, cIdx) => {
+          out.push({ row: rIdx, col: cIdx, code: f?.code || `_${f?.type}_${rIdx}_${cIdx}`, type: f?.type || "", label: f?.label });
+        });
+      }
+    });
+    return out;
+  }
+  function renderLayoutGrid(items, comparedCodes, mode) {
+    if (!items.length) return emptyState("レイアウト未取得");
+    const byRow = /* @__PURE__ */ new Map();
+    for (const it of items) {
+      if (!byRow.has(it.row)) byRow.set(it.row, []);
+      byRow.get(it.row).push(it);
+    }
+    const rows = [...byRow.keys()].sort((a, b) => a - b);
+    const rowsHtml = rows.map((r) => {
+      const cells = byRow.get(r).sort((a, b) => a.col - b.col).map((c) => {
+        const exists = comparedCodes.has(c.code);
+        const cls = c.type === "GROUP" ? "diff-cat-layout-group" : !exists ? mode === "tgt" ? "diff-cat-layout-add" : "diff-cat-layout-rm" : "diff-cat-layout-keep";
+        return `<div class="diff-cat-layout-cell ${cls}" title="${esc(`${c.label || c.code} (${c.type})`)}">
+        <span class="diff-cat-layout-code">${esc(c.code)}</span>
+        <span class="diff-cat-layout-type">${esc(c.type || "-")}</span>
+      </div>`;
+      }).join("");
+      return `<div class="diff-cat-layout-row">${cells}</div>`;
+    }).join("");
+    return `<div class="diff-cat-layout-grid">${rowsHtml}</div>`;
+  }
+  function renderLayoutCategory(src, tgt) {
+    const sl = getSection(src, "layoutSettings");
+    const tl = getSection(tgt, "layoutSettings");
+    const srcLayout = Array.isArray(sl?.layout) ? sl.layout : Array.isArray(sl) ? sl : [];
+    const tgtLayout = Array.isArray(tl?.layout) ? tl.layout : Array.isArray(tl) ? tl : [];
+    if (!srcLayout.length && !tgtLayout.length) return emptyState("レイアウト設定がありません");
+    const flatS = flatLayout(srcLayout);
+    const flatT = flatLayout(tgtLayout);
+    const srcCodes = new Set(flatS.map((i) => i.code));
+    const tgtCodes = new Set(flatT.map((i) => i.code));
+    const onlyInSrc = flatS.filter((i) => !tgtCodes.has(i.code));
+    const onlyInTgt = flatT.filter((i) => !srcCodes.has(i.code));
+    return `<section class="diff-cat-sec">
+    <header class="diff-cat-sec-head">
+      <span class="diff-cat-sec-icon">${renderSectionIconHtml("layoutSettings")}</span>
+      <span class="diff-cat-sec-title">レイアウト</span>
+      <span class="diff-cat-sec-sub">行 × 列のフィールド配置</span>
+    </header>
+    <div class="diff-cat-layout-cmp">
+      <div class="diff-cat-layout-side">
+        <header class="diff-cat-side-head">比較元 (${flatS.length}項目)</header>
+        ${renderLayoutGrid(flatS, tgtCodes, "src")}
+      </div>
+      <div class="diff-cat-layout-side">
+        <header class="diff-cat-side-head">比較先 (${flatT.length}項目)</header>
+        ${renderLayoutGrid(flatT, srcCodes, "tgt")}
+      </div>
+    </div>
+    <div class="diff-cat-layout-summary">
+      <span class="diff-cat-tag diff-cat-tag--rm">削除候補 ${onlyInSrc.length}</span>
+      <span class="diff-cat-tag diff-cat-tag--add">新規 ${onlyInTgt.length}</span>
+      <span class="diff-cat-tag">保持 ${flatT.length - onlyInTgt.length}</span>
+    </div>
+  </section>`;
+  }
+  function listCustomizeFiles(side) {
+    const out = [];
+    if (!side) return out;
+    for (const scope of ["desktop", "mobile"]) {
+      const sc = side[scope];
+      if (!sc) continue;
+      for (const t of ["js", "css"]) {
+        const list = Array.isArray(sc[t]) ? sc[t] : [];
+        list.forEach((item) => {
+          const file = item?.file || item;
+          out.push({
+            scope,
+            type: t.toUpperCase(),
+            url: item?.url || file?.url || "",
+            name: file?.name || item?.name || (item?.url ? String(item.url).split("/").pop() : "(不明)")
+          });
+        });
+      }
+    }
+    return out;
+  }
+  function renderCustomizeCategory(src, tgt) {
+    const sc = getSection(src, "customizeSettings");
+    const tc = getSection(tgt, "customizeSettings");
+    const sFiles = listCustomizeFiles(sc);
+    const tFiles = listCustomizeFiles(tc);
+    const keyOf = (f) => `${f.scope}/${f.type}/${f.name}`;
+    const sm = new Map(sFiles.map((f) => [keyOf(f), f]));
+    const tm = new Map(tFiles.map((f) => [keyOf(f), f]));
+    const keys = /* @__PURE__ */ new Set([...sm.keys(), ...tm.keys()]);
+    const fileRows = [...keys].map((k) => {
+      const s = sm.get(k);
+      const t = tm.get(k);
+      const status = statusLabel({ left: !!s, right: !!t });
+      const ref = t || s;
+      return `<tr>
+      <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
+      <td><span class="diff-cat-tag">${esc(ref.scope)}</span></td>
+      <td><span class="diff-cat-tag diff-cat-tag--type">${esc(ref.type)}</span></td>
+      <td class="diff-cat-mono">${esc(ref.name)}</td>
+    </tr>`;
+    }).join("");
+    let customizeBlock = "";
+    if (keys.size) {
+      customizeBlock = `<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml("customizeSettings")}</span>
+        <span class="diff-cat-sec-title">JS/CSS</span>
+        <span class="diff-cat-sec-sub">desktop / mobile × JS / CSS のファイル一覧</span>
+      </header>
+      <div class="diff-cat-table-wrap"><table class="diff-cat-table">
+        <thead><tr><th style="width:60px">状態</th><th style="width:80px">配置</th><th style="width:60px">種別</th><th>ファイル</th></tr></thead>
+        <tbody>${fileRows}</tbody>
+      </table></div>
+    </section>`;
+    }
+    const sp = getSection(src, "pluginSettings");
+    const tp = getSection(tgt, "pluginSettings");
+    const sPlugins = Array.isArray(sp?.plugins) ? sp.plugins : Array.isArray(sp) ? sp : [];
+    const tPlugins = Array.isArray(tp?.plugins) ? tp.plugins : Array.isArray(tp) ? tp : [];
+    let pluginBlock = "";
+    if (sPlugins.length || tPlugins.length) {
+      const sMap = new Map(sPlugins.map((p) => [String(p?.id || ""), p]));
+      const tMap = new Map(tPlugins.map((p) => [String(p?.id || ""), p]));
+      const allIds = /* @__PURE__ */ new Set([...sMap.keys(), ...tMap.keys()]);
+      const rows = [...allIds].map((id) => {
+        const s = sMap.get(id);
+        const t = tMap.get(id);
+        const ref = t || s;
+        const status = statusLabel({ left: !!s, right: !!t });
+        const vL = s?.version || "";
+        const vR = t?.version || "";
+        const vChanged = vL && vR && vL !== vR;
+        return `<tr>
+        <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
+        <td class="diff-cat-mono">${esc(id)}</td>
+        <td>${esc(ref?.name || "-")}</td>
+        <td>${vChanged ? `<span class="diff-cat-old">${esc(vL)}</span> → <span class="diff-cat-new">${esc(vR)}</span>` : esc(vR || vL || "-")}</td>
+      </tr>`;
+      }).join("");
+      pluginBlock = `<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml("pluginSettings")}</span>
+        <span class="diff-cat-sec-title">プラグイン</span>
+        <span class="diff-cat-sec-sub">有効化されたプラグイン一覧</span>
+      </header>
+      <div class="diff-cat-table-wrap"><table class="diff-cat-table">
+        <thead><tr><th style="width:60px">状態</th><th>ID</th><th>名前</th><th>バージョン</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </section>`;
+    }
+    return customizeBlock + pluginBlock || emptyState("JS/CSS・プラグインのデータがありません");
+  }
+  function renderKvDiffTable(label, src, tgt) {
+    if (!src && !tgt) return "";
+    const keys = /* @__PURE__ */ new Set([...Object.keys(src || {}), ...Object.keys(tgt || {})]);
+    if (!keys.size) return "";
+    const rows = [];
+    for (const k of keys) {
+      const a = src?.[k];
+      const b = tgt?.[k];
+      if (!valueChanged(a, b)) continue;
+      const status = statusLabel({ left: a !== void 0, right: b !== void 0 });
+      rows.push(`<tr>
+      <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
+      <td class="diff-cat-mono">${esc(k)}</td>
+      <td class="diff-cat-old">${esc(safeStringify(a))}</td>
+      <td class="diff-cat-arrow">→</td>
+      <td class="diff-cat-new">${esc(safeStringify(b))}</td>
+    </tr>`);
+    }
+    if (!rows.length) return "";
+    return `<section class="diff-cat-sec">
+    <header class="diff-cat-sec-head">
+      <span class="diff-cat-sec-title">${esc(label)}</span>
+      <span class="diff-cat-sec-sub">変更されたキーのみ表示 (${rows.length})</span>
+    </header>
+    <div class="diff-cat-table-wrap"><table class="diff-cat-table">
+      <thead><tr><th style="width:60px">状態</th><th>キー</th><th>旧</th><th></th><th>新</th></tr></thead>
+      <tbody>${rows.join("")}</tbody>
+    </table></div>
+  </section>`;
+  }
+  function renderCategoriesTree(src, tgt) {
+    const sm = /* @__PURE__ */ new Map();
+    const tm = /* @__PURE__ */ new Map();
+    (src || []).forEach((c) => sm.set(String(c?.code || ""), c));
+    (tgt || []).forEach((c) => tm.set(String(c?.code || ""), c));
+    const keys = /* @__PURE__ */ new Set([...sm.keys(), ...tm.keys()]);
+    if (!keys.size) return emptyState("カテゴリ設定がありません");
+    const items = [...keys].map((k) => {
+      const s = sm.get(k);
+      const t = tm.get(k);
+      const status = statusLabel({ left: !!s, right: !!t });
+      const ref = t || s;
+      return `<li>
+      <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
+      <span class="diff-cat-mono">${esc(k)}</span>
+      <span>${esc(ref?.name || "-")}</span>
+    </li>`;
+    }).join("");
+    return `<section class="diff-cat-sec">
+    <header class="diff-cat-sec-head">
+      <span class="diff-cat-sec-icon">${renderSectionIconHtml("categories")}</span>
+      <span class="diff-cat-sec-title">カテゴリ</span>
+      <span class="diff-cat-sec-sub">分類コードでマッチング</span>
+    </header>
+    <ul class="diff-cat-tree">${items}</ul>
+  </section>`;
+  }
+  function renderAppSettingsCategory(src, tgt) {
+    const blocks = [];
+    blocks.push(renderKvDiffTable("アプリ設定 (appSettings)", getSection(src, "appSettings"), getSection(tgt, "appSettings")));
+    blocks.push(renderKvDiffTable("アプリ情報 (appInfo)", getSection(src, "appInfo"), getSection(tgt, "appInfo")));
+    blocks.push(renderKvDiffTable("フォーム設定 (formSettings)", getSection(src, "formSettings"), getSection(tgt, "formSettings")));
+    const sc = getSection(src, "categories");
+    const tc = getSection(tgt, "categories");
+    const sCats = Array.isArray(sc?.categories) ? sc.categories : Array.isArray(sc) ? sc : [];
+    const tCats = Array.isArray(tc?.categories) ? tc.categories : Array.isArray(tc) ? tc : [];
+    if (sCats.length || tCats.length) blocks.push(renderCategoriesTree(sCats, tCats));
+    const html = blocks.filter(Boolean).join("");
+    return html || emptyState("アプリ設定の変更はありません");
+  }
+  function renderFieldsCategory(rows) {
+    const byCode = /* @__PURE__ */ new Map();
+    for (const r of rows || []) {
+      if (!r || r.type === "same") continue;
+      const m = String(r.path || "").match(/^fieldSettings\.properties\.([^.[\]]+)/);
+      const code = m ? m[1] : "(その他)";
+      if (!byCode.has(code)) byCode.set(code, []);
+      byCode.get(code).push(r);
+    }
+    if (!byCode.size) return emptyState("フィールドの差分はありません");
+    const blocks = [...byCode.entries()].map(([code, rs]) => {
+      const summary = countRowSummary(rs);
+      const list = rs.map((r) => {
+        const leaf = String(r.path || "").replace(/^fieldSettings\.properties\.[^.[\]]+\.?/, "") || "(本体)";
+        return `<li class="diff-cat-field-line">
+        <span class="diff-cat-mono">${esc(leaf)}</span>
+        <span class="diff-cat-old">${esc(safeStringify(r.left))}</span>
+        <span class="diff-cat-arrow">→</span>
+        <span class="diff-cat-new">${esc(safeStringify(r.right))}</span>
+      </li>`;
+      }).join("");
+      return `<details class="diff-cat-field-block" ${rs.length <= 5 ? "open" : ""}>
+      <summary>
+        <span class="diff-cat-mono">${esc(code)}</span>
+        <span class="diff-cat-stats">${diffBadge(summary)}</span>
+        <span class="diff-cat-muted">${rs.length}件</span>
+      </summary>
+      <ul class="diff-cat-field-list">${list}</ul>
+    </details>`;
+    }).join("");
+    return `<section class="diff-cat-sec">
+    <header class="diff-cat-sec-head">
+      <span class="diff-cat-sec-icon">${renderSectionIconHtml("fieldSettings")}</span>
+      <span class="diff-cat-sec-title">フィールド</span>
+      <span class="diff-cat-sec-sub">フィールドコード単位で集約</span>
+    </header>
+    ${blocks}
+  </section>`;
+  }
+  function renderCategoryContent(catKey, rows, src, tgt, rowsBySection) {
+    switch (catKey) {
+      case "acl":
+        return renderAclCategory(src, tgt, rowsBySection);
+      case "process":
+        return renderProcessCategory(src, tgt);
+      case "notify":
+        return renderNotifyCategory(src, tgt);
+      case "views":
+        return renderViewsCategory(src, tgt);
+      case "layout":
+        return renderLayoutCategory(src, tgt);
+      case "customize":
+        return renderCustomizeCategory(src, tgt);
+      case "app":
+        return renderAppSettingsCategory(src, tgt);
+      case "fields":
+        return renderFieldsCategory(rows);
+      default:
+        return emptyState("未対応のカテゴリです");
+    }
+  }
+  function buildCategoryViewHtml(rows) {
+    const src = state.lastSourceBundle;
+    const tgt = state.lastTargetBundle;
+    const actualRows = (rows || []).filter((r) => r && r.type !== "same");
+    const rowsBySection = getRowsBySection(actualRows);
+    const activeCat = state.diffCategoryView && DIFF_CATEGORIES.some((c) => c.key === state.diffCategoryView) ? state.diffCategoryView : DIFF_CATEGORIES.find((c) => c.sections.some((sec) => rowsBySection.has(sec)))?.key || "acl";
+    const tabs = DIFF_CATEGORIES.map((cat) => {
+      const catRows = cat.sections.flatMap((sec) => rowsBySection.get(sec) || []);
+      const s = countRowSummary(catRows);
+      const hasSource = cat.sections.some((sec) => getSection(src, sec) || getSection(tgt, sec));
+      const dim = !s.total && !hasSource;
+      const active = activeCat === cat.key ? " is-active" : "";
+      const badge = s.total ? `<span class="diff-cat-tab-badge diff-cat-tab-badge--${s.high ? "high" : s.medium ? "med" : "low"}">${s.total}</span>` : "";
+      return `<button type="button" class="diff-cat-tab${active}${dim ? " is-dim" : ""}" data-act="setDiffCategoryView" data-cat="${esc(cat.key)}" title="${esc(cat.hint)}">
+      <span class="diff-cat-tab-icon">${esc(cat.icon)}</span>
+      <span class="diff-cat-tab-label">${esc(cat.label)}</span>
+      ${badge}
+    </button>`;
+    }).join("");
+    const activeRows = (DIFF_CATEGORIES.find((c) => c.key === activeCat)?.sections || []).flatMap((sec) => rowsBySection.get(sec) || []);
+    const contentHtml = renderCategoryContent(activeCat, activeRows, src, tgt, rowsBySection);
+    return `<div class="diff-cat-view" data-active-cat="${esc(activeCat)}">
+    <nav class="diff-cat-tabs" role="tablist" aria-label="セクション別ビューの切替">${tabs}</nav>
+    <div class="diff-cat-content">${contentHtml}</div>
+  </div>`;
+  }
+  var DIFF_CATEGORIES, SECTION_TO_CATEGORY, APP_ACL_PERMISSIONS, FIELD_ACL_LEVELS;
+  var init_category_view = __esm({
+    "src/diff/category-view.ts"() {
+      "use strict";
+      init_utils();
+      init_state();
+      DIFF_CATEGORIES = [
+        { key: "fields", label: "フィールド", hint: "フィールド定義の追加・変更", sections: ["fieldSettings"], icon: "🔤" },
+        { key: "layout", label: "レイアウト", hint: "フォーム配置の差分", sections: ["layoutSettings"], icon: "🧩" },
+        { key: "views", label: "ビュー・グラフ", hint: "一覧表示とレポート", sections: ["viewSettings", "reportSettings"], icon: "📊" },
+        { key: "process", label: "プロセス・アクション", hint: "ステータス遷移とアクション", sections: ["processSettings", "actionSettings"], icon: "🔁" },
+        { key: "notify", label: "通知", hint: "通知ルールとリマインダー", sections: ["notifications", "perRecordNotifications", "reminderNotifications"], icon: "🔔" },
+        { key: "acl", label: "権限", hint: "アプリ・フィールド・レコード権限", sections: ["appAcl", "fieldAcl", "recordPermissions"], icon: "🔐" },
+        { key: "customize", label: "JS/CSS・プラグイン", hint: "カスタマイズと配布資産", sections: ["customizeSettings", "pluginSettings"], icon: "🧪" },
+        { key: "app", label: "アプリ設定", hint: "基本情報・フォーム・カテゴリ", sections: ["appSettings", "appInfo", "formSettings", "categories"], icon: "⚙" }
+      ];
+      SECTION_TO_CATEGORY = (() => {
+        const m = {};
+        for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
+        return m;
+      })();
+      APP_ACL_PERMISSIONS = [
+        { key: "appEditable", label: "アプリ管理" },
+        { key: "recordViewable", label: "閲覧" },
+        { key: "recordAddable", label: "追加" },
+        { key: "recordEditable", label: "編集" },
+        { key: "recordDeletable", label: "削除" },
+        { key: "recordImportable", label: "CSV読込" },
+        { key: "recordExportable", label: "CSV書出" }
+      ];
+      FIELD_ACL_LEVELS = ["NONE", "READ", "READ_WRITE"];
     }
   });
 
@@ -8654,6 +9646,13 @@ ${body}`;
         ${viewedCount ? `<div class="diff-stat-chip diff-stat-chip--ok" title="レビュー済"><div class="diff-stat-chip__num">${viewedCount}</div><div class="diff-stat-chip__label">レビュー済</div></div>` : ""}
         ${renameCount ? `<div class="diff-stat-chip" title="名称変更候補"><div class="diff-stat-chip__num">${renameCount}</div><div class="diff-stat-chip__label">改名候補</div></div>` : ""}
       </div>`;
+    const viewMode = state.diffViewMode === "category" ? "category" : "table";
+    const viewModeToggleHtml = `
+      <div class="diff-view-mode-toggle" role="group" aria-label="差分の表示モード切替">
+        <span class="diff-view-mode-toggle__lbl">表示</span>
+        <button type="button" class="diff-view-mode-btn${viewMode === "table" ? " is-active" : ""}" data-act="setDiffViewMode" data-mode="table" title="差分行を表形式で一覧表示（既定）">📋 行一覧</button>
+        <button type="button" class="diff-view-mode-btn${viewMode === "category" ? " is-active" : ""}" data-act="setDiffViewMode" data-mode="category" title="権限・プロセス・通知などをカテゴリ別の可視化で表示">🗂 セクション別</button>
+      </div>`;
     const summaryHtml = `
       <div class="diff-summary-head" role="region" aria-label="差分サマリー">
         ${buildDiffSummaryBars(summary)}
@@ -8663,9 +9662,10 @@ ${body}`;
           ${filteredRows.length !== rows.length ? `<span class="diff-info">絞込中: 高 ${filteredSeverity.high} / 中 ${filteredSeverity.medium} / 低 ${filteredSeverity.low}</span>` : ""}
           ${rawKeyword ? `<span class="diff-info">検索: ${esc(rawKeyword)}</span>` : ""}
         </div>
-        ${impactCardsHtml}
+        ${viewModeToggleHtml}
+        ${viewMode === "table" ? impactCardsHtml : ""}
         ${viewedControlsHtml}
-        ${sectionNavHtml}
+        ${viewMode === "table" ? sectionNavHtml : ""}
       </div>
     `;
     const issueHtml = filteredIssues.length ? `<section class="diff-issues">
@@ -8685,6 +9685,19 @@ ${body}`;
         <div class="diff-empty">差分はありません。</div>
       </div>`;
       scheduleDiffPopoutSync();
+      return;
+    }
+    if (viewMode === "category") {
+      ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === "dark" ? "dark" : ""} diff-view--category">
+        ${summaryHtml}
+        ${issueHtml}
+        ${buildCategoryViewHtml(rows)}
+      </div>`;
+      scheduleDiffPopoutSync();
+      try {
+        getToolDocument().dispatchEvent(new CustomEvent("kus:diffRendered", { detail: { count: rows.length, mode: "category" } }));
+      } catch (e) {
+      }
       return;
     }
     if (!filteredRows.length && !filteredIssues.length) {
@@ -8817,6 +9830,7 @@ ${body}`;
       init_filter();
       init_api();
       init_dialog();
+      init_category_view();
       FIELD_CHANGE_PROP_LABELS = {
         label: "フィールド名",
         noLabel: "フィールド名を表示しない",
@@ -11275,11 +12289,11 @@ ${tgt.full}`);
     const stamp = new Date(report.completedAt).toLocaleString();
     const sectionHtml = report.sections.map((s) => {
       const statusCls = s.status === "ok" ? "ok" : s.status === "ng" ? "ng" : "skipped";
-      const statusLabel = s.status === "ok" ? "成功" : s.status === "ng" ? "失敗" : "スキップ";
+      const statusLabel2 = s.status === "ok" ? "成功" : s.status === "ng" ? "失敗" : "スキップ";
       const msg = s.message ? `<span class="reflect-apply-section__msg" title="${esc(s.message)}">${esc(s.message)}</span>` : "";
       return `<div class="reflect-apply-section">
       <span class="reflect-apply-section__label">${esc(s.label || s.sectionKey)}</span>
-      <span class="reflect-apply-section__status ${statusCls}">${statusLabel}</span>
+      <span class="reflect-apply-section__status ${statusCls}">${statusLabel2}</span>
       ${msg}
     </div>`;
     }).join("");
@@ -11380,13 +12394,13 @@ ${tgt.full}`);
     const modeLabel = state.lastApplyCompletedMode === "nodes" ? "差分選択モード" : "まとめて反映モード";
     const hadError = !!state.lastApplyCompletedHadError;
     const statusCls = hadError ? "reflect-post-apply--warn" : "reflect-post-apply--ok";
-    const statusLabel = hadError ? "一部エラーあり" : "正常完了";
+    const statusLabel2 = hadError ? "一部エラーあり" : "正常完了";
     const staleNote = diffStale ? '<span class="reflect-post-apply__hint">反映後の実機状態はまだ比較されていません。「今すぐ再比較」で差分が 0 件になったか確認できます。</span>' : '<span class="reflect-post-apply__hint">現在表示中の差分は反映後の最新状態と同期済みです。</span>';
     host.style.display = "block";
     const celebrate = !hadError && minutesAgo < 5;
     host.innerHTML = `<div class="reflect-post-apply ${statusCls}${celebrate ? " apply-celebrate" : ""}">
     <div class="reflect-post-apply__head">
-      <span class="reflect-post-apply__title">${celebrate ? "✨ " : ""}反映${ageLabel}に完了しました（${esc(modeLabel)} / ${esc(statusLabel)}）</span>
+      <span class="reflect-post-apply__title">${celebrate ? "✨ " : ""}反映${ageLabel}に完了しました（${esc(modeLabel)} / ${esc(statusLabel2)}）</span>
       <div class="reflect-post-apply__actions">
         <button type="button" class="btn ok" data-act="postApplyRecompare" title="反映後の比較先プレビューを再取得して差分比較を実行します"${diffStale ? "" : " disabled"}>今すぐ再比較</button>
         <button type="button" class="btn sub" data-act="dismissPostApplyCard" title="このお知らせを閉じます">閉じる</button>
@@ -18089,6 +19103,8 @@ ${reason}` : "",
       diffWarnThreshold: ui.diffWarnThreshold?.value?.trim?.() || "",
       charDiff: ui.charDiff.checked,
       diffTheme: state.diffViewTheme,
+      diffViewMode: state.diffViewMode || "table",
+      diffCategoryView: state.diffCategoryView || "",
       diffScopes: selectedScopeKeys(ui.diffScopes),
       applyScopes: selectedScopeKeys(ui.applyScopes),
       applyDiffOnly: ui.applyDiffOnly.checked,
@@ -18196,6 +19212,8 @@ ${reason}` : "",
       state.diffIncludeSame = !!saved.diffIncludeSame;
     }
     if (saved.diffTheme === "dark" || saved.diffTheme === "light") state.diffViewTheme = saved.diffTheme;
+    if (saved.diffViewMode === "category" || saved.diffViewMode === "table") state.diffViewMode = saved.diffViewMode;
+    if (typeof saved.diffCategoryView === "string") state.diffCategoryView = saved.diffCategoryView;
     if (saved.applyDiffOnly != null) ui.applyDiffOnly.checked = !!saved.applyDiffOnly;
     if (saved.autoBackupPreview != null) ui.autoBackupPreview.checked = !!saved.autoBackupPreview;
     if (saved.stopOnError != null) ui.stopOnError.checked = !!saved.stopOnError;
@@ -27470,6 +28488,162 @@ ${detail}`);
     font-size:12px;
   }
 }
+
+/* =========================================================================
+   差分結果ビュー: 表示モード切替 + セクション別カテゴリビュー
+   ========================================================================= */
+#kintone-unified-suite-v2 .diff-view .diff-view-mode-toggle{display:flex;align-items:center;gap:6px;padding:6px 10px;border-top:1px dashed var(--dv-border);background:linear-gradient(180deg,var(--dv-card),color-mix(in srgb,var(--dv-card) 92%,var(--dv-pad)))}
+#kintone-unified-suite-v2 .diff-view .diff-view-mode-toggle__lbl{font-size:10px;font-weight:800;color:var(--dv-sub);letter-spacing:.06em;text-transform:uppercase;padding-right:4px}
+#kintone-unified-suite-v2 .diff-view .diff-view-mode-btn{border:1px solid var(--dv-border);background:var(--dv-bg);color:var(--dv-text);border-radius:7px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,color .15s,box-shadow .15s}
+#kintone-unified-suite-v2 .diff-view .diff-view-mode-btn:hover{background:color-mix(in srgb,var(--dv-bg) 80%,#dbeafe);border-color:#93c5fd}
+#kintone-unified-suite-v2 .diff-view .diff-view-mode-btn.is-active{background:#2563eb;border-color:#1d4ed8;color:#fff;box-shadow:0 2px 6px rgba(37,99,235,.25)}
+
+#kintone-unified-suite-v2 .diff-view--category .diff-cat-view{padding:10px;background:var(--dv-bg)}
+#kintone-unified-suite-v2 .diff-cat-tabs{display:flex;gap:4px;flex-wrap:wrap;padding:6px;background:var(--dv-card);border:1px solid var(--dv-border);border-radius:10px;margin-bottom:10px;position:sticky;top:0;z-index:3}
+#kintone-unified-suite-v2 .diff-cat-tab{display:flex;align-items:center;gap:6px;background:var(--dv-bg);border:1px solid var(--dv-border);color:var(--dv-text);border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .12s,box-shadow .15s}
+#kintone-unified-suite-v2 .diff-cat-tab:hover{background:color-mix(in srgb,var(--dv-bg) 80%,#dbeafe);transform:translateY(-1px);box-shadow:0 2px 5px rgba(15,23,42,.08)}
+#kintone-unified-suite-v2 .diff-cat-tab.is-active{background:#0f172a;border-color:#0f172a;color:#fff}
+#kintone-unified-suite-v2 .diff-cat-tab.is-dim{opacity:.5}
+#kintone-unified-suite-v2 .diff-cat-tab-icon{font-size:14px}
+#kintone-unified-suite-v2 .diff-cat-tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:18px;padding:0 6px;border-radius:9px;font-size:10px;font-weight:800;background:#dbeafe;color:#1e40af}
+#kintone-unified-suite-v2 .diff-cat-tab.is-active .diff-cat-tab-badge{background:#fff;color:#0f172a}
+#kintone-unified-suite-v2 .diff-cat-tab-badge--high{background:#fee2e2;color:#991b1b}
+#kintone-unified-suite-v2 .diff-cat-tab-badge--med{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .diff-cat-tab-badge--low{background:#e0f2fe;color:#075985}
+
+#kintone-unified-suite-v2 .diff-cat-content{display:flex;flex-direction:column;gap:12px}
+#kintone-unified-suite-v2 .diff-cat-sec{background:var(--dv-card);border:1px solid var(--dv-border);border-radius:10px;padding:12px}
+#kintone-unified-suite-v2 .diff-cat-sec-head{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--dv-border);padding-bottom:8px;margin-bottom:10px}
+#kintone-unified-suite-v2 .diff-cat-sec-icon{font-size:14px}
+#kintone-unified-suite-v2 .diff-cat-sec-title{font-size:13px;font-weight:800;color:var(--dv-text)}
+#kintone-unified-suite-v2 .diff-cat-sec-sub{font-size:11px;color:var(--dv-sub);font-weight:600;margin-left:auto}
+#kintone-unified-suite-v2 .diff-cat-h4{font-size:11px;font-weight:800;color:var(--dv-sub);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 6px}
+#kintone-unified-suite-v2 .diff-cat-empty{padding:16px;color:var(--dv-sub);font-size:12px;text-align:center;border:1px dashed var(--dv-border);border-radius:8px}
+#kintone-unified-suite-v2 .diff-cat-muted{color:var(--dv-sub);font-size:11px}
+#kintone-unified-suite-v2 .diff-cat-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--dv-text)}
+#kintone-unified-suite-v2 .diff-cat-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;background:var(--dv-pad);padding:1px 6px;border-radius:4px;color:var(--dv-text);word-break:break-all;display:inline-block;max-width:100%}
+#kintone-unified-suite-v2 .diff-cat-arrow{color:#64748b;font-weight:700;padding:0 4px}
+#kintone-unified-suite-v2 .diff-cat-tag{display:inline-block;background:var(--dv-pad);color:var(--dv-text);font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;margin:2px 3px 0 0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+#kintone-unified-suite-v2 .diff-cat-tag--more{background:#e0e7ff;color:#3730a3}
+#kintone-unified-suite-v2 .diff-cat-tag--type{background:#dbeafe;color:#1e40af}
+#kintone-unified-suite-v2 .diff-cat-tag--warn{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .diff-cat-tag--add{background:#d1fae5;color:#065f46}
+#kintone-unified-suite-v2 .diff-cat-tag--rm{background:#fee2e2;color:#991b1b}
+
+#kintone-unified-suite-v2 .diff-cat-status{display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;letter-spacing:.04em;line-height:1.4}
+#kintone-unified-suite-v2 .diff-cat-status--add{background:#d1fae5;color:#065f46}
+#kintone-unified-suite-v2 .diff-cat-status--rm{background:#fee2e2;color:#991b1b}
+#kintone-unified-suite-v2 .diff-cat-status--chg{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .diff-cat-status--same{background:#e5e7eb;color:#374151}
+
+#kintone-unified-suite-v2 .diff-cat-table-wrap{overflow-x:auto;border:1px solid var(--dv-border);border-radius:8px}
+#kintone-unified-suite-v2 .diff-cat-table{width:100%;border-collapse:collapse;font-size:12px;background:var(--dv-card)}
+#kintone-unified-suite-v2 .diff-cat-table th,#kintone-unified-suite-v2 .diff-cat-table td{padding:6px 10px;border-bottom:1px solid var(--dv-border);text-align:left;vertical-align:middle}
+#kintone-unified-suite-v2 .diff-cat-table th{background:var(--dv-pad);font-size:11px;font-weight:800;color:var(--dv-sub);text-transform:uppercase;letter-spacing:.04em}
+#kintone-unified-suite-v2 .diff-cat-table tbody tr:hover td{background:color-mix(in srgb,var(--dv-card) 88%,#dbeafe)}
+
+#kintone-unified-suite-v2 .diff-cat-matrix{width:100%;border-collapse:collapse;font-size:12px;background:var(--dv-card);table-layout:auto}
+#kintone-unified-suite-v2 .diff-cat-matrix th,#kintone-unified-suite-v2 .diff-cat-matrix td{padding:6px 8px;border-bottom:1px solid var(--dv-border);text-align:center;vertical-align:middle}
+#kintone-unified-suite-v2 .diff-cat-matrix th{background:var(--dv-pad);font-size:10px;font-weight:800;color:var(--dv-sub);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-cat-matrix td.diff-cat-entity{text-align:left;padding:6px 10px}
+#kintone-unified-suite-v2 .diff-cat-cell{font-weight:800;font-size:12px;letter-spacing:.06em}
+#kintone-unified-suite-v2 .diff-cat-cell--on{background:#dcfce7;color:#166534}
+#kintone-unified-suite-v2 .diff-cat-cell--off{background:#f3f4f6;color:#9ca3af}
+#kintone-unified-suite-v2 .diff-cat-cell--grant{background:#bbf7d0;color:#14532d;outline:1px solid #16a34a}
+#kintone-unified-suite-v2 .diff-cat-cell--deny{background:#fecaca;color:#7f1d1d;outline:1px solid #dc2626}
+#kintone-unified-suite-v2 .diff-cat-cell--grant-new{background:#bbf7d0;color:#14532d}
+#kintone-unified-suite-v2 .diff-cat-cell--deny-new{background:#fecaca;color:#7f1d1d}
+#kintone-unified-suite-v2 .diff-cat-legend-cell{display:inline-block;min-width:32px;padding:1px 4px;border-radius:3px;margin-right:4px;text-align:center}
+#kintone-unified-suite-v2 .diff-cat-legend{display:flex;gap:14px;font-size:11px;color:var(--dv-sub);padding:8px 4px 0;flex-wrap:wrap}
+
+#kintone-unified-suite-v2 .diff-cat-acl-block{border:1px solid var(--dv-border);border-radius:8px;padding:8px 10px;margin-top:8px;background:color-mix(in srgb,var(--dv-card) 95%,var(--dv-pad))}
+#kintone-unified-suite-v2 .diff-cat-acl-header{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-cat-acl-row{display:flex;align-items:center;gap:10px;padding:3px 4px;font-size:11px;border-bottom:1px dashed var(--dv-border)}
+#kintone-unified-suite-v2 .diff-cat-acl-row:last-child{border-bottom:0}
+#kintone-unified-suite-v2 .diff-cat-acl-entity{flex:1;min-width:160px;color:var(--dv-text)}
+#kintone-unified-suite-v2 .diff-cat-acl-level{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#1e40af;font-weight:700;font-size:11px}
+#kintone-unified-suite-v2 .diff-cat-acl-up .diff-cat-acl-level{background:#d1fae5;color:#065f46;padding:1px 6px;border-radius:4px}
+#kintone-unified-suite-v2 .diff-cat-acl-down .diff-cat-acl-level{background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:4px}
+#kintone-unified-suite-v2 .diff-cat-acl-condition{font-weight:700;color:var(--dv-text);font-size:12px}
+
+#kintone-unified-suite-v2 .diff-cat-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+#kintone-unified-suite-v2 .diff-cat-card{border:1px solid var(--dv-border);border-radius:8px;background:var(--dv-bg);padding:8px 10px;transition:transform .12s,box-shadow .15s}
+#kintone-unified-suite-v2 .diff-cat-card:hover{transform:translateY(-2px);box-shadow:0 3px 10px rgba(15,23,42,.08)}
+#kintone-unified-suite-v2 .diff-cat-card--chg{border-color:#f59e0b;box-shadow:0 0 0 2px rgba(245,158,11,.12)}
+#kintone-unified-suite-v2 .diff-cat-card-head{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--dv-border);padding-bottom:6px;margin-bottom:6px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-cat-card-title{font-size:12px;font-weight:800;color:var(--dv-text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-cat-card-body{display:flex;flex-direction:column;gap:4px;font-size:11px}
+#kintone-unified-suite-v2 .diff-cat-kv{display:flex;gap:8px;align-items:flex-start;line-height:1.5}
+#kintone-unified-suite-v2 .diff-cat-k{flex:0 0 70px;font-size:10px;font-weight:800;color:var(--dv-sub);text-transform:uppercase;letter-spacing:.04em;padding-top:1px}
+#kintone-unified-suite-v2 .diff-cat-v{flex:1;color:var(--dv-text);min-width:0}
+#kintone-unified-suite-v2 .diff-cat-kv-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+#kintone-unified-suite-v2 .diff-cat-changed-detail{margin-top:6px;border-top:1px dashed var(--dv-border);padding-top:4px}
+#kintone-unified-suite-v2 .diff-cat-changed-detail > summary{cursor:pointer;font-size:11px;font-weight:700;color:#1e40af}
+#kintone-unified-suite-v2 .diff-cat-changed-detail ul{margin:4px 0 0;padding-left:18px;font-size:11px;color:var(--dv-text);line-height:1.6}
+#kintone-unified-suite-v2 .diff-cat-old{background:var(--dv-del);color:var(--dv-del-txt);padding:0 4px;border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all}
+#kintone-unified-suite-v2 .diff-cat-new{background:var(--dv-add);color:var(--dv-add-txt);padding:0 4px;border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all}
+
+#kintone-unified-suite-v2 .diff-cat-state-row{display:flex;flex-wrap:wrap;gap:6px;padding:4px 0}
+#kintone-unified-suite-v2 .diff-cat-state{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid var(--dv-border)}
+#kintone-unified-suite-v2 .diff-cat-state-same{background:var(--dv-pad);color:var(--dv-text)}
+#kintone-unified-suite-v2 .diff-cat-state-add{background:#d1fae5;color:#065f46;border-color:#16a34a}
+#kintone-unified-suite-v2 .diff-cat-state-rm{background:#fee2e2;color:#991b1b;border-color:#dc2626;text-decoration:line-through}
+#kintone-unified-suite-v2 .diff-cat-process-name{font-weight:700;font-size:12px}
+#kintone-unified-suite-v2 .diff-cat-process-meta{padding:4px 0 8px;display:flex;gap:6px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-cat-flow-svg{width:100%;height:auto;max-height:560px;background:var(--dv-pad);border:1px solid var(--dv-border);border-radius:8px;padding:8px}
+
+#kintone-unified-suite-v2 .diff-cat-layout-cmp{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+#kintone-unified-suite-v2 .diff-cat-layout-side{border:1px solid var(--dv-border);border-radius:8px;padding:8px;background:var(--dv-bg)}
+#kintone-unified-suite-v2 .diff-cat-side-head{font-size:11px;font-weight:800;color:var(--dv-sub);text-transform:uppercase;letter-spacing:.04em;padding-bottom:6px;border-bottom:1px solid var(--dv-border);margin-bottom:6px}
+#kintone-unified-suite-v2 .diff-cat-layout-grid{display:flex;flex-direction:column;gap:4px}
+#kintone-unified-suite-v2 .diff-cat-layout-row{display:flex;gap:4px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-cat-layout-cell{flex:1;min-width:100px;padding:6px 8px;border-radius:5px;border:1px solid var(--dv-border);background:var(--dv-card);display:flex;flex-direction:column;gap:2px;font-size:10px}
+#kintone-unified-suite-v2 .diff-cat-layout-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;font-weight:700;color:var(--dv-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-cat-layout-type{font-size:9px;color:var(--dv-sub);text-transform:uppercase;letter-spacing:.04em}
+#kintone-unified-suite-v2 .diff-cat-layout-keep{background:var(--dv-card)}
+#kintone-unified-suite-v2 .diff-cat-layout-add{background:#d1fae5;border-color:#16a34a}
+#kintone-unified-suite-v2 .diff-cat-layout-rm{background:#fee2e2;border-color:#dc2626;opacity:.8}
+#kintone-unified-suite-v2 .diff-cat-layout-group{background:#e0e7ff;border-color:#6366f1;font-weight:700}
+#kintone-unified-suite-v2 .diff-cat-layout-summary{display:flex;gap:8px;flex-wrap:wrap;padding-top:8px}
+
+#kintone-unified-suite-v2 .diff-cat-tree{list-style:none;margin:0;padding:0;font-size:12px;display:flex;flex-direction:column;gap:4px}
+#kintone-unified-suite-v2 .diff-cat-tree li{display:flex;align-items:center;gap:8px;padding:4px 6px;border-bottom:1px dashed var(--dv-border)}
+
+#kintone-unified-suite-v2 .diff-cat-field-block{border:1px solid var(--dv-border);border-radius:6px;background:var(--dv-bg);margin-bottom:6px}
+#kintone-unified-suite-v2 .diff-cat-field-block > summary{cursor:pointer;display:flex;align-items:center;gap:10px;padding:6px 10px;font-weight:700;font-size:12px;color:var(--dv-text)}
+#kintone-unified-suite-v2 .diff-cat-field-block > summary:hover{background:color-mix(in srgb,var(--dv-bg) 88%,#dbeafe)}
+#kintone-unified-suite-v2 .diff-cat-field-block .diff-cat-stats{margin-left:auto;display:flex;gap:4px}
+#kintone-unified-suite-v2 .diff-cat-field-list{list-style:none;margin:0;padding:6px 10px 8px;border-top:1px dashed var(--dv-border);display:flex;flex-direction:column;gap:3px}
+#kintone-unified-suite-v2 .diff-cat-field-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px}
+#kintone-unified-suite-v2 .diff-cat-stat{display:inline-flex;align-items:center;font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--dv-pad);color:var(--dv-text)}
+#kintone-unified-suite-v2 .diff-cat-stat--add{background:#d1fae5;color:#065f46}
+#kintone-unified-suite-v2 .diff-cat-stat--rm{background:#fee2e2;color:#991b1b}
+#kintone-unified-suite-v2 .diff-cat-stat--chg{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .diff-cat-stat--high{background:#fecaca;color:#7f1d1d;border:1px solid #dc2626}
+
+#kintone-unified-suite-v2 .diff-cat-prev{background:var(--dv-del);color:var(--dv-del-txt);padding:3px 6px;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all;margin-bottom:2px}
+#kintone-unified-suite-v2 .diff-cat-next{background:var(--dv-add);color:var(--dv-add-txt);padding:3px 6px;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all}
+#kintone-unified-suite-v2 .diff-cat-same{padding:3px 6px;color:var(--dv-sub);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+#kintone-unified-suite-v2 .diff-cat-prev-tag,#kintone-unified-suite-v2 .diff-cat-next-tag{display:inline-block;min-width:18px;padding:0 4px;font-size:9px;font-weight:800;text-align:center;border-radius:3px;margin-right:6px;background:rgba(0,0,0,.12)}
+
+/* Dark theme tweaks */
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-cell--on{background:#134e4a;color:#5eead4}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-cell--off{background:#1f2937;color:#475569}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-cell--grant{background:#14532d;color:#bbf7d0;outline-color:#16a34a}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-cell--deny{background:#7f1d1d;color:#fecaca;outline-color:#dc2626}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-cell--grant-new{background:#14532d;color:#bbf7d0}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-cell--deny-new{background:#7f1d1d;color:#fecaca}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-status--add{background:#14532d;color:#bbf7d0}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-status--rm{background:#7f1d1d;color:#fecaca}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-status--chg{background:#78350f;color:#fde68a}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-status--same{background:#1f2937;color:#9ca3af}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-tag--type{background:#1e3a8a;color:#bfdbfe}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-flow-svg{background:#1e293b}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-layout-add{background:#14532d;border-color:#16a34a}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-layout-rm{background:#7f1d1d;border-color:#dc2626}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-layout-group{background:#312e81;border-color:#6366f1}
+
 `;
 
   // src/ui/template.ts
@@ -33932,6 +35106,29 @@ ${detail}`);
         });
         applyLauncherFilter();
         setStatus(`ランチャータブを切り替えました: ${actEl.textContent?.trim() || ""}`);
+        return;
+      }
+      if (act === "setDiffViewMode") {
+        const mode = actEl.dataset.mode === "category" ? "category" : "table";
+        if (state.diffViewMode === mode) return;
+        state.diffViewMode = mode;
+        if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+        try {
+          saveCurrentDialogState2();
+        } catch (e2) {
+        }
+        setStatus(mode === "category" ? "セクション別ビューに切り替えました" : "行一覧ビューに切り替えました");
+        return;
+      }
+      if (act === "setDiffCategoryView") {
+        const next = String(actEl.dataset.cat || "");
+        if (!next) return;
+        state.diffCategoryView = next;
+        if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+        try {
+          saveCurrentDialogState2();
+        } catch (e2) {
+        }
         return;
       }
       if (act === "diffSectionsExpandAll") {

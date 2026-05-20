@@ -22,6 +22,7 @@ import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './e
 import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter } from './filter.js';
 import { resolveBundleRevision, pickBundleSections } from '../api.js';
 import { getToolDocument } from '../ui/dialog.js';
+import { buildCategoryViewHtml } from './category-view.js';
 
 // ---------------------------------------------------------------------------
 // Diff display helpers
@@ -4928,6 +4929,14 @@ export function renderResultRows(rows) {
         ${renameCount ? `<div class="diff-stat-chip" title="名称変更候補"><div class="diff-stat-chip__num">${renameCount}</div><div class="diff-stat-chip__label">改名候補</div></div>` : ''}
       </div>`;
 
+  const viewMode = state.diffViewMode === 'category' ? 'category' : 'table';
+  const viewModeToggleHtml = `
+      <div class="diff-view-mode-toggle" role="group" aria-label="差分の表示モード切替">
+        <span class="diff-view-mode-toggle__lbl">表示</span>
+        <button type="button" class="diff-view-mode-btn${viewMode === 'table' ? ' is-active' : ''}" data-act="setDiffViewMode" data-mode="table" title="差分行を表形式で一覧表示（既定）">📋 行一覧</button>
+        <button type="button" class="diff-view-mode-btn${viewMode === 'category' ? ' is-active' : ''}" data-act="setDiffViewMode" data-mode="category" title="権限・プロセス・通知などをカテゴリ別の可視化で表示">🗂 セクション別</button>
+      </div>`;
+
   const summaryHtml = `
       <div class="diff-summary-head" role="region" aria-label="差分サマリー">
         ${buildDiffSummaryBars(summary)}
@@ -4937,9 +4946,10 @@ export function renderResultRows(rows) {
           ${filteredRows.length !== rows.length ? `<span class="diff-info">絞込中: 高 ${filteredSeverity.high} / 中 ${filteredSeverity.medium} / 低 ${filteredSeverity.low}</span>` : ''}
           ${rawKeyword ? `<span class="diff-info">検索: ${esc(rawKeyword)}</span>` : ''}
         </div>
-        ${impactCardsHtml}
+        ${viewModeToggleHtml}
+        ${viewMode === 'table' ? impactCardsHtml : ''}
         ${viewedControlsHtml}
-        ${sectionNavHtml}
+        ${viewMode === 'table' ? sectionNavHtml : ''}
       </div>
     `;
 
@@ -4961,6 +4971,21 @@ export function renderResultRows(rows) {
         <div class="diff-empty">差分はありません。</div>
       </div>`;
     scheduleDiffPopoutSync();
+    return;
+  }
+
+  if (viewMode === 'category') {
+    // セクション別ビュー: 権限/プロセス/通知/ビュー/レイアウト/JS-CSS/アプリ設定 を
+    // カテゴリ別タブの可視化（マトリクス・カード・図）でレンダリングする。
+    ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''} diff-view--category">
+        ${summaryHtml}
+        ${issueHtml}
+        ${buildCategoryViewHtml(rows)}
+      </div>`;
+    scheduleDiffPopoutSync();
+    try {
+      getToolDocument().dispatchEvent(new CustomEvent('kus:diffRendered', { detail: { count: rows.length, mode: 'category' } }));
+    } catch (e) { /* ignore */ }
     return;
   }
 

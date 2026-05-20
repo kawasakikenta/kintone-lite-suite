@@ -27,6 +27,7 @@
     "src/diff/engine.ts",
     "src/diff/enrich.ts",
     "src/diff/export.ts",
+    "src/diff/category-view.ts",
     "src/reflect/apply.ts",
     "src/reflect/plan.ts",
     "src/oss_integrations.ts",

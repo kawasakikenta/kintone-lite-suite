@@ -1,0 +1,1143 @@
+'use strict';
+
+/**
+ * 差分結果の「セクション別ビュー」レンダラー。
+ *
+ * 既存の「行一覧」表示はパス/種別/値の機械的な diff 表示で、フィールド以外
+ * （権限/プロセス/通知/ビュー/レイアウト/JS-CSS/アプリ設定/カテゴリ）が
+ * 直感的に読み取れないという課題があった。本モジュールはセクションを
+ * 9 カテゴリに束ね、各カテゴリ向けの可視化（マトリクス・カード・図）で
+ * 差分を提示する。
+ *
+ * 入口は {@link buildCategoryViewHtml}。`state.lastSourceBundle` /
+ * `state.lastTargetBundle` と enriched diff rows を入力に取り、ビュー全体の
+ * HTML 文字列を返す。
+ */
+
+import { esc, renderSectionIconHtml } from '../utils.js';
+import { state } from '../state.js';
+
+// ---------------------------------------------------------------------------
+// Category definitions
+// ---------------------------------------------------------------------------
+
+export interface DiffCategoryDef {
+  key: string;
+  label: string;
+  hint: string;
+  sections: string[];
+  icon: string;
+}
+
+export const DIFF_CATEGORIES: ReadonlyArray<DiffCategoryDef> = [
+  { key: 'fields',    label: 'フィールド',       hint: 'フィールド定義の追加・変更',           sections: ['fieldSettings'], icon: '🔤' },
+  { key: 'layout',    label: 'レイアウト',       hint: 'フォーム配置の差分',                   sections: ['layoutSettings'], icon: '🧩' },
+  { key: 'views',     label: 'ビュー・グラフ',   hint: '一覧表示とレポート',                   sections: ['viewSettings', 'reportSettings'], icon: '📊' },
+  { key: 'process',   label: 'プロセス・アクション', hint: 'ステータス遷移とアクション',        sections: ['processSettings', 'actionSettings'], icon: '🔁' },
+  { key: 'notify',    label: '通知',             hint: '通知ルールとリマインダー',             sections: ['notifications', 'perRecordNotifications', 'reminderNotifications'], icon: '🔔' },
+  { key: 'acl',       label: '権限',             hint: 'アプリ・フィールド・レコード権限',     sections: ['appAcl', 'fieldAcl', 'recordPermissions'], icon: '🔐' },
+  { key: 'customize', label: 'JS/CSS・プラグイン', hint: 'カスタマイズと配布資産',              sections: ['customizeSettings', 'pluginSettings'], icon: '🧪' },
+  { key: 'app',       label: 'アプリ設定',       hint: '基本情報・フォーム・カテゴリ',         sections: ['appSettings', 'appInfo', 'formSettings', 'categories'], icon: '⚙' }
+];
+
+const SECTION_TO_CATEGORY: Record<string, string> = (() => {
+  const m: Record<string, string> = {};
+  for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
+  return m;
+})();
+
+export function getCategoryOfSection(sectionKey: string): string {
+  return SECTION_TO_CATEGORY[sectionKey] || 'app';
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function countRowSummary(rows: any[]) {
+  const s = { total: 0, added: 0, removed: 0, changed: 0, high: 0, medium: 0, low: 0 };
+  for (const r of rows || []) {
+    if (!r || r.type === 'same') continue;
+    s.total += 1;
+    if (r.type === 'added') s.added += 1;
+    else if (r.type === 'removed') s.removed += 1;
+    else if (r.type === 'changed') s.changed += 1;
+    const sev = String(r.severity || 'low').toLowerCase();
+    if (sev === 'high') s.high += 1;
+    else if (sev === 'medium') s.medium += 1;
+    else s.low += 1;
+  }
+  return s;
+}
+
+function diffBadge(s: ReturnType<typeof countRowSummary>): string {
+  const items = [
+    s.added ? `<span class="diff-cat-stat diff-cat-stat--add" title="追加">+${s.added}</span>` : '',
+    s.removed ? `<span class="diff-cat-stat diff-cat-stat--rm" title="削除">−${s.removed}</span>` : '',
+    s.changed ? `<span class="diff-cat-stat diff-cat-stat--chg" title="変更">~${s.changed}</span>` : '',
+    s.high ? `<span class="diff-cat-stat diff-cat-stat--high" title="重要度高">⚠${s.high}</span>` : ''
+  ].filter(Boolean).join('');
+  return items;
+}
+
+function getRowsBySection(rows: any[]): Map<string, any[]> {
+  const m = new Map<string, any[]>();
+  for (const r of rows || []) {
+    if (!r || r.type === 'same') continue;
+    const k = r.sectionKey || '';
+    if (!k) continue;
+    if (!m.has(k)) m.set(k, []);
+    m.get(k)!.push(r);
+  }
+  return m;
+}
+
+function getSection(bundle: any, key: string): any {
+  return bundle?.sections?.[key];
+}
+
+function emptyState(message: string): string {
+  return `<div class="diff-cat-empty">${esc(message)}</div>`;
+}
+
+function shortList(items: string[], max = 5): string {
+  const list = (items || []).filter(Boolean);
+  if (!list.length) return '<span class="diff-cat-muted">-</span>';
+  const head = list.slice(0, max).map((x) => `<span class="diff-cat-tag">${esc(x)}</span>`).join('');
+  const rest = list.length > max ? `<span class="diff-cat-tag diff-cat-tag--more">+${list.length - max}</span>` : '';
+  return head + rest;
+}
+
+function statusLabel(present: { left: boolean; right: boolean }): { cls: string; label: string } {
+  if (present.left && present.right) return { cls: 'diff-cat-status--chg', label: '変更' };
+  if (!present.left && present.right) return { cls: 'diff-cat-status--add', label: '追加' };
+  if (present.left && !present.right) return { cls: 'diff-cat-status--rm', label: '削除' };
+  return { cls: 'diff-cat-status--same', label: '同一' };
+}
+
+function valueChanged(a: any, b: any): boolean {
+  try {
+    return JSON.stringify(a) !== JSON.stringify(b);
+  } catch {
+    return a !== b;
+  }
+}
+
+function safeStringify(v: any): string {
+  if (v === undefined) return '（未定義）';
+  if (v == null) return '-';
+  if (typeof v === 'string') return v;
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+function diffWrap(left: any, right: any): { html: string; same: boolean } {
+  const same = !valueChanged(left, right);
+  if (same) {
+    return { same, html: `<div class="diff-cat-same">${esc(safeStringify(left))}</div>` };
+  }
+  return {
+    same,
+    html: `<div class="diff-cat-prev"><span class="diff-cat-prev-tag">旧</span>${esc(safeStringify(left))}</div>
+           <div class="diff-cat-next"><span class="diff-cat-next-tag">新</span>${esc(safeStringify(right))}</div>`
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Permissions (appAcl / fieldAcl / recordPermissions)
+// ---------------------------------------------------------------------------
+
+const APP_ACL_PERMISSIONS = [
+  { key: 'appEditable', label: 'アプリ管理' },
+  { key: 'recordViewable', label: '閲覧' },
+  { key: 'recordAddable', label: '追加' },
+  { key: 'recordEditable', label: '編集' },
+  { key: 'recordDeletable', label: '削除' },
+  { key: 'recordImportable', label: 'CSV読込' },
+  { key: 'recordExportable', label: 'CSV書出' }
+] as const;
+
+const FIELD_ACL_LEVELS = ['NONE', 'READ', 'READ_WRITE'] as const;
+
+function entityKey(entity: any): string {
+  if (!entity) return '';
+  return `${entity.type || ''}:${entity.code || entity.id || entity.login || ''}`;
+}
+
+function entityLabel(entity: any): string {
+  if (!entity) return '-';
+  const type = entity.type || '';
+  const code = entity.code || entity.login || entity.id || '';
+  const name = entity.name || '';
+  const typeIcon = type === 'USER' ? '👤'
+    : type === 'GROUP' ? '👥'
+    : type === 'ORGANIZATION' ? '🏢'
+    : type === 'CREATOR' ? '✏️'
+    : type === 'FIELD_ENTITY' ? '🔗'
+    : '·';
+  return `${typeIcon} ${name || code || '(未設定)'}${code && name ? ` <span class="diff-cat-muted">${esc(code)}</span>` : ''}`;
+}
+
+function appAclRowsByEntity(rights: any[]): Map<string, any> {
+  const m = new Map<string, any>();
+  for (const r of rights || []) {
+    const k = entityKey(r?.entity);
+    if (!k) continue;
+    m.set(k, r);
+  }
+  return m;
+}
+
+function renderAppAclMatrix(srcRights: any[], tgtRights: any[]): string {
+  const sm = appAclRowsByEntity(srcRights);
+  const tm = appAclRowsByEntity(tgtRights);
+  const keys = new Set<string>([...sm.keys(), ...tm.keys()]);
+  if (!keys.size) return emptyState('アプリ権限の設定がありません');
+
+  const headerCells = APP_ACL_PERMISSIONS.map((p) => `<th title="${esc(p.label)}">${esc(p.label)}</th>`).join('');
+  const rows: string[] = [];
+  for (const key of keys) {
+    const s = sm.get(key);
+    const t = tm.get(key);
+    const status = statusLabel({ left: !!s, right: !!t });
+    const entity = (t || s)?.entity;
+    const cells = APP_ACL_PERMISSIONS.map((p) => {
+      const lv = !!s?.[p.key];
+      const rv = !!t?.[p.key];
+      const cls = !s || !t
+        ? (rv ? 'diff-cat-cell--grant-new' : (lv ? 'diff-cat-cell--deny-new' : 'diff-cat-cell--off'))
+        : (lv === rv ? (rv ? 'diff-cat-cell--on' : 'diff-cat-cell--off')
+          : (rv ? 'diff-cat-cell--grant' : 'diff-cat-cell--deny'));
+      const glyph = lv === rv ? (rv ? '●' : '○')
+        : (rv ? '↑●' : '↓○');
+      const title = `${p.label}: ${lv ? '許可' : '不許可'} → ${rv ? '許可' : '不許可'}`;
+      return `<td class="diff-cat-cell ${cls}" title="${esc(title)}">${glyph}</td>`;
+    }).join('');
+    rows.push(`<tr>
+      <td class="diff-cat-entity"><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
+      <td class="diff-cat-entity">${entityLabel(entity)}</td>
+      ${cells}
+      <td class="diff-cat-entity diff-cat-muted">${esc(t?.filterCond || s?.filterCond || '-')}</td>
+    </tr>`);
+  }
+  return `<div class="diff-cat-table-wrap"><table class="diff-cat-matrix">
+    <thead><tr>
+      <th style="width:60px">状態</th>
+      <th style="width:200px">対象</th>
+      ${headerCells}
+      <th style="min-width:140px">フィルタ条件</th>
+    </tr></thead>
+    <tbody>${rows.join('')}</tbody>
+  </table></div>
+  <div class="diff-cat-legend">
+    <span><span class="diff-cat-cell diff-cat-cell--on diff-cat-legend-cell">●</span> 許可</span>
+    <span><span class="diff-cat-cell diff-cat-cell--off diff-cat-legend-cell">○</span> 不許可</span>
+    <span><span class="diff-cat-cell diff-cat-cell--grant diff-cat-legend-cell">↑●</span> 拡大</span>
+    <span><span class="diff-cat-cell diff-cat-cell--deny diff-cat-legend-cell">↓○</span> 縮小</span>
+  </div>`;
+}
+
+function fieldAclRowsByCode(rights: any[]): Map<string, any> {
+  const m = new Map<string, any>();
+  for (const r of rights || []) {
+    const code = String(r?.code || '');
+    if (!code) continue;
+    m.set(code, r);
+  }
+  return m;
+}
+
+function renderFieldAclTable(srcRights: any[], tgtRights: any[]): string {
+  const sm = fieldAclRowsByCode(srcRights);
+  const tm = fieldAclRowsByCode(tgtRights);
+  const codes = new Set<string>([...sm.keys(), ...tm.keys()]);
+  if (!codes.size) return emptyState('フィールド権限の設定がありません');
+  const rows: string[] = [];
+  for (const code of codes) {
+    const s = sm.get(code);
+    const t = tm.get(code);
+    const entries = new Map<string, { left: string; right: string }>();
+    for (const e of s?.entities || []) {
+      const k = entityKey(e?.entity);
+      entries.set(k, { left: e?.accessibility || 'NONE', right: 'NONE' });
+    }
+    for (const e of t?.entities || []) {
+      const k = entityKey(e?.entity);
+      const cur = entries.get(k) || { left: 'NONE', right: 'NONE' };
+      cur.right = e?.accessibility || 'NONE';
+      entries.set(k, cur);
+    }
+    const entityHtml = [...entries.entries()].map(([k, v]) => {
+      const ent = (t?.entities || []).find((e: any) => entityKey(e?.entity) === k)?.entity
+        || (s?.entities || []).find((e: any) => entityKey(e?.entity) === k)?.entity;
+      const lvL = FIELD_ACL_LEVELS.indexOf(v.left as any);
+      const lvR = FIELD_ACL_LEVELS.indexOf(v.right as any);
+      const cls = lvR < lvL ? 'diff-cat-acl-down' : (lvR > lvL ? 'diff-cat-acl-up' : '');
+      const arrow = v.left === v.right ? '' : ' → ';
+      const rightLabel = v.left === v.right ? '' : esc(v.right);
+      return `<div class="diff-cat-acl-row ${cls}">
+        <span class="diff-cat-acl-entity">${entityLabel(ent)}</span>
+        <span class="diff-cat-acl-level">${esc(v.left)}${arrow}${rightLabel}</span>
+      </div>`;
+    }).join('');
+    rows.push(`<section class="diff-cat-acl-block">
+      <header class="diff-cat-acl-header">
+        <span class="diff-cat-tag">${esc(code)}</span>
+        <span class="diff-cat-muted">${entries.size} 件のエンティティ</span>
+      </header>
+      ${entityHtml || emptyState('エンティティ設定なし')}
+    </section>`);
+  }
+  return rows.join('');
+}
+
+function renderRecordPermissionMatrix(srcRights: any[], tgtRights: any[]): string {
+  // recordPermissions は filterCond ごとに分かれた配列。entity × permission を表示。
+  const list = (rights: any[]) => (rights || []).map((r, idx) => ({
+    key: `${r?.filterCond || ''}:${idx}`,
+    cond: r?.filterCond || '(条件なし)',
+    rights: r
+  }));
+  const slist = list(srcRights);
+  const tlist = list(tgtRights);
+  const maxLen = Math.max(slist.length, tlist.length);
+  if (!maxLen) return emptyState('レコード権限の設定がありません');
+  const blocks: string[] = [];
+  for (let i = 0; i < maxLen; i++) {
+    const s = slist[i];
+    const t = tlist[i];
+    const cond = t?.cond || s?.cond || '-';
+    const matrix = renderAppAclMatrix(s?.rights?.entities || [], t?.rights?.entities || []);
+    blocks.push(`<section class="diff-cat-acl-block">
+      <header class="diff-cat-acl-header">
+        <span class="diff-cat-acl-condition">条件: <code>${esc(cond)}</code></span>
+      </header>
+      ${matrix}
+    </section>`);
+  }
+  return blocks.join('');
+}
+
+function renderAclCategory(src: any, tgt: any, rowsBySection: Map<string, any[]>): string {
+  const blocks: string[] = [];
+  const has = (k: string) => rowsBySection.has(k);
+
+  if (has('appAcl') || getSection(src, 'appAcl') || getSection(tgt, 'appAcl')) {
+    const srcRights = getSection(src, 'appAcl')?.rights || [];
+    const tgtRights = getSection(tgt, 'appAcl')?.rights || [];
+    blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml('appAcl')}</span>
+        <span class="diff-cat-sec-title">アプリ権限</span>
+        <span class="diff-cat-sec-sub">エンティティ × 操作のマトリクス</span>
+      </header>
+      ${renderAppAclMatrix(srcRights, tgtRights)}
+    </section>`);
+  }
+
+  if (has('fieldAcl') || getSection(src, 'fieldAcl') || getSection(tgt, 'fieldAcl')) {
+    const srcRights = getSection(src, 'fieldAcl')?.rights || [];
+    const tgtRights = getSection(tgt, 'fieldAcl')?.rights || [];
+    blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml('fieldAcl')}</span>
+        <span class="diff-cat-sec-title">フィールド権限</span>
+        <span class="diff-cat-sec-sub">NONE / READ / READ_WRITE の昇降</span>
+      </header>
+      ${renderFieldAclTable(srcRights, tgtRights)}
+    </section>`);
+  }
+
+  if (has('recordPermissions') || getSection(src, 'recordPermissions') || getSection(tgt, 'recordPermissions')) {
+    const srcRights = getSection(src, 'recordPermissions')?.rights || [];
+    const tgtRights = getSection(tgt, 'recordPermissions')?.rights || [];
+    blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml('recordPermissions')}</span>
+        <span class="diff-cat-sec-title">レコード権限</span>
+        <span class="diff-cat-sec-sub">filterCond ごとに権限を比較</span>
+      </header>
+      ${renderRecordPermissionMatrix(srcRights, tgtRights)}
+    </section>`);
+  }
+
+  return blocks.length ? blocks.join('') : emptyState('権限セクションのデータがありません');
+}
+
+// ---------------------------------------------------------------------------
+// Process (processSettings / actionSettings)
+// ---------------------------------------------------------------------------
+
+function processStates(p: any): string[] {
+  if (!p) return [];
+  if (Array.isArray(p.states)) return p.states.map((s: any) => String(s?.name || s));
+  if (p.states && typeof p.states === 'object') return Object.keys(p.states);
+  return [];
+}
+
+function processActions(p: any): Array<{ name: string; from: string; to: string }> {
+  if (!p || !Array.isArray(p.actions)) return [];
+  return p.actions.map((a: any) => ({
+    name: String(a?.name || ''),
+    from: String(a?.from || ''),
+    to: String(a?.to || '')
+  }));
+}
+
+function renderProcessStates(src: string[], tgt: string[]): string {
+  const all = new Set([...src, ...tgt]);
+  if (!all.size) return emptyState('ステータスがありません');
+  const chips = [...all].map((name) => {
+    const inS = src.includes(name);
+    const inT = tgt.includes(name);
+    const cls = inS && inT ? 'diff-cat-state-same'
+      : inT ? 'diff-cat-state-add' : 'diff-cat-state-rm';
+    const icon = inS && inT ? '＝' : inT ? '＋' : '−';
+    return `<span class="diff-cat-state ${cls}" title="${esc(name)}">${icon} ${esc(name)}</span>`;
+  }).join('');
+  return `<div class="diff-cat-state-row">${chips}</div>`;
+}
+
+function renderProcessActions(srcActs: Array<{ name: string; from: string; to: string }>, tgtActs: Array<{ name: string; from: string; to: string }>): string {
+  const keyOf = (a: { name: string; from: string; to: string }) => `${a.from}→${a.to}|${a.name}`;
+  const sm = new Map(srcActs.map((a) => [keyOf(a), a]));
+  const tm = new Map(tgtActs.map((a) => [keyOf(a), a]));
+  const keys = new Set([...sm.keys(), ...tm.keys()]);
+  if (!keys.size) return emptyState('アクションがありません');
+  const rows = [...keys].map((k) => {
+    const s = sm.get(k);
+    const t = tm.get(k);
+    const status = statusLabel({ left: !!s, right: !!t });
+    const ref = t || s!;
+    return `<tr>
+      <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
+      <td class="diff-cat-process-name">${esc(ref.name || '(無名)')}</td>
+      <td><span class="diff-cat-tag">${esc(ref.from || '(未設定)')}</span></td>
+      <td class="diff-cat-arrow">→</td>
+      <td><span class="diff-cat-tag">${esc(ref.to || '(未設定)')}</span></td>
+    </tr>`;
+  }).join('');
+  return `<div class="diff-cat-table-wrap"><table class="diff-cat-table">
+    <thead><tr>
+      <th style="width:60px">状態</th>
+      <th>アクション名</th>
+      <th>遷移元</th>
+      <th></th>
+      <th>遷移先</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+function renderProcessFlowDiagram(srcActs: Array<{ name: string; from: string; to: string }>, tgtActs: Array<{ name: string; from: string; to: string }>): string {
+  // Mermaid なしで自前 SVG を描く。状態を縦に並べ、遷移を矢印で結ぶ。
+  const states = new Set<string>();
+  srcActs.forEach((a) => { states.add(a.from); states.add(a.to); });
+  tgtActs.forEach((a) => { states.add(a.from); states.add(a.to); });
+  const stateList = [...states].filter(Boolean);
+  if (stateList.length < 2) return '';
+
+  const W = 640;
+  const colW = 220;
+  const rowH = 56;
+  const padY = 24;
+  const H = padY * 2 + stateList.length * rowH;
+  const stateY = (s: string) => padY + stateList.indexOf(s) * rowH + rowH / 2;
+
+  const stateNodes = stateList.map((s) => {
+    const y = stateY(s);
+    return `<g><rect x="${(W - colW) / 2}" y="${y - 18}" width="${colW}" height="36" rx="18" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <text x="${W / 2}" y="${y + 5}" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">${esc(s)}</text></g>`;
+  }).join('');
+
+  const keyOf = (a: { name: string; from: string; to: string }) => `${a.from}→${a.to}|${a.name}`;
+  const sm = new Map(srcActs.map((a) => [keyOf(a), a]));
+  const tm = new Map(tgtActs.map((a) => [keyOf(a), a]));
+  const allActs = new Set([...sm.keys(), ...tm.keys()]);
+  let curve = 0;
+  const arrows = [...allActs].map((k) => {
+    const a = tm.get(k) || sm.get(k)!;
+    if (!a.from || !a.to || a.from === a.to) return '';
+    const y1 = stateY(a.from);
+    const y2 = stateY(a.to);
+    const x1 = W / 2 + colW / 2;
+    const x2 = W / 2 + colW / 2;
+    const off = 30 + (curve % 4) * 24;
+    curve += 1;
+    const cx = x1 + off;
+    const inSrc = sm.has(k);
+    const inTgt = tm.has(k);
+    const color = inSrc && inTgt ? '#64748b' : inTgt ? '#16a34a' : '#dc2626';
+    const dash = inSrc && inTgt ? '' : ' stroke-dasharray="5,3"';
+    const labelY = (y1 + y2) / 2;
+    return `<g>
+      <path d="M${x1},${y1} Q${cx},${labelY} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="1.8"${dash} marker-end="url(#diff-cat-arrow)"/>
+      <text x="${cx + 6}" y="${labelY}" font-size="11" fill="${color}">${esc(a.name || '')}</text>
+    </g>`;
+  }).join('');
+
+  return `<svg class="diff-cat-flow-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="プロセス遷移図">
+    <defs>
+      <marker id="diff-cat-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+      </marker>
+    </defs>
+    ${arrows}
+    ${stateNodes}
+  </svg>
+  <div class="diff-cat-legend">
+    <span><svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="#64748b" stroke-width="2"/></svg> 不変</span>
+    <span><svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="#16a34a" stroke-width="2" stroke-dasharray="5,3"/></svg> 追加</span>
+    <span><svg width="22" height="6"><line x1="0" y1="3" x2="22" y2="3" stroke="#dc2626" stroke-width="2" stroke-dasharray="5,3"/></svg> 削除</span>
+  </div>`;
+}
+
+function renderActionSettings(src: any, tgt: any): string {
+  const ss = Array.isArray(src?.actions) ? src.actions : (Array.isArray(src) ? src : []);
+  const tt = Array.isArray(tgt?.actions) ? tgt.actions : (Array.isArray(tgt) ? tgt : []);
+  const keyOf = (a: any) => `${a?.name || ''}|${a?.app || ''}`;
+  const sm = new Map<string, any>(ss.map((a: any) => [keyOf(a), a]));
+  const tm = new Map<string, any>(tt.map((a: any) => [keyOf(a), a]));
+  const keys = new Set<string>([...sm.keys(), ...tm.keys()]);
+  if (!keys.size) return emptyState('アクション設定がありません');
+  const cards = [...keys].map((k) => {
+    const s = sm.get(k);
+    const t = tm.get(k);
+    const ref: any = t || s;
+    const status = statusLabel({ left: !!s, right: !!t });
+    const targetApp = ref?.app?.app || ref?.app?.code || ref?.app || '-';
+    return `<div class="diff-cat-card">
+      <header class="diff-cat-card-head">
+        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
+        <span class="diff-cat-card-title">${esc(ref?.name || '(無名アクション)')}</span>
+      </header>
+      <div class="diff-cat-card-body">
+        <div class="diff-cat-kv"><span class="diff-cat-k">対象アプリ</span><span class="diff-cat-v">${esc(String(targetApp))}</span></div>
+        <div class="diff-cat-kv"><span class="diff-cat-k">フィールド対応</span><span class="diff-cat-v">${esc(String(((ref?.mappings || []).length) + ' 件'))}</span></div>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="diff-cat-card-grid">${cards}</div>`;
+}
+
+function renderProcessCategory(src: any, tgt: any): string {
+  const blocks: string[] = [];
+  const sp = getSection(src, 'processSettings');
+  const tp = getSection(tgt, 'processSettings');
+  if (sp || tp) {
+    const srcStates = processStates(sp);
+    const tgtStates = processStates(tp);
+    const srcActs = processActions(sp);
+    const tgtActs = processActions(tp);
+    const enableChanged = (sp?.enable ?? null) !== (tp?.enable ?? null);
+    const enableBadge = enableChanged
+      ? `<span class="diff-cat-tag diff-cat-tag--warn">プロセス有効化: ${sp?.enable ? '有' : '無'} → ${tp?.enable ? '有' : '無'}</span>`
+      : `<span class="diff-cat-tag">プロセス有効化: ${tp?.enable ?? sp?.enable ? '有' : '無'}</span>`;
+    blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml('processSettings')}</span>
+        <span class="diff-cat-sec-title">プロセス管理</span>
+        <span class="diff-cat-sec-sub">ステータスとアクション</span>
+      </header>
+      <div class="diff-cat-process-meta">${enableBadge}</div>
+      <h4 class="diff-cat-h4">ステータス一覧</h4>
+      ${renderProcessStates(srcStates, tgtStates)}
+      <h4 class="diff-cat-h4">アクション一覧</h4>
+      ${renderProcessActions(srcActs, tgtActs)}
+      <h4 class="diff-cat-h4">遷移図</h4>
+      ${renderProcessFlowDiagram(srcActs, tgtActs)}
+    </section>`);
+  }
+
+  const sa = getSection(src, 'actionSettings');
+  const ta = getSection(tgt, 'actionSettings');
+  if (sa || ta) {
+    blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml('actionSettings')}</span>
+        <span class="diff-cat-sec-title">アクション設定</span>
+        <span class="diff-cat-sec-sub">アプリ間アクション</span>
+      </header>
+      ${renderActionSettings(sa, ta)}
+    </section>`);
+  }
+  return blocks.length ? blocks.join('') : emptyState('プロセス/アクション設定のデータがありません');
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+function notificationKey(n: any): string {
+  // 大半の通知は完全一致での識別子がないため、内容ハッシュを使う。
+  return JSON.stringify({
+    cond: n?.filterCond || '',
+    name: n?.name || '',
+    when: n?.when || n?.event || '',
+    timing: n?.timing || ''
+  });
+}
+
+function renderNotificationCard(rule: any, status: { cls: string; label: string }): string {
+  const recipients: string[] = (rule?.recipients || rule?.targets || [])
+    .map((r: any) => `${r?.entity?.type || ''}:${r?.entity?.code || r?.entity?.login || r?.entity?.id || '-'}`)
+    .filter((x: string) => x !== ':-');
+  const condition = rule?.filterCond || rule?.condition || '';
+  return `<div class="diff-cat-card">
+    <header class="diff-cat-card-head">
+      <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
+      <span class="diff-cat-card-title">${esc(rule?.name || '(無名通知)')}</span>
+    </header>
+    <div class="diff-cat-card-body">
+      ${condition ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(condition)}</code></div>` : ''}
+      ${rule?.timing ? `<div class="diff-cat-kv"><span class="diff-cat-k">タイミング</span><span class="diff-cat-v">${esc(rule.timing)}</span></div>` : ''}
+      ${rule?.when ? `<div class="diff-cat-kv"><span class="diff-cat-k">トリガー</span><span class="diff-cat-v">${esc(rule.when)}</span></div>` : ''}
+      <div class="diff-cat-kv"><span class="diff-cat-k">宛先</span><span class="diff-cat-v">${shortList(recipients, 8)}</span></div>
+    </div>
+  </div>`;
+}
+
+function renderNotificationGroup(label: string, srcRules: any[], tgtRules: any[]): string {
+  const sm = new Map<string, any>();
+  const tm = new Map<string, any>();
+  (srcRules || []).forEach((r) => sm.set(notificationKey(r), r));
+  (tgtRules || []).forEach((r) => tm.set(notificationKey(r), r));
+  const keys = new Set<string>([...sm.keys(), ...tm.keys()]);
+  if (!keys.size) return '';
+  const cards = [...keys].map((k) => {
+    const s = sm.get(k);
+    const t = tm.get(k);
+    const status = statusLabel({ left: !!s, right: !!t });
+    return renderNotificationCard(t || s, status);
+  }).join('');
+  return `<section class="diff-cat-sec">
+    <header class="diff-cat-sec-head">
+      <span class="diff-cat-sec-title">${esc(label)}</span>
+      <span class="diff-cat-sec-sub">${keys.size}件のルール</span>
+    </header>
+    <div class="diff-cat-card-grid">${cards}</div>
+  </section>`;
+}
+
+function renderNotifyCategory(src: any, tgt: any): string {
+  const blocks: string[] = [];
+  const sn = getSection(src, 'notifications');
+  const tn = getSection(tgt, 'notifications');
+  const srcG = Array.isArray(sn?.notifications) ? sn.notifications : (Array.isArray(sn) ? sn : []);
+  const tgtG = Array.isArray(tn?.notifications) ? tn.notifications : (Array.isArray(tn) ? tn : []);
+  if (srcG.length || tgtG.length) blocks.push(renderNotificationGroup('一般通知', srcG, tgtG));
+
+  const sp = getSection(src, 'perRecordNotifications');
+  const tp = getSection(tgt, 'perRecordNotifications');
+  const sPR = Array.isArray(sp?.notifications) ? sp.notifications : (Array.isArray(sp) ? sp : []);
+  const tPR = Array.isArray(tp?.notifications) ? tp.notifications : (Array.isArray(tp) ? tp : []);
+  if (sPR.length || tPR.length) blocks.push(renderNotificationGroup('レコード条件通知', sPR, tPR));
+
+  const sr = getSection(src, 'reminderNotifications');
+  const tr = getSection(tgt, 'reminderNotifications');
+  const sRM = Array.isArray(sr?.notifications) ? sr.notifications : (Array.isArray(sr) ? sr : []);
+  const tRM = Array.isArray(tr?.notifications) ? tr.notifications : (Array.isArray(tr) ? tr : []);
+  if (sRM.length || tRM.length) blocks.push(renderNotificationGroup('リマインダー通知', sRM, tRM));
+
+  if ((sr?.timezone || tr?.timezone) && sr?.timezone !== tr?.timezone) {
+    blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-title">タイムゾーン</span>
+      </header>
+      <div class="diff-cat-kv-row">
+        <span class="diff-cat-tag">${esc(sr?.timezone || '-')}</span>
+        <span class="diff-cat-arrow">→</span>
+        <span class="diff-cat-tag">${esc(tr?.timezone || '-')}</span>
+      </div>
+    </section>`);
+  }
+  return blocks.length ? blocks.join('') : emptyState('通知設定のデータがありません');
+}
+
+// ---------------------------------------------------------------------------
+// Views (viewSettings / reportSettings)
+// ---------------------------------------------------------------------------
+
+function renderViewCards(srcViews: any, tgtViews: any): string {
+  const sm = srcViews && typeof srcViews === 'object' ? srcViews : {};
+  const tm = tgtViews && typeof tgtViews === 'object' ? tgtViews : {};
+  const keys = new Set<string>([...Object.keys(sm), ...Object.keys(tm)]);
+  if (!keys.size) return emptyState('ビューがありません');
+  const cards = [...keys].map((k) => {
+    const s = sm[k];
+    const t = tm[k];
+    const ref = t || s;
+    const status = statusLabel({ left: !!s, right: !!t });
+    const changed = !!s && !!t && valueChanged(s, t);
+    const type = ref?.type || 'LIST';
+    const fields: string[] = Array.isArray(ref?.fields) ? ref.fields : (ref?.fields ? Object.keys(ref.fields) : []);
+    const filter = ref?.filterCond || '';
+    const sort = ref?.sort || '';
+    return `<div class="diff-cat-card ${changed ? 'diff-cat-card--chg' : ''}">
+      <header class="diff-cat-card-head">
+        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
+        <span class="diff-cat-card-title">${esc(ref?.name || k)}</span>
+        <span class="diff-cat-tag diff-cat-tag--type">${esc(type)}</span>
+      </header>
+      <div class="diff-cat-card-body">
+        <div class="diff-cat-kv"><span class="diff-cat-k">表示項目</span><span class="diff-cat-v">${shortList(fields, 6)}</span></div>
+        ${filter ? `<div class="diff-cat-kv"><span class="diff-cat-k">絞込</span><code class="diff-cat-code">${esc(filter)}</code></div>` : ''}
+        ${sort ? `<div class="diff-cat-kv"><span class="diff-cat-k">ソート</span><code class="diff-cat-code">${esc(sort)}</code></div>` : ''}
+        ${changed ? renderViewChangedDetail(s, t) : ''}
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="diff-cat-card-grid">${cards}</div>`;
+}
+
+function renderViewChangedDetail(s: any, t: any): string {
+  const checks: Array<{ key: string; label: string }> = [
+    { key: 'name', label: '名前' },
+    { key: 'type', label: '種別' },
+    { key: 'filterCond', label: '絞込条件' },
+    { key: 'sort', label: 'ソート' },
+    { key: 'index', label: '表示順' },
+    { key: 'paginationStyle', label: 'ページ送り' }
+  ];
+  const items: string[] = [];
+  for (const c of checks) {
+    if (valueChanged(s?.[c.key], t?.[c.key])) {
+      items.push(`<li><span class="diff-cat-k">${esc(c.label)}</span>: <span class="diff-cat-old">${esc(safeStringify(s?.[c.key]))}</span> → <span class="diff-cat-new">${esc(safeStringify(t?.[c.key]))}</span></li>`);
+    }
+  }
+  const sf = Array.isArray(s?.fields) ? s.fields : [];
+  const tf = Array.isArray(t?.fields) ? t.fields : [];
+  if (valueChanged(sf, tf)) {
+    const added = tf.filter((x: any) => !sf.includes(x));
+    const removed = sf.filter((x: any) => !tf.includes(x));
+    if (added.length || removed.length) {
+      items.push(`<li><span class="diff-cat-k">表示項目</span>: ${added.length ? `<span class="diff-cat-new">+${added.length}件 (${added.slice(0, 3).map(esc).join(', ')}${added.length > 3 ? '…' : ''})</span>` : ''}${removed.length ? ` <span class="diff-cat-old">-${removed.length}件 (${removed.slice(0, 3).map(esc).join(', ')}${removed.length > 3 ? '…' : ''})</span>` : ''}</li>`);
+    }
+  }
+  return items.length ? `<details class="diff-cat-changed-detail"><summary>変更詳細 (${items.length})</summary><ul>${items.join('')}</ul></details>` : '';
+}
+
+function renderReportCards(srcReports: any, tgtReports: any): string {
+  const sm = srcReports && typeof srcReports === 'object' ? srcReports : {};
+  const tm = tgtReports && typeof tgtReports === 'object' ? tgtReports : {};
+  const keys = new Set<string>([...Object.keys(sm), ...Object.keys(tm)]);
+  if (!keys.size) return emptyState('グラフ設定がありません');
+  const cards = [...keys].map((k) => {
+    const s = sm[k];
+    const t = tm[k];
+    const ref = t || s;
+    const status = statusLabel({ left: !!s, right: !!t });
+    return `<div class="diff-cat-card">
+      <header class="diff-cat-card-head">
+        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
+        <span class="diff-cat-card-title">${esc(ref?.name || k)}</span>
+        <span class="diff-cat-tag diff-cat-tag--type">${esc(ref?.chartType || ref?.type || 'GRAPH')}</span>
+      </header>
+      <div class="diff-cat-card-body">
+        ${ref?.filterCond ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(ref.filterCond)}</code></div>` : ''}
+        ${ref?.groups ? `<div class="diff-cat-kv"><span class="diff-cat-k">分類</span><span class="diff-cat-v">${shortList((ref.groups || []).map((g: any) => g?.code || g), 6)}</span></div>` : ''}
+        ${ref?.aggregations ? `<div class="diff-cat-kv"><span class="diff-cat-k">集計</span><span class="diff-cat-v">${shortList((ref.aggregations || []).map((a: any) => `${a?.type || ''}(${a?.code || '-'})`), 6)}</span></div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="diff-cat-card-grid">${cards}</div>`;
+}
+
+function renderViewsCategory(src: any, tgt: any): string {
+  const blocks: string[] = [];
+  const sv = getSection(src, 'viewSettings');
+  const tv = getSection(tgt, 'viewSettings');
+  if (sv || tv) {
+    const srcViews = sv?.views || sv;
+    const tgtViews = tv?.views || tv;
+    blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml('viewSettings')}</span>
+        <span class="diff-cat-sec-title">ビュー設定</span>
+        <span class="diff-cat-sec-sub">一覧の表示項目・絞込・ソート</span>
+      </header>
+      ${renderViewCards(srcViews, tgtViews)}
+    </section>`);
+  }
+  const sr = getSection(src, 'reportSettings');
+  const tr = getSection(tgt, 'reportSettings');
+  if (sr || tr) {
+    const srcR = sr?.reports || sr;
+    const tgtR = tr?.reports || tr;
+    blocks.push(`<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml('reportSettings')}</span>
+        <span class="diff-cat-sec-title">グラフ設定</span>
+        <span class="diff-cat-sec-sub">レポートの種別・分類・集計</span>
+      </header>
+      ${renderReportCards(srcR, tgtR)}
+    </section>`);
+  }
+  return blocks.length ? blocks.join('') : emptyState('ビュー/グラフのデータがありません');
+}
+
+// ---------------------------------------------------------------------------
+// Layout
+// ---------------------------------------------------------------------------
+
+function flatLayout(layout: any[]): Array<{ row: number; col: number; code: string; type: string; label?: string }> {
+  if (!Array.isArray(layout)) return [];
+  const out: Array<{ row: number; col: number; code: string; type: string; label?: string }> = [];
+  layout.forEach((row, rIdx) => {
+    if (row?.type === 'GROUP') {
+      const groupCode = row.code || `_group${rIdx}`;
+      out.push({ row: rIdx, col: 0, code: groupCode, type: 'GROUP', label: row.label });
+      (row.layout || []).forEach((inner: any, riIdx: number) => {
+        (inner?.fields || []).forEach((f: any, cIdx: number) => {
+          out.push({ row: rIdx + 0.1 * (riIdx + 1), col: cIdx, code: f?.code || `_${f?.type}_${rIdx}_${riIdx}_${cIdx}`, type: f?.type || '', label: f?.label });
+        });
+      });
+    } else {
+      (row?.fields || []).forEach((f: any, cIdx: number) => {
+        out.push({ row: rIdx, col: cIdx, code: f?.code || `_${f?.type}_${rIdx}_${cIdx}`, type: f?.type || '', label: f?.label });
+      });
+    }
+  });
+  return out;
+}
+
+function renderLayoutGrid(items: Array<{ row: number; col: number; code: string; type: string; label?: string }>, comparedCodes: Set<string>, mode: 'src' | 'tgt'): string {
+  if (!items.length) return emptyState('レイアウト未取得');
+  // Group by row, sort by col
+  const byRow = new Map<number, Array<typeof items[0]>>();
+  for (const it of items) {
+    if (!byRow.has(it.row)) byRow.set(it.row, []);
+    byRow.get(it.row)!.push(it);
+  }
+  const rows = [...byRow.keys()].sort((a, b) => a - b);
+  const rowsHtml = rows.map((r) => {
+    const cells = byRow.get(r)!.sort((a, b) => a.col - b.col).map((c) => {
+      const exists = comparedCodes.has(c.code);
+      const cls = c.type === 'GROUP' ? 'diff-cat-layout-group'
+        : !exists ? (mode === 'tgt' ? 'diff-cat-layout-add' : 'diff-cat-layout-rm')
+        : 'diff-cat-layout-keep';
+      return `<div class="diff-cat-layout-cell ${cls}" title="${esc(`${c.label || c.code} (${c.type})`)}">
+        <span class="diff-cat-layout-code">${esc(c.code)}</span>
+        <span class="diff-cat-layout-type">${esc(c.type || '-')}</span>
+      </div>`;
+    }).join('');
+    return `<div class="diff-cat-layout-row">${cells}</div>`;
+  }).join('');
+  return `<div class="diff-cat-layout-grid">${rowsHtml}</div>`;
+}
+
+function renderLayoutCategory(src: any, tgt: any): string {
+  const sl = getSection(src, 'layoutSettings');
+  const tl = getSection(tgt, 'layoutSettings');
+  const srcLayout = Array.isArray(sl?.layout) ? sl.layout : (Array.isArray(sl) ? sl : []);
+  const tgtLayout = Array.isArray(tl?.layout) ? tl.layout : (Array.isArray(tl) ? tl : []);
+  if (!srcLayout.length && !tgtLayout.length) return emptyState('レイアウト設定がありません');
+  const flatS = flatLayout(srcLayout);
+  const flatT = flatLayout(tgtLayout);
+  const srcCodes = new Set(flatS.map((i) => i.code));
+  const tgtCodes = new Set(flatT.map((i) => i.code));
+  const onlyInSrc = flatS.filter((i) => !tgtCodes.has(i.code));
+  const onlyInTgt = flatT.filter((i) => !srcCodes.has(i.code));
+  return `<section class="diff-cat-sec">
+    <header class="diff-cat-sec-head">
+      <span class="diff-cat-sec-icon">${renderSectionIconHtml('layoutSettings')}</span>
+      <span class="diff-cat-sec-title">レイアウト</span>
+      <span class="diff-cat-sec-sub">行 × 列のフィールド配置</span>
+    </header>
+    <div class="diff-cat-layout-cmp">
+      <div class="diff-cat-layout-side">
+        <header class="diff-cat-side-head">比較元 (${flatS.length}項目)</header>
+        ${renderLayoutGrid(flatS, tgtCodes, 'src')}
+      </div>
+      <div class="diff-cat-layout-side">
+        <header class="diff-cat-side-head">比較先 (${flatT.length}項目)</header>
+        ${renderLayoutGrid(flatT, srcCodes, 'tgt')}
+      </div>
+    </div>
+    <div class="diff-cat-layout-summary">
+      <span class="diff-cat-tag diff-cat-tag--rm">削除候補 ${onlyInSrc.length}</span>
+      <span class="diff-cat-tag diff-cat-tag--add">新規 ${onlyInTgt.length}</span>
+      <span class="diff-cat-tag">保持 ${flatT.length - onlyInTgt.length}</span>
+    </div>
+  </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Customize (JS/CSS + plugins)
+// ---------------------------------------------------------------------------
+
+function listCustomizeFiles(side: any): Array<{ scope: string; type: string; url: string; name: string }> {
+  const out: Array<{ scope: string; type: string; url: string; name: string }> = [];
+  if (!side) return out;
+  for (const scope of ['desktop', 'mobile']) {
+    const sc = side[scope];
+    if (!sc) continue;
+    for (const t of ['js', 'css']) {
+      const list = Array.isArray(sc[t]) ? sc[t] : [];
+      list.forEach((item: any) => {
+        const file = item?.file || item;
+        out.push({
+          scope,
+          type: t.toUpperCase(),
+          url: item?.url || file?.url || '',
+          name: file?.name || item?.name || (item?.url ? String(item.url).split('/').pop() : '(不明)')
+        });
+      });
+    }
+  }
+  return out;
+}
+
+function renderCustomizeCategory(src: any, tgt: any): string {
+  const sc = getSection(src, 'customizeSettings');
+  const tc = getSection(tgt, 'customizeSettings');
+  const sFiles = listCustomizeFiles(sc);
+  const tFiles = listCustomizeFiles(tc);
+  const keyOf = (f: { scope: string; type: string; name: string }) => `${f.scope}/${f.type}/${f.name}`;
+  const sm = new Map(sFiles.map((f) => [keyOf(f), f]));
+  const tm = new Map(tFiles.map((f) => [keyOf(f), f]));
+  const keys = new Set<string>([...sm.keys(), ...tm.keys()]);
+
+  const fileRows = [...keys].map((k) => {
+    const s = sm.get(k);
+    const t = tm.get(k);
+    const status = statusLabel({ left: !!s, right: !!t });
+    const ref = t || s!;
+    return `<tr>
+      <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
+      <td><span class="diff-cat-tag">${esc(ref.scope)}</span></td>
+      <td><span class="diff-cat-tag diff-cat-tag--type">${esc(ref.type)}</span></td>
+      <td class="diff-cat-mono">${esc(ref.name)}</td>
+    </tr>`;
+  }).join('');
+
+  let customizeBlock = '';
+  if (keys.size) {
+    customizeBlock = `<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml('customizeSettings')}</span>
+        <span class="diff-cat-sec-title">JS/CSS</span>
+        <span class="diff-cat-sec-sub">desktop / mobile × JS / CSS のファイル一覧</span>
+      </header>
+      <div class="diff-cat-table-wrap"><table class="diff-cat-table">
+        <thead><tr><th style="width:60px">状態</th><th style="width:80px">配置</th><th style="width:60px">種別</th><th>ファイル</th></tr></thead>
+        <tbody>${fileRows}</tbody>
+      </table></div>
+    </section>`;
+  }
+
+  // Plugins
+  const sp = getSection(src, 'pluginSettings');
+  const tp = getSection(tgt, 'pluginSettings');
+  const sPlugins: any[] = Array.isArray(sp?.plugins) ? sp.plugins : (Array.isArray(sp) ? sp : []);
+  const tPlugins: any[] = Array.isArray(tp?.plugins) ? tp.plugins : (Array.isArray(tp) ? tp : []);
+  let pluginBlock = '';
+  if (sPlugins.length || tPlugins.length) {
+    const sMap = new Map(sPlugins.map((p) => [String(p?.id || ''), p]));
+    const tMap = new Map(tPlugins.map((p) => [String(p?.id || ''), p]));
+    const allIds = new Set([...sMap.keys(), ...tMap.keys()]);
+    const rows = [...allIds].map((id) => {
+      const s = sMap.get(id);
+      const t = tMap.get(id);
+      const ref = t || s;
+      const status = statusLabel({ left: !!s, right: !!t });
+      const vL = s?.version || '';
+      const vR = t?.version || '';
+      const vChanged = vL && vR && vL !== vR;
+      return `<tr>
+        <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
+        <td class="diff-cat-mono">${esc(id)}</td>
+        <td>${esc(ref?.name || '-')}</td>
+        <td>${vChanged ? `<span class="diff-cat-old">${esc(vL)}</span> → <span class="diff-cat-new">${esc(vR)}</span>` : esc(vR || vL || '-')}</td>
+      </tr>`;
+    }).join('');
+    pluginBlock = `<section class="diff-cat-sec">
+      <header class="diff-cat-sec-head">
+        <span class="diff-cat-sec-icon">${renderSectionIconHtml('pluginSettings')}</span>
+        <span class="diff-cat-sec-title">プラグイン</span>
+        <span class="diff-cat-sec-sub">有効化されたプラグイン一覧</span>
+      </header>
+      <div class="diff-cat-table-wrap"><table class="diff-cat-table">
+        <thead><tr><th style="width:60px">状態</th><th>ID</th><th>名前</th><th>バージョン</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </section>`;
+  }
+
+  return (customizeBlock + pluginBlock) || emptyState('JS/CSS・プラグインのデータがありません');
+}
+
+// ---------------------------------------------------------------------------
+// App settings (appSettings / appInfo / formSettings / categories)
+// ---------------------------------------------------------------------------
+
+function renderKvDiffTable(label: string, src: any, tgt: any): string {
+  if (!src && !tgt) return '';
+  const keys = new Set<string>([...Object.keys(src || {}), ...Object.keys(tgt || {})]);
+  if (!keys.size) return '';
+  const rows: string[] = [];
+  for (const k of keys) {
+    const a = src?.[k];
+    const b = tgt?.[k];
+    if (!valueChanged(a, b)) continue;
+    const status = statusLabel({ left: a !== undefined, right: b !== undefined });
+    rows.push(`<tr>
+      <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
+      <td class="diff-cat-mono">${esc(k)}</td>
+      <td class="diff-cat-old">${esc(safeStringify(a))}</td>
+      <td class="diff-cat-arrow">→</td>
+      <td class="diff-cat-new">${esc(safeStringify(b))}</td>
+    </tr>`);
+  }
+  if (!rows.length) return '';
+  return `<section class="diff-cat-sec">
+    <header class="diff-cat-sec-head">
+      <span class="diff-cat-sec-title">${esc(label)}</span>
+      <span class="diff-cat-sec-sub">変更されたキーのみ表示 (${rows.length})</span>
+    </header>
+    <div class="diff-cat-table-wrap"><table class="diff-cat-table">
+      <thead><tr><th style="width:60px">状態</th><th>キー</th><th>旧</th><th></th><th>新</th></tr></thead>
+      <tbody>${rows.join('')}</tbody>
+    </table></div>
+  </section>`;
+}
+
+function renderCategoriesTree(src: any[], tgt: any[]): string {
+  const sm = new Map<string, any>();
+  const tm = new Map<string, any>();
+  (src || []).forEach((c: any) => sm.set(String(c?.code || ''), c));
+  (tgt || []).forEach((c: any) => tm.set(String(c?.code || ''), c));
+  const keys = new Set([...sm.keys(), ...tm.keys()]);
+  if (!keys.size) return emptyState('カテゴリ設定がありません');
+  const items = [...keys].map((k) => {
+    const s = sm.get(k);
+    const t = tm.get(k);
+    const status = statusLabel({ left: !!s, right: !!t });
+    const ref = t || s;
+    return `<li>
+      <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
+      <span class="diff-cat-mono">${esc(k)}</span>
+      <span>${esc(ref?.name || '-')}</span>
+    </li>`;
+  }).join('');
+  return `<section class="diff-cat-sec">
+    <header class="diff-cat-sec-head">
+      <span class="diff-cat-sec-icon">${renderSectionIconHtml('categories')}</span>
+      <span class="diff-cat-sec-title">カテゴリ</span>
+      <span class="diff-cat-sec-sub">分類コードでマッチング</span>
+    </header>
+    <ul class="diff-cat-tree">${items}</ul>
+  </section>`;
+}
+
+function renderAppSettingsCategory(src: any, tgt: any): string {
+  const blocks: string[] = [];
+  blocks.push(renderKvDiffTable('アプリ設定 (appSettings)', getSection(src, 'appSettings'), getSection(tgt, 'appSettings')));
+  blocks.push(renderKvDiffTable('アプリ情報 (appInfo)', getSection(src, 'appInfo'), getSection(tgt, 'appInfo')));
+  blocks.push(renderKvDiffTable('フォーム設定 (formSettings)', getSection(src, 'formSettings'), getSection(tgt, 'formSettings')));
+  const sc = getSection(src, 'categories');
+  const tc = getSection(tgt, 'categories');
+  const sCats = Array.isArray(sc?.categories) ? sc.categories : (Array.isArray(sc) ? sc : []);
+  const tCats = Array.isArray(tc?.categories) ? tc.categories : (Array.isArray(tc) ? tc : []);
+  if (sCats.length || tCats.length) blocks.push(renderCategoriesTree(sCats, tCats));
+  const html = blocks.filter(Boolean).join('');
+  return html || emptyState('アプリ設定の変更はありません');
+}
+
+// ---------------------------------------------------------------------------
+// Fields (existing flat row list rendered with category styling)
+// ---------------------------------------------------------------------------
+
+function renderFieldsCategory(rows: any[]): string {
+  // フィールドはコード単位でグループ化し、各コードの差分行をまとめる。
+  const byCode = new Map<string, any[]>();
+  for (const r of rows || []) {
+    if (!r || r.type === 'same') continue;
+    const m = String(r.path || '').match(/^fieldSettings\.properties\.([^.[\]]+)/);
+    const code = m ? m[1] : '(その他)';
+    if (!byCode.has(code)) byCode.set(code, []);
+    byCode.get(code)!.push(r);
+  }
+  if (!byCode.size) return emptyState('フィールドの差分はありません');
+  const blocks = [...byCode.entries()].map(([code, rs]) => {
+    const summary = countRowSummary(rs);
+    const list = rs.map((r) => {
+      const leaf = String(r.path || '').replace(/^fieldSettings\.properties\.[^.[\]]+\.?/, '') || '(本体)';
+      return `<li class="diff-cat-field-line">
+        <span class="diff-cat-mono">${esc(leaf)}</span>
+        <span class="diff-cat-old">${esc(safeStringify(r.left))}</span>
+        <span class="diff-cat-arrow">→</span>
+        <span class="diff-cat-new">${esc(safeStringify(r.right))}</span>
+      </li>`;
+    }).join('');
+    return `<details class="diff-cat-field-block" ${rs.length <= 5 ? 'open' : ''}>
+      <summary>
+        <span class="diff-cat-mono">${esc(code)}</span>
+        <span class="diff-cat-stats">${diffBadge(summary)}</span>
+        <span class="diff-cat-muted">${rs.length}件</span>
+      </summary>
+      <ul class="diff-cat-field-list">${list}</ul>
+    </details>`;
+  }).join('');
+  return `<section class="diff-cat-sec">
+    <header class="diff-cat-sec-head">
+      <span class="diff-cat-sec-icon">${renderSectionIconHtml('fieldSettings')}</span>
+      <span class="diff-cat-sec-title">フィールド</span>
+      <span class="diff-cat-sec-sub">フィールドコード単位で集約</span>
+    </header>
+    ${blocks}
+  </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Main entry: tab strip + active panel
+// ---------------------------------------------------------------------------
+
+function renderCategoryContent(catKey: string, rows: any[], src: any, tgt: any, rowsBySection: Map<string, any[]>): string {
+  switch (catKey) {
+    case 'acl': return renderAclCategory(src, tgt, rowsBySection);
+    case 'process': return renderProcessCategory(src, tgt);
+    case 'notify': return renderNotifyCategory(src, tgt);
+    case 'views': return renderViewsCategory(src, tgt);
+    case 'layout': return renderLayoutCategory(src, tgt);
+    case 'customize': return renderCustomizeCategory(src, tgt);
+    case 'app': return renderAppSettingsCategory(src, tgt);
+    case 'fields': return renderFieldsCategory(rows);
+    default: return emptyState('未対応のカテゴリです');
+  }
+}
+
+export function buildCategoryViewHtml(rows: any[]): string {
+  const src = state.lastSourceBundle;
+  const tgt = state.lastTargetBundle;
+  const actualRows = (rows || []).filter((r) => r && r.type !== 'same');
+  const rowsBySection = getRowsBySection(actualRows);
+
+  // Build tabs
+  const activeCat = state.diffCategoryView && DIFF_CATEGORIES.some((c) => c.key === state.diffCategoryView)
+    ? state.diffCategoryView
+    : (DIFF_CATEGORIES.find((c) => c.sections.some((sec) => rowsBySection.has(sec)))?.key || 'acl');
+
+  const tabs = DIFF_CATEGORIES.map((cat) => {
+    const catRows = cat.sections.flatMap((sec) => rowsBySection.get(sec) || []);
+    const s = countRowSummary(catRows);
+    const hasSource = cat.sections.some((sec) => getSection(src, sec) || getSection(tgt, sec));
+    const dim = !s.total && !hasSource;
+    const active = activeCat === cat.key ? ' is-active' : '';
+    const badge = s.total
+      ? `<span class="diff-cat-tab-badge diff-cat-tab-badge--${s.high ? 'high' : (s.medium ? 'med' : 'low')}">${s.total}</span>`
+      : '';
+    return `<button type="button" class="diff-cat-tab${active}${dim ? ' is-dim' : ''}" data-act="setDiffCategoryView" data-cat="${esc(cat.key)}" title="${esc(cat.hint)}">
+      <span class="diff-cat-tab-icon">${esc(cat.icon)}</span>
+      <span class="diff-cat-tab-label">${esc(cat.label)}</span>
+      ${badge}
+    </button>`;
+  }).join('');
+
+  const activeRows = (DIFF_CATEGORIES.find((c) => c.key === activeCat)?.sections || []).flatMap((sec) => rowsBySection.get(sec) || []);
+  const contentHtml = renderCategoryContent(activeCat, activeRows, src, tgt, rowsBySection);
+
+  return `<div class="diff-cat-view" data-active-cat="${esc(activeCat)}">
+    <nav class="diff-cat-tabs" role="tablist" aria-label="セクション別ビューの切替">${tabs}</nav>
+    <div class="diff-cat-content">${contentHtml}</div>
+  </div>`;
+}

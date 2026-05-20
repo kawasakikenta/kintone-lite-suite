@@ -1732,6 +1732,23 @@ export function setupEventHandlers(injected: any = {}) {
       setStatus(`ランチャータブを切り替えました: ${actEl.textContent?.trim() || ''}`);
       return;
     }
+    if (act === 'setDiffViewMode') {
+      const mode = actEl.dataset.mode === 'category' ? 'category' : 'table';
+      if (state.diffViewMode === mode) return;
+      state.diffViewMode = mode;
+      if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+      try { saveCurrentDialogState(); } catch (e) { /* ignore */ }
+      setStatus(mode === 'category' ? 'セクション別ビューに切り替えました' : '行一覧ビューに切り替えました');
+      return;
+    }
+    if (act === 'setDiffCategoryView') {
+      const next = String(actEl.dataset.cat || '');
+      if (!next) return;
+      state.diffCategoryView = next;
+      if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+      try { saveCurrentDialogState(); } catch (e) { /* ignore */ }
+      return;
+    }
     if (act === 'diffSectionsExpandAll') {
       const doc = getToolDocument();
       const els = [...doc.querySelectorAll<HTMLDetailsElement>('#u_result details, #u_result .row .fold, .diff-result-main details')];

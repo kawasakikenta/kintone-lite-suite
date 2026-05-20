@@ -453,6 +453,8 @@ export function saveCurrentDialogState() {
     diffWarnThreshold: ui.diffWarnThreshold?.value?.trim?.() || '',
     charDiff: ui.charDiff.checked,
     diffTheme: state.diffViewTheme,
+    diffViewMode: state.diffViewMode || 'table',
+    diffCategoryView: state.diffCategoryView || '',
     diffScopes: selectedScopeKeys(ui.diffScopes),
     applyScopes: selectedScopeKeys(ui.applyScopes),
     applyDiffOnly: ui.applyDiffOnly.checked,
@@ -562,6 +564,8 @@ export function restoreDialogState() {
   if (saved.charDiff != null) ui.charDiff.checked = !!saved.charDiff;
   if (saved.diffIncludeSame != null && ui.diffIncludeSame) { ui.diffIncludeSame.checked = !!saved.diffIncludeSame; state.diffIncludeSame = !!saved.diffIncludeSame; }
   if (saved.diffTheme === 'dark' || saved.diffTheme === 'light') state.diffViewTheme = saved.diffTheme;
+  if (saved.diffViewMode === 'category' || saved.diffViewMode === 'table') state.diffViewMode = saved.diffViewMode;
+  if (typeof saved.diffCategoryView === 'string') state.diffCategoryView = saved.diffCategoryView;
   if (saved.applyDiffOnly != null) ui.applyDiffOnly.checked = !!saved.applyDiffOnly;
   if (saved.autoBackupPreview != null) ui.autoBackupPreview.checked = !!saved.autoBackupPreview;
   if (saved.stopOnError != null) ui.stopOnError.checked = !!saved.stopOnError;

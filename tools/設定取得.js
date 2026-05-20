@@ -573,6 +573,8 @@ ${contextLine}`);
         lastPreviewBackupPayload: null,
         lastPreviewBackupFilename: "",
         diffViewTheme: "light",
+        diffViewMode: "table",
+        diffCategoryView: "",
         diffCollapsedSections: /* @__PURE__ */ new Set(),
         diffSectionVisibleCounts: {},
         diffSelectedIds: /* @__PURE__ */ new Set(),
@@ -941,6 +943,31 @@ ${contextLine}`);
     }
   });
 
+  // src/diff/category-view.ts
+  var DIFF_CATEGORIES, SECTION_TO_CATEGORY;
+  var init_category_view = __esm({
+    "src/diff/category-view.ts"() {
+      "use strict";
+      init_utils();
+      init_state();
+      DIFF_CATEGORIES = [
+        { key: "fields", label: "フィールド", hint: "フィールド定義の追加・変更", sections: ["fieldSettings"], icon: "🔤" },
+        { key: "layout", label: "レイアウト", hint: "フォーム配置の差分", sections: ["layoutSettings"], icon: "🧩" },
+        { key: "views", label: "ビュー・グラフ", hint: "一覧表示とレポート", sections: ["viewSettings", "reportSettings"], icon: "📊" },
+        { key: "process", label: "プロセス・アクション", hint: "ステータス遷移とアクション", sections: ["processSettings", "actionSettings"], icon: "🔁" },
+        { key: "notify", label: "通知", hint: "通知ルールとリマインダー", sections: ["notifications", "perRecordNotifications", "reminderNotifications"], icon: "🔔" },
+        { key: "acl", label: "権限", hint: "アプリ・フィールド・レコード権限", sections: ["appAcl", "fieldAcl", "recordPermissions"], icon: "🔐" },
+        { key: "customize", label: "JS/CSS・プラグイン", hint: "カスタマイズと配布資産", sections: ["customizeSettings", "pluginSettings"], icon: "🧪" },
+        { key: "app", label: "アプリ設定", hint: "基本情報・フォーム・カテゴリ", sections: ["appSettings", "appInfo", "formSettings", "categories"], icon: "⚙" }
+      ];
+      SECTION_TO_CATEGORY = (() => {
+        const m = {};
+        for (const cat of DIFF_CATEGORIES) for (const sec of cat.sections) m[sec] = cat.key;
+        return m;
+      })();
+    }
+  });
+
   // src/diff/export.ts
   var init_export = __esm({
     "src/diff/export.ts"() {
@@ -952,6 +979,7 @@ ${contextLine}`);
       init_filter();
       init_api();
       init_dialog();
+      init_category_view();
     }
   });
 
