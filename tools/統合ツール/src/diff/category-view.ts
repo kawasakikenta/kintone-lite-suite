@@ -14,7 +14,7 @@
  * HTML 文字列を返す。
  */
 
-import { esc, renderSectionIconHtml } from '../utils.js';
+import { esc, renderSectionIconHtml, extractAppNameFromBundle } from '../utils.js';
 import { state } from '../state.js';
 
 // ---------------------------------------------------------------------------
@@ -1106,6 +1106,14 @@ function renderCategoryContent(catKey: string, rows: any[], src: any, tgt: any, 
   }
 }
 
+function appLabel(bundle: any, fallback: string): string {
+  if (!bundle) return fallback;
+  const id = String(bundle.appId || '').trim();
+  const name = extractAppNameFromBundle(bundle) || '';
+  if (!id && !name) return fallback;
+  return name ? `${name}（app${id || '-'}）` : `app${id}`;
+}
+
 export function buildCategoryViewHtml(rows: any[]): string {
   const src = state.lastSourceBundle;
   const tgt = state.lastTargetBundle;
@@ -1117,7 +1125,7 @@ export function buildCategoryViewHtml(rows: any[]): string {
     ? state.diffCategoryView
     : (DIFF_CATEGORIES.find((c) => c.sections.some((sec) => rowsBySection.has(sec)))?.key || 'acl');
 
-  const tabs = DIFF_CATEGORIES.map((cat) => {
+  const tabs = DIFF_CATEGORIES.map((cat, idx) => {
     const catRows = cat.sections.flatMap((sec) => rowsBySection.get(sec) || []);
     const s = countRowSummary(catRows);
     const hasSource = cat.sections.some((sec) => getSection(src, sec) || getSection(tgt, sec));
@@ -1126,7 +1134,9 @@ export function buildCategoryViewHtml(rows: any[]): string {
     const badge = s.total
       ? `<span class="diff-cat-tab-badge diff-cat-tab-badge--${s.high ? 'high' : (s.medium ? 'med' : 'low')}">${s.total}</span>`
       : '';
-    return `<button type="button" class="diff-cat-tab${active}${dim ? ' is-dim' : ''}" data-act="setDiffCategoryView" data-cat="${esc(cat.key)}" title="${esc(cat.hint)}">
+    const idxHint = idx < 9 ? `<span class="diff-cat-tab-key" aria-hidden="true">${idx + 1}</span>` : '';
+    return `<button type="button" class="diff-cat-tab${active}${dim ? ' is-dim' : ''}" data-act="setDiffCategoryView" data-cat="${esc(cat.key)}" title="${esc(cat.hint)}（${idx + 1}キーで切替）">
+      ${idxHint}
       <span class="diff-cat-tab-icon">${esc(cat.icon)}</span>
       <span class="diff-cat-tab-label">${esc(cat.label)}</span>
       ${badge}
@@ -1136,8 +1146,106 @@ export function buildCategoryViewHtml(rows: any[]): string {
   const activeRows = (DIFF_CATEGORIES.find((c) => c.key === activeCat)?.sections || []).flatMap((sec) => rowsBySection.get(sec) || []);
   const contentHtml = renderCategoryContent(activeCat, activeRows, src, tgt, rowsBySection);
 
+  const srcLabel = appLabel(src, '比較元');
+  const tgtLabel = appLabel(tgt, '比較先');
+  const headerHtml = `<header class="diff-cat-header">
+    <div class="diff-cat-header-apps" title="現在比較しているアプリ">
+      <span class="diff-cat-header-app diff-cat-header-app--src">📤 ${esc(srcLabel)}</span>
+      <span class="diff-cat-header-arrow">vs</span>
+      <span class="diff-cat-header-app diff-cat-header-app--tgt">📥 ${esc(tgtLabel)}</span>
+    </div>
+    <div class="diff-cat-header-actions">
+      <button type="button" class="diff-cat-header-btn" data-act="copyCategoryViewMarkdown" title="現在表示中のカテゴリビューを Markdown としてコピー">📋 Markdown コピー</button>
+      <button type="button" class="diff-cat-header-btn" data-act="downloadCategoryViewMarkdown" title="セクション別ビュー全体を Markdown ファイルとして保存">⬇ MD 保存</button>
+      <button type="button" class="diff-cat-header-btn" data-act="printCategoryView" title="カテゴリビューを印刷プレビュー">🖨 印刷</button>
+    </div>
+  </header>`;
+
+  const keyboardHintHtml = `<div class="diff-cat-hotkeys" aria-hidden="true">
+    <span><kbd>V</kbd> 行一覧へ戻る</span>
+    <span><kbd>1</kbd>〜<kbd>${DIFF_CATEGORIES.length}</kbd> カテゴリ切替</span>
+  </div>`;
+
   return `<div class="diff-cat-view" data-active-cat="${esc(activeCat)}">
+    ${headerHtml}
     <nav class="diff-cat-tabs" role="tablist" aria-label="セクション別ビューの切替">${tabs}</nav>
+    ${keyboardHintHtml}
     <div class="diff-cat-content">${contentHtml}</div>
   </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Markdown export of category view (text-friendly summary for copy/share)
+// ---------------------------------------------------------------------------
+
+function categoryToMarkdown(catKey: string, rows: any[], src: any, tgt: any, rowsBySection: Map<string, any[]>): string {
+  const cat = DIFF_CATEGORIES.find((c) => c.key === catKey);
+  if (!cat) return '';
+  const lines: string[] = [`## ${cat.icon} ${cat.label}`];
+  for (const sec of cat.sections) {
+    const secRows = rowsBySection.get(sec) || [];
+    const s = countRowSummary(secRows);
+    if (!secRows.length) continue;
+    const label = SECTION_LABELS[sec] || sec;
+    lines.push(`### ${label}`);
+    lines.push(`差分: +${s.added} / -${s.removed} / ~${s.changed} (高:${s.high} 中:${s.medium} 低:${s.low})`);
+    const sample = secRows.slice(0, 30);
+    for (const r of sample) {
+      const t = r.type === 'added' ? '+ 追加' : r.type === 'removed' ? '- 削除' : '~ 変更';
+      const v = r.type === 'added' ? safeStringify(r.right)
+        : r.type === 'removed' ? safeStringify(r.left)
+        : `${safeStringify(r.left)} → ${safeStringify(r.right)}`;
+      lines.push(`- ${t} \`${r.path}\` ${v.slice(0, 200)}`);
+    }
+    if (secRows.length > sample.length) lines.push(`- … 他 ${secRows.length - sample.length} 件`);
+  }
+  return lines.join('\n');
+}
+
+const SECTION_LABELS: Record<string, string> = {
+  appSettings: 'アプリ設定',
+  appInfo: 'アプリ情報',
+  fieldSettings: 'フィールド設定',
+  layoutSettings: 'レイアウト設定',
+  formSettings: 'フォーム設定',
+  viewSettings: 'ビュー設定',
+  reportSettings: 'グラフ設定',
+  processSettings: 'プロセス管理',
+  pluginSettings: 'プラグイン',
+  customizeSettings: 'JS/CSS設定',
+  actionSettings: 'アクション設定',
+  appAcl: 'アプリ権限',
+  fieldAcl: 'フィールド権限',
+  recordPermissions: 'レコード権限',
+  notifications: '通知設定',
+  perRecordNotifications: 'レコード条件通知',
+  reminderNotifications: 'リマインダー通知',
+  categories: 'カテゴリ設定'
+};
+
+export function buildCategoryViewMarkdown(rows: any[], options: { onlyActive?: boolean } = {}): string {
+  const src = state.lastSourceBundle;
+  const tgt = state.lastTargetBundle;
+  const actualRows = (rows || []).filter((r) => r && r.type !== 'same');
+  const rowsBySection = getRowsBySection(actualRows);
+  const srcLabel = appLabel(src, '比較元');
+  const tgtLabel = appLabel(tgt, '比較先');
+  const lines: string[] = [
+    `# 差分比較レポート（セクション別ビュー）`,
+    ``,
+    `- 比較元: ${srcLabel}`,
+    `- 比較先: ${tgtLabel}`,
+    `- 生成: ${new Date().toISOString()}`,
+    ``
+  ];
+  const cats = options.onlyActive && state.diffCategoryView
+    ? DIFF_CATEGORIES.filter((c) => c.key === state.diffCategoryView)
+    : DIFF_CATEGORIES;
+  for (const cat of cats) {
+    const catRows = cat.sections.flatMap((sec) => rowsBySection.get(sec) || []);
+    if (!catRows.length) continue;
+    lines.push(categoryToMarkdown(cat.key, catRows, src, tgt, rowsBySection));
+    lines.push('');
+  }
+  return lines.join('\n');
 }

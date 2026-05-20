@@ -1031,6 +1031,36 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
 
+    // 差分タブのセクション別ビュー: V で表示モード切替、数字キーでカテゴリ切替
+    if (
+      !editable &&
+      !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey &&
+      state.activeTab === 'diff'
+    ) {
+      if (e.key === 'v' || e.key === 'V') {
+        const next = state.diffViewMode === 'category' ? 'table' : 'category';
+        state.diffViewMode = next;
+        if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+        try { saveCurrentDialogState(); } catch (err) { /* ignore */ }
+        setStatus(next === 'category' ? 'セクション別ビューに切り替えました（V キー）' : '行一覧ビューに切り替えました（V キー）');
+        e.preventDefault();
+        return;
+      }
+      if (state.diffViewMode === 'category' && /^[1-9]$/.test(e.key)) {
+        const idx = Number(e.key) - 1;
+        import('./diff/category-view.js').then((m) => {
+          const cat = m.DIFF_CATEGORIES[idx];
+          if (!cat) return;
+          state.diffCategoryView = cat.key;
+          if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+          try { saveCurrentDialogState(); } catch (err) { /* ignore */ }
+          setStatus(`カテゴリ「${cat.label}」に切り替えました（${e.key} キー）`);
+        });
+        e.preventDefault();
+        return;
+      }
+    }
+
     // 数字キー 1-9 / 0 / - で機能タブをワンキー切替（screen-feature のときのみ・装飾キーなし）
     if (
       !editable &&
@@ -1747,6 +1777,34 @@ export function setupEventHandlers(injected: any = {}) {
       state.diffCategoryView = next;
       if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
       try { saveCurrentDialogState(); } catch (e) { /* ignore */ }
+      return;
+    }
+    if (act === 'copyCategoryViewMarkdown') {
+      if (!state.lastDiffRows.length) { setStatus('差分結果がありません'); return; }
+      import('./diff/category-view.js').then((m) => {
+        const md = m.buildCategoryViewMarkdown(state.lastDiffRows, { onlyActive: true });
+        copyToClipboard(md, '現在のカテゴリビューを Markdown でコピーしました', 'コピーに失敗しました');
+      });
+      return;
+    }
+    if (act === 'downloadCategoryViewMarkdown') {
+      if (!state.lastDiffRows.length) { setStatus('差分結果がありません'); return; }
+      import('./diff/category-view.js').then((m) => {
+        const md = m.buildCategoryViewMarkdown(state.lastDiffRows, { onlyActive: false });
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        downloadText(`差分セクション別_${ts}.md`, md, 'text/markdown');
+        setStatus('セクション別ビューを Markdown として保存しました');
+      });
+      return;
+    }
+    if (act === 'printCategoryView') {
+      try {
+        const win = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__ : window;
+        win.print();
+        setStatus('印刷ダイアログを開きました');
+      } catch (e) {
+        setStatus('印刷に失敗しました', true);
+      }
       return;
     }
     if (act === 'diffSectionsExpandAll') {

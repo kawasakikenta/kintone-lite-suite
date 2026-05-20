@@ -805,10 +805,10 @@ ${contextLine}`);
     const normalizedExt = String(ext || "").replace(/^\./, "").trim() || "txt";
     const base = sanitizeFilenamePart(baseLabel, "出力");
     const stamp = options.timestamp || nowStamp();
-    const appLabel = String(options.appLabel || "").trim();
+    const appLabel2 = String(options.appLabel || "").trim();
     const suffix = String(options.suffix || "").trim();
     const parts = [base];
-    if (appLabel) parts.push(sanitizeFilenamePart(appLabel));
+    if (appLabel2) parts.push(sanitizeFilenamePart(appLabel2));
     if (suffix) parts.push(sanitizeFilenamePart(suffix));
     parts.push(sanitizeFilenamePart(stamp, nowStamp()));
     return `${parts.join("_")}.${normalizedExt}`;
@@ -4070,6 +4070,16 @@ ${contextLine}`);
   });
 
   // src/diff/category-view.ts
+  var category_view_exports = {};
+  __export(category_view_exports, {
+    DIFF_CATEGORIES: () => DIFF_CATEGORIES,
+    buildCategoryViewHtml: () => buildCategoryViewHtml,
+    buildCategoryViewMarkdown: () => buildCategoryViewMarkdown,
+    getCategoryOfSection: () => getCategoryOfSection
+  });
+  function getCategoryOfSection(sectionKey) {
+    return SECTION_TO_CATEGORY[sectionKey] || "app";
+  }
   function countRowSummary(rows) {
     const s = { total: 0, added: 0, removed: 0, changed: 0, high: 0, medium: 0, low: 0 };
     for (const r of rows || []) {
@@ -4999,20 +5009,29 @@ ${contextLine}`);
         return emptyState("未対応のカテゴリです");
     }
   }
+  function appLabel(bundle, fallback) {
+    if (!bundle) return fallback;
+    const id = String(bundle.appId || "").trim();
+    const name = extractAppNameFromBundle(bundle) || "";
+    if (!id && !name) return fallback;
+    return name ? `${name}（app${id || "-"}）` : `app${id}`;
+  }
   function buildCategoryViewHtml(rows) {
     const src = state.lastSourceBundle;
     const tgt = state.lastTargetBundle;
     const actualRows = (rows || []).filter((r) => r && r.type !== "same");
     const rowsBySection = getRowsBySection(actualRows);
     const activeCat = state.diffCategoryView && DIFF_CATEGORIES.some((c) => c.key === state.diffCategoryView) ? state.diffCategoryView : DIFF_CATEGORIES.find((c) => c.sections.some((sec) => rowsBySection.has(sec)))?.key || "acl";
-    const tabs = DIFF_CATEGORIES.map((cat) => {
+    const tabs = DIFF_CATEGORIES.map((cat, idx) => {
       const catRows = cat.sections.flatMap((sec) => rowsBySection.get(sec) || []);
       const s = countRowSummary(catRows);
       const hasSource = cat.sections.some((sec) => getSection(src, sec) || getSection(tgt, sec));
       const dim = !s.total && !hasSource;
       const active = activeCat === cat.key ? " is-active" : "";
       const badge = s.total ? `<span class="diff-cat-tab-badge diff-cat-tab-badge--${s.high ? "high" : s.medium ? "med" : "low"}">${s.total}</span>` : "";
-      return `<button type="button" class="diff-cat-tab${active}${dim ? " is-dim" : ""}" data-act="setDiffCategoryView" data-cat="${esc(cat.key)}" title="${esc(cat.hint)}">
+      const idxHint = idx < 9 ? `<span class="diff-cat-tab-key" aria-hidden="true">${idx + 1}</span>` : "";
+      return `<button type="button" class="diff-cat-tab${active}${dim ? " is-dim" : ""}" data-act="setDiffCategoryView" data-cat="${esc(cat.key)}" title="${esc(cat.hint)}（${idx + 1}キーで切替）">
+      ${idxHint}
       <span class="diff-cat-tab-icon">${esc(cat.icon)}</span>
       <span class="diff-cat-tab-label">${esc(cat.label)}</span>
       ${badge}
@@ -5020,12 +5039,77 @@ ${contextLine}`);
     }).join("");
     const activeRows = (DIFF_CATEGORIES.find((c) => c.key === activeCat)?.sections || []).flatMap((sec) => rowsBySection.get(sec) || []);
     const contentHtml = renderCategoryContent(activeCat, activeRows, src, tgt, rowsBySection);
+    const srcLabel = appLabel(src, "比較元");
+    const tgtLabel = appLabel(tgt, "比較先");
+    const headerHtml = `<header class="diff-cat-header">
+    <div class="diff-cat-header-apps" title="現在比較しているアプリ">
+      <span class="diff-cat-header-app diff-cat-header-app--src">📤 ${esc(srcLabel)}</span>
+      <span class="diff-cat-header-arrow">vs</span>
+      <span class="diff-cat-header-app diff-cat-header-app--tgt">📥 ${esc(tgtLabel)}</span>
+    </div>
+    <div class="diff-cat-header-actions">
+      <button type="button" class="diff-cat-header-btn" data-act="copyCategoryViewMarkdown" title="現在表示中のカテゴリビューを Markdown としてコピー">📋 Markdown コピー</button>
+      <button type="button" class="diff-cat-header-btn" data-act="downloadCategoryViewMarkdown" title="セクション別ビュー全体を Markdown ファイルとして保存">⬇ MD 保存</button>
+      <button type="button" class="diff-cat-header-btn" data-act="printCategoryView" title="カテゴリビューを印刷プレビュー">🖨 印刷</button>
+    </div>
+  </header>`;
+    const keyboardHintHtml = `<div class="diff-cat-hotkeys" aria-hidden="true">
+    <span><kbd>V</kbd> 行一覧へ戻る</span>
+    <span><kbd>1</kbd>〜<kbd>${DIFF_CATEGORIES.length}</kbd> カテゴリ切替</span>
+  </div>`;
     return `<div class="diff-cat-view" data-active-cat="${esc(activeCat)}">
+    ${headerHtml}
     <nav class="diff-cat-tabs" role="tablist" aria-label="セクション別ビューの切替">${tabs}</nav>
+    ${keyboardHintHtml}
     <div class="diff-cat-content">${contentHtml}</div>
   </div>`;
   }
-  var DIFF_CATEGORIES, SECTION_TO_CATEGORY, APP_ACL_PERMISSIONS, FIELD_ACL_LEVELS;
+  function categoryToMarkdown(catKey, rows, src, tgt, rowsBySection) {
+    const cat = DIFF_CATEGORIES.find((c) => c.key === catKey);
+    if (!cat) return "";
+    const lines = [`## ${cat.icon} ${cat.label}`];
+    for (const sec of cat.sections) {
+      const secRows = rowsBySection.get(sec) || [];
+      const s = countRowSummary(secRows);
+      if (!secRows.length) continue;
+      const label = SECTION_LABELS[sec] || sec;
+      lines.push(`### ${label}`);
+      lines.push(`差分: +${s.added} / -${s.removed} / ~${s.changed} (高:${s.high} 中:${s.medium} 低:${s.low})`);
+      const sample = secRows.slice(0, 30);
+      for (const r of sample) {
+        const t = r.type === "added" ? "+ 追加" : r.type === "removed" ? "- 削除" : "~ 変更";
+        const v = r.type === "added" ? safeStringify(r.right) : r.type === "removed" ? safeStringify(r.left) : `${safeStringify(r.left)} → ${safeStringify(r.right)}`;
+        lines.push(`- ${t} \`${r.path}\` ${v.slice(0, 200)}`);
+      }
+      if (secRows.length > sample.length) lines.push(`- … 他 ${secRows.length - sample.length} 件`);
+    }
+    return lines.join("\n");
+  }
+  function buildCategoryViewMarkdown(rows, options = {}) {
+    const src = state.lastSourceBundle;
+    const tgt = state.lastTargetBundle;
+    const actualRows = (rows || []).filter((r) => r && r.type !== "same");
+    const rowsBySection = getRowsBySection(actualRows);
+    const srcLabel = appLabel(src, "比較元");
+    const tgtLabel = appLabel(tgt, "比較先");
+    const lines = [
+      `# 差分比較レポート（セクション別ビュー）`,
+      ``,
+      `- 比較元: ${srcLabel}`,
+      `- 比較先: ${tgtLabel}`,
+      `- 生成: ${(/* @__PURE__ */ new Date()).toISOString()}`,
+      ``
+    ];
+    const cats = options.onlyActive && state.diffCategoryView ? DIFF_CATEGORIES.filter((c) => c.key === state.diffCategoryView) : DIFF_CATEGORIES;
+    for (const cat of cats) {
+      const catRows = cat.sections.flatMap((sec) => rowsBySection.get(sec) || []);
+      if (!catRows.length) continue;
+      lines.push(categoryToMarkdown(cat.key, catRows, src, tgt, rowsBySection));
+      lines.push("");
+    }
+    return lines.join("\n");
+  }
+  var DIFF_CATEGORIES, SECTION_TO_CATEGORY, APP_ACL_PERMISSIONS, FIELD_ACL_LEVELS, SECTION_LABELS;
   var init_category_view = __esm({
     "src/diff/category-view.ts"() {
       "use strict";
@@ -5056,6 +5140,26 @@ ${contextLine}`);
         { key: "recordExportable", label: "CSV書出" }
       ];
       FIELD_ACL_LEVELS = ["NONE", "READ", "READ_WRITE"];
+      SECTION_LABELS = {
+        appSettings: "アプリ設定",
+        appInfo: "アプリ情報",
+        fieldSettings: "フィールド設定",
+        layoutSettings: "レイアウト設定",
+        formSettings: "フォーム設定",
+        viewSettings: "ビュー設定",
+        reportSettings: "グラフ設定",
+        processSettings: "プロセス管理",
+        pluginSettings: "プラグイン",
+        customizeSettings: "JS/CSS設定",
+        actionSettings: "アクション設定",
+        appAcl: "アプリ権限",
+        fieldAcl: "フィールド権限",
+        recordPermissions: "レコード権限",
+        notifications: "通知設定",
+        perRecordNotifications: "レコード条件通知",
+        reminderNotifications: "リマインダー通知",
+        categories: "カテゴリ設定"
+      };
     }
   });
 
@@ -12011,7 +12115,7 @@ ${tgt.full}`);
     } catch {
     }
     const targetBundle = state.importedTargetBundle || state.lastTargetBundle;
-    const appLabel = (() => {
+    const appLabel2 = (() => {
       const info = targetBundle?.sections?.appInfo;
       if (info && typeof info === "object" && !info._fetchError) {
         return String(info.name || "").trim();
@@ -12031,7 +12135,7 @@ ${tgt.full}`);
     el.innerHTML = `<div class="reflect-target-badge__inner ${previewClass}">
     <span class="reflect-target-badge__chip">${esc(previewLabel)}</span>
     <span class="reflect-target-badge__app">App ${esc(appId)}</span>
-    ${appLabel ? `<span class="reflect-target-badge__name" title="${esc(appLabel)}">${esc(appLabel)}</span>` : ""}
+    ${appLabel2 ? `<span class="reflect-target-badge__name" title="${esc(appLabel2)}">${esc(appLabel2)}</span>` : ""}
     ${guestSuffix ? `<span class="reflect-target-badge__guest">${guestSuffix}</span>` : ""}
     <button type="button" class="reflect-target-badge__open" data-act="openTargetPreviewApp" data-preview-url="${esc(appPath)}" title="比較先アプリのプレビュー確認画面を開き、チェックリストに反映します">開く</button>
   </div>`;
@@ -28644,6 +28748,36 @@ ${detail}`);
 #kintone-unified-suite-v2 .diff-view.dark .diff-cat-layout-rm{background:#7f1d1d;border-color:#dc2626}
 #kintone-unified-suite-v2 .diff-view.dark .diff-cat-layout-group{background:#312e81;border-color:#6366f1}
 
+/* Header + actions + hotkey hints */
+#kintone-unified-suite-v2 .diff-cat-header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 4px 10px;border-bottom:1px dashed var(--dv-border);margin-bottom:8px}
+#kintone-unified-suite-v2 .diff-cat-header-apps{display:flex;align-items:center;gap:8px;flex:1;min-width:0;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-cat-header-app{display:inline-flex;align-items:center;gap:4px;background:var(--dv-pad);padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;color:var(--dv-text);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-cat-header-app--src{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .diff-cat-header-app--tgt{background:#dbeafe;color:#1e40af}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-header-app--src{background:#78350f;color:#fde68a}
+#kintone-unified-suite-v2 .diff-view.dark .diff-cat-header-app--tgt{background:#1e3a8a;color:#bfdbfe}
+#kintone-unified-suite-v2 .diff-cat-header-arrow{font-size:11px;font-weight:800;color:var(--dv-sub);letter-spacing:.1em;text-transform:uppercase}
+#kintone-unified-suite-v2 .diff-cat-header-actions{display:flex;gap:6px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-cat-header-btn{border:1px solid var(--dv-border);background:var(--dv-card);color:var(--dv-text);border-radius:7px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,box-shadow .15s}
+#kintone-unified-suite-v2 .diff-cat-header-btn:hover{background:color-mix(in srgb,var(--dv-card) 80%,#dbeafe);border-color:#93c5fd;box-shadow:0 1px 4px rgba(15,23,42,.08)}
+
+#kintone-unified-suite-v2 .diff-cat-hotkeys{display:flex;gap:14px;font-size:10px;color:var(--dv-sub);padding:6px 4px 8px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-cat-hotkeys kbd{display:inline-block;background:var(--dv-pad);border:1px solid var(--dv-border);border-radius:3px;padding:0 5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;font-weight:700;color:var(--dv-text);margin:0 2px}
+
+#kintone-unified-suite-v2 .diff-cat-tab-key{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;font-size:9px;font-weight:800;background:var(--dv-pad);color:var(--dv-sub);border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#kintone-unified-suite-v2 .diff-cat-tab.is-active .diff-cat-tab-key{background:#1e3a8a;color:#fff}
+
+/* Print friendliness: when printing, expand details and remove sticky positioning */
+@media print {
+  #kintone-unified-suite-v2 .diff-cat-tabs{position:static}
+  #kintone-unified-suite-v2 .diff-cat-tab:not(.is-active){display:none}
+  #kintone-unified-suite-v2 .diff-cat-hotkeys,
+  #kintone-unified-suite-v2 .diff-cat-header-actions,
+  #kintone-unified-suite-v2 .diff-view-mode-toggle{display:none !important}
+  #kintone-unified-suite-v2 details{display:block}
+  #kintone-unified-suite-v2 details > *:not(summary){display:block !important}
+}
+
 `;
 
   // src/ui/template.ts
@@ -32696,7 +32830,7 @@ ${detail}`);
     const issueHtml = fetchIssues && fetchIssues.length ? `<div class="pvd-issues"><strong>取得失敗 ${fetchIssues.length}件</strong><span>${esc(fetchIssues.map((x) => x.section || x.sectionKey).filter(Boolean).join(", "))}</span></div>` : "";
     const previewApp = extractAppNameFromBundle(previewBundle) || "";
     const prodApp = extractAppNameFromBundle(productionBundle) || "";
-    const appLabel = previewApp || prodApp ? ` / ${esc(previewApp || prodApp)}` : "";
+    const appLabel2 = previewApp || prodApp ? ` / ${esc(previewApp || prodApp)}` : "";
     const stamp = runAt ? new Date(runAt).toLocaleString() : "";
     host.style.display = "block";
     host.innerHTML = `
@@ -32706,7 +32840,7 @@ ${detail}`);
           <div class="pvd-title">プレビュー ⇔ 本番 差分比較</div>
           <div class="pvd-subtitle">デプロイ待ちの設定差分を、プレビュー側と本番側で並べて確認します。</div>
         </div>
-        <div class="pvd-meta">App ${esc(appId)}${guestId ? ` / guest ${esc(guestId)}` : ""}${appLabel}${stamp ? ` ・ ${esc(stamp)}` : ""}</div>
+        <div class="pvd-meta">App ${esc(appId)}${guestId ? ` / guest ${esc(guestId)}` : ""}${appLabel2}${stamp ? ` ・ ${esc(stamp)}` : ""}</div>
       </div>
       <div class="pvd-metrics">
         ${renderMetricCard("差分", totalActual, "プレビューと本番の差", "pvd-metric--total")}
@@ -32816,8 +32950,8 @@ ${detail}`);
       return;
     }
     const appName = extractAppNameFromBundle(payload.previewBundle) || extractAppNameFromBundle(payload.productionBundle) || "";
-    const appLabel = buildAppFilenameLabel(payload.appId, appName);
-    const filename = `preview_prod_diff_${appLabel}_${nowStamp()}.json`;
+    const appLabel2 = buildAppFilenameLabel(payload.appId, appName);
+    const filename = `preview_prod_diff_${appLabel2}_${nowStamp()}.json`;
     const body = {
       kind: "preview-production-diff",
       exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -34490,6 +34624,36 @@ ${detail}`);
         ui.launcherSearch?.select();
         return;
       }
+      if (!editable && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && state.activeTab === "diff") {
+        if (e.key === "v" || e.key === "V") {
+          const next = state.diffViewMode === "category" ? "table" : "category";
+          state.diffViewMode = next;
+          if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+          try {
+            saveCurrentDialogState2();
+          } catch (err) {
+          }
+          setStatus(next === "category" ? "セクション別ビューに切り替えました（V キー）" : "行一覧ビューに切り替えました（V キー）");
+          e.preventDefault();
+          return;
+        }
+        if (state.diffViewMode === "category" && /^[1-9]$/.test(e.key)) {
+          const idx = Number(e.key) - 1;
+          Promise.resolve().then(() => (init_category_view(), category_view_exports)).then((m) => {
+            const cat = m.DIFF_CATEGORIES[idx];
+            if (!cat) return;
+            state.diffCategoryView = cat.key;
+            if (state.lastDiffRows.length || state.lastFetchIssues.length) renderResultRows(state.lastDiffRows);
+            try {
+              saveCurrentDialogState2();
+            } catch (err) {
+            }
+            setStatus(`カテゴリ「${cat.label}」に切り替えました（${e.key} キー）`);
+          });
+          e.preventDefault();
+          return;
+        }
+      }
       if (!editable && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && root2.classList.contains("screen-feature")) {
         const tabByKey = {
           "1": "diff",
@@ -35128,6 +35292,40 @@ ${detail}`);
         try {
           saveCurrentDialogState2();
         } catch (e2) {
+        }
+        return;
+      }
+      if (act === "copyCategoryViewMarkdown") {
+        if (!state.lastDiffRows.length) {
+          setStatus("差分結果がありません");
+          return;
+        }
+        Promise.resolve().then(() => (init_category_view(), category_view_exports)).then((m) => {
+          const md = m.buildCategoryViewMarkdown(state.lastDiffRows, { onlyActive: true });
+          copyToClipboard(md, "現在のカテゴリビューを Markdown でコピーしました", "コピーに失敗しました");
+        });
+        return;
+      }
+      if (act === "downloadCategoryViewMarkdown") {
+        if (!state.lastDiffRows.length) {
+          setStatus("差分結果がありません");
+          return;
+        }
+        Promise.resolve().then(() => (init_category_view(), category_view_exports)).then((m) => {
+          const md = m.buildCategoryViewMarkdown(state.lastDiffRows, { onlyActive: false });
+          const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+          downloadText(`差分セクション別_${ts}.md`, md, "text/markdown");
+          setStatus("セクション別ビューを Markdown として保存しました");
+        });
+        return;
+      }
+      if (act === "printCategoryView") {
+        try {
+          const win = window.__KUS_TOOL_WINDOW__ && !window.__KUS_TOOL_WINDOW__.closed ? window.__KUS_TOOL_WINDOW__ : window;
+          win.print();
+          setStatus("印刷ダイアログを開きました");
+        } catch (e2) {
+          setStatus("印刷に失敗しました", true);
         }
         return;
       }
@@ -39681,11 +39879,11 @@ ${body}`;
     setStatus("設計情報を取得中...");
     const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
     state.lastSourceBundle = bundle;
-    const appLabel = buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle));
+    const appLabel2 = buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle));
     if (kind === "json") {
-      downloadText(buildExportFilename("設計書", "json", { appLabel }), JSON.stringify(bundle, null, 2), "application/json");
+      downloadText(buildExportFilename("設計書", "json", { appLabel: appLabel2 }), JSON.stringify(bundle, null, 2), "application/json");
     } else {
-      downloadText(buildExportFilename("設計書", "md", { appLabel }), bundleToMarkdown(bundle), "text/markdown");
+      downloadText(buildExportFilename("設計書", "md", { appLabel: appLabel2 }), bundleToMarkdown(bundle), "text/markdown");
     }
     setStatus(`設計書出力完了（App ${bundle.appId}）`);
   }
@@ -42290,8 +42488,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     if (!text) throw new Error("先にJS/CSS設定を取得してください");
     const parsed = JSON.parse(text);
     const c = commonParams();
-    const appLabel = buildAppFilenameLabel(c.source.appId || "unknown", lastFetchedSourceAppName);
-    downloadText(buildExportFilename("JS_CSS設定", "json", { appLabel }), JSON.stringify(parsed, null, 2), "application/json");
+    const appLabel2 = buildAppFilenameLabel(c.source.appId || "unknown", lastFetchedSourceAppName);
+    downloadText(buildExportFilename("JS_CSS設定", "json", { appLabel: appLabel2 }), JSON.stringify(parsed, null, 2), "application/json");
     setStatus("JS/CSS設定JSONを保存しました");
   }
   async function runApplyJsConfig() {
