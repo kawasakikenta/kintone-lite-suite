@@ -1629,7 +1629,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <div class="er-route-badge">標準生成</div>
                       <div class="er-route-title">現在の比較元アプリからER図を開く</div>
                       <div class="er-route-sub">通常はこのまま生成できます。探索範囲を広げる場合だけ詳細オプションを調整してください。</div>
-                      <div class="er-route-meta" aria-label="標準設定">
+                      <div class="er-route-meta" id="u_erRouteMeta" aria-label="標準設定">
                         <span>Dagre</span>
                         <span>標準密度</span>
                         <span>サブテーブルON</span>
@@ -1640,6 +1640,20 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <button type="button" class="btn sub" data-act="exportERDiagramHtml" title="単体HTMLファイルとして保存">HTML保存</button>
                     </div>
                   </div>
+
+                  <!-- プリセット: ワンクリックで詳細オプションを既定値に揃える -->
+                  <div class="er-preset-row" role="group" aria-label="ER生成プリセット">
+                    <span class="er-preset-row__lbl">プリセット</span>
+                    <button type="button" class="btn sub er-preset-btn" data-act="applyErPreset" data-er-preset="current" title="現在のアプリと直接の関連のみ (深さ1)">🎯 現在のみ</button>
+                    <button type="button" class="btn sub er-preset-btn" data-act="applyErPreset" data-er-preset="neighborhood" title="周辺 2 ホップまで探索">🔗 周辺 (深さ2)</button>
+                    <button type="button" class="btn sub er-preset-btn" data-act="applyErPreset" data-er-preset="reverse" title="深さ2 + 全アプリ走査の逆引き探索（時間がかかります）">↩ 逆引きあり</button>
+                    <button type="button" class="btn sub er-preset-btn" data-act="applyErPreset" data-er-preset="full" title="無制限・サブテーブル含む・逆引きあり (大規模スキャン)">🌐 すべて辿る</button>
+                    <button type="button" class="btn sub er-preset-btn" data-act="applyErPreset" data-er-preset="space" title="スペースID 入力欄にフォーカスし、スペース全体を起点に設定">🏢 スペース全体</button>
+                  </div>
+
+                  <!-- 事前見積もり: 開く前に「何を取得するか」を提示 -->
+                  <div class="er-preflight" id="u_erPreflight" aria-live="polite"></div>
+
                   <details class="er-route-details">
                     <summary>
                       <span>詳細オプション</span>

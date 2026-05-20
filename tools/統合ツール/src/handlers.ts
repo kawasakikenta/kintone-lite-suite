@@ -3316,6 +3316,13 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'renderProcessFlow' && typeof runRenderProcessFlow === 'function') return withGuard(runRenderProcessFlow);
     if (act === 'generateERDiagram' && typeof runGenerateERDiagram === 'function') return withGuard(runGenerateERDiagram);
     if (act === 'exportERDiagramHtml' && typeof runExportERDiagramHtml === 'function') return withGuard(runExportERDiagramHtml);
+    if (act === 'applyErPreset') {
+      const preset = String(actEl.dataset.erPreset || '');
+      if (preset) {
+        import('./tabs/er.js').then((m) => m.applyErPreset(preset)).catch(() => { /* noop */ });
+      }
+      return;
+    }
     if (act === 'runBatchProcess' && typeof runBatchProcess === 'function') return withGuard(runBatchProcess);
     if (act === 'runBatchFileDownload' && typeof runBatchFileDownload === 'function') return withGuard(runBatchFileDownload);
     if (act === 'runBatchJsConfigDownload' && typeof runBatchJsConfigDownload === 'function') return withGuard(runBatchJsConfigDownload);

@@ -2625,6 +2625,11 @@ export function initExtras(): void {
   try { initGenerationalBackupHook(); } catch (e) { console.warn('extras: genBackup', e); }
   try { initErLayoutSwitch(); } catch (e) { console.warn('extras: erLayout', e); }
   try { initErDoubleClickNav(); } catch (e) { console.warn('extras: erDblClick', e); }
+  try {
+    // ER タブの事前見積もり + ルートメタ更新リスナー。
+    // 動的 import を使うのは boot 順序の依存ループ回避のため。
+    import('../tabs/er.js').then((m) => m.bindErPreflightListeners?.()).catch(() => { /* noop */ });
+  } catch (e) { console.warn('extras: erPreflight', e); }
   try { initProcessAnnotations(); } catch (e) { console.warn('extras: processNote', e); }
   try { initRecordUpdateCountDelta(); } catch (e) { console.warn('extras: recordDelta', e); }
   try { initApiCollection(); } catch (e) { console.warn('extras: apiCollection', e); }

@@ -2405,3 +2405,137 @@ export async function runExportERDiagramHtml() {
     throw e;
   }
 }
+
+// ---------------------------------------------------------------------------
+// ER プリセット: 詳細オプションをワンクリックで既定値に揃える
+// ---------------------------------------------------------------------------
+
+export interface ErPreset {
+  layout?: string;
+  density?: string;
+  maxDepth?: string;
+  includeSubtable?: boolean;
+  includeReverseLookup?: boolean;
+  focusSpaceInput?: boolean;
+  label: string;
+}
+
+const ER_PRESETS: Record<string, ErPreset> = {
+  current:      { label: '現在のみ', layout: 'dagre', density: 'standard', maxDepth: '1', includeSubtable: true, includeReverseLookup: false },
+  neighborhood: { label: '周辺 (深さ2)', layout: 'dagre', density: 'standard', maxDepth: '2', includeSubtable: true, includeReverseLookup: false },
+  reverse:      { label: '逆引きあり', layout: 'dagre', density: 'standard', maxDepth: '2', includeSubtable: true, includeReverseLookup: true },
+  full:         { label: 'すべて辿る', layout: 'cose', density: 'standard', maxDepth: '0', includeSubtable: true, includeReverseLookup: true },
+  space:        { label: 'スペース全体', layout: 'dagre', density: 'standard', maxDepth: '2', includeSubtable: true, includeReverseLookup: false, focusSpaceInput: true }
+};
+
+export function applyErPreset(presetKey: string): void {
+  const preset = ER_PRESETS[presetKey];
+  if (!preset) {
+    setStatus(`不明なプリセット: ${presetKey}`, true);
+    return;
+  }
+  if (preset.layout != null && ui.erLayout) ui.erLayout.value = preset.layout;
+  if (preset.density != null && ui.erFieldDensity) ui.erFieldDensity.value = preset.density;
+  if (preset.maxDepth != null && ui.erMaxDepth) ui.erMaxDepth.value = preset.maxDepth;
+  if (preset.includeSubtable != null && ui.erIncludeSubtable) ui.erIncludeSubtable.checked = preset.includeSubtable;
+  if (preset.includeReverseLookup != null && ui.erIncludeReverseLookup) ui.erIncludeReverseLookup.checked = preset.includeReverseLookup;
+  if (preset.focusSpaceInput && ui.erSpaceId) {
+    try {
+      ui.erSpaceId.focus();
+      ui.erSpaceId.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e) { /* noop */ }
+  }
+  renderErPreflight();
+  renderErRouteMeta();
+  setStatus(`ER プリセット「${preset.label}」を適用しました`);
+}
+
+// ---------------------------------------------------------------------------
+// 事前見積もり: 生成前に「何を取得するか」を要約表示
+// ---------------------------------------------------------------------------
+
+export function renderErPreflight(): void {
+  let host: HTMLElement | null;
+  try { host = getToolDocument().getElementById('u_erPreflight'); }
+  catch { host = null; }
+  if (!host) return;
+  let opts: ReturnType<typeof readErDiagramOptions>;
+  try { opts = readErDiagramOptions(); }
+  catch { host.innerHTML = ''; return; }
+
+  const startCount = opts.startAppIds.length;
+  const hasSpace = !!opts.spaceId;
+  const reverse = !!opts.includeReverseLookup;
+  const depth = opts.maxDepth === 0 ? '無制限' : `${opts.maxDepth} ホップ`;
+  const densityLabel = ({ compact: '簡易', standard: '標準', full: '詳細' } as Record<string, string>)[opts.fieldDensity] || opts.fieldDensity;
+
+  if (!startCount && !hasSpace) {
+    host.innerHTML = `<div class="er-preflight__empty">起点アプリIDがありません — 上の接続設定で比較元を指定するか、追加起点 / スペースIDを入力してください。</div>`;
+    return;
+  }
+
+  const warnings: string[] = [];
+  if (reverse) warnings.push('逆引き探索ON: 全アプリを走査するため時間がかかります（アプリ数 × 数秒）。');
+  if (opts.maxDepth === 0) warnings.push('深さ無制限: アプリ網が大きい場合は実行時間が伸びます。');
+  if (hasSpace) warnings.push(`スペース ${opts.spaceId} 内の全アプリを起点に追加します。`);
+  if (startCount > 5 && !hasSpace) warnings.push(`起点が ${startCount}アプリと多めです。広範囲を探索します。`);
+
+  const seedLabel = startCount
+    ? opts.startAppIds.slice(0, 5).join(', ') + (startCount > 5 ? ` 他${startCount - 5}` : '')
+    : '（スペース内アプリ）';
+  const warningsHtml = warnings.length
+    ? `<div class="er-preflight__warnings">${warnings.map((w) => `<div class="er-preflight__warn">⚠ ${esc(w)}</div>`).join('')}</div>`
+    : `<div class="er-preflight__ok">✓ 軽量な探索です。すぐに生成できます。</div>`;
+  host.innerHTML = `
+    <div class="er-preflight__head">
+      <span class="er-preflight__lbl">事前見積もり</span>
+      <span class="er-preflight__hint">生成前に取得範囲を確認できます</span>
+    </div>
+    <div class="er-preflight__grid">
+      <div class="er-preflight__chip"><span class="er-preflight__chip-lbl">起点</span><span class="er-preflight__chip-val">${esc(String(startCount))} アプリ</span></div>
+      <div class="er-preflight__chip"><span class="er-preflight__chip-lbl">探索深さ</span><span class="er-preflight__chip-val">${esc(depth)}</span></div>
+      <div class="er-preflight__chip"><span class="er-preflight__chip-lbl">密度</span><span class="er-preflight__chip-val">${esc(densityLabel)}</span></div>
+      <div class="er-preflight__chip"><span class="er-preflight__chip-lbl">サブテーブル</span><span class="er-preflight__chip-val">${opts.includeSubtableFields ? 'ON' : 'OFF'}</span></div>
+      <div class="er-preflight__chip${reverse ? ' er-preflight__chip--warn' : ''}"><span class="er-preflight__chip-lbl">逆引き</span><span class="er-preflight__chip-val">${reverse ? 'ON (全走査)' : 'OFF'}</span></div>
+      ${hasSpace ? `<div class="er-preflight__chip er-preflight__chip--warn"><span class="er-preflight__chip-lbl">スペース</span><span class="er-preflight__chip-val">#${esc(opts.spaceId)}</span></div>` : ''}
+    </div>
+    <div class="er-preflight__seed" title="${esc(seedLabel)}"><span class="er-preflight__chip-lbl">起点ID</span> <code>${esc(seedLabel)}</code></div>
+    ${warningsHtml}
+  `;
+}
+
+export function renderErRouteMeta(): void {
+  let host: HTMLElement | null;
+  try { host = getToolDocument().getElementById('u_erRouteMeta'); }
+  catch { host = null; }
+  if (!host) return;
+  let opts: ReturnType<typeof readErDiagramOptions>;
+  try { opts = readErDiagramOptions(); }
+  catch { return; }
+  const layoutLabel = formatErLayoutLabel(opts.layoutName);
+  const densityLabel = ({ compact: '簡易密度', standard: '標準密度', full: '詳細密度' } as Record<string, string>)[opts.fieldDensity] || opts.fieldDensity;
+  const subtableLabel = `サブテーブル${opts.includeSubtableFields ? 'ON' : 'OFF'}`;
+  const depthLabel = opts.maxDepth === 0 ? '深さ無制限' : `深さ${opts.maxDepth}`;
+  const reverseLabel = opts.includeReverseLookup ? '逆引きON' : '';
+  const parts = [layoutLabel, densityLabel, depthLabel, subtableLabel, reverseLabel].filter(Boolean);
+  host.innerHTML = parts.map((p) => `<span>${esc(p)}</span>`).join('');
+}
+
+/**
+ * ER タブを開いた・オプションを変更した瞬間に preflight と meta を再描画する。
+ * UI 初期化フローから呼び出される（boot 時の登録は handlers/setupEventHandlers 側）。
+ */
+export function bindErPreflightListeners(): void {
+  const doc = (() => { try { return getToolDocument(); } catch { return null; } })();
+  if (!doc) return;
+  const ids = ['u_erLayout', 'u_erFieldDensity', 'u_erMaxDepth', 'u_erExtraApps', 'u_erSpaceId', 'u_erIncludeSubtable', 'u_erIncludeReverseLookup', 'u_sourceApp'];
+  ids.forEach((id) => {
+    const el = doc.getElementById(id) as HTMLElement & { _kusErBound?: boolean } | null;
+    if (!el || el._kusErBound) return;
+    el._kusErBound = true;
+    el.addEventListener('input', () => { renderErPreflight(); renderErRouteMeta(); });
+    el.addEventListener('change', () => { renderErPreflight(); renderErRouteMeta(); });
+  });
+  renderErPreflight();
+  renderErRouteMeta();
+}
