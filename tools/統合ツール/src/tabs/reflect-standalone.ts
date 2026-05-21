@@ -1,7 +1,7 @@
 'use strict';
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
-import { deepClone } from '../utils.js';
+import { deepClone, stableStringify } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle } from '../api.js';
 
 function filterWritable(props: any) {
@@ -179,4 +179,164 @@ export async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
   onProgress(logs);
   setStatus(hadError ? '反映完了（一部エラーあり）' : '反映完了');
   return logs;
+}
+
+// =============================================================================
+// Lite 版向け追加ヘルパー（フル版の安全機能と同等の最小実装）
+// =============================================================================
+
+export interface LookupPreflightOptions {
+  /** ゲストID（API prefix 解決に使用） */
+  targetGuestId?: string;
+}
+
+export interface LookupPreflightIssue {
+  from: string;
+  to: string;
+  reason: string;
+}
+
+export interface LookupPreflightResult {
+  ok: boolean;
+  missing: LookupPreflightIssue[];
+}
+
+/**
+ * Lookup AppID マッピングの変換先アプリが実在するかをチェックする。
+ * フル版の preflightLookupMap の lite 版相当（TTL キャッシュなし）。
+ */
+export async function preflightLookupMapStandalone(
+  lookupMap: Record<string, string>,
+  opts: LookupPreflightOptions = {}
+): Promise<LookupPreflightResult> {
+  const entries = Object.entries(lookupMap || {});
+  if (!entries.length) return { ok: true, missing: [] };
+  const prefix = buildApiPrefix(opts.targetGuestId || '', true);
+  const missing: LookupPreflightIssue[] = [];
+  for (const [from, to] of entries) {
+    const target = String(to || '').trim();
+    if (!target || !/^\d+$/.test(target)) {
+      missing.push({ from, to: target, reason: 'AppID形式が不正' });
+      continue;
+    }
+    try {
+      await apiGet(prefix, '/app.json', { id: target });
+    } catch (e: any) {
+      missing.push({ from, to: target, reason: `取得失敗: ${e?.message || String(e)}` });
+    }
+  }
+  return { ok: missing.length === 0, missing };
+}
+
+export interface PreviewSectionEntry {
+  sectionKey: string;
+  label: string;
+  status: 'change' | 'same' | 'src-missing' | 'tgt-missing' | 'error';
+  message: string;
+  /** フィールド設定の場合のみ、追加/更新/削除候補件数を返す */
+  fieldStats?: { add: number; update: number; tgtOnly: number };
+}
+
+export interface PreviewReflectResult {
+  totalSections: number;
+  changedSections: number;
+  sameSections: number;
+  errorSections: number;
+  entries: PreviewSectionEntry[];
+}
+
+/**
+ * 反映実行前に「比較元と比較先プレビューでどのセクションが変わるか」を比較する。
+ * フル版の差分エンジン相当のフル機能はないが、セクション単位の一致/不一致と、
+ * フィールド設定のみ追加/更新/比較先のみ件数を返す。
+ */
+export async function previewReflectStandalone(
+  opts: {
+    sourceAppId: string;
+    sourceGuestId?: string;
+    sourcePreview?: boolean;
+    targetAppId: string;
+    targetGuestId?: string;
+    scopes: string[];
+  },
+  setStatus: (msg: string) => void
+): Promise<PreviewReflectResult> {
+  const scopes = (opts.scopes || []).filter(Boolean);
+  if (!scopes.length) throw new Error('プレビュー対象セクションが空です');
+  if (!opts.sourceAppId) throw new Error('比較元アプリIDを入力してください');
+  if (!opts.targetAppId) throw new Error('比較先アプリIDを入力してください');
+
+  setStatus('比較元設定を取得中...');
+  const source = await fetchBundle({
+    appId: opts.sourceAppId,
+    guestId: opts.sourceGuestId || '',
+    preview: !!opts.sourcePreview,
+    sections: scopes,
+    onProgress: (p, l) => setStatus(`比較元取得 ${Math.round(p * 100)}% (${l})`)
+  });
+  setStatus('比較先プレビューを取得中...');
+  const target = await fetchBundle({
+    appId: opts.targetAppId,
+    guestId: opts.targetGuestId || '',
+    preview: true,
+    sections: scopes,
+    onProgress: (p, l) => setStatus(`比較先取得 ${Math.round(p * 100)}% (${l})`)
+  });
+
+  const entries: PreviewSectionEntry[] = [];
+  for (const secKey of scopes) {
+    const def = SECTION_DEFS.find((d) => d.key === secKey);
+    const label = def?.label || secKey;
+    const srcSec = source.sections?.[secKey];
+    const tgtSec = target.sections?.[secKey];
+
+    if (!srcSec || (srcSec as any)._fetchError) {
+      entries.push({ sectionKey: secKey, label, status: 'src-missing', message: `比較元未取得: ${(srcSec as any)?._fetchError || '不明'}` });
+      continue;
+    }
+    if (!tgtSec || (tgtSec as any)._fetchError) {
+      entries.push({ sectionKey: secKey, label, status: 'tgt-missing', message: `比較先未取得: ${(tgtSec as any)?._fetchError || '不明'}` });
+      continue;
+    }
+
+    const same = stableStringify(srcSec) === stableStringify(tgtSec);
+    if (same) {
+      entries.push({ sectionKey: secKey, label, status: 'same', message: '差分なし' });
+      continue;
+    }
+
+    // フィールド設定のみ詳細件数を出す
+    if (secKey === 'fieldSettings') {
+      const srcProps = filterWritable((srcSec as any).properties || srcSec);
+      const tgtProps = (tgtSec as any).properties || tgtSec || {};
+      let add = 0;
+      let update = 0;
+      let tgtOnly = 0;
+      for (const code of Object.keys(srcProps)) {
+        if (!tgtProps[code]) { add += 1; continue; }
+        if (stableStringify(srcProps[code]) !== stableStringify(tgtProps[code])) update += 1;
+      }
+      for (const code of Object.keys(tgtProps)) {
+        if (!srcProps[code]) tgtOnly += 1;
+      }
+      const detail = `追加 ${add} / 更新 ${update} / 比較先のみ ${tgtOnly}`;
+      entries.push({
+        sectionKey: secKey,
+        label,
+        status: 'change',
+        message: detail,
+        fieldStats: { add, update, tgtOnly }
+      });
+    } else {
+      entries.push({ sectionKey: secKey, label, status: 'change', message: '差分あり（セクション単位）' });
+    }
+  }
+
+  return {
+    totalSections: entries.length,
+    changedSections: entries.filter((e) => e.status === 'change').length,
+    sameSections: entries.filter((e) => e.status === 'same').length,
+    errorSections: entries.filter((e) => e.status === 'src-missing' || e.status === 'tgt-missing' || e.status === 'error').length,
+    entries
+  };
 }

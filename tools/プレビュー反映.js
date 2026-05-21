@@ -458,6 +458,9 @@
     }
     return v;
   }
+  function stableStringify(v) {
+    return JSON.stringify(normalize(v));
+  }
   function compactForLog(value, max = 220) {
     try {
       const raw = typeof value === "string" ? value : JSON.stringify(value);
@@ -1144,6 +1147,101 @@ ${contextLine}`);
     setStatus(hadError ? "反映完了（一部エラーあり）" : "反映完了");
     return logs;
   }
+  async function preflightLookupMapStandalone(lookupMap, opts = {}) {
+    const entries = Object.entries(lookupMap || {});
+    if (!entries.length) return { ok: true, missing: [] };
+    const prefix = buildApiPrefix(opts.targetGuestId || "", true);
+    const missing = [];
+    for (const [from, to] of entries) {
+      const target = String(to || "").trim();
+      if (!target || !/^\d+$/.test(target)) {
+        missing.push({ from, to: target, reason: "AppID形式が不正" });
+        continue;
+      }
+      try {
+        await apiGet(prefix, "/app.json", { id: target });
+      } catch (e) {
+        missing.push({ from, to: target, reason: `取得失敗: ${e?.message || String(e)}` });
+      }
+    }
+    return { ok: missing.length === 0, missing };
+  }
+  async function previewReflectStandalone(opts, setStatus) {
+    const scopes = (opts.scopes || []).filter(Boolean);
+    if (!scopes.length) throw new Error("プレビュー対象セクションが空です");
+    if (!opts.sourceAppId) throw new Error("比較元アプリIDを入力してください");
+    if (!opts.targetAppId) throw new Error("比較先アプリIDを入力してください");
+    setStatus("比較元設定を取得中...");
+    const source = await fetchBundle({
+      appId: opts.sourceAppId,
+      guestId: opts.sourceGuestId || "",
+      preview: !!opts.sourcePreview,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`比較元取得 ${Math.round(p * 100)}% (${l})`)
+    });
+    setStatus("比較先プレビューを取得中...");
+    const target = await fetchBundle({
+      appId: opts.targetAppId,
+      guestId: opts.targetGuestId || "",
+      preview: true,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`比較先取得 ${Math.round(p * 100)}% (${l})`)
+    });
+    const entries = [];
+    for (const secKey of scopes) {
+      const def = SECTION_DEFS.find((d) => d.key === secKey);
+      const label = def?.label || secKey;
+      const srcSec = source.sections?.[secKey];
+      const tgtSec = target.sections?.[secKey];
+      if (!srcSec || srcSec._fetchError) {
+        entries.push({ sectionKey: secKey, label, status: "src-missing", message: `比較元未取得: ${srcSec?._fetchError || "不明"}` });
+        continue;
+      }
+      if (!tgtSec || tgtSec._fetchError) {
+        entries.push({ sectionKey: secKey, label, status: "tgt-missing", message: `比較先未取得: ${tgtSec?._fetchError || "不明"}` });
+        continue;
+      }
+      const same = stableStringify(srcSec) === stableStringify(tgtSec);
+      if (same) {
+        entries.push({ sectionKey: secKey, label, status: "same", message: "差分なし" });
+        continue;
+      }
+      if (secKey === "fieldSettings") {
+        const srcProps = filterWritable(srcSec.properties || srcSec);
+        const tgtProps = tgtSec.properties || tgtSec || {};
+        let add = 0;
+        let update = 0;
+        let tgtOnly = 0;
+        for (const code of Object.keys(srcProps)) {
+          if (!tgtProps[code]) {
+            add += 1;
+            continue;
+          }
+          if (stableStringify(srcProps[code]) !== stableStringify(tgtProps[code])) update += 1;
+        }
+        for (const code of Object.keys(tgtProps)) {
+          if (!srcProps[code]) tgtOnly += 1;
+        }
+        const detail = `追加 ${add} / 更新 ${update} / 比較先のみ ${tgtOnly}`;
+        entries.push({
+          sectionKey: secKey,
+          label,
+          status: "change",
+          message: detail,
+          fieldStats: { add, update, tgtOnly }
+        });
+      } else {
+        entries.push({ sectionKey: secKey, label, status: "change", message: "差分あり（セクション単位）" });
+      }
+    }
+    return {
+      totalSections: entries.length,
+      changedSections: entries.filter((e) => e.status === "change").length,
+      sameSections: entries.filter((e) => e.status === "same").length,
+      errorSections: entries.filter((e) => e.status === "src-missing" || e.status === "tgt-missing" || e.status === "error").length,
+      entries
+    };
+  }
 
   // src/ui/components.ts
   init_constants();
@@ -1712,7 +1810,42 @@ ${contextLine}`);
   }
 
   // src/entries/reflect-lite-ui.ts
-  var memoryState = {};
+  var memoryState = {
+    presets: []
+  };
+  var SCOPE_QUICK_PRESETS = [
+    { id: "all", label: "すべて", hint: "反映可能なセクションを全選択" },
+    {
+      id: "formOnly",
+      label: "フォームのみ",
+      hint: "フィールド設定＋レイアウト＋ビュー",
+      scopes: ["fieldSettings", "layoutSettings", "viewSettings"]
+    },
+    {
+      id: "viewsOnly",
+      label: "ビュー+グラフ",
+      hint: "ビュー設定とグラフ設定のみ",
+      scopes: ["viewSettings", "reportSettings"]
+    },
+    {
+      id: "permsOnly",
+      label: "権限のみ",
+      hint: "アプリ・フィールド・レコード権限",
+      scopes: ["appAcl", "fieldAcl", "recordPermissions"]
+    },
+    {
+      id: "notificationsOnly",
+      label: "通知のみ",
+      hint: "一般・条件・リマインダー通知",
+      scopes: ["notifications", "perRecordNotifications", "reminderNotifications"]
+    },
+    {
+      id: "noPerms",
+      label: "権限を除外",
+      hint: "権限系・通知系を除いた全セクション",
+      exclude: ["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications"]
+    }
+  ];
   function mountReflectLitePanel() {
     const panel = createLitePanel({
       id: "kus-reflect-lite",
@@ -1728,57 +1861,300 @@ ${contextLine}`);
     const tgtGuest = makeInput({ placeholder: "ゲストID", value: memoryState.targetGuestId || "", width: "guest" });
     const copyBtn = makeButton("比較元 → 比較先", "sub");
     const currentBtn = makeButton("現在のアプリを比較先", "sub");
+    const swapBtn = makeButton("入れ替え", "sub");
     const cardApp = makeCard({ title: "アプリ", number: 1 });
     cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: "比較元" }));
     cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "比較先" }));
-    const quickRow = makeRow([copyBtn, currentBtn]);
+    const quickRow = makeRow([copyBtn, currentBtn, swapBtn]);
     quickRow.style.marginTop = "4px";
     cardApp.body.appendChild(quickRow);
+    const sameConnBanner = document.createElement("div");
+    sameConnBanner.className = "kus-lp__note--warn";
+    sameConnBanner.style.display = "none";
+    sameConnBanner.textContent = "⚠ 比較元と比較先が同一接続です（同じアプリID・ゲストID）。実行すると同一アプリで上書きになります。";
+    cardApp.body.appendChild(sameConnBanner);
     panel.body.insertBefore(cardApp.card, panel.status);
     copyBtn.addEventListener("click", () => {
       tgtApp.value = srcApp.value.trim();
       tgtGuest.value = srcGuest.value.trim();
       saveState();
+      refreshSameConnBanner();
       panel.setStatus("比較元IDを比較先へコピーしました", "info");
     });
     currentBtn.addEventListener("click", () => {
       tgtApp.value = DEFAULT_APP_ID || "";
       saveState();
+      refreshSameConnBanner();
       panel.setStatus("現在のアプリIDを比較先にセットしました", "info");
     });
+    swapBtn.addEventListener("click", () => {
+      const sa = srcApp.value;
+      const sg = srcGuest.value;
+      srcApp.value = tgtApp.value;
+      srcGuest.value = tgtGuest.value;
+      tgtApp.value = sa;
+      tgtGuest.value = sg;
+      saveState();
+      refreshSameConnBanner();
+      panel.setStatus("比較元と比較先を入れ替えました", "info");
+    });
+    [srcApp, srcGuest, tgtApp, tgtGuest].forEach((el) => {
+      el.addEventListener("input", () => {
+        saveState();
+        refreshSameConnBanner();
+      });
+    });
+    function refreshSameConnBanner() {
+      const same = !!srcApp.value.trim() && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim();
+      sameConnBanner.style.display = same ? "block" : "none";
+    }
     const cardScope = makeCard({ title: "反映するセクション", number: 2 });
     const putSections = SECTION_DEFS.filter((d) => d.put);
-    const chips = putSections.map((d) => makeChip({ label: d.label, checked: true, value: d.key }));
+    const initialSelected = new Set(
+      Array.isArray(memoryState.selectedScopes) && memoryState.selectedScopes.length ? memoryState.selectedScopes : putSections.map((d) => d.key)
+    );
+    const chips = putSections.map((d) => makeChip({
+      label: d.label,
+      checked: initialSelected.has(d.key),
+      value: d.key
+    }));
     const chipBox = document.createElement("div");
     chipBox.className = "kus-lp__chips";
     chips.forEach((c) => chipBox.appendChild(c.label));
     cardScope.body.appendChild(chipBox);
+    const scopeCountLabel = document.createElement("div");
+    scopeCountLabel.className = "kus-lp__small";
+    scopeCountLabel.style.marginTop = "4px";
+    cardScope.body.appendChild(scopeCountLabel);
+    function refreshScopeCount() {
+      const sel = chips.filter((c) => c.checkbox.checked).length;
+      scopeCountLabel.textContent = `選択中: ${sel} / ${chips.length} セクション`;
+    }
+    chips.forEach((c) => c.checkbox.addEventListener("change", () => {
+      refreshScopeCount();
+      saveState();
+    }));
+    refreshScopeCount();
+    const presetRow = document.createElement("div");
+    presetRow.className = "kus-lp__btn-row";
+    presetRow.style.marginTop = "8px";
+    for (const preset of SCOPE_QUICK_PRESETS) {
+      const btn = makeButton(preset.label, "sub");
+      btn.title = preset.hint;
+      btn.addEventListener("click", () => {
+        applyScopePreset(preset);
+        panel.setStatus(`プリセット適用: ${preset.label}（${chips.filter((c) => c.checkbox.checked).length}件）`, "info");
+      });
+      presetRow.appendChild(btn);
+    }
+    cardScope.body.appendChild(presetRow);
     const allBtn = makeButton("全選択", "sub");
     const noneBtn = makeButton("全解除", "sub");
     cardScope.actions.appendChild(allBtn);
     cardScope.actions.appendChild(noneBtn);
-    allBtn.addEventListener("click", () => chips.forEach((c) => {
-      c.checkbox.checked = true;
-    }));
-    noneBtn.addEventListener("click", () => chips.forEach((c) => {
-      c.checkbox.checked = false;
-    }));
+    allBtn.addEventListener("click", () => {
+      chips.forEach((c) => {
+        c.checkbox.checked = true;
+      });
+      refreshScopeCount();
+      saveState();
+    });
+    noneBtn.addEventListener("click", () => {
+      chips.forEach((c) => {
+        c.checkbox.checked = false;
+      });
+      refreshScopeCount();
+      saveState();
+    });
+    function applyScopePreset(preset) {
+      if (preset.id === "all") {
+        chips.forEach((c) => {
+          c.checkbox.checked = true;
+        });
+      } else if (preset.scopes) {
+        const target = new Set(preset.scopes);
+        chips.forEach((c) => {
+          c.checkbox.checked = target.has(c.checkbox.value);
+        });
+      } else if (preset.exclude) {
+        const excluded = new Set(preset.exclude);
+        chips.forEach((c) => {
+          c.checkbox.checked = !excluded.has(c.checkbox.value);
+        });
+      }
+      refreshScopeCount();
+      saveState();
+    }
     panel.body.insertBefore(cardScope.card, panel.status);
     const cardOpt = makeCard({ title: "実行オプション", number: 3, soft: true });
-    const backup = makeCheck({ label: "比較先プレビューのバックアップを保存", checked: true });
-    const srcPreview = makeCheck({ label: "比較元をプレビューから取得", checked: memoryState.sourcePreview !== false });
-    const stop = makeCheck({ label: "エラー時に中断する", checked: !!memoryState.stopOnError });
+    const backup = makeCheck({
+      label: "比較先プレビューのバックアップを保存",
+      checked: memoryState.doBackup !== false,
+      help: "反映前に比較先プレビューの設定を JSON で書き出します"
+    });
+    const srcPreview = makeCheck({
+      label: "比較元をプレビューから取得",
+      checked: memoryState.sourcePreview !== false,
+      help: "OFF にすると比較元の本番（運用中）設定を取得します"
+    });
+    const stop = makeCheck({
+      label: "エラー時に中断する",
+      checked: !!memoryState.stopOnError,
+      help: "途中で失敗したらそこで止めます（ロールバックはしません）"
+    });
     const optGrid = document.createElement("div");
     optGrid.className = "kus-lp__check-grid";
     optGrid.appendChild(backup.label);
     optGrid.appendChild(srcPreview.label);
     optGrid.appendChild(stop.label);
     cardOpt.body.appendChild(optGrid);
+    [backup.checkbox, srcPreview.checkbox, stop.checkbox].forEach((cb) => {
+      cb.addEventListener("change", saveState);
+    });
     const lookupDetails = makeDetails("Lookup AppID マッピング（任意）");
-    const lookupTa = makeTextarea({ rows: 3, code: true, placeholder: '{"旧AppID":"新AppID", ...}' });
+    const lookupTa = makeTextarea({
+      rows: 3,
+      code: true,
+      placeholder: '{"旧AppID":"新AppID", ...}',
+      value: memoryState.lookupMapText || ""
+    });
+    lookupTa.addEventListener("input", saveState);
     lookupDetails.body.appendChild(lookupTa);
+    const lookupHint = document.createElement("div");
+    lookupHint.className = "kus-lp__small";
+    lookupHint.style.marginTop = "6px";
+    lookupHint.textContent = "フィールドの参照アプリ（ルックアップ）を別 AppID に置換します。実行前にマッピング先 AppID の存在を自動チェックします。";
+    lookupDetails.body.appendChild(lookupHint);
     cardOpt.body.appendChild(lookupDetails.details);
     panel.body.insertBefore(cardOpt.card, panel.status);
+    const cardPreset = makeCard({ title: "プリセット（接続+スコープ）", soft: true });
+    const presetSelect = document.createElement("select");
+    presetSelect.className = "kus-lp__select";
+    presetSelect.style.minWidth = "180px";
+    const saveBtn = makeButton("現在の設定を保存", "sub");
+    const loadBtn = makeButton("読み込み", "sub");
+    const delBtn = makeButton("削除", "sub");
+    cardPreset.body.appendChild(makeRow([presetSelect, loadBtn, saveBtn, delBtn], { label: "名前" }));
+    const presetHint = document.createElement("div");
+    presetHint.className = "kus-lp__small";
+    presetHint.textContent = "プリセットはこのタブを閉じるまで保持されます（ブラウザに永続保存はしません）。";
+    cardPreset.body.appendChild(presetHint);
+    panel.body.insertBefore(cardPreset.card, panel.status);
+    function refreshPresetSelect() {
+      presetSelect.innerHTML = "";
+      const presets = memoryState.presets || [];
+      if (!presets.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "(プリセットなし)";
+        presetSelect.appendChild(opt);
+        presetSelect.disabled = true;
+        loadBtn.disabled = true;
+        delBtn.disabled = true;
+        return;
+      }
+      presetSelect.disabled = false;
+      loadBtn.disabled = false;
+      delBtn.disabled = false;
+      for (const p of presets) {
+        const opt = document.createElement("option");
+        opt.value = p.name;
+        opt.textContent = `${p.name} (src#${p.source.appId} → tgt#${p.target.appId})`;
+        presetSelect.appendChild(opt);
+      }
+    }
+    refreshPresetSelect();
+    saveBtn.addEventListener("click", () => {
+      const name = window.prompt("プリセット名を入力してください", "");
+      if (!name) return;
+      const trimmed = name.trim();
+      if (!trimmed) {
+        panel.setStatus("プリセット名が空です", "warn");
+        return;
+      }
+      const preset = {
+        name: trimmed,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        source: {
+          appId: srcApp.value.trim(),
+          guestId: srcGuest.value.trim(),
+          preview: srcPreview.checkbox.checked
+        },
+        target: {
+          appId: tgtApp.value.trim(),
+          guestId: tgtGuest.value.trim()
+        },
+        scopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value),
+        lookupMapText: lookupTa.value,
+        doBackup: backup.checkbox.checked,
+        stopOnError: stop.checkbox.checked
+      };
+      memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== trimmed);
+      memoryState.presets.unshift(preset);
+      refreshPresetSelect();
+      presetSelect.value = trimmed;
+      panel.setStatus(`プリセット「${trimmed}」を保存しました`, "ok");
+    });
+    loadBtn.addEventListener("click", () => {
+      const name = presetSelect.value;
+      const preset = (memoryState.presets || []).find((p) => p.name === name);
+      if (!preset) return;
+      srcApp.value = preset.source.appId;
+      srcGuest.value = preset.source.guestId;
+      tgtApp.value = preset.target.appId;
+      tgtGuest.value = preset.target.guestId;
+      srcPreview.checkbox.checked = !!preset.source.preview;
+      backup.checkbox.checked = !!preset.doBackup;
+      stop.checkbox.checked = !!preset.stopOnError;
+      lookupTa.value = preset.lookupMapText || "";
+      const wanted = new Set(preset.scopes || []);
+      chips.forEach((c) => {
+        c.checkbox.checked = wanted.has(c.checkbox.value);
+      });
+      refreshScopeCount();
+      refreshSameConnBanner();
+      saveState();
+      panel.setStatus(`プリセット「${name}」を読み込みました`, "ok");
+    });
+    delBtn.addEventListener("click", () => {
+      const name = presetSelect.value;
+      if (!name) return;
+      if (!window.confirm(`プリセット「${name}」を削除しますか？`)) return;
+      memoryState.presets = (memoryState.presets || []).filter((p) => p.name !== name);
+      refreshPresetSelect();
+      panel.setStatus(`プリセット「${name}」を削除しました`, "info");
+    });
+    const previewBtn = makeButton("差分プレビュー（読取のみ）", "ghost", { icon: "👁" });
+    previewBtn.style.width = "100%";
+    previewBtn.style.marginBottom = "8px";
+    panel.body.insertBefore(previewBtn, panel.status);
+    const previewCard = makeCard({ title: "差分プレビュー結果" });
+    previewCard.card.style.display = "none";
+    const previewBody = document.createElement("div");
+    previewCard.body.appendChild(previewBody);
+    panel.body.insertBefore(previewCard.card, panel.status);
+    previewBtn.addEventListener("click", () => {
+      const scopes = chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value);
+      if (!scopes.length) {
+        panel.setStatus("対象セクションを選択してください", "warn");
+        return;
+      }
+      return liteRun(panel, "差分プレビューを取得中…", async () => {
+        const result = await previewReflectStandalone(
+          {
+            sourceAppId: srcApp.value.trim(),
+            sourceGuestId: srcGuest.value.trim(),
+            sourcePreview: srcPreview.checkbox.checked,
+            targetAppId: tgtApp.value.trim(),
+            targetGuestId: tgtGuest.value.trim(),
+            scopes
+          },
+          (m) => panel.setStatus(m, "busy")
+        );
+        renderPreviewResult(previewBody, result);
+        previewCard.card.style.display = "block";
+      }, `差分プレビュー完了（${scopes.length}セクションを比較）`);
+    });
     const runBtn = makeButton("プレビュー反映を実行", "run", { icon: "⤴" });
     runBtn.classList.add("kus-lp__btn--danger");
     runBtn.classList.remove("kus-lp__btn--run");
@@ -1795,14 +2171,36 @@ ${contextLine}`);
     logCard.body.appendChild(logPre);
     logCard.card.style.display = "none";
     panel.body.insertBefore(logCard.card, panel.status);
+    const lastResultCard = makeCard({ title: "直近の実行結果", soft: true });
+    const lastResultBody = document.createElement("div");
+    lastResultBody.className = "kus-lp__small";
+    lastResultCard.body.appendChild(lastResultBody);
+    lastResultCard.card.style.display = "none";
+    panel.body.insertBefore(lastResultCard.card, panel.status);
+    renderLastResult();
+    function renderLastResult() {
+      const last = memoryState.lastResult;
+      if (!last) {
+        lastResultCard.card.style.display = "none";
+        return;
+      }
+      const stamp = new Date(last.at).toLocaleString();
+      const tone = last.ng > 0 ? "color:#9a3412" : "color:#065f46";
+      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.ng > 0 ? "⚠ 一部エラー" : "✓ 全成功"}</div><div>比較先 #${escapeHtml(last.appId || "-")} / OK ${last.ok} / NG ${last.ng}</div><div>${stamp}</div>`;
+      lastResultCard.card.style.display = "block";
+    }
     function saveState() {
       memoryState = {
+        ...memoryState,
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         sourcePreview: srcPreview.checkbox.checked,
-        stopOnError: stop.checkbox.checked
+        stopOnError: stop.checkbox.checked,
+        doBackup: backup.checkbox.checked,
+        selectedScopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value),
+        lookupMapText: lookupTa.value
       };
     }
     function parseLookupMap(text) {
@@ -1826,12 +2224,42 @@ ${contextLine}`);
         return;
       }
       saveState();
+      if (!confirmReflectRisk(panel, {
+        sourceAppId: srcApp.value.trim(),
+        sourceGuestId: srcGuest.value.trim(),
+        targetAppId: tgtApp.value.trim(),
+        targetGuestId: tgtGuest.value.trim(),
+        scopes,
+        doBackup: backup.checkbox.checked,
+        stopOnError: stop.checkbox.checked,
+        lookupMapText: lookupTa.value
+      })) {
+        panel.setStatus("反映実行をキャンセルしました", "info");
+        return;
+      }
       logCard.card.style.display = "block";
       logPre.style.display = "block";
       logPre.textContent = "";
       return liteRun(panel, "プレビュー反映 実行中…", async () => {
-        const lookupMap = parseLookupMap(lookupTa.value);
-        await runApplyPreviewStandalone(
+        let lookupMap;
+        try {
+          lookupMap = parseLookupMap(lookupTa.value);
+        } catch (e) {
+          throw e;
+        }
+        if (Object.keys(lookupMap).length) {
+          panel.setStatus("Lookup マッピング先 AppID を確認中…", "busy");
+          const pf = await preflightLookupMapStandalone(lookupMap, { targetGuestId: tgtGuest.value.trim() });
+          if (!pf.ok) {
+            const detail = pf.missing.map((m) => ` - ${m.from} → ${m.to || "(空)"}: ${m.reason}`).join("\n");
+            const cont = window.confirm(`Lookup 変換ルールに問題があります:
+${detail}
+
+[OK] 続行 / [キャンセル] 中断`);
+            if (!cont) throw new Error("Lookup プリフライトで中断しました");
+          }
+        }
+        const logs = await runApplyPreviewStandalone(
           {
             sourceAppId: srcApp.value.trim(),
             sourceGuestId: srcGuest.value.trim(),
@@ -1845,13 +2273,125 @@ ${contextLine}`);
             stopOnError: stop.checkbox.checked
           },
           (m, e) => panel.setStatus(m, e ? "err" : "busy"),
-          (logs) => {
-            logPre.textContent = logs.join("\n");
+          (logsArr) => {
+            logPre.textContent = logsArr.join("\n");
             logPre.scrollTop = logPre.scrollHeight;
           }
         );
+        const okCount = logs.filter((l) => l.startsWith("OK ")).length;
+        const ngCount = logs.filter((l) => l.startsWith("NG ")).length;
+        memoryState.lastResult = {
+          ok: okCount,
+          ng: ngCount,
+          at: Date.now(),
+          appId: tgtApp.value.trim()
+        };
+        renderLastResult();
       }, "プレビュー反映が完了しました（kintone管理画面でデプロイ実行してください）");
     });
+    refreshSameConnBanner();
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[ch]);
+  }
+  function renderPreviewResult(host, result) {
+    host.innerHTML = "";
+    const summary = document.createElement("div");
+    summary.className = "kus-lp__small";
+    summary.style.marginBottom = "8px";
+    summary.innerHTML = `<strong>${result.totalSections}</strong>セクション中 <span style="color:#9a3412;font-weight:600">差分あり ${result.changedSections}</span> / <span style="color:#065f46">差分なし ${result.sameSections}</span>` + (result.errorSections > 0 ? ` / <span style="color:#991b1b">取得失敗 ${result.errorSections}</span>` : "");
+    host.appendChild(summary);
+    if (!result.entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "kus-lp__small";
+      empty.textContent = "対象セクションがありません";
+      host.appendChild(empty);
+      return;
+    }
+    const table = document.createElement("table");
+    table.style.cssText = "width:100%;border-collapse:collapse;font-size:11.5px";
+    const thead = document.createElement("thead");
+    thead.innerHTML = '<tr><th style="text-align:left;padding:4px 6px;border-bottom:1px solid #e2e8f0">セクション</th><th style="text-align:left;padding:4px 6px;border-bottom:1px solid #e2e8f0">状態</th><th style="text-align:left;padding:4px 6px;border-bottom:1px solid #e2e8f0">詳細</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    for (const entry of result.entries) {
+      const tr = document.createElement("tr");
+      const labelTd = document.createElement("td");
+      labelTd.style.cssText = "padding:4px 6px;border-bottom:1px solid #f1f5f9";
+      labelTd.textContent = entry.label;
+      const statusTd = document.createElement("td");
+      statusTd.style.cssText = "padding:4px 6px;border-bottom:1px solid #f1f5f9;font-weight:600";
+      const detailTd = document.createElement("td");
+      detailTd.style.cssText = "padding:4px 6px;border-bottom:1px solid #f1f5f9;color:#475569";
+      detailTd.textContent = entry.message;
+      switch (entry.status) {
+        case "change":
+          statusTd.textContent = "差分あり";
+          statusTd.style.color = "#b45309";
+          break;
+        case "same":
+          statusTd.textContent = "一致";
+          statusTd.style.color = "#065f46";
+          break;
+        case "src-missing":
+        case "tgt-missing":
+        case "error":
+          statusTd.textContent = "取得失敗";
+          statusTd.style.color = "#991b1b";
+          break;
+      }
+      tr.appendChild(labelTd);
+      tr.appendChild(statusTd);
+      tr.appendChild(detailTd);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    host.appendChild(table);
+  }
+  function confirmReflectRisk(panel, ctx) {
+    if (!ctx.sourceAppId) {
+      panel.setStatus("比較元アプリIDを入力してください", "warn");
+      return false;
+    }
+    if (!ctx.targetAppId) {
+      panel.setStatus("比較先アプリIDを入力してください", "warn");
+      return false;
+    }
+    const issues = [];
+    const sameConn = ctx.sourceAppId === ctx.targetAppId && ctx.sourceGuestId === ctx.targetGuestId;
+    if (sameConn) {
+      issues.push("比較元と比較先が同一接続です（同じアプリID・ゲストID）");
+    }
+    if (ctx.scopes.length >= 10) {
+      issues.push(`対象セクション数が多いです（${ctx.scopes.length}件）`);
+    }
+    const riskySections = ["appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications", "processSettings"];
+    const riskyHit = ctx.scopes.filter((s) => riskySections.includes(s));
+    if (riskyHit.length) {
+      const labels = riskyHit.map((s) => SECTION_DEFS.find((d) => d.key === s)?.label || s).join(", ");
+      issues.push(`影響範囲の広いセクションを含みます: ${labels}`);
+    }
+    if (!ctx.doBackup) {
+      issues.push("「バックアップを保存」が OFF です（ロールバック用ファイルが残りません）");
+    }
+    const scopeLabels = ctx.scopes.map((s) => SECTION_DEFS.find((d) => d.key === s)?.label || s).join(", ");
+    const lines = [
+      "【最終確認: プレビュー反映】",
+      `比較元: #${ctx.sourceAppId}${ctx.sourceGuestId ? ` (guest:${ctx.sourceGuestId})` : ""}`,
+      `比較先: #${ctx.targetAppId}${ctx.targetGuestId ? ` (guest:${ctx.targetGuestId})` : ""} ※プレビュー`,
+      `対象セクション (${ctx.scopes.length}): ${scopeLabels}`,
+      `オプション: バックアップ=${ctx.doBackup ? "ON" : "OFF"} / エラー時中断=${ctx.stopOnError ? "ON" : "OFF"}${ctx.lookupMapText.trim() ? " / Lookup変換あり" : ""}`,
+      "",
+      issues.length ? `注意点:
+  - ${issues.join("\n  - ")}` : "注意点: なし"
+    ];
+    return window.confirm(lines.join("\n") + "\n\n本当に実行しますか？");
   }
 
   // src/entries/reflect-lite-entry.ts
