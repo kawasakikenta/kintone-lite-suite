@@ -43903,7 +43903,11 @@ ${diffMd}
       showToast("先にAPIを実行してください", "warn");
       return;
     }
-    downloadText(`api-response_${nowStamp()}.json`, prettyJson(lastApiTesterResponse), "application/json;charset=utf-8");
+    const doc = getToolDocument();
+    const method = String(doc.getElementById("u_apiTesterMethod")?.value || "GET").toUpperCase();
+    const rawPath = String(doc.getElementById("u_apiTesterPath")?.value || "").trim();
+    const pathSlug = rawPath.replace(/^\/+/, "").replace(/\.json$/i, "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "response";
+    downloadText(`api-${method.toLowerCase()}_${pathSlug}_${nowStamp()}.json`, prettyJson(lastApiTesterResponse), "application/json;charset=utf-8");
     setStatus("レスポンスをJSONとして保存しました");
   }
   function exportApiTesterHistory() {
