@@ -31767,6 +31767,7 @@ ${detail}`);
                       <button type="button" class="btn sub" data-act="kusExportDiffJson" title="差分スナップショット（rows / fetchIssues / filters）を JSON で保存">📸 差分スナップショット保存</button>
                       <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
+                      <button type="button" class="btn sub" data-act="kusCopyDiffMd" title="差分 Markdown 表をクリップボードへコピー（PR・チャット貼付向け）">📋 差分 MD コピー</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffCsv" title="差分結果を Excel 用 CSV (UTF-8 BOM) で保存">📊 差分 CSV</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙付きPDFとして印刷ダイアログを開きます">📕 差分 PDF（表紙付き）</button>
@@ -41592,21 +41593,39 @@ ${body}`;
   var DIFF_TYPE_LABEL = { added: "追加", removed: "削除", changed: "変更", moved: "移動", same: "同一" };
   var DIFF_SEVERITY_LABEL = { high: "高", mid: "中", low: "低", info: "情報" };
   var localizeKintoneEnumsInText2 = localizeKintoneEnumsInText;
-  function exportDiffAsMarkdown() {
+  function buildDiffMarkdownText() {
     const rows = state.lastDiffRows || [];
-    if (!rows.length) {
-      pushToast("差分が未取得です", { tone: "warn" });
-      return;
-    }
-    const md = "# 差分レポート\n\n生成: " + (/* @__PURE__ */ new Date()).toISOString() + "\n\n| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n|---|---|---|---|---|---|\n" + rows.map((r) => {
+    return "# 差分レポート\n\n生成: " + (/* @__PURE__ */ new Date()).toISOString() + "\n\n| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n|---|---|---|---|---|---|\n" + rows.map((r) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
       const oldStr = localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r)));
       const newStr = localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r)));
       return `| ${typeLabel} | ${diffSectionLabel(r)} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
     }).join("\n");
+  }
+  function exportDiffAsMarkdown() {
+    const rows = state.lastDiffRows || [];
+    if (!rows.length) {
+      pushToast("差分が未取得です", { tone: "warn" });
+      return;
+    }
+    const md = buildDiffMarkdownText();
     triggerDownload2(new Blob([md], { type: "text/markdown" }), `kus-diff_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`);
     pushToast("Markdown を保存しました", { tone: "ok" });
+  }
+  async function copyDiffAsMarkdown() {
+    const rows = state.lastDiffRows || [];
+    if (!rows.length) {
+      pushToast("差分が未取得です", { tone: "warn" });
+      return;
+    }
+    const md = buildDiffMarkdownText();
+    try {
+      await navigator.clipboard.writeText(md);
+      pushToast("Markdown をクリップボードへコピーしました", { tone: "ok" });
+    } catch (_e) {
+      pushToast("クリップボードへコピーできませんでした", { tone: "error" });
+    }
   }
   function exportDiffAsCsvForExcel() {
     const rows = state.lastDiffRows || [];
@@ -42648,6 +42667,9 @@ ${body}`;
       } else if (act === "kusExportDiffMd") {
         e.preventDefault();
         exportDiffAsMarkdown();
+      } else if (act === "kusCopyDiffMd") {
+        e.preventDefault();
+        copyDiffAsMarkdown();
       } else if (act === "kusExportDiffCsv") {
         e.preventDefault();
         exportDiffAsCsvForExcel();

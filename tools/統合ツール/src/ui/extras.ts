@@ -1799,21 +1799,38 @@ const DIFF_SEVERITY_LABEL: Record<string, string> = { high: '高', mid: '中', l
 
 const localizeKintoneEnumsInText = kusEnumsLocalize;
 
-export function exportDiffAsMarkdown(): void {
+function buildDiffMarkdownText(): string {
   const rows = state.lastDiffRows || [];
-  if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
-  const md = '# 差分レポート\n\n生成: ' + new Date().toISOString() + '\n\n'
+  return '# 差分レポート\n\n生成: ' + new Date().toISOString() + '\n\n'
     + '| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n'
     + '|---|---|---|---|---|---|\n'
     + rows.map((r: any) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-    const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
-    const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
-    return `| ${typeLabel} | ${diffSectionLabel(r)} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
-  }).join('\n');
+      const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
+      const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
+      return `| ${typeLabel} | ${diffSectionLabel(r)} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
+    }).join('\n');
+}
+
+export function exportDiffAsMarkdown(): void {
+  const rows = state.lastDiffRows || [];
+  if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
+  const md = buildDiffMarkdownText();
   triggerDownload(new Blob([md], { type: 'text/markdown' }), `kus-diff_${new Date().toISOString().slice(0, 10)}.md`);
   pushToast('Markdown を保存しました', { tone: 'ok' });
+}
+
+export async function copyDiffAsMarkdown(): Promise<void> {
+  const rows = state.lastDiffRows || [];
+  if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
+  const md = buildDiffMarkdownText();
+  try {
+    await navigator.clipboard.writeText(md);
+    pushToast('Markdown をクリップボードへコピーしました', { tone: 'ok' });
+  } catch (_e) {
+    pushToast('クリップボードへコピーできませんでした', { tone: 'error' });
+  }
 }
 export function exportDiffAsCsvForExcel(): void {
   const rows = state.lastDiffRows || [];
@@ -2685,6 +2702,9 @@ export function initExtras(): void {
     } else if (act === 'kusExportDiffMd') {
       e.preventDefault();
       exportDiffAsMarkdown();
+    } else if (act === 'kusCopyDiffMd') {
+      e.preventDefault();
+      copyDiffAsMarkdown();
     } else if (act === 'kusExportDiffCsv') {
       e.preventDefault();
       exportDiffAsCsvForExcel();
