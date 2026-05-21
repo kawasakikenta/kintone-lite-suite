@@ -32868,6 +32868,7 @@ ${detail}`);
                 <button type="button" class="btn" data-act="fetchJsConfig" title="比較元アプリIDで customize.json を取得">JS/CSS設定を取得</button>
                 <button type="button" class="btn sub" data-act="loadTargetJsConfig" title="比較先アプリIDの customize.json を取得（反映前の現状確認）">比較先の現在値を読込</button>
                 <button type="button" class="btn sub" data-act="exportJsConfigJson">JSON出力</button>
+                <button type="button" class="btn sub" data-act="copyJsConfigJson" title="現在のテキストエリアの JSON をクリップボードへコピー">JSONコピー</button>
                 <button type="button" class="btn sub" data-act="importJsConfigJson">JSONファイル読込</button>
                 <button type="button" class="btn warn" data-act="applyJsConfig" title="下のJSONを比較先プレビューへ">比較先(プレビュー)へ反映</button>
               </div>
@@ -39677,6 +39678,18 @@ ${detail}`);
       if (act === "exportJsConfigJson" && typeof runExportJsConfig2 === "function") return withGuard(runExportJsConfig2);
       if (act === "importJsConfigJson") return ui.jsconfigFile.click();
       if (act === "applyJsConfig" && typeof runApplyJsConfig2 === "function") return withGuard(runApplyJsConfig2);
+      if (act === "copyJsConfigJson") {
+        return withGuard(async () => {
+          const text = (ui.jsconfigJson?.value || "").trim();
+          if (!text) throw new Error("コピーする JSON がありません");
+          try {
+            await navigator.clipboard.writeText(text);
+            setStatus("JS/CSS 設定 JSON をクリップボードへコピーしました");
+          } catch (_e) {
+            throw new Error("クリップボードへコピーできませんでした");
+          }
+        });
+      }
       if (act === "renderProcessFlow" && typeof runRenderProcessFlow2 === "function") return withGuard(runRenderProcessFlow2);
       if (act === "generateERDiagram" && typeof runGenerateERDiagram2 === "function") return withGuard(runGenerateERDiagram2);
       if (act === "exportERDiagramHtml" && typeof runExportERDiagramHtml2 === "function") return withGuard(runExportERDiagramHtml2);

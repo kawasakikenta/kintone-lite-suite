@@ -3323,6 +3323,18 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'exportJsConfigJson' && typeof runExportJsConfig === 'function') return withGuard(runExportJsConfig);
     if (act === 'importJsConfigJson') return ui.jsconfigFile.click();
     if (act === 'applyJsConfig' && typeof runApplyJsConfig === 'function') return withGuard(runApplyJsConfig);
+    if (act === 'copyJsConfigJson') {
+      return withGuard(async () => {
+        const text = (ui.jsconfigJson?.value || '').trim();
+        if (!text) throw new Error('コピーする JSON がありません');
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus('JS/CSS 設定 JSON をクリップボードへコピーしました');
+        } catch (_e) {
+          throw new Error('クリップボードへコピーできませんでした');
+        }
+      });
+    }
 
     // ----- Other tabs -----
     if (act === 'renderProcessFlow' && typeof runRenderProcessFlow === 'function') return withGuard(runRenderProcessFlow);
