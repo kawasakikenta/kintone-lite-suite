@@ -1785,8 +1785,14 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">プロセス管理の可視化（比較元アプリ）</div>
               <div class="muted" style="margin-top:8px;line-height:1.55">比較元アプリのプロセス管理設定からフロー図（Mermaid）を生成し表示します。</div>
-              <div class="btns">
+              <div class="btns" style="display:flex;flex-wrap:wrap;gap:6px;">
                 <button type="button" class="btn" data-act="renderProcessFlow" title="下にMermaidソースとプレビューを表示">フロー図を取得・描画</button>
+                <button type="button" class="btn sub" data-act="copyMermaidSource" title="Mermaid 構文をクリップボードへコピー">構文コピー</button>
+                <button type="button" class="btn sub" data-act="downloadMermaidSource" title="Mermaid 構文を .mmd ファイルとして保存">構文DL</button>
+                <button type="button" class="btn sub" data-act="downloadFlowSvg" title="生成された SVG を保存">SVG保存</button>
+              </div>
+              <div id="u_processFlowSummary" style="margin-top:10px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#0f172a;">
+                <span style="color:#94a3b8;font-style:italic;">フロー図を取得すると、ステータス・アクションの統計を表示します</span>
               </div>
               <div class="grid2" style="margin-top:8px">
                 <div>
@@ -1816,11 +1822,18 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   </div>
                   <div>
                     <label>アクション実行</label>
-                    <div style="display:flex;gap:4px">
-                      <select id="u_simActionSelect" style="flex:1" disabled title="利用可能なアクションが入ります"><option value="">-- 開始してください --</option></select>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                      <select id="u_simActionSelect" style="flex:1;min-width:140px;" disabled title="利用可能なアクションが入ります"><option value="">-- 開始してください --</option></select>
                       <button type="button" class="btn ok" data-act="simExecuteAction">実行</button>
+                      <button type="button" class="btn sub" data-act="simUndo" title="一手戻す">↶ 戻す</button>
                       <button type="button" class="btn sub" data-act="simStart">最初から</button>
                     </div>
+                  </div>
+                </div>
+                <div style="margin-top:12px">
+                  <label style="font-size:11px;color:#475569;">アクション履歴</label>
+                  <div id="u_simHistoryList" style="margin-top:4px;max-height:180px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;background:#fff;">
+                    <div style="color:#94a3b8;font-size:11px;font-style:italic;padding:6px;">履歴はありません（最初から実行で開始）</div>
                   </div>
                 </div>
                 </div>

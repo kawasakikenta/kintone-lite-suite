@@ -33188,8 +33188,14 @@ ${detail}`);
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">プロセス管理の可視化（比較元アプリ）</div>
               <div class="muted" style="margin-top:8px;line-height:1.55">比較元アプリのプロセス管理設定からフロー図（Mermaid）を生成し表示します。</div>
-              <div class="btns">
+              <div class="btns" style="display:flex;flex-wrap:wrap;gap:6px;">
                 <button type="button" class="btn" data-act="renderProcessFlow" title="下にMermaidソースとプレビューを表示">フロー図を取得・描画</button>
+                <button type="button" class="btn sub" data-act="copyMermaidSource" title="Mermaid 構文をクリップボードへコピー">構文コピー</button>
+                <button type="button" class="btn sub" data-act="downloadMermaidSource" title="Mermaid 構文を .mmd ファイルとして保存">構文DL</button>
+                <button type="button" class="btn sub" data-act="downloadFlowSvg" title="生成された SVG を保存">SVG保存</button>
+              </div>
+              <div id="u_processFlowSummary" style="margin-top:10px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#0f172a;">
+                <span style="color:#94a3b8;font-style:italic;">フロー図を取得すると、ステータス・アクションの統計を表示します</span>
               </div>
               <div class="grid2" style="margin-top:8px">
                 <div>
@@ -33219,11 +33225,18 @@ ${detail}`);
                   </div>
                   <div>
                     <label>アクション実行</label>
-                    <div style="display:flex;gap:4px">
-                      <select id="u_simActionSelect" style="flex:1" disabled title="利用可能なアクションが入ります"><option value="">-- 開始してください --</option></select>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                      <select id="u_simActionSelect" style="flex:1;min-width:140px;" disabled title="利用可能なアクションが入ります"><option value="">-- 開始してください --</option></select>
                       <button type="button" class="btn ok" data-act="simExecuteAction">実行</button>
+                      <button type="button" class="btn sub" data-act="simUndo" title="一手戻す">↶ 戻す</button>
                       <button type="button" class="btn sub" data-act="simStart">最初から</button>
                     </div>
+                  </div>
+                </div>
+                <div style="margin-top:12px">
+                  <label style="font-size:11px;color:#475569;">アクション履歴</label>
+                  <div id="u_simHistoryList" style="margin-top:4px;max-height:180px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;background:#fff;">
+                    <div style="color:#94a3b8;font-size:11px;font-style:italic;padding:6px;">履歴はありません（最初から実行で開始）</div>
                   </div>
                 </div>
                 </div>
@@ -36738,6 +36751,10 @@ ${detail}`);
       deleteTemplate: deleteTemplate2,
       runSimStart: runSimStart2,
       runSimExecuteAction: runSimExecuteAction2,
+      runSimUndo: runSimUndo2,
+      copyMermaidSource: copyMermaidSource2,
+      downloadMermaidSource: downloadMermaidSource2,
+      downloadFlowSvg: downloadFlowSvg2,
       runApiTester: runApiTester2,
       clearApiTesterHistory: clearApiTesterHistory2,
       copyApiTesterCurl: copyApiTesterCurl2,
@@ -39585,6 +39602,10 @@ ${detail}`);
       if (act === "fieldGraphExportPng" && typeof fieldGraphExportPng2 === "function") return fieldGraphExportPng2();
       if (act === "simStart" && typeof runSimStart2 === "function") return withGuard(runSimStart2);
       if (act === "simExecuteAction" && typeof runSimExecuteAction2 === "function") return withGuard(runSimExecuteAction2);
+      if (act === "simUndo" && typeof runSimUndo2 === "function") return runSimUndo2();
+      if (act === "copyMermaidSource" && typeof copyMermaidSource2 === "function") return copyMermaidSource2();
+      if (act === "downloadMermaidSource" && typeof downloadMermaidSource2 === "function") return downloadMermaidSource2();
+      if (act === "downloadFlowSvg" && typeof downloadFlowSvg2 === "function") return downloadFlowSvg2();
       if (act === "clearApiTesterHistory" && typeof clearApiTesterHistory2 === "function") {
         clearApiTesterHistory2();
         setStatus("APIテスターの履歴をクリアしました");
@@ -42889,6 +42910,7 @@ ${diffMd}
   var pfSimStates = null;
   var pfSimActions = null;
   var pfSimCurrent = null;
+  var pfSimHistory = [];
   var mermaidLoadPromise = null;
   var mermaidRenderSeq = 0;
   var MERMAID_CDN_URLS = [
@@ -43075,13 +43097,42 @@ ${diffMd}
       elSelEl.innerHTML = available.map((a) => `<option value="${esc(a.name)}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join("");
     }
   }
+  function nowTimeLabel() {
+    const d = /* @__PURE__ */ new Date();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
+  }
+  function renderSimHistory() {
+    const el = getToolDocument().getElementById("u_simHistoryList");
+    if (!el) return;
+    if (!pfSimHistory.length) {
+      el.innerHTML = '<div style="color:#94a3b8;font-size:11px;font-style:italic;padding:6px;">履歴はありません（最初から実行で開始）</div>';
+      return;
+    }
+    const rows = pfSimHistory.map((h, idx) => {
+      return `<div style="display:flex;gap:6px;align-items:center;padding:4px 6px;border-bottom:1px dashed #e2e8f0;font-size:11px;">
+      <span style="color:#94a3b8;width:24px;flex-shrink:0;">#${idx + 1}</span>
+      <span style="color:#94a3b8;flex-shrink:0;font-variant-numeric:tabular-nums;">${esc(h.at)}</span>
+      <span style="color:#0f172a;font-weight:600;">${esc(h.from)}</span>
+      <span style="color:#64748b;">→</span>
+      <span style="color:#1e40af;background:#dbeafe;padding:1px 5px;border-radius:4px;">${esc(h.action)}</span>
+      <span style="color:#64748b;">→</span>
+      <span style="color:#0f172a;font-weight:600;">${esc(h.to)}</span>
+    </div>`;
+    }).join("");
+    el.innerHTML = rows;
+  }
   async function runSimStart() {
     if (!pfSimStates) return;
     const startStates = new Set(Object.keys(pfSimStates));
-    for (const a of pfSimActions) if (a.to) startStates.delete(a.to);
+    for (const a of pfSimActions || []) if (a.to) startStates.delete(a.to);
     const startSt = [...startStates][0] || Object.keys(pfSimStates)[0];
     if (!startSt) return;
     pfSimCurrent = startSt;
+    pfSimHistory = [];
+    renderSimHistory();
     updateProcessSimulationUI();
     setStatus("シミュレーション開始: " + startSt);
     await redrawProcessFlow(startSt);
@@ -43091,12 +43142,96 @@ ${diffMd}
     if (!sel || sel.disabled) return;
     const actionName = sel.value;
     if (!actionName) return;
-    const action = pfSimActions.find((a) => a.from === pfSimCurrent && a.name === actionName);
+    const action = (pfSimActions || []).find((a) => a.from === pfSimCurrent && a.name === actionName);
     if (!action) return;
+    const prev = pfSimCurrent;
     pfSimCurrent = action.to;
+    pfSimHistory.push({ from: prev || "?", action: actionName, to: action.to, at: nowTimeLabel() });
+    renderSimHistory();
     updateProcessSimulationUI();
     setStatus(`アクション「${actionName}」実行 → 「${action.to}」`);
     await redrawProcessFlow(action.to);
+  }
+  function runSimUndo() {
+    if (!pfSimHistory.length) {
+      showToast("巻き戻せる履歴がありません", "warn");
+      return;
+    }
+    const last = pfSimHistory.pop();
+    pfSimCurrent = last ? last.from : pfSimCurrent;
+    renderSimHistory();
+    updateProcessSimulationUI();
+    setStatus(`巻き戻し: 現在ステータス ${pfSimCurrent}`);
+    redrawProcessFlow(pfSimCurrent || null);
+  }
+  async function copyMermaidSource() {
+    const text = getToolDocument().getElementById("u_mermaidText")?.value || "";
+    if (!text.trim()) {
+      showToast("先にフロー図を取得してください", "warn");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("Mermaid構文をコピーしました");
+    } catch (_e) {
+      showToast("クリップボードへコピーできませんでした", "error");
+    }
+  }
+  function downloadMermaidSource() {
+    const text = getToolDocument().getElementById("u_mermaidText")?.value || "";
+    if (!text.trim()) {
+      showToast("先にフロー図を取得してください", "warn");
+      return;
+    }
+    downloadText(`process-flow_${nowStamp()}.mmd`, text, "text/plain;charset=utf-8");
+    setStatus("Mermaid構文を保存しました");
+  }
+  function downloadFlowSvg() {
+    const viewEl = getToolDocument().getElementById("u_mermaidView");
+    const svg = viewEl?.querySelector("svg");
+    if (!svg) {
+      showToast("先にフロー図を取得してください（SVG未生成）", "warn");
+      return;
+    }
+    const clone = svg.cloneNode(true);
+    if (!clone.getAttribute("xmlns")) clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    const xml = new XMLSerializer().serializeToString(clone);
+    downloadText(`process-flow_${nowStamp()}.svg`, xml, "image/svg+xml;charset=utf-8");
+    setStatus("フロー図をSVGとして保存しました");
+  }
+  function renderProcessFlowSummary() {
+    const el = getToolDocument().getElementById("u_processFlowSummary");
+    if (!el) return;
+    if (!pfSimStates || !pfSimActions) {
+      el.innerHTML = '<span style="color:#94a3b8;font-style:italic;">フロー図を取得すると、ステータス・アクションの統計を表示します</span>';
+      return;
+    }
+    const stateNames = Object.keys(pfSimStates);
+    const stateCount = stateNames.length;
+    const actionCount = pfSimActions.length;
+    const startStates = new Set(stateNames);
+    for (const a of pfSimActions) if (a.to) startStates.delete(a.to);
+    const endStates = new Set(stateNames);
+    for (const s of stateNames) {
+      if (pfSimActions.some((a) => a.from === s)) endStates.delete(s);
+    }
+    const branching = stateNames.filter((s) => pfSimActions.filter((a) => a.from === s).length >= 2);
+    const orphanFrom = pfSimActions.filter((a) => !pfSimStates[a.from]);
+    const orphanTo = pfSimActions.filter((a) => !pfSimStates[a.to]);
+    const issues = [];
+    if (!startStates.size) issues.push("始点（受信側のないステータス）が見つかりません");
+    if (!endStates.size) issues.push("終端（次のアクションのないステータス）が見つかりません");
+    if (orphanFrom.length) issues.push(`未定義ステータスから出るアクション ${orphanFrom.length} 件`);
+    if (orphanTo.length) issues.push(`未定義ステータスへ入るアクション ${orphanTo.length} 件`);
+    const chip = (label, value, color) => `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;background:${color}1a;color:${color};font-size:11px;font-weight:600;">${esc(label)} <span style="font-variant-numeric:tabular-nums;">${value}</span></span>`;
+    const issueHtml = issues.length ? `<div style="margin-top:6px;color:#b45309;font-size:11px;line-height:1.5;">⚠ ${issues.map(esc).join(" / ")}</div>` : "";
+    el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+    ${chip("ステータス", stateCount, "#0f172a")}
+    ${chip("アクション", actionCount, "#1e40af")}
+    ${chip("始点", startStates.size, "#16a34a")}
+    ${chip("終端", endStates.size, "#9333ea")}
+    ${chip("分岐ステータス", branching.length, "#d97706")}
+  </div>${issueHtml}`;
   }
   async function runRenderProcessFlow() {
     const c = commonParams();
@@ -43113,15 +43248,21 @@ ${diffMd}
         pfSimStates = null;
         pfSimActions = null;
         pfSimCurrent = null;
+        pfSimHistory = [];
         updateProcessSimulationUI();
+        renderSimHistory();
+        renderProcessFlowSummary();
         return;
       }
       pfSimStates = res.states || {};
       pfSimActions = res.actions || [];
       pfSimCurrent = null;
+      pfSimHistory = [];
       setStatus("フロー図 生成中...");
       await redrawProcessFlow(null);
       updateProcessSimulationUI();
+      renderSimHistory();
+      renderProcessFlowSummary();
       setStatus("フロー図 生成完了");
     } catch (e) {
       ui.mermaidView.innerHTML = `<div style="color:#b91c1c">エラー: ${esc(e.message || String(e))}</div>`;
@@ -45842,6 +45983,10 @@ ${field.label}` : code,
       deleteTemplate,
       runSimStart,
       runSimExecuteAction,
+      runSimUndo,
+      copyMermaidSource,
+      downloadMermaidSource,
+      downloadFlowSvg,
       runApiTester,
       clearApiTesterHistory,
       copyApiTesterCurl,

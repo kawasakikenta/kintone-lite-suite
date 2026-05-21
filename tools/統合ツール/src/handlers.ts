@@ -422,6 +422,10 @@ export function setupEventHandlers(injected: any = {}) {
     deleteTemplate,
     runSimStart,
     runSimExecuteAction,
+    runSimUndo,
+    copyMermaidSource,
+    downloadMermaidSource,
+    downloadFlowSvg,
     runApiTester,
     clearApiTesterHistory,
     copyApiTesterCurl,
@@ -3363,6 +3367,12 @@ export function setupEventHandlers(injected: any = {}) {
     // ----- Simulation -----
     if (act === 'simStart' && typeof runSimStart === 'function') return withGuard(runSimStart);
     if (act === 'simExecuteAction' && typeof runSimExecuteAction === 'function') return withGuard(runSimExecuteAction);
+    if (act === 'simUndo' && typeof runSimUndo === 'function') return runSimUndo();
+
+    // ----- Process flow utilities -----
+    if (act === 'copyMermaidSource' && typeof copyMermaidSource === 'function') return copyMermaidSource();
+    if (act === 'downloadMermaidSource' && typeof downloadMermaidSource === 'function') return downloadMermaidSource();
+    if (act === 'downloadFlowSvg' && typeof downloadFlowSvg === 'function') return downloadFlowSvg();
 
     // ----- API tester -----
     if (act === 'clearApiTesterHistory' && typeof clearApiTesterHistory === 'function') {

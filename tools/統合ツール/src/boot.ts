@@ -53,7 +53,15 @@ import {
   runBatchJsConfigDownload,
   renderCustomizeResult
 } from './tabs/jsconfig.js';
-import { runRenderProcessFlow, runSimStart, runSimExecuteAction } from './tabs/process.js';
+import {
+  runRenderProcessFlow,
+  runSimStart,
+  runSimExecuteAction,
+  runSimUndo,
+  copyMermaidSource,
+  downloadMermaidSource,
+  downloadFlowSvg
+} from './tabs/process.js';
 import {
   runBatchProcess,
   runBatchFileDownload,
@@ -393,6 +401,10 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     deleteTemplate,
     runSimStart,
     runSimExecuteAction,
+    runSimUndo,
+    copyMermaidSource,
+    downloadMermaidSource,
+    downloadFlowSvg,
     runApiTester,
     clearApiTesterHistory,
     copyApiTesterCurl,
