@@ -20,6 +20,14 @@ import {
   loadJSZip
 } from './record.js';
 
+function formatFileSize(bytes: any): string {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
 export function renderCustomizeResult(data) {
   if (!data) {
     ui.jsconfigResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">データがありません</div>';
@@ -32,26 +40,42 @@ export function renderCustomizeResult(data) {
     { label: 'モバイル CSS', items: data.mobile?.css || [] }
   ];
   const totalCount = categories.reduce((s, c) => s + c.items.length, 0);
-  const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">合計: ${totalCount}件 (Desktop JS:${categories[0].items.length} CSS:${categories[1].items.length} / Mobile JS:${categories[2].items.length} CSS:${categories[3].items.length})</div>`;
+  let urlTotal = 0;
+  let fileTotal = 0;
+  for (const cat of categories) {
+    for (const item of cat.items) {
+      if (item?.type === 'URL') urlTotal += 1;
+      else fileTotal += 1;
+    }
+  }
+  const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">
+    <div>合計: ${totalCount}件 (Desktop JS:${categories[0].items.length} CSS:${categories[1].items.length} / Mobile JS:${categories[2].items.length} CSS:${categories[3].items.length})</div>
+    <div style="margin-top:2px;color:#64748b;">タイプ: URL ${urlTotal} / FILE ${fileTotal}</div>
+  </div>`;
   const rows = [];
   for (const cat of categories) {
     if (!cat.items.length) continue;
-    for (const item of cat.items) {
+    cat.items.forEach((item: any, idx: number) => {
       const fileType = item.type || '-';
       const src = item.type === 'URL' ? (item.url || '-') : (item.file?.name || item.file?.fileKey || '(アップロードファイル)');
+      const sizeLabel = item.type !== 'URL' ? formatFileSize(item?.file?.size) : '';
+      const srcCell = item.type === 'URL'
+        ? `<a href="${esc(src)}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:underline;word-break:break-all">${esc(src)}</a>`
+        : `<span style="word-break:break-all">${esc(src)}</span>${sizeLabel ? `<span style="margin-left:6px;color:#64748b;font-size:10px;">(${esc(sizeLabel)})</span>` : ''}`;
       rows.push(`<tr>
+        <td style="color:#94a3b8;font-variant-numeric:tabular-nums;font-size:10px;">${idx + 1}</td>
         <td>${esc(cat.label)}</td>
         <td><span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;background:${fileType === 'URL' ? '#dbeafe' : '#dcfce7'};color:${fileType === 'URL' ? '#1d4ed8' : '#166534'}">${esc(fileType)}</span></td>
-        <td style="word-break:break-all">${esc(src)}</td>
+        <td>${srcCell}</td>
       </tr>`);
-    }
+    });
   }
   if (!rows.length) {
     ui.jsconfigResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#15803d">JS/CSS設定は空です。</div>';
     return;
   }
   ui.jsconfigResult.innerHTML = `${header}<table>
-    <thead><tr><th>カテゴリ</th><th>タイプ</th><th>ソース</th></tr></thead>
+    <thead><tr><th style="width:30px">#</th><th>カテゴリ</th><th style="width:60px">タイプ</th><th>ソース</th></tr></thead>
     <tbody>${rows.join('')}</tbody>
   </table>`;
 }
