@@ -444,6 +444,20 @@ export function beautifyApiTesterBody(): void {
   }
 }
 
+export function minifyApiTesterBody(): void {
+  const bodyEl = getToolDocument().getElementById('u_apiTesterBody') as HTMLTextAreaElement | null;
+  if (!bodyEl) return;
+  const raw = (bodyEl.value || '').trim();
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    bodyEl.value = JSON.stringify(parsed);
+    setStatus('Body をミニファイしました');
+  } catch (e) {
+    showToast('JSON が不正です: ' + (e as any).message, 'error');
+  }
+}
+
 export async function copyApiTesterResponse(): Promise<void> {
   if (lastApiTesterResponse == null) {
     showToast('先にAPIを実行してください', 'warn');

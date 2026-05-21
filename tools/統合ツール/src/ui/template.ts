@@ -1751,7 +1751,10 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <div style="margin-top:8px">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                       <label title="GET のときは無視されることがあります" style="margin:0">リクエストBody (JSONフォーマット)</label>
-                      <button type="button" class="btn sub" data-act="beautifyApiTesterBody" title="Body の JSON を整形・検証します" style="padding:2px 8px;font-size:11px;">JSON整形</button>
+                      <span style="display:flex;gap:4px;">
+                        <button type="button" class="btn sub" data-act="beautifyApiTesterBody" title="Body の JSON を整形・検証します" style="padding:2px 8px;font-size:11px;">整形</button>
+                        <button type="button" class="btn sub" data-act="minifyApiTesterBody" title="Body の JSON を1行にミニファイします" style="padding:2px 8px;font-size:11px;">最小化</button>
+                      </span>
                     </div>
                     <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace;margin-top:4px;" placeholder='{"app": 1, "id": 100}'></textarea>
                   </div>

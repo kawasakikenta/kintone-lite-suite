@@ -83,6 +83,7 @@ import {
   renderApiTesterHistory,
   initApiTesterEnhancements,
   beautifyApiTesterBody,
+  minifyApiTesterBody,
   copyApiTesterResponse,
   downloadApiTesterResponse,
   exportApiTesterHistory
@@ -411,6 +412,7 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     clearApiTesterHistory,
     copyApiTesterCurl,
     beautifyApiTesterBody,
+    minifyApiTesterBody,
     copyApiTesterResponse,
     downloadApiTesterResponse,
     exportApiTesterHistory,

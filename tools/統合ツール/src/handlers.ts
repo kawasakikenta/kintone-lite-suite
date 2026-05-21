@@ -432,6 +432,7 @@ export function setupEventHandlers(injected: any = {}) {
     clearApiTesterHistory,
     copyApiTesterCurl,
     beautifyApiTesterBody,
+    minifyApiTesterBody,
     copyApiTesterResponse,
     downloadApiTesterResponse,
     exportApiTesterHistory,
@@ -3411,6 +3412,7 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'copyApiTesterCurl' && typeof copyApiTesterCurl === 'function') return copyApiTesterCurl();
     if (act === 'runApiTester' && typeof runApiTester === 'function') return runApiTester();
     if (act === 'beautifyApiTesterBody' && typeof beautifyApiTesterBody === 'function') return beautifyApiTesterBody();
+    if (act === 'minifyApiTesterBody' && typeof minifyApiTesterBody === 'function') return minifyApiTesterBody();
     if (act === 'copyApiTesterResponse' && typeof copyApiTesterResponse === 'function') return copyApiTesterResponse();
     if (act === 'downloadApiTesterResponse' && typeof downloadApiTesterResponse === 'function') return downloadApiTesterResponse();
     if (act === 'exportApiTesterHistory' && typeof exportApiTesterHistory === 'function') return exportApiTesterHistory();

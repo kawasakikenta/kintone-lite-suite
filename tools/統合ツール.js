@@ -33235,7 +33235,10 @@ ${detail}`);
                   <div style="margin-top:8px">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                       <label title="GET のときは無視されることがあります" style="margin:0">リクエストBody (JSONフォーマット)</label>
-                      <button type="button" class="btn sub" data-act="beautifyApiTesterBody" title="Body の JSON を整形・検証します" style="padding:2px 8px;font-size:11px;">JSON整形</button>
+                      <span style="display:flex;gap:4px;">
+                        <button type="button" class="btn sub" data-act="beautifyApiTesterBody" title="Body の JSON を整形・検証します" style="padding:2px 8px;font-size:11px;">整形</button>
+                        <button type="button" class="btn sub" data-act="minifyApiTesterBody" title="Body の JSON を1行にミニファイします" style="padding:2px 8px;font-size:11px;">最小化</button>
+                      </span>
                     </div>
                     <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace;margin-top:4px;" placeholder='{"app": 1, "id": 100}'></textarea>
                   </div>
@@ -36875,6 +36878,7 @@ ${detail}`);
       clearApiTesterHistory: clearApiTesterHistory2,
       copyApiTesterCurl: copyApiTesterCurl2,
       beautifyApiTesterBody: beautifyApiTesterBody2,
+      minifyApiTesterBody: minifyApiTesterBody2,
       copyApiTesterResponse: copyApiTesterResponse2,
       downloadApiTesterResponse: downloadApiTesterResponse2,
       exportApiTesterHistory: exportApiTesterHistory2,
@@ -39756,6 +39760,7 @@ ${detail}`);
       if (act === "copyApiTesterCurl" && typeof copyApiTesterCurl2 === "function") return copyApiTesterCurl2();
       if (act === "runApiTester" && typeof runApiTester2 === "function") return runApiTester2();
       if (act === "beautifyApiTesterBody" && typeof beautifyApiTesterBody2 === "function") return beautifyApiTesterBody2();
+      if (act === "minifyApiTesterBody" && typeof minifyApiTesterBody2 === "function") return minifyApiTesterBody2();
       if (act === "copyApiTesterResponse" && typeof copyApiTesterResponse2 === "function") return copyApiTesterResponse2();
       if (act === "downloadApiTesterResponse" && typeof downloadApiTesterResponse2 === "function") return downloadApiTesterResponse2();
       if (act === "exportApiTesterHistory" && typeof exportApiTesterHistory2 === "function") return exportApiTesterHistory2();
@@ -43885,6 +43890,19 @@ ${diffMd}
       showToast("JSON が不正です: " + e.message, "error");
     }
   }
+  function minifyApiTesterBody() {
+    const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
+    if (!bodyEl) return;
+    const raw = (bodyEl.value || "").trim();
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      bodyEl.value = JSON.stringify(parsed);
+      setStatus("Body をミニファイしました");
+    } catch (e) {
+      showToast("JSON が不正です: " + e.message, "error");
+    }
+  }
   async function copyApiTesterResponse() {
     if (lastApiTesterResponse == null) {
       showToast("先にAPIを実行してください", "warn");
@@ -46198,6 +46216,7 @@ ${field.label}` : code,
       clearApiTesterHistory,
       copyApiTesterCurl,
       beautifyApiTesterBody,
+      minifyApiTesterBody,
       copyApiTesterResponse,
       downloadApiTesterResponse,
       exportApiTesterHistory,
