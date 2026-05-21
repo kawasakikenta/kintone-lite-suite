@@ -340,12 +340,25 @@ function setPresetHint(text) {
 function applyApiTesterPreset(presetId: string) {
   const preset = API_TESTER_PRESETS.find(p => p.id === presetId);
   if (!preset) return;
-  const methodEl = getToolDocument().getElementById('u_apiTesterMethod') as HTMLInputElement | HTMLSelectElement | null;
-  const pathEl = getToolDocument().getElementById('u_apiTesterPath') as HTMLInputElement | null;
-  const bodyEl = getToolDocument().getElementById('u_apiTesterBody') as HTMLTextAreaElement | null;
+  const doc = getToolDocument();
+  const methodEl = doc.getElementById('u_apiTesterMethod') as HTMLInputElement | HTMLSelectElement | null;
+  const pathEl = doc.getElementById('u_apiTesterPath') as HTMLInputElement | null;
+  const bodyEl = doc.getElementById('u_apiTesterBody') as HTMLTextAreaElement | null;
+  // 比較元アプリID/ゲストIDが入力されていれば、プリセットの app=1 等をその値で置換して
+  // ユーザーが手で書き換える手間を省く（GET 系は読み取り専用なので安全）。
+  const sourceAppId = (doc.getElementById('u_sourceApp') as HTMLInputElement | null)?.value?.trim();
+  let body = preset.body;
+  if (sourceAppId && body && typeof body === 'object' && !Array.isArray(body)) {
+    body = { ...body };
+    if ('app' in (body as any) && /^\d+$/.test(sourceAppId)) (body as any).app = Number(sourceAppId);
+    if ('id' in (body as any) && /^\d+$/.test(sourceAppId) && preset.path === '/k/v1/app.json') (body as any).id = Number(sourceAppId);
+    if ('apps' in (body as any) && Array.isArray((body as any).apps) && /^\d+$/.test(sourceAppId)) {
+      (body as any).apps = [Number(sourceAppId)];
+    }
+  }
   if (methodEl) methodEl.value = preset.method;
   if (pathEl) pathEl.value = preset.path;
-  if (bodyEl) bodyEl.value = prettyJson(preset.body);
+  if (bodyEl) bodyEl.value = prettyJson(body);
   setPresetHint(preset.hint);
 }
 

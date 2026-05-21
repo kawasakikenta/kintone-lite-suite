@@ -43817,12 +43817,23 @@ ${diffMd}
   function applyApiTesterPreset(presetId) {
     const preset = API_TESTER_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
-    const methodEl = getToolDocument().getElementById("u_apiTesterMethod");
-    const pathEl = getToolDocument().getElementById("u_apiTesterPath");
-    const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
+    const doc = getToolDocument();
+    const methodEl = doc.getElementById("u_apiTesterMethod");
+    const pathEl = doc.getElementById("u_apiTesterPath");
+    const bodyEl = doc.getElementById("u_apiTesterBody");
+    const sourceAppId = doc.getElementById("u_sourceApp")?.value?.trim();
+    let body = preset.body;
+    if (sourceAppId && body && typeof body === "object" && !Array.isArray(body)) {
+      body = { ...body };
+      if ("app" in body && /^\d+$/.test(sourceAppId)) body.app = Number(sourceAppId);
+      if ("id" in body && /^\d+$/.test(sourceAppId) && preset.path === "/k/v1/app.json") body.id = Number(sourceAppId);
+      if ("apps" in body && Array.isArray(body.apps) && /^\d+$/.test(sourceAppId)) {
+        body.apps = [Number(sourceAppId)];
+      }
+    }
     if (methodEl) methodEl.value = preset.method;
     if (pathEl) pathEl.value = preset.path;
-    if (bodyEl) bodyEl.value = prettyJson(preset.body);
+    if (bodyEl) bodyEl.value = prettyJson(body);
     setPresetHint(preset.hint);
   }
   function initApiTesterEnhancements() {
