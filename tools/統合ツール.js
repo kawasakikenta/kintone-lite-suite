@@ -41655,7 +41655,19 @@ ${body}`;
       if (severityCounts[s] != null) severityCounts[s] += 1;
     }
     const actualDiffCount = typeCounts.added + typeCounts.removed + typeCounts.changed + typeCounts.moved;
+    const sourceBundle = state.lastSourceBundle;
+    const targetBundle = state.lastTargetBundle;
+    const contextLines = [];
+    if (sourceBundle?.appId) {
+      const srcLabel = `App ${sourceBundle.appId}${sourceBundle.guestId ? ` / Guest ${sourceBundle.guestId}` : ""}${sourceBundle.preview ? " / preview" : ""}`;
+      contextLines.push(`- 比較元: ${srcLabel}`);
+    }
+    if (targetBundle?.appId) {
+      const tgtLabel = `App ${targetBundle.appId}${targetBundle.guestId ? ` / Guest ${targetBundle.guestId}` : ""}${targetBundle.preview ? " / preview" : ""}`;
+      contextLines.push(`- 比較先: ${tgtLabel}`);
+    }
     const summaryLines = [
+      ...contextLines,
       `- 件数: 差分 ${actualDiffCount} 件 / 同一 ${typeCounts.same} 件`,
       `- 種別: 追加 ${typeCounts.added} / 削除 ${typeCounts.removed} / 変更 ${typeCounts.changed} / 移動 ${typeCounts.moved}`,
       `- 重要度: 高 ${severityCounts.high} / 中 ${severityCounts.mid} / 低 ${severityCounts.low} / 情報 ${severityCounts.info}`
