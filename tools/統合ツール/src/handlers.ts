@@ -3295,6 +3295,18 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
     if (act === 'importFieldJson') return ui.fieldJsonFile.click();
+    if (act === 'copyFieldJson') {
+      return withGuard(async () => {
+        const text = (ui.fieldJson?.value || '').trim();
+        if (!text) throw new Error('コピーする JSON がありません');
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus('フィールド JSON をクリップボードへコピーしました');
+        } catch (_e) {
+          throw new Error('クリップボードへコピーできませんでした');
+        }
+      });
+    }
     if (act === 'exportFieldJson') {
       return withGuard(async () => {
         const { nowStamp, downloadText } = await import('./utils.js');

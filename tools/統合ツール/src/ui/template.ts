@@ -1244,6 +1244,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <button type="button" class="btn sub" data-act="formatFieldJson" style="margin-left:8px">JSON整形</button>
                 <button type="button" class="btn sub" data-act="importFieldJson">JSONファイル読込</button>
                 <button type="button" class="btn sub" data-act="exportFieldJson">JSON保存</button>
+                <button type="button" class="btn sub" data-act="copyFieldJson" title="現在のテキストエリアの JSON をクリップボードへコピー">JSONコピー</button>
               </div>
                 </div>
               </details>

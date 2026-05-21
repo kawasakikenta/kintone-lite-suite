@@ -32728,6 +32728,7 @@ ${detail}`);
                 <button type="button" class="btn sub" data-act="formatFieldJson" style="margin-left:8px">JSON整形</button>
                 <button type="button" class="btn sub" data-act="importFieldJson">JSONファイル読込</button>
                 <button type="button" class="btn sub" data-act="exportFieldJson">JSON保存</button>
+                <button type="button" class="btn sub" data-act="copyFieldJson" title="現在のテキストエリアの JSON をクリップボードへコピー">JSONコピー</button>
               </div>
                 </div>
               </details>
@@ -39651,6 +39652,18 @@ ${detail}`);
         return;
       }
       if (act === "importFieldJson") return ui.fieldJsonFile.click();
+      if (act === "copyFieldJson") {
+        return withGuard(async () => {
+          const text = (ui.fieldJson?.value || "").trim();
+          if (!text) throw new Error("コピーする JSON がありません");
+          try {
+            await navigator.clipboard.writeText(text);
+            setStatus("フィールド JSON をクリップボードへコピーしました");
+          } catch (_e) {
+            throw new Error("クリップボードへコピーできませんでした");
+          }
+        });
+      }
       if (act === "exportFieldJson") {
         return withGuard(async () => {
           const { nowStamp: nowStamp2, downloadText: downloadText2 } = await Promise.resolve().then(() => (init_utils(), utils_exports));
