@@ -3098,11 +3098,159 @@ ${contextLine}`);
     const out = JSON.stringify(value, null, 2);
     return out == null ? String(value) : out;
   }
+  function isSubtableFieldMap(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const entries = Object.values(value);
+    if (!entries.length) return false;
+    return entries.every((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+      return "code" in item || "type" in item || "label" in item;
+    });
+  }
+  function formatSubtableChildLine(child, idx) {
+    const label = child?.label ?? child?.name ?? child?.code ?? "（未設定）";
+    const typeLabel = child?.type ? String(child.type) : "フィールド";
+    const code = child?.code ?? "-";
+    return `${idx + 1}. ${label} / ${typeLabel} / ${code}`;
+  }
+  function formatSubtableChildrenText(fields) {
+    const entries = Object.values(fields || {});
+    if (!entries.length) return "（項目なし）";
+    return entries.map(formatSubtableChildLine).join("\n");
+  }
+  function formatSubtableSnapshotText(value) {
+    const head = [
+      `フィールド名: ${value.label ?? value.name ?? "（未設定）"}`,
+      `フィールドコード: ${value.code ?? "-"}`,
+      "フィールド型: テーブル (SUBTABLE)"
+    ];
+    return `${head.join("\n")}
+----
+テーブル内の項目:
+${formatSubtableChildrenText(value.fields)}`;
+  }
+  function isSubtableFieldsPath(path) {
+    return typeof path === "string" && /^fieldSettings\.properties\.[^.[\]]+\.fields(?:\.[^.[\]]+)?$/.test(path);
+  }
+  function isSubtableFieldRootPath(path) {
+    return typeof path === "string" && /^fieldSettings\.properties\.[^.[\]]+$/.test(path);
+  }
+  function stripLabelHtmlTags(text) {
+    if (typeof text !== "string" || text.indexOf("<") === -1) return text;
+    const lineBreaks = text.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n");
+    const stripped = lineBreaks.replace(/<[^>]*>/g, "");
+    const decoded = stripped.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    return decoded.replace(/\n{3,}/g, "\n\n").trim();
+  }
+  function sanitizeHtmlBearingProps(value) {
+    if (value == null || typeof value !== "object") return value;
+    if (Array.isArray(value)) {
+      return value.map((item) => sanitizeHtmlBearingProps(item));
+    }
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (typeof v === "string" && (k === "label" || k === "name")) {
+        out[k] = stripLabelHtmlTags(v);
+      } else if (v && typeof v === "object") {
+        out[k] = sanitizeHtmlBearingProps(v);
+      } else {
+        out[k] = v;
+      }
+    }
+    return out;
+  }
+  function stringifyRowValueForDiff(value, path) {
+    if (value === void 0) return "（未定義）";
+    if (typeof value === "string" && /customizeSettings\..+\.file\._body$/.test(String(path || ""))) {
+      return value;
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      if (value.type === "SUBTABLE" && value.fields && typeof value.fields === "object") {
+        return formatSubtableSnapshotText(sanitizeHtmlBearingProps(value));
+      }
+      if (isSubtableFieldsPath(path) && isSubtableFieldMap(value)) {
+        return `テーブル内の項目:
+${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
+      }
+      if (isSubtableFieldRootPath(path) && isSubtableFieldMap(value)) {
+        return `テーブル内の項目:
+${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
+      }
+      if (typeof value.label === "string" && value.label.includes("<")) {
+        return stringifyForDiff(sanitizeHtmlBearingProps(value));
+      }
+    }
+    if (typeof path === "string" && path.startsWith("layoutSettings")) {
+      return stringifyForDiff(sanitizeHtmlBearingProps(value));
+    }
+    if (typeof value === "string" && typeof path === "string" && (/\.label$/.test(path) || /^layoutSettings\b/.test(path))) {
+      return stripLabelHtmlTags(value);
+    }
+    return stringifyForDiff(value);
+  }
   function getDiffExportContentLabel(mode) {
     return mode === "withCompared" ? "行データ + 比較設定" : "行データのみ";
   }
   function shouldIncludeComparedContent(mode) {
     return mode === "withCompared";
+  }
+  function buildCharDiffHtml(leftText, rightText) {
+    const segmentGraphemes = (text) => {
+      const normalized = String(text ?? "");
+      if (!normalized) return [];
+      const IntlAny = Intl;
+      if (typeof IntlAny !== "undefined" && typeof IntlAny.Segmenter === "function") {
+        try {
+          const segmenter = new IntlAny.Segmenter("ja", { granularity: "grapheme" });
+          return Array.from(segmenter.segment(normalized), (seg) => seg.segment);
+        } catch (_) {
+        }
+      }
+      return Array.from(normalized);
+    };
+    const a = segmentGraphemes(leftText);
+    const b = segmentGraphemes(rightText);
+    if (!a.length || !b.length) return null;
+    if (a.length * b.length > CHAR_DIFF_MAX_CELLS) return null;
+    const dp = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1));
+    for (let i2 = 1; i2 <= a.length; i2++) {
+      for (let j2 = 1; j2 <= b.length; j2++) {
+        dp[i2][j2] = a[i2 - 1] === b[j2 - 1] ? dp[i2 - 1][j2 - 1] + 1 : Math.max(dp[i2 - 1][j2], dp[i2][j2 - 1]);
+      }
+    }
+    const ops = [];
+    let i = a.length;
+    let j = b.length;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+        ops.push({ type: "same", ch: a[i - 1] });
+        i -= 1;
+        j -= 1;
+      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        ops.push({ type: "add", ch: b[j - 1] });
+        j -= 1;
+      } else if (i > 0) {
+        ops.push({ type: "del", ch: a[i - 1] });
+        i -= 1;
+      } else {
+        break;
+      }
+    }
+    ops.reverse();
+    let left = "";
+    let right = "";
+    for (const op of ops) {
+      if (op.type === "same") {
+        const ch = esc(op.ch);
+        left += ch;
+        right += ch;
+      } else if (op.type === "del") {
+        left += `<mark class="diff-char-del">${esc(op.ch)}</mark>`;
+      } else {
+        right += `<mark class="diff-char-add">${esc(op.ch)}</mark>`;
+      }
+    }
+    return { left, right };
   }
   function buildDiffExportComparedBundles(sourceBundle, targetBundle, scopes) {
     const compareScopes = [...new Set((scopes || []).filter(Boolean))];
@@ -6140,6 +6288,11 @@ ${contextLine}`);
     };
   }
 
+  // src/entries/diff-lite-ui.ts
+  init_constants();
+  init_export();
+  init_utils();
+
   // src/tabs/diff-export-standalone.ts
   init_utils();
   init_engine();
@@ -6839,14 +6992,131 @@ ${contextLine}`);
     ["reminderNotifications", "リマインダー", false],
     ["categories", "カテゴリ", false]
   ];
+  var TYPE_LABEL = { added: "追加", removed: "削除", changed: "変更", moved: "移動", same: "同一" };
+  var SEVERITY_LABEL = { high: "高", medium: "中", low: "低" };
+  var RESULT_CSS_ID = "kus-diff-lite-result-styles";
+  var RESULT_CSS = `
+.kus-dl-result{font:12px/1.5 ui-monospace,Menlo,monospace;color:#0f172a}
+.kus-dl-result__summary{margin:0 0 6px;font-family:-apple-system,Segoe UI,sans-serif;font-size:11.5px;color:#475569;display:flex;flex-wrap:wrap;gap:6px 12px}
+.kus-dl-result__summary strong{color:#0f172a}
+.kus-dl-section{border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;overflow:hidden;background:#fff}
+.kus-dl-section>summary{padding:6px 10px;background:#f8fafc;font:600 12px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:8px}
+.kus-dl-section>summary::-webkit-details-marker{display:none}
+.kus-dl-section>summary::before{content:"▸";display:inline-block;margin-right:6px;color:#64748b;transition:transform .15s}
+.kus-dl-section[open]>summary::before{transform:rotate(90deg)}
+.kus-dl-section__count{color:#64748b;font-weight:400}
+.kus-dl-section__body{padding:6px}
+.kus-dl-row{border-bottom:1px solid #f1f5f9;padding:6px 8px;font-family:-apple-system,Segoe UI,sans-serif;font-size:11.5px}
+.kus-dl-row:last-child{border-bottom:none}
+.kus-dl-row__head{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:4px}
+.kus-dl-row__path{font-family:ui-monospace,Menlo,monospace;color:#334155;word-break:break-all;flex:1;min-width:120px}
+.kus-dl-row__cols{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-family:ui-monospace,Menlo,monospace;font-size:11px}
+.kus-dl-pre{margin:0;padding:6px 8px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow:auto}
+.kus-dl-pre.del{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}
+.kus-dl-pre.add{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}
+.kus-dl-pre.empty{color:#94a3b8;font-style:italic}
+.kus-dl-badge{display:inline-block;padding:1px 6px;border-radius:4px;font:600 10.5px/1.4 -apple-system,Segoe UI,sans-serif;letter-spacing:.02em}
+.kus-dl-badge--added{background:#dcfce7;color:#166534}
+.kus-dl-badge--removed{background:#fee2e2;color:#991b1b}
+.kus-dl-badge--changed{background:#dbeafe;color:#1d4ed8}
+.kus-dl-badge--moved{background:#fef3c7;color:#92400e}
+.kus-dl-badge--same{background:#e2e8f0;color:#475569}
+.kus-dl-sev{display:inline-block;padding:0 5px;border-radius:3px;font:600 10px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-sev--high{background:#fee2e2;color:#991b1b}
+.kus-dl-sev--medium{background:#fef3c7;color:#92400e}
+.kus-dl-sev--low{background:#e0f2fe;color:#0c4a6e}
+.kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:12px;background:#f8fafc;border-radius:8px}
+.kus-dl-result mark.diff-char-del{background:#fecaca;color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through}
+.kus-dl-result mark.diff-char-add{background:#bbf7d0;color:#14532d;border-radius:2px;padding:0 1px}
+`;
+  function ensureResultStyles() {
+    if (document.getElementById(RESULT_CSS_ID)) return;
+    const st = document.createElement("style");
+    st.id = RESULT_CSS_ID;
+    st.textContent = RESULT_CSS;
+    document.head.appendChild(st);
+  }
+  function rowSearchText(row) {
+    const safe = (v) => {
+      try {
+        return v === void 0 ? "" : JSON.stringify(v);
+      } catch {
+        return String(v);
+      }
+    };
+    return [row.section || "", row.sectionKey || "", row.severity || "", row.path || "", row.label || "", safe(row.left), safe(row.right)].join("\n").toLowerCase();
+  }
+  function rowMatchesFilters(row, filters) {
+    if (filters.section && row.sectionKey !== filters.section) return false;
+    if (filters.type) {
+      if (filters.type === "moved") {
+        if (!row.moved) return false;
+      } else if (row.type !== filters.type) {
+        return false;
+      }
+    }
+    if (filters.severity && String(row.severity || "low") !== filters.severity) return false;
+    if (filters.keyword && !rowSearchText(row).includes(filters.keyword)) return false;
+    return true;
+  }
+  function rowColumnsHtml(row, useCharDiff) {
+    const leftStr = stringifyRowValueForDiff(row.left, row.path);
+    const rightStr = stringifyRowValueForDiff(row.right, row.path);
+    if (row.type === "added") {
+      return { left: '<pre class="kus-dl-pre empty">（なし）</pre>', right: `<pre class="kus-dl-pre add">${esc(rightStr)}</pre>` };
+    }
+    if (row.type === "removed") {
+      return { left: `<pre class="kus-dl-pre del">${esc(leftStr)}</pre>`, right: '<pre class="kus-dl-pre empty">（なし）</pre>' };
+    }
+    if (row.type === "same") {
+      return { left: `<pre class="kus-dl-pre empty">${esc(leftStr)}</pre>`, right: '<pre class="kus-dl-pre empty">（同一）</pre>' };
+    }
+    if (useCharDiff) {
+      const charDiff = buildCharDiffHtml(leftStr, rightStr);
+      if (charDiff) {
+        return { left: `<pre class="kus-dl-pre del">${charDiff.left}</pre>`, right: `<pre class="kus-dl-pre add">${charDiff.right}</pre>` };
+      }
+    }
+    return { left: `<pre class="kus-dl-pre del">${esc(leftStr)}</pre>`, right: `<pre class="kus-dl-pre add">${esc(rightStr)}</pre>` };
+  }
+  function renderRowsHtml(rows, useCharDiff, summary) {
+    if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ""}</div>`;
+    const bySection = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = r.sectionKey || "(その他)";
+      if (!bySection.has(key)) bySection.set(key, []);
+      bySection.get(key).push(r);
+    }
+    const orderedKeys = [];
+    for (const def of SECTION_DEFS) if (bySection.has(def.key)) orderedKeys.push(def.key);
+    for (const k of bySection.keys()) if (!orderedKeys.includes(k)) orderedKeys.push(k);
+    const parts = [];
+    parts.push(`<div class="kus-dl-result__summary">${summary}</div>`);
+    for (const k of orderedKeys) {
+      const list = bySection.get(k);
+      const label = SECTION_DEFS.find((d) => d.key === k)?.label || k;
+      parts.push(`<details class="kus-dl-section" open><summary>${esc(label)} <span class="kus-dl-section__count">${list.length}件</span></summary><div class="kus-dl-section__body">`);
+      for (const r of list) {
+        const cols = rowColumnsHtml(r, useCharDiff);
+        const typeBadge = `<span class="kus-dl-badge kus-dl-badge--${esc(r.type || "same")}">${esc(TYPE_LABEL[r.type] || r.type || "")}</span>`;
+        const sevBadge = r.severity ? `<span class="kus-dl-sev kus-dl-sev--${esc(r.severity)}">${esc(SEVERITY_LABEL[r.severity] || r.severity)}</span>` : "";
+        const labelHtml = r.label ? `<span style="color:#475569">${esc(r.label)}</span>` : "";
+        parts.push(`<div class="kus-dl-row"><div class="kus-dl-row__head">${typeBadge}${sevBadge}<span class="kus-dl-row__path">${esc(r.path || "")}</span>${labelHtml}</div><div class="kus-dl-row__cols">${cols.left}${cols.right}</div></div>`);
+      }
+      parts.push("</div></details>");
+    }
+    return parts.join("");
+  }
   function mountDiffLitePanel(runDiffStandalone2) {
+    ensureResultStyles();
     const panel = createLitePanel({
       id: "kus-diff-lite",
       title: "差分比較",
       subtitle: "2 アプリの設定差分を取得し、JSON / HTML / バンドル / パッチで保存",
       accent: "diff",
       badges: [{ label: "Lite" }, { label: "出力対応" }],
-      hint: "API 取得・差分計算・出力をこのスクリプトに同梱しています。<strong>統合ツール.js は不要</strong>。"
+      hint: "API 取得・差分計算・出力をこのスクリプトに同梱しています。<strong>統合ツール.js は不要</strong>。",
+      wide: true
     });
     const srcApp = makeInput({ placeholder: "アプリID", width: "id" });
     const srcGuest = makeInput({ placeholder: "ゲストID", width: "guest" });
@@ -6892,13 +7162,57 @@ ${contextLine}`);
     panel.body.insertBefore(advDetails.details, panel.status);
     const runBtn = makeButton("差分比較を実行", "run", { icon: "◎" });
     panel.body.insertBefore(runBtn, panel.status);
+    const cardFilter = makeCard({ title: "結果の絞り込み", soft: true });
+    cardFilter.card.style.display = "none";
+    const filterSection = makeSelect([["", "全セクション"]]);
+    const filterType = makeSelect([
+      ["", "全種別"],
+      ["added", "追加"],
+      ["removed", "削除"],
+      ["changed", "変更"],
+      ["moved", "移動"],
+      ["same", "同一"]
+    ]);
+    const filterSeverity = makeSelect([
+      ["", "全重要度"],
+      ["high", "高"],
+      ["medium", "中"],
+      ["low", "低"]
+    ]);
+    const filterSearch = makeInput({ placeholder: "パス・値・ラベルで検索", width: "wide" });
+    const filterClear = makeButton("クリア", "ghost");
+    cardFilter.body.appendChild(makeRow([filterSection, filterType, filterSeverity, filterClear], { label: "フィルタ" }));
+    cardFilter.body.appendChild(makeRow(filterSearch, { label: "検索" }));
+    const charDiffCb = makeCheck({ label: "文字単位ハイライト", checked: true, help: "変更行で「どこが変わったか」を文字単位で強調表示します" });
+    cardFilter.body.appendChild(makeRow(charDiffCb.label));
+    filterClear.addEventListener("click", () => {
+      filterSection.value = "";
+      filterType.value = "";
+      filterSeverity.value = "";
+      filterSearch.value = "";
+      rerender();
+    });
+    [filterSection, filterType, filterSeverity].forEach((el) => el.addEventListener("change", () => rerender()));
+    filterSearch.addEventListener("input", () => rerender());
+    charDiffCb.checkbox.addEventListener("change", () => rerender());
+    panel.body.insertBefore(cardFilter.card, panel.status);
+    const cardResult = makeCard({ title: "結果", soft: true });
+    cardResult.card.style.display = "none";
+    const resultBox = document.createElement("div");
+    resultBox.className = "kus-dl-result";
+    cardResult.body.appendChild(resultBox);
+    panel.body.insertBefore(cardResult.card, panel.status);
     const cardOut = makeCard({ title: "ファイル出力", number: 3, soft: true });
-    cardOut.body.appendChild(makeNote("比較完了後に利用できます。レポートに生設定を含めるか選べます。"));
+    cardOut.body.appendChild(makeNote("比較完了後に利用できます。レポートに生設定を含めるか、出力対象を絞るかを選べます。"));
+    const expRange = makeSelect([
+      ["all", "全件"],
+      ["filtered", "表示中（フィルタ適用後）"]
+    ], "all");
     const expMode = makeSelect([
       ["diffOnly", "行データのみ"],
       ["withCompared", "行データ + 比較セクションの設定"]
     ], "diffOnly");
-    cardOut.body.appendChild(makeRow(expMode, { label: "レポート" }));
+    cardOut.body.appendChild(makeRow([expRange, expMode], { label: "範囲 / 内容" }));
     const grid = document.createElement("div");
     grid.className = "kus-lp__btn-grid";
     const bJson = makeButton("差分 JSON", "sub", { icon: "↓" });
@@ -6912,6 +7226,7 @@ ${contextLine}`);
     cardOut.body.appendChild(grid);
     panel.body.insertBefore(cardOut.card, panel.status);
     let cache = null;
+    let summaryText = "";
     function readForm() {
       return {
         source: { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked },
@@ -6926,25 +7241,66 @@ ${contextLine}`);
         }
       };
     }
-    function printRows(rows) {
-      const max = 400;
-      const lines = [];
-      for (let i = 0; i < rows.length && i < max; i++) {
-        const r = rows[i];
-        lines.push(`${r.sectionKey || ""}	${r.type || ""}	${r.path || ""}	${r.label || ""}`);
-      }
-      let txt = lines.join("\n");
-      if (rows.length > max) txt += `
-... 他 ${rows.length - max} 件`;
-      panel.setResult(txt || "差分はありません");
+    function currentFilters() {
+      return {
+        section: filterSection.value,
+        type: filterType.value,
+        severity: filterSeverity.value,
+        keyword: filterSearch.value.trim().toLowerCase()
+      };
     }
-    function exportCtx() {
+    function filteredRows() {
+      if (!cache) return [];
+      const f = currentFilters();
+      return cache.rows.filter((r) => rowMatchesFilters(r, f));
+    }
+    function refreshFilterSectionOptions() {
+      if (!cache) return;
+      const set = new Set(cache.rows.map((r) => r.sectionKey).filter(Boolean));
+      const prev = filterSection.value;
+      filterSection.innerHTML = "";
+      const optAll = document.createElement("option");
+      optAll.value = "";
+      optAll.textContent = "全セクション";
+      filterSection.appendChild(optAll);
+      for (const def of SECTION_DEFS) {
+        if (set.has(def.key)) {
+          const o = document.createElement("option");
+          o.value = def.key;
+          o.textContent = def.label;
+          filterSection.appendChild(o);
+        }
+      }
+      if ([...filterSection.options].some((o) => o.value === prev)) filterSection.value = prev;
+    }
+    function rerender() {
+      if (!cache) {
+        resultBox.innerHTML = "";
+        cardResult.card.style.display = "none";
+        cardFilter.card.style.display = "none";
+        return;
+      }
+      const rows = filteredRows();
+      const summary = `<strong>${rows.length}</strong>件 表示中 / 全 <strong>${cache.rows.length}</strong>件 ・ ${summaryText}`;
+      resultBox.innerHTML = renderRowsHtml(rows, charDiffCb.checkbox.checked, summary);
+      cardResult.card.style.display = "block";
+      cardFilter.card.style.display = "block";
+    }
+    function exportCtx(forceAll = false) {
       if (!cache) throw new Error("先に差分比較を実行してください");
-      return { ...cache, exportContentMode: expMode.value || "diffOnly" };
+      const rows = forceAll || expRange.value === "all" ? cache.rows : filteredRows();
+      return {
+        ...cache,
+        rows,
+        exportContentMode: expMode.value || "diffOnly"
+      };
     }
     runBtn.addEventListener("click", () => {
       cache = null;
-      panel.setResult("");
+      summaryText = "";
+      resultBox.innerHTML = "";
+      cardResult.card.style.display = "none";
+      cardFilter.card.style.display = "none";
       const f = readForm();
       if (!f.scopes.length) {
         panel.setStatus("比較セクションを 1 つ以上選択してください", "warn");
@@ -6969,24 +7325,26 @@ ${contextLine}`);
           ignoreKeys: f.ignoreKeys,
           normalizationPresetState: f.normalizationPresetState
         };
-        printRows(out.rows);
-        panel.setStatus(`${out.summary?.text || "完了"} — ファイル出力ボタンから保存できます`, "ok");
+        summaryText = out.summary?.text || "完了";
+        refreshFilterSectionOptions();
+        rerender();
+        panel.setStatus(`${summaryText} — フィルタで絞り込み、ファイル出力ボタンから保存できます`, "ok");
       });
     });
     bJson.addEventListener("click", () => {
       try {
         runExportDiffJsonStandalone(exportCtx());
-        panel.setStatus("差分 JSON をダウンロードしました", "ok");
+        panel.setStatus(`差分 JSON をダウンロードしました（${expRange.value === "all" ? "全件" : "表示中"}）`, "ok");
       } catch (e) {
-        panel.setStatus(`エラー: ${e.message || String(e)}`, "err");
+        panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
       }
     });
     bHtml.addEventListener("click", () => {
       try {
         runExportDiffHtmlStandalone(exportCtx());
-        panel.setStatus("差分 HTML をダウンロードしました", "ok");
+        panel.setStatus(`差分 HTML をダウンロードしました（${expRange.value === "all" ? "全件" : "表示中"}）`, "ok");
       } catch (e) {
-        panel.setStatus(`エラー: ${e.message || String(e)}`, "err");
+        panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
       }
     });
     bBundle.addEventListener("click", () => {
@@ -6995,16 +7353,17 @@ ${contextLine}`);
         runExportBundleJsonStandalone(cache.sourceBundle, cache.targetBundle);
         panel.setStatus("バンドル JSON をダウンロードしました", "ok");
       } catch (e) {
-        panel.setStatus(`エラー: ${e.message || String(e)}`, "err");
+        panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
       }
     });
     bPatch.addEventListener("click", () => {
       try {
         if (!cache) throw new Error("先に差分比較を実行してください");
-        runExportPatchJsonStandalone(cache.rows, cache.sourceBundle, cache.targetBundle);
-        panel.setStatus("パッチ JSON をダウンロードしました", "ok");
+        const rows = expRange.value === "all" ? cache.rows : filteredRows();
+        runExportPatchJsonStandalone(rows, cache.sourceBundle, cache.targetBundle);
+        panel.setStatus(`パッチ JSON をダウンロードしました（${expRange.value === "all" ? "全件" : "表示中"}）`, "ok");
       } catch (e) {
-        panel.setStatus(`エラー: ${e.message || String(e)}`, "err");
+        panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
       }
     });
   }

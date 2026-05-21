@@ -1831,6 +1831,24 @@ ${contextLine}`);
     const cardTarget = makeCard({ title: "対象アプリ", number: 1 });
     const appTa = makeTextarea({ rows: 3, code: true, placeholder: "アプリID（カンマ・改行・スペース区切り）" });
     cardTarget.body.appendChild(appTa);
+    const useCurrentBtn = makeButton("現在のアプリを追加", "sub");
+    useCurrentBtn.addEventListener("click", () => {
+      const id = String(DEFAULT_APP_ID || "").trim();
+      if (!id) {
+        panel.setStatus("現在のアプリ ID が取得できません", "warn");
+        return;
+      }
+      const cur = appTa.value.trim();
+      const lines = cur ? cur.split(/\s*[\s,]+\s*/).filter(Boolean) : [];
+      if (lines.includes(id)) {
+        panel.setStatus(`アプリ #${id} は既に対象に含まれています`, "info");
+        return;
+      }
+      lines.push(id);
+      appTa.value = lines.join("\n");
+      panel.setStatus(`アプリ #${id} を対象に追加しました`, "ok");
+    });
+    cardTarget.actions.appendChild(useCurrentBtn);
     const searchKw = makeInput({ placeholder: "アプリ名の一部", width: "wide" });
     const searchBtn = makeButton("検索", "sub");
     cardTarget.body.appendChild(makeRow([searchKw, searchBtn], { label: "アプリ検索" }));

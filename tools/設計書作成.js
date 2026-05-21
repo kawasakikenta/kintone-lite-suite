@@ -4188,6 +4188,83 @@ ${detail}`);
     }
     setStatus(`設計書ZIP出力完了（${appIds.length}件）`);
   }
+  function simpleLineDiffLite(oStr, nStr) {
+    const oLines = oStr.split("\n");
+    const nLines = nStr.split("\n");
+    const result = [];
+    let i = 0, j = 0;
+    while (i < oLines.length || j < nLines.length) {
+      if (i < oLines.length && j < nLines.length && oLines[i] === nLines[j]) {
+        result.push("  " + oLines[i]);
+        i++;
+        j++;
+      } else {
+        let rsI = -1, rsJ = -1;
+        for (let k = 1; k < 60; k++) {
+          if (i + k < oLines.length && oLines[i + k] === nLines[j]) {
+            rsI = i + k;
+            rsJ = j;
+            break;
+          }
+          if (j + k < nLines.length && oLines[i] === nLines[j + k]) {
+            rsI = i;
+            rsJ = j + k;
+            break;
+          }
+        }
+        if (rsI !== -1) {
+          if (rsI > i) {
+            for (let scan = i; scan < rsI; scan++) result.push("- " + oLines[scan]);
+            i = rsI;
+          } else {
+            for (let scan = j; scan < rsJ; scan++) result.push("+ " + nLines[scan]);
+            j = rsJ;
+          }
+        } else {
+          if (i < oLines.length) result.push("- " + oLines[i++]);
+          if (j < nLines.length) result.push("+ " + nLines[j++]);
+        }
+      }
+    }
+    return result.join("\n");
+  }
+  async function runDesignDiffMdStandalone(opts, setStatus) {
+    const srcAppId = String(opts.source?.appId || "").trim();
+    const tgtAppId = String(opts.target?.appId || "").trim();
+    if (!srcAppId || !tgtAppId) throw new Error("比較元と比較先の両方のアプリIDを指定してください。");
+    const scopes = SECTION_DEFS.map((s) => s.key);
+    setStatus("比較元の設計情報を取得中...");
+    const srcBundle = await fetchBundle({
+      appId: srcAppId,
+      guestId: String(opts.source.guestId || "").trim(),
+      preview: !!opts.source.preview,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
+    });
+    setStatus("比較先の設計情報を取得中...");
+    const tgtBundle = await fetchBundle({
+      appId: tgtAppId,
+      guestId: String(opts.target.guestId || "").trim(),
+      preview: !!opts.target.preview,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`)
+    });
+    setStatus("差分レポート生成中...");
+    const srcMd = bundleToMarkdown(srcBundle);
+    const tgtMd = bundleToMarkdown(tgtBundle);
+    const diffMd = simpleLineDiffLite(tgtMd, srcMd);
+    const finalMd = `# 設計書差分レポート
+- 生成日時: ${nowStamp()}
+- 比較元App: ${srcAppId} (追加/更新後)
+- 比較先App: ${tgtAppId} (現在の設定)
+
+\`\`\`diff
+${diffMd}
+\`\`\`
+`;
+    downloadText(`design_diff_${srcAppId}_vs_${tgtAppId}_${nowStamp()}.md`, finalMd, "text/markdown");
+    setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）`);
+  }
 
   // src/ui/components.ts
   init_constants();
@@ -4793,6 +4870,29 @@ ${detail}`);
       await runDesignExportXlsxStandalone(source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
     }));
     panel.body.insertBefore(cardSingle.card, panel.status);
+    const diffDetails = makeDetails("2 アプリ間の設計差分を Markdown で出力");
+    const cmpApp = makeInput({ placeholder: "比較先アプリID", width: "id" });
+    const cmpGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
+    const cmpPrev = makeCheck({ label: "プレビュー環境から取得" });
+    diffDetails.body.appendChild(makeRow([cmpApp, cmpGuest, cmpPrev.label], { label: "比較先" }));
+    diffDetails.body.appendChild(makeNote("比較元（上のアプリID）と比較先で設計書 MD を生成し、差分レポートを保存します。簡易行差分のため大きな構造変更は文脈が崩れる場合があります。"));
+    const bDiff = makeButton("設計書差分 MD を保存", "primary", { icon: "↓" });
+    bDiff.style.width = "100%";
+    diffDetails.body.appendChild(bDiff);
+    panel.body.insertBefore(diffDetails.details, panel.status);
+    bDiff.addEventListener("click", () => liteRun(panel, "設計書差分 MD 生成中…", async () => {
+      await runDesignDiffMdStandalone(
+        {
+          source: source(),
+          target: {
+            appId: cmpApp.value.trim(),
+            guestId: cmpGuest.value.trim(),
+            preview: cmpPrev.checkbox.checked
+          }
+        },
+        (m, e) => panel.setStatus(m, e ? "err" : "busy")
+      );
+    }));
     const batchDetails = makeDetails("複数アプリ一括 ZIP 出力（Excel）");
     const batchIds = makeTextarea({ rows: 3, code: true, placeholder: "例: 74, 120, 305  （カンマ・改行・スペース区切り）" });
     batchDetails.body.appendChild(batchIds);

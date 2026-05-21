@@ -871,6 +871,42 @@ ${contextLine}`);
   // src/tabs/jsconfig-standalone.ts
   init_utils();
   init_api();
+  var JSZIP_CDN = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+  function loadJSZipForJsConfig() {
+    const w = window;
+    if (w.JSZip) return Promise.resolve(w.JSZip);
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${JSZIP_CDN}"]`);
+      if (existing) {
+        existing.addEventListener("load", () => resolve(window.JSZip));
+        existing.addEventListener("error", () => reject(new Error("JSZipの読み込みに失敗")));
+        return;
+      }
+      const s = document.createElement("script");
+      s.src = JSZIP_CDN;
+      s.onload = () => resolve(window.JSZip);
+      s.onerror = () => reject(new Error("JSZipの読み込みに失敗"));
+      document.head.appendChild(s);
+    });
+  }
+  async function downloadFileBlobForJsConfig(prefix, fileKey) {
+    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
+    const headers = { "X-Requested-With": "XMLHttpRequest" };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const resp = await fetch(url, { method: "GET", headers });
+        if (resp.status === 403) return null;
+        if (!resp.ok) throw new Error("ダウンロード失敗: " + resp.status);
+        return await resp.blob();
+      } catch (_e) {
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    return null;
+  }
+  function sanitizeFolderName(name) {
+    return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[ -]/g, "").trim();
+  }
   function renderCustomizeResultHtml(data) {
     if (!data) {
       return '<div style="padding:10px;font-size:12px;color:#64748b">データがありません</div>';
@@ -949,6 +985,94 @@ ${contextLine}`);
     const logs = [`OK JS/CSS設定反映（アプリ: ${targetAppId}）`];
     setLogHtml(`<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap">${esc(logs.join("\n"))}</pre>`);
     setStatus("JS/CSS設定反映完了");
+  }
+  async function runBatchJsConfigDownloadStandalone(p, setStatus) {
+    const guestId = String(p.guestId || "").trim();
+    const baseListPrefix = buildApiPrefix(guestId, false);
+    setStatus("対象スペースの全アプリを取得中...");
+    let apps = [];
+    let offset = 0;
+    while (true) {
+      const resp = await apiGet(baseListPrefix, "/apps.json", { limit: 100, offset });
+      const batch = (resp?.apps || []).map((a2) => ({
+        appId: String(a2.appId),
+        name: String(a2.name || ""),
+        spaceId: a2.spaceId
+      }));
+      apps = apps.concat(batch);
+      if (batch.length < 100) break;
+      offset += 100;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    if (!apps.length) throw new Error("アプリが見つかりませんでした。");
+    const seen = /* @__PURE__ */ new Set();
+    apps = apps.filter((app) => {
+      const key = `${app.appId}_${app.spaceId || "null"}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    setStatus(`${apps.length}個のアプリ設定を解析中...`);
+    const JSZipCtor = await loadJSZipForJsConfig();
+    const zip = new JSZipCtor();
+    let hasFiles = false;
+    let failedCount = 0;
+    let fileCount = 0;
+    for (let i = 0; i < apps.length; i++) {
+      const app = apps[i];
+      const safeName = sanitizeFolderName(app.name || `app${app.appId}`);
+      const guestSpaceId = app.spaceId ? Number(app.spaceId) : 0;
+      setStatus(`[${i + 1}/${apps.length}] アプリ "${safeName}" (${app.appId}) をチェック...`);
+      let customize = null;
+      try {
+        let prefix = baseListPrefix;
+        if (guestSpaceId) prefix = `/k/guest/${guestSpaceId}/v1`;
+        customize = await apiGet(prefix, "/app/customize.json", { app: app.appId });
+      } catch (_e) {
+        failedCount++;
+        continue;
+      }
+      const files = [
+        ...customize?.desktop?.js || [],
+        ...customize?.desktop?.css || [],
+        ...customize?.mobile?.js || [],
+        ...customize?.mobile?.css || []
+      ];
+      const fileTargets = files.filter((f) => f.type === "FILE");
+      if (!fileTargets.length) continue;
+      const folderName = guestSpaceId ? `guest${guestSpaceId}_${app.appId}_${safeName}` : `${app.appId}_${safeName}`;
+      const appFolder = zip.folder(folderName);
+      const dlPrefix = guestSpaceId ? `/k/guest/${guestSpaceId}/v1` : baseListPrefix;
+      for (const file of fileTargets) {
+        const blob = await downloadFileBlobForJsConfig(dlPrefix, file.file.fileKey);
+        if (blob) {
+          appFolder.file(file.file.name || `${file.file.fileKey}.bin`, blob);
+          hasFiles = true;
+          fileCount++;
+        } else {
+          failedCount++;
+        }
+      }
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    if (!hasFiles) {
+      setStatus(`対象ファイルがありません。(取得失敗: ${failedCount}件スキップ)`, true);
+      return { apps: apps.length, files: 0, failed: failedCount };
+    }
+    setStatus("ZIPファイル作成中...");
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    const a = document.createElement("a");
+    const u = URL.createObjectURL(zipBlob);
+    a.href = u;
+    a.download = `customize_scripts_${nowStamp()}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(u);
+    }, 100);
+    setStatus(`JS/CSS一括DL完了（${apps.length}アプリ / ${fileCount}ファイル / 取得失敗 ${failedCount}件）`);
+    return { apps: apps.length, files: fileCount, failed: failedCount };
   }
 
   // src/ui/components.ts
@@ -1484,6 +1608,18 @@ ${contextLine}`);
     n.textContent = text;
     return n;
   }
+  function makeDetails(title, opts = {}) {
+    const d = document.createElement("details");
+    d.className = "kus-lp__details";
+    if (opts.open) d.open = true;
+    const s = document.createElement("summary");
+    s.textContent = title;
+    const b = document.createElement("div");
+    b.className = "kus-lp__details-body";
+    d.appendChild(s);
+    d.appendChild(b);
+    return { details: d, body: b };
+  }
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
     panel.setBusy(true);
@@ -1574,6 +1710,20 @@ ${contextLine}`);
         (html) => {
           panel.setResultHtml(html);
         }
+      );
+    }));
+    const batchDetails = makeDetails("全アプリの JS/CSS ファイルを一括ダウンロード");
+    batchDetails.body.appendChild(makeNote("スペース内のアプリを走査し、customize.json の FILE タイプの JS/CSS を 1 つの ZIP にまとめます。URL タイプは除外されます（取得不能のため）。"));
+    const batchGuest = makeInput({ placeholder: "ゲストID（任意 / 未指定で全体）", width: "wide" });
+    batchDetails.body.appendChild(makeRow(batchGuest, { label: "ゲスト" }));
+    const batchBtn = makeButton("JS/CSS を ZIP で一括取得", "primary", { icon: "↓" });
+    batchBtn.style.width = "100%";
+    batchDetails.body.appendChild(batchBtn);
+    panel.body.insertBefore(batchDetails.details, panel.status);
+    batchBtn.addEventListener("click", () => liteRun(panel, "全アプリの JS/CSS をスキャン中…", async () => {
+      await runBatchJsConfigDownloadStandalone(
+        { guestId: batchGuest.value.trim() || srcGuest.value.trim() },
+        (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
     }));
   }

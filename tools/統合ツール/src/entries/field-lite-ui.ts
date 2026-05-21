@@ -18,6 +18,7 @@ import {
   makeNote,
   liteRun
 } from './litePanelTheme.js';
+import { downloadText } from '../utils.js';
 
 export function mountFieldLitePanel() {
   const panel = createLitePanel({
@@ -45,13 +46,67 @@ export function mountFieldLitePanel() {
 
   const bLoadSrc = makeButton('比較元から読込', 'sub');
   const bLoadTgt = makeButton('比較先から読込', 'sub');
+  const bFormat = makeButton('整形', 'sub');
+  const bImport = makeButton('ファイル読込', 'sub');
+  const bExport = makeButton('保存', 'sub');
   const bClear = makeButton('クリア', 'ghost');
   bClear.addEventListener('click', () => { fieldJson.value = ''; });
+  bFormat.addEventListener('click', () => {
+    try {
+      const parsed = JSON.parse(fieldJson.value || '{}');
+      fieldJson.value = JSON.stringify(parsed, null, 2);
+      panel.setStatus('JSON を整形しました', 'ok');
+    } catch (e: any) {
+      panel.setStatus(`JSON が壊れています: ${e?.message || String(e)}`, 'err');
+    }
+  });
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json,application/json';
+  fileInput.style.display = 'none';
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    file.text().then((text) => {
+      try {
+        const parsed = JSON.parse(text);
+        fieldJson.value = JSON.stringify(parsed, null, 2);
+        panel.setStatus(`「${file.name}」を読み込みました`, 'ok');
+      } catch (e: any) {
+        panel.setStatus(`JSON 読み込みエラー: ${e?.message || String(e)}`, 'err');
+      } finally {
+        fileInput.value = '';
+      }
+    });
+  });
+  bImport.addEventListener('click', () => fileInput.click());
+  bExport.addEventListener('click', () => {
+    const text = fieldJson.value.trim();
+    if (!text) {
+      panel.setStatus('保存する JSON がありません', 'warn');
+      return;
+    }
+    try {
+      JSON.parse(text); // 妥当性のみチェック
+    } catch (e: any) {
+      panel.setStatus(`JSON が壊れています: ${e?.message || String(e)}`, 'err');
+      return;
+    }
+    const stamp = new Date().toISOString().replace(/[^\dT]/g, '').slice(0, 15);
+    const appLabel = (tgtApp.value.trim() || srcApp.value.trim() || 'app');
+    downloadText(`fields_${appLabel}_${stamp}.json`, text, 'application/json');
+    panel.setStatus('フィールド JSON を保存しました', 'ok');
+  });
 
   const cardJson = makeCard({ title: 'フィールド定義 JSON', number: 2 });
   cardJson.actions.appendChild(bLoadSrc);
   cardJson.actions.appendChild(bLoadTgt);
+  cardJson.actions.appendChild(bFormat);
+  cardJson.actions.appendChild(bImport);
+  cardJson.actions.appendChild(bExport);
   cardJson.actions.appendChild(bClear);
+  cardJson.body.appendChild(fileInput);
   cardJson.body.appendChild(fieldJson);
   panel.body.insertBefore(cardJson.card, panel.status);
 
@@ -70,6 +125,114 @@ export function mountFieldLitePanel() {
     );
     fieldJson.value = JSON.stringify({ properties: props }, null, 2);
   }, '比較先のフィールド定義を読み込みました'));
+
+  // ---- 比較元からフィールドを選んでマージ ----
+  const pickDetails = makeDetails('比較元からフィールドを選んでマージ', { open: false });
+  const bLoadPickList = makeButton('比較元フィールド一覧を取得', 'sub');
+  pickDetails.body.appendChild(makeRow(bLoadPickList));
+  const pickListBox = document.createElement('div');
+  pickListBox.style.cssText = 'display:none;margin-top:8px;max-height:240px;overflow:auto;border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:6px';
+  const pickTable = document.createElement('table');
+  pickTable.style.cssText = 'width:100%;font-size:11.5px;border-collapse:collapse';
+  const pickHead = document.createElement('thead');
+  pickHead.innerHTML = '<tr style="position:sticky;top:-6px;background:#f8fafc;z-index:1;box-shadow:0 1px 0 #e2e8f0">'
+    + '<th style="width:30px;text-align:center;padding:4px"><input type="checkbox" id="kus-field-lite-check-all" title="表示中の全行を選択"></th>'
+    + '<th style="text-align:left;padding:4px">コード / ラベル</th>'
+    + '<th style="text-align:left;padding:4px;width:130px">タイプ</th>'
+    + '</tr>';
+  const pickBody = document.createElement('tbody');
+  pickTable.appendChild(pickHead);
+  pickTable.appendChild(pickBody);
+  pickListBox.appendChild(pickTable);
+  pickDetails.body.appendChild(pickListBox);
+
+  const bInsertPicked = makeButton('選択したフィールドを JSON に挿入（マージ）', 'primary');
+  const bClosePick = makeButton('閉じる', 'ghost');
+  const pickActions = makeRow([bInsertPicked, bClosePick]);
+  pickActions.style.cssText = 'display:none;margin-top:8px';
+  pickDetails.body.appendChild(pickActions);
+
+  let pickedPropsCache: Record<string, any> = {};
+
+  bLoadPickList.addEventListener('click', () => liteRun(panel, '比較元フィールド一覧を取得中…', async () => {
+    const props = await runLoadFieldsStandalone(
+      { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: true },
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+    );
+    pickedPropsCache = props || {};
+    pickBody.innerHTML = '';
+    const entries = Object.entries(pickedPropsCache) as Array<[string, any]>;
+    entries.sort(([a], [b]) => a.localeCompare(b));
+    for (const [code, def] of entries) {
+      const tr = document.createElement('tr');
+      tr.style.cssText = 'border-bottom:1px solid #f1f5f9';
+      const tdCb = document.createElement('td');
+      tdCb.style.cssText = 'padding:4px;text-align:center';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset.code = code;
+      tdCb.appendChild(cb);
+      const tdCode = document.createElement('td');
+      tdCode.style.cssText = 'padding:4px;font-family:ui-monospace,monospace';
+      tdCode.textContent = `${code}${def?.label ? `  /  ${def.label}` : ''}`;
+      const tdType = document.createElement('td');
+      tdType.style.cssText = 'padding:4px;color:#475569';
+      tdType.textContent = String(def?.type || '');
+      tr.appendChild(tdCb);
+      tr.appendChild(tdCode);
+      tr.appendChild(tdType);
+      pickBody.appendChild(tr);
+    }
+    pickListBox.style.display = 'block';
+    pickActions.style.display = 'flex';
+  }, `${Object.keys(pickedPropsCache).length}件のフィールド候補を表示中（左クリックで選択）`));
+
+  pickHead.querySelector<HTMLInputElement>('#kus-field-lite-check-all')?.addEventListener('change', (ev) => {
+    const all = (ev.target as HTMLInputElement).checked;
+    pickBody.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach((cb) => { cb.checked = all; });
+  });
+
+  bClosePick.addEventListener('click', () => {
+    pickListBox.style.display = 'none';
+    pickActions.style.display = 'none';
+  });
+
+  bInsertPicked.addEventListener('click', () => {
+    const codes = Array.from(pickBody.querySelectorAll<HTMLInputElement>('input[type=checkbox]:checked'))
+      .map((cb) => cb.dataset.code || '')
+      .filter(Boolean);
+    if (!codes.length) {
+      panel.setStatus('挿入するフィールドにチェックを入れてください', 'warn');
+      return;
+    }
+    let current: { properties?: Record<string, any> } = {};
+    if (fieldJson.value.trim()) {
+      try {
+        const parsed = JSON.parse(fieldJson.value);
+        current = parsed && typeof parsed === 'object'
+          ? (parsed.properties ? parsed : { properties: parsed })
+          : { properties: {} };
+      } catch (e: any) {
+        panel.setStatus(`既存 JSON が壊れています: ${e?.message || String(e)}`, 'err');
+        return;
+      }
+    } else {
+      current = { properties: {} };
+    }
+    const props = current.properties = { ...(current.properties || {}) };
+    let added = 0;
+    for (const code of codes) {
+      const def = pickedPropsCache[code];
+      if (def) {
+        props[code] = JSON.parse(JSON.stringify(def));
+        added++;
+      }
+    }
+    fieldJson.value = JSON.stringify(current, null, 2);
+    panel.setStatus(`${added}件のフィールドを JSON にマージしました`, 'ok');
+  });
+
+  panel.body.insertBefore(pickDetails.details, panel.status);
 
   // ---- オプション ----
   const optCard = makeCard({ title: '反映オプション', number: 3, soft: true });

@@ -41,6 +41,38 @@ export function mountErLitePanel() {
   cardMain.body.appendChild(btnRow);
   panel.body.insertBefore(cardMain.card, panel.status);
 
+  // ---- プリセット ----
+  const presetCard = makeCard({ title: 'プリセット', soft: true });
+  const presetRow = document.createElement('div');
+  presetRow.className = 'kus-lp__btn-row';
+  type ErPresetCfg = { label: string; layout: string; density: string; depth: string; subtable: boolean; reverse: boolean; focusSpace?: boolean };
+  const ER_PRESETS: Record<string, ErPresetCfg> = {
+    current:      { label: '現在のみ',         layout: 'dagre',        density: 'standard', depth: '1', subtable: true,  reverse: false },
+    neighborhood: { label: '周辺 (深さ2)',     layout: 'dagre',        density: 'standard', depth: '2', subtable: true,  reverse: false },
+    reverse:      { label: '逆引きあり',       layout: 'dagre',        density: 'standard', depth: '2', subtable: true,  reverse: true  },
+    full:         { label: 'すべて辿る',       layout: 'cose',         density: 'standard', depth: '0', subtable: true,  reverse: true  },
+    space:        { label: 'スペース全体',     layout: 'dagre',        density: 'standard', depth: '2', subtable: true,  reverse: false, focusSpace: true }
+  };
+  for (const [key, p] of Object.entries(ER_PRESETS)) {
+    const btn = makeButton(p.label, 'sub');
+    btn.addEventListener('click', () => {
+      layoutSel.value = p.layout;
+      densitySel.value = p.density;
+      depthInp.value = p.depth;
+      subtableCb.checkbox.checked = p.subtable;
+      reverseCb.checkbox.checked = p.reverse;
+      details.details.open = true;
+      if (p.focusSpace) {
+        try { spaceInp.focus(); spaceInp.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* noop */ }
+      }
+      panel.setStatus(`ER プリセット「${p.label}」を適用しました`, 'info');
+    });
+    presetRow.appendChild(btn);
+  }
+  presetCard.body.appendChild(presetRow);
+  presetCard.body.appendChild(makeNote('クリックで「探索深さ／密度／レイアウト／逆引き」を一括設定します。あとから詳細オプションで微調整できます。'));
+  panel.body.insertBefore(presetCard.card, panel.status);
+
   // ---- 詳細 ----
   const details = makeDetails('詳細オプション');
   const extra = makeInput({ placeholder: 'カンマ区切り (例: 100, 120)', width: 'wide' });
