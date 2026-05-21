@@ -48,6 +48,7 @@ import {
 import { runGenerateERDiagram, runExportERDiagramHtml } from './tabs/er.js';
 import {
   runFetchJsConfig,
+  runLoadTargetJsConfig,
   runExportJsConfig,
   runApplyJsConfig,
   runBatchJsConfigDownload,
@@ -383,6 +384,7 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     runDesignExportXlsxBatchZip,
     runDesignDiffMd,
     runFetchJsConfig,
+    runLoadTargetJsConfig,
     runExportJsConfig,
     runApplyJsConfig,
     runRenderProcessFlow,

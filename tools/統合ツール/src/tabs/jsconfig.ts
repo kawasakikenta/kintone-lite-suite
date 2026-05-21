@@ -58,6 +58,26 @@ export function renderCustomizeResult(data) {
 
 let lastFetchedSourceAppName = '';
 
+export async function runLoadTargetJsConfig() {
+  const c = commonParams();
+  if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
+  const isPreview = !!ui.jsconfigPreview.checked;
+  const prefix = buildApiPrefix(c.target.guestId, isPreview);
+  const appInfoPrefix = buildApiPrefix(c.target.guestId, false);
+  setStatus('比較先のJS/CSS設定を取得中...');
+  const res = await apiGet(prefix, '/app/customize.json', { app: c.target.appId });
+  const data = normalize(res);
+  let targetName = '';
+  try {
+    const appInfo = await apiGet(appInfoPrefix, '/app.json', { id: c.target.appId });
+    targetName = String(appInfo?.name || '').trim();
+  } catch (_e) { /* ignore */ }
+  lastFetchedSourceAppName = targetName;
+  ui.jsconfigJson.value = JSON.stringify(data, null, 2);
+  renderCustomizeResult(data);
+  setStatus(`比較先のJS/CSS設定を取得しました（アプリ: ${c.target.appId}${targetName ? ` / ${targetName}` : ''}${isPreview ? ' / プレビュー' : ''}）`);
+}
+
 export async function runFetchJsConfig() {
   const c = commonParams();
   if (!c.source.appId) throw new Error('比較元アプリIDを入力してください');

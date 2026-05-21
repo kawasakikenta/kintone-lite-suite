@@ -32865,6 +32865,7 @@ ${detail}`);
               <input type="checkbox" id="u_jsconfigDeployAfter" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
               <div class="btns">
                 <button type="button" class="btn" data-act="fetchJsConfig" title="比較元アプリIDで customize.json を取得">JS/CSS設定を取得</button>
+                <button type="button" class="btn sub" data-act="loadTargetJsConfig" title="比較先アプリIDの customize.json を取得（反映前の現状確認）">比較先の現在値を読込</button>
                 <button type="button" class="btn sub" data-act="exportJsConfigJson">JSON出力</button>
                 <button type="button" class="btn sub" data-act="importJsConfigJson">JSONファイル読込</button>
                 <button type="button" class="btn warn" data-act="applyJsConfig" title="下のJSONを比較先プレビューへ">比較先(プレビュー)へ反映</button>
@@ -36815,6 +36816,7 @@ ${detail}`);
       runDesignExportXlsxBatchZip: runDesignExportXlsxBatchZip2,
       runDesignDiffMd: runDesignDiffMd2,
       runFetchJsConfig: runFetchJsConfig2,
+      runLoadTargetJsConfig: runLoadTargetJsConfig2,
       runExportJsConfig: runExportJsConfig2,
       runApplyJsConfig: runApplyJsConfig2,
       runRenderProcessFlow: runRenderProcessFlow2,
@@ -39641,6 +39643,7 @@ ${detail}`);
       if (act === "exportDesignXlsxBatchZip" && typeof runDesignExportXlsxBatchZip2 === "function") return withGuard(runDesignExportXlsxBatchZip2);
       if (act === "exportDesignDiffMd" && typeof runDesignDiffMd2 === "function") return withGuard(runDesignDiffMd2);
       if (act === "fetchJsConfig" && typeof runFetchJsConfig2 === "function") return withGuard(runFetchJsConfig2);
+      if (act === "loadTargetJsConfig" && typeof runLoadTargetJsConfig2 === "function") return withGuard(runLoadTargetJsConfig2);
       if (act === "exportJsConfigJson" && typeof runExportJsConfig2 === "function") return withGuard(runExportJsConfig2);
       if (act === "importJsConfigJson") return ui.jsconfigFile.click();
       if (act === "applyJsConfig" && typeof runApplyJsConfig2 === "function") return withGuard(runApplyJsConfig2);
@@ -42853,6 +42856,26 @@ ${diffMd}
   </table>`;
   }
   var lastFetchedSourceAppName = "";
+  async function runLoadTargetJsConfig() {
+    const c = commonParams();
+    if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
+    const isPreview = !!ui.jsconfigPreview.checked;
+    const prefix = buildApiPrefix(c.target.guestId, isPreview);
+    const appInfoPrefix = buildApiPrefix(c.target.guestId, false);
+    setStatus("比較先のJS/CSS設定を取得中...");
+    const res = await apiGet(prefix, "/app/customize.json", { app: c.target.appId });
+    const data = normalize(res);
+    let targetName = "";
+    try {
+      const appInfo = await apiGet(appInfoPrefix, "/app.json", { id: c.target.appId });
+      targetName = String(appInfo?.name || "").trim();
+    } catch (_e) {
+    }
+    lastFetchedSourceAppName = targetName;
+    ui.jsconfigJson.value = JSON.stringify(data, null, 2);
+    renderCustomizeResult(data);
+    setStatus(`比較先のJS/CSS設定を取得しました（アプリ: ${c.target.appId}${targetName ? ` / ${targetName}` : ""}${isPreview ? " / プレビュー" : ""}）`);
+  }
   async function runFetchJsConfig() {
     const c = commonParams();
     if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
@@ -46048,6 +46071,7 @@ ${field.label}` : code,
       runDesignExportXlsxBatchZip,
       runDesignDiffMd,
       runFetchJsConfig,
+      runLoadTargetJsConfig,
       runExportJsConfig,
       runApplyJsConfig,
       runRenderProcessFlow,

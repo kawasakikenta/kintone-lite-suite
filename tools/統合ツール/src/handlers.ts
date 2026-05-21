@@ -405,6 +405,7 @@ export function setupEventHandlers(injected: any = {}) {
     runDesignExportXlsxBatchZip,
     runDesignDiffMd,
     runFetchJsConfig,
+    runLoadTargetJsConfig,
     runExportJsConfig,
     runApplyJsConfig,
     runRenderProcessFlow,
@@ -3318,6 +3319,7 @@ export function setupEventHandlers(injected: any = {}) {
 
     // ----- JS/CSS config -----
     if (act === 'fetchJsConfig' && typeof runFetchJsConfig === 'function') return withGuard(runFetchJsConfig);
+    if (act === 'loadTargetJsConfig' && typeof runLoadTargetJsConfig === 'function') return withGuard(runLoadTargetJsConfig);
     if (act === 'exportJsConfigJson' && typeof runExportJsConfig === 'function') return withGuard(runExportJsConfig);
     if (act === 'importJsConfigJson') return ui.jsconfigFile.click();
     if (act === 'applyJsConfig' && typeof runApplyJsConfig === 'function') return withGuard(runApplyJsConfig);
