@@ -639,6 +639,7 @@ export function renderApiTesterHistory() {
             <span style="font-size:9px;font-weight:800;background:${methodBg};color:${methodColor};padding:2px 4px;border-radius:4px;">${esc(h.method)}</span>
             <span style="font-size:11px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;" title="${esc(h.path)}">${esc(h.path)}</span>
             ${timeLabel ? `<span style="font-size:9px;color:#94a3b8;flex-shrink:0;" title="${esc(h.time)}">${esc(timeLabel)}</span>` : ''}
+            <button type="button" class="api-history-del" data-idx="${i}" title="この履歴を削除" aria-label="この履歴を削除" style="flex-shrink:0;background:transparent;border:none;color:#94a3b8;cursor:pointer;font-size:13px;line-height:1;padding:0 2px;">×</button>
           </div>
           ${bPrev && bPrev !== '{}' ? `<div style="font-size:10px;color:#64748b;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(bPrev)}</div>` : ''}
         </div>
@@ -660,7 +661,9 @@ export function renderApiTesterHistory() {
       if (bodyEl) bodyEl.value = data.body || '{}';
     };
     items.forEach((item: HTMLElement) => {
-      item.addEventListener('click', () => {
+      item.addEventListener('click', (event: Event) => {
+        const target = event.target as HTMLElement | null;
+        if (target?.classList?.contains('api-history-del')) return;
         applyHistoryItem(item);
       });
       item.addEventListener('keydown', (event: Event) => {
@@ -674,6 +677,16 @@ export function renderApiTesterHistory() {
       item.addEventListener('blur', () => { item.style.outline = 'none'; });
       item.addEventListener('mouseover', () => { item.style.borderColor = '#93c5fd'; item.style.backgroundColor = '#eff6ff'; });
       item.addEventListener('mouseout', () => { item.style.borderColor = '#e2e8f0'; item.style.backgroundColor = '#fff'; });
+    });
+    listEl.querySelectorAll<HTMLElement>('.api-history-del').forEach((btn: HTMLElement) => {
+      btn.addEventListener('click', (event: Event) => {
+        event.stopPropagation();
+        const idx = parseInt(btn.dataset.idx || '-1', 10);
+        if (!(idx >= 0 && idx < apiTesterHistoryMemory.length)) return;
+        apiTesterHistoryMemory.splice(idx, 1);
+        renderApiTesterHistory();
+        setStatus(`履歴を 1 件削除しました（残 ${apiTesterHistoryMemory.length} 件）`);
+      });
     });
   } catch (e) {
     console.error('History load failed', e);
