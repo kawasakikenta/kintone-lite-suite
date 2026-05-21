@@ -38479,9 +38479,23 @@ ${detail}`);
         ui.targetApp.value = src.app;
         ui.targetGuest.value = src.guest;
         ui.targetPreview.checked = src.preview;
+        const tmpImpSrc = state.importedSourceBundle;
+        const tmpImpSrcName = state.importedSourceName;
+        state.importedSourceBundle = state.importedTargetBundle;
+        state.importedSourceName = state.importedTargetName;
+        state.importedTargetBundle = tmpImpSrc;
+        state.importedTargetName = tmpImpSrcName;
+        const tmpLastSrc = state.lastSourceBundle;
+        state.lastSourceBundle = state.lastTargetBundle;
+        state.lastTargetBundle = tmpLastSrc;
+        state.lastDiffRows = [];
+        state.lastDiffAt = null;
+        state.lastDiffSignature = "";
+        state.lastApplyPlan = null;
+        state.diffSelectedIds = /* @__PURE__ */ new Set();
         saveCurrentDialogState2();
         renderBundleState();
-        setStatus("比較元/比較先設定を入れ替えました");
+        setStatus("比較元/比較先設定（および取得済みバンドル）を入れ替えました。差分は再実行が必要です。");
         return;
       }
       if (act === "settingsExportUseCurrent") {

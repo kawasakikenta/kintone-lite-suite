@@ -2139,9 +2139,25 @@ export function setupEventHandlers(injected: any = {}) {
       ui.targetApp.value = src.app;
       ui.targetGuest.value = src.guest;
       ui.targetPreview.checked = src.preview;
+      // 取得済み・読込済みバンドルも合わせて入れ替え、差分の方向だけが直感に反しないようにする
+      const tmpImpSrc = state.importedSourceBundle;
+      const tmpImpSrcName = state.importedSourceName;
+      state.importedSourceBundle = state.importedTargetBundle;
+      state.importedSourceName = state.importedTargetName;
+      state.importedTargetBundle = tmpImpSrc;
+      state.importedTargetName = tmpImpSrcName;
+      const tmpLastSrc = state.lastSourceBundle;
+      state.lastSourceBundle = state.lastTargetBundle;
+      state.lastTargetBundle = tmpLastSrc;
+      // 差分結果は方向が変わるためクリア（再比較を促す）
+      state.lastDiffRows = [];
+      state.lastDiffAt = null;
+      state.lastDiffSignature = '';
+      state.lastApplyPlan = null;
+      state.diffSelectedIds = new Set();
       saveCurrentDialogState();
       renderBundleState();
-      setStatus('比較元/比較先設定を入れ替えました');
+      setStatus('比較元/比較先設定（および取得済みバンドル）を入れ替えました。差分は再実行が必要です。');
       return;
     }
     // ----- Settings export quick add -----
