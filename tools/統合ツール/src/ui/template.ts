@@ -1239,6 +1239,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <div class="btns">
                 <button type="button" class="btn warn" data-act="applyField" title="比較先プレビューにフィールドを追加・更新します">比較先(プレビュー)へフィールド適用</button>
                 <button type="button" class="btn sub" data-act="loadTargetFields" title="現在の比較先アプリの fields.json を読み込み">比較先の現在値を読込</button>
+                <button type="button" class="btn sub" data-act="validateFieldJson" title="JSON を反映せず、フィールド定義の検証と統計を表示します">検証のみ</button>
                 <button type="button" class="btn sub" data-act="formatFieldJson" style="margin-left:8px">JSON整形</button>
                 <button type="button" class="btn sub" data-act="importFieldJson">JSONファイル読込</button>
                 <button type="button" class="btn sub" data-act="exportFieldJson">JSON保存</button>

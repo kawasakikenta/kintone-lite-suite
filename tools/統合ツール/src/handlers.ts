@@ -140,6 +140,7 @@ import {
   runLoadTargetFields,
   runLoadSourceFieldsList,
   runInsertSelectedSourceFields,
+  runFieldValidate,
   parseFieldInput,
   parseLookupMapInput,
   parseAppIdList
@@ -3279,6 +3280,7 @@ export function setupEventHandlers(injected: any = {}) {
     // ----- Field tab -----
     if (act === 'applyField') return withGuard(runFieldApply);
     if (act === 'loadTargetFields') return withGuard(runLoadTargetFields);
+    if (act === 'validateFieldJson') return runFieldValidate();
     if (act === 'formatFieldJson') {
       try {
         const text = ui.fieldJson.value.trim();
