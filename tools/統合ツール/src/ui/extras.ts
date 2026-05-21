@@ -1801,7 +1801,22 @@ const localizeKintoneEnumsInText = kusEnumsLocalize;
 
 function buildDiffMarkdownText(): string {
   const rows = state.lastDiffRows || [];
+  const typeCounts: Record<string, number> = { added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
+  const severityCounts: Record<string, number> = { high: 0, mid: 0, low: 0, info: 0 };
+  for (const r of rows) {
+    const t = String((r as any)?.type || '');
+    const s = String((r as any)?.severity || '');
+    if (typeCounts[t] != null) typeCounts[t] += 1;
+    if (severityCounts[s] != null) severityCounts[s] += 1;
+  }
+  const actualDiffCount = typeCounts.added + typeCounts.removed + typeCounts.changed + typeCounts.moved;
+  const summaryLines = [
+    `- 件数: 差分 ${actualDiffCount} 件 / 同一 ${typeCounts.same} 件`,
+    `- 種別: 追加 ${typeCounts.added} / 削除 ${typeCounts.removed} / 変更 ${typeCounts.changed} / 移動 ${typeCounts.moved}`,
+    `- 重要度: 高 ${severityCounts.high} / 中 ${severityCounts.mid} / 低 ${severityCounts.low} / 情報 ${severityCounts.info}`
+  ];
   return '# 差分レポート\n\n生成: ' + new Date().toISOString() + '\n\n'
+    + summaryLines.join('\n') + '\n\n'
     + '| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n'
     + '|---|---|---|---|---|---|\n'
     + rows.map((r: any) => {

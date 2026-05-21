@@ -41609,7 +41609,21 @@ ${body}`;
   var localizeKintoneEnumsInText2 = localizeKintoneEnumsInText;
   function buildDiffMarkdownText() {
     const rows = state.lastDiffRows || [];
-    return "# 差分レポート\n\n生成: " + (/* @__PURE__ */ new Date()).toISOString() + "\n\n| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n|---|---|---|---|---|---|\n" + rows.map((r) => {
+    const typeCounts = { added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
+    const severityCounts = { high: 0, mid: 0, low: 0, info: 0 };
+    for (const r of rows) {
+      const t = String(r?.type || "");
+      const s = String(r?.severity || "");
+      if (typeCounts[t] != null) typeCounts[t] += 1;
+      if (severityCounts[s] != null) severityCounts[s] += 1;
+    }
+    const actualDiffCount = typeCounts.added + typeCounts.removed + typeCounts.changed + typeCounts.moved;
+    const summaryLines = [
+      `- 件数: 差分 ${actualDiffCount} 件 / 同一 ${typeCounts.same} 件`,
+      `- 種別: 追加 ${typeCounts.added} / 削除 ${typeCounts.removed} / 変更 ${typeCounts.changed} / 移動 ${typeCounts.moved}`,
+      `- 重要度: 高 ${severityCounts.high} / 中 ${severityCounts.mid} / 低 ${severityCounts.low} / 情報 ${severityCounts.info}`
+    ];
+    return "# 差分レポート\n\n生成: " + (/* @__PURE__ */ new Date()).toISOString() + "\n\n" + summaryLines.join("\n") + "\n\n| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n|---|---|---|---|---|---|\n" + rows.map((r) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
       const oldStr = localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r)));
