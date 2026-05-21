@@ -4,7 +4,8 @@ import { DEFAULT_APP_ID } from '../constants.js';
 import {
   runApplyJsConfigStandalone,
   runExportJsConfigStandalone,
-  runFetchJsConfigStandalone
+  runFetchJsConfigStandalone,
+  runBatchJsConfigDownloadStandalone
 } from '../tabs/jsconfig-standalone.js';
 import {
   createLitePanel,
@@ -14,6 +15,7 @@ import {
   makeCheck,
   makeTextarea,
   makeCard,
+  makeDetails,
   makeNote,
   liteRun
 } from './litePanelTheme.js';
@@ -100,6 +102,23 @@ export function mountJsconfigLitePanel() {
       { targetAppId: tgtApp.value.trim(), targetGuestId: tgtGuest.value.trim(), jsonText: jsonTa.value, deployAfter: false },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'),
       (html: string) => { panel.setResultHtml(html); }
+    );
+  }));
+
+  // 全アプリ JS/CSS ファイル 一括ダウンロード
+  const batchDetails = makeDetails('全アプリの JS/CSS ファイルを一括ダウンロード');
+  batchDetails.body.appendChild(makeNote('スペース内のアプリを走査し、customize.json の FILE タイプの JS/CSS を 1 つの ZIP にまとめます。URL タイプは除外されます（取得不能のため）。'));
+  const batchGuest = makeInput({ placeholder: 'ゲストID（任意 / 未指定で全体）', width: 'wide' });
+  batchDetails.body.appendChild(makeRow(batchGuest, { label: 'ゲスト' }));
+  const batchBtn = makeButton('JS/CSS を ZIP で一括取得', 'primary', { icon: '↓' });
+  batchBtn.style.width = '100%';
+  batchDetails.body.appendChild(batchBtn);
+  panel.body.insertBefore(batchDetails.details, panel.status);
+
+  batchBtn.addEventListener('click', () => liteRun(panel, '全アプリの JS/CSS をスキャン中…', async () => {
+    await runBatchJsConfigDownloadStandalone(
+      { guestId: batchGuest.value.trim() || srcGuest.value.trim() },
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
   }));
 }

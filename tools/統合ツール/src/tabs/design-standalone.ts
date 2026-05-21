@@ -106,3 +106,84 @@ export async function runBatchDesignExportXlsxZipStandalone(
   }
   setStatus(`設計書ZIP出力完了（${appIds.length}件）`);
 }
+
+function simpleLineDiffLite(oStr: string, nStr: string): string {
+  const oLines = oStr.split('\n');
+  const nLines = nStr.split('\n');
+  const result: string[] = [];
+  let i = 0, j = 0;
+  while (i < oLines.length || j < nLines.length) {
+    if (i < oLines.length && j < nLines.length && oLines[i] === nLines[j]) {
+      result.push('  ' + oLines[i]); i++; j++;
+    } else {
+      let rsI = -1, rsJ = -1;
+      for (let k = 1; k < 60; k++) {
+        if (i + k < oLines.length && oLines[i + k] === nLines[j]) { rsI = i + k; rsJ = j; break; }
+        if (j + k < nLines.length && oLines[i] === nLines[j + k]) { rsI = i; rsJ = j + k; break; }
+      }
+      if (rsI !== -1) {
+        if (rsI > i) {
+          for (let scan = i; scan < rsI; scan++) result.push('- ' + oLines[scan]);
+          i = rsI;
+        } else {
+          for (let scan = j; scan < rsJ; scan++) result.push('+ ' + nLines[scan]);
+          j = rsJ;
+        }
+      } else {
+        if (i < oLines.length) result.push('- ' + oLines[i++]);
+        if (j < nLines.length) result.push('+ ' + nLines[j++]);
+      }
+    }
+  }
+  return result.join('\n');
+}
+
+/**
+ * 比較元と比較先の設計書 Markdown を生成し、行差分レポートを Markdown 出力する。
+ */
+export async function runDesignDiffMdStandalone(
+  opts: {
+    source: { appId: string; guestId?: string; preview?: boolean };
+    target: { appId: string; guestId?: string; preview?: boolean };
+  },
+  setStatus: (msg: string, err?: boolean) => void
+) {
+  const srcAppId = String(opts.source?.appId || '').trim();
+  const tgtAppId = String(opts.target?.appId || '').trim();
+  if (!srcAppId || !tgtAppId) throw new Error('比較元と比較先の両方のアプリIDを指定してください。');
+  const scopes = SECTION_DEFS.map((s) => s.key);
+
+  setStatus('比較元の設計情報を取得中...');
+  const srcBundle = await fetchBundle({
+    appId: srcAppId,
+    guestId: String(opts.source.guestId || '').trim(),
+    preview: !!opts.source.preview,
+    sections: scopes,
+    onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
+  });
+  setStatus('比較先の設計情報を取得中...');
+  const tgtBundle = await fetchBundle({
+    appId: tgtAppId,
+    guestId: String(opts.target.guestId || '').trim(),
+    preview: !!opts.target.preview,
+    sections: scopes,
+    onProgress: (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`)
+  });
+
+  setStatus('差分レポート生成中...');
+  const srcMd = bundleToMarkdown(srcBundle);
+  const tgtMd = bundleToMarkdown(tgtBundle);
+  const diffMd = simpleLineDiffLite(tgtMd, srcMd);
+
+  const finalMd = `# 設計書差分レポート
+- 生成日時: ${nowStamp()}
+- 比較元App: ${srcAppId} (追加/更新後)
+- 比較先App: ${tgtAppId} (現在の設定)
+
+\`\`\`diff
+${diffMd}
+\`\`\`
+`;
+  downloadText(`design_diff_${srcAppId}_vs_${tgtAppId}_${nowStamp()}.md`, finalMd, 'text/markdown');
+  setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）`);
+}

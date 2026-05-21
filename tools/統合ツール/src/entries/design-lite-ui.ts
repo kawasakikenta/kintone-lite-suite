@@ -3,6 +3,7 @@
 import { DEFAULT_APP_ID } from '../constants.js';
 import {
   runDesignCopyMdStandalone,
+  runDesignDiffMdStandalone,
   runDesignExportStandalone,
   runDesignExportXlsxStandalone,
   runBatchDesignExportXlsxZipStandalone
@@ -69,6 +70,32 @@ export function mountDesignLitePanel() {
     await runDesignExportXlsxStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }));
   panel.body.insertBefore(cardSingle.card, panel.status);
+
+  // ---- 2アプリ差分 MD ----
+  const diffDetails = makeDetails('2 アプリ間の設計差分を Markdown で出力');
+  const cmpApp = makeInput({ placeholder: '比較先アプリID', width: 'id' });
+  const cmpGuest = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  const cmpPrev = makeCheck({ label: 'プレビュー環境から取得' });
+  diffDetails.body.appendChild(makeRow([cmpApp, cmpGuest, cmpPrev.label], { label: '比較先' }));
+  diffDetails.body.appendChild(makeNote('比較元（上のアプリID）と比較先で設計書 MD を生成し、差分レポートを保存します。簡易行差分のため大きな構造変更は文脈が崩れる場合があります。'));
+  const bDiff = makeButton('設計書差分 MD を保存', 'primary', { icon: '↓' });
+  bDiff.style.width = '100%';
+  diffDetails.body.appendChild(bDiff);
+  panel.body.insertBefore(diffDetails.details, panel.status);
+
+  bDiff.addEventListener('click', () => liteRun(panel, '設計書差分 MD 生成中…', async () => {
+    await runDesignDiffMdStandalone(
+      {
+        source: source(),
+        target: {
+          appId: cmpApp.value.trim(),
+          guestId: cmpGuest.value.trim(),
+          preview: cmpPrev.checkbox.checked
+        }
+      },
+      (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
+    );
+  }));
 
   // ---- 複数アプリ ZIP ----
   const batchDetails = makeDetails('複数アプリ一括 ZIP 出力（Excel）');
