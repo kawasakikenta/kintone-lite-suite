@@ -33199,7 +33199,7 @@ ${detail}`);
                 </summary>
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">リクエストの組み立てと実行</div>
-              <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。<strong>POST/PUT/DELETE</strong> は <code>/v1/preview/</code> を含むパスのみ可能です（本番への書き込み・デプロイAPIは不可）。</div>
+              <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。<strong>POST/PUT/DELETE</strong> は <code>/v1/preview/</code> を含むパスのみ可能です（本番への書き込み・デプロイAPIは不可）。<br><span style="font-size:11px">参考: <a href="https://cybozu.dev/ja/kintone/docs/rest-api/" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline;">kintone REST API リファレンス (cybozu.dev)</a> ／ 画面内 <kbd style="background:#f1f5f9;padding:1px 5px;border-radius:3px;border:1px solid #cbd5e1;font-size:10px;">Ctrl/Cmd + Enter</kbd> で実行</span></div>
               <div class="grid2" style="margin-top:8px">
                 <div>
                   <label title="よく使うAPIを選ぶと、メソッド・パス・Bodyの参考値を反映します">APIプリセット（参考値）</label>
