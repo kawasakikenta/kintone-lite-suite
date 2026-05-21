@@ -383,8 +383,10 @@ export async function runLoadTargetFields() {
   const prefix = buildApiPrefix(c.target.guestId, true);
   setStatus('比較先フィールド取得中...');
   const res = await apiGet(prefix, '/app/form/fields.json', { app: c.target.appId });
-  fieldJson.value = JSON.stringify({ properties: res.properties || ({} as any) }, null, 2);
-  setStatus('比較先フィールドを読み込みました');
+  const properties = res.properties || ({} as any);
+  fieldJson.value = JSON.stringify({ properties }, null, 2);
+  const summary = summarizeFieldProps(properties);
+  setStatus(`比較先フィールドを読み込みました（合計 ${summary.total} / 書込可 ${summary.writable}${summary.subtable ? ` / サブテーブル ${summary.subtable}` : ''}${summary.lookup ? ` / ルックアップ ${summary.lookup}` : ''}）`);
 }
 
 export async function runLoadSourceFieldsList() {
