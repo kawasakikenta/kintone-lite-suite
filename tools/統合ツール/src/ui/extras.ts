@@ -1799,6 +1799,13 @@ const DIFF_SEVERITY_LABEL: Record<string, string> = { high: '高', mid: '中', l
 
 const localizeKintoneEnumsInText = kusEnumsLocalize;
 
+function escapeMarkdownTableCell(value: string): string {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, '<br>');
+}
+
 function buildDiffMarkdownText(): string {
   const rows = state.lastDiffRows || [];
   const typeCounts: Record<string, number> = { added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
@@ -1822,9 +1829,11 @@ function buildDiffMarkdownText(): string {
     + rows.map((r: any) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-      const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
-      const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
-      return `| ${typeLabel} | ${diffSectionLabel(r)} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
+      const oldStr = escapeMarkdownTableCell(localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r))));
+      const newStr = escapeMarkdownTableCell(localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r))));
+      const path = escapeMarkdownTableCell(String(r.path ?? ''));
+      const section = escapeMarkdownTableCell(diffSectionLabel(r));
+      return `| ${typeLabel} | ${section} | \`${path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
     }).join('\n');
 }
 

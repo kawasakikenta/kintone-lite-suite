@@ -41607,6 +41607,9 @@ ${body}`;
   var DIFF_TYPE_LABEL = { added: "追加", removed: "削除", changed: "変更", moved: "移動", same: "同一" };
   var DIFF_SEVERITY_LABEL = { high: "高", mid: "中", low: "低", info: "情報" };
   var localizeKintoneEnumsInText2 = localizeKintoneEnumsInText;
+  function escapeMarkdownTableCell(value) {
+    return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+  }
   function buildDiffMarkdownText() {
     const rows = state.lastDiffRows || [];
     const typeCounts = { added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
@@ -41626,9 +41629,11 @@ ${body}`;
     return "# 差分レポート\n\n生成: " + (/* @__PURE__ */ new Date()).toISOString() + "\n\n" + summaryLines.join("\n") + "\n\n| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n|---|---|---|---|---|---|\n" + rows.map((r) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r)));
-      const newStr = localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r)));
-      return `| ${typeLabel} | ${diffSectionLabel(r)} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
+      const oldStr = escapeMarkdownTableCell(localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r))));
+      const newStr = escapeMarkdownTableCell(localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r))));
+      const path = escapeMarkdownTableCell(String(r.path ?? ""));
+      const section = escapeMarkdownTableCell(diffSectionLabel(r));
+      return `| ${typeLabel} | ${section} | \`${path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
     }).join("\n");
   }
   function exportDiffAsMarkdown() {
