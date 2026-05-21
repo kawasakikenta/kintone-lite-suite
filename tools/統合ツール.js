@@ -33655,6 +33655,20 @@ ${detail}`);
                 </ul>
               </div>
               <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">機能タブ切替（機能画面で）</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>1</kbd> ～ <kbd>7</kbd><span>差分比較 / 反映 / フィールド / ER図 / プロセス / 分析 / APIテスター</span></li>
+                  <li><kbd>Esc</kbd><span>ランチャーへ戻る</span></li>
+                </ul>
+              </div>
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">プレビュー反映 / APIテスター</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd><span>反映タブ: 次のアクション実行 / APIテスター: API を実行</span></li>
+                  <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd><span>反映タブ: プレビュー反映を実行</span></li>
+                </ul>
+              </div>
+              <div class="shortcut-help-group">
                 <div class="shortcut-help-group-title">操作ガイド表示中</div>
                 <ul class="shortcut-help-list">
                   <li><kbd>→</kbd> / <kbd>Enter</kbd><span>次のステップへ進む</span></li>
