@@ -1744,18 +1744,29 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                     </div>
                   </div>
                   <div style="margin-top:8px">
-                    <label title="GET のときは無視されることがあります">リクエストBody (JSONフォーマット)</label>
-                    <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace" placeholder='{"app": 1, "id": 100}'></textarea>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                      <label title="GET のときは無視されることがあります" style="margin:0">リクエストBody (JSONフォーマット)</label>
+                      <button type="button" class="btn sub" data-act="beautifyApiTesterBody" title="Body の JSON を整形・検証します" style="padding:2px 8px;font-size:11px;">JSON整形</button>
+                    </div>
+                    <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace;margin-top:4px;" placeholder='{"app": 1, "id": 100}'></textarea>
                   </div>
-                  <div class="btns" style="margin-top:10px;display:flex;">
-                    <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ">APIを実行</button>
+                  <div class="btns" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
+                    <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ ( Ctrl/Cmd+Enter )">APIを実行</button>
                     <button type="button" class="btn sub" data-act="copyApiTesterCurl" title="現在の入力からcurl例をコピー">curlコピー</button>
-                    <button type="button" class="btn sub" data-act="clearApiTesterHistory" style="margin-left:auto;">履歴クリア</button>
+                    <button type="button" class="btn sub" data-act="copyApiTesterResponse" title="直近のレスポンスをクリップボードへコピー">レスポンスコピー</button>
+                    <button type="button" class="btn sub" data-act="downloadApiTesterResponse" title="直近のレスポンスをJSONファイルとして保存">JSON保存</button>
                   </div>
+                  <div id="u_apiTesterMeta" style="margin-top:8px;font-size:11px;padding:6px 10px;border-radius:6px;color:#64748b;background:#f8fafc;border:1px dashed #e2e8f0;">未実行</div>
                   <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>
                 </div>
                 <aside class="api-tester-side">
-                  <div class="api-tester-side-title">最近の実行履歴</div>
+                  <div class="api-tester-side-title" style="display:flex;align-items:center;justify-content:space-between;">
+                    <span>最近の実行履歴</span>
+                    <span style="display:flex;gap:4px;">
+                      <button type="button" class="btn sub" data-act="exportApiTesterHistory" title="履歴をJSONとして保存" style="padding:2px 6px;font-size:10px;">保存</button>
+                      <button type="button" class="btn sub" data-act="clearApiTesterHistory" title="履歴を全消去" style="padding:2px 6px;font-size:10px;">消去</button>
+                    </span>
+                  </div>
                   <div id="u_apiTesterHistoryList" class="api-tester-history-list">
                     <div style="color:#94a3b8;font-size:11px;font-style:italic;padding:8px;">履歴はありません</div>
                   </div>

@@ -1,16 +1,37 @@
 'use strict';
 
-import { esc, showToast } from '../utils.js';
+import { downloadText, esc, nowStamp, showToast } from '../utils.js';
 import { assertAllowsMutatingApiUrl } from '../api.js';
 import { setBusy } from '../ui/components.js';
 import { setStatus } from '../ui/components.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { bumpSessionMetric } from '../ui/psychology.js';
 
-const API_TESTER_PRESETS = [
+type ApiTesterPreset = {
+  id: string;
+  label: string;
+  group: string;
+  method: string;
+  path: string;
+  body: any;
+  hint: string;
+};
+
+const API_TESTER_PRESETS: ReadonlyArray<ApiTesterPreset> = [
+  // ----- 取得系（読み取り） -----
+  {
+    id: 'app-info',
+    label: 'アプリ情報を取得',
+    group: '取得（読み取り）',
+    method: 'GET',
+    path: '/k/v1/app.json',
+    body: { id: 1 },
+    hint: 'アプリのメタ情報（名称・コード・スペースなど）を取得します。'
+  },
   {
     id: 'app-settings',
-    label: 'アプリ設定を取得（GET）',
+    label: 'アプリ設定を取得',
+    group: '取得（読み取り）',
     method: 'GET',
     path: '/k/v1/app/settings.json',
     body: { app: 1 },
@@ -18,16 +39,85 @@ const API_TESTER_PRESETS = [
   },
   {
     id: 'form-fields-get',
-    label: 'フォーム項目を取得（GET）',
+    label: 'フォーム項目を取得',
+    group: '取得（読み取り）',
     method: 'GET',
     path: '/k/v1/app/form/fields.json',
     body: { app: 1 },
     hint: 'フォーム構造確認用。返却値の properties でフィールド一覧を確認できます。'
   },
   {
-    id: 'form-fields-put-preview',
-    label: 'フォーム項目を更新（PUT / preview）',
-    method: 'PUT',
+    id: 'form-layout-get',
+    label: 'フォームレイアウトを取得',
+    group: '取得（読み取り）',
+    method: 'GET',
+    path: '/k/v1/app/form/layout.json',
+    body: { app: 1 },
+    hint: 'レイアウト構造（ROW / GROUP / SUBTABLE）を取得します。'
+  },
+  {
+    id: 'views-get',
+    label: 'ビュー設定を取得',
+    group: '取得（読み取り）',
+    method: 'GET',
+    path: '/k/v1/app/views.json',
+    body: { app: 1 },
+    hint: '一覧（ビュー）の設定を取得します。'
+  },
+  {
+    id: 'process-mgmt-get',
+    label: 'プロセス管理設定を取得',
+    group: '取得（読み取り）',
+    method: 'GET',
+    path: '/k/v1/app/status.json',
+    body: { app: 1 },
+    hint: 'ステータス・アクション・閲覧設定を取得します。'
+  },
+  {
+    id: 'deploy-status-get',
+    label: 'デプロイ状態を取得',
+    group: '取得（読み取り）',
+    method: 'GET',
+    path: '/k/v1/preview/app/deploy.json',
+    body: { apps: [1] },
+    hint: 'デプロイ中(PROCESSING)/成功(SUCCESS)/失敗(FAIL)/未着手(CANCEL/NONE) を確認できます。'
+  },
+  {
+    id: 'record-get',
+    label: 'レコード1件取得',
+    group: '取得（読み取り）',
+    method: 'GET',
+    path: '/k/v1/record.json',
+    body: { app: 1, id: 1 },
+    hint: 'app と id の組み合わせで1件取得します。'
+  },
+  {
+    id: 'records-get',
+    label: 'レコード一覧取得',
+    group: '取得（読み取り）',
+    method: 'GET',
+    path: '/k/v1/records.json',
+    body: {
+      app: 1,
+      query: 'order by $id desc limit 10'
+    },
+    hint: '大量取得時は limit/offset や query を調整してください。'
+  },
+  {
+    id: 'comments-get',
+    label: 'コメント一覧取得',
+    group: '取得（読み取り）',
+    method: 'GET',
+    path: '/k/v1/record/comments.json',
+    body: { app: 1, record: 1, order: 'desc', limit: 10 },
+    hint: 'レコードのコメントを新しい順で取得します。'
+  },
+  // ----- preview 更新系（書き込み） -----
+  {
+    id: 'form-fields-post-preview',
+    label: 'フィールドを追加（POST / preview）',
+    group: '更新（preview 必須）',
+    method: 'POST',
     path: '/k/v1/preview/app/form/fields.json',
     body: {
       app: 1,
@@ -39,27 +129,58 @@ const API_TESTER_PRESETS = [
         }
       }
     },
-    hint: '更新系APIのため preview パス必須です。反映後の本番デプロイは管理画面で実施してください。'
+    hint: '新規フィールドを preview に追加します。デプロイ反映は別途必要です。'
   },
   {
-    id: 'record-get',
-    label: 'レコード1件取得（GET）',
-    method: 'GET',
-    path: '/k/v1/record.json',
-    body: { app: 1, id: 1 },
-    hint: 'app と id の組み合わせで1件取得します。'
-  },
-  {
-    id: 'records-get',
-    label: 'レコード一覧取得（GET）',
-    method: 'GET',
-    path: '/k/v1/records.json',
+    id: 'form-fields-put-preview',
+    label: 'フィールドを更新（PUT / preview）',
+    group: '更新（preview 必須）',
+    method: 'PUT',
+    path: '/k/v1/preview/app/form/fields.json',
     body: {
       app: 1,
-      query: 'order by $id desc limit 10'
+      properties: {
+        sample_text: {
+          type: 'SINGLE_LINE_TEXT',
+          code: 'sample_text',
+          label: 'サンプルテキスト(更新)'
+        }
+      }
     },
-    hint: '大量取得時は limit/offset や query を調整してください。'
+    hint: '既存フィールド設定を変更します。type/code は変更不可です。'
+  },
+  {
+    id: 'app-settings-put-preview',
+    label: 'アプリ設定を更新（PUT / preview）',
+    group: '更新（preview 必須）',
+    method: 'PUT',
+    path: '/k/v1/preview/app/settings.json',
+    body: {
+      app: 1,
+      name: '更新後のアプリ名'
+    },
+    hint: 'アプリ名・説明・アイコンなどの基本設定を更新します。'
   }
+];
+
+const PATH_SUGGESTIONS: ReadonlyArray<string> = [
+  '/k/v1/app.json',
+  '/k/v1/app/settings.json',
+  '/k/v1/app/form/fields.json',
+  '/k/v1/app/form/layout.json',
+  '/k/v1/app/views.json',
+  '/k/v1/app/status.json',
+  '/k/v1/app/acl.json',
+  '/k/v1/field/acl.json',
+  '/k/v1/record/acl.json',
+  '/k/v1/record.json',
+  '/k/v1/records.json',
+  '/k/v1/record/comments.json',
+  '/k/v1/preview/app/deploy.json',
+  '/k/v1/preview/app/settings.json',
+  '/k/v1/preview/app/form/fields.json',
+  '/k/v1/preview/app/form/layout.json',
+  '/k/v1/preview/app/views.json'
 ];
 
 function sleep(ms: number) {
@@ -102,6 +223,37 @@ async function runKintoneApiWithSingleRetry(path: string, method: string, payloa
   }
 }
 
+let lastApiTesterResponse: any = null;
+
+function setApiTesterMeta(text: string, ok: boolean): void {
+  const metaEl = getToolDocument().getElementById('u_apiTesterMeta');
+  if (!metaEl) return;
+  metaEl.textContent = text;
+  metaEl.style.color = ok ? '#166534' : '#991b1b';
+  metaEl.style.background = ok ? '#f0fdf4' : '#fee2e2';
+  metaEl.style.border = `1px solid ${ok ? '#bbf7d0' : '#fecaca'}`;
+}
+
+function formatDuration(ms: number): string {
+  if (!isFinite(ms) || ms < 0) return '-';
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(2)} s`;
+}
+
+function describeResponseShape(res: any): string {
+  if (res == null) return 'null';
+  if (Array.isArray(res)) return `array (${res.length} items)`;
+  if (typeof res === 'object') {
+    if (Array.isArray(res.records)) return `records (${res.records.length} items)`;
+    if (res.properties && typeof res.properties === 'object') {
+      return `properties (${Object.keys(res.properties).length} fields)`;
+    }
+    if (Array.isArray(res.comments)) return `comments (${res.comments.length} items)`;
+    return `object (${Object.keys(res).length} keys)`;
+  }
+  return typeof res;
+}
+
 export async function runApiTester() {
   bumpSessionMetric('apiTesterRun');
   const method = (getToolDocument().getElementById('u_apiTesterMethod') as HTMLInputElement | null)?.value || 'GET';
@@ -131,7 +283,10 @@ export async function runApiTester() {
 
   setBusy(true, `API実行中 (${method}) ...`);
   resEl.innerHTML = '<div style="color:#64748b">実行中...</div>';
+  setApiTesterMeta('実行中…', true);
+  lastApiTesterResponse = null;
 
+  const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   try {
     if (/^https?:\/\//i.test(path)) {
       throw new Error('kintone.api には /k/v1/... または /k/guest/... の相対パスを指定してください。完全URLは実行できません。');
@@ -146,12 +301,20 @@ export async function runApiTester() {
     assertAllowsMutatingApiUrl(finalPath, method);
 
     const res = await runKintoneApiWithSingleRetry(finalPath, method, payload);
-    resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(JSON.stringify(res, null, 2))}</pre>`;
-    setStatus(`API実行成功: ${method} ${finalPath}`);
+    const elapsed = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0;
+    lastApiTesterResponse = res;
+    const json = JSON.stringify(res, null, 2);
+    const sizeBytes = new Blob([json]).size;
+    resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(json)}</pre>`;
+    setApiTesterMeta(`✓ 成功 / ${formatDuration(elapsed)} / ${describeResponseShape(res)} / ${(sizeBytes / 1024).toFixed(1)} KB`, true);
+    setStatus(`API実行成功: ${method} ${finalPath} (${formatDuration(elapsed)})`);
     saveApiTesterHistory(method, path, bodyStr);
   } catch (e) {
+    const elapsed = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - t0;
     let errMsg = formatApiTesterError(e);
     resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">${esc(errMsg)}</pre>`;
+    const status = (e && (e as any).status) ? ` / status ${(e as any).status}` : '';
+    setApiTesterMeta(`✗ エラー / ${formatDuration(elapsed)}${status}`, false);
     setStatus(`API実行エラー: ${method} ${path}`, true);
   } finally {
     setBusy(false);
@@ -198,9 +361,19 @@ export function initApiTesterEnhancements() {
   const presetEl = doc.getElementById('u_apiTesterPreset') as HTMLSelectElement | null;
   const suggestEl = doc.getElementById('u_apiTesterPathSuggest') as HTMLDataListElement | null;
   if (presetEl) {
-    presetEl.querySelectorAll('option[data-api-tester-preset]').forEach((option) => option.remove());
-    const options = API_TESTER_PRESETS.map((preset) => `<option data-api-tester-preset="1" value="${esc(preset.id)}">${esc(preset.label)}</option>`).join('');
-    presetEl.insertAdjacentHTML('beforeend', options);
+    presetEl.querySelectorAll('option[data-api-tester-preset], optgroup[data-api-tester-preset]').forEach((node) => node.remove());
+    const groups = new Map<string, ApiTesterPreset[]>();
+    for (const preset of API_TESTER_PRESETS) {
+      const arr = groups.get(preset.group) || [];
+      arr.push(preset);
+      groups.set(preset.group, arr);
+    }
+    const fragments: string[] = [];
+    for (const [group, presets] of groups.entries()) {
+      const options = presets.map((preset) => `<option data-api-tester-preset="1" value="${esc(preset.id)}">${esc(preset.label)}</option>`).join('');
+      fragments.push(`<optgroup data-api-tester-preset="1" label="${esc(group)}">${options}</optgroup>`);
+    }
+    presetEl.insertAdjacentHTML('beforeend', fragments.join(''));
     presetEl.addEventListener('change', () => {
       const presetId = presetEl.value;
       if (!presetId) {
@@ -212,14 +385,18 @@ export function initApiTesterEnhancements() {
   }
   if (suggestEl) {
     const seen = new Set<string>();
-    suggestEl.innerHTML = API_TESTER_PRESETS
-      .filter((preset) => {
-        if (seen.has(preset.path)) return false;
-        seen.add(preset.path);
-        return true;
-      })
-      .map((preset) => `<option value="${esc(preset.path)}"></option>`)
-      .join('');
+    const paths: string[] = [];
+    for (const preset of API_TESTER_PRESETS) {
+      if (seen.has(preset.path)) continue;
+      seen.add(preset.path);
+      paths.push(preset.path);
+    }
+    for (const path of PATH_SUGGESTIONS) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      paths.push(path);
+    }
+    suggestEl.innerHTML = paths.map((path) => `<option value="${esc(path)}"></option>`).join('');
   }
 
   const methodEl = doc.getElementById('u_apiTesterMethod') as HTMLInputElement | HTMLSelectElement | null;
@@ -235,6 +412,72 @@ export function initApiTesterEnhancements() {
       setPresetHint(preset.hint);
     });
   }
+
+  // Ctrl/Cmd + Enter to execute, while focused on the API tester pane
+  const pane = doc.querySelector('[data-pane="apiTester"]') as HTMLElement | null;
+  if (pane) {
+    pane.addEventListener('keydown', (event: Event) => {
+      const ke = event as KeyboardEvent;
+      if ((ke.ctrlKey || ke.metaKey) && ke.key === 'Enter') {
+        ke.preventDefault();
+        runApiTester();
+      }
+    });
+  }
+}
+
+export function beautifyApiTesterBody(): void {
+  const bodyEl = getToolDocument().getElementById('u_apiTesterBody') as HTMLTextAreaElement | null;
+  if (!bodyEl) return;
+  const raw = (bodyEl.value || '').trim();
+  if (!raw) {
+    bodyEl.value = '{}';
+    setStatus('Body を {} に初期化しました');
+    return;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    bodyEl.value = prettyJson(parsed);
+    setStatus('Body を整形しました');
+  } catch (e) {
+    showToast('JSON が不正です: ' + (e as any).message, 'error');
+  }
+}
+
+export async function copyApiTesterResponse(): Promise<void> {
+  if (lastApiTesterResponse == null) {
+    showToast('先にAPIを実行してください', 'warn');
+    return;
+  }
+  const text = prettyJson(lastApiTesterResponse);
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus('レスポンスをクリップボードへコピーしました');
+  } catch (_e) {
+    showToast('クリップボードへコピーできませんでした', 'error');
+  }
+}
+
+export function downloadApiTesterResponse(): void {
+  if (lastApiTesterResponse == null) {
+    showToast('先にAPIを実行してください', 'warn');
+    return;
+  }
+  downloadText(`api-response_${nowStamp()}.json`, prettyJson(lastApiTesterResponse), 'application/json;charset=utf-8');
+  setStatus('レスポンスをJSONとして保存しました');
+}
+
+export function exportApiTesterHistory(): void {
+  if (!apiTesterHistoryMemory.length) {
+    showToast('履歴がありません', 'warn');
+    return;
+  }
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    history: apiTesterHistoryMemory
+  };
+  downloadText(`api-tester-history_${nowStamp()}.json`, prettyJson(payload), 'application/json;charset=utf-8');
+  setStatus(`履歴 ${apiTesterHistoryMemory.length} 件をエクスポートしました`);
 }
 
 export function saveApiTesterHistory(method: string, path: string, bodyStr: string) {
@@ -291,12 +534,25 @@ export function renderApiTesterHistory() {
       const isGet = h.method === 'GET';
       const methodColor = isGet ? '#2563eb' : (h.method === 'POST' ? '#16a34a' : (h.method === 'PUT' ? '#d97706' : '#dc2626'));
       const methodBg = isGet ? '#dbeafe' : (h.method === 'POST' ? '#dcfce3' : (h.method === 'PUT' ? '#fef3c7' : '#fee2e2'));
+      let timeLabel = '';
+      if (h.time) {
+        try {
+          const d = new Date(h.time);
+          if (!isNaN(d.getTime())) {
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mm = String(d.getMinutes()).padStart(2, '0');
+            const ss = String(d.getSeconds()).padStart(2, '0');
+            timeLabel = `${hh}:${mm}:${ss}`;
+          }
+        } catch (_) { /* ignore */ }
+      }
       return `
         <div class="api-history-item" data-idx="${i}" role="button" tabindex="0"
           style="cursor:pointer;background:#fff;border:1px solid #e2e8f0;padding:6px 8px;border-radius:6px;transition:0.15s;display:flex;flex-direction:column;gap:4px;">
           <div style="display:flex;align-items:center;gap:6px;overflow:hidden;">
             <span style="font-size:9px;font-weight:800;background:${methodBg};color:${methodColor};padding:2px 4px;border-radius:4px;">${esc(h.method)}</span>
-            <span style="font-size:11px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(h.path)}">${esc(h.path)}</span>
+            <span style="font-size:11px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;" title="${esc(h.path)}">${esc(h.path)}</span>
+            ${timeLabel ? `<span style="font-size:9px;color:#94a3b8;flex-shrink:0;" title="${esc(h.time)}">${esc(timeLabel)}</span>` : ''}
           </div>
           ${bPrev && bPrev !== '{}' ? `<div style="font-size:10px;color:#64748b;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(bPrev)}</div>` : ''}
         </div>

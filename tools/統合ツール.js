@@ -33147,18 +33147,29 @@ ${detail}`);
                     </div>
                   </div>
                   <div style="margin-top:8px">
-                    <label title="GET のときは無視されることがあります">リクエストBody (JSONフォーマット)</label>
-                    <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace" placeholder='{"app": 1, "id": 100}'></textarea>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                      <label title="GET のときは無視されることがあります" style="margin:0">リクエストBody (JSONフォーマット)</label>
+                      <button type="button" class="btn sub" data-act="beautifyApiTesterBody" title="Body の JSON を整形・検証します" style="padding:2px 8px;font-size:11px;">JSON整形</button>
+                    </div>
+                    <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace;margin-top:4px;" placeholder='{"app": 1, "id": 100}'></textarea>
                   </div>
-                  <div class="btns" style="margin-top:10px;display:flex;">
-                    <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ">APIを実行</button>
+                  <div class="btns" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
+                    <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ ( Ctrl/Cmd+Enter )">APIを実行</button>
                     <button type="button" class="btn sub" data-act="copyApiTesterCurl" title="現在の入力からcurl例をコピー">curlコピー</button>
-                    <button type="button" class="btn sub" data-act="clearApiTesterHistory" style="margin-left:auto;">履歴クリア</button>
+                    <button type="button" class="btn sub" data-act="copyApiTesterResponse" title="直近のレスポンスをクリップボードへコピー">レスポンスコピー</button>
+                    <button type="button" class="btn sub" data-act="downloadApiTesterResponse" title="直近のレスポンスをJSONファイルとして保存">JSON保存</button>
                   </div>
+                  <div id="u_apiTesterMeta" style="margin-top:8px;font-size:11px;padding:6px 10px;border-radius:6px;color:#64748b;background:#f8fafc;border:1px dashed #e2e8f0;">未実行</div>
                   <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>
                 </div>
                 <aside class="api-tester-side">
-                  <div class="api-tester-side-title">最近の実行履歴</div>
+                  <div class="api-tester-side-title" style="display:flex;align-items:center;justify-content:space-between;">
+                    <span>最近の実行履歴</span>
+                    <span style="display:flex;gap:4px;">
+                      <button type="button" class="btn sub" data-act="exportApiTesterHistory" title="履歴をJSONとして保存" style="padding:2px 6px;font-size:10px;">保存</button>
+                      <button type="button" class="btn sub" data-act="clearApiTesterHistory" title="履歴を全消去" style="padding:2px 6px;font-size:10px;">消去</button>
+                    </span>
+                  </div>
                   <div id="u_apiTesterHistoryList" class="api-tester-history-list">
                     <div style="color:#94a3b8;font-size:11px;font-style:italic;padding:8px;">履歴はありません</div>
                   </div>
@@ -36730,6 +36741,10 @@ ${detail}`);
       runApiTester: runApiTester2,
       clearApiTesterHistory: clearApiTesterHistory2,
       copyApiTesterCurl: copyApiTesterCurl2,
+      beautifyApiTesterBody: beautifyApiTesterBody2,
+      copyApiTesterResponse: copyApiTesterResponse2,
+      downloadApiTesterResponse: downloadApiTesterResponse2,
+      exportApiTesterHistory: exportApiTesterHistory2,
       runPreviewApplyPlan: runPreviewApplyPlan2,
       runExportDryRunPlan: runExportDryRunPlan2,
       runExportReviewZip: runExportReviewZip2,
@@ -39577,6 +39592,10 @@ ${detail}`);
       }
       if (act === "copyApiTesterCurl" && typeof copyApiTesterCurl2 === "function") return copyApiTesterCurl2();
       if (act === "runApiTester" && typeof runApiTester2 === "function") return runApiTester2();
+      if (act === "beautifyApiTesterBody" && typeof beautifyApiTesterBody2 === "function") return beautifyApiTesterBody2();
+      if (act === "copyApiTesterResponse" && typeof copyApiTesterResponse2 === "function") return copyApiTesterResponse2();
+      if (act === "downloadApiTesterResponse" && typeof downloadApiTesterResponse2 === "function") return downloadApiTesterResponse2();
+      if (act === "exportApiTesterHistory" && typeof exportApiTesterHistory2 === "function") return exportApiTesterHistory2();
     });
     refreshDiffSelectionSetDropdown();
     syncDiffOnboardingVisibility();
@@ -43121,9 +43140,20 @@ ${diffMd}
   init_dialog();
   init_psychology();
   var API_TESTER_PRESETS = [
+    // ----- 取得系（読み取り） -----
+    {
+      id: "app-info",
+      label: "アプリ情報を取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/app.json",
+      body: { id: 1 },
+      hint: "アプリのメタ情報（名称・コード・スペースなど）を取得します。"
+    },
     {
       id: "app-settings",
-      label: "アプリ設定を取得（GET）",
+      label: "アプリ設定を取得",
+      group: "取得（読み取り）",
       method: "GET",
       path: "/k/v1/app/settings.json",
       body: { app: 1 },
@@ -43131,16 +43161,85 @@ ${diffMd}
     },
     {
       id: "form-fields-get",
-      label: "フォーム項目を取得（GET）",
+      label: "フォーム項目を取得",
+      group: "取得（読み取り）",
       method: "GET",
       path: "/k/v1/app/form/fields.json",
       body: { app: 1 },
       hint: "フォーム構造確認用。返却値の properties でフィールド一覧を確認できます。"
     },
     {
-      id: "form-fields-put-preview",
-      label: "フォーム項目を更新（PUT / preview）",
-      method: "PUT",
+      id: "form-layout-get",
+      label: "フォームレイアウトを取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/app/form/layout.json",
+      body: { app: 1 },
+      hint: "レイアウト構造（ROW / GROUP / SUBTABLE）を取得します。"
+    },
+    {
+      id: "views-get",
+      label: "ビュー設定を取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/app/views.json",
+      body: { app: 1 },
+      hint: "一覧（ビュー）の設定を取得します。"
+    },
+    {
+      id: "process-mgmt-get",
+      label: "プロセス管理設定を取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/app/status.json",
+      body: { app: 1 },
+      hint: "ステータス・アクション・閲覧設定を取得します。"
+    },
+    {
+      id: "deploy-status-get",
+      label: "デプロイ状態を取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/preview/app/deploy.json",
+      body: { apps: [1] },
+      hint: "デプロイ中(PROCESSING)/成功(SUCCESS)/失敗(FAIL)/未着手(CANCEL/NONE) を確認できます。"
+    },
+    {
+      id: "record-get",
+      label: "レコード1件取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/record.json",
+      body: { app: 1, id: 1 },
+      hint: "app と id の組み合わせで1件取得します。"
+    },
+    {
+      id: "records-get",
+      label: "レコード一覧取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/records.json",
+      body: {
+        app: 1,
+        query: "order by $id desc limit 10"
+      },
+      hint: "大量取得時は limit/offset や query を調整してください。"
+    },
+    {
+      id: "comments-get",
+      label: "コメント一覧取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/record/comments.json",
+      body: { app: 1, record: 1, order: "desc", limit: 10 },
+      hint: "レコードのコメントを新しい順で取得します。"
+    },
+    // ----- preview 更新系（書き込み） -----
+    {
+      id: "form-fields-post-preview",
+      label: "フィールドを追加（POST / preview）",
+      group: "更新（preview 必須）",
+      method: "POST",
       path: "/k/v1/preview/app/form/fields.json",
       body: {
         app: 1,
@@ -43152,27 +43251,57 @@ ${diffMd}
           }
         }
       },
-      hint: "更新系APIのため preview パス必須です。反映後の本番デプロイは管理画面で実施してください。"
+      hint: "新規フィールドを preview に追加します。デプロイ反映は別途必要です。"
     },
     {
-      id: "record-get",
-      label: "レコード1件取得（GET）",
-      method: "GET",
-      path: "/k/v1/record.json",
-      body: { app: 1, id: 1 },
-      hint: "app と id の組み合わせで1件取得します。"
-    },
-    {
-      id: "records-get",
-      label: "レコード一覧取得（GET）",
-      method: "GET",
-      path: "/k/v1/records.json",
+      id: "form-fields-put-preview",
+      label: "フィールドを更新（PUT / preview）",
+      group: "更新（preview 必須）",
+      method: "PUT",
+      path: "/k/v1/preview/app/form/fields.json",
       body: {
         app: 1,
-        query: "order by $id desc limit 10"
+        properties: {
+          sample_text: {
+            type: "SINGLE_LINE_TEXT",
+            code: "sample_text",
+            label: "サンプルテキスト(更新)"
+          }
+        }
       },
-      hint: "大量取得時は limit/offset や query を調整してください。"
+      hint: "既存フィールド設定を変更します。type/code は変更不可です。"
+    },
+    {
+      id: "app-settings-put-preview",
+      label: "アプリ設定を更新（PUT / preview）",
+      group: "更新（preview 必須）",
+      method: "PUT",
+      path: "/k/v1/preview/app/settings.json",
+      body: {
+        app: 1,
+        name: "更新後のアプリ名"
+      },
+      hint: "アプリ名・説明・アイコンなどの基本設定を更新します。"
     }
+  ];
+  var PATH_SUGGESTIONS = [
+    "/k/v1/app.json",
+    "/k/v1/app/settings.json",
+    "/k/v1/app/form/fields.json",
+    "/k/v1/app/form/layout.json",
+    "/k/v1/app/views.json",
+    "/k/v1/app/status.json",
+    "/k/v1/app/acl.json",
+    "/k/v1/field/acl.json",
+    "/k/v1/record/acl.json",
+    "/k/v1/record.json",
+    "/k/v1/records.json",
+    "/k/v1/record/comments.json",
+    "/k/v1/preview/app/deploy.json",
+    "/k/v1/preview/app/settings.json",
+    "/k/v1/preview/app/form/fields.json",
+    "/k/v1/preview/app/form/layout.json",
+    "/k/v1/preview/app/views.json"
   ];
   function sleep3(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -43214,6 +43343,33 @@ ${diffMd}
       return await kintone.api(path, method, payload);
     }
   }
+  var lastApiTesterResponse = null;
+  function setApiTesterMeta(text, ok) {
+    const metaEl = getToolDocument().getElementById("u_apiTesterMeta");
+    if (!metaEl) return;
+    metaEl.textContent = text;
+    metaEl.style.color = ok ? "#166534" : "#991b1b";
+    metaEl.style.background = ok ? "#f0fdf4" : "#fee2e2";
+    metaEl.style.border = `1px solid ${ok ? "#bbf7d0" : "#fecaca"}`;
+  }
+  function formatDuration(ms) {
+    if (!isFinite(ms) || ms < 0) return "-";
+    if (ms < 1e3) return `${Math.round(ms)} ms`;
+    return `${(ms / 1e3).toFixed(2)} s`;
+  }
+  function describeResponseShape(res) {
+    if (res == null) return "null";
+    if (Array.isArray(res)) return `array (${res.length} items)`;
+    if (typeof res === "object") {
+      if (Array.isArray(res.records)) return `records (${res.records.length} items)`;
+      if (res.properties && typeof res.properties === "object") {
+        return `properties (${Object.keys(res.properties).length} fields)`;
+      }
+      if (Array.isArray(res.comments)) return `comments (${res.comments.length} items)`;
+      return `object (${Object.keys(res).length} keys)`;
+    }
+    return typeof res;
+  }
   async function runApiTester() {
     bumpSessionMetric("apiTesterRun");
     const method = getToolDocument().getElementById("u_apiTesterMethod")?.value || "GET";
@@ -43239,6 +43395,9 @@ ${diffMd}
     }
     setBusy(true, `API実行中 (${method}) ...`);
     resEl.innerHTML = '<div style="color:#64748b">実行中...</div>';
+    setApiTesterMeta("実行中…", true);
+    lastApiTesterResponse = null;
+    const t0 = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     try {
       if (/^https?:\/\//i.test(path)) {
         throw new Error("kintone.api には /k/v1/... または /k/guest/... の相対パスを指定してください。完全URLは実行できません。");
@@ -43251,12 +43410,20 @@ ${diffMd}
       }
       assertAllowsMutatingApiUrl(finalPath, method);
       const res = await runKintoneApiWithSingleRetry(finalPath, method, payload);
-      resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(JSON.stringify(res, null, 2))}</pre>`;
-      setStatus(`API実行成功: ${method} ${finalPath}`);
+      const elapsed = (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now()) - t0;
+      lastApiTesterResponse = res;
+      const json = JSON.stringify(res, null, 2);
+      const sizeBytes = new Blob([json]).size;
+      resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(json)}</pre>`;
+      setApiTesterMeta(`✓ 成功 / ${formatDuration(elapsed)} / ${describeResponseShape(res)} / ${(sizeBytes / 1024).toFixed(1)} KB`, true);
+      setStatus(`API実行成功: ${method} ${finalPath} (${formatDuration(elapsed)})`);
       saveApiTesterHistory(method, path, bodyStr);
     } catch (e) {
+      const elapsed = (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now()) - t0;
       let errMsg = formatApiTesterError(e);
       resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">${esc(errMsg)}</pre>`;
+      const status = e && e.status ? ` / status ${e.status}` : "";
+      setApiTesterMeta(`✗ エラー / ${formatDuration(elapsed)}${status}`, false);
       setStatus(`API実行エラー: ${method} ${path}`, true);
     } finally {
       setBusy(false);
@@ -43297,9 +43464,19 @@ ${diffMd}
     const presetEl = doc.getElementById("u_apiTesterPreset");
     const suggestEl = doc.getElementById("u_apiTesterPathSuggest");
     if (presetEl) {
-      presetEl.querySelectorAll("option[data-api-tester-preset]").forEach((option) => option.remove());
-      const options = API_TESTER_PRESETS.map((preset) => `<option data-api-tester-preset="1" value="${esc(preset.id)}">${esc(preset.label)}</option>`).join("");
-      presetEl.insertAdjacentHTML("beforeend", options);
+      presetEl.querySelectorAll("option[data-api-tester-preset], optgroup[data-api-tester-preset]").forEach((node) => node.remove());
+      const groups = /* @__PURE__ */ new Map();
+      for (const preset of API_TESTER_PRESETS) {
+        const arr = groups.get(preset.group) || [];
+        arr.push(preset);
+        groups.set(preset.group, arr);
+      }
+      const fragments = [];
+      for (const [group, presets] of groups.entries()) {
+        const options = presets.map((preset) => `<option data-api-tester-preset="1" value="${esc(preset.id)}">${esc(preset.label)}</option>`).join("");
+        fragments.push(`<optgroup data-api-tester-preset="1" label="${esc(group)}">${options}</optgroup>`);
+      }
+      presetEl.insertAdjacentHTML("beforeend", fragments.join(""));
       presetEl.addEventListener("change", () => {
         const presetId = presetEl.value;
         if (!presetId) {
@@ -43311,11 +43488,18 @@ ${diffMd}
     }
     if (suggestEl) {
       const seen = /* @__PURE__ */ new Set();
-      suggestEl.innerHTML = API_TESTER_PRESETS.filter((preset) => {
-        if (seen.has(preset.path)) return false;
+      const paths = [];
+      for (const preset of API_TESTER_PRESETS) {
+        if (seen.has(preset.path)) continue;
         seen.add(preset.path);
-        return true;
-      }).map((preset) => `<option value="${esc(preset.path)}"></option>`).join("");
+        paths.push(preset.path);
+      }
+      for (const path of PATH_SUGGESTIONS) {
+        if (seen.has(path)) continue;
+        seen.add(path);
+        paths.push(path);
+      }
+      suggestEl.innerHTML = paths.map((path) => `<option value="${esc(path)}"></option>`).join("");
     }
     const methodEl = doc.getElementById("u_apiTesterMethod");
     const pathEl = doc.getElementById("u_apiTesterPath");
@@ -43330,6 +43514,66 @@ ${diffMd}
         setPresetHint(preset.hint);
       });
     }
+    const pane = doc.querySelector('[data-pane="apiTester"]');
+    if (pane) {
+      pane.addEventListener("keydown", (event) => {
+        const ke = event;
+        if ((ke.ctrlKey || ke.metaKey) && ke.key === "Enter") {
+          ke.preventDefault();
+          runApiTester();
+        }
+      });
+    }
+  }
+  function beautifyApiTesterBody() {
+    const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
+    if (!bodyEl) return;
+    const raw = (bodyEl.value || "").trim();
+    if (!raw) {
+      bodyEl.value = "{}";
+      setStatus("Body を {} に初期化しました");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      bodyEl.value = prettyJson(parsed);
+      setStatus("Body を整形しました");
+    } catch (e) {
+      showToast("JSON が不正です: " + e.message, "error");
+    }
+  }
+  async function copyApiTesterResponse() {
+    if (lastApiTesterResponse == null) {
+      showToast("先にAPIを実行してください", "warn");
+      return;
+    }
+    const text = prettyJson(lastApiTesterResponse);
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("レスポンスをクリップボードへコピーしました");
+    } catch (_e) {
+      showToast("クリップボードへコピーできませんでした", "error");
+    }
+  }
+  function downloadApiTesterResponse() {
+    if (lastApiTesterResponse == null) {
+      showToast("先にAPIを実行してください", "warn");
+      return;
+    }
+    downloadText(`api-response_${nowStamp()}.json`, prettyJson(lastApiTesterResponse), "application/json;charset=utf-8");
+    setStatus("レスポンスをJSONとして保存しました");
+  }
+  function exportApiTesterHistory() {
+    if (!apiTesterHistoryMemory.length) {
+      showToast("履歴がありません", "warn");
+      return;
+    }
+    const payload = {
+      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      history: apiTesterHistoryMemory
+    };
+    downloadText(`api-tester-history_${nowStamp()}.json`, prettyJson(payload), "application/json;charset=utf-8");
+    setStatus(`履歴 ${apiTesterHistoryMemory.length} 件をエクスポートしました`);
   }
   function saveApiTesterHistory(method, path, bodyStr) {
     let hist = apiTesterHistoryMemory.filter((h) => !(h.method === method && h.path === path && h.body === bodyStr));
@@ -43384,12 +43628,26 @@ ${diffMd}
         const isGet = h.method === "GET";
         const methodColor = isGet ? "#2563eb" : h.method === "POST" ? "#16a34a" : h.method === "PUT" ? "#d97706" : "#dc2626";
         const methodBg = isGet ? "#dbeafe" : h.method === "POST" ? "#dcfce3" : h.method === "PUT" ? "#fef3c7" : "#fee2e2";
+        let timeLabel = "";
+        if (h.time) {
+          try {
+            const d = new Date(h.time);
+            if (!isNaN(d.getTime())) {
+              const hh = String(d.getHours()).padStart(2, "0");
+              const mm = String(d.getMinutes()).padStart(2, "0");
+              const ss = String(d.getSeconds()).padStart(2, "0");
+              timeLabel = `${hh}:${mm}:${ss}`;
+            }
+          } catch (_) {
+          }
+        }
         return `
         <div class="api-history-item" data-idx="${i}" role="button" tabindex="0"
           style="cursor:pointer;background:#fff;border:1px solid #e2e8f0;padding:6px 8px;border-radius:6px;transition:0.15s;display:flex;flex-direction:column;gap:4px;">
           <div style="display:flex;align-items:center;gap:6px;overflow:hidden;">
             <span style="font-size:9px;font-weight:800;background:${methodBg};color:${methodColor};padding:2px 4px;border-radius:4px;">${esc(h.method)}</span>
-            <span style="font-size:11px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(h.path)}">${esc(h.path)}</span>
+            <span style="font-size:11px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;" title="${esc(h.path)}">${esc(h.path)}</span>
+            ${timeLabel ? `<span style="font-size:9px;color:#94a3b8;flex-shrink:0;" title="${esc(h.time)}">${esc(timeLabel)}</span>` : ""}
           </div>
           ${bPrev && bPrev !== "{}" ? `<div style="font-size:10px;color:#64748b;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(bPrev)}</div>` : ""}
         </div>
@@ -45587,6 +45845,10 @@ ${field.label}` : code,
       runApiTester,
       clearApiTesterHistory,
       copyApiTesterCurl,
+      beautifyApiTesterBody,
+      copyApiTesterResponse,
+      downloadApiTesterResponse,
+      exportApiTesterHistory,
       runPreviewApplyPlan,
       runExportDryRunPlan,
       runExportReviewZip,

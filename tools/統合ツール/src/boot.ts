@@ -67,7 +67,17 @@ import {
   loadViewsForSelect,
   renderTemplateOptions
 } from './tabs/record.js';
-import { runApiTester, clearApiTesterHistory, copyApiTesterCurl, renderApiTesterHistory, initApiTesterEnhancements } from './tabs/api-tester.js';
+import {
+  runApiTester,
+  clearApiTesterHistory,
+  copyApiTesterCurl,
+  renderApiTesterHistory,
+  initApiTesterEnhancements,
+  beautifyApiTesterBody,
+  copyApiTesterResponse,
+  downloadApiTesterResponse,
+  exportApiTesterHistory
+} from './tabs/api-tester.js';
 import {
   runAnalyzeDashboard,
   runFieldImpactAnalysis,
@@ -386,6 +396,10 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     runApiTester,
     clearApiTesterHistory,
     copyApiTesterCurl,
+    beautifyApiTesterBody,
+    copyApiTesterResponse,
+    downloadApiTesterResponse,
+    exportApiTesterHistory,
     runPreviewApplyPlan,
     runExportDryRunPlan,
     runExportReviewZip,

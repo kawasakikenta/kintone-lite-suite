@@ -425,6 +425,10 @@ export function setupEventHandlers(injected: any = {}) {
     runApiTester,
     clearApiTesterHistory,
     copyApiTesterCurl,
+    beautifyApiTesterBody,
+    copyApiTesterResponse,
+    downloadApiTesterResponse,
+    exportApiTesterHistory,
     runPreviewApplyPlan,
     runExportDryRunPlan,
     runExportReviewZip,
@@ -3368,6 +3372,10 @@ export function setupEventHandlers(injected: any = {}) {
     }
     if (act === 'copyApiTesterCurl' && typeof copyApiTesterCurl === 'function') return copyApiTesterCurl();
     if (act === 'runApiTester' && typeof runApiTester === 'function') return runApiTester();
+    if (act === 'beautifyApiTesterBody' && typeof beautifyApiTesterBody === 'function') return beautifyApiTesterBody();
+    if (act === 'copyApiTesterResponse' && typeof copyApiTesterResponse === 'function') return copyApiTesterResponse();
+    if (act === 'downloadApiTesterResponse' && typeof downloadApiTesterResponse === 'function') return downloadApiTesterResponse();
+    if (act === 'exportApiTesterHistory' && typeof exportApiTesterHistory === 'function') return exportApiTesterHistory();
   });
 
   refreshDiffSelectionSetDropdown();
