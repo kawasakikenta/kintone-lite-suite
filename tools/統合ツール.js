@@ -33255,6 +33255,7 @@ ${detail}`);
                   <div class="api-tester-side-title" style="display:flex;align-items:center;justify-content:space-between;">
                     <span>最近の実行履歴</span>
                     <span style="display:flex;gap:4px;">
+                      <button type="button" class="btn sub" data-act="importApiTesterHistory" title="JSON 履歴を読み込み（既存履歴とマージ）" style="padding:2px 6px;font-size:10px;">読込</button>
                       <button type="button" class="btn sub" data-act="exportApiTesterHistory" title="履歴をJSONとして保存" style="padding:2px 6px;font-size:10px;">保存</button>
                       <button type="button" class="btn sub" data-act="clearApiTesterHistory" title="履歴を全消去" style="padding:2px 6px;font-size:10px;">消去</button>
                     </span>
@@ -36882,6 +36883,7 @@ ${detail}`);
       copyApiTesterResponse: copyApiTesterResponse2,
       downloadApiTesterResponse: downloadApiTesterResponse2,
       exportApiTesterHistory: exportApiTesterHistory2,
+      importApiTesterHistory: importApiTesterHistory2,
       runPreviewApplyPlan: runPreviewApplyPlan2,
       runExportDryRunPlan: runExportDryRunPlan2,
       runExportReviewZip: runExportReviewZip2,
@@ -39764,6 +39766,7 @@ ${detail}`);
       if (act === "copyApiTesterResponse" && typeof copyApiTesterResponse2 === "function") return copyApiTesterResponse2();
       if (act === "downloadApiTesterResponse" && typeof downloadApiTesterResponse2 === "function") return downloadApiTesterResponse2();
       if (act === "exportApiTesterHistory" && typeof exportApiTesterHistory2 === "function") return exportApiTesterHistory2();
+      if (act === "importApiTesterHistory" && typeof importApiTesterHistory2 === "function") return importApiTesterHistory2();
     });
     refreshDiffSelectionSetDropdown();
     syncDiffOnboardingVisibility();
@@ -43940,6 +43943,56 @@ ${diffMd}
     downloadText(`api-tester-history_${nowStamp()}.json`, prettyJson(payload), "application/json;charset=utf-8");
     setStatus(`履歴 ${apiTesterHistoryMemory.length} 件をエクスポートしました`);
   }
+  function importApiTesterHistory() {
+    const doc = getToolDocument();
+    const input = doc.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.addEventListener("change", async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.history) ? parsed.history : null;
+        if (!items) {
+          showToast("履歴 JSON の形式が不正です（history 配列が見つかりません）", "error");
+          return;
+        }
+        const seen = /* @__PURE__ */ new Set();
+        const normalized = [];
+        for (const raw of items) {
+          if (!raw || typeof raw !== "object") continue;
+          const method = String(raw.method || "GET").toUpperCase();
+          const path = String(raw.path || "").trim();
+          if (!path) continue;
+          const body = String(raw.body || "{}");
+          const time = String(raw.time || (/* @__PURE__ */ new Date()).toISOString());
+          const key = `${method}	${path}	${body}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          normalized.push({ method, path, body, time });
+        }
+        const existing = apiTesterHistoryMemory.slice();
+        const existingKeys = new Set(existing.map((h) => `${h.method}	${h.path}	${h.body}`));
+        let added = 0;
+        for (const item of normalized) {
+          const key = `${item.method}	${item.path}	${item.body}`;
+          if (existingKeys.has(key)) continue;
+          existingKeys.add(key);
+          existing.push(item);
+          added += 1;
+        }
+        existing.sort((a, b) => String(b.time || "").localeCompare(String(a.time || "")));
+        apiTesterHistoryMemory = existing.slice(0, 15);
+        renderApiTesterHistory();
+        setStatus(`履歴をインポートしました（追加 ${added} 件 / 合計 ${apiTesterHistoryMemory.length} 件）`);
+      } catch (e) {
+        showToast("履歴 JSON の読み込みに失敗: " + (e?.message || String(e)), "error");
+      }
+    }, { once: true });
+    input.click();
+  }
   function saveApiTesterHistory(method, path, bodyStr) {
     let hist = apiTesterHistoryMemory.filter((h) => !(h.method === method && h.path === path && h.body === bodyStr));
     hist.unshift({ method, path, body: bodyStr, time: (/* @__PURE__ */ new Date()).toISOString() });
@@ -46220,6 +46273,7 @@ ${field.label}` : code,
       copyApiTesterResponse,
       downloadApiTesterResponse,
       exportApiTesterHistory,
+      importApiTesterHistory,
       runPreviewApplyPlan,
       runExportDryRunPlan,
       runExportReviewZip,

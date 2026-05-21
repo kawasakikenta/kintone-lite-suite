@@ -502,6 +502,57 @@ export function exportApiTesterHistory(): void {
   setStatus(`履歴 ${apiTesterHistoryMemory.length} 件をエクスポートしました`);
 }
 
+export function importApiTesterHistory(): void {
+  const doc = getToolDocument();
+  const input = doc.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.addEventListener('change', async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.history) ? parsed.history : null;
+      if (!items) {
+        showToast('履歴 JSON の形式が不正です（history 配列が見つかりません）', 'error');
+        return;
+      }
+      const seen = new Set<string>();
+      const normalized: any[] = [];
+      for (const raw of items) {
+        if (!raw || typeof raw !== 'object') continue;
+        const method = String((raw as any).method || 'GET').toUpperCase();
+        const path = String((raw as any).path || '').trim();
+        if (!path) continue;
+        const body = String((raw as any).body || '{}');
+        const time = String((raw as any).time || new Date().toISOString());
+        const key = `${method}\t${path}\t${body}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        normalized.push({ method, path, body, time });
+      }
+      const existing = apiTesterHistoryMemory.slice();
+      const existingKeys = new Set(existing.map((h: any) => `${h.method}\t${h.path}\t${h.body}`));
+      let added = 0;
+      for (const item of normalized) {
+        const key = `${item.method}\t${item.path}\t${item.body}`;
+        if (existingKeys.has(key)) continue;
+        existingKeys.add(key);
+        existing.push(item);
+        added += 1;
+      }
+      existing.sort((a, b) => String(b.time || '').localeCompare(String(a.time || '')));
+      apiTesterHistoryMemory = existing.slice(0, 15);
+      renderApiTesterHistory();
+      setStatus(`履歴をインポートしました（追加 ${added} 件 / 合計 ${apiTesterHistoryMemory.length} 件）`);
+    } catch (e: any) {
+      showToast('履歴 JSON の読み込みに失敗: ' + (e?.message || String(e)), 'error');
+    }
+  }, { once: true });
+  input.click();
+}
+
 export function saveApiTesterHistory(method: string, path: string, bodyStr: string) {
   let hist = apiTesterHistoryMemory.filter((h: any) => !(h.method === method && h.path === path && h.body === bodyStr));
   hist.unshift({ method, path, body: bodyStr, time: new Date().toISOString() });

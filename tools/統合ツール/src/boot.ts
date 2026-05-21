@@ -86,7 +86,8 @@ import {
   minifyApiTesterBody,
   copyApiTesterResponse,
   downloadApiTesterResponse,
-  exportApiTesterHistory
+  exportApiTesterHistory,
+  importApiTesterHistory
 } from './tabs/api-tester.js';
 import {
   runAnalyzeDashboard,
@@ -416,6 +417,7 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     copyApiTesterResponse,
     downloadApiTesterResponse,
     exportApiTesterHistory,
+    importApiTesterHistory,
     runPreviewApplyPlan,
     runExportDryRunPlan,
     runExportReviewZip,

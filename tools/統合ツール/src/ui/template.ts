@@ -1771,6 +1771,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <div class="api-tester-side-title" style="display:flex;align-items:center;justify-content:space-between;">
                     <span>最近の実行履歴</span>
                     <span style="display:flex;gap:4px;">
+                      <button type="button" class="btn sub" data-act="importApiTesterHistory" title="JSON 履歴を読み込み（既存履歴とマージ）" style="padding:2px 6px;font-size:10px;">読込</button>
                       <button type="button" class="btn sub" data-act="exportApiTesterHistory" title="履歴をJSONとして保存" style="padding:2px 6px;font-size:10px;">保存</button>
                       <button type="button" class="btn sub" data-act="clearApiTesterHistory" title="履歴を全消去" style="padding:2px 6px;font-size:10px;">消去</button>
                     </span>

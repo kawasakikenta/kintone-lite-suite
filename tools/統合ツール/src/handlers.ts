@@ -436,6 +436,7 @@ export function setupEventHandlers(injected: any = {}) {
     copyApiTesterResponse,
     downloadApiTesterResponse,
     exportApiTesterHistory,
+    importApiTesterHistory,
     runPreviewApplyPlan,
     runExportDryRunPlan,
     runExportReviewZip,
@@ -3416,6 +3417,7 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'copyApiTesterResponse' && typeof copyApiTesterResponse === 'function') return copyApiTesterResponse();
     if (act === 'downloadApiTesterResponse' && typeof downloadApiTesterResponse === 'function') return downloadApiTesterResponse();
     if (act === 'exportApiTesterHistory' && typeof exportApiTesterHistory === 'function') return exportApiTesterHistory();
+    if (act === 'importApiTesterHistory' && typeof importApiTesterHistory === 'function') return importApiTesterHistory();
   });
 
   refreshDiffSelectionSetDropdown();
