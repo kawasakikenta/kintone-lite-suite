@@ -2149,12 +2149,15 @@ export function setupEventHandlers(injected: any = {}) {
       const tmpLastSrc = state.lastSourceBundle;
       state.lastSourceBundle = state.lastTargetBundle;
       state.lastTargetBundle = tmpLastSrc;
-      // 差分結果は方向が変わるためクリア（再比較を促す）
+      // 差分結果と反映候補は方向が変わるためクリア（再比較を促す）
       state.lastDiffRows = [];
       state.lastDiffAt = null;
       state.lastDiffSignature = '';
       state.lastApplyPlan = null;
       state.diffSelectedIds = new Set();
+      state.reflectRows = [];
+      state.reflectSelectedIds = new Set();
+      state.reflectNodeModes = {};
       saveCurrentDialogState();
       renderBundleState();
       setStatus('比較元/比較先設定（および取得済みバンドル）を入れ替えました。差分は再実行が必要です。');
