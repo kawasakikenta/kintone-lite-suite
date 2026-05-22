@@ -31698,7 +31698,7 @@ ${detail}`);
               <button type="button" class="btn sub connection-secondary-action connection-secondary-action--primary" data-act="setBothCurrent" title="今開いているアプリのIDを比較元と比較先の両方に一括セット（最も多いケース）">両方=現在アプリ</button>
               <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元（動作対象）にセット">比較元=現在アプリ</button>
               <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
-              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
+              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報＋取得済みバンドルを入れ替え。差分・反映候補はリセットされ再比較が必要になります。">比較元/比較先入替</button>
             </div>
             <div class="connection-preview-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
               <span class="muted" style="font-size:12px">取得環境</span>
