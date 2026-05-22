@@ -81,17 +81,9 @@ export function mountSettingsExportLitePanel() {
   allBtn.addEventListener('click', () => chips.forEach((c) => { c.checkbox.checked = true; }));
   noneBtn.addEventListener('click', () => chips.forEach((c) => { c.checkbox.checked = false; }));
 
-  // Scope-root として既存 standalone 関数に合うように DOM ラッパを作る
-  const scopeRoot = document.createElement('div');
-  scopeRoot.style.display = 'none';
-  for (const c of chips) {
-    // 既存 selectedScopeKeys() は input[type=checkbox][value] を集計する設計
-    const inp = c.checkbox.cloneNode(true) as HTMLInputElement;
-    inp.checked = c.checkbox.checked;
-    c.checkbox.addEventListener('change', () => { inp.checked = c.checkbox.checked; });
-    scopeRoot.appendChild(inp);
-  }
-  cardScope.body.appendChild(scopeRoot);
+  // selectedScopeKeys() は配下の input[type=checkbox]:checked を集計するので
+  // chipBox をそのまま scopeRoot として渡す（クローン同期は change 未発火で壊れる）
+  const scopeRoot = chipBox;
   panel.body.insertBefore(cardScope.card, panel.status);
 
   // ---- ゲスト / プレビュー ----
