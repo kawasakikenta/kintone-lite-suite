@@ -1263,6 +1263,10 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <button type="button" class="btn sub" data-act="loadSourceFieldsList" title="比較元アプリのフィールド一覧APIを呼び出します">比較元フィールド一覧を取得</button>
                 </div>
                 <div id="u_sourceFieldListContainer" style="display:none;margin-top:8px">
+                  <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+                    <input type="text" id="u_sourceFieldFilter" placeholder="フィルタ: コード / ラベル / タイプ" style="flex:1;font-size:12px;padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;" autocomplete="off">
+                    <span id="u_sourceFieldFilterCount" style="font-size:11px;color:#64748b;flex-shrink:0;"></span>
+                  </div>
                   <div style="max-height:220px;overflow:auto;border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:4px">
                     <table style="border:none;margin:0" id="u_sourceFieldTable">
                       <thead style="position:sticky;top:-4px;background:#f8fafc;z-index:1;box-shadow:0 1px 0 #e2e8f0">

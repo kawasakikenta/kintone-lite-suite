@@ -421,6 +421,33 @@ export async function runLoadSourceFieldsList() {
     if (ui.sourceFieldTbody) ui.sourceFieldTbody.innerHTML = rows.join('');
     if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = 'block';
     if (ui.sourceFieldCheckAll) ui.sourceFieldCheckAll.checked = false;
+    const filterInput = getToolDocument().getElementById('u_sourceFieldFilter') as HTMLInputElement | null;
+    const countEl = getToolDocument().getElementById('u_sourceFieldFilterCount');
+    if (countEl) countEl.textContent = `${fields.length} 件`;
+    if (filterInput && !(filterInput as any).__bound) {
+      (filterInput as any).__bound = true;
+      filterInput.addEventListener('input', () => {
+        const term = String(filterInput.value || '').trim().toLowerCase();
+        let visible = 0;
+        const tbody = ui.sourceFieldTbody;
+        if (!tbody) return;
+        tbody.querySelectorAll<HTMLTableRowElement>('tr').forEach((row: HTMLTableRowElement) => {
+          if (!term) {
+            row.style.display = '';
+            visible += 1;
+            return;
+          }
+          const text = String(row.textContent || '').toLowerCase();
+          const show = text.includes(term);
+          row.style.display = show ? '' : 'none';
+          if (show) visible += 1;
+        });
+        if (countEl) countEl.textContent = `${visible} 件${term ? ` (全 ${fields.length})` : ''}`;
+      });
+    } else if (filterInput) {
+      filterInput.value = '';
+      filterInput.dispatchEvent(new Event('input'));
+    }
     setStatus(`比較元フィールド ${fields.length} 件を取得しました`);
   } catch (e) {
     if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = 'none';
