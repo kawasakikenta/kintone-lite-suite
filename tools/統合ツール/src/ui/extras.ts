@@ -1799,21 +1799,74 @@ const DIFF_SEVERITY_LABEL: Record<string, string> = { high: '高', mid: '中', l
 
 const localizeKintoneEnumsInText = kusEnumsLocalize;
 
-export function exportDiffAsMarkdown(): void {
+function escapeMarkdownTableCell(value: string): string {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, '<br>');
+}
+
+function buildDiffMarkdownText(): string {
   const rows = state.lastDiffRows || [];
-  if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
-  const md = '# 差分レポート\n\n生成: ' + new Date().toISOString() + '\n\n'
+  const typeCounts: Record<string, number> = { added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
+  const severityCounts: Record<string, number> = { high: 0, mid: 0, low: 0, info: 0 };
+  for (const r of rows) {
+    const t = String((r as any)?.type || '');
+    const s = String((r as any)?.severity || '');
+    if (typeCounts[t] != null) typeCounts[t] += 1;
+    if (severityCounts[s] != null) severityCounts[s] += 1;
+  }
+  const actualDiffCount = typeCounts.added + typeCounts.removed + typeCounts.changed + typeCounts.moved;
+  const sourceBundle = (state as any).lastSourceBundle;
+  const targetBundle = (state as any).lastTargetBundle;
+  const contextLines: string[] = [];
+  if (sourceBundle?.appId) {
+    const srcLabel = `App ${sourceBundle.appId}${sourceBundle.guestId ? ` / Guest ${sourceBundle.guestId}` : ''}${sourceBundle.preview ? ' / preview' : ''}`;
+    contextLines.push(`- 比較元: ${srcLabel}`);
+  }
+  if (targetBundle?.appId) {
+    const tgtLabel = `App ${targetBundle.appId}${targetBundle.guestId ? ` / Guest ${targetBundle.guestId}` : ''}${targetBundle.preview ? ' / preview' : ''}`;
+    contextLines.push(`- 比較先: ${tgtLabel}`);
+  }
+  const summaryLines = [
+    ...contextLines,
+    `- 件数: 差分 ${actualDiffCount} 件 / 同一 ${typeCounts.same} 件`,
+    `- 種別: 追加 ${typeCounts.added} / 削除 ${typeCounts.removed} / 変更 ${typeCounts.changed} / 移動 ${typeCounts.moved}`,
+    `- 重要度: 高 ${severityCounts.high} / 中 ${severityCounts.mid} / 低 ${severityCounts.low} / 情報 ${severityCounts.info}`
+  ];
+  return '# 差分レポート\n\n生成: ' + new Date().toISOString() + '\n\n'
+    + summaryLines.join('\n') + '\n\n'
     + '| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n'
     + '|---|---|---|---|---|---|\n'
     + rows.map((r: any) => {
       const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
       const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-    const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
-    const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
-    return `| ${typeLabel} | ${diffSectionLabel(r)} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
-  }).join('\n');
+      const oldStr = escapeMarkdownTableCell(localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r))));
+      const newStr = escapeMarkdownTableCell(localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r))));
+      const path = escapeMarkdownTableCell(String(r.path ?? ''));
+      const section = escapeMarkdownTableCell(diffSectionLabel(r));
+      return `| ${typeLabel} | ${section} | \`${path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
+    }).join('\n');
+}
+
+export function exportDiffAsMarkdown(): void {
+  const rows = state.lastDiffRows || [];
+  if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
+  const md = buildDiffMarkdownText();
   triggerDownload(new Blob([md], { type: 'text/markdown' }), `kus-diff_${new Date().toISOString().slice(0, 10)}.md`);
   pushToast('Markdown を保存しました', { tone: 'ok' });
+}
+
+export async function copyDiffAsMarkdown(): Promise<void> {
+  const rows = state.lastDiffRows || [];
+  if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
+  const md = buildDiffMarkdownText();
+  try {
+    await navigator.clipboard.writeText(md);
+    pushToast('Markdown をクリップボードへコピーしました', { tone: 'ok' });
+  } catch (_e) {
+    pushToast('クリップボードへコピーできませんでした', { tone: 'error' });
+  }
 }
 export function exportDiffAsCsvForExcel(): void {
   const rows = state.lastDiffRows || [];
@@ -2685,6 +2738,9 @@ export function initExtras(): void {
     } else if (act === 'kusExportDiffMd') {
       e.preventDefault();
       exportDiffAsMarkdown();
+    } else if (act === 'kusCopyDiffMd') {
+      e.preventDefault();
+      copyDiffAsMarkdown();
     } else if (act === 'kusExportDiffCsv') {
       e.preventDefault();
       exportDiffAsCsvForExcel();

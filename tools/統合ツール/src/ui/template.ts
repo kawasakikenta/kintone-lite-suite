@@ -185,7 +185,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <button type="button" class="btn sub connection-secondary-action connection-secondary-action--primary" data-act="setBothCurrent" title="今開いているアプリのIDを比較元と比較先の両方に一括セット（最も多いケース）">両方=現在アプリ</button>
               <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元（動作対象）にセット">比較元=現在アプリ</button>
               <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
-              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
+              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報＋取得済みバンドルを入れ替え。差分・反映候補はリセットされ再比較が必要になります。">比較元/比較先入替</button>
             </div>
             <div class="connection-preview-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
               <span class="muted" style="font-size:12px">取得環境</span>
@@ -283,6 +283,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <button type="button" class="btn sub" data-act="kusExportDiffJson" title="差分スナップショット（rows / fetchIssues / filters）を JSON で保存">📸 差分スナップショット保存</button>
                       <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
+                      <button type="button" class="btn sub" data-act="kusCopyDiffMd" title="差分 Markdown 表をクリップボードへコピー（PR・チャット貼付向け）">📋 差分 MD コピー</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffCsv" title="差分結果を Excel 用 CSV (UTF-8 BOM) で保存">📊 差分 CSV</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙付きPDFとして印刷ダイアログを開きます">📕 差分 PDF（表紙付き）</button>
@@ -1239,9 +1240,11 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <div class="btns">
                 <button type="button" class="btn warn" data-act="applyField" title="比較先プレビューにフィールドを追加・更新します">比較先(プレビュー)へフィールド適用</button>
                 <button type="button" class="btn sub" data-act="loadTargetFields" title="現在の比較先アプリの fields.json を読み込み">比較先の現在値を読込</button>
+                <button type="button" class="btn sub" data-act="validateFieldJson" title="JSON を反映せず、フィールド定義の検証と統計を表示します">検証のみ</button>
                 <button type="button" class="btn sub" data-act="formatFieldJson" style="margin-left:8px">JSON整形</button>
                 <button type="button" class="btn sub" data-act="importFieldJson">JSONファイル読込</button>
                 <button type="button" class="btn sub" data-act="exportFieldJson">JSON保存</button>
+                <button type="button" class="btn sub" data-act="copyFieldJson" title="現在のテキストエリアの JSON をクリップボードへコピー">JSONコピー</button>
               </div>
                 </div>
               </details>
@@ -1260,6 +1263,10 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <button type="button" class="btn sub" data-act="loadSourceFieldsList" title="比較元アプリのフィールド一覧APIを呼び出します">比較元フィールド一覧を取得</button>
                 </div>
                 <div id="u_sourceFieldListContainer" style="display:none;margin-top:8px">
+                  <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+                    <input type="text" id="u_sourceFieldFilter" placeholder="フィルタ: コード / ラベル / タイプ" style="flex:1;font-size:12px;padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;" autocomplete="off">
+                    <span id="u_sourceFieldFilterCount" style="font-size:11px;color:#64748b;flex-shrink:0;"></span>
+                  </div>
                   <div style="max-height:220px;overflow:auto;border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:4px">
                     <table style="border:none;margin:0" id="u_sourceFieldTable">
                       <thead style="position:sticky;top:-4px;background:#f8fafc;z-index:1;box-shadow:0 1px 0 #e2e8f0">
@@ -1380,7 +1387,9 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <input type="checkbox" id="u_jsconfigDeployAfter" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
               <div class="btns">
                 <button type="button" class="btn" data-act="fetchJsConfig" title="比較元アプリIDで customize.json を取得">JS/CSS設定を取得</button>
+                <button type="button" class="btn sub" data-act="loadTargetJsConfig" title="比較先アプリIDの customize.json を取得（反映前の現状確認）">比較先の現在値を読込</button>
                 <button type="button" class="btn sub" data-act="exportJsConfigJson">JSON出力</button>
+                <button type="button" class="btn sub" data-act="copyJsConfigJson" title="現在のテキストエリアの JSON をクリップボードへコピー">JSONコピー</button>
                 <button type="button" class="btn sub" data-act="importJsConfigJson">JSONファイル読込</button>
                 <button type="button" class="btn warn" data-act="applyJsConfig" title="下のJSONを比較先プレビューへ">比較先(プレビュー)へ反映</button>
               </div>
@@ -1712,7 +1721,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 </summary>
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">リクエストの組み立てと実行</div>
-              <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。<strong>POST/PUT/DELETE</strong> は <code>/v1/preview/</code> を含むパスのみ可能です（本番への書き込み・デプロイAPIは不可）。</div>
+              <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。<strong>POST/PUT/DELETE</strong> は <code>/v1/preview/</code> を含むパスのみ可能です（本番への書き込み・デプロイAPIは不可）。<br><span style="font-size:11px">参考: <a href="https://cybozu.dev/ja/kintone/docs/rest-api/" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline;">kintone REST API リファレンス (cybozu.dev)</a> ／ 画面内 <kbd style="background:#f1f5f9;padding:1px 5px;border-radius:3px;border:1px solid #cbd5e1;font-size:10px;">Ctrl/Cmd + Enter</kbd> で実行</span></div>
               <div class="grid2" style="margin-top:8px">
                 <div>
                   <label title="よく使うAPIを選ぶと、メソッド・パス・Bodyの参考値を反映します">APIプリセット（参考値）</label>
@@ -1744,18 +1753,33 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                     </div>
                   </div>
                   <div style="margin-top:8px">
-                    <label title="GET のときは無視されることがあります">リクエストBody (JSONフォーマット)</label>
-                    <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace" placeholder='{"app": 1, "id": 100}'></textarea>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                      <label title="GET のときは無視されることがあります" style="margin:0">リクエストBody (JSONフォーマット)</label>
+                      <span style="display:flex;gap:4px;">
+                        <button type="button" class="btn sub" data-act="beautifyApiTesterBody" title="Body の JSON を整形・検証します" style="padding:2px 8px;font-size:11px;">整形</button>
+                        <button type="button" class="btn sub" data-act="minifyApiTesterBody" title="Body の JSON を1行にミニファイします" style="padding:2px 8px;font-size:11px;">最小化</button>
+                      </span>
+                    </div>
+                    <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace;margin-top:4px;" placeholder='{"app": 1, "id": 100}'></textarea>
                   </div>
-                  <div class="btns" style="margin-top:10px;display:flex;">
-                    <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ">APIを実行</button>
+                  <div class="btns" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
+                    <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ ( Ctrl/Cmd+Enter )">APIを実行</button>
                     <button type="button" class="btn sub" data-act="copyApiTesterCurl" title="現在の入力からcurl例をコピー">curlコピー</button>
-                    <button type="button" class="btn sub" data-act="clearApiTesterHistory" style="margin-left:auto;">履歴クリア</button>
+                    <button type="button" class="btn sub" data-act="copyApiTesterResponse" title="直近のレスポンスをクリップボードへコピー">レスポンスコピー</button>
+                    <button type="button" class="btn sub" data-act="downloadApiTesterResponse" title="直近のレスポンスをJSONファイルとして保存">JSON保存</button>
                   </div>
+                  <div id="u_apiTesterMeta" style="margin-top:8px;font-size:11px;padding:6px 10px;border-radius:6px;color:#64748b;background:#f8fafc;border:1px dashed #e2e8f0;">未実行</div>
                   <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>
                 </div>
                 <aside class="api-tester-side">
-                  <div class="api-tester-side-title">最近の実行履歴</div>
+                  <div class="api-tester-side-title" style="display:flex;align-items:center;justify-content:space-between;">
+                    <span>最近の実行履歴</span>
+                    <span style="display:flex;gap:4px;">
+                      <button type="button" class="btn sub" data-act="importApiTesterHistory" title="JSON 履歴を読み込み（既存履歴とマージ）" style="padding:2px 6px;font-size:10px;">読込</button>
+                      <button type="button" class="btn sub" data-act="exportApiTesterHistory" title="履歴をJSONとして保存" style="padding:2px 6px;font-size:10px;">保存</button>
+                      <button type="button" class="btn sub" data-act="clearApiTesterHistory" title="履歴を全消去" style="padding:2px 6px;font-size:10px;">消去</button>
+                    </span>
+                  </div>
                   <div id="u_apiTesterHistoryList" class="api-tester-history-list">
                     <div style="color:#94a3b8;font-size:11px;font-style:italic;padding:8px;">履歴はありません</div>
                   </div>
@@ -1774,8 +1798,14 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">プロセス管理の可視化（比較元アプリ）</div>
               <div class="muted" style="margin-top:8px;line-height:1.55">比較元アプリのプロセス管理設定からフロー図（Mermaid）を生成し表示します。</div>
-              <div class="btns">
+              <div class="btns" style="display:flex;flex-wrap:wrap;gap:6px;">
                 <button type="button" class="btn" data-act="renderProcessFlow" title="下にMermaidソースとプレビューを表示">フロー図を取得・描画</button>
+                <button type="button" class="btn sub" data-act="copyMermaidSource" title="Mermaid 構文をクリップボードへコピー">構文コピー</button>
+                <button type="button" class="btn sub" data-act="downloadMermaidSource" title="Mermaid 構文を .mmd ファイルとして保存">構文DL</button>
+                <button type="button" class="btn sub" data-act="downloadFlowSvg" title="生成された SVG を保存">SVG保存</button>
+              </div>
+              <div id="u_processFlowSummary" style="margin-top:10px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#0f172a;">
+                <span style="color:#94a3b8;font-style:italic;">フロー図を取得すると、ステータス・アクションの統計を表示します</span>
               </div>
               <div class="grid2" style="margin-top:8px">
                 <div>
@@ -1805,11 +1835,18 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   </div>
                   <div>
                     <label>アクション実行</label>
-                    <div style="display:flex;gap:4px">
-                      <select id="u_simActionSelect" style="flex:1" disabled title="利用可能なアクションが入ります"><option value="">-- 開始してください --</option></select>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                      <select id="u_simActionSelect" style="flex:1;min-width:140px;" disabled title="利用可能なアクションが入ります"><option value="">-- 開始してください --</option></select>
                       <button type="button" class="btn ok" data-act="simExecuteAction">実行</button>
+                      <button type="button" class="btn sub" data-act="simUndo" title="一手戻す">↶ 戻す</button>
                       <button type="button" class="btn sub" data-act="simStart">最初から</button>
                     </div>
+                  </div>
+                </div>
+                <div style="margin-top:12px">
+                  <label style="font-size:11px;color:#475569;">アクション履歴</label>
+                  <div id="u_simHistoryList" style="margin-top:4px;max-height:180px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;background:#fff;">
+                    <div style="color:#94a3b8;font-size:11px;font-style:italic;padding:6px;">履歴はありません（最初から実行で開始）</div>
                   </div>
                 </div>
                 </div>
@@ -2141,6 +2178,20 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <li><kbd>x</kbd><span>フォーカス中の行の選択をトグル</span></li>
                   <li><kbd>↑</kbd> / <kbd>↓</kbd><span>チェックボックス間を移動（フォーカス時）</span></li>
                   <li><kbd>Shift</kbd>+クリック<span>チェック範囲を一括選択</span></li>
+                </ul>
+              </div>
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">機能タブ切替（機能画面で）</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>1</kbd> ～ <kbd>7</kbd><span>差分比較 / 反映 / フィールド / ER図 / プロセス / 分析 / APIテスター</span></li>
+                  <li><kbd>Esc</kbd><span>ランチャーへ戻る</span></li>
+                </ul>
+              </div>
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">プレビュー反映 / APIテスター</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd><span>反映タブ: 次のアクション実行 / APIテスター: API を実行</span></li>
+                  <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd><span>反映タブ: プレビュー反映を実行</span></li>
                 </ul>
               </div>
               <div class="shortcut-help-group">

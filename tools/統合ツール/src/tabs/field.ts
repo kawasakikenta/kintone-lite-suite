@@ -154,7 +154,7 @@ export function filterWritableFieldProps(props: any, skipSystem: boolean) {
   return out;
 }
 
-function collectFieldValidationIssues(props: any): string[] {
+export function collectFieldValidationIssues(props: any): string[] {
   const issues: string[] = [];
   const seenCodes = new Set<string>();
   const visit = (fieldMap: any, path: string) => {
@@ -177,6 +177,91 @@ function collectFieldValidationIssues(props: any): string[] {
   };
   visit(props, '');
   return issues;
+}
+
+export function summarizeFieldProps(props: any): { total: number; system: number; writable: number; subtable: number; lookup: number; calc: number; byType: Record<string, number>; } {
+  const byType: Record<string, number> = {};
+  let total = 0;
+  let system = 0;
+  let writable = 0;
+  let subtable = 0;
+  let lookup = 0;
+  let calc = 0;
+  for (const [, def] of Object.entries(props || {}) as Array<[string, any]>) {
+    if (!def || typeof def !== 'object') continue;
+    total += 1;
+    const type = String(def.type || '').trim();
+    byType[type] = (byType[type] || 0) + 1;
+    if (SYSTEM_FIELD_TYPES.has(type)) system += 1; else writable += 1;
+    if (type === 'SUBTABLE') subtable += 1;
+    if (def.lookup) lookup += 1;
+    if (type === 'CALC' || def.expression) calc += 1;
+  }
+  return { total, system, writable, subtable, lookup, calc, byType };
+}
+
+export function runFieldValidate(): void {
+  const fieldJson = ui.fieldJson;
+  const resultEl = ui.result;
+  if (!fieldJson) {
+    setStatus('フィールドJSONエディタが初期化されていません', true);
+    return;
+  }
+  const text = fieldJson.value?.trim();
+  if (!text) {
+    setStatus('検証するJSONがありません', true);
+    return;
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e: any) {
+    if (resultEl) resultEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">JSON パースエラー: ${esc(e?.message || String(e))}</pre>`;
+    setStatus('JSON が不正です', true);
+    return;
+  }
+  let props: any;
+  try {
+    props = parseFieldInput(text);
+  } catch (e: any) {
+    if (resultEl) resultEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">入力エラー: ${esc(e?.message || String(e))}</pre>`;
+    setStatus('JSON の形式が不正です', true);
+    return;
+  }
+  const issues = collectFieldValidationIssues(props);
+  const summary = summarizeFieldProps(props);
+  const typeRows = Object.entries(summary.byType)
+    .sort((a, b) => b[1] - a[1])
+    .map(([type, n]) => `<tr><td style="padding:2px 8px;font-family:monospace;font-size:11px;">${esc(type)}</td><td style="padding:2px 8px;text-align:right;font-variant-numeric:tabular-nums;">${n}</td></tr>`)
+    .join('');
+  const summaryHtml = `<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+    <span style="background:#e0f2fe;color:#075985;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">合計 ${summary.total}</span>
+    <span style="background:#dcfce7;color:#15803d;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">書込可 ${summary.writable}</span>
+    <span style="background:#f1f5f9;color:#475569;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">システム ${summary.system}</span>
+    ${summary.subtable ? `<span style="background:#fef3c7;color:#92400e;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">サブテーブル ${summary.subtable}</span>` : ''}
+    ${summary.lookup ? `<span style="background:#fce7f3;color:#9d174d;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">ルックアップ ${summary.lookup}</span>` : ''}
+    ${summary.calc ? `<span style="background:#ede9fe;color:#6d28d9;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">計算 ${summary.calc}</span>` : ''}
+  </div>`;
+  if (issues.length) {
+    if (resultEl) resultEl.innerHTML = `<div style="margin:0;padding:10px;font-size:12px;background:#fff8f1;border:1px solid #fed7aa;border-radius:6px;">
+      ${summaryHtml}
+      <div style="color:#9a3412;font-weight:600;margin-bottom:6px;">⚠ 検出された問題: ${issues.length} 件</div>
+      <pre style="margin:0;padding:8px;background:#fff;border-radius:4px;font-size:11px;white-space:pre-wrap;color:#7c2d12;">${esc(issues.join('\n'))}</pre>
+    </div>`;
+    setStatus(`検証完了: ${issues.length} 件の問題を検出しました`, true);
+    return;
+  }
+  if (resultEl) resultEl.innerHTML = `<div style="margin:0;padding:10px;font-size:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;">
+    ${summaryHtml}
+    <div style="color:#15803d;font-weight:600;margin-top:4px;">✓ 検証OK: 問題は見つかりませんでした</div>
+    <details style="margin-top:8px;"><summary style="cursor:pointer;font-size:11px;color:#475569;">タイプ別内訳</summary>
+      <table style="margin-top:6px;border-collapse:collapse;font-size:11px;background:#fff;"><thead><tr><th style="padding:2px 8px;text-align:left;border-bottom:1px solid #e2e8f0;">type</th><th style="padding:2px 8px;text-align:right;border-bottom:1px solid #e2e8f0;">件数</th></tr></thead><tbody>${typeRows}</tbody></table>
+    </details>
+  </div>`;
+  const labelParts = [`合計 ${summary.total}`, `書込可 ${summary.writable}`];
+  if (summary.subtable) labelParts.push(`サブテーブル ${summary.subtable}`);
+  if (summary.lookup) labelParts.push(`ルックアップ ${summary.lookup}`);
+  setStatus(`検証OK: ${labelParts.join(' / ')}`);
 }
 
 const FORMULA_WORDS = new Set([
@@ -298,8 +383,10 @@ export async function runLoadTargetFields() {
   const prefix = buildApiPrefix(c.target.guestId, true);
   setStatus('比較先フィールド取得中...');
   const res = await apiGet(prefix, '/app/form/fields.json', { app: c.target.appId });
-  fieldJson.value = JSON.stringify({ properties: res.properties || ({} as any) }, null, 2);
-  setStatus('比較先フィールドを読み込みました');
+  const properties = res.properties || ({} as any);
+  fieldJson.value = JSON.stringify({ properties }, null, 2);
+  const summary = summarizeFieldProps(properties);
+  setStatus(`比較先フィールドを読み込みました（合計 ${summary.total} / 書込可 ${summary.writable}${summary.subtable ? ` / サブテーブル ${summary.subtable}` : ''}${summary.lookup ? ` / ルックアップ ${summary.lookup}` : ''}）`);
 }
 
 export async function runLoadSourceFieldsList() {
@@ -334,6 +421,33 @@ export async function runLoadSourceFieldsList() {
     if (ui.sourceFieldTbody) ui.sourceFieldTbody.innerHTML = rows.join('');
     if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = 'block';
     if (ui.sourceFieldCheckAll) ui.sourceFieldCheckAll.checked = false;
+    const filterInput = getToolDocument().getElementById('u_sourceFieldFilter') as HTMLInputElement | null;
+    const countEl = getToolDocument().getElementById('u_sourceFieldFilterCount');
+    if (countEl) countEl.textContent = `${fields.length} 件`;
+    if (filterInput && !(filterInput as any).__bound) {
+      (filterInput as any).__bound = true;
+      filterInput.addEventListener('input', () => {
+        const term = String(filterInput.value || '').trim().toLowerCase();
+        let visible = 0;
+        const tbody = ui.sourceFieldTbody;
+        if (!tbody) return;
+        tbody.querySelectorAll<HTMLTableRowElement>('tr').forEach((row: HTMLTableRowElement) => {
+          if (!term) {
+            row.style.display = '';
+            visible += 1;
+            return;
+          }
+          const text = String(row.textContent || '').toLowerCase();
+          const show = text.includes(term);
+          row.style.display = show ? '' : 'none';
+          if (show) visible += 1;
+        });
+        if (countEl) countEl.textContent = `${visible} 件${term ? ` (全 ${fields.length})` : ''}`;
+      });
+    } else if (filterInput) {
+      filterInput.value = '';
+      filterInput.dispatchEvent(new Event('input'));
+    }
     setStatus(`比較元フィールド ${fields.length} 件を取得しました`);
   } catch (e) {
     if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = 'none';

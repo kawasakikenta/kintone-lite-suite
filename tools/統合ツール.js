@@ -13660,6 +13660,87 @@ ${tgt.full}`);
     visit(props, "");
     return issues;
   }
+  function summarizeFieldProps(props) {
+    const byType = {};
+    let total = 0;
+    let system = 0;
+    let writable = 0;
+    let subtable = 0;
+    let lookup = 0;
+    let calc = 0;
+    for (const [, def] of Object.entries(props || {})) {
+      if (!def || typeof def !== "object") continue;
+      total += 1;
+      const type = String(def.type || "").trim();
+      byType[type] = (byType[type] || 0) + 1;
+      if (SYSTEM_FIELD_TYPES.has(type)) system += 1;
+      else writable += 1;
+      if (type === "SUBTABLE") subtable += 1;
+      if (def.lookup) lookup += 1;
+      if (type === "CALC" || def.expression) calc += 1;
+    }
+    return { total, system, writable, subtable, lookup, calc, byType };
+  }
+  function runFieldValidate() {
+    const fieldJson = ui.fieldJson;
+    const resultEl = ui.result;
+    if (!fieldJson) {
+      setStatus("フィールドJSONエディタが初期化されていません", true);
+      return;
+    }
+    const text = fieldJson.value?.trim();
+    if (!text) {
+      setStatus("検証するJSONがありません", true);
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      if (resultEl) resultEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">JSON パースエラー: ${esc(e?.message || String(e))}</pre>`;
+      setStatus("JSON が不正です", true);
+      return;
+    }
+    let props;
+    try {
+      props = parseFieldInput(text);
+    } catch (e) {
+      if (resultEl) resultEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">入力エラー: ${esc(e?.message || String(e))}</pre>`;
+      setStatus("JSON の形式が不正です", true);
+      return;
+    }
+    const issues = collectFieldValidationIssues(props);
+    const summary = summarizeFieldProps(props);
+    const typeRows = Object.entries(summary.byType).sort((a, b) => b[1] - a[1]).map(([type, n]) => `<tr><td style="padding:2px 8px;font-family:monospace;font-size:11px;">${esc(type)}</td><td style="padding:2px 8px;text-align:right;font-variant-numeric:tabular-nums;">${n}</td></tr>`).join("");
+    const summaryHtml = `<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+    <span style="background:#e0f2fe;color:#075985;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">合計 ${summary.total}</span>
+    <span style="background:#dcfce7;color:#15803d;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">書込可 ${summary.writable}</span>
+    <span style="background:#f1f5f9;color:#475569;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">システム ${summary.system}</span>
+    ${summary.subtable ? `<span style="background:#fef3c7;color:#92400e;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">サブテーブル ${summary.subtable}</span>` : ""}
+    ${summary.lookup ? `<span style="background:#fce7f3;color:#9d174d;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">ルックアップ ${summary.lookup}</span>` : ""}
+    ${summary.calc ? `<span style="background:#ede9fe;color:#6d28d9;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:600;">計算 ${summary.calc}</span>` : ""}
+  </div>`;
+    if (issues.length) {
+      if (resultEl) resultEl.innerHTML = `<div style="margin:0;padding:10px;font-size:12px;background:#fff8f1;border:1px solid #fed7aa;border-radius:6px;">
+      ${summaryHtml}
+      <div style="color:#9a3412;font-weight:600;margin-bottom:6px;">⚠ 検出された問題: ${issues.length} 件</div>
+      <pre style="margin:0;padding:8px;background:#fff;border-radius:4px;font-size:11px;white-space:pre-wrap;color:#7c2d12;">${esc(issues.join("\n"))}</pre>
+    </div>`;
+      setStatus(`検証完了: ${issues.length} 件の問題を検出しました`, true);
+      return;
+    }
+    if (resultEl) resultEl.innerHTML = `<div style="margin:0;padding:10px;font-size:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;">
+    ${summaryHtml}
+    <div style="color:#15803d;font-weight:600;margin-top:4px;">✓ 検証OK: 問題は見つかりませんでした</div>
+    <details style="margin-top:8px;"><summary style="cursor:pointer;font-size:11px;color:#475569;">タイプ別内訳</summary>
+      <table style="margin-top:6px;border-collapse:collapse;font-size:11px;background:#fff;"><thead><tr><th style="padding:2px 8px;text-align:left;border-bottom:1px solid #e2e8f0;">type</th><th style="padding:2px 8px;text-align:right;border-bottom:1px solid #e2e8f0;">件数</th></tr></thead><tbody>${typeRows}</tbody></table>
+    </details>
+  </div>`;
+    const labelParts = [`合計 ${summary.total}`, `書込可 ${summary.writable}`];
+    if (summary.subtable) labelParts.push(`サブテーブル ${summary.subtable}`);
+    if (summary.lookup) labelParts.push(`ルックアップ ${summary.lookup}`);
+    setStatus(`検証OK: ${labelParts.join(" / ")}`);
+  }
   function collectFormulaRefs(expression) {
     const refs = /* @__PURE__ */ new Set();
     String(expression || "").replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (token) => {
@@ -13768,8 +13849,10 @@ ${warnings.join("\n")}
     const prefix = buildApiPrefix(c.target.guestId, true);
     setStatus("比較先フィールド取得中...");
     const res = await apiGet(prefix, "/app/form/fields.json", { app: c.target.appId });
-    fieldJson.value = JSON.stringify({ properties: res.properties || {} }, null, 2);
-    setStatus("比較先フィールドを読み込みました");
+    const properties = res.properties || {};
+    fieldJson.value = JSON.stringify({ properties }, null, 2);
+    const summary = summarizeFieldProps(properties);
+    setStatus(`比較先フィールドを読み込みました（合計 ${summary.total} / 書込可 ${summary.writable}${summary.subtable ? ` / サブテーブル ${summary.subtable}` : ""}${summary.lookup ? ` / ルックアップ ${summary.lookup}` : ""}）`);
   }
   async function runLoadSourceFieldsList() {
     const c = commonParams();
@@ -13799,6 +13882,33 @@ ${warnings.join("\n")}
       if (ui.sourceFieldTbody) ui.sourceFieldTbody.innerHTML = rows.join("");
       if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = "block";
       if (ui.sourceFieldCheckAll) ui.sourceFieldCheckAll.checked = false;
+      const filterInput = getToolDocument().getElementById("u_sourceFieldFilter");
+      const countEl = getToolDocument().getElementById("u_sourceFieldFilterCount");
+      if (countEl) countEl.textContent = `${fields.length} 件`;
+      if (filterInput && !filterInput.__bound) {
+        filterInput.__bound = true;
+        filterInput.addEventListener("input", () => {
+          const term = String(filterInput.value || "").trim().toLowerCase();
+          let visible = 0;
+          const tbody = ui.sourceFieldTbody;
+          if (!tbody) return;
+          tbody.querySelectorAll("tr").forEach((row) => {
+            if (!term) {
+              row.style.display = "";
+              visible += 1;
+              return;
+            }
+            const text = String(row.textContent || "").toLowerCase();
+            const show = text.includes(term);
+            row.style.display = show ? "" : "none";
+            if (show) visible += 1;
+          });
+          if (countEl) countEl.textContent = `${visible} 件${term ? ` (全 ${fields.length})` : ""}`;
+        });
+      } else if (filterInput) {
+        filterInput.value = "";
+        filterInput.dispatchEvent(new Event("input"));
+      }
       setStatus(`比較元フィールド ${fields.length} 件を取得しました`);
     } catch (e) {
       if (ui.sourceFieldListContainer) ui.sourceFieldListContainer.style.display = "none";
@@ -31588,7 +31698,7 @@ ${detail}`);
               <button type="button" class="btn sub connection-secondary-action connection-secondary-action--primary" data-act="setBothCurrent" title="今開いているアプリのIDを比較元と比較先の両方に一括セット（最も多いケース）">両方=現在アプリ</button>
               <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元（動作対象）にセット">比較元=現在アプリ</button>
               <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
-              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報を入れ替え">比較元/比較先入替</button>
+              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報＋取得済みバンドルを入れ替え。差分・反映候補はリセットされ再比較が必要になります。">比較元/比較先入替</button>
             </div>
             <div class="connection-preview-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
               <span class="muted" style="font-size:12px">取得環境</span>
@@ -31686,6 +31796,7 @@ ${detail}`);
                       <button type="button" class="btn sub" data-act="kusExportDiffJson" title="差分スナップショット（rows / fetchIssues / filters）を JSON で保存">📸 差分スナップショット保存</button>
                       <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
+                      <button type="button" class="btn sub" data-act="kusCopyDiffMd" title="差分 Markdown 表をクリップボードへコピー（PR・チャット貼付向け）">📋 差分 MD コピー</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffCsv" title="差分結果を Excel 用 CSV (UTF-8 BOM) で保存">📊 差分 CSV</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙付きPDFとして印刷ダイアログを開きます">📕 差分 PDF（表紙付き）</button>
@@ -32642,9 +32753,11 @@ ${detail}`);
               <div class="btns">
                 <button type="button" class="btn warn" data-act="applyField" title="比較先プレビューにフィールドを追加・更新します">比較先(プレビュー)へフィールド適用</button>
                 <button type="button" class="btn sub" data-act="loadTargetFields" title="現在の比較先アプリの fields.json を読み込み">比較先の現在値を読込</button>
+                <button type="button" class="btn sub" data-act="validateFieldJson" title="JSON を反映せず、フィールド定義の検証と統計を表示します">検証のみ</button>
                 <button type="button" class="btn sub" data-act="formatFieldJson" style="margin-left:8px">JSON整形</button>
                 <button type="button" class="btn sub" data-act="importFieldJson">JSONファイル読込</button>
                 <button type="button" class="btn sub" data-act="exportFieldJson">JSON保存</button>
+                <button type="button" class="btn sub" data-act="copyFieldJson" title="現在のテキストエリアの JSON をクリップボードへコピー">JSONコピー</button>
               </div>
                 </div>
               </details>
@@ -32663,6 +32776,10 @@ ${detail}`);
                   <button type="button" class="btn sub" data-act="loadSourceFieldsList" title="比較元アプリのフィールド一覧APIを呼び出します">比較元フィールド一覧を取得</button>
                 </div>
                 <div id="u_sourceFieldListContainer" style="display:none;margin-top:8px">
+                  <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+                    <input type="text" id="u_sourceFieldFilter" placeholder="フィルタ: コード / ラベル / タイプ" style="flex:1;font-size:12px;padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;" autocomplete="off">
+                    <span id="u_sourceFieldFilterCount" style="font-size:11px;color:#64748b;flex-shrink:0;"></span>
+                  </div>
                   <div style="max-height:220px;overflow:auto;border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:4px">
                     <table style="border:none;margin:0" id="u_sourceFieldTable">
                       <thead style="position:sticky;top:-4px;background:#f8fafc;z-index:1;box-shadow:0 1px 0 #e2e8f0">
@@ -32783,7 +32900,9 @@ ${detail}`);
               <input type="checkbox" id="u_jsconfigDeployAfter" disabled style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" tabindex="-1" aria-hidden="true" title="">
               <div class="btns">
                 <button type="button" class="btn" data-act="fetchJsConfig" title="比較元アプリIDで customize.json を取得">JS/CSS設定を取得</button>
+                <button type="button" class="btn sub" data-act="loadTargetJsConfig" title="比較先アプリIDの customize.json を取得（反映前の現状確認）">比較先の現在値を読込</button>
                 <button type="button" class="btn sub" data-act="exportJsConfigJson">JSON出力</button>
+                <button type="button" class="btn sub" data-act="copyJsConfigJson" title="現在のテキストエリアの JSON をクリップボードへコピー">JSONコピー</button>
                 <button type="button" class="btn sub" data-act="importJsConfigJson">JSONファイル読込</button>
                 <button type="button" class="btn warn" data-act="applyJsConfig" title="下のJSONを比較先プレビューへ">比較先(プレビュー)へ反映</button>
               </div>
@@ -33115,7 +33234,7 @@ ${detail}`);
                 </summary>
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">リクエストの組み立てと実行</div>
-              <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。<strong>POST/PUT/DELETE</strong> は <code>/v1/preview/</code> を含むパスのみ可能です（本番への書き込み・デプロイAPIは不可）。</div>
+              <div class="muted" style="margin-top:8px;line-height:1.55">指定したエンドポイントに対して kintone.api を直接実行し、レスポンスを確認します。※ゲストスペースIDを指定すると <code>/k/guest/{id}/v1/...</code> 等が使われます。<strong>POST/PUT/DELETE</strong> は <code>/v1/preview/</code> を含むパスのみ可能です（本番への書き込み・デプロイAPIは不可）。<br><span style="font-size:11px">参考: <a href="https://cybozu.dev/ja/kintone/docs/rest-api/" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline;">kintone REST API リファレンス (cybozu.dev)</a> ／ 画面内 <kbd style="background:#f1f5f9;padding:1px 5px;border-radius:3px;border:1px solid #cbd5e1;font-size:10px;">Ctrl/Cmd + Enter</kbd> で実行</span></div>
               <div class="grid2" style="margin-top:8px">
                 <div>
                   <label title="よく使うAPIを選ぶと、メソッド・パス・Bodyの参考値を反映します">APIプリセット（参考値）</label>
@@ -33147,18 +33266,33 @@ ${detail}`);
                     </div>
                   </div>
                   <div style="margin-top:8px">
-                    <label title="GET のときは無視されることがあります">リクエストBody (JSONフォーマット)</label>
-                    <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace" placeholder='{"app": 1, "id": 100}'></textarea>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                      <label title="GET のときは無視されることがあります" style="margin:0">リクエストBody (JSONフォーマット)</label>
+                      <span style="display:flex;gap:4px;">
+                        <button type="button" class="btn sub" data-act="beautifyApiTesterBody" title="Body の JSON を整形・検証します" style="padding:2px 8px;font-size:11px;">整形</button>
+                        <button type="button" class="btn sub" data-act="minifyApiTesterBody" title="Body の JSON を1行にミニファイします" style="padding:2px 8px;font-size:11px;">最小化</button>
+                      </span>
+                    </div>
+                    <textarea id="u_apiTesterBody" style="min-height:100px;font-family:monospace;margin-top:4px;" placeholder='{"app": 1, "id": 100}'></textarea>
                   </div>
-                  <div class="btns" style="margin-top:10px;display:flex;">
-                    <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ">APIを実行</button>
+                  <div class="btns" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
+                    <button type="button" class="btn warn" data-act="runApiTester" title="GETは本番パス可。POST/PUT/DELETEはプレビューパスのみ ( Ctrl/Cmd+Enter )">APIを実行</button>
                     <button type="button" class="btn sub" data-act="copyApiTesterCurl" title="現在の入力からcurl例をコピー">curlコピー</button>
-                    <button type="button" class="btn sub" data-act="clearApiTesterHistory" style="margin-left:auto;">履歴クリア</button>
+                    <button type="button" class="btn sub" data-act="copyApiTesterResponse" title="直近のレスポンスをクリップボードへコピー">レスポンスコピー</button>
+                    <button type="button" class="btn sub" data-act="downloadApiTesterResponse" title="直近のレスポンスをJSONファイルとして保存">JSON保存</button>
                   </div>
+                  <div id="u_apiTesterMeta" style="margin-top:8px;font-size:11px;padding:6px 10px;border-radius:6px;color:#64748b;background:#f8fafc;border:1px dashed #e2e8f0;">未実行</div>
                   <div class="result" id="u_apiTesterResult" style="max-height:300px;margin-top:8px;overflow:auto">実行結果がここに表示されます</div>
                 </div>
                 <aside class="api-tester-side">
-                  <div class="api-tester-side-title">最近の実行履歴</div>
+                  <div class="api-tester-side-title" style="display:flex;align-items:center;justify-content:space-between;">
+                    <span>最近の実行履歴</span>
+                    <span style="display:flex;gap:4px;">
+                      <button type="button" class="btn sub" data-act="importApiTesterHistory" title="JSON 履歴を読み込み（既存履歴とマージ）" style="padding:2px 6px;font-size:10px;">読込</button>
+                      <button type="button" class="btn sub" data-act="exportApiTesterHistory" title="履歴をJSONとして保存" style="padding:2px 6px;font-size:10px;">保存</button>
+                      <button type="button" class="btn sub" data-act="clearApiTesterHistory" title="履歴を全消去" style="padding:2px 6px;font-size:10px;">消去</button>
+                    </span>
+                  </div>
                   <div id="u_apiTesterHistoryList" class="api-tester-history-list">
                     <div style="color:#94a3b8;font-size:11px;font-style:italic;padding:8px;">履歴はありません</div>
                   </div>
@@ -33177,8 +33311,14 @@ ${detail}`);
                 <div class="diff-fold-body">
               <div class="step" style="margin-top:0">プロセス管理の可視化（比較元アプリ）</div>
               <div class="muted" style="margin-top:8px;line-height:1.55">比較元アプリのプロセス管理設定からフロー図（Mermaid）を生成し表示します。</div>
-              <div class="btns">
+              <div class="btns" style="display:flex;flex-wrap:wrap;gap:6px;">
                 <button type="button" class="btn" data-act="renderProcessFlow" title="下にMermaidソースとプレビューを表示">フロー図を取得・描画</button>
+                <button type="button" class="btn sub" data-act="copyMermaidSource" title="Mermaid 構文をクリップボードへコピー">構文コピー</button>
+                <button type="button" class="btn sub" data-act="downloadMermaidSource" title="Mermaid 構文を .mmd ファイルとして保存">構文DL</button>
+                <button type="button" class="btn sub" data-act="downloadFlowSvg" title="生成された SVG を保存">SVG保存</button>
+              </div>
+              <div id="u_processFlowSummary" style="margin-top:10px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;color:#0f172a;">
+                <span style="color:#94a3b8;font-style:italic;">フロー図を取得すると、ステータス・アクションの統計を表示します</span>
               </div>
               <div class="grid2" style="margin-top:8px">
                 <div>
@@ -33208,11 +33348,18 @@ ${detail}`);
                   </div>
                   <div>
                     <label>アクション実行</label>
-                    <div style="display:flex;gap:4px">
-                      <select id="u_simActionSelect" style="flex:1" disabled title="利用可能なアクションが入ります"><option value="">-- 開始してください --</option></select>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                      <select id="u_simActionSelect" style="flex:1;min-width:140px;" disabled title="利用可能なアクションが入ります"><option value="">-- 開始してください --</option></select>
                       <button type="button" class="btn ok" data-act="simExecuteAction">実行</button>
+                      <button type="button" class="btn sub" data-act="simUndo" title="一手戻す">↶ 戻す</button>
                       <button type="button" class="btn sub" data-act="simStart">最初から</button>
                     </div>
+                  </div>
+                </div>
+                <div style="margin-top:12px">
+                  <label style="font-size:11px;color:#475569;">アクション履歴</label>
+                  <div id="u_simHistoryList" style="margin-top:4px;max-height:180px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px;background:#fff;">
+                    <div style="color:#94a3b8;font-size:11px;font-style:italic;padding:6px;">履歴はありません（最初から実行で開始）</div>
                   </div>
                 </div>
                 </div>
@@ -33544,6 +33691,20 @@ ${detail}`);
                   <li><kbd>x</kbd><span>フォーカス中の行の選択をトグル</span></li>
                   <li><kbd>↑</kbd> / <kbd>↓</kbd><span>チェックボックス間を移動（フォーカス時）</span></li>
                   <li><kbd>Shift</kbd>+クリック<span>チェック範囲を一括選択</span></li>
+                </ul>
+              </div>
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">機能タブ切替（機能画面で）</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>1</kbd> ～ <kbd>7</kbd><span>差分比較 / 反映 / フィールド / ER図 / プロセス / 分析 / APIテスター</span></li>
+                  <li><kbd>Esc</kbd><span>ランチャーへ戻る</span></li>
+                </ul>
+              </div>
+              <div class="shortcut-help-group">
+                <div class="shortcut-help-group-title">プレビュー反映 / APIテスター</div>
+                <ul class="shortcut-help-list">
+                  <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd><span>反映タブ: 次のアクション実行 / APIテスター: API を実行</span></li>
+                  <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd><span>反映タブ: プレビュー反映を実行</span></li>
                 </ul>
               </div>
               <div class="shortcut-help-group">
@@ -35748,15 +35909,23 @@ ${detail}`);
     const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(", ");
     const stashed = Array.isArray(state.lastSettingsExportBundles) ? state.lastSettingsExportBundles : [];
     const stashedById = new Map(stashed.map((b) => [String(b?.appId || ""), b]));
+    const totalApps = rows.length;
+    const totalOk = rows.reduce((acc, r) => acc + Number(r.okCount || 0), 0);
+    const totalNg = rows.reduce((acc, r) => acc + Number(r.ngCount || 0), 0);
+    const allSuccess = totalNg === 0;
     const body = rows.map((r) => {
       const idStr = String(r.appId);
       const canLoad = stashedById.has(idStr);
+      const bundle = stashedById.get(idStr);
+      const appName = bundle ? extractAppNameFromBundle(bundle) : "";
+      const idCell = appName ? `<div style="display:flex;flex-direction:column;line-height:1.3;"><span>${esc(idStr)}</span><span style="font-size:10px;color:#64748b;">${esc(appName)}</span></div>` : esc(idStr);
       const loadCell = canLoad ? `<div class="settings-export-load-actions">
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="source" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較元」としてセットし差分タブへ移動">比較元へ</button>
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="target" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較先」としてセットし差分タブへ移動">比較先へ</button>
         </div>` : '<span class="muted" style="font-size:10px">取得失敗</span>';
-      return `<tr>
-      <td>${esc(idStr)}</td>
+      const rowBg = r.ngCount ? "background:#fff8f1;" : "";
+      return `<tr style="${rowBg}">
+      <td>${idCell}</td>
       <td>${esc(String(r.okCount))}</td>
       <td>${esc(String(r.ngCount))}</td>
       <td>${esc(r.pluginConfigLabel || "-")}</td>
@@ -35764,10 +35933,17 @@ ${detail}`);
       <td>${loadCell}</td>
     </tr>`;
     }).join("");
+    const totalsHtml = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:${allSuccess ? "#f0fdf4" : "#fff8f1"};display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+    <span style="font-weight:700;color:${allSuccess ? "#15803d" : "#9a3412"};">${allSuccess ? "✓ 全件成功" : "⚠ 一部失敗あり"}</span>
+    <span>アプリ数 <strong>${totalApps}</strong></span>
+    <span style="color:#16a34a">セクションOK合計 <strong>${totalOk}</strong></span>
+    <span style="color:${totalNg ? "#dc2626" : "#64748b"}">セクションNG合計 <strong>${totalNg}</strong></span>
+  </div>`;
     return `
+    ${totalsHtml}
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || "-")}</div>
     <table>
-      <thead><tr><th>アプリID</th><th>取得OK</th><th>取得NG</th><th>プラグイン設定</th><th>メモ</th><th style="width:160px">差分タブへ</th></tr></thead>
+      <thead><tr><th>アプリID / 名称</th><th>取得OK</th><th>取得NG</th><th>プラグイン設定</th><th>メモ</th><th style="width:160px">差分タブへ</th></tr></thead>
       <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
     </table>
   `;
@@ -36709,6 +36885,7 @@ ${detail}`);
       runDesignExportXlsxBatchZip: runDesignExportXlsxBatchZip2,
       runDesignDiffMd: runDesignDiffMd2,
       runFetchJsConfig: runFetchJsConfig2,
+      runLoadTargetJsConfig: runLoadTargetJsConfig2,
       runExportJsConfig: runExportJsConfig2,
       runApplyJsConfig: runApplyJsConfig2,
       runRenderProcessFlow: runRenderProcessFlow2,
@@ -36727,9 +36904,19 @@ ${detail}`);
       deleteTemplate: deleteTemplate2,
       runSimStart: runSimStart2,
       runSimExecuteAction: runSimExecuteAction2,
+      runSimUndo: runSimUndo2,
+      copyMermaidSource: copyMermaidSource2,
+      downloadMermaidSource: downloadMermaidSource2,
+      downloadFlowSvg: downloadFlowSvg2,
       runApiTester: runApiTester2,
       clearApiTesterHistory: clearApiTesterHistory2,
       copyApiTesterCurl: copyApiTesterCurl2,
+      beautifyApiTesterBody: beautifyApiTesterBody2,
+      minifyApiTesterBody: minifyApiTesterBody2,
+      copyApiTesterResponse: copyApiTesterResponse2,
+      downloadApiTesterResponse: downloadApiTesterResponse2,
+      exportApiTesterHistory: exportApiTesterHistory2,
+      importApiTesterHistory: importApiTesterHistory2,
       runPreviewApplyPlan: runPreviewApplyPlan2,
       runExportDryRunPlan: runExportDryRunPlan2,
       runExportReviewZip: runExportReviewZip2,
@@ -37815,6 +38002,8 @@ ${detail}`);
       if (e.target.id === "u_sourceFieldCheckAll") {
         const checked = e.target.checked;
         ui.sourceFieldTbody?.querySelectorAll(".src-field-sel").forEach((c) => {
+          const row = c.closest("tr");
+          if (row && row.style.display === "none") return;
           c.checked = checked;
         });
         return;
@@ -38325,9 +38514,26 @@ ${detail}`);
         ui.targetApp.value = src.app;
         ui.targetGuest.value = src.guest;
         ui.targetPreview.checked = src.preview;
+        const tmpImpSrc = state.importedSourceBundle;
+        const tmpImpSrcName = state.importedSourceName;
+        state.importedSourceBundle = state.importedTargetBundle;
+        state.importedSourceName = state.importedTargetName;
+        state.importedTargetBundle = tmpImpSrc;
+        state.importedTargetName = tmpImpSrcName;
+        const tmpLastSrc = state.lastSourceBundle;
+        state.lastSourceBundle = state.lastTargetBundle;
+        state.lastTargetBundle = tmpLastSrc;
+        state.lastDiffRows = [];
+        state.lastDiffAt = null;
+        state.lastDiffSignature = "";
+        state.lastApplyPlan = null;
+        state.diffSelectedIds = /* @__PURE__ */ new Set();
+        state.reflectRows = [];
+        state.reflectSelectedIds = /* @__PURE__ */ new Set();
+        state.reflectNodeModes = {};
         saveCurrentDialogState2();
         renderBundleState();
-        setStatus("比較元/比較先設定を入れ替えました");
+        setStatus("比較元/比較先設定（および取得済みバンドル）を入れ替えました。差分は再実行が必要です。");
         return;
       }
       if (act === "settingsExportUseCurrent") {
@@ -39490,6 +39696,7 @@ ${detail}`);
       if (act === "applyPatchJson" && typeof runApplyPatchJson2 === "function") return withGuard(runApplyPatchJson2);
       if (act === "applyField") return withGuard(runFieldApply);
       if (act === "loadTargetFields") return withGuard(runLoadTargetFields);
+      if (act === "validateFieldJson") return runFieldValidate();
       if (act === "formatFieldJson") {
         try {
           const text = ui.fieldJson.value.trim();
@@ -39503,6 +39710,18 @@ ${detail}`);
         return;
       }
       if (act === "importFieldJson") return ui.fieldJsonFile.click();
+      if (act === "copyFieldJson") {
+        return withGuard(async () => {
+          const text = (ui.fieldJson?.value || "").trim();
+          if (!text) throw new Error("コピーする JSON がありません");
+          try {
+            await navigator.clipboard.writeText(text);
+            setStatus("フィールド JSON をクリップボードへコピーしました");
+          } catch (_e) {
+            throw new Error("クリップボードへコピーできませんでした");
+          }
+        });
+      }
       if (act === "exportFieldJson") {
         return withGuard(async () => {
           const { nowStamp: nowStamp2, downloadText: downloadText2 } = await Promise.resolve().then(() => (init_utils(), utils_exports));
@@ -39526,9 +39745,22 @@ ${detail}`);
       if (act === "exportDesignXlsxBatchZip" && typeof runDesignExportXlsxBatchZip2 === "function") return withGuard(runDesignExportXlsxBatchZip2);
       if (act === "exportDesignDiffMd" && typeof runDesignDiffMd2 === "function") return withGuard(runDesignDiffMd2);
       if (act === "fetchJsConfig" && typeof runFetchJsConfig2 === "function") return withGuard(runFetchJsConfig2);
+      if (act === "loadTargetJsConfig" && typeof runLoadTargetJsConfig2 === "function") return withGuard(runLoadTargetJsConfig2);
       if (act === "exportJsConfigJson" && typeof runExportJsConfig2 === "function") return withGuard(runExportJsConfig2);
       if (act === "importJsConfigJson") return ui.jsconfigFile.click();
       if (act === "applyJsConfig" && typeof runApplyJsConfig2 === "function") return withGuard(runApplyJsConfig2);
+      if (act === "copyJsConfigJson") {
+        return withGuard(async () => {
+          const text = (ui.jsconfigJson?.value || "").trim();
+          if (!text) throw new Error("コピーする JSON がありません");
+          try {
+            await navigator.clipboard.writeText(text);
+            setStatus("JS/CSS 設定 JSON をクリップボードへコピーしました");
+          } catch (_e) {
+            throw new Error("クリップボードへコピーできませんでした");
+          }
+        });
+      }
       if (act === "renderProcessFlow" && typeof runRenderProcessFlow2 === "function") return withGuard(runRenderProcessFlow2);
       if (act === "generateERDiagram" && typeof runGenerateERDiagram2 === "function") return withGuard(runGenerateERDiagram2);
       if (act === "exportERDiagramHtml" && typeof runExportERDiagramHtml2 === "function") return withGuard(runExportERDiagramHtml2);
@@ -39570,6 +39802,10 @@ ${detail}`);
       if (act === "fieldGraphExportPng" && typeof fieldGraphExportPng2 === "function") return fieldGraphExportPng2();
       if (act === "simStart" && typeof runSimStart2 === "function") return withGuard(runSimStart2);
       if (act === "simExecuteAction" && typeof runSimExecuteAction2 === "function") return withGuard(runSimExecuteAction2);
+      if (act === "simUndo" && typeof runSimUndo2 === "function") return runSimUndo2();
+      if (act === "copyMermaidSource" && typeof copyMermaidSource2 === "function") return copyMermaidSource2();
+      if (act === "downloadMermaidSource" && typeof downloadMermaidSource2 === "function") return downloadMermaidSource2();
+      if (act === "downloadFlowSvg" && typeof downloadFlowSvg2 === "function") return downloadFlowSvg2();
       if (act === "clearApiTesterHistory" && typeof clearApiTesterHistory2 === "function") {
         clearApiTesterHistory2();
         setStatus("APIテスターの履歴をクリアしました");
@@ -39577,6 +39813,12 @@ ${detail}`);
       }
       if (act === "copyApiTesterCurl" && typeof copyApiTesterCurl2 === "function") return copyApiTesterCurl2();
       if (act === "runApiTester" && typeof runApiTester2 === "function") return runApiTester2();
+      if (act === "beautifyApiTesterBody" && typeof beautifyApiTesterBody2 === "function") return beautifyApiTesterBody2();
+      if (act === "minifyApiTesterBody" && typeof minifyApiTesterBody2 === "function") return minifyApiTesterBody2();
+      if (act === "copyApiTesterResponse" && typeof copyApiTesterResponse2 === "function") return copyApiTesterResponse2();
+      if (act === "downloadApiTesterResponse" && typeof downloadApiTesterResponse2 === "function") return downloadApiTesterResponse2();
+      if (act === "exportApiTesterHistory" && typeof exportApiTesterHistory2 === "function") return exportApiTesterHistory2();
+      if (act === "importApiTesterHistory" && typeof importApiTesterHistory2 === "function") return importApiTesterHistory2();
     });
     refreshDiffSelectionSetDropdown();
     syncDiffOnboardingVisibility();
@@ -41451,21 +41693,70 @@ ${body}`;
   var DIFF_TYPE_LABEL = { added: "追加", removed: "削除", changed: "変更", moved: "移動", same: "同一" };
   var DIFF_SEVERITY_LABEL = { high: "高", mid: "中", low: "低", info: "情報" };
   var localizeKintoneEnumsInText2 = localizeKintoneEnumsInText;
+  function escapeMarkdownTableCell(value) {
+    return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+  }
+  function buildDiffMarkdownText() {
+    const rows = state.lastDiffRows || [];
+    const typeCounts = { added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
+    const severityCounts = { high: 0, mid: 0, low: 0, info: 0 };
+    for (const r of rows) {
+      const t = String(r?.type || "");
+      const s = String(r?.severity || "");
+      if (typeCounts[t] != null) typeCounts[t] += 1;
+      if (severityCounts[s] != null) severityCounts[s] += 1;
+    }
+    const actualDiffCount = typeCounts.added + typeCounts.removed + typeCounts.changed + typeCounts.moved;
+    const sourceBundle = state.lastSourceBundle;
+    const targetBundle = state.lastTargetBundle;
+    const contextLines = [];
+    if (sourceBundle?.appId) {
+      const srcLabel = `App ${sourceBundle.appId}${sourceBundle.guestId ? ` / Guest ${sourceBundle.guestId}` : ""}${sourceBundle.preview ? " / preview" : ""}`;
+      contextLines.push(`- 比較元: ${srcLabel}`);
+    }
+    if (targetBundle?.appId) {
+      const tgtLabel = `App ${targetBundle.appId}${targetBundle.guestId ? ` / Guest ${targetBundle.guestId}` : ""}${targetBundle.preview ? " / preview" : ""}`;
+      contextLines.push(`- 比較先: ${tgtLabel}`);
+    }
+    const summaryLines = [
+      ...contextLines,
+      `- 件数: 差分 ${actualDiffCount} 件 / 同一 ${typeCounts.same} 件`,
+      `- 種別: 追加 ${typeCounts.added} / 削除 ${typeCounts.removed} / 変更 ${typeCounts.changed} / 移動 ${typeCounts.moved}`,
+      `- 重要度: 高 ${severityCounts.high} / 中 ${severityCounts.mid} / 低 ${severityCounts.low} / 情報 ${severityCounts.info}`
+    ];
+    return "# 差分レポート\n\n生成: " + (/* @__PURE__ */ new Date()).toISOString() + "\n\n" + summaryLines.join("\n") + "\n\n| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n|---|---|---|---|---|---|\n" + rows.map((r) => {
+      const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
+      const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
+      const oldStr = escapeMarkdownTableCell(localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r))));
+      const newStr = escapeMarkdownTableCell(localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r))));
+      const path = escapeMarkdownTableCell(String(r.path ?? ""));
+      const section = escapeMarkdownTableCell(diffSectionLabel(r));
+      return `| ${typeLabel} | ${section} | \`${path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
+    }).join("\n");
+  }
   function exportDiffAsMarkdown() {
     const rows = state.lastDiffRows || [];
     if (!rows.length) {
       pushToast("差分が未取得です", { tone: "warn" });
       return;
     }
-    const md = "# 差分レポート\n\n生成: " + (/* @__PURE__ */ new Date()).toISOString() + "\n\n| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n|---|---|---|---|---|---|\n" + rows.map((r) => {
-      const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
-      const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r)));
-      const newStr = localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r)));
-      return `| ${typeLabel} | ${diffSectionLabel(r)} | \`${r.path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
-    }).join("\n");
+    const md = buildDiffMarkdownText();
     triggerDownload2(new Blob([md], { type: "text/markdown" }), `kus-diff_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`);
     pushToast("Markdown を保存しました", { tone: "ok" });
+  }
+  async function copyDiffAsMarkdown() {
+    const rows = state.lastDiffRows || [];
+    if (!rows.length) {
+      pushToast("差分が未取得です", { tone: "warn" });
+      return;
+    }
+    const md = buildDiffMarkdownText();
+    try {
+      await navigator.clipboard.writeText(md);
+      pushToast("Markdown をクリップボードへコピーしました", { tone: "ok" });
+    } catch (_e) {
+      pushToast("クリップボードへコピーできませんでした", { tone: "error" });
+    }
   }
   function exportDiffAsCsvForExcel() {
     const rows = state.lastDiffRows || [];
@@ -42507,6 +42798,9 @@ ${body}`;
       } else if (act === "kusExportDiffMd") {
         e.preventDefault();
         exportDiffAsMarkdown();
+      } else if (act === "kusCopyDiffMd") {
+        e.preventDefault();
+        copyDiffAsMarkdown();
       } else if (act === "kusExportDiffCsv") {
         e.preventDefault();
         exportDiffAsCsvForExcel();
@@ -42694,6 +42988,13 @@ ${diffMd}
   init_dialog();
   init_diff();
   init_record();
+  function formatFileSize(bytes) {
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(2)} MB`;
+  }
   function renderCustomizeResult(data) {
     if (!data) {
       ui.jsconfigResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#64748b">データがありません</div>';
@@ -42706,30 +43007,64 @@ ${diffMd}
       { label: "モバイル CSS", items: data.mobile?.css || [] }
     ];
     const totalCount = categories.reduce((s, c) => s + c.items.length, 0);
-    const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">合計: ${totalCount}件 (Desktop JS:${categories[0].items.length} CSS:${categories[1].items.length} / Mobile JS:${categories[2].items.length} CSS:${categories[3].items.length})</div>`;
+    let urlTotal = 0;
+    let fileTotal = 0;
+    for (const cat of categories) {
+      for (const item of cat.items) {
+        if (item?.type === "URL") urlTotal += 1;
+        else fileTotal += 1;
+      }
+    }
+    const header = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">
+    <div>合計: ${totalCount}件 (Desktop JS:${categories[0].items.length} CSS:${categories[1].items.length} / Mobile JS:${categories[2].items.length} CSS:${categories[3].items.length})</div>
+    <div style="margin-top:2px;color:#64748b;">タイプ: URL ${urlTotal} / FILE ${fileTotal}</div>
+  </div>`;
     const rows = [];
     for (const cat of categories) {
       if (!cat.items.length) continue;
-      for (const item of cat.items) {
+      cat.items.forEach((item, idx) => {
         const fileType = item.type || "-";
         const src = item.type === "URL" ? item.url || "-" : item.file?.name || item.file?.fileKey || "(アップロードファイル)";
+        const sizeLabel = item.type !== "URL" ? formatFileSize(item?.file?.size) : "";
+        const srcCell = item.type === "URL" ? `<a href="${esc(src)}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:underline;word-break:break-all">${esc(src)}</a>` : `<span style="word-break:break-all">${esc(src)}</span>${sizeLabel ? `<span style="margin-left:6px;color:#64748b;font-size:10px;">(${esc(sizeLabel)})</span>` : ""}`;
         rows.push(`<tr>
+        <td style="color:#94a3b8;font-variant-numeric:tabular-nums;font-size:10px;">${idx + 1}</td>
         <td>${esc(cat.label)}</td>
         <td><span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;background:${fileType === "URL" ? "#dbeafe" : "#dcfce7"};color:${fileType === "URL" ? "#1d4ed8" : "#166534"}">${esc(fileType)}</span></td>
-        <td style="word-break:break-all">${esc(src)}</td>
+        <td>${srcCell}</td>
       </tr>`);
-      }
+      });
     }
     if (!rows.length) {
       ui.jsconfigResult.innerHTML = '<div style="padding:10px;font-size:12px;color:#15803d">JS/CSS設定は空です。</div>';
       return;
     }
     ui.jsconfigResult.innerHTML = `${header}<table>
-    <thead><tr><th>カテゴリ</th><th>タイプ</th><th>ソース</th></tr></thead>
+    <thead><tr><th style="width:30px">#</th><th>カテゴリ</th><th style="width:60px">タイプ</th><th>ソース</th></tr></thead>
     <tbody>${rows.join("")}</tbody>
   </table>`;
   }
   var lastFetchedSourceAppName = "";
+  async function runLoadTargetJsConfig() {
+    const c = commonParams();
+    if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
+    const isPreview = !!ui.jsconfigPreview.checked;
+    const prefix = buildApiPrefix(c.target.guestId, isPreview);
+    const appInfoPrefix = buildApiPrefix(c.target.guestId, false);
+    setStatus("比較先のJS/CSS設定を取得中...");
+    const res = await apiGet(prefix, "/app/customize.json", { app: c.target.appId });
+    const data = normalize(res);
+    let targetName = "";
+    try {
+      const appInfo = await apiGet(appInfoPrefix, "/app.json", { id: c.target.appId });
+      targetName = String(appInfo?.name || "").trim();
+    } catch (_e) {
+    }
+    lastFetchedSourceAppName = targetName;
+    ui.jsconfigJson.value = JSON.stringify(data, null, 2);
+    renderCustomizeResult(data);
+    setStatus(`比較先のJS/CSS設定を取得しました（アプリ: ${c.target.appId}${targetName ? ` / ${targetName}` : ""}${isPreview ? " / プレビュー" : ""}）`);
+  }
   async function runFetchJsConfig() {
     const c = commonParams();
     if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
@@ -42870,6 +43205,7 @@ ${diffMd}
   var pfSimStates = null;
   var pfSimActions = null;
   var pfSimCurrent = null;
+  var pfSimHistory = [];
   var mermaidLoadPromise = null;
   var mermaidRenderSeq = 0;
   var MERMAID_CDN_URLS = [
@@ -43056,13 +43392,42 @@ ${diffMd}
       elSelEl.innerHTML = available.map((a) => `<option value="${esc(a.name)}">${esc(a.name)} (→ ${esc(a.to)})</option>`).join("");
     }
   }
+  function nowTimeLabel() {
+    const d = /* @__PURE__ */ new Date();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
+  }
+  function renderSimHistory() {
+    const el = getToolDocument().getElementById("u_simHistoryList");
+    if (!el) return;
+    if (!pfSimHistory.length) {
+      el.innerHTML = '<div style="color:#94a3b8;font-size:11px;font-style:italic;padding:6px;">履歴はありません（最初から実行で開始）</div>';
+      return;
+    }
+    const rows = pfSimHistory.map((h, idx) => {
+      return `<div style="display:flex;gap:6px;align-items:center;padding:4px 6px;border-bottom:1px dashed #e2e8f0;font-size:11px;">
+      <span style="color:#94a3b8;width:24px;flex-shrink:0;">#${idx + 1}</span>
+      <span style="color:#94a3b8;flex-shrink:0;font-variant-numeric:tabular-nums;">${esc(h.at)}</span>
+      <span style="color:#0f172a;font-weight:600;">${esc(h.from)}</span>
+      <span style="color:#64748b;">→</span>
+      <span style="color:#1e40af;background:#dbeafe;padding:1px 5px;border-radius:4px;">${esc(h.action)}</span>
+      <span style="color:#64748b;">→</span>
+      <span style="color:#0f172a;font-weight:600;">${esc(h.to)}</span>
+    </div>`;
+    }).join("");
+    el.innerHTML = rows;
+  }
   async function runSimStart() {
     if (!pfSimStates) return;
     const startStates = new Set(Object.keys(pfSimStates));
-    for (const a of pfSimActions) if (a.to) startStates.delete(a.to);
+    for (const a of pfSimActions || []) if (a.to) startStates.delete(a.to);
     const startSt = [...startStates][0] || Object.keys(pfSimStates)[0];
     if (!startSt) return;
     pfSimCurrent = startSt;
+    pfSimHistory = [];
+    renderSimHistory();
     updateProcessSimulationUI();
     setStatus("シミュレーション開始: " + startSt);
     await redrawProcessFlow(startSt);
@@ -43072,12 +43437,96 @@ ${diffMd}
     if (!sel || sel.disabled) return;
     const actionName = sel.value;
     if (!actionName) return;
-    const action = pfSimActions.find((a) => a.from === pfSimCurrent && a.name === actionName);
+    const action = (pfSimActions || []).find((a) => a.from === pfSimCurrent && a.name === actionName);
     if (!action) return;
+    const prev = pfSimCurrent;
     pfSimCurrent = action.to;
+    pfSimHistory.push({ from: prev || "?", action: actionName, to: action.to, at: nowTimeLabel() });
+    renderSimHistory();
     updateProcessSimulationUI();
     setStatus(`アクション「${actionName}」実行 → 「${action.to}」`);
     await redrawProcessFlow(action.to);
+  }
+  function runSimUndo() {
+    if (!pfSimHistory.length) {
+      showToast("巻き戻せる履歴がありません", "warn");
+      return;
+    }
+    const last = pfSimHistory.pop();
+    pfSimCurrent = last ? last.from : pfSimCurrent;
+    renderSimHistory();
+    updateProcessSimulationUI();
+    setStatus(`巻き戻し: 現在ステータス ${pfSimCurrent}`);
+    redrawProcessFlow(pfSimCurrent || null);
+  }
+  async function copyMermaidSource() {
+    const text = getToolDocument().getElementById("u_mermaidText")?.value || "";
+    if (!text.trim()) {
+      showToast("先にフロー図を取得してください", "warn");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("Mermaid構文をコピーしました");
+    } catch (_e) {
+      showToast("クリップボードへコピーできませんでした", "error");
+    }
+  }
+  function downloadMermaidSource() {
+    const text = getToolDocument().getElementById("u_mermaidText")?.value || "";
+    if (!text.trim()) {
+      showToast("先にフロー図を取得してください", "warn");
+      return;
+    }
+    downloadText(`process-flow_${nowStamp()}.mmd`, text, "text/plain;charset=utf-8");
+    setStatus("Mermaid構文を保存しました");
+  }
+  function downloadFlowSvg() {
+    const viewEl = getToolDocument().getElementById("u_mermaidView");
+    const svg = viewEl?.querySelector("svg");
+    if (!svg) {
+      showToast("先にフロー図を取得してください（SVG未生成）", "warn");
+      return;
+    }
+    const clone = svg.cloneNode(true);
+    if (!clone.getAttribute("xmlns")) clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    const xml = new XMLSerializer().serializeToString(clone);
+    downloadText(`process-flow_${nowStamp()}.svg`, xml, "image/svg+xml;charset=utf-8");
+    setStatus("フロー図をSVGとして保存しました");
+  }
+  function renderProcessFlowSummary() {
+    const el = getToolDocument().getElementById("u_processFlowSummary");
+    if (!el) return;
+    if (!pfSimStates || !pfSimActions) {
+      el.innerHTML = '<span style="color:#94a3b8;font-style:italic;">フロー図を取得すると、ステータス・アクションの統計を表示します</span>';
+      return;
+    }
+    const stateNames = Object.keys(pfSimStates);
+    const stateCount = stateNames.length;
+    const actionCount = pfSimActions.length;
+    const startStates = new Set(stateNames);
+    for (const a of pfSimActions) if (a.to) startStates.delete(a.to);
+    const endStates = new Set(stateNames);
+    for (const s of stateNames) {
+      if (pfSimActions.some((a) => a.from === s)) endStates.delete(s);
+    }
+    const branching = stateNames.filter((s) => pfSimActions.filter((a) => a.from === s).length >= 2);
+    const orphanFrom = pfSimActions.filter((a) => !pfSimStates[a.from]);
+    const orphanTo = pfSimActions.filter((a) => !pfSimStates[a.to]);
+    const issues = [];
+    if (!startStates.size) issues.push("始点（受信側のないステータス）が見つかりません");
+    if (!endStates.size) issues.push("終端（次のアクションのないステータス）が見つかりません");
+    if (orphanFrom.length) issues.push(`未定義ステータスから出るアクション ${orphanFrom.length} 件`);
+    if (orphanTo.length) issues.push(`未定義ステータスへ入るアクション ${orphanTo.length} 件`);
+    const chip = (label, value, color) => `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;background:${color}1a;color:${color};font-size:11px;font-weight:600;">${esc(label)} <span style="font-variant-numeric:tabular-nums;">${value}</span></span>`;
+    const issueHtml = issues.length ? `<div style="margin-top:6px;color:#b45309;font-size:11px;line-height:1.5;">⚠ ${issues.map(esc).join(" / ")}</div>` : "";
+    el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+    ${chip("ステータス", stateCount, "#0f172a")}
+    ${chip("アクション", actionCount, "#1e40af")}
+    ${chip("始点", startStates.size, "#16a34a")}
+    ${chip("終端", endStates.size, "#9333ea")}
+    ${chip("分岐ステータス", branching.length, "#d97706")}
+  </div>${issueHtml}`;
   }
   async function runRenderProcessFlow() {
     const c = commonParams();
@@ -43094,15 +43543,21 @@ ${diffMd}
         pfSimStates = null;
         pfSimActions = null;
         pfSimCurrent = null;
+        pfSimHistory = [];
         updateProcessSimulationUI();
+        renderSimHistory();
+        renderProcessFlowSummary();
         return;
       }
       pfSimStates = res.states || {};
       pfSimActions = res.actions || [];
       pfSimCurrent = null;
+      pfSimHistory = [];
       setStatus("フロー図 生成中...");
       await redrawProcessFlow(null);
       updateProcessSimulationUI();
+      renderSimHistory();
+      renderProcessFlowSummary();
       setStatus("フロー図 生成完了");
     } catch (e) {
       ui.mermaidView.innerHTML = `<div style="color:#b91c1c">エラー: ${esc(e.message || String(e))}</div>`;
@@ -43121,9 +43576,20 @@ ${diffMd}
   init_dialog();
   init_psychology();
   var API_TESTER_PRESETS = [
+    // ----- 取得系（読み取り） -----
+    {
+      id: "app-info",
+      label: "アプリ情報を取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/app.json",
+      body: { id: 1 },
+      hint: "アプリのメタ情報（名称・コード・スペースなど）を取得します。"
+    },
     {
       id: "app-settings",
-      label: "アプリ設定を取得（GET）",
+      label: "アプリ設定を取得",
+      group: "取得（読み取り）",
       method: "GET",
       path: "/k/v1/app/settings.json",
       body: { app: 1 },
@@ -43131,16 +43597,85 @@ ${diffMd}
     },
     {
       id: "form-fields-get",
-      label: "フォーム項目を取得（GET）",
+      label: "フォーム項目を取得",
+      group: "取得（読み取り）",
       method: "GET",
       path: "/k/v1/app/form/fields.json",
       body: { app: 1 },
       hint: "フォーム構造確認用。返却値の properties でフィールド一覧を確認できます。"
     },
     {
-      id: "form-fields-put-preview",
-      label: "フォーム項目を更新（PUT / preview）",
-      method: "PUT",
+      id: "form-layout-get",
+      label: "フォームレイアウトを取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/app/form/layout.json",
+      body: { app: 1 },
+      hint: "レイアウト構造（ROW / GROUP / SUBTABLE）を取得します。"
+    },
+    {
+      id: "views-get",
+      label: "ビュー設定を取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/app/views.json",
+      body: { app: 1 },
+      hint: "一覧（ビュー）の設定を取得します。"
+    },
+    {
+      id: "process-mgmt-get",
+      label: "プロセス管理設定を取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/app/status.json",
+      body: { app: 1 },
+      hint: "ステータス・アクション・閲覧設定を取得します。"
+    },
+    {
+      id: "deploy-status-get",
+      label: "デプロイ状態を取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/preview/app/deploy.json",
+      body: { apps: [1] },
+      hint: "デプロイ中(PROCESSING)/成功(SUCCESS)/失敗(FAIL)/未着手(CANCEL/NONE) を確認できます。"
+    },
+    {
+      id: "record-get",
+      label: "レコード1件取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/record.json",
+      body: { app: 1, id: 1 },
+      hint: "app と id の組み合わせで1件取得します。"
+    },
+    {
+      id: "records-get",
+      label: "レコード一覧取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/records.json",
+      body: {
+        app: 1,
+        query: "order by $id desc limit 10"
+      },
+      hint: "大量取得時は limit/offset や query を調整してください。"
+    },
+    {
+      id: "comments-get",
+      label: "コメント一覧取得",
+      group: "取得（読み取り）",
+      method: "GET",
+      path: "/k/v1/record/comments.json",
+      body: { app: 1, record: 1, order: "desc", limit: 10 },
+      hint: "レコードのコメントを新しい順で取得します。"
+    },
+    // ----- preview 更新系（書き込み） -----
+    {
+      id: "form-fields-post-preview",
+      label: "フィールドを追加（POST / preview）",
+      group: "更新（preview 必須）",
+      method: "POST",
       path: "/k/v1/preview/app/form/fields.json",
       body: {
         app: 1,
@@ -43152,27 +43687,57 @@ ${diffMd}
           }
         }
       },
-      hint: "更新系APIのため preview パス必須です。反映後の本番デプロイは管理画面で実施してください。"
+      hint: "新規フィールドを preview に追加します。デプロイ反映は別途必要です。"
     },
     {
-      id: "record-get",
-      label: "レコード1件取得（GET）",
-      method: "GET",
-      path: "/k/v1/record.json",
-      body: { app: 1, id: 1 },
-      hint: "app と id の組み合わせで1件取得します。"
-    },
-    {
-      id: "records-get",
-      label: "レコード一覧取得（GET）",
-      method: "GET",
-      path: "/k/v1/records.json",
+      id: "form-fields-put-preview",
+      label: "フィールドを更新（PUT / preview）",
+      group: "更新（preview 必須）",
+      method: "PUT",
+      path: "/k/v1/preview/app/form/fields.json",
       body: {
         app: 1,
-        query: "order by $id desc limit 10"
+        properties: {
+          sample_text: {
+            type: "SINGLE_LINE_TEXT",
+            code: "sample_text",
+            label: "サンプルテキスト(更新)"
+          }
+        }
       },
-      hint: "大量取得時は limit/offset や query を調整してください。"
+      hint: "既存フィールド設定を変更します。type/code は変更不可です。"
+    },
+    {
+      id: "app-settings-put-preview",
+      label: "アプリ設定を更新（PUT / preview）",
+      group: "更新（preview 必須）",
+      method: "PUT",
+      path: "/k/v1/preview/app/settings.json",
+      body: {
+        app: 1,
+        name: "更新後のアプリ名"
+      },
+      hint: "アプリ名・説明・アイコンなどの基本設定を更新します。"
     }
+  ];
+  var PATH_SUGGESTIONS = [
+    "/k/v1/app.json",
+    "/k/v1/app/settings.json",
+    "/k/v1/app/form/fields.json",
+    "/k/v1/app/form/layout.json",
+    "/k/v1/app/views.json",
+    "/k/v1/app/status.json",
+    "/k/v1/app/acl.json",
+    "/k/v1/field/acl.json",
+    "/k/v1/record/acl.json",
+    "/k/v1/record.json",
+    "/k/v1/records.json",
+    "/k/v1/record/comments.json",
+    "/k/v1/preview/app/deploy.json",
+    "/k/v1/preview/app/settings.json",
+    "/k/v1/preview/app/form/fields.json",
+    "/k/v1/preview/app/form/layout.json",
+    "/k/v1/preview/app/views.json"
   ];
   function sleep3(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -43214,6 +43779,33 @@ ${diffMd}
       return await kintone.api(path, method, payload);
     }
   }
+  var lastApiTesterResponse = null;
+  function setApiTesterMeta(text, ok) {
+    const metaEl = getToolDocument().getElementById("u_apiTesterMeta");
+    if (!metaEl) return;
+    metaEl.textContent = text;
+    metaEl.style.color = ok ? "#166534" : "#991b1b";
+    metaEl.style.background = ok ? "#f0fdf4" : "#fee2e2";
+    metaEl.style.border = `1px solid ${ok ? "#bbf7d0" : "#fecaca"}`;
+  }
+  function formatDuration(ms) {
+    if (!isFinite(ms) || ms < 0) return "-";
+    if (ms < 1e3) return `${Math.round(ms)} ms`;
+    return `${(ms / 1e3).toFixed(2)} s`;
+  }
+  function describeResponseShape(res) {
+    if (res == null) return "null";
+    if (Array.isArray(res)) return `array (${res.length} items)`;
+    if (typeof res === "object") {
+      if (Array.isArray(res.records)) return `records (${res.records.length} items)`;
+      if (res.properties && typeof res.properties === "object") {
+        return `properties (${Object.keys(res.properties).length} fields)`;
+      }
+      if (Array.isArray(res.comments)) return `comments (${res.comments.length} items)`;
+      return `object (${Object.keys(res).length} keys)`;
+    }
+    return typeof res;
+  }
   async function runApiTester() {
     bumpSessionMetric("apiTesterRun");
     const method = getToolDocument().getElementById("u_apiTesterMethod")?.value || "GET";
@@ -43239,6 +43831,9 @@ ${diffMd}
     }
     setBusy(true, `API実行中 (${method}) ...`);
     resEl.innerHTML = '<div style="color:#64748b">実行中...</div>';
+    setApiTesterMeta("実行中…", true);
+    lastApiTesterResponse = null;
+    const t0 = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     try {
       if (/^https?:\/\//i.test(path)) {
         throw new Error("kintone.api には /k/v1/... または /k/guest/... の相対パスを指定してください。完全URLは実行できません。");
@@ -43251,12 +43846,20 @@ ${diffMd}
       }
       assertAllowsMutatingApiUrl(finalPath, method);
       const res = await runKintoneApiWithSingleRetry(finalPath, method, payload);
-      resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(JSON.stringify(res, null, 2))}</pre>`;
-      setStatus(`API実行成功: ${method} ${finalPath}`);
+      const elapsed = (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now()) - t0;
+      lastApiTesterResponse = res;
+      const json = JSON.stringify(res, null, 2);
+      const sizeBytes = new Blob([json]).size;
+      resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0">${esc(json)}</pre>`;
+      setApiTesterMeta(`✓ 成功 / ${formatDuration(elapsed)} / ${describeResponseShape(res)} / ${(sizeBytes / 1024).toFixed(1)} KB`, true);
+      setStatus(`API実行成功: ${method} ${finalPath} (${formatDuration(elapsed)})`);
       saveApiTesterHistory(method, path, bodyStr);
     } catch (e) {
+      const elapsed = (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now()) - t0;
       let errMsg = formatApiTesterError(e);
       resEl.innerHTML = `<pre style="margin:0;padding:10px;font-size:12px;white-space:pre-wrap;color:#991b1b;background:#fee2e2;border:1px solid #fecaca">${esc(errMsg)}</pre>`;
+      const status = e && e.status ? ` / status ${e.status}` : "";
+      setApiTesterMeta(`✗ エラー / ${formatDuration(elapsed)}${status}`, false);
       setStatus(`API実行エラー: ${method} ${path}`, true);
     } finally {
       setBusy(false);
@@ -43278,12 +43881,23 @@ ${diffMd}
   function applyApiTesterPreset(presetId) {
     const preset = API_TESTER_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
-    const methodEl = getToolDocument().getElementById("u_apiTesterMethod");
-    const pathEl = getToolDocument().getElementById("u_apiTesterPath");
-    const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
+    const doc = getToolDocument();
+    const methodEl = doc.getElementById("u_apiTesterMethod");
+    const pathEl = doc.getElementById("u_apiTesterPath");
+    const bodyEl = doc.getElementById("u_apiTesterBody");
+    const sourceAppId = doc.getElementById("u_sourceApp")?.value?.trim();
+    let body = preset.body;
+    if (sourceAppId && body && typeof body === "object" && !Array.isArray(body)) {
+      body = { ...body };
+      if ("app" in body && /^\d+$/.test(sourceAppId)) body.app = Number(sourceAppId);
+      if ("id" in body && /^\d+$/.test(sourceAppId) && preset.path === "/k/v1/app.json") body.id = Number(sourceAppId);
+      if ("apps" in body && Array.isArray(body.apps) && /^\d+$/.test(sourceAppId)) {
+        body.apps = [Number(sourceAppId)];
+      }
+    }
     if (methodEl) methodEl.value = preset.method;
     if (pathEl) pathEl.value = preset.path;
-    if (bodyEl) bodyEl.value = prettyJson(preset.body);
+    if (bodyEl) bodyEl.value = prettyJson(body);
     setPresetHint(preset.hint);
   }
   function initApiTesterEnhancements() {
@@ -43297,9 +43911,19 @@ ${diffMd}
     const presetEl = doc.getElementById("u_apiTesterPreset");
     const suggestEl = doc.getElementById("u_apiTesterPathSuggest");
     if (presetEl) {
-      presetEl.querySelectorAll("option[data-api-tester-preset]").forEach((option) => option.remove());
-      const options = API_TESTER_PRESETS.map((preset) => `<option data-api-tester-preset="1" value="${esc(preset.id)}">${esc(preset.label)}</option>`).join("");
-      presetEl.insertAdjacentHTML("beforeend", options);
+      presetEl.querySelectorAll("option[data-api-tester-preset], optgroup[data-api-tester-preset]").forEach((node) => node.remove());
+      const groups = /* @__PURE__ */ new Map();
+      for (const preset of API_TESTER_PRESETS) {
+        const arr = groups.get(preset.group) || [];
+        arr.push(preset);
+        groups.set(preset.group, arr);
+      }
+      const fragments = [];
+      for (const [group, presets] of groups.entries()) {
+        const options = presets.map((preset) => `<option data-api-tester-preset="1" value="${esc(preset.id)}">${esc(preset.label)}</option>`).join("");
+        fragments.push(`<optgroup data-api-tester-preset="1" label="${esc(group)}">${options}</optgroup>`);
+      }
+      presetEl.insertAdjacentHTML("beforeend", fragments.join(""));
       presetEl.addEventListener("change", () => {
         const presetId = presetEl.value;
         if (!presetId) {
@@ -43311,11 +43935,18 @@ ${diffMd}
     }
     if (suggestEl) {
       const seen = /* @__PURE__ */ new Set();
-      suggestEl.innerHTML = API_TESTER_PRESETS.filter((preset) => {
-        if (seen.has(preset.path)) return false;
+      const paths = [];
+      for (const preset of API_TESTER_PRESETS) {
+        if (seen.has(preset.path)) continue;
         seen.add(preset.path);
-        return true;
-      }).map((preset) => `<option value="${esc(preset.path)}"></option>`).join("");
+        paths.push(preset.path);
+      }
+      for (const path of PATH_SUGGESTIONS) {
+        if (seen.has(path)) continue;
+        seen.add(path);
+        paths.push(path);
+      }
+      suggestEl.innerHTML = paths.map((path) => `<option value="${esc(path)}"></option>`).join("");
     }
     const methodEl = doc.getElementById("u_apiTesterMethod");
     const pathEl = doc.getElementById("u_apiTesterPath");
@@ -43330,6 +43961,133 @@ ${diffMd}
         setPresetHint(preset.hint);
       });
     }
+    const pane = doc.querySelector('[data-pane="apiTester"]');
+    if (pane) {
+      pane.addEventListener("keydown", (event) => {
+        const ke = event;
+        if ((ke.ctrlKey || ke.metaKey) && ke.key === "Enter") {
+          ke.preventDefault();
+          runApiTester();
+        }
+      });
+    }
+  }
+  function beautifyApiTesterBody() {
+    const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
+    if (!bodyEl) return;
+    const raw = (bodyEl.value || "").trim();
+    if (!raw) {
+      bodyEl.value = "{}";
+      setStatus("Body を {} に初期化しました");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      bodyEl.value = prettyJson(parsed);
+      setStatus("Body を整形しました");
+    } catch (e) {
+      showToast("JSON が不正です: " + e.message, "error");
+    }
+  }
+  function minifyApiTesterBody() {
+    const bodyEl = getToolDocument().getElementById("u_apiTesterBody");
+    if (!bodyEl) return;
+    const raw = (bodyEl.value || "").trim();
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      bodyEl.value = JSON.stringify(parsed);
+      setStatus("Body をミニファイしました");
+    } catch (e) {
+      showToast("JSON が不正です: " + e.message, "error");
+    }
+  }
+  async function copyApiTesterResponse() {
+    if (lastApiTesterResponse == null) {
+      showToast("先にAPIを実行してください", "warn");
+      return;
+    }
+    const text = prettyJson(lastApiTesterResponse);
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("レスポンスをクリップボードへコピーしました");
+    } catch (_e) {
+      showToast("クリップボードへコピーできませんでした", "error");
+    }
+  }
+  function downloadApiTesterResponse() {
+    if (lastApiTesterResponse == null) {
+      showToast("先にAPIを実行してください", "warn");
+      return;
+    }
+    const doc = getToolDocument();
+    const method = String(doc.getElementById("u_apiTesterMethod")?.value || "GET").toUpperCase();
+    const rawPath = String(doc.getElementById("u_apiTesterPath")?.value || "").trim();
+    const pathSlug = rawPath.replace(/^\/+/, "").replace(/\.json$/i, "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "response";
+    downloadText(`api-${method.toLowerCase()}_${pathSlug}_${nowStamp()}.json`, prettyJson(lastApiTesterResponse), "application/json;charset=utf-8");
+    setStatus("レスポンスをJSONとして保存しました");
+  }
+  function exportApiTesterHistory() {
+    if (!apiTesterHistoryMemory.length) {
+      showToast("履歴がありません", "warn");
+      return;
+    }
+    const payload = {
+      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      history: apiTesterHistoryMemory
+    };
+    downloadText(`api-tester-history_${nowStamp()}.json`, prettyJson(payload), "application/json;charset=utf-8");
+    setStatus(`履歴 ${apiTesterHistoryMemory.length} 件をエクスポートしました`);
+  }
+  function importApiTesterHistory() {
+    const doc = getToolDocument();
+    const input = doc.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.addEventListener("change", async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const items = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.history) ? parsed.history : null;
+        if (!items) {
+          showToast("履歴 JSON の形式が不正です（history 配列が見つかりません）", "error");
+          return;
+        }
+        const seen = /* @__PURE__ */ new Set();
+        const normalized = [];
+        for (const raw of items) {
+          if (!raw || typeof raw !== "object") continue;
+          const method = String(raw.method || "GET").toUpperCase();
+          const path = String(raw.path || "").trim();
+          if (!path) continue;
+          const body = String(raw.body || "{}");
+          const time = String(raw.time || (/* @__PURE__ */ new Date()).toISOString());
+          const key = `${method}	${path}	${body}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          normalized.push({ method, path, body, time });
+        }
+        const existing = apiTesterHistoryMemory.slice();
+        const existingKeys = new Set(existing.map((h) => `${h.method}	${h.path}	${h.body}`));
+        let added = 0;
+        for (const item of normalized) {
+          const key = `${item.method}	${item.path}	${item.body}`;
+          if (existingKeys.has(key)) continue;
+          existingKeys.add(key);
+          existing.push(item);
+          added += 1;
+        }
+        existing.sort((a, b) => String(b.time || "").localeCompare(String(a.time || "")));
+        apiTesterHistoryMemory = existing.slice(0, 15);
+        renderApiTesterHistory();
+        setStatus(`履歴をインポートしました（追加 ${added} 件 / 合計 ${apiTesterHistoryMemory.length} 件）`);
+      } catch (e) {
+        showToast("履歴 JSON の読み込みに失敗: " + (e?.message || String(e)), "error");
+      }
+    }, { once: true });
+    input.click();
   }
   function saveApiTesterHistory(method, path, bodyStr) {
     let hist = apiTesterHistoryMemory.filter((h) => !(h.method === method && h.path === path && h.body === bodyStr));
@@ -43384,12 +44142,27 @@ ${diffMd}
         const isGet = h.method === "GET";
         const methodColor = isGet ? "#2563eb" : h.method === "POST" ? "#16a34a" : h.method === "PUT" ? "#d97706" : "#dc2626";
         const methodBg = isGet ? "#dbeafe" : h.method === "POST" ? "#dcfce3" : h.method === "PUT" ? "#fef3c7" : "#fee2e2";
+        let timeLabel = "";
+        if (h.time) {
+          try {
+            const d = new Date(h.time);
+            if (!isNaN(d.getTime())) {
+              const hh = String(d.getHours()).padStart(2, "0");
+              const mm = String(d.getMinutes()).padStart(2, "0");
+              const ss = String(d.getSeconds()).padStart(2, "0");
+              timeLabel = `${hh}:${mm}:${ss}`;
+            }
+          } catch (_) {
+          }
+        }
         return `
         <div class="api-history-item" data-idx="${i}" role="button" tabindex="0"
           style="cursor:pointer;background:#fff;border:1px solid #e2e8f0;padding:6px 8px;border-radius:6px;transition:0.15s;display:flex;flex-direction:column;gap:4px;">
           <div style="display:flex;align-items:center;gap:6px;overflow:hidden;">
             <span style="font-size:9px;font-weight:800;background:${methodBg};color:${methodColor};padding:2px 4px;border-radius:4px;">${esc(h.method)}</span>
-            <span style="font-size:11px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(h.path)}">${esc(h.path)}</span>
+            <span style="font-size:11px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;" title="${esc(h.path)}">${esc(h.path)}</span>
+            ${timeLabel ? `<span style="font-size:9px;color:#94a3b8;flex-shrink:0;" title="${esc(h.time)}">${esc(timeLabel)}</span>` : ""}
+            <button type="button" class="api-history-del" data-idx="${i}" title="この履歴を削除" aria-label="この履歴を削除" style="flex-shrink:0;background:transparent;border:none;color:#94a3b8;cursor:pointer;font-size:13px;line-height:1;padding:0 2px;">×</button>
           </div>
           ${bPrev && bPrev !== "{}" ? `<div style="font-size:10px;color:#64748b;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(bPrev)}</div>` : ""}
         </div>
@@ -43409,7 +44182,9 @@ ${diffMd}
         if (bodyEl) bodyEl.value = data.body || "{}";
       };
       items.forEach((item) => {
-        item.addEventListener("click", () => {
+        item.addEventListener("click", (event) => {
+          const target = event.target;
+          if (target?.classList?.contains("api-history-del")) return;
           applyHistoryItem(item);
         });
         item.addEventListener("keydown", (event) => {
@@ -43431,6 +44206,16 @@ ${diffMd}
         item.addEventListener("mouseout", () => {
           item.style.borderColor = "#e2e8f0";
           item.style.backgroundColor = "#fff";
+        });
+      });
+      listEl.querySelectorAll(".api-history-del").forEach((btn) => {
+        btn.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const idx = parseInt(btn.dataset.idx || "-1", 10);
+          if (!(idx >= 0 && idx < apiTesterHistoryMemory.length)) return;
+          apiTesterHistoryMemory.splice(idx, 1);
+          renderApiTesterHistory();
+          setStatus(`履歴を 1 件削除しました（残 ${apiTesterHistoryMemory.length} 件）`);
         });
       });
     } catch (e) {
@@ -45566,6 +46351,7 @@ ${field.label}` : code,
       runDesignExportXlsxBatchZip,
       runDesignDiffMd,
       runFetchJsConfig,
+      runLoadTargetJsConfig,
       runExportJsConfig,
       runApplyJsConfig,
       runRenderProcessFlow,
@@ -45584,9 +46370,19 @@ ${field.label}` : code,
       deleteTemplate,
       runSimStart,
       runSimExecuteAction,
+      runSimUndo,
+      copyMermaidSource,
+      downloadMermaidSource,
+      downloadFlowSvg,
       runApiTester,
       clearApiTesterHistory,
       copyApiTesterCurl,
+      beautifyApiTesterBody,
+      minifyApiTesterBody,
+      copyApiTesterResponse,
+      downloadApiTesterResponse,
+      exportApiTesterHistory,
+      importApiTesterHistory,
       runPreviewApplyPlan,
       runExportDryRunPlan,
       runExportReviewZip,

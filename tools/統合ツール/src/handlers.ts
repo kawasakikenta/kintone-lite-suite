@@ -140,6 +140,7 @@ import {
   runLoadTargetFields,
   runLoadSourceFieldsList,
   runInsertSelectedSourceFields,
+  runFieldValidate,
   parseFieldInput,
   parseLookupMapInput,
   parseAppIdList
@@ -404,6 +405,7 @@ export function setupEventHandlers(injected: any = {}) {
     runDesignExportXlsxBatchZip,
     runDesignDiffMd,
     runFetchJsConfig,
+    runLoadTargetJsConfig,
     runExportJsConfig,
     runApplyJsConfig,
     runRenderProcessFlow,
@@ -422,9 +424,19 @@ export function setupEventHandlers(injected: any = {}) {
     deleteTemplate,
     runSimStart,
     runSimExecuteAction,
+    runSimUndo,
+    copyMermaidSource,
+    downloadMermaidSource,
+    downloadFlowSvg,
     runApiTester,
     clearApiTesterHistory,
     copyApiTesterCurl,
+    beautifyApiTesterBody,
+    minifyApiTesterBody,
+    copyApiTesterResponse,
+    downloadApiTesterResponse,
+    exportApiTesterHistory,
+    importApiTesterHistory,
     runPreviewApplyPlan,
     runExportDryRunPlan,
     runExportReviewZip,
@@ -1636,10 +1648,14 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
 
-    // Source field check-all
+    // Source field check-all (フィルタ適用中は表示中の行のみ対象)
     if ((e.target as HTMLElement).id === 'u_sourceFieldCheckAll') {
       const checked = (e.target as HTMLInputElement).checked;
-      ui.sourceFieldTbody?.querySelectorAll<HTMLInputElement>('.src-field-sel').forEach(c => { c.checked = checked; });
+      ui.sourceFieldTbody?.querySelectorAll<HTMLInputElement>('.src-field-sel').forEach((c: HTMLInputElement) => {
+        const row = c.closest('tr') as HTMLTableRowElement | null;
+        if (row && row.style.display === 'none') return;
+        c.checked = checked;
+      });
       return;
     }
 
@@ -2127,9 +2143,28 @@ export function setupEventHandlers(injected: any = {}) {
       ui.targetApp.value = src.app;
       ui.targetGuest.value = src.guest;
       ui.targetPreview.checked = src.preview;
+      // 取得済み・読込済みバンドルも合わせて入れ替え、差分の方向だけが直感に反しないようにする
+      const tmpImpSrc = state.importedSourceBundle;
+      const tmpImpSrcName = state.importedSourceName;
+      state.importedSourceBundle = state.importedTargetBundle;
+      state.importedSourceName = state.importedTargetName;
+      state.importedTargetBundle = tmpImpSrc;
+      state.importedTargetName = tmpImpSrcName;
+      const tmpLastSrc = state.lastSourceBundle;
+      state.lastSourceBundle = state.lastTargetBundle;
+      state.lastTargetBundle = tmpLastSrc;
+      // 差分結果と反映候補は方向が変わるためクリア（再比較を促す）
+      state.lastDiffRows = [];
+      state.lastDiffAt = null;
+      state.lastDiffSignature = '';
+      state.lastApplyPlan = null;
+      state.diffSelectedIds = new Set();
+      state.reflectRows = [];
+      state.reflectSelectedIds = new Set();
+      state.reflectNodeModes = {};
       saveCurrentDialogState();
       renderBundleState();
-      setStatus('比較元/比較先設定を入れ替えました');
+      setStatus('比較元/比較先設定（および取得済みバンドル）を入れ替えました。差分は再実行が必要です。');
       return;
     }
     // ----- Settings export quick add -----
@@ -3271,6 +3306,7 @@ export function setupEventHandlers(injected: any = {}) {
     // ----- Field tab -----
     if (act === 'applyField') return withGuard(runFieldApply);
     if (act === 'loadTargetFields') return withGuard(runLoadTargetFields);
+    if (act === 'validateFieldJson') return runFieldValidate();
     if (act === 'formatFieldJson') {
       try {
         const text = ui.fieldJson.value.trim();
@@ -3284,6 +3320,18 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
     if (act === 'importFieldJson') return ui.fieldJsonFile.click();
+    if (act === 'copyFieldJson') {
+      return withGuard(async () => {
+        const text = (ui.fieldJson?.value || '').trim();
+        if (!text) throw new Error('コピーする JSON がありません');
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus('フィールド JSON をクリップボードへコピーしました');
+        } catch (_e) {
+          throw new Error('クリップボードへコピーできませんでした');
+        }
+      });
+    }
     if (act === 'exportFieldJson') {
       return withGuard(async () => {
         const { nowStamp, downloadText } = await import('./utils.js');
@@ -3308,9 +3356,22 @@ export function setupEventHandlers(injected: any = {}) {
 
     // ----- JS/CSS config -----
     if (act === 'fetchJsConfig' && typeof runFetchJsConfig === 'function') return withGuard(runFetchJsConfig);
+    if (act === 'loadTargetJsConfig' && typeof runLoadTargetJsConfig === 'function') return withGuard(runLoadTargetJsConfig);
     if (act === 'exportJsConfigJson' && typeof runExportJsConfig === 'function') return withGuard(runExportJsConfig);
     if (act === 'importJsConfigJson') return ui.jsconfigFile.click();
     if (act === 'applyJsConfig' && typeof runApplyJsConfig === 'function') return withGuard(runApplyJsConfig);
+    if (act === 'copyJsConfigJson') {
+      return withGuard(async () => {
+        const text = (ui.jsconfigJson?.value || '').trim();
+        if (!text) throw new Error('コピーする JSON がありません');
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus('JS/CSS 設定 JSON をクリップボードへコピーしました');
+        } catch (_e) {
+          throw new Error('クリップボードへコピーできませんでした');
+        }
+      });
+    }
 
     // ----- Other tabs -----
     if (act === 'renderProcessFlow' && typeof runRenderProcessFlow === 'function') return withGuard(runRenderProcessFlow);
@@ -3359,6 +3420,12 @@ export function setupEventHandlers(injected: any = {}) {
     // ----- Simulation -----
     if (act === 'simStart' && typeof runSimStart === 'function') return withGuard(runSimStart);
     if (act === 'simExecuteAction' && typeof runSimExecuteAction === 'function') return withGuard(runSimExecuteAction);
+    if (act === 'simUndo' && typeof runSimUndo === 'function') return runSimUndo();
+
+    // ----- Process flow utilities -----
+    if (act === 'copyMermaidSource' && typeof copyMermaidSource === 'function') return copyMermaidSource();
+    if (act === 'downloadMermaidSource' && typeof downloadMermaidSource === 'function') return downloadMermaidSource();
+    if (act === 'downloadFlowSvg' && typeof downloadFlowSvg === 'function') return downloadFlowSvg();
 
     // ----- API tester -----
     if (act === 'clearApiTesterHistory' && typeof clearApiTesterHistory === 'function') {
@@ -3368,6 +3435,12 @@ export function setupEventHandlers(injected: any = {}) {
     }
     if (act === 'copyApiTesterCurl' && typeof copyApiTesterCurl === 'function') return copyApiTesterCurl();
     if (act === 'runApiTester' && typeof runApiTester === 'function') return runApiTester();
+    if (act === 'beautifyApiTesterBody' && typeof beautifyApiTesterBody === 'function') return beautifyApiTesterBody();
+    if (act === 'minifyApiTesterBody' && typeof minifyApiTesterBody === 'function') return minifyApiTesterBody();
+    if (act === 'copyApiTesterResponse' && typeof copyApiTesterResponse === 'function') return copyApiTesterResponse();
+    if (act === 'downloadApiTesterResponse' && typeof downloadApiTesterResponse === 'function') return downloadApiTesterResponse();
+    if (act === 'exportApiTesterHistory' && typeof exportApiTesterHistory === 'function') return exportApiTesterHistory();
+    if (act === 'importApiTesterHistory' && typeof importApiTesterHistory === 'function') return importApiTesterHistory();
   });
 
   refreshDiffSelectionSetDropdown();

@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, nowStamp, downloadText, downloadBlob } from '../utils.js';
+import { esc, extractAppNameFromBundle, nowStamp, downloadText, downloadBlob } from '../utils.js';
 import { apiGet, fetchBundle, buildApiPrefix, fetchAppsInSpace } from '../api.js';
 import { selectedScopeKeys } from '../utils.js';
 import { setStatus } from '../ui/components.js';
@@ -98,17 +98,27 @@ export function renderSettingsExportSummary(rows, scopes) {
   const labels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k).join(', ');
   const stashed = Array.isArray(state.lastSettingsExportBundles) ? state.lastSettingsExportBundles : [];
   const stashedById = new Map(stashed.map((b: any) => [String(b?.appId || ''), b]));
+  const totalApps = rows.length;
+  const totalOk = rows.reduce((acc, r) => acc + Number(r.okCount || 0), 0);
+  const totalNg = rows.reduce((acc, r) => acc + Number(r.ngCount || 0), 0);
+  const allSuccess = totalNg === 0;
   const body = rows.map((r) => {
     const idStr = String(r.appId);
     const canLoad = stashedById.has(idStr);
+    const bundle = stashedById.get(idStr);
+    const appName = bundle ? extractAppNameFromBundle(bundle) : '';
+    const idCell = appName
+      ? `<div style="display:flex;flex-direction:column;line-height:1.3;"><span>${esc(idStr)}</span><span style="font-size:10px;color:#64748b;">${esc(appName)}</span></div>`
+      : esc(idStr);
     const loadCell = canLoad
       ? `<div class="settings-export-load-actions">
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="source" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較元」としてセットし差分タブへ移動">比較元へ</button>
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="target" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較先」としてセットし差分タブへ移動">比較先へ</button>
         </div>`
       : '<span class="muted" style="font-size:10px">取得失敗</span>';
-    return `<tr>
-      <td>${esc(idStr)}</td>
+    const rowBg = r.ngCount ? 'background:#fff8f1;' : '';
+    return `<tr style="${rowBg}">
+      <td>${idCell}</td>
       <td>${esc(String(r.okCount))}</td>
       <td>${esc(String(r.ngCount))}</td>
       <td>${esc(r.pluginConfigLabel || '-')}</td>
@@ -116,10 +126,17 @@ export function renderSettingsExportSummary(rows, scopes) {
       <td>${loadCell}</td>
     </tr>`;
   }).join('');
+  const totalsHtml = `<div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:${allSuccess ? '#f0fdf4' : '#fff8f1'};display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+    <span style="font-weight:700;color:${allSuccess ? '#15803d' : '#9a3412'};">${allSuccess ? '✓ 全件成功' : '⚠ 一部失敗あり'}</span>
+    <span>アプリ数 <strong>${totalApps}</strong></span>
+    <span style="color:#16a34a">セクションOK合計 <strong>${totalOk}</strong></span>
+    <span style="color:${totalNg ? '#dc2626' : '#64748b'}">セクションNG合計 <strong>${totalNg}</strong></span>
+  </div>`;
   return `
+    ${totalsHtml}
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
     <table>
-      <thead><tr><th>アプリID</th><th>取得OK</th><th>取得NG</th><th>プラグイン設定</th><th>メモ</th><th style="width:160px">差分タブへ</th></tr></thead>
+      <thead><tr><th>アプリID / 名称</th><th>取得OK</th><th>取得NG</th><th>プラグイン設定</th><th>メモ</th><th style="width:160px">差分タブへ</th></tr></thead>
       <tbody>${body || '<tr><td colspan="6">結果なし</td></tr>'}</tbody>
     </table>
   `;
