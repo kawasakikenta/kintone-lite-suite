@@ -1876,17 +1876,7 @@ ${contextLine}`);
     noneBtn.addEventListener("click", () => chips.forEach((c) => {
       c.checkbox.checked = false;
     }));
-    const scopeRoot = document.createElement("div");
-    scopeRoot.style.display = "none";
-    for (const c of chips) {
-      const inp = c.checkbox.cloneNode(true);
-      inp.checked = c.checkbox.checked;
-      c.checkbox.addEventListener("change", () => {
-        inp.checked = c.checkbox.checked;
-      });
-      scopeRoot.appendChild(inp);
-    }
-    cardScope.body.appendChild(scopeRoot);
+    const scopeRoot = chipBox;
     panel.body.insertBefore(cardScope.card, panel.status);
     const cardOpt = makeCard({ title: "接続・出力", number: 3, soft: true });
     const guestInp = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
