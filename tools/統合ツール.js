@@ -38002,6 +38002,8 @@ ${detail}`);
       if (e.target.id === "u_sourceFieldCheckAll") {
         const checked = e.target.checked;
         ui.sourceFieldTbody?.querySelectorAll(".src-field-sel").forEach((c) => {
+          const row = c.closest("tr");
+          if (row && row.style.display === "none") return;
           c.checked = checked;
         });
         return;

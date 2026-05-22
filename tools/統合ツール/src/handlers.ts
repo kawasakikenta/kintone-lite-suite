@@ -1648,10 +1648,14 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
 
-    // Source field check-all
+    // Source field check-all (フィルタ適用中は表示中の行のみ対象)
     if ((e.target as HTMLElement).id === 'u_sourceFieldCheckAll') {
       const checked = (e.target as HTMLInputElement).checked;
-      ui.sourceFieldTbody?.querySelectorAll<HTMLInputElement>('.src-field-sel').forEach(c => { c.checked = checked; });
+      ui.sourceFieldTbody?.querySelectorAll<HTMLInputElement>('.src-field-sel').forEach((c: HTMLInputElement) => {
+        const row = c.closest('tr') as HTMLTableRowElement | null;
+        if (row && row.style.display === 'none') return;
+        c.checked = checked;
+      });
       return;
     }
 
