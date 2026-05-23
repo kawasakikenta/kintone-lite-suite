@@ -258,10 +258,12 @@ export async function previewReflectStandalone(
     targetAppId: string;
     targetGuestId?: string;
     scopes: string[];
+    lookupMap?: Record<string, string>;
   },
   setStatus: (msg: string) => void
 ): Promise<PreviewReflectResult> {
   const scopes = (opts.scopes || []).filter(Boolean);
+  const lookupMap = opts.lookupMap || ({} as any);
   if (!scopes.length) throw new Error('プレビュー対象セクションが空です');
   if (!opts.sourceAppId) throw new Error('比較元アプリIDを入力してください');
   if (!opts.targetAppId) throw new Error('比較先アプリIDを入力してください');
@@ -299,16 +301,18 @@ export async function previewReflectStandalone(
       continue;
     }
 
-    const same = stableStringify(srcSec) === stableStringify(tgtSec);
-    if (same) {
-      entries.push({ sectionKey: secKey, label, status: 'same', message: '差分なし' });
-      continue;
-    }
-
     // フィールド設定のみ詳細件数を出す
     if (secKey === 'fieldSettings') {
-      const srcProps = filterWritable((srcSec as any).properties || srcSec);
-      const tgtProps = (tgtSec as any).properties || tgtSec || {};
+      const srcPropsRaw = filterWritable((srcSec as any).properties || srcSec);
+      const srcProps: Record<string, any> = {};
+      for (const [code, def] of Object.entries(srcPropsRaw) as Array<[string, any]>) {
+        srcProps[code] = convertLookup(def, lookupMap);
+      }
+      const tgtProps = filterWritable((tgtSec as any).properties || tgtSec || {});
+      if (stableStringify(srcProps) === stableStringify(tgtProps)) {
+        entries.push({ sectionKey: secKey, label, status: 'same', message: '差分なし' });
+        continue;
+      }
       let add = 0;
       let update = 0;
       let tgtOnly = 0;
@@ -328,6 +332,10 @@ export async function previewReflectStandalone(
         fieldStats: { add, update, tgtOnly }
       });
     } else {
+      if (stableStringify(srcSec) === stableStringify(tgtSec)) {
+        entries.push({ sectionKey: secKey, label, status: 'same', message: '差分なし' });
+        continue;
+      }
       entries.push({ sectionKey: secKey, label, status: 'change', message: '差分あり（セクション単位）' });
     }
   }
