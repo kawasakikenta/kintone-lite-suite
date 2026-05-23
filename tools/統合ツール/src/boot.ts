@@ -35,8 +35,26 @@ import { scheduleGuidedTourLayout } from './ui/tour.js';
 import { setupEventHandlers, forceReleaseRunningGuard } from './handlers.js';
 import { registry } from './registry.js';
 import { diffFeature } from './features/diff/index.js';
+import { reflectFeature } from './features/reflect/index.js';
+import { fieldFeature } from './features/field/index.js';
+import { erFeature } from './features/er/index.js';
+import { processFeature } from './features/process/index.js';
+import { analyzeFeature } from './features/analyze/index.js';
+import { apiTesterFeature } from './features/apiTester/index.js';
+import { jsconfigFeature } from './features/jsconfig/index.js';
+import { recordFeature } from './features/record/index.js';
+import { designFeature } from './features/design/index.js';
 
 registry.register(diffFeature);
+registry.register(reflectFeature);
+registry.register(fieldFeature);
+registry.register(erFeature);
+registry.register(processFeature);
+registry.register(analyzeFeature);
+registry.register(apiTesterFeature);
+registry.register(jsconfigFeature);
+registry.register(recordFeature);
+registry.register(designFeature);
 import { installPsychology } from './ui/psychology.js';
 import { initExtras } from './ui/extras.js';
 import { initJsonEditor, getJsonEditorInstance, startGuidedTour } from './oss_integrations.js';
@@ -453,6 +471,9 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     fieldGraphRelayout,
     fieldGraphExportPng
   });
+
+  registry.initAll();
+  registry.registerEventsAll(root);
 
   renderApiTesterHistory();
   initApiTesterEnhancements();

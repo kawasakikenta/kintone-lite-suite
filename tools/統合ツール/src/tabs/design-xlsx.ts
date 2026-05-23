@@ -804,7 +804,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       }),
       header: () => ({
         font: { ...Sty.baseFont({ bold: true }), color: { rgb: CONFIG.COLORS.HEADER_TEXT } },
-        alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+        alignment: { vertical: 'center', horizontal: 'center', wrapText: false },
         fill: { patternType: 'solid', fgColor: { rgb: CONFIG.COLORS.HEADER_BG } },
         ...Sty.borderThin()
       }),
