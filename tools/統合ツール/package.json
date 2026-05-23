@@ -9,11 +9,13 @@
     "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
     "check:no-browser-storage": "node scripts/check-no-browser-storage.cjs",
     "check": "npm run check:no-browser-storage && npm run typecheck && npm run typecheck:strict && npm run build",
-    "test": "npm run check"
+    "test": "npm run check",
+    "test:unit": "vitest run"
   },
   "devDependencies": {
+    "@types/node": "^22.9.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.6.3",
-    "@types/node": "^22.9.0"
+    "vitest": "^4.1.7"
   }
 }

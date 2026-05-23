@@ -33,6 +33,10 @@ import { resolveApplyScopes } from './reflect/helpers.js';
 import { makeApplyPlanSignature, runPreviewApplyPlan, runExportDryRunPlan, runExportReviewZip, togglePlanSectionExclude } from './reflect/plan.js';
 import { scheduleGuidedTourLayout } from './ui/tour.js';
 import { setupEventHandlers, forceReleaseRunningGuard } from './handlers.js';
+import { registry } from './registry.js';
+import { diffFeature } from './features/diff/index.js';
+
+registry.register(diffFeature);
 import { installPsychology } from './ui/psychology.js';
 import { initExtras } from './ui/extras.js';
 import { initJsonEditor, getJsonEditorInstance, startGuidedTour } from './oss_integrations.js';

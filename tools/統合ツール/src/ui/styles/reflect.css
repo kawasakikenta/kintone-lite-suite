@@ -1,0 +1,26 @@
+/* ========== Section Preview Editor ========== */
+#kintone-unified-suite-v2 .section-preview-editor{min-height:200px}
+#kintone-unified-suite-v2 .spe-hero{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px;padding:12px 14px;border:1px solid #dbeafe;border-radius:12px;background:linear-gradient(135deg,#f8fbff,#eef2ff)}
+#kintone-unified-suite-v2 .spe-hero-title{font-size:14px;font-weight:800;color:#1e3a8a}
+#kintone-unified-suite-v2 .spe-hero-sub{margin-top:4px;font-size:12px;line-height:1.65;color:#475569}
+#kintone-unified-suite-v2 .spe-hero-chips{display:flex;gap:6px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .spe-chip{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:#fff;border:1px solid #bfdbfe;color:#1d4ed8;font-size:11px;font-weight:700}
+#kintone-unified-suite-v2 .spe-section-select{min-height:36px;border:1px solid #cbd5e1;border-radius:8px;padding:0 10px;font-size:13px;background:#fff;color:#0f172a;cursor:pointer;min-width:180px}
+#kintone-unified-suite-v2 .spe-section-select:focus{outline:2px solid #3b82f6;outline-offset:-1px}
+#kintone-unified-suite-v2 .spe-empty{padding:32px 20px;text-align:center;color:#64748b;font-size:13px;line-height:1.7}
+#kintone-unified-suite-v2 .spe-empty p{margin:0 0 8px}
+#kintone-unified-suite-v2 .spe-empty-actions{margin-top:16px}
+
+/* ========== JSONEditor overrides ========== */
+#kintone-unified-suite-v2 .jsoneditor {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+#kintone-unified-suite-v2 .jsoneditor-menu {
+  background-color: #f1f5f9;
+  border-bottom: 1px solid #cbd5e1;
+}
+#kintone-unified-suite-v2 .jsoneditor-menu > button {
+  background-color: transparent;
+}

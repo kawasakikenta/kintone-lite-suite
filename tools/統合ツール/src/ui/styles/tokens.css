@@ -1,0 +1,80 @@
+/* === Design tokens (S18-S20 + S9 dark + reduced-motion) === */
+#kintone-unified-suite-v2{
+  /* Severity colors (S1) */
+  --sev-high:#dc2626; --sev-high-bg:#fef2f2; --sev-high-fg:#7f1d1d; --sev-high-border:#fca5a5;
+  --sev-mid:#f59e0b;  --sev-mid-bg:#fffbeb;  --sev-mid-fg:#7c2d12;  --sev-mid-border:#fcd34d;
+  --sev-low:#22c55e;  --sev-low-bg:#f0fdf4;  --sev-low-fg:#15803d;  --sev-low-border:#86efac;
+  /* Stage colors (S3) */
+  --stg-diff:#3b82f6;   --stg-diff-bg:#dbeafe;   /* 🔍 */
+  --stg-select:#8b5cf6; --stg-select-bg:#ede9fe; /* ✓ */
+  --stg-plan:#f59e0b;   --stg-plan-bg:#fef3c7;   /* 📋 */
+  --stg-apply:#22c55e;  --stg-apply-bg:#dcfce7;  /* 🚀 */
+  /* Spacing (S18) */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px;
+  /* Radius (S20) */
+  --r-chip:4px; --r-card:8px; --r-modal:12px;
+  /* Font size (S19) — 3 tier */
+  --fs-aux:11px; --fs-body:13px; --fs-head:16px;
+  /* Surface palette */
+  --bg-app:#f6f8fb; --bg-card:#ffffff; --bg-soft:#f1f5f9; --bg-soft2:#f8fafc;
+  --txt-1:#0f172a; --txt-2:#334155; --txt-3:#64748b; --txt-mute:#94a3b8;
+  --border-1:#e2e8f0; --border-2:#cbd5e1;
+  --accent:#2563eb; --accent-2:#1d4ed8;
+}
+@media (prefers-color-scheme:dark){
+  #kintone-unified-suite-v2[data-theme="auto"]{
+    --bg-app:#0f172a; --bg-card:#1e293b; --bg-soft:#1e293b; --bg-soft2:#0f172a;
+    --txt-1:#f1f5f9; --txt-2:#cbd5e1; --txt-3:#94a3b8; --txt-mute:#64748b;
+    --border-1:#334155; --border-2:#475569;
+    --sev-high-bg:#3f0e0e; --sev-high-fg:#fca5a5;
+    --sev-mid-bg:#3a2200;  --sev-mid-fg:#fcd34d;
+    --sev-low-bg:#0a3d1f;  --sev-low-fg:#86efac;
+    --stg-diff-bg:#172554; --stg-select-bg:#2e1065; --stg-plan-bg:#451a03; --stg-apply-bg:#052e16;
+  }
+}
+#kintone-unified-suite-v2[data-theme="dark"]{
+  --bg-app:#0f172a; --bg-card:#1e293b; --bg-soft:#1e293b; --bg-soft2:#0f172a;
+  --txt-1:#f1f5f9; --txt-2:#cbd5e1; --txt-3:#94a3b8; --txt-mute:#64748b;
+  --border-1:#334155; --border-2:#475569;
+}
+@media (prefers-reduced-motion:reduce){
+  #kintone-unified-suite-v2 *,
+  #kintone-unified-suite-v2 *::before,
+  #kintone-unified-suite-v2 *::after{
+    animation-duration:0.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:0.01ms !important;
+  }
+}
+/* === Severity universal styles (S1) === */
+#kintone-unified-suite-v2 .sev-high{border-left:4px solid var(--sev-high) !important}
+#kintone-unified-suite-v2 .sev-medium{border-left:2px solid var(--sev-mid) !important}
+#kintone-unified-suite-v2 .sev-low{border-left:1px solid var(--sev-low) !important}
+#kintone-unified-suite-v2 .sev-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;font-size:10px;font-weight:900;flex-shrink:0}
+#kintone-unified-suite-v2 .sev-icon--high{background:var(--sev-high);color:#fff}
+#kintone-unified-suite-v2 .sev-icon--medium{background:var(--sev-mid);color:#fff}
+#kintone-unified-suite-v2 .sev-icon--low{background:var(--sev-low);color:#fff}
+#kintone-unified-suite-v2 .sev-pill{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:999px;font-size:var(--fs-aux);font-weight:800;border:1px solid var(--border-1)}
+#kintone-unified-suite-v2 .sev-pill--high{background:var(--sev-high-bg);color:var(--sev-high-fg);border-color:var(--sev-high-border)}
+#kintone-unified-suite-v2 .sev-pill--medium{background:var(--sev-mid-bg);color:var(--sev-mid-fg);border-color:var(--sev-mid-border)}
+#kintone-unified-suite-v2 .sev-pill--low{background:var(--sev-low-bg);color:var(--sev-low-fg);border-color:var(--sev-low-border)}
+/* === Section icon system (S10) === */
+#kintone-unified-suite-v2 .sec-icon{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;font-size:11px;font-weight:900;border-radius:4px;background:var(--bg-soft);color:var(--txt-2);flex-shrink:0}
+#kintone-unified-suite-v2 .sec-icon[data-section="fieldSettings"]{background:#dbeafe;color:#1e40af}
+#kintone-unified-suite-v2 .sec-icon[data-section="layoutSettings"]{background:#e0e7ff;color:#3730a3}
+#kintone-unified-suite-v2 .sec-icon[data-section="viewSettings"]{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .sec-icon[data-section="reportSettings"]{background:#fce7f3;color:#9d174d}
+#kintone-unified-suite-v2 .sec-icon[data-section="processSettings"]{background:#cffafe;color:#155e75}
+#kintone-unified-suite-v2 .sec-icon[data-section="actionSettings"]{background:#d1fae5;color:#065f46}
+#kintone-unified-suite-v2 .sec-icon[data-section="appAcl"],
+#kintone-unified-suite-v2 .sec-icon[data-section="fieldAcl"],
+#kintone-unified-suite-v2 .sec-icon[data-section="recordPermissions"]{background:#fee2e2;color:#991b1b}
+#kintone-unified-suite-v2 .sec-icon[data-section="notifications"],
+#kintone-unified-suite-v2 .sec-icon[data-section="perRecordNotifications"],
+#kintone-unified-suite-v2 .sec-icon[data-section="reminderNotifications"]{background:#ffedd5;color:#9a3412}
+#kintone-unified-suite-v2 .sec-icon[data-section="customizeSettings"]{background:#1e293b;color:#fbbf24}
+#kintone-unified-suite-v2 .sec-icon[data-section="pluginSettings"]{background:#fae8ff;color:#6b21a8}
+#kintone-unified-suite-v2 .sec-icon[data-section="categories"]{background:#f1f5f9;color:#475569}
+#kintone-unified-suite-v2 .sec-icon[data-section="appSettings"],
+#kintone-unified-suite-v2 .sec-icon[data-section="appInfo"],
+#kintone-unified-suite-v2 .sec-icon[data-section="formSettings"]{background:#f3f4f6;color:#374151}

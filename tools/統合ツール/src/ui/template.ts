@@ -1,6 +1,12 @@
 'use strict';
 
-import cssText from './styles.css';
+import tokensCss from './styles/tokens.css';
+import componentsCss from './styles/components.css';
+import diffCss from './styles/diff.css';
+import reflectCss from './styles/reflect.css';
+import tabsCss from './styles/tabs.css';
+
+const cssText = [tokensCss, componentsCss, diffCss, reflectCss, tabsCss].join('\n');
 import {
   TOOL_ID, TOOL_VERSION, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS,
   FEATURE_DEFS, DEFAULT_SUBTAB_STATE,
