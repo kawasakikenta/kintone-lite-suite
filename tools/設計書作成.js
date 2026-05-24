@@ -2790,9 +2790,8 @@ ${body}`;
         },
         title: () => ({
           font: { ...Sty.baseFont({ bold: true, sz: 12 }), color: { rgb: CONFIG.COLORS.TITLE_TEXT } },
-          alignment: { vertical: "center", horizontal: "left", wrapText: true },
-          fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.TITLE_BG } },
-          ...Sty.borderThin()
+          alignment: { vertical: "center", horizontal: "left", wrapText: false },
+          fill: { patternType: "solid", fgColor: { rgb: CONFIG.COLORS.TITLE_BG } }
         }),
         header: () => ({
           font: { ...Sty.baseFont({ bold: true }), color: { rgb: CONFIG.COLORS.HEADER_TEXT } },
@@ -2838,14 +2837,24 @@ ${body}`;
           });
         }
         const widths = [];
-        for (const row of aoa) {
-          (row || []).forEach((v, i) => {
-            const w = UtilsX.calculateCellWidth(v);
+        const headerWidths = [];
+        for (let r = 0; r < aoa.length; r++) {
+          const row = aoa[r] || [];
+          const isHeaderOrInfo = headerRowIdx != null && r === headerRowIdx || headerInfoRows.includes(r);
+          row.forEach((v, i) => {
+            let w = UtilsX.calculateCellWidth(v);
+            if (isHeaderOrInfo) {
+              w = Math.max(w, UtilsX.calculateCellWidth(v) + 3);
+              headerWidths[i] = Math.max(headerWidths[i] || 0, w);
+            }
             widths[i] = Math.max(widths[i] || CONFIG.MIN_COL_WIDTH, w);
           });
         }
         ws["!cols"] = widths.map((w, i) => {
-          const colMax = perColMax[i] != null ? perColMax[i] : CONFIG.MAX_COL_WIDTH;
+          let colMax = perColMax[i] != null ? perColMax[i] : CONFIG.MAX_COL_WIDTH;
+          if (headerWidths[i] != null && colMax < headerWidths[i]) {
+            colMax = headerWidths[i];
+          }
           const base = w || CONFIG.DEFAULT_COL_WIDTH;
           const clamped = Math.max(CONFIG.MIN_COL_WIDTH, Math.min(colMax, base));
           return { wch: clamped };
