@@ -16,6 +16,8 @@
 
 import { esc, renderSectionIconHtml, extractAppNameFromBundle } from '../utils.js';
 import { state } from '../state.js';
+import { labelOfProp, labelOfValue, formatEntityText } from './label-dict.js';
+import { decodeRow, isSemanticSection } from './path-decoder.js';
 
 // ---------------------------------------------------------------------------
 // Category definitions
@@ -140,6 +142,57 @@ function diffWrap(left: any, right: any): { html: string; same: boolean } {
     html: `<div class="diff-cat-prev"><span class="diff-cat-prev-tag">旧</span>${esc(safeStringify(left))}</div>
            <div class="diff-cat-next"><span class="diff-cat-next-tag">新</span>${esc(safeStringify(right))}</div>`
   };
+}
+
+// ---------------------------------------------------------------------------
+// 変更サマリ生成 (Step 2: カード見出しに「宛先 +2/−1」等のチップを出す)
+// ---------------------------------------------------------------------------
+
+interface ChangedKeySpec {
+  /** 'recipients' 'targets' のように配列を集合 diff 表示するキー */
+  setKeys?: string[];
+  /** スカラー / オブジェクトを「変更あり」とだけ示すキー */
+  scalarKeys?: string[];
+  /** 集合 diff における識別キー（既定では JSON.stringify） */
+  identify?: (item: any) => string;
+}
+
+/**
+ * src と tgt の差分を「キー名 → 説明文」のリストに変換する。
+ * 配列キーは "+N/-M" 形式、スカラー/オブジェクトは "変更" 表示。
+ */
+function summarizeChangedKeys(src: any, tgt: any, spec: ChangedKeySpec): string[] {
+  if (!src || !tgt) return [];
+  const out: string[] = [];
+  const identify = spec.identify || ((v: any) => { try { return JSON.stringify(v); } catch { return String(v); } });
+  for (const k of (spec.setKeys || [])) {
+    const a = Array.isArray(src[k]) ? src[k] : [];
+    const b = Array.isArray(tgt[k]) ? tgt[k] : [];
+    if (!a.length && !b.length) continue;
+    const am = new Map<string, any>(a.map((x: any) => [identify(x), x]));
+    const bm = new Map<string, any>(b.map((x: any) => [identify(x), x]));
+    let added = 0;
+    let removed = 0;
+    for (const key of bm.keys()) if (!am.has(key)) added++;
+    for (const key of am.keys()) if (!bm.has(key)) removed++;
+    if (!added && !removed) continue;
+    const parts: string[] = [];
+    if (added) parts.push(`+${added}`);
+    if (removed) parts.push(`−${removed}`);
+    out.push(`${labelOfProp(k)} ${parts.join('/')}`);
+  }
+  for (const k of (spec.scalarKeys || [])) {
+    if (!valueChanged(src[k], tgt[k])) continue;
+    out.push(`${labelOfProp(k)}変更`);
+  }
+  return out;
+}
+
+function renderChangedSummaryChips(items: string[]): string {
+  if (!items?.length) return '';
+  return `<span class="diff-cat-changed-chips">` +
+    items.map((x) => `<span class="diff-cat-changed-chip">${esc(x)}</span>`).join('') +
+    `</span>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -272,11 +325,13 @@ function renderFieldAclTable(srcRights: any[], tgtRights: any[]): string {
       const lvL = FIELD_ACL_LEVELS.indexOf(v.left as any);
       const lvR = FIELD_ACL_LEVELS.indexOf(v.right as any);
       const cls = lvR < lvL ? 'diff-cat-acl-down' : (lvR > lvL ? 'diff-cat-acl-up' : '');
+      const leftDisp = labelOfValue('accessibility', v.left) || v.left;
+      const rightDisp = labelOfValue('accessibility', v.right) || v.right;
       const arrow = v.left === v.right ? '' : ' → ';
-      const rightLabel = v.left === v.right ? '' : esc(v.right);
+      const rightLabel = v.left === v.right ? '' : esc(rightDisp);
       return `<div class="diff-cat-acl-row ${cls}">
         <span class="diff-cat-acl-entity">${entityLabel(ent)}</span>
-        <span class="diff-cat-acl-level">${esc(v.left)}${arrow}${rightLabel}</span>
+        <span class="diff-cat-acl-level">${esc(leftDisp)}${arrow}${rightLabel}</span>
       </div>`;
     }).join('');
     rows.push(`<section class="diff-cat-acl-block">
@@ -505,10 +560,17 @@ function renderActionSettings(src: any, tgt: any): string {
     const ref: any = t || s;
     const status = statusLabel({ left: !!s, right: !!t });
     const targetApp = ref?.app?.app || ref?.app?.code || ref?.app || '-';
+    const changedKeys = (s && t)
+      ? summarizeChangedKeys(s, t, {
+          setKeys: ['mappings'],
+          scalarKeys: ['name', 'app']
+        })
+      : [];
     return `<div class="diff-cat-card">
       <header class="diff-cat-card-head">
         <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
         <span class="diff-cat-card-title">${esc(ref?.name || '(無名アクション)')}</span>
+        ${renderChangedSummaryChips(changedKeys)}
       </header>
       <div class="diff-cat-card-body">
         <div class="diff-cat-kv"><span class="diff-cat-k">対象アプリ</span><span class="diff-cat-v">${esc(String(targetApp))}</span></div>
@@ -577,15 +639,35 @@ function notificationKey(n: any): string {
   });
 }
 
-function renderNotificationCard(rule: any, status: { cls: string; label: string }): string {
-  const recipients: string[] = (rule?.recipients || rule?.targets || [])
-    .map((r: any) => `${r?.entity?.type || ''}:${r?.entity?.code || r?.entity?.login || r?.entity?.id || '-'}`)
-    .filter((x: string) => x !== ':-');
+function recipientLabels(rule: any): string[] {
+  const list = rule?.recipients || rule?.targets || [];
+  return (Array.isArray(list) ? list : [])
+    .map((r: any) => formatEntityText(r?.entity || r, { compact: true }))
+    .filter(Boolean);
+}
+
+function recipientIdentity(r: any): string {
+  const ent = r?.entity || r || {};
+  return `${ent.type || ''}:${ent.code || ent.login || ent.id || ''}`;
+}
+
+function renderNotificationCard(s: any, t: any, status: { cls: string; label: string }): string {
+  const rule = t || s;
+  const recipients = recipientLabels(rule);
   const condition = rule?.filterCond || rule?.condition || '';
+  // 変更サマリは src/tgt 両方あるときのみ計算
+  const changedKeys = (s && t)
+    ? summarizeChangedKeys(s, t, {
+        setKeys: ['recipients', 'targets'],
+        scalarKeys: ['filterCond', 'timing', 'when', 'name', 'title'],
+        identify: recipientIdentity
+      })
+    : [];
   return `<div class="diff-cat-card">
     <header class="diff-cat-card-head">
       <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
-      <span class="diff-cat-card-title">${esc(rule?.name || '(無名通知)')}</span>
+      <span class="diff-cat-card-title">${esc(rule?.name || rule?.title || '(無名通知)')}</span>
+      ${renderChangedSummaryChips(changedKeys)}
     </header>
     <div class="diff-cat-card-body">
       ${condition ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(condition)}</code></div>` : ''}
@@ -607,7 +689,7 @@ function renderNotificationGroup(label: string, srcRules: any[], tgtRules: any[]
     const s = sm.get(k);
     const t = tm.get(k);
     const status = statusLabel({ left: !!s, right: !!t });
-    return renderNotificationCard(t || s, status);
+    return renderNotificationCard(s, t, status);
   }).join('');
   return `<section class="diff-cat-sec">
     <header class="diff-cat-sec-head">
@@ -668,15 +750,25 @@ function renderViewCards(srcViews: any, tgtViews: any): string {
     const ref = t || s;
     const status = statusLabel({ left: !!s, right: !!t });
     const changed = !!s && !!t && valueChanged(s, t);
-    const type = ref?.type || 'LIST';
-    const fields: string[] = Array.isArray(ref?.fields) ? ref.fields : (ref?.fields ? Object.keys(ref.fields) : []);
+    const typeRaw = ref?.type || 'LIST';
+    const typeLabel = labelOfValue('view.type', typeRaw) || typeRaw;
+    const fields: string[] = Array.isArray(ref?.fields)
+      ? ref.fields.map((f: any) => (typeof f === 'object' ? (f?.code || f?.label || '') : String(f))).filter(Boolean)
+      : (ref?.fields ? Object.keys(ref.fields) : []);
     const filter = ref?.filterCond || '';
     const sort = ref?.sort || '';
+    const changedKeys = (s && t)
+      ? summarizeChangedKeys(s, t, {
+          setKeys: ['fields'],
+          scalarKeys: ['name', 'type', 'filterCond', 'sort', 'index', 'paginationStyle']
+        })
+      : [];
     return `<div class="diff-cat-card ${changed ? 'diff-cat-card--chg' : ''}">
       <header class="diff-cat-card-head">
         <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
         <span class="diff-cat-card-title">${esc(ref?.name || k)}</span>
-        <span class="diff-cat-tag diff-cat-tag--type">${esc(type)}</span>
+        <span class="diff-cat-tag diff-cat-tag--type">${esc(typeLabel)}</span>
+        ${renderChangedSummaryChips(changedKeys)}
       </header>
       <div class="diff-cat-card-body">
         <div class="diff-cat-kv"><span class="diff-cat-k">表示項目</span><span class="diff-cat-v">${shortList(fields, 6)}</span></div>
@@ -690,30 +782,39 @@ function renderViewCards(srcViews: any, tgtViews: any): string {
 }
 
 function renderViewChangedDetail(s: any, t: any): string {
-  const checks: Array<{ key: string; label: string }> = [
-    { key: 'name', label: '名前' },
-    { key: 'type', label: '種別' },
-    { key: 'filterCond', label: '絞込条件' },
-    { key: 'sort', label: 'ソート' },
-    { key: 'index', label: '表示順' },
-    { key: 'paginationStyle', label: 'ページ送り' }
+  const checks: Array<{ key: string; valueScope?: string }> = [
+    { key: 'name' },
+    { key: 'type', valueScope: 'view.type' },
+    { key: 'filterCond' },
+    { key: 'sort' },
+    { key: 'index' },
+    { key: 'paginationStyle', valueScope: 'paginationStyle' }
   ];
   const items: string[] = [];
   for (const c of checks) {
     if (valueChanged(s?.[c.key], t?.[c.key])) {
-      items.push(`<li><span class="diff-cat-k">${esc(c.label)}</span>: <span class="diff-cat-old">${esc(safeStringify(s?.[c.key]))}</span> → <span class="diff-cat-new">${esc(safeStringify(t?.[c.key]))}</span></li>`);
+      const oldRaw = s?.[c.key];
+      const newRaw = t?.[c.key];
+      const oldDisp = c.valueScope ? (labelOfValue(c.valueScope, oldRaw) || safeStringify(oldRaw)) : safeStringify(oldRaw);
+      const newDisp = c.valueScope ? (labelOfValue(c.valueScope, newRaw) || safeStringify(newRaw)) : safeStringify(newRaw);
+      items.push(`<li><span class="diff-cat-k">${esc(labelOfProp(c.key))}</span>: <span class="diff-cat-old">${esc(oldDisp)}</span> → <span class="diff-cat-new">${esc(newDisp)}</span></li>`);
     }
   }
   const sf = Array.isArray(s?.fields) ? s.fields : [];
   const tf = Array.isArray(t?.fields) ? t.fields : [];
   if (valueChanged(sf, tf)) {
-    const added = tf.filter((x: any) => !sf.includes(x));
-    const removed = sf.filter((x: any) => !tf.includes(x));
+    const keyOf = (x: any) => (typeof x === 'object' ? (x?.code || x?.label || JSON.stringify(x)) : String(x));
+    const sCodes = sf.map(keyOf);
+    const tCodes = tf.map(keyOf);
+    const added = tCodes.filter((x: string) => !sCodes.includes(x));
+    const removed = sCodes.filter((x: string) => !tCodes.includes(x));
     if (added.length || removed.length) {
-      items.push(`<li><span class="diff-cat-k">表示項目</span>: ${added.length ? `<span class="diff-cat-new">+${added.length}件 (${added.slice(0, 3).map(esc).join(', ')}${added.length > 3 ? '…' : ''})</span>` : ''}${removed.length ? ` <span class="diff-cat-old">-${removed.length}件 (${removed.slice(0, 3).map(esc).join(', ')}${removed.length > 3 ? '…' : ''})</span>` : ''}</li>`);
+      items.push(`<li><span class="diff-cat-k">表示項目</span>: ${added.length ? `<span class="diff-cat-new">+${added.length}件 (${added.slice(0, 3).map(esc).join(', ')}${added.length > 3 ? '…' : ''})</span>` : ''}${removed.length ? ` <span class="diff-cat-old">−${removed.length}件 (${removed.slice(0, 3).map(esc).join(', ')}${removed.length > 3 ? '…' : ''})</span>` : ''}</li>`);
     }
   }
-  return items.length ? `<details class="diff-cat-changed-detail"><summary>変更詳細 (${items.length})</summary><ul>${items.join('')}</ul></details>` : '';
+  if (!items.length) return '';
+  const openAttr = items.length >= 3 ? ' open' : '';
+  return `<details class="diff-cat-changed-detail"${openAttr}><summary>変更詳細 (${items.length})</summary><ul>${items.join('')}</ul></details>`;
 }
 
 function renderReportCards(srcReports: any, tgtReports: any): string {
@@ -726,11 +827,20 @@ function renderReportCards(srcReports: any, tgtReports: any): string {
     const t = tm[k];
     const ref = t || s;
     const status = statusLabel({ left: !!s, right: !!t });
+    const chartRaw = ref?.chartType || ref?.type || 'GRAPH';
+    const chartLabel = labelOfValue('chart.type', chartRaw) || chartRaw;
+    const changedKeys = (s && t)
+      ? summarizeChangedKeys(s, t, {
+          setKeys: ['groups', 'aggregations'],
+          scalarKeys: ['name', 'chartType', 'chartMode', 'filterCond']
+        })
+      : [];
     return `<div class="diff-cat-card">
       <header class="diff-cat-card-head">
         <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
         <span class="diff-cat-card-title">${esc(ref?.name || k)}</span>
-        <span class="diff-cat-tag diff-cat-tag--type">${esc(ref?.chartType || ref?.type || 'GRAPH')}</span>
+        <span class="diff-cat-tag diff-cat-tag--type">${esc(chartLabel)}</span>
+        ${renderChangedSummaryChips(changedKeys)}
       </header>
       <div class="diff-cat-card-body">
         ${ref?.filterCond ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(ref.filterCond)}</code></div>` : ''}
@@ -943,10 +1053,13 @@ function renderCustomizeCategory(src: any, tgt: any): string {
       const vL = s?.version || '';
       const vR = t?.version || '';
       const vChanged = vL && vR && vL !== vR;
+      const summaryHtml = (s && t && !vChanged && valueChanged(s, t))
+        ? renderChangedSummaryChips(['設定変更'])
+        : '';
       return `<tr>
         <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
         <td class="diff-cat-mono">${esc(id)}</td>
-        <td>${esc(ref?.name || '-')}</td>
+        <td>${esc(ref?.name || '-')}${summaryHtml}</td>
         <td>${vChanged ? `<span class="diff-cat-old">${esc(vL)}</span> → <span class="diff-cat-new">${esc(vR)}</span>` : esc(vR || vL || '-')}</td>
       </tr>`;
     }).join('');
@@ -1192,10 +1305,23 @@ function categoryToMarkdown(catKey: string, rows: any[], src: any, tgt: any, row
     const sample = secRows.slice(0, 30);
     for (const r of sample) {
       const t = r.type === 'added' ? '+ 追加' : r.type === 'removed' ? '- 削除' : '~ 変更';
-      const v = r.type === 'added' ? safeStringify(r.right)
-        : r.type === 'removed' ? safeStringify(r.left)
-        : `${safeStringify(r.left)} → ${safeStringify(r.right)}`;
-      lines.push(`- ${t} \`${r.path}\` ${v.slice(0, 200)}`);
+      // 非フィールド系は辞書経由のセマンティック整形を優先 (HTML と表記を揃える)
+      const decoded = isSemanticSection(r.sectionKey) ? decodeRow(r) : null;
+      let where = '';
+      let value = '';
+      if (decoded) {
+        const chips = (decoded.whereChips || []).map((c) => (c.icon ? `${c.icon} ${c.label}` : c.label)).join(' / ');
+        where = chips ? ` [${chips}]` : '';
+        const propPart = decoded.propLabel ? `${decoded.propLabel}: ` : '';
+        value = r.type === 'added'   ? `${propPart}${decoded.afterText}`
+              : r.type === 'removed' ? `${propPart}${decoded.beforeText}`
+                                     : `${propPart}${decoded.beforeText} → ${decoded.afterText}`;
+      } else {
+        value = r.type === 'added' ? safeStringify(r.right)
+              : r.type === 'removed' ? safeStringify(r.left)
+                                     : `${safeStringify(r.left)} → ${safeStringify(r.right)}`;
+      }
+      lines.push(`- ${t}${where} ${value.slice(0, 200)}`);
     }
     if (secRows.length > sample.length) lines.push(`- … 他 ${secRows.length - sample.length} 件`);
   }

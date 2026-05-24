@@ -951,6 +951,21 @@ ${contextLine}`);
     }
   });
 
+  // src/diff/label-dict.ts
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+    }
+  });
+
+  // src/diff/path-decoder.ts
+  var init_path_decoder = __esm({
+    "src/diff/path-decoder.ts"() {
+      "use strict";
+      init_label_dict();
+    }
+  });
+
   // src/diff/category-view.ts
   var DIFF_CATEGORIES, SECTION_TO_CATEGORY;
   var init_category_view = __esm({
@@ -958,6 +973,8 @@ ${contextLine}`);
       "use strict";
       init_utils();
       init_state();
+      init_label_dict();
+      init_path_decoder();
       DIFF_CATEGORIES = [
         { key: "fields", label: "フィールド", hint: "フィールド定義の追加・変更", sections: ["fieldSettings"], icon: "🔤" },
         { key: "layout", label: "レイアウト", hint: "フォーム配置の差分", sections: ["layoutSettings"], icon: "🧩" },
@@ -988,6 +1005,7 @@ ${contextLine}`);
       init_api();
       init_dialog();
       init_category_view();
+      init_path_decoder();
     }
   });
 

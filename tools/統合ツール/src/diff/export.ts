@@ -23,6 +23,7 @@ import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter } fr
 import { resolveBundleRevision, pickBundleSections } from '../api.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { buildCategoryViewHtml } from './category-view.js';
+import { decodeRow, isSemanticSection } from './path-decoder.js';
 
 // ---------------------------------------------------------------------------
 // Diff display helpers
@@ -381,6 +382,14 @@ export function renderChangedColumns(row, useCharDiff) {
 }
 
 export function renderRowColumns(row, useCharDiff) {
+  // 非フィールド系セクションは "where / what" を抽出した
+  // セマンティック表示に切替える。フィールド/レイアウトは既存ロジック維持。
+  if (isSemanticSection(row?.sectionKey)) {
+    const decoded = decodeRow(row);
+    if (decoded) {
+      return renderSemanticRowColumns(row, decoded, useCharDiff);
+    }
+  }
   if (row.type === 'same') {
     return {
       left: `<pre class="diff-pre" style="color:var(--dv-sub);font-style:italic">${esc(stringifyRowValueForDiff(row.left, row.path))}</pre>`,
@@ -400,6 +409,88 @@ export function renderRowColumns(row, useCharDiff) {
     };
   }
   return renderChangedColumns(row, useCharDiff);
+}
+
+function renderWhereChipsHtml(decoded): string {
+  const sectChip = `<span class="diff-sem-chip diff-sem-chip--sec">${decoded.sectionIcon ? esc(decoded.sectionIcon) + ' ' : ''}${esc(decoded.sectionLabel)}</span>`;
+  const whereChips = (decoded.whereChips || []).map((c) => {
+    const muted = c.muted ? ' diff-sem-chip--muted' : '';
+    return `<span class="diff-sem-chip${muted}">${c.icon ? esc(c.icon) + ' ' : ''}${esc(c.label)}</span>`;
+  }).join('');
+  const propChip = decoded.propLabel
+    ? `<span class="diff-sem-chip diff-sem-chip--prop">${decoded.propIcon ? esc(decoded.propIcon) + ' ' : ''}${esc(decoded.propLabel)}</span>`
+    : '';
+  return `<div class="diff-sem-chips">${sectChip}${whereChips}${propChip}</div>`;
+}
+
+function renderSemanticValueBlock(text: string, kind: 'add' | 'del' | 'empty' | 'same'): string {
+  const cls = kind === 'empty' ? 'empty' : kind;
+  const safe = esc(text || '');
+  return `<div class="diff-sem-val diff-sem-val--${cls}">${safe.replace(/\n/g, '<br>')}</div>`;
+}
+
+function renderSemanticRowColumns(row, decoded, useCharDiff): { left: string; right: string } {
+  const chips = renderWhereChipsHtml(decoded);
+  if (row.type === 'same') {
+    return {
+      left: `${chips}${renderSemanticValueBlock(decoded.beforeText, 'same')}`,
+      right: `${chips}<div class="diff-sem-val diff-sem-val--same">（同一）</div>`
+    };
+  }
+  if (row.type === 'added') {
+    return {
+      left: `${chips}${renderSemanticValueBlock('（なし）', 'empty')}`,
+      right: `${chips}${renderSemanticValueBlock(decoded.afterText, 'add')}`
+    };
+  }
+  if (row.type === 'removed') {
+    return {
+      left: `${chips}${renderSemanticValueBlock(decoded.beforeText, 'del')}`,
+      right: `${chips}${renderSemanticValueBlock('（なし）', 'empty')}`
+    };
+  }
+  // changed: 既存の line/char diff をラベル化済みテキストにも適用
+  const leftLines = String(decoded.beforeText || '').split('\n');
+  const rightLines = String(decoded.afterText || '').split('\n');
+  const ops = buildLineDiffOps(leftLines, rightLines);
+  if (!ops) {
+    return {
+      left: `${chips}${renderSemanticValueBlock(decoded.beforeText, 'del')}`,
+      right: `${chips}${renderSemanticValueBlock(decoded.afterText, 'add')}`
+    };
+  }
+  let leftHtml = '';
+  let rightHtml = '';
+  let lno = 0;
+  let rno = 0;
+  for (const op of ops) {
+    if (op.type === 'same') {
+      lno += 1; rno += 1;
+      leftHtml  += `<div class="diff-line"><span class="diff-ln">${lno}</span>${esc(op.left || '')}</div>`;
+      rightHtml += `<div class="diff-line"><span class="diff-ln">${rno}</span>${esc(op.right || '')}</div>`;
+      continue;
+    }
+    if (op.type === 'replace') {
+      lno += 1; rno += 1;
+      const cd = useCharDiff ? buildCharDiffHtml(op.left, op.right) : null;
+      leftHtml  += `<div class="diff-line del"><span class="diff-ln">${lno}</span>${cd ? cd.left : esc(op.left || '')}</div>`;
+      rightHtml += `<div class="diff-line add"><span class="diff-ln">${rno}</span>${cd ? cd.right : esc(op.right || '')}</div>`;
+      continue;
+    }
+    if (op.type === 'del') {
+      lno += 1;
+      leftHtml  += `<div class="diff-line del"><span class="diff-ln">${lno}</span>${esc(op.left || '')}</div>`;
+      rightHtml += '<div class="diff-line pad"><span class="diff-ln"></span></div>';
+      continue;
+    }
+    rno += 1;
+    leftHtml  += '<div class="diff-line pad"><span class="diff-ln"></span></div>';
+    rightHtml += `<div class="diff-line add"><span class="diff-ln">${rno}</span>${esc(op.right || '')}</div>`;
+  }
+  return {
+    left:  `${chips}<div class="diff-sem-scroll diff-sem-val diff-sem-val--del">${leftHtml}</div>`,
+    right: `${chips}<div class="diff-sem-scroll diff-sem-val diff-sem-val--add">${rightHtml}</div>`
+  };
 }
 
 export function renderDiffRowMeta(row) {
@@ -445,6 +536,11 @@ function buildDiffRowSearchText(row) {
     try { return v === undefined ? '' : JSON.stringify(v); }
     catch { return String(v); }
   };
+  // 非フィールド系は decodeRow が返す日本語ラベルも検索対象に含める。
+  // 例: 「営業部」「閲覧」「アプリ権限」がそのまま検索キーワードとして使える。
+  const semanticTokens = isSemanticSection(row?.sectionKey)
+    ? (decodeRow(row)?.searchableTokens || [])
+    : [];
   return [
     row.section || '',
     row.sectionKey || '',
@@ -454,6 +550,7 @@ function buildDiffRowSearchText(row) {
     row.renameCandidate ? `${row.renameCandidate.fromCode || ''} ${row.renameCandidate.toCode || ''}` : '',
     row.impactSummary || '',
     ...(row.impactRefs || []).map((ref) => `${ref.section || ''} ${ref.kind || ''} ${ref.path || ''}`),
+    ...semanticTokens,
     safe(row.left),
     safe(row.right)
   ].join('\n').toLowerCase();

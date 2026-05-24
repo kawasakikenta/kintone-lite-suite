@@ -3993,6 +3993,17 @@
 #kintone-unified-suite-v2 .diff-cat-changed-detail{margin-top:6px;border-top:1px dashed var(--dv-border);padding-top:4px}
 #kintone-unified-suite-v2 .diff-cat-changed-detail > summary{cursor:pointer;font-size:11px;font-weight:700;color:#1e40af}
 #kintone-unified-suite-v2 .diff-cat-changed-detail ul{margin:4px 0 0;padding-left:18px;font-size:11px;color:var(--dv-text);line-height:1.6}
+/* Step 2: 変更サマリチップ (カードヘッダで "宛先 +2/−1" などを表示) */
+#kintone-unified-suite-v2 .diff-cat-changed-chips{display:inline-flex;flex-wrap:wrap;gap:3px;margin-left:auto;align-items:center}
+#kintone-unified-suite-v2 .diff-cat-changed-chip{display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;line-height:1.5;border:1px solid #fbbf24}
+/* 印刷時: <details> は強制展開、影は除去 */
+@media print {
+  #kintone-unified-suite-v2 .diff-cat-changed-detail{padding-top:0}
+  #kintone-unified-suite-v2 .diff-cat-changed-detail[open] > summary{font-size:10px}
+  #kintone-unified-suite-v2 details:not([open]) > *:not(summary){display:block !important}
+  #kintone-unified-suite-v2 details > summary::-webkit-details-marker{display:none}
+  #kintone-unified-suite-v2 .diff-cat-card{box-shadow:none !important;transform:none !important;break-inside:avoid}
+}
 #kintone-unified-suite-v2 .diff-cat-old{background:var(--dv-del);color:var(--dv-del-txt);padding:0 4px;border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all}
 #kintone-unified-suite-v2 .diff-cat-new{background:var(--dv-add);color:var(--dv-add-txt);padding:0 4px;border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all}
 
