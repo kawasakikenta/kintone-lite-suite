@@ -4077,6 +4077,524 @@ ${contextLine}`);
     }
   });
 
+  // src/diff/label-dict.ts
+  function labelOfProp(key) {
+    if (!key) return "";
+    return PROP_LABELS[key]?.label || String(key);
+  }
+  function iconOfProp(key) {
+    if (!key) return "";
+    return PROP_LABELS[key]?.icon || "";
+  }
+  function labelOfValue(scope, value) {
+    if (value == null) return null;
+    const dict = VALUE_LABELS[scope];
+    if (!dict) return null;
+    return dict[String(value)] || null;
+  }
+  function labelOfSection(sectionKey) {
+    if (!sectionKey) return { label: "-", icon: "" };
+    return SECTION_LABELS[sectionKey] || { label: String(sectionKey), icon: "" };
+  }
+  function labelOfBool(value, propKey) {
+    if (propKey && PERMISSION_KEYS.has(propKey)) {
+      return value ? "許可" : "不許可";
+    }
+    if (propKey === "enable" || propKey === "enabled") {
+      return value ? "有効" : "無効";
+    }
+    return value ? "はい" : "いいえ";
+  }
+  function formatEntityText(entity, options = {}) {
+    if (!entity || typeof entity !== "object") return "";
+    const type = String(entity.type || "");
+    const code = String(entity.code || entity.login || entity.id || "");
+    const name = String(entity.name || "");
+    const typed = VALUE_LABELS["entity.type"]?.[type] || (type ? `· ${type}` : "·");
+    const display = name || code || "(未設定)";
+    if (options.compact) return `${typed} ${display}`;
+    if (name && code && name !== code) return `${typed} ${name} (${code})`;
+    return `${typed} ${display}`;
+  }
+  var VALUE_LABELS, PROP_LABELS, SECTION_LABELS, PERMISSION_KEYS;
+  var init_label_dict = __esm({
+    "src/diff/label-dict.ts"() {
+      "use strict";
+      VALUE_LABELS = {
+        // entity.type
+        "entity.type": {
+          USER: "👤 ユーザー",
+          GROUP: "👥 グループ",
+          ORGANIZATION: "🏢 部署",
+          DEPARTMENT: "🏢 部署",
+          DEPT: "🏢 部署",
+          CREATOR: "✏️ 作成者",
+          FIELD_ENTITY: "🔗 フィールド",
+          EVERYONE: "🌐 全員",
+          CUSTOM_FIELD: "🔗 ユーザー選択フィールド"
+        },
+        // field acl level
+        accessibility: {
+          NONE: "不可",
+          READ: "閲覧のみ",
+          READ_WRITE: "閲覧+編集"
+        },
+        // ビュー種別
+        "view.type": {
+          LIST: "一覧",
+          CALENDAR: "カレンダー",
+          CUSTOM: "カスタマイズ"
+        },
+        // グラフ種別
+        "chart.type": {
+          BAR: "棒グラフ",
+          COLUMN: "縦棒グラフ",
+          PIE: "円グラフ",
+          LINE: "折れ線",
+          PIVOT_TABLE: "クロス集計表",
+          TABLE: "集計表",
+          AREA: "エリアグラフ",
+          AREA_STACKED: "積み上げエリア",
+          SPLINE: "スプライン",
+          SPLINE_AREA: "スプラインエリア",
+          BUBBLE: "バブル",
+          BAR_STACKED: "積み上げ棒",
+          FUNNEL: "ファネル"
+        },
+        // ページ送り
+        paginationStyle: {
+          NORMAL: "通常",
+          NUMBER: "ページ番号",
+          INFINITE: "無限スクロール"
+        },
+        // 通知トリガ
+        recordTrigger: {
+          APP: "アプリ全体",
+          RECORD: "レコード単位"
+        }
+      };
+      PROP_LABELS = {
+        // appAcl 操作権限
+        appEditable: { label: "アプリ管理", icon: "⚙" },
+        recordViewable: { label: "閲覧", icon: "👁" },
+        recordAddable: { label: "追加", icon: "➕" },
+        recordEditable: { label: "編集", icon: "✏️" },
+        recordDeletable: { label: "削除", icon: "🗑" },
+        recordImportable: { label: "CSV読込", icon: "📥" },
+        recordExportable: { label: "CSV書出", icon: "📤" },
+        // recordPermissions の権限
+        viewable: { label: "閲覧", icon: "👁" },
+        editable: { label: "編集", icon: "✏️" },
+        deletable: { label: "削除", icon: "🗑" },
+        // 共通
+        filterCond: { label: "絞込条件", icon: "🔍" },
+        includeSubs: { label: "配下を含む" },
+        entities: { label: "エンティティ" },
+        entity: { label: "対象" },
+        rights: { label: "権限エントリー" },
+        accessibility: { label: "アクセス権" },
+        // viewSettings
+        fields: { label: "表示項目", icon: "📋" },
+        sort: { label: "ソート", icon: "↕" },
+        index: { label: "表示順", icon: "🔢" },
+        paginationStyle: { label: "ページ送り", icon: "📄" },
+        defaultView: { label: "既定ビュー" },
+        view: { label: "ビュー" },
+        views: { label: "ビュー一覧" },
+        // reportSettings
+        groups: { label: "分類", icon: "📊" },
+        aggregations: { label: "集計", icon: "🧮" },
+        chartType: { label: "グラフ種別" },
+        chartMode: { label: "モード" },
+        reports: { label: "グラフ一覧" },
+        periodicReports: { label: "定期レポート" },
+        // notifications
+        recordAdded: { label: "レコード追加時" },
+        recordEdited: { label: "レコード編集時" },
+        commentAdded: { label: "コメント追加時" },
+        statusChanged: { label: "ステータス変更時" },
+        fileImported: { label: "ファイル取込時" },
+        recipients: { label: "宛先" },
+        targets: { label: "宛先" },
+        notifications: { label: "通知ルール" },
+        timing: { label: "タイミング" },
+        notifyOnUpdate: { label: "更新時に通知" },
+        timezone: { label: "タイムゾーン" },
+        perRecordNotifications: { label: "レコード条件通知" },
+        reminderNotifications: { label: "リマインダー通知" },
+        title: { label: "タイトル" },
+        body: { label: "本文" },
+        // processSettings
+        enable: { label: "プロセス有効化" },
+        states: { label: "ステータス" },
+        actions: { label: "アクション" },
+        from: { label: "遷移元" },
+        to: { label: "遷移先" },
+        assignee: { label: "作業者" },
+        type: { label: "種別" },
+        settings: { label: "設定" },
+        // actionSettings
+        app: { label: "対象アプリ" },
+        mappings: { label: "フィールド対応" },
+        sourceField: { label: "元フィールド" },
+        destField: { label: "先フィールド" },
+        destApp: { label: "先アプリ" },
+        // customizeSettings
+        desktop: { label: "デスクトップ" },
+        mobile: { label: "モバイル" },
+        js: { label: "JS" },
+        css: { label: "CSS" },
+        file: { label: "ファイル" },
+        scope: { label: "配置" },
+        url: { label: "URL" },
+        // pluginSettings
+        plugins: { label: "プラグイン一覧" },
+        version: { label: "バージョン" },
+        id: { label: "ID" },
+        // appSettings / appInfo
+        name: { label: "名前" },
+        description: { label: "説明" },
+        theme: { label: "テーマ" },
+        titleField: { label: "タイトルフィールド" },
+        icon: { label: "アイコン" },
+        appId: { label: "アプリID" },
+        spaceId: { label: "スペースID" },
+        threadId: { label: "スレッドID" },
+        code: { label: "コード" },
+        label: { label: "ラベル" },
+        // categories
+        categories: { label: "カテゴリ" },
+        // layoutSettings
+        layout: { label: "レイアウト" },
+        row: { label: "行" }
+      };
+      SECTION_LABELS = {
+        appAcl: { label: "アプリ権限", icon: "🔐" },
+        fieldAcl: { label: "フィールド権限", icon: "🔐" },
+        recordPermissions: { label: "レコード権限", icon: "🔐" },
+        notifications: { label: "通知", icon: "🔔" },
+        perRecordNotifications: { label: "レコード条件通知", icon: "🔔" },
+        reminderNotifications: { label: "リマインダー通知", icon: "🔔" },
+        viewSettings: { label: "ビュー設定", icon: "📊" },
+        reportSettings: { label: "グラフ設定", icon: "📈" },
+        processSettings: { label: "プロセス管理", icon: "🔁" },
+        actionSettings: { label: "アクション設定", icon: "⚡" },
+        customizeSettings: { label: "JS/CSS設定", icon: "🧪" },
+        pluginSettings: { label: "プラグイン", icon: "🧩" },
+        appSettings: { label: "アプリ設定", icon: "⚙" },
+        appInfo: { label: "アプリ情報", icon: "ℹ️" },
+        formSettings: { label: "フォーム設定", icon: "📝" },
+        fieldSettings: { label: "フィールド設定", icon: "🔤" },
+        layoutSettings: { label: "レイアウト設定", icon: "🧩" },
+        categories: { label: "カテゴリ設定", icon: "🗂" }
+      };
+      PERMISSION_KEYS = /* @__PURE__ */ new Set([
+        "appEditable",
+        "recordViewable",
+        "recordAddable",
+        "recordEditable",
+        "recordDeletable",
+        "recordImportable",
+        "recordExportable",
+        "viewable",
+        "editable",
+        "deletable",
+        "includeSubs"
+      ]);
+    }
+  });
+
+  // src/diff/path-decoder.ts
+  function isSemanticSection(sectionKey) {
+    return !!sectionKey && SEMANTIC_SECTIONS.has(sectionKey);
+  }
+  function tokenize(path) {
+    if (!path) return [];
+    const out = [];
+    const re = /([^[.\]]+)|\[(\d+)\]/g;
+    let m;
+    while ((m = re.exec(String(path))) !== null) {
+      if (m[1] != null) out.push(m[1]);
+      else out.push(Number(m[2]));
+    }
+    return out;
+  }
+  function isIndex(token) {
+    return typeof token === "number";
+  }
+  function valueToText(value, propKey, depth = 0) {
+    if (value === void 0) return "（未設定）";
+    if (value === null) return "-";
+    if (typeof value === "boolean") return labelOfBool(value, propKey);
+    if (typeof value === "number") return String(value);
+    if (typeof value === "string") {
+      if (propKey === "accessibility") {
+        return labelOfValue("accessibility", value) || value;
+      }
+      if (propKey === "type") {
+        return labelOfValue("view.type", value) || labelOfValue("chart.type", value) || value;
+      }
+      if (propKey === "chartType") {
+        return labelOfValue("chart.type", value) || value;
+      }
+      if (propKey === "paginationStyle") {
+        return labelOfValue("paginationStyle", value) || value;
+      }
+      return value;
+    }
+    if (Array.isArray(value)) {
+      if (!value.length) return "（空）";
+      if (value[0] && typeof value[0] === "object" && (value[0].entity || value[0].type)) {
+        const compact = value.length > 4;
+        const items = value.slice(0, 8).map((v) => {
+          const ent = v.entity || (v.type ? v : null);
+          if (ent) return formatEntityText(ent, { compact });
+          return safeStringify(v);
+        });
+        const more = value.length > items.length ? `, …+${value.length - items.length}` : "";
+        return items.join(", ") + more;
+      }
+      if (value.every((v) => v == null || typeof v !== "object")) {
+        return value.map((v) => v == null ? "-" : String(v)).join(", ");
+      }
+      if (depth >= 1) return `(${value.length} 件)`;
+      return value.slice(0, 6).map((v) => valueToText(v, propKey, depth + 1)).join("\n");
+    }
+    if (typeof value === "object") {
+      if (value.entity && typeof value.entity === "object") {
+        const base = formatEntityText(value.entity);
+        const extras = [];
+        if (value.accessibility) {
+          const lv = labelOfValue("accessibility", value.accessibility) || value.accessibility;
+          extras.push(lv);
+        }
+        if (typeof value.includeSubs === "boolean") extras.push(value.includeSubs ? "配下含む" : "配下なし");
+        return extras.length ? `${base} / ${extras.join(" / ")}` : base;
+      }
+      if (value.type && typeof value.code !== "undefined" && Object.keys(value).length <= 4) {
+        return formatEntityText(value);
+      }
+      return summarizeObject(value, depth);
+    }
+    return String(value);
+  }
+  function summarizeObject(obj, depth) {
+    const lines = [];
+    let n = 0;
+    for (const key of SUMMARY_KEYS_PRIORITY) {
+      if (n >= 6) break;
+      if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+      const v = obj[key];
+      if (v === null || v === void 0) continue;
+      if (typeof v === "object" && depth >= 1) continue;
+      lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1)}`);
+      n++;
+    }
+    const remaining = Object.keys(obj).filter((k) => !SUMMARY_KEYS_PRIORITY.includes(k));
+    for (const key of remaining) {
+      if (n >= 6) break;
+      const v = obj[key];
+      if (v === null || v === void 0) continue;
+      if (Array.isArray(v)) {
+        lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1)}`);
+        n++;
+      } else if (typeof v !== "object") {
+        lines.push(`${labelOfProp(key)}: ${valueToText(v, key, depth + 1)}`);
+        n++;
+      }
+    }
+    if (!lines.length) return safeStringify(obj);
+    return lines.join("\n");
+  }
+  function safeStringify(v) {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
+  function parsePath(sectionKey, path) {
+    const tokens = tokenize(path);
+    if (!tokens.length) return {};
+    const ctx = {};
+    if (sectionKey === "customizeSettings" && tokens.length >= 2) {
+      if (typeof tokens[1] === "string") ctx.platform = tokens[1];
+      if (typeof tokens[2] === "string") ctx.kind = tokens[2];
+    }
+    const namedMaps = {
+      viewSettings: "views",
+      reportSettings: "reports",
+      processSettings: "states",
+      // processSettings.states.<name> も対象だが actions は配列
+      categories: "categories"
+    };
+    const mapBucket = namedMaps[sectionKey];
+    if (mapBucket) {
+      for (let i = 1; i < tokens.length; i++) {
+        if (tokens[i] === mapBucket && typeof tokens[i + 1] === "string") {
+          ctx.namedScope = mapBucket;
+          ctx.namedKey = tokens[i + 1];
+          break;
+        }
+      }
+    }
+    for (let i = 1; i < tokens.length; i++) {
+      if (typeof tokens[i] === "string" && isIndex(tokens[i + 1])) {
+        ctx.arrayBucketKey = tokens[i];
+        ctx.arrayIndex = tokens[i + 1];
+        break;
+      }
+    }
+    for (let i = tokens.length - 1; i >= 1; i--) {
+      if (typeof tokens[i] === "string") {
+        ctx.leafKey = tokens[i];
+        break;
+      }
+    }
+    return ctx;
+  }
+  function extractEntityFromPayload(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    if (payload.entity && typeof payload.entity === "object") return payload.entity;
+    if (payload.type && (payload.code !== void 0 || payload.login !== void 0 || payload.id !== void 0)) {
+      const entityTypes = Object.keys(VALUE_LABELS["entity.type"] || {});
+      if (entityTypes.includes(String(payload.type))) return payload;
+    }
+    return null;
+  }
+  function buildWhereChips(row, ctx) {
+    const chips = [];
+    if (row.entityLabel) {
+      const ek = String(row.entityKind || "");
+      const iconMap = {
+        aclEntry: "👥",
+        recordAclEntry: "👥",
+        fieldAclEntry: "🔤",
+        notification: "🔔",
+        perRecordNotification: "🔔",
+        reminderNotification: "⏰",
+        view: "📊",
+        report: "📈",
+        state: "🚦",
+        action: "🔁",
+        appAction: "⚡",
+        plugin: "🧩",
+        jsCss: "🧪",
+        category: "🗂",
+        layoutRow: "🧱"
+      };
+      chips.push({ icon: iconMap[ek] || "·", label: String(row.entityLabel) });
+      if (row.entityCode && row.entityCode !== row.entityLabel) {
+        chips.push({ label: String(row.entityCode), muted: true });
+      }
+      return chips;
+    }
+    const payload = row.right ?? row.left;
+    const entity = extractEntityFromPayload(payload);
+    if (entity) {
+      chips.push({ label: formatEntityText(entity) });
+    }
+    if (ctx.namedKey) {
+      const scopeIcon = ctx.namedScope === "views" ? "📊" : ctx.namedScope === "reports" ? "📈" : ctx.namedScope === "states" ? "🚦" : ctx.namedScope === "categories" ? "🗂" : "·";
+      chips.push({ icon: scopeIcon, label: ctx.namedKey });
+    }
+    if (ctx.platform || ctx.kind) {
+      const platLabel = ctx.platform === "desktop" ? "デスクトップ" : ctx.platform === "mobile" ? "モバイル" : ctx.platform || "";
+      const kindLabel = ctx.kind ? String(ctx.kind).toUpperCase() : "";
+      const txt = [platLabel, kindLabel].filter(Boolean).join(" / ");
+      if (txt) chips.push({ icon: "📁", label: txt });
+    }
+    if (!chips.length && ctx.arrayBucketKey && typeof ctx.arrayIndex === "number") {
+      chips.push({ label: `${labelOfProp(ctx.arrayBucketKey)} #${ctx.arrayIndex + 1}`, muted: true });
+    }
+    return chips;
+  }
+  function decodeRow(row) {
+    if (!row || !row.sectionKey || !isSemanticSection(row.sectionKey)) return null;
+    const sect = labelOfSection(row.sectionKey);
+    const ctx = parsePath(row.sectionKey, String(row.path || ""));
+    const whereChips = buildWhereChips(row, ctx);
+    const leaf = ctx.leafKey && ctx.leafKey !== row.sectionKey && ctx.leafKey !== ctx.arrayBucketKey ? ctx.leafKey : "";
+    const propLabel = leaf ? labelOfProp(leaf) : "";
+    const propIcon = leaf ? iconOfProp(leaf) : "";
+    const propKey = leaf || ctx.arrayBucketKey || "";
+    const beforeText = row.type === "added" ? "（なし）" : valueToText(row.left, propKey);
+    const afterText = row.type === "removed" ? "（なし）" : valueToText(row.right, propKey);
+    const oneLineSummary = buildOneLineSummary(row, propLabel, beforeText, afterText);
+    const searchableTokens = [
+      sect.label,
+      sect.icon,
+      ...whereChips.map((c) => c.label),
+      propLabel,
+      propIcon,
+      beforeText,
+      afterText,
+      oneLineSummary
+    ].filter(Boolean);
+    return {
+      sectionLabel: sect.label,
+      sectionIcon: sect.icon || "",
+      whereChips,
+      propLabel,
+      propIcon,
+      beforeText,
+      afterText,
+      oneLineSummary,
+      searchableTokens
+    };
+  }
+  function buildOneLineSummary(row, propLabel, beforeText, afterText) {
+    const shortLeft = beforeText.length > 30 ? beforeText.slice(0, 30) + "…" : beforeText;
+    const shortRight = afterText.length > 30 ? afterText.slice(0, 30) + "…" : afterText;
+    if (row.type === "added") return propLabel ? `${propLabel}: 追加（${shortRight}）` : `追加（${shortRight}）`;
+    if (row.type === "removed") return propLabel ? `${propLabel}: 削除（${shortLeft}）` : `削除（${shortLeft}）`;
+    if (row.type === "same") return propLabel ? `${propLabel}: 同一` : "同一";
+    return propLabel ? `${propLabel}: ${shortLeft} → ${shortRight}` : `${shortLeft} → ${shortRight}`;
+  }
+  var SEMANTIC_SECTIONS, SUMMARY_KEYS_PRIORITY;
+  var init_path_decoder = __esm({
+    "src/diff/path-decoder.ts"() {
+      "use strict";
+      init_label_dict();
+      SEMANTIC_SECTIONS = /* @__PURE__ */ new Set([
+        "appAcl",
+        "fieldAcl",
+        "recordPermissions",
+        "notifications",
+        "perRecordNotifications",
+        "reminderNotifications",
+        "viewSettings",
+        "reportSettings",
+        "actionSettings",
+        "processSettings",
+        "customizeSettings",
+        "pluginSettings",
+        "appSettings",
+        "appInfo",
+        "formSettings",
+        "categories"
+      ]);
+      SUMMARY_KEYS_PRIORITY = [
+        "name",
+        "label",
+        "title",
+        "code",
+        "id",
+        "type",
+        "chartType",
+        "from",
+        "to",
+        "enable",
+        "filterCond",
+        "accessibility",
+        "timing",
+        "version",
+        "paginationStyle",
+        "url"
+      ];
+    }
+  });
+
   // src/diff/category-view.ts
   var category_view_exports = {};
   __export(category_view_exports, {
@@ -4149,7 +4667,7 @@ ${contextLine}`);
       return a !== b;
     }
   }
-  function safeStringify(v) {
+  function safeStringify2(v) {
     if (v === void 0) return "（未定義）";
     if (v == null) return "-";
     if (typeof v === "string") return v;
@@ -4158,6 +4676,59 @@ ${contextLine}`);
     } catch {
       return String(v);
     }
+  }
+  function summarizeChangedKeys(src, tgt, spec) {
+    if (!src || !tgt) return [];
+    const out = [];
+    const identify = spec.identify || ((v) => {
+      try {
+        return JSON.stringify(v);
+      } catch {
+        return String(v);
+      }
+    });
+    for (const k of spec.setKeys || []) {
+      const a = Array.isArray(src[k]) ? src[k] : [];
+      const b = Array.isArray(tgt[k]) ? tgt[k] : [];
+      if (!a.length && !b.length) continue;
+      const am = new Map(a.map((x) => [identify(x), x]));
+      const bm = new Map(b.map((x) => [identify(x), x]));
+      let added = 0;
+      let removed = 0;
+      for (const key of bm.keys()) if (!am.has(key)) added++;
+      for (const key of am.keys()) if (!bm.has(key)) removed++;
+      if (!added && !removed) continue;
+      const parts = [];
+      if (added) parts.push(`+${added}`);
+      if (removed) parts.push(`−${removed}`);
+      out.push(`${labelOfProp(k)} ${parts.join("/")}`);
+    }
+    for (const k of spec.scalarKeys || []) {
+      if (!valueChanged(src[k], tgt[k])) continue;
+      out.push(`${labelOfProp(k)}変更`);
+    }
+    return out;
+  }
+  function renderChangedSummaryChips(items) {
+    if (!items?.length) return "";
+    return `<span class="diff-cat-changed-chips">` + items.map((x) => `<span class="diff-cat-changed-chip">${esc(x)}</span>`).join("") + `</span>`;
+  }
+  function renderDiffCard(opts) {
+    const chgCls = opts.changedClass ? " diff-cat-card--chg" : "";
+    const typeBadge = opts.typeBadge ? `<span class="diff-cat-tag diff-cat-tag--type">${esc(opts.typeBadge)}</span>` : "";
+    const summaryHtml = renderChangedSummaryChips(opts.changedSummary || []);
+    return `<div class="diff-cat-card${chgCls}">
+    <header class="diff-cat-card-head">
+      <span class="diff-cat-status ${opts.status.cls}">${esc(opts.status.label)}</span>
+      <span class="diff-cat-card-title">${esc(opts.title)}</span>
+      ${typeBadge}
+      ${summaryHtml}
+    </header>
+    <div class="diff-cat-card-body">
+      ${opts.bodyHtml}
+      ${opts.changedDetailHtml || ""}
+    </div>
+  </div>`;
   }
   function entityKey(entity) {
     if (!entity) return "";
@@ -4252,21 +4823,35 @@ ${contextLine}`);
         cur.right = e?.accessibility || "NONE";
         entries.set(k, cur);
       }
-      const entityHtml = [...entries.entries()].map(([k, v]) => {
+      const sorted = [...entries.entries()].sort((a, b) => {
+        const ca = a[1].left !== a[1].right ? 0 : 1;
+        const cb = b[1].left !== b[1].right ? 0 : 1;
+        return ca - cb;
+      });
+      const changedCount = sorted.filter(([, v]) => v.left !== v.right).length;
+      const entityHtml = sorted.map(([k, v]) => {
         const ent = (t?.entities || []).find((e) => entityKey(e?.entity) === k)?.entity || (s?.entities || []).find((e) => entityKey(e?.entity) === k)?.entity;
         const lvL = FIELD_ACL_LEVELS.indexOf(v.left);
         const lvR = FIELD_ACL_LEVELS.indexOf(v.right);
-        const cls = lvR < lvL ? "diff-cat-acl-down" : lvR > lvL ? "diff-cat-acl-up" : "";
-        const arrow = v.left === v.right ? "" : " → ";
-        const rightLabel = v.left === v.right ? "" : esc(v.right);
+        const isChanged = v.left !== v.right;
+        const cls = [
+          lvR < lvL ? "diff-cat-acl-down" : lvR > lvL ? "diff-cat-acl-up" : "",
+          isChanged ? "diff-cat-acl-row--chg" : "diff-cat-acl-row--same"
+        ].filter(Boolean).join(" ");
+        const leftDisp = labelOfValue("accessibility", v.left) || v.left;
+        const rightDisp = labelOfValue("accessibility", v.right) || v.right;
+        const arrow = isChanged ? " → " : "";
+        const rightLabel = isChanged ? esc(rightDisp) : "";
         return `<div class="diff-cat-acl-row ${cls}">
         <span class="diff-cat-acl-entity">${entityLabel(ent)}</span>
-        <span class="diff-cat-acl-level">${esc(v.left)}${arrow}${rightLabel}</span>
+        <span class="diff-cat-acl-level">${esc(leftDisp)}${arrow}${rightLabel}</span>
       </div>`;
       }).join("");
+      const changeBadge = changedCount ? `<span class="diff-cat-changed-chip">変更 ${changedCount}</span>` : `<span class="diff-cat-tag diff-cat-tag--same">変更なし</span>`;
       rows.push(`<section class="diff-cat-acl-block">
       <header class="diff-cat-acl-header">
         <span class="diff-cat-tag">${esc(code)}</span>
+        ${changeBadge}
         <span class="diff-cat-muted">${entries.size} 件のエンティティ</span>
       </header>
       ${entityHtml || emptyState("エンティティ設定なし")}
@@ -4289,10 +4874,16 @@ ${contextLine}`);
       const s = slist[i];
       const t = tlist[i];
       const cond = t?.cond || s?.cond || "-";
-      const matrix = renderAppAclMatrix(s?.rights?.entities || [], t?.rights?.entities || []);
+      const sEntities = s?.rights?.entities || [];
+      const tEntities = t?.rights?.entities || [];
+      const status = statusLabel({ left: !!s, right: !!t });
+      const condChanged = !!s && !!t && s.cond !== t.cond;
+      const matrix = renderAppAclMatrix(sEntities, tEntities);
       blocks.push(`<section class="diff-cat-acl-block">
       <header class="diff-cat-acl-header">
+        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
         <span class="diff-cat-acl-condition">条件: <code>${esc(cond)}</code></span>
+        ${condChanged ? `<span class="diff-cat-changed-chip">条件変更</span>` : ""}
       </header>
       ${matrix}
     </section>`);
@@ -4473,16 +5064,21 @@ ${contextLine}`);
       const ref = t || s;
       const status = statusLabel({ left: !!s, right: !!t });
       const targetApp = ref?.app?.app || ref?.app?.code || ref?.app || "-";
-      return `<div class="diff-cat-card">
-      <header class="diff-cat-card-head">
-        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
-        <span class="diff-cat-card-title">${esc(ref?.name || "(無名アクション)")}</span>
-      </header>
-      <div class="diff-cat-card-body">
-        <div class="diff-cat-kv"><span class="diff-cat-k">対象アプリ</span><span class="diff-cat-v">${esc(String(targetApp))}</span></div>
-        <div class="diff-cat-kv"><span class="diff-cat-k">フィールド対応</span><span class="diff-cat-v">${esc(String((ref?.mappings || []).length + " 件"))}</span></div>
-      </div>
-    </div>`;
+      const changedKeys = s && t ? summarizeChangedKeys(s, t, {
+        setKeys: ["mappings"],
+        scalarKeys: ["name", "app"]
+      }) : [];
+      const bodyHtml = [
+        `<div class="diff-cat-kv"><span class="diff-cat-k">対象アプリ</span><span class="diff-cat-v">${esc(String(targetApp))}</span></div>`,
+        `<div class="diff-cat-kv"><span class="diff-cat-k">フィールド対応</span><span class="diff-cat-v">${esc(String((ref?.mappings || []).length + " 件"))}</span></div>`
+      ].join("");
+      return renderDiffCard({
+        status,
+        title: ref?.name || "(無名アクション)",
+        changedSummary: changedKeys,
+        bodyHtml,
+        changedClass: changedKeys.length > 0
+      });
     }).join("");
     return `<div class="diff-cat-card-grid">${cards}</div>`;
   }
@@ -4534,21 +5130,36 @@ ${contextLine}`);
       timing: n?.timing || ""
     });
   }
-  function renderNotificationCard(rule, status) {
-    const recipients = (rule?.recipients || rule?.targets || []).map((r) => `${r?.entity?.type || ""}:${r?.entity?.code || r?.entity?.login || r?.entity?.id || "-"}`).filter((x) => x !== ":-");
+  function recipientLabels(rule) {
+    const list = rule?.recipients || rule?.targets || [];
+    return (Array.isArray(list) ? list : []).map((r) => formatEntityText(r?.entity || r, { compact: true })).filter(Boolean);
+  }
+  function recipientIdentity(r) {
+    const ent = r?.entity || r || {};
+    return `${ent.type || ""}:${ent.code || ent.login || ent.id || ""}`;
+  }
+  function renderNotificationCard(s, t, status) {
+    const rule = t || s;
+    const recipients = recipientLabels(rule);
     const condition = rule?.filterCond || rule?.condition || "";
-    return `<div class="diff-cat-card">
-    <header class="diff-cat-card-head">
-      <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
-      <span class="diff-cat-card-title">${esc(rule?.name || "(無名通知)")}</span>
-    </header>
-    <div class="diff-cat-card-body">
-      ${condition ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(condition)}</code></div>` : ""}
-      ${rule?.timing ? `<div class="diff-cat-kv"><span class="diff-cat-k">タイミング</span><span class="diff-cat-v">${esc(rule.timing)}</span></div>` : ""}
-      ${rule?.when ? `<div class="diff-cat-kv"><span class="diff-cat-k">トリガー</span><span class="diff-cat-v">${esc(rule.when)}</span></div>` : ""}
-      <div class="diff-cat-kv"><span class="diff-cat-k">宛先</span><span class="diff-cat-v">${shortList(recipients, 8)}</span></div>
-    </div>
-  </div>`;
+    const changedKeys = s && t ? summarizeChangedKeys(s, t, {
+      setKeys: ["recipients", "targets"],
+      scalarKeys: ["filterCond", "timing", "when", "name", "title"],
+      identify: recipientIdentity
+    }) : [];
+    const bodyHtml = [
+      condition ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(condition)}</code></div>` : "",
+      rule?.timing ? `<div class="diff-cat-kv"><span class="diff-cat-k">タイミング</span><span class="diff-cat-v">${esc(rule.timing)}</span></div>` : "",
+      rule?.when ? `<div class="diff-cat-kv"><span class="diff-cat-k">トリガー</span><span class="diff-cat-v">${esc(rule.when)}</span></div>` : "",
+      `<div class="diff-cat-kv"><span class="diff-cat-k">宛先</span><span class="diff-cat-v">${shortList(recipients, 8)}</span></div>`
+    ].filter(Boolean).join("");
+    return renderDiffCard({
+      status,
+      title: rule?.name || rule?.title || "(無名通知)",
+      changedSummary: changedKeys,
+      bodyHtml,
+      changedClass: changedKeys.length > 0
+    });
   }
   function renderNotificationGroup(label, srcRules, tgtRules) {
     const sm = /* @__PURE__ */ new Map();
@@ -4561,7 +5172,7 @@ ${contextLine}`);
       const s = sm.get(k);
       const t = tm.get(k);
       const status = statusLabel({ left: !!s, right: !!t });
-      return renderNotificationCard(t || s, status);
+      return renderNotificationCard(s, t, status);
     }).join("");
     return `<section class="diff-cat-sec">
     <header class="diff-cat-sec-head">
@@ -4613,51 +5224,66 @@ ${contextLine}`);
       const ref = t || s;
       const status = statusLabel({ left: !!s, right: !!t });
       const changed = !!s && !!t && valueChanged(s, t);
-      const type = ref?.type || "LIST";
-      const fields = Array.isArray(ref?.fields) ? ref.fields : ref?.fields ? Object.keys(ref.fields) : [];
+      const typeRaw = ref?.type || "LIST";
+      const typeLabel = labelOfValue("view.type", typeRaw) || typeRaw;
+      const fields = Array.isArray(ref?.fields) ? ref.fields.map((f) => typeof f === "object" ? f?.code || f?.label || "" : String(f)).filter(Boolean) : ref?.fields ? Object.keys(ref.fields) : [];
       const filter = ref?.filterCond || "";
       const sort = ref?.sort || "";
-      return `<div class="diff-cat-card ${changed ? "diff-cat-card--chg" : ""}">
-      <header class="diff-cat-card-head">
-        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
-        <span class="diff-cat-card-title">${esc(ref?.name || k)}</span>
-        <span class="diff-cat-tag diff-cat-tag--type">${esc(type)}</span>
-      </header>
-      <div class="diff-cat-card-body">
-        <div class="diff-cat-kv"><span class="diff-cat-k">表示項目</span><span class="diff-cat-v">${shortList(fields, 6)}</span></div>
-        ${filter ? `<div class="diff-cat-kv"><span class="diff-cat-k">絞込</span><code class="diff-cat-code">${esc(filter)}</code></div>` : ""}
-        ${sort ? `<div class="diff-cat-kv"><span class="diff-cat-k">ソート</span><code class="diff-cat-code">${esc(sort)}</code></div>` : ""}
-        ${changed ? renderViewChangedDetail(s, t) : ""}
-      </div>
-    </div>`;
+      const changedKeys = s && t ? summarizeChangedKeys(s, t, {
+        setKeys: ["fields"],
+        scalarKeys: ["name", "type", "filterCond", "sort", "index", "paginationStyle"]
+      }) : [];
+      const bodyHtml = [
+        `<div class="diff-cat-kv"><span class="diff-cat-k">表示項目</span><span class="diff-cat-v">${shortList(fields, 6)}</span></div>`,
+        filter ? `<div class="diff-cat-kv"><span class="diff-cat-k">絞込</span><code class="diff-cat-code">${esc(filter)}</code></div>` : "",
+        sort ? `<div class="diff-cat-kv"><span class="diff-cat-k">ソート</span><code class="diff-cat-code">${esc(sort)}</code></div>` : ""
+      ].filter(Boolean).join("");
+      return renderDiffCard({
+        status,
+        title: ref?.name || k,
+        typeBadge: typeLabel,
+        changedSummary: changedKeys,
+        bodyHtml,
+        changedDetailHtml: changed ? renderViewChangedDetail(s, t) : "",
+        changedClass: changed
+      });
     }).join("");
     return `<div class="diff-cat-card-grid">${cards}</div>`;
   }
   function renderViewChangedDetail(s, t) {
     const checks = [
-      { key: "name", label: "名前" },
-      { key: "type", label: "種別" },
-      { key: "filterCond", label: "絞込条件" },
-      { key: "sort", label: "ソート" },
-      { key: "index", label: "表示順" },
-      { key: "paginationStyle", label: "ページ送り" }
+      { key: "name" },
+      { key: "type", valueScope: "view.type" },
+      { key: "filterCond" },
+      { key: "sort" },
+      { key: "index" },
+      { key: "paginationStyle", valueScope: "paginationStyle" }
     ];
     const items = [];
     for (const c of checks) {
       if (valueChanged(s?.[c.key], t?.[c.key])) {
-        items.push(`<li><span class="diff-cat-k">${esc(c.label)}</span>: <span class="diff-cat-old">${esc(safeStringify(s?.[c.key]))}</span> → <span class="diff-cat-new">${esc(safeStringify(t?.[c.key]))}</span></li>`);
+        const oldRaw = s?.[c.key];
+        const newRaw = t?.[c.key];
+        const oldDisp = c.valueScope ? labelOfValue(c.valueScope, oldRaw) || safeStringify2(oldRaw) : safeStringify2(oldRaw);
+        const newDisp = c.valueScope ? labelOfValue(c.valueScope, newRaw) || safeStringify2(newRaw) : safeStringify2(newRaw);
+        items.push(`<li><span class="diff-cat-k">${esc(labelOfProp(c.key))}</span>: <span class="diff-cat-old">${esc(oldDisp)}</span> → <span class="diff-cat-new">${esc(newDisp)}</span></li>`);
       }
     }
     const sf = Array.isArray(s?.fields) ? s.fields : [];
     const tf = Array.isArray(t?.fields) ? t.fields : [];
     if (valueChanged(sf, tf)) {
-      const added = tf.filter((x) => !sf.includes(x));
-      const removed = sf.filter((x) => !tf.includes(x));
+      const keyOf = (x) => typeof x === "object" ? x?.code || x?.label || JSON.stringify(x) : String(x);
+      const sCodes = sf.map(keyOf);
+      const tCodes = tf.map(keyOf);
+      const added = tCodes.filter((x) => !sCodes.includes(x));
+      const removed = sCodes.filter((x) => !tCodes.includes(x));
       if (added.length || removed.length) {
-        items.push(`<li><span class="diff-cat-k">表示項目</span>: ${added.length ? `<span class="diff-cat-new">+${added.length}件 (${added.slice(0, 3).map(esc).join(", ")}${added.length > 3 ? "…" : ""})</span>` : ""}${removed.length ? ` <span class="diff-cat-old">-${removed.length}件 (${removed.slice(0, 3).map(esc).join(", ")}${removed.length > 3 ? "…" : ""})</span>` : ""}</li>`);
+        items.push(`<li><span class="diff-cat-k">表示項目</span>: ${added.length ? `<span class="diff-cat-new">+${added.length}件 (${added.slice(0, 3).map(esc).join(", ")}${added.length > 3 ? "…" : ""})</span>` : ""}${removed.length ? ` <span class="diff-cat-old">−${removed.length}件 (${removed.slice(0, 3).map(esc).join(", ")}${removed.length > 3 ? "…" : ""})</span>` : ""}</li>`);
       }
     }
-    return items.length ? `<details class="diff-cat-changed-detail"><summary>変更詳細 (${items.length})</summary><ul>${items.join("")}</ul></details>` : "";
+    if (!items.length) return "";
+    const openAttr = items.length >= 3 ? " open" : "";
+    return `<details class="diff-cat-changed-detail"${openAttr}><summary>変更詳細 (${items.length})</summary><ul>${items.join("")}</ul></details>`;
   }
   function renderReportCards(srcReports, tgtReports) {
     const sm = srcReports && typeof srcReports === "object" ? srcReports : {};
@@ -4669,18 +5295,25 @@ ${contextLine}`);
       const t = tm[k];
       const ref = t || s;
       const status = statusLabel({ left: !!s, right: !!t });
-      return `<div class="diff-cat-card">
-      <header class="diff-cat-card-head">
-        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
-        <span class="diff-cat-card-title">${esc(ref?.name || k)}</span>
-        <span class="diff-cat-tag diff-cat-tag--type">${esc(ref?.chartType || ref?.type || "GRAPH")}</span>
-      </header>
-      <div class="diff-cat-card-body">
-        ${ref?.filterCond ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(ref.filterCond)}</code></div>` : ""}
-        ${ref?.groups ? `<div class="diff-cat-kv"><span class="diff-cat-k">分類</span><span class="diff-cat-v">${shortList((ref.groups || []).map((g) => g?.code || g), 6)}</span></div>` : ""}
-        ${ref?.aggregations ? `<div class="diff-cat-kv"><span class="diff-cat-k">集計</span><span class="diff-cat-v">${shortList((ref.aggregations || []).map((a) => `${a?.type || ""}(${a?.code || "-"})`), 6)}</span></div>` : ""}
-      </div>
-    </div>`;
+      const chartRaw = ref?.chartType || ref?.type || "GRAPH";
+      const chartLabel = labelOfValue("chart.type", chartRaw) || chartRaw;
+      const changedKeys = s && t ? summarizeChangedKeys(s, t, {
+        setKeys: ["groups", "aggregations"],
+        scalarKeys: ["name", "chartType", "chartMode", "filterCond"]
+      }) : [];
+      const bodyHtml = [
+        ref?.filterCond ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(ref.filterCond)}</code></div>` : "",
+        ref?.groups ? `<div class="diff-cat-kv"><span class="diff-cat-k">分類</span><span class="diff-cat-v">${shortList((ref.groups || []).map((g) => g?.code || g), 6)}</span></div>` : "",
+        ref?.aggregations ? `<div class="diff-cat-kv"><span class="diff-cat-k">集計</span><span class="diff-cat-v">${shortList((ref.aggregations || []).map((a) => `${a?.type || ""}(${a?.code || "-"})`), 6)}</span></div>` : ""
+      ].filter(Boolean).join("");
+      return renderDiffCard({
+        status,
+        title: ref?.name || k,
+        typeBadge: chartLabel,
+        changedSummary: changedKeys,
+        bodyHtml,
+        changedClass: changedKeys.length > 0
+      });
     }).join("");
     return `<div class="diff-cat-card-grid">${cards}</div>`;
   }
@@ -4736,7 +5369,7 @@ ${contextLine}`);
     });
     return out;
   }
-  function renderLayoutGrid(items, comparedCodes, mode) {
+  function renderLayoutGrid(items, comparedCodes, movedCodes, mode) {
     if (!items.length) return emptyState("レイアウト未取得");
     const byRow = /* @__PURE__ */ new Map();
     for (const it of items) {
@@ -4747,10 +5380,14 @@ ${contextLine}`);
     const rowsHtml = rows.map((r) => {
       const cells = byRow.get(r).sort((a, b) => a.col - b.col).map((c) => {
         const exists = comparedCodes.has(c.code);
-        const cls = c.type === "GROUP" ? "diff-cat-layout-group" : !exists ? mode === "tgt" ? "diff-cat-layout-add" : "diff-cat-layout-rm" : "diff-cat-layout-keep";
-        return `<div class="diff-cat-layout-cell ${cls}" title="${esc(`${c.label || c.code} (${c.type})`)}">
+        const moved = exists && movedCodes.has(c.code);
+        const cls = c.type === "GROUP" ? "diff-cat-layout-group" : !exists ? mode === "tgt" ? "diff-cat-layout-add" : "diff-cat-layout-rm" : moved ? "diff-cat-layout-move" : "diff-cat-layout-keep";
+        const movedBadge = moved ? '<span class="diff-cat-layout-move-badge" aria-hidden="true">↕</span>' : "";
+        const titleSuffix = !exists ? mode === "tgt" ? " / 新規追加" : " / 削除予定" : moved ? " / 位置移動" : "";
+        return `<div class="diff-cat-layout-cell ${cls}" data-layout-code="${esc(c.code)}" data-layout-mode="${mode}" title="${esc(`${c.label || c.code} (${c.type})${titleSuffix}`)}">
         <span class="diff-cat-layout-code">${esc(c.code)}</span>
         <span class="diff-cat-layout-type">${esc(c.type || "-")}</span>
+        ${movedBadge}
       </div>`;
       }).join("");
       return `<div class="diff-cat-layout-row">${cells}</div>`;
@@ -4769,26 +5406,36 @@ ${contextLine}`);
     const tgtCodes = new Set(flatT.map((i) => i.code));
     const onlyInSrc = flatS.filter((i) => !tgtCodes.has(i.code));
     const onlyInTgt = flatT.filter((i) => !srcCodes.has(i.code));
+    const srcByCode = new Map(flatS.map((i) => [i.code, i]));
+    const movedCodes = /* @__PURE__ */ new Set();
+    for (const item of flatT) {
+      const s = srcByCode.get(item.code);
+      if (!s) continue;
+      if (s.row !== item.row || s.col !== item.col) movedCodes.add(item.code);
+    }
+    const changedTotal = onlyInSrc.length + onlyInTgt.length + movedCodes.size;
+    const headSub = changedTotal ? `変更 ${changedTotal} 件（追加 ${onlyInTgt.length} / 削除 ${onlyInSrc.length} / 移動 ${movedCodes.size}）` : "行 × 列のフィールド配置";
     return `<section class="diff-cat-sec">
     <header class="diff-cat-sec-head">
       <span class="diff-cat-sec-icon">${renderSectionIconHtml("layoutSettings")}</span>
       <span class="diff-cat-sec-title">レイアウト</span>
-      <span class="diff-cat-sec-sub">行 × 列のフィールド配置</span>
+      <span class="diff-cat-sec-sub">${esc(headSub)}</span>
     </header>
     <div class="diff-cat-layout-cmp">
       <div class="diff-cat-layout-side">
         <header class="diff-cat-side-head">比較元 (${flatS.length}項目)</header>
-        ${renderLayoutGrid(flatS, tgtCodes, "src")}
+        ${renderLayoutGrid(flatS, tgtCodes, movedCodes, "src")}
       </div>
       <div class="diff-cat-layout-side">
         <header class="diff-cat-side-head">比較先 (${flatT.length}項目)</header>
-        ${renderLayoutGrid(flatT, srcCodes, "tgt")}
+        ${renderLayoutGrid(flatT, srcCodes, movedCodes, "tgt")}
       </div>
     </div>
     <div class="diff-cat-layout-summary">
       <span class="diff-cat-tag diff-cat-tag--rm">削除候補 ${onlyInSrc.length}</span>
       <span class="diff-cat-tag diff-cat-tag--add">新規 ${onlyInTgt.length}</span>
-      <span class="diff-cat-tag">保持 ${flatT.length - onlyInTgt.length}</span>
+      ${movedCodes.size ? `<span class="diff-cat-tag diff-cat-tag--move">移動 ${movedCodes.size}</span>` : ""}
+      <span class="diff-cat-tag">保持 ${flatT.length - onlyInTgt.length - movedCodes.size}</span>
     </div>
   </section>`;
   }
@@ -4822,10 +5469,14 @@ ${contextLine}`);
     const sm = new Map(sFiles.map((f) => [keyOf(f), f]));
     const tm = new Map(tFiles.map((f) => [keyOf(f), f]));
     const keys = /* @__PURE__ */ new Set([...sm.keys(), ...tm.keys()]);
+    let addedFiles = 0;
+    let removedFiles = 0;
     const fileRows = [...keys].map((k) => {
       const s = sm.get(k);
       const t = tm.get(k);
       const status = statusLabel({ left: !!s, right: !!t });
+      if (!s && t) addedFiles++;
+      else if (s && !t) removedFiles++;
       const ref = t || s;
       return `<tr>
       <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
@@ -4836,11 +5487,13 @@ ${contextLine}`);
     }).join("");
     let customizeBlock = "";
     if (keys.size) {
+      const changedTotal = addedFiles + removedFiles;
+      const headSub = changedTotal ? `変更 ${changedTotal} 件（追加 ${addedFiles} / 削除 ${removedFiles}）` : "desktop / mobile × JS / CSS のファイル一覧";
       customizeBlock = `<section class="diff-cat-sec">
       <header class="diff-cat-sec-head">
         <span class="diff-cat-sec-icon">${renderSectionIconHtml("customizeSettings")}</span>
         <span class="diff-cat-sec-title">JS/CSS</span>
-        <span class="diff-cat-sec-sub">desktop / mobile × JS / CSS のファイル一覧</span>
+        <span class="diff-cat-sec-sub">${esc(headSub)}</span>
       </header>
       <div class="diff-cat-table-wrap"><table class="diff-cat-table">
         <thead><tr><th style="width:60px">状態</th><th style="width:80px">配置</th><th style="width:60px">種別</th><th>ファイル</th></tr></thead>
@@ -4857,6 +5510,14 @@ ${contextLine}`);
       const sMap = new Map(sPlugins.map((p) => [String(p?.id || ""), p]));
       const tMap = new Map(tPlugins.map((p) => [String(p?.id || ""), p]));
       const allIds = /* @__PURE__ */ new Set([...sMap.keys(), ...tMap.keys()]);
+      let pAdded = 0, pRemoved = 0, pChanged = 0;
+      for (const id of allIds) {
+        const s = sMap.get(id);
+        const t = tMap.get(id);
+        if (!s && t) pAdded++;
+        else if (s && !t) pRemoved++;
+        else if (s && t && valueChanged(s, t)) pChanged++;
+      }
       const rows = [...allIds].map((id) => {
         const s = sMap.get(id);
         const t = tMap.get(id);
@@ -4865,18 +5526,21 @@ ${contextLine}`);
         const vL = s?.version || "";
         const vR = t?.version || "";
         const vChanged = vL && vR && vL !== vR;
+        const summaryHtml = s && t && !vChanged && valueChanged(s, t) ? renderChangedSummaryChips(["設定変更"]) : "";
         return `<tr>
         <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
         <td class="diff-cat-mono">${esc(id)}</td>
-        <td>${esc(ref?.name || "-")}</td>
+        <td>${esc(ref?.name || "-")}${summaryHtml}</td>
         <td>${vChanged ? `<span class="diff-cat-old">${esc(vL)}</span> → <span class="diff-cat-new">${esc(vR)}</span>` : esc(vR || vL || "-")}</td>
       </tr>`;
       }).join("");
+      const pTotal = pAdded + pRemoved + pChanged;
+      const pSub = pTotal ? `変更 ${pTotal} 件（追加 ${pAdded} / 削除 ${pRemoved} / 更新 ${pChanged}）` : "有効化されたプラグイン一覧";
       pluginBlock = `<section class="diff-cat-sec">
       <header class="diff-cat-sec-head">
         <span class="diff-cat-sec-icon">${renderSectionIconHtml("pluginSettings")}</span>
         <span class="diff-cat-sec-title">プラグイン</span>
-        <span class="diff-cat-sec-sub">有効化されたプラグイン一覧</span>
+        <span class="diff-cat-sec-sub">${esc(pSub)}</span>
       </header>
       <div class="diff-cat-table-wrap"><table class="diff-cat-table">
         <thead><tr><th style="width:60px">状態</th><th>ID</th><th>名前</th><th>バージョン</th></tr></thead>
@@ -4899,9 +5563,9 @@ ${contextLine}`);
       rows.push(`<tr>
       <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
       <td class="diff-cat-mono">${esc(k)}</td>
-      <td class="diff-cat-old">${esc(safeStringify(a))}</td>
+      <td class="diff-cat-old">${esc(safeStringify2(a))}</td>
       <td class="diff-cat-arrow">→</td>
-      <td class="diff-cat-new">${esc(safeStringify(b))}</td>
+      <td class="diff-cat-new">${esc(safeStringify2(b))}</td>
     </tr>`);
     }
     if (!rows.length) return "";
@@ -4972,9 +5636,9 @@ ${contextLine}`);
         const leaf = String(r.path || "").replace(/^fieldSettings\.properties\.[^.[\]]+\.?/, "") || "(本体)";
         return `<li class="diff-cat-field-line">
         <span class="diff-cat-mono">${esc(leaf)}</span>
-        <span class="diff-cat-old">${esc(safeStringify(r.left))}</span>
+        <span class="diff-cat-old">${esc(safeStringify2(r.left))}</span>
         <span class="diff-cat-arrow">→</span>
-        <span class="diff-cat-new">${esc(safeStringify(r.right))}</span>
+        <span class="diff-cat-new">${esc(safeStringify2(r.right))}</span>
       </li>`;
       }).join("");
       return `<details class="diff-cat-field-block" ${rs.length <= 5 ? "open" : ""}>
@@ -5080,14 +5744,24 @@ ${contextLine}`);
       const secRows = rowsBySection.get(sec) || [];
       const s = countRowSummary(secRows);
       if (!secRows.length) continue;
-      const label = SECTION_LABELS[sec] || sec;
+      const label = SECTION_LABELS2[sec] || sec;
       lines.push(`### ${label}`);
       lines.push(`差分: +${s.added} / -${s.removed} / ~${s.changed} (高:${s.high} 中:${s.medium} 低:${s.low})`);
       const sample = secRows.slice(0, 30);
       for (const r of sample) {
         const t = r.type === "added" ? "+ 追加" : r.type === "removed" ? "- 削除" : "~ 変更";
-        const v = r.type === "added" ? safeStringify(r.right) : r.type === "removed" ? safeStringify(r.left) : `${safeStringify(r.left)} → ${safeStringify(r.right)}`;
-        lines.push(`- ${t} \`${r.path}\` ${v.slice(0, 200)}`);
+        const decoded = isSemanticSection(r.sectionKey) ? decodeRow(r) : null;
+        let where = "";
+        let value = "";
+        if (decoded) {
+          const chips = (decoded.whereChips || []).map((c) => c.icon ? `${c.icon} ${c.label}` : c.label).join(" / ");
+          where = chips ? ` [${chips}]` : "";
+          const propPart = decoded.propLabel ? `${decoded.propLabel}: ` : "";
+          value = r.type === "added" ? `${propPart}${decoded.afterText}` : r.type === "removed" ? `${propPart}${decoded.beforeText}` : `${propPart}${decoded.beforeText} → ${decoded.afterText}`;
+        } else {
+          value = r.type === "added" ? safeStringify2(r.right) : r.type === "removed" ? safeStringify2(r.left) : `${safeStringify2(r.left)} → ${safeStringify2(r.right)}`;
+        }
+        lines.push(`- ${t}${where} ${value.slice(0, 200)}`);
       }
       if (secRows.length > sample.length) lines.push(`- … 他 ${secRows.length - sample.length} 件`);
     }
@@ -5117,12 +5791,14 @@ ${contextLine}`);
     }
     return lines.join("\n");
   }
-  var DIFF_CATEGORIES, SECTION_TO_CATEGORY, APP_ACL_PERMISSIONS, FIELD_ACL_LEVELS, SECTION_LABELS;
+  var DIFF_CATEGORIES, SECTION_TO_CATEGORY, APP_ACL_PERMISSIONS, FIELD_ACL_LEVELS, SECTION_LABELS2;
   var init_category_view = __esm({
     "src/diff/category-view.ts"() {
       "use strict";
       init_utils();
       init_state();
+      init_label_dict();
+      init_path_decoder();
       DIFF_CATEGORIES = [
         { key: "fields", label: "フィールド", hint: "フィールド定義の追加・変更", sections: ["fieldSettings"], icon: "🔤" },
         { key: "layout", label: "レイアウト", hint: "フォーム配置の差分", sections: ["layoutSettings"], icon: "🧩" },
@@ -5148,7 +5824,7 @@ ${contextLine}`);
         { key: "recordExportable", label: "CSV書出" }
       ];
       FIELD_ACL_LEVELS = ["NONE", "READ", "READ_WRITE"];
-      SECTION_LABELS = {
+      SECTION_LABELS2 = {
         appSettings: "アプリ設定",
         appInfo: "アプリ情報",
         fieldSettings: "フィールド設定",
@@ -5606,6 +6282,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     };
   }
   function renderRowColumns(row, useCharDiff) {
+    if (isSemanticSection(row?.sectionKey)) {
+      const decoded = decodeRow(row);
+      if (decoded) {
+        return renderSemanticRowColumns(row, decoded, useCharDiff);
+      }
+    }
     if (row.type === "same") {
       return {
         left: `<pre class="diff-pre" style="color:var(--dv-sub);font-style:italic">${esc(stringifyRowValueForDiff(row.left, row.path))}</pre>`,
@@ -5625,6 +6307,84 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       };
     }
     return renderChangedColumns(row, useCharDiff);
+  }
+  function renderWhereChipsHtml(decoded) {
+    const sectChip = `<span class="diff-sem-chip diff-sem-chip--sec">${decoded.sectionIcon ? esc(decoded.sectionIcon) + " " : ""}${esc(decoded.sectionLabel)}</span>`;
+    const whereChips = (decoded.whereChips || []).map((c) => {
+      const muted = c.muted ? " diff-sem-chip--muted" : "";
+      return `<span class="diff-sem-chip${muted}">${c.icon ? esc(c.icon) + " " : ""}${esc(c.label)}</span>`;
+    }).join("");
+    const propChip = decoded.propLabel ? `<span class="diff-sem-chip diff-sem-chip--prop">${decoded.propIcon ? esc(decoded.propIcon) + " " : ""}${esc(decoded.propLabel)}</span>` : "";
+    return `<div class="diff-sem-chips">${sectChip}${whereChips}${propChip}</div>`;
+  }
+  function renderSemanticValueBlock(text, kind) {
+    const cls = kind === "empty" ? "empty" : kind;
+    const safe = esc(text || "");
+    return `<div class="diff-sem-val diff-sem-val--${cls}">${safe.replace(/\n/g, "<br>")}</div>`;
+  }
+  function renderSemanticRowColumns(row, decoded, useCharDiff) {
+    const chips = renderWhereChipsHtml(decoded);
+    if (row.type === "same") {
+      return {
+        left: `${chips}${renderSemanticValueBlock(decoded.beforeText, "same")}`,
+        right: `${chips}<div class="diff-sem-val diff-sem-val--same">（同一）</div>`
+      };
+    }
+    if (row.type === "added") {
+      return {
+        left: `${chips}${renderSemanticValueBlock("（なし）", "empty")}`,
+        right: `${chips}${renderSemanticValueBlock(decoded.afterText, "add")}`
+      };
+    }
+    if (row.type === "removed") {
+      return {
+        left: `${chips}${renderSemanticValueBlock(decoded.beforeText, "del")}`,
+        right: `${chips}${renderSemanticValueBlock("（なし）", "empty")}`
+      };
+    }
+    const leftLines = String(decoded.beforeText || "").split("\n");
+    const rightLines = String(decoded.afterText || "").split("\n");
+    const ops = buildLineDiffOps(leftLines, rightLines);
+    if (!ops) {
+      return {
+        left: `${chips}${renderSemanticValueBlock(decoded.beforeText, "del")}`,
+        right: `${chips}${renderSemanticValueBlock(decoded.afterText, "add")}`
+      };
+    }
+    let leftHtml = "";
+    let rightHtml = "";
+    let lno = 0;
+    let rno = 0;
+    for (const op of ops) {
+      if (op.type === "same") {
+        lno += 1;
+        rno += 1;
+        leftHtml += `<div class="diff-line"><span class="diff-ln">${lno}</span>${esc(op.left || "")}</div>`;
+        rightHtml += `<div class="diff-line"><span class="diff-ln">${rno}</span>${esc(op.right || "")}</div>`;
+        continue;
+      }
+      if (op.type === "replace") {
+        lno += 1;
+        rno += 1;
+        const cd = useCharDiff ? buildCharDiffHtml(op.left, op.right) : null;
+        leftHtml += `<div class="diff-line del"><span class="diff-ln">${lno}</span>${cd ? cd.left : esc(op.left || "")}</div>`;
+        rightHtml += `<div class="diff-line add"><span class="diff-ln">${rno}</span>${cd ? cd.right : esc(op.right || "")}</div>`;
+        continue;
+      }
+      if (op.type === "del") {
+        lno += 1;
+        leftHtml += `<div class="diff-line del"><span class="diff-ln">${lno}</span>${esc(op.left || "")}</div>`;
+        rightHtml += '<div class="diff-line pad"><span class="diff-ln"></span></div>';
+        continue;
+      }
+      rno += 1;
+      leftHtml += '<div class="diff-line pad"><span class="diff-ln"></span></div>';
+      rightHtml += `<div class="diff-line add"><span class="diff-ln">${rno}</span>${esc(op.right || "")}</div>`;
+    }
+    return {
+      left: `${chips}<div class="diff-sem-scroll diff-sem-val diff-sem-val--del">${leftHtml}</div>`,
+      right: `${chips}<div class="diff-sem-scroll diff-sem-val diff-sem-val--add">${rightHtml}</div>`
+    };
   }
   function renderDiffRowMeta(row) {
     const tags = [];
@@ -5663,6 +6423,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         return String(v);
       }
     };
+    const semanticTokens = isSemanticSection(row?.sectionKey) ? decodeRow(row)?.searchableTokens || [] : [];
     return [
       row.section || "",
       row.sectionKey || "",
@@ -5672,6 +6433,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       row.renameCandidate ? `${row.renameCandidate.fromCode || ""} ${row.renameCandidate.toCode || ""}` : "",
       row.impactSummary || "",
       ...(row.impactRefs || []).map((ref) => `${ref.section || ""} ${ref.kind || ""} ${ref.path || ""}`),
+      ...semanticTokens,
       safe(row.left),
       safe(row.right)
     ].join("\n").toLowerCase();
@@ -9943,6 +10705,7 @@ ${body}`;
       init_api();
       init_dialog();
       init_category_view();
+      init_path_decoder();
       FIELD_CHANGE_PROP_LABELS = {
         label: "フィールド名",
         noLabel: "フィールド名を表示しない",
@@ -25121,6 +25884,24 @@ ${detail}`);
 #kintone-unified-suite-v2 .diff-view .diff-pre.empty{color:var(--dv-sub);font-style:italic}
 #kintone-unified-suite-v2 .diff-view mark.diff-char-add{background:var(--dv-mark-add);color:var(--dv-add-txt);padding:0 1px;border-radius:2px}
 #kintone-unified-suite-v2 .diff-view mark.diff-char-del{background:var(--dv-mark-del);color:var(--dv-del-txt);padding:0 1px;border-radius:2px}
+/* セマンティック差分行 (非フィールド系の path-decoder 出力) */
+#kintone-unified-suite-v2 .diff-view .diff-sem-chips{display:flex;flex-wrap:wrap;gap:4px;padding:6px 10px 4px;background:linear-gradient(180deg,rgba(241,245,249,.6),transparent);border-bottom:1px dashed var(--dv-border)}
+#kintone-unified-suite-v2 .diff-view .diff-sem-chip{display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:1px 7px;border-radius:999px;background:#e2e8f0;color:#0f172a;font-weight:600;line-height:1.6}
+#kintone-unified-suite-v2 .diff-view .diff-sem-chip--sec{background:#dbeafe;color:#1d4ed8}
+#kintone-unified-suite-v2 .diff-view .diff-sem-chip--prop{background:#fef3c7;color:#92400e}
+#kintone-unified-suite-v2 .diff-view .diff-sem-chip--muted{background:transparent;border:1px dashed var(--dv-border);color:var(--dv-sub);font-weight:500}
+#kintone-unified-suite-v2 .diff-view .diff-sem-val{padding:8px 10px;white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.6;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif}
+#kintone-unified-suite-v2 .diff-view .diff-sem-val--add{background:var(--dv-add);color:var(--dv-add-txt)}
+#kintone-unified-suite-v2 .diff-view .diff-sem-val--del{background:var(--dv-del);color:var(--dv-del-txt)}
+#kintone-unified-suite-v2 .diff-view .diff-sem-val--empty{color:var(--dv-sub);font-style:italic}
+#kintone-unified-suite-v2 .diff-view .diff-sem-val--same{color:var(--dv-sub);font-style:italic}
+#kintone-unified-suite-v2 .diff-view .diff-sem-scroll{max-height:420px;overflow:auto;padding:0}
+#kintone-unified-suite-v2 .diff-view .diff-sem-scroll .diff-line{padding:1px 8px}
+#kintone-unified-suite-v2 .diff-view.dark .diff-sem-chips{background:linear-gradient(180deg,rgba(30,41,59,.45),transparent);border-bottom-color:#334155}
+#kintone-unified-suite-v2 .diff-view.dark .diff-sem-chip{background:#334155;color:#e2e8f0}
+#kintone-unified-suite-v2 .diff-view.dark .diff-sem-chip--sec{background:#1e3a8a;color:#bfdbfe}
+#kintone-unified-suite-v2 .diff-view.dark .diff-sem-chip--prop{background:#78350f;color:#fde68a}
+#kintone-unified-suite-v2 .diff-view.dark .diff-sem-chip--muted{background:transparent;border-color:#334155;color:#94a3b8}
 #kintone-unified-suite-v2 .diff-view .diff-tools{display:flex;align-items:center;gap:6px}
 #kintone-unified-suite-v2 .diff-view .diff-mini-btn{border:1px solid var(--dv-border);background:transparent;color:var(--dv-sub);border-radius:6px;padding:2px 6px;font-size:10px;cursor:pointer}
 #kintone-unified-suite-v2 .diff-view .diff-mini-btn.active{background:#fef3c7;color:#92400e;border-color:#f59e0b}
@@ -31436,6 +32217,17 @@ ${detail}`);
 #kintone-unified-suite-v2 .diff-cat-changed-detail{margin-top:6px;border-top:1px dashed var(--dv-border);padding-top:4px}
 #kintone-unified-suite-v2 .diff-cat-changed-detail > summary{cursor:pointer;font-size:11px;font-weight:700;color:#1e40af}
 #kintone-unified-suite-v2 .diff-cat-changed-detail ul{margin:4px 0 0;padding-left:18px;font-size:11px;color:var(--dv-text);line-height:1.6}
+/* Step 2: 変更サマリチップ (カードヘッダで "宛先 +2/−1" などを表示) */
+#kintone-unified-suite-v2 .diff-cat-changed-chips{display:inline-flex;flex-wrap:wrap;gap:3px;margin-left:auto;align-items:center}
+#kintone-unified-suite-v2 .diff-cat-changed-chip{display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;line-height:1.5;border:1px solid #fbbf24}
+/* 印刷時: <details> は強制展開、影は除去 */
+@media print {
+  #kintone-unified-suite-v2 .diff-cat-changed-detail{padding-top:0}
+  #kintone-unified-suite-v2 .diff-cat-changed-detail[open] > summary{font-size:10px}
+  #kintone-unified-suite-v2 details:not([open]) > *:not(summary){display:block !important}
+  #kintone-unified-suite-v2 details > summary::-webkit-details-marker{display:none}
+  #kintone-unified-suite-v2 .diff-cat-card{box-shadow:none !important;transform:none !important;break-inside:avoid}
+}
 #kintone-unified-suite-v2 .diff-cat-old{background:var(--dv-del);color:var(--dv-del-txt);padding:0 4px;border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all}
 #kintone-unified-suite-v2 .diff-cat-new{background:var(--dv-add);color:var(--dv-add-txt);padding:0 4px;border-radius:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all}
 
@@ -31459,8 +32251,14 @@ ${detail}`);
 #kintone-unified-suite-v2 .diff-cat-layout-keep{background:var(--dv-card)}
 #kintone-unified-suite-v2 .diff-cat-layout-add{background:#d1fae5;border-color:#16a34a}
 #kintone-unified-suite-v2 .diff-cat-layout-rm{background:#fee2e2;border-color:#dc2626;opacity:.8}
+#kintone-unified-suite-v2 .diff-cat-layout-move{background:#fef3c7;border-color:#f59e0b;position:relative}
+#kintone-unified-suite-v2 .diff-cat-layout-move-badge{position:absolute;top:-6px;right:-4px;width:18px;height:18px;border-radius:999px;background:#f59e0b;color:#fff;font-size:11px;display:inline-flex;align-items:center;justify-content:center;font-weight:800;box-shadow:0 1px 3px rgba(0,0,0,.15)}
 #kintone-unified-suite-v2 .diff-cat-layout-group{background:#e0e7ff;border-color:#6366f1;font-weight:700}
 #kintone-unified-suite-v2 .diff-cat-layout-summary{display:flex;gap:8px;flex-wrap:wrap;padding-top:8px}
+#kintone-unified-suite-v2 .diff-cat-tag--move{background:#fef3c7;color:#92400e;border:1px solid #fbbf24}
+#kintone-unified-suite-v2 .diff-cat-tag--same{background:transparent;color:var(--dv-sub);border:1px dashed var(--dv-border);font-style:italic}
+#kintone-unified-suite-v2 .diff-cat-acl-row--chg{background:rgba(254,243,199,.4);border-left:3px solid #f59e0b;padding-left:6px}
+#kintone-unified-suite-v2 .diff-cat-acl-row--same{opacity:.7}
 
 #kintone-unified-suite-v2 .diff-cat-tree{list-style:none;margin:0;padding:0;font-size:12px;display:flex;flex-direction:column;gap:4px}
 #kintone-unified-suite-v2 .diff-cat-tree li{display:flex;align-items:center;gap:8px;padding:4px 6px;border-bottom:1px dashed var(--dv-border)}

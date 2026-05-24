@@ -16,6 +16,8 @@
 
 import { esc, renderSectionIconHtml, extractAppNameFromBundle } from '../utils.js';
 import { state } from '../state.js';
+import { labelOfProp, labelOfValue, formatEntityText } from './label-dict.js';
+import { decodeRow, isSemanticSection } from './path-decoder.js';
 
 // ---------------------------------------------------------------------------
 // Category definitions
@@ -143,6 +145,92 @@ function diffWrap(left: any, right: any): { html: string; same: boolean } {
 }
 
 // ---------------------------------------------------------------------------
+// 変更サマリ生成 (Step 2: カード見出しに「宛先 +2/−1」等のチップを出す)
+// ---------------------------------------------------------------------------
+
+interface ChangedKeySpec {
+  /** 'recipients' 'targets' のように配列を集合 diff 表示するキー */
+  setKeys?: string[];
+  /** スカラー / オブジェクトを「変更あり」とだけ示すキー */
+  scalarKeys?: string[];
+  /** 集合 diff における識別キー（既定では JSON.stringify） */
+  identify?: (item: any) => string;
+}
+
+/**
+ * src と tgt の差分を「キー名 → 説明文」のリストに変換する。
+ * 配列キーは "+N/-M" 形式、スカラー/オブジェクトは "変更" 表示。
+ */
+function summarizeChangedKeys(src: any, tgt: any, spec: ChangedKeySpec): string[] {
+  if (!src || !tgt) return [];
+  const out: string[] = [];
+  const identify = spec.identify || ((v: any) => { try { return JSON.stringify(v); } catch { return String(v); } });
+  for (const k of (spec.setKeys || [])) {
+    const a = Array.isArray(src[k]) ? src[k] : [];
+    const b = Array.isArray(tgt[k]) ? tgt[k] : [];
+    if (!a.length && !b.length) continue;
+    const am = new Map<string, any>(a.map((x: any) => [identify(x), x]));
+    const bm = new Map<string, any>(b.map((x: any) => [identify(x), x]));
+    let added = 0;
+    let removed = 0;
+    for (const key of bm.keys()) if (!am.has(key)) added++;
+    for (const key of am.keys()) if (!bm.has(key)) removed++;
+    if (!added && !removed) continue;
+    const parts: string[] = [];
+    if (added) parts.push(`+${added}`);
+    if (removed) parts.push(`−${removed}`);
+    out.push(`${labelOfProp(k)} ${parts.join('/')}`);
+  }
+  for (const k of (spec.scalarKeys || [])) {
+    if (!valueChanged(src[k], tgt[k])) continue;
+    out.push(`${labelOfProp(k)}変更`);
+  }
+  return out;
+}
+
+function renderChangedSummaryChips(items: string[]): string {
+  if (!items?.length) return '';
+  return `<span class="diff-cat-changed-chips">` +
+    items.map((x) => `<span class="diff-cat-changed-chip">${esc(x)}</span>`).join('') +
+    `</span>`;
+}
+
+// ---------------------------------------------------------------------------
+// 共通カード (Step 4: renderNotificationCard / renderViewCards / renderReportCards
+// / renderActionSettings で重複していたカード構造を一本化)
+// ---------------------------------------------------------------------------
+
+interface DiffCardOpts {
+  status: { cls: string; label: string };
+  title: string;
+  typeBadge?: string;
+  changedSummary?: string[];
+  bodyHtml: string;
+  changedDetailHtml?: string;
+  changedClass?: boolean;
+}
+
+function renderDiffCard(opts: DiffCardOpts): string {
+  const chgCls = opts.changedClass ? ' diff-cat-card--chg' : '';
+  const typeBadge = opts.typeBadge
+    ? `<span class="diff-cat-tag diff-cat-tag--type">${esc(opts.typeBadge)}</span>`
+    : '';
+  const summaryHtml = renderChangedSummaryChips(opts.changedSummary || []);
+  return `<div class="diff-cat-card${chgCls}">
+    <header class="diff-cat-card-head">
+      <span class="diff-cat-status ${opts.status.cls}">${esc(opts.status.label)}</span>
+      <span class="diff-cat-card-title">${esc(opts.title)}</span>
+      ${typeBadge}
+      ${summaryHtml}
+    </header>
+    <div class="diff-cat-card-body">
+      ${opts.bodyHtml}
+      ${opts.changedDetailHtml || ''}
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Permissions (appAcl / fieldAcl / recordPermissions)
 // ---------------------------------------------------------------------------
 
@@ -266,22 +354,39 @@ function renderFieldAclTable(srcRights: any[], tgtRights: any[]): string {
       cur.right = e?.accessibility || 'NONE';
       entries.set(k, cur);
     }
-    const entityHtml = [...entries.entries()].map(([k, v]) => {
+    // 変更ありを先頭に並べ替え（Step 5: 変更箇所が探しやすく）
+    const sorted = [...entries.entries()].sort((a, b) => {
+      const ca = a[1].left !== a[1].right ? 0 : 1;
+      const cb = b[1].left !== b[1].right ? 0 : 1;
+      return ca - cb;
+    });
+    const changedCount = sorted.filter(([, v]) => v.left !== v.right).length;
+    const entityHtml = sorted.map(([k, v]) => {
       const ent = (t?.entities || []).find((e: any) => entityKey(e?.entity) === k)?.entity
         || (s?.entities || []).find((e: any) => entityKey(e?.entity) === k)?.entity;
       const lvL = FIELD_ACL_LEVELS.indexOf(v.left as any);
       const lvR = FIELD_ACL_LEVELS.indexOf(v.right as any);
-      const cls = lvR < lvL ? 'diff-cat-acl-down' : (lvR > lvL ? 'diff-cat-acl-up' : '');
-      const arrow = v.left === v.right ? '' : ' → ';
-      const rightLabel = v.left === v.right ? '' : esc(v.right);
+      const isChanged = v.left !== v.right;
+      const cls = [
+        lvR < lvL ? 'diff-cat-acl-down' : (lvR > lvL ? 'diff-cat-acl-up' : ''),
+        isChanged ? 'diff-cat-acl-row--chg' : 'diff-cat-acl-row--same'
+      ].filter(Boolean).join(' ');
+      const leftDisp = labelOfValue('accessibility', v.left) || v.left;
+      const rightDisp = labelOfValue('accessibility', v.right) || v.right;
+      const arrow = isChanged ? ' → ' : '';
+      const rightLabel = isChanged ? esc(rightDisp) : '';
       return `<div class="diff-cat-acl-row ${cls}">
         <span class="diff-cat-acl-entity">${entityLabel(ent)}</span>
-        <span class="diff-cat-acl-level">${esc(v.left)}${arrow}${rightLabel}</span>
+        <span class="diff-cat-acl-level">${esc(leftDisp)}${arrow}${rightLabel}</span>
       </div>`;
     }).join('');
+    const changeBadge = changedCount
+      ? `<span class="diff-cat-changed-chip">変更 ${changedCount}</span>`
+      : `<span class="diff-cat-tag diff-cat-tag--same">変更なし</span>`;
     rows.push(`<section class="diff-cat-acl-block">
       <header class="diff-cat-acl-header">
         <span class="diff-cat-tag">${esc(code)}</span>
+        ${changeBadge}
         <span class="diff-cat-muted">${entries.size} 件のエンティティ</span>
       </header>
       ${entityHtml || emptyState('エンティティ設定なし')}
@@ -306,10 +411,16 @@ function renderRecordPermissionMatrix(srcRights: any[], tgtRights: any[]): strin
     const s = slist[i];
     const t = tlist[i];
     const cond = t?.cond || s?.cond || '-';
-    const matrix = renderAppAclMatrix(s?.rights?.entities || [], t?.rights?.entities || []);
+    const sEntities = s?.rights?.entities || [];
+    const tEntities = t?.rights?.entities || [];
+    const status = statusLabel({ left: !!s, right: !!t });
+    const condChanged = !!s && !!t && s.cond !== t.cond;
+    const matrix = renderAppAclMatrix(sEntities, tEntities);
     blocks.push(`<section class="diff-cat-acl-block">
       <header class="diff-cat-acl-header">
+        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
         <span class="diff-cat-acl-condition">条件: <code>${esc(cond)}</code></span>
+        ${condChanged ? `<span class="diff-cat-changed-chip">条件変更</span>` : ''}
       </header>
       ${matrix}
     </section>`);
@@ -505,16 +616,23 @@ function renderActionSettings(src: any, tgt: any): string {
     const ref: any = t || s;
     const status = statusLabel({ left: !!s, right: !!t });
     const targetApp = ref?.app?.app || ref?.app?.code || ref?.app || '-';
-    return `<div class="diff-cat-card">
-      <header class="diff-cat-card-head">
-        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
-        <span class="diff-cat-card-title">${esc(ref?.name || '(無名アクション)')}</span>
-      </header>
-      <div class="diff-cat-card-body">
-        <div class="diff-cat-kv"><span class="diff-cat-k">対象アプリ</span><span class="diff-cat-v">${esc(String(targetApp))}</span></div>
-        <div class="diff-cat-kv"><span class="diff-cat-k">フィールド対応</span><span class="diff-cat-v">${esc(String(((ref?.mappings || []).length) + ' 件'))}</span></div>
-      </div>
-    </div>`;
+    const changedKeys = (s && t)
+      ? summarizeChangedKeys(s, t, {
+          setKeys: ['mappings'],
+          scalarKeys: ['name', 'app']
+        })
+      : [];
+    const bodyHtml = [
+      `<div class="diff-cat-kv"><span class="diff-cat-k">対象アプリ</span><span class="diff-cat-v">${esc(String(targetApp))}</span></div>`,
+      `<div class="diff-cat-kv"><span class="diff-cat-k">フィールド対応</span><span class="diff-cat-v">${esc(String(((ref?.mappings || []).length) + ' 件'))}</span></div>`
+    ].join('');
+    return renderDiffCard({
+      status,
+      title: ref?.name || '(無名アクション)',
+      changedSummary: changedKeys,
+      bodyHtml,
+      changedClass: changedKeys.length > 0
+    });
   }).join('');
   return `<div class="diff-cat-card-grid">${cards}</div>`;
 }
@@ -577,23 +695,42 @@ function notificationKey(n: any): string {
   });
 }
 
-function renderNotificationCard(rule: any, status: { cls: string; label: string }): string {
-  const recipients: string[] = (rule?.recipients || rule?.targets || [])
-    .map((r: any) => `${r?.entity?.type || ''}:${r?.entity?.code || r?.entity?.login || r?.entity?.id || '-'}`)
-    .filter((x: string) => x !== ':-');
+function recipientLabels(rule: any): string[] {
+  const list = rule?.recipients || rule?.targets || [];
+  return (Array.isArray(list) ? list : [])
+    .map((r: any) => formatEntityText(r?.entity || r, { compact: true }))
+    .filter(Boolean);
+}
+
+function recipientIdentity(r: any): string {
+  const ent = r?.entity || r || {};
+  return `${ent.type || ''}:${ent.code || ent.login || ent.id || ''}`;
+}
+
+function renderNotificationCard(s: any, t: any, status: { cls: string; label: string }): string {
+  const rule = t || s;
+  const recipients = recipientLabels(rule);
   const condition = rule?.filterCond || rule?.condition || '';
-  return `<div class="diff-cat-card">
-    <header class="diff-cat-card-head">
-      <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
-      <span class="diff-cat-card-title">${esc(rule?.name || '(無名通知)')}</span>
-    </header>
-    <div class="diff-cat-card-body">
-      ${condition ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(condition)}</code></div>` : ''}
-      ${rule?.timing ? `<div class="diff-cat-kv"><span class="diff-cat-k">タイミング</span><span class="diff-cat-v">${esc(rule.timing)}</span></div>` : ''}
-      ${rule?.when ? `<div class="diff-cat-kv"><span class="diff-cat-k">トリガー</span><span class="diff-cat-v">${esc(rule.when)}</span></div>` : ''}
-      <div class="diff-cat-kv"><span class="diff-cat-k">宛先</span><span class="diff-cat-v">${shortList(recipients, 8)}</span></div>
-    </div>
-  </div>`;
+  const changedKeys = (s && t)
+    ? summarizeChangedKeys(s, t, {
+        setKeys: ['recipients', 'targets'],
+        scalarKeys: ['filterCond', 'timing', 'when', 'name', 'title'],
+        identify: recipientIdentity
+      })
+    : [];
+  const bodyHtml = [
+    condition ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(condition)}</code></div>` : '',
+    rule?.timing ? `<div class="diff-cat-kv"><span class="diff-cat-k">タイミング</span><span class="diff-cat-v">${esc(rule.timing)}</span></div>` : '',
+    rule?.when ? `<div class="diff-cat-kv"><span class="diff-cat-k">トリガー</span><span class="diff-cat-v">${esc(rule.when)}</span></div>` : '',
+    `<div class="diff-cat-kv"><span class="diff-cat-k">宛先</span><span class="diff-cat-v">${shortList(recipients, 8)}</span></div>`
+  ].filter(Boolean).join('');
+  return renderDiffCard({
+    status,
+    title: rule?.name || rule?.title || '(無名通知)',
+    changedSummary: changedKeys,
+    bodyHtml,
+    changedClass: changedKeys.length > 0
+  });
 }
 
 function renderNotificationGroup(label: string, srcRules: any[], tgtRules: any[]): string {
@@ -607,7 +744,7 @@ function renderNotificationGroup(label: string, srcRules: any[], tgtRules: any[]
     const s = sm.get(k);
     const t = tm.get(k);
     const status = statusLabel({ left: !!s, right: !!t });
-    return renderNotificationCard(t || s, status);
+    return renderNotificationCard(s, t, status);
   }).join('');
   return `<section class="diff-cat-sec">
     <header class="diff-cat-sec-head">
@@ -668,52 +805,71 @@ function renderViewCards(srcViews: any, tgtViews: any): string {
     const ref = t || s;
     const status = statusLabel({ left: !!s, right: !!t });
     const changed = !!s && !!t && valueChanged(s, t);
-    const type = ref?.type || 'LIST';
-    const fields: string[] = Array.isArray(ref?.fields) ? ref.fields : (ref?.fields ? Object.keys(ref.fields) : []);
+    const typeRaw = ref?.type || 'LIST';
+    const typeLabel = labelOfValue('view.type', typeRaw) || typeRaw;
+    const fields: string[] = Array.isArray(ref?.fields)
+      ? ref.fields.map((f: any) => (typeof f === 'object' ? (f?.code || f?.label || '') : String(f))).filter(Boolean)
+      : (ref?.fields ? Object.keys(ref.fields) : []);
     const filter = ref?.filterCond || '';
     const sort = ref?.sort || '';
-    return `<div class="diff-cat-card ${changed ? 'diff-cat-card--chg' : ''}">
-      <header class="diff-cat-card-head">
-        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
-        <span class="diff-cat-card-title">${esc(ref?.name || k)}</span>
-        <span class="diff-cat-tag diff-cat-tag--type">${esc(type)}</span>
-      </header>
-      <div class="diff-cat-card-body">
-        <div class="diff-cat-kv"><span class="diff-cat-k">表示項目</span><span class="diff-cat-v">${shortList(fields, 6)}</span></div>
-        ${filter ? `<div class="diff-cat-kv"><span class="diff-cat-k">絞込</span><code class="diff-cat-code">${esc(filter)}</code></div>` : ''}
-        ${sort ? `<div class="diff-cat-kv"><span class="diff-cat-k">ソート</span><code class="diff-cat-code">${esc(sort)}</code></div>` : ''}
-        ${changed ? renderViewChangedDetail(s, t) : ''}
-      </div>
-    </div>`;
+    const changedKeys = (s && t)
+      ? summarizeChangedKeys(s, t, {
+          setKeys: ['fields'],
+          scalarKeys: ['name', 'type', 'filterCond', 'sort', 'index', 'paginationStyle']
+        })
+      : [];
+    const bodyHtml = [
+      `<div class="diff-cat-kv"><span class="diff-cat-k">表示項目</span><span class="diff-cat-v">${shortList(fields, 6)}</span></div>`,
+      filter ? `<div class="diff-cat-kv"><span class="diff-cat-k">絞込</span><code class="diff-cat-code">${esc(filter)}</code></div>` : '',
+      sort ? `<div class="diff-cat-kv"><span class="diff-cat-k">ソート</span><code class="diff-cat-code">${esc(sort)}</code></div>` : ''
+    ].filter(Boolean).join('');
+    return renderDiffCard({
+      status,
+      title: ref?.name || k,
+      typeBadge: typeLabel,
+      changedSummary: changedKeys,
+      bodyHtml,
+      changedDetailHtml: changed ? renderViewChangedDetail(s, t) : '',
+      changedClass: changed
+    });
   }).join('');
   return `<div class="diff-cat-card-grid">${cards}</div>`;
 }
 
 function renderViewChangedDetail(s: any, t: any): string {
-  const checks: Array<{ key: string; label: string }> = [
-    { key: 'name', label: '名前' },
-    { key: 'type', label: '種別' },
-    { key: 'filterCond', label: '絞込条件' },
-    { key: 'sort', label: 'ソート' },
-    { key: 'index', label: '表示順' },
-    { key: 'paginationStyle', label: 'ページ送り' }
+  const checks: Array<{ key: string; valueScope?: string }> = [
+    { key: 'name' },
+    { key: 'type', valueScope: 'view.type' },
+    { key: 'filterCond' },
+    { key: 'sort' },
+    { key: 'index' },
+    { key: 'paginationStyle', valueScope: 'paginationStyle' }
   ];
   const items: string[] = [];
   for (const c of checks) {
     if (valueChanged(s?.[c.key], t?.[c.key])) {
-      items.push(`<li><span class="diff-cat-k">${esc(c.label)}</span>: <span class="diff-cat-old">${esc(safeStringify(s?.[c.key]))}</span> → <span class="diff-cat-new">${esc(safeStringify(t?.[c.key]))}</span></li>`);
+      const oldRaw = s?.[c.key];
+      const newRaw = t?.[c.key];
+      const oldDisp = c.valueScope ? (labelOfValue(c.valueScope, oldRaw) || safeStringify(oldRaw)) : safeStringify(oldRaw);
+      const newDisp = c.valueScope ? (labelOfValue(c.valueScope, newRaw) || safeStringify(newRaw)) : safeStringify(newRaw);
+      items.push(`<li><span class="diff-cat-k">${esc(labelOfProp(c.key))}</span>: <span class="diff-cat-old">${esc(oldDisp)}</span> → <span class="diff-cat-new">${esc(newDisp)}</span></li>`);
     }
   }
   const sf = Array.isArray(s?.fields) ? s.fields : [];
   const tf = Array.isArray(t?.fields) ? t.fields : [];
   if (valueChanged(sf, tf)) {
-    const added = tf.filter((x: any) => !sf.includes(x));
-    const removed = sf.filter((x: any) => !tf.includes(x));
+    const keyOf = (x: any) => (typeof x === 'object' ? (x?.code || x?.label || JSON.stringify(x)) : String(x));
+    const sCodes = sf.map(keyOf);
+    const tCodes = tf.map(keyOf);
+    const added = tCodes.filter((x: string) => !sCodes.includes(x));
+    const removed = sCodes.filter((x: string) => !tCodes.includes(x));
     if (added.length || removed.length) {
-      items.push(`<li><span class="diff-cat-k">表示項目</span>: ${added.length ? `<span class="diff-cat-new">+${added.length}件 (${added.slice(0, 3).map(esc).join(', ')}${added.length > 3 ? '…' : ''})</span>` : ''}${removed.length ? ` <span class="diff-cat-old">-${removed.length}件 (${removed.slice(0, 3).map(esc).join(', ')}${removed.length > 3 ? '…' : ''})</span>` : ''}</li>`);
+      items.push(`<li><span class="diff-cat-k">表示項目</span>: ${added.length ? `<span class="diff-cat-new">+${added.length}件 (${added.slice(0, 3).map(esc).join(', ')}${added.length > 3 ? '…' : ''})</span>` : ''}${removed.length ? ` <span class="diff-cat-old">−${removed.length}件 (${removed.slice(0, 3).map(esc).join(', ')}${removed.length > 3 ? '…' : ''})</span>` : ''}</li>`);
     }
   }
-  return items.length ? `<details class="diff-cat-changed-detail"><summary>変更詳細 (${items.length})</summary><ul>${items.join('')}</ul></details>` : '';
+  if (!items.length) return '';
+  const openAttr = items.length >= 3 ? ' open' : '';
+  return `<details class="diff-cat-changed-detail"${openAttr}><summary>変更詳細 (${items.length})</summary><ul>${items.join('')}</ul></details>`;
 }
 
 function renderReportCards(srcReports: any, tgtReports: any): string {
@@ -726,18 +882,27 @@ function renderReportCards(srcReports: any, tgtReports: any): string {
     const t = tm[k];
     const ref = t || s;
     const status = statusLabel({ left: !!s, right: !!t });
-    return `<div class="diff-cat-card">
-      <header class="diff-cat-card-head">
-        <span class="diff-cat-status ${status.cls}">${esc(status.label)}</span>
-        <span class="diff-cat-card-title">${esc(ref?.name || k)}</span>
-        <span class="diff-cat-tag diff-cat-tag--type">${esc(ref?.chartType || ref?.type || 'GRAPH')}</span>
-      </header>
-      <div class="diff-cat-card-body">
-        ${ref?.filterCond ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(ref.filterCond)}</code></div>` : ''}
-        ${ref?.groups ? `<div class="diff-cat-kv"><span class="diff-cat-k">分類</span><span class="diff-cat-v">${shortList((ref.groups || []).map((g: any) => g?.code || g), 6)}</span></div>` : ''}
-        ${ref?.aggregations ? `<div class="diff-cat-kv"><span class="diff-cat-k">集計</span><span class="diff-cat-v">${shortList((ref.aggregations || []).map((a: any) => `${a?.type || ''}(${a?.code || '-'})`), 6)}</span></div>` : ''}
-      </div>
-    </div>`;
+    const chartRaw = ref?.chartType || ref?.type || 'GRAPH';
+    const chartLabel = labelOfValue('chart.type', chartRaw) || chartRaw;
+    const changedKeys = (s && t)
+      ? summarizeChangedKeys(s, t, {
+          setKeys: ['groups', 'aggregations'],
+          scalarKeys: ['name', 'chartType', 'chartMode', 'filterCond']
+        })
+      : [];
+    const bodyHtml = [
+      ref?.filterCond ? `<div class="diff-cat-kv"><span class="diff-cat-k">条件</span><code class="diff-cat-code">${esc(ref.filterCond)}</code></div>` : '',
+      ref?.groups ? `<div class="diff-cat-kv"><span class="diff-cat-k">分類</span><span class="diff-cat-v">${shortList((ref.groups || []).map((g: any) => g?.code || g), 6)}</span></div>` : '',
+      ref?.aggregations ? `<div class="diff-cat-kv"><span class="diff-cat-k">集計</span><span class="diff-cat-v">${shortList((ref.aggregations || []).map((a: any) => `${a?.type || ''}(${a?.code || '-'})`), 6)}</span></div>` : ''
+    ].filter(Boolean).join('');
+    return renderDiffCard({
+      status,
+      title: ref?.name || k,
+      typeBadge: chartLabel,
+      changedSummary: changedKeys,
+      bodyHtml,
+      changedClass: changedKeys.length > 0
+    });
   }).join('');
   return `<div class="diff-cat-card-grid">${cards}</div>`;
 }
@@ -800,7 +965,12 @@ function flatLayout(layout: any[]): Array<{ row: number; col: number; code: stri
   return out;
 }
 
-function renderLayoutGrid(items: Array<{ row: number; col: number; code: string; type: string; label?: string }>, comparedCodes: Set<string>, mode: 'src' | 'tgt'): string {
+function renderLayoutGrid(
+  items: Array<{ row: number; col: number; code: string; type: string; label?: string }>,
+  comparedCodes: Set<string>,
+  movedCodes: Set<string>,
+  mode: 'src' | 'tgt'
+): string {
   if (!items.length) return emptyState('レイアウト未取得');
   // Group by row, sort by col
   const byRow = new Map<number, Array<typeof items[0]>>();
@@ -812,12 +982,17 @@ function renderLayoutGrid(items: Array<{ row: number; col: number; code: string;
   const rowsHtml = rows.map((r) => {
     const cells = byRow.get(r)!.sort((a, b) => a.col - b.col).map((c) => {
       const exists = comparedCodes.has(c.code);
+      const moved = exists && movedCodes.has(c.code);
       const cls = c.type === 'GROUP' ? 'diff-cat-layout-group'
         : !exists ? (mode === 'tgt' ? 'diff-cat-layout-add' : 'diff-cat-layout-rm')
-        : 'diff-cat-layout-keep';
-      return `<div class="diff-cat-layout-cell ${cls}" title="${esc(`${c.label || c.code} (${c.type})`)}">
+        : (moved ? 'diff-cat-layout-move' : 'diff-cat-layout-keep');
+      const movedBadge = moved ? '<span class="diff-cat-layout-move-badge" aria-hidden="true">↕</span>' : '';
+      const titleSuffix = !exists ? (mode === 'tgt' ? ' / 新規追加' : ' / 削除予定')
+        : (moved ? ' / 位置移動' : '');
+      return `<div class="diff-cat-layout-cell ${cls}" data-layout-code="${esc(c.code)}" data-layout-mode="${mode}" title="${esc(`${c.label || c.code} (${c.type})${titleSuffix}`)}">
         <span class="diff-cat-layout-code">${esc(c.code)}</span>
         <span class="diff-cat-layout-type">${esc(c.type || '-')}</span>
+        ${movedBadge}
       </div>`;
     }).join('');
     return `<div class="diff-cat-layout-row">${cells}</div>`;
@@ -837,26 +1012,39 @@ function renderLayoutCategory(src: any, tgt: any): string {
   const tgtCodes = new Set(flatT.map((i) => i.code));
   const onlyInSrc = flatS.filter((i) => !tgtCodes.has(i.code));
   const onlyInTgt = flatT.filter((i) => !srcCodes.has(i.code));
+  // 両側に存在するコードのうち、row / col が変わっているものを「移動」として検出
+  const srcByCode = new Map(flatS.map((i) => [i.code, i] as const));
+  const movedCodes = new Set<string>();
+  for (const item of flatT) {
+    const s = srcByCode.get(item.code);
+    if (!s) continue;
+    if (s.row !== item.row || s.col !== item.col) movedCodes.add(item.code);
+  }
+  const changedTotal = onlyInSrc.length + onlyInTgt.length + movedCodes.size;
+  const headSub = changedTotal
+    ? `変更 ${changedTotal} 件（追加 ${onlyInTgt.length} / 削除 ${onlyInSrc.length} / 移動 ${movedCodes.size}）`
+    : '行 × 列のフィールド配置';
   return `<section class="diff-cat-sec">
     <header class="diff-cat-sec-head">
       <span class="diff-cat-sec-icon">${renderSectionIconHtml('layoutSettings')}</span>
       <span class="diff-cat-sec-title">レイアウト</span>
-      <span class="diff-cat-sec-sub">行 × 列のフィールド配置</span>
+      <span class="diff-cat-sec-sub">${esc(headSub)}</span>
     </header>
     <div class="diff-cat-layout-cmp">
       <div class="diff-cat-layout-side">
         <header class="diff-cat-side-head">比較元 (${flatS.length}項目)</header>
-        ${renderLayoutGrid(flatS, tgtCodes, 'src')}
+        ${renderLayoutGrid(flatS, tgtCodes, movedCodes, 'src')}
       </div>
       <div class="diff-cat-layout-side">
         <header class="diff-cat-side-head">比較先 (${flatT.length}項目)</header>
-        ${renderLayoutGrid(flatT, srcCodes, 'tgt')}
+        ${renderLayoutGrid(flatT, srcCodes, movedCodes, 'tgt')}
       </div>
     </div>
     <div class="diff-cat-layout-summary">
       <span class="diff-cat-tag diff-cat-tag--rm">削除候補 ${onlyInSrc.length}</span>
       <span class="diff-cat-tag diff-cat-tag--add">新規 ${onlyInTgt.length}</span>
-      <span class="diff-cat-tag">保持 ${flatT.length - onlyInTgt.length}</span>
+      ${movedCodes.size ? `<span class="diff-cat-tag diff-cat-tag--move">移動 ${movedCodes.size}</span>` : ''}
+      <span class="diff-cat-tag">保持 ${flatT.length - onlyInTgt.length - movedCodes.size}</span>
     </div>
   </section>`;
 }
@@ -897,10 +1085,14 @@ function renderCustomizeCategory(src: any, tgt: any): string {
   const tm = new Map(tFiles.map((f) => [keyOf(f), f]));
   const keys = new Set<string>([...sm.keys(), ...tm.keys()]);
 
+  let addedFiles = 0;
+  let removedFiles = 0;
   const fileRows = [...keys].map((k) => {
     const s = sm.get(k);
     const t = tm.get(k);
     const status = statusLabel({ left: !!s, right: !!t });
+    if (!s && t) addedFiles++;
+    else if (s && !t) removedFiles++;
     const ref = t || s!;
     return `<tr>
       <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
@@ -912,11 +1104,15 @@ function renderCustomizeCategory(src: any, tgt: any): string {
 
   let customizeBlock = '';
   if (keys.size) {
+    const changedTotal = addedFiles + removedFiles;
+    const headSub = changedTotal
+      ? `変更 ${changedTotal} 件（追加 ${addedFiles} / 削除 ${removedFiles}）`
+      : 'desktop / mobile × JS / CSS のファイル一覧';
     customizeBlock = `<section class="diff-cat-sec">
       <header class="diff-cat-sec-head">
         <span class="diff-cat-sec-icon">${renderSectionIconHtml('customizeSettings')}</span>
         <span class="diff-cat-sec-title">JS/CSS</span>
-        <span class="diff-cat-sec-sub">desktop / mobile × JS / CSS のファイル一覧</span>
+        <span class="diff-cat-sec-sub">${esc(headSub)}</span>
       </header>
       <div class="diff-cat-table-wrap"><table class="diff-cat-table">
         <thead><tr><th style="width:60px">状態</th><th style="width:80px">配置</th><th style="width:60px">種別</th><th>ファイル</th></tr></thead>
@@ -935,6 +1131,14 @@ function renderCustomizeCategory(src: any, tgt: any): string {
     const sMap = new Map(sPlugins.map((p) => [String(p?.id || ''), p]));
     const tMap = new Map(tPlugins.map((p) => [String(p?.id || ''), p]));
     const allIds = new Set([...sMap.keys(), ...tMap.keys()]);
+    let pAdded = 0, pRemoved = 0, pChanged = 0;
+    for (const id of allIds) {
+      const s = sMap.get(id);
+      const t = tMap.get(id);
+      if (!s && t) pAdded++;
+      else if (s && !t) pRemoved++;
+      else if (s && t && valueChanged(s, t)) pChanged++;
+    }
     const rows = [...allIds].map((id) => {
       const s = sMap.get(id);
       const t = tMap.get(id);
@@ -943,18 +1147,25 @@ function renderCustomizeCategory(src: any, tgt: any): string {
       const vL = s?.version || '';
       const vR = t?.version || '';
       const vChanged = vL && vR && vL !== vR;
+      const summaryHtml = (s && t && !vChanged && valueChanged(s, t))
+        ? renderChangedSummaryChips(['設定変更'])
+        : '';
       return `<tr>
         <td><span class="diff-cat-status ${status.cls}">${esc(status.label)}</span></td>
         <td class="diff-cat-mono">${esc(id)}</td>
-        <td>${esc(ref?.name || '-')}</td>
+        <td>${esc(ref?.name || '-')}${summaryHtml}</td>
         <td>${vChanged ? `<span class="diff-cat-old">${esc(vL)}</span> → <span class="diff-cat-new">${esc(vR)}</span>` : esc(vR || vL || '-')}</td>
       </tr>`;
     }).join('');
+    const pTotal = pAdded + pRemoved + pChanged;
+    const pSub = pTotal
+      ? `変更 ${pTotal} 件（追加 ${pAdded} / 削除 ${pRemoved} / 更新 ${pChanged}）`
+      : '有効化されたプラグイン一覧';
     pluginBlock = `<section class="diff-cat-sec">
       <header class="diff-cat-sec-head">
         <span class="diff-cat-sec-icon">${renderSectionIconHtml('pluginSettings')}</span>
         <span class="diff-cat-sec-title">プラグイン</span>
-        <span class="diff-cat-sec-sub">有効化されたプラグイン一覧</span>
+        <span class="diff-cat-sec-sub">${esc(pSub)}</span>
       </header>
       <div class="diff-cat-table-wrap"><table class="diff-cat-table">
         <thead><tr><th style="width:60px">状態</th><th>ID</th><th>名前</th><th>バージョン</th></tr></thead>
@@ -1192,10 +1403,23 @@ function categoryToMarkdown(catKey: string, rows: any[], src: any, tgt: any, row
     const sample = secRows.slice(0, 30);
     for (const r of sample) {
       const t = r.type === 'added' ? '+ 追加' : r.type === 'removed' ? '- 削除' : '~ 変更';
-      const v = r.type === 'added' ? safeStringify(r.right)
-        : r.type === 'removed' ? safeStringify(r.left)
-        : `${safeStringify(r.left)} → ${safeStringify(r.right)}`;
-      lines.push(`- ${t} \`${r.path}\` ${v.slice(0, 200)}`);
+      // 非フィールド系は辞書経由のセマンティック整形を優先 (HTML と表記を揃える)
+      const decoded = isSemanticSection(r.sectionKey) ? decodeRow(r) : null;
+      let where = '';
+      let value = '';
+      if (decoded) {
+        const chips = (decoded.whereChips || []).map((c) => (c.icon ? `${c.icon} ${c.label}` : c.label)).join(' / ');
+        where = chips ? ` [${chips}]` : '';
+        const propPart = decoded.propLabel ? `${decoded.propLabel}: ` : '';
+        value = r.type === 'added'   ? `${propPart}${decoded.afterText}`
+              : r.type === 'removed' ? `${propPart}${decoded.beforeText}`
+                                     : `${propPart}${decoded.beforeText} → ${decoded.afterText}`;
+      } else {
+        value = r.type === 'added' ? safeStringify(r.right)
+              : r.type === 'removed' ? safeStringify(r.left)
+                                     : `${safeStringify(r.left)} → ${safeStringify(r.right)}`;
+      }
+      lines.push(`- ${t}${where} ${value.slice(0, 200)}`);
     }
     if (secRows.length > sample.length) lines.push(`- … 他 ${secRows.length - sample.length} 件`);
   }
