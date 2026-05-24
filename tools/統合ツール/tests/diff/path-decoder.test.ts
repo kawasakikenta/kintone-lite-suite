@@ -110,4 +110,34 @@ describe('path-decoder.decodeRow', () => {
     expect(decodeRow({ sectionKey: 'fieldSettings', path: 'fieldSettings.x', type: 'changed' })).toBeNull();
     expect(decodeRow({ sectionKey: 'layoutSettings', path: 'layoutSettings.layout[0]', type: 'changed' })).toBeNull();
   });
+
+  it('decodes recipients (added) as compact entity list', () => {
+    const row = {
+      sectionKey: 'notifications',
+      path: 'notifications.notifications[0].recipients',
+      type: 'changed',
+      left: [{ entity: { type: 'GROUP', code: 'sales', name: '営業部' } }],
+      right: [
+        { entity: { type: 'GROUP', code: 'sales', name: '営業部' } },
+        { entity: { type: 'USER', code: 'alice', name: 'Alice' } }
+      ]
+    };
+    const d = decodeRow(row);
+    expect(d!.propLabel).toBe('宛先');
+    expect(d!.beforeText).toContain('営業部');
+    expect(d!.afterText).toContain('Alice');
+  });
+
+  it('keeps internal keys searchable alongside Japanese labels', () => {
+    const row = {
+      sectionKey: 'appAcl',
+      path: 'appAcl.rights[0].recordViewable',
+      type: 'changed',
+      left: true,
+      right: false
+    };
+    const d = decodeRow(row);
+    // 日本語ラベルが検索インデックスに含まれる
+    expect(d!.searchableTokens.join(' ')).toMatch(/閲覧|アプリ権限|許可/);
+  });
 });
