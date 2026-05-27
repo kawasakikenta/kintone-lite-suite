@@ -290,7 +290,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
                       <button type="button" class="btn sub" data-act="kusCopyDiffMd" title="差分 Markdown 表をクリップボードへコピー（PR・チャット貼付向け）">📋 差分 MD コピー</button>
-                      <button type="button" class="btn sub" data-act="kusExportDiffCsv" title="差分結果を Excel 用 CSV (UTF-8 BOM) で保存">📊 差分 CSV</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffXlsx" title="差分結果を Excel (.xlsx) でセクション別シート構成で保存">📊 差分 Excel</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙付きPDFとして印刷ダイアログを開きます">📕 差分 PDF（表紙付き）</button>
                       <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">

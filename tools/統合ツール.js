@@ -813,10 +813,10 @@ ${contextLine}`);
     const normalizedExt = String(ext || "").replace(/^\./, "").trim() || "txt";
     const base = sanitizeFilenamePart(baseLabel, "出力");
     const stamp = options.timestamp || nowStamp();
-    const appLabel2 = String(options.appLabel || "").trim();
+    const appLabel3 = String(options.appLabel || "").trim();
     const suffix = String(options.suffix || "").trim();
     const parts = [base];
-    if (appLabel2) parts.push(sanitizeFilenamePart(appLabel2));
+    if (appLabel3) parts.push(sanitizeFilenamePart(appLabel3));
     if (suffix) parts.push(sanitizeFilenamePart(suffix));
     parts.push(sanitizeFilenamePart(stamp, nowStamp()));
     return `${parts.join("_")}.${normalizedExt}`;
@@ -12886,7 +12886,7 @@ ${tgt.full}`);
     } catch {
     }
     const targetBundle = state.importedTargetBundle || state.lastTargetBundle;
-    const appLabel2 = (() => {
+    const appLabel3 = (() => {
       const info = targetBundle?.sections?.appInfo;
       if (info && typeof info === "object" && !info._fetchError) {
         return String(info.name || "").trim();
@@ -12910,7 +12910,7 @@ ${tgt.full}`);
     el.innerHTML = `<div class="reflect-target-badge__inner ${previewClass}">
     <span class="reflect-target-badge__chip">${esc(previewLabel)}</span>
     <span class="reflect-target-badge__app">App ${esc(appId)}</span>
-    ${appLabel2 ? `<span class="reflect-target-badge__name" title="${esc(appLabel2)}">${esc(appLabel2)}</span>` : ""}
+    ${appLabel3 ? `<span class="reflect-target-badge__name" title="${esc(appLabel3)}">${esc(appLabel3)}</span>` : ""}
     ${guestSuffix ? `<span class="reflect-target-badge__guest">${guestSuffix}</span>` : ""}
     <button type="button" class="reflect-target-badge__open${pendingClass}" data-act="openTargetPreviewApp" data-preview-url="${esc(appPath)}" title="比較先アプリのプレビュー確認画面を開き、チェックリスト「プレビュー画面確認済み」を満たします">${esc(pendingLabel)}</button>
   </div>`;
@@ -32617,7 +32617,7 @@ ${detail}`);
                       <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
                       <button type="button" class="btn sub" data-act="kusCopyDiffMd" title="差分 Markdown 表をクリップボードへコピー（PR・チャット貼付向け）">📋 差分 MD コピー</button>
-                      <button type="button" class="btn sub" data-act="kusExportDiffCsv" title="差分結果を Excel 用 CSV (UTF-8 BOM) で保存">📊 差分 CSV</button>
+                      <button type="button" class="btn sub" data-act="kusExportDiffXlsx" title="差分結果を Excel (.xlsx) でセクション別シート構成で保存">📊 差分 Excel</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙付きPDFとして印刷ダイアログを開きます">📕 差分 PDF（表紙付き）</button>
                       <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
@@ -36471,7 +36471,7 @@ ${detail}`);
     const issueHtml = fetchIssues && fetchIssues.length ? `<div class="pvd-issues"><strong>取得失敗 ${fetchIssues.length}件</strong><span>${esc(fetchIssues.map((x) => x.section || x.sectionKey).filter(Boolean).join(", "))}</span></div>` : "";
     const previewApp = extractAppNameFromBundle(previewBundle) || "";
     const prodApp = extractAppNameFromBundle(productionBundle) || "";
-    const appLabel2 = previewApp || prodApp ? ` / ${esc(previewApp || prodApp)}` : "";
+    const appLabel3 = previewApp || prodApp ? ` / ${esc(previewApp || prodApp)}` : "";
     const stamp = runAt ? new Date(runAt).toLocaleString() : "";
     host.style.display = "block";
     host.innerHTML = `
@@ -36481,7 +36481,7 @@ ${detail}`);
           <div class="pvd-title">プレビュー ⇔ 本番 差分比較</div>
           <div class="pvd-subtitle">デプロイ待ちの設定差分を、プレビュー側と本番側で並べて確認します。</div>
         </div>
-        <div class="pvd-meta">App ${esc(appId)}${guestId ? ` / guest ${esc(guestId)}` : ""}${appLabel2}${stamp ? ` ・ ${esc(stamp)}` : ""}</div>
+        <div class="pvd-meta">App ${esc(appId)}${guestId ? ` / guest ${esc(guestId)}` : ""}${appLabel3}${stamp ? ` ・ ${esc(stamp)}` : ""}</div>
       </div>
       <div class="pvd-metrics">
         ${renderMetricCard("差分", totalActual, "プレビューと本番の差", "pvd-metric--total")}
@@ -36591,8 +36591,8 @@ ${detail}`);
       return;
     }
     const appName = extractAppNameFromBundle(payload.previewBundle) || extractAppNameFromBundle(payload.productionBundle) || "";
-    const appLabel2 = buildAppFilenameLabel(payload.appId, appName);
-    const filename = `preview_prod_diff_${appLabel2}_${nowStamp()}.json`;
+    const appLabel3 = buildAppFilenameLabel(payload.appId, appName);
+    const filename = `preview_prod_diff_${appLabel3}_${nowStamp()}.json`;
     const body = {
       kind: "preview-production-diff",
       exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -40997,6 +40997,345 @@ ${detail}`);
     return out;
   }
 
+  // src/diff/xlsx-export.ts
+  init_constants();
+  init_utils();
+  init_export();
+
+  // src/diff/xlsx-builder.ts
+  var XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  var crcTable = null;
+  function crc32(bytes) {
+    if (!crcTable) {
+      const t = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+        t[i] = c >>> 0;
+      }
+      crcTable = t;
+    }
+    let crc = 4294967295;
+    for (let i = 0; i < bytes.length; i++) crc = (crcTable[(crc ^ bytes[i]) & 255] ^ crc >>> 8) >>> 0;
+    return (crc ^ 4294967295) >>> 0;
+  }
+  function buildStoredZip(entries) {
+    const parts = [];
+    const central = [];
+    let offset = 0;
+    const DOS_TIME = 0;
+    const DOS_DATE = 2020 - 1980 << 9 | 1 << 5 | 1;
+    const enc = new TextEncoder();
+    for (const e of entries) {
+      const nameBytes = enc.encode(e.name);
+      const data = e.data;
+      const crc = crc32(data);
+      const size = data.length;
+      const lfh = new Uint8Array(30 + nameBytes.length);
+      const dv = new DataView(lfh.buffer);
+      dv.setUint32(0, 67324752, true);
+      dv.setUint16(4, 20, true);
+      dv.setUint16(6, 2048, true);
+      dv.setUint16(8, 0, true);
+      dv.setUint16(10, DOS_TIME, true);
+      dv.setUint16(12, DOS_DATE, true);
+      dv.setUint32(14, crc, true);
+      dv.setUint32(18, size, true);
+      dv.setUint32(22, size, true);
+      dv.setUint16(26, nameBytes.length, true);
+      dv.setUint16(28, 0, true);
+      lfh.set(nameBytes, 30);
+      parts.push(lfh, data);
+      const cdh = new Uint8Array(46 + nameBytes.length);
+      const cdv = new DataView(cdh.buffer);
+      cdv.setUint32(0, 33639248, true);
+      cdv.setUint16(4, 20, true);
+      cdv.setUint16(6, 20, true);
+      cdv.setUint16(8, 2048, true);
+      cdv.setUint16(10, 0, true);
+      cdv.setUint16(12, DOS_TIME, true);
+      cdv.setUint16(14, DOS_DATE, true);
+      cdv.setUint32(16, crc, true);
+      cdv.setUint32(20, size, true);
+      cdv.setUint32(24, size, true);
+      cdv.setUint16(28, nameBytes.length, true);
+      cdv.setUint16(30, 0, true);
+      cdv.setUint16(32, 0, true);
+      cdv.setUint16(34, 0, true);
+      cdv.setUint16(36, 0, true);
+      cdv.setUint32(38, 0, true);
+      cdv.setUint32(42, offset, true);
+      cdh.set(nameBytes, 46);
+      central.push(cdh);
+      offset += lfh.length + data.length;
+    }
+    const cdStart = offset;
+    let cdSize = 0;
+    for (const c of central) {
+      parts.push(c);
+      cdSize += c.length;
+    }
+    const eocd = new Uint8Array(22);
+    const edv = new DataView(eocd.buffer);
+    edv.setUint32(0, 101010256, true);
+    edv.setUint16(4, 0, true);
+    edv.setUint16(6, 0, true);
+    edv.setUint16(8, central.length, true);
+    edv.setUint16(10, central.length, true);
+    edv.setUint32(12, cdSize, true);
+    edv.setUint32(16, cdStart, true);
+    edv.setUint16(20, 0, true);
+    parts.push(eocd);
+    return new Blob(parts, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+  function escapeXml(s) {
+    return String(s ?? "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  }
+  function colRef(n) {
+    let s = "";
+    let v = n;
+    while (v > 0) {
+      const r = (v - 1) % 26;
+      s = String.fromCharCode(65 + r) + s;
+      v = Math.floor((v - 1) / 26);
+    }
+    return s;
+  }
+  function sanitizeSheetName(name, index, used) {
+    let n = String(name || `Sheet${index + 1}`).replace(/[\\\/\?\*\[\]:]/g, "_");
+    if (n.length > 31) n = n.slice(0, 31);
+    if (!n) n = `Sheet${index + 1}`;
+    let candidate = n;
+    let i = 2;
+    while (used.has(candidate)) {
+      const suffix = `_${i++}`;
+      candidate = (n.length + suffix.length > 31 ? n.slice(0, 31 - suffix.length) : n) + suffix;
+    }
+    used.add(candidate);
+    return candidate;
+  }
+  var MIN_COL_W = 10;
+  var MAX_COL_W = 60;
+  function estimateColWidth(rows, col) {
+    let max = MIN_COL_W;
+    const limit = Math.min(rows.length, 500);
+    for (let r = 0; r < limit; r++) {
+      const v = rows[r] ? rows[r][col] : void 0;
+      if (v == null) continue;
+      const text = String(v);
+      let maxLine = 0;
+      for (const line of text.split("\n")) {
+        let w = 0;
+        for (let i = 0; i < line.length; i++) {
+          const code = line.charCodeAt(i);
+          w += code > 127 || code === 0 ? 2 : 1;
+        }
+        if (w > maxLine) maxLine = w;
+      }
+      if (maxLine > max) max = maxLine;
+    }
+    return Math.min(MAX_COL_W, max + 2);
+  }
+  function buildSheetXml(sheet) {
+    const rows = sheet.rows || [];
+    const maxCols = rows.reduce((n, r) => Math.max(n, r ? r.length : 0), 0);
+    const widths = sheet.colWidths && sheet.colWidths.length ? sheet.colWidths : Array.from({ length: maxCols }, (_, i) => estimateColWidth(rows, i));
+    const out = [];
+    out.push(XML_HEADER);
+    out.push('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">');
+    const freeze = sheet.freezeHeader !== false && rows.length > 0;
+    if (freeze) {
+      out.push('<sheetViews><sheetView workbookViewId="0">');
+      out.push('<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>');
+      out.push("</sheetView></sheetViews>");
+    }
+    out.push('<sheetFormatPr defaultRowHeight="16"/>');
+    if (widths.length) {
+      out.push("<cols>");
+      widths.forEach((w, i) => {
+        const cw = Math.max(MIN_COL_W, Math.min(MAX_COL_W, Number(w) || MIN_COL_W));
+        out.push(`<col min="${i + 1}" max="${i + 1}" width="${cw}" customWidth="1"/>`);
+      });
+      out.push("</cols>");
+    }
+    out.push("<sheetData>");
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const cells = [];
+      for (let c = 0; c < row.length; c++) {
+        const v = row[c];
+        if (v === null || v === void 0 || v === "") continue;
+        const ref = `${colRef(c + 1)}${r + 1}`;
+        const styleAttr = r === 0 ? ' s="1"' : ' s="2"';
+        if (typeof v === "number" && Number.isFinite(v)) {
+          cells.push(`<c r="${ref}"${styleAttr}><v>${v}</v></c>`);
+        } else if (typeof v === "boolean") {
+          cells.push(`<c r="${ref}"${styleAttr} t="b"><v>${v ? 1 : 0}</v></c>`);
+        } else {
+          cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${escapeXml(v)}</t></is></c>`);
+        }
+      }
+      out.push(`<row r="${r + 1}">${cells.join("")}</row>`);
+    }
+    out.push("</sheetData>");
+    if (sheet.autoFilter !== false && rows.length > 1 && maxCols > 0) {
+      out.push(`<autoFilter ref="A1:${colRef(maxCols)}${rows.length}"/>`);
+    }
+    out.push("</worksheet>");
+    return out.join("");
+  }
+  function buildWorkbookXml(sheets) {
+    const items = sheets.map((s, i) => `<sheet name="${escapeXml(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("");
+    return `${XML_HEADER}<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${items}</sheets></workbook>`;
+  }
+  function buildWorkbookRels(sheets) {
+    const items = sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("");
+    return `${XML_HEADER}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${items}</Relationships>`;
+  }
+  function buildContentTypes(sheets) {
+    const overrides = sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("");
+    return `${XML_HEADER}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` + overrides + "</Types>";
+  }
+  function buildRootRels() {
+    return `${XML_HEADER}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+  }
+  function buildStylesXml() {
+    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE0F2FE"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  }
+  function buildXlsxBlob(sheets) {
+    const enc = new TextEncoder();
+    const used = /* @__PURE__ */ new Set();
+    const safe = sheets.map((s, i) => ({ ...s, name: sanitizeSheetName(s.name, i, used) }));
+    const entries = [
+      { name: "[Content_Types].xml", data: enc.encode(buildContentTypes(safe)) },
+      { name: "_rels/.rels", data: enc.encode(buildRootRels()) },
+      { name: "xl/workbook.xml", data: enc.encode(buildWorkbookXml(safe)) },
+      { name: "xl/_rels/workbook.xml.rels", data: enc.encode(buildWorkbookRels(safe)) },
+      { name: "xl/styles.xml", data: enc.encode(buildStylesXml()) }
+    ];
+    safe.forEach((s, i) => {
+      entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s)) });
+    });
+    return buildStoredZip(entries);
+  }
+
+  // src/diff/xlsx-export.ts
+  var SECTION_LABEL_BY_KEY2 = new Map(SECTION_DEFS.map((d) => [d.key, d.label]));
+  var SECTION_ORDER_BY_KEY = new Map(SECTION_DEFS.map((d, i) => [d.key, i]));
+  function sectionLabelOf(key) {
+    return SECTION_LABEL_BY_KEY2.get(key) || key || "(未分類)";
+  }
+  function groupRowsBySection(rows) {
+    const map = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = r.sectionKey || "(その他)";
+      let list = map.get(key);
+      if (!list) {
+        list = [];
+        map.set(key, list);
+      }
+      list.push(r);
+    }
+    const ordered = /* @__PURE__ */ new Map();
+    const known = [...map.keys()].filter((k) => SECTION_ORDER_BY_KEY.has(k)).sort((a, b) => SECTION_ORDER_BY_KEY.get(a) - SECTION_ORDER_BY_KEY.get(b));
+    const unknown = [...map.keys()].filter((k) => !SECTION_ORDER_BY_KEY.has(k));
+    for (const k of [...known, ...unknown]) ordered.set(k, map.get(k));
+    return ordered;
+  }
+  function appLabel2(bundle) {
+    if (!bundle) return "";
+    const name = bundle.meta?.appName ? String(bundle.meta.appName) : "";
+    const id = bundle.appId != null ? String(bundle.appId) : "";
+    if (name && id) return `${name} (App ${id})`;
+    return name || (id ? `App ${id}` : "");
+  }
+  var HEADER = ["種別", "重要度", "パス", "項目", "比較元 (旧)", "比較先 (新)"];
+  var COL_WIDTHS = [10, 8, 38, 28, 48, 48];
+  function buildSummarySheet(ctx, grouped) {
+    const rows = ctx.rows || [];
+    const issues = ctx.fetchIssues || [];
+    const typeCounts = { added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
+    const sevCounts = { high: 0, medium: 0, low: 0 };
+    for (const r of rows) {
+      if (typeCounts[r.type] != null) typeCounts[r.type] += 1;
+      const sev = String(r.severity || "").toLowerCase();
+      if (sevCounts[sev] != null) sevCounts[sev] += 1;
+    }
+    const diffCount = typeCounts.added + typeCounts.removed + typeCounts.changed + typeCounts.moved;
+    const sheet = {
+      name: "概要",
+      autoFilter: false,
+      freezeHeader: false,
+      colWidths: [22, 60],
+      rows: [
+        ["項目", "値"],
+        ["生成日時", (/* @__PURE__ */ new Date()).toISOString()],
+        ["比較元アプリ", appLabel2(ctx.sourceBundle)],
+        ["比較元ゲストID", String(ctx.sourceBundle?.guestId || "")],
+        ["比較元プレビュー", ctx.sourceBundle?.preview ? "はい" : "いいえ"],
+        ["比較先アプリ", appLabel2(ctx.targetBundle)],
+        ["比較先ゲストID", String(ctx.targetBundle?.guestId || "")],
+        ["比較先プレビュー", ctx.targetBundle?.preview ? "はい" : "いいえ"],
+        ["出力内容", getDiffExportContentLabel(ctx.exportContentMode || "diffOnly")],
+        ["無視キー", String(ctx.ignoreKeys || "")],
+        ["", ""],
+        ["集計", "件数"],
+        ["全行数", String(rows.length)],
+        ["差分件数 (追加/削除/変更/移動)", String(diffCount)],
+        ["  追加", String(typeCounts.added)],
+        ["  削除", String(typeCounts.removed)],
+        ["  変更", String(typeCounts.changed)],
+        ["  移動", String(typeCounts.moved)],
+        ["  同一", String(typeCounts.same)],
+        ["重要度: 高", String(sevCounts.high)],
+        ["重要度: 中", String(sevCounts.medium)],
+        ["重要度: 低", String(sevCounts.low)],
+        ["取得時の問題", String(issues.length)],
+        ["", ""],
+        ["セクション", "件数"]
+      ]
+    };
+    for (const [key, list] of grouped) {
+      sheet.rows.push([sectionLabelOf(key), String(list.length)]);
+    }
+    return sheet;
+  }
+  function buildSectionSheet(label, list) {
+    const rows = [HEADER];
+    for (const r of list) {
+      const type = getDiffTypeDisplayLabel(r.type, { moved: !!r.moved });
+      const sev = getSeverityDisplayLabel(r.severity || "low");
+      const left = r.left === void 0 || r.type === "added" ? "" : stringifyRowValueForDiff(r.left, r.path);
+      const right = r.right === void 0 || r.type === "removed" ? "" : stringifyRowValueForDiff(r.right, r.path);
+      rows.push([type, sev, r.path || "", r.label || "", left, right]);
+    }
+    return { name: label, rows, colWidths: COL_WIDTHS };
+  }
+  function buildIssuesSheet(issues) {
+    const rows = [["セクション", "対象", "メッセージ"]];
+    for (const i of issues) {
+      rows.push([sectionLabelOf(i.sectionKey || ""), getIssueSideLabel(i.side || ""), String(i.message || "")]);
+    }
+    return { name: "取得時の問題", rows, colWidths: [22, 12, 80] };
+  }
+  function buildDiffXlsxBlob(ctx) {
+    const rows = ctx.rows || [];
+    const issues = ctx.fetchIssues || [];
+    if (!rows.length && !issues.length) throw new Error("出力できる比較結果がありません");
+    const grouped = groupRowsBySection(rows);
+    const sheets = [buildSummarySheet(ctx, grouped)];
+    for (const [key, list] of grouped) {
+      sheets.push(buildSectionSheet(sectionLabelOf(key), list));
+    }
+    if (issues.length) sheets.push(buildIssuesSheet(issues));
+    return buildXlsxBlob(sheets);
+  }
+  function runExportDiffXlsx(ctx) {
+    const blob = buildDiffXlsxBlob(ctx);
+    const filename = ctx.filename || `diff_${nowStamp()}.xlsx`;
+    downloadBlob(filename, blob);
+  }
+
   // src/ui/extras.ts
   var G = {};
   function getRoot2() {
@@ -42748,22 +43087,26 @@ ${body}`;
       pushToast("クリップボードへコピーできませんでした", { tone: "error" });
     }
   }
-  function exportDiffAsCsvForExcel() {
+  function exportDiffAsXlsx() {
     const rows = state.lastDiffRows || [];
     if (!rows.length) {
       pushToast("差分が未取得です", { tone: "warn" });
       return;
     }
-    const head = ["種別", "セクション", "パス", "旧値", "新値", "重要度"].join(",");
-    const body = rows.map((r) => {
-      const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
-      const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-      const oldStr = localizeKintoneEnumsInText2(JSON.stringify(diffLeftValue(r)));
-      const newStr = localizeKintoneEnumsInText2(JSON.stringify(diffRightValue(r)));
-      return [typeLabel, diffSectionLabel(r), r.path, oldStr, newStr, severityLabel].map((c) => `"${String(c ?? "").replace(/"/g, '""').replace(/[\r\n]/g, " ")}"`).join(",");
-    }).join("\n");
-    triggerDownload2(new Blob(["\uFEFF", head + "\n" + body], { type: "text/csv;charset=utf-8" }), `kus-diff_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.csv`);
-    pushToast("Excel 用 CSV を保存しました", { tone: "ok" });
+    try {
+      runExportDiffXlsx({
+        rows,
+        fetchIssues: state.lastFetchIssues || [],
+        sourceBundle: state.lastSourceBundle,
+        targetBundle: state.lastTargetBundle,
+        ignoreKeys: ui.ignoreKeys?.value || "",
+        exportContentMode: "diffOnly",
+        filename: `kus-diff_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`
+      });
+      pushToast("差分 Excel (.xlsx) を保存しました", { tone: "ok" });
+    } catch (e) {
+      pushToast(`Excel 出力に失敗しました: ${e?.message || String(e)}`, { tone: "error" });
+    }
   }
   function exportDiffAsPrintablePdf() {
     const rows = state.lastDiffRows || [];
@@ -43791,9 +44134,9 @@ ${body}`;
       } else if (act === "kusCopyDiffMd") {
         e.preventDefault();
         copyDiffAsMarkdown();
-      } else if (act === "kusExportDiffCsv") {
+      } else if (act === "kusExportDiffXlsx") {
         e.preventDefault();
-        exportDiffAsCsvForExcel();
+        exportDiffAsXlsx();
       } else if (act === "kusExportDiffPdf") {
         e.preventDefault();
         exportDiffAsPrintablePdf();
@@ -43837,11 +44180,11 @@ ${body}`;
     setStatus("設計情報を取得中...");
     const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
     state.lastSourceBundle = bundle;
-    const appLabel2 = buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle));
+    const appLabel3 = buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle));
     if (kind === "json") {
-      downloadText(buildExportFilename("設計書", "json", { appLabel: appLabel2 }), JSON.stringify(bundle, null, 2), "application/json");
+      downloadText(buildExportFilename("設計書", "json", { appLabel: appLabel3 }), JSON.stringify(bundle, null, 2), "application/json");
     } else {
-      downloadText(buildExportFilename("設計書", "md", { appLabel: appLabel2 }), bundleToMarkdown(bundle), "text/markdown");
+      downloadText(buildExportFilename("設計書", "md", { appLabel: appLabel3 }), bundleToMarkdown(bundle), "text/markdown");
     }
     setStatus(`設計書出力完了（App ${bundle.appId}）`);
   }
@@ -44079,8 +44422,8 @@ ${diffMd}
     if (!text) throw new Error("先にJS/CSS設定を取得してください");
     const parsed = JSON.parse(text);
     const c = commonParams();
-    const appLabel2 = buildAppFilenameLabel(c.source.appId || "unknown", lastFetchedSourceAppName);
-    downloadText(buildExportFilename("JS_CSS設定", "json", { appLabel: appLabel2 }), JSON.stringify(parsed, null, 2), "application/json");
+    const appLabel3 = buildAppFilenameLabel(c.source.appId || "unknown", lastFetchedSourceAppName);
+    downloadText(buildExportFilename("JS_CSS設定", "json", { appLabel: appLabel3 }), JSON.stringify(parsed, null, 2), "application/json");
     setStatus("JS/CSS設定JSONを保存しました");
   }
   async function runApplyJsConfig() {

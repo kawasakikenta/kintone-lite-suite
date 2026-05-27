@@ -38,6 +38,7 @@ import { setStatus } from './components.js';
 import { getToolDocument } from './dialog.js';
 import { localizeKintoneEnumsInText as kusEnumsLocalize } from '../kintone-enums.js';
 import { renderReflectApplyChecklistStatus } from '../handlers/checklist.js';
+import { runExportDiffXlsx } from '../diff/xlsx-export.js';
 
 interface ExtrasGlobal {
   toastStack?: HTMLDivElement;
@@ -1868,21 +1869,23 @@ export async function copyDiffAsMarkdown(): Promise<void> {
     pushToast('クリップボードへコピーできませんでした', { tone: 'error' });
   }
 }
-export function exportDiffAsCsvForExcel(): void {
+export function exportDiffAsXlsx(): void {
   const rows = state.lastDiffRows || [];
   if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
-  const head = ['種別', 'セクション', 'パス', '旧値', '新値', '重要度'].join(',');
-  const body = rows.map((r: any) => {
-    const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
-    const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-    const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
-    const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
-    return [typeLabel, diffSectionLabel(r), r.path, oldStr, newStr, severityLabel]
-      .map((c) => `"${String(c ?? '').replace(/"/g, '""').replace(/[\r\n]/g, ' ')}"`).join(',');
-  }).join('\n');
-  // BOM for Excel
-  triggerDownload(new Blob(['﻿', head + '\n' + body], { type: 'text/csv;charset=utf-8' }), `kus-diff_${new Date().toISOString().slice(0, 10)}.csv`);
-  pushToast('Excel 用 CSV を保存しました', { tone: 'ok' });
+  try {
+    runExportDiffXlsx({
+      rows,
+      fetchIssues: state.lastFetchIssues || [],
+      sourceBundle: state.lastSourceBundle,
+      targetBundle: state.lastTargetBundle,
+      ignoreKeys: ui.ignoreKeys?.value || '',
+      exportContentMode: 'diffOnly',
+      filename: `kus-diff_${new Date().toISOString().slice(0, 10)}.xlsx`
+    });
+    pushToast('差分 Excel (.xlsx) を保存しました', { tone: 'ok' });
+  } catch (e: any) {
+    pushToast(`Excel 出力に失敗しました: ${e?.message || String(e)}`, { tone: 'error' });
+  }
 }
 export function exportDiffAsPrintablePdf(): void {
   const rows = state.lastDiffRows || [];
@@ -2741,9 +2744,9 @@ export function initExtras(): void {
     } else if (act === 'kusCopyDiffMd') {
       e.preventDefault();
       copyDiffAsMarkdown();
-    } else if (act === 'kusExportDiffCsv') {
+    } else if (act === 'kusExportDiffXlsx') {
       e.preventDefault();
-      exportDiffAsCsvForExcel();
+      exportDiffAsXlsx();
     } else if (act === 'kusExportDiffPdf') {
       e.preventDefault();
       exportDiffAsPrintablePdf();
