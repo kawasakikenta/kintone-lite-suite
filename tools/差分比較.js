@@ -606,6 +606,186 @@ ${contextLine}`);
   function downloadText(filename, text, type) {
     triggerDownload(filename, new Blob([text], { type: type || "text/plain" }));
   }
+  var __XLSX_CRC32_TABLE = null;
+  function xlsxCrc32(bytes) {
+    if (!__XLSX_CRC32_TABLE) {
+      const t = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+        t[i] = c >>> 0;
+      }
+      __XLSX_CRC32_TABLE = t;
+    }
+    let crc = 0xffffffff;
+    for (let i = 0; i < bytes.length; i++) crc = (__XLSX_CRC32_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8)) >>> 0;
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+  function xlsxBuildStoredZip(entries) {
+    const enc = new TextEncoder();
+    const parts = [];
+    const central = [];
+    let offset = 0;
+    const DOS_TIME = 0;
+    const DOS_DATE = ((2020 - 1980) << 9) | (1 << 5) | 1;
+    for (const e of entries) {
+      const nameBytes = enc.encode(e.name);
+      const data = typeof e.data === "string" ? enc.encode(e.data) : e.data;
+      const crc = xlsxCrc32(data);
+      const size = data.length;
+      const lfh = new Uint8Array(30 + nameBytes.length);
+      const dv = new DataView(lfh.buffer);
+      dv.setUint32(0, 0x04034b50, true);
+      dv.setUint16(4, 20, true);
+      dv.setUint16(6, 0x0800, true);
+      dv.setUint16(8, 0, true);
+      dv.setUint16(10, DOS_TIME, true);
+      dv.setUint16(12, DOS_DATE, true);
+      dv.setUint32(14, crc, true);
+      dv.setUint32(18, size, true);
+      dv.setUint32(22, size, true);
+      dv.setUint16(26, nameBytes.length, true);
+      dv.setUint16(28, 0, true);
+      lfh.set(nameBytes, 30);
+      parts.push(lfh, data);
+      const cdh = new Uint8Array(46 + nameBytes.length);
+      const cdv = new DataView(cdh.buffer);
+      cdv.setUint32(0, 0x02014b50, true);
+      cdv.setUint16(4, 20, true);
+      cdv.setUint16(6, 20, true);
+      cdv.setUint16(8, 0x0800, true);
+      cdv.setUint16(10, 0, true);
+      cdv.setUint16(12, DOS_TIME, true);
+      cdv.setUint16(14, DOS_DATE, true);
+      cdv.setUint32(16, crc, true);
+      cdv.setUint32(20, size, true);
+      cdv.setUint32(24, size, true);
+      cdv.setUint16(28, nameBytes.length, true);
+      cdv.setUint16(30, 0, true);
+      cdv.setUint16(32, 0, true);
+      cdv.setUint16(34, 0, true);
+      cdv.setUint16(36, 0, true);
+      cdv.setUint32(38, 0, true);
+      cdv.setUint32(42, offset, true);
+      cdh.set(nameBytes, 46);
+      central.push(cdh);
+      offset += lfh.length + data.length;
+    }
+    const cdStart = offset;
+    let cdSize = 0;
+    for (const c of central) { parts.push(c); cdSize += c.length; }
+    const eocd = new Uint8Array(22);
+    const edv = new DataView(eocd.buffer);
+    edv.setUint32(0, 0x06054b50, true);
+    edv.setUint16(4, 0, true);
+    edv.setUint16(6, 0, true);
+    edv.setUint16(8, central.length, true);
+    edv.setUint16(10, central.length, true);
+    edv.setUint32(12, cdSize, true);
+    edv.setUint32(16, cdStart, true);
+    edv.setUint16(20, 0, true);
+    parts.push(eocd);
+    return new Blob(parts, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+  function xlsxEscape(s) {
+    return String(s ?? "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  }
+  function xlsxColRef(n) {
+    let s = "";
+    let v = n;
+    while (v > 0) { const r = (v - 1) % 26; s = String.fromCharCode(65 + r) + s; v = Math.floor((v - 1) / 26); }
+    return s;
+  }
+  function xlsxSanitizeSheetName(name, index, used) {
+    let n = String(name || `Sheet${index + 1}`).replace(/[\\\/\?\*\[\]:]/g, "_");
+    if (n.length > 31) n = n.slice(0, 31);
+    if (!n) n = `Sheet${index + 1}`;
+    let candidate = n;
+    let i = 2;
+    while (used.has(candidate)) {
+      const suffix = `_${i++}`;
+      candidate = (n.length + suffix.length > 31 ? n.slice(0, 31 - suffix.length) : n) + suffix;
+    }
+    used.add(candidate);
+    return candidate;
+  }
+  function xlsxBuildSheetXml(rows) {
+    const lines = [];
+    lines.push('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>');
+    lines.push('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">');
+    lines.push('<sheetData>');
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const cells = [];
+      for (let c = 0; c < row.length; c++) {
+        const v = row[c];
+        if (v === null || v === void 0 || v === "") continue;
+        const ref = `${xlsxColRef(c + 1)}${r + 1}`;
+        const styleAttr = r === 0 ? ' s="1"' : ' s="2"';
+        cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${xlsxEscape(v)}</t></is></c>`);
+      }
+      lines.push(`<row r="${r + 1}">${cells.join("")}</row>`);
+    }
+    lines.push('</sheetData>');
+    lines.push('</worksheet>');
+    return lines.join("");
+  }
+  function xlsxBuildWorkbookXml(sheets) {
+    const items = sheets.map((s, i) => `<sheet name="${xlsxEscape(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("");
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+      `<sheets>${items}</sheets></workbook>`;
+  }
+  function xlsxBuildWorkbookRels(sheets) {
+    const items = sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("");
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${items}</Relationships>`;
+  }
+  function xlsxBuildContentTypes(sheets) {
+    const overrides = sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("");
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+      `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+      `<Default Extension="xml" ContentType="application/xml"/>` +
+      `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+      `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
+      overrides +
+      `</Types>`;
+  }
+  function xlsxBuildRootRels() {
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>` +
+      `</Relationships>`;
+  }
+  function xlsxBuildStylesXml() {
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+      `<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>` +
+      `<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/></patternFill></fill></fills>` +
+      `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+      `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+      `<cellXfs count="3">` +
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+      `<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>` +
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>` +
+      `</cellXfs>` +
+      `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+      `</styleSheet>`;
+  }
+  function buildXlsxBlob(sheets) {
+    const used = /* @__PURE__ */ new Set();
+    const safeSheets = sheets.map((s, i) => ({ name: xlsxSanitizeSheetName(s.name, i, used), data: s.data || [] }));
+    const entries = [
+      { name: "[Content_Types].xml", data: xlsxBuildContentTypes(safeSheets) },
+      { name: "_rels/.rels", data: xlsxBuildRootRels() },
+      { name: "xl/workbook.xml", data: xlsxBuildWorkbookXml(safeSheets) },
+      { name: "xl/_rels/workbook.xml.rels", data: xlsxBuildWorkbookRels(safeSheets) },
+      { name: "xl/styles.xml", data: xlsxBuildStylesXml() }
+    ];
+    safeSheets.forEach((s, i) => {
+      entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: xlsxBuildSheetXml(s.data) });
+    });
+    return xlsxBuildStoredZip(entries);
+  }
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
@@ -6405,6 +6585,70 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const payload = buildPatchPayload(rows, sourceBundle, targetBundle);
     downloadText(`patch_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
   }
+  function runExportDiffXlsxStandalone(ctx) {
+    const rows = ctx.rows || [];
+    const fetchIssues = ctx.fetchIssues || [];
+    if (!rows.length && !fetchIssues.length) throw new Error("出力できる比較結果がありません");
+    const bySection = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = r.sectionKey || "(その他)";
+      if (!bySection.has(key)) bySection.set(key, []);
+      bySection.get(key).push(r);
+    }
+    const orderedKeys = [];
+    for (const def of SECTION_DEFS) if (bySection.has(def.key)) orderedKeys.push(def.key);
+    for (const k of bySection.keys()) if (!orderedKeys.includes(k)) orderedKeys.push(k);
+    const sectionLabelOf = (k) => SECTION_DEFS.find((d) => d.key === k)?.label || k;
+    const summaryData = [
+      ["項目", "値"],
+      ["生成日時", new Date().toISOString()],
+      ["比較元アプリID", String(ctx.sourceBundle?.appId || "")],
+      ["比較元ゲストID", String(ctx.sourceBundle?.guestId || "")],
+      ["比較元プレビュー", ctx.sourceBundle?.preview ? "はい" : "いいえ"],
+      ["比較先アプリID", String(ctx.targetBundle?.appId || "")],
+      ["比較先ゲストID", String(ctx.targetBundle?.guestId || "")],
+      ["比較先プレビュー", ctx.targetBundle?.preview ? "はい" : "いいえ"],
+      ["全差分行数", String(rows.length)],
+      ["セクション数", String(orderedKeys.length)],
+      ["取得時の問題", String(fetchIssues.length)],
+      ["無視キー", String(ctx.ignoreKeys || "")],
+      ["出力内容", getDiffExportContentLabel(ctx.exportContentMode || "diffOnly")]
+    ];
+    summaryData.push(["", ""]);
+    summaryData.push(["セクション", "件数"]);
+    for (const k of orderedKeys) summaryData.push([sectionLabelOf(k), String(bySection.get(k).length)]);
+    const HEADER = ["セクション", "種別", "重要度", "パス", "ラベル", "比較元", "比較先"];
+    const sheets = [{ name: "概要", data: summaryData }];
+    for (const k of orderedKeys) {
+      const list = bySection.get(k);
+      const label = sectionLabelOf(k);
+      const data = [HEADER];
+      for (const r of list) {
+        const left = r.left === void 0 ? "" : stringifyRowValueForDiff(r.left, r.path);
+        const right = r.right === void 0 ? "" : stringifyRowValueForDiff(r.right, r.path);
+        data.push([
+          label,
+          getDiffTypeDisplayLabel(r.type, { moved: !!r.moved }),
+          getSeverityDisplayLabel(r.severity || "low"),
+          r.path || "",
+          r.label || "",
+          r.type === "added" ? "" : left,
+          r.type === "removed" ? "" : right
+        ]);
+      }
+      sheets.push({ name: label, data });
+    }
+    if (fetchIssues.length) {
+      const data = [["セクション", "対象", "メッセージ"]];
+      for (const i of fetchIssues) {
+        const label = sectionLabelOf(i.sectionKey || "");
+        data.push([label, getIssueSideLabel(i.side), String(i.message || "")]);
+      }
+      sheets.push({ name: "取得時の問題", data });
+    }
+    const blob = buildXlsxBlob(sheets);
+    triggerDownload(`diff_${nowStamp()}.xlsx`, blob);
+  }
 
   // src/ui/components.ts
   init_constants();
@@ -7130,7 +7374,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const panel = createLitePanel({
       id: "kus-diff-lite",
       title: "差分比較",
-      subtitle: "2 アプリの設定差分を取得し、JSON / HTML / バンドル / パッチで保存",
+      subtitle: "2 アプリの設定差分を取得し、JSON / HTML / Excel / バンドル / パッチで保存",
       accent: "diff",
       badges: [{ label: "Lite" }, { label: "出力対応" }],
       hint: "API 取得・差分計算・出力をこのスクリプトに同梱しています。<strong>統合ツール.js は不要</strong>。",
@@ -7237,10 +7481,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const bHtml = makeButton("差分 HTML", "sub", { icon: "↓" });
     const bBundle = makeButton("バンドル JSON", "sub", { icon: "↓" });
     const bPatch = makeButton("パッチ JSON", "sub", { icon: "↓" });
+    const bXlsx = makeButton("差分 Excel", "sub", { icon: "↓" });
     grid.appendChild(bJson);
     grid.appendChild(bHtml);
     grid.appendChild(bBundle);
     grid.appendChild(bPatch);
+    grid.appendChild(bXlsx);
     cardOut.body.appendChild(grid);
     panel.body.insertBefore(cardOut.card, panel.status);
     let cache = null;
@@ -7380,6 +7626,14 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         const rows = expRange.value === "all" ? cache.rows : filteredRows();
         runExportPatchJsonStandalone(rows, cache.sourceBundle, cache.targetBundle);
         panel.setStatus(`パッチ JSON をダウンロードしました（${expRange.value === "all" ? "全件" : "表示中"}）`, "ok");
+      } catch (e) {
+        panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
+      }
+    });
+    bXlsx.addEventListener("click", () => {
+      try {
+        runExportDiffXlsxStandalone(exportCtx());
+        panel.setStatus(`差分 Excel をダウンロードしました（${expRange.value === "all" ? "全件" : "表示中"}）`, "ok");
       } catch (e) {
         panel.setStatus(`エラー: ${e?.message || String(e)}`, "err");
       }
