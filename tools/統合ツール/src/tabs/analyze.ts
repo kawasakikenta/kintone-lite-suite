@@ -1750,7 +1750,7 @@ function renderFieldGraphDetail(detailEl, nodeId, fieldGraphData) {
     <div class="field-graph-detail-head">
       <div class="field-graph-detail-code">${esc(nodeId)}</div>
       <div class="field-graph-detail-label">${esc(field.label || '-')}</div>
-      <span class="layout-type-badge">${esc(field.type || '-')}</span>
+      <span class="layout-type-badge">${esc(formatFieldTypeLabel(field.type))}</span>
     </div>
     ${renderAnalyzeStatGrid([
       { label: '参照される数', value: incoming.length, note: 'この項目を使う側' },
@@ -1764,6 +1764,13 @@ function renderFieldGraphDetail(detailEl, nodeId, fieldGraphData) {
       <div class="field-graph-detail-section-title">参照先 (${outgoing.length}件)</div>
       ${renderFieldGraphMiniList(outgoing, '参照先なし', 'outgoing')}
     </div>`;
+}
+
+
+function formatFieldTypeLabel(fieldType) {
+  const code = String(fieldType || '').trim();
+  if (!code) return '-';
+  return FIELD_TYPE_JP[code] || code;
 }
 
 function applyFieldGraphSearch(cy, term) {
