@@ -15,15 +15,15 @@ export function getSideApiPrefix(isSource, preview) {
   return buildApiPrefix(side.guestId, !!preview);
 }
 
-function hasOrderByClause(query) {
+export function hasOrderByClause(query) {
   return /\border\s+by\b/i.test(String(query || ''));
 }
 
-function hasPagingClause(query) {
+export function hasPagingClause(query) {
   return /\blimit\s+\d+/i.test(String(query || '')) || /\boffset\s+\d+/i.test(String(query || ''));
 }
 
-function buildPagedRecordsQuery(query, offset, options: { includeOrder?: boolean; limit?: number } = {}) {
+export function buildPagedRecordsQuery(query, offset, options: { includeOrder?: boolean; limit?: number } = {}) {
   const base = String(query || '').trim();
   if (hasPagingClause(base)) {
     throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
@@ -36,7 +36,7 @@ function buildPagedRecordsQuery(query, offset, options: { includeOrder?: boolean
   return parts.join(' ');
 }
 
-function buildKeysetRecordsQuery(query, lastRecordId, limit = 500) {
+export function buildKeysetRecordsQuery(query, lastRecordId, limit = 500) {
   const base = String(query || '').trim();
   if (hasPagingClause(base)) {
     throw new Error('クエリ内の limit/offset はページング動作と競合します。limit/offset を取り除いて再実行してください。');
