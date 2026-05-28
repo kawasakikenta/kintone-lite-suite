@@ -7,7 +7,10 @@ import { showToast } from '../utils.js';
 const SHEETLIB_PRIMARY_URL = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js';
 const SHEETLIB_FALLBACK_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
 const DESIGN_EXPORT_VERSION = '2.2';
-const DESIGN_EXPORT_PREF_KEY = 'kus.designExport.selectedSheets.v1';
+
+// シート選択の記憶はブラウザストレージを使わず、セッション中のみインメモリで保持する
+// （本ツールの永続化方針: state.ts と同様にメモリ内のみで完結させる）
+let rememberedSheetSelection: Set<string> | null = null;
 
 const EXPORT_SHEET_DEFS: Array<{ key: string; label: string; default: boolean; required?: boolean }> = [
   { key: 'summary', label: 'サマリー', default: true },
@@ -80,23 +83,11 @@ async function loadJSZipOnce(): Promise<any> {
 
 
 function loadPersistedSheetSelection(): Set<string> | null {
-  try {
-    const raw = window.localStorage.getItem(DESIGN_EXPORT_PREF_KEY);
-    if (!raw) return null;
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return null;
-    return new Set(arr.map((v) => String(v)));
-  } catch {
-    return null;
-  }
+  return rememberedSheetSelection ? new Set(rememberedSheetSelection) : null;
 }
 
 function persistSheetSelection(selected: Set<string>): void {
-  try {
-    window.localStorage.setItem(DESIGN_EXPORT_PREF_KEY, JSON.stringify(Array.from(selected)));
-  } catch {
-    // ignore
-  }
+  rememberedSheetSelection = new Set(selected);
 }
 
 function resolveExportSheetDefs(): Array<{ key: string; label: string; default: boolean; required?: boolean }> {
@@ -683,7 +674,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     const APP_ID = Number(sourceAppId);
     if (!APP_ID) throw new Error('有効な比較元アプリIDが指定されませんでした。');
 
-    const selectedSheets = preselectedSheets || await showExportOptionsDialog();
+    const selectedSheets = preselectedSheets || await showDesignExportOptionsDialog();
     if (!selectedSheets) return false;
 
     if (progressLabel) {
