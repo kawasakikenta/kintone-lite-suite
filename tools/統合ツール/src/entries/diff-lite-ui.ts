@@ -248,6 +248,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   // ---- 実行 ----
   const runBtn = makeButton('差分比較を実行', 'run', { icon: '◎' });
   panel.body.insertBefore(runBtn, panel.status);
+  // 入力欄で Enter を押すと差分比較を実行（読み取り専用なので安全）
+  panel.setPrimaryAction(runBtn);
 
   // ---- 結果フィルタ ----
   const cardFilter = makeCard({ title: '結果の絞り込み', soft: true });
@@ -267,7 +269,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     ['medium', '中'],
     ['low', '低']
   ]);
-  const filterSearch = makeInput({ placeholder: 'パス・値・ラベルで検索', width: 'wide' });
+  const filterSearch = makeInput({ placeholder: 'パス・値・ラベルで検索', width: 'wide', noSubmit: true });
   const filterClear = makeButton('クリア', 'ghost');
   cardFilter.body.appendChild(makeRow([filterSection, filterType, filterSeverity, filterClear], { label: 'フィルタ' }));
   cardFilter.body.appendChild(makeRow(filterSearch, { label: '検索' }));

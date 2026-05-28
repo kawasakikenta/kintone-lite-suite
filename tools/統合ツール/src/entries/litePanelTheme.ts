@@ -332,6 +332,12 @@ export interface LitePanelHandle {
   setResultHtml: (html: string) => void;
   setBusy: (busy: boolean) => void;
   close: () => void;
+  /**
+   * パネルの主アクション（実行ボタン）を登録する。
+   * 登録すると、入力欄で Enter（テキストエリアは Ctrl/Cmd+Enter）を押したときに
+   * このボタンが押される。IME 変換確定の Enter は無視する。
+   */
+  setPrimaryAction: (btn: HTMLButtonElement) => void;
 }
 
 // ===== Panel factory =====
@@ -344,6 +350,9 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   const root = document.createElement('div');
   root.id = opts.id;
   root.className = `kus-lp${opts.wide ? ' kus-lp--wide' : ''}`;
+  // ダイアログ的なフローティングパネルとして読み上げ環境に伝える（ページ操作は妨げないので非モーダル）
+  root.setAttribute('role', 'dialog');
+  root.setAttribute('aria-modal', 'false');
   applyAccentVars(root, opts.accent);
 
   const hero = document.createElement('div');
@@ -351,9 +360,12 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   const heroMain = document.createElement('div');
   heroMain.className = 'kus-lp__hero-main';
 
+  const titleId = `${opts.id}-title`;
   const titleEl = document.createElement('h1');
   titleEl.className = 'kus-lp__title';
+  titleEl.id = titleId;
   titleEl.textContent = opts.title;
+  root.setAttribute('aria-labelledby', titleId);
   heroMain.appendChild(titleEl);
 
   if (opts.subtitle) {
@@ -450,17 +462,65 @@ export function createLitePanel(opts: LitePanelOptions): LitePanelHandle {
   }
 
   function close() {
+    document.removeEventListener('keydown', onDocKeydown, true);
     root.remove();
     setRootElement(null);
   }
 
   closeBtn.addEventListener('click', close);
+
+  // ===== 主アクション（実行ボタン）と Enter 送信 =====
+  let primaryBtn: HTMLButtonElement | null = null;
+  function setPrimaryAction(btn: HTMLButtonElement) {
+    primaryBtn = btn;
+  }
+  function triggerPrimary() {
+    if (primaryBtn && !primaryBtn.disabled) primaryBtn.click();
+  }
+  body.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key !== 'Enter' || e.isComposing || (e as any).keyCode === 229) return;
+    const t = e.target as HTMLElement | null;
+    if (!t) return;
+    const tag = t.tagName;
+    if (tag === 'TEXTAREA') {
+      // 複数行入力中の誤送信を防ぐため、テキストエリアは Ctrl/Cmd+Enter のみ実行
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); triggerPrimary(); }
+      return;
+    }
+    if (tag === 'INPUT') {
+      const type = (t as HTMLInputElement).type;
+      if (type === 'checkbox' || type === 'radio' || type === 'file' || type === 'button') return;
+      // フィルタ／検索など、独自の Enter 挙動を持つ入力は data-lp-no-submit で除外できる
+      if (t.hasAttribute('data-lp-no-submit') || type === 'search') return;
+      e.preventDefault();
+      triggerPrimary();
+    }
+  });
+
+  // ===== Esc で閉じる（実行中は閉じない）=====
+  function onDocKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && !closeBtn.disabled && document.body.contains(root)) {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    }
+  }
+  document.addEventListener('keydown', onDocKeydown, true);
+
   setRootElement(root);
 
   // 既存 components.ts の setStatus() を lite から流用できるように
   setComponentUi({ status, result, busyText: document.createElement('span') });
 
-  return { root, body, status, result, setStatus, setResult, setResultHtml, setBusy, close };
+  // 開いた直後に最初の入力欄へフォーカスし、キーボードだけで操作を始められるようにする
+  requestAnimationFrame(() => {
+    const first = body.querySelector<HTMLElement>(
+      'input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])'
+    );
+    try { first?.focus({ preventScroll: true } as any); } catch { /* noop */ }
+  });
+
+  return { root, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setPrimaryAction };
 }
 
 // ===== Element factories =====
@@ -494,6 +554,8 @@ export interface InputOptions {
   type?: string;
   placeholder?: string;
   ariaLabel?: string;
+  /** Enter で主アクションを実行させたくない入力（検索・フィルタ等）に true */
+  noSubmit?: boolean;
 }
 
 export function makeInput(opts: InputOptions = {}): HTMLInputElement {
@@ -502,6 +564,7 @@ export function makeInput(opts: InputOptions = {}): HTMLInputElement {
   if (opts.placeholder) inp.placeholder = opts.placeholder;
   if (opts.value) inp.value = opts.value;
   if (opts.ariaLabel) inp.setAttribute('aria-label', opts.ariaLabel);
+  if (opts.noSubmit) inp.setAttribute('data-lp-no-submit', '');
   inp.className = 'kus-lp__input' + (opts.width ? ` kus-lp__input--${opts.width}` : '');
   return inp;
 }

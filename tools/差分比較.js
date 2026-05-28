@@ -7090,14 +7090,19 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const root2 = document.createElement("div");
     root2.id = opts.id;
     root2.className = `kus-lp${opts.wide ? " kus-lp--wide" : ""}`;
+    root2.setAttribute("role", "dialog");
+    root2.setAttribute("aria-modal", "false");
     applyAccentVars(root2, opts.accent);
     const hero = document.createElement("div");
     hero.className = "kus-lp__hero";
     const heroMain = document.createElement("div");
     heroMain.className = "kus-lp__hero-main";
+    const titleId = `${opts.id}-title`;
     const titleEl = document.createElement("h1");
     titleEl.className = "kus-lp__title";
+    titleEl.id = titleId;
     titleEl.textContent = opts.title;
+    root2.setAttribute("aria-labelledby", titleId);
     heroMain.appendChild(titleEl);
     if (opts.subtitle) {
       const subEl = document.createElement("p");
@@ -7171,13 +7176,58 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       root2.style.cursor = busy ? "progress" : "";
     }
     function close() {
+      document.removeEventListener("keydown", onDocKeydown, true);
       root2.remove();
       setRootElement(null);
     }
     closeBtn.addEventListener("click", close);
+    let primaryBtn = null;
+    function setPrimaryAction(btn) {
+      primaryBtn = btn;
+    }
+    function triggerPrimary() {
+      if (primaryBtn && !primaryBtn.disabled) primaryBtn.click();
+    }
+    body.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+      const t = e.target;
+      if (!t) return;
+      const tag = t.tagName;
+      if (tag === "TEXTAREA") {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          triggerPrimary();
+        }
+        return;
+      }
+      if (tag === "INPUT") {
+        const type = t.type;
+        if (type === "checkbox" || type === "radio" || type === "file" || type === "button") return;
+        if (t.hasAttribute("data-lp-no-submit") || type === "search") return;
+        e.preventDefault();
+        triggerPrimary();
+      }
+    });
+    function onDocKeydown(e) {
+      if (e.key === "Escape" && !closeBtn.disabled && document.body.contains(root2)) {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      }
+    }
+    document.addEventListener("keydown", onDocKeydown, true);
     setRootElement(root2);
     setComponentUi({ status, result, busyText: document.createElement("span") });
-    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close };
+    requestAnimationFrame(() => {
+      const first = body.querySelector(
+        "input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])"
+      );
+      try {
+        first?.focus({ preventScroll: true });
+      } catch {
+      }
+    });
+    return { root: root2, body, status, result, setStatus, setResult, setResultHtml, setBusy, close, setPrimaryAction };
   }
   function makeRow(child, opts = {}) {
     const wrap = document.createElement("div");
@@ -7205,6 +7255,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (opts.placeholder) inp.placeholder = opts.placeholder;
     if (opts.value) inp.value = opts.value;
     if (opts.ariaLabel) inp.setAttribute("aria-label", opts.ariaLabel);
+    if (opts.noSubmit) inp.setAttribute("data-lp-no-submit", "");
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
@@ -7522,6 +7573,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     panel.body.insertBefore(advDetails.details, panel.status);
     const runBtn = makeButton("差分比較を実行", "run", { icon: "◎" });
     panel.body.insertBefore(runBtn, panel.status);
+    panel.setPrimaryAction(runBtn);
     const cardFilter = makeCard({ title: "結果の絞り込み", soft: true });
     cardFilter.card.style.display = "none";
     const filterSection = makeSelect([["", "全セクション"]]);
@@ -7539,7 +7591,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       ["medium", "中"],
       ["low", "低"]
     ]);
-    const filterSearch = makeInput({ placeholder: "パス・値・ラベルで検索", width: "wide" });
+    const filterSearch = makeInput({ placeholder: "パス・値・ラベルで検索", width: "wide", noSubmit: true });
     const filterClear = makeButton("クリア", "ghost");
     cardFilter.body.appendChild(makeRow([filterSection, filterType, filterSeverity, filterClear], { label: "フィルタ" }));
     cardFilter.body.appendChild(makeRow(filterSearch, { label: "検索" }));
