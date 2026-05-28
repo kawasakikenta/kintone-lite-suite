@@ -1041,6 +1041,13 @@ ${contextLine}`);
     }
   });
 
+  // src/reflect/footerLabel.ts
+  var init_footerLabel = __esm({
+    "src/reflect/footerLabel.ts"() {
+      "use strict";
+    }
+  });
+
   // src/oss_integrations.ts
   var init_oss_integrations = __esm({
     "src/oss_integrations.ts"() {
@@ -1076,6 +1083,7 @@ ${contextLine}`);
       init_engine();
       init_enrich();
       init_nodeModeUi();
+      init_footerLabel();
       init_constants();
       init_dialog();
       init_oss_integrations();

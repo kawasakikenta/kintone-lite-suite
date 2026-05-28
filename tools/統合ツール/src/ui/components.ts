@@ -37,6 +37,7 @@ import {
 } from '../diff/engine.js';
 import { summarizeSeverity } from '../diff/enrich.js';
 import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
+import { buildApplyButtonLabel } from '../reflect/footerLabel.js';
 import { REFLECT_QUICK_PRESETS } from '../constants.js';
 import { saveCurrentDialogState, getToolDocument } from './dialog.js';
 import { renderRichDiff } from '../oss_integrations.js';
@@ -1671,6 +1672,13 @@ export function renderReflectFooterBadges() {
   if (applyBtn) {
     applyBtn.disabled = applyDisabled;
     applyBtn.classList.toggle('is-disabled', applyDisabled);
+    // 実行直前の安心感のため、反映可能なら「何件/何セクションを書き込むか」をボタンに明示する
+    applyBtn.textContent = buildApplyButtonLabel({
+      isNode,
+      selectedNodeCount,
+      scopeCount,
+      canApply
+    });
     applyBtn.title = applyDisabled
       ? `反映できない状態です: ${blockReasons.join(' / ')}`
       : '選択した内容を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます';
@@ -2356,7 +2364,10 @@ export function renderReflectNodeList() {
     const metaItems = [reason, impact, rename].filter(Boolean);
     const modeLabel = mode === 'src' ? '比較元を採用' : '比較先を維持（反映しない）';
     const selectedLabel = selected.has(r._id) ? '選択中' : '未選択';
-    return `<article class="reflect-node-card-item${activeRow?._id === r._id ? ' is-active' : ''}${selected.has(r._id) ? ' is-selected' : ''}" data-node-open="${esc(r._id)}">
+    const isActive = activeRow?._id === r._id;
+    // ローリング tabindex: アクティブ行のみ Tab で到達でき、↑↓で行間を移動する
+    const cardAria = `${r.section || '-'} / ${typeLabel} / 重要度${getSeverityDisplayLabel(severity)} / ${selectedLabel}`;
+    return `<article class="reflect-node-card-item${isActive ? ' is-active' : ''}${selected.has(r._id) ? ' is-selected' : ''}" data-node-open="${esc(r._id)}" data-node-card="1" tabindex="${isActive ? '0' : '-1'}" aria-label="${esc(cardAria)}">
       <div class="reflect-node-card-headline">
         <label class="reflect-node-card-check" title="${esc(selectedLabel)}">
           <input type="checkbox" data-node-id="${esc(r._id)}" ${checked}>
@@ -2374,11 +2385,11 @@ export function renderReflectNodeList() {
       </div>
       <div class="reflect-node-card-actions">
         <button type="button" class="reflect-node-mode-btn reflect-node-mode-btn--${esc(mode)}" data-node-mode="${esc(r._id)}">${esc(modeLabel)}</button>
-        <span class="reflect-node-card-hint">クリックで詳細表示</span>
+        <span class="reflect-node-card-hint">クリック／Enterで詳細</span>
       </div>
     </article>`;
   }).join('');
-  ui.reflectNodeList.innerHTML = `${header}<div class="reflect-node-card-list">${body}</div>${truncatedCount ? `<div class="reflect-node-list-more">他 ${truncatedCount}件は絞り込みで表示できます</div>` : ''}`;
+  ui.reflectNodeList.innerHTML = `${header}<div class="reflect-node-card-list" role="group" aria-label="差分候補リスト（↑↓で移動、Spaceで選択切替、Enterで詳細表示）">${body}</div>${truncatedCount ? `<div class="reflect-node-list-more">他 ${truncatedCount}件は絞り込みで表示できます</div>` : ''}`;
   renderReflectNodeDetail();
   renderBundleState();
   renderReflectModeUi();

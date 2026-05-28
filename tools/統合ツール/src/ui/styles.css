@@ -1344,6 +1344,7 @@
 #kintone-unified-suite-v2 .reflect-node-card-item:hover{border-color:#93c5fd;box-shadow:0 2px 8px rgba(37,99,235,.12)}
 #kintone-unified-suite-v2 .reflect-node-card-item.is-active{border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.12)}
 #kintone-unified-suite-v2 .reflect-node-card-item.is-selected{background:#fbfdff}
+#kintone-unified-suite-v2 .reflect-node-card-item:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-color:#2563eb}
 #kintone-unified-suite-v2 .reflect-node-card-headline{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
 #kintone-unified-suite-v2 .reflect-node-card-check{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:#334155;cursor:pointer}
 #kintone-unified-suite-v2 .reflect-node-card-check input{margin:0}

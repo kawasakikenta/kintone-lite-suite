@@ -11191,6 +11191,21 @@ ${body}`;
     }
   });
 
+  // src/reflect/footerLabel.ts
+  function buildApplyButtonLabel(opts) {
+    const base = "プレビューへ反映";
+    if (!opts || !opts.canApply) return base;
+    if (opts.isNode) {
+      return opts.selectedNodeCount > 0 ? `${base}（${opts.selectedNodeCount}件）` : base;
+    }
+    return opts.scopeCount > 0 ? `${base}（${opts.scopeCount}セクション）` : base;
+  }
+  var init_footerLabel = __esm({
+    "src/reflect/footerLabel.ts"() {
+      "use strict";
+    }
+  });
+
   // src/oss_integrations.ts
   var oss_integrations_exports = {};
   __export(oss_integrations_exports, {
@@ -13010,6 +13025,12 @@ ${tgt.full}`);
     if (applyBtn) {
       applyBtn.disabled = applyDisabled;
       applyBtn.classList.toggle("is-disabled", applyDisabled);
+      applyBtn.textContent = buildApplyButtonLabel({
+        isNode,
+        selectedNodeCount,
+        scopeCount,
+        canApply
+      });
       applyBtn.title = applyDisabled ? `反映できない状態です: ${blockReasons.join(" / ")}` : "選択した内容を比較先のプレビュー環境へ書き込みます。未確認時はプラン確認が先に開きます";
     }
     if (planBtn) {
@@ -13618,7 +13639,9 @@ ${tgt.full}`);
       const metaItems = [reason, impact, rename].filter(Boolean);
       const modeLabel = mode === "src" ? "比較元を採用" : "比較先を維持（反映しない）";
       const selectedLabel = selected.has(r._id) ? "選択中" : "未選択";
-      return `<article class="reflect-node-card-item${activeRow?._id === r._id ? " is-active" : ""}${selected.has(r._id) ? " is-selected" : ""}" data-node-open="${esc(r._id)}">
+      const isActive = activeRow?._id === r._id;
+      const cardAria = `${r.section || "-"} / ${typeLabel} / 重要度${getSeverityDisplayLabel(severity)} / ${selectedLabel}`;
+      return `<article class="reflect-node-card-item${isActive ? " is-active" : ""}${selected.has(r._id) ? " is-selected" : ""}" data-node-open="${esc(r._id)}" data-node-card="1" tabindex="${isActive ? "0" : "-1"}" aria-label="${esc(cardAria)}">
       <div class="reflect-node-card-headline">
         <label class="reflect-node-card-check" title="${esc(selectedLabel)}">
           <input type="checkbox" data-node-id="${esc(r._id)}" ${checked}>
@@ -13636,11 +13659,11 @@ ${tgt.full}`);
       </div>
       <div class="reflect-node-card-actions">
         <button type="button" class="reflect-node-mode-btn reflect-node-mode-btn--${esc(mode)}" data-node-mode="${esc(r._id)}">${esc(modeLabel)}</button>
-        <span class="reflect-node-card-hint">クリックで詳細表示</span>
+        <span class="reflect-node-card-hint">クリック／Enterで詳細</span>
       </div>
     </article>`;
     }).join("");
-    ui3.reflectNodeList.innerHTML = `${header}<div class="reflect-node-card-list">${body}</div>${truncatedCount ? `<div class="reflect-node-list-more">他 ${truncatedCount}件は絞り込みで表示できます</div>` : ""}`;
+    ui3.reflectNodeList.innerHTML = `${header}<div class="reflect-node-card-list" role="group" aria-label="差分候補リスト（↑↓で移動、Spaceで選択切替、Enterで詳細表示）">${body}</div>${truncatedCount ? `<div class="reflect-node-list-more">他 ${truncatedCount}件は絞り込みで表示できます</div>` : ""}`;
     renderReflectNodeDetail();
     renderBundleState();
     renderReflectModeUi();
@@ -13805,6 +13828,7 @@ ${tgt.full}`);
       init_engine();
       init_enrich();
       init_nodeModeUi();
+      init_footerLabel();
       init_constants();
       init_dialog();
       init_oss_integrations();
@@ -38489,6 +38513,50 @@ ${detail}`);
       if (e.target?.id === "u_previewProdSearch" && e.key === "Enter") {
         e.preventDefault();
         applyPreviewProdDiffSearch();
+        return;
+      }
+      const nodeCardEl = e.target?.closest?.("[data-node-card]");
+      if (nodeCardEl && e.target === nodeCardEl && ["ArrowDown", "ArrowUp", "Home", "End", "Enter", " ", "Spacebar"].includes(e.key)) {
+        const cards = Array.from(ui.reflectNodeList?.querySelectorAll("[data-node-card]") || []);
+        if (!cards.length) return;
+        const focusCardById = (id) => {
+          ui.reflectNodeList?.querySelector(`[data-node-open="${id}"]`)?.focus();
+        };
+        if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
+          e.preventDefault();
+          const curIdx = cards.indexOf(nodeCardEl);
+          let nextIdx = curIdx;
+          if (e.key === "ArrowDown") nextIdx = Math.min(cards.length - 1, curIdx + 1);
+          else if (e.key === "ArrowUp") nextIdx = Math.max(0, curIdx - 1);
+          else if (e.key === "Home") nextIdx = 0;
+          else if (e.key === "End") nextIdx = cards.length - 1;
+          const nextId = cards[nextIdx]?.dataset.nodeOpen || "";
+          if (nextId) {
+            setActiveReflectNode(nextId, { persist: false });
+            renderReflectNodeList();
+            focusCardById(nextId);
+          }
+          return;
+        }
+        const cardId = nodeCardEl.dataset.nodeOpen || "";
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (cardId) {
+            setActiveReflectNode(cardId, { persist: false });
+            renderReflectNodeList();
+            focusCardById(cardId);
+          }
+          return;
+        }
+        e.preventDefault();
+        if (cardId) {
+          pushReflectUndo();
+          if (state.reflectSelectedIds.has(cardId)) state.reflectSelectedIds.delete(cardId);
+          else state.reflectSelectedIds.add(cardId);
+          state.reflectActiveNodeId = cardId;
+          renderReflectNodeList();
+          focusCardById(cardId);
+        }
         return;
       }
       const featCard = e.target?.closest?.(".feature-card[data-feature]");

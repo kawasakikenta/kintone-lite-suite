@@ -1013,6 +1013,50 @@ export function setupEventHandlers(injected: any = {}) {
       return;
     }
 
+    // 差分候補カードのキーボード操作（↑↓で移動 / Spaceで選択切替 / Enterで詳細表示）
+    const nodeCardEl = (e.target as Element)?.closest?.('[data-node-card]') as HTMLElement | null;
+    if (nodeCardEl && (e.target as Element) === nodeCardEl
+        && ['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', ' ', 'Spacebar'].includes(e.key)) {
+      const cards = Array.from(ui.reflectNodeList?.querySelectorAll<HTMLElement>('[data-node-card]') || []);
+      if (!cards.length) return;
+      const focusCardById = (id: string) => {
+        ui.reflectNodeList?.querySelector<HTMLElement>(`[data-node-open="${id}"]`)?.focus();
+      };
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+        e.preventDefault();
+        const curIdx = cards.indexOf(nodeCardEl);
+        let nextIdx = curIdx;
+        if (e.key === 'ArrowDown') nextIdx = Math.min(cards.length - 1, curIdx + 1);
+        else if (e.key === 'ArrowUp') nextIdx = Math.max(0, curIdx - 1);
+        else if (e.key === 'Home') nextIdx = 0;
+        else if (e.key === 'End') nextIdx = cards.length - 1;
+        const nextId = cards[nextIdx]?.dataset.nodeOpen || '';
+        if (nextId) {
+          setActiveReflectNode(nextId, { persist: false });
+          renderReflectNodeList();
+          focusCardById(nextId);
+        }
+        return;
+      }
+      const cardId = nodeCardEl.dataset.nodeOpen || '';
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (cardId) { setActiveReflectNode(cardId, { persist: false }); renderReflectNodeList(); focusCardById(cardId); }
+        return;
+      }
+      // Space: 選択状態をトグル（元に戻すで取消可）
+      e.preventDefault();
+      if (cardId) {
+        pushReflectUndo();
+        if (state.reflectSelectedIds.has(cardId)) state.reflectSelectedIds.delete(cardId);
+        else state.reflectSelectedIds.add(cardId);
+        state.reflectActiveNodeId = cardId;
+        renderReflectNodeList();
+        focusCardById(cardId);
+      }
+      return;
+    }
+
     const featCard = (e.target as Element)?.closest?.('.feature-card[data-feature]') as HTMLElement | null;
     if (featCard && !editable && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
