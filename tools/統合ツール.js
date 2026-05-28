@@ -36684,6 +36684,7 @@ ${detail}`);
       `}
       <div class="pvd-actions">
         <button type="button" class="btn sub" data-act="exportPreviewProdDiffJson">JSONで保存</button>
+        <button type="button" class="btn sub" data-act="exportPreviewProdDiffCsv">CSVで保存</button>
         <button type="button" class="btn sub" data-act="closePreviewProdDiff">閉じる</button>
       </div>
       <p class="pvd-hint muted">デプロイ待ちの変更（＝プレビューにあって本番に無い変更）を一覧できます。反映セクションの選択に合わせて対象を絞り込みます。</p>
@@ -36782,11 +36783,67 @@ ${detail}`);
     downloadText(filename, JSON.stringify(body, null, 2), "application/json");
     setStatus(`プレビュー⇔本番 差分をJSONに保存しました: ${filename}`);
   }
+  function csvCell(value) {
+    const s = value == null ? "" : String(value);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+  function buildPreviewProdDiffCsv(rows) {
+    const header = ["セクション", "差分種別", "重要度", "パス", "理由", "プレビュー値", "本番値"];
+    const lines = [header.map(csvCell).join(",")];
+    for (const row of rows || []) {
+      const type = getPreviewProdTypeInfo(getPreviewProdRowKind(row));
+      const severity = String(row?.severity || "low");
+      lines.push([
+        getSectionLabel2(row?.sectionKey),
+        type.label,
+        getSeverityDisplayLabel(severity),
+        row?.path || "",
+        row?.reasonSummary || "",
+        formatPreviewValue(row?.left, row?.path),
+        formatPreviewValue(row?.right, row?.path)
+      ].map(csvCell).join(","));
+    }
+    return lines.join("\r\n");
+  }
+  function exportPreviewProdDiffCsv() {
+    const bucket = getPreviewProdState();
+    const payload = bucket.lastResult;
+    if (!payload) {
+      setStatus("先に「プレビュー⇔本番を比較」を実行してください", true);
+      return;
+    }
+    const rows = getActualDiffRows(payload.rows || []);
+    if (!rows.length) {
+      setStatus("CSVに保存できる差分がありません", true);
+      return;
+    }
+    const appName = extractAppNameFromBundle(payload.previewBundle) || extractAppNameFromBundle(payload.productionBundle) || "";
+    const appLabel3 = buildAppFilenameLabel(payload.appId, appName);
+    const filename = `preview_prod_diff_${appLabel3}_${nowStamp()}.csv`;
+    const csv = `\uFEFF${buildPreviewProdDiffCsv(rows)}`;
+    downloadText(filename, csv, "text/csv;charset=utf-8");
+    setStatus(`プレビュー⇔本番 差分をCSVに保存しました: ${filename}（${rows.length}件）`);
+  }
   function rerenderLastResult() {
     const bucket = getPreviewProdState();
     const host = ensureResultHost();
     if (!bucket.lastResult || !host) return false;
+    const doc = getToolDocument();
+    const active = doc.activeElement;
+    const searchFocused = !!active && active.id === "u_previewProdSearch";
+    const caret = searchFocused ? active.selectionStart : null;
     renderResult(host, bucket.lastResult);
+    if (searchFocused) {
+      const next = doc.getElementById("u_previewProdSearch");
+      if (next) {
+        next.focus();
+        const pos = caret == null ? next.value.length : Math.min(caret, next.value.length);
+        try {
+          next.setSelectionRange(pos, pos);
+        } catch {
+        }
+      }
+    }
     return true;
   }
   function setPreviewProdDiffFilter(kind, value) {
@@ -40525,6 +40582,10 @@ ${detail}`);
       if (act === "runPreviewProdDiff") return withGuard(runPreviewProductionDiff);
       if (act === "exportPreviewProdDiffJson") {
         exportPreviewProdDiffJson();
+        return;
+      }
+      if (act === "exportPreviewProdDiffCsv") {
+        exportPreviewProdDiffCsv();
         return;
       }
       if (act === "setPreviewProdDiffFilter") {

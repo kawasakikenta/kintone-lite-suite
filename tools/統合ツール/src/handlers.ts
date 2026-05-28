@@ -129,6 +129,7 @@ import {
 import {
   runPreviewProductionDiff,
   exportPreviewProdDiffJson,
+  exportPreviewProdDiffCsv,
   setPreviewProdDiffFilter,
   applyPreviewProdDiffSearch,
   clearPreviewProdDiffFilters,
@@ -3160,6 +3161,7 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'deployOnly' && typeof runDeployOnly === 'function') return withGuard(runDeployOnly);
     if (act === 'runPreviewProdDiff') return withGuard(runPreviewProductionDiff);
     if (act === 'exportPreviewProdDiffJson') { exportPreviewProdDiffJson(); return; }
+    if (act === 'exportPreviewProdDiffCsv') { exportPreviewProdDiffCsv(); return; }
     if (act === 'setPreviewProdDiffFilter') {
       setPreviewProdDiffFilter(actEl.dataset.filterKind || '', actEl.dataset.filterValue || '');
       return;

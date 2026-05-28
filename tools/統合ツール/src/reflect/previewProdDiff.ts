@@ -342,6 +342,7 @@ function renderResult(host, payload) {
       `}
       <div class="pvd-actions">
         <button type="button" class="btn sub" data-act="exportPreviewProdDiffJson">JSONで保存</button>
+        <button type="button" class="btn sub" data-act="exportPreviewProdDiffCsv">CSVで保存</button>
         <button type="button" class="btn sub" data-act="closePreviewProdDiff">閉じる</button>
       </div>
       <p class="pvd-hint muted">デプロイ待ちの変更（＝プレビューにあって本番に無い変更）を一覧できます。反映セクションの選択に合わせて対象を絞り込みます。</p>
@@ -447,11 +448,70 @@ export function exportPreviewProdDiffJson() {
   setStatus(`プレビュー⇔本番 差分をJSONに保存しました: ${filename}`);
 }
 
+function csvCell(value: unknown): string {
+  const s = value == null ? '' : String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** プレビュー⇔本番差分の行配列を CSV テキストへ変換する（純粋関数 / テスト対象）。 */
+export function buildPreviewProdDiffCsv(rows: any[]): string {
+  const header = ['セクション', '差分種別', '重要度', 'パス', '理由', 'プレビュー値', '本番値'];
+  const lines = [header.map(csvCell).join(',')];
+  for (const row of rows || []) {
+    const type = getPreviewProdTypeInfo(getPreviewProdRowKind(row));
+    const severity = String(row?.severity || 'low');
+    lines.push([
+      getSectionLabel(row?.sectionKey),
+      type.label,
+      getSeverityDisplayLabel(severity),
+      row?.path || '',
+      row?.reasonSummary || '',
+      formatPreviewValue(row?.left, row?.path),
+      formatPreviewValue(row?.right, row?.path)
+    ].map(csvCell).join(','));
+  }
+  return lines.join('\r\n');
+}
+
+export function exportPreviewProdDiffCsv() {
+  const bucket = getPreviewProdState();
+  const payload = bucket.lastResult;
+  if (!payload) {
+    setStatus('先に「プレビュー⇔本番を比較」を実行してください', true);
+    return;
+  }
+  const rows = getActualDiffRows(payload.rows || []);
+  if (!rows.length) {
+    setStatus('CSVに保存できる差分がありません', true);
+    return;
+  }
+  const appName = extractAppNameFromBundle(payload.previewBundle) || extractAppNameFromBundle(payload.productionBundle) || '';
+  const appLabel = buildAppFilenameLabel(payload.appId, appName);
+  const filename = `preview_prod_diff_${appLabel}_${nowStamp()}.csv`;
+  // Excel で文字化けしないよう UTF-8 BOM を付与する
+  const csv = `﻿${buildPreviewProdDiffCsv(rows)}`;
+  downloadText(filename, csv, 'text/csv;charset=utf-8');
+  setStatus(`プレビュー⇔本番 差分をCSVに保存しました: ${filename}（${rows.length}件）`);
+}
+
 function rerenderLastResult() {
   const bucket = getPreviewProdState();
   const host = ensureResultHost();
   if (!bucket.lastResult || !host) return false;
+  // 再描画で innerHTML を差し替えると検索ボックスのフォーカス/キャレットが失われるため復元する
+  const doc = getToolDocument();
+  const active = doc.activeElement as HTMLInputElement | null;
+  const searchFocused = !!active && active.id === 'u_previewProdSearch';
+  const caret = searchFocused ? active.selectionStart : null;
   renderResult(host, bucket.lastResult);
+  if (searchFocused) {
+    const next = doc.getElementById('u_previewProdSearch') as HTMLInputElement | null;
+    if (next) {
+      next.focus();
+      const pos = caret == null ? next.value.length : Math.min(caret, next.value.length);
+      try { next.setSelectionRange(pos, pos); } catch { /* noop */ }
+    }
+  }
   return true;
 }
 
