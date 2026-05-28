@@ -11771,6 +11771,10 @@ ${body}`;
       const active = t.dataset.tab === key;
       t.classList.toggle("active", active);
       t.dataset.state = active ? "selected" : "idle";
+      if (t.getAttribute("role") === "tab") {
+        t.setAttribute("aria-selected", active ? "true" : "false");
+        t.tabIndex = active ? 0 : -1;
+      }
     });
     ui3.panes.forEach((p) => p.classList.toggle("active", p.dataset.pane === key));
     const root2 = getToolDocument().getElementById("kintone-unified-suite-v2");
@@ -32341,11 +32345,90 @@ ${detail}`);
 
 `;
 
+  // src/ui/styles/a11y-responsive.css
+  var a11y_responsive_default = `/* === A11y & Responsive enhancements (UI改善) ===
+   方針:
+   - アクセシビリティ: キーボード操作時に高コントラストな focus-visible リングを全操作要素へ付与
+   - レスポンシブ/操作性: 狭幅でタブバーを横スクロール化し、タップターゲットを拡大
+   - 視認性/余白: 狭幅で本文の行間・余白を緩めて読みやすくする
+   後勝ちで効かせたいルールがあるため、本ファイルは結合の最後に読み込む。
+*/
+
+/* 1) グローバル focus-visible リング（キーボード操作時のみ表示） --------------- */
+#kintone-unified-suite-v2 :is(
+  a[href], button, summary, [role="button"], [role="tab"],
+  [tabindex]:not([tabindex="-1"]),
+  input, select, textarea
+):focus-visible{
+  outline:3px solid var(--accent, #2563eb);
+  outline-offset:2px;
+}
+/* チェックボックス/ラジオは内側に潰れないようオフセットを少し広げる */
+#kintone-unified-suite-v2 :is(input[type="checkbox"], input[type="radio"]):focus-visible{
+  outline:3px solid var(--accent, #2563eb);
+  outline-offset:3px;
+}
+/* マウスクリック時に残るアウトラインを抑止（focus-visible を優先） */
+#kintone-unified-suite-v2 :is(button, summary, [role="tab"]):focus:not(:focus-visible){
+  outline:none;
+}
+/* アクティブな濃色タブはリングが埋もれないよう内側にも白枠を重ねる */
+#kintone-unified-suite-v2 .kus-tab-bar .tab.active:focus-visible{
+  box-shadow:0 0 0 2px #fff inset, 0 3px 9px rgba(18,50,75,.18);
+}
+
+/* 2) レスポンシブ: 狭幅でタブバーを横スクロール（折返しで潰れるのを防ぐ） -------- */
+@media (max-width:640px){
+  #kintone-unified-suite-v2 .kus-tab-bar .tabs,
+  #kintone-unified-suite-v2 .kus-tab-bar .tab-group--primary{
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:thin;
+    scroll-snap-type:x proximity;
+  }
+  #kintone-unified-suite-v2 .kus-tab-bar .tab{
+    flex:0 0 auto;
+    scroll-snap-align:start;
+  }
+  #kintone-unified-suite-v2 .kus-tab-bar .tabs::-webkit-scrollbar{height:6px}
+  #kintone-unified-suite-v2 .kus-tab-bar .tabs::-webkit-scrollbar-thumb{
+    background:rgba(100,116,139,.4);border-radius:999px;
+  }
+}
+
+/* 3) タッチ端末/狭幅: タップターゲットを 40px 以上に拡大して誤タップを防ぐ ------- */
+@media (hover:none), (max-width:560px){
+  #kintone-unified-suite-v2 :is(.tab,.subtab,.chip,.btn,.x){
+    min-height:40px;
+  }
+  #kintone-unified-suite-v2 :is(.tab,.subtab){
+    padding-top:9px;padding-bottom:9px;
+    display:inline-flex;align-items:center;
+  }
+  #kintone-unified-suite-v2 :is(input[type="text"],input[type="number"],input[type="search"],select,textarea){
+    min-height:40px;
+    font-size:16px; /* iOS で入力時に自動ズームされるのを抑止 */
+  }
+  #kintone-unified-suite-v2 textarea{min-height:96px}
+  /* 操作系の隣接間隔を広げて押し間違いを減らす */
+  #kintone-unified-suite-v2 .subtabs{gap:8px}
+}
+
+/* 4) 視認性/余白: 狭幅で本文の行間と余白を少し緩める ------------------------- */
+@media (max-width:560px){
+  #kintone-unified-suite-v2 .card{padding:14px}
+  #kintone-unified-suite-v2 :is(.subpane-note,.launcher-empty-desc,.feature-breadcrumb){
+    line-height:1.7;
+  }
+}
+`;
+
   // src/ui/template.ts
   init_constants();
   init_utils();
   init_dialog();
-  var cssText = [tokens_default, components_default, diff_default, reflect_default, tabs_default].join("\n");
+  var cssText = [tokens_default, components_default, diff_default, reflect_default, tabs_default, a11y_responsive_default].join("\n");
   function buildRoot(targetDocument = document, options = {}) {
     const doc = targetDocument || document;
     const root2 = doc.createElement("div");
@@ -33027,11 +33110,11 @@ ${detail}`);
 
           <!-- タブナビゲーション（ヘッダー直下に sticky 配置） -->
           <div class="kus-tab-bar" id="u_kusTabBar">
-            <div class="tabs">
+            <div class="tabs" role="tablist" aria-label="機能タブ" aria-orientation="horizontal">
               <div class="tab-group tab-group--primary" data-group="change">
-                <button class="tab" data-tab="diff" data-state="idle">差分比較</button>
-                <button class="tab active" data-tab="reflect" data-state="selected">プレビュー反映</button>
-                <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
+                <button class="tab" data-tab="diff" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">差分比較</button>
+                <button class="tab active" data-tab="reflect" data-state="selected" type="button" role="tab" aria-selected="true" tabindex="0">プレビュー反映</button>
+                <button class="tab" data-tab="field" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">フィールド追加</button>
               </div>
 
               <details class="kus-tab-more" id="u_kusTabMore">
@@ -33039,13 +33122,13 @@ ${detail}`);
                 <div class="kus-tab-more__body">
                   <div class="kus-tab-more__group">
                     <div class="kus-tab-more__group-lbl">可視化・分析</div>
-                    <button class="tab" data-tab="er" data-state="idle">ER図</button>
-                    <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
-                    <button class="tab" data-tab="analyze" data-state="idle">分析</button>
+                    <button class="tab" data-tab="er" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">ER図</button>
+                    <button class="tab" data-tab="processFlow" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">プロセス図</button>
+                    <button class="tab" data-tab="analyze" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">分析</button>
                   </div>
                   <div class="kus-tab-more__group">
                     <div class="kus-tab-more__group-lbl">API・検証</div>
-                    <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
+                    <button class="tab" data-tab="apiTester" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">APIテスター</button>
                   </div>
                 </div>
               </details>
@@ -38273,6 +38356,22 @@ ${detail}`);
         const tabs = Array.from(ui.launcherGroupFilters?.querySelectorAll(".launcher-tab-btn") || []);
         if (tabs.length === 0) return;
         const currentIdx = tabs.indexOf(launcherTabBtn);
+        let nextIdx = currentIdx;
+        if (e.key === "ArrowLeft") nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
+        else if (e.key === "ArrowRight") nextIdx = (currentIdx + 1) % tabs.length;
+        else if (e.key === "Home") nextIdx = 0;
+        else if (e.key === "End") nextIdx = tabs.length - 1;
+        tabs[nextIdx]?.focus();
+        tabs[nextIdx]?.click();
+        return;
+      }
+      const mainTabBtn = e.target?.closest?.(".kus-tab-bar .tab");
+      if (mainTabBtn && !editable && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
+        e.preventDefault();
+        const bar = getToolDocument().getElementById("u_kusTabBar");
+        const tabs = Array.from(bar?.querySelectorAll(".tab") || []).filter((t) => t.offsetParent !== null);
+        if (tabs.length === 0) return;
+        const currentIdx = tabs.indexOf(mainTabBtn);
         let nextIdx = currentIdx;
         if (e.key === "ArrowLeft") nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
         else if (e.key === "ArrowRight") nextIdx = (currentIdx + 1) % tabs.length;

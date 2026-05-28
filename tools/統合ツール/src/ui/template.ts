@@ -5,8 +5,9 @@ import componentsCss from './styles/components.css';
 import diffCss from './styles/diff.css';
 import reflectCss from './styles/reflect.css';
 import tabsCss from './styles/tabs.css';
+import a11yResponsiveCss from './styles/a11y-responsive.css';
 
-const cssText = [tokensCss, componentsCss, diffCss, reflectCss, tabsCss].join('\n');
+const cssText = [tokensCss, componentsCss, diffCss, reflectCss, tabsCss, a11yResponsiveCss].join('\n');
 import {
   TOOL_ID, TOOL_VERSION, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS,
   FEATURE_DEFS, DEFAULT_SUBTAB_STATE,
@@ -702,11 +703,11 @@ export function buildRoot(targetDocument = document, options: any = {}) {
 
           <!-- タブナビゲーション（ヘッダー直下に sticky 配置） -->
           <div class="kus-tab-bar" id="u_kusTabBar">
-            <div class="tabs">
+            <div class="tabs" role="tablist" aria-label="機能タブ" aria-orientation="horizontal">
               <div class="tab-group tab-group--primary" data-group="change">
-                <button class="tab" data-tab="diff" data-state="idle">差分比較</button>
-                <button class="tab active" data-tab="reflect" data-state="selected">プレビュー反映</button>
-                <button class="tab" data-tab="field" data-state="idle">フィールド追加</button>
+                <button class="tab" data-tab="diff" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">差分比較</button>
+                <button class="tab active" data-tab="reflect" data-state="selected" type="button" role="tab" aria-selected="true" tabindex="0">プレビュー反映</button>
+                <button class="tab" data-tab="field" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">フィールド追加</button>
               </div>
 
               <details class="kus-tab-more" id="u_kusTabMore">
@@ -714,13 +715,13 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <div class="kus-tab-more__body">
                   <div class="kus-tab-more__group">
                     <div class="kus-tab-more__group-lbl">可視化・分析</div>
-                    <button class="tab" data-tab="er" data-state="idle">ER図</button>
-                    <button class="tab" data-tab="processFlow" data-state="idle">プロセス図</button>
-                    <button class="tab" data-tab="analyze" data-state="idle">分析</button>
+                    <button class="tab" data-tab="er" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">ER図</button>
+                    <button class="tab" data-tab="processFlow" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">プロセス図</button>
+                    <button class="tab" data-tab="analyze" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">分析</button>
                   </div>
                   <div class="kus-tab-more__group">
                     <div class="kus-tab-more__group-lbl">API・検証</div>
-                    <button class="tab" data-tab="apiTester" data-state="idle">APIテスター</button>
+                    <button class="tab" data-tab="apiTester" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">APIテスター</button>
                   </div>
                 </div>
               </details>

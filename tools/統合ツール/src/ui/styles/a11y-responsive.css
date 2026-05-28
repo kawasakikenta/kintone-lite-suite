@@ -1,0 +1,76 @@
+/* === A11y & Responsive enhancements (UI改善) ===
+   方針:
+   - アクセシビリティ: キーボード操作時に高コントラストな focus-visible リングを全操作要素へ付与
+   - レスポンシブ/操作性: 狭幅でタブバーを横スクロール化し、タップターゲットを拡大
+   - 視認性/余白: 狭幅で本文の行間・余白を緩めて読みやすくする
+   後勝ちで効かせたいルールがあるため、本ファイルは結合の最後に読み込む。
+*/
+
+/* 1) グローバル focus-visible リング（キーボード操作時のみ表示） --------------- */
+#kintone-unified-suite-v2 :is(
+  a[href], button, summary, [role="button"], [role="tab"],
+  [tabindex]:not([tabindex="-1"]),
+  input, select, textarea
+):focus-visible{
+  outline:3px solid var(--accent, #2563eb);
+  outline-offset:2px;
+}
+/* チェックボックス/ラジオは内側に潰れないようオフセットを少し広げる */
+#kintone-unified-suite-v2 :is(input[type="checkbox"], input[type="radio"]):focus-visible{
+  outline:3px solid var(--accent, #2563eb);
+  outline-offset:3px;
+}
+/* マウスクリック時に残るアウトラインを抑止（focus-visible を優先） */
+#kintone-unified-suite-v2 :is(button, summary, [role="tab"]):focus:not(:focus-visible){
+  outline:none;
+}
+/* アクティブな濃色タブはリングが埋もれないよう内側にも白枠を重ねる */
+#kintone-unified-suite-v2 .kus-tab-bar .tab.active:focus-visible{
+  box-shadow:0 0 0 2px #fff inset, 0 3px 9px rgba(18,50,75,.18);
+}
+
+/* 2) レスポンシブ: 狭幅でタブバーを横スクロール（折返しで潰れるのを防ぐ） -------- */
+@media (max-width:640px){
+  #kintone-unified-suite-v2 .kus-tab-bar .tabs,
+  #kintone-unified-suite-v2 .kus-tab-bar .tab-group--primary{
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:thin;
+    scroll-snap-type:x proximity;
+  }
+  #kintone-unified-suite-v2 .kus-tab-bar .tab{
+    flex:0 0 auto;
+    scroll-snap-align:start;
+  }
+  #kintone-unified-suite-v2 .kus-tab-bar .tabs::-webkit-scrollbar{height:6px}
+  #kintone-unified-suite-v2 .kus-tab-bar .tabs::-webkit-scrollbar-thumb{
+    background:rgba(100,116,139,.4);border-radius:999px;
+  }
+}
+
+/* 3) タッチ端末/狭幅: タップターゲットを 40px 以上に拡大して誤タップを防ぐ ------- */
+@media (hover:none), (max-width:560px){
+  #kintone-unified-suite-v2 :is(.tab,.subtab,.chip,.btn,.x){
+    min-height:40px;
+  }
+  #kintone-unified-suite-v2 :is(.tab,.subtab){
+    padding-top:9px;padding-bottom:9px;
+    display:inline-flex;align-items:center;
+  }
+  #kintone-unified-suite-v2 :is(input[type="text"],input[type="number"],input[type="search"],select,textarea){
+    min-height:40px;
+    font-size:16px; /* iOS で入力時に自動ズームされるのを抑止 */
+  }
+  #kintone-unified-suite-v2 textarea{min-height:96px}
+  /* 操作系の隣接間隔を広げて押し間違いを減らす */
+  #kintone-unified-suite-v2 .subtabs{gap:8px}
+}
+
+/* 4) 視認性/余白: 狭幅で本文の行間と余白を少し緩める ------------------------- */
+@media (max-width:560px){
+  #kintone-unified-suite-v2 .card{padding:14px}
+  #kintone-unified-suite-v2 :is(.subpane-note,.launcher-empty-desc,.feature-breadcrumb){
+    line-height:1.7;
+  }
+}

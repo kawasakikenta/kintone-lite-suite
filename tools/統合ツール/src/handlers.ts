@@ -1035,6 +1035,27 @@ export function setupEventHandlers(injected: any = {}) {
       tabs[nextIdx]?.click();
       return;
     }
+
+    // メインのタブバー（差分比較 / プレビュー反映 / ...）の roving tabindex
+    const mainTabBtn = (e.target as Element)?.closest?.('.kus-tab-bar .tab') as HTMLButtonElement | null;
+    if (mainTabBtn && !editable && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+      e.preventDefault();
+      const bar = getToolDocument().getElementById('u_kusTabBar');
+      // 表示中（⋯ その他 が開いている場合はその中身も含む）のタブのみを対象にする
+      const tabs = Array.from(bar?.querySelectorAll<HTMLButtonElement>('.tab') || [])
+        .filter((t) => t.offsetParent !== null);
+      if (tabs.length === 0) return;
+      const currentIdx = tabs.indexOf(mainTabBtn);
+      let nextIdx = currentIdx;
+      if (e.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'ArrowRight') nextIdx = (currentIdx + 1) % tabs.length;
+      else if (e.key === 'Home') nextIdx = 0;
+      else if (e.key === 'End') nextIdx = tabs.length - 1;
+      tabs[nextIdx]?.focus();
+      tabs[nextIdx]?.click();
+      return;
+    }
+
     if (!editable && (e.key === '/' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'))) {
       e.preventDefault();
       showLauncherScreen({ persist: false });

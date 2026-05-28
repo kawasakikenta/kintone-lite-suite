@@ -258,6 +258,11 @@ export function switchTab(tabKey, options: any = {}) {
     const active = t.dataset.tab === key;
     t.classList.toggle('active', active);
     t.dataset.state = active ? 'selected' : 'idle';
+    // ARIA タブの選択状態と roving tabindex を同期（role="tab" のものだけ）
+    if (t.getAttribute('role') === 'tab') {
+      t.setAttribute('aria-selected', active ? 'true' : 'false');
+      (t as HTMLElement).tabIndex = active ? 0 : -1;
+    }
   });
   ui.panes.forEach((p) => p.classList.toggle('active', p.dataset.pane === key));
   
