@@ -40960,176 +40960,6 @@ ${detail}`);
     syncDiffOnboardingVisibility();
   }
 
-  // src/registry.ts
-  var FeatureRegistry = class {
-    constructor() {
-      __publicField(this, "features", /* @__PURE__ */ new Map());
-    }
-    register(feature) {
-      if (this.features.has(feature.id)) {
-        console.warn(`Feature ${feature.id} is already registered.`);
-        return;
-      }
-      this.features.set(feature.id, feature);
-    }
-    getFeature(id) {
-      return this.features.get(id);
-    }
-    initAll() {
-      this.features.forEach((feature) => {
-        try {
-          feature.init?.();
-        } catch (e) {
-          console.error(`Failed to init feature ${feature.id}`, e);
-        }
-      });
-    }
-    registerEventsAll(element) {
-      this.features.forEach((feature) => {
-        try {
-          feature.registerEvents?.(element);
-        } catch (e) {
-          console.error(`Failed to register events for feature ${feature.id}`, e);
-        }
-      });
-    }
-  };
-  var registry = new FeatureRegistry();
-
-  // src/features/diff/index.ts
-  var diffState = {
-    viewMode: "table",
-    categoryView: "",
-    filterSection: "",
-    filterType: "",
-    filterSeverity: "",
-    searchKeyword: ""
-  };
-  var diffFeature = {
-    id: "diff",
-    init() {
-      console.log("[DiffFeature] Initialized");
-    },
-    registerEvents(rootElement) {
-      console.log("[DiffFeature] Registering events");
-      rootElement.addEventListener("click", (e) => {
-        const target = e.target.closest("[data-act]");
-        if (!target) return;
-        const act = target.getAttribute("data-act");
-        if (act === "clearDiffFilters") {
-          e.preventDefault();
-          e.stopPropagation();
-          clearDiffFilters();
-        }
-      });
-    }
-  };
-  function clearDiffFilters() {
-    diffState.filterSection = "";
-    diffState.filterType = "";
-    diffState.filterSeverity = "";
-    diffState.searchKeyword = "";
-    const secSelect = document.getElementById("u_diffFilterSection");
-    const typeSelect = document.getElementById("u_diffFilterType");
-    const sevSelect = document.getElementById("u_diffFilterSeverity");
-    const searchInput = document.getElementById("u_diffSearch");
-    if (secSelect) secSelect.value = "";
-    if (typeSelect) typeSelect.value = "";
-    if (sevSelect) sevSelect.value = "";
-    if (searchInput) searchInput.value = "";
-    console.log("[DiffFeature] Filters cleared via local feature handler");
-  }
-
-  // src/features/reflect/index.ts
-  var reflectFeature = {
-    id: "reflect",
-    init() {
-      console.log("[ReflectFeature] Initialized");
-    },
-    registerEvents(rootElement) {
-    }
-  };
-
-  // src/features/field/index.ts
-  var fieldFeature = {
-    id: "field",
-    init() {
-      console.log("[FieldFeature] Initialized");
-    },
-    registerEvents(rootElement) {
-    }
-  };
-
-  // src/features/er/index.ts
-  var erFeature = {
-    id: "er",
-    init() {
-      console.log("[ERFeature] Initialized");
-    },
-    registerEvents(rootElement) {
-    }
-  };
-
-  // src/features/process/index.ts
-  var processFeature = {
-    id: "process",
-    init() {
-      console.log("[ProcessFeature] Initialized");
-    },
-    registerEvents(rootElement) {
-    }
-  };
-
-  // src/features/analyze/index.ts
-  var analyzeFeature = {
-    id: "analyze",
-    init() {
-      console.log("[AnalyzeFeature] Initialized");
-    },
-    registerEvents(rootElement) {
-    }
-  };
-
-  // src/features/apiTester/index.ts
-  var apiTesterFeature = {
-    id: "apiTester",
-    init() {
-      console.log("[ApiTesterFeature] Initialized");
-    },
-    registerEvents(rootElement) {
-    }
-  };
-
-  // src/features/jsconfig/index.ts
-  var jsconfigFeature = {
-    id: "jsconfig",
-    init() {
-      console.log("[JsConfigFeature] Initialized");
-    },
-    registerEvents(rootElement) {
-    }
-  };
-
-  // src/features/record/index.ts
-  var recordFeature = {
-    id: "record",
-    init() {
-      console.log("[RecordFeature] Initialized");
-    },
-    registerEvents(rootElement) {
-    }
-  };
-
-  // src/features/design/index.ts
-  var designFeature = {
-    id: "design",
-    init() {
-      console.log("[DesignFeature] Initialized");
-    },
-    registerEvents(rootElement) {
-    }
-  };
-
   // src/boot.ts
   init_psychology();
 
@@ -47722,16 +47552,6 @@ ${field.label}` : code,
 
   // src/boot.ts
   var TOOL_POPOUT_NAME = "kintone-unified-suite-v2";
-  registry.register(diffFeature);
-  registry.register(reflectFeature);
-  registry.register(fieldFeature);
-  registry.register(erFeature);
-  registry.register(processFeature);
-  registry.register(analyzeFeature);
-  registry.register(apiTesterFeature);
-  registry.register(jsconfigFeature);
-  registry.register(recordFeature);
-  registry.register(designFeature);
   function runKintoneUnifiedSuite(options = {}) {
     if (!window.kintone?.api || !window.kintone?.app) {
       alert("kintone画面で実行してください");
@@ -48078,8 +47898,6 @@ ${field.label}` : code,
       fieldGraphRelayout,
       fieldGraphExportPng
     });
-    registry.initAll();
-    registry.registerEventsAll(root2);
     renderApiTesterHistory();
     initApiTesterEnhancements();
     installPsychology({
