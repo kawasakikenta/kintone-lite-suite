@@ -22901,6 +22901,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   // src/tabs/design-xlsx.ts
   var design_xlsx_exports = {};
   __export(design_xlsx_exports, {
+    getDesignExportSheetMeta: () => getDesignExportSheetMeta,
     runAdvancedDesignExporter: () => runAdvancedDesignExporter,
     runBatchDesignExportXlsxZip: () => runBatchDesignExportXlsxZip,
     showDesignExportOptionsDialog: () => showDesignExportOptionsDialog
@@ -22974,9 +22975,20 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
   function resolveExportSheetDefs() {
     return EXPORT_SHEET_DEFS;
   }
+  function getDesignExportSheetMeta() {
+    return {
+      defs: EXPORT_SHEET_DEFS,
+      categories: EXPORT_SHEET_CATEGORIES,
+      presets: EXPORT_SHEET_PRESETS
+    };
+  }
+  function escapeHtmlAttr(value) {
+    return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
   function showSheetSelectionDialog(defs, title = "📊 エクスポート設定") {
     return new Promise((resolve) => {
-      const overlay = getToolDocument().createElement("div");
+      const doc = getToolDocument();
+      const overlay = doc.createElement("div");
       Object.assign(overlay.style, {
         position: "fixed",
         top: "0",
@@ -22991,33 +23003,93 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         fontFamily: '"Meiryo", sans-serif'
       });
       const remembered = loadPersistedSheetSelection();
-      const checkboxes = defs.map((d) => {
-        const checked = remembered ? remembered.has(d.key) : d.default;
-        return `<label style="display:block;margin:3px 0;font-size:13px;cursor:${d.required ? "default" : "pointer"};"><input type="checkbox" value="${d.key}" ${checked ? "checked" : ""} ${d.required ? "disabled" : ""} style="margin-right:6px;">${d.label}${d.required ? " (必須)" : ""}</label>`;
+      const optionalTotal = defs.filter((d) => !d.required).length;
+      const usedCats = EXPORT_SHEET_CATEGORIES.filter((c) => defs.some((d) => d.cat === c.key));
+      const groupsHtml = usedCats.map((cat) => {
+        const items = defs.filter((d) => d.cat === cat.key);
+        const rows = items.map((d) => {
+          const checked = remembered ? remembered.has(d.key) : d.default;
+          return `<label style="display:flex;align-items:center;gap:6px;margin:3px 0;font-size:13px;cursor:${d.required ? "default" : "pointer"};"><input type="checkbox" value="${escapeHtmlAttr(d.key)}" ${checked ? "checked" : ""} ${d.required ? "disabled" : ""}>${escapeHtmlAttr(d.label)}${d.required ? " (必須)" : ""}</label>`;
+        }).join("");
+        return `<div style="margin-bottom:10px;"><div style="font-size:11px;font-weight:bold;color:#2E5C8A;letter-spacing:.04em;margin:2px 0 4px;border-bottom:1px solid #e2e8f0;padding-bottom:2px;">${escapeHtmlAttr(cat.label)}</div>${rows}</div>`;
       }).join("");
-      overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:460px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.3);"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:16px;">${title}</div><div style="font-size:12px;color:#666;margin-bottom:12px;">出力するシートを選択してください（前回設定を自動反映）</div><div style="display:flex;gap:8px;margin-bottom:12px;"><button id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div><div id="kex-sheet-options" style="max-height:340px;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${checkboxes}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;"><button id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
-      getToolDocument().body.appendChild(overlay);
-      overlay.querySelector("#kex-select-all").onclick = () => {
-        overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]').forEach((cb) => {
-          cb.checked = true;
+      const presetBtns = EXPORT_SHEET_PRESETS.map(
+        (p) => `<button type="button" class="kex-preset" data-preset="${escapeHtmlAttr(p.id)}" style="font-size:11px;padding:4px 10px;border:1px solid #c2d1de;border-radius:999px;background:#eef4f8;color:#24506f;cursor:pointer;">${escapeHtmlAttr(p.label)}</button>`
+      ).join("");
+      overlay.innerHTML = `<div role="dialog" aria-modal="true" aria-label="${escapeHtmlAttr(title)}" tabindex="-1" style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:480px;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.3);outline:none;"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:8px;">${escapeHtmlAttr(title)}</div><div style="font-size:12px;color:#666;margin-bottom:10px;">出力するシートを選択してください（前回設定を自動反映 / Esc=キャンセル, Ctrl+Enter=エクスポート）</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center;"><span style="font-size:11px;color:#94a3b8;margin-right:2px;">プリセット:</span>${presetBtns}</div><div style="display:flex;gap:8px;margin-bottom:8px;"><button type="button" id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button><span id="kex-count" style="margin-left:auto;align-self:center;font-size:12px;font-weight:bold;color:#2E5C8A;"></span></div><div id="kex-sheet-options" style="flex:1;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${groupsHtml}</div><div id="kex-warn" style="font-size:11px;color:#b91c1c;min-height:16px;margin-top:6px;"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;"><button type="button" id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button type="button" id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
+      doc.body.appendChild(overlay);
+      const box = overlay.querySelector('[role="dialog"]');
+      const optionBoxes = () => Array.from(overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]'));
+      const selectableBoxes = () => Array.from(overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])'));
+      const countEl = overlay.querySelector("#kex-count");
+      const warnEl = overlay.querySelector("#kex-warn");
+      const exportBtn = overlay.querySelector("#kex-export");
+      const refresh = () => {
+        const checked = optionBoxes().filter((cb) => cb.checked).length;
+        countEl.textContent = `選択中 ${checked} / ${optionalTotal}`;
+        const empty = checked === 0;
+        exportBtn.disabled = empty;
+        exportBtn.style.opacity = empty ? "0.5" : "1";
+        exportBtn.style.cursor = empty ? "not-allowed" : "pointer";
+        warnEl.textContent = empty ? "出力するシートを1つ以上選択してください。" : "";
+      };
+      overlay.addEventListener("change", (e) => {
+        if (e.target?.matches?.('input[type="checkbox"]')) refresh();
+      });
+      const applyPreset = (keys) => {
+        selectableBoxes().forEach((cb) => {
+          cb.checked = keys ? keys.includes(cb.value) : true;
         });
+        refresh();
       };
-      overlay.querySelector("#kex-select-none").onclick = () => {
-        overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:not([disabled])').forEach((cb) => {
-          cb.checked = false;
-        });
+      overlay.querySelectorAll(".kex-preset").forEach((btn) => {
+        btn.onclick = () => {
+          const preset = EXPORT_SHEET_PRESETS.find((p) => p.id === btn.dataset.preset);
+          if (preset) applyPreset(preset.keys);
+        };
+      });
+      overlay.querySelector("#kex-select-all").onclick = () => applyPreset(null);
+      overlay.querySelector("#kex-select-none").onclick = () => applyPreset([]);
+      const close = (result) => {
+        doc.removeEventListener("keydown", onKeydown, true);
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        resolve(result);
       };
-      overlay.querySelector("#kex-cancel").onclick = () => {
-        getToolDocument().body.removeChild(overlay);
-        resolve(null);
-      };
-      overlay.querySelector("#kex-export").onclick = () => {
+      const doCancel = () => close(null);
+      const doExport = () => {
         const selected = /* @__PURE__ */ new Set();
-        overlay.querySelectorAll('#kex-sheet-options input[type="checkbox"]:checked').forEach((cb) => selected.add(cb.value));
+        optionBoxes().forEach((cb) => {
+          if (cb.checked) selected.add(cb.value);
+        });
+        if (selected.size === 0) {
+          refresh();
+          return;
+        }
         persistSheetSelection(selected);
-        getToolDocument().body.removeChild(overlay);
-        resolve(selected);
+        close(selected);
       };
+      overlay.querySelector("#kex-cancel").onclick = doCancel;
+      exportBtn.onclick = doExport;
+      overlay.addEventListener("mousedown", (e) => {
+        if (e.target === overlay) doCancel();
+      });
+      const onKeydown = (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          doCancel();
+        } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          e.stopPropagation();
+          doExport();
+        }
+      };
+      doc.addEventListener("keydown", onKeydown, true);
+      refresh();
+      try {
+        box?.focus();
+      } catch {
+      }
     });
   }
   function showDesignExportOptionsDialog() {
@@ -23790,6 +23862,10 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       if (!APP_ID) throw new Error("有効な比較元アプリIDが指定されませんでした。");
       const selectedSheets = preselectedSheets || await showDesignExportOptionsDialog();
       if (!selectedSheets) return false;
+      if (selectedSheets.size === 0) {
+        if (!preselectedSheets) await showToast("出力するシートが選択されていません", "warn");
+        return false;
+      }
       if (progressLabel) {
         const prefix = `${progressLabel} `;
         const origShow = UI.show.bind(UI);
@@ -25265,7 +25341,7 @@ ${detail}`);
     showToast(`✅ 設計書ZIPを保存しました${suffix}`, tone);
     return true;
   }
-  var SHEETLIB_PRIMARY_URL, SHEETLIB_FALLBACK_URL, DESIGN_EXPORT_VERSION, rememberedSheetSelection, EXPORT_SHEET_DEFS;
+  var SHEETLIB_PRIMARY_URL, SHEETLIB_FALLBACK_URL, DESIGN_EXPORT_VERSION, rememberedSheetSelection, EXPORT_SHEET_DEFS, EXPORT_SHEET_CATEGORIES, EXPORT_SHEET_PRESETS;
   var init_design_xlsx = __esm({
     "src/tabs/design-xlsx.ts"() {
       "use strict";
@@ -25277,25 +25353,39 @@ ${detail}`);
       DESIGN_EXPORT_VERSION = "2.2";
       rememberedSheetSelection = null;
       EXPORT_SHEET_DEFS = [
-        { key: "summary", label: "サマリー", default: true },
-        { key: "fields", label: "項目定義", default: true },
-        { key: "layout", label: "フォームレイアウト", default: true },
-        { key: "views", label: "一覧", default: true },
-        { key: "reports", label: "グラフ", default: true },
-        { key: "status", label: "プロセス管理", default: true },
-        { key: "statusMatrix", label: "遷移マトリクス", default: true },
-        { key: "appAcl", label: "アプリ権限", default: true },
-        { key: "recordAcl", label: "レコード権限", default: true },
-        { key: "fieldAcl", label: "フィールド権限", default: true },
-        { key: "customize", label: "JS/CSSカスタマイズ", default: true },
-        { key: "actions", label: "アクション", default: true },
-        { key: "plugins", label: "プラグイン", default: true },
-        { key: "genNotif", label: "通知(一般)", default: true },
-        { key: "recNotif", label: "通知(レコード)", default: true },
-        { key: "remNotif", label: "通知(リマインダー)", default: true },
-        { key: "webhook", label: "Webhook", default: true },
-        { key: "adminNotes", label: "管理者メモ", default: true },
-        { key: "dependencies", label: "フィールド依存関係", default: true }
+        { key: "summary", label: "サマリー", default: true, cat: "basic" },
+        { key: "fields", label: "項目定義", default: true, cat: "basic" },
+        { key: "layout", label: "フォームレイアウト", default: true, cat: "basic" },
+        { key: "views", label: "一覧", default: true, cat: "basic" },
+        { key: "reports", label: "グラフ", default: true, cat: "basic" },
+        { key: "status", label: "プロセス管理", default: true, cat: "process" },
+        { key: "statusMatrix", label: "遷移マトリクス", default: true, cat: "process" },
+        { key: "appAcl", label: "アプリ権限", default: true, cat: "acl" },
+        { key: "recordAcl", label: "レコード権限", default: true, cat: "acl" },
+        { key: "fieldAcl", label: "フィールド権限", default: true, cat: "acl" },
+        { key: "customize", label: "JS/CSSカスタマイズ", default: true, cat: "customize" },
+        { key: "actions", label: "アクション", default: true, cat: "customize" },
+        { key: "plugins", label: "プラグイン", default: true, cat: "customize" },
+        { key: "webhook", label: "Webhook", default: true, cat: "customize" },
+        { key: "genNotif", label: "通知(一般)", default: true, cat: "notif" },
+        { key: "recNotif", label: "通知(レコード)", default: true, cat: "notif" },
+        { key: "remNotif", label: "通知(リマインダー)", default: true, cat: "notif" },
+        { key: "adminNotes", label: "管理者メモ", default: true, cat: "other" },
+        { key: "dependencies", label: "フィールド依存関係", default: true, cat: "other" }
+      ];
+      EXPORT_SHEET_CATEGORIES = [
+        { key: "basic", label: "基本" },
+        { key: "process", label: "プロセス" },
+        { key: "acl", label: "権限" },
+        { key: "customize", label: "カスタマイズ・連携" },
+        { key: "notif", label: "通知" },
+        { key: "other", label: "その他" }
+      ];
+      EXPORT_SHEET_PRESETS = [
+        { id: "all", label: "すべて", keys: null },
+        { id: "basic", label: "基本のみ", keys: ["summary", "fields", "layout", "views", "reports"] },
+        { id: "acl", label: "権限のみ", keys: ["appAcl", "recordAcl", "fieldAcl"] },
+        { id: "notif", label: "通知のみ", keys: ["genNotif", "recNotif", "remNotif"] }
       ];
     }
   });
