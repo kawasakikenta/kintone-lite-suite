@@ -34825,7 +34825,7 @@ ${detail}`);
                   <div class="sidebar-head">
                     <div class="sidebar-head-row">
                       <span>反映するセクション</span>
-                      <span style="font-size:10px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
+                      <span style="font-size:11px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
                     </div>
                     <p class="sidebar-hint">1. チェックで反映対象を選ぶ 2. 行クリックで内容確認</p>
                   </div>
@@ -34834,15 +34834,23 @@ ${detail}`);
                   </div>
                   <div class="sidebar-sections" id="u_reflectSidebarSections"></div>
                   <div class="sidebar-footer">
-                    <button type="button" class="btn sub" data-act="reflectSidebarOverview">全体概要</button>
-                    <button class="btn sub" data-act="applyScopeAll">全選択</button>
-                    <button class="btn sub" data-act="applyScopeNone">全解除</button>
-                    <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn">差分のみ</button>
-                    <button class="btn sub" data-act="applyScopeHighRisk">高重要度</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="safe">安全寄り</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="visual">画面系</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="permissions">権限系</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="customize">JS/CSS</button>
+                    <div class="sidebar-footer__group sidebar-footer__group--lead">
+                      <button type="button" class="btn sub" data-act="reflectSidebarOverview" title="全セクションの選択状況と差分件数をまとめて確認します">全体概要</button>
+                    </div>
+                    <div class="sidebar-footer__group" role="group" aria-label="一括選択">
+                      <span class="sidebar-footer__label">選択</span>
+                      <button class="btn sub" data-act="applyScopeAll" title="すべてのセクションを反映対象にします">全選択</button>
+                      <button class="btn sub" data-act="applyScopeNone" title="すべての選択を解除します">全解除</button>
+                      <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn" title="前回差分があったセクションだけを選びます">差分のみ</button>
+                      <button class="btn sub" data-act="applyScopeHighRisk" title="重要度が高いセクションだけを選びます">高重要度</button>
+                    </div>
+                    <div class="sidebar-footer__group" role="group" aria-label="分類で選択">
+                      <span class="sidebar-footer__label">分類</span>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="safe" title="権限など影響の大きい設定を避けた安全寄りの選択">安全寄り</button>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="visual" title="フォーム・ビューなど画面まわりの設定を選択">画面系</button>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="permissions" title="アプリ／フィールド／レコードの権限設定を選択">権限系</button>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="customize" title="JS/CSSカスタマイズ設定を選択">JS/CSS</button>
+                    </div>
                   </div>
                   <div class="reflect-preset-row" title="接続先とセクション選択をまとめてプリセットに保存/復元します">
                     <span class="reflect-preset-row__label">反映プリセット</span>
