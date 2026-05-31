@@ -1977,7 +1977,7 @@ export function renderReflectApplyHistory() {
   const successRate = summary.totalOk + summary.totalNg > 0
     ? Math.round((summary.totalOk / (summary.totalOk + summary.totalNg)) * 100)
     : null;
-  const aggLine = `<div class="reflect-apply-history__agg">累計 OK ${summary.totalOk} / NG ${summary.totalNg}${summary.totalSkip ? ` / スキップ ${summary.totalSkip}` : ''}${successRate !== null ? `（成功率 ${successRate}%）` : ''}${summary.errorEntryCount ? ` ・ エラーを含む反映 ${summary.errorEntryCount}件` : ''}</div>`;
+  const aggLine = `<div class="reflect-apply-history__agg">累計 <span class="reflect-apply-history__agg-ok">OK ${summary.totalOk}</span> / <span class="reflect-apply-history__agg-ng">NG ${summary.totalNg}</span>${summary.totalSkip ? ` / スキップ ${summary.totalSkip}` : ''}${successRate !== null ? `<span class="reflect-apply-history__agg-rate">成功率 ${successRate}%</span>` : ''}${summary.errorEntryCount ? `<span class="reflect-apply-history__agg-warn">⚠ エラーを含む反映 ${summary.errorEntryCount}件</span>` : ''}</div>`;
   host.innerHTML = `<details${open} data-act-host="reflectApplyHistory">
       <summary>
         <span>反映履歴（${history.length}件・端末保存）</span>

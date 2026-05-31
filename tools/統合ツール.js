@@ -13331,7 +13331,7 @@ ${tgt.full}`);
     }).join("");
     const summary = summarizeApplyHistory(history2);
     const successRate = summary.totalOk + summary.totalNg > 0 ? Math.round(summary.totalOk / (summary.totalOk + summary.totalNg) * 100) : null;
-    const aggLine = `<div class="reflect-apply-history__agg">累計 OK ${summary.totalOk} / NG ${summary.totalNg}${summary.totalSkip ? ` / スキップ ${summary.totalSkip}` : ""}${successRate !== null ? `（成功率 ${successRate}%）` : ""}${summary.errorEntryCount ? ` ・ エラーを含む反映 ${summary.errorEntryCount}件` : ""}</div>`;
+    const aggLine = `<div class="reflect-apply-history__agg">累計 <span class="reflect-apply-history__agg-ok">OK ${summary.totalOk}</span> / <span class="reflect-apply-history__agg-ng">NG ${summary.totalNg}</span>${summary.totalSkip ? ` / スキップ ${summary.totalSkip}` : ""}${successRate !== null ? `<span class="reflect-apply-history__agg-rate">成功率 ${successRate}%</span>` : ""}${summary.errorEntryCount ? `<span class="reflect-apply-history__agg-warn">⚠ エラーを含む反映 ${summary.errorEntryCount}件</span>` : ""}</div>`;
     host.innerHTML = `<details${open} data-act-host="reflectApplyHistory">
       <summary>
         <span>反映履歴（${history2.length}件・端末保存）</span>
@@ -34847,11 +34847,16 @@ ${detail}`);
                   <div class="reflect-preset-row" title="接続先とセクション選択をまとめてプリセットに保存/復元します">
                     <span class="reflect-preset-row__label">反映プリセット</span>
                     <select id="u_reflectPresetSelect" class="reflect-preset-row__select" aria-label="プリセット選択"></select>
-                    <button type="button" class="btn sub" data-act="applyReflectPreset">読込</button>
-                    <button type="button" class="btn sub" data-act="saveReflectPreset">現在の内容で保存</button>
-                    <button type="button" class="btn sub" data-act="deleteReflectPreset">削除</button>
-                    <button type="button" class="btn sub" data-act="exportReflectPresets" title="保存済みの反映プリセットをまとめてJSONファイルに書き出します（別セッション・別端末へ持ち運び可）">JSON書出</button>
-                    <button type="button" class="btn sub" data-act="importReflectPresets" title="書き出した反映プリセットJSONを読み込み、現在のプリセットへ取り込みます（同名は上書き）">JSON読込</button>
+                    <span class="reflect-preset-row__group" role="group" aria-label="プリセット操作">
+                      <button type="button" class="btn sub" data-act="applyReflectPreset" title="選択中のプリセットを現在の入力に読み込みます">読込</button>
+                      <button type="button" class="btn sub" data-act="saveReflectPreset" title="現在の接続先・セクション選択をプリセットとして保存します">保存</button>
+                      <button type="button" class="btn sub" data-act="deleteReflectPreset" title="選択中のプリセットを削除します">削除</button>
+                    </span>
+                    <span class="reflect-preset-row__divider" aria-hidden="true"></span>
+                    <span class="reflect-preset-row__group" role="group" aria-label="ファイル入出力">
+                      <button type="button" class="btn sub" data-act="exportReflectPresets" title="保存済みの反映プリセットをまとめてJSONファイルに書き出します（別セッション・別端末へ持ち運び可）">JSON書出</button>
+                      <button type="button" class="btn sub" data-act="importReflectPresets" title="書き出した反映プリセットJSONを読み込み、現在のプリセットへ取り込みます（同名は上書き）">JSON読込</button>
+                    </span>
                     <input type="file" id="u_reflectPresetsFileInput" accept="application/json" style="display:none">
                   </div>
                 </div>
