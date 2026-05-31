@@ -11206,6 +11206,71 @@ ${body}`;
     }
   });
 
+  // src/reflect/applyHistorySummary.ts
+  function formatApplyHistoryModeLabel(mode) {
+    if (!mode) return "反映";
+    return APPLY_HISTORY_MODE_LABELS[mode] || mode;
+  }
+  function safeCount(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
+  function summarizeApplyHistory(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    let totalOk = 0;
+    let totalNg = 0;
+    let totalSkip = 0;
+    let errorEntryCount = 0;
+    let lastAppliedAt = null;
+    let count = 0;
+    for (const entry of list) {
+      if (!entry || typeof entry !== "object") continue;
+      count += 1;
+      totalOk += safeCount(entry.okCount);
+      totalNg += safeCount(entry.ngCount);
+      totalSkip += safeCount(entry.skipCount);
+      const hadError = !!entry.hadError || safeCount(entry.ngCount) > 0;
+      if (hadError) errorEntryCount += 1;
+      const at = Number(entry.at);
+      if (Number.isFinite(at) && (lastAppliedAt === null || at > lastAppliedAt)) {
+        lastAppliedAt = at;
+      }
+    }
+    return { count, totalOk, totalNg, totalSkip, errorEntryCount, lastAppliedAt };
+  }
+  function resolveReplayScopeKeys(entryScopes, availableScopeKeys) {
+    const available = /* @__PURE__ */ new Set();
+    if (availableScopeKeys) {
+      for (const key of availableScopeKeys) {
+        if (key) available.add(String(key));
+      }
+    }
+    const seen = /* @__PURE__ */ new Set();
+    const applicable = [];
+    const unavailable = [];
+    for (const raw of Array.isArray(entryScopes) ? entryScopes : []) {
+      const key = String(raw == null ? "" : raw).trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      if (available.has(key)) applicable.push(key);
+      else unavailable.push(key);
+    }
+    return { applicable, unavailable };
+  }
+  var APPLY_HISTORY_MODE_LABELS;
+  var init_applyHistorySummary = __esm({
+    "src/reflect/applyHistorySummary.ts"() {
+      "use strict";
+      APPLY_HISTORY_MODE_LABELS = Object.freeze({
+        section: "まとめ反映",
+        nodes: "差分選択",
+        patch: "JSONパッチ",
+        retry: "再反映",
+        restore: "復元"
+      });
+    }
+  });
+
   // src/oss_integrations.ts
   var oss_integrations_exports = {};
   __export(oss_integrations_exports, {
@@ -13244,23 +13309,29 @@ ${tgt.full}`);
       return;
     }
     const open = state.reflectApplyHistoryOpen ? " open" : "";
+    const sectionLabelOf2 = (key) => SECTION_DEFS.find((d) => d.key === key)?.label || key;
     const items = history2.map((entry) => {
       const hasErr = entry.hadError || (entry.ngCount || 0) > 0;
-      const modeLabel = {
-        section: "まとめ反映",
-        nodes: "差分選択",
-        patch: "JSONパッチ",
-        retry: "再反映",
-        restore: "復元"
-      }[entry.mode] || entry.mode || "反映";
+      const modeLabel = formatApplyHistoryModeLabel(entry.mode);
       const time = new Date(entry.at).toLocaleString();
       const scopeLabel = (entry.scopes || []).slice(0, 4).join(", ") + ((entry.scopes || []).length > 4 ? ` 他${entry.scopes.length - 4}` : "");
+      const failedKeys = Array.isArray(entry.failedSectionKeys) ? entry.failedSectionKeys.filter(Boolean) : [];
+      const failedRow = failedKeys.length ? `<div class="reflect-apply-history__fail" title="${esc(failedKeys.map(sectionLabelOf2).join(", "))}">⚠ 失敗: ${esc(failedKeys.slice(0, 6).map(sectionLabelOf2).join(", "))}${failedKeys.length > 6 ? ` 他${failedKeys.length - 6}` : ""}</div>` : "";
+      const canReplay = Array.isArray(entry.scopes) && entry.scopes.length > 0;
+      const replayBtn = canReplay ? `<button type="button" class="reflect-apply-history__replay" data-act="replayApplyHistoryScopes" data-history-id="${esc(entry.id || "")}" title="この反映で対象だったセクションを反映スコープに復元します（実行はしません）">再反映を準備</button>` : "<span></span>";
       return `<div class="reflect-apply-history__item${hasErr ? " has-error" : ""}" title="${esc(scopeLabel)}">
-      <span class="reflect-apply-history__time">${esc(time)}</span>
-      <span class="reflect-apply-history__summary">[${esc(modeLabel)}] 比較先 ${esc(entry.appId || "-")} / ${esc(scopeLabel || "-")}</span>
-      <span class="reflect-apply-history__stats" style="color:${hasErr ? "#991b1b" : "#166534"}">OK ${entry.okCount || 0} / NG ${entry.ngCount || 0}</span>
+      <div class="reflect-apply-history__row">
+        <span class="reflect-apply-history__time">${esc(time)}</span>
+        <span class="reflect-apply-history__summary">[${esc(modeLabel)}] 比較先 ${esc(entry.appId || "-")} / ${esc(scopeLabel || "-")}</span>
+        <span class="reflect-apply-history__stats" style="color:${hasErr ? "#991b1b" : "#166534"}">OK ${entry.okCount || 0} / NG ${entry.ngCount || 0}</span>
+        ${replayBtn}
+      </div>
+      ${failedRow}
     </div>`;
     }).join("");
+    const summary = summarizeApplyHistory(history2);
+    const successRate = summary.totalOk + summary.totalNg > 0 ? Math.round(summary.totalOk / (summary.totalOk + summary.totalNg) * 100) : null;
+    const aggLine = `<div class="reflect-apply-history__agg">累計 OK ${summary.totalOk} / NG ${summary.totalNg}${summary.totalSkip ? ` / スキップ ${summary.totalSkip}` : ""}${successRate !== null ? `（成功率 ${successRate}%）` : ""}${summary.errorEntryCount ? ` ・ エラーを含む反映 ${summary.errorEntryCount}件` : ""}</div>`;
     host.innerHTML = `<details${open} data-act-host="reflectApplyHistory">
       <summary>
         <span>反映履歴（${history2.length}件・端末保存）</span>
@@ -13269,6 +13340,7 @@ ${tgt.full}`);
           <button type="button" class="btn sub" data-act="clearApplyHistory" style="padding:2px 8px;font-size:10px" title="履歴を消去">クリア</button>
         </span>
       </summary>
+      ${aggLine}
       <div class="reflect-apply-history__list">${items}</div>
     </details>`;
     const details = host.querySelector("details");
@@ -13829,6 +13901,7 @@ ${tgt.full}`);
       init_enrich();
       init_nodeModeUi();
       init_footerLabel();
+      init_applyHistorySummary();
       init_constants();
       init_dialog();
       init_oss_integrations();
@@ -36908,6 +36981,7 @@ ${detail}`);
   }
 
   // src/handlers.ts
+  init_applyHistorySummary();
   init_field();
 
   // src/tabs/settings-export.ts
@@ -40740,6 +40814,34 @@ ${detail}`);
         const filename = `reflect_apply_history_${nowStamp()}.json`;
         downloadText(filename, JSON.stringify(snapshot, null, 2), "application/json");
         setStatus(`反映履歴を書き出しました: ${filename}（${snapshot.count}件）`);
+        return;
+      }
+      if (act === "replayApplyHistoryScopes") {
+        const historyId = actEl.dataset.historyId;
+        const entry = (Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : []).find((e2) => e2 && e2.id === historyId);
+        if (!entry) {
+          setStatus("対象の反映履歴が見つかりませんでした（クリア済みの可能性があります）", true);
+          return;
+        }
+        const availableKeys = SECTION_DEFS.filter((d) => d.put).map((d) => d.key);
+        const { applicable, unavailable } = resolveReplayScopeKeys(entry.scopes, availableKeys);
+        if (!applicable.length) {
+          setStatus("この履歴のセクションは現在の反映スコープに存在しないため復元できませんでした", true);
+          return;
+        }
+        const wanted = new Set(applicable);
+        ui.applyScopes?.querySelectorAll("input[type=checkbox]").forEach((el) => {
+          el.checked = wanted.has(el.value);
+        });
+        switchTab("reflect", { persist: false });
+        switchSubTab("reflect", "settings", { persist: false });
+        saveCurrentDialogState2();
+        renderReflectAssistPanel();
+        const labelOf = (key) => SECTION_DEFS.find((d) => d.key === key)?.label || key;
+        const restored = applicable.map(labelOf).join(", ");
+        const appNote = entry.appId ? `（記録時の比較先アプリ ${entry.appId}）` : "";
+        const skipNote = unavailable.length ? ` / 復元できないセクション ${unavailable.length}件は除外` : "";
+        setStatus(`反映スコープを復元しました: ${restored}${skipNote}。接続先を確認のうえ再反映してください${appNote}`);
         return;
       }
       if (act === "applyReflectQuickPreset") {

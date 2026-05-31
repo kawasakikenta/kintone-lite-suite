@@ -136,6 +136,8 @@ import {
   closePreviewProdDiff
 } from './reflect/previewProdDiff.js';
 
+import { resolveReplayScopeKeys } from './reflect/applyHistorySummary.js';
+
 import {
   runFieldApply,
   runLoadTargetFields,
@@ -3281,6 +3283,32 @@ export function setupEventHandlers(injected: any = {}) {
       const filename = `reflect_apply_history_${nowStamp()}.json`;
       downloadText(filename, JSON.stringify(snapshot, null, 2), 'application/json');
       setStatus(`反映履歴を書き出しました: ${filename}（${snapshot.count}件）`);
+      return;
+    }
+    if (act === 'replayApplyHistoryScopes') {
+      const historyId = actEl.dataset.historyId;
+      const entry = (Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [])
+        .find((e: any) => e && e.id === historyId);
+      if (!entry) { setStatus('対象の反映履歴が見つかりませんでした（クリア済みの可能性があります）', true); return; }
+      const availableKeys = SECTION_DEFS.filter((d) => d.put).map((d) => d.key);
+      const { applicable, unavailable } = resolveReplayScopeKeys(entry.scopes, availableKeys);
+      if (!applicable.length) {
+        setStatus('この履歴のセクションは現在の反映スコープに存在しないため復元できませんでした', true);
+        return;
+      }
+      const wanted = new Set(applicable);
+      ui.applyScopes?.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach((el) => {
+        el.checked = wanted.has(el.value);
+      });
+      switchTab('reflect', { persist: false });
+      switchSubTab('reflect', 'settings', { persist: false });
+      saveCurrentDialogState();
+      renderReflectAssistPanel();
+      const labelOf = (key: string) => SECTION_DEFS.find((d) => d.key === key)?.label || key;
+      const restored = applicable.map(labelOf).join(', ');
+      const appNote = entry.appId ? `（記録時の比較先アプリ ${entry.appId}）` : '';
+      const skipNote = unavailable.length ? ` / 復元できないセクション ${unavailable.length}件は除外` : '';
+      setStatus(`反映スコープを復元しました: ${restored}${skipNote}。接続先を確認のうえ再反映してください${appNote}`);
       return;
     }
     if (act === 'applyReflectQuickPreset') {

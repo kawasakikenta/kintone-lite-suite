@@ -6764,6 +6764,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   // src/reflect/nodeModeUi.ts
   init_state();
 
+  // src/reflect/applyHistorySummary.ts
+  var APPLY_HISTORY_MODE_LABELS = Object.freeze({
+    section: "まとめ反映",
+    nodes: "差分選択",
+    patch: "JSONパッチ",
+    retry: "再反映",
+    restore: "復元"
+  });
+
   // src/ui/components.ts
   init_constants();
   init_dialog();
