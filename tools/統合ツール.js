@@ -11206,6 +11206,71 @@ ${body}`;
     }
   });
 
+  // src/reflect/applyHistorySummary.ts
+  function formatApplyHistoryModeLabel(mode) {
+    if (!mode) return "反映";
+    return APPLY_HISTORY_MODE_LABELS[mode] || mode;
+  }
+  function safeCount(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
+  function summarizeApplyHistory(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    let totalOk = 0;
+    let totalNg = 0;
+    let totalSkip = 0;
+    let errorEntryCount = 0;
+    let lastAppliedAt = null;
+    let count = 0;
+    for (const entry of list) {
+      if (!entry || typeof entry !== "object") continue;
+      count += 1;
+      totalOk += safeCount(entry.okCount);
+      totalNg += safeCount(entry.ngCount);
+      totalSkip += safeCount(entry.skipCount);
+      const hadError = !!entry.hadError || safeCount(entry.ngCount) > 0;
+      if (hadError) errorEntryCount += 1;
+      const at = Number(entry.at);
+      if (Number.isFinite(at) && (lastAppliedAt === null || at > lastAppliedAt)) {
+        lastAppliedAt = at;
+      }
+    }
+    return { count, totalOk, totalNg, totalSkip, errorEntryCount, lastAppliedAt };
+  }
+  function resolveReplayScopeKeys(entryScopes, availableScopeKeys) {
+    const available = /* @__PURE__ */ new Set();
+    if (availableScopeKeys) {
+      for (const key of availableScopeKeys) {
+        if (key) available.add(String(key));
+      }
+    }
+    const seen = /* @__PURE__ */ new Set();
+    const applicable = [];
+    const unavailable = [];
+    for (const raw of Array.isArray(entryScopes) ? entryScopes : []) {
+      const key = String(raw == null ? "" : raw).trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      if (available.has(key)) applicable.push(key);
+      else unavailable.push(key);
+    }
+    return { applicable, unavailable };
+  }
+  var APPLY_HISTORY_MODE_LABELS;
+  var init_applyHistorySummary = __esm({
+    "src/reflect/applyHistorySummary.ts"() {
+      "use strict";
+      APPLY_HISTORY_MODE_LABELS = Object.freeze({
+        section: "まとめ反映",
+        nodes: "差分選択",
+        patch: "JSONパッチ",
+        retry: "再反映",
+        restore: "復元"
+      });
+    }
+  });
+
   // src/oss_integrations.ts
   var oss_integrations_exports = {};
   __export(oss_integrations_exports, {
@@ -13244,23 +13309,29 @@ ${tgt.full}`);
       return;
     }
     const open = state.reflectApplyHistoryOpen ? " open" : "";
+    const sectionLabelOf2 = (key) => SECTION_DEFS.find((d) => d.key === key)?.label || key;
     const items = history2.map((entry) => {
       const hasErr = entry.hadError || (entry.ngCount || 0) > 0;
-      const modeLabel = {
-        section: "まとめ反映",
-        nodes: "差分選択",
-        patch: "JSONパッチ",
-        retry: "再反映",
-        restore: "復元"
-      }[entry.mode] || entry.mode || "反映";
+      const modeLabel = formatApplyHistoryModeLabel(entry.mode);
       const time = new Date(entry.at).toLocaleString();
       const scopeLabel = (entry.scopes || []).slice(0, 4).join(", ") + ((entry.scopes || []).length > 4 ? ` 他${entry.scopes.length - 4}` : "");
+      const failedKeys = Array.isArray(entry.failedSectionKeys) ? entry.failedSectionKeys.filter(Boolean) : [];
+      const failedRow = failedKeys.length ? `<div class="reflect-apply-history__fail" title="${esc(failedKeys.map(sectionLabelOf2).join(", "))}">⚠ 失敗: ${esc(failedKeys.slice(0, 6).map(sectionLabelOf2).join(", "))}${failedKeys.length > 6 ? ` 他${failedKeys.length - 6}` : ""}</div>` : "";
+      const canReplay = Array.isArray(entry.scopes) && entry.scopes.length > 0;
+      const replayBtn = canReplay ? `<button type="button" class="reflect-apply-history__replay" data-act="replayApplyHistoryScopes" data-history-id="${esc(entry.id || "")}" title="この反映で対象だったセクションを反映スコープに復元します（実行はしません）">再反映を準備</button>` : "<span></span>";
       return `<div class="reflect-apply-history__item${hasErr ? " has-error" : ""}" title="${esc(scopeLabel)}">
-      <span class="reflect-apply-history__time">${esc(time)}</span>
-      <span class="reflect-apply-history__summary">[${esc(modeLabel)}] 比較先 ${esc(entry.appId || "-")} / ${esc(scopeLabel || "-")}</span>
-      <span class="reflect-apply-history__stats" style="color:${hasErr ? "#991b1b" : "#166534"}">OK ${entry.okCount || 0} / NG ${entry.ngCount || 0}</span>
+      <div class="reflect-apply-history__row">
+        <span class="reflect-apply-history__time">${esc(time)}</span>
+        <span class="reflect-apply-history__summary">[${esc(modeLabel)}] 比較先 ${esc(entry.appId || "-")} / ${esc(scopeLabel || "-")}</span>
+        <span class="reflect-apply-history__stats" style="color:${hasErr ? "#991b1b" : "#166534"}">OK ${entry.okCount || 0} / NG ${entry.ngCount || 0}</span>
+        ${replayBtn}
+      </div>
+      ${failedRow}
     </div>`;
     }).join("");
+    const summary = summarizeApplyHistory(history2);
+    const successRate = summary.totalOk + summary.totalNg > 0 ? Math.round(summary.totalOk / (summary.totalOk + summary.totalNg) * 100) : null;
+    const aggLine = `<div class="reflect-apply-history__agg">累計 <span class="reflect-apply-history__agg-ok">OK ${summary.totalOk}</span> / <span class="reflect-apply-history__agg-ng">NG ${summary.totalNg}</span>${summary.totalSkip ? ` / スキップ ${summary.totalSkip}` : ""}${successRate !== null ? `<span class="reflect-apply-history__agg-rate">成功率 ${successRate}%</span>` : ""}${summary.errorEntryCount ? `<span class="reflect-apply-history__agg-warn">⚠ エラーを含む反映 ${summary.errorEntryCount}件</span>` : ""}</div>`;
     host.innerHTML = `<details${open} data-act-host="reflectApplyHistory">
       <summary>
         <span>反映履歴（${history2.length}件・端末保存）</span>
@@ -13269,6 +13340,7 @@ ${tgt.full}`);
           <button type="button" class="btn sub" data-act="clearApplyHistory" style="padding:2px 8px;font-size:10px" title="履歴を消去">クリア</button>
         </span>
       </summary>
+      ${aggLine}
       <div class="reflect-apply-history__list">${items}</div>
     </details>`;
     const details = host.querySelector("details");
@@ -13829,6 +13901,7 @@ ${tgt.full}`);
       init_enrich();
       init_nodeModeUi();
       init_footerLabel();
+      init_applyHistorySummary();
       init_constants();
       init_dialog();
       init_oss_integrations();
@@ -14908,6 +14981,97 @@ ${warnings.join("\n")}
     }
   });
 
+  // src/reflect/presetIo.ts
+  function normalizeEndpoint(raw) {
+    const obj = raw && typeof raw === "object" ? raw : {};
+    return {
+      appId: String(obj.appId == null ? "" : obj.appId).trim(),
+      guestId: String(obj.guestId == null ? "" : obj.guestId).trim(),
+      preview: !!obj.preview
+    };
+  }
+  function normalizeScopes(raw) {
+    if (!Array.isArray(raw)) return [];
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const item of raw) {
+      const key = String(item == null ? "" : item).trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(key);
+    }
+    return out;
+  }
+  function normalizeReflectPreset(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const name = String(raw.name == null ? "" : raw.name).trim();
+    if (!name) return null;
+    const createdAt = typeof raw.createdAt === "string" && raw.createdAt ? raw.createdAt : (/* @__PURE__ */ new Date()).toISOString();
+    return {
+      name,
+      createdAt,
+      source: normalizeEndpoint(raw.source),
+      target: normalizeEndpoint(raw.target),
+      scopes: normalizeScopes(raw.scopes),
+      applyDiffOnly: !!raw.applyDiffOnly,
+      lookupMap: String(raw.lookupMap == null ? "" : raw.lookupMap)
+    };
+  }
+  function buildReflectPresetsExport(presets) {
+    const normalized = (Array.isArray(presets) ? presets : []).map(normalizeReflectPreset).filter((p) => p !== null);
+    return {
+      kind: REFLECT_PRESETS_EXPORT_KIND,
+      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      count: normalized.length,
+      presets: normalized
+    };
+  }
+  function normalizeImportedReflectPresets(parsed) {
+    let rawList;
+    if (Array.isArray(parsed)) {
+      rawList = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      if (parsed.kind && parsed.kind !== REFLECT_PRESETS_EXPORT_KIND) {
+        return { presets: [], error: `この形式は反映プリセットとして認識できません（kind="${REFLECT_PRESETS_EXPORT_KIND}" を想定）` };
+      }
+      rawList = Array.isArray(parsed.presets) ? parsed.presets : null;
+    } else {
+      rawList = null;
+    }
+    if (!Array.isArray(rawList)) {
+      return { presets: [], error: "プリセットJSONの形式が不正です（presets 配列が見つかりません）" };
+    }
+    const presets = rawList.map(normalizeReflectPreset).filter((p) => p !== null);
+    return { presets };
+  }
+  function mergeReflectPresets(existing, incoming, limit = 30) {
+    const base = (Array.isArray(existing) ? existing : []).map(normalizeReflectPreset).filter((p) => p !== null);
+    const incomingList = (Array.isArray(incoming) ? incoming : []).map(normalizeReflectPreset).filter((p) => p !== null);
+    const incomingNames = new Set(incomingList.map((p) => p.name));
+    let replaced = 0;
+    const kept = [];
+    for (const preset of base) {
+      if (incomingNames.has(preset.name)) {
+        replaced += 1;
+        continue;
+      }
+      kept.push(preset);
+    }
+    const merged = [...incomingList, ...kept].slice(0, Math.max(0, limit));
+    return {
+      presets: merged,
+      added: incomingList.length - replaced,
+      replaced
+    };
+  }
+  var REFLECT_PRESETS_EXPORT_KIND;
+  var init_presetIo = __esm({
+    "src/reflect/presetIo.ts"() {
+      "use strict";
+      REFLECT_PRESETS_EXPORT_KIND = "reflect-presets";
+    }
+  });
+
   // src/reflect/rowMode.ts
   function reflectRowModeById(rowId) {
     return state.reflectNodeModes[rowId] === "tgt" ? "tgt" : "src";
@@ -14929,6 +15093,7 @@ ${warnings.join("\n")}
     applyReflectQuickPreset: () => applyReflectQuickPreset,
     deleteReflectPreset: () => deleteReflectPreset,
     ensureActiveReflectNodeId: () => ensureActiveReflectNodeId,
+    exportReflectPresetsJson: () => exportReflectPresetsJson,
     exportReflectSelectionJson: () => exportReflectSelectionJson,
     getActiveReflectRow: () => getActiveReflectRow,
     getDiffCountsBySection: () => getDiffCountsBySection2,
@@ -14936,6 +15101,7 @@ ${warnings.join("\n")}
     getReflectQuickPresets: () => getReflectQuickPresets,
     getReflectRowById: () => getReflectRowById,
     getSelectedReflectRows: () => getSelectedReflectRows,
+    importReflectPresetsFromFile: () => importReflectPresetsFromFile,
     importReflectSelectionFromFile: () => importReflectSelectionFromFile,
     loadReflectPresets: () => loadReflectPresets,
     loadReflectRowsFromLastDiff: () => loadReflectRowsFromLastDiff,
@@ -15293,6 +15459,29 @@ ${warnings.join("\n")}
     const presets = loadReflectPresets().filter((p) => p && p.name !== name);
     if (!persistReflectPresets(presets)) throw new Error("反映プリセットを削除できませんでした");
   }
+  function exportReflectPresetsJson() {
+    const payload = buildReflectPresetsExport(loadReflectPresets());
+    if (!payload.count) throw new Error("書き出せる反映プリセットがありません");
+    const filename = `reflect_presets_${nowStamp()}.json`;
+    downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
+    return { filename, count: payload.count };
+  }
+  async function importReflectPresetsFromFile(file) {
+    if (!file) throw new Error("ファイルが選択されていません");
+    const text = await readTextFile(file);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new Error("プリセットJSONの読み込みに失敗しました（JSON形式が不正です）");
+    }
+    const { presets, error } = normalizeImportedReflectPresets(parsed);
+    if (error) throw new Error(error);
+    if (!presets.length) throw new Error("取り込めるプリセットが見つかりませんでした");
+    const merged = mergeReflectPresets(loadReflectPresets(), presets, 30);
+    if (!persistReflectPresets(merged.presets)) throw new Error("反映プリセットを保存できませんでした");
+    return { added: merged.added, replaced: merged.replaced, total: merged.presets.length };
+  }
   function exportReflectSelectionJson() {
     const rows = state.reflectRows || [];
     if (!rows.length) throw new Error("反映候補がありません。先に「差分候補を読込」を実行してください");
@@ -15431,6 +15620,7 @@ ${warnings.join("\n")}
       init_preview_compare();
       init_nodeModeUi();
       init_helpers();
+      init_presetIo();
       init_rowMode();
       BULK_MODE_CONFIRM_THRESHOLD = 5;
       reflectPresetsMemory = [];
@@ -32804,10 +32994,11 @@ ${detail}`);
                   <details class="diff-hero__pop">
                     <summary class="btn sub diff-hero__pop-btn" title="差分結果の出力">📤 出力</summary>
                     <div class="diff-hero__pop-body">
+                      <div class="diff-hero__pop-group">差分を出力</div>
                       <button type="button" class="btn sub" data-act="exportDiffJson">JSON</button>
                       <button type="button" class="btn sub" data-act="exportDiffHtml">HTML</button>
                       <button type="button" class="btn sub" data-act="exportPatchJson">パッチ</button>
-                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <div class="diff-hero__pop-group">レポート・スナップショット</div>
                       <button type="button" class="btn sub" data-act="kusExportDiffJson" title="差分スナップショット（rows / fetchIssues / filters）を JSON で保存">📸 差分スナップショット保存</button>
                       <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
@@ -32815,7 +33006,7 @@ ${detail}`);
                       <button type="button" class="btn sub" data-act="kusExportDiffXlsx" title="差分結果を Excel (.xlsx) でセクション別シート構成で保存">📊 差分 Excel</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙付きPDFとして印刷ダイアログを開きます">📕 差分 PDF（表紙付き）</button>
-                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <div class="diff-hero__pop-group">反映プラン・検証</div>
                       <button type="button" class="btn sub" data-act="kusExportPlanMd" title="現在の反映プランを Markdown で保存（PR 添付向け）">📝 反映プラン MD 保存</button>
                       <button type="button" class="btn sub" data-act="kusExportPlanMermaid" title="反映プランを Mermaid フロー図として保存">📊 反映プラン Mermaid</button>
                       <button type="button" class="btn sub" data-act="kusShowApiDiff" title="送信予定 API リクエストの旧/新差分プレビュー">🔍 API 差分プレビュー</button>
@@ -34635,7 +34826,7 @@ ${detail}`);
                   <div class="sidebar-head">
                     <div class="sidebar-head-row">
                       <span>反映するセクション</span>
-                      <span style="font-size:10px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
+                      <span style="font-size:11px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
                     </div>
                     <p class="sidebar-hint">1. チェックで反映対象を選ぶ 2. 行クリックで内容確認</p>
                   </div>
@@ -34644,22 +34835,38 @@ ${detail}`);
                   </div>
                   <div class="sidebar-sections" id="u_reflectSidebarSections"></div>
                   <div class="sidebar-footer">
-                    <button type="button" class="btn sub" data-act="reflectSidebarOverview">全体概要</button>
-                    <button class="btn sub" data-act="applyScopeAll">全選択</button>
-                    <button class="btn sub" data-act="applyScopeNone">全解除</button>
-                    <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn">差分のみ</button>
-                    <button class="btn sub" data-act="applyScopeHighRisk">高重要度</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="safe">安全寄り</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="visual">画面系</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="permissions">権限系</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="customize">JS/CSS</button>
+                    <div class="sidebar-footer__group sidebar-footer__group--lead">
+                      <button type="button" class="btn sub" data-act="reflectSidebarOverview" title="全セクションの選択状況と差分件数をまとめて確認します">全体概要</button>
+                    </div>
+                    <div class="sidebar-footer__group" role="group" aria-label="一括選択">
+                      <span class="sidebar-footer__label">選択</span>
+                      <button class="btn sub" data-act="applyScopeAll" title="すべてのセクションを反映対象にします">全選択</button>
+                      <button class="btn sub" data-act="applyScopeNone" title="すべての選択を解除します">全解除</button>
+                      <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn" title="前回差分があったセクションだけを選びます">差分のみ</button>
+                      <button class="btn sub" data-act="applyScopeHighRisk" title="重要度が高いセクションだけを選びます">高重要度</button>
+                    </div>
+                    <div class="sidebar-footer__group" role="group" aria-label="分類で選択">
+                      <span class="sidebar-footer__label">分類</span>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="safe" title="権限など影響の大きい設定を避けた安全寄りの選択">安全寄り</button>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="visual" title="フォーム・ビューなど画面まわりの設定を選択">画面系</button>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="permissions" title="アプリ／フィールド／レコードの権限設定を選択">権限系</button>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="customize" title="JS/CSSカスタマイズ設定を選択">JS/CSS</button>
+                    </div>
                   </div>
                   <div class="reflect-preset-row" title="接続先とセクション選択をまとめてプリセットに保存/復元します">
                     <span class="reflect-preset-row__label">反映プリセット</span>
                     <select id="u_reflectPresetSelect" class="reflect-preset-row__select" aria-label="プリセット選択"></select>
-                    <button type="button" class="btn sub" data-act="applyReflectPreset">読込</button>
-                    <button type="button" class="btn sub" data-act="saveReflectPreset">現在の内容で保存</button>
-                    <button type="button" class="btn sub" data-act="deleteReflectPreset">削除</button>
+                    <span class="reflect-preset-row__group" role="group" aria-label="プリセット操作">
+                      <button type="button" class="btn sub" data-act="applyReflectPreset" title="選択中のプリセットを現在の入力に読み込みます">読込</button>
+                      <button type="button" class="btn sub" data-act="saveReflectPreset" title="現在の接続先・セクション選択をプリセットとして保存します">保存</button>
+                      <button type="button" class="btn sub" data-act="deleteReflectPreset" title="選択中のプリセットを削除します">削除</button>
+                    </span>
+                    <span class="reflect-preset-row__divider" aria-hidden="true"></span>
+                    <span class="reflect-preset-row__group" role="group" aria-label="ファイル入出力">
+                      <button type="button" class="btn sub" data-act="exportReflectPresets" title="保存済みの反映プリセットをまとめてJSONファイルに書き出します（別セッション・別端末へ持ち運び可）">JSON書出</button>
+                      <button type="button" class="btn sub" data-act="importReflectPresets" title="書き出した反映プリセットJSONを読み込み、現在のプリセットへ取り込みます（同名は上書き）">JSON読込</button>
+                    </span>
+                    <input type="file" id="u_reflectPresetsFileInput" accept="application/json" style="display:none">
                   </div>
                 </div>
               </div>
@@ -36908,6 +37115,7 @@ ${detail}`);
   }
 
   // src/handlers.ts
+  init_applyHistorySummary();
   init_field();
 
   // src/tabs/settings-export.ts
@@ -38965,6 +39173,23 @@ ${detail}`);
         });
       });
     }
+    const reflectPresetsFileInput = getToolDocument().getElementById("u_reflectPresetsFileInput");
+    if (reflectPresetsFileInput) {
+      reflectPresetsFileInput.addEventListener("change", () => {
+        const f = reflectPresetsFileInput.files && reflectPresetsFileInput.files[0];
+        reflectPresetsFileInput.value = "";
+        if (!f) return;
+        withGuard(async () => {
+          try {
+            const r = await importReflectPresetsFromFile(f);
+            renderReflectPresetSelect("");
+            setStatus(`反映プリセットを取り込みました（新規 ${r.added}件${r.replaced ? ` / 上書き ${r.replaced}件` : ""} / 合計 ${r.total}件）`);
+          } catch (err) {
+            setStatus(err && err.message ? err.message : String(err), true);
+          }
+        });
+      });
+    }
     const targetPreviewBackupFileInput = getToolDocument().getElementById("u_targetPreviewBackupFileInput");
     if (targetPreviewBackupFileInput) {
       targetPreviewBackupFileInput.addEventListener("change", () => {
@@ -40279,6 +40504,23 @@ ${detail}`);
         setStatus(`プリセット「${name}」を削除しました`);
         return;
       }
+      if (act === "exportReflectPresets") {
+        try {
+          const r = exportReflectPresetsJson();
+          setStatus(`反映プリセットを書き出しました: ${r.filename}（${r.count}件）`);
+        } catch (err) {
+          setStatus(err && err.message ? err.message : String(err), true);
+        }
+        return;
+      }
+      if (act === "importReflectPresets") {
+        const input = getToolDocument().getElementById("u_reflectPresetsFileInput");
+        if (input) {
+          input.value = "";
+          input.click();
+        }
+        return;
+      }
       if (act === "loadReflectNodes") return withGuard(async () => {
         loadReflectRowsFromLastDiff();
       });
@@ -40740,6 +40982,34 @@ ${detail}`);
         const filename = `reflect_apply_history_${nowStamp()}.json`;
         downloadText(filename, JSON.stringify(snapshot, null, 2), "application/json");
         setStatus(`反映履歴を書き出しました: ${filename}（${snapshot.count}件）`);
+        return;
+      }
+      if (act === "replayApplyHistoryScopes") {
+        const historyId = actEl.dataset.historyId;
+        const entry = (Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : []).find((e2) => e2 && e2.id === historyId);
+        if (!entry) {
+          setStatus("対象の反映履歴が見つかりませんでした（クリア済みの可能性があります）", true);
+          return;
+        }
+        const availableKeys = SECTION_DEFS.filter((d) => d.put).map((d) => d.key);
+        const { applicable, unavailable } = resolveReplayScopeKeys(entry.scopes, availableKeys);
+        if (!applicable.length) {
+          setStatus("この履歴のセクションは現在の反映スコープに存在しないため復元できませんでした", true);
+          return;
+        }
+        const wanted = new Set(applicable);
+        ui.applyScopes?.querySelectorAll("input[type=checkbox]").forEach((el) => {
+          el.checked = wanted.has(el.value);
+        });
+        switchTab("reflect", { persist: false });
+        switchSubTab("reflect", "settings", { persist: false });
+        saveCurrentDialogState2();
+        renderReflectAssistPanel();
+        const labelOf = (key) => SECTION_DEFS.find((d) => d.key === key)?.label || key;
+        const restored = applicable.map(labelOf).join(", ");
+        const appNote = entry.appId ? `（記録時の比較先アプリ ${entry.appId}）` : "";
+        const skipNote = unavailable.length ? ` / 復元できないセクション ${unavailable.length}件は除外` : "";
+        setStatus(`反映スコープを復元しました: ${restored}${skipNote}。接続先を確認のうえ再反映してください${appNote}`);
         return;
       }
       if (act === "applyReflectQuickPreset") {

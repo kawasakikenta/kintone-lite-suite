@@ -26,6 +26,11 @@ import { commonParams, saveCurrentDialogState, currentDiffSignature } from './di
 import { getPreviewCompareStatusPrefix } from './preview-compare.js';
 import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
 import { resolveApplyScopes } from '../reflect/helpers.js';
+import {
+  buildReflectPresetsExport,
+  normalizeImportedReflectPresets,
+  mergeReflectPresets
+} from '../reflect/presetIo.js';
 
 // ---------------------------------------------------------------------------
 // Reflect state snapshot / undo / redo
@@ -449,6 +454,35 @@ export function applyReflectPreset(name) {
 export function deleteReflectPreset(name) {
   const presets = loadReflectPresets().filter((p) => p && p.name !== name);
   if (!persistReflectPresets(presets)) throw new Error('反映プリセットを削除できませんでした');
+}
+
+// ---------------------------------------------------------------------------
+// Reflect preset export / import (ファイルで持ち運ぶ)
+// ---------------------------------------------------------------------------
+
+export function exportReflectPresetsJson() {
+  const payload = buildReflectPresetsExport(loadReflectPresets());
+  if (!payload.count) throw new Error('書き出せる反映プリセットがありません');
+  const filename = `reflect_presets_${nowStamp()}.json`;
+  downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
+  return { filename, count: payload.count };
+}
+
+export async function importReflectPresetsFromFile(file) {
+  if (!file) throw new Error('ファイルが選択されていません');
+  const text = await readTextFile(file);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error('プリセットJSONの読み込みに失敗しました（JSON形式が不正です）');
+  }
+  const { presets, error } = normalizeImportedReflectPresets(parsed);
+  if (error) throw new Error(error);
+  if (!presets.length) throw new Error('取り込めるプリセットが見つかりませんでした');
+  const merged = mergeReflectPresets(loadReflectPresets(), presets, 30);
+  if (!persistReflectPresets(merged.presets)) throw new Error('反映プリセットを保存できませんでした');
+  return { added: merged.added, replaced: merged.replaced, total: merged.presets.length };
 }
 
 // ---------------------------------------------------------------------------

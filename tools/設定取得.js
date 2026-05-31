@@ -1048,6 +1048,21 @@ ${contextLine}`);
     }
   });
 
+  // src/reflect/applyHistorySummary.ts
+  var APPLY_HISTORY_MODE_LABELS;
+  var init_applyHistorySummary = __esm({
+    "src/reflect/applyHistorySummary.ts"() {
+      "use strict";
+      APPLY_HISTORY_MODE_LABELS = Object.freeze({
+        section: "まとめ反映",
+        nodes: "差分選択",
+        patch: "JSONパッチ",
+        retry: "再反映",
+        restore: "復元"
+      });
+    }
+  });
+
   // src/oss_integrations.ts
   var init_oss_integrations = __esm({
     "src/oss_integrations.ts"() {
@@ -1084,6 +1099,7 @@ ${contextLine}`);
       init_enrich();
       init_nodeModeUi();
       init_footerLabel();
+      init_applyHistorySummary();
       init_constants();
       init_dialog();
       init_oss_integrations();

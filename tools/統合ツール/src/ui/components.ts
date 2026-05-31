@@ -38,6 +38,7 @@ import {
 import { summarizeSeverity } from '../diff/enrich.js';
 import { isReflectNodeModeEffective } from '../reflect/nodeModeUi.js';
 import { buildApplyButtonLabel } from '../reflect/footerLabel.js';
+import { formatApplyHistoryModeLabel, summarizeApplyHistory } from '../reflect/applyHistorySummary.js';
 import { REFLECT_QUICK_PRESETS } from '../constants.js';
 import { saveCurrentDialogState, getToolDocument } from './dialog.js';
 import { renderRichDiff } from '../oss_integrations.js';
@@ -1948,23 +1949,35 @@ export function renderReflectApplyHistory() {
     return;
   }
   const open = state.reflectApplyHistoryOpen ? ' open' : '';
+  const sectionLabelOf = (key) => SECTION_DEFS.find((d) => d.key === key)?.label || key;
   const items = history.map((entry) => {
     const hasErr = entry.hadError || (entry.ngCount || 0) > 0;
-    const modeLabel = {
-      section: 'まとめ反映',
-      nodes: '差分選択',
-      patch: 'JSONパッチ',
-      retry: '再反映',
-      restore: '復元'
-    }[entry.mode] || entry.mode || '反映';
+    const modeLabel = formatApplyHistoryModeLabel(entry.mode);
     const time = new Date(entry.at).toLocaleString();
     const scopeLabel = (entry.scopes || []).slice(0, 4).join(', ') + ((entry.scopes || []).length > 4 ? ` 他${entry.scopes.length - 4}` : '');
+    const failedKeys = Array.isArray(entry.failedSectionKeys) ? entry.failedSectionKeys.filter(Boolean) : [];
+    const failedRow = failedKeys.length
+      ? `<div class="reflect-apply-history__fail" title="${esc(failedKeys.map(sectionLabelOf).join(', '))}">⚠ 失敗: ${esc(failedKeys.slice(0, 6).map(sectionLabelOf).join(', '))}${failedKeys.length > 6 ? ` 他${failedKeys.length - 6}` : ''}</div>`
+      : '';
+    const canReplay = Array.isArray(entry.scopes) && entry.scopes.length > 0;
+    const replayBtn = canReplay
+      ? `<button type="button" class="reflect-apply-history__replay" data-act="replayApplyHistoryScopes" data-history-id="${esc(entry.id || '')}" title="この反映で対象だったセクションを反映スコープに復元します（実行はしません）">再反映を準備</button>`
+      : '<span></span>';
     return `<div class="reflect-apply-history__item${hasErr ? ' has-error' : ''}" title="${esc(scopeLabel)}">
-      <span class="reflect-apply-history__time">${esc(time)}</span>
-      <span class="reflect-apply-history__summary">[${esc(modeLabel)}] 比較先 ${esc(entry.appId || '-')} / ${esc(scopeLabel || '-')}</span>
-      <span class="reflect-apply-history__stats" style="color:${hasErr ? '#991b1b' : '#166534'}">OK ${entry.okCount || 0} / NG ${entry.ngCount || 0}</span>
+      <div class="reflect-apply-history__row">
+        <span class="reflect-apply-history__time">${esc(time)}</span>
+        <span class="reflect-apply-history__summary">[${esc(modeLabel)}] 比較先 ${esc(entry.appId || '-')} / ${esc(scopeLabel || '-')}</span>
+        <span class="reflect-apply-history__stats" style="color:${hasErr ? '#991b1b' : '#166534'}">OK ${entry.okCount || 0} / NG ${entry.ngCount || 0}</span>
+        ${replayBtn}
+      </div>
+      ${failedRow}
     </div>`;
   }).join('');
+  const summary = summarizeApplyHistory(history);
+  const successRate = summary.totalOk + summary.totalNg > 0
+    ? Math.round((summary.totalOk / (summary.totalOk + summary.totalNg)) * 100)
+    : null;
+  const aggLine = `<div class="reflect-apply-history__agg">累計 <span class="reflect-apply-history__agg-ok">OK ${summary.totalOk}</span> / <span class="reflect-apply-history__agg-ng">NG ${summary.totalNg}</span>${summary.totalSkip ? ` / スキップ ${summary.totalSkip}` : ''}${successRate !== null ? `<span class="reflect-apply-history__agg-rate">成功率 ${successRate}%</span>` : ''}${summary.errorEntryCount ? `<span class="reflect-apply-history__agg-warn">⚠ エラーを含む反映 ${summary.errorEntryCount}件</span>` : ''}</div>`;
   host.innerHTML = `<details${open} data-act-host="reflectApplyHistory">
       <summary>
         <span>反映履歴（${history.length}件・端末保存）</span>
@@ -1973,6 +1986,7 @@ export function renderReflectApplyHistory() {
           <button type="button" class="btn sub" data-act="clearApplyHistory" style="padding:2px 8px;font-size:10px" title="履歴を消去">クリア</button>
         </span>
       </summary>
+      ${aggLine}
       <div class="reflect-apply-history__list">${items}</div>
     </details>`;
   // Bind toggle persistence

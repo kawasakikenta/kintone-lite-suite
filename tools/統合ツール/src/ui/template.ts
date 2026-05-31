@@ -283,10 +283,11 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <details class="diff-hero__pop">
                     <summary class="btn sub diff-hero__pop-btn" title="差分結果の出力">📤 出力</summary>
                     <div class="diff-hero__pop-body">
+                      <div class="diff-hero__pop-group">差分を出力</div>
                       <button type="button" class="btn sub" data-act="exportDiffJson">JSON</button>
                       <button type="button" class="btn sub" data-act="exportDiffHtml">HTML</button>
                       <button type="button" class="btn sub" data-act="exportPatchJson">パッチ</button>
-                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <div class="diff-hero__pop-group">レポート・スナップショット</div>
                       <button type="button" class="btn sub" data-act="kusExportDiffJson" title="差分スナップショット（rows / fetchIssues / filters）を JSON で保存">📸 差分スナップショット保存</button>
                       <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
@@ -294,7 +295,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <button type="button" class="btn sub" data-act="kusExportDiffXlsx" title="差分結果を Excel (.xlsx) でセクション別シート構成で保存">📊 差分 Excel</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙付きPDFとして印刷ダイアログを開きます">📕 差分 PDF（表紙付き）</button>
-                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <div class="diff-hero__pop-group">反映プラン・検証</div>
                       <button type="button" class="btn sub" data-act="kusExportPlanMd" title="現在の反映プランを Markdown で保存（PR 添付向け）">📝 反映プラン MD 保存</button>
                       <button type="button" class="btn sub" data-act="kusExportPlanMermaid" title="反映プランを Mermaid フロー図として保存">📊 反映プラン Mermaid</button>
                       <button type="button" class="btn sub" data-act="kusShowApiDiff" title="送信予定 API リクエストの旧/新差分プレビュー">🔍 API 差分プレビュー</button>
@@ -2114,7 +2115,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <div class="sidebar-head">
                     <div class="sidebar-head-row">
                       <span>反映するセクション</span>
-                      <span style="font-size:10px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
+                      <span style="font-size:11px;font-weight:400;color:#64748b" id="u_sidebarCount">0 / 0</span>
                     </div>
                     <p class="sidebar-hint">1. チェックで反映対象を選ぶ 2. 行クリックで内容確認</p>
                   </div>
@@ -2123,22 +2124,38 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   </div>
                   <div class="sidebar-sections" id="u_reflectSidebarSections"></div>
                   <div class="sidebar-footer">
-                    <button type="button" class="btn sub" data-act="reflectSidebarOverview">全体概要</button>
-                    <button class="btn sub" data-act="applyScopeAll">全選択</button>
-                    <button class="btn sub" data-act="applyScopeNone">全解除</button>
-                    <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn">差分のみ</button>
-                    <button class="btn sub" data-act="applyScopeHighRisk">高重要度</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="safe">安全寄り</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="visual">画面系</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="permissions">権限系</button>
-                    <button class="btn sub" data-act="applyScopePreset" data-scope-preset="customize">JS/CSS</button>
+                    <div class="sidebar-footer__group sidebar-footer__group--lead">
+                      <button type="button" class="btn sub" data-act="reflectSidebarOverview" title="全セクションの選択状況と差分件数をまとめて確認します">全体概要</button>
+                    </div>
+                    <div class="sidebar-footer__group" role="group" aria-label="一括選択">
+                      <span class="sidebar-footer__label">選択</span>
+                      <button class="btn sub" data-act="applyScopeAll" title="すべてのセクションを反映対象にします">全選択</button>
+                      <button class="btn sub" data-act="applyScopeNone" title="すべての選択を解除します">全解除</button>
+                      <button class="btn sub" data-act="applyScopeDiffOnly" id="u_applyScopeDiffOnlyBtn" title="前回差分があったセクションだけを選びます">差分のみ</button>
+                      <button class="btn sub" data-act="applyScopeHighRisk" title="重要度が高いセクションだけを選びます">高重要度</button>
+                    </div>
+                    <div class="sidebar-footer__group" role="group" aria-label="分類で選択">
+                      <span class="sidebar-footer__label">分類</span>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="safe" title="権限など影響の大きい設定を避けた安全寄りの選択">安全寄り</button>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="visual" title="フォーム・ビューなど画面まわりの設定を選択">画面系</button>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="permissions" title="アプリ／フィールド／レコードの権限設定を選択">権限系</button>
+                      <button class="btn sub" data-act="applyScopePreset" data-scope-preset="customize" title="JS/CSSカスタマイズ設定を選択">JS/CSS</button>
+                    </div>
                   </div>
                   <div class="reflect-preset-row" title="接続先とセクション選択をまとめてプリセットに保存/復元します">
                     <span class="reflect-preset-row__label">反映プリセット</span>
                     <select id="u_reflectPresetSelect" class="reflect-preset-row__select" aria-label="プリセット選択"></select>
-                    <button type="button" class="btn sub" data-act="applyReflectPreset">読込</button>
-                    <button type="button" class="btn sub" data-act="saveReflectPreset">現在の内容で保存</button>
-                    <button type="button" class="btn sub" data-act="deleteReflectPreset">削除</button>
+                    <span class="reflect-preset-row__group" role="group" aria-label="プリセット操作">
+                      <button type="button" class="btn sub" data-act="applyReflectPreset" title="選択中のプリセットを現在の入力に読み込みます">読込</button>
+                      <button type="button" class="btn sub" data-act="saveReflectPreset" title="現在の接続先・セクション選択をプリセットとして保存します">保存</button>
+                      <button type="button" class="btn sub" data-act="deleteReflectPreset" title="選択中のプリセットを削除します">削除</button>
+                    </span>
+                    <span class="reflect-preset-row__divider" aria-hidden="true"></span>
+                    <span class="reflect-preset-row__group" role="group" aria-label="ファイル入出力">
+                      <button type="button" class="btn sub" data-act="exportReflectPresets" title="保存済みの反映プリセットをまとめてJSONファイルに書き出します（別セッション・別端末へ持ち運び可）">JSON書出</button>
+                      <button type="button" class="btn sub" data-act="importReflectPresets" title="書き出した反映プリセットJSONを読み込み、現在のプリセットへ取り込みます（同名は上書き）">JSON読込</button>
+                    </span>
+                    <input type="file" id="u_reflectPresetsFileInput" accept="application/json" style="display:none">
                   </div>
                 </div>
               </div>
