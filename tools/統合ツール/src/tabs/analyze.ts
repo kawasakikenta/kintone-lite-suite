@@ -1299,7 +1299,7 @@ function renderNotificationVisualizerResult() {
       { label: '宛先種類', value: uniqueTargets.size, note: '重複除外' }
     ])}
     <div class="analyze-summary">表示中: ${rows.length} / 通知設定をテーブルとフローで確認できます。</div>
-    <details class="diff-fold" open>
+    <details class="diff-fold">
       <summary class="diff-fold-summary"><span class="diff-fold-title">テーブルビュー</span></summary>
       <div class="diff-fold-body">
         <div class="analyze-table-wrap"><table class="analyze-table">
@@ -1308,7 +1308,7 @@ function renderNotificationVisualizerResult() {
         </table></div>
       </div>
     </details>
-    <details class="diff-fold" open>
+    <details class="diff-fold">
       <summary class="diff-fold-summary"><span class="diff-fold-title">フロービュー</span></summary>
       <div class="diff-fold-body"><div class="notif-flow-list">${flowCards || '<div style="color:#94a3b8">該当なし</div>'}</div></div>
     </details>`;
@@ -1476,7 +1476,7 @@ function renderLayoutUnplacedFields(title, summary, fieldDefs) {
     ? `<div class="analyze-stat-note">ほか ${summary.unplacedCodes.length - 12} 件</div>`
     : '';
   return `
-    <details class="diff-fold" open>
+    <details class="diff-fold">
       <summary class="diff-fold-summary"><span class="diff-fold-title">${esc(title)} のレイアウト外フィールド (${summary.unplacedCodes.length}件)</span></summary>
       <div class="diff-fold-body">
         <div class="analyze-code-list">${labels}</div>
