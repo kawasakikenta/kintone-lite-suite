@@ -384,6 +384,8 @@
 #kintone-unified-suite-v2 .diff-hero__pop[open] > summary{background:#dbeafe;color:#1e40af;border-color:#93c5fd}
 #kintone-unified-suite-v2 .diff-hero__pop-body{position:absolute;right:0;top:calc(100% + 4px);z-index:10;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 4px 12px rgba(15,23,42,.12);padding:6px;display:flex;flex-direction:column;gap:3px;min-width:140px}
 #kintone-unified-suite-v2 .diff-hero__pop-body .btn{padding:5px 10px;font-size:11px;text-align:left;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-hero__pop-group{font-size:10px;font-weight:700;color:#64748b;letter-spacing:.04em;padding:5px 8px 2px;margin-top:4px;border-top:1px solid #eef2f7}
+#kintone-unified-suite-v2 .diff-hero__pop-group:first-child{margin-top:0;border-top:0;padding-top:2px}
 #kintone-unified-suite-v2 .diff-hero__advanced{padding:4px 10px;font-size:11px}
 #kintone-unified-suite-v2 .diff-step-label{font-size:11px;color:#64748b;font-weight:700;margin:6px 4px 4px;letter-spacing:.04em}
 /* 比較条件の調整: ⚙ 詳細 popover からのみ開閉（閉じてる間は完全に隠す） */

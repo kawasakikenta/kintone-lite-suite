@@ -283,10 +283,11 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <details class="diff-hero__pop">
                     <summary class="btn sub diff-hero__pop-btn" title="差分結果の出力">📤 出力</summary>
                     <div class="diff-hero__pop-body">
+                      <div class="diff-hero__pop-group">差分を出力</div>
                       <button type="button" class="btn sub" data-act="exportDiffJson">JSON</button>
                       <button type="button" class="btn sub" data-act="exportDiffHtml">HTML</button>
                       <button type="button" class="btn sub" data-act="exportPatchJson">パッチ</button>
-                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <div class="diff-hero__pop-group">レポート・スナップショット</div>
                       <button type="button" class="btn sub" data-act="kusExportDiffJson" title="差分スナップショット（rows / fetchIssues / filters）を JSON で保存">📸 差分スナップショット保存</button>
                       <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
@@ -294,7 +295,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <button type="button" class="btn sub" data-act="kusExportDiffXlsx" title="差分結果を Excel (.xlsx) でセクション別シート構成で保存">📊 差分 Excel</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdf" title="差分結果を印刷ダイアログ（PDF 保存）">🖨 差分 PDF</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffPdfCover" title="表紙付きPDFとして印刷ダイアログを開きます">📕 差分 PDF（表紙付き）</button>
-                      <hr style="margin:4px 0;border:0;border-top:1px solid #e2e8f0">
+                      <div class="diff-hero__pop-group">反映プラン・検証</div>
                       <button type="button" class="btn sub" data-act="kusExportPlanMd" title="現在の反映プランを Markdown で保存（PR 添付向け）">📝 反映プラン MD 保存</button>
                       <button type="button" class="btn sub" data-act="kusExportPlanMermaid" title="反映プランを Mermaid フロー図として保存">📊 反映プラン Mermaid</button>
                       <button type="button" class="btn sub" data-act="kusShowApiDiff" title="送信予定 API リクエストの旧/新差分プレビュー">🔍 API 差分プレビュー</button>
