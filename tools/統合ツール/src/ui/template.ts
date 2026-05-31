@@ -2139,6 +2139,9 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                     <button type="button" class="btn sub" data-act="applyReflectPreset">読込</button>
                     <button type="button" class="btn sub" data-act="saveReflectPreset">現在の内容で保存</button>
                     <button type="button" class="btn sub" data-act="deleteReflectPreset">削除</button>
+                    <button type="button" class="btn sub" data-act="exportReflectPresets" title="保存済みの反映プリセットをまとめてJSONファイルに書き出します（別セッション・別端末へ持ち運び可）">JSON書出</button>
+                    <button type="button" class="btn sub" data-act="importReflectPresets" title="書き出した反映プリセットJSONを読み込み、現在のプリセットへ取り込みます（同名は上書き）">JSON読込</button>
+                    <input type="file" id="u_reflectPresetsFileInput" accept="application/json" style="display:none">
                   </div>
                 </div>
               </div>

@@ -14981,6 +14981,97 @@ ${warnings.join("\n")}
     }
   });
 
+  // src/reflect/presetIo.ts
+  function normalizeEndpoint(raw) {
+    const obj = raw && typeof raw === "object" ? raw : {};
+    return {
+      appId: String(obj.appId == null ? "" : obj.appId).trim(),
+      guestId: String(obj.guestId == null ? "" : obj.guestId).trim(),
+      preview: !!obj.preview
+    };
+  }
+  function normalizeScopes(raw) {
+    if (!Array.isArray(raw)) return [];
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const item of raw) {
+      const key = String(item == null ? "" : item).trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(key);
+    }
+    return out;
+  }
+  function normalizeReflectPreset(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const name = String(raw.name == null ? "" : raw.name).trim();
+    if (!name) return null;
+    const createdAt = typeof raw.createdAt === "string" && raw.createdAt ? raw.createdAt : (/* @__PURE__ */ new Date()).toISOString();
+    return {
+      name,
+      createdAt,
+      source: normalizeEndpoint(raw.source),
+      target: normalizeEndpoint(raw.target),
+      scopes: normalizeScopes(raw.scopes),
+      applyDiffOnly: !!raw.applyDiffOnly,
+      lookupMap: String(raw.lookupMap == null ? "" : raw.lookupMap)
+    };
+  }
+  function buildReflectPresetsExport(presets) {
+    const normalized = (Array.isArray(presets) ? presets : []).map(normalizeReflectPreset).filter((p) => p !== null);
+    return {
+      kind: REFLECT_PRESETS_EXPORT_KIND,
+      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      count: normalized.length,
+      presets: normalized
+    };
+  }
+  function normalizeImportedReflectPresets(parsed) {
+    let rawList;
+    if (Array.isArray(parsed)) {
+      rawList = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      if (parsed.kind && parsed.kind !== REFLECT_PRESETS_EXPORT_KIND) {
+        return { presets: [], error: `この形式は反映プリセットとして認識できません（kind="${REFLECT_PRESETS_EXPORT_KIND}" を想定）` };
+      }
+      rawList = Array.isArray(parsed.presets) ? parsed.presets : null;
+    } else {
+      rawList = null;
+    }
+    if (!Array.isArray(rawList)) {
+      return { presets: [], error: "プリセットJSONの形式が不正です（presets 配列が見つかりません）" };
+    }
+    const presets = rawList.map(normalizeReflectPreset).filter((p) => p !== null);
+    return { presets };
+  }
+  function mergeReflectPresets(existing, incoming, limit = 30) {
+    const base = (Array.isArray(existing) ? existing : []).map(normalizeReflectPreset).filter((p) => p !== null);
+    const incomingList = (Array.isArray(incoming) ? incoming : []).map(normalizeReflectPreset).filter((p) => p !== null);
+    const incomingNames = new Set(incomingList.map((p) => p.name));
+    let replaced = 0;
+    const kept = [];
+    for (const preset of base) {
+      if (incomingNames.has(preset.name)) {
+        replaced += 1;
+        continue;
+      }
+      kept.push(preset);
+    }
+    const merged = [...incomingList, ...kept].slice(0, Math.max(0, limit));
+    return {
+      presets: merged,
+      added: incomingList.length - replaced,
+      replaced
+    };
+  }
+  var REFLECT_PRESETS_EXPORT_KIND;
+  var init_presetIo = __esm({
+    "src/reflect/presetIo.ts"() {
+      "use strict";
+      REFLECT_PRESETS_EXPORT_KIND = "reflect-presets";
+    }
+  });
+
   // src/reflect/rowMode.ts
   function reflectRowModeById(rowId) {
     return state.reflectNodeModes[rowId] === "tgt" ? "tgt" : "src";
@@ -15002,6 +15093,7 @@ ${warnings.join("\n")}
     applyReflectQuickPreset: () => applyReflectQuickPreset,
     deleteReflectPreset: () => deleteReflectPreset,
     ensureActiveReflectNodeId: () => ensureActiveReflectNodeId,
+    exportReflectPresetsJson: () => exportReflectPresetsJson,
     exportReflectSelectionJson: () => exportReflectSelectionJson,
     getActiveReflectRow: () => getActiveReflectRow,
     getDiffCountsBySection: () => getDiffCountsBySection2,
@@ -15009,6 +15101,7 @@ ${warnings.join("\n")}
     getReflectQuickPresets: () => getReflectQuickPresets,
     getReflectRowById: () => getReflectRowById,
     getSelectedReflectRows: () => getSelectedReflectRows,
+    importReflectPresetsFromFile: () => importReflectPresetsFromFile,
     importReflectSelectionFromFile: () => importReflectSelectionFromFile,
     loadReflectPresets: () => loadReflectPresets,
     loadReflectRowsFromLastDiff: () => loadReflectRowsFromLastDiff,
@@ -15366,6 +15459,29 @@ ${warnings.join("\n")}
     const presets = loadReflectPresets().filter((p) => p && p.name !== name);
     if (!persistReflectPresets(presets)) throw new Error("反映プリセットを削除できませんでした");
   }
+  function exportReflectPresetsJson() {
+    const payload = buildReflectPresetsExport(loadReflectPresets());
+    if (!payload.count) throw new Error("書き出せる反映プリセットがありません");
+    const filename = `reflect_presets_${nowStamp()}.json`;
+    downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
+    return { filename, count: payload.count };
+  }
+  async function importReflectPresetsFromFile(file) {
+    if (!file) throw new Error("ファイルが選択されていません");
+    const text = await readTextFile(file);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new Error("プリセットJSONの読み込みに失敗しました（JSON形式が不正です）");
+    }
+    const { presets, error } = normalizeImportedReflectPresets(parsed);
+    if (error) throw new Error(error);
+    if (!presets.length) throw new Error("取り込めるプリセットが見つかりませんでした");
+    const merged = mergeReflectPresets(loadReflectPresets(), presets, 30);
+    if (!persistReflectPresets(merged.presets)) throw new Error("反映プリセットを保存できませんでした");
+    return { added: merged.added, replaced: merged.replaced, total: merged.presets.length };
+  }
   function exportReflectSelectionJson() {
     const rows = state.reflectRows || [];
     if (!rows.length) throw new Error("反映候補がありません。先に「差分候補を読込」を実行してください");
@@ -15504,6 +15620,7 @@ ${warnings.join("\n")}
       init_preview_compare();
       init_nodeModeUi();
       init_helpers();
+      init_presetIo();
       init_rowMode();
       BULK_MODE_CONFIRM_THRESHOLD = 5;
       reflectPresetsMemory = [];
@@ -34733,6 +34850,9 @@ ${detail}`);
                     <button type="button" class="btn sub" data-act="applyReflectPreset">読込</button>
                     <button type="button" class="btn sub" data-act="saveReflectPreset">現在の内容で保存</button>
                     <button type="button" class="btn sub" data-act="deleteReflectPreset">削除</button>
+                    <button type="button" class="btn sub" data-act="exportReflectPresets" title="保存済みの反映プリセットをまとめてJSONファイルに書き出します（別セッション・別端末へ持ち運び可）">JSON書出</button>
+                    <button type="button" class="btn sub" data-act="importReflectPresets" title="書き出した反映プリセットJSONを読み込み、現在のプリセットへ取り込みます（同名は上書き）">JSON読込</button>
+                    <input type="file" id="u_reflectPresetsFileInput" accept="application/json" style="display:none">
                   </div>
                 </div>
               </div>
@@ -39039,6 +39159,23 @@ ${detail}`);
         });
       });
     }
+    const reflectPresetsFileInput = getToolDocument().getElementById("u_reflectPresetsFileInput");
+    if (reflectPresetsFileInput) {
+      reflectPresetsFileInput.addEventListener("change", () => {
+        const f = reflectPresetsFileInput.files && reflectPresetsFileInput.files[0];
+        reflectPresetsFileInput.value = "";
+        if (!f) return;
+        withGuard(async () => {
+          try {
+            const r = await importReflectPresetsFromFile(f);
+            renderReflectPresetSelect("");
+            setStatus(`反映プリセットを取り込みました（新規 ${r.added}件${r.replaced ? ` / 上書き ${r.replaced}件` : ""} / 合計 ${r.total}件）`);
+          } catch (err) {
+            setStatus(err && err.message ? err.message : String(err), true);
+          }
+        });
+      });
+    }
     const targetPreviewBackupFileInput = getToolDocument().getElementById("u_targetPreviewBackupFileInput");
     if (targetPreviewBackupFileInput) {
       targetPreviewBackupFileInput.addEventListener("change", () => {
@@ -40351,6 +40488,23 @@ ${detail}`);
         deleteReflectPreset(name);
         renderReflectPresetSelect("");
         setStatus(`プリセット「${name}」を削除しました`);
+        return;
+      }
+      if (act === "exportReflectPresets") {
+        try {
+          const r = exportReflectPresetsJson();
+          setStatus(`反映プリセットを書き出しました: ${r.filename}（${r.count}件）`);
+        } catch (err) {
+          setStatus(err && err.message ? err.message : String(err), true);
+        }
+        return;
+      }
+      if (act === "importReflectPresets") {
+        const input = getToolDocument().getElementById("u_reflectPresetsFileInput");
+        if (input) {
+          input.value = "";
+          input.click();
+        }
         return;
       }
       if (act === "loadReflectNodes") return withGuard(async () => {

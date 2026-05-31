@@ -123,7 +123,9 @@ import {
   deleteReflectPreset,
   exportReflectSelectionJson,
   importReflectSelectionFromFile,
-  applyReflectQuickPreset
+  applyReflectQuickPreset,
+  exportReflectPresetsJson,
+  importReflectPresetsFromFile
 } from './tabs/reflect.js';
 
 import {
@@ -1513,6 +1515,24 @@ export function setupEventHandlers(injected: any = {}) {
     });
   }
 
+  const reflectPresetsFileInput = getToolDocument().getElementById('u_reflectPresetsFileInput') as HTMLInputElement | null;
+  if (reflectPresetsFileInput) {
+    reflectPresetsFileInput.addEventListener('change', () => {
+      const f = reflectPresetsFileInput.files && reflectPresetsFileInput.files[0];
+      reflectPresetsFileInput.value = '';
+      if (!f) return;
+      withGuard(async () => {
+        try {
+          const r = await importReflectPresetsFromFile(f);
+          renderReflectPresetSelect('');
+          setStatus(`反映プリセットを取り込みました（新規 ${r.added}件${r.replaced ? ` / 上書き ${r.replaced}件` : ''} / 合計 ${r.total}件）`);
+        } catch (err) {
+          setStatus(err && err.message ? err.message : String(err), true);
+        }
+      });
+    });
+  }
+
   const targetPreviewBackupFileInput = getToolDocument().getElementById('u_targetPreviewBackupFileInput') as HTMLInputElement | null;
   if (targetPreviewBackupFileInput) {
     targetPreviewBackupFileInput.addEventListener('change', () => {
@@ -2833,6 +2853,20 @@ export function setupEventHandlers(injected: any = {}) {
       deleteReflectPreset(name);
       renderReflectPresetSelect('');
       setStatus(`プリセット「${name}」を削除しました`);
+      return;
+    }
+    if (act === 'exportReflectPresets') {
+      try {
+        const r = exportReflectPresetsJson();
+        setStatus(`反映プリセットを書き出しました: ${r.filename}（${r.count}件）`);
+      } catch (err) {
+        setStatus(err && err.message ? err.message : String(err), true);
+      }
+      return;
+    }
+    if (act === 'importReflectPresets') {
+      const input = getToolDocument().getElementById('u_reflectPresetsFileInput') as HTMLInputElement | null;
+      if (input) { input.value = ''; input.click(); }
       return;
     }
 
