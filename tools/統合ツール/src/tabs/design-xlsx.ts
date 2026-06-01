@@ -1535,7 +1535,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
           if (row?.type === 'GROUP') {
             const label = sanitize(row.label || fields[row.code]?.label);
             const rowIdx = lAoa.length;
-            lAoa.push([lno++, rowNo, '-', 'グループ', depth, `${indent}${label || '-'}`, row.code || '-', 'GROUP', '-', '-', row.open === false ? '初期非表示' : '-']);
+            lAoa.push([lno++, rowNo, '-', 'グループ', depth, `${indent}${label || '-'}`, row.code || '-', FIELD_TYPE['GROUP'] || 'GROUP', '-', '-', row.open === false ? '初期非表示' : '-']);
             outlineRows.push({ idx: rowIdx, level: depth });
             walkRows(Array.isArray(row.layout) ? row.layout : [], depth + 1, 0);
             continue;
@@ -1559,7 +1559,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
             const rowIdx = lAoa.length;
             if (item.type === 'GROUP') {
               const label = sanitize(item.label || fields[item.code]?.label);
-              lAoa.push([lno++, rowNo, ci + 1, 'グループ', depth, `${indent}${label || '-'}`, item.code || '-', 'GROUP', '-', getWidth(item), item.open === false ? '初期非表示' : '-']);
+              lAoa.push([lno++, rowNo, ci + 1, 'グループ', depth, `${indent}${label || '-'}`, item.code || '-', FIELD_TYPE['GROUP'] || 'GROUP', '-', getWidth(item), item.open === false ? '初期非表示' : '-']);
               outlineRows.push({ idx: rowIdx, level: depth });
               walkRows(Array.isArray(item.layout) ? item.layout : [], depth + 1, 0);
               return;
@@ -1571,7 +1571,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
             }
             if (item.type === 'LABEL') {
               const label = sanitize(item.label);
-              lAoa.push([lno++, rowNo, ci + 1, 'ラベル', depth, `${indent}${label || '-'}`, '-', 'LABEL', '-', getWidth(item), '-']);
+              lAoa.push([lno++, rowNo, ci + 1, 'ラベル', depth, `${indent}${label || '-'}`, '-', FIELD_TYPE['LABEL'] || 'LABEL', '-', getWidth(item), '-']);
               outlineRows.push({ idx: rowIdx, level: depth });
               return;
             }
