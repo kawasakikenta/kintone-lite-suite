@@ -3500,7 +3500,7 @@ ${body}`;
             if (row?.type === "GROUP") {
               const label = sanitize(row.label || fields[row.code]?.label);
               const rowIdx = lAoa.length;
-              lAoa.push([lno++, rowNo, "-", "グループ", depth, `${indent}${label || "-"}`, row.code || "-", "GROUP", "-", "-", row.open === false ? "初期非表示" : "-"]);
+              lAoa.push([lno++, rowNo, "-", "グループ", depth, `${indent}${label || "-"}`, row.code || "-", FIELD_TYPE["GROUP"] || "GROUP", "-", "-", row.open === false ? "初期非表示" : "-"]);
               outlineRows.push({ idx: rowIdx, level: depth });
               walkRows(Array.isArray(row.layout) ? row.layout : [], depth + 1, 0);
               continue;
@@ -3524,7 +3524,7 @@ ${body}`;
               const rowIdx = lAoa.length;
               if (item.type === "GROUP") {
                 const label2 = sanitize(item.label || fields[item.code]?.label);
-                lAoa.push([lno++, rowNo, ci + 1, "グループ", depth, `${indent}${label2 || "-"}`, item.code || "-", "GROUP", "-", getWidth(item), item.open === false ? "初期非表示" : "-"]);
+                lAoa.push([lno++, rowNo, ci + 1, "グループ", depth, `${indent}${label2 || "-"}`, item.code || "-", FIELD_TYPE["GROUP"] || "GROUP", "-", getWidth(item), item.open === false ? "初期非表示" : "-"]);
                 outlineRows.push({ idx: rowIdx, level: depth });
                 walkRows(Array.isArray(item.layout) ? item.layout : [], depth + 1, 0);
                 return;
@@ -3536,7 +3536,7 @@ ${body}`;
               }
               if (item.type === "LABEL") {
                 const label2 = sanitize(item.label);
-                lAoa.push([lno++, rowNo, ci + 1, "ラベル", depth, `${indent}${label2 || "-"}`, "-", "LABEL", "-", getWidth(item), "-"]);
+                lAoa.push([lno++, rowNo, ci + 1, "ラベル", depth, `${indent}${label2 || "-"}`, "-", FIELD_TYPE["LABEL"] || "LABEL", "-", getWidth(item), "-"]);
                 outlineRows.push({ idx: rowIdx, level: depth });
                 return;
               }

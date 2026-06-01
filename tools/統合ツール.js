@@ -24831,7 +24831,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
             if (row?.type === "GROUP") {
               const label = sanitize(row.label || fields[row.code]?.label);
               const rowIdx = lAoa.length;
-              lAoa.push([lno++, rowNo, "-", "グループ", depth, `${indent}${label || "-"}`, row.code || "-", "GROUP", "-", "-", row.open === false ? "初期非表示" : "-"]);
+              lAoa.push([lno++, rowNo, "-", "グループ", depth, `${indent}${label || "-"}`, row.code || "-", FIELD_TYPE["GROUP"] || "GROUP", "-", "-", row.open === false ? "初期非表示" : "-"]);
               outlineRows.push({ idx: rowIdx, level: depth });
               walkRows(Array.isArray(row.layout) ? row.layout : [], depth + 1, 0);
               continue;
@@ -24855,7 +24855,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
               const rowIdx = lAoa.length;
               if (item.type === "GROUP") {
                 const label2 = sanitize(item.label || fields[item.code]?.label);
-                lAoa.push([lno++, rowNo, ci + 1, "グループ", depth, `${indent}${label2 || "-"}`, item.code || "-", "GROUP", "-", getWidth(item), item.open === false ? "初期非表示" : "-"]);
+                lAoa.push([lno++, rowNo, ci + 1, "グループ", depth, `${indent}${label2 || "-"}`, item.code || "-", FIELD_TYPE["GROUP"] || "GROUP", "-", getWidth(item), item.open === false ? "初期非表示" : "-"]);
                 outlineRows.push({ idx: rowIdx, level: depth });
                 walkRows(Array.isArray(item.layout) ? item.layout : [], depth + 1, 0);
                 return;
@@ -24867,7 +24867,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
               }
               if (item.type === "LABEL") {
                 const label2 = sanitize(item.label);
-                lAoa.push([lno++, rowNo, ci + 1, "ラベル", depth, `${indent}${label2 || "-"}`, "-", "LABEL", "-", getWidth(item), "-"]);
+                lAoa.push([lno++, rowNo, ci + 1, "ラベル", depth, `${indent}${label2 || "-"}`, "-", FIELD_TYPE["LABEL"] || "LABEL", "-", getWidth(item), "-"]);
                 outlineRows.push({ idx: rowIdx, level: depth });
                 return;
               }
@@ -47149,7 +47149,7 @@ ${diffMd}
       { label: "宛先種類", value: uniqueTargets.size, note: "重複除外" }
     ])}
     <div class="analyze-summary">表示中: ${rows.length} / 通知設定をテーブルとフローで確認できます。</div>
-    <details class="diff-fold" open>
+    <details class="diff-fold">
       <summary class="diff-fold-summary"><span class="diff-fold-title">テーブルビュー</span></summary>
       <div class="diff-fold-body">
         <div class="analyze-table-wrap"><table class="analyze-table">
@@ -47158,7 +47158,7 @@ ${diffMd}
         </table></div>
       </div>
     </details>
-    <details class="diff-fold" open>
+    <details class="diff-fold">
       <summary class="diff-fold-summary"><span class="diff-fold-title">フロービュー</span></summary>
       <div class="diff-fold-body"><div class="notif-flow-list">${flowCards || '<div style="color:#94a3b8">該当なし</div>'}</div></div>
     </details>`;
@@ -47308,7 +47308,7 @@ ${diffMd}
     }).join("");
     const more = summary.unplacedCodes.length > 12 ? `<div class="analyze-stat-note">ほか ${summary.unplacedCodes.length - 12} 件</div>` : "";
     return `
-    <details class="diff-fold" open>
+    <details class="diff-fold">
       <summary class="diff-fold-summary"><span class="diff-fold-title">${esc(title)} のレイアウト外フィールド (${summary.unplacedCodes.length}件)</span></summary>
       <div class="diff-fold-body">
         <div class="analyze-code-list">${labels}</div>
