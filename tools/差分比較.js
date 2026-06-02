@@ -6232,6 +6232,19 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
   });
 
+  // src/kintoneGuard.ts
+  var NOT_KINTONE_PAGE_MESSAGE = "kintone画面で実行してください";
+  function isKintonePage() {
+    return Boolean(window.kintone?.api && window.kintone?.app);
+  }
+  function runOnKintonePage(run) {
+    if (!isKintonePage()) {
+      alert(NOT_KINTONE_PAGE_MESSAGE);
+      return;
+    }
+    run();
+  }
+
   // src/tabs/diff-standalone.ts
   init_api();
   init_engine();
@@ -7965,9 +7978,5 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
 
   // src/entries/diff-lite-entry.ts
-  if (!window.kintone?.api || !window.kintone?.app) {
-    alert("kintone画面で実行してください");
-  } else {
-    mountDiffLitePanel(runDiffStandalone);
-  }
+  runOnKintonePage(() => mountDiffLitePanel(runDiffStandalone));
 })();

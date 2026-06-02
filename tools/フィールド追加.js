@@ -886,6 +886,19 @@ ${contextLine}`);
     }
   });
 
+  // src/kintoneGuard.ts
+  var NOT_KINTONE_PAGE_MESSAGE = "kintone画面で実行してください";
+  function isKintonePage() {
+    return Boolean(window.kintone?.api && window.kintone?.app);
+  }
+  function runOnKintonePage(run) {
+    if (!isKintonePage()) {
+      alert(NOT_KINTONE_PAGE_MESSAGE);
+      return;
+    }
+    run();
+  }
+
   // src/entries/field-lite-ui.ts
   init_constants();
 
@@ -2043,9 +2056,5 @@ ${contextLine}`);
   }
 
   // src/entries/field-lite-entry.ts
-  if (!window.kintone?.api || !window.kintone?.app) {
-    alert("kintone画面で実行してください");
-  } else {
-    mountFieldLitePanel();
-  }
+  runOnKintonePage(mountFieldLitePanel);
 })();
