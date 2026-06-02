@@ -17,6 +17,7 @@ import {
   makeNote,
   liteRun
 } from './litePanelTheme.js';
+import { createAppSearchControl } from './appSearchControl.js';
 
 export function mountErLitePanel() {
   const panel = createLitePanel({
@@ -33,6 +34,10 @@ export function mountErLitePanel() {
   const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
   const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
   cardMain.body.appendChild(makeRow([appInp, guestInp], { label: '起点ID' }));
+  cardMain.body.appendChild(createAppSearchControl(panel, {
+    guestEl: guestInp,
+    targets: [{ apply: (id, _name) => { appInp.value = id; } }]
+  }));
 
   const bOpen = makeButton('ER 図を開く', 'primary', { icon: '◉' });
   const bSave = makeButton('HTML 保存', 'ghost', { icon: '↓' });

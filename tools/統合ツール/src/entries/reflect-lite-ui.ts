@@ -20,6 +20,7 @@ import {
   liteRun,
   type LitePanelHandle
 } from './litePanelTheme.js';
+import { createAppSearchControl } from './appSearchControl.js';
 
 // =============================================================================
 // メモリ状態（リロードで消える。lite はブラウザ永続ストレージを使わない方針）
@@ -242,6 +243,21 @@ export function mountReflectLitePanel() {
   sameConnBanner.style.display = 'none';
   sameConnBanner.textContent = '⚠ 比較元と比較先が同一接続です（同じアプリID・ゲストID）。同一アプリのプレビューを上書きする状態です。';
   cardApp.body.appendChild(sameConnBanner);
+
+  cardApp.body.appendChild(createAppSearchControl(panel, {
+    targets: [
+      { label: '比較元', apply: (id, _name, guestId) => {
+        srcApp.value = id;
+        if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
+        saveState(); refreshSameConnBanner(); refreshReviewCard();
+      } },
+      { label: '比較先', apply: (id, _name, guestId) => {
+        tgtApp.value = id;
+        if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId;
+        saveState(); refreshSameConnBanner(); refreshReviewCard();
+      } }
+    ]
+  }));
 
   panel.body.insertBefore(cardApp.card, panel.status);
 

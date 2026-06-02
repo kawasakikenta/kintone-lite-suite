@@ -19,6 +19,7 @@ import {
   makeNote,
   liteRun
 } from './litePanelTheme.js';
+import { createAppSearchControl } from './appSearchControl.js';
 
 export function mountJsconfigLitePanel() {
   const panel = createLitePanel({
@@ -36,6 +37,13 @@ export function mountJsconfigLitePanel() {
   const srcGuest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
   const srcPrev = makeCheck({ label: 'プレビュー環境から取得' });
   cardFetch.body.appendChild(makeRow([srcApp, srcGuest, srcPrev.label], { label: '取得元' }));
+  const fetchAppSearch = createAppSearchControl(panel, {
+    guestEl: srcGuest,
+    targets: [
+      { label: '取得元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; } }
+    ]
+  });
+  cardFetch.body.appendChild(fetchAppSearch);
   const fetchBtn = makeButton('JS/CSS を取得', 'primary', { icon: '⤓' });
   cardFetch.body.appendChild(makeRow(fetchBtn));
   panel.body.insertBefore(cardFetch.card, panel.status);
@@ -71,6 +79,12 @@ export function mountJsconfigLitePanel() {
   const tgtApp = makeInput({ placeholder: '反映先アプリID', width: 'id' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
   cardApply.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '反映先' }));
+  cardApply.body.appendChild(createAppSearchControl(panel, {
+    guestEl: tgtGuest,
+    targets: [
+      { label: '反映先', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }
+    ]
+  }));
   cardApply.body.appendChild(makeNote('反映先は常にプレビュー環境。デプロイは管理画面から手動で行ってください。'));
   const applyBtn = makeButton('比較先プレビューへ反映', 'run', { icon: '⤴' });
   cardApply.body.appendChild(applyBtn);

@@ -18,6 +18,7 @@ import {
   makeNote,
   liteRun
 } from './litePanelTheme.js';
+import { createAppSearchControl } from './appSearchControl.js';
 import { downloadText } from '../utils.js';
 
 export function mountFieldLitePanel() {
@@ -39,6 +40,12 @@ export function mountFieldLitePanel() {
   const cardApp = makeCard({ title: 'アプリ', number: 1 });
   cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: '比較元' }));
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '比較先' }));
+  cardApp.body.appendChild(createAppSearchControl(panel, {
+    targets: [
+      { label: '比較元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; } },
+      { label: '比較先', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }
+    ]
+  }));
   panel.body.insertBefore(cardApp.card, panel.status);
 
   // ---- フィールド定義JSON ----

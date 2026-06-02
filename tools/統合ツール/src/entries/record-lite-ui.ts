@@ -24,6 +24,7 @@ import {
   makeNote,
   liteRun
 } from './litePanelTheme.js';
+import { createAppSearchControl } from './appSearchControl.js';
 
 export function mountRecordLitePanel() {
   const panel = createLitePanel({
@@ -41,6 +42,10 @@ export function mountRecordLitePanel() {
   const tgtGuest = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
   const cardApp = makeCard({ title: '接続情報', number: 1 });
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '対象アプリ' }));
+  cardApp.body.appendChild(createAppSearchControl(panel, {
+    guestEl: tgtGuest,
+    targets: [{ label: '対象アプリ', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }]
+  }));
   panel.body.insertBefore(cardApp.card, panel.status);
 
   // 一覧ロード補助
@@ -189,6 +194,10 @@ export function mountRecordLitePanel() {
         const srcGuest = makeInput({ placeholder: 'ゲスト (任意)', width: 'guest' });
         const query = makeInput({ placeholder: '条件 (任意)', width: 'wide' });
         root.appendChild(makeRow([srcApp, srcGuest], { label: 'コピー元' }));
+        root.appendChild(createAppSearchControl(panel, {
+          guestEl: srcGuest,
+          targets: [{ label: 'コピー元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; } }]
+        }));
         root.appendChild(makeRow(query, { label: 'クエリ' }));
         root.appendChild(makeNote('元アプリの絞り込んだレコードを、対象アプリへ POST で追加します。ファイル/システム項目は除外されます。'));
         const run = makeButton('レコードをコピー実行', 'primary');

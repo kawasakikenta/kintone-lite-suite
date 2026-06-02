@@ -25,6 +25,7 @@ import {
   liteRun,
   type LitePanelHandle
 } from './litePanelTheme.js';
+import { createAppSearchControl } from './appSearchControl.js';
 
 const SCOPE_OPTS: Array<[string, string, boolean]> = [
   ['fieldSettings', 'フィールド', true],
@@ -210,6 +211,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const cardApp = makeCard({ title: 'アプリと環境', number: 1 });
   cardApp.body.appendChild(makeRow([srcApp, srcGuest, srcPrev.label], { label: '比較元' }));
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest, tgtPrev.label], { label: '比較先' }));
+  cardApp.body.appendChild(createAppSearchControl(panel, {
+    targets: [
+      { label: '比較元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; } },
+      { label: '比較先', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }
+    ]
+  }));
   panel.body.insertBefore(cardApp.card, panel.status);
 
   // ---- セクション ----

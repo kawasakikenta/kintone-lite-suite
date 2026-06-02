@@ -20,6 +20,7 @@ import {
   makeNote,
   liteRun
 } from './litePanelTheme.js';
+import { createAppSearchControl } from './appSearchControl.js';
 
 export function mountDesignLitePanel() {
   const panel = createLitePanel({
@@ -112,4 +113,19 @@ export function mountDesignLitePanel() {
     );
   }));
   panel.body.insertBefore(batchDetails.details, panel.status);
+
+  // ---- アプリ名検索（単アプリ／比較先／一括リストへ流し込み） ----
+  cardSingle.body.appendChild(createAppSearchControl(panel, {
+    guestEl: guestInp,
+    targets: [
+      { label: '単アプリ', apply: (id, _name, guestId) => { appInp.value = id; if (guestId && !guestInp.value.trim()) guestInp.value = guestId; } },
+      { label: '比較先', apply: (id, _name, guestId) => { cmpApp.value = id; if (guestId && !cmpGuest.value.trim()) cmpGuest.value = guestId; } },
+      { label: '一括リスト', apply: (id) => {
+        const ids = new Set(batchIds.value.split(/[\s,]+/).map((v) => v.trim()).filter(Boolean));
+        ids.add(id);
+        batchIds.value = [...ids].join(', ');
+        batchDetails.details.open = true;
+      } }
+    ]
+  }));
 }

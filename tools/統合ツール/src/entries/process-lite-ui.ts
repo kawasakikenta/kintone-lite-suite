@@ -11,6 +11,7 @@ import {
   makeNote,
   liteRun
 } from './litePanelTheme.js';
+import { createAppSearchControl } from './appSearchControl.js';
 
 export function mountProcessLitePanel() {
   const panel = createLitePanel({
@@ -27,6 +28,10 @@ export function mountProcessLitePanel() {
   const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
   const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
   cardApp.body.appendChild(makeRow([appInp, guestInp], { label: 'アプリ' }));
+  cardApp.body.appendChild(createAppSearchControl(panel, {
+    guestEl: guestInp,
+    targets: [{ apply: (id, _name, guestId) => { appInp.value = id; if (guestId && !guestInp.value.trim()) guestInp.value = guestId; } }]
+  }));
 
   const runBtn = makeButton('フロー図を描画', 'run', { icon: '◐' });
   cardApp.body.appendChild(runBtn);
