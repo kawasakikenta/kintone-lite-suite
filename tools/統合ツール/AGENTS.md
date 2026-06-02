@@ -24,7 +24,8 @@
 ### バンドル種別
 
 全単機能スクリプトは **軽量 lite バンドル** です。`boot.ts`（統合ツールのフル UI）を含まず、
-`*-standalone.ts` + `*-lite-ui.ts` + `liteMount.ts` で自己完結する軽量パネルを提供します。
+`*-standalone.ts` + `*-lite-ui.ts` + `litePanelTheme.ts`（共通パネル UI）で自己完結する軽量パネルを提供します。
+各 lite エントリ（`*-lite-entry.ts`）は `kintoneGuard.ts` の `runOnKintonePage()` で kintone 画面判定してから起動します。
 
 統合版（`統合ツール.js`）はフル UI バンドルで全タブ機能を含みます（現在は約 2MB）。
 lite 版は必要な機能のみバンドルするため、各ファイルは機能ごとに数十〜数百KB程度です。
@@ -49,11 +50,14 @@ tools/統合ツール/
 │   ├── state.ts               # グローバル state
 │   ├── api.ts                 # kintone REST API ラッパー
 │   ├── utils.ts               # 汎用ユーティリティ
+│   ├── kintoneGuard.ts        # kintone 画面ガード（全エントリ・boot 共通）
 │   ├── handlers.ts            # イベント委譲
 │   ├── entries/               # esbuild エントリポイント
-│   │   ├── *-lite-entry.ts    # 軽量単機能エントリ
+│   │   ├── *-lite-entry.ts    # 軽量単機能エントリ（kintoneGuard で起動）
 │   │   ├── *-lite-ui.ts       # 軽量単機能の UI パネル
-│   │   └── liteMount.ts       # lite 版共通パネルマウント
+│   │   ├── litePanelTheme.ts  # lite 版共通パネル UI（createLitePanel/makeRow 等）
+│   │   ├── appSearchControl.ts # アプリ名検索コントロール（lite 共通）
+│   │   └── suite-tab-*-entry.ts # 統合版を指定タブで起動するエントリ
 │   ├── tabs/                  # 各タブの正規実装
 │   │   ├── *.ts               # 統合版で使うタブロジック
 │   │   └── *-standalone.ts    # lite 版用に統合 UI 依存を外した関数群
@@ -69,6 +73,7 @@ tools/統合ツール/
 ## 共有モジュールの注意点
 
 - `tabs/design-xlsx.ts` は `tabs/design.ts`（統合版）と `tabs/design-standalone.ts`（lite 版）の**両方**からインポートされる。変更時は両方に影響する。
-- `tabs/er.ts` の `crawl`/`buildHTML` は統合版と `tabs/er-standalone.ts`（lite 版）の両方から使用される。
-- `entries/liteMount.ts` は全 lite 系パネルの共通基盤。変更時は軽量バンドル全体に影響する。
-- `diff/export.ts` の `bundleToMarkdown` は統合版・設計書 lite・差分 lite から参照される。
+- `tabs/er.ts` の `crawl`/`buildHTML` は統合版（`boot.ts`）と `tabs/er-standalone.ts`（lite 版）の両方から使用される。
+- `entries/litePanelTheme.ts` の `createLitePanel`／`makeRow` 等は全 lite 系パネルの共通 UI 基盤。変更時は軽量バンドル全体に影響する。
+- `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全エントリ（lite 9 本・suite-tab 5 本）と `boot.ts` 共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
+- `diff/export.ts` の `bundleToMarkdown` は統合版の設計タブ（`tabs/design.ts`）と設計書 lite（`tabs/design-standalone.ts`）から参照される。
