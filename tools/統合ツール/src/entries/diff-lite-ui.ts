@@ -321,7 +321,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   grid.appendChild(bBundle);
   grid.appendChild(bPatch);
   cardOut.body.appendChild(grid);
-  panel.body.insertBefore(cardOut.card, panel.status);
+  // 出力カードは結果カードの前に挿入し、差分件数が多くても結果リストの下までスクロールせず
+  // 出力ボタンへすぐ届くようにする
+  panel.body.insertBefore(cardOut.card, cardResult.card);
 
   // ---- 状態 ----
   let cache: DiffCache | null = null;

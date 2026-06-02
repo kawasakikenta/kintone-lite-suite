@@ -7647,7 +7647,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     grid.appendChild(bBundle);
     grid.appendChild(bPatch);
     cardOut.body.appendChild(grid);
-    panel.body.insertBefore(cardOut.card, panel.status);
+    panel.body.insertBefore(cardOut.card, cardResult.card);
     let cache = null;
     let summaryText = "";
     function readForm() {
