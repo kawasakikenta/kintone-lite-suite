@@ -54,6 +54,78 @@ const EXPORT_SHEET_PRESETS: Array<{ id: string; label: string; keys: string[] | 
   { id: 'notif', label: '通知のみ', keys: ['genNotif', 'recNotif', 'remNotif'] }
 ];
 
+// フィールドタイプ（kintone API の type 値）→ 日本語ラベル。
+// 項目定義シートの出力と、出力対象フィールドタイプの選択ダイアログで共有する。
+const FIELD_TYPE_LABELS: Record<string, string> = {
+  'LABEL': 'ラベル', 'HR': '罫線', 'SPACER': 'スペース', 'GROUP': 'グループ',
+  'FILE': '添付ファイル', 'LINK': 'リンク', 'REFERENCE_TABLE': '関連レコード一覧',
+  'SINGLE_LINE_TEXT': '文字列(1行)', 'MULTI_LINE_TEXT': '文字列(複数行)', 'RICH_TEXT': 'リッチエディター',
+  'NUMBER': '数値', 'CALC': '計算', 'RADIO_BUTTON': 'ラジオボタン', 'CHECK_BOX': 'チェックボックス',
+  'DROP_DOWN': 'ドロップダウン', 'MULTI_SELECT': '複数選択', 'DATE': '日付', 'DATETIME': '日時', 'TIME': '時刻',
+  'USER_SELECT': 'ユーザー選択', 'ORGANIZATION_SELECT': '組織選択', 'GROUP_SELECT': 'グループ選択',
+  'LOOKUP': 'ルックアップ', 'SUBTABLE': 'テーブル',
+  'RECORD_NUMBER': 'レコード番号', 'CREATOR': '作成者', 'CREATED_TIME': '作成日時',
+  'MODIFIER': '更新者', 'UPDATED_TIME': '更新日時', 'STATUS': 'ステータス', 'CATEGORY': 'カテゴリー',
+  'STATUS_ASSIGNEE': '作業者'
+};
+
+type FieldTypeDef = { key: string; label: string; cat: string };
+
+// 項目定義シートに出力するフィールドタイプの選択候補。
+// deco: ラベル・罫線などレイアウト要素（フィールドコードを持たない装飾）。
+// 既定はすべて出力（＝従来動作）で、ここから外したタイプは項目定義シートから除外される。
+const EXPORT_FIELD_TYPE_DEFS: Array<FieldTypeDef> = [
+  // レイアウト・装飾要素（特にラベル/罫線を外したい要望が多い）
+  { key: 'LABEL', label: FIELD_TYPE_LABELS.LABEL, cat: 'deco' },
+  { key: 'HR', label: FIELD_TYPE_LABELS.HR, cat: 'deco' },
+  { key: 'SPACER', label: FIELD_TYPE_LABELS.SPACER, cat: 'deco' },
+  { key: 'GROUP', label: 'グループ見出し', cat: 'deco' },
+  // 入力・システム項目
+  { key: 'SINGLE_LINE_TEXT', label: FIELD_TYPE_LABELS.SINGLE_LINE_TEXT, cat: 'field' },
+  { key: 'MULTI_LINE_TEXT', label: FIELD_TYPE_LABELS.MULTI_LINE_TEXT, cat: 'field' },
+  { key: 'RICH_TEXT', label: FIELD_TYPE_LABELS.RICH_TEXT, cat: 'field' },
+  { key: 'NUMBER', label: FIELD_TYPE_LABELS.NUMBER, cat: 'field' },
+  { key: 'CALC', label: FIELD_TYPE_LABELS.CALC, cat: 'field' },
+  { key: 'RADIO_BUTTON', label: FIELD_TYPE_LABELS.RADIO_BUTTON, cat: 'field' },
+  { key: 'CHECK_BOX', label: FIELD_TYPE_LABELS.CHECK_BOX, cat: 'field' },
+  { key: 'DROP_DOWN', label: FIELD_TYPE_LABELS.DROP_DOWN, cat: 'field' },
+  { key: 'MULTI_SELECT', label: FIELD_TYPE_LABELS.MULTI_SELECT, cat: 'field' },
+  { key: 'DATE', label: FIELD_TYPE_LABELS.DATE, cat: 'field' },
+  { key: 'DATETIME', label: FIELD_TYPE_LABELS.DATETIME, cat: 'field' },
+  { key: 'TIME', label: FIELD_TYPE_LABELS.TIME, cat: 'field' },
+  { key: 'USER_SELECT', label: FIELD_TYPE_LABELS.USER_SELECT, cat: 'field' },
+  { key: 'ORGANIZATION_SELECT', label: FIELD_TYPE_LABELS.ORGANIZATION_SELECT, cat: 'field' },
+  { key: 'GROUP_SELECT', label: FIELD_TYPE_LABELS.GROUP_SELECT, cat: 'field' },
+  { key: 'FILE', label: FIELD_TYPE_LABELS.FILE, cat: 'field' },
+  { key: 'LINK', label: FIELD_TYPE_LABELS.LINK, cat: 'field' },
+  { key: 'SUBTABLE', label: FIELD_TYPE_LABELS.SUBTABLE, cat: 'field' },
+  { key: 'REFERENCE_TABLE', label: FIELD_TYPE_LABELS.REFERENCE_TABLE, cat: 'field' },
+  { key: 'RECORD_NUMBER', label: FIELD_TYPE_LABELS.RECORD_NUMBER, cat: 'field' },
+  { key: 'CREATOR', label: FIELD_TYPE_LABELS.CREATOR, cat: 'field' },
+  { key: 'CREATED_TIME', label: FIELD_TYPE_LABELS.CREATED_TIME, cat: 'field' },
+  { key: 'MODIFIER', label: FIELD_TYPE_LABELS.MODIFIER, cat: 'field' },
+  { key: 'UPDATED_TIME', label: FIELD_TYPE_LABELS.UPDATED_TIME, cat: 'field' },
+  { key: 'STATUS', label: FIELD_TYPE_LABELS.STATUS, cat: 'field' },
+  { key: 'CATEGORY', label: FIELD_TYPE_LABELS.CATEGORY, cat: 'field' }
+];
+
+const EXPORT_FIELD_TYPE_CATEGORIES: Array<{ key: string; label: string }> = [
+  { key: 'deco', label: 'レイアウト・装飾' },
+  { key: 'field', label: '入力・システム項目' }
+];
+
+// 項目定義シートから「除外する」フィールドタイプの集合（セッション中のみ保持）。
+// 空（または null）はすべて出力する従来動作を意味する。
+let rememberedFieldTypeExclusion: Set<string> | null = null;
+
+function loadPersistedFieldTypeExclusion(): Set<string> | null {
+  return rememberedFieldTypeExclusion ? new Set(rememberedFieldTypeExclusion) : null;
+}
+
+function persistFieldTypeExclusion(excluded: Set<string>): void {
+  rememberedFieldTypeExclusion = new Set(excluded);
+}
+
 function getExporterOverlayZIndex(): string {
   const main = getToolDocument().getElementById(TOOL_ID);
   const raw = main ? Number(window.getComputedStyle(main).zIndex) : NaN;
@@ -123,6 +195,15 @@ export function getDesignExportSheetMeta() {
   };
 }
 
+/** テスト/検証用: 項目定義シートのフィールドタイプ選択メタ情報（定義・カテゴリ）を返す。 */
+export function getDesignExportFieldTypeMeta() {
+  return {
+    defs: EXPORT_FIELD_TYPE_DEFS,
+    categories: EXPORT_FIELD_TYPE_CATEGORIES,
+    labels: FIELD_TYPE_LABELS
+  };
+}
+
 function escapeHtmlAttr(value: string): string {
   return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -156,7 +237,20 @@ function showSheetSelectionDialog(defs: Array<SheetDef>, title = '📊 エクス
       `<button type="button" class="kex-preset" data-preset="${escapeHtmlAttr(p.id)}" style="font-size:11px;padding:4px 10px;border:1px solid #c2d1de;border-radius:999px;background:#eef4f8;color:#24506f;cursor:pointer;">${escapeHtmlAttr(p.label)}</button>`
     ).join('');
 
-    overlay.innerHTML = `<div role="dialog" aria-modal="true" aria-label="${escapeHtmlAttr(title)}" tabindex="-1" style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:480px;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.3);outline:none;"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:8px;">${escapeHtmlAttr(title)}</div><div style="font-size:12px;color:#666;margin-bottom:10px;">出力するシートを選択してください（前回設定を自動反映 / Esc=キャンセル, Ctrl+Enter=エクスポート）</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center;"><span style="font-size:11px;color:#94a3b8;margin-right:2px;">プリセット:</span>${presetBtns}</div><div style="display:flex;gap:8px;margin-bottom:8px;"><button type="button" id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button><span id="kex-count" style="margin-left:auto;align-self:center;font-size:12px;font-weight:bold;color:#2E5C8A;"></span></div><div id="kex-sheet-options" style="flex:1;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${groupsHtml}</div><div id="kex-warn" style="font-size:11px;color:#b91c1c;min-height:16px;margin-top:6px;"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;"><button type="button" id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button type="button" id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
+    // 項目定義シートに出力するフィールドタイプの選択（チェック=出力）
+    const rememberedTypeExclusion = loadPersistedFieldTypeExclusion();
+    const usedTypeCats = EXPORT_FIELD_TYPE_CATEGORIES.filter((c) => EXPORT_FIELD_TYPE_DEFS.some((d) => d.cat === c.key));
+    const fieldTypeGroupsHtml = usedTypeCats.map((cat) => {
+      const items = EXPORT_FIELD_TYPE_DEFS.filter((d) => d.cat === cat.key);
+      const rows = items.map((d) => {
+        const checked = rememberedTypeExclusion ? !rememberedTypeExclusion.has(d.key) : true;
+        return `<label style="display:inline-flex;align-items:center;gap:5px;margin:2px 8px 2px 0;font-size:12px;cursor:pointer;"><input type="checkbox" class="kex-ftype" value="${escapeHtmlAttr(d.key)}" ${checked ? 'checked' : ''}>${escapeHtmlAttr(d.label)}</label>`;
+      }).join('');
+      return `<div style="margin-bottom:6px;"><div style="font-size:11px;font-weight:bold;color:#2E5C8A;margin:2px 0 3px;">${escapeHtmlAttr(cat.label)}</div><div style="display:flex;flex-wrap:wrap;">${rows}</div></div>`;
+    }).join('');
+    const fieldTypeSectionHtml = `<details id="kex-ftype-details" style="margin-top:8px;border:1px solid #eee;border-radius:6px;background:#fafafa;"><summary style="cursor:pointer;font-size:12px;font-weight:bold;color:#2E5C8A;padding:6px 8px;">「項目定義」シートに出力するフィールドタイプ</summary><div style="padding:4px 10px 8px;"><div style="font-size:11px;color:#666;margin-bottom:6px;">チェックしたタイプのみ項目定義シートに出力します（ラベル・罫線などの除外に利用）。<button type="button" id="kex-ftype-all" style="font-size:10px;padding:2px 8px;margin-left:6px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-ftype-none" style="font-size:10px;padding:2px 8px;margin-left:4px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button></div>${fieldTypeGroupsHtml}</div></details>`;
+
+    overlay.innerHTML = `<div role="dialog" aria-modal="true" aria-label="${escapeHtmlAttr(title)}" tabindex="-1" style="background:#fff;border-radius:12px;padding:28px;min-width:360px;max-width:480px;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.3);outline:none;"><div style="font-size:18px;font-weight:bold;color:#2E5C8A;margin-bottom:8px;">${escapeHtmlAttr(title)}</div><div style="font-size:12px;color:#666;margin-bottom:10px;">出力するシートを選択してください（前回設定を自動反映 / Esc=キャンセル, Ctrl+Enter=エクスポート）</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center;"><span style="font-size:11px;color:#94a3b8;margin-right:2px;">プリセット:</span>${presetBtns}</div><div style="display:flex;gap:8px;margin-bottom:8px;"><button type="button" id="kex-select-all" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全選択</button><button type="button" id="kex-select-none" style="font-size:11px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;">全解除</button><span id="kex-count" style="margin-left:auto;align-self:center;font-size:12px;font-weight:bold;color:#2E5C8A;"></span></div><div id="kex-sheet-options" style="flex:1;overflow-y:auto;padding:8px;background:#fafafa;border-radius:6px;border:1px solid #eee;">${groupsHtml}</div>${fieldTypeSectionHtml}<div id="kex-warn" style="font-size:11px;color:#b91c1c;min-height:16px;margin-top:6px;"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;"><button type="button" id="kex-cancel" style="padding:8px 20px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">キャンセル</button><button type="button" id="kex-export" style="padding:8px 20px;border:none;border-radius:6px;background:#4A90E2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold;">エクスポート</button></div></div>`;
     doc.body.appendChild(overlay);
 
     const box = overlay.querySelector('[role="dialog"]') as HTMLElement;
@@ -193,6 +287,11 @@ function showSheetSelectionDialog(defs: Array<SheetDef>, title = '📊 エクス
     (overlay.querySelector('#kex-select-all') as HTMLElement).onclick = () => applyPreset(null);
     (overlay.querySelector('#kex-select-none') as HTMLElement).onclick = () => applyPreset([]);
 
+    const fieldTypeBoxes = () => Array.from(overlay.querySelectorAll<HTMLInputElement>('input.kex-ftype'));
+    const setFieldTypes = (checked: boolean) => fieldTypeBoxes().forEach((cb) => { cb.checked = checked; });
+    (overlay.querySelector('#kex-ftype-all') as HTMLElement | null)?.addEventListener('click', () => setFieldTypes(true));
+    (overlay.querySelector('#kex-ftype-none') as HTMLElement | null)?.addEventListener('click', () => setFieldTypes(false));
+
     const close = (result: Set<string> | null) => {
       doc.removeEventListener('keydown', onKeydown, true);
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
@@ -204,6 +303,10 @@ function showSheetSelectionDialog(defs: Array<SheetDef>, title = '📊 エクス
       optionBoxes().forEach((cb) => { if (cb.checked) selected.add(cb.value); });
       if (selected.size === 0) { refresh(); return; }
       persistSheetSelection(selected);
+      // チェックを外したフィールドタイプを「除外集合」として記憶する
+      const excludedTypes = new Set<string>();
+      fieldTypeBoxes().forEach((cb) => { if (!cb.checked) excludedTypes.add(cb.value); });
+      persistFieldTypeExclusion(excludedTypes);
       close(selected);
     };
 
@@ -382,18 +485,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     'タイトル': 30, 'シート名': 26
   };
 
-  const FIELD_TYPE = {
-    'LABEL': 'ラベル', 'HR': '罫線', 'SPACER': 'スペース', 'GROUP': 'グループ',
-    'FILE': '添付ファイル', 'LINK': 'リンク', 'REFERENCE_TABLE': '関連レコード一覧',
-    'SINGLE_LINE_TEXT': '文字列(1行)', 'MULTI_LINE_TEXT': '文字列(複数行)', 'RICH_TEXT': 'リッチエディター',
-    'NUMBER': '数値', 'CALC': '計算', 'RADIO_BUTTON': 'ラジオボタン', 'CHECK_BOX': 'チェックボックス',
-    'DROP_DOWN': 'ドロップダウン', 'MULTI_SELECT': '複数選択', 'DATE': '日付', 'DATETIME': '日時', 'TIME': '時刻',
-    'USER_SELECT': 'ユーザー選択', 'ORGANIZATION_SELECT': '組織選択', 'GROUP_SELECT': 'グループ選択',
-    'LOOKUP': 'ルックアップ', 'SUBTABLE': 'テーブル',
-    'RECORD_NUMBER': 'レコード番号', 'CREATOR': '作成者', 'CREATED_TIME': '作成日時',
-    'MODIFIER': '更新者', 'UPDATED_TIME': '更新日時', 'STATUS': 'ステータス', 'CATEGORY': 'カテゴリー',
-    'STATUS_ASSIGNEE': '作業者'
-  };
+  const FIELD_TYPE = FIELD_TYPE_LABELS;
 
   // kintone API のレスポンス値（ENUM）を日本語ラベルへ変換するための辞書群。
   // Excel 出力で「CREATOR」のような英語の生値が混在しないようにするため。
@@ -774,6 +866,12 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       if (!preselectedSheets) await showToast('出力するシートが選択されていません', 'warn');
       return false;
     }
+
+    // 項目定義シートから除外するフィールドタイプ（ダイアログ選択 or バッチ時の引数 / 記憶値）
+    const fieldTypeExclusion: Set<string> = (params.fieldTypeExclusion instanceof Set)
+      ? new Set(params.fieldTypeExclusion)
+      : (loadPersistedFieldTypeExclusion() || new Set<string>());
+    const isFieldTypeExcluded = (type: string): boolean => fieldTypeExclusion.has(String(type || ''));
 
     if (progressLabel) {
       const prefix = `${progressLabel} `;
@@ -1483,25 +1581,28 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       const sectionRowsFields = [];
       for (const entry of orderedItems) {
         if (entry.kind === 'GROUP') {
+          if (isFieldTypeExcluded('GROUP')) continue;
           pushGroupRow(entry.item, entry.groupLabel);
           continue;
         }
         if (entry.kind === 'LABEL' || entry.kind === 'HR' || entry.kind === 'SPACER') {
+          if (isFieldTypeExcluded(entry.kind)) continue;
           pushDecorationRow(entry.kind, entry.item, entry.groupLabel);
           continue;
         }
         const code = entry.code;
         const f = fields[code];
         if (!f || f.type === 'GROUP') continue;
+        if (isFieldTypeExcluded(f.type)) continue;
         pushRow(f.label || '', code, f, null, false, entry.groupLabel);
         if (f.type === 'SUBTABLE' && f.fields) {
           const subCodes = subtableFieldOrder.get(code) || Object.keys(f.fields);
+          const visibleSubCodes = subCodes.filter((sc) => f.fields[sc] && !isFieldTypeExcluded(f.fields[sc].type));
           const subHeaderRow = fAoa.length;
-          const subCount = subCodes.filter((sc) => f.fields[sc]).length;
-          fAoa.push(padRow([`▼ テーブル「${f.label || code}」(${subCount}列)`]));
+          fAoa.push(padRow([`▼ テーブル「${f.label || code}」(${visibleSubCodes.length}列)`]));
           sectionRowsFields.push(subHeaderRow);
-          for (const sc of subCodes) {
-            if (f.fields[sc]) pushRow(f.fields[sc].label || '', sc, f.fields[sc], f.label || code, true);
+          for (const sc of visibleSubCodes) {
+            pushRow(f.fields[sc].label || '', sc, f.fields[sc], f.label || code, true);
           }
         }
       }
@@ -2180,6 +2281,8 @@ export async function runBatchDesignExportXlsxZip(params: { appIds: Array<string
   // 1. シート選択を最初に1回だけ取得
   const selectedSheets = await showSheetSelectionDialog(resolveExportSheetDefs(), "📦 一括エクスポート設定");
   if (!selectedSheets) return false;
+  // 項目定義シートのフィールドタイプ除外設定（ダイアログで記憶された値を全アプリ共通で適用）
+  const batchFieldTypeExclusion = loadPersistedFieldTypeExclusion() || new Set<string>();
 
   // 2. 依存ライブラリを先にロード
   const batchUi = createBatchExporterUI();
@@ -2214,6 +2317,7 @@ export async function runBatchDesignExportXlsxZip(params: { appIds: Array<string
         appId,
         guestId,
         preselectedSheets: selectedSheets,
+        fieldTypeExclusion: batchFieldTypeExclusion,
         returnWorkbook: true,
         progressLabel: label,
         suppressToast: true
