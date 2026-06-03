@@ -20306,6 +20306,10 @@ ${reason}` : "",
       sourcePreview: ui.sourcePreview.checked,
       targetAppId: ui.targetApp.value.trim(),
       targetGuestId: ui.targetGuest.value.trim(),
+      targetConnections: [...getToolDocument().querySelectorAll("[data-conn-target-row]")].map((row) => ({
+        appId: String(row.querySelector("[data-conn-target-app], #u_targetApp")?.value || "").trim(),
+        guestId: String(row.querySelector("[data-conn-target-guest], #u_targetGuest")?.value || "").trim()
+      })).filter((r) => r.appId || r.guestId),
       targetPreview: ui.targetPreview.checked,
       connectionSearchKeyword: ui.connectionSearchKeyword?.value?.trim?.() || "",
       connectionSearchGuest: ui.connectionSearchGuest?.value?.trim?.() || "",
@@ -20405,6 +20409,38 @@ ${reason}` : "",
     if (saved.sourcePreview != null) ui.sourcePreview.checked = !!saved.sourcePreview;
     if (saved.targetAppId != null) ui.targetApp.value = String(saved.targetAppId);
     if (saved.targetGuestId != null) ui.targetGuest.value = String(saved.targetGuestId);
+    if (Array.isArray(saved.targetConnections)) {
+      const rows = [...getToolDocument().querySelectorAll("[data-conn-target-row]")];
+      rows.slice(1).forEach((row) => row.remove());
+      const first = getToolDocument().querySelector("[data-conn-target-row]");
+      const applyRow = (row, item) => {
+        if (!row) return;
+        const app = row.querySelector("[data-conn-target-app], #u_targetApp");
+        const guest = row.querySelector("[data-conn-target-guest], #u_targetGuest");
+        if (app) app.value = String(item?.appId || "");
+        if (guest) guest.value = String(item?.guestId || "");
+      };
+      if (saved.targetConnections.length) applyRow(first, saved.targetConnections[0]);
+      saved.targetConnections.slice(1).forEach((item, idx) => {
+        if (!first?.parentElement) return;
+        const row = first.cloneNode(true);
+        row.querySelectorAll("[id]").forEach((el) => el.removeAttribute("id"));
+        applyRow(row, item);
+        const role = row.querySelector(".connection-table__role");
+        if (role) role.textContent = `比較先 ${idx + 2}`;
+        const actions = row.querySelector(".connection-table__actions");
+        if (actions && !actions.querySelector('[data-act="removeConnectionRow"]')) {
+          const btn = getToolDocument().createElement("button");
+          btn.type = "button";
+          btn.className = "btn sub danger";
+          btn.dataset.act = "removeConnectionRow";
+          btn.title = "この比較先行を削除";
+          btn.textContent = "削除";
+          actions.appendChild(btn);
+        }
+        first.parentElement.appendChild(row);
+      });
+    }
     if (saved.targetPreview != null) ui.targetPreview.checked = !!saved.targetPreview;
     if (saved.connectionSearchKeyword != null && ui.connectionSearchKeyword) ui.connectionSearchKeyword.value = String(saved.connectionSearchKeyword);
     if (saved.connectionSearchGuest != null && ui.connectionSearchGuest) ui.connectionSearchGuest.value = String(saved.connectionSearchGuest);
@@ -32737,6 +32773,51 @@ ${detail}`);
 #kintone-unified-suite-v2 .reflect-apply-check.is-checked .reflect-apply-check__auto{background:#dcfce7;color:#166534;opacity:1}
 #kintone-unified-suite-v2 .reflect-apply-check:hover .reflect-apply-check__auto{opacity:1}
 
+
+#kintone-unified-suite-v2 .connection-table-wrap{
+  margin-top:8px;
+  overflow:auto;
+  border:1px solid #dbe3ef;
+  border-radius:10px;
+  background:#fff;
+}
+#kintone-unified-suite-v2 .connection-table{
+  width:100%;
+  border-collapse:collapse;
+  min-width:620px;
+  font-size:12px;
+}
+#kintone-unified-suite-v2 .connection-table th,
+#kintone-unified-suite-v2 .connection-table td{
+  border-bottom:1px solid #edf2f7;
+  padding:6px 8px;
+  text-align:left;
+  vertical-align:middle;
+}
+#kintone-unified-suite-v2 .connection-table th{
+  background:#f8fafc;
+  color:#334155;
+  font-weight:700;
+}
+#kintone-unified-suite-v2 .connection-table tr:last-child td{border-bottom:0}
+#kintone-unified-suite-v2 .connection-table input{
+  width:100%;
+  min-width:90px;
+  box-sizing:border-box;
+}
+#kintone-unified-suite-v2 .connection-table__role{
+  width:86px;
+  white-space:nowrap;
+  color:#475569;
+  font-weight:700;
+}
+#kintone-unified-suite-v2 .connection-table__actions{
+  display:flex;
+  gap:4px;
+  flex-wrap:wrap;
+  min-width:160px;
+}
+#kintone-unified-suite-v2:not(.tab-needs-target) .connection-table .conn-target{display:none !important}
 `;
 
   // src/ui/styles/a11y-responsive.css
@@ -32971,29 +33052,41 @@ ${detail}`);
               <div class="connection-step1-body" id="u_connectionStep1Body">
               <p class="connection-section-lead" id="u_connectionLead">動作対象のアプリIDを <strong>比較元</strong> に入力します。<br>プレビュー反映を使う場合のみ <strong>比較先</strong> も入力してください（ER図／プロセス図／分析は比較元だけでOK）。</p>
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
-              <div class="grid connection-grid">
-              <div class="conn-source">
-                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span> <span class="conn-label-hint" title="このツール全体の動作対象アプリ。1アプリだけ操作する機能（ER図 / プロセス図 / 分析など）もここに入力します。">動作対象</span></label>
-                <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
-              </div>
-              <div class="conn-source">
-                <label for="u_sourceGuest" id="u_sourceGuestLabel">比較元 ゲストID</label>
-                <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
-              </div>
-              <div class="conn-target">
-                <label for="u_targetApp" id="u_targetAppLabel">比較先アプリID <span class="req-soft" title="差分比較・プレビュー反映を使うときに必須。1アプリだけ操作する機能では空のままで構いません。">差分比較時</span></label>
-                <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
-              </div>
-              <div class="conn-target">
-                <label for="u_targetGuest" id="u_targetGuestLabel">比較先 ゲストID</label>
-                <input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off">
-              </div>
+              <div class="connection-table-wrap">
+              <table class="connection-table" aria-label="接続先アプリ一覧">
+                <thead>
+                  <tr>
+                    <th>区分</th>
+                    <th><span id="u_sourceAppLabel">比較元アプリID</span> <span class="req">必須</span></th>
+                    <th><span id="u_sourceGuestLabel">ゲストID</span></th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="conn-source">
+                    <td class="connection-table__role">比較元</td>
+                    <td><input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off" placeholder="アプリID"></td>
+                    <td><input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off"></td>
+                    <td><button type="button" class="btn sub connection-row-copy" data-act="copySourceRowToClipboard" title="比較元行をコピー">行コピー</button></td>
+                  </tr>
+                  <tr class="conn-target" data-conn-target-row>
+                    <td class="connection-table__role">比較先 1</td>
+                    <td><input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off" placeholder="アプリID" data-conn-target-app></td>
+                    <td><input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off" data-conn-target-guest></td>
+                    <td class="connection-table__actions">
+                      <button type="button" class="btn sub connection-row-copy" data-act="copyTargetRowToClipboard" title="この比較先行をコピー">行コピー</button>
+                      <button type="button" class="btn sub" data-act="duplicateConnectionRow" title="この行を複製">複製</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
             <div class="btns connection-step-btns connection-quick-btns" style="margin-top:8px">
               <button type="button" class="btn sub connection-secondary-action connection-secondary-action--primary" data-act="setBothCurrent" title="今開いているアプリのIDを比較元と比較先の両方に一括セット（最も多いケース）">両方=現在アプリ</button>
               <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元（動作対象）にセット">比較元=現在アプリ</button>
               <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
               <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報＋取得済みバンドルを入れ替え。差分・反映候補はリセットされ再比較が必要になります。">比較元/比較先入替</button>
+              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="addConnectionTargetRow" title="比較先アプリIDとゲストIDの行を追加">比較先行を追加</button>
             </div>
             <div class="connection-preview-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
               <span class="muted" style="font-size:12px">取得環境</span>
@@ -33194,15 +33287,15 @@ ${detail}`);
               <!-- (旧「差分の実行・保存・設定JSON読込」フォールドはヒーローバーへ移動) -->
               <details class="diff-fold diff-fold--multi">
                 <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">複数比較先の一括比較</span>
-                  <span class="diff-fold-sub">同じ比較元に対し複数アプリを比較</span>
+                  <span class="diff-fold-title">接続表の比較先を一括比較</span>
+                  <span class="diff-fold-sub">上の接続設定テーブルに入力した複数行を使用</span>
                 </summary>
                 <div class="diff-fold-body">
-                <div class="muted" style="margin-top:0;line-height:1.6">比較元 / 比較セクション / 無視キー / 正規化は現在の差分条件を使います。比較先ゲストID / プレビューは上の比較先設定を共通利用します。</div>
-                <textarea id="u_diffMultiTargets" rows="3" placeholder="アプリIDを改行またはカンマ区切りで入力" style="margin-top:6px" title="比較先アプリIDを列挙"></textarea>
+                <div class="muted" style="margin-top:0;line-height:1.6">比較元 / 比較セクション / 無視キー / 正規化は現在の差分条件を使います。比較先アプリIDとゲストIDは接続設定テーブルの各行から読み取ります。</div>
+                <textarea id="u_diffMultiTargets" rows="3" hidden aria-hidden="true"></textarea>
                 <div class="btns" style="margin-top:4px">
-                  <button type="button" class="btn sub" data-act="diffMultiUseCurrentTarget" title="上部の比較先アプリIDを1行追加">現在の比較先を追加</button>
-                  <button type="button" class="btn sub" data-act="runMultiTargetDiff" title="各IDに対し順に差分を計算">複数比較先を比較</button>
+                  <button type="button" class="btn sub" data-act="addConnectionTargetRow" title="接続設定テーブルへ比較先行を追加">比較先行を追加</button>
+                  <button type="button" class="btn sub" data-act="runMultiTargetDiff" title="接続設定テーブルの各行に対し順に差分を計算">接続表の比較先を比較</button>
                 </div>
                 <div id="u_diffMultiTargetResult" class="result" style="max-height:260px;margin-top:6px"></div>
                 </div>
@@ -37922,9 +38015,6 @@ ${detail}`);
     }
     return focusDiffRow(ids[nextIdx]);
   }
-  function parseIdSet(text) {
-    return [...new Set(String(text || "").split(/[\s,]+/).map((v) => v.trim()).filter((v) => /^\d+$/.test(v)))];
-  }
   function normalizeDiffFavoritePath2(path) {
     return String(path || "").trim();
   }
@@ -38115,15 +38205,44 @@ ${detail}`);
       if (searchGuestId && ui.targetGuest && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
       setStatus(`比較先に App ${id}${appName ? ` (${appName})` : ""} を設定しました`);
     } else if (assign === "diffMulti") {
-      if (!ui.diffMultiTargets) {
-        setStatus("複数比較先リストが見つかりません", true);
+      const doc = ui.targetApp?.ownerDocument || document;
+      const rows = [...doc.querySelectorAll("[data-conn-target-row]")];
+      const first = rows[0];
+      const empty = rows.find((row2) => !String(row2.querySelector("[data-conn-target-app], #u_targetApp")?.value || "").trim());
+      const row = empty || first?.cloneNode(true);
+      if (!row || !first?.parentElement) {
+        setStatus("複数比較先の接続表が見つかりません", true);
         return;
       }
-      const ids = new Set(parseIdSet(ui.diffMultiTargets.value));
-      ids.add(id);
-      ui.diffMultiTargets.value = [...ids].join("\n");
-      if (searchGuestId && ui.targetGuest && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
-      setStatus(`複数比較先へ App ${id}${appName ? ` (${appName})` : ""} を追加しました`);
+      if (!empty) {
+        row.querySelectorAll("[id]").forEach((el) => el.removeAttribute("id"));
+        const role = row.querySelector(".connection-table__role");
+        if (role) role.textContent = `比較先 ${rows.length + 1}`;
+        const actions = row.querySelector(".connection-table__actions");
+        if (actions && !actions.querySelector('[data-act="removeConnectionRow"]')) {
+          const btn = doc.createElement("button");
+          btn.type = "button";
+          btn.className = "btn sub danger";
+          btn.dataset.act = "removeConnectionRow";
+          btn.title = "この比較先行を削除";
+          btn.textContent = "削除";
+          actions.appendChild(btn);
+        }
+        first.parentElement.appendChild(row);
+      }
+      const app = row.querySelector("[data-conn-target-app], #u_targetApp");
+      const guest = row.querySelector("[data-conn-target-guest], #u_targetGuest");
+      if (app) app.value = id;
+      if (guest && searchGuestId) guest.value = searchGuestId;
+      if (ui.diffMultiTargets) {
+        const lines = [...doc.querySelectorAll("[data-conn-target-row]")].map((r) => {
+          const appId2 = String(r.querySelector("[data-conn-target-app], #u_targetApp")?.value || "").trim();
+          const guestId = String(r.querySelector("[data-conn-target-guest], #u_targetGuest")?.value || "").trim();
+          return appId2 ? guestId ? `${appId2},${guestId}` : appId2 : "";
+        }).filter(Boolean);
+        ui.diffMultiTargets.value = lines.join("\n");
+      }
+      setStatus(`接続表の比較先へ App ${id}${appName ? ` (${appName})` : ""} を追加しました`);
     } else if (assign === "settingsExport") {
       if (searchGuestId && ui.settingsExportGuest && !ui.settingsExportGuest.value.trim()) ui.settingsExportGuest.value = searchGuestId;
       addAppIdToSettingsExport(id, appName);
@@ -38235,6 +38354,72 @@ ${detail}`);
       const on = p.getAttribute("data-reflect-inner-pane") === key;
       p.classList.toggle("active", on);
     });
+  }
+  function getConnectionTargetRows() {
+    const doc = getToolDocument();
+    return [...doc.querySelectorAll("[data-conn-target-row]")];
+  }
+  function getConnectionTargets() {
+    return getConnectionTargetRows().map((row) => {
+      const app = row.querySelector("[data-conn-target-app], #u_targetApp");
+      const guest = row.querySelector("[data-conn-target-guest], #u_targetGuest");
+      return { row, appEl: app, guestEl: guest, appId: (app?.value || "").trim(), guestId: (guest?.value || "").trim() };
+    });
+  }
+  function syncConnectionTargetRowLabels() {
+    getConnectionTargetRows().forEach((row, idx) => {
+      const role = row.querySelector(".connection-table__role");
+      if (role) role.textContent = `比較先 ${idx + 1}`;
+      const remove = row.querySelector('[data-act="removeConnectionRow"]');
+      if (remove) remove.disabled = idx === 0 && getConnectionTargetRows().length === 1;
+    });
+  }
+  function syncDiffMultiTargetsFromConnectionTable() {
+    if (!ui.diffMultiTargets) return;
+    const lines = getConnectionTargets().filter((t) => t.appId).map((t) => t.guestId ? `${t.appId},${t.guestId}` : t.appId);
+    ui.diffMultiTargets.value = lines.join("\n");
+  }
+  function addConnectionTargetRow(seed) {
+    const first = getConnectionTargetRows()[0];
+    if (!first || !first.parentElement) return null;
+    const row = first.cloneNode(true);
+    row.removeAttribute("id");
+    const app = row.querySelector("[data-conn-target-app], #u_targetApp");
+    const guest = row.querySelector("[data-conn-target-guest], #u_targetGuest");
+    if (app) {
+      app.removeAttribute("id");
+      app.value = seed?.appId || "";
+    }
+    if (guest) {
+      guest.removeAttribute("id");
+      guest.value = seed?.guestId || "";
+    }
+    const actions = row.querySelector(".connection-table__actions");
+    if (actions && !actions.querySelector('[data-act="removeConnectionRow"]')) {
+      const btn = getToolDocument().createElement("button");
+      btn.type = "button";
+      btn.className = "btn sub danger";
+      btn.dataset.act = "removeConnectionRow";
+      btn.title = "この比較先行を削除";
+      btn.textContent = "削除";
+      actions.appendChild(btn);
+    }
+    first.parentElement.appendChild(row);
+    syncConnectionTargetRowLabels();
+    syncDiffMultiTargetsFromConnectionTable();
+    return row;
+  }
+  async function copyConnectionRowText(row, label) {
+    if (!row) return;
+    const app = row.querySelector('input[id$="App"], [data-conn-target-app]')?.value?.trim?.() || "";
+    const guest = row.querySelector('input[id$="Guest"], [data-conn-target-guest]')?.value?.trim?.() || "";
+    const text = [label, app, guest].join("	");
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus(`${label}行をコピーしました`);
+    } catch {
+      setStatus(`${label}行: ${text}`);
+    }
   }
   function setupEventHandlers(injected = {}) {
     const root2 = getRoot();
@@ -39088,7 +39273,7 @@ ${detail}`);
         if (label) label.textContent = input.files?.[0]?.name || "未選択";
         return;
       }
-      if (e.target === ui.sourceApp || e.target === ui.targetApp) {
+      if (e.target === ui.sourceApp || e.target === ui.targetApp || e.target?.matches?.("[data-conn-target-app]")) {
         const pastedGuestId = extractGuestIdFromInput(e.target.value);
         const extracted = extractAppIdFromInput(e.target.value);
         if (extracted && extracted !== e.target.value.trim()) {
@@ -39096,7 +39281,8 @@ ${detail}`);
           setStatus(`URL からアプリIDを抽出しました: ${extracted}`);
         }
         if (pastedGuestId) {
-          const guestInput = e.target === ui.sourceApp ? ui.sourceGuest : ui.targetGuest;
+          const rowGuest = e.target.closest("[data-conn-target-row]")?.querySelector("[data-conn-target-guest]");
+          const guestInput = e.target === ui.sourceApp ? ui.sourceGuest : rowGuest || ui.targetGuest;
           if (guestInput && !guestInput.value.trim()) guestInput.value = pastedGuestId;
         }
         const sanitized = String(e.target.value || "").trim();
@@ -39106,6 +39292,7 @@ ${detail}`);
         if (!valid) {
           setStatus("アプリIDは数値のみで入力してください（例: 123）", true);
         }
+        syncDiffMultiTargetsFromConnectionTable();
         saveCurrentDialogState2();
         updateConnectionStepIndicators();
         renderBundleState();
@@ -39931,6 +40118,7 @@ ${detail}`);
         }
         ui.sourceApp.value = DEFAULT_APP_ID;
         ui.targetApp.value = DEFAULT_APP_ID;
+        syncDiffMultiTargetsFromConnectionTable();
         saveCurrentDialogState2();
         updateConnectionStepIndicators();
         renderBundleState();
@@ -39948,10 +40136,49 @@ ${detail}`);
         ui.targetApp.value = ui.sourceApp.value.trim();
         ui.targetGuest.value = ui.sourceGuest.value.trim();
         ui.targetPreview.checked = !!ui.sourcePreview.checked;
+        syncDiffMultiTargetsFromConnectionTable();
         saveCurrentDialogState2();
         renderBundleState();
         setStatus("比較元設定を比較先へコピーしました");
         return;
+      }
+      if (act === "addConnectionTargetRow") {
+        const row = addConnectionTargetRow({ appId: "", guestId: "" });
+        const app = row?.querySelector("[data-conn-target-app]");
+        try {
+          app?.focus();
+        } catch {
+        }
+        saveCurrentDialogState2();
+        setStatus("比較先行を追加しました");
+        return;
+      }
+      if (act === "duplicateConnectionRow") {
+        const row = actEl.closest("[data-conn-target-row]");
+        const appId = row?.querySelector("[data-conn-target-app], #u_targetApp")?.value?.trim?.() || "";
+        const guestId = row?.querySelector("[data-conn-target-guest], #u_targetGuest")?.value?.trim?.() || "";
+        addConnectionTargetRow({ appId, guestId });
+        saveCurrentDialogState2();
+        setStatus(`比較先行を複製しました (${appId || "未入力"})`);
+        return;
+      }
+      if (act === "removeConnectionRow") {
+        const row = actEl.closest("[data-conn-target-row]");
+        if (row && getConnectionTargetRows().length > 1) row.remove();
+        syncConnectionTargetRowLabels();
+        syncDiffMultiTargetsFromConnectionTable();
+        saveCurrentDialogState2();
+        updateConnectionStepIndicators();
+        setStatus("比較先行を削除しました");
+        return;
+      }
+      if (act === "copySourceRowToClipboard") {
+        return copyConnectionRowText(actEl.closest("tr"), "比較元");
+      }
+      if (act === "copyTargetRowToClipboard") {
+        const row = actEl.closest("[data-conn-target-row]");
+        const idx = Math.max(0, getConnectionTargetRows().indexOf(row));
+        return copyConnectionRowText(row, `比較先 ${idx + 1}`);
       }
       if (act === "swapSourceTarget") {
         const src = { app: ui.sourceApp.value, guest: ui.sourceGuest.value, preview: ui.sourcePreview.checked };
@@ -39978,6 +40205,7 @@ ${detail}`);
         state.reflectRows = [];
         state.reflectSelectedIds = /* @__PURE__ */ new Set();
         state.reflectNodeModes = {};
+        syncDiffMultiTargetsFromConnectionTable();
         saveCurrentDialogState2();
         renderBundleState();
         setStatus("比較元/比較先設定（および取得済みバンドル）を入れ替えました。差分は再実行が必要です。");
@@ -40266,11 +40494,9 @@ ${detail}`);
           setStatus("比較先アプリIDを入力してから追加してください", true);
           return;
         }
-        const ids = new Set(String(ui.diffMultiTargets.value || "").split(/[\s,]+/).map((v) => v.trim()).filter(Boolean));
-        ids.add(cur);
-        ui.diffMultiTargets.value = [...ids].join("\n");
+        addConnectionTargetRow({ appId: cur, guestId: ui.targetGuest.value.trim() });
         saveCurrentDialogState2();
-        setStatus(`比較先アプリID ${cur} を一括比較リストへ追加しました`);
+        setStatus(`比較先アプリID ${cur} の行を追加しました`);
         return;
       }
       if (act === "runMultiTargetDiff") {
@@ -40278,7 +40504,13 @@ ${detail}`);
           const area = ui.diffMultiTargets;
           const out = ui.diffMultiTargetResult;
           if (!area || !out) throw new Error("複数比較先UIが見つかりません");
-          const targets = [...new Set(String(area.value || "").split(/[\s,]+/).map((v) => v.trim()).filter(Boolean))];
+          const seen = /* @__PURE__ */ new Set();
+          const targets = getConnectionTargets().filter((t) => t.appId).filter((t) => {
+            const key = `${t.appId}::${t.guestId}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
           if (!targets.length) throw new Error("比較先アプリIDを1件以上入力してください");
           const sourceId = ui.sourceApp.value.trim();
           if (!state.importedSourceBundle && !sourceId) throw new Error("比較元アプリIDを入力してください");
@@ -40289,14 +40521,17 @@ ${detail}`);
           };
           const rows = [];
           for (let i = 0; i < targets.length; i += 1) {
-            const targetAppId = targets[i];
+            const target = targets[i];
+            const targetAppId = target.appId;
             ui.targetApp.value = targetAppId;
+            ui.targetGuest.value = target.guestId;
             saveCurrentDialogState2();
-            setStatus(`複数比較先を比較中 (${i + 1}/${targets.length}) App:${targetAppId}`);
+            setStatus(`複数比較先を比較中 (${i + 1}/${targets.length}) App:${targetAppId}${target.guestId ? ` / Guest:${target.guestId}` : ""}`);
             await runDiff();
             const summary = summarizeRows(state.lastDiffRows || []);
             rows.push({
               targetAppId,
+              targetGuestId: target.guestId,
               diffCount: countActualDiffRows(state.lastDiffRows || []),
               sameCount: summary.same,
               issueCount: (state.lastFetchIssues || []).length
@@ -40306,7 +40541,7 @@ ${detail}`);
           ui.targetGuest.value = originalTarget.guest;
           ui.targetPreview.checked = originalTarget.preview;
           saveCurrentDialogState2();
-          out.innerHTML = `<table class="diff-table"><thead><tr><th style="width:120px">比較先App</th><th style="width:90px">差分</th><th style="width:90px">同一</th><th style="width:120px">取得失敗</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.targetAppId)}</td><td>${r.diffCount}</td><td>${r.sameCount}</td><td>${r.issueCount}</td></tr>`).join("")}</tbody></table>`;
+          out.innerHTML = `<table class="diff-table"><thead><tr><th style="width:120px">比較先App</th><th style="width:100px">ゲストID</th><th style="width:90px">差分</th><th style="width:90px">同一</th><th style="width:120px">取得失敗</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.targetAppId)}</td><td>${esc(r.targetGuestId || "通常")}</td><td>${r.diffCount}</td><td>${r.sameCount}</td><td>${r.issueCount}</td></tr>`).join("")}</tbody></table>`;
           setStatus(`複数比較先の比較が完了しました (${rows.length}件)`);
         });
       }

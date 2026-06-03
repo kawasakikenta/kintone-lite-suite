@@ -186,15 +186,46 @@ export function addConnectionSearchApp(appId: string, appName: string): void {
     if (searchGuestId && ui.targetGuest && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
     setStatus(`比較先に App ${id}${appName ? ` (${appName})` : ''} を設定しました`);
   } else if (assign === 'diffMulti') {
-    if (!ui.diffMultiTargets) {
-      setStatus('複数比較先リストが見つかりません', true);
+    const doc = ui.targetApp?.ownerDocument || document;
+    const rows = [...doc.querySelectorAll('[data-conn-target-row]')] as HTMLTableRowElement[];
+    const first = rows[0];
+    const empty = rows.find((row) => !String((row.querySelector('[data-conn-target-app], #u_targetApp') as HTMLInputElement | null)?.value || '').trim());
+    const row = empty || (first?.cloneNode(true) as HTMLTableRowElement | null);
+    if (!row || !first?.parentElement) {
+      setStatus('複数比較先の接続表が見つかりません', true);
       return;
     }
-    const ids = new Set(parseIdSet(ui.diffMultiTargets.value));
-    ids.add(id);
-    ui.diffMultiTargets.value = [...ids].join('\n');
-    if (searchGuestId && ui.targetGuest && !ui.targetGuest.value.trim()) ui.targetGuest.value = searchGuestId;
-    setStatus(`複数比較先へ App ${id}${appName ? ` (${appName})` : ''} を追加しました`);
+    if (!empty) {
+      row.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+      const role = row.querySelector('.connection-table__role') as HTMLElement | null;
+      if (role) role.textContent = `比較先 ${rows.length + 1}`;
+      const actions = row.querySelector('.connection-table__actions') as HTMLElement | null;
+      if (actions && !actions.querySelector('[data-act="removeConnectionRow"]')) {
+        const btn = doc.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn sub danger';
+        btn.dataset.act = 'removeConnectionRow';
+        btn.title = 'この比較先行を削除';
+        btn.textContent = '削除';
+        actions.appendChild(btn);
+      }
+      first.parentElement.appendChild(row);
+    }
+    const app = row.querySelector('[data-conn-target-app], #u_targetApp') as HTMLInputElement | null;
+    const guest = row.querySelector('[data-conn-target-guest], #u_targetGuest') as HTMLInputElement | null;
+    if (app) app.value = id;
+    if (guest && searchGuestId) guest.value = searchGuestId;
+    if (ui.diffMultiTargets) {
+      const lines = [...doc.querySelectorAll('[data-conn-target-row]')]
+        .map((r: any) => {
+          const appId = String((r.querySelector('[data-conn-target-app], #u_targetApp') as HTMLInputElement | null)?.value || '').trim();
+          const guestId = String((r.querySelector('[data-conn-target-guest], #u_targetGuest') as HTMLInputElement | null)?.value || '').trim();
+          return appId ? (guestId ? `${appId},${guestId}` : appId) : '';
+        })
+        .filter(Boolean);
+      ui.diffMultiTargets.value = lines.join('\n');
+    }
+    setStatus(`接続表の比較先へ App ${id}${appName ? ` (${appName})` : ''} を追加しました`);
   } else if (assign === 'settingsExport') {
     if (searchGuestId && ui.settingsExportGuest && !ui.settingsExportGuest.value.trim()) ui.settingsExportGuest.value = searchGuestId;
     addAppIdToSettingsExport(id, appName);

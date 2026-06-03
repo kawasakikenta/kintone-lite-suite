@@ -170,29 +170,41 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <div class="connection-step1-body" id="u_connectionStep1Body">
               <p class="connection-section-lead" id="u_connectionLead">動作対象のアプリIDを <strong>比較元</strong> に入力します。<br>プレビュー反映を使う場合のみ <strong>比較先</strong> も入力してください（ER図／プロセス図／分析は比較元だけでOK）。</p>
               <p class="muted connection-lookup-note">ルックアップ参照先アプリIDが環境で異なる場合のみ、下の「ルックアップ参照先アプリID変換」を開いて設定します。</p>
-              <div class="grid connection-grid">
-              <div class="conn-source">
-                <label for="u_sourceApp" id="u_sourceAppLabel">比較元アプリID <span class="req">必須</span> <span class="conn-label-hint" title="このツール全体の動作対象アプリ。1アプリだけ操作する機能（ER図 / プロセス図 / 分析など）もここに入力します。">動作対象</span></label>
-                <input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
-              </div>
-              <div class="conn-source">
-                <label for="u_sourceGuest" id="u_sourceGuestLabel">比較元 ゲストID</label>
-                <input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off">
-              </div>
-              <div class="conn-target">
-                <label for="u_targetApp" id="u_targetAppLabel">比較先アプリID <span class="req-soft" title="差分比較・プレビュー反映を使うときに必須。1アプリだけ操作する機能では空のままで構いません。">差分比較時</span></label>
-                <input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off">
-              </div>
-              <div class="conn-target">
-                <label for="u_targetGuest" id="u_targetGuestLabel">比較先 ゲストID</label>
-                <input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off">
-              </div>
+              <div class="connection-table-wrap">
+              <table class="connection-table" aria-label="接続先アプリ一覧">
+                <thead>
+                  <tr>
+                    <th>区分</th>
+                    <th><span id="u_sourceAppLabel">比較元アプリID</span> <span class="req">必須</span></th>
+                    <th><span id="u_sourceGuestLabel">ゲストID</span></th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="conn-source">
+                    <td class="connection-table__role">比較元</td>
+                    <td><input type="text" id="u_sourceApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off" placeholder="アプリID"></td>
+                    <td><input type="text" id="u_sourceGuest" placeholder="空欄で通常スペース" autocomplete="off"></td>
+                    <td><button type="button" class="btn sub connection-row-copy" data-act="copySourceRowToClipboard" title="比較元行をコピー">行コピー</button></td>
+                  </tr>
+                  <tr class="conn-target" data-conn-target-row>
+                    <td class="connection-table__role">比較先 1</td>
+                    <td><input type="text" id="u_targetApp" value="${esc(DEFAULT_APP_ID)}" autocomplete="off" placeholder="アプリID" data-conn-target-app></td>
+                    <td><input type="text" id="u_targetGuest" placeholder="空欄で通常スペース" autocomplete="off" data-conn-target-guest></td>
+                    <td class="connection-table__actions">
+                      <button type="button" class="btn sub connection-row-copy" data-act="copyTargetRowToClipboard" title="この比較先行をコピー">行コピー</button>
+                      <button type="button" class="btn sub" data-act="duplicateConnectionRow" title="この行を複製">複製</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
             <div class="btns connection-step-btns connection-quick-btns" style="margin-top:8px">
               <button type="button" class="btn sub connection-secondary-action connection-secondary-action--primary" data-act="setBothCurrent" title="今開いているアプリのIDを比較元と比較先の両方に一括セット（最も多いケース）">両方=現在アプリ</button>
               <button type="button" class="btn sub connection-secondary-action" data-act="setSourceCurrent" title="今開いているアプリのIDを比較元（動作対象）にセット">比較元=現在アプリ</button>
               <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="copySourceToTarget" title="比較元のID/ゲスト/プレビュー設定を比較先にコピー">比較先←比較元</button>
               <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="swapSourceTarget" title="比較元と比較先の接続情報＋取得済みバンドルを入れ替え。差分・反映候補はリセットされ再比較が必要になります。">比較元/比較先入替</button>
+              <button type="button" class="btn sub connection-secondary-action conn-target-action" data-act="addConnectionTargetRow" title="比較先アプリIDとゲストIDの行を追加">比較先行を追加</button>
             </div>
             <div class="connection-preview-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
               <span class="muted" style="font-size:12px">取得環境</span>
@@ -393,15 +405,15 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <!-- (旧「差分の実行・保存・設定JSON読込」フォールドはヒーローバーへ移動) -->
               <details class="diff-fold diff-fold--multi">
                 <summary class="diff-fold-summary">
-                  <span class="diff-fold-title">複数比較先の一括比較</span>
-                  <span class="diff-fold-sub">同じ比較元に対し複数アプリを比較</span>
+                  <span class="diff-fold-title">接続表の比較先を一括比較</span>
+                  <span class="diff-fold-sub">上の接続設定テーブルに入力した複数行を使用</span>
                 </summary>
                 <div class="diff-fold-body">
-                <div class="muted" style="margin-top:0;line-height:1.6">比較元 / 比較セクション / 無視キー / 正規化は現在の差分条件を使います。比較先ゲストID / プレビューは上の比較先設定を共通利用します。</div>
-                <textarea id="u_diffMultiTargets" rows="3" placeholder="アプリIDを改行またはカンマ区切りで入力" style="margin-top:6px" title="比較先アプリIDを列挙"></textarea>
+                <div class="muted" style="margin-top:0;line-height:1.6">比較元 / 比較セクション / 無視キー / 正規化は現在の差分条件を使います。比較先アプリIDとゲストIDは接続設定テーブルの各行から読み取ります。</div>
+                <textarea id="u_diffMultiTargets" rows="3" hidden aria-hidden="true"></textarea>
                 <div class="btns" style="margin-top:4px">
-                  <button type="button" class="btn sub" data-act="diffMultiUseCurrentTarget" title="上部の比較先アプリIDを1行追加">現在の比較先を追加</button>
-                  <button type="button" class="btn sub" data-act="runMultiTargetDiff" title="各IDに対し順に差分を計算">複数比較先を比較</button>
+                  <button type="button" class="btn sub" data-act="addConnectionTargetRow" title="接続設定テーブルへ比較先行を追加">比較先行を追加</button>
+                  <button type="button" class="btn sub" data-act="runMultiTargetDiff" title="接続設定テーブルの各行に対し順に差分を計算">接続表の比較先を比較</button>
                 </div>
                 <div id="u_diffMultiTargetResult" class="result" style="max-height:260px;margin-top:6px"></div>
                 </div>
