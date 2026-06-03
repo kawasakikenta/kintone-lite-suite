@@ -210,11 +210,53 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   const cardApp = makeCard({ title: 'アプリと環境', number: 1 });
   cardApp.body.appendChild(makeRow([srcApp, srcGuest, srcPrev.label], { label: '比較元' }));
-  cardApp.body.appendChild(makeRow([tgtApp, tgtGuest, tgtPrev.label], { label: '比較先' }));
+  cardApp.body.appendChild(makeRow([tgtApp, tgtGuest, tgtPrev.label], { label: '比較先 1' }));
+  const targetList = document.createElement('div');
+  targetList.style.display = 'grid';
+  targetList.style.gap = '6px';
+  targetList.style.marginTop = '6px';
+  const targetRows: Array<{ app: HTMLInputElement; guest: HTMLInputElement; row: HTMLElement }> = [{ app: tgtApp, guest: tgtGuest, row: tgtApp.closest('.kus-lp__row') as HTMLElement }];
+  const relabelTargetRows = () => targetRows.forEach((r, idx) => {
+    const label = r.row?.querySelector?.('.kus-lp__row-label') as HTMLElement | null;
+    if (label) label.textContent = `比較先 ${idx + 1}`;
+  });
+  const addTargetRow = (appId = '', guestId = '') => {
+    const app = makeInput({ placeholder: 'アプリID', width: 'id' });
+    const guest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
+    app.value = appId;
+    guest.value = guestId;
+    const copy = makeButton('行コピー', 'sub');
+    const remove = makeButton('削除', 'ghost');
+    const row = makeRow([app, guest, copy, remove], { label: `比較先 ${targetRows.length + 1}` });
+    copy.addEventListener('click', async () => {
+      const text = [`比較先 ${targetRows.indexOf(entry) + 1}`, app.value.trim(), guest.value.trim()].join('\t');
+      try { await navigator.clipboard.writeText(text); panel.setStatus('比較先行をコピーしました', 'info'); } catch { panel.setStatus(text, 'info'); }
+    });
+    remove.addEventListener('click', () => {
+      row.remove();
+      const idx = targetRows.indexOf(entry);
+      if (idx >= 0) targetRows.splice(idx, 1);
+      relabelTargetRows();
+    });
+    const entry = { app, guest, row };
+    targetRows.push(entry);
+    targetList.appendChild(row);
+    return entry;
+  };
+  const addTargetBtn = makeButton('比較先行を追加', 'sub');
+  addTargetBtn.addEventListener('click', () => { addTargetRow(); panel.setStatus('比較先行を追加しました', 'info'); });
+  const copyFirstBtn = makeButton('比較先1を複製', 'sub');
+  copyFirstBtn.addEventListener('click', () => addTargetRow(tgtApp.value.trim(), tgtGuest.value.trim()));
+  cardApp.body.appendChild(makeRow([addTargetBtn, copyFirstBtn], { label: '複数比較' }));
+  cardApp.body.appendChild(targetList);
   cardApp.body.appendChild(createAppSearchControl(panel, {
     targets: [
       { label: '比較元', apply: (id, _name, guestId) => { srcApp.value = id; if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId; } },
-      { label: '比較先', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }
+      { label: '比較先', apply: (id, _name, guestId) => {
+        const empty = targetRows.find((r) => !r.app.value.trim()) || addTargetRow();
+        empty.app.value = id;
+        if (guestId && !empty.guest.value.trim()) empty.guest.value = guestId;
+      } }
     ]
   }));
   panel.body.insertBefore(cardApp.card, panel.status);
@@ -254,7 +296,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 実行 ----
   const runBtn = makeButton('差分比較を実行', 'run', { icon: '◎' });
-  panel.body.insertBefore(runBtn, panel.status);
+  const runAllBtn = makeButton('全比較先を順に比較', 'sub', { icon: '◎' });
+  panel.body.insertBefore(makeRow([runBtn, runAllBtn]), panel.status);
   // 入力欄で Enter を押すと差分比較を実行（読み取り専用なので安全）
   panel.setPrimaryAction(runBtn);
 
@@ -336,6 +379,19 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   let cache: DiffCache | null = null;
   let summaryText = '';
 
+  function readTargets() {
+    const seen = new Set<string>();
+    return targetRows
+      .map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim(), preview: tgtPrev.checkbox.checked }))
+      .filter((t) => t.appId)
+      .filter((t) => {
+        const key = `${t.appId}::${t.guestId}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
   function readForm() {
     return {
       source: { appId: srcApp.value.trim(), guestId: srcGuest.value.trim(), preview: srcPrev.checkbox.checked },
@@ -407,6 +463,35 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       exportContentMode: expMode.value || 'diffOnly'
     };
   }
+
+  runAllBtn.addEventListener('click', () => {
+    const targets = readTargets();
+    if (!targets.length) {
+      panel.setStatus('比較先アプリIDを 1 件以上入力してください', 'warn');
+      return;
+    }
+    liteRun(panel, '全比較先を比較中…', async () => {
+      const base = readForm();
+      const rows: string[] = [];
+      for (let i = 0; i < targets.length; i += 1) {
+        const t = targets[i];
+        panel.setStatus(`比較中 (${i + 1}/${targets.length}) App:${t.appId}${t.guestId ? ` / Guest:${t.guestId}` : ''}`, 'busy');
+        const out = await runDiffStandalone({
+          source: base.source,
+          target: t,
+          scopes: base.scopes,
+          ignoreKeys: base.ignoreKeys,
+          includeSame: base.includeSame,
+          normalizationPresetState: base.normalizationPresetState,
+          onStatus: (m: string) => panel.setStatus(m, 'busy')
+        });
+        rows.push(`<tr><td>${esc(t.appId)}</td><td>${esc(t.guestId || '通常')}</td><td>${(out.rows || []).filter((r: any) => r.type !== 'same').length}</td><td>${(out.fetchIssues || []).length}</td></tr>`);
+      }
+      cardResult.card.style.display = '';
+      resultBox.innerHTML = `<div class="kus-dl-result"><table><thead><tr><th>比較先App</th><th>ゲストID</th><th>差分</th><th>取得失敗</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+      panel.setStatus(`全比較先の比較が完了しました (${targets.length}件)`, 'ok');
+    });
+  });
 
   runBtn.addEventListener('click', () => {
     cache = null;

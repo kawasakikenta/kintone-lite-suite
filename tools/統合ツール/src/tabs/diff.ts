@@ -429,6 +429,10 @@ export function saveCurrentDialogState() {
     sourcePreview: ui.sourcePreview.checked,
     targetAppId: ui.targetApp.value.trim(),
     targetGuestId: ui.targetGuest.value.trim(),
+    targetConnections: [...getToolDocument().querySelectorAll('[data-conn-target-row]')].map((row: any) => ({
+      appId: String((row.querySelector('[data-conn-target-app], #u_targetApp') as HTMLInputElement | null)?.value || '').trim(),
+      guestId: String((row.querySelector('[data-conn-target-guest], #u_targetGuest') as HTMLInputElement | null)?.value || '').trim()
+    })).filter((r) => r.appId || r.guestId),
     targetPreview: ui.targetPreview.checked,
     connectionSearchKeyword: ui.connectionSearchKeyword?.value?.trim?.() || '',
     connectionSearchGuest: ui.connectionSearchGuest?.value?.trim?.() || '',
@@ -533,6 +537,38 @@ export function restoreDialogState() {
   if (saved.sourcePreview != null) ui.sourcePreview.checked = !!saved.sourcePreview;
   if (saved.targetAppId != null) ui.targetApp.value = String(saved.targetAppId);
   if (saved.targetGuestId != null) ui.targetGuest.value = String(saved.targetGuestId);
+  if (Array.isArray(saved.targetConnections)) {
+    const rows = [...getToolDocument().querySelectorAll('[data-conn-target-row]')] as HTMLTableRowElement[];
+    rows.slice(1).forEach((row) => row.remove());
+    const first = getToolDocument().querySelector('[data-conn-target-row]') as HTMLTableRowElement | null;
+    const applyRow = (row: HTMLTableRowElement | null, item: any) => {
+      if (!row) return;
+      const app = row.querySelector('[data-conn-target-app], #u_targetApp') as HTMLInputElement | null;
+      const guest = row.querySelector('[data-conn-target-guest], #u_targetGuest') as HTMLInputElement | null;
+      if (app) app.value = String(item?.appId || '');
+      if (guest) guest.value = String(item?.guestId || '');
+    };
+    if (saved.targetConnections.length) applyRow(first, saved.targetConnections[0]);
+    saved.targetConnections.slice(1).forEach((item: any, idx: number) => {
+      if (!first?.parentElement) return;
+      const row = first.cloneNode(true) as HTMLTableRowElement;
+      row.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+      applyRow(row, item);
+      const role = row.querySelector('.connection-table__role') as HTMLElement | null;
+      if (role) role.textContent = `比較先 ${idx + 2}`;
+      const actions = row.querySelector('.connection-table__actions') as HTMLElement | null;
+      if (actions && !actions.querySelector('[data-act="removeConnectionRow"]')) {
+        const btn = getToolDocument().createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn sub danger';
+        btn.dataset.act = 'removeConnectionRow';
+        btn.title = 'この比較先行を削除';
+        btn.textContent = '削除';
+        actions.appendChild(btn);
+      }
+      first.parentElement.appendChild(row);
+    });
+  }
   if (saved.targetPreview != null) ui.targetPreview.checked = !!saved.targetPreview;
   if (saved.connectionSearchKeyword != null && ui.connectionSearchKeyword) ui.connectionSearchKeyword.value = String(saved.connectionSearchKeyword);
   if (saved.connectionSearchGuest != null && ui.connectionSearchGuest) ui.connectionSearchGuest.value = String(saved.connectionSearchGuest);
