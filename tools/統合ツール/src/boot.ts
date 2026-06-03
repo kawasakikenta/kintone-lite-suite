@@ -1,6 +1,7 @@
 'use strict';
 
 import { TOOL_ID, FEATURE_DEFS } from './constants.js';
+import { isKintonePage } from './kintoneGuard.js';
 
 const TOOL_POPOUT_NAME = 'kintone-unified-suite-v2';
 import { ui as sharedUi, state } from './state.js';
@@ -105,7 +106,7 @@ import {
  * @param {{ initialTab?: string }} [options]
  */
 export function runKintoneUnifiedSuite(options: any = {}) {
-  if (!window.kintone?.api || !window.kintone?.app) {
+  if (!isKintonePage()) {
     alert('kintone画面で実行してください');
     return;
   }

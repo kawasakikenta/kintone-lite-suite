@@ -25696,6 +25696,13 @@ ${detail}`);
 
   // src/boot.ts
   init_constants();
+
+  // src/kintoneGuard.ts
+  function isKintonePage() {
+    return Boolean(window.kintone?.api && window.kintone?.app);
+  }
+
+  // src/boot.ts
   init_state();
   init_utils();
 
@@ -47823,7 +47830,7 @@ ${field.label}` : code,
   // src/boot.ts
   var TOOL_POPOUT_NAME = "kintone-unified-suite-v2";
   function runKintoneUnifiedSuite(options = {}) {
-    if (!window.kintone?.api || !window.kintone?.app) {
+    if (!isKintonePage()) {
       alert("kintone画面で実行してください");
       return;
     }

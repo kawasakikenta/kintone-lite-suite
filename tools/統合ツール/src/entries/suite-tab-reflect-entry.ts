@@ -1,10 +1,7 @@
 'use strict';
 
 import '../register-api.js';
+import { runOnKintonePage } from '../kintoneGuard.js';
 import { runKintoneUnifiedSuite } from '../boot.js';
 
-if (!window.kintone?.api || !window.kintone?.app) {
-  alert('kintone画面で実行してください');
-} else {
-  runKintoneUnifiedSuite({ initialTab: 'reflect' });
-}
+runOnKintonePage(() => runKintoneUnifiedSuite({ initialTab: 'reflect' }));
