@@ -289,6 +289,28 @@ const THEME_CSS = `
 
 /* Wide variant (一部 lite 用に幅広にしたい場合) */
 .kus-lp--wide{width:min(640px,96vw)}
+
+/* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
+.kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
+.kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
+.kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
+.kus-lp__apptable tbody tr:last-child td{border-bottom:none}
+.kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
+.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-acts{white-space:nowrap}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:11px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
+.kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+@media(max-width:420px){
+  .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
+  .kus-lp__apptable thead{display:none}
+  .kus-lp__apptable tbody tr{border-bottom:1px solid var(--c-border);padding:6px 4px}
+  .kus-lp__apptable td{border:none;padding:3px 6px}
+  .kus-lp__apptable-no{text-align:left;font-weight:600}
+}
 `;
 
 function ensureThemeStyles() {
@@ -692,6 +714,231 @@ export function makeDetails(title: string, opts: { open?: boolean } = {}): { det
   d.appendChild(s);
   d.appendChild(b);
   return { details: d, body: b };
+}
+
+// ===== App table（複数アプリ × アプリごとのゲストスペース入力） =====
+
+export interface AppTableRow { appId: string; guestId: string }
+
+export interface AppTableOptions {
+  /** 初期行。未指定なら空の 1 行を表示する */
+  initial?: AppTableRow[];
+  /** 「現在のアプリ」ボタンに入れる既定アプリ ID（指定時のみボタン表示） */
+  currentAppId?: string;
+  appPlaceholder?: string;
+  guestPlaceholder?: string;
+  /** 常に表示しておく最小行数（既定 1）。これ以下は削除せずクリアする */
+  minRows?: number;
+  /** 行の追加・削除・編集が起きたら呼ばれる */
+  onChange?: (rows: AppTableRow[]) => void;
+}
+
+export interface AppTableHandle {
+  element: HTMLElement;
+  /** appId が入力済みの行のみ（appId+guestId の重複は除去） */
+  getApps(): AppTableRow[];
+  /** 空行を含む全行 */
+  getAllRows(): AppTableRow[];
+  /** 先頭行（単一アプリ用途）。空でも空文字で返す */
+  first(): AppTableRow;
+  /** 末尾に 1 行追加して返す */
+  addRow(appId?: string, guestId?: string, opts?: { focus?: boolean }): void;
+  /** 既存行をすべて置き換える（rows が空なら空 1 行） */
+  setApps(rows: AppTableRow[]): void;
+  /** 全行を空にする（最小行数は残す） */
+  clear(): void;
+  /** appId が入力済みの行数 */
+  count(): number;
+}
+
+interface AppTableRowEntry {
+  tr: HTMLTableRowElement;
+  app: HTMLInputElement;
+  guest: HTMLInputElement;
+  copyBtn: HTMLButtonElement;
+}
+
+/**
+ * 「アプリID + ゲストスペース」を表形式で 1〜N 件入力するコンポーネント。
+ * - 1 行だけ使えば単一アプリ指定、複数行で一括処理に使える（単一/複数を分けない）
+ * - アプリごとに異なるゲストスペースを指定できる
+ * - 各行に「↑コピー」（上の行の内容をコピー）「複製」「×（削除）」を備える
+ */
+export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
+  const minRows = Math.max(1, opts.minRows ?? 1);
+  const wrap = document.createElement('div');
+  wrap.className = 'kus-lp__apptable';
+
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  thead.innerHTML =
+    '<tr><th class="kus-lp__apptable-no" scope="col">#</th>' +
+    '<th scope="col">アプリID</th>' +
+    '<th scope="col">ゲストID</th>' +
+    '<th class="kus-lp__apptable-acts-h" scope="col">操作</th></tr>';
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  const foot = document.createElement('div');
+  foot.className = 'kus-lp__apptable-foot';
+  const addBtn = makeButton('＋ 行を追加', 'sub');
+  foot.appendChild(addBtn);
+  if (opts.currentAppId && /^\d+$/.test(String(opts.currentAppId).trim())) {
+    const curBtn = makeButton('現在のアプリ', 'sub');
+    curBtn.title = '今開いているアプリのIDを空き行に入れます';
+    curBtn.addEventListener('click', () => {
+      const id = String(opts.currentAppId).trim();
+      if (rows.some((r) => r.app.value.trim() === id)) return;
+      const empty = rows.find((r) => !r.app.value.trim());
+      if (empty) { empty.app.value = id; empty.app.focus(); }
+      else insertRow(rows.length, id, '', true);
+      emitChange();
+    });
+    foot.appendChild(curBtn);
+  }
+  const count = document.createElement('span');
+  count.className = 'kus-lp__apptable-count';
+  foot.appendChild(count);
+  wrap.appendChild(foot);
+
+  const rows: AppTableRowEntry[] = [];
+
+  function getApps(): AppTableRow[] {
+    const seen = new Set<string>();
+    const out: AppTableRow[] = [];
+    for (const r of rows) {
+      const appId = r.app.value.trim();
+      if (!appId) continue;
+      const guestId = r.guest.value.trim();
+      const key = `${appId}::${guestId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ appId, guestId });
+    }
+    return out;
+  }
+  function getAllRows(): AppTableRow[] {
+    return rows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim() }));
+  }
+  function refresh() {
+    rows.forEach((r, i) => {
+      const no = r.tr.querySelector('.kus-lp__apptable-no') as HTMLElement | null;
+      if (no) no.textContent = String(i + 1);
+      r.copyBtn.disabled = i === 0;
+    });
+    const n = getApps().length;
+    count.textContent = n ? `${n} アプリ` : '未入力';
+  }
+  function emitChange() {
+    refresh();
+    opts.onChange?.(getApps());
+  }
+  function removeRow(entry: AppTableRowEntry) {
+    if (rows.length <= minRows) {
+      entry.app.value = '';
+      entry.guest.value = '';
+      emitChange();
+      return;
+    }
+    const idx = rows.indexOf(entry);
+    if (idx >= 0) rows.splice(idx, 1);
+    entry.tr.remove();
+    emitChange();
+  }
+  function insertRow(index: number, appId = '', guestId = '', focus = false): AppTableRowEntry {
+    const tr = document.createElement('tr');
+    const tdNo = document.createElement('td');
+    tdNo.className = 'kus-lp__apptable-no';
+    const tdApp = document.createElement('td');
+    const tdGuest = document.createElement('td');
+    const tdAct = document.createElement('td');
+    tdAct.className = 'kus-lp__apptable-acts';
+
+    const app = makeInput({ placeholder: opts.appPlaceholder || 'アプリID', ariaLabel: 'アプリID' });
+    const guest = makeInput({ placeholder: opts.guestPlaceholder || '空欄=通常スペース', ariaLabel: 'ゲストID' });
+    app.value = appId;
+    guest.value = guestId;
+
+    const copyBtn = makeButton('↑コピー', 'sub');
+    copyBtn.title = '上の行のアプリID・ゲストIDをこの行へコピー';
+    const dupBtn = makeButton('複製', 'sub');
+    dupBtn.title = 'この行を下に複製';
+    const delBtn = makeButton('×', 'ghost');
+    delBtn.title = 'この行を削除';
+
+    tdApp.appendChild(app);
+    tdGuest.appendChild(guest);
+    tdAct.appendChild(copyBtn);
+    tdAct.appendChild(dupBtn);
+    tdAct.appendChild(delBtn);
+    tr.appendChild(tdNo);
+    tr.appendChild(tdApp);
+    tr.appendChild(tdGuest);
+    tr.appendChild(tdAct);
+
+    const entry: AppTableRowEntry = { tr, app, guest, copyBtn };
+
+    copyBtn.addEventListener('click', () => {
+      const idx = rows.indexOf(entry);
+      if (idx <= 0) return;
+      const prev = rows[idx - 1];
+      app.value = prev.app.value;
+      guest.value = prev.guest.value;
+      app.focus();
+      emitChange();
+    });
+    dupBtn.addEventListener('click', () => {
+      const idx = rows.indexOf(entry);
+      const ne = insertRow(idx + 1, app.value.trim(), guest.value.trim(), true);
+      ne.app.focus();
+      emitChange();
+    });
+    delBtn.addEventListener('click', () => removeRow(entry));
+    app.addEventListener('input', emitChange);
+    guest.addEventListener('input', emitChange);
+
+    const at = Math.min(Math.max(index, 0), rows.length);
+    if (at >= rows.length) tbody.appendChild(tr);
+    else tbody.insertBefore(tr, rows[at].tr);
+    rows.splice(at, 0, entry);
+    refresh();
+    if (focus) app.focus();
+    return entry;
+  }
+
+  addBtn.addEventListener('click', () => {
+    const e = insertRow(rows.length, '', '', true);
+    e.app.focus();
+    emitChange();
+  });
+
+  function setApps(list: AppTableRow[]) {
+    rows.splice(0).forEach((r) => r.tr.remove());
+    tbody.innerHTML = '';
+    const src = Array.isArray(list) && list.length ? list : [{ appId: '', guestId: '' }];
+    src.forEach((r) => insertRow(rows.length, String(r.appId || '').trim(), String(r.guestId || '').trim()));
+    while (rows.length < minRows) insertRow(rows.length, '', '');
+    emitChange();
+  }
+
+  // 初期化
+  setApps(opts.initial || []);
+
+  return {
+    element: wrap,
+    getApps,
+    getAllRows,
+    first: () => {
+      const r = rows[0];
+      return r ? { appId: r.app.value.trim(), guestId: r.guest.value.trim() } : { appId: '', guestId: '' };
+    },
+    addRow: (appId = '', guestId = '', o = {}) => { insertRow(rows.length, appId, guestId, !!o.focus); emitChange(); },
+    setApps,
+    clear: () => setApps([]),
+    count: () => getApps().length
+  };
 }
 
 // ===== Tab bar =====

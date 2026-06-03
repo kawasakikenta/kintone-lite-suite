@@ -4,7 +4,7 @@ import { SETTINGS_EXPORT_SCOPE_DEFS, DEFAULT_APP_ID } from '../constants.js';
 import {
   runSettingsExportSearchStandalone,
   runSettingsExportStandalone,
-  runSettingsExportAddSpaceStandalone,
+  runSettingsExportListSpaceAppsStandalone,
   renderSettingsExportSearchResultsHtml
 } from '../tabs/settings-export-standalone.js';
 import {
@@ -14,7 +14,7 @@ import {
   makeButton,
   makeCheck,
   makeChip,
-  makeTextarea,
+  makeAppTable,
   makeCard,
   makeNote,
   liteRun
@@ -27,34 +27,24 @@ export function mountSettingsExportLitePanel() {
     subtitle: '複数アプリの設定を JSON または ZIP（1アプリ=1JSON）で保存します。',
     accent: 'settings',
     badges: [{ label: 'Lite' }, { label: '複数アプリ対応' }],
-    hint: 'アプリ検索／スペース内アプリ自動追加に対応。ZIP は manifest 付きで保存します。',
+    hint: '1 行だけ入力すれば 1 アプリ、複数行で一括取得。<strong>アプリごとに別のゲストスペース</strong>を指定できます。',
     wide: true
   });
 
-  // ---- 対象アプリ ----
+  // ---- 対象アプリ（表形式：アプリID × ゲストスペース） ----
   const cardTarget = makeCard({ title: '対象アプリ', number: 1 });
-  const appTa = makeTextarea({ rows: 3, code: true, placeholder: 'アプリID（カンマ・改行・スペース区切り）' });
-  cardTarget.body.appendChild(appTa);
-
-  const useCurrentBtn = makeButton('現在のアプリを追加', 'sub');
-  useCurrentBtn.addEventListener('click', () => {
-    const id = String(DEFAULT_APP_ID || '').trim();
-    if (!id) { panel.setStatus('現在のアプリ ID が取得できません', 'warn'); return; }
-    const cur = appTa.value.trim();
-    const lines = cur ? cur.split(/\s*[\s,]+\s*/).filter(Boolean) : [];
-    if (lines.includes(id)) {
-      panel.setStatus(`アプリ #${id} は既に対象に含まれています`, 'info');
-      return;
-    }
-    lines.push(id);
-    appTa.value = lines.join('\n');
-    panel.setStatus(`アプリ #${id} を対象に追加しました`, 'ok');
+  const appTable = makeAppTable({
+    currentAppId: String(DEFAULT_APP_ID || ''),
+    initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: '' }] : []
   });
-  cardTarget.actions.appendChild(useCurrentBtn);
+  cardTarget.body.appendChild(appTable.element);
+  cardTarget.body.appendChild(makeNote('各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。'));
 
+  // ---- アプリ検索 / スペース取込（検索用ゲストIDで照会し、表に行を追加） ----
   const searchKw = makeInput({ placeholder: 'アプリ名の一部', width: 'wide' });
+  const searchGuest = makeInput({ placeholder: '検索用ゲストID（任意）', width: 'guest' });
   const searchBtn = makeButton('検索', 'sub');
-  cardTarget.body.appendChild(makeRow([searchKw, searchBtn], { label: 'アプリ検索' }));
+  cardTarget.body.appendChild(makeRow([searchKw, searchGuest, searchBtn], { label: 'アプリ検索' }));
 
   const searchOut = document.createElement('div');
   searchOut.className = 'kus-lp__panel-html kus-lp__panel-html--empty';
@@ -62,7 +52,7 @@ export function mountSettingsExportLitePanel() {
   cardTarget.body.appendChild(searchOut);
 
   const spaceKw = makeInput({ placeholder: 'スペースID', width: 'narrow' });
-  const spaceBtn = makeButton('スペース内アプリを追加', 'sub');
+  const spaceBtn = makeButton('スペース内アプリを表に追加', 'sub');
   cardTarget.body.appendChild(makeRow([spaceKw, spaceBtn], { label: 'スペース' }));
   panel.body.insertBefore(cardTarget.card, panel.status);
 
@@ -86,11 +76,10 @@ export function mountSettingsExportLitePanel() {
   const scopeRoot = chipBox;
   panel.body.insertBefore(cardScope.card, panel.status);
 
-  // ---- ゲスト / プレビュー ----
-  const cardOpt = makeCard({ title: '接続・出力', number: 3, soft: true });
-  const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
+  // ---- プレビュー / 出力 ----
+  const cardOpt = makeCard({ title: '出力', number: 3, soft: true });
   const prev = makeCheck({ label: 'プレビュー環境から取得' });
-  cardOpt.body.appendChild(makeRow([guestInp, prev.label], { label: '接続' }));
+  cardOpt.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
 
   const btnJson = makeButton('JSON で保存', 'primary', { icon: '↓' });
   const btnZip = makeButton('ZIP で保存', 'primary', { icon: '↓' });
@@ -109,8 +98,7 @@ export function mountSettingsExportLitePanel() {
 
   function opts() {
     return {
-      appIdsText: appTa.value,
-      guestId: guestInp.value.trim(),
+      apps: appTable.getApps(),
       preview: prev.checkbox.checked,
       scopeRoot
     };
@@ -119,7 +107,7 @@ export function mountSettingsExportLitePanel() {
   searchBtn.addEventListener('click', () => liteRun(panel, 'アプリ検索中…', async () => {
     const apps = await runSettingsExportSearchStandalone(
       searchKw.value,
-      guestInp.value.trim(),
+      searchGuest.value.trim(),
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
     searchOut.innerHTML = renderSettingsExportSearchResultsHtml(apps);
@@ -133,17 +121,26 @@ export function mountSettingsExportLitePanel() {
     if (!btn) return;
     const id = btn.getAttribute('data-app');
     if (!id) return;
-    const cur = appTa.value.trim();
-    appTa.value = cur ? `${cur}\n${id}` : id;
+    appTable.addRow(id, searchGuest.value.trim());
+    panel.setStatus(`アプリ #${id} を対象表に追加しました`, 'info');
   });
 
   spaceBtn.addEventListener('click', () => liteRun(panel, 'スペース内アプリ取得中…', async () => {
-    appTa.value = await runSettingsExportAddSpaceStandalone(
+    const guest = searchGuest.value.trim();
+    const ids = await runSettingsExportListSpaceAppsStandalone(
       spaceKw.value.trim(),
-      guestInp.value.trim(),
-      appTa.value,
+      guest,
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
+    const existing = new Set(appTable.getApps().map((a) => a.appId));
+    let added = 0;
+    for (const id of ids) {
+      if (existing.has(id)) continue;
+      appTable.addRow(id, guest);
+      existing.add(id);
+      added += 1;
+    }
+    panel.setStatus(`スペースのアプリ ${ids.length}件を読み込みました（新規追加 ${added}件）`, 'ok');
   }));
 
   btnJson.addEventListener('click', () => liteRun(panel, '設定一括取得（JSON）中…', async () => {

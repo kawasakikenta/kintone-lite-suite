@@ -4077,6 +4077,329 @@ ${contextLine}`);
     }
   });
 
+  // src/ui/appTargetTable.ts
+  var appTargetTable_exports = {};
+  __export(appTargetTable_exports, {
+    AppTargetTable: () => AppTargetTable,
+    getAppTargetTable: () => getAppTargetTable,
+    initAppTargetTables: () => initAppTargetTables,
+    resetAppTargetTables: () => resetAppTargetTables
+  });
+  function ensureStyles(doc) {
+    if (doc.getElementById(STYLE_ID)) return;
+    const s = doc.createElement("style");
+    s.id = STYLE_ID;
+    s.textContent = CSS2;
+    (doc.head || doc.documentElement).appendChild(s);
+  }
+  function parseAppIds(text) {
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const tk of String(text || "").split(/[\s,]+/)) {
+      const id = tk.trim();
+      if (!/^\d+$/.test(id) || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+    return out;
+  }
+  function getAppTargetTable(key) {
+    return registry.get(key);
+  }
+  function initAppTargetTables(root2, configs = {}) {
+    const doc = root2.ownerDocument || document;
+    const nodes = root2.querySelectorAll("[data-app-target-table]");
+    nodes.forEach((el) => {
+      const key = el.getAttribute("data-app-target-table") || "";
+      if (!key) return;
+      const cfg = configs[key] || {};
+      const mirrorId = el.getAttribute("data-mirror") || "";
+      const mirror = mirrorId ? doc.getElementById(mirrorId) : null;
+      const table = new AppTargetTable({
+        key,
+        container: el,
+        mirror,
+        currentAppId: cfg.currentAppId,
+        defaultGuest: cfg.defaultGuest,
+        onChange: cfg.onChange
+      });
+      registry.set(key, table);
+    });
+  }
+  function resetAppTargetTables() {
+    registry.clear();
+  }
+  var STYLE_ID, CSS2, AppTargetTable, registry;
+  var init_appTargetTable = __esm({
+    "src/ui/appTargetTable.ts"() {
+      "use strict";
+      STYLE_ID = "kus-app-target-table-styles";
+      CSS2 = `
+.app-target-table{border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff}
+.app-target-table table{width:100%;border-collapse:collapse;table-layout:fixed}
+.app-target-table th{background:#f1f5f9;font-size:11px;font-weight:600;color:#334155;text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0}
+.app-target-table td{padding:5px 8px;border-bottom:1px solid #eef2f7;vertical-align:middle}
+.app-target-table tbody tr:last-child td{border-bottom:none}
+.app-target-table input{width:100%;box-sizing:border-box;padding:6px 8px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#0f172a}
+.app-target-table input:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+.app-target-table__no{width:30px;text-align:center;color:#94a3b8;font-size:11px;font-variant-numeric:tabular-nums}
+.app-target-table__acts-h{width:132px}
+.app-target-table__acts{white-space:nowrap}
+.app-target-table__acts .btn{padding:4px 7px;font-size:11px;margin-left:4px}
+.app-target-table__acts .btn:first-child{margin-left:0}
+.app-target-table__foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:#f8fafc;border-top:1px solid #e2e8f0}
+.app-target-table__count{font-size:11px;color:#64748b;margin-left:auto;font-weight:600}
+`;
+      AppTargetTable = class {
+        constructor(opts) {
+          __publicField(this, "key");
+          __publicField(this, "container");
+          __publicField(this, "mirror");
+          __publicField(this, "currentAppId");
+          __publicField(this, "defaultGuest");
+          __publicField(this, "onChange");
+          __publicField(this, "doc");
+          __publicField(this, "tbody");
+          __publicField(this, "count");
+          __publicField(this, "rows", []);
+          __publicField(this, "suppressMirror", false);
+          this.key = opts.key;
+          this.container = opts.container;
+          this.mirror = opts.mirror || null;
+          this.currentAppId = opts.currentAppId;
+          this.defaultGuest = opts.defaultGuest || (() => "");
+          this.onChange = opts.onChange;
+          this.doc = opts.container.ownerDocument || document;
+          ensureStyles(this.doc);
+          this.render();
+          this.syncFromMirror();
+        }
+        render() {
+          const doc = this.doc;
+          this.container.classList.add("app-target-table");
+          this.container.innerHTML = '<table><thead><tr><th class="app-target-table__no">#</th><th>アプリID</th><th>ゲストID</th><th class="app-target-table__acts-h">操作</th></tr></thead><tbody></tbody></table><div class="app-target-table__foot"></div>';
+          this.tbody = this.container.querySelector("tbody");
+          const foot = this.container.querySelector(".app-target-table__foot");
+          const addBtn = doc.createElement("button");
+          addBtn.type = "button";
+          addBtn.className = "btn sub";
+          addBtn.textContent = "＋ 行を追加";
+          addBtn.addEventListener("click", () => {
+            const e = this.insertRow(this.rows.length, "", "", true);
+            e.app.focus();
+            this.changed();
+          });
+          foot.appendChild(addBtn);
+          if (this.currentAppId) {
+            const curBtn = doc.createElement("button");
+            curBtn.type = "button";
+            curBtn.className = "btn sub";
+            curBtn.textContent = "現在のアプリ";
+            curBtn.title = "今開いているアプリのIDを空き行に入れます";
+            curBtn.addEventListener("click", () => {
+              const id = String(this.currentAppId() || "").trim();
+              if (!/^\d+$/.test(id)) return;
+              if (this.rows.some((r) => r.app.value.trim() === id)) return;
+              const empty = this.rows.find((r) => !r.app.value.trim());
+              if (empty) {
+                empty.app.value = id;
+                empty.app.focus();
+              } else {
+                const e = this.insertRow(this.rows.length, id, "", true);
+                e.app.focus();
+              }
+              this.changed();
+            });
+            foot.appendChild(curBtn);
+          }
+          this.count = doc.createElement("span");
+          this.count.className = "app-target-table__count";
+          foot.appendChild(this.count);
+        }
+        insertRow(index, appId = "", guestId = "", _focus = false) {
+          const doc = this.doc;
+          const tr = doc.createElement("tr");
+          const mk = (cls) => {
+            const td = doc.createElement("td");
+            if (cls) td.className = cls;
+            return td;
+          };
+          const tdNo = mk("app-target-table__no");
+          const tdApp = mk();
+          const tdGuest = mk();
+          const tdAct = mk("app-target-table__acts");
+          const app = doc.createElement("input");
+          app.type = "text";
+          app.placeholder = "アプリID";
+          app.value = appId;
+          app.setAttribute("aria-label", "アプリID");
+          const guest = doc.createElement("input");
+          guest.type = "text";
+          guest.placeholder = "空欄=通常スペース";
+          guest.value = guestId;
+          guest.setAttribute("aria-label", "ゲストID");
+          const copyBtn = doc.createElement("button");
+          copyBtn.type = "button";
+          copyBtn.className = "btn sub";
+          copyBtn.textContent = "↑コピー";
+          copyBtn.title = "上の行のアプリID・ゲストIDをこの行へコピー";
+          const dupBtn = doc.createElement("button");
+          dupBtn.type = "button";
+          dupBtn.className = "btn sub";
+          dupBtn.textContent = "複製";
+          dupBtn.title = "この行を下に複製";
+          const delBtn = doc.createElement("button");
+          delBtn.type = "button";
+          delBtn.className = "btn sub";
+          delBtn.textContent = "×";
+          delBtn.title = "この行を削除";
+          tdApp.appendChild(app);
+          tdGuest.appendChild(guest);
+          tdAct.appendChild(copyBtn);
+          tdAct.appendChild(dupBtn);
+          tdAct.appendChild(delBtn);
+          tr.appendChild(tdNo);
+          tr.appendChild(tdApp);
+          tr.appendChild(tdGuest);
+          tr.appendChild(tdAct);
+          const entry = { tr, app, guest, copyBtn };
+          copyBtn.addEventListener("click", () => {
+            const idx = this.rows.indexOf(entry);
+            if (idx <= 0) return;
+            const prev = this.rows[idx - 1];
+            app.value = prev.app.value;
+            guest.value = prev.guest.value;
+            app.focus();
+            this.changed();
+          });
+          dupBtn.addEventListener("click", () => {
+            const idx = this.rows.indexOf(entry);
+            const ne = this.insertRow(idx + 1, app.value.trim(), guest.value.trim());
+            ne.app.focus();
+            this.changed();
+          });
+          delBtn.addEventListener("click", () => this.removeRow(entry));
+          app.addEventListener("input", () => this.changed());
+          guest.addEventListener("input", () => this.changed());
+          const at = Math.min(Math.max(index, 0), this.rows.length);
+          if (at >= this.rows.length) this.tbody.appendChild(tr);
+          else this.tbody.insertBefore(tr, this.rows[at].tr);
+          this.rows.splice(at, 0, entry);
+          this.refresh();
+          return entry;
+        }
+        removeRow(entry) {
+          if (this.rows.length <= 1) {
+            entry.app.value = "";
+            entry.guest.value = "";
+            this.changed();
+            return;
+          }
+          const idx = this.rows.indexOf(entry);
+          if (idx >= 0) this.rows.splice(idx, 1);
+          entry.tr.remove();
+          this.changed();
+        }
+        refresh() {
+          this.rows.forEach((r, i) => {
+            const no = r.tr.querySelector(".app-target-table__no");
+            if (no) no.textContent = String(i + 1);
+            r.copyBtn.disabled = i === 0;
+          });
+          const n = this.getTargets().length;
+          this.count.textContent = n ? `${n} アプリ` : "未入力";
+        }
+        /** 行変化時：mirror へ書き戻し → refresh → onChange */
+        changed() {
+          this.writeMirror();
+          this.refresh();
+          this.onChange?.();
+        }
+        writeMirror() {
+          if (!this.mirror || this.suppressMirror) return;
+          const ids = [];
+          const seen = /* @__PURE__ */ new Set();
+          for (const r of this.rows) {
+            const id = r.app.value.trim();
+            if (!/^\d+$/.test(id) || seen.has(id)) continue;
+            seen.add(id);
+            ids.push(id);
+          }
+          this.mirror.value = ids.join(", ");
+        }
+        /** mirror（アプリID一覧）から表を再構築。既存行のゲストは appId 一致で引き継ぐ。 */
+        syncFromMirror() {
+          if (!this.mirror) {
+            if (!this.rows.length) this.insertRow(0, "", "");
+            this.refresh();
+            return;
+          }
+          const guestByApp = /* @__PURE__ */ new Map();
+          for (const r of this.rows) {
+            const id = r.app.value.trim();
+            if (id && r.guest.value.trim()) guestByApp.set(id, r.guest.value.trim());
+          }
+          const ids = parseAppIds(this.mirror.value);
+          this.suppressMirror = true;
+          this.rows.splice(0).forEach((r) => r.tr.remove());
+          this.tbody.innerHTML = "";
+          const def = String(this.defaultGuest() || "").trim();
+          if (ids.length) {
+            for (const id of ids) this.insertRow(this.rows.length, id, guestByApp.get(id) ?? def);
+          } else {
+            this.insertRow(0, "", "");
+          }
+          this.suppressMirror = false;
+          this.refresh();
+        }
+        getTargets() {
+          const seen = /* @__PURE__ */ new Set();
+          const out = [];
+          for (const r of this.rows) {
+            const appId = r.app.value.trim();
+            if (!/^\d+$/.test(appId)) continue;
+            const guestId = r.guest.value.trim();
+            const key = `${appId}::${guestId}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push({ appId, guestId });
+          }
+          return out;
+        }
+        getAllRows() {
+          return this.rows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim() }));
+        }
+        addRow(appId = "", guestId = "", focus = false) {
+          const id = String(appId || "").trim();
+          if (id && this.rows.some((r) => r.app.value.trim() === id)) {
+            this.changed();
+            return;
+          }
+          const empty = !id ? null : this.rows.find((r) => !r.app.value.trim());
+          if (empty) {
+            empty.app.value = id;
+            empty.guest.value = guestId;
+            if (focus) empty.app.focus();
+          } else {
+            const e = this.insertRow(this.rows.length, id, guestId, focus);
+            if (focus) e.app.focus();
+          }
+          this.changed();
+        }
+        setTargets(list) {
+          this.suppressMirror = true;
+          this.rows.splice(0).forEach((r) => r.tr.remove());
+          this.tbody.innerHTML = "";
+          const src = Array.isArray(list) && list.length ? list : [{ appId: "", guestId: "" }];
+          for (const r of src) this.insertRow(this.rows.length, String(r.appId || "").trim(), String(r.guestId || "").trim());
+          this.suppressMirror = false;
+          this.changed();
+        }
+      };
+      registry = /* @__PURE__ */ new Map();
+    }
+  });
+
   // src/diff/label-dict.ts
   function labelOfProp(key) {
     if (!key) return "";
@@ -20507,6 +20830,12 @@ ${reason}` : "",
     if (saved.settingsExportGuest != null) ui.settingsExportGuest.value = String(saved.settingsExportGuest);
     if (saved.settingsExportPreview != null) ui.settingsExportPreview.checked = !!saved.settingsExportPreview;
     if (saved.settingsExportIncludePluginConfig != null && ui.settingsExportIncludePluginConfig) ui.settingsExportIncludePluginConfig.checked = !!saved.settingsExportIncludePluginConfig;
+    if (saved.settingsExportAppIds != null) {
+      try {
+        getAppTargetTable("settingsExport")?.syncFromMirror();
+      } catch (e) {
+      }
+    }
     if (saved.recordBackupView != null && ui.recordBackupView) ui.recordBackupView.value = String(saved.recordBackupView || "");
     if (saved.recordBackupZipName != null && ui.recordBackupZipName) ui.recordBackupZipName.value = String(saved.recordBackupZipName || "record_backup.zip");
     if (saved.recordBackupIncludeFiles != null && ui.recordBackupIncludeFiles) ui.recordBackupIncludeFiles.checked = !!saved.recordBackupIncludeFiles;
@@ -20577,6 +20906,7 @@ ${reason}` : "",
       init_constants();
       init_state();
       init_psychology();
+      init_appTargetTable();
       init_utils();
       init_api();
       init_engine();
@@ -25466,16 +25796,18 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
     return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim() || "untitled";
   }
   async function runBatchDesignExportXlsxZip(params) {
+    const sharedGuest = String(params.guestId || "").trim();
+    const rawTargets = Array.isArray(params.apps) ? params.apps : (params.appIds || []).map((id) => ({ appId: id, guestId: sharedGuest }));
     const seen = /* @__PURE__ */ new Set();
-    const appIds = [];
-    for (const v of params.appIds || []) {
-      const id = String(v ?? "").trim();
+    const targets = [];
+    for (const t of rawTargets) {
+      const id = String(t?.appId ?? "").trim();
       if (!id || !/^\d+$/.test(id) || seen.has(id)) continue;
       seen.add(id);
-      appIds.push(id);
+      targets.push({ appId: id, guestId: String(t?.guestId || "").trim() });
     }
-    if (appIds.length === 0) throw new Error("有効なアプリIDが1件もありません。");
-    const guestId = String(params.guestId || "").trim();
+    if (targets.length === 0) throw new Error("有効なアプリIDが1件もありません。");
+    const appIds = targets.map((t) => t.appId);
     const selectedSheets = await showSheetSelectionDialog(resolveExportSheetDefs(), "📦 一括エクスポート設定");
     if (!selectedSheets) return false;
     const batchFieldTypeExclusion = loadPersistedFieldTypeExclusion() || /* @__PURE__ */ new Set();
@@ -25500,7 +25832,8 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       cancelled = !!window.__kusBatchCancel;
       if (cancelled) break;
       const appId = appIds[i];
-      const label = `(${i + 1}/${appIds.length}) アプリ ${appId}:`;
+      const guestId = targets[i].guestId;
+      const label = `(${i + 1}/${appIds.length}) アプリ ${appId}${guestId ? ` (guest:${guestId})` : ""}:`;
       batchUi.update(`${label} 設計書を生成中...`, i + 2);
       try {
         const ret = await runAdvancedDesignExporter({
@@ -25559,7 +25892,8 @@ ${detail}`);
     manifestLines.push("kintone 設計書 一括出力マニフェスト");
     manifestLines.push(`出力日時: ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`);
     manifestLines.push(`対象アプリ数: ${appIds.length}（成功 ${successCount} / 失敗 ${appIds.length - successCount}）`);
-    if (guestId) manifestLines.push(`ゲストスペース: ${guestId}`);
+    const manifestGuestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
+    if (manifestGuestIds.length) manifestLines.push(`ゲストスペース: ${manifestGuestIds.join(", ")}`);
     manifestLines.push("");
     manifestLines.push("## 出力ファイル");
     for (const r of results) {
@@ -25578,7 +25912,8 @@ ${detail}`);
       appCount: appIds.length,
       successCount,
       failedCount: appIds.length - successCount,
-      guestId: guestId || null,
+      guestIds: manifestGuestIds,
+      targets,
       results,
       failedApis: failedAPIs
     }, null, 2));
@@ -34242,10 +34577,11 @@ ${detail}`);
                   <span class="diff-fold-sub">対象アプリIDを並べて指定し、1つのZIPにまとめて保存</span>
                 </summary>
                 <div class="diff-fold-body">
-              <div class="muted" style="margin-top:0;line-height:1.6">対象アプリIDを改行・カンマ・スペース区切りで指定します。シート選択ダイアログは最初に1回だけ表示し、すべてのアプリに同じ設定が適用されます。ゲストスペースIDは比較元と同じ値が使われます。</div>
-              <div class="row" style="margin-top:8px">
-                <label for="u_designBatchAppIds">対象アプリID</label>
-                <textarea id="u_designBatchAppIds" style="min-height:80px" placeholder="74, 120, 305" title="カンマ・改行・スペース区切りで複数指定"></textarea>
+              <div class="muted" style="margin-top:0;line-height:1.6">対象アプリを行ごとに指定します（1 行で 1 アプリ、複数行で一括）。シート選択ダイアログは最初に1回だけ表示し、すべてのアプリに同じ設定が適用されます。ゲストスペースはアプリごとに行で指定でき、空欄の行は比較元のゲストIDが使われます。各行「↑コピー」で上の行を複製できます。</div>
+              <div class="row" style="margin-top:8px;display:block">
+                <label for="u_designBatchAppIds">対象アプリ（アプリごとにゲストスペース指定可）</label>
+                <textarea id="u_designBatchAppIds" hidden aria-hidden="true"></textarea>
+                <div id="u_designBatchAppTable" data-app-target-table="designBatch" data-mirror="u_designBatchAppIds" style="margin-top:4px"></div>
               </div>
               <div class="btns" style="margin-top:8px">
                 <button type="button" class="btn dark" data-act="exportDesignXlsxBatchZip" title="指定アプリの設計書ExcelをまとめてZIPで保存します">設計書ZIP出力（一括）</button>
@@ -34772,8 +35108,10 @@ ${detail}`);
               <div class="muted" style="margin-top:0;line-height:1.6">複数アプリの設定をまとめてバックアップします。レコードデータや添付ファイル本体は含まず、JS/CSS は <code>customize.json</code> として保存します。必要に応じてプラグイン設定も一緒に保存できます。</div>
               <div class="grid2" style="margin-top:8px">
                 <div>
-                  <label title="取得するアプリの数値IDを列挙">対象アプリID（カンマ/改行区切り）</label>
-                  <textarea id="u_settingsExportAppIds" style="min-height:88px" placeholder="74, 120, 305" title="カンマ・改行・スペース区切りで複数指定"></textarea>
+                  <label title="取得するアプリの数値IDとゲストスペースを行ごとに指定">対象アプリ（アプリごとにゲストスペース指定可）</label>
+                  <textarea id="u_settingsExportAppIds" hidden aria-hidden="true"></textarea>
+                  <div id="u_settingsExportAppTable" data-app-target-table="settingsExport" data-mirror="u_settingsExportAppIds"></div>
+                  <div class="muted" style="margin-top:6px;line-height:1.55;font-size:11px">1 行で 1 アプリ、複数行で一括取得。各行「↑コピー」で上の行のアプリID・ゲストIDを複製できます。</div>
                   <div class="inline" style="margin-top:8px">
                     <input type="text" id="u_settingsExportSearchKeyword" placeholder="アプリ名で検索" style="flex:1" title="スペース内のアプリを名前で検索し結果からIDを選べます">
                     <button type="button" class="btn sub" data-act="settingsExportSearchApps">検索</button>
@@ -34785,8 +35123,8 @@ ${detail}`);
                   <div class="result" id="u_settingsExportSearchResult" style="max-height:140px;margin-top:6px"></div>
                 </div>
                 <div>
-                  <label title="ゲストスペース利用時は共通のゲストID">ゲストID（任意 / 全アプリ共通）</label>
-                  <input type="text" id="u_settingsExportGuest" placeholder="空で通常空間" title="空欄で通常スペース">
+                  <label title="アプリ検索・スペース取得で照会するゲストスペースID。表に追加される行の既定ゲストにも使われます">検索用ゲストID（任意）</label>
+                  <input type="text" id="u_settingsExportGuest" placeholder="空で通常空間" title="アプリ検索/スペース取得に使うゲストID。表の各行で個別に上書きできます">
                   <label class="chip" style="margin-top:8px" title="プレビュー環境の設定JSONを取得します"><input type="checkbox" id="u_settingsExportPreview"> プレビュー設定を取得</label>
                   <label class="chip" style="margin-top:8px" title="APIラボのプラグイン設定取得APIも試します。取得できない場合はバックアップ自体は継続します。"><input type="checkbox" id="u_settingsExportIncludePluginConfig"> プラグイン設定も取得</label>
                   <div class="btns" style="margin-top:8px">
@@ -35154,6 +35492,7 @@ ${detail}`);
 
   // src/boot.ts
   init_dialog();
+  init_appTargetTable();
   init_components();
   init_export();
   init_diff();
@@ -37311,13 +37650,29 @@ ${detail}`);
   init_diff();
   init_field();
   init_record();
+  init_appTargetTable();
+  function resolveSettingsExportTargets() {
+    const table = getAppTargetTable("settingsExport");
+    if (table) {
+      const targets = table.getTargets();
+      if (targets.length) return targets;
+    }
+    const guestId = ui.settingsExportGuest.value.trim();
+    return parseAppIdList(ui.settingsExportAppIds.value).map((appId) => ({ appId, guestId }));
+  }
   function addAppIdToSettingsExport(appId, appName) {
-    if (!/^\d+$/.test(String(appId || "").trim())) return;
-    const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
-    set.add(String(appId).trim());
-    ui.settingsExportAppIds.value = [...set].join(", ");
+    const id = String(appId || "").trim();
+    if (!/^\d+$/.test(id)) return;
+    const table = getAppTargetTable("settingsExport");
+    if (table) {
+      table.addRow(id, ui.settingsExportGuest.value.trim());
+    } else {
+      const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+      set.add(id);
+      ui.settingsExportAppIds.value = [...set].join(", ");
+    }
     saveCurrentDialogState2();
-    setStatus(`アプリ ${appId}${appName ? ` (${appName})` : ""} を追加しました`);
+    setStatus(`アプリ ${id}${appName ? ` (${appName})` : ""} を追加しました`);
   }
   function renderSettingsExportSearchResults(apps) {
     const list = Array.isArray(apps) ? apps : [];
@@ -37359,6 +37714,15 @@ ${detail}`);
       setStatus(`スペース ${spaceId} に取得対象アプリがありませんでした`, true);
       return;
     }
+    const table = getAppTargetTable("settingsExport");
+    if (table) {
+      const before2 = table.getTargets().length;
+      apps.forEach((a) => table.addRow(a.appId, guestId));
+      const after = table.getTargets().length;
+      saveCurrentDialogState2();
+      setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を読み込みました（新規追加 ${after - before2}件 / 合計 ${after}件）`);
+      return;
+    }
     const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
     const before = set.size;
     apps.forEach((a) => set.add(a.appId));
@@ -37381,7 +37745,8 @@ ${detail}`);
       const canLoad = stashedById.has(idStr);
       const bundle = stashedById.get(idStr);
       const appName = bundle ? extractAppNameFromBundle(bundle) : "";
-      const idCell = appName ? `<div style="display:flex;flex-direction:column;line-height:1.3;"><span>${esc(idStr)}</span><span style="font-size:10px;color:#64748b;">${esc(appName)}</span></div>` : esc(idStr);
+      const guestStr = r.guestId ? `guest:${r.guestId}` : "通常スペース";
+      const idCell = `<div style="display:flex;flex-direction:column;line-height:1.3;"><span>${esc(idStr)}</span>${appName ? `<span style="font-size:10px;color:#64748b;">${esc(appName)}</span>` : ""}<span style="font-size:10px;color:#94a3b8;">${esc(guestStr)}</span></div>`;
       const loadCell = canLoad ? `<div class="settings-export-load-actions">
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="source" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較元」としてセットし差分タブへ移動">比較元へ</button>
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="target" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較先」としてセットし差分タブへ移動">比較先へ</button>
@@ -37498,26 +37863,27 @@ ${detail}`);
     return result;
   }
   async function runSettingsExport(mode) {
-    const appIds = parseAppIdList(ui.settingsExportAppIds.value);
-    if (!appIds.length) throw new Error("対象アプリIDを1件以上入力してください");
+    const targets = resolveSettingsExportTargets();
+    if (!targets.length) throw new Error("対象アプリIDを1件以上入力してください");
     const scopes = selectedScopeKeys(ui.settingsExportScopes);
     if (!scopes.length) throw new Error("取得対象セクションを選択してください");
-    const guestId = ui.settingsExportGuest.value.trim();
     const preview = !!ui.settingsExportPreview.checked;
     const includePluginConfig = !!ui.settingsExportIncludePluginConfig?.checked;
     saveCurrentDialogState2();
     const bundles = [];
     const rows = [];
-    for (let i = 0; i < appIds.length; i++) {
-      const appId = appIds[i];
-      setStatus(`設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId}`);
+    for (let i = 0; i < targets.length; i++) {
+      const { appId, guestId } = targets[i];
+      const guestNote = guestId ? ` (guest:${guestId})` : "";
+      setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote}`);
       const bundle = await fetchBundle({
         appId,
         guestId,
         preview,
         sections: scopes,
-        onProgress: (p, l) => setStatus(`設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId} ${Math.round(p * 100)}% (${l})`)
+        onProgress: (p, l) => setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
       });
+      if (guestId && !bundle.guestId) bundle.guestId = guestId;
       bundles.push(bundle);
       let okCount = 0;
       let ngCount = 0;
@@ -37535,7 +37901,7 @@ ${detail}`);
           existingPluginList: bundle?.sections?.pluginSettings?.plugins,
           onProgress: (pluginIndex, pluginTotal, plugin) => {
             const pluginName = String(plugin?.name || plugin?.id || "");
-            setStatus(`プラグイン設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId} ${pluginIndex + 1}/${pluginTotal}${pluginName ? ` (${pluginName})` : ""}`);
+            setStatus(`プラグイン設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${pluginIndex + 1}/${pluginTotal}${pluginName ? ` (${pluginName})` : ""}`);
           }
         });
         bundle.pluginConfigBackup = pluginConfigBackup;
@@ -37549,6 +37915,7 @@ ${detail}`);
       }
       rows.push({
         appId,
+        guestId,
         okCount,
         ngCount,
         pluginConfigLabel: formatPluginConfigSummary2(pluginConfigBackup),
@@ -37557,10 +37924,12 @@ ${detail}`);
     }
     state.lastSettingsExportBundles = bundles;
     ui.settingsExportResult.innerHTML = renderSettingsExportSummary(rows, scopes);
+    const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
     const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
     const payload = {
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      guestId: guestId || "",
+      guestIds,
+      targets,
       preview,
       includePluginConfig,
       scopes,
@@ -37572,13 +37941,16 @@ ${detail}`);
       const zip = new JSZipCtor();
       zip.file("manifest.json", JSON.stringify({
         generatedAt: payload.generatedAt,
-        guestId: payload.guestId,
+        guestIds,
+        targets,
         preview: payload.preview,
         includePluginConfig: payload.includePluginConfig,
         scopes: payload.scopes,
         appCount: bundles.length
       }, null, 2));
-      for (const bundle of bundles) {
+      for (let i = 0; i < bundles.length; i++) {
+        const bundle = bundles[i];
+        const guestId = targets[i].guestId;
         const suffix = `${guestId ? `_guest_${guestId}` : ""}${preview ? "_preview" : "_live"}`;
         const name = `app_${bundle.appId}${suffix}.json`;
         zip.file(name, JSON.stringify(bundle, null, 2));
@@ -37591,6 +37963,9 @@ ${detail}`);
     downloadText(`settings_export_${bundles.length}apps_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
     setStatus(`設定バックアップJSONを保存しました（${bundles.length}アプリ）`);
   }
+
+  // src/handlers.ts
+  init_appTargetTable();
 
   // src/handlers/checklist.ts
   init_state();
@@ -40217,9 +40592,13 @@ ${detail}`);
           setStatus("現在のアプリIDを取得できませんでした", true);
           return;
         }
-        const set = new Set(parseAppIdList(ui.settingsExportAppIds.value.trim()));
-        set.add(cur);
-        ui.settingsExportAppIds.value = [...set].join(", ");
+        const table = getAppTargetTable("settingsExport");
+        if (table) table.addRow(cur, "");
+        else {
+          const set = new Set(parseAppIdList(ui.settingsExportAppIds.value.trim()));
+          set.add(cur);
+          ui.settingsExportAppIds.value = [...set].join(", ");
+        }
         saveCurrentDialogState2();
         setStatus(`現在のApp(${cur})を追加しました`);
         return;
@@ -40230,10 +40609,15 @@ ${detail}`);
           setStatus("比較元アプリIDが空です", true);
           return;
         }
-        const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
-        set.add(srcId);
-        ui.settingsExportAppIds.value = [...set].join(", ");
-        ui.settingsExportGuest.value = ui.sourceGuest.value.trim();
+        const srcGuest = ui.sourceGuest.value.trim();
+        const table = getAppTargetTable("settingsExport");
+        if (table) table.addRow(srcId, srcGuest);
+        else {
+          const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+          set.add(srcId);
+          ui.settingsExportAppIds.value = [...set].join(", ");
+        }
+        ui.settingsExportGuest.value = srcGuest;
         ui.settingsExportPreview.checked = !!ui.sourcePreview.checked;
         saveCurrentDialogState2();
         setStatus(`比較元アプリ(${srcId})を追加しました`);
@@ -40245,10 +40629,15 @@ ${detail}`);
           setStatus("比較先アプリIDが空です", true);
           return;
         }
-        const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
-        set.add(tgtId);
-        ui.settingsExportAppIds.value = [...set].join(", ");
-        ui.settingsExportGuest.value = ui.targetGuest.value.trim();
+        const tgtGuest = ui.targetGuest.value.trim();
+        const table = getAppTargetTable("settingsExport");
+        if (table) table.addRow(tgtId, tgtGuest);
+        else {
+          const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+          set.add(tgtId);
+          ui.settingsExportAppIds.value = [...set].join(", ");
+        }
+        ui.settingsExportGuest.value = tgtGuest;
         ui.settingsExportPreview.checked = !!ui.targetPreview.checked;
         saveCurrentDialogState2();
         setStatus(`比較先アプリ(${tgtId})を追加しました`);
@@ -45032,23 +45421,29 @@ ${diffMd}
   }
   async function runDesignExportXlsxBatchZip() {
     const { runBatchDesignExportXlsxZip: runBatchDesignExportXlsxZip2 } = await Promise.resolve().then(() => (init_design_xlsx(), design_xlsx_exports));
+    const { getAppTargetTable: getAppTargetTable2 } = await Promise.resolve().then(() => (init_appTargetTable(), appTargetTable_exports));
     const c = commonParams();
-    const ta = getToolDocument().getElementById("u_designBatchAppIds");
-    const raw = ta?.value || "";
-    const appIds = raw.split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
-    if (appIds.length === 0) {
+    const sourceGuest = c.source.guestId || "";
+    let apps = [];
+    const table = getAppTargetTable2("designBatch");
+    if (table) {
+      apps = table.getTargets().map((t) => ({ appId: t.appId, guestId: t.guestId || sourceGuest }));
+    }
+    if (!apps.length) {
+      const ta = getToolDocument().getElementById("u_designBatchAppIds");
+      const raw = ta?.value || "";
+      apps = raw.split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s)).map((appId) => ({ appId, guestId: sourceGuest }));
+    }
+    if (apps.length === 0) {
       throw new Error("対象アプリIDを1件以上入力してください（数値のみ、改行/カンマ/スペース区切り）");
     }
-    setStatus(`設計書ZIP出力を開始（${appIds.length}件）...`);
-    const done = await runBatchDesignExportXlsxZip2({
-      appIds,
-      guestId: c.source.guestId
-    });
+    setStatus(`設計書ZIP出力を開始（${apps.length}件）...`);
+    const done = await runBatchDesignExportXlsxZip2({ apps });
     if (done === false) {
       setStatus("設計書ZIP出力をキャンセルしました");
       return;
     }
-    setStatus(`設計書ZIP出力完了（${appIds.length}件）`);
+    setStatus(`設計書ZIP出力完了（${apps.length}件）`);
   }
 
   // src/boot.ts
@@ -48405,6 +48800,43 @@ ${field.label}` : code,
     Object.assign(ui, ui4);
     setUiRefs(ui4);
     setComponentUi(ui4);
+    resetAppTargetTables();
+    try {
+      initAppTargetTables(root2, {
+        settingsExport: {
+          currentAppId: () => {
+            try {
+              return String(window.kintone?.app?.getId() || "");
+            } catch (e) {
+              return "";
+            }
+          },
+          defaultGuest: () => ui4.settingsExportGuest?.value?.trim() || "",
+          onChange: () => {
+            try {
+              saveCurrentDialogState2();
+            } catch (e) {
+            }
+          }
+        },
+        designBatch: {
+          defaultGuest: () => {
+            try {
+              return commonParams().source.guestId || "";
+            } catch (e) {
+              return "";
+            }
+          },
+          onChange: () => {
+            try {
+              saveCurrentDialogState2();
+            } catch (e) {
+            }
+          }
+        }
+      });
+    } catch (e) {
+    }
     setComponentDeps({
       buildDiffWarningInfo,
       renderRowColumns,

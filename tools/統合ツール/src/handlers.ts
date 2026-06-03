@@ -158,6 +158,7 @@ import {
   addSpaceAppsToSettingsExport,
   loadSettingsExportBundleToDiff
 } from './tabs/settings-export.js';
+import { getAppTargetTable } from './ui/appTargetTable.js';
 
 // --- These functions are not yet extracted into modules. They remain in the
 //     monolithic file or will be extracted in future refactoring steps.
@@ -2374,9 +2375,13 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'settingsExportUseCurrent') {
       const cur = String(kintone.app.getId() || '').trim();
       if (!cur) { setStatus('現在のアプリIDを取得できませんでした', true); return; }
-      const set = new Set(parseAppIdList(ui.settingsExportAppIds.value.trim()));
-      set.add(cur);
-      ui.settingsExportAppIds.value = [...set].join(', ');
+      const table = getAppTargetTable('settingsExport');
+      if (table) table.addRow(cur, '');
+      else {
+        const set = new Set(parseAppIdList(ui.settingsExportAppIds.value.trim()));
+        set.add(cur);
+        ui.settingsExportAppIds.value = [...set].join(', ');
+      }
       saveCurrentDialogState();
       setStatus(`現在のApp(${cur})を追加しました`);
       return;
@@ -2384,10 +2389,15 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'settingsExportUseSource') {
       const srcId = ui.sourceApp.value.trim();
       if (!srcId) { setStatus('比較元アプリIDが空です', true); return; }
-      const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
-      set.add(srcId);
-      ui.settingsExportAppIds.value = [...set].join(', ');
-      ui.settingsExportGuest.value = ui.sourceGuest.value.trim();
+      const srcGuest = ui.sourceGuest.value.trim();
+      const table = getAppTargetTable('settingsExport');
+      if (table) table.addRow(srcId, srcGuest);
+      else {
+        const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+        set.add(srcId);
+        ui.settingsExportAppIds.value = [...set].join(', ');
+      }
+      ui.settingsExportGuest.value = srcGuest;
       ui.settingsExportPreview.checked = !!ui.sourcePreview.checked;
       saveCurrentDialogState();
       setStatus(`比較元アプリ(${srcId})を追加しました`);
@@ -2396,10 +2406,15 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'settingsExportUseTarget') {
       const tgtId = ui.targetApp.value.trim();
       if (!tgtId) { setStatus('比較先アプリIDが空です', true); return; }
-      const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
-      set.add(tgtId);
-      ui.settingsExportAppIds.value = [...set].join(', ');
-      ui.settingsExportGuest.value = ui.targetGuest.value.trim();
+      const tgtGuest = ui.targetGuest.value.trim();
+      const table = getAppTargetTable('settingsExport');
+      if (table) table.addRow(tgtId, tgtGuest);
+      else {
+        const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+        set.add(tgtId);
+        ui.settingsExportAppIds.value = [...set].join(', ');
+      }
+      ui.settingsExportGuest.value = tgtGuest;
       ui.settingsExportPreview.checked = !!ui.targetPreview.checked;
       saveCurrentDialogState();
       setStatus(`比較先アプリ(${tgtId})を追加しました`);

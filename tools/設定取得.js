@@ -1121,6 +1121,13 @@ ${contextLine}`);
     }
   });
 
+  // src/ui/appTargetTable.ts
+  var init_appTargetTable = __esm({
+    "src/ui/appTargetTable.ts"() {
+      "use strict";
+    }
+  });
+
   // src/tabs/preview-compare.ts
   var init_preview_compare = __esm({
     "src/tabs/preview-compare.ts"() {
@@ -1135,6 +1142,7 @@ ${contextLine}`);
       init_constants();
       init_state();
       init_psychology();
+      init_appTargetTable();
       init_utils();
       init_api();
       init_engine();
@@ -1226,6 +1234,7 @@ ${contextLine}`);
     const body = rows.map(
       (r) => `<tr>
     <td>${esc(r.appId)}</td>
+    <td>${esc(r.guestId ? `guest:${r.guestId}` : "通常")}</td>
     <td>${esc(String(r.okCount))}</td>
     <td>${esc(String(r.ngCount))}</td>
     <td>${esc(r.note || "-")}</td>
@@ -1234,8 +1243,8 @@ ${contextLine}`);
     return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || "-")}</div>
     <table style="width:100%;font-size:11px;border-collapse:collapse">
-      <thead><tr><th style="text-align:left;padding:4px">アプリID</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
-      <tbody>${body || '<tr><td colspan="4">結果なし</td></tr>'}</tbody>
+      <thead><tr><th style="text-align:left;padding:4px">アプリID</th><th>ゲスト</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
     </table>
   `;
   }
@@ -1268,42 +1277,58 @@ ${contextLine}`);
     setStatus2(`アプリ検索完了: ${apps.length}件`);
     return apps;
   }
-  async function runSettingsExportAddSpaceStandalone(spaceId, guestId, currentText, setStatus2) {
+  async function runSettingsExportListSpaceAppsStandalone(spaceId, guestId, setStatus2) {
     const sid = String(spaceId || "").trim();
     if (!/^\d+$/.test(sid)) throw new Error("スペースIDを数値で入力してください");
     setStatus2(`スペース ${sid} のアプリ一覧を取得中...`);
     const apps = await fetchAppsInSpace(sid, guestId);
     if (!apps.length) {
       setStatus2(`スペース ${sid} に取得対象アプリがありませんでした`, true);
-      return String(currentText || "");
+      return [];
     }
-    const set = new Set(parseAppIdList(currentText));
-    const before = set.size;
-    apps.forEach((a) => set.add(a.appId));
-    const ordered = [...set].sort((a, b) => Number(a) - Number(b));
-    const added = set.size - before;
-    setStatus2(`スペース ${sid} のアプリ ${apps.length}件を読み込みました（新規追加 ${added}件 / 合計 ${set.size}件）`);
-    return ordered.join("\n");
+    setStatus2(`スペース ${sid} のアプリ ${apps.length}件を取得しました`);
+    return apps.map((a) => a.appId);
+  }
+  function resolveExportTargets(opts) {
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    const push = (appId, guestId) => {
+      const id = String(appId || "").trim();
+      if (!/^\d+$/.test(id)) return;
+      const g = String(guestId || "").trim();
+      const key = `${id}::${g}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ appId: id, guestId: g });
+    };
+    if (Array.isArray(opts.apps)) {
+      for (const a of opts.apps) push(a?.appId, a?.guestId);
+    } else {
+      const guestId = String(opts.guestId || "").trim();
+      for (const id of parseAppIdList(opts.appIdsText)) push(id, guestId);
+    }
+    return out;
   }
   async function runSettingsExportStandalone(mode, opts, setStatus2) {
-    const appIds = parseAppIdList(opts.appIdsText);
-    if (!appIds.length) throw new Error("対象アプリIDを1件以上入力してください");
+    const targets = resolveExportTargets(opts);
+    if (!targets.length) throw new Error("対象アプリIDを1件以上入力してください");
     const scopes = selectedScopeKeys(opts.scopeRoot);
     if (!scopes.length) throw new Error("取得対象セクションを選択してください");
-    const guestId = String(opts.guestId || "").trim();
     const preview = !!opts.preview;
     const bundles = [];
     const rows = [];
-    for (let i = 0; i < appIds.length; i++) {
-      const appId = appIds[i];
-      setStatus2(`設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId}`);
+    for (let i = 0; i < targets.length; i++) {
+      const { appId, guestId } = targets[i];
+      const guestNote = guestId ? ` (guest:${guestId})` : "";
+      setStatus2(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote}`);
       const bundle = await fetchBundle({
         appId,
         guestId,
         preview,
         sections: scopes,
-        onProgress: (p, l) => setStatus2(`設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId} ${Math.round(p * 100)}% (${l})`)
+        onProgress: (p, l) => setStatus2(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
       });
+      if (guestId && !bundle.guestId) bundle.guestId = guestId;
       bundles.push(bundle);
       let okCount = 0;
       let ngCount = 0;
@@ -1312,12 +1337,14 @@ ${contextLine}`);
         if (sec && sec._fetchError) ngCount += 1;
         else okCount += 1;
       }
-      rows.push({ appId, okCount, ngCount, note: ngCount ? "一部セクション取得失敗あり" : "OK" });
+      rows.push({ appId, guestId, okCount, ngCount, note: ngCount ? "一部セクション取得失敗あり" : "OK" });
     }
+    const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
     const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
     const payload = {
       generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      guestId: guestId || "",
+      guestIds,
+      targets,
       preview,
       scopes,
       scopeLabels,
@@ -1331,7 +1358,8 @@ ${contextLine}`);
         JSON.stringify(
           {
             generatedAt: payload.generatedAt,
-            guestId: payload.guestId,
+            guestIds,
+            targets,
             preview: payload.preview,
             scopes: payload.scopes,
             appCount: bundles.length
@@ -1340,7 +1368,9 @@ ${contextLine}`);
           2
         )
       );
-      for (const bundle of bundles) {
+      for (let i = 0; i < bundles.length; i++) {
+        const bundle = bundles[i];
+        const guestId = targets[i].guestId;
         const suffix = `${guestId ? `_guest_${guestId}` : ""}${preview ? "_preview" : "_live"}`;
         const name = `app_${bundle.appId}${suffix}.json`;
         zip.file(name, JSON.stringify(bundle, null, 2));
@@ -1631,6 +1661,28 @@ ${contextLine}`);
 
 /* Wide variant (一部 lite 用に幅広にしたい場合) */
 .kus-lp--wide{width:min(640px,96vw)}
+
+/* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
+.kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
+.kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
+.kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
+.kus-lp__apptable tbody tr:last-child td{border-bottom:none}
+.kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
+.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-acts{white-space:nowrap}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:11px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
+.kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+@media(max-width:420px){
+  .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
+  .kus-lp__apptable thead{display:none}
+  .kus-lp__apptable tbody tr{border-bottom:1px solid var(--c-border);padding:6px 4px}
+  .kus-lp__apptable td{border:none;padding:3px 6px}
+  .kus-lp__apptable-no{text-align:left;font-weight:600}
+}
 `;
   function ensureThemeStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -1823,14 +1875,6 @@ ${contextLine}`);
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
-  function makeTextarea(opts = {}) {
-    const t = document.createElement("textarea");
-    t.className = "kus-lp__textarea" + (opts.code ? " kus-lp__textarea--code" : "");
-    if (opts.rows) t.rows = opts.rows;
-    if (opts.placeholder) t.placeholder = opts.placeholder;
-    if (opts.value) t.value = opts.value;
-    return t;
-  }
   function makeButton(label, variant = "primary", opts = {}) {
     const b = document.createElement("button");
     b.type = "button";
@@ -1908,6 +1952,168 @@ ${contextLine}`);
     n.textContent = text;
     return n;
   }
+  function makeAppTable(opts = {}) {
+    const minRows = Math.max(1, opts.minRows ?? 1);
+    const wrap = document.createElement("div");
+    wrap.className = "kus-lp__apptable";
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    thead.innerHTML = '<tr><th class="kus-lp__apptable-no" scope="col">#</th><th scope="col">アプリID</th><th scope="col">ゲストID</th><th class="kus-lp__apptable-acts-h" scope="col">操作</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__apptable-foot";
+    const addBtn = makeButton("＋ 行を追加", "sub");
+    foot.appendChild(addBtn);
+    if (opts.currentAppId && /^\d+$/.test(String(opts.currentAppId).trim())) {
+      const curBtn = makeButton("現在のアプリ", "sub");
+      curBtn.title = "今開いているアプリのIDを空き行に入れます";
+      curBtn.addEventListener("click", () => {
+        const id = String(opts.currentAppId).trim();
+        if (rows.some((r) => r.app.value.trim() === id)) return;
+        const empty = rows.find((r) => !r.app.value.trim());
+        if (empty) {
+          empty.app.value = id;
+          empty.app.focus();
+        } else insertRow(rows.length, id, "", true);
+        emitChange();
+      });
+      foot.appendChild(curBtn);
+    }
+    const count = document.createElement("span");
+    count.className = "kus-lp__apptable-count";
+    foot.appendChild(count);
+    wrap.appendChild(foot);
+    const rows = [];
+    function getApps() {
+      const seen = /* @__PURE__ */ new Set();
+      const out = [];
+      for (const r of rows) {
+        const appId = r.app.value.trim();
+        if (!appId) continue;
+        const guestId = r.guest.value.trim();
+        const key = `${appId}::${guestId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ appId, guestId });
+      }
+      return out;
+    }
+    function getAllRows() {
+      return rows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim() }));
+    }
+    function refresh() {
+      rows.forEach((r, i) => {
+        const no = r.tr.querySelector(".kus-lp__apptable-no");
+        if (no) no.textContent = String(i + 1);
+        r.copyBtn.disabled = i === 0;
+      });
+      const n = getApps().length;
+      count.textContent = n ? `${n} アプリ` : "未入力";
+    }
+    function emitChange() {
+      refresh();
+      opts.onChange?.(getApps());
+    }
+    function removeRow(entry) {
+      if (rows.length <= minRows) {
+        entry.app.value = "";
+        entry.guest.value = "";
+        emitChange();
+        return;
+      }
+      const idx = rows.indexOf(entry);
+      if (idx >= 0) rows.splice(idx, 1);
+      entry.tr.remove();
+      emitChange();
+    }
+    function insertRow(index, appId = "", guestId = "", focus = false) {
+      const tr = document.createElement("tr");
+      const tdNo = document.createElement("td");
+      tdNo.className = "kus-lp__apptable-no";
+      const tdApp = document.createElement("td");
+      const tdGuest = document.createElement("td");
+      const tdAct = document.createElement("td");
+      tdAct.className = "kus-lp__apptable-acts";
+      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID", ariaLabel: "アプリID" });
+      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストID" });
+      app.value = appId;
+      guest.value = guestId;
+      const copyBtn = makeButton("↑コピー", "sub");
+      copyBtn.title = "上の行のアプリID・ゲストIDをこの行へコピー";
+      const dupBtn = makeButton("複製", "sub");
+      dupBtn.title = "この行を下に複製";
+      const delBtn = makeButton("×", "ghost");
+      delBtn.title = "この行を削除";
+      tdApp.appendChild(app);
+      tdGuest.appendChild(guest);
+      tdAct.appendChild(copyBtn);
+      tdAct.appendChild(dupBtn);
+      tdAct.appendChild(delBtn);
+      tr.appendChild(tdNo);
+      tr.appendChild(tdApp);
+      tr.appendChild(tdGuest);
+      tr.appendChild(tdAct);
+      const entry = { tr, app, guest, copyBtn };
+      copyBtn.addEventListener("click", () => {
+        const idx = rows.indexOf(entry);
+        if (idx <= 0) return;
+        const prev = rows[idx - 1];
+        app.value = prev.app.value;
+        guest.value = prev.guest.value;
+        app.focus();
+        emitChange();
+      });
+      dupBtn.addEventListener("click", () => {
+        const idx = rows.indexOf(entry);
+        const ne = insertRow(idx + 1, app.value.trim(), guest.value.trim(), true);
+        ne.app.focus();
+        emitChange();
+      });
+      delBtn.addEventListener("click", () => removeRow(entry));
+      app.addEventListener("input", emitChange);
+      guest.addEventListener("input", emitChange);
+      const at = Math.min(Math.max(index, 0), rows.length);
+      if (at >= rows.length) tbody.appendChild(tr);
+      else tbody.insertBefore(tr, rows[at].tr);
+      rows.splice(at, 0, entry);
+      refresh();
+      if (focus) app.focus();
+      return entry;
+    }
+    addBtn.addEventListener("click", () => {
+      const e = insertRow(rows.length, "", "", true);
+      e.app.focus();
+      emitChange();
+    });
+    function setApps(list) {
+      rows.splice(0).forEach((r) => r.tr.remove());
+      tbody.innerHTML = "";
+      const src = Array.isArray(list) && list.length ? list : [{ appId: "", guestId: "" }];
+      src.forEach((r) => insertRow(rows.length, String(r.appId || "").trim(), String(r.guestId || "").trim()));
+      while (rows.length < minRows) insertRow(rows.length, "", "");
+      emitChange();
+    }
+    setApps(opts.initial || []);
+    return {
+      element: wrap,
+      getApps,
+      getAllRows,
+      first: () => {
+        const r = rows[0];
+        return r ? { appId: r.app.value.trim(), guestId: r.guest.value.trim() } : { appId: "", guestId: "" };
+      },
+      addRow: (appId = "", guestId = "", o = {}) => {
+        insertRow(rows.length, appId, guestId, !!o.focus);
+        emitChange();
+      },
+      setApps,
+      clear: () => setApps([]),
+      count: () => getApps().length
+    };
+  }
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
     panel.setBusy(true);
@@ -1931,39 +2137,26 @@ ${contextLine}`);
       subtitle: "複数アプリの設定を JSON または ZIP（1アプリ=1JSON）で保存します。",
       accent: "settings",
       badges: [{ label: "Lite" }, { label: "複数アプリ対応" }],
-      hint: "アプリ検索／スペース内アプリ自動追加に対応。ZIP は manifest 付きで保存します。",
+      hint: "1 行だけ入力すれば 1 アプリ、複数行で一括取得。<strong>アプリごとに別のゲストスペース</strong>を指定できます。",
       wide: true
     });
     const cardTarget = makeCard({ title: "対象アプリ", number: 1 });
-    const appTa = makeTextarea({ rows: 3, code: true, placeholder: "アプリID（カンマ・改行・スペース区切り）" });
-    cardTarget.body.appendChild(appTa);
-    const useCurrentBtn = makeButton("現在のアプリを追加", "sub");
-    useCurrentBtn.addEventListener("click", () => {
-      const id = String(DEFAULT_APP_ID || "").trim();
-      if (!id) {
-        panel.setStatus("現在のアプリ ID が取得できません", "warn");
-        return;
-      }
-      const cur = appTa.value.trim();
-      const lines = cur ? cur.split(/\s*[\s,]+\s*/).filter(Boolean) : [];
-      if (lines.includes(id)) {
-        panel.setStatus(`アプリ #${id} は既に対象に含まれています`, "info");
-        return;
-      }
-      lines.push(id);
-      appTa.value = lines.join("\n");
-      panel.setStatus(`アプリ #${id} を対象に追加しました`, "ok");
+    const appTable = makeAppTable({
+      currentAppId: String(DEFAULT_APP_ID || ""),
+      initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: "" }] : []
     });
-    cardTarget.actions.appendChild(useCurrentBtn);
+    cardTarget.body.appendChild(appTable.element);
+    cardTarget.body.appendChild(makeNote("各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。"));
     const searchKw = makeInput({ placeholder: "アプリ名の一部", width: "wide" });
+    const searchGuest = makeInput({ placeholder: "検索用ゲストID（任意）", width: "guest" });
     const searchBtn = makeButton("検索", "sub");
-    cardTarget.body.appendChild(makeRow([searchKw, searchBtn], { label: "アプリ検索" }));
+    cardTarget.body.appendChild(makeRow([searchKw, searchGuest, searchBtn], { label: "アプリ検索" }));
     const searchOut = document.createElement("div");
     searchOut.className = "kus-lp__panel-html kus-lp__panel-html--empty";
     searchOut.style.maxHeight = "180px";
     cardTarget.body.appendChild(searchOut);
     const spaceKw = makeInput({ placeholder: "スペースID", width: "narrow" });
-    const spaceBtn = makeButton("スペース内アプリを追加", "sub");
+    const spaceBtn = makeButton("スペース内アプリを表に追加", "sub");
     cardTarget.body.appendChild(makeRow([spaceKw, spaceBtn], { label: "スペース" }));
     panel.body.insertBefore(cardTarget.card, panel.status);
     const cardScope = makeCard({ title: "取得セクション", number: 2 });
@@ -1984,10 +2177,9 @@ ${contextLine}`);
     }));
     const scopeRoot = chipBox;
     panel.body.insertBefore(cardScope.card, panel.status);
-    const cardOpt = makeCard({ title: "接続・出力", number: 3, soft: true });
-    const guestInp = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
+    const cardOpt = makeCard({ title: "出力", number: 3, soft: true });
     const prev = makeCheck({ label: "プレビュー環境から取得" });
-    cardOpt.body.appendChild(makeRow([guestInp, prev.label], { label: "接続" }));
+    cardOpt.body.appendChild(makeRow([prev.label], { label: "取得環境" }));
     const btnJson = makeButton("JSON で保存", "primary", { icon: "↓" });
     const btnZip = makeButton("ZIP で保存", "primary", { icon: "↓" });
     const btnGrid = document.createElement("div");
@@ -2002,8 +2194,7 @@ ${contextLine}`);
     panel.body.insertBefore(summary, panel.status);
     function opts() {
       return {
-        appIdsText: appTa.value,
-        guestId: guestInp.value.trim(),
+        apps: appTable.getApps(),
         preview: prev.checkbox.checked,
         scopeRoot
       };
@@ -2011,7 +2202,7 @@ ${contextLine}`);
     searchBtn.addEventListener("click", () => liteRun(panel, "アプリ検索中…", async () => {
       const apps = await runSettingsExportSearchStandalone(
         searchKw.value,
-        guestInp.value.trim(),
+        searchGuest.value.trim(),
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
       searchOut.innerHTML = renderSettingsExportSearchResultsHtml(apps);
@@ -2024,17 +2215,25 @@ ${contextLine}`);
       if (!btn) return;
       const id = btn.getAttribute("data-app");
       if (!id) return;
-      const cur = appTa.value.trim();
-      appTa.value = cur ? `${cur}
-${id}` : id;
+      appTable.addRow(id, searchGuest.value.trim());
+      panel.setStatus(`アプリ #${id} を対象表に追加しました`, "info");
     });
     spaceBtn.addEventListener("click", () => liteRun(panel, "スペース内アプリ取得中…", async () => {
-      appTa.value = await runSettingsExportAddSpaceStandalone(
+      const guest = searchGuest.value.trim();
+      const ids = await runSettingsExportListSpaceAppsStandalone(
         spaceKw.value.trim(),
-        guestInp.value.trim(),
-        appTa.value,
+        guest,
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
+      const existing = new Set(appTable.getApps().map((a) => a.appId));
+      let added = 0;
+      for (const id of ids) {
+        if (existing.has(id)) continue;
+        appTable.addRow(id, guest);
+        existing.add(id);
+        added += 1;
+      }
+      panel.setStatus(`スペースのアプリ ${ids.length}件を読み込みました（新規追加 ${added}件）`, "ok");
     }));
     btnJson.addEventListener("click", () => liteRun(panel, "設定一括取得（JSON）中…", async () => {
       const { summaryHtml } = await runSettingsExportStandalone(

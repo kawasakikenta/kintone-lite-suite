@@ -4180,16 +4180,18 @@ ${body}`;
     return String(name || "").replace(/[\\/:*?"<>|]/g, "_").replace(/[\u0000-\u001f]/g, "").trim() || "untitled";
   }
   async function runBatchDesignExportXlsxZip(params) {
+    const sharedGuest = String(params.guestId || "").trim();
+    const rawTargets = Array.isArray(params.apps) ? params.apps : (params.appIds || []).map((id) => ({ appId: id, guestId: sharedGuest }));
     const seen = /* @__PURE__ */ new Set();
-    const appIds = [];
-    for (const v of params.appIds || []) {
-      const id = String(v ?? "").trim();
+    const targets = [];
+    for (const t of rawTargets) {
+      const id = String(t?.appId ?? "").trim();
       if (!id || !/^\d+$/.test(id) || seen.has(id)) continue;
       seen.add(id);
-      appIds.push(id);
+      targets.push({ appId: id, guestId: String(t?.guestId || "").trim() });
     }
-    if (appIds.length === 0) throw new Error("有効なアプリIDが1件もありません。");
-    const guestId = String(params.guestId || "").trim();
+    if (targets.length === 0) throw new Error("有効なアプリIDが1件もありません。");
+    const appIds = targets.map((t) => t.appId);
     const selectedSheets = await showSheetSelectionDialog(resolveExportSheetDefs(), "📦 一括エクスポート設定");
     if (!selectedSheets) return false;
     const batchFieldTypeExclusion = loadPersistedFieldTypeExclusion() || /* @__PURE__ */ new Set();
@@ -4214,7 +4216,8 @@ ${body}`;
       cancelled = !!window.__kusBatchCancel;
       if (cancelled) break;
       const appId = appIds[i];
-      const label = `(${i + 1}/${appIds.length}) アプリ ${appId}:`;
+      const guestId = targets[i].guestId;
+      const label = `(${i + 1}/${appIds.length}) アプリ ${appId}${guestId ? ` (guest:${guestId})` : ""}:`;
       batchUi.update(`${label} 設計書を生成中...`, i + 2);
       try {
         const ret = await runAdvancedDesignExporter({
@@ -4273,7 +4276,8 @@ ${detail}`);
     manifestLines.push("kintone 設計書 一括出力マニフェスト");
     manifestLines.push(`出力日時: ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`);
     manifestLines.push(`対象アプリ数: ${appIds.length}（成功 ${successCount} / 失敗 ${appIds.length - successCount}）`);
-    if (guestId) manifestLines.push(`ゲストスペース: ${guestId}`);
+    const manifestGuestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
+    if (manifestGuestIds.length) manifestLines.push(`ゲストスペース: ${manifestGuestIds.join(", ")}`);
     manifestLines.push("");
     manifestLines.push("## 出力ファイル");
     for (const r of results) {
@@ -4292,7 +4296,8 @@ ${detail}`);
       appCount: appIds.length,
       successCount,
       failedCount: appIds.length - successCount,
-      guestId: guestId || null,
+      guestIds: manifestGuestIds,
+      targets,
       results,
       failedApis: failedAPIs
     }, null, 2));
@@ -4375,16 +4380,21 @@ ${detail}`);
     setStatus("設計書Excel出力完了");
   }
   async function runBatchDesignExportXlsxZipStandalone(source, setStatus) {
-    const appIds = String(source.appIdsText || "").split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
-    if (appIds.length === 0) throw new Error("アプリIDを1件以上入力してください（数値のみ、改行/カンマ/スペース区切り）");
-    const guestId = String(source.guestId || "").trim();
-    setStatus(`設計書ZIP出力を開始（${appIds.length}件）...`);
-    const done = await runBatchDesignExportXlsxZip({ appIds, guestId });
+    let apps;
+    if (Array.isArray(source.apps)) {
+      apps = source.apps.map((a) => ({ appId: String(a.appId || "").trim(), guestId: String(a.guestId || "").trim() })).filter((a) => /^\d+$/.test(a.appId));
+    } else {
+      const guestId = String(source.guestId || "").trim();
+      apps = String(source.appIdsText || "").split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s)).map((appId) => ({ appId, guestId }));
+    }
+    if (apps.length === 0) throw new Error("アプリIDを1件以上入力してください（数値のみ）");
+    setStatus(`設計書ZIP出力を開始（${apps.length}件）...`);
+    const done = await runBatchDesignExportXlsxZip({ apps });
     if (done === false) {
       setStatus("設計書ZIP出力をキャンセルしました");
       return;
     }
-    setStatus(`設計書ZIP出力完了（${appIds.length}件）`);
+    setStatus(`設計書ZIP出力完了（${apps.length}件）`);
   }
   function simpleLineDiffLite(oStr, nStr) {
     const oLines = oStr.split("\n");
@@ -4792,6 +4802,28 @@ ${diffMd}
 
 /* Wide variant (一部 lite 用に幅広にしたい場合) */
 .kus-lp--wide{width:min(640px,96vw)}
+
+/* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
+.kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
+.kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
+.kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
+.kus-lp__apptable tbody tr:last-child td{border-bottom:none}
+.kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
+.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-acts{white-space:nowrap}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:11px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
+.kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+@media(max-width:420px){
+  .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
+  .kus-lp__apptable thead{display:none}
+  .kus-lp__apptable tbody tr{border-bottom:1px solid var(--c-border);padding:6px 4px}
+  .kus-lp__apptable td{border:none;padding:3px 6px}
+  .kus-lp__apptable-no{text-align:left;font-weight:600}
+}
 `;
   function ensureThemeStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -4984,14 +5016,6 @@ ${diffMd}
     inp.className = "kus-lp__input" + (opts.width ? ` kus-lp__input--${opts.width}` : "");
     return inp;
   }
-  function makeTextarea(opts = {}) {
-    const t = document.createElement("textarea");
-    t.className = "kus-lp__textarea" + (opts.code ? " kus-lp__textarea--code" : "");
-    if (opts.rows) t.rows = opts.rows;
-    if (opts.placeholder) t.placeholder = opts.placeholder;
-    if (opts.value) t.value = opts.value;
-    return t;
-  }
   function makeButton(label, variant = "primary", opts = {}) {
     const b = document.createElement("button");
     b.type = "button";
@@ -5068,6 +5092,168 @@ ${diffMd}
     d.appendChild(s);
     d.appendChild(b);
     return { details: d, body: b };
+  }
+  function makeAppTable(opts = {}) {
+    const minRows = Math.max(1, opts.minRows ?? 1);
+    const wrap = document.createElement("div");
+    wrap.className = "kus-lp__apptable";
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    thead.innerHTML = '<tr><th class="kus-lp__apptable-no" scope="col">#</th><th scope="col">アプリID</th><th scope="col">ゲストID</th><th class="kus-lp__apptable-acts-h" scope="col">操作</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__apptable-foot";
+    const addBtn = makeButton("＋ 行を追加", "sub");
+    foot.appendChild(addBtn);
+    if (opts.currentAppId && /^\d+$/.test(String(opts.currentAppId).trim())) {
+      const curBtn = makeButton("現在のアプリ", "sub");
+      curBtn.title = "今開いているアプリのIDを空き行に入れます";
+      curBtn.addEventListener("click", () => {
+        const id = String(opts.currentAppId).trim();
+        if (rows.some((r) => r.app.value.trim() === id)) return;
+        const empty = rows.find((r) => !r.app.value.trim());
+        if (empty) {
+          empty.app.value = id;
+          empty.app.focus();
+        } else insertRow(rows.length, id, "", true);
+        emitChange();
+      });
+      foot.appendChild(curBtn);
+    }
+    const count = document.createElement("span");
+    count.className = "kus-lp__apptable-count";
+    foot.appendChild(count);
+    wrap.appendChild(foot);
+    const rows = [];
+    function getApps() {
+      const seen = /* @__PURE__ */ new Set();
+      const out = [];
+      for (const r of rows) {
+        const appId = r.app.value.trim();
+        if (!appId) continue;
+        const guestId = r.guest.value.trim();
+        const key = `${appId}::${guestId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ appId, guestId });
+      }
+      return out;
+    }
+    function getAllRows() {
+      return rows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim() }));
+    }
+    function refresh() {
+      rows.forEach((r, i) => {
+        const no = r.tr.querySelector(".kus-lp__apptable-no");
+        if (no) no.textContent = String(i + 1);
+        r.copyBtn.disabled = i === 0;
+      });
+      const n = getApps().length;
+      count.textContent = n ? `${n} アプリ` : "未入力";
+    }
+    function emitChange() {
+      refresh();
+      opts.onChange?.(getApps());
+    }
+    function removeRow(entry) {
+      if (rows.length <= minRows) {
+        entry.app.value = "";
+        entry.guest.value = "";
+        emitChange();
+        return;
+      }
+      const idx = rows.indexOf(entry);
+      if (idx >= 0) rows.splice(idx, 1);
+      entry.tr.remove();
+      emitChange();
+    }
+    function insertRow(index, appId = "", guestId = "", focus = false) {
+      const tr = document.createElement("tr");
+      const tdNo = document.createElement("td");
+      tdNo.className = "kus-lp__apptable-no";
+      const tdApp = document.createElement("td");
+      const tdGuest = document.createElement("td");
+      const tdAct = document.createElement("td");
+      tdAct.className = "kus-lp__apptable-acts";
+      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID", ariaLabel: "アプリID" });
+      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストID" });
+      app.value = appId;
+      guest.value = guestId;
+      const copyBtn = makeButton("↑コピー", "sub");
+      copyBtn.title = "上の行のアプリID・ゲストIDをこの行へコピー";
+      const dupBtn = makeButton("複製", "sub");
+      dupBtn.title = "この行を下に複製";
+      const delBtn = makeButton("×", "ghost");
+      delBtn.title = "この行を削除";
+      tdApp.appendChild(app);
+      tdGuest.appendChild(guest);
+      tdAct.appendChild(copyBtn);
+      tdAct.appendChild(dupBtn);
+      tdAct.appendChild(delBtn);
+      tr.appendChild(tdNo);
+      tr.appendChild(tdApp);
+      tr.appendChild(tdGuest);
+      tr.appendChild(tdAct);
+      const entry = { tr, app, guest, copyBtn };
+      copyBtn.addEventListener("click", () => {
+        const idx = rows.indexOf(entry);
+        if (idx <= 0) return;
+        const prev = rows[idx - 1];
+        app.value = prev.app.value;
+        guest.value = prev.guest.value;
+        app.focus();
+        emitChange();
+      });
+      dupBtn.addEventListener("click", () => {
+        const idx = rows.indexOf(entry);
+        const ne = insertRow(idx + 1, app.value.trim(), guest.value.trim(), true);
+        ne.app.focus();
+        emitChange();
+      });
+      delBtn.addEventListener("click", () => removeRow(entry));
+      app.addEventListener("input", emitChange);
+      guest.addEventListener("input", emitChange);
+      const at = Math.min(Math.max(index, 0), rows.length);
+      if (at >= rows.length) tbody.appendChild(tr);
+      else tbody.insertBefore(tr, rows[at].tr);
+      rows.splice(at, 0, entry);
+      refresh();
+      if (focus) app.focus();
+      return entry;
+    }
+    addBtn.addEventListener("click", () => {
+      const e = insertRow(rows.length, "", "", true);
+      e.app.focus();
+      emitChange();
+    });
+    function setApps(list) {
+      rows.splice(0).forEach((r) => r.tr.remove());
+      tbody.innerHTML = "";
+      const src = Array.isArray(list) && list.length ? list : [{ appId: "", guestId: "" }];
+      src.forEach((r) => insertRow(rows.length, String(r.appId || "").trim(), String(r.guestId || "").trim()));
+      while (rows.length < minRows) insertRow(rows.length, "", "");
+      emitChange();
+    }
+    setApps(opts.initial || []);
+    return {
+      element: wrap,
+      getApps,
+      getAllRows,
+      first: () => {
+        const r = rows[0];
+        return r ? { appId: r.app.value.trim(), guestId: r.guest.value.trim() } : { appId: "", guestId: "" };
+      },
+      addRow: (appId = "", guestId = "", o = {}) => {
+        insertRow(rows.length, appId, guestId, !!o.focus);
+        emitChange();
+      },
+      setApps,
+      clear: () => setApps([]),
+      count: () => getApps().length
+    };
   }
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
@@ -5245,18 +5431,30 @@ ${diffMd}
       subtitle: "アプリ設定を取得し、Markdown / JSON / Excel で設計書を出力します。",
       accent: "design",
       badges: [{ label: "Lite" }, { label: "4 形式出力" }],
-      hint: "Excel 出力は SheetJS / 設計書テンプレートを内蔵。ZIP 一括出力で多アプリを一度に処理できます。"
+      hint: "対象アプリ表に 1 行入力すれば 1 アプリ出力、複数行で ZIP 一括出力。<strong>アプリごとに別ゲストスペース</strong>も指定できます。"
     });
-    const cardSingle = makeCard({ title: "単アプリ出力", number: 1 });
-    const appInp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id" });
-    const guestInp = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
+    const cardTarget = makeCard({ title: "対象アプリ", number: 1 });
+    const appTable = makeAppTable({
+      currentAppId: String(DEFAULT_APP_ID || ""),
+      initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: "" }] : []
+    });
+    cardTarget.body.appendChild(appTable.element);
     const prev = makeCheck({ label: "プレビュー環境から取得" });
-    cardSingle.body.appendChild(makeRow([appInp, guestInp, prev.label], { label: "対象" }));
-    const source = () => ({
-      appId: appInp.value.trim(),
-      guestId: guestInp.value.trim(),
-      preview: prev.checkbox.checked
-    });
+    cardTarget.body.appendChild(makeRow([prev.label], { label: "取得環境" }));
+    cardTarget.body.appendChild(makeNote("単一出力（Markdown / JSON / Excel / コピー）は1行目のアプリが対象です。ZIP 一括出力は表の全行を対象にします。各行「↑コピー」で上の行を複製できます。"));
+    panel.body.insertBefore(cardTarget.card, panel.status);
+    const source = () => {
+      const r = appTable.first();
+      return { appId: r.appId, guestId: r.guestId, preview: prev.checkbox.checked };
+    };
+    const requireFirstApp = () => {
+      if (!appTable.first().appId) {
+        panel.setStatus("対象アプリ表の1行目にアプリIDを入力してください", "warn");
+        return false;
+      }
+      return true;
+    };
+    const cardOut = makeCard({ title: "出力（1行目のアプリ）", number: 2 });
     const grid = document.createElement("div");
     grid.className = "kus-lp__btn-grid";
     const bMd = makeButton("Markdown 保存", "primary", { icon: "↓" });
@@ -5267,73 +5465,78 @@ ${diffMd}
     grid.appendChild(bXlsx);
     grid.appendChild(bJson);
     grid.appendChild(bCopy);
-    cardSingle.body.appendChild(grid);
-    bMd.addEventListener("click", () => liteRun(panel, "設計書 Markdown 生成中…", async () => {
-      await runDesignExportStandalone("md", source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
-    }));
-    bJson.addEventListener("click", () => liteRun(panel, "設計書 JSON 生成中…", async () => {
-      await runDesignExportStandalone("json", source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
-    }));
-    bCopy.addEventListener("click", () => liteRun(panel, "Markdown コピー中…", async () => {
-      await runDesignCopyMdStandalone(source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
-    }));
-    bXlsx.addEventListener("click", () => liteRun(panel, "Excel 生成中…", async () => {
-      await runDesignExportXlsxStandalone(source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
-    }));
-    panel.body.insertBefore(cardSingle.card, panel.status);
+    cardOut.body.appendChild(grid);
+    panel.body.insertBefore(cardOut.card, panel.status);
+    bMd.addEventListener("click", () => {
+      if (!requireFirstApp()) return;
+      liteRun(panel, "設計書 Markdown 生成中…", async () => {
+        await runDesignExportStandalone("md", source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+      });
+    });
+    bJson.addEventListener("click", () => {
+      if (!requireFirstApp()) return;
+      liteRun(panel, "設計書 JSON 生成中…", async () => {
+        await runDesignExportStandalone("json", source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+      });
+    });
+    bCopy.addEventListener("click", () => {
+      if (!requireFirstApp()) return;
+      liteRun(panel, "Markdown コピー中…", async () => {
+        await runDesignCopyMdStandalone(source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+      });
+    });
+    bXlsx.addEventListener("click", () => {
+      if (!requireFirstApp()) return;
+      liteRun(panel, "Excel 生成中…", async () => {
+        await runDesignExportXlsxStandalone(source(), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
+      });
+    });
+    const cardBatch = makeCard({ title: "複数アプリ一括 ZIP 出力（Excel）", number: 3, soft: true });
+    cardBatch.body.appendChild(makeNote("シート選択は最初の 1 アプリで 1 回だけ表示し、以降は同じ設定を全アプリに適用します。アプリごとのゲストスペースは表の各行に従います。"));
+    const bBatchZip = makeButton("対象アプリの設計書 ZIP を保存", "primary", { icon: "↓" });
+    bBatchZip.style.width = "100%";
+    cardBatch.body.appendChild(bBatchZip);
+    bBatchZip.addEventListener("click", () => {
+      const apps = appTable.getApps();
+      if (!apps.length) {
+        panel.setStatus("対象アプリ表にアプリIDを1件以上入力してください", "warn");
+        return;
+      }
+      liteRun(panel, "複数アプリ Excel 生成中…", async () => {
+        await runBatchDesignExportXlsxZipStandalone(
+          { apps },
+          (m, e) => panel.setStatus(m, e ? "err" : "busy")
+        );
+      });
+    });
+    panel.body.insertBefore(cardBatch.card, panel.status);
     const diffDetails = makeDetails("2 アプリ間の設計差分を Markdown で出力");
-    const cmpApp = makeInput({ placeholder: "比較先アプリID", width: "id" });
-    const cmpGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
-    const cmpPrev = makeCheck({ label: "プレビュー環境から取得" });
-    diffDetails.body.appendChild(makeRow([cmpApp, cmpGuest, cmpPrev.label], { label: "比較先" }));
-    diffDetails.body.appendChild(makeNote("比較元（上のアプリID）と比較先で設計書 MD を生成し、差分レポートを保存します。簡易行差分のため大きな構造変更は文脈が崩れる場合があります。"));
+    diffDetails.body.appendChild(makeNote("表の 1 行目を比較元、2 行目を比較先として設計書 MD を生成し、差分レポートを保存します。2 行以上入力してください。簡易行差分のため大きな構造変更は文脈が崩れる場合があります。"));
     const bDiff = makeButton("設計書差分 MD を保存", "primary", { icon: "↓" });
     bDiff.style.width = "100%";
     diffDetails.body.appendChild(bDiff);
     panel.body.insertBefore(diffDetails.details, panel.status);
-    bDiff.addEventListener("click", () => liteRun(panel, "設計書差分 MD 生成中…", async () => {
-      await runDesignDiffMdStandalone(
-        {
-          source: source(),
-          target: {
-            appId: cmpApp.value.trim(),
-            guestId: cmpGuest.value.trim(),
-            preview: cmpPrev.checkbox.checked
-          }
-        },
-        (m, e) => panel.setStatus(m, e ? "err" : "busy")
-      );
-    }));
-    const batchDetails = makeDetails("複数アプリ一括 ZIP 出力（Excel）");
-    const batchIds = makeTextarea({ rows: 3, code: true, placeholder: "例: 74, 120, 305  （カンマ・改行・スペース区切り）" });
-    batchDetails.body.appendChild(batchIds);
-    batchDetails.body.appendChild(makeNote("シート選択は最初の 1 アプリで 1 回だけ表示し、以降は同じ設定を全アプリに適用します。"));
-    const bBatchZip = makeButton("複数アプリの設計書 ZIP を保存", "primary", { icon: "↓" });
-    bBatchZip.style.width = "100%";
-    batchDetails.body.appendChild(bBatchZip);
-    bBatchZip.addEventListener("click", () => liteRun(panel, "複数アプリ Excel 生成中…", async () => {
-      await runBatchDesignExportXlsxZipStandalone(
-        { appIdsText: batchIds.value, guestId: guestInp.value.trim() },
-        (m, e) => panel.setStatus(m, e ? "err" : "busy")
-      );
-    }));
-    panel.body.insertBefore(batchDetails.details, panel.status);
-    cardSingle.body.appendChild(createAppSearchControl(panel, {
-      guestEl: guestInp,
+    bDiff.addEventListener("click", () => {
+      const all = appTable.getAllRows().filter((r) => r.appId);
+      if (all.length < 2) {
+        panel.setStatus("差分には対象アプリ表に2行以上のアプリIDが必要です", "warn");
+        return;
+      }
+      liteRun(panel, "設計書差分 MD 生成中…", async () => {
+        await runDesignDiffMdStandalone(
+          {
+            source: { appId: all[0].appId, guestId: all[0].guestId, preview: prev.checkbox.checked },
+            target: { appId: all[1].appId, guestId: all[1].guestId, preview: prev.checkbox.checked }
+          },
+          (m, e) => panel.setStatus(m, e ? "err" : "busy")
+        );
+      });
+    });
+    cardTarget.body.appendChild(createAppSearchControl(panel, {
       targets: [
-        { label: "単アプリ", apply: (id, _name, guestId) => {
-          appInp.value = id;
-          if (guestId && !guestInp.value.trim()) guestInp.value = guestId;
-        } },
-        { label: "比較先", apply: (id, _name, guestId) => {
-          cmpApp.value = id;
-          if (guestId && !cmpGuest.value.trim()) cmpGuest.value = guestId;
-        } },
-        { label: "一括リスト", apply: (id) => {
-          const ids = new Set(batchIds.value.split(/[\s,]+/).map((v) => v.trim()).filter(Boolean));
-          ids.add(id);
-          batchIds.value = [...ids].join(", ");
-          batchDetails.details.open = true;
+        { label: "表に追加", apply: (id, _name, guestId) => {
+          appTable.addRow(id, guestId || "");
+          panel.setStatus(`アプリ #${id} を対象表に追加しました`, "info");
         } }
       ]
     }));

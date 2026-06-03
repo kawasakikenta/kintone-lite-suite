@@ -1360,10 +1360,11 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <span class="diff-fold-sub">対象アプリIDを並べて指定し、1つのZIPにまとめて保存</span>
                 </summary>
                 <div class="diff-fold-body">
-              <div class="muted" style="margin-top:0;line-height:1.6">対象アプリIDを改行・カンマ・スペース区切りで指定します。シート選択ダイアログは最初に1回だけ表示し、すべてのアプリに同じ設定が適用されます。ゲストスペースIDは比較元と同じ値が使われます。</div>
-              <div class="row" style="margin-top:8px">
-                <label for="u_designBatchAppIds">対象アプリID</label>
-                <textarea id="u_designBatchAppIds" style="min-height:80px" placeholder="74, 120, 305" title="カンマ・改行・スペース区切りで複数指定"></textarea>
+              <div class="muted" style="margin-top:0;line-height:1.6">対象アプリを行ごとに指定します（1 行で 1 アプリ、複数行で一括）。シート選択ダイアログは最初に1回だけ表示し、すべてのアプリに同じ設定が適用されます。ゲストスペースはアプリごとに行で指定でき、空欄の行は比較元のゲストIDが使われます。各行「↑コピー」で上の行を複製できます。</div>
+              <div class="row" style="margin-top:8px;display:block">
+                <label for="u_designBatchAppIds">対象アプリ（アプリごとにゲストスペース指定可）</label>
+                <textarea id="u_designBatchAppIds" hidden aria-hidden="true"></textarea>
+                <div id="u_designBatchAppTable" data-app-target-table="designBatch" data-mirror="u_designBatchAppIds" style="margin-top:4px"></div>
               </div>
               <div class="btns" style="margin-top:8px">
                 <button type="button" class="btn dark" data-act="exportDesignXlsxBatchZip" title="指定アプリの設計書ExcelをまとめてZIPで保存します">設計書ZIP出力（一括）</button>
@@ -1890,8 +1891,10 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <div class="muted" style="margin-top:0;line-height:1.6">複数アプリの設定をまとめてバックアップします。レコードデータや添付ファイル本体は含まず、JS/CSS は <code>customize.json</code> として保存します。必要に応じてプラグイン設定も一緒に保存できます。</div>
               <div class="grid2" style="margin-top:8px">
                 <div>
-                  <label title="取得するアプリの数値IDを列挙">対象アプリID（カンマ/改行区切り）</label>
-                  <textarea id="u_settingsExportAppIds" style="min-height:88px" placeholder="74, 120, 305" title="カンマ・改行・スペース区切りで複数指定"></textarea>
+                  <label title="取得するアプリの数値IDとゲストスペースを行ごとに指定">対象アプリ（アプリごとにゲストスペース指定可）</label>
+                  <textarea id="u_settingsExportAppIds" hidden aria-hidden="true"></textarea>
+                  <div id="u_settingsExportAppTable" data-app-target-table="settingsExport" data-mirror="u_settingsExportAppIds"></div>
+                  <div class="muted" style="margin-top:6px;line-height:1.55;font-size:11px">1 行で 1 アプリ、複数行で一括取得。各行「↑コピー」で上の行のアプリID・ゲストIDを複製できます。</div>
                   <div class="inline" style="margin-top:8px">
                     <input type="text" id="u_settingsExportSearchKeyword" placeholder="アプリ名で検索" style="flex:1" title="スペース内のアプリを名前で検索し結果からIDを選べます">
                     <button type="button" class="btn sub" data-act="settingsExportSearchApps">検索</button>
@@ -1903,8 +1906,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <div class="result" id="u_settingsExportSearchResult" style="max-height:140px;margin-top:6px"></div>
                 </div>
                 <div>
-                  <label title="ゲストスペース利用時は共通のゲストID">ゲストID（任意 / 全アプリ共通）</label>
-                  <input type="text" id="u_settingsExportGuest" placeholder="空で通常空間" title="空欄で通常スペース">
+                  <label title="アプリ検索・スペース取得で照会するゲストスペースID。表に追加される行の既定ゲストにも使われます">検索用ゲストID（任意）</label>
+                  <input type="text" id="u_settingsExportGuest" placeholder="空で通常空間" title="アプリ検索/スペース取得に使うゲストID。表の各行で個別に上書きできます">
                   <label class="chip" style="margin-top:8px" title="プレビュー環境の設定JSONを取得します"><input type="checkbox" id="u_settingsExportPreview"> プレビュー設定を取得</label>
                   <label class="chip" style="margin-top:8px" title="APIラボのプラグイン設定取得APIも試します。取得できない場合はバックアップ自体は継続します。"><input type="checkbox" id="u_settingsExportIncludePluginConfig"> プラグイン設定も取得</label>
                   <div class="btns" style="margin-top:8px">
