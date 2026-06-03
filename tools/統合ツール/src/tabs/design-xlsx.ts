@@ -2266,17 +2266,26 @@ function sanitizeFilename(name: string): string {
  * @param params.guestId ゲストスペースID（任意）
  * @returns 生成・ダウンロードまで完了したら true、キャンセル時 false。
  */
-export async function runBatchDesignExportXlsxZip(params: { appIds: Array<string | number>; guestId?: string }): Promise<boolean> {
+export async function runBatchDesignExportXlsxZip(params: {
+  apps?: Array<{ appId: string | number; guestId?: string }>;
+  appIds?: Array<string | number>;
+  guestId?: string;
+}): Promise<boolean> {
+  // apps（アプリごとに別ゲスト）優先。無ければ appIds + 共通 guestId にフォールバック。
+  const sharedGuest = String(params.guestId || '').trim();
+  const rawTargets: Array<{ appId: string | number; guestId?: string }> = Array.isArray(params.apps)
+    ? params.apps
+    : (params.appIds || []).map((id) => ({ appId: id, guestId: sharedGuest }));
   const seen = new Set<string>();
-  const appIds: string[] = [];
-  for (const v of (params.appIds || [])) {
-    const id = String(v ?? '').trim();
+  const targets: Array<{ appId: string; guestId: string }> = [];
+  for (const t of rawTargets) {
+    const id = String(t?.appId ?? '').trim();
     if (!id || !/^\d+$/.test(id) || seen.has(id)) continue;
     seen.add(id);
-    appIds.push(id);
+    targets.push({ appId: id, guestId: String(t?.guestId || '').trim() });
   }
-  if (appIds.length === 0) throw new Error('有効なアプリIDが1件もありません。');
-  const guestId = String(params.guestId || '').trim();
+  if (targets.length === 0) throw new Error('有効なアプリIDが1件もありません。');
+  const appIds = targets.map((t) => t.appId);
 
   // 1. シート選択を最初に1回だけ取得
   const selectedSheets = await showSheetSelectionDialog(resolveExportSheetDefs(), "📦 一括エクスポート設定");
@@ -2310,7 +2319,8 @@ export async function runBatchDesignExportXlsxZip(params: { appIds: Array<string
     cancelled = !!(window as any).__kusBatchCancel;
     if (cancelled) break;
     const appId = appIds[i];
-    const label = `(${i + 1}/${appIds.length}) アプリ ${appId}:`;
+    const guestId = targets[i].guestId;
+    const label = `(${i + 1}/${appIds.length}) アプリ ${appId}${guestId ? ` (guest:${guestId})` : ''}:`;
     batchUi.update(`${label} 設計書を生成中...`, i + 2);
     try {
       const ret = await runAdvancedDesignExporter({
@@ -2380,7 +2390,8 @@ export async function runBatchDesignExportXlsxZip(params: { appIds: Array<string
   manifestLines.push('kintone 設計書 一括出力マニフェスト');
   manifestLines.push(`出力日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
   manifestLines.push(`対象アプリ数: ${appIds.length}（成功 ${successCount} / 失敗 ${appIds.length - successCount}）`);
-  if (guestId) manifestLines.push(`ゲストスペース: ${guestId}`);
+  const manifestGuestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
+  if (manifestGuestIds.length) manifestLines.push(`ゲストスペース: ${manifestGuestIds.join(', ')}`);
   manifestLines.push('');
   manifestLines.push('## 出力ファイル');
   for (const r of results) {
@@ -2399,7 +2410,8 @@ export async function runBatchDesignExportXlsxZip(params: { appIds: Array<string
     appCount: appIds.length,
     successCount,
     failedCount: appIds.length - successCount,
-    guestId: guestId || null,
+    guestIds: manifestGuestIds,
+    targets,
     results,
     failedApis: failedAPIs
   }, null, 2));

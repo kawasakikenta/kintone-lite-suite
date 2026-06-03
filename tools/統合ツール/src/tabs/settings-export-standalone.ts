@@ -27,6 +27,7 @@ export function renderSettingsExportSummaryHtml(rows, scopes) {
     .map(
       (r) => `<tr>
     <td>${esc(r.appId)}</td>
+    <td>${esc(r.guestId ? `guest:${r.guestId}` : '通常')}</td>
     <td>${esc(String(r.okCount))}</td>
     <td>${esc(String(r.ngCount))}</td>
     <td>${esc(r.note || '-')}</td>
@@ -36,8 +37,8 @@ export function renderSettingsExportSummaryHtml(rows, scopes) {
   return `
     <div style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;background:#f8fafc">対象セクション: ${esc(labels || '-')}</div>
     <table style="width:100%;font-size:11px;border-collapse:collapse">
-      <thead><tr><th style="text-align:left;padding:4px">アプリID</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
-      <tbody>${body || '<tr><td colspan="4">結果なし</td></tr>'}</tbody>
+      <thead><tr><th style="text-align:left;padding:4px">アプリID</th><th>ゲスト</th><th>取得OK</th><th>取得NG</th><th>メモ</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="5">結果なし</td></tr>'}</tbody>
     </table>
   `;
 }
@@ -104,28 +105,76 @@ export async function runSettingsExportAddSpaceStandalone(
   return ordered.join('\n');
 }
 
+/**
+ * スペース内の全アプリIDを配列で返す（表形式 UI に行として追加する用途）。
+ */
+export async function runSettingsExportListSpaceAppsStandalone(
+  spaceId: any,
+  guestId: any,
+  setStatus: (msg: string, isError?: boolean) => void
+): Promise<string[]> {
+  const sid = String(spaceId || '').trim();
+  if (!/^\d+$/.test(sid)) throw new Error('スペースIDを数値で入力してください');
+  setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
+  const apps = await fetchAppsInSpace(sid, guestId);
+  if (!apps.length) {
+    setStatus(`スペース ${sid} に取得対象アプリがありませんでした`, true);
+    return [];
+  }
+  setStatus(`スペース ${sid} のアプリ ${apps.length}件を取得しました`);
+  return apps.map((a) => a.appId);
+}
+
+/**
+ * 対象アプリ（appId + アプリごとのゲストスペース）のリストを正規化する。
+ * - opts.apps（[{appId, guestId}]）があればそれを優先（アプリごとに別ゲスト対応）
+ * - 旧来の opts.appIdsText + opts.guestId（全アプリ共通ゲスト）も受け付ける
+ */
+function resolveExportTargets(opts: any): Array<{ appId: string; guestId: string }> {
+  const out: Array<{ appId: string; guestId: string }> = [];
+  const seen = new Set<string>();
+  const push = (appId: string, guestId: string) => {
+    const id = String(appId || '').trim();
+    if (!/^\d+$/.test(id)) return;
+    const g = String(guestId || '').trim();
+    const key = `${id}::${g}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ appId: id, guestId: g });
+  };
+  if (Array.isArray(opts.apps)) {
+    for (const a of opts.apps) push(a?.appId, a?.guestId);
+  } else {
+    const guestId = String(opts.guestId || '').trim();
+    for (const id of parseAppIdList(opts.appIdsText)) push(id, guestId);
+  }
+  return out;
+}
+
 export async function runSettingsExportStandalone(mode: string, opts: any, setStatus: (msg: string, isError?: boolean) => void) {
-  const appIds = parseAppIdList(opts.appIdsText);
-  if (!appIds.length) throw new Error('対象アプリIDを1件以上入力してください');
+  const targets = resolveExportTargets(opts);
+  if (!targets.length) throw new Error('対象アプリIDを1件以上入力してください');
   const scopes = selectedScopeKeys(opts.scopeRoot);
   if (!scopes.length) throw new Error('取得対象セクションを選択してください');
 
-  const guestId = String(opts.guestId || '').trim();
   const preview = !!opts.preview;
 
   const bundles = [];
   const rows = [];
-  for (let i = 0; i < appIds.length; i++) {
-    const appId = appIds[i];
-    setStatus(`設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId}`);
+  for (let i = 0; i < targets.length; i++) {
+    const { appId, guestId } = targets[i];
+    const guestNote = guestId ? ` (guest:${guestId})` : '';
+    setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote}`);
     const bundle = await fetchBundle({
       appId,
       guestId,
       preview,
       sections: scopes,
       onProgress: (p, l) =>
-        setStatus(`設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId} ${Math.round(p * 100)}% (${l})`)
+        setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
     });
+    // ゲストスペース情報を bundle にも残しておく（ファイル名・突合用）
+    if (guestId && !(bundle as any).guestId) (bundle as any).guestId = guestId;
     bundles.push(bundle);
 
     let okCount = 0;
@@ -135,13 +184,15 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
       if (sec && sec._fetchError) ngCount += 1;
       else okCount += 1;
     }
-    rows.push({ appId, okCount, ngCount, note: ngCount ? '一部セクション取得失敗あり' : 'OK' });
+    rows.push({ appId, guestId, okCount, ngCount, note: ngCount ? '一部セクション取得失敗あり' : 'OK' });
   }
 
+  const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
   const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
   const payload = {
     generatedAt: new Date().toISOString(),
-    guestId: guestId || '',
+    guestIds,
+    targets,
     preview,
     scopes,
     scopeLabels,
@@ -156,7 +207,8 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
       JSON.stringify(
         {
           generatedAt: payload.generatedAt,
-          guestId: payload.guestId,
+          guestIds,
+          targets,
           preview: payload.preview,
           scopes: payload.scopes,
           appCount: bundles.length
@@ -165,7 +217,9 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
         2
       )
     );
-    for (const bundle of bundles) {
+    for (let i = 0; i < bundles.length; i++) {
+      const bundle = bundles[i];
+      const guestId = targets[i].guestId;
       const suffix = `${guestId ? `_guest_${guestId}` : ''}${preview ? '_preview' : '_live'}`;
       const name = `app_${bundle.appId}${suffix}.json`;
       zip.file(name, JSON.stringify(bundle, null, 2));

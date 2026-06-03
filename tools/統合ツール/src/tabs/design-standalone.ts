@@ -84,27 +84,35 @@ export async function runDesignExportXlsxStandalone(source, setStatus) {
 
 /**
  * 複数アプリの設計書を1つの ZIP にまとめて出力する（Lite パネル用）。
- * @param source.appIdsText 改行/カンマ/スペース区切りのアプリID一覧
- * @param source.guestId ゲストスペースID（任意）
+ * - source.apps: [{appId, guestId}]（アプリごとに別ゲストスペース対応）を優先
+ * - 旧来の source.appIdsText + source.guestId（全アプリ共通ゲスト）も受け付ける
  * @param setStatus 進捗メッセージ
  */
 export async function runBatchDesignExportXlsxZipStandalone(
-  source: { appIdsText: string; guestId?: string },
+  source: { apps?: Array<{ appId: string; guestId?: string }>; appIdsText?: string; guestId?: string },
   setStatus: (msg: string, err?: boolean) => void
 ) {
-  const appIds = String(source.appIdsText || '')
-    .split(/[\s,]+/)
-    .map((s) => s.trim())
-    .filter((s) => /^\d+$/.test(s));
-  if (appIds.length === 0) throw new Error('アプリIDを1件以上入力してください（数値のみ、改行/カンマ/スペース区切り）');
-  const guestId = String(source.guestId || '').trim();
-  setStatus(`設計書ZIP出力を開始（${appIds.length}件）...`);
-  const done = await runBatchDesignExportXlsxZip({ appIds, guestId });
+  let apps: Array<{ appId: string; guestId: string }>;
+  if (Array.isArray(source.apps)) {
+    apps = source.apps
+      .map((a) => ({ appId: String(a.appId || '').trim(), guestId: String(a.guestId || '').trim() }))
+      .filter((a) => /^\d+$/.test(a.appId));
+  } else {
+    const guestId = String(source.guestId || '').trim();
+    apps = String(source.appIdsText || '')
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter((s) => /^\d+$/.test(s))
+      .map((appId) => ({ appId, guestId }));
+  }
+  if (apps.length === 0) throw new Error('アプリIDを1件以上入力してください（数値のみ）');
+  setStatus(`設計書ZIP出力を開始（${apps.length}件）...`);
+  const done = await runBatchDesignExportXlsxZip({ apps });
   if (done === false) {
     setStatus('設計書ZIP出力をキャンセルしました');
     return;
   }
-  setStatus(`設計書ZIP出力完了（${appIds.length}件）`);
+  setStatus(`設計書ZIP出力完了（${apps.length}件）`);
 }
 
 function simpleLineDiffLite(oStr: string, nStr: string): string {

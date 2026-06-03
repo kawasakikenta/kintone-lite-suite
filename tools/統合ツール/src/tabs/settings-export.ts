@@ -9,18 +9,40 @@ import { setStatus } from '../ui/components.js';
 import { commonParams, saveCurrentDialogState } from './diff.js';
 import { parseAppIdList } from './field.js';
 import { loadJSZip } from './record.js';
+import { getAppTargetTable } from '../ui/appTargetTable.js';
+
+/**
+ * 設定一括取得の対象（appId + アプリごとのゲストスペース）を解決する。
+ * 表（appTargetTable）が初期化されていればそれを優先し、無ければ旧来の
+ * テキストエリア + 共通ゲストID から組み立てる。
+ */
+function resolveSettingsExportTargets(): Array<{ appId: string; guestId: string }> {
+  const table = getAppTargetTable('settingsExport');
+  if (table) {
+    const targets = table.getTargets();
+    if (targets.length) return targets;
+  }
+  const guestId = ui.settingsExportGuest.value.trim();
+  return parseAppIdList(ui.settingsExportAppIds.value).map((appId) => ({ appId, guestId }));
+}
 
 // ---------------------------------------------------------------------------
 // Add app ID to settings export
 // ---------------------------------------------------------------------------
 
 export function addAppIdToSettingsExport(appId, appName) {
-  if (!/^\d+$/.test(String(appId || '').trim())) return;
-  const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
-  set.add(String(appId).trim());
-  ui.settingsExportAppIds.value = [...set].join(', ');
+  const id = String(appId || '').trim();
+  if (!/^\d+$/.test(id)) return;
+  const table = getAppTargetTable('settingsExport');
+  if (table) {
+    table.addRow(id, ui.settingsExportGuest.value.trim());
+  } else {
+    const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
+    set.add(id);
+    ui.settingsExportAppIds.value = [...set].join(', ');
+  }
   saveCurrentDialogState();
-  setStatus(`アプリ ${appId}${appName ? ` (${appName})` : ''} を追加しました`);
+  setStatus(`アプリ ${id}${appName ? ` (${appName})` : ''} を追加しました`);
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +102,15 @@ export async function addSpaceAppsToSettingsExport() {
     setStatus(`スペース ${spaceId} に取得対象アプリがありませんでした`, true);
     return;
   }
+  const table = getAppTargetTable('settingsExport');
+  if (table) {
+    const before = table.getTargets().length;
+    apps.forEach((a) => table.addRow(a.appId, guestId));
+    const after = table.getTargets().length;
+    saveCurrentDialogState();
+    setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を読み込みました（新規追加 ${after - before}件 / 合計 ${after}件）`);
+    return;
+  }
   const set = new Set(parseAppIdList(ui.settingsExportAppIds.value));
   const before = set.size;
   apps.forEach((a) => set.add(a.appId));
@@ -107,9 +138,8 @@ export function renderSettingsExportSummary(rows, scopes) {
     const canLoad = stashedById.has(idStr);
     const bundle = stashedById.get(idStr);
     const appName = bundle ? extractAppNameFromBundle(bundle) : '';
-    const idCell = appName
-      ? `<div style="display:flex;flex-direction:column;line-height:1.3;"><span>${esc(idStr)}</span><span style="font-size:10px;color:#64748b;">${esc(appName)}</span></div>`
-      : esc(idStr);
+    const guestStr = r.guestId ? `guest:${r.guestId}` : '通常スペース';
+    const idCell = `<div style="display:flex;flex-direction:column;line-height:1.3;"><span>${esc(idStr)}</span>${appName ? `<span style="font-size:10px;color:#64748b;">${esc(appName)}</span>` : ''}<span style="font-size:10px;color:#94a3b8;">${esc(guestStr)}</span></div>`;
     const loadCell = canLoad
       ? `<div class="settings-export-load-actions">
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="source" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較元」としてセットし差分タブへ移動">比較元へ</button>
@@ -244,28 +274,29 @@ async function fetchPluginConfigBackup({ appId, guestId, preview, existingPlugin
 // ---------------------------------------------------------------------------
 
 export async function runSettingsExport(mode) {
-  const appIds = parseAppIdList(ui.settingsExportAppIds.value);
-  if (!appIds.length) throw new Error('対象アプリIDを1件以上入力してください');
+  const targets = resolveSettingsExportTargets();
+  if (!targets.length) throw new Error('対象アプリIDを1件以上入力してください');
   const scopes = selectedScopeKeys(ui.settingsExportScopes);
   if (!scopes.length) throw new Error('取得対象セクションを選択してください');
 
-  const guestId = ui.settingsExportGuest.value.trim();
   const preview = !!ui.settingsExportPreview.checked;
   const includePluginConfig = !!ui.settingsExportIncludePluginConfig?.checked;
   saveCurrentDialogState();
 
   const bundles = [];
   const rows = [];
-  for (let i = 0; i < appIds.length; i++) {
-    const appId = appIds[i];
-    setStatus(`設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId}`);
+  for (let i = 0; i < targets.length; i++) {
+    const { appId, guestId } = targets[i];
+    const guestNote = guestId ? ` (guest:${guestId})` : '';
+    setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote}`);
     const bundle = await fetchBundle({
       appId,
       guestId,
       preview,
       sections: scopes,
-      onProgress: (p, l) => setStatus(`設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId} ${Math.round(p * 100)}% (${l})`)
+      onProgress: (p, l) => setStatus(`設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${Math.round(p * 100)}% (${l})`)
     });
+    if (guestId && !(bundle as any).guestId) (bundle as any).guestId = guestId;
     bundles.push(bundle);
 
     let okCount = 0;
@@ -285,7 +316,7 @@ export async function runSettingsExport(mode) {
         existingPluginList: bundle?.sections?.pluginSettings?.plugins,
         onProgress: (pluginIndex: number, pluginTotal: number, plugin: any) => {
           const pluginName = String(plugin?.name || plugin?.id || '');
-          setStatus(`プラグイン設定取得中 ${i + 1}/${appIds.length}: アプリ ${appId} ${pluginIndex + 1}/${pluginTotal}${pluginName ? ` (${pluginName})` : ''}`);
+          setStatus(`プラグイン設定取得中 ${i + 1}/${targets.length}: アプリ ${appId}${guestNote} ${pluginIndex + 1}/${pluginTotal}${pluginName ? ` (${pluginName})` : ''}`);
         }
       });
       bundle.pluginConfigBackup = pluginConfigBackup;
@@ -301,6 +332,7 @@ export async function runSettingsExport(mode) {
 
     rows.push({
       appId,
+      guestId,
       okCount,
       ngCount,
       pluginConfigLabel: formatPluginConfigSummary(pluginConfigBackup),
@@ -312,10 +344,12 @@ export async function runSettingsExport(mode) {
   state.lastSettingsExportBundles = bundles;
   ui.settingsExportResult.innerHTML = renderSettingsExportSummary(rows, scopes);
 
+  const guestIds = [...new Set(targets.map((t) => t.guestId).filter(Boolean))];
   const scopeLabels = scopes.map((k) => SECTION_DEFS.find((s) => s.key === k)?.label || k);
   const payload = {
     generatedAt: new Date().toISOString(),
-    guestId: guestId || '',
+    guestIds,
+    targets,
     preview,
     includePluginConfig,
     scopes,
@@ -328,13 +362,16 @@ export async function runSettingsExport(mode) {
     const zip = new JSZipCtor();
     zip.file('manifest.json', JSON.stringify({
           generatedAt: payload.generatedAt,
-          guestId: payload.guestId,
+          guestIds,
+          targets,
           preview: payload.preview,
           includePluginConfig: payload.includePluginConfig,
           scopes: payload.scopes,
           appCount: bundles.length
         }, null, 2));
-    for (const bundle of bundles) {
+    for (let i = 0; i < bundles.length; i++) {
+      const bundle = bundles[i];
+      const guestId = targets[i].guestId;
       const suffix = `${guestId ? `_guest_${guestId}` : ''}${preview ? '_preview' : '_live'}`;
       const name = `app_${bundle.appId}${suffix}.json`;
       zip.file(name, JSON.stringify(bundle, null, 2));

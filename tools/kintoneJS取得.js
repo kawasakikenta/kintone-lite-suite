@@ -1434,6 +1434,28 @@ ${contextLine}`);
 
 /* Wide variant (一部 lite 用に幅広にしたい場合) */
 .kus-lp--wide{width:min(640px,96vw)}
+
+/* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
+.kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
+.kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
+.kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
+.kus-lp__apptable tbody tr:last-child td{border-bottom:none}
+.kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
+.kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.kus-lp__apptable-acts-h{width:128px}
+.kus-lp__apptable-acts{white-space:nowrap}
+.kus-lp__apptable-acts .kus-lp__btn{padding:4px 7px;font-size:11px;border-radius:7px}
+.kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
+.kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
+.kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+@media(max-width:420px){
+  .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
+  .kus-lp__apptable thead{display:none}
+  .kus-lp__apptable tbody tr{border-bottom:1px solid var(--c-border);padding:6px 4px}
+  .kus-lp__apptable td{border:none;padding:3px 6px}
+  .kus-lp__apptable-no{text-align:left;font-weight:600}
+}
 `;
   function ensureThemeStyles() {
     if (document.getElementById(STYLE_ID)) return;

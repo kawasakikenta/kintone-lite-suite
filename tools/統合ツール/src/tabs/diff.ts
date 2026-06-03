@@ -3,6 +3,7 @@
 import { SECTION_DEFS, IGNORE_PRESET_KEYS, DEFAULT_SUBTAB_STATE, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT } from '../constants.js';
 import { state, ui, saveDialogState, loadDialogState } from '../state.js';
 import { bumpSessionMetric } from '../ui/psychology.js';
+import { getAppTargetTable } from '../ui/appTargetTable.js';
 import {
   esc,
   stableStringify,
@@ -632,6 +633,10 @@ export function restoreDialogState() {
   if (saved.settingsExportGuest != null) ui.settingsExportGuest.value = String(saved.settingsExportGuest);
   if (saved.settingsExportPreview != null) ui.settingsExportPreview.checked = !!saved.settingsExportPreview;
   if (saved.settingsExportIncludePluginConfig != null && ui.settingsExportIncludePluginConfig) ui.settingsExportIncludePluginConfig.checked = !!saved.settingsExportIncludePluginConfig;
+  // 復元したアプリID一覧（mirror）を表入力へ反映する
+  if (saved.settingsExportAppIds != null) {
+    try { getAppTargetTable('settingsExport')?.syncFromMirror(); } catch (e) { /* ignore */ }
+  }
   if (saved.recordBackupView != null && ui.recordBackupView) ui.recordBackupView.value = String(saved.recordBackupView || '');
   if (saved.recordBackupZipName != null && ui.recordBackupZipName) ui.recordBackupZipName.value = String(saved.recordBackupZipName || 'record_backup.zip');
   if (saved.recordBackupIncludeFiles != null && ui.recordBackupIncludeFiles) ui.recordBackupIncludeFiles.checked = !!saved.recordBackupIncludeFiles;

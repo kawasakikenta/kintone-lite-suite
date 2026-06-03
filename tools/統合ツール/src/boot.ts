@@ -8,6 +8,7 @@ import { ui as sharedUi, state } from './state.js';
 import { stableStringify, selectedScopeKeys } from './utils.js';
 import { buildRoot, copyTextToClipboard } from './ui/template.js';
 import { getToolDocument, setRootElement, setUiRefs } from './ui/dialog.js';
+import { initAppTargetTables, resetAppTargetTables } from './ui/appTargetTable.js';
 import { setComponentUi, setComponentDeps, setStatus, switchTab, openFeatureScreen } from './ui/components.js';
 import { stringifyForDiff, renderRowColumns, buildDiffWarningInfo, renderResultRows, renderDiffFilterOptions, renderDiffSelectionState, renderDiffWarningBox, syncDiffThemeButton } from './diff/export.js';
 import { commonParams, currentDiffSignature, saveCurrentDialogState } from './tabs/diff.js';
@@ -361,6 +362,22 @@ export function runKintoneUnifiedSuite(options: any = {}) {
   Object.assign(sharedUi, ui);
   setUiRefs(ui);
   setComponentUi(ui);
+
+  // 複数アプリ × アプリごとゲストスペースの表入力（設定一括取得 / 設計書一括ZIP）を初期化
+  resetAppTargetTables();
+  try {
+    initAppTargetTables(root, {
+      settingsExport: {
+        currentAppId: () => { try { return String((window as any).kintone?.app?.getId() || ''); } catch (e) { return ''; } },
+        defaultGuest: () => ui.settingsExportGuest?.value?.trim() || '',
+        onChange: () => { try { saveCurrentDialogState(); } catch (e) { /* ignore */ } }
+      },
+      designBatch: {
+        defaultGuest: () => { try { return commonParams().source.guestId || ''; } catch (e) { return ''; } },
+        onChange: () => { try { saveCurrentDialogState(); } catch (e) { /* ignore */ } }
+      }
+    });
+  } catch (e) { /* テーブル初期化失敗時も本体は継続 */ }
   setComponentDeps({
     buildDiffWarningInfo,
     renderRowColumns,

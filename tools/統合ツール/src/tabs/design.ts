@@ -261,21 +261,30 @@ export async function runDesignExportXlsx() {
  */
 export async function runDesignExportXlsxBatchZip() {
   const { runBatchDesignExportXlsxZip } = await import('./design-xlsx.js');
+  const { getAppTargetTable } = await import('../ui/appTargetTable.js');
   const c = commonParams();
-  const ta = getToolDocument().getElementById('u_designBatchAppIds') as HTMLTextAreaElement | null;
-  const raw = ta?.value || '';
-  const appIds = raw.split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
-  if (appIds.length === 0) {
+  const sourceGuest = c.source.guestId || '';
+
+  // 表（appTargetTable）があればアプリごとのゲストスペースを使う。
+  // ゲスト未入力の行は比較元のゲストIDで補完する（従来挙動の踏襲）。
+  let apps: Array<{ appId: string; guestId: string }> = [];
+  const table = getAppTargetTable('designBatch');
+  if (table) {
+    apps = table.getTargets().map((t) => ({ appId: t.appId, guestId: t.guestId || sourceGuest }));
+  }
+  if (!apps.length) {
+    const ta = getToolDocument().getElementById('u_designBatchAppIds') as HTMLTextAreaElement | null;
+    const raw = ta?.value || '';
+    apps = raw.split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s)).map((appId) => ({ appId, guestId: sourceGuest }));
+  }
+  if (apps.length === 0) {
     throw new Error('対象アプリIDを1件以上入力してください（数値のみ、改行/カンマ/スペース区切り）');
   }
-  setStatus(`設計書ZIP出力を開始（${appIds.length}件）...`);
-  const done = await runBatchDesignExportXlsxZip({
-    appIds,
-    guestId: c.source.guestId
-  });
+  setStatus(`設計書ZIP出力を開始（${apps.length}件）...`);
+  const done = await runBatchDesignExportXlsxZip({ apps });
   if (done === false) {
     setStatus('設計書ZIP出力をキャンセルしました');
     return;
   }
-  setStatus(`設計書ZIP出力完了（${appIds.length}件）`);
+  setStatus(`設計書ZIP出力完了（${apps.length}件）`);
 }
