@@ -497,7 +497,47 @@ ${contextLine}`);
   function nowStamp() {
     const d = /* @__PURE__ */ new Date();
     const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+  function sanitizeFilenamePart(value, fallback = "不明") {
+    const text = String(value || "").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    return cleaned || fallback;
+  }
+  function extractAppNameFromBundle(bundle) {
+    const appSettings = bundle?.sections?.appSettings;
+    const candidates = [
+      appSettings?.name,
+      appSettings?.app?.name,
+      appSettings?.general?.name,
+      bundle?.meta?.appName,
+      bundle?.appName
+    ];
+    const found = candidates.find((item) => String(item || "").trim());
+    return found ? String(found).trim() : "";
+  }
+  function buildAppFilenameLabel(appId, appName) {
+    const id = String(appId || "").trim();
+    const name = String(appName || "").trim();
+    if (name && id) return `${sanitizeFilenamePart(name)}(app${sanitizeFilenamePart(id)})`;
+    if (name) return sanitizeFilenamePart(name);
+    if (id) return `app${sanitizeFilenamePart(id)}`;
+    return "";
+  }
+  function appLabelFromBundle(bundle) {
+    return buildAppFilenameLabel(bundle?.appId, extractAppNameFromBundle(bundle));
+  }
+  function buildExportFilename(baseLabel, ext, options = {}) {
+    const normalizedExt = String(ext || "").replace(/^\./, "").trim() || "txt";
+    const base = sanitizeFilenamePart(baseLabel, "出力");
+    const stamp = options.timestamp || nowStamp();
+    const appLabel = String(options.appLabel || "").trim();
+    const suffix = String(options.suffix || "").trim();
+    const parts = [base];
+    if (appLabel) parts.push(sanitizeFilenamePart(appLabel));
+    if (suffix) parts.push(sanitizeFilenamePart(suffix));
+    parts.push(sanitizeFilenamePart(stamp, nowStamp()));
+    return `${parts.join("_")}.${normalizedExt}`;
   }
   function triggerDownload(filename, blob) {
     const doc = getToolDocumentSafe();
@@ -1217,6 +1257,10 @@ ${contextLine}`);
   init_utils();
   init_api();
   init_record();
+  function settingsExportLabel(bundles) {
+    if (bundles.length === 1) return appLabelFromBundle(bundles[0]);
+    return `${bundles.length}件`;
+  }
   function parseAppIdList(text) {
     const tokens = String(text || "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
     const out = [];
@@ -1371,16 +1415,16 @@ ${contextLine}`);
       for (let i = 0; i < bundles.length; i++) {
         const bundle = bundles[i];
         const guestId = targets[i].guestId;
-        const suffix = `${guestId ? `_guest_${guestId}` : ""}${preview ? "_preview" : "_live"}`;
-        const name = `app_${bundle.appId}${suffix}.json`;
+        const suffix = `${guestId ? `_ゲスト${guestId}` : ""}${preview ? "_プレビュー" : "_本番"}`;
+        const name = `${buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle))}${suffix}.json`;
         zip.file(name, JSON.stringify(bundle, null, 2));
       }
       const zipBlob = await zip.generateAsync({ type: "blob" });
-      downloadBlob(`settings_export_${bundles.length}apps_${nowStamp()}.zip`, zipBlob);
+      downloadBlob(buildExportFilename("設定一括取得", "zip", { appLabel: settingsExportLabel(bundles) }), zipBlob);
       setStatus2(`設定一括取得ZIPを保存しました（${bundles.length} apps）`);
       return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
     }
-    downloadText(`settings_export_${bundles.length}apps_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    downloadText(buildExportFilename("設定一括取得", "json", { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), "application/json");
     setStatus2(`設定一括取得JSONを保存しました（${bundles.length}アプリ）`);
     return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
   }
@@ -1676,6 +1720,7 @@ ${contextLine}`);
 .kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}
@@ -1986,6 +2031,10 @@ ${contextLine}`);
     count.className = "kus-lp__apptable-count";
     foot.appendChild(count);
     wrap.appendChild(foot);
+    const hint = document.createElement("div");
+    hint.className = "kus-lp__apptable-hint";
+    hint.textContent = "アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。";
+    wrap.appendChild(hint);
     const rows = [];
     function getApps() {
       const seen = /* @__PURE__ */ new Set();
@@ -2017,6 +2066,31 @@ ${contextLine}`);
       refresh();
       opts.onChange?.(getApps());
     }
+    function distributeAppTokens(entry) {
+      const raw = entry.app.value;
+      if (!/[,、\s]/.test(raw)) return false;
+      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+      if (tokens.length <= 1) {
+        const next = tokens[0] || "";
+        if (entry.app.value !== next) {
+          entry.app.value = next;
+          return true;
+        }
+        return false;
+      }
+      entry.app.value = tokens[0];
+      const guestVal = entry.guest.value.trim();
+      const start = rows.indexOf(entry);
+      let last = entry;
+      for (let k = 1; k < tokens.length; k += 1) {
+        last = insertRow(start + k, tokens[k], guestVal, false);
+      }
+      try {
+        last.app.focus();
+      } catch {
+      }
+      return true;
+    }
     function removeRow(entry) {
       if (rows.length <= minRows) {
         entry.app.value = "";
@@ -2037,7 +2111,7 @@ ${contextLine}`);
       const tdGuest = document.createElement("td");
       const tdAct = document.createElement("td");
       tdAct.className = "kus-lp__apptable-acts";
-      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID", ariaLabel: "アプリID" });
+      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID" });
       const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストID" });
       app.value = appId;
       guest.value = guestId;
@@ -2075,6 +2149,17 @@ ${contextLine}`);
       delBtn.addEventListener("click", () => removeRow(entry));
       app.addEventListener("input", emitChange);
       guest.addEventListener("input", emitChange);
+      app.addEventListener("change", () => {
+        if (distributeAppTokens(entry)) emitChange();
+      });
+      app.addEventListener("paste", (ev) => {
+        const text = ev.clipboardData?.getData("text") || "";
+        if (!/[,、\s]/.test(text)) return;
+        ev.preventDefault();
+        const combined = [app.value.trim(), text].filter(Boolean).join(",");
+        app.value = combined;
+        if (distributeAppTokens(entry)) emitChange();
+      });
       const at = Math.min(Math.max(index, 0), rows.length);
       if (at >= rows.length) tbody.appendChild(tr);
       else tbody.insertBefore(tr, rows[at].tr);
@@ -2187,7 +2272,7 @@ ${contextLine}`);
     btnGrid.appendChild(btnJson);
     btnGrid.appendChild(btnZip);
     cardOpt.body.appendChild(btnGrid);
-    cardOpt.body.appendChild(makeNote("JSON は全アプリを 1 ファイルに、ZIP は app_<id>.json + manifest.json で個別保存します。"));
+    cardOpt.body.appendChild(makeNote("JSON は全アプリを 1 ファイルに、ZIP は「アプリ名(appID).json」＋ manifest.json で個別保存します。"));
     panel.body.insertBefore(cardOpt.card, panel.status);
     const summary = document.createElement("div");
     summary.className = "kus-lp__panel-html kus-lp__panel-html--empty";

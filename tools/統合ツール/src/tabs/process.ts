@@ -1,7 +1,7 @@
 'use strict';
 
 import { ui } from '../state.js';
-import { downloadText, esc, nowStamp, showToast } from '../utils.js';
+import { downloadText, esc, showToast, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 import { buildApiPrefix, apiGet } from '../api.js';
 import { setStatus } from '../ui/components.js';
 import { commonParams } from './diff.js';
@@ -308,7 +308,7 @@ export function downloadMermaidSource(): void {
     showToast('先にフロー図を取得してください', 'warn');
     return;
   }
-  downloadText(`process-flow_${nowStamp()}.mmd`, text, 'text/plain;charset=utf-8');
+  downloadText(buildExportFilename('プロセス図', 'mmd', { appLabel: buildAppFilenameLabel(commonParams().source.appId, '') }), text, 'text/plain;charset=utf-8');
   setStatus('Mermaid構文を保存しました');
 }
 
@@ -322,7 +322,7 @@ export function downloadFlowSvg(): void {
   const clone = svg.cloneNode(true) as SVGElement;
   if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   const xml = new XMLSerializer().serializeToString(clone);
-  downloadText(`process-flow_${nowStamp()}.svg`, xml, 'image/svg+xml;charset=utf-8');
+  downloadText(buildExportFilename('プロセス図', 'svg', { appLabel: buildAppFilenameLabel(commonParams().source.appId, '') }), xml, 'image/svg+xml;charset=utf-8');
   setStatus('フロー図をSVGとして保存しました');
 }
 

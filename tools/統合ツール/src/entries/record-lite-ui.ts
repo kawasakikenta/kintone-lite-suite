@@ -80,7 +80,7 @@ export function mountRecordLitePanel() {
     {
       id: 'csv-export', label: 'CSV出力', build: (root) => {
         const query = makeInput({ placeholder: 'absent', width: 'wide' });
-        const fname = makeInput({ placeholder: 'records.csv', value: 'records.csv', width: 'medium' });
+        const fname = makeInput({ placeholder: '空欄で自動命名（レコード_アプリ_日時.csv）', width: 'wide' });
         const useView = makeButton('▼ 一覧から', 'sub');
         useView.addEventListener('click', () => applyViewQuery(query));
         root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
@@ -163,7 +163,7 @@ export function mountRecordLitePanel() {
         const query = makeInput({ placeholder: '条件 (任意)', width: 'wide' });
         const fileCode = makeInput({ placeholder: '例: attached_file', width: 'medium' });
         const folderCode = makeInput({ placeholder: '任意（フォルダ名にするフィールド）', width: 'medium' });
-        const zipName = makeInput({ placeholder: 'attachments.zip', width: 'medium' });
+        const zipName = makeInput({ placeholder: '空欄で自動命名（添付ファイル_アプリ_日時.zip）', width: 'wide' });
         const useView = makeButton('▼ 一覧から', 'sub');
         useView.addEventListener('click', () => applyViewQuery(query));
         root.appendChild(makeRow([query, useView], { label: 'クエリ' }));
@@ -221,7 +221,7 @@ export function mountRecordLitePanel() {
     {
       id: 'backup', label: 'バックアップ', build: (root) => {
         const query = makeInput({ placeholder: '条件 (任意・全件は空)', width: 'wide' });
-        const zipName = makeInput({ placeholder: 'record_backup_<app>_<ts>.zip', width: 'wide' });
+        const zipName = makeInput({ placeholder: '空欄で自動命名（レコードバックアップ_アプリ_日時.zip）', width: 'wide' });
         const useView = makeButton('▼ 一覧から', 'sub');
         useView.addEventListener('click', () => applyViewQuery(query));
         root.appendChild(makeRow([query, useView], { label: 'クエリ' }));

@@ -176,7 +176,8 @@ export function apiErrorWithContext(err: any, meta: ApiErrorMeta): ApiDiagError 
 export function nowStamp(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+  // 日付＋時刻＋秒（YYYYMMDD_HHMMSS）。同一分内に複数回出力してもファイル名が衝突しないよう秒まで含める。
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
 export function sanitizeFilenamePart(value: unknown, fallback: string = '不明'): string {
@@ -208,6 +209,11 @@ export function buildAppFilenameLabel(appId: unknown, appName: unknown): string 
   if (name) return sanitizeFilenamePart(name);
   if (id) return `app${sanitizeFilenamePart(id)}`;
   return '';
+}
+
+/** バンドルからファイル名用ラベル（アプリ名(appID)）を組み立てる。 */
+export function appLabelFromBundle(bundle: any): string {
+  return buildAppFilenameLabel(bundle?.appId, extractAppNameFromBundle(bundle));
 }
 
 export interface BuildExportFilenameOptions {

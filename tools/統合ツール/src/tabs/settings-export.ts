@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, extractAppNameFromBundle, nowStamp, downloadText, downloadBlob } from '../utils.js';
+import { esc, extractAppNameFromBundle, downloadText, downloadBlob, buildExportFilename, buildAppFilenameLabel, appLabelFromBundle } from '../utils.js';
 import { apiGet, fetchBundle, buildApiPrefix, fetchAppsInSpace } from '../api.js';
 import { selectedScopeKeys } from '../utils.js';
 import { setStatus } from '../ui/components.js';
@@ -372,16 +372,18 @@ export async function runSettingsExport(mode) {
     for (let i = 0; i < bundles.length; i++) {
       const bundle = bundles[i];
       const guestId = targets[i].guestId;
-      const suffix = `${guestId ? `_guest_${guestId}` : ''}${preview ? '_preview' : '_live'}`;
-      const name = `app_${bundle.appId}${suffix}.json`;
+      const suffix = `${guestId ? `_ゲスト${guestId}` : ''}${preview ? '_プレビュー' : '_本番'}`;
+      const name = `${buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle))}${suffix}.json`;
       zip.file(name, JSON.stringify(bundle, null, 2));
     }
     const zipBlob = await zip.generateAsync({ type: 'blob' });
-    downloadBlob(`settings_export_${bundles.length}apps_${nowStamp()}.zip`, zipBlob);
+    const expLabel = bundles.length === 1 ? appLabelFromBundle(bundles[0]) : `${bundles.length}件`;
+    downloadBlob(buildExportFilename('設定一括取得', 'zip', { appLabel: expLabel }), zipBlob);
     setStatus(`設定バックアップZIPを保存しました（${bundles.length} apps）`);
     return;
   }
 
-  downloadText(`settings_export_${bundles.length}apps_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  const expLabel = bundles.length === 1 ? appLabelFromBundle(bundles[0]) : `${bundles.length}件`;
+  downloadText(buildExportFilename('設定一括取得', 'json', { appLabel: expLabel }), JSON.stringify(payload, null, 2), 'application/json');
   setStatus(`設定バックアップJSONを保存しました（${bundles.length}アプリ）`);
 }

@@ -500,6 +500,36 @@ ${contextLine}`);
     if (err?.stack) wrapped.stack = err.stack;
     return wrapped;
   }
+  function nowStamp() {
+    const d = /* @__PURE__ */ new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+  function sanitizeFilenamePart(value, fallback = "不明") {
+    const text = String(value || "").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    return cleaned || fallback;
+  }
+  function buildAppFilenameLabel(appId, appName) {
+    const id = String(appId || "").trim();
+    const name = String(appName || "").trim();
+    if (name && id) return `${sanitizeFilenamePart(name)}(app${sanitizeFilenamePart(id)})`;
+    if (name) return sanitizeFilenamePart(name);
+    if (id) return `app${sanitizeFilenamePart(id)}`;
+    return "";
+  }
+  function buildExportFilename(baseLabel, ext, options = {}) {
+    const normalizedExt = String(ext || "").replace(/^\./, "").trim() || "txt";
+    const base = sanitizeFilenamePart(baseLabel, "出力");
+    const stamp = options.timestamp || nowStamp();
+    const appLabel = String(options.appLabel || "").trim();
+    const suffix = String(options.suffix || "").trim();
+    const parts = [base];
+    if (appLabel) parts.push(sanitizeFilenamePart(appLabel));
+    if (suffix) parts.push(sanitizeFilenamePart(suffix));
+    parts.push(sanitizeFilenamePart(stamp, nowStamp()));
+    return `${parts.join("_")}.${normalizedExt}`;
+  }
   function triggerDownload(filename, blob) {
     const doc = getToolDocumentSafe();
     const win = getToolWindowSafe();
@@ -1202,7 +1232,7 @@ ${contextLine}`);
     for (const rec of records) lines.push(propKeys.map((k) => esc2(extractValue(rec, k))).join(","));
     const csvStr = "\uFEFF" + lines.join("\n");
     const blob = new Blob([csvStr], { type: "text/csv;charset=utf-8;" });
-    downloadBlob(filename || "records.csv", blob);
+    downloadBlob(filename || buildExportFilename("レコード", "csv", { appLabel: buildAppFilenameLabel(appId, "") }), blob);
     setStatus(`CSV出力完了 (${records.length}件)`);
   }
   var CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
@@ -1429,7 +1459,7 @@ ${contextLine}`);
     }
     setStatus(`ZIP生成中 (${fileCount}ファイル)`);
     const zipBlob = await zip.generateAsync({ type: "blob" });
-    downloadBlob(zipName || `attachments_${appId}_${Date.now()}.zip`, zipBlob);
+    downloadBlob(zipName || buildExportFilename("添付ファイル", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), zipBlob);
     setStatus(`添付一括DL完了: ${fileCount}ファイル`);
   }
   async function runRecordBackupStandalone(opts, setStatus) {
@@ -1572,7 +1602,7 @@ ${contextLine}`);
     }, null, 2));
     setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
     const blob = await zip.generateAsync({ type: "blob" });
-    downloadBlob(zipName || `record_backup_${appId}_${Date.now()}.zip`, blob);
+    downloadBlob(zipName || buildExportFilename("レコードバックアップ", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), blob);
     setStatus(`バックアップ完了: ${records.length}件 / 添付 ${fileCount} / コメント ${commentCount}`);
   }
   async function runLoadStatusActionsStandalone(opts, setStatus) {
@@ -1944,6 +1974,7 @@ ${contextLine}`);
 .kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}
@@ -2500,7 +2531,7 @@ ${contextLine}`);
         label: "CSV出力",
         build: (root2) => {
           const query = makeInput({ placeholder: "absent", width: "wide" });
-          const fname = makeInput({ placeholder: "records.csv", value: "records.csv", width: "medium" });
+          const fname = makeInput({ placeholder: "空欄で自動命名（レコード_アプリ_日時.csv）", width: "wide" });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
@@ -2590,7 +2621,7 @@ ${contextLine}`);
           const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
           const fileCode = makeInput({ placeholder: "例: attached_file", width: "medium" });
           const folderCode = makeInput({ placeholder: "任意（フォルダ名にするフィールド）", width: "medium" });
-          const zipName = makeInput({ placeholder: "attachments.zip", width: "medium" });
+          const zipName = makeInput({ placeholder: "空欄で自動命名（添付ファイル_アプリ_日時.zip）", width: "wide" });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
@@ -2655,7 +2686,7 @@ ${contextLine}`);
         label: "バックアップ",
         build: (root2) => {
           const query = makeInput({ placeholder: "条件 (任意・全件は空)", width: "wide" });
-          const zipName = makeInput({ placeholder: "record_backup_<app>_<ts>.zip", width: "wide" });
+          const zipName = makeInput({ placeholder: "空欄で自動命名（レコードバックアップ_アプリ_日時.zip）", width: "wide" });
           const useView = makeButton("▼ 一覧から", "sub");
           useView.addEventListener("click", () => applyViewQuery(query));
           root2.appendChild(makeRow([query, useView], { label: "クエリ" }));

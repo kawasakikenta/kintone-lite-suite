@@ -6,7 +6,6 @@ import { showToast } from '../utils.js';
 
 const SHEETLIB_PRIMARY_URL = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js';
 const SHEETLIB_FALLBACK_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
-const DESIGN_EXPORT_VERSION = '2.2';
 
 // シート選択の記憶はブラウザストレージを使わず、セッション中のみインメモリで保持する
 // （本ツールの永続化方針: state.ts と同様にメモリ内のみで完結させる）
@@ -2206,8 +2205,9 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     }
 
     UI.update(returnWorkbook ? '生成完了' : 'ダウンロード中...', 12);
-    const safeAppName = String(appSettings?.name || `App${APP_ID}`).replace(/[\\/:*?"<>|]/g, '_');
-    const filename = `${safeAppName}_設計書_v${DESIGN_EXPORT_VERSION}.xlsx`;
+    const safeAppName = String(appSettings?.name || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const appLabel = safeAppName ? `${safeAppName}(app${APP_ID})` : `app${APP_ID}`;
+    const filename = `設計書_${appLabel}_${nowStampZip()}.xlsx`;
 
     if (returnWorkbook) {
       // バッチ用: ダウンロードせず、ワークブックと付帯情報を返す。UI の表示制御は呼び出し元に委ねる。

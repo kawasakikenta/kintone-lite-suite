@@ -1,7 +1,7 @@
 'use strict';
 
 import { SECTION_DEFS } from '../constants.js';
-import { deepClone, esc, downloadText, stableStringify, deepEqual as deepEqualShared } from '../utils.js';
+import { deepClone, esc, downloadText, stableStringify, deepEqual as deepEqualShared, buildExportFilename } from '../utils.js';
 import { state } from '../state.js';
 import { apiGet, buildApiPrefix } from '../api.js';
 import { getSectionRenderer } from '../reflect/sectionRenderers/registry.js';
@@ -577,7 +577,7 @@ export function initSectionPreviewEditor(ui, setStatus) {
         };
       } else if (act === 'export') {
         const label = SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey;
-        downloadText(`kintone-${st.sectionKey}-preview.json`, JSON.stringify(st.after, null, 2), 'application/json');
+        downloadText(buildExportFilename(`${label}_比較先プレビュー`, 'json'), JSON.stringify(st.after, null, 2), 'application/json');
         setStatus(`${label} の比較先JSONを保存しました`);
       }
       render();

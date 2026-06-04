@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, EXTERNAL_LIBRARIES } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, safeJsonForScript, nowStamp, downloadText, showToast } from '../utils.js';
+import { esc, safeJsonForScript, downloadText, showToast, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 import { apiGet, buildApiPrefix, fetchAppsInSpace } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { getToolWindow, getToolDocument } from '../ui/dialog.js';
@@ -2003,7 +2003,7 @@ function showMermaid(){
       m+="  "+sn(a.name)+(r.kind==="LOOKUP"?" }o--|| ":" ||--o{ ")+sn(t.name)+' : "'+r.fromLabel+'"\\n';
     });
   });
-  openModal("Mermaid ER図",m,"kintone_erd.mmd");
+  openModal("Mermaid ER図",m,"ER図.mmd");
 }
 
 function showDrawio(){
@@ -2025,7 +2025,7 @@ function showDrawio(){
     x+='<mxCell id="E'+(ec++)+'" value="'+(r.kind==="LOOKUP"?"ルックアップ":"関連")+'" style="'+st+'" edge="1" parent="1" source="A'+a.id+'" target="A'+r.toApp+'"><mxGeometry relative="1" as="geometry"/></mxCell>';
   }));
   x+="</root></mxGraphModel></diagram></mxfile>";
-  openModal("draw.io 用XML",x,"kintone_erd.drawio");
+  openModal("draw.io 用XML",x,"ER図.drawio");
 }
 
 function showSQL(){
@@ -2062,7 +2062,7 @@ function showSQL(){
       sql+="ALTER TABLE "+sn(a.name)+" ADD CONSTRAINT fk_"+sn(a.name)+"_"+sn(r.from)+" FOREIGN KEY ("+sn(r.from)+") REFERENCES "+sn(t.name)+"("+sn(r.toField)+");\\n";
     });
   });
-  openModal("SQL DDL",sql,"kintone_erd.sql");
+  openModal("SQL DDL",sql,"ER図.sql");
 }
 
 function showPlantUML(){
@@ -2088,7 +2088,7 @@ function showPlantUML(){
     });
   });
   p+="@enduml";
-  openModal("PlantUML",p,"kintone_erd.puml");
+  openModal("PlantUML",p,"ER図.puml");
 }
 
 function showJSON(){
@@ -2102,7 +2102,7 @@ function showJSON(){
       relations:a.relations.map(r=>({fromField:r.from,toApp:r.toApp,toField:r.toField,type:r.kind})),
     })),
   };
-  openModal("JSON スキーマ",JSON.stringify(schema,null,2),"kintone_erd_schema.json");
+  openModal("JSON スキーマ",JSON.stringify(schema,null,2),"ER図スキーマ.json");
 }
 
 // ─── CSV exports ───
@@ -2119,7 +2119,7 @@ function showCSVApps(){
     const acts=(a.relations||[]).filter(r=>r.kind==="ACTION").length;
     rows.push([a.id,a.name,visibleFieldsForNode(a).length,a.relations.length,lookups,refs,acts,a.requiredCount||0,a.depth||0,startAppIdSet.has(String(a.id))?"1":"0",a.ok?"OK":"ERROR"]);
   });
-  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_apps.csv");
+  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_アプリ一覧.csv");
 }
 function showCSVFields(){
   const rows=[["アプリID","アプリ名","フィールドコード","フィールド名","種類","必須","重複禁止","主キー","ルックアップ","関連","サブテーブル内","テーブル名"]];
@@ -2128,7 +2128,7 @@ function showCSVFields(){
       rows.push([a.id,a.name,f.code||"",buildFieldDisplayName(f),f.type||"",f.required?"1":"0",f.unique?"1":"0",f.isPK?"1":"0",f.isLookup?"1":"0",f.isRef?"1":"0",f.inSubtable?"1":"0",f.tableLabel||""]);
     });
   });
-  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_fields.csv");
+  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_フィールド一覧.csv");
 }
 function showCSVRelations(){
   const rows=[["種類","起点アプリID","起点アプリ名","起点フィールド","宛先アプリID","宛先アプリ名","宛先フィールド"]];
@@ -2138,7 +2138,7 @@ function showCSVRelations(){
       rows.push([r.kind,a.id,a.name,r.fromDisplay||r.fromLabel||r.from||"",r.toApp,t?t.name:"(不明)",r.toField||""]);
     });
   });
-  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_relations.csv");
+  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_リレーション一覧.csv");
 }
 
 // ─── Markdown spec ───
@@ -2186,7 +2186,7 @@ function showMarkdown(){
       lines.push("");
     }
   });
-  openModal("Markdown 仕様書",lines.join("\\n"),"kintone_erd_spec.md");
+  openModal("Markdown 仕様書",lines.join("\\n"),"ER図仕様書.md");
 }
 
 // ─── Zoom controls ───
@@ -2391,10 +2391,9 @@ export async function runExportERDiagramHtml() {
     const apps = await crawl(options.startAppIds, options);
     progressUi.update(94, 'HTML保存データ生成中...');
     const html = buildHTML(apps, options);
-    const guestSuffix = options.source?.guestId ? `_guest${options.source.guestId}` : '';
-    const previewSuffix = options.source?.preview ? '_preview' : '_prod';
+    const suffix = `${options.source?.guestId ? `guest${options.source.guestId}_` : ''}${options.source?.preview ? 'プレビュー' : '本番'}`;
     downloadText(
-      `kintone_erd_app${options.startAppId}${guestSuffix}${previewSuffix}_${nowStamp()}.html`,
+      buildExportFilename('ER図', 'html', { appLabel: buildAppFilenameLabel(options.startAppId, ''), suffix }),
       html,
       'text/html'
     );

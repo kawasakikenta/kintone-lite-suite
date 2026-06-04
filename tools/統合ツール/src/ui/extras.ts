@@ -39,6 +39,7 @@ import { getToolDocument } from './dialog.js';
 import { localizeKintoneEnumsInText as kusEnumsLocalize } from '../kintone-enums.js';
 import { renderReflectApplyChecklistStatus } from '../handlers/checklist.js';
 import { runExportDiffXlsx } from '../diff/xlsx-export.js';
+import { buildExportFilename } from '../utils.js';
 
 interface ExtrasGlobal {
   toastStack?: HTMLDivElement;
@@ -543,7 +544,7 @@ export function exportDiffStateToJson(): void {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `kus-diff-snapshot_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+  a.download = buildExportFilename('差分スナップショット', 'json');
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 200);
   pushToast('差分結果 JSON をダウンロードしました', { tone: 'ok' });
@@ -670,7 +671,7 @@ export function exportPlanMarkdown(): void {
   const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `kus-apply-plan_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.md`;
+  a.download = buildExportFilename('反映プラン', 'md');
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 200);
   pushToast('反映プラン Markdown をダウンロードしました', { tone: 'ok' });
@@ -711,7 +712,7 @@ export function downloadDiagram(svg: SVGSVGElement, baseName: string, format: 's
   if (format === 'svg') {
     const xml = new XMLSerializer().serializeToString(svg);
     const blob = new Blob([xml], { type: 'image/svg+xml' });
-    triggerDownload(blob, `${baseName}.svg`);
+    triggerDownload(blob, buildExportFilename(baseName, 'svg'));
     return;
   }
   // PNG via canvas
@@ -727,7 +728,7 @@ export function downloadDiagram(svg: SVGSVGElement, baseName: string, format: 's
     ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
     URL.revokeObjectURL(url);
     canvas.toBlob((b) => {
-      if (b) triggerDownload(b, `${baseName}.png`);
+      if (b) triggerDownload(b, buildExportFilename(baseName, 'png'));
     });
   };
   img.src = url;
@@ -770,7 +771,7 @@ export function initDiagramExportButtons(): void {
       return;
     }
     const fmt = target.dataset.act === 'exportDiagramSvg' ? 'svg' : 'png';
-    downloadDiagram(svg, `kus-${paneKey}_${new Date().toISOString().slice(0, 10)}`, fmt as any);
+    downloadDiagram(svg, `${paneKey}図`, fmt as any);
     pushToast(`${fmt.toUpperCase()} を保存しました`, { tone: 'ok' });
   });
 }
@@ -1366,7 +1367,7 @@ export function initGenerationalBackupHook(): void {
       pushToast('バックアップ対象がありません（先に比較先を取得してください）', { tone: 'warn' });
       return;
     }
-    downloadWithGeneration(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), 'kus-target-backup');
+    downloadWithGeneration(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }), '比較先バックアップ');
   });
 }
 
@@ -1520,7 +1521,7 @@ export function initApiCollection(): void {
       pushToast(`コレクションへ追加: ${name}`, { tone: 'ok' });
     } else if (act === 'kusApiCollExport') {
       const blob = new Blob([JSON.stringify(apiCollection, null, 2)], { type: 'application/json' });
-      triggerDownload(blob, `kus-api-collection_${new Date().toISOString().slice(0, 10)}.json`);
+      triggerDownload(blob, buildExportFilename('APIコレクション', 'json'));
       pushToast('コレクション JSON を保存しました', { tone: 'ok' });
     } else if (act === 'kusApiCollImport') {
       const inp = document.createElement('input');
@@ -1854,7 +1855,7 @@ export function exportDiffAsMarkdown(): void {
   const rows = state.lastDiffRows || [];
   if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
   const md = buildDiffMarkdownText();
-  triggerDownload(new Blob([md], { type: 'text/markdown' }), `kus-diff_${new Date().toISOString().slice(0, 10)}.md`);
+  triggerDownload(new Blob([md], { type: 'text/markdown' }), buildExportFilename('差分レポート', 'md'));
   pushToast('Markdown を保存しました', { tone: 'ok' });
 }
 
@@ -1880,7 +1881,7 @@ export function exportDiffAsXlsx(): void {
       targetBundle: state.lastTargetBundle,
       ignoreKeys: ui.ignoreKeys?.value || '',
       exportContentMode: 'diffOnly',
-      filename: `kus-diff_${new Date().toISOString().slice(0, 10)}.xlsx`
+      filename: buildExportFilename('差分レポート', 'xlsx')
     });
     pushToast('差分 Excel (.xlsx) を保存しました', { tone: 'ok' });
   } catch (e: any) {
@@ -2053,7 +2054,7 @@ export async function showPlanMermaidInTool(): Promise<void> {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     overlay.querySelector('[data-act="kusPlanMermaidDl"]')?.addEventListener('click', () => {
       const md = '```mermaid\n' + code + '\n```\n';
-      triggerDownload(new Blob([md], { type: 'text/markdown' }), `kus-plan-mermaid_${new Date().toISOString().slice(0, 10)}.md`);
+      triggerDownload(new Blob([md], { type: 'text/markdown' }), buildExportFilename('反映プランMermaid', 'md'));
       pushToast('Mermaid Markdown を保存しました', { tone: 'ok' });
     });
   } catch (e) {
@@ -2065,7 +2066,7 @@ export function exportPlanAsMermaid(): void {
   const plan = state.lastApplyPlan;
   if (!plan) { pushToast('反映プランが未生成です', { tone: 'warn' }); return; }
   const md = '```mermaid\n' + buildPlanMermaid(plan) + '\n```\n';
-  triggerDownload(new Blob([md], { type: 'text/markdown' }), `kus-plan-mermaid_${new Date().toISOString().slice(0, 10)}.md`);
+  triggerDownload(new Blob([md], { type: 'text/markdown' }), buildExportFilename('反映プランMermaid', 'md'));
   pushToast('Mermaid 形式で保存しました', { tone: 'ok' });
 }
 
@@ -2124,7 +2125,7 @@ export async function captureReflectScreenshot(): Promise<void> {
     const canvas: HTMLCanvasElement = await h2c(root, { backgroundColor: '#fff', scale: window.devicePixelRatio || 1, logging: false });
     canvas.toBlob((blob) => {
       if (!blob) { pushToast('PNG 生成に失敗', { tone: 'error' }); return; }
-      triggerDownload(blob, `kus-snapshot_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`);
+      triggerDownload(blob, buildExportFilename('スナップショット', 'png'));
       pushToast('PNG スクリーンショットを保存しました', { tone: 'ok' });
     }, 'image/png');
   } catch (e) {
@@ -2134,7 +2135,7 @@ export async function captureReflectScreenshot(): Promise<void> {
       try { return [...s.cssRules].map((r) => r.cssText).join('\n'); } catch { return ''; }
     }).join('\n');
     const doc = `<!doctype html><html><head><meta charset="utf-8"><title>kus-snapshot</title><style>${css}</style></head><body>${html}</body></html>`;
-    triggerDownload(new Blob([doc], { type: 'text/html' }), `kus-snapshot_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.html`);
+    triggerDownload(new Blob([doc], { type: 'text/html' }), buildExportFilename('スナップショット', 'html'));
     pushToast(`PNG 失敗。HTML で保存しました (${(e as any)?.message || e})`, { tone: 'warn' });
   }
 }
@@ -2317,7 +2318,7 @@ export function exportDryRunOverlay(): void {
     before: s.before ?? null,
     after: s.after ?? s.payload ?? null
   }));
-  triggerDownload(new Blob([JSON.stringify({ generatedAt: new Date().toISOString(), overlay }, null, 2)], { type: 'application/json' }), `kus-dryrun-overlay_${new Date().toISOString().slice(0, 10)}.json`);
+  triggerDownload(new Blob([JSON.stringify({ generatedAt: new Date().toISOString(), overlay }, null, 2)], { type: 'application/json' }), buildExportFilename('ドライランオーバーレイ', 'json'));
   pushToast('ドライラン重ね差分 JSON を保存しました', { tone: 'ok' });
 }
 

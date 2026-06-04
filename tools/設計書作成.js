@@ -610,7 +610,47 @@ ${contextLine}`);
   function nowStamp() {
     const d = /* @__PURE__ */ new Date();
     const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+  function sanitizeFilenamePart(value, fallback = "不明") {
+    const text = String(value || "").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    return cleaned || fallback;
+  }
+  function extractAppNameFromBundle(bundle) {
+    const appSettings = bundle?.sections?.appSettings;
+    const candidates = [
+      appSettings?.name,
+      appSettings?.app?.name,
+      appSettings?.general?.name,
+      bundle?.meta?.appName,
+      bundle?.appName
+    ];
+    const found = candidates.find((item) => String(item || "").trim());
+    return found ? String(found).trim() : "";
+  }
+  function buildAppFilenameLabel(appId, appName) {
+    const id = String(appId || "").trim();
+    const name = String(appName || "").trim();
+    if (name && id) return `${sanitizeFilenamePart(name)}(app${sanitizeFilenamePart(id)})`;
+    if (name) return sanitizeFilenamePart(name);
+    if (id) return `app${sanitizeFilenamePart(id)}`;
+    return "";
+  }
+  function appLabelFromBundle(bundle) {
+    return buildAppFilenameLabel(bundle?.appId, extractAppNameFromBundle(bundle));
+  }
+  function buildExportFilename(baseLabel, ext, options = {}) {
+    const normalizedExt = String(ext || "").replace(/^\./, "").trim() || "txt";
+    const base = sanitizeFilenamePart(baseLabel, "出力");
+    const stamp = options.timestamp || nowStamp();
+    const appLabel = String(options.appLabel || "").trim();
+    const suffix = String(options.suffix || "").trim();
+    const parts = [base];
+    if (appLabel) parts.push(sanitizeFilenamePart(appLabel));
+    if (suffix) parts.push(sanitizeFilenamePart(suffix));
+    parts.push(sanitizeFilenamePart(stamp, nowStamp()));
+    return `${parts.join("_")}.${normalizedExt}`;
   }
   function triggerDownload(filename, blob) {
     const doc = getToolDocumentSafe();
@@ -1775,7 +1815,6 @@ ${body}`;
   init_utils();
   var SHEETLIB_PRIMARY_URL = "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js";
   var SHEETLIB_FALLBACK_URL = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
-  var DESIGN_EXPORT_VERSION = "2.2";
   var rememberedSheetSelection = null;
   var EXPORT_SHEET_DEFS = [
     { key: "summary", label: "サマリー", default: true, cat: "basic" },
@@ -4132,8 +4171,9 @@ ${body}`;
         }
       }
       UI.update(returnWorkbook ? "生成完了" : "ダウンロード中...", 12);
-      const safeAppName = String(appSettings?.name || `App${APP_ID}`).replace(/[\\/:*?"<>|]/g, "_");
-      const filename = `${safeAppName}_設計書_v${DESIGN_EXPORT_VERSION}.xlsx`;
+      const safeAppName = String(appSettings?.name || "").replace(/[\\/:*?"<>|]/g, "_").trim();
+      const appLabel = safeAppName ? `${safeAppName}(app${APP_ID})` : `app${APP_ID}`;
+      const filename = `設計書_${appLabel}_${nowStampZip()}.xlsx`;
       if (returnWorkbook) {
         return {
           wb,
@@ -4337,10 +4377,11 @@ ${detail}`);
       onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
     });
     state.lastSourceBundle = bundle;
+    const appLabel = appLabelFromBundle(bundle);
     if (kind === "json") {
-      downloadText(`design_${bundle.appId}_${nowStamp()}.json`, JSON.stringify(bundle, null, 2), "application/json");
+      downloadText(buildExportFilename("設計書", "json", { appLabel }), JSON.stringify(bundle, null, 2), "application/json");
     } else {
-      downloadText(`design_${bundle.appId}_${nowStamp()}.md`, bundleToMarkdown(bundle), "text/markdown");
+      downloadText(buildExportFilename("設計書", "md", { appLabel }), bundleToMarkdown(bundle), "text/markdown");
     }
     setStatus(`設計書出力完了（App ${bundle.appId}）`);
   }
@@ -4470,7 +4511,8 @@ ${detail}`);
 ${diffMd}
 \`\`\`
 `;
-    downloadText(`design_diff_${srcAppId}_vs_${tgtAppId}_${nowStamp()}.md`, finalMd, "text/markdown");
+    const diffLabel = `${appLabelFromBundle(srcBundle)}_vs_${appLabelFromBundle(tgtBundle)}`;
+    downloadText(buildExportFilename("設計書差分", "md", { appLabel: diffLabel }), finalMd, "text/markdown");
     setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）`);
   }
 
@@ -4817,6 +4859,7 @@ ${diffMd}
 .kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}
@@ -5127,6 +5170,10 @@ ${diffMd}
     count.className = "kus-lp__apptable-count";
     foot.appendChild(count);
     wrap.appendChild(foot);
+    const hint = document.createElement("div");
+    hint.className = "kus-lp__apptable-hint";
+    hint.textContent = "アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。";
+    wrap.appendChild(hint);
     const rows = [];
     function getApps() {
       const seen = /* @__PURE__ */ new Set();
@@ -5158,6 +5205,31 @@ ${diffMd}
       refresh();
       opts.onChange?.(getApps());
     }
+    function distributeAppTokens(entry) {
+      const raw = entry.app.value;
+      if (!/[,、\s]/.test(raw)) return false;
+      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+      if (tokens.length <= 1) {
+        const next = tokens[0] || "";
+        if (entry.app.value !== next) {
+          entry.app.value = next;
+          return true;
+        }
+        return false;
+      }
+      entry.app.value = tokens[0];
+      const guestVal = entry.guest.value.trim();
+      const start = rows.indexOf(entry);
+      let last = entry;
+      for (let k = 1; k < tokens.length; k += 1) {
+        last = insertRow(start + k, tokens[k], guestVal, false);
+      }
+      try {
+        last.app.focus();
+      } catch {
+      }
+      return true;
+    }
     function removeRow(entry) {
       if (rows.length <= minRows) {
         entry.app.value = "";
@@ -5178,7 +5250,7 @@ ${diffMd}
       const tdGuest = document.createElement("td");
       const tdAct = document.createElement("td");
       tdAct.className = "kus-lp__apptable-acts";
-      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID", ariaLabel: "アプリID" });
+      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID" });
       const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストID" });
       app.value = appId;
       guest.value = guestId;
@@ -5216,6 +5288,17 @@ ${diffMd}
       delBtn.addEventListener("click", () => removeRow(entry));
       app.addEventListener("input", emitChange);
       guest.addEventListener("input", emitChange);
+      app.addEventListener("change", () => {
+        if (distributeAppTokens(entry)) emitChange();
+      });
+      app.addEventListener("paste", (ev) => {
+        const text = ev.clipboardData?.getData("text") || "";
+        if (!/[,、\s]/.test(text)) return;
+        ev.preventDefault();
+        const combined = [app.value.trim(), text].filter(Boolean).join(",");
+        app.value = combined;
+        if (distributeAppTokens(entry)) emitChange();
+      });
       const at = Math.min(Math.max(index, 0), rows.length);
       if (at >= rows.length) tbody.appendChild(tr);
       else tbody.insertBefore(tr, rows[at].tr);

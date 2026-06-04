@@ -608,6 +608,7 @@
   var utils_exports = {};
   __export(utils_exports, {
     apiErrorWithContext: () => apiErrorWithContext,
+    appLabelFromBundle: () => appLabelFromBundle,
     buildAppFilenameLabel: () => buildAppFilenameLabel,
     buildExportFilename: () => buildExportFilename,
     classifyStage: () => classifyStage,
@@ -782,7 +783,7 @@ ${contextLine}`);
   function nowStamp() {
     const d = /* @__PURE__ */ new Date();
     const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
   function sanitizeFilenamePart(value, fallback = "不明") {
     const text = String(value || "").trim();
@@ -808,6 +809,9 @@ ${contextLine}`);
     if (name) return sanitizeFilenamePart(name);
     if (id) return `app${sanitizeFilenamePart(id)}`;
     return "";
+  }
+  function appLabelFromBundle(bundle) {
+    return buildAppFilenameLabel(bundle?.appId, extractAppNameFromBundle(bundle));
   }
   function buildExportFilename(baseLabel, ext, options = {}) {
     const normalizedExt = String(ext || "").replace(/^\./, "").trim() || "txt";
@@ -9823,7 +9827,7 @@ ${body}`;
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'patch_' + REPORT_META.source.appId + '_vs_' + REPORT_META.target.appId + '.json';
+    a.download = '反映パッチ_app' + REPORT_META.source.appId + '_vs_app' + REPORT_META.target.appId + '.json';
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -15785,7 +15789,7 @@ ${warnings.join("\n")}
   function exportReflectPresetsJson() {
     const payload = buildReflectPresetsExport(loadReflectPresets());
     if (!payload.count) throw new Error("書き出せる反映プリセットがありません");
-    const filename = `reflect_presets_${nowStamp()}.json`;
+    const filename = buildExportFilename("反映プリセット", "json");
     downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
     return { filename, count: payload.count };
   }
@@ -15830,7 +15834,7 @@ ${warnings.join("\n")}
         mode: state.reflectNodeModes[r._id] || "src"
       }))
     };
-    const filename = `reflect_selection_${nowStamp()}.json`;
+    const filename = buildExportFilename("反映選択", "json");
     downloadText(filename, JSON.stringify(payload, null, 2), "application/json");
     return { filename, selectedCount: selected.length };
   }
@@ -21042,10 +21046,9 @@ ${reason}` : "",
       const apps = await crawl(options.startAppIds, options);
       progressUi.update(94, "HTML保存データ生成中...");
       const html = buildHTML(apps, options);
-      const guestSuffix = options.source?.guestId ? `_guest${options.source.guestId}` : "";
-      const previewSuffix = options.source?.preview ? "_preview" : "_prod";
+      const suffix = `${options.source?.guestId ? `guest${options.source.guestId}_` : ""}${options.source?.preview ? "プレビュー" : "本番"}`;
       downloadText(
-        `kintone_erd_app${options.startAppId}${guestSuffix}${previewSuffix}_${nowStamp()}.html`,
+        buildExportFilename("ER図", "html", { appLabel: buildAppFilenameLabel(options.startAppId, ""), suffix }),
         html,
         "text/html"
       );
@@ -23148,7 +23151,7 @@ function showMermaid(){
       m+="  "+sn(a.name)+(r.kind==="LOOKUP"?" }o--|| ":" ||--o{ ")+sn(t.name)+' : "'+r.fromLabel+'"\\n';
     });
   });
-  openModal("Mermaid ER図",m,"kintone_erd.mmd");
+  openModal("Mermaid ER図",m,"ER図.mmd");
 }
 
 function showDrawio(){
@@ -23170,7 +23173,7 @@ function showDrawio(){
     x+='<mxCell id="E'+(ec++)+'" value="'+(r.kind==="LOOKUP"?"ルックアップ":"関連")+'" style="'+st+'" edge="1" parent="1" source="A'+a.id+'" target="A'+r.toApp+'"><mxGeometry relative="1" as="geometry"/></mxCell>';
   }));
   x+="</root></mxGraphModel></diagram></mxfile>";
-  openModal("draw.io 用XML",x,"kintone_erd.drawio");
+  openModal("draw.io 用XML",x,"ER図.drawio");
 }
 
 function showSQL(){
@@ -23207,7 +23210,7 @@ function showSQL(){
       sql+="ALTER TABLE "+sn(a.name)+" ADD CONSTRAINT fk_"+sn(a.name)+"_"+sn(r.from)+" FOREIGN KEY ("+sn(r.from)+") REFERENCES "+sn(t.name)+"("+sn(r.toField)+");\\n";
     });
   });
-  openModal("SQL DDL",sql,"kintone_erd.sql");
+  openModal("SQL DDL",sql,"ER図.sql");
 }
 
 function showPlantUML(){
@@ -23233,7 +23236,7 @@ function showPlantUML(){
     });
   });
   p+="@enduml";
-  openModal("PlantUML",p,"kintone_erd.puml");
+  openModal("PlantUML",p,"ER図.puml");
 }
 
 function showJSON(){
@@ -23247,7 +23250,7 @@ function showJSON(){
       relations:a.relations.map(r=>({fromField:r.from,toApp:r.toApp,toField:r.toField,type:r.kind})),
     })),
   };
-  openModal("JSON スキーマ",JSON.stringify(schema,null,2),"kintone_erd_schema.json");
+  openModal("JSON スキーマ",JSON.stringify(schema,null,2),"ER図スキーマ.json");
 }
 
 // ─── CSV exports ───
@@ -23264,7 +23267,7 @@ function showCSVApps(){
     const acts=(a.relations||[]).filter(r=>r.kind==="ACTION").length;
     rows.push([a.id,a.name,visibleFieldsForNode(a).length,a.relations.length,lookups,refs,acts,a.requiredCount||0,a.depth||0,startAppIdSet.has(String(a.id))?"1":"0",a.ok?"OK":"ERROR"]);
   });
-  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_apps.csv");
+  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_アプリ一覧.csv");
 }
 function showCSVFields(){
   const rows=[["アプリID","アプリ名","フィールドコード","フィールド名","種類","必須","重複禁止","主キー","ルックアップ","関連","サブテーブル内","テーブル名"]];
@@ -23273,7 +23276,7 @@ function showCSVFields(){
       rows.push([a.id,a.name,f.code||"",buildFieldDisplayName(f),f.type||"",f.required?"1":"0",f.unique?"1":"0",f.isPK?"1":"0",f.isLookup?"1":"0",f.isRef?"1":"0",f.inSubtable?"1":"0",f.tableLabel||""]);
     });
   });
-  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_fields.csv");
+  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_フィールド一覧.csv");
 }
 function showCSVRelations(){
   const rows=[["種類","起点アプリID","起点アプリ名","起点フィールド","宛先アプリID","宛先アプリ名","宛先フィールド"]];
@@ -23283,7 +23286,7 @@ function showCSVRelations(){
       rows.push([r.kind,a.id,a.name,r.fromDisplay||r.fromLabel||r.from||"",r.toApp,t?t.name:"(不明)",r.toField||""]);
     });
   });
-  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_relations.csv");
+  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_リレーション一覧.csv");
 }
 
 // ─── Markdown spec ───
@@ -23331,7 +23334,7 @@ function showMarkdown(){
       lines.push("");
     }
   });
-  openModal("Markdown 仕様書",lines.join("\\n"),"kintone_erd_spec.md");
+  openModal("Markdown 仕様書",lines.join("\\n"),"ER図仕様書.md");
 }
 
 // ─── Zoom controls ───
@@ -25748,8 +25751,9 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         }
       }
       UI.update(returnWorkbook ? "生成完了" : "ダウンロード中...", 12);
-      const safeAppName = String(appSettings?.name || `App${APP_ID}`).replace(/[\\/:*?"<>|]/g, "_");
-      const filename = `${safeAppName}_設計書_v${DESIGN_EXPORT_VERSION}.xlsx`;
+      const safeAppName = String(appSettings?.name || "").replace(/[\\/:*?"<>|]/g, "_").trim();
+      const appLabel3 = safeAppName ? `${safeAppName}(app${APP_ID})` : `app${APP_ID}`;
+      const filename = `設計書_${appLabel3}_${nowStampZip()}.xlsx`;
       if (returnWorkbook) {
         return {
           wb,
@@ -25936,7 +25940,7 @@ ${detail}`);
     showToast(`✅ 設計書ZIPを保存しました${suffix}`, tone);
     return true;
   }
-  var SHEETLIB_PRIMARY_URL, SHEETLIB_FALLBACK_URL, DESIGN_EXPORT_VERSION, rememberedSheetSelection, EXPORT_SHEET_DEFS, EXPORT_SHEET_CATEGORIES, EXPORT_SHEET_PRESETS, FIELD_TYPE_LABELS, EXPORT_FIELD_TYPE_DEFS, EXPORT_FIELD_TYPE_CATEGORIES, rememberedFieldTypeExclusion;
+  var SHEETLIB_PRIMARY_URL, SHEETLIB_FALLBACK_URL, rememberedSheetSelection, EXPORT_SHEET_DEFS, EXPORT_SHEET_CATEGORIES, EXPORT_SHEET_PRESETS, FIELD_TYPE_LABELS, EXPORT_FIELD_TYPE_DEFS, EXPORT_FIELD_TYPE_CATEGORIES, rememberedFieldTypeExclusion;
   var init_design_xlsx = __esm({
     "src/tabs/design-xlsx.ts"() {
       "use strict";
@@ -25945,7 +25949,6 @@ ${detail}`);
       init_utils();
       SHEETLIB_PRIMARY_URL = "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js";
       SHEETLIB_FALLBACK_URL = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
-      DESIGN_EXPORT_VERSION = "2.2";
       rememberedSheetSelection = null;
       EXPORT_SHEET_DEFS = [
         { key: "summary", label: "サマリー", default: true, cat: "basic" },
@@ -37112,7 +37115,7 @@ ${detail}`);
           };
         } else if (act === "export") {
           const label = SECTION_DEFS.find((d) => d.key === st.sectionKey)?.label || st.sectionKey;
-          downloadText(`kintone-${st.sectionKey}-preview.json`, JSON.stringify(st.after, null, 2), "application/json");
+          downloadText(buildExportFilename(`${label}_比較先プレビュー`, "json"), JSON.stringify(st.after, null, 2), "application/json");
           setStatus2(`${label} の比較先JSONを保存しました`);
         }
         render();
@@ -37517,7 +37520,7 @@ ${detail}`);
     }
     const appName = extractAppNameFromBundle(payload.previewBundle) || extractAppNameFromBundle(payload.productionBundle) || "";
     const appLabel3 = buildAppFilenameLabel(payload.appId, appName);
-    const filename = `preview_prod_diff_${appLabel3}_${nowStamp()}.json`;
+    const filename = buildExportFilename("プレビュー本番差分", "json", { appLabel: appLabel3 });
     const body = {
       kind: "preview-production-diff",
       exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -37572,7 +37575,7 @@ ${detail}`);
     }
     const appName = extractAppNameFromBundle(payload.previewBundle) || extractAppNameFromBundle(payload.productionBundle) || "";
     const appLabel3 = buildAppFilenameLabel(payload.appId, appName);
-    const filename = `preview_prod_diff_${appLabel3}_${nowStamp()}.csv`;
+    const filename = buildExportFilename("プレビュー本番差分", "csv", { appLabel: appLabel3 });
     const csv = `\uFEFF${buildPreviewProdDiffCsv(rows)}`;
     downloadText(filename, csv, "text/csv;charset=utf-8");
     setStatus(`プレビュー⇔本番 差分をCSVに保存しました: ${filename}（${rows.length}件）`);
@@ -37951,16 +37954,18 @@ ${detail}`);
       for (let i = 0; i < bundles.length; i++) {
         const bundle = bundles[i];
         const guestId = targets[i].guestId;
-        const suffix = `${guestId ? `_guest_${guestId}` : ""}${preview ? "_preview" : "_live"}`;
-        const name = `app_${bundle.appId}${suffix}.json`;
+        const suffix = `${guestId ? `_ゲスト${guestId}` : ""}${preview ? "_プレビュー" : "_本番"}`;
+        const name = `${buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle))}${suffix}.json`;
         zip.file(name, JSON.stringify(bundle, null, 2));
       }
       const zipBlob = await zip.generateAsync({ type: "blob" });
-      downloadBlob(`settings_export_${bundles.length}apps_${nowStamp()}.zip`, zipBlob);
+      const expLabel2 = bundles.length === 1 ? appLabelFromBundle(bundles[0]) : `${bundles.length}件`;
+      downloadBlob(buildExportFilename("設定一括取得", "zip", { appLabel: expLabel2 }), zipBlob);
       setStatus(`設定バックアップZIPを保存しました（${bundles.length} apps）`);
       return;
     }
-    downloadText(`settings_export_${bundles.length}apps_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    const expLabel = bundles.length === 1 ? appLabelFromBundle(bundles[0]) : `${bundles.length}件`;
+    downloadText(buildExportFilename("設定一括取得", "json", { appLabel: expLabel }), JSON.stringify(payload, null, 2), "application/json");
     setStatus(`設定バックアップJSONを保存しました（${bundles.length}アプリ）`);
   }
 
@@ -40171,8 +40176,7 @@ ${detail}`);
         }
         Promise.resolve().then(() => (init_category_view(), category_view_exports)).then((m) => {
           const md = m.buildCategoryViewMarkdown(state.lastDiffRows, { onlyActive: false });
-          const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
-          downloadText(`差分セクション別_${ts}.md`, md, "text/markdown");
+          downloadText(buildExportFilename("差分セクション別", "md"), md, "text/markdown");
           setStatus("セクション別ビューを Markdown として保存しました");
         });
         return;
@@ -41693,7 +41697,7 @@ ${detail}`);
           setStatus("書き出し対象の反映履歴がありません", true);
           return;
         }
-        const filename = `reflect_apply_history_${nowStamp()}.json`;
+        const filename = buildExportFilename("反映履歴", "json");
         downloadText(filename, JSON.stringify(snapshot, null, 2), "application/json");
         setStatus(`反映履歴を書き出しました: ${filename}（${snapshot.count}件）`);
         return;
@@ -41844,10 +41848,10 @@ ${detail}`);
       }
       if (act === "exportFieldJson") {
         return withGuard(async () => {
-          const { nowStamp: nowStamp2, downloadText: downloadText2 } = await Promise.resolve().then(() => (init_utils(), utils_exports));
+          const { buildExportFilename: buildExportFilename2, downloadText: downloadText2 } = await Promise.resolve().then(() => (init_utils(), utils_exports));
           if (!ui.fieldJson.value.trim()) throw new Error("フィールドJSONが空です");
           const parsed = JSON.parse(ui.fieldJson.value);
-          downloadText2(`fields_${nowStamp2()}.json`, JSON.stringify(parsed, null, 2), "application/json");
+          downloadText2(buildExportFilename2("フィールド定義", "json"), JSON.stringify(parsed, null, 2), "application/json");
           setStatus("フィールドJSONを保存しました");
         });
       }
@@ -42462,11 +42466,15 @@ ${detail}`);
   }
   function runExportDiffXlsx(ctx) {
     const blob = buildDiffXlsxBlob(ctx);
-    const filename = ctx.filename || `diff_${nowStamp()}.xlsx`;
+    const src = buildAppFilenameLabel(ctx.sourceBundle?.appId, ctx.sourceBundle?.meta?.appName);
+    const tgt = buildAppFilenameLabel(ctx.targetBundle?.appId, ctx.targetBundle?.meta?.appName);
+    const pairLabel = src && tgt ? `${src}_vs_${tgt}` : src || tgt || "";
+    const filename = ctx.filename || buildExportFilename("差分", "xlsx", { appLabel: pairLabel });
     downloadBlob(filename, blob);
   }
 
   // src/ui/extras.ts
+  init_utils();
   var G = {};
   function getRoot2() {
     return getToolDocument().getElementById("kintone-unified-suite-v2");
@@ -42894,7 +42902,7 @@ ${detail}`);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `kus-diff-snapshot_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+    a.download = buildExportFilename("差分スナップショット", "json");
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 200);
     pushToast("差分結果 JSON をダウンロードしました", { tone: "ok" });
@@ -43007,7 +43015,7 @@ ${detail}`);
     const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `kus-apply-plan_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.md`;
+    a.download = buildExportFilename("反映プラン", "md");
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 200);
     pushToast("反映プラン Markdown をダウンロードしました", { tone: "ok" });
@@ -43039,7 +43047,7 @@ ${detail}`);
     if (format === "svg") {
       const xml2 = new XMLSerializer().serializeToString(svg);
       const blob2 = new Blob([xml2], { type: "image/svg+xml" });
-      triggerDownload2(blob2, `${baseName}.svg`);
+      triggerDownload2(blob2, buildExportFilename(baseName, "svg"));
       return;
     }
     const xml = new XMLSerializer().serializeToString(svg);
@@ -43054,7 +43062,7 @@ ${detail}`);
       ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
       canvas.toBlob((b) => {
-        if (b) triggerDownload2(b, `${baseName}.png`);
+        if (b) triggerDownload2(b, buildExportFilename(baseName, "png"));
       });
     };
     img.src = url;
@@ -43097,7 +43105,7 @@ ${detail}`);
         return;
       }
       const fmt = target.dataset.act === "exportDiagramSvg" ? "svg" : "png";
-      downloadDiagram(svg, `kus-${paneKey}_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`, fmt);
+      downloadDiagram(svg, `${paneKey}図`, fmt);
       pushToast(`${fmt.toUpperCase()} を保存しました`, { tone: "ok" });
     });
   }
@@ -43637,7 +43645,7 @@ ${body}`;
         pushToast("バックアップ対象がありません（先に比較先を取得してください）", { tone: "warn" });
         return;
       }
-      downloadWithGeneration(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), "kus-target-backup");
+      downloadWithGeneration(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), "比較先バックアップ");
     });
   }
   function initErLayoutSwitch() {
@@ -43769,7 +43777,7 @@ ${body}`;
         pushToast(`コレクションへ追加: ${name}`, { tone: "ok" });
       } else if (act === "kusApiCollExport") {
         const blob = new Blob([JSON.stringify(apiCollection, null, 2)], { type: "application/json" });
-        triggerDownload2(blob, `kus-api-collection_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`);
+        triggerDownload2(blob, buildExportFilename("APIコレクション", "json"));
         pushToast("コレクション JSON を保存しました", { tone: "ok" });
       } else if (act === "kusApiCollImport") {
         const inp = document.createElement("input");
@@ -44200,7 +44208,7 @@ ${body}`;
       return;
     }
     const md = buildDiffMarkdownText();
-    triggerDownload2(new Blob([md], { type: "text/markdown" }), `kus-diff_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`);
+    triggerDownload2(new Blob([md], { type: "text/markdown" }), buildExportFilename("差分レポート", "md"));
     pushToast("Markdown を保存しました", { tone: "ok" });
   }
   async function copyDiffAsMarkdown() {
@@ -44231,7 +44239,7 @@ ${body}`;
         targetBundle: state.lastTargetBundle,
         ignoreKeys: ui.ignoreKeys?.value || "",
         exportContentMode: "diffOnly",
-        filename: `kus-diff_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`
+        filename: buildExportFilename("差分レポート", "xlsx")
       });
       pushToast("差分 Excel (.xlsx) を保存しました", { tone: "ok" });
     } catch (e) {
@@ -44404,7 +44412,7 @@ ${body}`;
       });
       overlay.querySelector('[data-act="kusPlanMermaidDl"]')?.addEventListener("click", () => {
         const md = "```mermaid\n" + code + "\n```\n";
-        triggerDownload2(new Blob([md], { type: "text/markdown" }), `kus-plan-mermaid_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`);
+        triggerDownload2(new Blob([md], { type: "text/markdown" }), buildExportFilename("反映プランMermaid", "md"));
         pushToast("Mermaid Markdown を保存しました", { tone: "ok" });
       });
     } catch (e) {
@@ -44419,7 +44427,7 @@ ${body}`;
       return;
     }
     const md = "```mermaid\n" + buildPlanMermaid(plan) + "\n```\n";
-    triggerDownload2(new Blob([md], { type: "text/markdown" }), `kus-plan-mermaid_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.md`);
+    triggerDownload2(new Blob([md], { type: "text/markdown" }), buildExportFilename("反映プランMermaid", "md"));
     pushToast("Mermaid 形式で保存しました", { tone: "ok" });
   }
   function showApiRequestDiffPreview() {
@@ -44478,7 +44486,7 @@ ${body}`;
           pushToast("PNG 生成に失敗", { tone: "error" });
           return;
         }
-        triggerDownload2(blob, `kus-snapshot_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.png`);
+        triggerDownload2(blob, buildExportFilename("スナップショット", "png"));
         pushToast("PNG スクリーンショットを保存しました", { tone: "ok" });
       }, "image/png");
     } catch (e) {
@@ -44491,7 +44499,7 @@ ${body}`;
         }
       }).join("\n");
       const doc = `<!doctype html><html><head><meta charset="utf-8"><title>kus-snapshot</title><style>${css}</style></head><body>${html}</body></html>`;
-      triggerDownload2(new Blob([doc], { type: "text/html" }), `kus-snapshot_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}.html`);
+      triggerDownload2(new Blob([doc], { type: "text/html" }), buildExportFilename("スナップショット", "html"));
       pushToast(`PNG 失敗。HTML で保存しました (${e?.message || e})`, { tone: "warn" });
     }
   }
@@ -44692,7 +44700,7 @@ ${body}`;
       before: s.before ?? null,
       after: s.after ?? s.payload ?? null
     }));
-    triggerDownload2(new Blob([JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), overlay }, null, 2)], { type: "application/json" }), `kus-dryrun-overlay_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`);
+    triggerDownload2(new Blob([JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), overlay }, null, 2)], { type: "application/json" }), buildExportFilename("ドライランオーバーレイ", "json"));
     pushToast("ドライラン重ね差分 JSON を保存しました", { tone: "ok" });
   }
   var DESIGN_TEMPLATES = [
@@ -45947,7 +45955,7 @@ ${diffMd}
       showToast("先にフロー図を取得してください", "warn");
       return;
     }
-    downloadText(`process-flow_${nowStamp()}.mmd`, text, "text/plain;charset=utf-8");
+    downloadText(buildExportFilename("プロセス図", "mmd", { appLabel: buildAppFilenameLabel(commonParams().source.appId, "") }), text, "text/plain;charset=utf-8");
     setStatus("Mermaid構文を保存しました");
   }
   function downloadFlowSvg() {
@@ -45960,7 +45968,7 @@ ${diffMd}
     const clone = svg.cloneNode(true);
     if (!clone.getAttribute("xmlns")) clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
     const xml = new XMLSerializer().serializeToString(clone);
-    downloadText(`process-flow_${nowStamp()}.svg`, xml, "image/svg+xml;charset=utf-8");
+    downloadText(buildExportFilename("プロセス図", "svg", { appLabel: buildAppFilenameLabel(commonParams().source.appId, "") }), xml, "image/svg+xml;charset=utf-8");
     setStatus("フロー図をSVGとして保存しました");
   }
   function renderProcessFlowSummary() {
@@ -46493,7 +46501,7 @@ ${diffMd}
     const method = String(doc.getElementById("u_apiTesterMethod")?.value || "GET").toUpperCase();
     const rawPath = String(doc.getElementById("u_apiTesterPath")?.value || "").trim();
     const pathSlug = rawPath.replace(/^\/+/, "").replace(/\.json$/i, "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "response";
-    downloadText(`api-${method.toLowerCase()}_${pathSlug}_${nowStamp()}.json`, prettyJson(lastApiTesterResponse), "application/json;charset=utf-8");
+    downloadText(buildExportFilename("API応答", "json", { appLabel: `${method.toLowerCase()}_${pathSlug}` }), prettyJson(lastApiTesterResponse), "application/json;charset=utf-8");
     setStatus("レスポンスをJSONとして保存しました");
   }
   function exportApiTesterHistory() {
@@ -46505,7 +46513,7 @@ ${diffMd}
       exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
       history: apiTesterHistoryMemory
     };
-    downloadText(`api-tester-history_${nowStamp()}.json`, prettyJson(payload), "application/json;charset=utf-8");
+    downloadText(buildExportFilename("APIテスター履歴", "json"), prettyJson(payload), "application/json;charset=utf-8");
     setStatus(`履歴 ${apiTesterHistoryMemory.length} 件をエクスポートしました`);
   }
   function importApiTesterHistory() {
@@ -46766,7 +46774,7 @@ ${diffMd}
     (rows || []).forEach((row) => {
       lines.push((row || []).map(escapeCsvCell2).join(","));
     });
-    downloadText(`${filenameBase}_${nowStamp()}.csv`, `\uFEFF${lines.join("\n")}`, "text/csv;charset=utf-8");
+    downloadText(buildExportFilename(filenameBase, "csv"), `\uFEFF${lines.join("\n")}`, "text/csv;charset=utf-8");
   }
   function normalizeEntityInfo(entity) {
     const type = String(entity?.type || "").trim();
@@ -47516,7 +47524,7 @@ ${diffMd}
       });
     });
     downloadCsvFile(
-      "field_impact",
+      "影響分析",
       ["フィールドコード", "ラベル", "タイプ", "参照数", "参照元セクション", "参照種別", "パス"],
       csvRows
     );
@@ -47660,7 +47668,7 @@ ${diffMd}
       return;
     }
     downloadCsvFile(
-      "permission_matrix",
+      "権限マトリクス",
       ["カテゴリ", "エンティティ", "対象/条件", "管理", "閲覧", "追加", "編集", "削除", "読込/書出", "備考"],
       rows
     );
@@ -47809,7 +47817,7 @@ ${diffMd}
       showToast("出力対象の通知設定がありません", "warn");
       return;
     }
-    downloadCsvFile("notification_visualizer", ["種別", "タイトル", "条件", "宛先数", "宛先"], rows);
+    downloadCsvFile("通知一覧", ["種別", "タイトル", "条件", "宛先数", "宛先"], rows);
     setStatus("通知設定CSVを出力しました");
   }
   function ensureNotificationScaffold(el) {
@@ -48535,7 +48543,7 @@ ${field.label}` : code,
     const png = cy.png({ scale: 2, bg: "#f8fafc" });
     const link = getToolDocument().createElement("a");
     link.href = png;
-    link.download = `field_dependency_${nowStamp()}.png`;
+    link.download = buildExportFilename("フィールド依存グラフ", "png");
     link.click();
     setStatus("PNGを保存しました");
   }
