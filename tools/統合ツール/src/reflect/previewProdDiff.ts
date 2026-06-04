@@ -4,11 +4,11 @@ import { SECTION_DEFS } from '../constants.js';
 import { state, ui } from '../state.js';
 import {
   esc,
-  nowStamp,
   downloadText,
   selectedScopeKeys,
   extractAppNameFromBundle,
   buildAppFilenameLabel,
+  buildExportFilename,
   getSeverityDisplayLabel
 } from '../utils.js';
 import { fetchBundle } from '../api.js';
@@ -428,7 +428,7 @@ export function exportPreviewProdDiffJson() {
   }
   const appName = extractAppNameFromBundle(payload.previewBundle) || extractAppNameFromBundle(payload.productionBundle) || '';
   const appLabel = buildAppFilenameLabel(payload.appId, appName);
-  const filename = `preview_prod_diff_${appLabel}_${nowStamp()}.json`;
+  const filename = buildExportFilename('プレビュー本番差分', 'json', { appLabel });
   const body = {
     kind: 'preview-production-diff',
     exportedAt: new Date().toISOString(),
@@ -487,7 +487,7 @@ export function exportPreviewProdDiffCsv() {
   }
   const appName = extractAppNameFromBundle(payload.previewBundle) || extractAppNameFromBundle(payload.productionBundle) || '';
   const appLabel = buildAppFilenameLabel(payload.appId, appName);
-  const filename = `preview_prod_diff_${appLabel}_${nowStamp()}.csv`;
+  const filename = buildExportFilename('プレビュー本番差分', 'csv', { appLabel });
   // Excel で文字化けしないよう UTF-8 BOM を付与する
   const csv = `﻿${buildPreviewProdDiffCsv(rows)}`;
   downloadText(filename, csv, 'text/csv;charset=utf-8');

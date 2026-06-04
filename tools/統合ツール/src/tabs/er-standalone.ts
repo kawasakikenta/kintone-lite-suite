@@ -2,7 +2,7 @@
 
 import { crawl, buildHTML, progressUi, ER_DEFAULTS, formatErLayoutLabel } from './er.js';
 import { fetchAppsInSpace } from '../api.js';
-import { nowStamp, downloadText } from '../utils.js';
+import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 
 /**
  * スペースID指定時、スペース内全アプリを起点に追加し、
@@ -109,11 +109,10 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
     const apps = await crawl(options.startAppIds, options);
     progressUi.update(94, 'HTML保存データ生成中...');
     const html = buildHTML(apps, options);
-    const guestSuffix = opts.guestId ? `_guest${opts.guestId}` : '';
-    const previewSuffix = opts.preview ? '_preview' : '_prod';
     const baseName = appId || `space${spaceId}`;
+    const suffix = `${opts.guestId ? `guest${opts.guestId}_` : ''}${opts.preview ? 'プレビュー' : '本番'}`;
     downloadText(
-      `kintone_erd_app${baseName}${guestSuffix}${previewSuffix}_${nowStamp()}.html`,
+      buildExportFilename('ER図', 'html', { appLabel: buildAppFilenameLabel(baseName, ''), suffix }),
       html,
       'text/html'
     );

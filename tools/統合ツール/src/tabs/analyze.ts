@@ -1,7 +1,7 @@
 'use strict';
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
-import { esc, downloadText, nowStamp, showToast, stableStringify } from '../utils.js';
+import { esc, downloadText, showToast, stableStringify, buildExportFilename } from '../utils.js';
 import { FIELD_TYPE_JP, lookupEnum } from '../kintone-enums.js';
 import { fetchBundle, ensureBundleShape } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
@@ -91,7 +91,7 @@ function downloadCsvFile(filenameBase, header, rows) {
   (rows || []).forEach((row) => {
     lines.push((row || []).map(escapeCsvCell).join(','));
   });
-  downloadText(`${filenameBase}_${nowStamp()}.csv`, `\uFEFF${lines.join('\n')}`, 'text/csv;charset=utf-8');
+  downloadText(buildExportFilename(filenameBase, 'csv'), `\uFEFF${lines.join('\n')}`, 'text/csv;charset=utf-8');
 }
 
 function normalizeEntityInfo(entity) {
@@ -911,7 +911,7 @@ export function exportFieldImpactCsv() {
     });
   });
   downloadCsvFile(
-    'field_impact',
+    '影響分析',
     ['フィールドコード', 'ラベル', 'タイプ', '参照数', '参照元セクション', '参照種別', 'パス'],
     csvRows
   );
@@ -1064,7 +1064,7 @@ function exportPermissionMatrixCsv() {
     return;
   }
   downloadCsvFile(
-    'permission_matrix',
+    '権限マトリクス',
     ['カテゴリ', 'エンティティ', '対象/条件', '管理', '閲覧', '追加', '編集', '削除', '読込/書出', '備考'],
     rows
   );
@@ -1229,7 +1229,7 @@ function exportNotificationVisualizerCsv() {
     showToast('出力対象の通知設定がありません', 'warn');
     return;
   }
-  downloadCsvFile('notification_visualizer', ['種別', 'タイトル', '条件', '宛先数', '宛先'], rows);
+  downloadCsvFile('通知一覧', ['種別', 'タイトル', '条件', '宛先数', '宛先'], rows);
   setStatus('通知設定CSVを出力しました');
 }
 
@@ -2039,7 +2039,7 @@ export function fieldGraphExportPng() {
   const png = cy.png({ scale: 2, bg: '#f8fafc' });
   const link = getToolDocument().createElement('a');
   link.href = png;
-  link.download = `field_dependency_${nowStamp()}.png`;
+  link.download = buildExportFilename('フィールド依存グラフ', 'png');
   link.click();
   setStatus('PNGを保存しました');
 }

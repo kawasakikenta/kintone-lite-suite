@@ -19,7 +19,7 @@ import {
   liteRun
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
-import { downloadText } from '../utils.js';
+import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 
 export function mountFieldLitePanel() {
   const panel = createLitePanel({
@@ -100,9 +100,8 @@ export function mountFieldLitePanel() {
       panel.setStatus(`JSON が壊れています: ${e?.message || String(e)}`, 'err');
       return;
     }
-    const stamp = new Date().toISOString().replace(/[^\dT]/g, '').slice(0, 15);
-    const appLabel = (tgtApp.value.trim() || srcApp.value.trim() || 'app');
-    downloadText(`fields_${appLabel}_${stamp}.json`, text, 'application/json');
+    const appId = tgtApp.value.trim() || srcApp.value.trim();
+    downloadText(buildExportFilename('フィールド定義', 'json', { appLabel: buildAppFilenameLabel(appId, '') }), text, 'application/json');
     panel.setStatus('フィールド JSON を保存しました', 'ok');
   });
 

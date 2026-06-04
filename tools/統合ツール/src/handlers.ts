@@ -12,7 +12,7 @@ import {
   upsertConnectionPreset,
   deleteConnectionPreset
 } from './state.js';
-import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast, kusConfirm, kusPrompt, nowStamp, downloadText } from './utils.js';
+import { esc, deepClone, readTextFile, getThemeDisplayLabel, selectedScopeKeys, showToast, kusConfirm, kusPrompt, downloadText, buildExportFilename } from './utils.js';
 import { buildApiPrefix, apiGet } from './api.js';
 import { countActualDiffRows, getActualDiffRows, summarizeRows } from './diff/engine.js';
 import { getRenderedDiffRows } from './diff/filter.js';
@@ -1973,8 +1973,7 @@ export function setupEventHandlers(injected: any = {}) {
       if (!state.lastDiffRows.length) { setStatus('差分結果がありません'); return; }
       import('./diff/category-view.js').then((m) => {
         const md = m.buildCategoryViewMarkdown(state.lastDiffRows, { onlyActive: false });
-        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        downloadText(`差分セクション別_${ts}.md`, md, 'text/markdown');
+        downloadText(buildExportFilename('差分セクション別', 'md'), md, 'text/markdown');
         setStatus('セクション別ビューを Markdown として保存しました');
       });
       return;
@@ -3453,7 +3452,7 @@ export function setupEventHandlers(injected: any = {}) {
     if (act === 'exportApplyHistory') {
       const snapshot = snapshotReflectApplyHistoryExport();
       if (!snapshot.count) { setStatus('書き出し対象の反映履歴がありません', true); return; }
-      const filename = `reflect_apply_history_${nowStamp()}.json`;
+      const filename = buildExportFilename('反映履歴', 'json');
       downloadText(filename, JSON.stringify(snapshot, null, 2), 'application/json');
       setStatus(`反映履歴を書き出しました: ${filename}（${snapshot.count}件）`);
       return;
@@ -3602,10 +3601,10 @@ export function setupEventHandlers(injected: any = {}) {
     }
     if (act === 'exportFieldJson') {
       return withGuard(async () => {
-        const { nowStamp, downloadText } = await import('./utils.js');
+        const { buildExportFilename, downloadText } = await import('./utils.js');
         if (!ui.fieldJson.value.trim()) throw new Error('フィールドJSONが空です');
         const parsed = JSON.parse(ui.fieldJson.value);
-        downloadText(`fields_${nowStamp()}.json`, JSON.stringify(parsed, null, 2), 'application/json');
+        downloadText(buildExportFilename('フィールド定義', 'json'), JSON.stringify(parsed, null, 2), 'application/json');
         setStatus('フィールドJSONを保存しました');
       });
     }

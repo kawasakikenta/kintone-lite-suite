@@ -496,7 +496,7 @@ ${contextLine}`);
   function nowStamp() {
     const d = /* @__PURE__ */ new Date();
     const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
   function triggerDownload(filename, blob) {
     const doc = getToolDocumentSafe();
@@ -1449,6 +1449,7 @@ ${contextLine}`);
 .kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}

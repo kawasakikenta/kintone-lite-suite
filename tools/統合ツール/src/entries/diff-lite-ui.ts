@@ -204,7 +204,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const srcApp = makeInput({ placeholder: 'アプリID', width: 'id' });
   const srcGuest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
   const srcPrev = makeCheck({ label: 'プレビューで取得' });
-  const tgtApp = makeInput({ placeholder: 'アプリID', width: 'id' });
+  const tgtApp = makeInput({ placeholder: 'アプリID（カンマ区切り可）', width: 'medium' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
   const tgtPrev = makeCheck({ label: 'プレビューで取得' });
 
@@ -221,7 +221,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     if (label) label.textContent = `比較先 ${idx + 1}`;
   });
   const addTargetRow = (appId = '', guestId = '') => {
-    const app = makeInput({ placeholder: 'アプリID', width: 'id' });
+    const app = makeInput({ placeholder: 'アプリID（カンマ区切り可）', width: 'medium' });
     const guest = makeInput({ placeholder: 'ゲストID', width: 'guest' });
     app.value = appId;
     guest.value = guestId;
@@ -241,8 +241,31 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const entry = { app, guest, row };
     targetRows.push(entry);
     targetList.appendChild(row);
+    attachTargetSplit(app, guest);
     return entry;
   };
+  // 比較先のアプリID欄に「100, 120, 130」のようにカンマ区切りで入力したら比較先行へ分割する
+  const attachTargetSplit = (appInput: HTMLInputElement, guestInput: HTMLInputElement) => {
+    const distribute = () => {
+      const raw = appInput.value;
+      if (!/[,、\s]/.test(raw)) return;
+      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+      if (tokens.length <= 1) { appInput.value = tokens[0] || ''; return; }
+      appInput.value = tokens[0];
+      const guestVal = guestInput.value.trim();
+      for (let k = 1; k < tokens.length; k += 1) addTargetRow(tokens[k], guestVal);
+      panel.setStatus(`比較先を ${tokens.length} 件に分割しました`, 'info');
+    };
+    appInput.addEventListener('change', distribute);
+    appInput.addEventListener('paste', (ev: ClipboardEvent) => {
+      const text = ev.clipboardData?.getData('text') || '';
+      if (!/[,、\s]/.test(text)) return;
+      ev.preventDefault();
+      appInput.value = [appInput.value.trim(), text].filter(Boolean).join(',');
+      distribute();
+    });
+  };
+  attachTargetSplit(tgtApp, tgtGuest);
   const addTargetBtn = makeButton('比較先行を追加', 'sub');
   addTargetBtn.addEventListener('click', () => { addTargetRow(); panel.setStatus('比較先行を追加しました', 'info'); });
   const copyFirstBtn = makeButton('比較先1を複製', 'sub');

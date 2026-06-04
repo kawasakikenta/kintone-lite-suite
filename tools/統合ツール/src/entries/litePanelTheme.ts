@@ -304,6 +304,7 @@ const THEME_CSS = `
 .kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}
@@ -803,6 +804,11 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
   foot.appendChild(count);
   wrap.appendChild(foot);
 
+  const hint = document.createElement('div');
+  hint.className = 'kus-lp__apptable-hint';
+  hint.textContent = 'アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。';
+  wrap.appendChild(hint);
+
   const rows: AppTableRowEntry[] = [];
 
   function getApps(): AppTableRow[] {
@@ -835,6 +841,31 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     refresh();
     opts.onChange?.(getApps());
   }
+  /**
+   * 1 つのアプリID入力欄に「100, 120, 130」のようにカンマ区切りで入力された値を、
+   * 先頭をその行に残し、残りを直後の行へ分割展開する。
+   * @returns 分割が発生したら true
+   */
+  function distributeAppTokens(entry: AppTableRowEntry): boolean {
+    const raw = entry.app.value;
+    if (!/[,、\s]/.test(raw)) return false;
+    const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+    if (tokens.length <= 1) {
+      // 区切り文字だけ / 末尾カンマなどは正規化（先頭トークンのみ残す）
+      const next = tokens[0] || '';
+      if (entry.app.value !== next) { entry.app.value = next; return true; }
+      return false;
+    }
+    entry.app.value = tokens[0];
+    const guestVal = entry.guest.value.trim();
+    const start = rows.indexOf(entry);
+    let last = entry;
+    for (let k = 1; k < tokens.length; k += 1) {
+      last = insertRow(start + k, tokens[k], guestVal, false);
+    }
+    try { last.app.focus(); } catch { /* noop */ }
+    return true;
+  }
   function removeRow(entry: AppTableRowEntry) {
     if (rows.length <= minRows) {
       entry.app.value = '';
@@ -856,7 +887,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     const tdAct = document.createElement('td');
     tdAct.className = 'kus-lp__apptable-acts';
 
-    const app = makeInput({ placeholder: opts.appPlaceholder || 'アプリID', ariaLabel: 'アプリID' });
+    const app = makeInput({ placeholder: opts.appPlaceholder || 'アプリID（カンマ区切りで複数可）', ariaLabel: 'アプリID' });
     const guest = makeInput({ placeholder: opts.guestPlaceholder || '空欄=通常スペース', ariaLabel: 'ゲストID' });
     app.value = appId;
     guest.value = guestId;
@@ -898,6 +929,17 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     delBtn.addEventListener('click', () => removeRow(entry));
     app.addEventListener('input', emitChange);
     guest.addEventListener('input', emitChange);
+    // カンマ（,／、）・空白・改行区切りで複数アプリIDをまとめて入力したら自動で行へ分割する。
+    // 入力途中の誤分割を避けるため、確定（change/blur）時とペースト時にのみ分割する。
+    app.addEventListener('change', () => { if (distributeAppTokens(entry)) emitChange(); });
+    app.addEventListener('paste', (ev: ClipboardEvent) => {
+      const text = ev.clipboardData?.getData('text') || '';
+      if (!/[,、\s]/.test(text)) return;
+      ev.preventDefault();
+      const combined = [app.value.trim(), text].filter(Boolean).join(',');
+      app.value = combined;
+      if (distributeAppTokens(entry)) emitChange();
+    });
 
     const at = Math.min(Math.max(index, 0), rows.length);
     if (at >= rows.length) tbody.appendChild(tr);

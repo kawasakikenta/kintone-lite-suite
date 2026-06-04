@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS } from '../constants.js';
 import { state } from '../state.js';
-import { nowStamp, downloadText } from '../utils.js';
+import { nowStamp, downloadText, buildExportFilename, appLabelFromBundle } from '../utils.js';
 import { fetchBundle } from '../api.js';
 import { bundleToMarkdown } from '../diff/export.js';
 import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip } from './design-xlsx.js';
@@ -28,10 +28,11 @@ export async function runDesignExportStandalone(kind, source, setStatus) {
   });
   state.lastSourceBundle = bundle;
 
+  const appLabel = appLabelFromBundle(bundle);
   if (kind === 'json') {
-    downloadText(`design_${bundle.appId}_${nowStamp()}.json`, JSON.stringify(bundle, null, 2), 'application/json');
+    downloadText(buildExportFilename('設計書', 'json', { appLabel }), JSON.stringify(bundle, null, 2), 'application/json');
   } else {
-    downloadText(`design_${bundle.appId}_${nowStamp()}.md`, bundleToMarkdown(bundle), 'text/markdown');
+    downloadText(buildExportFilename('設計書', 'md', { appLabel }), bundleToMarkdown(bundle), 'text/markdown');
   }
   setStatus(`設計書出力完了（App ${bundle.appId}）`);
 }
@@ -192,6 +193,7 @@ export async function runDesignDiffMdStandalone(
 ${diffMd}
 \`\`\`
 `;
-  downloadText(`design_diff_${srcAppId}_vs_${tgtAppId}_${nowStamp()}.md`, finalMd, 'text/markdown');
+  const diffLabel = `${appLabelFromBundle(srcBundle)}_vs_${appLabelFromBundle(tgtBundle)}`;
+  downloadText(buildExportFilename('設計書差分', 'md', { appLabel: diffLabel }), finalMd, 'text/markdown');
   setStatus(`設計書差分レポートを出力しました（${srcAppId} ⇔ ${tgtAppId}）`);
 }

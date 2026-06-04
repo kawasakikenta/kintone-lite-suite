@@ -2,8 +2,9 @@
 
 import { SECTION_DEFS } from '../constants.js';
 import {
-  nowStamp,
   downloadBlob,
+  buildExportFilename,
+  buildAppFilenameLabel,
   getDiffTypeDisplayLabel,
   getSeverityDisplayLabel,
   getIssueSideLabel
@@ -160,6 +161,9 @@ export function buildDiffXlsxBlob(ctx: DiffXlsxContext): Blob {
 
 export function runExportDiffXlsx(ctx: DiffXlsxContext): void {
   const blob = buildDiffXlsxBlob(ctx);
-  const filename = ctx.filename || `diff_${nowStamp()}.xlsx`;
+  const src = buildAppFilenameLabel(ctx.sourceBundle?.appId, ctx.sourceBundle?.meta?.appName);
+  const tgt = buildAppFilenameLabel(ctx.targetBundle?.appId, ctx.targetBundle?.meta?.appName);
+  const pairLabel = src && tgt ? `${src}_vs_${tgt}` : (src || tgt || '');
+  const filename = ctx.filename || buildExportFilename('差分', 'xlsx', { appLabel: pairLabel });
   downloadBlob(filename, blob);
 }

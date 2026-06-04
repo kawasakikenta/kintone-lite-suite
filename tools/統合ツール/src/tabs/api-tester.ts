@@ -1,6 +1,6 @@
 'use strict';
 
-import { downloadText, esc, nowStamp, showToast } from '../utils.js';
+import { downloadText, esc, showToast, buildExportFilename } from '../utils.js';
 import { assertAllowsMutatingApiUrl } from '../api.js';
 import { setBusy } from '../ui/components.js';
 import { setStatus } from '../ui/components.js';
@@ -498,7 +498,7 @@ export function downloadApiTesterResponse(): void {
     .replace(/\.json$/i, '')
     .replace(/[^A-Za-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '') || 'response';
-  downloadText(`api-${method.toLowerCase()}_${pathSlug}_${nowStamp()}.json`, prettyJson(lastApiTesterResponse), 'application/json;charset=utf-8');
+  downloadText(buildExportFilename('API応答', 'json', { appLabel: `${method.toLowerCase()}_${pathSlug}` }), prettyJson(lastApiTesterResponse), 'application/json;charset=utf-8');
   setStatus('レスポンスをJSONとして保存しました');
 }
 
@@ -511,7 +511,7 @@ export function exportApiTesterHistory(): void {
     exportedAt: new Date().toISOString(),
     history: apiTesterHistoryMemory
   };
-  downloadText(`api-tester-history_${nowStamp()}.json`, prettyJson(payload), 'application/json;charset=utf-8');
+  downloadText(buildExportFilename('APIテスター履歴', 'json'), prettyJson(payload), 'application/json;charset=utf-8');
   setStatus(`履歴 ${apiTesterHistoryMemory.length} 件をエクスポートしました`);
 }
 

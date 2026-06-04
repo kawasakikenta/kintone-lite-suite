@@ -3936,7 +3936,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'patch_' + REPORT_META.source.appId + '_vs_' + REPORT_META.target.appId + '.json';
+    a.download = '反映パッチ_app' + REPORT_META.source.appId + '_vs_app' + REPORT_META.target.appId + '.json';
     a.click();
     URL.revokeObjectURL(a.href);
   }

@@ -1,9 +1,15 @@
 'use strict';
 
 import { SECTION_DEFS } from '../constants.js';
-import { esc, nowStamp, downloadText, downloadBlob, selectedScopeKeys } from '../utils.js';
+import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, appLabelFromBundle, extractAppNameFromBundle } from '../utils.js';
 import { fetchBundle, buildApiPrefix, apiGet, fetchAppsInSpace } from '../api.js';
 import { loadJSZip } from './record.js';
+
+/** 設定一括取得のファイル名ラベル。1アプリならアプリ名(appID)、複数なら「N件」。 */
+function settingsExportLabel(bundles: any[]): string {
+  if (bundles.length === 1) return appLabelFromBundle(bundles[0]);
+  return `${bundles.length}件`;
+}
 
 function parseAppIdList(text) {
   const tokens = String(text || '')
@@ -220,17 +226,17 @@ export async function runSettingsExportStandalone(mode: string, opts: any, setSt
     for (let i = 0; i < bundles.length; i++) {
       const bundle = bundles[i];
       const guestId = targets[i].guestId;
-      const suffix = `${guestId ? `_guest_${guestId}` : ''}${preview ? '_preview' : '_live'}`;
-      const name = `app_${bundle.appId}${suffix}.json`;
+      const suffix = `${guestId ? `_ゲスト${guestId}` : ''}${preview ? '_プレビュー' : '_本番'}`;
+      const name = `${buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle))}${suffix}.json`;
       zip.file(name, JSON.stringify(bundle, null, 2));
     }
     const zipBlob = await zip.generateAsync({ type: 'blob' });
-    downloadBlob(`settings_export_${bundles.length}apps_${nowStamp()}.zip`, zipBlob);
+    downloadBlob(buildExportFilename('設定一括取得', 'zip', { appLabel: settingsExportLabel(bundles) }), zipBlob);
     setStatus(`設定一括取得ZIPを保存しました（${bundles.length} apps）`);
     return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
   }
 
-  downloadText(`settings_export_${bundles.length}apps_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  downloadText(buildExportFilename('設定一括取得', 'json', { appLabel: settingsExportLabel(bundles) }), JSON.stringify(payload, null, 2), 'application/json');
   setStatus(`設定一括取得JSONを保存しました（${bundles.length}アプリ）`);
   return { summaryHtml: renderSettingsExportSummaryHtml(rows, scopes) };
 }

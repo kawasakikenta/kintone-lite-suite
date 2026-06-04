@@ -1,6 +1,6 @@
 'use strict';
 
-import { nowStamp, downloadText } from '../utils.js';
+import { downloadText, buildExportFilename, appLabelFromBundle } from '../utils.js';
 import { countActualDiffRows } from '../diff/engine.js';
 import {
   buildDiffHtml,
@@ -28,6 +28,14 @@ function warningInfoLite(rows: any[], fetchIssues: any[]) {
   const issueCount = (fetchIssues || []).length;
   const total = diffCount + issueCount;
   return { threshold: 0, diffCount, issueCount, total, exceeded: false };
+}
+
+/** 比較元・比較先バンドルから「比較元_vs_比較先」のファイル名ラベルを作る。 */
+function diffPairLabel(sourceBundle: any, targetBundle: any): string {
+  const src = appLabelFromBundle(sourceBundle);
+  const tgt = appLabelFromBundle(targetBundle);
+  if (src && tgt) return `${src}_vs_${tgt}`;
+  return src || tgt || '';
 }
 
 /**
@@ -73,7 +81,7 @@ export function runExportDiffJsonStandalone(ctx) {
     compareSourceBundle: compareInfo?.sourceBundle || null,
     compareTargetBundle: compareInfo?.targetBundle || null
   });
-  downloadText(`diff_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  downloadText(buildExportFilename('差分', 'json', { appLabel: diffPairLabel(ctx.sourceBundle, ctx.targetBundle) }), JSON.stringify(payload, null, 2), 'application/json');
 }
 
 /**
@@ -107,7 +115,7 @@ export function runExportDiffHtmlStandalone(ctx) {
     normalizationState: ctx.normalizationPresetState || ({} as any),
     warning: warningInfoLite(rows, fetchIssues)
   });
-  downloadText(`diff_${nowStamp()}.html`, html, 'text/html');
+  downloadText(buildExportFilename('差分', 'html', { appLabel: diffPairLabel(ctx.sourceBundle, ctx.targetBundle) }), html, 'text/html');
 }
 
 export function runExportBundleJsonStandalone(sourceBundle, targetBundle) {
@@ -117,7 +125,7 @@ export function runExportBundleJsonStandalone(sourceBundle, targetBundle) {
     source: sourceBundle,
     target: targetBundle
   };
-  downloadText(`bundle_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  downloadText(buildExportFilename('比較バンドル', 'json', { appLabel: diffPairLabel(sourceBundle, targetBundle) }), JSON.stringify(payload, null, 2), 'application/json');
 }
 
 /**
@@ -128,5 +136,5 @@ export function runExportBundleJsonStandalone(sourceBundle, targetBundle) {
 export function runExportPatchJsonStandalone(rows, sourceBundle, targetBundle) {
   if (!countActualDiffRows(rows || [])) throw new Error('出力できる差分がありません');
   const payload = buildPatchPayload(rows, sourceBundle, targetBundle);
-  downloadText(`patch_${nowStamp()}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  downloadText(buildExportFilename('反映パッチ', 'json', { appLabel: diffPairLabel(sourceBundle, targetBundle) }), JSON.stringify(payload, null, 2), 'application/json');
 }

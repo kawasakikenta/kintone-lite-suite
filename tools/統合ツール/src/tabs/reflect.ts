@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, REFLECT_QUICK_PRESETS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc, deepClone, normalize, downloadText, nowStamp, readTextFile, kusConfirm, showToast } from '../utils.js';
+import { esc, deepClone, normalize, downloadText, readTextFile, kusConfirm, showToast, buildExportFilename } from '../utils.js';
 import { apiGet, fetchBundle, buildApiPrefix } from '../api.js';
 import {
   getActualDiffRows,
@@ -463,7 +463,7 @@ export function deleteReflectPreset(name) {
 export function exportReflectPresetsJson() {
   const payload = buildReflectPresetsExport(loadReflectPresets());
   if (!payload.count) throw new Error('書き出せる反映プリセットがありません');
-  const filename = `reflect_presets_${nowStamp()}.json`;
+  const filename = buildExportFilename('反映プリセット', 'json');
   downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
   return { filename, count: payload.count };
 }
@@ -514,7 +514,7 @@ export function exportReflectSelectionJson() {
       mode: state.reflectNodeModes[r._id] || 'src'
     }))
   };
-  const filename = `reflect_selection_${nowStamp()}.json`;
+  const filename = buildExportFilename('反映選択', 'json');
   downloadText(filename, JSON.stringify(payload, null, 2), 'application/json');
   return { filename, selectedCount: selected.length };
 }

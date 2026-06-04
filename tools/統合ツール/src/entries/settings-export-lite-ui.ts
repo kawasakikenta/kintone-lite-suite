@@ -88,7 +88,7 @@ export function mountSettingsExportLitePanel() {
   btnGrid.appendChild(btnJson);
   btnGrid.appendChild(btnZip);
   cardOpt.body.appendChild(btnGrid);
-  cardOpt.body.appendChild(makeNote('JSON は全アプリを 1 ファイルに、ZIP は app_<id>.json + manifest.json で個別保存します。'));
+  cardOpt.body.appendChild(makeNote('JSON は全アプリを 1 ファイルに、ZIP は「アプリ名(appID).json」＋ manifest.json で個別保存します。'));
   panel.body.insertBefore(cardOpt.card, panel.status);
 
   // ---- 結果サマリ ----

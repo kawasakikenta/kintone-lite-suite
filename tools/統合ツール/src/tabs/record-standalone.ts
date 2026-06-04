@@ -1,6 +1,6 @@
 'use strict';
 
-import { downloadBlob, kusConfirm } from '../utils.js';
+import { downloadBlob, kusConfirm, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle } from '../api.js';
 
 const JSZIP_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
@@ -163,7 +163,7 @@ export async function runCsvExportStandalone(opts, setStatus) {
   for (const rec of records) lines.push(propKeys.map(k => esc(extractValue(rec, k))).join(','));
   const csvStr = '\uFEFF' + lines.join('\n');
   const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
-  downloadBlob(filename || 'records.csv', blob);
+  downloadBlob(filename || buildExportFilename('レコード', 'csv', { appLabel: buildAppFilenameLabel(appId, '') }), blob);
   setStatus(`CSV出力完了 (${records.length}件)`);
 }
 
@@ -370,7 +370,7 @@ export async function runAttachmentDownloadStandalone(opts, setStatus) {
   }
   setStatus(`ZIP生成中 (${fileCount}ファイル)`);
   const zipBlob = await zip.generateAsync({ type: 'blob' });
-  downloadBlob(zipName || `attachments_${appId}_${Date.now()}.zip`, zipBlob);
+  downloadBlob(zipName || buildExportFilename('添付ファイル', 'zip', { appLabel: buildAppFilenameLabel(appId, '') }), zipBlob);
   setStatus(`添付一括DL完了: ${fileCount}ファイル`);
 }
 
@@ -534,7 +534,7 @@ export async function runRecordBackupStandalone(opts, setStatus) {
 
   setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
   const blob = await zip.generateAsync({ type: 'blob' });
-  downloadBlob(zipName || `record_backup_${appId}_${Date.now()}.zip`, blob);
+  downloadBlob(zipName || buildExportFilename('レコードバックアップ', 'zip', { appLabel: buildAppFilenameLabel(appId, '') }), blob);
   setStatus(`バックアップ完了: ${records.length}件 / 添付 ${fileCount} / コメント ${commentCount}`);
 }
 

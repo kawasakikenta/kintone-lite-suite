@@ -557,7 +557,47 @@ ${contextLine}`);
   function nowStamp() {
     const d = /* @__PURE__ */ new Date();
     const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+  function sanitizeFilenamePart(value, fallback = "不明") {
+    const text = String(value || "").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    return cleaned || fallback;
+  }
+  function extractAppNameFromBundle(bundle) {
+    const appSettings = bundle?.sections?.appSettings;
+    const candidates = [
+      appSettings?.name,
+      appSettings?.app?.name,
+      appSettings?.general?.name,
+      bundle?.meta?.appName,
+      bundle?.appName
+    ];
+    const found = candidates.find((item) => String(item || "").trim());
+    return found ? String(found).trim() : "";
+  }
+  function buildAppFilenameLabel(appId, appName) {
+    const id = String(appId || "").trim();
+    const name = String(appName || "").trim();
+    if (name && id) return `${sanitizeFilenamePart(name)}(app${sanitizeFilenamePart(id)})`;
+    if (name) return sanitizeFilenamePart(name);
+    if (id) return `app${sanitizeFilenamePart(id)}`;
+    return "";
+  }
+  function appLabelFromBundle(bundle) {
+    return buildAppFilenameLabel(bundle?.appId, extractAppNameFromBundle(bundle));
+  }
+  function buildExportFilename(baseLabel, ext, options = {}) {
+    const normalizedExt = String(ext || "").replace(/^\./, "").trim() || "txt";
+    const base = sanitizeFilenamePart(baseLabel, "出力");
+    const stamp = options.timestamp || nowStamp();
+    const appLabel2 = String(options.appLabel || "").trim();
+    const suffix = String(options.suffix || "").trim();
+    const parts = [base];
+    if (appLabel2) parts.push(sanitizeFilenamePart(appLabel2));
+    if (suffix) parts.push(sanitizeFilenamePart(suffix));
+    parts.push(sanitizeFilenamePart(stamp, nowStamp()));
+    return `${parts.join("_")}.${normalizedExt}`;
   }
   function getIssueSideLabel(side) {
     if (side === "source") return "比較元";
@@ -5532,7 +5572,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'patch_' + REPORT_META.source.appId + '_vs_' + REPORT_META.target.appId + '.json';
+    a.download = '反映パッチ_app' + REPORT_META.source.appId + '_vs_app' + REPORT_META.target.appId + '.json';
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -6348,6 +6388,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const total = diffCount + issueCount;
     return { threshold: 0, diffCount, issueCount, total, exceeded: false };
   }
+  function diffPairLabel(sourceBundle, targetBundle) {
+    const src = appLabelFromBundle(sourceBundle);
+    const tgt = appLabelFromBundle(targetBundle);
+    if (src && tgt) return `${src}_vs_${tgt}`;
+    return src || tgt || "";
+  }
   function runExportDiffJsonStandalone(ctx) {
     const rows = ctx.rows || [];
     const fetchIssues = ctx.fetchIssues || [];
@@ -6377,7 +6423,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       compareSourceBundle: compareInfo?.sourceBundle || null,
       compareTargetBundle: compareInfo?.targetBundle || null
     });
-    downloadText(`diff_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    downloadText(buildExportFilename("差分", "json", { appLabel: diffPairLabel(ctx.sourceBundle, ctx.targetBundle) }), JSON.stringify(payload, null, 2), "application/json");
   }
   function runExportDiffHtmlStandalone(ctx) {
     const rows = ctx.rows || [];
@@ -6405,7 +6451,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       normalizationState: ctx.normalizationPresetState || {},
       warning: warningInfoLite(rows, fetchIssues)
     });
-    downloadText(`diff_${nowStamp()}.html`, html, "text/html");
+    downloadText(buildExportFilename("差分", "html", { appLabel: diffPairLabel(ctx.sourceBundle, ctx.targetBundle) }), html, "text/html");
   }
   function runExportBundleJsonStandalone(sourceBundle, targetBundle) {
     if (!sourceBundle || !targetBundle) throw new Error("先に差分比較を実行してください");
@@ -6414,12 +6460,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       source: sourceBundle,
       target: targetBundle
     };
-    downloadText(`bundle_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    downloadText(buildExportFilename("比較バンドル", "json", { appLabel: diffPairLabel(sourceBundle, targetBundle) }), JSON.stringify(payload, null, 2), "application/json");
   }
   function runExportPatchJsonStandalone(rows, sourceBundle, targetBundle) {
     if (!countActualDiffRows(rows || [])) throw new Error("出力できる差分がありません");
     const payload = buildPatchPayload(rows, sourceBundle, targetBundle);
-    downloadText(`patch_${nowStamp()}.json`, JSON.stringify(payload, null, 2), "application/json");
+    downloadText(buildExportFilename("反映パッチ", "json", { appLabel: diffPairLabel(sourceBundle, targetBundle) }), JSON.stringify(payload, null, 2), "application/json");
   }
 
   // src/diff/xlsx-export.ts
@@ -6757,7 +6803,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
   function runExportDiffXlsx(ctx) {
     const blob = buildDiffXlsxBlob(ctx);
-    const filename = ctx.filename || `diff_${nowStamp()}.xlsx`;
+    const src = buildAppFilenameLabel(ctx.sourceBundle?.appId, ctx.sourceBundle?.meta?.appName);
+    const tgt = buildAppFilenameLabel(ctx.targetBundle?.appId, ctx.targetBundle?.meta?.appName);
+    const pairLabel = src && tgt ? `${src}_vs_${tgt}` : src || tgt || "";
+    const filename = ctx.filename || buildExportFilename("差分", "xlsx", { appLabel: pairLabel });
     downloadBlob(filename, blob);
   }
 
@@ -7104,6 +7153,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 .kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}
@@ -7729,7 +7779,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const srcApp = makeInput({ placeholder: "アプリID", width: "id" });
     const srcGuest = makeInput({ placeholder: "ゲストID", width: "guest" });
     const srcPrev = makeCheck({ label: "プレビューで取得" });
-    const tgtApp = makeInput({ placeholder: "アプリID", width: "id" });
+    const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切り可）", width: "medium" });
     const tgtGuest = makeInput({ placeholder: "ゲストID", width: "guest" });
     const tgtPrev = makeCheck({ label: "プレビューで取得" });
     const cardApp = makeCard({ title: "アプリと環境", number: 1 });
@@ -7745,7 +7795,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       if (label) label.textContent = `比較先 ${idx + 1}`;
     });
     const addTargetRow = (appId = "", guestId = "") => {
-      const app = makeInput({ placeholder: "アプリID", width: "id" });
+      const app = makeInput({ placeholder: "アプリID（カンマ区切り可）", width: "medium" });
       const guest = makeInput({ placeholder: "ゲストID", width: "guest" });
       app.value = appId;
       guest.value = guestId;
@@ -7770,8 +7820,33 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       const entry = { app, guest, row };
       targetRows.push(entry);
       targetList.appendChild(row);
+      attachTargetSplit(app, guest);
       return entry;
     };
+    const attachTargetSplit = (appInput, guestInput) => {
+      const distribute = () => {
+        const raw = appInput.value;
+        if (!/[,、\s]/.test(raw)) return;
+        const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+        if (tokens.length <= 1) {
+          appInput.value = tokens[0] || "";
+          return;
+        }
+        appInput.value = tokens[0];
+        const guestVal = guestInput.value.trim();
+        for (let k = 1; k < tokens.length; k += 1) addTargetRow(tokens[k], guestVal);
+        panel.setStatus(`比較先を ${tokens.length} 件に分割しました`, "info");
+      };
+      appInput.addEventListener("change", distribute);
+      appInput.addEventListener("paste", (ev) => {
+        const text = ev.clipboardData?.getData("text") || "";
+        if (!/[,、\s]/.test(text)) return;
+        ev.preventDefault();
+        appInput.value = [appInput.value.trim(), text].filter(Boolean).join(",");
+        distribute();
+      });
+    };
+    attachTargetSplit(tgtApp, tgtGuest);
     const addTargetBtn = makeButton("比較先行を追加", "sub");
     addTargetBtn.addEventListener("click", () => {
       addTargetRow();

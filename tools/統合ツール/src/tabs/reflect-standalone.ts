@@ -1,7 +1,7 @@
 'use strict';
 
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
-import { deepClone, stableStringify } from '../utils.js';
+import { deepClone, stableStringify, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle } from '../api.js';
 
 function filterWritable(props: any) {
@@ -125,7 +125,7 @@ export async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
     const blob = new Blob([payload], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `backup_app${targetAppId}_${Date.now()}.json`;
+    a.download = buildExportFilename('反映前バックアップ', 'json', { appLabel: buildAppFilenameLabel(targetAppId, '') });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     logs.push('バックアップ保存完了');

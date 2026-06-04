@@ -589,7 +589,32 @@ ${contextLine}`);
   function nowStamp() {
     const d = /* @__PURE__ */ new Date();
     const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+  function sanitizeFilenamePart(value, fallback = "不明") {
+    const text = String(value || "").trim();
+    const cleaned = text.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+    return cleaned || fallback;
+  }
+  function buildAppFilenameLabel(appId, appName) {
+    const id = String(appId || "").trim();
+    const name = String(appName || "").trim();
+    if (name && id) return `${sanitizeFilenamePart(name)}(app${sanitizeFilenamePart(id)})`;
+    if (name) return sanitizeFilenamePart(name);
+    if (id) return `app${sanitizeFilenamePart(id)}`;
+    return "";
+  }
+  function buildExportFilename(baseLabel, ext, options = {}) {
+    const normalizedExt = String(ext || "").replace(/^\./, "").trim() || "txt";
+    const base = sanitizeFilenamePart(baseLabel, "出力");
+    const stamp = options.timestamp || nowStamp();
+    const appLabel = String(options.appLabel || "").trim();
+    const suffix = String(options.suffix || "").trim();
+    const parts = [base];
+    if (appLabel) parts.push(sanitizeFilenamePart(appLabel));
+    if (suffix) parts.push(sanitizeFilenamePart(suffix));
+    parts.push(sanitizeFilenamePart(stamp, nowStamp()));
+    return `${parts.join("_")}.${normalizedExt}`;
   }
   function triggerDownload(filename, blob) {
     const doc = getToolDocumentSafe();
@@ -2990,7 +3015,7 @@ function showMermaid(){
       m+="  "+sn(a.name)+(r.kind==="LOOKUP"?" }o--|| ":" ||--o{ ")+sn(t.name)+' : "'+r.fromLabel+'"\\n';
     });
   });
-  openModal("Mermaid ER図",m,"kintone_erd.mmd");
+  openModal("Mermaid ER図",m,"ER図.mmd");
 }
 
 function showDrawio(){
@@ -3012,7 +3037,7 @@ function showDrawio(){
     x+='<mxCell id="E'+(ec++)+'" value="'+(r.kind==="LOOKUP"?"ルックアップ":"関連")+'" style="'+st+'" edge="1" parent="1" source="A'+a.id+'" target="A'+r.toApp+'"><mxGeometry relative="1" as="geometry"/></mxCell>';
   }));
   x+="</root></mxGraphModel></diagram></mxfile>";
-  openModal("draw.io 用XML",x,"kintone_erd.drawio");
+  openModal("draw.io 用XML",x,"ER図.drawio");
 }
 
 function showSQL(){
@@ -3049,7 +3074,7 @@ function showSQL(){
       sql+="ALTER TABLE "+sn(a.name)+" ADD CONSTRAINT fk_"+sn(a.name)+"_"+sn(r.from)+" FOREIGN KEY ("+sn(r.from)+") REFERENCES "+sn(t.name)+"("+sn(r.toField)+");\\n";
     });
   });
-  openModal("SQL DDL",sql,"kintone_erd.sql");
+  openModal("SQL DDL",sql,"ER図.sql");
 }
 
 function showPlantUML(){
@@ -3075,7 +3100,7 @@ function showPlantUML(){
     });
   });
   p+="@enduml";
-  openModal("PlantUML",p,"kintone_erd.puml");
+  openModal("PlantUML",p,"ER図.puml");
 }
 
 function showJSON(){
@@ -3089,7 +3114,7 @@ function showJSON(){
       relations:a.relations.map(r=>({fromField:r.from,toApp:r.toApp,toField:r.toField,type:r.kind})),
     })),
   };
-  openModal("JSON スキーマ",JSON.stringify(schema,null,2),"kintone_erd_schema.json");
+  openModal("JSON スキーマ",JSON.stringify(schema,null,2),"ER図スキーマ.json");
 }
 
 // ─── CSV exports ───
@@ -3106,7 +3131,7 @@ function showCSVApps(){
     const acts=(a.relations||[]).filter(r=>r.kind==="ACTION").length;
     rows.push([a.id,a.name,visibleFieldsForNode(a).length,a.relations.length,lookups,refs,acts,a.requiredCount||0,a.depth||0,startAppIdSet.has(String(a.id))?"1":"0",a.ok?"OK":"ERROR"]);
   });
-  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_apps.csv");
+  openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_アプリ一覧.csv");
 }
 function showCSVFields(){
   const rows=[["アプリID","アプリ名","フィールドコード","フィールド名","種類","必須","重複禁止","主キー","ルックアップ","関連","サブテーブル内","テーブル名"]];
@@ -3115,7 +3140,7 @@ function showCSVFields(){
       rows.push([a.id,a.name,f.code||"",buildFieldDisplayName(f),f.type||"",f.required?"1":"0",f.unique?"1":"0",f.isPK?"1":"0",f.isLookup?"1":"0",f.isRef?"1":"0",f.inSubtable?"1":"0",f.tableLabel||""]);
     });
   });
-  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_fields.csv");
+  openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_フィールド一覧.csv");
 }
 function showCSVRelations(){
   const rows=[["種類","起点アプリID","起点アプリ名","起点フィールド","宛先アプリID","宛先アプリ名","宛先フィールド"]];
@@ -3125,7 +3150,7 @@ function showCSVRelations(){
       rows.push([r.kind,a.id,a.name,r.fromDisplay||r.fromLabel||r.from||"",r.toApp,t?t.name:"(不明)",r.toField||""]);
     });
   });
-  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"kintone_erd_relations.csv");
+  openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_リレーション一覧.csv");
 }
 
 // ─── Markdown spec ───
@@ -3173,7 +3198,7 @@ function showMarkdown(){
       lines.push("");
     }
   });
-  openModal("Markdown 仕様書",lines.join("\\n"),"kintone_erd_spec.md");
+  openModal("Markdown 仕様書",lines.join("\\n"),"ER図仕様書.md");
 }
 
 // ─── Zoom controls ───
@@ -3396,11 +3421,10 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       const apps = await crawl(options.startAppIds, options);
       progressUi.update(94, "HTML保存データ生成中...");
       const html = buildHTML(apps, options);
-      const guestSuffix = opts.guestId ? `_guest${opts.guestId}` : "";
-      const previewSuffix = opts.preview ? "_preview" : "_prod";
       const baseName = appId || `space${spaceId}`;
+      const suffix = `${opts.guestId ? `guest${opts.guestId}_` : ""}${opts.preview ? "プレビュー" : "本番"}`;
       downloadText(
-        `kintone_erd_app${baseName}${guestSuffix}${previewSuffix}_${nowStamp()}.html`,
+        buildExportFilename("ER図", "html", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
         html,
         "text/html"
       );
@@ -3703,6 +3727,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 .kus-lp__apptable-acts .kus-lp__btn + .kus-lp__btn{margin-left:4px}
 .kus-lp__apptable-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;background:var(--c-surface);border-top:1px solid var(--c-border)}
 .kus-lp__apptable-count{font-size:11px;color:var(--c-muted);margin-left:auto;font-weight:600}
+.kus-lp__apptable-hint{font-size:11px;line-height:1.5;color:var(--c-muted);padding:6px 10px;border-top:1px solid var(--c-border);background:var(--c-surface)}
 @media(max-width:420px){
   .kus-lp__apptable table,.kus-lp__apptable thead,.kus-lp__apptable tbody,.kus-lp__apptable th,.kus-lp__apptable td,.kus-lp__apptable tr{display:block}
   .kus-lp__apptable thead{display:none}
