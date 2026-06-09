@@ -24308,6 +24308,33 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
       }
       return map;
     }
+    function formatFieldAwareEntityDetailed(entity, fieldLabelMap = {}) {
+      if (!entity) return "-";
+      if (Array.isArray(entity)) return entity.map((e2) => formatFieldAwareEntityDetailed(e2, fieldLabelMap)).join("\n");
+      const wrapper = entity.entity ? entity : null;
+      const e = wrapper ? entity.entity : entity;
+      const type = String(e?.type || "").toUpperCase();
+      if (type === "FIELD_ENTITY" && e?.code) {
+        const label = fieldLabelMap[e.code];
+        const fieldText = label && label !== e.code ? `${label}（${e.code}）` : e.code;
+        const suffix = wrapper?.includeSubs || entity.includeSubs ? " (サブ組織含)" : "";
+        return `フィールド値: ${fieldText}${suffix}`;
+      }
+      return UtilsX.formatEntityDetailed(entity);
+    }
+    function formatNotificationTargets(notification, fieldLabelMap = {}) {
+      if (Array.isArray(notification?.targets)) {
+        const targets = UtilsX.ensureArray(notification.targets);
+        return targets.length ? targets.map((target) => formatFieldAwareEntityDetailed(target, fieldLabelMap)).join("\n") : "-";
+      }
+      if (notification?.entity) return formatFieldAwareEntityDetailed(notification.entity, fieldLabelMap);
+      if (notification?.targetField) {
+        const code = notification.targetField;
+        const label = fieldLabelMap[code];
+        return label && label !== code ? `フィールド値: ${label}（${code}）` : `フィールド値: ${code}`;
+      }
+      return "-";
+    }
     function buildFieldGroupMap(layout) {
       const groupByCode = /* @__PURE__ */ new Map();
       const walk = (rows, currentGroup) => {
@@ -24398,6 +24425,10 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         UtilsX.ensureArray(payload?.notifications).forEach((n, i) => {
           scanFilterCond(n.filterCond, `${label}#${i + 1}条件`);
           if (n.targetField) add(n.targetField, `${label}#${i + 1}対象`);
+          UtilsX.ensureArray(n.targets).forEach((target) => {
+            const entity = target?.entity || target;
+            if (String(entity?.type || "").toUpperCase() === "FIELD_ENTITY") add(entity.code, `${label}#${i + 1}対象`);
+          });
         });
       };
       scanNotif(genNotif, "通知(一般)");
@@ -25510,7 +25541,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
             const baseLabel = base ? fieldLabelMap[base] || base : "-";
             return [
               i + 1,
-              UtilsX.formatEntityDetailed(n.entity || n),
+              formatNotificationTargets(n, fieldLabelMap),
               n.timing ? typeof n.timing === "object" ? ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing.code) || n.timing.code || "-" : ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing) || n.timing : "-",
               baseLabel,
               n.daysLater != null || n.daysBefore != null ? `${n.daysLater != null ? `+${n.daysLater}` : ""}${n.daysBefore != null ? `-${n.daysBefore}` : ""}日` : "-",
@@ -25531,7 +25562,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
           const headers2 = ["No.", "対象", "フィルター条件", "レコード作成", "編集", "コメント", "ステータス", "ファイル添付", "本文/備考"];
           const rows2 = list.map((n, i) => [
             i + 1,
-            UtilsX.formatEntityDetailed(n.entity || n),
+            formatNotificationTargets(n, fieldLabelMap),
             UtilsX.formatFilterCond(n.filterCond || ""),
             UtilsX.formatBoolean(n.recordAdded ?? n.notifyOnCreate),
             UtilsX.formatBoolean(n.recordEdited ?? n.notifyOnEdit),
@@ -25550,7 +25581,7 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
         const headers = ["No.", "対象", "レコード追加", "編集", "コメント", "ステータス", "ファイル添付", "タイミング/条件", "本文/備考"];
         const rows = list.map((n, i) => [
           i + 1,
-          UtilsX.formatEntityDetailed(n.entity || n),
+          formatNotificationTargets(n, fieldLabelMap),
           UtilsX.formatBoolean(n.recordAdded ?? n.notifyOnCreate),
           UtilsX.formatBoolean(n.recordEdited ?? n.notifyOnEdit),
           UtilsX.formatBoolean(n.commentAdded ?? n.notifyOnComment),
