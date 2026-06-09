@@ -1801,6 +1801,41 @@ ${contextLine}`);
     }
   });
 
+  // src/settingsBundleImport.ts
+  function unwrapBundleCandidates(raw, side) {
+    if (!raw || typeof raw !== "object") return [];
+    if (raw.source && raw.target) return unwrapBundleCandidates(side === "target" ? raw.target : raw.source, side);
+    if (raw.bundle) return unwrapBundleCandidates(raw.bundle, side);
+    if (Array.isArray(raw.apps)) return raw.apps;
+    if (Array.isArray(raw.bundles)) return raw.bundles;
+    if (raw.sections && raw.appId != null) return [raw];
+    return [raw];
+  }
+  function pickSettingsBundle(raw, options = {}) {
+    const side = options.side || "source";
+    const appId = String(options.appId || "").trim();
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return ensureBundleShape(item);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    if (appId) {
+      const matched = candidates.find((b) => String(b?.appId || "") === appId);
+      if (matched) return matched;
+      if (candidates.length > 1) throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
+    }
+    return candidates[0];
+  }
+  var init_settingsBundleImport = __esm({
+    "src/settingsBundleImport.ts"() {
+      "use strict";
+      init_api();
+    }
+  });
+
   // src/diff/engine.ts
   function fieldAclLevelIndex(value) {
     if (value == null) return -1;
@@ -15689,18 +15724,18 @@ ${warnings.join("\n")}
   }
   async function runPrefetchCommonData() {
     const c = commonParams();
-    if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
-    if (!c.target.appId) throw new Error("比較先アプリIDを入力してください");
+    if (!c.source.appId && !state.importedSourceBundle) throw new Error("比較元アプリIDまたは設定JSONを指定してください");
+    if (!c.target.appId && !state.importedTargetBundle) throw new Error("比較先アプリIDまたは設定JSONを指定してください");
     const sections = SECTION_DEFS.map((d) => d.key);
     const modeTag = getPreviewCompareStatusPrefix(ui);
-    setStatus(`${modeTag} 共通データ取得: 比較元...`);
-    const source = await fetchBundle({
+    setStatus(state.importedSourceBundle ? `${modeTag} 共通データ取得: 比較元JSON読込...` : `${modeTag} 共通データ取得: 比較元...`);
+    const source = state.importedSourceBundle ? pickBundleSections(state.importedSourceBundle, sections) : await fetchBundle({
       ...c.source,
       sections,
       onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較元 ${Math.round(p * 100)}% (${l})`)
     });
-    setStatus(`${modeTag} 共通データ取得: 比較先...`);
-    const target = await fetchBundle({
+    setStatus(state.importedTargetBundle ? `${modeTag} 共通データ取得: 比較先JSON読込...` : `${modeTag} 共通データ取得: 比較先...`);
+    const target = state.importedTargetBundle ? pickBundleSections(state.importedTargetBundle, sections) : await fetchBundle({
       ...c.target,
       sections,
       onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較先 ${Math.round(p * 100)}% (${l})`)
@@ -20394,7 +20429,8 @@ ${reason}` : "",
     if (obj && typeof obj === "object" && obj.source && obj.target) {
       obj = side === "source" ? obj.source : obj.target;
     }
-    return ensureBundleShape(obj);
+    const appId = side === "source" ? ui?.sourceApp?.value?.trim?.() : ui?.targetApp?.value?.trim?.();
+    return pickSettingsBundle(obj, { side, appId });
   }
   function currentDiffSignature() {
     const c = commonParams();
@@ -20913,6 +20949,7 @@ ${reason}` : "",
       init_appTargetTable();
       init_utils();
       init_api();
+      init_settingsBundleImport();
       init_engine();
       init_enrich();
       init_filter();
@@ -26097,6 +26134,7 @@ ${detail}`);
 
   // src/tabs/diff-standalone.ts
   init_api();
+  init_settingsBundleImport();
   init_engine();
   init_enrich();
   init_utils();
@@ -26130,8 +26168,8 @@ ${detail}`);
     }
     async function resolveSide(side) {
       const imported = side === "source" ? opts.importedSourceBundle : opts.importedTargetBundle;
-      if (imported) return imported;
       const params = side === "source" ? source : target;
+      if (imported) return pickSettingsBundle(imported, { side, appId: String(params.appId || "").trim() });
       return fetchBundle({
         appId: String(params.appId || "").trim(),
         guestId: String(params.guestId || "").trim(),
@@ -45341,13 +45379,18 @@ ${body}`;
   init_export();
   init_psychology();
   init_design_xlsx();
+  function resolveDesignBundle(side, params, scopes, onProgress) {
+    const imported = side === "source" ? state.importedSourceBundle : state.importedTargetBundle;
+    if (imported) return Promise.resolve(pickBundleSections(imported, scopes));
+    return fetchBundle({ ...params, sections: scopes, onProgress });
+  }
   async function runDesignExport(kind) {
     bumpSessionMetric("designExport");
     const c = commonParams();
-    if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
+    if (!c.source.appId && !state.importedSourceBundle) throw new Error("比較元アプリIDまたは設定JSONを指定してください");
     const scopes = SECTION_DEFS.map((s) => s.key);
-    setStatus("設計情報を取得中...");
-    const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
+    setStatus(state.importedSourceBundle ? "設定JSONから設計情報を読み込み中..." : "設計情報を取得中...");
+    const bundle = await resolveDesignBundle("source", c.source, scopes, (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`));
     state.lastSourceBundle = bundle;
     const appLabel3 = buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle));
     if (kind === "json") {
@@ -45359,10 +45402,10 @@ ${body}`;
   }
   async function runDesignCopyMd() {
     const c = commonParams();
-    if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
+    if (!c.source.appId && !state.importedSourceBundle) throw new Error("比較元アプリIDまたは設定JSONを指定してください");
     const scopes = SECTION_DEFS.map((s) => s.key);
-    setStatus("設計情報を取得中...");
-    const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
+    setStatus(state.importedSourceBundle ? "設定JSONから設計情報を読み込み中..." : "設計情報を取得中...");
+    const bundle = await resolveDesignBundle("source", c.source, scopes, (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`));
     state.lastSourceBundle = bundle;
     const md = bundleToMarkdown(bundle);
     try {
@@ -45414,12 +45457,12 @@ ${body}`;
   }
   async function runDesignDiffMd() {
     const c = commonParams();
-    if (!c.source.appId || !c.target.appId) throw new Error("比較元と比較先の両方のアプリIDを指定してください。");
+    if (!c.source.appId && !state.importedSourceBundle || !c.target.appId && !state.importedTargetBundle) throw new Error("比較元と比較先の両方にアプリIDまたは設定JSONを指定してください。");
     const scopes = SECTION_DEFS.map((s) => s.key);
-    setStatus("比較元の設計情報を取得中...");
-    const srcBundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`) });
-    setStatus("比較先の設計情報を取得中...");
-    const tgtBundle = await fetchBundle({ ...c.target, sections: scopes, onProgress: (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`) });
+    setStatus(state.importedSourceBundle ? "比較元の設計情報を設定JSONから読み込み中..." : "比較元の設計情報を取得中...");
+    const srcBundle = await resolveDesignBundle("source", c.source, scopes, (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`));
+    setStatus(state.importedTargetBundle ? "比較先の設計情報を設定JSONから読み込み中..." : "比較先の設計情報を取得中...");
+    const tgtBundle = await resolveDesignBundle("target", c.target, scopes, (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`));
     setStatus("差分レポート生成中...");
     const srcMd = bundleToMarkdown(srcBundle);
     const tgtMd = bundleToMarkdown(tgtBundle);

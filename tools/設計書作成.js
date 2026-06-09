@@ -822,6 +822,17 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
+  function sanitizeBundleMeta(meta) {
+    const out = { sectionRevisions: {} };
+    const revisions = meta?.sectionRevisions;
+    if (!revisions || typeof revisions !== "object") return out;
+    Object.keys(revisions).forEach((key) => {
+      const value = revisions[key];
+      if (value == null || value === "") return;
+      out.sectionRevisions[key] = String(value);
+    });
+    return out;
+  }
   function extractSectionRevision(res) {
     if (!res || typeof res !== "object") return "";
     const candidates = [res.revision, res.appRevision, res.revisionNo, res.app?.revision];
@@ -830,6 +841,18 @@ ${contextLine}`);
       return String(value);
     }
     return "";
+  }
+  function ensureBundleShape(bundle) {
+    if (!bundle || typeof bundle !== "object") throw new Error("バンドル形式が不正です");
+    if (!bundle.sections || typeof bundle.sections !== "object") throw new Error("sections がありません");
+    return {
+      appId: String(bundle.appId || ""),
+      guestId: String(bundle.guestId || ""),
+      preview: !!bundle.preview,
+      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      meta: sanitizeBundleMeta(bundle.meta),
+      sections: normalize(bundle.sections)
+    };
   }
   function fnv1aHashString(text) {
     let h = 2166136261;
@@ -1807,6 +1830,38 @@ ${body}`;
   init_state();
   init_utils();
   init_api();
+
+  // src/settingsBundleImport.ts
+  init_api();
+  function unwrapBundleCandidates(raw, side) {
+    if (!raw || typeof raw !== "object") return [];
+    if (raw.source && raw.target) return unwrapBundleCandidates(side === "target" ? raw.target : raw.source, side);
+    if (raw.bundle) return unwrapBundleCandidates(raw.bundle, side);
+    if (Array.isArray(raw.apps)) return raw.apps;
+    if (Array.isArray(raw.bundles)) return raw.bundles;
+    if (raw.sections && raw.appId != null) return [raw];
+    return [raw];
+  }
+  function pickSettingsBundle(raw, options = {}) {
+    const side = options.side || "source";
+    const appId = String(options.appId || "").trim();
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return ensureBundleShape(item);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    if (appId) {
+      const matched = candidates.find((b) => String(b?.appId || "") === appId);
+      if (matched) return matched;
+      if (candidates.length > 1) throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
+    }
+    return candidates[0];
+  }
+
+  // src/tabs/design-standalone.ts
   init_export();
 
   // src/tabs/design-xlsx.ts
@@ -4395,12 +4450,13 @@ ${detail}`);
   // src/tabs/design-standalone.ts
   async function runDesignExportStandalone(kind, source, setStatus) {
     const appId = String(source.appId || "").trim();
-    if (!appId) throw new Error("アプリIDを入力してください");
+    const importedBundle = source.importedBundle;
+    if (!appId && !importedBundle) throw new Error("アプリIDまたは設定JSONを指定してください");
     const guestId = String(source.guestId || "").trim();
     const preview = !!source.preview;
     const scopes = SECTION_DEFS.map((s) => s.key);
-    setStatus("設計情報を取得中...");
-    const bundle = await fetchBundle({
+    setStatus(importedBundle ? "設定JSONから設計情報を読み込み中..." : "設計情報を取得中...");
+    const bundle = importedBundle ? pickSettingsBundle(importedBundle, { side: "source", appId }) : await fetchBundle({
       appId,
       guestId,
       preview,
@@ -4418,12 +4474,13 @@ ${detail}`);
   }
   async function runDesignCopyMdStandalone(source, setStatus) {
     const appId = String(source.appId || "").trim();
-    if (!appId) throw new Error("アプリIDを入力してください");
+    const importedBundle = source.importedBundle;
+    if (!appId && !importedBundle) throw new Error("アプリIDまたは設定JSONを指定してください");
     const guestId = String(source.guestId || "").trim();
     const preview = !!source.preview;
     const scopes = SECTION_DEFS.map((s) => s.key);
-    setStatus("設計情報を取得中...");
-    const bundle = await fetchBundle({
+    setStatus(importedBundle ? "設定JSONから設計情報を読み込み中..." : "設計情報を取得中...");
+    const bundle = importedBundle ? pickSettingsBundle(importedBundle, { side: "source", appId }) : await fetchBundle({
       appId,
       guestId,
       preview,
@@ -4511,18 +4568,20 @@ ${detail}`);
   async function runDesignDiffMdStandalone(opts, setStatus) {
     const srcAppId = String(opts.source?.appId || "").trim();
     const tgtAppId = String(opts.target?.appId || "").trim();
-    if (!srcAppId || !tgtAppId) throw new Error("比較元と比較先の両方のアプリIDを指定してください。");
+    const importedSource = opts.source?.importedBundle;
+    const importedTarget = opts.target?.importedBundle;
+    if (!srcAppId && !importedSource || !tgtAppId && !importedTarget) throw new Error("比較元と比較先の両方にアプリIDまたは設定JSONを指定してください。");
     const scopes = SECTION_DEFS.map((s) => s.key);
-    setStatus("比較元の設計情報を取得中...");
-    const srcBundle = await fetchBundle({
+    setStatus(importedSource ? "比較元の設計情報を設定JSONから読み込み中..." : "比較元の設計情報を取得中...");
+    const srcBundle = importedSource ? pickSettingsBundle(importedSource, { side: "source", appId: srcAppId }) : await fetchBundle({
       appId: srcAppId,
       guestId: String(opts.source.guestId || "").trim(),
       preview: !!opts.source.preview,
       sections: scopes,
       onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
     });
-    setStatus("比較先の設計情報を取得中...");
-    const tgtBundle = await fetchBundle({
+    setStatus(importedTarget ? "比較先の設計情報を設定JSONから読み込み中..." : "比較先の設計情報を取得中...");
+    const tgtBundle = importedTarget ? pickSettingsBundle(importedTarget, { side: "target", appId: tgtAppId }) : await fetchBundle({
       appId: tgtAppId,
       guestId: String(opts.target.guestId || "").trim(),
       preview: !!opts.target.preview,

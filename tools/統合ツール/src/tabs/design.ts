@@ -13,7 +13,7 @@ import {
   buildExportFilename,
   extractAppNameFromBundle
 } from '../utils.js';
-import { apiGet, buildApiPrefix, fetchBundle } from '../api.js';
+import { apiGet, buildApiPrefix, fetchBundle, pickBundleSections } from '../api.js';
 import { setStatus, setBusy } from '../ui/components.js';
 import { commonParams } from './diff.js';
 import { getToolDocument } from '../ui/dialog.js';
@@ -32,13 +32,20 @@ function formatExternalLoadError(name, err, urls) {
   return new Error(`${name}に失敗しました: ${err?.message || String(err)}${urlInfo}`);
 }
 
+function resolveDesignBundle(side, params, scopes, onProgress) {
+  const imported = side === 'source' ? state.importedSourceBundle : state.importedTargetBundle;
+  if (imported) return Promise.resolve(pickBundleSections(imported, scopes));
+  return fetchBundle({ ...params, sections: scopes, onProgress });
+}
+
+
 export async function runDesignExport(kind) {
   bumpSessionMetric('designExport');
   const c = commonParams();
-  if (!c.source.appId) throw new Error('比較元アプリIDを入力してください');
+  if (!c.source.appId && !state.importedSourceBundle) throw new Error('比較元アプリIDまたは設定JSONを指定してください');
   const scopes = SECTION_DEFS.map((s) => s.key);
-  setStatus('設計情報を取得中...');
-  const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
+  setStatus(state.importedSourceBundle ? '設定JSONから設計情報を読み込み中...' : '設計情報を取得中...');
+  const bundle = await resolveDesignBundle('source', c.source, scopes, (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`));
   state.lastSourceBundle = bundle;
   const appLabel = buildAppFilenameLabel(bundle.appId, extractAppNameFromBundle(bundle));
 
@@ -53,10 +60,10 @@ export async function runDesignExport(kind) {
 
 export async function runDesignCopyMd() {
   const c = commonParams();
-  if (!c.source.appId) throw new Error('比較元アプリIDを入力してください');
+  if (!c.source.appId && !state.importedSourceBundle) throw new Error('比較元アプリIDまたは設定JSONを指定してください');
   const scopes = SECTION_DEFS.map((s) => s.key);
-  setStatus('設計情報を取得中...');
-  const bundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`) });
+  setStatus(state.importedSourceBundle ? '設定JSONから設計情報を読み込み中...' : '設計情報を取得中...');
+  const bundle = await resolveDesignBundle('source', c.source, scopes, (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`));
   state.lastSourceBundle = bundle;
 
   const md = bundleToMarkdown(bundle);
@@ -102,14 +109,14 @@ export function simpleLineDiff(oStr, nStr) {
 
 export async function runDesignDiffMd() {
   const c = commonParams();
-  if (!c.source.appId || !c.target.appId) throw new Error('比較元と比較先の両方のアプリIDを指定してください。');
+  if ((!c.source.appId && !state.importedSourceBundle) || (!c.target.appId && !state.importedTargetBundle)) throw new Error('比較元と比較先の両方にアプリIDまたは設定JSONを指定してください。');
   const scopes = SECTION_DEFS.map((s) => s.key);
 
-  setStatus('比較元の設計情報を取得中...');
-  const srcBundle = await fetchBundle({ ...c.source, sections: scopes, onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`) });
+  setStatus(state.importedSourceBundle ? '比較元の設計情報を設定JSONから読み込み中...' : '比較元の設計情報を取得中...');
+  const srcBundle = await resolveDesignBundle('source', c.source, scopes, (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`));
 
-  setStatus('比較先の設計情報を取得中...');
-  const tgtBundle = await fetchBundle({ ...c.target, sections: scopes, onProgress: (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`) });
+  setStatus(state.importedTargetBundle ? '比較先の設計情報を設定JSONから読み込み中...' : '比較先の設計情報を取得中...');
+  const tgtBundle = await resolveDesignBundle('target', c.target, scopes, (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`));
 
   setStatus('差分レポート生成中...');
   const srcMd = bundleToMarkdown(srcBundle);

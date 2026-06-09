@@ -1,6 +1,7 @@
 'use strict';
 
 import { fetchBundle } from '../api.js';
+import { pickSettingsBundle } from '../settingsBundleImport.js';
 import {
   computeDiffRows,
   countActualDiffRows,
@@ -58,8 +59,8 @@ export async function runDiffStandalone(opts) {
 
   async function resolveSide(side) {
     const imported = side === 'source' ? opts.importedSourceBundle : opts.importedTargetBundle;
-    if (imported) return imported;
     const params = side === 'source' ? source : target;
+    if (imported) return pickSettingsBundle(imported, { side, appId: String(params.appId || '').trim() });
     return fetchBundle({
       appId: String(params.appId || '').trim(),
       guestId: String(params.guestId || '').trim(),

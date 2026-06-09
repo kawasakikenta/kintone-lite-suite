@@ -4,6 +4,7 @@ import { SECTION_DEFS } from '../constants.js';
 import { state } from '../state.js';
 import { nowStamp, downloadText, buildExportFilename, appLabelFromBundle } from '../utils.js';
 import { fetchBundle } from '../api.js';
+import { pickSettingsBundle } from '../settingsBundleImport.js';
 import { bundleToMarkdown } from '../diff/export.js';
 import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip } from './design-xlsx.js';
 
@@ -14,18 +15,21 @@ import { runAdvancedDesignExporter, runBatchDesignExportXlsxZip } from './design
  */
 export async function runDesignExportStandalone(kind, source, setStatus) {
   const appId = String(source.appId || '').trim();
-  if (!appId) throw new Error('アプリIDを入力してください');
+  const importedBundle = (source as any).importedBundle;
+  if (!appId && !importedBundle) throw new Error('アプリIDまたは設定JSONを指定してください');
   const guestId = String(source.guestId || '').trim();
   const preview = !!source.preview;
   const scopes = SECTION_DEFS.map((s) => s.key);
-  setStatus('設計情報を取得中...');
-  const bundle = await fetchBundle({
-    appId,
-    guestId,
-    preview,
-    sections: scopes,
-    onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
-  });
+  setStatus(importedBundle ? '設定JSONから設計情報を読み込み中...' : '設計情報を取得中...');
+  const bundle = importedBundle
+    ? pickSettingsBundle(importedBundle, { side: 'source', appId })
+    : await fetchBundle({
+      appId,
+      guestId,
+      preview,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
+    });
   state.lastSourceBundle = bundle;
 
   const appLabel = appLabelFromBundle(bundle);
@@ -43,18 +47,21 @@ export async function runDesignExportStandalone(kind, source, setStatus) {
  */
 export async function runDesignCopyMdStandalone(source, setStatus) {
   const appId = String(source.appId || '').trim();
-  if (!appId) throw new Error('アプリIDを入力してください');
+  const importedBundle = (source as any).importedBundle;
+  if (!appId && !importedBundle) throw new Error('アプリIDまたは設定JSONを指定してください');
   const guestId = String(source.guestId || '').trim();
   const preview = !!source.preview;
   const scopes = SECTION_DEFS.map((s) => s.key);
-  setStatus('設計情報を取得中...');
-  const bundle = await fetchBundle({
-    appId,
-    guestId,
-    preview,
-    sections: scopes,
-    onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
-  });
+  setStatus(importedBundle ? '設定JSONから設計情報を読み込み中...' : '設計情報を取得中...');
+  const bundle = importedBundle
+    ? pickSettingsBundle(importedBundle, { side: 'source', appId })
+    : await fetchBundle({
+      appId,
+      guestId,
+      preview,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`取得中 ${Math.round(p * 100)}% (${l})`)
+    });
   state.lastSourceBundle = bundle;
 
   const md = bundleToMarkdown(bundle);
@@ -159,25 +166,31 @@ export async function runDesignDiffMdStandalone(
 ) {
   const srcAppId = String(opts.source?.appId || '').trim();
   const tgtAppId = String(opts.target?.appId || '').trim();
-  if (!srcAppId || !tgtAppId) throw new Error('比較元と比較先の両方のアプリIDを指定してください。');
+  const importedSource = (opts.source as any)?.importedBundle;
+  const importedTarget = (opts.target as any)?.importedBundle;
+  if ((!srcAppId && !importedSource) || (!tgtAppId && !importedTarget)) throw new Error('比較元と比較先の両方にアプリIDまたは設定JSONを指定してください。');
   const scopes = SECTION_DEFS.map((s) => s.key);
 
-  setStatus('比較元の設計情報を取得中...');
-  const srcBundle = await fetchBundle({
-    appId: srcAppId,
-    guestId: String(opts.source.guestId || '').trim(),
-    preview: !!opts.source.preview,
-    sections: scopes,
-    onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
-  });
-  setStatus('比較先の設計情報を取得中...');
-  const tgtBundle = await fetchBundle({
-    appId: tgtAppId,
-    guestId: String(opts.target.guestId || '').trim(),
-    preview: !!opts.target.preview,
-    sections: scopes,
-    onProgress: (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`)
-  });
+  setStatus(importedSource ? '比較元の設計情報を設定JSONから読み込み中...' : '比較元の設計情報を取得中...');
+  const srcBundle = importedSource
+    ? pickSettingsBundle(importedSource, { side: 'source', appId: srcAppId })
+    : await fetchBundle({
+      appId: srcAppId,
+      guestId: String(opts.source.guestId || '').trim(),
+      preview: !!opts.source.preview,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
+    });
+  setStatus(importedTarget ? '比較先の設計情報を設定JSONから読み込み中...' : '比較先の設計情報を取得中...');
+  const tgtBundle = importedTarget
+    ? pickSettingsBundle(importedTarget, { side: 'target', appId: tgtAppId })
+    : await fetchBundle({
+      appId: tgtAppId,
+      guestId: String(opts.target.guestId || '').trim(),
+      preview: !!opts.target.preview,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`比較先取得中 ${Math.round(p * 100)}% (${l})`)
+    });
 
   setStatus('差分レポート生成中...');
   const srcMd = bundleToMarkdown(srcBundle);

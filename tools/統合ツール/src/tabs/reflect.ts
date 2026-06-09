@@ -3,7 +3,7 @@
 import { SECTION_DEFS, REFLECT_QUICK_PRESETS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { state, ui } from '../state.js';
 import { esc, deepClone, normalize, downloadText, readTextFile, kusConfirm, showToast, buildExportFilename } from '../utils.js';
-import { apiGet, fetchBundle, buildApiPrefix } from '../api.js';
+import { apiGet, fetchBundle, buildApiPrefix, pickBundleSections } from '../api.js';
 import {
   getActualDiffRows,
   countActualDiffRows,
@@ -341,23 +341,27 @@ export function getDiffCountsBySection() {
 
 export async function runPrefetchCommonData() {
   const c = commonParams();
-  if (!c.source.appId) throw new Error('比較元アプリIDを入力してください');
-  if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
+  if (!c.source.appId && !state.importedSourceBundle) throw new Error('比較元アプリIDまたは設定JSONを指定してください');
+  if (!c.target.appId && !state.importedTargetBundle) throw new Error('比較先アプリIDまたは設定JSONを指定してください');
   const sections = SECTION_DEFS.map((d) => d.key);
   const modeTag = getPreviewCompareStatusPrefix(ui);
 
-  setStatus(`${modeTag} 共通データ取得: 比較元...`);
-  const source = await fetchBundle({
-    ...c.source,
-    sections,
-    onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較元 ${Math.round(p * 100)}% (${l})`)
-  });
-  setStatus(`${modeTag} 共通データ取得: 比較先...`);
-  const target = await fetchBundle({
-    ...c.target,
-    sections,
-    onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較先 ${Math.round(p * 100)}% (${l})`)
-  });
+  setStatus(state.importedSourceBundle ? `${modeTag} 共通データ取得: 比較元JSON読込...` : `${modeTag} 共通データ取得: 比較元...`);
+  const source = state.importedSourceBundle
+    ? pickBundleSections(state.importedSourceBundle, sections)
+    : await fetchBundle({
+      ...c.source,
+      sections,
+      onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較元 ${Math.round(p * 100)}% (${l})`)
+    });
+  setStatus(state.importedTargetBundle ? `${modeTag} 共通データ取得: 比較先JSON読込...` : `${modeTag} 共通データ取得: 比較先...`);
+  const target = state.importedTargetBundle
+    ? pickBundleSections(state.importedTargetBundle, sections)
+    : await fetchBundle({
+      ...c.target,
+      sections,
+      onProgress: (p, l) => setStatus(`${modeTag} 共通データ取得 比較先 ${Math.round(p * 100)}% (${l})`)
+    });
 
   state.lastSourceBundle = source;
   state.lastTargetBundle = target;

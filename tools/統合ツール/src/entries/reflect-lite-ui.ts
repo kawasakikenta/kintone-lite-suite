@@ -21,6 +21,7 @@ import {
   type LitePanelHandle
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { readSettingsBundleFile } from '../settingsBundleImport.js';
 
 // =============================================================================
 // メモリ状態（リロードで消える。lite はブラウザ永続ストレージを使わない方針）
@@ -225,6 +226,11 @@ export function mountReflectLitePanel() {
   const srcGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.sourceGuestId || '', width: 'guest' });
   const tgtApp = makeInput({ placeholder: '比較先アプリID', value: memoryState.targetAppId || DEFAULT_APP_ID || '', width: 'id' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.targetGuestId || '', width: 'guest' });
+  let sourceBundleFromJson: any = null;
+  const srcJsonFile = document.createElement('input');
+  srcJsonFile.type = 'file';
+  srcJsonFile.accept = '.json,application/json';
+  srcJsonFile.className = 'kus-lp__file';
 
   const currentSrcBtn = makeButton('現在のアプリを比較元', 'sub');
   const copyBtn = makeButton('比較元 → 比較先', 'sub');
@@ -233,10 +239,20 @@ export function mountReflectLitePanel() {
 
   const cardApp = makeCard({ title: 'アプリ', number: 1 });
   cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: '比較元' }));
+  cardApp.body.appendChild(makeRow(srcJsonFile, { label: '比較元JSON' }));
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '比較先' }));
   const quickRow = makeRow([currentSrcBtn, copyBtn, currentBtn, swapBtn]);
   quickRow.style.marginTop = '4px';
   cardApp.body.appendChild(quickRow);
+
+  srcJsonFile.addEventListener('change', () => liteRun(panel, '比較元JSONを読み込み中…', async () => {
+    const file = srcJsonFile.files?.[0];
+    if (!file) return;
+    sourceBundleFromJson = await readSettingsBundleFile(file, { side: 'source', appId: srcApp.value.trim() });
+    if (!srcApp.value.trim() && sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
+    panel.setStatus(`比較元JSONを読み込みました: App ${sourceBundleFromJson?.appId || '-'}`, 'ok');
+    updateSafetyUi();
+  }));
 
   const sameConnBanner = document.createElement('div');
   sameConnBanner.className = 'kus-lp__note--warn';
@@ -633,6 +649,7 @@ export function mountReflectLitePanel() {
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
         sourcePreview: srcPreview.checkbox.checked,
+        sourceBundle: sourceBundleFromJson,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes,
@@ -728,6 +745,7 @@ export function mountReflectLitePanel() {
       sourceAppId: srcApp.value.trim(),
       sourceGuestId: srcGuest.value.trim(),
       sourcePreview: srcPreview.checkbox.checked,
+      sourceBundle: sourceBundleFromJson,
       targetAppId: tgtApp.value.trim(),
       targetGuestId: tgtGuest.value.trim(),
       scopes,
@@ -767,7 +785,7 @@ export function mountReflectLitePanel() {
     const riskyHit = scopes.filter((key) => RISKY_SCOPE_KEYS.has(key));
     const previewResult = preview?.result || null;
     const plan = fresh ? getExecutionPlan(scopes, previewResult) : getExecutionPlan(scopes, null);
-    const canRunBase = !!src && !!tgt && scopes.length > 0 && lookupState.ok;
+    const canRunBase = (!!src || !!sourceBundleFromJson) && !!tgt && scopes.length > 0 && lookupState.ok;
     previewBtn.disabled = !canRunBase;
     changedOnlyBtn.disabled = !(fresh && previewResult && previewResult.changedSections > 0);
     runBtn.disabled = !canRunBase;
@@ -785,7 +803,7 @@ export function mountReflectLitePanel() {
     }
 
     const issues: string[] = [];
-    if (!src) issues.push('比較元アプリIDが未入力です。');
+    if (!src && !sourceBundleFromJson) issues.push('比較元アプリIDまたは比較元JSONが未入力です。');
     if (!tgt) issues.push('比較先アプリIDが未入力です。');
     if (!scopes.length) issues.push('反映対象セクションが未選択です。');
     if (lookupError) issues.push(lookupError);
@@ -1062,6 +1080,7 @@ export function mountReflectLitePanel() {
           sourceAppId: srcApp.value.trim(),
           sourceGuestId: srcGuest.value.trim(),
           sourcePreview: srcPreview.checkbox.checked,
+          sourceBundle: sourceBundleFromJson,
           targetAppId: tgtApp.value.trim(),
           targetGuestId: tgtGuest.value.trim(),
           scopes: plan.effectiveScopes,
