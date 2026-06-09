@@ -1168,6 +1168,14 @@ ${contextLine}`);
     }
   });
 
+  // src/settingsBundleImport.ts
+  var init_settingsBundleImport = __esm({
+    "src/settingsBundleImport.ts"() {
+      "use strict";
+      init_api();
+    }
+  });
+
   // src/tabs/preview-compare.ts
   var init_preview_compare = __esm({
     "src/tabs/preview-compare.ts"() {
@@ -1185,6 +1193,7 @@ ${contextLine}`);
       init_appTargetTable();
       init_utils();
       init_api();
+      init_settingsBundleImport();
       init_engine();
       init_enrich();
       init_filter();

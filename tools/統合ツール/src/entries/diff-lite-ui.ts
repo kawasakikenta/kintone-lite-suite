@@ -26,6 +26,7 @@ import {
   type LitePanelHandle
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
+import { readSettingsBundleFile } from '../settingsBundleImport.js';
 
 const SCOPE_OPTS: Array<[string, string, boolean]> = [
   ['fieldSettings', 'フィールド', true],
@@ -299,6 +300,23 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   noneBtn.addEventListener('click', () => chips.forEach((c) => { c.checkbox.checked = false; }));
   panel.body.insertBefore(cardScope.card, panel.status);
 
+  // ---- 設定JSON読込 ----
+  const cardImport = makeCard({ title: '設定JSON読込（任意）', soft: true });
+  cardImport.body.appendChild(makeNote('設定出力で保存した単体JSON、設定一括取得JSON（apps 配列）、差分バンドルJSONを指定できます。指定した側はAPI取得せずJSONを使用します。'));
+  const srcFile = document.createElement('input');
+  srcFile.type = 'file';
+  srcFile.accept = '.json,application/json';
+  srcFile.className = 'kus-lp__file';
+  const tgtFile = document.createElement('input');
+  tgtFile.type = 'file';
+  tgtFile.accept = '.json,application/json';
+  tgtFile.className = 'kus-lp__file';
+  const clearImportBtn = makeButton('読込解除', 'ghost');
+  cardImport.body.appendChild(makeRow(srcFile, { label: '比較元JSON' }));
+  cardImport.body.appendChild(makeRow(tgtFile, { label: '比較先JSON' }));
+  cardImport.body.appendChild(makeRow(clearImportBtn));
+  panel.body.insertBefore(cardImport.card, panel.status);
+
   // ---- 詳細オプション ----
   const advDetails = makeDetails('詳細オプション');
   const ignTa = makeTextarea({ rows: 2, code: true, placeholder: '無視キー（カンマ区切り）' });
@@ -401,6 +419,30 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   // ---- 状態 ----
   let cache: DiffCache | null = null;
   let summaryText = '';
+  let importedSourceBundle: any = null;
+  let importedTargetBundle: any = null;
+
+  srcFile.addEventListener('change', () => liteRun(panel, '比較元JSONを読み込み中…', async () => {
+    const file = srcFile.files?.[0];
+    if (!file) return;
+    importedSourceBundle = await readSettingsBundleFile(file, { side: 'source', appId: srcApp.value.trim() });
+    if (!srcApp.value.trim() && importedSourceBundle?.appId) srcApp.value = String(importedSourceBundle.appId);
+    panel.setStatus(`比較元JSONを読み込みました: App ${importedSourceBundle?.appId || '-'}`, 'ok');
+  }));
+  tgtFile.addEventListener('change', () => liteRun(panel, '比較先JSONを読み込み中…', async () => {
+    const file = tgtFile.files?.[0];
+    if (!file) return;
+    importedTargetBundle = await readSettingsBundleFile(file, { side: 'target', appId: tgtApp.value.trim() });
+    if (!tgtApp.value.trim() && importedTargetBundle?.appId) tgtApp.value = String(importedTargetBundle.appId);
+    panel.setStatus(`比較先JSONを読み込みました: App ${importedTargetBundle?.appId || '-'}`, 'ok');
+  }));
+  clearImportBtn.addEventListener('click', () => {
+    importedSourceBundle = null;
+    importedTargetBundle = null;
+    srcFile.value = '';
+    tgtFile.value = '';
+    panel.setStatus('設定JSONの読込を解除しました', 'info');
+  });
 
   function readTargets() {
     const seen = new Set<string>();
@@ -506,6 +548,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           ignoreKeys: base.ignoreKeys,
           includeSame: base.includeSame,
           normalizationPresetState: base.normalizationPresetState,
+          importedSourceBundle,
           onStatus: (m: string) => panel.setStatus(m, 'busy')
         });
         rows.push(`<tr><td>${esc(t.appId)}</td><td>${esc(t.guestId || '通常')}</td><td>${(out.rows || []).filter((r: any) => r.type !== 'same').length}</td><td>${(out.fetchIssues || []).length}</td></tr>`);
@@ -535,6 +578,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         ignoreKeys: f.ignoreKeys,
         includeSame: f.includeSame,
         normalizationPresetState: f.normalizationPresetState,
+        importedSourceBundle,
+        importedTargetBundle,
         onStatus: (m: string) => panel.setStatus(m, 'busy')
       });
       cache = {

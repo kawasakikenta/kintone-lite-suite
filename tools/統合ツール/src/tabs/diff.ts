@@ -15,7 +15,8 @@ import {
   buildAppFilenameLabel,
   extractAppNameFromBundle
 } from '../utils.js';
-import { buildApiPrefix, fetchBundle, ensureBundleShape, pickBundleSections } from '../api.js';
+import { buildApiPrefix, fetchBundle, pickBundleSections } from '../api.js';
+import { pickSettingsBundle } from '../settingsBundleImport.js';
 import {
   computeDiffRows,
   getActualDiffRows,
@@ -142,7 +143,8 @@ export function parseBundleLikeObject(raw, side) {
   if (obj && typeof obj === 'object' && obj.source && obj.target) {
     obj = side === 'source' ? obj.source : obj.target;
   }
-  return ensureBundleShape(obj);
+  const appId = side === 'source' ? ui?.sourceApp?.value?.trim?.() : ui?.targetApp?.value?.trim?.();
+  return pickSettingsBundle(obj, { side, appId });
 }
 
 export function currentDiffSignature() {

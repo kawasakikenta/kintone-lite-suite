@@ -753,6 +753,17 @@ ${contextLine}`);
       throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
     }
   }
+  function sanitizeBundleMeta(meta) {
+    const out = { sectionRevisions: {} };
+    const revisions = meta?.sectionRevisions;
+    if (!revisions || typeof revisions !== "object") return out;
+    Object.keys(revisions).forEach((key) => {
+      const value = revisions[key];
+      if (value == null || value === "") return;
+      out.sectionRevisions[key] = String(value);
+    });
+    return out;
+  }
   function extractSectionRevision(res) {
     if (!res || typeof res !== "object") return "";
     const candidates = [res.revision, res.appRevision, res.revisionNo, res.app?.revision];
@@ -761,6 +772,18 @@ ${contextLine}`);
       return String(value);
     }
     return "";
+  }
+  function ensureBundleShape(bundle) {
+    if (!bundle || typeof bundle !== "object") throw new Error("バンドル形式が不正です");
+    if (!bundle.sections || typeof bundle.sections !== "object") throw new Error("sections がありません");
+    return {
+      appId: String(bundle.appId || ""),
+      guestId: String(bundle.guestId || ""),
+      preview: !!bundle.preview,
+      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      meta: sanitizeBundleMeta(bundle.meta),
+      sections: normalize(bundle.sections)
+    };
   }
   function fnv1aHashString(text) {
     let h = 2166136261;
@@ -1061,6 +1084,47 @@ ${contextLine}`);
   init_constants();
   init_utils();
   init_api();
+
+  // src/settingsBundleImport.ts
+  init_api();
+  function unwrapBundleCandidates(raw, side) {
+    if (!raw || typeof raw !== "object") return [];
+    if (raw.source && raw.target) return unwrapBundleCandidates(side === "target" ? raw.target : raw.source, side);
+    if (raw.bundle) return unwrapBundleCandidates(raw.bundle, side);
+    if (Array.isArray(raw.apps)) return raw.apps;
+    if (Array.isArray(raw.bundles)) return raw.bundles;
+    if (raw.sections && raw.appId != null) return [raw];
+    return [raw];
+  }
+  function pickSettingsBundle(raw, options = {}) {
+    const side = options.side || "source";
+    const appId = String(options.appId || "").trim();
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return ensureBundleShape(item);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    if (appId) {
+      const matched = candidates.find((b) => String(b?.appId || "") === appId);
+      if (matched) return matched;
+      if (candidates.length > 1) throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
+    }
+    return candidates[0];
+  }
+  async function readSettingsBundleFile(file, options = {}) {
+    const text = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(String(e.target.result || ""));
+      reader.onerror = () => reject(new Error("ファイルの読み取りに失敗しました"));
+      reader.readAsText(file);
+    });
+    return pickSettingsBundle(JSON.parse(text), options);
+  }
+
+  // src/tabs/reflect-standalone.ts
   function filterWritable(props) {
     const out = {};
     for (const [k, def] of Object.entries(props || {})) {
@@ -1129,15 +1193,15 @@ ${contextLine}`);
   }
   async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
     const { sourceAppId, sourceGuestId, sourcePreview, targetAppId, targetGuestId } = opts;
-    if (!sourceAppId) throw new Error("比較元アプリIDを入力してください");
+    if (!sourceAppId && !opts.sourceBundle) throw new Error("比較元アプリIDまたは設定JSONを指定してください");
     if (!targetAppId) throw new Error("比較先アプリIDを入力してください");
     const scopes = (opts.scopes || []).filter(Boolean);
     if (!scopes.length) throw new Error("反映するセクションを選択してください");
     const lookupMap = opts.lookupMap || {};
     const stopOnError = !!opts.stopOnError;
     const logs = [];
-    setStatus("比較元設定を取得中...");
-    const sourceBundle = await fetchBundle({
+    setStatus(opts.sourceBundle ? "比較元設定を設定JSONから読み込み中..." : "比較元設定を取得中...");
+    const sourceBundle = opts.sourceBundle ? pickSettingsBundle(opts.sourceBundle, { side: "source", appId: String(sourceAppId || "").trim() }) : await fetchBundle({
       appId: sourceAppId,
       guestId: sourceGuestId || "",
       preview: !!sourcePreview,
@@ -1234,10 +1298,10 @@ ${contextLine}`);
     const scopes = (opts.scopes || []).filter(Boolean);
     const lookupMap = opts.lookupMap || {};
     if (!scopes.length) throw new Error("プレビュー対象セクションが空です");
-    if (!opts.sourceAppId) throw new Error("比較元アプリIDを入力してください");
+    if (!opts.sourceAppId && !opts.sourceBundle) throw new Error("比較元アプリIDまたは設定JSONを指定してください");
     if (!opts.targetAppId) throw new Error("比較先アプリIDを入力してください");
-    setStatus("比較元設定を取得中...");
-    const source = await fetchBundle({
+    setStatus(opts.sourceBundle ? "比較元設定を設定JSONから読み込み中..." : "比較元設定を取得中...");
+    const source = opts.sourceBundle ? pickSettingsBundle(opts.sourceBundle, { side: "source", appId: String(opts.sourceAppId || "").trim() }) : await fetchBundle({
       appId: opts.sourceAppId,
       guestId: opts.sourceGuestId || "",
       preview: !!opts.sourcePreview,
@@ -2235,16 +2299,30 @@ ${contextLine}`);
     const srcGuest = makeInput({ placeholder: "ゲストID", value: memoryState.sourceGuestId || "", width: "guest" });
     const tgtApp = makeInput({ placeholder: "比較先アプリID", value: memoryState.targetAppId || DEFAULT_APP_ID || "", width: "id" });
     const tgtGuest = makeInput({ placeholder: "ゲストID", value: memoryState.targetGuestId || "", width: "guest" });
+    let sourceBundleFromJson = null;
+    const srcJsonFile = document.createElement("input");
+    srcJsonFile.type = "file";
+    srcJsonFile.accept = ".json,application/json";
+    srcJsonFile.className = "kus-lp__file";
     const currentSrcBtn = makeButton("現在のアプリを比較元", "sub");
     const copyBtn = makeButton("比較元 → 比較先", "sub");
     const currentBtn = makeButton("現在のアプリを比較先", "sub");
     const swapBtn = makeButton("入れ替え", "sub");
     const cardApp = makeCard({ title: "アプリ", number: 1 });
     cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: "比較元" }));
+    cardApp.body.appendChild(makeRow(srcJsonFile, { label: "比較元JSON" }));
     cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "比較先" }));
     const quickRow = makeRow([currentSrcBtn, copyBtn, currentBtn, swapBtn]);
     quickRow.style.marginTop = "4px";
     cardApp.body.appendChild(quickRow);
+    srcJsonFile.addEventListener("change", () => liteRun(panel, "比較元JSONを読み込み中…", async () => {
+      const file = srcJsonFile.files?.[0];
+      if (!file) return;
+      sourceBundleFromJson = await readSettingsBundleFile(file, { side: "source", appId: srcApp.value.trim() });
+      if (!srcApp.value.trim() && sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
+      panel.setStatus(`比較元JSONを読み込みました: App ${sourceBundleFromJson?.appId || "-"}`, "ok");
+      updateSafetyUi();
+    }));
     const sameConnBanner = document.createElement("div");
     sameConnBanner.className = "kus-lp__note--warn";
     sameConnBanner.style.display = "none";
@@ -2617,6 +2695,7 @@ ${contextLine}`);
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
         sourcePreview: srcPreview.checkbox.checked,
+        sourceBundle: sourceBundleFromJson,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes,
@@ -2702,6 +2781,7 @@ ${contextLine}`);
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
         sourcePreview: srcPreview.checkbox.checked,
+        sourceBundle: sourceBundleFromJson,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes,
@@ -2740,7 +2820,7 @@ ${contextLine}`);
       const riskyHit = scopes.filter((key) => RISKY_SCOPE_KEYS.has(key));
       const previewResult = preview?.result || null;
       const plan = fresh ? getExecutionPlan(scopes, previewResult) : getExecutionPlan(scopes, null);
-      const canRunBase = !!src && !!tgt && scopes.length > 0 && lookupState.ok;
+      const canRunBase = (!!src || !!sourceBundleFromJson) && !!tgt && scopes.length > 0 && lookupState.ok;
       previewBtn.disabled = !canRunBase;
       changedOnlyBtn.disabled = !(fresh && previewResult && previewResult.changedSections > 0);
       runBtn.disabled = !canRunBase;
@@ -2756,7 +2836,7 @@ ${contextLine}`);
         setButtonText(runBtn, "プレビュー反映を実行");
       }
       const issues = [];
-      if (!src) issues.push("比較元アプリIDが未入力です。");
+      if (!src && !sourceBundleFromJson) issues.push("比較元アプリIDまたは比較元JSONが未入力です。");
       if (!tgt) issues.push("比較先アプリIDが未入力です。");
       if (!scopes.length) issues.push("反映対象セクションが未選択です。");
       if (lookupError) issues.push(lookupError);
@@ -2985,6 +3065,7 @@ ${detail}
             sourceAppId: srcApp.value.trim(),
             sourceGuestId: srcGuest.value.trim(),
             sourcePreview: srcPreview.checkbox.checked,
+            sourceBundle: sourceBundleFromJson,
             targetAppId: tgtApp.value.trim(),
             targetGuestId: tgtGuest.value.trim(),
             scopes: plan.effectiveScopes,

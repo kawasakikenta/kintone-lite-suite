@@ -835,6 +835,17 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
+  function sanitizeBundleMeta(meta) {
+    const out = { sectionRevisions: {} };
+    const revisions = meta?.sectionRevisions;
+    if (!revisions || typeof revisions !== "object") return out;
+    Object.keys(revisions).forEach((key) => {
+      const value = revisions[key];
+      if (value == null || value === "") return;
+      out.sectionRevisions[key] = String(value);
+    });
+    return out;
+  }
   function extractSectionRevision(res) {
     if (!res || typeof res !== "object") return "";
     const candidates = [res.revision, res.appRevision, res.revisionNo, res.app?.revision];
@@ -843,6 +854,18 @@ ${contextLine}`);
       return String(value);
     }
     return "";
+  }
+  function ensureBundleShape(bundle) {
+    if (!bundle || typeof bundle !== "object") throw new Error("バンドル形式が不正です");
+    if (!bundle.sections || typeof bundle.sections !== "object") throw new Error("sections がありません");
+    return {
+      appId: String(bundle.appId || ""),
+      guestId: String(bundle.guestId || ""),
+      preview: !!bundle.preview,
+      fetchedAt: bundle.fetchedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      meta: sanitizeBundleMeta(bundle.meta),
+      sections: normalize(bundle.sections)
+    };
   }
   function pickBundleSections(bundle, sections) {
     const picked = {
@@ -6287,6 +6310,47 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
   // src/tabs/diff-standalone.ts
   init_api();
+
+  // src/settingsBundleImport.ts
+  init_api();
+  function unwrapBundleCandidates(raw, side) {
+    if (!raw || typeof raw !== "object") return [];
+    if (raw.source && raw.target) return unwrapBundleCandidates(side === "target" ? raw.target : raw.source, side);
+    if (raw.bundle) return unwrapBundleCandidates(raw.bundle, side);
+    if (Array.isArray(raw.apps)) return raw.apps;
+    if (Array.isArray(raw.bundles)) return raw.bundles;
+    if (raw.sections && raw.appId != null) return [raw];
+    return [raw];
+  }
+  function pickSettingsBundle(raw, options = {}) {
+    const side = options.side || "source";
+    const appId = String(options.appId || "").trim();
+    const candidates = unwrapBundleCandidates(raw, side).map((item) => {
+      try {
+        return ensureBundleShape(item);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    if (!candidates.length) throw new Error("設定JSON内にアプリ設定バンドルが見つかりません");
+    if (appId) {
+      const matched = candidates.find((b) => String(b?.appId || "") === appId);
+      if (matched) return matched;
+      if (candidates.length > 1) throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
+    }
+    return candidates[0];
+  }
+  async function readSettingsBundleFile(file, options = {}) {
+    const text = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(String(e.target.result || ""));
+      reader.onerror = () => reject(new Error("ファイルの読み取りに失敗しました"));
+      reader.readAsText(file);
+    });
+    return pickSettingsBundle(JSON.parse(text), options);
+  }
+
+  // src/tabs/diff-standalone.ts
   init_engine();
   init_enrich();
   init_utils();
@@ -6320,8 +6384,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
     async function resolveSide(side) {
       const imported = side === "source" ? opts.importedSourceBundle : opts.importedTargetBundle;
-      if (imported) return imported;
       const params = side === "source" ? source : target;
+      if (imported) return pickSettingsBundle(imported, { side, appId: String(params.appId || "").trim() });
       return fetchBundle({
         appId: String(params.appId || "").trim(),
         guestId: String(params.guestId || "").trim(),
@@ -7887,6 +7951,21 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       c.checkbox.checked = false;
     }));
     panel.body.insertBefore(cardScope.card, panel.status);
+    const cardImport = makeCard({ title: "設定JSON読込（任意）", soft: true });
+    cardImport.body.appendChild(makeNote("設定出力で保存した単体JSON、設定一括取得JSON（apps 配列）、差分バンドルJSONを指定できます。指定した側はAPI取得せずJSONを使用します。"));
+    const srcFile = document.createElement("input");
+    srcFile.type = "file";
+    srcFile.accept = ".json,application/json";
+    srcFile.className = "kus-lp__file";
+    const tgtFile = document.createElement("input");
+    tgtFile.type = "file";
+    tgtFile.accept = ".json,application/json";
+    tgtFile.className = "kus-lp__file";
+    const clearImportBtn = makeButton("読込解除", "ghost");
+    cardImport.body.appendChild(makeRow(srcFile, { label: "比較元JSON" }));
+    cardImport.body.appendChild(makeRow(tgtFile, { label: "比較先JSON" }));
+    cardImport.body.appendChild(makeRow(clearImportBtn));
+    panel.body.insertBefore(cardImport.card, panel.status);
     const advDetails = makeDetails("詳細オプション");
     const ignTa = makeTextarea({ rows: 2, code: true, placeholder: "無視キー（カンマ区切り）" });
     advDetails.body.appendChild(makeRow(ignTa, { label: "無視キー", block: true }));
@@ -7973,6 +8052,29 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     panel.body.insertBefore(cardOut.card, cardResult.card);
     let cache = null;
     let summaryText = "";
+    let importedSourceBundle = null;
+    let importedTargetBundle = null;
+    srcFile.addEventListener("change", () => liteRun(panel, "比較元JSONを読み込み中…", async () => {
+      const file = srcFile.files?.[0];
+      if (!file) return;
+      importedSourceBundle = await readSettingsBundleFile(file, { side: "source", appId: srcApp.value.trim() });
+      if (!srcApp.value.trim() && importedSourceBundle?.appId) srcApp.value = String(importedSourceBundle.appId);
+      panel.setStatus(`比較元JSONを読み込みました: App ${importedSourceBundle?.appId || "-"}`, "ok");
+    }));
+    tgtFile.addEventListener("change", () => liteRun(panel, "比較先JSONを読み込み中…", async () => {
+      const file = tgtFile.files?.[0];
+      if (!file) return;
+      importedTargetBundle = await readSettingsBundleFile(file, { side: "target", appId: tgtApp.value.trim() });
+      if (!tgtApp.value.trim() && importedTargetBundle?.appId) tgtApp.value = String(importedTargetBundle.appId);
+      panel.setStatus(`比較先JSONを読み込みました: App ${importedTargetBundle?.appId || "-"}`, "ok");
+    }));
+    clearImportBtn.addEventListener("click", () => {
+      importedSourceBundle = null;
+      importedTargetBundle = null;
+      srcFile.value = "";
+      tgtFile.value = "";
+      panel.setStatus("設定JSONの読込を解除しました", "info");
+    });
     function readTargets() {
       const seen = /* @__PURE__ */ new Set();
       return targetRows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim(), preview: tgtPrev.checkbox.checked })).filter((t) => t.appId).filter((t) => {
@@ -8069,6 +8171,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
             ignoreKeys: base.ignoreKeys,
             includeSame: base.includeSame,
             normalizationPresetState: base.normalizationPresetState,
+            importedSourceBundle,
             onStatus: (m) => panel.setStatus(m, "busy")
           });
           rows.push(`<tr><td>${esc(t.appId)}</td><td>${esc(t.guestId || "通常")}</td><td>${(out.rows || []).filter((r) => r.type !== "same").length}</td><td>${(out.fetchIssues || []).length}</td></tr>`);
@@ -8097,6 +8200,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
           ignoreKeys: f.ignoreKeys,
           includeSame: f.includeSame,
           normalizationPresetState: f.normalizationPresetState,
+          importedSourceBundle,
+          importedTargetBundle,
           onStatus: (m) => panel.setStatus(m, "busy")
         });
         cache = {

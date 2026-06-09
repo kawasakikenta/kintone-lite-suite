@@ -3,6 +3,7 @@
 import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone, stableStringify, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle } from '../api.js';
+import { pickSettingsBundle } from '../settingsBundleImport.js';
 
 function filterWritable(props: any) {
   const out: Record<string, any> = {};
@@ -93,7 +94,7 @@ async function applyViewsSection(prefix, app, sourceViews, logs, stopOnError) {
  */
 export async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
   const { sourceAppId, sourceGuestId, sourcePreview, targetAppId, targetGuestId } = opts;
-  if (!sourceAppId) throw new Error('比較元アプリIDを入力してください');
+  if (!sourceAppId && !opts.sourceBundle) throw new Error('比較元アプリIDまたは設定JSONを指定してください');
   if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
 
   const scopes = (opts.scopes || []).filter(Boolean);
@@ -103,14 +104,16 @@ export async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
   const stopOnError = !!opts.stopOnError;
   const logs = [];
 
-  setStatus('比較元設定を取得中...');
-  const sourceBundle = await fetchBundle({
-    appId: sourceAppId,
-    guestId: sourceGuestId || '',
-    preview: !!sourcePreview,
-    sections: scopes,
-    onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
-  });
+  setStatus(opts.sourceBundle ? '比較元設定を設定JSONから読み込み中...' : '比較元設定を取得中...');
+  const sourceBundle = opts.sourceBundle
+    ? pickSettingsBundle(opts.sourceBundle, { side: 'source', appId: String(sourceAppId || '').trim() })
+    : await fetchBundle({
+      appId: sourceAppId,
+      guestId: sourceGuestId || '',
+      preview: !!sourcePreview,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`比較元取得中 ${Math.round(p * 100)}% (${l})`)
+    });
 
   if (opts.doBackup) {
     setStatus('比較先プレビューのバックアップ取得中...');
@@ -265,17 +268,19 @@ export async function previewReflectStandalone(
   const scopes = (opts.scopes || []).filter(Boolean);
   const lookupMap = opts.lookupMap || ({} as any);
   if (!scopes.length) throw new Error('プレビュー対象セクションが空です');
-  if (!opts.sourceAppId) throw new Error('比較元アプリIDを入力してください');
+  if (!opts.sourceAppId && !(opts as any).sourceBundle) throw new Error('比較元アプリIDまたは設定JSONを指定してください');
   if (!opts.targetAppId) throw new Error('比較先アプリIDを入力してください');
 
-  setStatus('比較元設定を取得中...');
-  const source = await fetchBundle({
-    appId: opts.sourceAppId,
-    guestId: opts.sourceGuestId || '',
-    preview: !!opts.sourcePreview,
-    sections: scopes,
-    onProgress: (p, l) => setStatus(`比較元取得 ${Math.round(p * 100)}% (${l})`)
-  });
+  setStatus((opts as any).sourceBundle ? '比較元設定を設定JSONから読み込み中...' : '比較元設定を取得中...');
+  const source = (opts as any).sourceBundle
+    ? pickSettingsBundle((opts as any).sourceBundle, { side: 'source', appId: String(opts.sourceAppId || '').trim() })
+    : await fetchBundle({
+      appId: opts.sourceAppId,
+      guestId: opts.sourceGuestId || '',
+      preview: !!opts.sourcePreview,
+      sections: scopes,
+      onProgress: (p, l) => setStatus(`比較元取得 ${Math.round(p * 100)}% (${l})`)
+    });
   setStatus('比較先プレビューを取得中...');
   const target = await fetchBundle({
     appId: opts.targetAppId,
