@@ -1083,7 +1083,24 @@ ${contextLine}`);
         if (rIdx > lIdx) return "medium";
       }
     }
-    if (sec === "pluginSettings" && leaf === "version" && row?.type === "changed") return "medium";
+    if (sec === "processSettings" && leaf === "enable" && row?.type === "changed") {
+      if (row?.left === true && row?.right === false) return "high";
+      if (row?.left === false && row?.right === true) return "medium";
+    }
+    if (sec === "pluginSettings") {
+      if (/^pluginSettings\.plugins\[\d+\]$/.test(rawPath)) {
+        if (row?.type === "removed") return "high";
+        if (row?.type === "added") return "medium";
+      }
+      if (leaf === "enabled" && row?.type === "changed") {
+        if (row?.left === true && row?.right === false) return "high";
+        if (row?.left === false && row?.right === true) return "medium";
+      }
+      if (leaf === "version" && row?.type === "changed") return "medium";
+    }
+    if (sec === "customizeSettings" && row?.type === "removed" && /^customizeSettings\.(?:desktop|mobile)\.(?:js|css)\[\d+\]$/.test(rawPath)) {
+      return "high";
+    }
     if (row?.type === "removed" && rawPath === sec) return "high";
     if (row?.type === "removed") {
       if (HIGH_IMPACT_SECTIONS.has(sec)) return "high";
@@ -1210,6 +1227,7 @@ ${contextLine}`);
       if (!isPlainObject(obj) || !Object.prototype.hasOwnProperty.call(obj, key)) return false;
       const val = obj[key];
       if (val == null || typeof val === "object") return false;
+      if (typeof val === "boolean") return false;
       const sig = `${typeof val}:${String(val)}`;
       if (seen.has(sig)) return false;
       seen.add(sig);
@@ -1324,6 +1342,154 @@ ${contextLine}`);
     }
     return true;
   }
+  function entityIdentitySig(entity) {
+    if (!entity || typeof entity !== "object") return null;
+    const type = entity.type != null ? String(entity.type) : "";
+    const code = entity.code != null ? String(entity.code) : entity.login != null ? String(entity.login) : "";
+    if (!type && !code) return null;
+    return `${type}:${code}`;
+  }
+  function findCompositeArrayRule(path) {
+    const p = String(path || "");
+    for (const rule of COMPOSITE_ARRAY_RULES) {
+      if (rule.pattern.test(p)) return rule;
+    }
+    return null;
+  }
+  function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
+    const rule = findCompositeArrayRule(path);
+    if (!rule) return false;
+    if (!a.length && !b.length) return false;
+    if (!a.every(isPlainObject) || !b.every(isPlainObject)) return false;
+    if (rule.applies && !rule.applies(a, b)) return false;
+    const buildMap = (arr) => {
+      const map = /* @__PURE__ */ new Map();
+      for (let i = 0; i < arr.length; i++) {
+        const sig = rule.makeSig(arr[i]);
+        if (sig == null) return null;
+        if (map.has(sig)) return null;
+        map.set(sig, { idx: i, item: arr[i] });
+      }
+      return map;
+    };
+    const mapA = buildMap(a);
+    const mapB = buildMap(b);
+    if (!mapA || !mapB) return false;
+    const ordered = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const sig of mapA.keys()) {
+      if (!seen.has(sig)) {
+        seen.add(sig);
+        ordered.push(sig);
+      }
+    }
+    for (const sig of mapB.keys()) {
+      if (!seen.has(sig)) {
+        seen.add(sig);
+        ordered.push(sig);
+      }
+    }
+    for (const sig of ordered) {
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      const left = mapA.get(sig);
+      const right = mapB.get(sig);
+      if (!left && right) {
+        pushDiffRow(out, {
+          type: "added",
+          path: `${path}[${right.idx}]`,
+          left: void 0,
+          right: right.item,
+          arrayKey: rule.arrayKey,
+          arrayKeyValue: rule.keyValue(right.item)
+        }, ignoreRules);
+        continue;
+      }
+      if (left && !right) {
+        pushDiffRow(out, {
+          type: "removed",
+          path: `${path}[${left.idx}]`,
+          left: left.item,
+          right: void 0,
+          arrayKey: rule.arrayKey,
+          arrayKeyValue: rule.keyValue(left.item)
+        }, ignoreRules);
+        continue;
+      }
+      if (!left || !right) continue;
+      const leftSig = makeArrayItemSignature(left.item, ignoreRules);
+      const rightSig = makeArrayItemSignature(right.item, ignoreRules);
+      if (leftSig === rightSig) {
+        if (left.idx !== right.idx) {
+          pushDiffRow(out, {
+            type: "changed",
+            path: `${path}[${right.idx}]`,
+            left: left.item,
+            right: right.item,
+            moved: true,
+            movedFrom: left.idx,
+            movedTo: right.idx,
+            arrayKey: rule.arrayKey,
+            arrayKeyValue: rule.keyValue(right.item)
+          }, ignoreRules);
+        } else if (canCollectSameRows(out)) {
+          pushDiffRow(out, {
+            type: "same",
+            path: `${path}[${right.idx}]`,
+            left: left.item,
+            right: right.item,
+            severity: "low",
+            arrayKey: rule.arrayKey,
+            arrayKeyValue: rule.keyValue(right.item)
+          }, ignoreRules);
+        }
+        continue;
+      }
+      const start = out.length;
+      collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules);
+      const keyVal = rule.keyValue(right.item) !== void 0 ? rule.keyValue(right.item) : rule.keyValue(left.item);
+      for (let oi = start; oi < out.length; oi++) {
+        if (!out[oi].arrayKey) out[oi].arrayKey = rule.arrayKey;
+        if (out[oi].arrayKeyValue === void 0) out[oi].arrayKeyValue = keyVal;
+      }
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    }
+    return true;
+  }
+  function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
+    if (a.length !== b.length || a.length < 2) return false;
+    const sigA = a.map((x) => makeArrayItemSignature(x, ignoreRules));
+    const sigB = b.map((x) => makeArrayItemSignature(x, ignoreRules));
+    if ([...sigA].sort().join("\0") !== [...sigB].sort().join("\0")) return false;
+    const used = new Array(a.length).fill(false);
+    for (let j = 0; j < b.length; j++) {
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      let from = -1;
+      for (let i = 0; i < a.length; i++) {
+        if (!used[i] && sigA[i] === sigB[j]) {
+          from = i;
+          break;
+        }
+      }
+      if (from < 0) continue;
+      used[from] = true;
+      if (from === j) {
+        if (canCollectSameRows(out)) {
+          pushDiffRow(out, { type: "same", path: `${path}[${j}]`, left: a[from], right: b[j], severity: "low" }, ignoreRules);
+        }
+        continue;
+      }
+      pushDiffRow(out, {
+        type: "changed",
+        path: `${path}[${j}]`,
+        left: a[from],
+        right: b[j],
+        moved: true,
+        movedFrom: from,
+        movedTo: j
+      }, ignoreRules);
+    }
+    return true;
+  }
   function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
     const n = a.length;
     const m = b.length;
@@ -1393,7 +1559,9 @@ ${contextLine}`);
     return true;
   }
   function collectArrayDiffs(a, b, path, out, ignoreRules) {
+    if (collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules)) return;
     if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) return;
+    if (collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules)) return;
     if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules)) return;
     const max = Math.max(a.length, b.length);
     for (let i = 0; i < max; i++) {
@@ -2010,7 +2178,7 @@ ${contextLine}`);
     });
     return out;
   }
-  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
+  var HIGH_IMPACT_SECTIONS, MEDIUM_IMPACT_SECTIONS, ARRAY_DIFF_LIMIT, SAME_ROW_LIMIT, ARRAY_LCS_MAX_CELLS, ARRAY_KEY_CANDIDATES, LOW_PRIORITY_LEAF_KEYS, ACL_GRANT_FLAG_KEYS, FIELD_ACL_LEVEL_ORDER, COMPOSITE_ARRAY_RULES, SUBTABLE_ROOT_PATH_RE, ENTITY_EXPAND_LIMIT;
   var init_engine = __esm({
     "src/diff/engine.ts"() {
       "use strict";
@@ -2078,6 +2246,53 @@ ${contextLine}`);
         "deletable"
       ]);
       FIELD_ACL_LEVEL_ORDER = ["NONE", "READ", "READ_WRITE"];
+      COMPOSITE_ARRAY_RULES = [
+        // アプリ権限：エンティティが識別子
+        {
+          pattern: /^appAcl\.rights$/,
+          arrayKey: "entity",
+          makeSig: (item) => entityIdentitySig(item?.entity),
+          keyValue: (item) => item?.entity
+        },
+        // フィールド権限・レコード権限のエンティティ配列
+        {
+          pattern: /^(?:fieldAcl|recordPermissions)\.rights\[\d+\]\.entities$/,
+          arrayKey: "entity",
+          makeSig: (item) => entityIdentitySig(item?.entity),
+          keyValue: (item) => item?.entity
+        },
+        // 一般通知：宛先エンティティが識別子
+        {
+          pattern: /^notifications\.notifications$/,
+          arrayKey: "entity",
+          makeSig: (item) => entityIdentitySig(item?.entity),
+          keyValue: (item) => item?.entity
+        },
+        // レコード条件通知・リマインダー通知：タイトル（無題はマッチ対象外）
+        {
+          pattern: /^(?:perRecordNotifications|reminderNotifications)\.notifications$/,
+          arrayKey: "title",
+          makeSig: (item) => {
+            const t = item?.title != null ? String(item.title).trim() : "";
+            return t || null;
+          },
+          keyValue: (item) => item?.title
+        },
+        // プロセス遷移・アプリアクション：name が重複していても from/to で識別。
+        // name がユニークな場合は objectKey マッチ（name 単独）の方が from/to の
+        // 変更を changed としてペアリングできるため、そちらに委ねる。
+        {
+          pattern: /^(?:processSettings|actionSettings)\.actions$/,
+          arrayKey: "name",
+          makeSig: (item) => {
+            const name = item?.name != null ? String(item.name).trim() : "";
+            if (!name) return null;
+            return `${name}|${item?.from != null ? String(item.from) : ""}|${item?.to != null ? String(item.to) : ""}`;
+          },
+          keyValue: (item) => item?.name,
+          applies: (a, b) => !(hasUniquePrimitiveKey(a, "name") && hasUniquePrimitiveKey(b, "name"))
+        }
+      ];
       SUBTABLE_ROOT_PATH_RE = /^fieldSettings\.properties\.([^.[\]]+)$/;
       ENTITY_EXPAND_LIMIT = 200;
     }
@@ -2453,24 +2668,92 @@ ${contextLine}`);
         "actionSettings",
         "notifications",
         "perRecordNotifications",
-        "reminderNotifications"
+        "reminderNotifications",
+        // 権限系：fieldAcl.rights[].code / recordPermissions の FIELD_ENTITY・filterCond が
+        // フィールドコードを参照する（フィールド削除・改名の影響範囲に含める）
+        "fieldAcl",
+        "recordPermissions"
       ].forEach((sectionKey) => {
         scanSectionForFieldRefs(sectionKey, bundle.sections[sectionKey], codeSet, index, sectionKey, "");
       });
     });
     return index;
   }
-  function resolveRowImpactRefs(row, impactIndex) {
+  function buildStatusImpactIndex(sourceBundle, targetBundle = null) {
+    const index = /* @__PURE__ */ new Map();
+    const sectionLabel = SECTION_DEFS.find((entry) => entry.key === "processSettings")?.label || "processSettings";
+    const add = (stateName, ref) => {
+      const name = String(stateName || "").trim();
+      if (!name) return;
+      if (!index.has(name)) index.set(name, []);
+      const bucket = index.get(name);
+      const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join("|");
+      if (bucket.some((item) => [item.sectionKey, item.kind, item.path, item.label].join("|") === sig)) return;
+      bucket.push(ref);
+    };
+    [sourceBundle, targetBundle].forEach((bundle) => {
+      const proc = bundle?.sections?.processSettings;
+      if (!proc || typeof proc !== "object") return;
+      const actions = Array.isArray(proc.actions) ? proc.actions : [];
+      actions.forEach((act, idx) => {
+        if (!act || typeof act !== "object") return;
+        const label = String(act.name || `遷移 #${idx}`);
+        if (typeof act.from === "string" && act.from) {
+          add(act.from, {
+            sectionKey: "processSettings",
+            section: sectionLabel,
+            kind: "遷移元参照",
+            label,
+            path: `processSettings.actions[${idx}].from`
+          });
+        }
+        if (typeof act.to === "string" && act.to) {
+          add(act.to, {
+            sectionKey: "processSettings",
+            section: sectionLabel,
+            kind: "遷移先参照",
+            label,
+            path: `processSettings.actions[${idx}].to`
+          });
+        }
+      });
+    });
+    return index;
+  }
+  function extractStateNameFromRow(row) {
+    if (String(row?.sectionKey || "") !== "processSettings") return "";
+    const tokens = tokenizePath(String(row?.path || ""));
+    if (tokens[1] === "states" && typeof tokens[2] === "string") return tokens[2];
+    return "";
+  }
+  function resolveRowImpactRefs(row, impactIndex, statusImpactIndex = null) {
     const codes = /* @__PURE__ */ new Set();
     const fieldInfo = extractFieldPathInfo(row.path);
     if (fieldInfo?.activeCode) codes.add(fieldInfo.activeCode);
     if (row.renameCandidate?.fromCode) codes.add(row.renameCandidate.fromCode);
     if (row.renameCandidate?.toCode) codes.add(row.renameCandidate.toCode);
-    if (!codes.size) return [];
+    const stateNames = /* @__PURE__ */ new Set();
+    if (statusImpactIndex && statusImpactIndex.size) {
+      const stateName = extractStateNameFromRow(row);
+      if (stateName) stateNames.add(stateName);
+      if (row.renameCandidate?.entityKind === "state") {
+        if (row.renameCandidate.fromCode) stateNames.add(String(row.renameCandidate.fromCode));
+        if (row.renameCandidate.toCode) stateNames.add(String(row.renameCandidate.toCode));
+      }
+    }
+    if (!codes.size && !stateNames.size) return [];
     const refs = [];
     const seen = /* @__PURE__ */ new Set();
     codes.forEach((code) => {
       (impactIndex.get(code) || []).forEach((ref) => {
+        const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join("|");
+        if (seen.has(sig)) return;
+        seen.add(sig);
+        refs.push(ref);
+      });
+    });
+    stateNames.forEach((name) => {
+      (statusImpactIndex?.get(name) || []).forEach((ref) => {
         const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join("|");
         if (seen.has(sig)) return;
         seen.add(sig);
@@ -2690,6 +2973,15 @@ ${contextLine}`);
       case "fieldAcl": {
         if (tokens[1] === "rights" && typeof tokens[2] === "number") {
           const fc = row?.arrayKey === "code" && row?.arrayKeyValue != null ? String(row.arrayKeyValue) : String(payload && typeof payload === "object" && payload.code || "");
+          if (tokens[3] === "entities") {
+            let ent = row?.arrayKey === "entity" && row?.arrayKeyValue && typeof row.arrayKeyValue === "object" ? row.arrayKeyValue : null;
+            if (!ent && payload && typeof payload === "object" && payload.entity) ent = payload.entity;
+            const entLabel = describeAclEntity(ent);
+            if (entLabel) {
+              const label2 = fc ? `${fc} › ${entLabel}` : entLabel;
+              return { entityKind: "fieldAclEntry", entityLabel: label2, entityCode: fc || String(ent?.code || ""), propLabel };
+            }
+          }
           const label = fc || `エントリー #${tokens[2]}`;
           return { entityKind: "fieldAclEntry", entityLabel: label, entityCode: fc, propLabel };
         }
@@ -2701,6 +2993,9 @@ ${contextLine}`);
         if (tokens[1] === "notifications" && typeof tokens[2] === "number") {
           const obj = payload && typeof payload === "object" ? payload : {};
           let label = String(obj.name || obj.title || "").trim();
+          if (!label && obj.entity && typeof obj.entity === "object") {
+            label = describeAclEntity(obj.entity);
+          }
           if (!label) {
             const recipients = obj.recipients;
             if (Array.isArray(recipients) && recipients.length) {
@@ -2710,6 +3005,12 @@ ${contextLine}`);
             }
           }
           if (!label && row?.arrayKey === "name" && row?.arrayKeyValue != null) {
+            label = String(row.arrayKeyValue);
+          }
+          if (!label && row?.arrayKey === "entity" && row?.arrayKeyValue && typeof row.arrayKeyValue === "object") {
+            label = describeAclEntity(row.arrayKeyValue);
+          }
+          if (!label && row?.arrayKey === "title" && row?.arrayKeyValue != null) {
             label = String(row.arrayKeyValue);
           }
           if (!label) label = `通知 #${tokens[2]}`;
@@ -2847,6 +3148,7 @@ ${contextLine}`);
     const renameMap = detectFieldRenameCandidates(seeded);
     const entityRenameMap = detectEntityRenameCandidates(seeded);
     const impactIndex = buildCombinedFieldImpactIndex(sourceBundle, targetBundle);
+    const statusImpactIndex = buildStatusImpactIndex(sourceBundle, targetBundle);
     return seeded.map((row) => {
       const next = { ...row };
       const renameCandidate = renameMap.get(row._id) || entityRenameMap.get(row._id);
@@ -2859,7 +3161,7 @@ ${contextLine}`);
         const suffix = renameCandidate ? renameCandidate.entityKind ? "改名候補" : "コード変更候補" : "";
         next.reasonSummary = suffix ? `${reason} / ${suffix}` : reason;
       }
-      const impactRefs = resolveRowImpactRefs(next, impactIndex);
+      const impactRefs = resolveRowImpactRefs(next, impactIndex, statusImpactIndex);
       if (impactRefs.length) {
         next.impactRefs = impactRefs.slice(0, DIFF_IMPACT_REF_LIMIT);
         next.impactCount = impactRefs.length;

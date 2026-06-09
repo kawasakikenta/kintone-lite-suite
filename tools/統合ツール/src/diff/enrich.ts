@@ -408,7 +408,11 @@ export function buildCombinedFieldImpactIndex(sourceBundle: any, targetBundle: a
       'actionSettings',
       'notifications',
       'perRecordNotifications',
-      'reminderNotifications'
+      'reminderNotifications',
+      // 権限系：fieldAcl.rights[].code / recordPermissions の FIELD_ENTITY・filterCond が
+      // フィールドコードを参照する（フィールド削除・改名の影響範囲に含める）
+      'fieldAcl',
+      'recordPermissions'
     ].forEach((sectionKey) => {
       scanSectionForFieldRefs(sectionKey, bundle.sections[sectionKey], codeSet, index, sectionKey, '');
     });
@@ -416,17 +420,92 @@ export function buildCombinedFieldImpactIndex(sourceBundle: any, targetBundle: a
   return index;
 }
 
-export function resolveRowImpactRefs(row, impactIndex) {
+// ---------------------------------------------------------------------------
+// Process status impact index
+// ---------------------------------------------------------------------------
+// ステータス（processSettings.states のキー）を参照している遷移アクションを
+// 逆引きする。ステータス削除・改名行に「影響: 遷移 N件」を出すための索引。
+// ---------------------------------------------------------------------------
+export function buildStatusImpactIndex(sourceBundle: any, targetBundle: any = null): Map<string, any[]> {
+  const index = new Map<string, any[]>();
+  const sectionLabel = SECTION_DEFS.find((entry) => entry.key === 'processSettings')?.label || 'processSettings';
+  const add = (stateName: string, ref: any) => {
+    const name = String(stateName || '').trim();
+    if (!name) return;
+    if (!index.has(name)) index.set(name, []);
+    const bucket = index.get(name)!;
+    const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join('|');
+    if (bucket.some((item) => [item.sectionKey, item.kind, item.path, item.label].join('|') === sig)) return;
+    bucket.push(ref);
+  };
+  [sourceBundle, targetBundle].forEach((bundle) => {
+    const proc = bundle?.sections?.processSettings;
+    if (!proc || typeof proc !== 'object') return;
+    const actions = Array.isArray(proc.actions) ? proc.actions : [];
+    actions.forEach((act: any, idx: number) => {
+      if (!act || typeof act !== 'object') return;
+      const label = String(act.name || `遷移 #${idx}`);
+      if (typeof act.from === 'string' && act.from) {
+        add(act.from, {
+          sectionKey: 'processSettings',
+          section: sectionLabel,
+          kind: '遷移元参照',
+          label,
+          path: `processSettings.actions[${idx}].from`
+        });
+      }
+      if (typeof act.to === 'string' && act.to) {
+        add(act.to, {
+          sectionKey: 'processSettings',
+          section: sectionLabel,
+          kind: '遷移先参照',
+          label,
+          path: `processSettings.actions[${idx}].to`
+        });
+      }
+    });
+  });
+  return index;
+}
+
+function extractStateNameFromRow(row: any): string {
+  if (String(row?.sectionKey || '') !== 'processSettings') return '';
+  const tokens = tokenizePath(String(row?.path || ''));
+  if (tokens[1] === 'states' && typeof tokens[2] === 'string') return tokens[2];
+  return '';
+}
+
+export function resolveRowImpactRefs(row, impactIndex, statusImpactIndex: Map<string, any[]> | null = null) {
   const codes = new Set();
   const fieldInfo = extractFieldPathInfo(row.path);
   if (fieldInfo?.activeCode) codes.add(fieldInfo.activeCode);
   if (row.renameCandidate?.fromCode) codes.add(row.renameCandidate.fromCode);
   if (row.renameCandidate?.toCode) codes.add(row.renameCandidate.toCode);
-  if (!codes.size) return [];
+
+  // ステータス行：参照している遷移アクションを影響範囲として解決する
+  const stateNames = new Set<string>();
+  if (statusImpactIndex && statusImpactIndex.size) {
+    const stateName = extractStateNameFromRow(row);
+    if (stateName) stateNames.add(stateName);
+    if (row.renameCandidate?.entityKind === 'state') {
+      if (row.renameCandidate.fromCode) stateNames.add(String(row.renameCandidate.fromCode));
+      if (row.renameCandidate.toCode) stateNames.add(String(row.renameCandidate.toCode));
+    }
+  }
+
+  if (!codes.size && !stateNames.size) return [];
   const refs: any[] = [];
   const seen = new Set();
   codes.forEach((code) => {
     (impactIndex.get(code) || []).forEach((ref: any) => {
+      const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join('|');
+      if (seen.has(sig)) return;
+      seen.add(sig);
+      refs.push(ref);
+    });
+  });
+  stateNames.forEach((name) => {
+    (statusImpactIndex?.get(name) || []).forEach((ref: any) => {
       const sig = [ref.sectionKey, ref.kind, ref.path, ref.label].join('|');
       if (seen.has(sig)) return;
       seen.add(sig);
@@ -817,6 +896,16 @@ export function extractEntityContext(row: any): DiffEntityContext {
         const fc = (row?.arrayKey === 'code' && row?.arrayKeyValue != null)
           ? String(row.arrayKeyValue)
           : String((payload && typeof payload === 'object' && (payload as any).code) || '');
+        // entities 配下の行：対象エンティティ（ユーザー/組織/グループ）をラベルに使う
+        if (tokens[3] === 'entities') {
+          let ent: any = (row?.arrayKey === 'entity' && row?.arrayKeyValue && typeof row.arrayKeyValue === 'object') ? row.arrayKeyValue : null;
+          if (!ent && payload && typeof payload === 'object' && (payload as any).entity) ent = (payload as any).entity;
+          const entLabel = describeAclEntity(ent);
+          if (entLabel) {
+            const label = fc ? `${fc} › ${entLabel}` : entLabel;
+            return { entityKind: 'fieldAclEntry', entityLabel: label, entityCode: fc || String(ent?.code || ''), propLabel };
+          }
+        }
         const label = fc || `エントリー #${tokens[2]}`;
         return { entityKind: 'fieldAclEntry', entityLabel: label, entityCode: fc, propLabel };
       }
@@ -828,6 +917,10 @@ export function extractEntityContext(row: any): DiffEntityContext {
       if (tokens[1] === 'notifications' && typeof tokens[2] === 'number') {
         const obj = (payload && typeof payload === 'object') ? payload as any : {};
         let label = String(obj.name || obj.title || '').trim();
+        if (!label && obj.entity && typeof obj.entity === 'object') {
+          // 一般通知：宛先エンティティが識別子
+          label = describeAclEntity(obj.entity);
+        }
         if (!label) {
           const recipients = obj.recipients;
           if (Array.isArray(recipients) && recipients.length) {
@@ -837,6 +930,12 @@ export function extractEntityContext(row: any): DiffEntityContext {
           }
         }
         if (!label && row?.arrayKey === 'name' && row?.arrayKeyValue != null) {
+          label = String(row.arrayKeyValue);
+        }
+        if (!label && row?.arrayKey === 'entity' && row?.arrayKeyValue && typeof row.arrayKeyValue === 'object') {
+          label = describeAclEntity(row.arrayKeyValue);
+        }
+        if (!label && row?.arrayKey === 'title' && row?.arrayKeyValue != null) {
           label = String(row.arrayKeyValue);
         }
         if (!label) label = `通知 #${tokens[2]}`;
@@ -999,6 +1098,7 @@ export function enrichDiffRows(rows, sourceBundle, targetBundle) {
   const renameMap = detectFieldRenameCandidates(seeded);
   const entityRenameMap = detectEntityRenameCandidates(seeded);
   const impactIndex = buildCombinedFieldImpactIndex(sourceBundle, targetBundle);
+  const statusImpactIndex = buildStatusImpactIndex(sourceBundle, targetBundle);
   return seeded.map((row) => {
     const next = { ...row };
     const renameCandidate = renameMap.get(row._id) || entityRenameMap.get(row._id);
@@ -1014,7 +1114,7 @@ export function enrichDiffRows(rows, sourceBundle, targetBundle) {
         : '';
       next.reasonSummary = suffix ? `${reason} / ${suffix}` : reason;
     }
-    const impactRefs = resolveRowImpactRefs(next, impactIndex);
+    const impactRefs = resolveRowImpactRefs(next, impactIndex, statusImpactIndex);
     if (impactRefs.length) {
       next.impactRefs = impactRefs.slice(0, DIFF_IMPACT_REF_LIMIT);
       next.impactCount = impactRefs.length;
