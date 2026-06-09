@@ -1425,6 +1425,8 @@
 #kintone-unified-suite-v2 .kus-confirm-prompt code{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-weight:700;color:#b91c1c}
 #kintone-unified-suite-v2 .kus-confirm-input{width:100%;margin-top:6px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 #kintone-unified-suite-v2 .kus-confirm-input:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(248,113,113,.25)}
+#kintone-unified-suite-v2 .kus-confirm-prompt--ack{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#0f172a;cursor:pointer;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc}
+#kintone-unified-suite-v2 .kus-confirm-prompt--ack input{width:16px;height:16px;accent-color:#d97706;cursor:pointer}
 #kintone-unified-suite-v2 .kus-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
 #kintone-unified-suite-v2 .kus-confirm-cancel{padding:8px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;cursor:pointer;font-weight:700;font-size:12px}
 #kintone-unified-suite-v2 .kus-confirm-cancel:hover{background:#e2e8f0}

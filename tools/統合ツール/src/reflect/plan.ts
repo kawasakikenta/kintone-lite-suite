@@ -24,8 +24,10 @@ import {
   convertLookupAppIds,
   sortRowsForPatch,
   applyDiffRowToSection,
-  extractFieldCodeFromRowPath
+  extractFieldCodeFromRowPath,
+  extractReferencedAppIds
 } from './apply.js';
+import { summarizePlanDeletes } from './planInsights.js';
 import { reflectRowModeById } from './rowMode.js';
 import { buildPlanRequestSummary } from './progress-pure.js';
 import {
@@ -765,6 +767,10 @@ export function markApplyPlan(signature, mode, totalReq, lines, extra: any = {})
   };
 }
 
+// showInlineConfirmation（最終確認パネル）表示中フラグ。
+// 表示中はプラン全体の再描画を避け、確認パネルの実行/キャンセルボタンを保護する。
+let inlineConfirmActive = false;
+
 /**
  * プラン確認画面で「このセクションだけ除外」チェックの状態を切り替える。
  * 状態は `state.lastApplyPlan.excludedSectionKeys` (string[]) に保持される。
@@ -784,7 +790,7 @@ export function togglePlanSectionExclude(sectionKey: string): void {
   // 該当ノードだけ書き換える。詳細パネル内に展開した <details> は維持される。
   // 失敗したらモーダル全体を再描画するフォールバックに切り替える。
   const updated = updatePlanCardExcludeStateInDom(plan, key);
-  if (!updated) {
+  if (!updated && !inlineConfirmActive) {
     try {
       renderPlanIntoModal(plan, Array.isArray(plan.plannedRequests) ? plan.plannedRequests : []);
     } catch (_e) { /* noop */ }
@@ -851,6 +857,20 @@ function updatePlanCardExcludeStateInDom(plan: any, sectionKey: string): boolean
         ? `このプランで反映する（${remainingReq}/${totalReqAll}件）`
         : 'このプランで反映する';
     }
+
+    // 最終確認パネル表示中は実行ボタンの件数表示と削除警告も連動して更新する
+    const execBtn = root.querySelector('#u_planExecute') as HTMLElement | null;
+    if (execBtn) {
+      execBtn.textContent = buildPlanExecuteLabel({
+        cardsHtml: '',
+        totalReqAll,
+        remainingReq,
+        excludedCount,
+        remainingMetaHtml: ''
+      });
+    }
+    const deleteSlot = root.querySelector('[data-plan-delete-warning]') as HTMLElement | null;
+    if (deleteSlot) deleteSlot.innerHTML = renderPlanDeleteWarningHtml(plan);
     return true;
   } catch (_e) {
     return false;
@@ -858,11 +878,13 @@ function updatePlanCardExcludeStateInDom(plan: any, sectionKey: string): boolean
 }
 
 export function showInlineConfirmation(plan, options) {
-  const appIdRefs = (options && options.appIdRefs) || [];
+  const appIdRefs = (options && options.appIdRefs) || plan?.appIdRefs || [];
   return new Promise((resolve) => {
     const stamp = new Date(plan.createdAt).toLocaleString();
     const planText = (plan.logs || []).join('\n') || '(プラン詳細なし)';
-    const appIdSection = renderAppIdConfirmSection(appIdRefs);
+    const appIdSection = appIdRefs.length
+      ? `<details class="plan-confirm-appids"><summary>関連アプリID一覧（${appIdRefs.length}件）— ルックアップ等の参照先を確認</summary>${renderAppIdConfirmSection(appIdRefs)}</details>`
+      : '';
     const baselineErrors: Array<{ sectionKey: string; label: string; message: string }> = Array.isArray(plan?.baselineErrors) ? plan.baselineErrors : [];
     const baselineWarning = baselineErrors.length
       ? `<div class="plan-baseline-warning" style="margin:8px 0;padding:8px 10px;border:1px solid #d97706;background:#fef3c7;color:#92400e;border-radius:6px;font-size:12px">
@@ -875,22 +897,39 @@ export function showInlineConfirmation(plan, options) {
     const doc = getToolDocument();
     const modalEl = doc.getElementById('u_reflectPlanModal') as HTMLElement | null;
     const modalBody = modalEl?.querySelector('.reflect-modal-body') as HTMLElement | null;
+    const modalFoot = modalEl?.querySelector('.reflect-modal-foot') as HTMLElement | null;
+    const modalTitle = modalEl?.querySelector('.reflect-modal-title') as HTMLElement | null;
     const fallbackHost = modalBody || ui.result;
     if (!fallbackHost) { resolve(false); return; }
     const previousHtml = fallbackHost.innerHTML;
     const previousScrollTop = (fallbackHost as any).scrollTop || 0;
+    const previousTitle = modalTitle ? modalTitle.textContent : '';
     if (modalEl) modalEl.hidden = false;
+    // 確認中はモーダル下部の「このプランで反映」等を隠し、実行ボタンを一本化する
+    if (modalFoot) modalFoot.style.display = 'none';
+    if (modalTitle) modalTitle.textContent = '実行前の最終確認';
+
+    const reqs = Array.isArray(plan.plannedRequests) ? plan.plannedRequests : [];
+    const cardsView = buildPlanSectionCardsHtml(plan, reqs);
+    const execLabel = buildPlanExecuteLabel(cardsView);
     const execDisabled = baselineErrors.length ? 'disabled' : '';
-    fallbackHost.innerHTML = `<div class="plan-confirm-panel">
-      <div style="font-weight:700;font-size:13px;margin-bottom:8px">実行前プラン確認</div>
+    inlineConfirmActive = true;
+    fallbackHost.innerHTML = `<div class="plan-confirm-panel" data-inline-confirm="1">
+      <div class="plan-confirm-head">
+        <div class="plan-confirm-head__title">実行前の最終確認</div>
+        <div class="plan-confirm-head__meta">予定リクエスト ${plan.totalReq || 0} 件 ／ ${esc(stamp)}${cardsView.remainingMetaHtml}</div>
+      </div>
+      ${renderPlanTargetLineHtml()}
       ${renderPlanRequestSummary(plan)}
+      <div class="plan-delete-warning-slot" data-plan-delete-warning>${renderPlanDeleteWarningHtml(plan)}</div>
       ${baselineWarning}
       ${appIdSection}
-      <div class="plan-summary">${esc(planText)}</div>
+      <div class="plan-confirm-cards">${cardsView.cardsHtml || '<div class="muted">予定リクエストがありません</div>'}</div>
+      <details class="plan-confirm-rawlogs"><summary>テキストログを表示</summary><div class="plan-summary">${esc(planText)}</div></details>
       <div class="plan-actions">
-        <span class="plan-meta">予定リクエスト: ${plan.totalReq || 0}件 | 作成: ${esc(stamp)}</span>
+        <span class="plan-meta">不要なセクションは各カードの「除外」で外せます。実行後も「直前保存を戻す」で復元できます。</span>
         <button class="btn sub" id="u_planCancel">キャンセル</button>
-        <button class="btn ok" id="u_planExecute" ${execDisabled}>このまま実行</button>
+        <button class="btn ok" id="u_planExecute" ${execDisabled}>${esc(execLabel)}</button>
       </div>
     </div>`;
     if (baselineErrors.length) {
@@ -901,26 +940,39 @@ export function showInlineConfirmation(plan, options) {
       });
     }
     (fallbackHost as any).scrollTop = 0;
-    const cleanup = () => {
+
+    let finished = false;
+    let observer: MutationObserver | null = null;
+    const finish = (result: boolean) => {
+      if (finished) return;
+      finished = true;
+      inlineConfirmActive = false;
+      if (observer) { observer.disconnect(); observer = null; }
       const execBtn = doc.getElementById('u_planExecute');
       const cancelBtn = doc.getElementById('u_planCancel');
       if (execBtn) execBtn.removeEventListener('click', onExec);
       if (cancelBtn) cancelBtn.removeEventListener('click', onCancel);
-    };
-    const onExec = () => {
-      cleanup();
-      if (modalEl) modalEl.hidden = true;
-      resolve(true);
-    };
-    const onCancel = () => {
-      cleanup();
       fallbackHost.innerHTML = previousHtml;
       (fallbackHost as any).scrollTop = previousScrollTop;
+      if (modalFoot) modalFoot.style.display = '';
+      if (modalTitle) modalTitle.textContent = previousTitle;
       if (modalEl) modalEl.hidden = true;
-      resolve(false);
+      resolve(result);
     };
+    const onExec = () => finish(true);
+    const onCancel = () => finish(false);
     doc.getElementById('u_planExecute')?.addEventListener('click', onExec);
     doc.getElementById('u_planCancel')?.addEventListener('click', onCancel);
+    // 初期フォーカスは安全側（キャンセル）に置き、Enter 押下での誤実行を防ぐ
+    setTimeout(() => (doc.getElementById('u_planCancel') as HTMLElement | null)?.focus?.(), 0);
+    // Esc・×ボタン・背景クリックでモーダルが hidden にされた場合もキャンセル扱いにする。
+    // ここで resolve しないと withGuard が解放されず UI がロックされたままになる。
+    if (modalEl && typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(() => {
+        if (!finished && modalEl.hidden) finish(false);
+      });
+      observer.observe(modalEl, { attributes: true, attributeFilter: ['hidden'] });
+    }
   });
 }
 
@@ -932,6 +984,17 @@ export async function ensureApplyPlanApproved(signature, mode, planRunner, optio
   }
   const currentPlan = state.lastApplyPlan;
   if (!currentPlan) return false;
+  // プラン確認モーダルを開いた状態で「このプランで反映」を押した場合は、
+  // 直前まで同じプラン内容を見ているため同内容の確認をもう一度挟まない。
+  // （最終的な安全確認は confirmApplyRiskGuard 側で必ず行われる）
+  if (valid) {
+    const doc = getToolDocument();
+    const modalEl = doc.getElementById('u_reflectPlanModal') as HTMLElement | null;
+    if (modalEl && !modalEl.hidden) {
+      modalEl.hidden = true;
+      return true;
+    }
+  }
   return showInlineConfirmation(currentPlan, options);
 }
 
@@ -1081,7 +1144,8 @@ export async function runPreviewApplyPlanNodes() {
   }
   lines.push(`合計予定リクエスト数: ${totalReq}`);
   lines.push('※ ノードモードは差分パスをもとに比較先プレビューへ反映します。');
-  markApplyPlan(planSignature, 'nodes', totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors });
+  const appIdRefs = state.lastSourceBundle ? extractReferencedAppIds(state.lastSourceBundle, sectionKeys, lookupMap) : [];
+  markApplyPlan(planSignature, 'nodes', totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors, appIdRefs });
 
   // プラン確認モーダル本体に描画（無ければ result にフォールバック）
   renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
@@ -1248,7 +1312,8 @@ export async function runPreviewApplyPlan() {
     logs.push('');
   }
   logs.push(`合計予定リクエスト数: ${totalReq}`);
-  markApplyPlan(planSignature, 'section', totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors });
+  const appIdRefs = sourceBundle ? extractReferencedAppIds(sourceBundle, scopes, lookupMap) : [];
+  markApplyPlan(planSignature, 'section', totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors, appIdRefs });
   // プラン確認モーダル本体に描画（無ければ result にフォールバック）
   renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
   renderReflectAssistPanel();
@@ -1269,8 +1334,61 @@ function renderPlanIntoModal(plan: any, plannedRequests: any[]): void {
   }
 }
 
+// 確認パネル共通: どこからどこへ書き込むかを 1 行で明示する
+function renderPlanTargetLineHtml(): string {
+  let src = { appId: '', guestId: '' };
+  let tgt = { appId: '', guestId: '' };
+  try {
+    const c = commonParams();
+    src = { appId: String(c.source?.appId || ''), guestId: String(c.source?.guestId || '') };
+    tgt = { appId: String(c.target?.appId || ''), guestId: String(c.target?.guestId || '') };
+  } catch (_e) {
+    return '';
+  }
+  const srcName = extractAppNameFromBundle(state.importedSourceBundle || state.lastSourceBundle) || '';
+  const tgtName = extractAppNameFromBundle(state.importedTargetBundle || state.lastTargetBundle) || '';
+  const fmt = (appId: string, name: string, guestId: string) => {
+    const guest = guestId ? `（ゲスト ${esc(guestId)}）` : '';
+    return `App ${esc(appId || '-')}${name ? ` ${esc(name)}` : ''}${guest}`;
+  };
+  return `<div class="plan-confirm-target" aria-label="反映の方向">
+    <span class="plan-confirm-target__side">比較元 ${fmt(src.appId, srcName, src.guestId)}</span>
+    <span class="plan-confirm-target__arrow" aria-hidden="true">→</span>
+    <span class="plan-confirm-target__side plan-confirm-target__side--target">比較先 ${fmt(tgt.appId, tgtName, tgt.guestId)}</span>
+    <span class="plan-confirm-target__badge">プレビューへ書き込み</span>
+  </div>`;
+}
+
+// 確認パネル共通: 削除を含むプランは赤帯で明示する（除外済みセクションは集計しない）
+function renderPlanDeleteWarningHtml(plan: any): string {
+  const reqs = Array.isArray(plan?.plannedRequests) ? plan.plannedRequests : [];
+  const excludedKeys = Array.isArray(plan?.excludedSectionKeys) ? plan.excludedSectionKeys : [];
+  const del = summarizePlanDeletes(reqs, excludedKeys);
+  if (!del.total) return '';
+  const breakdown = del.sections.map((s) => `${esc(s.sectionLabel)} ${s.count}件`).join(' ／ ');
+  return `<div class="plan-delete-warning" role="alert">
+    <div class="plan-delete-warning__title">⚠ 削除を含むプランです（合計 ${del.total}件）</div>
+    <div class="plan-delete-warning__body">${breakdown}</div>
+    <div class="plan-delete-warning__sub">削除は本番への反映（デプロイ）時に実データへも影響します。バックアップ自動保存をONにしたままの実行を推奨します。</div>
+  </div>`;
+}
+
+interface PlanCardsView {
+  cardsHtml: string;
+  totalReqAll: number;
+  remainingReq: number;
+  excludedCount: number;
+  remainingMetaHtml: string;
+}
+
+function buildPlanExecuteLabel(view: PlanCardsView): string {
+  return view.excludedCount > 0
+    ? `このまま実行（${view.remainingReq}/${view.totalReqAll}件）`
+    : `このまま実行（リクエスト ${view.totalReqAll}件）`;
+}
+
 // V3+U3+S5+S10+S1: リクエスト一覧をカード化 + delta指標 + セクションアイコン
-function renderPlanConfirmPanelHtml(plan: any, plannedRequests: any[]): string {
+function buildPlanSectionCardsHtml(plan: any, plannedRequests: any[]): PlanCardsView {
   const reqs = Array.isArray(plannedRequests) ? plannedRequests : [];
   const sectionPreviews = (plan?.sectionPreviews || ({} as any)) as Record<string, any>;
   const excluded: Set<string> = new Set<string>(
@@ -1375,20 +1493,32 @@ function renderPlanConfirmPanelHtml(plan: any, plannedRequests: any[]): string {
       <div class="plan-card__body">${hintHtml}${itemSummaryHtml}${detailRows}${more}</div>
     </details>`;
   }).join('');
-  const stamp = new Date(plan?.createdAt || Date.now()).toLocaleString();
-  const remainingMeta = excludedCount > 0
+  const remainingMetaHtml = excludedCount > 0
     ? ` ／ <span class="plan-confirm-head__remaining">実行対象 ${remainingReq} / ${totalReqAll} 件（除外 ${excludedCount} セクション）</span>`
+    : '';
+  return { cardsHtml: cards, totalReqAll, remainingReq, excludedCount, remainingMetaHtml };
+}
+
+function renderPlanConfirmPanelHtml(plan: any, plannedRequests: any[]): string {
+  const cardsView = buildPlanSectionCardsHtml(plan, plannedRequests);
+  const stamp = new Date(plan?.createdAt || Date.now()).toLocaleString();
+  const appIdRefs = Array.isArray(plan?.appIdRefs) ? plan.appIdRefs : [];
+  const appIdSection = appIdRefs.length
+    ? `<details class="plan-confirm-appids"><summary>関連アプリID一覧（${appIdRefs.length}件）— ルックアップ等の参照先を確認</summary>${renderAppIdConfirmSection(appIdRefs)}</details>`
     : '';
   return `<div class="plan-confirm-panel">
     <div class="plan-confirm-head">
       <div class="plan-confirm-head__title">実行前プラン確認</div>
-      <div class="plan-confirm-head__meta">予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}${remainingMeta}</div>
+      <div class="plan-confirm-head__meta">予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}${cardsView.remainingMetaHtml}</div>
     </div>
+    ${renderPlanTargetLineHtml()}
     ${renderPlanRequestSummary(plan)}
-    <div class="plan-confirm-cards">${cards || '<div class="muted">予定リクエストがありません</div>'}</div>
+    <div class="plan-delete-warning-slot" data-plan-delete-warning>${renderPlanDeleteWarningHtml(plan)}</div>
+    ${appIdSection}
+    <div class="plan-confirm-cards">${cardsView.cardsHtml || '<div class="muted">予定リクエストがありません</div>'}</div>
     <div class="plan-confirm-actions">
       <button type="button" class="btn-stage" data-stage="apply" data-act="applyPreview" title="このプランの内容で比較先プレビューへ反映します（チェックを入れたセクションは除外されます）">
-        <span class="btn-stage__icon">🚀</span><span>このプランで反映する${excludedCount > 0 ? `（${remainingReq}/${totalReqAll}件）` : ''}</span>
+        <span class="btn-stage__icon">🚀</span><span>このプランで反映する${cardsView.excludedCount > 0 ? `（${cardsView.remainingReq}/${cardsView.totalReqAll}件）` : ''}</span>
         <span class="btn-stage__shortcut">Ctrl+Shift+Enter</span>
       </button>
       <button type="button" class="btn sub" data-act="exportDryRunPlan" title="APIを実行せずプランをJSONで保存">ドライランJSONを保存</button>

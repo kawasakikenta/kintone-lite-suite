@@ -50,6 +50,7 @@ import {
   renderReflectNodeList
 } from './helpers.js';
 import { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
+import { summarizePlanDeletes, assessApplyRisk } from './planInsights.js';
 import { isReflectNodeModeEffective } from './nodeModeUi.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { getJsonEditorInstance, renderRichDiff } from '../oss_integrations.js';
@@ -978,23 +979,23 @@ interface ApplyRiskGuardOptions {
 }
 
 async function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGuardOptions = {}): Promise<boolean> {
-  const issues: string[] = [];
   const labels: string[] = [];
   const diffSummary = options.diffSummary || { total: 0, high: 0, medium: 0, low: 0 };
   const requestCount = Number(options.requestCount || 0);
-
-  if (isSameConnectionPair(c)) {
-    issues.push('比較元と比較先が同一接続です（同一 appId / guestId）');
-  }
-  if (diffSummary.total >= APPLY_GUARD_DIFF_THRESHOLD) {
-    issues.push(`差分件数がしきい値以上です（${diffSummary.total}件 / しきい値 ${APPLY_GUARD_DIFF_THRESHOLD}件）`);
-  }
-  if (diffSummary.high > 0) {
-    issues.push(`高重要度の差分を含みます（高 ${diffSummary.high}件）`);
-  }
-  if (requestCount >= APPLY_GUARD_REQUEST_THRESHOLD) {
-    issues.push(`APIリクエスト予定数が多いです（${requestCount}件 / しきい値 ${APPLY_GUARD_REQUEST_THRESHOLD}件）`);
-  }
+  // プランに含まれる削除対象数（除外済みセクションは除く）。削除は注意点として明示する。
+  const plan = state.lastApplyPlan;
+  const deleteSummary = summarizePlanDeletes(
+    Array.isArray(plan?.plannedRequests) ? plan.plannedRequests : [],
+    Array.isArray(plan?.excludedSectionKeys) ? plan.excludedSectionKeys : []
+  );
+  const risk = assessApplyRisk({
+    sameConnection: isSameConnectionPair(c),
+    diffSummary,
+    requestCount,
+    deleteCount: deleteSummary.total,
+    diffThreshold: APPLY_GUARD_DIFF_THRESHOLD,
+    requestThreshold: APPLY_GUARD_REQUEST_THRESHOLD
+  });
 
   // 注意点が無くても最終確認は必ず表示する（3 ルート間で確認 UI を統一するため）。
   if (Array.isArray(options.scopeLabels) && options.scopeLabels.length) {
@@ -1002,28 +1003,32 @@ async function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGua
   }
   labels.push(`差分件数: ${diffSummary.total}件（高 ${diffSummary.high} / 中 ${diffSummary.medium} / 低 ${diffSummary.low}）`);
   if (requestCount > 0) labels.push(`予定リクエスト: ${requestCount}件`);
-  labels.push(`しきい値: 差分${APPLY_GUARD_DIFF_THRESHOLD}件 / リクエスト${APPLY_GUARD_REQUEST_THRESHOLD}件を超えると警告`);
+  if (deleteSummary.total > 0) {
+    labels.push(`削除対象: ${deleteSummary.total}件（${deleteSummary.sections.map((s) => `${s.sectionLabel} ${s.count}`).join(' / ')}）`);
+  }
 
   const modeLabel = mode === 'nodes' ? 'ノード反映' : (mode === 'patch' ? 'JSONパッチ反映' : 'プレビュー反映');
   const targetAppId = String(c?.target?.appId || '').trim();
+  const targetAppName = extractAppNameFromBundle(state.importedTargetBundle || state.lastTargetBundle) || '';
   const bodyLines = [
     `【最終確認: ${modeLabel}】`,
-    `比較先アプリ: ${targetAppId || '-'}`,
+    `比較先アプリ: ${targetAppId || '-'}${targetAppName ? `（${targetAppName}）` : ''} のプレビューへ書き込みます`,
     ...labels
   ];
-  if (issues.length) {
-    bodyLines.push('', '注意点:', ...issues.map((line) => ` - ${line}`));
+  if (risk.issues.length) {
+    bodyLines.push('', '注意点:', ...risk.issues.map((line) => ` - ${line}`));
   } else {
     bodyLines.push('', '注意点: なし（しきい値以下）');
   }
-  // 高リスク（高重要度差分 or 同一接続）はアプリID 入力での確認、それ以外は固定キーワード。
-  const highRisk = isSameConnectionPair(c) || diffSummary.high > 0;
+  // 確認の重さはリスクに比例させる:
+  // 高リスク → アプリID入力 / 注意点あり → キーワード入力 / 注意点なし → チェックのみ
   return confirmDestructive({
     title: `${modeLabel} の最終確認`,
     body: bodyLines.join('\n'),
-    keyword: highRisk && targetAppId ? targetAppId : '実行する',
+    keyword: risk.highRisk && targetAppId ? targetAppId : '実行する',
     okLabel: `${modeLabel}を実行`,
-    riskTone: highRisk ? 'danger' : 'warning'
+    riskTone: risk.highRisk ? 'danger' : 'warning',
+    requireKeyword: risk.requireKeyword
   });
 }
 

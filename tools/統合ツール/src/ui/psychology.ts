@@ -145,6 +145,12 @@ export interface ConfirmDestructiveOptions {
   okLabel?: string;
   /** false の場合キャンセル扱い */
   riskTone?: 'danger' | 'warning';
+  /**
+   * false にするとキーワード入力の代わりに「内容を確認しました」チェックで実行できる。
+   * リスクが低い操作で毎回のタイピングをなくし、形骸化（考えずに入力する癖）を防ぐ。
+   * 省略時は従来どおりキーワード入力を要求する。
+   */
+  requireKeyword?: boolean;
 }
 
 export function confirmDestructive(opts: ConfirmDestructiveOptions): Promise<boolean> {
@@ -152,11 +158,21 @@ export function confirmDestructive(opts: ConfirmDestructiveOptions): Promise<boo
     const root = getRoot();
     const doc = getToolDocument();
     if (!root || !doc) { resolve(false); return; }
+    const requireKeyword = opts.requireKeyword !== false;
     const overlay = doc.createElement('div');
     overlay.className = `kus-confirm-overlay kus-confirm-overlay--${opts.riskTone || 'danger'}`;
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-labelledby', 'kus-confirm-title');
+    const promptHtml = requireKeyword
+      ? `<label class="kus-confirm-prompt">
+          確認のため <code>${esc(opts.keyword)}</code> と入力してください
+          <input type="text" class="kus-confirm-input" autocomplete="off" spellcheck="false" />
+        </label>`
+      : `<label class="kus-confirm-prompt kus-confirm-prompt--ack">
+          <input type="checkbox" class="kus-confirm-ack" />
+          <span>上記の内容を確認しました</span>
+        </label>`;
     overlay.innerHTML = `
       <div class="kus-confirm-card">
         <div class="kus-confirm-header">
@@ -164,10 +180,7 @@ export function confirmDestructive(opts: ConfirmDestructiveOptions): Promise<boo
           <h3 class="kus-confirm-title" id="kus-confirm-title">${esc(opts.title)}</h3>
         </div>
         <div class="kus-confirm-body">${escMultiline(opts.body)}</div>
-        <label class="kus-confirm-prompt">
-          確認のため <code>${esc(opts.keyword)}</code> と入力してください
-          <input type="text" class="kus-confirm-input" autocomplete="off" spellcheck="false" />
-        </label>
+        ${promptHtml}
         <div class="kus-confirm-actions">
           <button type="button" class="kus-confirm-cancel">キャンセル</button>
           <button type="button" class="kus-confirm-ok" disabled>${esc(opts.okLabel || '実行する')}</button>
@@ -177,6 +190,7 @@ export function confirmDestructive(opts: ConfirmDestructiveOptions): Promise<boo
     root.appendChild(overlay);
 
     const input = overlay.querySelector<HTMLInputElement>('.kus-confirm-input');
+    const ack = overlay.querySelector<HTMLInputElement>('.kus-confirm-ack');
     const ok = overlay.querySelector<HTMLButtonElement>('.kus-confirm-ok');
     const cancel = overlay.querySelector<HTMLButtonElement>('.kus-confirm-cancel');
     const close = (result: boolean) => {
@@ -186,13 +200,16 @@ export function confirmDestructive(opts: ConfirmDestructiveOptions): Promise<boo
     input?.addEventListener('input', () => {
       if (ok) ok.disabled = (input.value || '').trim() !== opts.keyword;
     });
-    input?.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && ok && !ok.disabled) close(true);
-      if (event.key === 'Escape') close(false);
+    ack?.addEventListener('change', () => {
+      if (ok) ok.disabled = !ack.checked;
+    });
+    overlay.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && ok && !ok.disabled) { event.preventDefault(); close(true); }
+      if (event.key === 'Escape') { event.preventDefault(); close(false); }
     });
     ok?.addEventListener('click', () => { if (!ok.disabled) close(true); });
     cancel?.addEventListener('click', () => close(false));
-    setTimeout(() => input?.focus(), 0);
+    setTimeout(() => (input || ack)?.focus(), 0);
   });
 }
 
