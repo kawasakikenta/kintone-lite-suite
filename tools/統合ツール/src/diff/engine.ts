@@ -90,8 +90,31 @@ export function detectRowSeverity(row) {
     }
   }
 
-  // プラグインバージョン更新は medium（脆弱性修正・破壊的変更を含む可能性）
-  if (sec === 'pluginSettings' && leaf === 'version' && row?.type === 'changed') return 'medium';
+  // プロセス管理の有効/無効：OFF は運用停止（high）、ON は運用開始（medium）
+  if (sec === 'processSettings' && leaf === 'enable' && row?.type === 'changed') {
+    if (row?.left === true && row?.right === false) return 'high';
+    if (row?.left === false && row?.right === true) return 'medium';
+  }
+
+  // プラグイン：削除/無効化は機能停止（high）、追加/有効化は挙動追加（medium）
+  if (sec === 'pluginSettings') {
+    if (/^pluginSettings\.plugins\[\d+\]$/.test(rawPath)) {
+      if (row?.type === 'removed') return 'high';
+      if (row?.type === 'added') return 'medium';
+    }
+    if (leaf === 'enabled' && row?.type === 'changed') {
+      if (row?.left === true && row?.right === false) return 'high';
+      if (row?.left === false && row?.right === true) return 'medium';
+    }
+    // プラグインバージョン更新は medium（脆弱性修正・破壊的変更を含む可能性）
+    if (leaf === 'version' && row?.type === 'changed') return 'medium';
+  }
+
+  // JS/CSS ファイル・URL の削除は挙動消失の可能性（high）
+  if (sec === 'customizeSettings' && row?.type === 'removed'
+    && /^customizeSettings\.(?:desktop|mobile)\.(?:js|css)\[\d+\]$/.test(rawPath)) {
+    return 'high';
+  }
 
   // セクション全体が removed の行は依然として high（重大インシデント）
   if (row?.type === 'removed' && rawPath === sec) return 'high';
@@ -245,6 +268,8 @@ export function hasUniquePrimitiveKey(arr, key) {
     if (!isPlainObject(obj) || !Object.prototype.hasOwnProperty.call(obj, key)) return false;
     const val = obj[key];
     if (val == null || typeof val === 'object') return false;
+    // boolean は識別子として無意味（2件配列で偶然ユニークになり誤マッチを生む）
+    if (typeof val === 'boolean') return false;
     const sig = `${typeof val}:${String(val)}`;
     if (seen.has(sig)) return false;
     seen.add(sig);
@@ -366,6 +391,224 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Composite-key array matching (non-field sections)
+// ---------------------------------------------------------------------------
+// 権限エントリー・通知ルール・遷移アクションは「単一のユニークな primitive
+// キー」を持たないため detectArrayObjectKey でマッチできず、LCS に落ちて
+// 並び替えが added/removed の嵐になっていた。ドメイン上の識別子
+// （entity.type:code、通知タイトル、アクション name|from|to）で安定マッチ
+// させ、エンティティ単位の changed / moved 行として出力する。
+// ---------------------------------------------------------------------------
+
+function entityIdentitySig(entity): string | null {
+  if (!entity || typeof entity !== 'object') return null;
+  const type = entity.type != null ? String(entity.type) : '';
+  const code = entity.code != null ? String(entity.code) : (entity.login != null ? String(entity.login) : '');
+  if (!type && !code) return null;
+  return `${type}:${code}`;
+}
+
+interface CompositeArrayRule {
+  pattern: RegExp;
+  arrayKey: string;
+  makeSig: (item: any) => string | null;
+  keyValue: (item: any) => any;
+  /** false を返すと objectKey 等の後続マッチャーに委ねる */
+  applies?: (a: any[], b: any[]) => boolean;
+}
+
+const COMPOSITE_ARRAY_RULES: ReadonlyArray<CompositeArrayRule> = [
+  // アプリ権限：エンティティが識別子
+  {
+    pattern: /^appAcl\.rights$/,
+    arrayKey: 'entity',
+    makeSig: (item) => entityIdentitySig(item?.entity),
+    keyValue: (item) => item?.entity
+  },
+  // フィールド権限・レコード権限のエンティティ配列
+  {
+    pattern: /^(?:fieldAcl|recordPermissions)\.rights\[\d+\]\.entities$/,
+    arrayKey: 'entity',
+    makeSig: (item) => entityIdentitySig(item?.entity),
+    keyValue: (item) => item?.entity
+  },
+  // 一般通知：宛先エンティティが識別子
+  {
+    pattern: /^notifications\.notifications$/,
+    arrayKey: 'entity',
+    makeSig: (item) => entityIdentitySig(item?.entity),
+    keyValue: (item) => item?.entity
+  },
+  // レコード条件通知・リマインダー通知：タイトル（無題はマッチ対象外）
+  {
+    pattern: /^(?:perRecordNotifications|reminderNotifications)\.notifications$/,
+    arrayKey: 'title',
+    makeSig: (item) => {
+      const t = item?.title != null ? String(item.title).trim() : '';
+      return t || null;
+    },
+    keyValue: (item) => item?.title
+  },
+  // プロセス遷移・アプリアクション：name が重複していても from/to で識別。
+  // name がユニークな場合は objectKey マッチ（name 単独）の方が from/to の
+  // 変更を changed としてペアリングできるため、そちらに委ねる。
+  {
+    pattern: /^(?:processSettings|actionSettings)\.actions$/,
+    arrayKey: 'name',
+    makeSig: (item) => {
+      const name = item?.name != null ? String(item.name).trim() : '';
+      if (!name) return null;
+      return `${name}|${item?.from != null ? String(item.from) : ''}|${item?.to != null ? String(item.to) : ''}`;
+    },
+    keyValue: (item) => item?.name,
+    applies: (a, b) => !(hasUniquePrimitiveKey(a, 'name') && hasUniquePrimitiveKey(b, 'name'))
+  }
+];
+
+function findCompositeArrayRule(path): CompositeArrayRule | null {
+  const p = String(path || '');
+  for (const rule of COMPOSITE_ARRAY_RULES) {
+    if (rule.pattern.test(p)) return rule;
+  }
+  return null;
+}
+
+export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
+  const rule = findCompositeArrayRule(path);
+  if (!rule) return false;
+  if (!a.length && !b.length) return false;
+  if (!a.every(isPlainObject) || !b.every(isPlainObject)) return false;
+  if (rule.applies && !rule.applies(a, b)) return false;
+
+  const buildMap = (arr) => {
+    const map = new Map<string, { idx: number; item: any }>();
+    for (let i = 0; i < arr.length; i++) {
+      const sig = rule.makeSig(arr[i]);
+      if (sig == null) return null; // 識別子なし → このルールでは扱えない
+      if (map.has(sig)) return null; // 片側内で重複 → 安全にフォールバック
+      map.set(sig, { idx: i, item: arr[i] });
+    }
+    return map;
+  };
+  const mapA = buildMap(a);
+  const mapB = buildMap(b);
+  if (!mapA || !mapB) return false;
+
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  for (const sig of mapA.keys()) { if (!seen.has(sig)) { seen.add(sig); ordered.push(sig); } }
+  for (const sig of mapB.keys()) { if (!seen.has(sig)) { seen.add(sig); ordered.push(sig); } }
+
+  for (const sig of ordered) {
+    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    const left = mapA.get(sig);
+    const right = mapB.get(sig);
+    if (!left && right) {
+      pushDiffRow(out, {
+        type: 'added',
+        path: `${path}[${right.idx}]`,
+        left: undefined,
+        right: right.item,
+        arrayKey: rule.arrayKey,
+        arrayKeyValue: rule.keyValue(right.item)
+      }, ignoreRules);
+      continue;
+    }
+    if (left && !right) {
+      pushDiffRow(out, {
+        type: 'removed',
+        path: `${path}[${left.idx}]`,
+        left: left.item,
+        right: undefined,
+        arrayKey: rule.arrayKey,
+        arrayKeyValue: rule.keyValue(left.item)
+      }, ignoreRules);
+      continue;
+    }
+    if (!left || !right) continue;
+
+    const leftSig = makeArrayItemSignature(left.item, ignoreRules);
+    const rightSig = makeArrayItemSignature(right.item, ignoreRules);
+    if (leftSig === rightSig) {
+      if (left.idx !== right.idx) {
+        pushDiffRow(out, {
+          type: 'changed',
+          path: `${path}[${right.idx}]`,
+          left: left.item,
+          right: right.item,
+          moved: true,
+          movedFrom: left.idx,
+          movedTo: right.idx,
+          arrayKey: rule.arrayKey,
+          arrayKeyValue: rule.keyValue(right.item)
+        }, ignoreRules);
+      } else if (canCollectSameRows(out)) {
+        pushDiffRow(out, {
+          type: 'same',
+          path: `${path}[${right.idx}]`,
+          left: left.item,
+          right: right.item,
+          severity: 'low',
+          arrayKey: rule.arrayKey,
+          arrayKeyValue: rule.keyValue(right.item)
+        }, ignoreRules);
+      }
+      continue;
+    }
+    const start = out.length;
+    collectDeepDiffs(left.item, right.item, `${path}[${right.idx}]`, out, ignoreRules);
+    const keyVal = rule.keyValue(right.item) !== undefined ? rule.keyValue(right.item) : rule.keyValue(left.item);
+    for (let oi = start; oi < out.length; oi++) {
+      if (!out[oi].arrayKey) out[oi].arrayKey = rule.arrayKey;
+      if (out[oi].arrayKeyValue === undefined) out[oi].arrayKeyValue = keyVal;
+    }
+    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Pure-reorder detection
+// ---------------------------------------------------------------------------
+// 配列の中身（シグネチャの多重集合）が一致していて並びだけが違う場合は、
+// added/removed の嵐ではなく moved 行（low）として出力する。レイアウト行や
+// キーを持たない配列の並び替えノイズを一掃する。
+// ---------------------------------------------------------------------------
+export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
+  if (a.length !== b.length || a.length < 2) return false;
+  const sigA = a.map((x) => makeArrayItemSignature(x, ignoreRules));
+  const sigB = b.map((x) => makeArrayItemSignature(x, ignoreRules));
+  if ([...sigA].sort().join(' ') !== [...sigB].sort().join(' ')) return false;
+
+  const used = new Array(a.length).fill(false);
+  for (let j = 0; j < b.length; j++) {
+    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    let from = -1;
+    for (let i = 0; i < a.length; i++) {
+      if (!used[i] && sigA[i] === sigB[j]) { from = i; break; }
+    }
+    if (from < 0) continue; // 多重集合一致済みのため理論上到達しない
+    used[from] = true;
+    if (from === j) {
+      if (canCollectSameRows(out)) {
+        pushDiffRow(out, { type: 'same', path: `${path}[${j}]`, left: a[from], right: b[j], severity: 'low' }, ignoreRules);
+      }
+      continue;
+    }
+    pushDiffRow(out, {
+      type: 'changed',
+      path: `${path}[${j}]`,
+      left: a[from],
+      right: b[j],
+      moved: true,
+      movedFrom: from,
+      movedTo: j
+    }, ignoreRules);
+  }
+  return true;
+}
+
 export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
   const n = a.length;
   const m = b.length;
@@ -441,7 +684,14 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
 }
 
 export function collectArrayDiffs(a, b, path, out, ignoreRules) {
+  // 1) 権限/通知/遷移などドメイン識別子（entity, title, name|from|to）での安定マッチ
+  //    （objectKey のフォールバック候補が accessibility 等の「値」を識別子に
+  //      誤採用してミスペアリングするのを防ぐため、ルールがある場合は先に試す）
+  if (collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules)) return;
+  // 2) 単一 primitive キー（code/name 等）での安定マッチ
   if (collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules)) return;
+  // 3) 中身が同じで並びだけ違う配列は moved 行に集約
+  if (collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules)) return;
   if (collectArrayDiffsByLcs(a, b, path, out, ignoreRules)) return;
   const max = Math.max(a.length, b.length);
   for (let i = 0; i < max; i++) {
