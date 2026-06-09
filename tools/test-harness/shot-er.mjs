@@ -17,7 +17,7 @@ const { chromium } = await import('/opt/node22/lib/node_modules/playwright/index
 
 const input = process.argv[2] || resolve(__dirname, 'outputs/er-diagram.html');
 const output = process.argv[3] || resolve(__dirname, 'outputs/er-diagram.png');
-const mode = process.argv[4] || 'plain'; // plain | manual-add
+const mode = process.argv[4] || 'plain'; // plain | manual-add | save-reload
 
 let html = readFileSync(input, 'utf8');
 const lib = (p) => readFileSync(resolve(toolsRoot, 'node_modules', p), 'utf8');
@@ -34,7 +34,7 @@ page.on('pageerror', (e) => console.error('[pageerror]', e.message));
 await page.goto('file://' + tmp);
 await page.waitForTimeout(2500);
 
-if (mode === 'manual-add') {
+if (mode === 'manual-add' || mode === 'save-reload') {
   // 1) add a custom entity with initial fields
   await page.evaluate(() => {
     window.hideOverview();
@@ -84,6 +84,44 @@ if (mode === 'manual-add') {
   console.log('export checks:', JSON.stringify(checks));
   await page.evaluate(() => { window.closeDetail(); window.fit(); });
   await page.waitForTimeout(600);
+}
+
+if (mode === 'save-reload') {
+  // exercise some view state too: hide one relation kind + move custom node
+  await page.evaluate(() => {
+    window.toggleRelationKind('REF');
+    window.hideOverview();
+  });
+  const downloadPromise = page.waitForEvent('download');
+  await page.evaluate(() => window.exportEditedHtml());
+  const download = await downloadPromise;
+  const savedPath = resolve(__dirname, 'outputs/_er-saved.html');
+  await download.saveAs(savedPath);
+  console.log('saved edited html:', download.suggestedFilename());
+
+  const page2 = await browser.newPage({ viewport: { width: 1480, height: 940 } });
+  page2.on('pageerror', (e) => console.error('[pageerror2]', e.message));
+  await page2.goto('file://' + savedPath);
+  await page2.waitForTimeout(2000);
+  const checks = await page2.evaluate(() => {
+    const appList = document.getElementById('app-list').textContent;
+    window.showCSVRelations();
+    const csvRel = document.getElementById('modal-content').textContent;
+    window.showMarkdown();
+    const md = document.getElementById('modal-content').textContent;
+    window.closeModal();
+    const refBtnOff = !document.getElementById('rel-ref-btn').classList.contains('active');
+    return {
+      appListHasCustom: appList.includes('外部システム'),
+      csvHasManualRel: csvRel.includes('API連携'),
+      mdHasManualField: md.includes('エラーメッセージ'),
+      refKindStillHidden: refBtnOff,
+      overviewStillHidden: document.getElementById('overview').classList.contains('hidden'),
+    };
+  });
+  console.log('reload checks:', JSON.stringify(checks));
+  await page2.screenshot({ path: output.replace(/\.png$/, '-reloaded.png') });
+  await page2.close();
 }
 
 await page.screenshot({ path: output });

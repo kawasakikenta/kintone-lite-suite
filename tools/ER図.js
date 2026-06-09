@@ -1823,6 +1823,8 @@ body{font-family:'DM Sans',sans-serif;background:
   <div class="tb-menu" id="export-menu">
     <button class="tb tb-menu-btn" onclick="toggleMenu('export-menu')">💾 出力</button>
     <div class="tb-menu-panel">
+      <button class="tb" onclick="exportEditedHtml();closeAllMenus()">💾 編集済みHTMLを保存</button>
+      <hr>
       <button class="tb" onclick="exportPNG();closeAllMenus()">🖼 PNG 画像</button>
       <button class="tb" onclick="exportSVG();closeAllMenus()">📄 SVG 画像</button>
       <hr>
@@ -2000,10 +2002,16 @@ body{font-family:'DM Sans',sans-serif;background:
 
 <div id="toast"></div>
 
-<script>
+<script id="er-main">
 const APPS = ${data};
 const ER_OPTIONS = ${diagramOptions};
 const appMap = new Map(APPS.map(a=>[a.id,a]));
+// 「編集済みHTMLを保存」で埋め込まれた編集状態（手動追加・配置・表示設定）
+const ER_EDIT_STATE = window.__ER_EDIT_STATE__ || null;
+if(ER_EDIT_STATE && ER_EDIT_STATE.options){
+  if(ER_EDIT_STATE.options.layoutName) ER_OPTIONS.layoutName = ER_EDIT_STATE.options.layoutName;
+  if(ER_EDIT_STATE.options.fieldDensity) ER_OPTIONS.fieldDensity = ER_EDIT_STATE.options.fieldDensity;
+}
 if (window.cytoscapeDagre) cytoscape.use(window.cytoscapeDagre);
 
 // ─── Toast ───
@@ -2233,44 +2241,94 @@ function toggleTheme(){
 }
 applyTheme();
 
+// ─── 手動追加のデータ層（編集済みHTMLの復元でも使用） ───
+let customAppSeq=0, customRelSeq=0, customFieldSeq=0;
+
+function findApp(id){
+  if(appMap.has(id)) return appMap.get(id);
+  const n=Number(id);
+  if(appMap.has(n)) return appMap.get(n);
+  const s=String(id);
+  return appMap.has(s) ? appMap.get(s) : null;
+}
+function registerManualApp(app){
+  app.relations = Array.isArray(app.relations) ? app.relations : [];
+  app.fields = Array.isArray(app.fields) ? app.fields : [];
+  app.allFields = Array.isArray(app.allFields) ? app.allFields : app.fields.slice();
+  app.isCustom = true;
+  if(app.ok === undefined) app.ok = true;
+  APPS.push(app);
+  appMap.set(app.id, app);
+}
+function applyManualFieldData(app, field){
+  app.fields.push(field);
+  if(Array.isArray(app.allFields)) app.allFields.push(field);
+  if(typeof app.totalFieldCount === "number") app.totalFieldCount += 1;
+  if(field.required) app.requiredCount = (app.requiredCount||0)+1;
+}
+function applyManualRelationData(app, rel){
+  app.relations.push(rel);
+  if(rel.kind === "LOOKUP") app.lookupCount = (app.lookupCount||0)+1;
+  if(rel.kind === "REF") app.refCount = (app.refCount||0)+1;
+}
+// 編集済みHTMLからの復元: 手動追加データを描画前に再適用する
+if(ER_EDIT_STATE){
+  try{
+    (ER_EDIT_STATE.customApps||[]).forEach(raw=>{ if(raw && raw.id !== undefined && !appMap.has(raw.id)) registerManualApp(raw); });
+    (ER_EDIT_STATE.customFields||[]).forEach(item=>{ const app=findApp(item && item.appId); if(app && item.field) applyManualFieldData(app, item.field); });
+    (ER_EDIT_STATE.customRelations||[]).forEach(item=>{ const app=findApp(item && item.fromAppId); if(app && item.rel) applyManualRelationData(app, item.rel); });
+    if(ER_EDIT_STATE.seq){
+      customAppSeq=Number(ER_EDIT_STATE.seq.app)||0;
+      customRelSeq=Number(ER_EDIT_STATE.seq.rel)||0;
+      customFieldSeq=Number(ER_EDIT_STATE.seq.field)||0;
+    }
+  }catch(err){ console.error("[ER] 編集状態の復元に失敗", err); }
+}
+
 // ─── Cytoscape Init ───
 const startAppIdSet = new Set((ER_OPTIONS.startAppIds || []).map((id)=>String(id)));
 const spaceAppIdSet = new Set((ER_OPTIONS.spaceAppIds || []).map((id)=>String(id)));
 const erSpaceId = String(ER_OPTIONS.spaceId || "");
 const isInSpaceApp = (app)=> !!erSpaceId && (spaceAppIdSet.has(String(app.id)) || String(app.spaceId || "") === erSpaceId);
+const savedPositions=(ER_EDIT_STATE && ER_EDIT_STATE.view && ER_EDIT_STATE.view.positions) || null;
 const elements=[];
 APPS.forEach(app=>{
-  elements.push({data:{
+  const el={data:{
     id:"a"+app.id,
     label:buildNodeLabel(app),
     appId:app.id,
     isError:!app.ok,
     isStart:startAppIdSet.has(String(app.id)),
     inSpace:isInSpaceApp(app),
+    isCustom:!!app.isCustom,
     fieldCount:visibleFieldsForNode(app).length,
     relCount:app.relations.length,
     depth:app.depth || 0
-  }});
+  }};
+  const sp=savedPositions && savedPositions["a"+app.id];
+  if(sp && typeof sp.x === "number" && typeof sp.y === "number") el.position={x:sp.x,y:sp.y};
+  elements.push(el);
 });
 function edgeDisplayLabel(text){
   const s=String(text||"");
   return s.length > 24 ? s.slice(0, 23) + "…" : s;
 }
-let ei=0;
+// エッジIDは「e_アプリID_リレーション順」で安定化（編集済みHTML復元時に削除状態を引き継ぐため）
 APPS.forEach(app=>{
-  app.relations.forEach(r=>{
+  app.relations.forEach((r,ri)=>{
     if(appMap.has(r.toApp)){
       const fullLabel = r.fromDisplay || r.fromLabel || (r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連":"アクション"));
-      elements.push({data:{id:"e"+(ei++),source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label:edgeDisplayLabel(fullLabel),fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || ""}});
+      elements.push({data:{id:"e_"+app.id+"_"+ri,source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label:edgeDisplayLabel(fullLabel),fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || "",isCustom:!!r.isCustom}});
     }
   });
 });
 
+const hasSavedLayout=!!savedPositions;
 const cy=cytoscape({
   container:document.getElementById("cy"),
   elements,
   style: buildCyStyle(currentPalette()),
-  layout: buildLayoutOptions(ER_OPTIONS.layoutName || "dagre", true),
+  layout: hasSavedLayout ? {name:"preset",fit:false} : buildLayoutOptions(ER_OPTIONS.layoutName || "dagre", true),
   minZoom:0.05,maxZoom:4,wheelSensitivity:0.25,
 });
 
@@ -2342,7 +2400,15 @@ function updateSearchMeta(query, matched){
 }
 
 function fit(){cy.fit(undefined,60);}
-cy.one("layoutstop",()=>setTimeout(fit,200));
+if(hasSavedLayout){
+  if(ER_EDIT_STATE.view && typeof ER_EDIT_STATE.view.zoom === "number" && ER_EDIT_STATE.view.pan){
+    cy.viewport({zoom:ER_EDIT_STATE.view.zoom, pan:ER_EDIT_STATE.view.pan});
+  }else{
+    setTimeout(fit,100);
+  }
+}else{
+  cy.one("layoutstop",()=>setTimeout(fit,200));
+}
 syncLayoutButtons(ER_OPTIONS.layoutName || "dagre");
 syncDensityControl();
 updateSearchMeta("", 0);
@@ -2467,13 +2533,21 @@ function clearFocus(silent){
   if(!silent) toast("関連強調を解除");
 }
 
+function syncFocusButton(){
+  const btn = document.getElementById("focus-toggle-btn");
+  if(!btn) return;
+  btn.classList.toggle("active", focusMode);
+  btn.textContent = focusMode ? "🎯 ON" : "🎯 OFF";
+}
+function syncRelationKindButtons(){
+  ["LOOKUP","REF","ACTION"].forEach(kind=>{
+    const btn = document.getElementById(kind==="LOOKUP" ? "rel-lookup-btn" : (kind==="REF" ? "rel-ref-btn" : "rel-action-btn"));
+    if(btn) btn.classList.toggle("active", !!relationKindState[kind]);
+  });
+}
 function toggleFocusMode(){
   focusMode = !focusMode;
-  const btn = document.getElementById("focus-toggle-btn");
-  if(btn){
-    btn.classList.toggle("active", focusMode);
-    btn.textContent = focusMode ? "🎯 関連強調 ON" : "🎯 関連強調 OFF";
-  }
+  syncFocusButton();
   if(!focusMode) clearFocus(true);
   else if(currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
   toast(focusMode ? "関連強調 ON" : "関連強調 OFF");
@@ -2609,18 +2683,10 @@ applyRelationFilter();
 applyRelationLabelVisibility();
 updateFocusOptions();
 
-// ─── Manual additions (アプリ / 項目 / 関連線の手動追加) ───
-let customAppSeq=0, customRelSeq=0, customFieldSeq=0;
+// ─── Manual additions (アプリ / 項目 / 関連線の手動追加 UI) ───
 let editorMode="";
 let pendingNodePos=null;
 
-function findApp(id){
-  if(appMap.has(id)) return appMap.get(id);
-  const n=Number(id);
-  if(appMap.has(n)) return appMap.get(n);
-  const s=String(id);
-  return appMap.has(s) ? appMap.get(s) : null;
-}
 function appOptionsHtml(selectedId){
   return APPS.map(a=>'<option value="'+escapeHtml(String(a.id))+'"'+(String(a.id)===String(selectedId)?" selected":"")+'>'+escapeHtml(a.name)+(a.isCustom?"（手動）":" (App "+escapeHtml(String(a.id))+")")+'</option>').join("");
 }
@@ -2690,10 +2756,9 @@ function addCustomApp(){
   const fields=parseManualFieldLines(document.getElementById("ed-app-fields").value);
   customAppSeq+=1;
   const id=-customAppSeq;
-  const app={id,name,fields,allFields:fields.slice(),totalFieldCount:fields.length,relations:[],ok:true,depth:0,isCustom:true,
+  const app={id,name,fields,totalFieldCount:fields.length,relations:[],ok:true,depth:0,isCustom:true,
     requiredCount:fields.filter(f=>f.required).length,lookupCount:0,refCount:0};
-  APPS.push(app);
-  appMap.set(id,app);
+  registerManualApp(app);
   const ext=cy.extent();
   const pos=pendingNodePos||{x:(ext.x1+ext.x2)/2+(Math.random()*60-30),y:(ext.y1+ext.y2)/2+(Math.random()*60-30)};
   const node=cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,fieldCount:fields.length,relCount:0,depth:0},position:pos});
@@ -2716,10 +2781,7 @@ function addCustomField(){
   const field={code:codeInput||("manual_"+customFieldSeq),label:name,type,
     required:kind==="required"||kind==="pk",isPK:kind==="pk",unique:kind==="pk",
     isLookup:kind==="lookup",isRef:kind==="ref",isCustom:true};
-  app.fields.push(field);
-  if(Array.isArray(app.allFields)) app.allFields.push(field);
-  if(typeof app.totalFieldCount==="number") app.totalFieldCount+=1;
-  if(field.required) app.requiredCount=(app.requiredCount||0)+1;
+  applyManualFieldData(app,field);
   const node=cy.getElementById("a"+app.id);
   if(node.length){
     node.data("label",buildNodeLabel(app));
@@ -2740,10 +2802,9 @@ function addCustomRelation(){
   const label=(document.getElementById("ed-rel-label").value||"").trim()||(kindLabel+"(手動)");
   customRelSeq+=1;
   const rel={from:"__MANUAL__"+customRelSeq,fromLabel:label,fromDisplay:label,toApp:to.id,toField:"",kind,isCustom:true};
-  from.relations.push(rel);
-  if(kind==="LOOKUP") from.lookupCount=(from.lookupCount||0)+1;
-  if(kind==="REF") from.refCount=(from.refCount||0)+1;
-  cy.add({group:"edges",data:{id:"em"+customRelSeq,source:"a"+from.id,target:"a"+to.id,kind,label:edgeDisplayLabel(label),fromLabel:label,fromDisplay:label,isCustom:true}});
+  const relIndex=from.relations.length;
+  applyManualRelationData(from,rel);
+  cy.add({group:"edges",data:{id:"e_"+from.id+"_"+relIndex,source:"a"+from.id,target:"a"+to.id,kind,label:edgeDisplayLabel(label),fromLabel:label,fromDisplay:label,isCustom:true}});
   const node=cy.getElementById("a"+from.id);
   if(node.length){
     node.data("relCount",from.relations.length);
@@ -3106,6 +3167,7 @@ const commands=[
   {label:"固定を全解除",icon:"📍",action:clearPins},
   {label:"ミニマップ",icon:"🗺",action:toggleMinimap},
   {label:"テーマ切替",icon:"🌓",action:toggleTheme},
+  {label:"編集済みHTMLを保存",icon:"💾",action:exportEditedHtml},
   {label:"PNG エクスポート",icon:"🖼",action:exportPNG},
   {label:"SVG エクスポート",icon:"📄",action:exportSVG},
   {label:"Mermaid エクスポート",icon:"🧜",action:showMermaid},
@@ -3205,6 +3267,129 @@ function exportSVG(){
     console.error("[ER] exportSVG failed", err);
     toast("SVG出力に失敗: "+((err&&err.message)||err));
   }
+}
+
+// ─── 編集済みHTMLの保存 / 復元 ───
+function captureEditState(){
+  const customApps=APPS.filter(a=>a.isCustom).map(a=>({
+    id:a.id,name:a.name,
+    fields:(a.fields||[]).map(f=>Object.assign({},f)),
+    totalFieldCount:a.totalFieldCount,
+    requiredCount:a.requiredCount||0,
+    lookupCount:a.lookupCount||0,
+    refCount:a.refCount||0,
+    depth:a.depth||0,
+    ok:true,isCustom:true
+  }));
+  const customFields=[];
+  APPS.filter(a=>!a.isCustom).forEach(a=>(a.fields||[]).forEach(f=>{
+    if(f.isCustom) customFields.push({appId:a.id,field:Object.assign({},f)});
+  }));
+  const customRelations=[];
+  APPS.forEach(a=>(a.relations||[]).forEach(r=>{
+    if(r.isCustom) customRelations.push({fromAppId:a.id,rel:Object.assign({},r)});
+  }));
+  const positions={};
+  cy.nodes().forEach(n=>{
+    const p=n.position();
+    positions[n.id()]={x:Math.round(p.x*100)/100,y:Math.round(p.y*100)/100};
+  });
+  return {
+    savedAt:new Date().toISOString(),
+    options:{layoutName:ER_OPTIONS.layoutName,fieldDensity:ER_OPTIONS.fieldDensity},
+    seq:{app:customAppSeq,rel:customRelSeq,field:customFieldSeq},
+    customApps,customFields,customRelations,
+    view:{
+      positions,
+      zoom:cy.zoom(),
+      pan:cy.pan(),
+      removedEdgeIds:[...manuallyRemovedEdgeIds],
+      removedNodeIds:[...manuallyRemovedNodeIds],
+      nodeHiddenEdgeIds:[...nodeHiddenEdgeIds],
+      pinnedNodeIds:[...pinnedNodeIds],
+      relationKinds:Object.assign({},relationKindState),
+      relationLabels:relationLabelVisible,
+      focusMode,focusDepth,focusDirection,
+      theme:isDark?"d":"l",
+      overviewHidden:document.getElementById("overview").classList.contains("hidden")
+    }
+  };
+}
+function exportEditedHtml(){
+  try{
+    const payload=captureEditState();
+    const clone=document.documentElement.cloneNode(true);
+    const cyHost=clone.querySelector("#cy");
+    if(cyHost) cyHost.innerHTML="";
+    const tip=clone.querySelector("#er-tooltip");
+    if(tip && tip.parentNode) tip.parentNode.removeChild(tip);
+    ["#cmd-overlay","#modal-overlay","#editor-overlay","#help-overlay","#detail","#minimap","#sidebar"].forEach(sel=>{
+      const el=clone.querySelector(sel);
+      if(el) el.classList.remove("open");
+    });
+    const toastEl=clone.querySelector("#toast");
+    if(toastEl) toastEl.classList.remove("show");
+    clone.querySelectorAll(".tb-menu.open").forEach(el=>el.classList.remove("open"));
+    const oldState=clone.querySelector("#er-edit-state");
+    if(oldState && oldState.parentNode) oldState.parentNode.removeChild(oldState);
+    const main=clone.querySelector("#er-main");
+    if(!main){toast("保存に失敗: 本体スクリプトが見つかりません");return;}
+    const stateScript=document.createElement("script");
+    stateScript.id="er-edit-state";
+    stateScript.textContent="window.__ER_EDIT_STATE__="+JSON.stringify(payload).replace(/<\\//g,"<\\\\/")+";";
+    main.parentNode.insertBefore(stateScript,main);
+    const html="<!DOCTYPE html>\\n"+clone.outerHTML;
+    const blob=new Blob([html],{type:"text/html"});
+    const a=document.createElement("a");
+    const stamp=new Date().toISOString().slice(0,16).replace(/[-:]/g,"").replace("T","_");
+    a.href=URL.createObjectURL(blob);
+    a.download="ER図_編集済み_"+stamp+".html";
+    a.style.display="none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{URL.revokeObjectURL(a.href);if(a.parentNode)a.parentNode.removeChild(a);},30000);
+    toast("編集済みHTMLを保存しました（開き直すと編集状態を復元）");
+  }catch(err){
+    console.error("[ER] exportEditedHtml failed",err);
+    toast("編集済みHTMLの保存に失敗: "+((err&&err.message)||err));
+  }
+}
+function applySavedViewState(){
+  if(!ER_EDIT_STATE || !ER_EDIT_STATE.view) return;
+  const view=ER_EDIT_STATE.view;
+  try{
+    (view.removedEdgeIds||[]).forEach(id=>{
+      const e=cy.getElementById(id);
+      if(e.length){manuallyRemovedEdgeIds.add(id);e.addClass("rel-manual-hidden");}
+    });
+    (view.removedNodeIds||[]).forEach(id=>{
+      const n=cy.getElementById(id);
+      if(n.length){manuallyRemovedNodeIds.add(id);n.addClass("app-manual-hidden");}
+    });
+    (view.nodeHiddenEdgeIds||[]).forEach(id=>{
+      const e=cy.getElementById(id);
+      if(e.length){nodeHiddenEdgeIds.add(id);e.addClass("rel-manual-hidden");}
+    });
+    (view.pinnedNodeIds||[]).forEach(id=>{
+      const n=cy.getElementById(id);
+      if(n.length) pinNode(n,true);
+    });
+    if(view.relationKinds){
+      ["LOOKUP","REF","ACTION"].forEach(k=>{relationKindState[k]=view.relationKinds[k]!==false;});
+    }
+    if(typeof view.relationLabels==="boolean") relationLabelVisible=view.relationLabels;
+    if(typeof view.focusMode==="boolean") focusMode=view.focusMode;
+    if(view.focusDepth){const sel=document.getElementById("focus-depth");if(sel)sel.value=String(view.focusDepth);}
+    if(view.focusDirection){const sel=document.getElementById("focus-direction");if(sel)sel.value=view.focusDirection;}
+    updateFocusOptions();
+    syncFocusButton();
+    syncRelationKindButtons();
+    applyRelationFilter();
+    applyRelationLabelVisibility();
+    if(view.theme==="l"&&isDark){isDark=false;applyTheme();applyCyTheme();}
+    if(view.overviewHidden) hideOverview();
+    refreshSidebar();
+  }catch(err){console.error("[ER] 表示状態の復元に失敗",err);}
 }
 
 let _md={text:"",filename:""};
@@ -3545,7 +3730,7 @@ let tipEl;
 cy.on("mouseover","node",e=>{
   const app=appMap.get(e.target.data("appId"));
   if(!app) return;
-  if(!tipEl){tipEl=document.createElement("div");Object.assign(tipEl.style,{position:"fixed",zIndex:"999",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"8px",padding:"8px 12px",fontSize:"11px",fontFamily:"'DM Mono',monospace",pointerEvents:"none",boxShadow:"0 4px 16px rgba(0,0,0,0.3)",maxWidth:"260px"});document.body.appendChild(tipEl);}
+  if(!tipEl){tipEl=document.createElement("div");tipEl.id="er-tooltip";Object.assign(tipEl.style,{position:"fixed",zIndex:"999",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"8px",padding:"8px 12px",fontSize:"11px",fontFamily:"'DM Mono',monospace",pointerEvents:"none",boxShadow:"0 4px 16px rgba(0,0,0,0.3)",maxWidth:"260px"});document.body.appendChild(tipEl);}
   const _v = visibleFieldsForNode(app).length;
   const _t = typeof app.totalFieldCount === "number" ? app.totalFieldCount : _v;
   const _itemText = _t > _v ? (_v + "/" + _t) : _v;
@@ -3554,6 +3739,9 @@ cy.on("mouseover","node",e=>{
 });
 cy.on("mouseout","node",()=>{if(tipEl) tipEl.style.display="none";});
 cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=(e.originalEvent.clientX+14)+"px";tipEl.style.top=(e.originalEvent.clientY+14)+"px";}});
+
+// ─── 編集済みHTMLの表示状態を復元（全初期化の最後に実行） ───
+applySavedViewState();
 <\/script>
 </body>
 </html>`
