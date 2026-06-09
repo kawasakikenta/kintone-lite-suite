@@ -82,6 +82,7 @@ async function applyViewsSection(prefix, app, sourceViews, logs, stopOnError) {
  *   sourceAppId: string,
  *   sourceGuestId?: string,
  *   sourcePreview?: boolean,
+ *   sourceBundle?: unknown,
  *   targetAppId: string,
  *   targetGuestId?: string,
  *   scopes: string[],
@@ -137,7 +138,7 @@ export async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
   const prefix = buildApiPrefix(targetGuestId || '', true);
   const app = targetAppId;
 
-  logs.push(`比較元: ${sourceAppId} → 比較先(プレビュー): ${targetAppId}`);
+  logs.push(`比較元: ${opts.sourceBundle ? `設定JSON${sourceAppId ? ` (App ${sourceAppId})` : ''}` : sourceAppId} → 比較先(プレビュー): ${targetAppId}`);
   logs.push(`セクション: ${scopes.length}件`);
   logs.push('');
 
@@ -258,6 +259,7 @@ export async function previewReflectStandalone(
     sourceAppId: string;
     sourceGuestId?: string;
     sourcePreview?: boolean;
+    sourceBundle?: unknown;
     targetAppId: string;
     targetGuestId?: string;
     scopes: string[];
@@ -268,12 +270,12 @@ export async function previewReflectStandalone(
   const scopes = (opts.scopes || []).filter(Boolean);
   const lookupMap = opts.lookupMap || ({} as any);
   if (!scopes.length) throw new Error('プレビュー対象セクションが空です');
-  if (!opts.sourceAppId && !(opts as any).sourceBundle) throw new Error('比較元アプリIDまたは設定JSONを指定してください');
+  if (!opts.sourceAppId && !opts.sourceBundle) throw new Error('比較元アプリIDまたは設定JSONを指定してください');
   if (!opts.targetAppId) throw new Error('比較先アプリIDを入力してください');
 
-  setStatus((opts as any).sourceBundle ? '比較元設定を設定JSONから読み込み中...' : '比較元設定を取得中...');
-  const source = (opts as any).sourceBundle
-    ? pickSettingsBundle((opts as any).sourceBundle, { side: 'source', appId: String(opts.sourceAppId || '').trim() })
+  setStatus(opts.sourceBundle ? '比較元設定を設定JSONから読み込み中...' : '比較元設定を取得中...');
+  const source = opts.sourceBundle
+    ? pickSettingsBundle(opts.sourceBundle, { side: 'source', appId: String(opts.sourceAppId || '').trim() })
     : await fetchBundle({
       appId: opts.sourceAppId,
       guestId: opts.sourceGuestId || '',

@@ -227,10 +227,17 @@ export function mountReflectLitePanel() {
   const tgtApp = makeInput({ placeholder: '比較先アプリID', value: memoryState.targetAppId || DEFAULT_APP_ID || '', width: 'id' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID', value: memoryState.targetGuestId || '', width: 'guest' });
   let sourceBundleFromJson: any = null;
+  // 差分プレビューの鮮度判定（signature）に使う読み込み済みJSONの識別子
+  let sourceBundleToken = '';
   const srcJsonFile = document.createElement('input');
   srcJsonFile.type = 'file';
   srcJsonFile.accept = '.json,application/json';
   srcJsonFile.className = 'kus-lp__file';
+  const srcJsonClearBtn = makeButton('クリア', 'ghost');
+  srcJsonClearBtn.style.display = 'none';
+  const srcJsonNote = document.createElement('div');
+  srcJsonNote.className = 'kus-lp__small';
+  srcJsonNote.style.display = 'none';
 
   const currentSrcBtn = makeButton('現在のアプリを比較元', 'sub');
   const copyBtn = makeButton('比較元 → 比較先', 'sub');
@@ -239,20 +246,46 @@ export function mountReflectLitePanel() {
 
   const cardApp = makeCard({ title: 'アプリ', number: 1 });
   cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: '比較元' }));
-  cardApp.body.appendChild(makeRow(srcJsonFile, { label: '比較元JSON' }));
+  cardApp.body.appendChild(makeRow([srcJsonFile, srcJsonClearBtn], { label: '比較元JSON' }));
+  cardApp.body.appendChild(srcJsonNote);
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '比較先' }));
   const quickRow = makeRow([currentSrcBtn, copyBtn, currentBtn, swapBtn]);
   quickRow.style.marginTop = '4px';
   cardApp.body.appendChild(quickRow);
 
+  function refreshSrcJsonNote() {
+    if (sourceBundleFromJson) {
+      srcJsonNote.textContent = `比較元JSON読み込み済み: App ${sourceBundleFromJson?.appId || '-'}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
+      srcJsonNote.style.display = 'block';
+      srcJsonClearBtn.style.display = '';
+    } else {
+      srcJsonNote.style.display = 'none';
+      srcJsonClearBtn.style.display = 'none';
+    }
+  }
+
   srcJsonFile.addEventListener('change', () => liteRun(panel, '比較元JSONを読み込み中…', async () => {
     const file = srcJsonFile.files?.[0];
     if (!file) return;
     sourceBundleFromJson = await readSettingsBundleFile(file, { side: 'source', appId: srcApp.value.trim() });
+    sourceBundleToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
     if (!srcApp.value.trim() && sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
     panel.setStatus(`比較元JSONを読み込みました: App ${sourceBundleFromJson?.appId || '-'}`, 'ok');
-    updateSafetyUi();
+    saveState();
+    refreshSrcJsonNote();
+    refreshSameConnBanner();
+    refreshReviewCard();
   }));
+
+  srcJsonClearBtn.addEventListener('click', () => {
+    sourceBundleFromJson = null;
+    sourceBundleToken = '';
+    srcJsonFile.value = '';
+    refreshSrcJsonNote();
+    refreshSameConnBanner();
+    refreshReviewCard();
+    panel.setStatus('比較元JSONをクリアしました（比較元アプリIDから取得します）', 'info');
+  });
 
   const sameConnBanner = document.createElement('div');
   sameConnBanner.className = 'kus-lp__note--warn';
@@ -278,7 +311,8 @@ export function mountReflectLitePanel() {
   panel.body.insertBefore(cardApp.card, panel.status);
 
   function refreshSameConnBanner() {
-    const same = !!srcApp.value.trim()
+    const same = !sourceBundleFromJson
+      && !!srcApp.value.trim()
       && srcApp.value.trim() === tgtApp.value.trim()
       && srcGuest.value.trim() === tgtGuest.value.trim();
     sameConnBanner.style.display = same ? 'block' : 'none';
@@ -649,7 +683,7 @@ export function mountReflectLitePanel() {
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
         sourcePreview: srcPreview.checkbox.checked,
-        sourceBundle: sourceBundleFromJson,
+        sourceBundleToken,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes,
@@ -745,7 +779,7 @@ export function mountReflectLitePanel() {
       sourceAppId: srcApp.value.trim(),
       sourceGuestId: srcGuest.value.trim(),
       sourcePreview: srcPreview.checkbox.checked,
-      sourceBundle: sourceBundleFromJson,
+      sourceBundleToken,
       targetAppId: tgtApp.value.trim(),
       targetGuestId: tgtGuest.value.trim(),
       scopes,
@@ -756,6 +790,7 @@ export function mountReflectLitePanel() {
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
         sourcePreview: srcPreview.checkbox.checked,
+        sourceBundle: sourceBundleFromJson,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes,
@@ -781,7 +816,7 @@ export function mountReflectLitePanel() {
     const lookupError = getLookupError(lookupState);
     const src = srcApp.value.trim();
     const tgt = tgtApp.value.trim();
-    const sameConn = !!src && src === tgt && srcGuest.value.trim() === tgtGuest.value.trim();
+    const sameConn = !sourceBundleFromJson && !!src && src === tgt && srcGuest.value.trim() === tgtGuest.value.trim();
     const riskyHit = scopes.filter((key) => RISKY_SCOPE_KEYS.has(key));
     const previewResult = preview?.result || null;
     const plan = fresh ? getExecutionPlan(scopes, previewResult) : getExecutionPlan(scopes, null);
@@ -824,8 +859,8 @@ export function mountReflectLitePanel() {
     let nextTone: 'ok' | 'info' | 'warn' = 'warn';
     let nextTitle = '次の一手';
     let nextText = '比較元 / 比較先 / セクションを確認してください。';
-    if (!src || !tgt) {
-      nextText = '比較元と比較先のアプリIDを埋めてください。比較先は通常、いま開いているアプリです。';
+    if ((!src && !sourceBundleFromJson) || !tgt) {
+      nextText = '比較元（アプリIDまたはJSON）と比較先のアプリIDを埋めてください。比較先は通常、いま開いているアプリです。';
     } else if (!scopes.length) {
       nextText = '反映したいセクションを選んでください。迷う場合は「フォームのみ」から始めるのが安全です。';
     } else if (!lookupState.ok) {
@@ -876,7 +911,7 @@ export function mountReflectLitePanel() {
 
     reviewBody.innerHTML = ''
       + '<div class="kus-rl-review-grid">'
-      + `  <div class="kus-rl-stat"><div class="kus-rl-stat__label">比較元</div><div class="kus-rl-stat__value">${escapeHtml(formatConnection(src, srcGuest.value.trim(), srcPreview.checkbox.checked ? 'preview' : 'prod'))}</div><div class="kus-rl-stat__meta">取得元: ${srcPreview.checkbox.checked ? 'プレビュー' : '本番'}</div></div>`
+      + `  <div class="kus-rl-stat"><div class="kus-rl-stat__label">比較元</div><div class="kus-rl-stat__value">${escapeHtml(sourceBundleFromJson ? `設定JSON${src ? ` (App ${src})` : ''}` : formatConnection(src, srcGuest.value.trim(), srcPreview.checkbox.checked ? 'preview' : 'prod'))}</div><div class="kus-rl-stat__meta">取得元: ${sourceBundleFromJson ? '読み込み済みJSON' : (srcPreview.checkbox.checked ? 'プレビュー' : '本番')}</div></div>`
       + `  <div class="kus-rl-stat"><div class="kus-rl-stat__label">比較先</div><div class="kus-rl-stat__value">${escapeHtml(formatConnection(tgt, tgtGuest.value.trim(), 'preview'))}</div><div class="kus-rl-stat__meta">反映先は常に比較先プレビューです</div></div>`
       + `  <div class="kus-rl-stat"><div class="kus-rl-stat__label">反映対象</div><div class="kus-rl-stat__value">${scopes.length ? `${scopes.length} セクション` : '未選択'}</div><div class="kus-rl-stat__meta">${escapeHtml(selectedSummary)}</div></div>`
       + `  <div class="kus-rl-stat"><div class="kus-rl-stat__label">差分プレビュー</div><div class="kus-rl-stat__value">${preview ? escapeHtml(formatPreviewStamp(preview.at)) : '未取得'}</div><div class="kus-rl-stat__meta">${escapeHtml(previewMeta)}</div></div>`
@@ -1050,6 +1085,7 @@ export function mountReflectLitePanel() {
       if (!confirmReflectRisk(panel, {
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
+        hasSourceBundle: !!sourceBundleFromJson,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes,
@@ -1189,6 +1225,8 @@ function buildPreviewSignature(args: {
   sourceAppId: string;
   sourceGuestId: string;
   sourcePreview: boolean;
+  /** 比較元JSONを読み込んでいる場合の識別子（ファイルが変わったら差分プレビューを古い扱いにする） */
+  sourceBundleToken?: string;
   targetAppId: string;
   targetGuestId: string;
   scopes: string[];
@@ -1201,6 +1239,7 @@ function buildPreviewSignature(args: {
     sourceAppId: args.sourceAppId,
     sourceGuestId: args.sourceGuestId,
     sourcePreview: !!args.sourcePreview,
+    sourceBundleToken: args.sourceBundleToken || '',
     targetAppId: args.targetAppId,
     targetGuestId: args.targetGuestId,
     scopes: [...(args.scopes || [])].sort(),
@@ -1343,6 +1382,8 @@ function confirmReflectRisk(
   ctx: {
     sourceAppId: string;
     sourceGuestId: string;
+    /** 比較元を設定JSONファイルから読み込んでいる場合 true */
+    hasSourceBundle?: boolean;
     targetAppId: string;
     targetGuestId: string;
     scopes: string[];
@@ -1355,8 +1396,8 @@ function confirmReflectRisk(
     preview?: PreviewReflectResult;
   }
 ): boolean {
-  if (!ctx.sourceAppId) {
-    panel.setStatus('比較元アプリIDを入力してください', 'warn');
+  if (!ctx.sourceAppId && !ctx.hasSourceBundle) {
+    panel.setStatus('比較元アプリIDを入力するか、比較元JSONを読み込んでください', 'warn');
     return false;
   }
   if (!ctx.targetAppId) {
@@ -1365,7 +1406,7 @@ function confirmReflectRisk(
   }
 
   const issues: string[] = [];
-  const sameConn = ctx.sourceAppId === ctx.targetAppId && ctx.sourceGuestId === ctx.targetGuestId;
+  const sameConn = !ctx.hasSourceBundle && ctx.sourceAppId === ctx.targetAppId && ctx.sourceGuestId === ctx.targetGuestId;
   if (sameConn) {
     issues.push('比較元と比較先が同一接続です（同じアプリID・ゲストID）');
   }
@@ -1421,7 +1462,9 @@ function confirmReflectRisk(
 
   const lines = [
     '【最終確認: プレビュー反映】',
-    `比較元: #${ctx.sourceAppId}${ctx.sourceGuestId ? ` (guest:${ctx.sourceGuestId})` : ''}`,
+    ctx.hasSourceBundle
+      ? `比較元: 設定JSON${ctx.sourceAppId ? ` (App ${ctx.sourceAppId})` : ''}`
+      : `比較元: #${ctx.sourceAppId}${ctx.sourceGuestId ? ` (guest:${ctx.sourceGuestId})` : ''}`,
     `比較先: #${ctx.targetAppId}${ctx.targetGuestId ? ` (guest:${ctx.targetGuestId})` : ''} ※プレビュー`,
     `対象セクション (${ctx.scopes.length}): ${scopeLabels}`,
     `実行予定セクション (${ctx.effectiveScopes.length}): ${effectiveLabels || 'なし'}`,

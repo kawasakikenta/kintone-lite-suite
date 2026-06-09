@@ -1228,7 +1228,7 @@ ${contextLine}`);
     }
     const prefix = buildApiPrefix(targetGuestId || "", true);
     const app = targetAppId;
-    logs.push(`比較元: ${sourceAppId} → 比較先(プレビュー): ${targetAppId}`);
+    logs.push(`比較元: ${opts.sourceBundle ? `設定JSON${sourceAppId ? ` (App ${sourceAppId})` : ""}` : sourceAppId} → 比較先(プレビュー): ${targetAppId}`);
     logs.push(`セクション: ${scopes.length}件`);
     logs.push("");
     let hadError = false;
@@ -2300,29 +2300,59 @@ ${contextLine}`);
     const tgtApp = makeInput({ placeholder: "比較先アプリID", value: memoryState.targetAppId || DEFAULT_APP_ID || "", width: "id" });
     const tgtGuest = makeInput({ placeholder: "ゲストID", value: memoryState.targetGuestId || "", width: "guest" });
     let sourceBundleFromJson = null;
+    let sourceBundleToken = "";
     const srcJsonFile = document.createElement("input");
     srcJsonFile.type = "file";
     srcJsonFile.accept = ".json,application/json";
     srcJsonFile.className = "kus-lp__file";
+    const srcJsonClearBtn = makeButton("クリア", "ghost");
+    srcJsonClearBtn.style.display = "none";
+    const srcJsonNote = document.createElement("div");
+    srcJsonNote.className = "kus-lp__small";
+    srcJsonNote.style.display = "none";
     const currentSrcBtn = makeButton("現在のアプリを比較元", "sub");
     const copyBtn = makeButton("比較元 → 比較先", "sub");
     const currentBtn = makeButton("現在のアプリを比較先", "sub");
     const swapBtn = makeButton("入れ替え", "sub");
     const cardApp = makeCard({ title: "アプリ", number: 1 });
     cardApp.body.appendChild(makeRow([srcApp, srcGuest], { label: "比較元" }));
-    cardApp.body.appendChild(makeRow(srcJsonFile, { label: "比較元JSON" }));
+    cardApp.body.appendChild(makeRow([srcJsonFile, srcJsonClearBtn], { label: "比較元JSON" }));
+    cardApp.body.appendChild(srcJsonNote);
     cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "比較先" }));
     const quickRow = makeRow([currentSrcBtn, copyBtn, currentBtn, swapBtn]);
     quickRow.style.marginTop = "4px";
     cardApp.body.appendChild(quickRow);
+    function refreshSrcJsonNote() {
+      if (sourceBundleFromJson) {
+        srcJsonNote.textContent = `比較元JSON読み込み済み: App ${sourceBundleFromJson?.appId || "-"}（比較元はこのJSONから取得し、アプリからの取得は行いません）`;
+        srcJsonNote.style.display = "block";
+        srcJsonClearBtn.style.display = "";
+      } else {
+        srcJsonNote.style.display = "none";
+        srcJsonClearBtn.style.display = "none";
+      }
+    }
     srcJsonFile.addEventListener("change", () => liteRun(panel, "比較元JSONを読み込み中…", async () => {
       const file = srcJsonFile.files?.[0];
       if (!file) return;
       sourceBundleFromJson = await readSettingsBundleFile(file, { side: "source", appId: srcApp.value.trim() });
+      sourceBundleToken = `${file.name}:${file.size}:${file.lastModified}:${Date.now()}`;
       if (!srcApp.value.trim() && sourceBundleFromJson?.appId) srcApp.value = String(sourceBundleFromJson.appId);
       panel.setStatus(`比較元JSONを読み込みました: App ${sourceBundleFromJson?.appId || "-"}`, "ok");
-      updateSafetyUi();
+      saveState();
+      refreshSrcJsonNote();
+      refreshSameConnBanner();
+      refreshReviewCard();
     }));
+    srcJsonClearBtn.addEventListener("click", () => {
+      sourceBundleFromJson = null;
+      sourceBundleToken = "";
+      srcJsonFile.value = "";
+      refreshSrcJsonNote();
+      refreshSameConnBanner();
+      refreshReviewCard();
+      panel.setStatus("比較元JSONをクリアしました（比較元アプリIDから取得します）", "info");
+    });
     const sameConnBanner = document.createElement("div");
     sameConnBanner.className = "kus-lp__note--warn";
     sameConnBanner.style.display = "none";
@@ -2348,7 +2378,7 @@ ${contextLine}`);
     }));
     panel.body.insertBefore(cardApp.card, panel.status);
     function refreshSameConnBanner() {
-      const same = !!srcApp.value.trim() && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim();
+      const same = !sourceBundleFromJson && !!srcApp.value.trim() && srcApp.value.trim() === tgtApp.value.trim() && srcGuest.value.trim() === tgtGuest.value.trim();
       sameConnBanner.style.display = same ? "block" : "none";
     }
     currentSrcBtn.addEventListener("click", () => {
@@ -2695,7 +2725,7 @@ ${contextLine}`);
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
         sourcePreview: srcPreview.checkbox.checked,
-        sourceBundle: sourceBundleFromJson,
+        sourceBundleToken,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes,
@@ -2781,7 +2811,7 @@ ${contextLine}`);
         sourceAppId: srcApp.value.trim(),
         sourceGuestId: srcGuest.value.trim(),
         sourcePreview: srcPreview.checkbox.checked,
-        sourceBundle: sourceBundleFromJson,
+        sourceBundleToken,
         targetAppId: tgtApp.value.trim(),
         targetGuestId: tgtGuest.value.trim(),
         scopes,
@@ -2792,6 +2822,7 @@ ${contextLine}`);
           sourceAppId: srcApp.value.trim(),
           sourceGuestId: srcGuest.value.trim(),
           sourcePreview: srcPreview.checkbox.checked,
+          sourceBundle: sourceBundleFromJson,
           targetAppId: tgtApp.value.trim(),
           targetGuestId: tgtGuest.value.trim(),
           scopes,
@@ -2816,7 +2847,7 @@ ${contextLine}`);
       const lookupError = getLookupError(lookupState);
       const src = srcApp.value.trim();
       const tgt = tgtApp.value.trim();
-      const sameConn = !!src && src === tgt && srcGuest.value.trim() === tgtGuest.value.trim();
+      const sameConn = !sourceBundleFromJson && !!src && src === tgt && srcGuest.value.trim() === tgtGuest.value.trim();
       const riskyHit = scopes.filter((key) => RISKY_SCOPE_KEYS.has(key));
       const previewResult = preview?.result || null;
       const plan = fresh ? getExecutionPlan(scopes, previewResult) : getExecutionPlan(scopes, null);
@@ -2856,8 +2887,8 @@ ${contextLine}`);
       let nextTone = "warn";
       let nextTitle = "次の一手";
       let nextText = "比較元 / 比較先 / セクションを確認してください。";
-      if (!src || !tgt) {
-        nextText = "比較元と比較先のアプリIDを埋めてください。比較先は通常、いま開いているアプリです。";
+      if (!src && !sourceBundleFromJson || !tgt) {
+        nextText = "比較元（アプリIDまたはJSON）と比較先のアプリIDを埋めてください。比較先は通常、いま開いているアプリです。";
       } else if (!scopes.length) {
         nextText = "反映したいセクションを選んでください。迷う場合は「フォームのみ」から始めるのが安全です。";
       } else if (!lookupState.ok) {
@@ -2896,7 +2927,7 @@ ${contextLine}`);
       } else {
         previewPills.push('<span class="kus-rl-pill kus-rl-pill--stale">未取得</span>');
       }
-      reviewBody.innerHTML = `<div class="kus-rl-review-grid">  <div class="kus-rl-stat"><div class="kus-rl-stat__label">比較元</div><div class="kus-rl-stat__value">${escapeHtml(formatConnection(src, srcGuest.value.trim(), srcPreview.checkbox.checked ? "preview" : "prod"))}</div><div class="kus-rl-stat__meta">取得元: ${srcPreview.checkbox.checked ? "プレビュー" : "本番"}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">比較先</div><div class="kus-rl-stat__value">${escapeHtml(formatConnection(tgt, tgtGuest.value.trim(), "preview"))}</div><div class="kus-rl-stat__meta">反映先は常に比較先プレビューです</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">反映対象</div><div class="kus-rl-stat__value">${scopes.length ? `${scopes.length} セクション` : "未選択"}</div><div class="kus-rl-stat__meta">${escapeHtml(selectedSummary)}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">差分プレビュー</div><div class="kus-rl-stat__value">${preview ? escapeHtml(formatPreviewStamp(preview.at)) : "未取得"}</div><div class="kus-rl-stat__meta">${escapeHtml(previewMeta)}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">実行予定</div><div class="kus-rl-stat__value">${fresh ? `${plan.effectiveScopes.length} セクション` : "プレビュー後に確定"}</div><div class="kus-rl-stat__meta">${escapeHtml(fresh ? effectiveSummary : "差分プレビューと実行オプションから自動算出します")}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">自動除外</div><div class="kus-rl-stat__value">${fresh ? `${plan.skippedSameScopes.length + plan.skippedErrorScopes.length} 件` : "未計算"}</div><div class="kus-rl-stat__meta">${escapeHtml(fresh ? buildSkipSummary(plan) : "差分なし / 取得失敗セクションをここに表示します")}</div></div></div><div class="kus-rl-pills">${previewPills.join("")}</div><div class="kus-rl-next kus-rl-next--${nextTone}"><strong>${nextTitle}</strong>${escapeHtml(nextText)}</div>` + (issues.length ? `<ul class="kus-rl-issues">${issues.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : '<div class="kus-rl-quiet">この条件では大きな注意点は見つかっていません。</div>');
+      reviewBody.innerHTML = `<div class="kus-rl-review-grid">  <div class="kus-rl-stat"><div class="kus-rl-stat__label">比較元</div><div class="kus-rl-stat__value">${escapeHtml(sourceBundleFromJson ? `設定JSON${src ? ` (App ${src})` : ""}` : formatConnection(src, srcGuest.value.trim(), srcPreview.checkbox.checked ? "preview" : "prod"))}</div><div class="kus-rl-stat__meta">取得元: ${sourceBundleFromJson ? "読み込み済みJSON" : srcPreview.checkbox.checked ? "プレビュー" : "本番"}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">比較先</div><div class="kus-rl-stat__value">${escapeHtml(formatConnection(tgt, tgtGuest.value.trim(), "preview"))}</div><div class="kus-rl-stat__meta">反映先は常に比較先プレビューです</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">反映対象</div><div class="kus-rl-stat__value">${scopes.length ? `${scopes.length} セクション` : "未選択"}</div><div class="kus-rl-stat__meta">${escapeHtml(selectedSummary)}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">差分プレビュー</div><div class="kus-rl-stat__value">${preview ? escapeHtml(formatPreviewStamp(preview.at)) : "未取得"}</div><div class="kus-rl-stat__meta">${escapeHtml(previewMeta)}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">実行予定</div><div class="kus-rl-stat__value">${fresh ? `${plan.effectiveScopes.length} セクション` : "プレビュー後に確定"}</div><div class="kus-rl-stat__meta">${escapeHtml(fresh ? effectiveSummary : "差分プレビューと実行オプションから自動算出します")}</div></div>  <div class="kus-rl-stat"><div class="kus-rl-stat__label">自動除外</div><div class="kus-rl-stat__value">${fresh ? `${plan.skippedSameScopes.length + plan.skippedErrorScopes.length} 件` : "未計算"}</div><div class="kus-rl-stat__meta">${escapeHtml(fresh ? buildSkipSummary(plan) : "差分なし / 取得失敗セクションをここに表示します")}</div></div></div><div class="kus-rl-pills">${previewPills.join("")}</div><div class="kus-rl-next kus-rl-next--${nextTone}"><strong>${nextTitle}</strong>${escapeHtml(nextText)}</div>` + (issues.length ? `<ul class="kus-rl-issues">${issues.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : '<div class="kus-rl-quiet">この条件では大きな注意点は見つかっていません。</div>');
       rerenderPreviewCard();
     }
     previewSearch.addEventListener("input", () => {
@@ -3035,6 +3066,7 @@ ${contextLine}`);
         if (!confirmReflectRisk(panel, {
           sourceAppId: srcApp.value.trim(),
           sourceGuestId: srcGuest.value.trim(),
+          hasSourceBundle: !!sourceBundleFromJson,
           targetAppId: tgtApp.value.trim(),
           targetGuestId: tgtGuest.value.trim(),
           scopes,
@@ -3163,6 +3195,7 @@ ${detail}
       sourceAppId: args.sourceAppId,
       sourceGuestId: args.sourceGuestId,
       sourcePreview: !!args.sourcePreview,
+      sourceBundleToken: args.sourceBundleToken || "",
       targetAppId: args.targetAppId,
       targetGuestId: args.targetGuestId,
       scopes: [...args.scopes || []].sort(),
@@ -3277,8 +3310,8 @@ ${detail}
     }
   }
   function confirmReflectRisk(panel, ctx) {
-    if (!ctx.sourceAppId) {
-      panel.setStatus("比較元アプリIDを入力してください", "warn");
+    if (!ctx.sourceAppId && !ctx.hasSourceBundle) {
+      panel.setStatus("比較元アプリIDを入力するか、比較元JSONを読み込んでください", "warn");
       return false;
     }
     if (!ctx.targetAppId) {
@@ -3286,7 +3319,7 @@ ${detail}
       return false;
     }
     const issues = [];
-    const sameConn = ctx.sourceAppId === ctx.targetAppId && ctx.sourceGuestId === ctx.targetGuestId;
+    const sameConn = !ctx.hasSourceBundle && ctx.sourceAppId === ctx.targetAppId && ctx.sourceGuestId === ctx.targetGuestId;
     if (sameConn) {
       issues.push("比較元と比較先が同一接続です（同じアプリID・ゲストID）");
     }
@@ -3331,7 +3364,7 @@ ${detail}
     const highRisk = sameConn || riskyHit.length > 0 || !ctx.doBackup || !ctx.stopOnError || (ctx.preview?.errorSections || 0) > 0 || ctx.effectiveScopes.length >= 10;
     const lines = [
       "【最終確認: プレビュー反映】",
-      `比較元: #${ctx.sourceAppId}${ctx.sourceGuestId ? ` (guest:${ctx.sourceGuestId})` : ""}`,
+      ctx.hasSourceBundle ? `比較元: 設定JSON${ctx.sourceAppId ? ` (App ${ctx.sourceAppId})` : ""}` : `比較元: #${ctx.sourceAppId}${ctx.sourceGuestId ? ` (guest:${ctx.sourceGuestId})` : ""}`,
       `比較先: #${ctx.targetAppId}${ctx.targetGuestId ? ` (guest:${ctx.targetGuestId})` : ""} ※プレビュー`,
       `対象セクション (${ctx.scopes.length}): ${scopeLabels}`,
       `実行予定セクション (${ctx.effectiveScopes.length}): ${effectiveLabels || "なし"}`,
