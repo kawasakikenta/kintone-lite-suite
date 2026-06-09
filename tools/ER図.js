@@ -1662,6 +1662,22 @@ body{font-family:'DM Sans',sans-serif;background:
 #modal .actions button{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;}
 #modal .actions button.primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
 
+/* ── Manual add editor ── */
+#editor-overlay{display:none;position:fixed;inset:0;z-index:310;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);justify-content:center;align-items:center;padding:16px;}
+#editor-overlay.open{display:flex;}
+#editor{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;width:min(440px,100%);max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-md);}
+#editor h2{font-size:15px;margin-bottom:4px;color:var(--accent);}
+#editor-sub{font-size:11px;color:var(--dim);margin-bottom:14px;line-height:1.5;}
+.ed-row{display:flex;flex-direction:column;gap:4px;margin-bottom:12px;}
+.ed-row label{font-size:11px;color:var(--dim);font-weight:600;}
+.ed-row input,.ed-row select,.ed-row textarea{padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:12px;font-family:inherit;outline:none;}
+.ed-row input:focus,.ed-row select:focus,.ed-row textarea:focus{border-color:var(--accent);}
+.ed-row textarea{min-height:84px;resize:vertical;}
+.ed-hint{font-size:10px;color:var(--dim);line-height:1.5;}
+#editor .actions{margin-top:14px;display:flex;gap:8px;justify-content:flex-end;}
+#editor .actions button{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;}
+#editor .actions button.primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
+
 /* ── Empty / Banner ── */
 #banner{
   position:fixed;top:48px;left:16px;z-index:95;display:flex;gap:8px;flex-wrap:wrap;max-width:min(900px,calc(100vw - 32px));
@@ -1777,6 +1793,15 @@ body{font-family:'DM Sans',sans-serif;background:
     <button class="tb active" id="rel-label-btn" onclick="toggleRelationLabels()" title="線ラベル">🏷</button>
   </div>
 
+  <div class="tb-menu" id="add-menu" data-mobile="hide">
+    <button class="tb tb-menu-btn" onclick="toggleMenu('add-menu')" title="要素を手動追加">➕ 追加</button>
+    <div class="tb-menu-panel">
+      <button class="tb" onclick="openAddApp();closeAllMenus()">⬡ アプリ(エンティティ)を追加</button>
+      <button class="tb" onclick="openAddField();closeAllMenus()">📝 アプリに項目を追加</button>
+      <button class="tb" onclick="openAddRelation();closeAllMenus()">🔗 関連線を追加</button>
+    </div>
+  </div>
+
   <div class="tb-menu" id="edit-menu" data-mobile="hide">
     <button class="tb tb-menu-btn" onclick="toggleMenu('edit-menu')" title="編集">✏</button>
     <div class="tb-menu-panel">
@@ -1865,6 +1890,7 @@ body{font-family:'DM Sans',sans-serif;background:
     <span>右クリックで固定</span>
     <span>Alt/⌥ + 右クリックで非表示</span>
     <span>Shift + F で関連強調</span>
+    <span>背景ダブルクリックで要素追加</span>
   </div>
 </div>
 
@@ -1927,6 +1953,19 @@ body{font-family:'DM Sans',sans-serif;background:
   </div>
 </div>
 
+<!-- Manual add editor -->
+<div id="editor-overlay" onclick="if(event.target===this)closeEditor()">
+  <div id="editor">
+    <h2 id="editor-title"></h2>
+    <div id="editor-sub"></div>
+    <div id="editor-body"></div>
+    <div class="actions">
+      <button class="primary" onclick="submitEditor()">追加</button>
+      <button onclick="closeEditor()">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <!-- Help / Shortcut modal -->
 <div id="help-overlay" onclick="if(event.target===this)closeHelp()">
   <div id="help-box">
@@ -1950,6 +1989,7 @@ body{font-family:'DM Sans',sans-serif;background:
         <div class="help-row"><span>フルスクリーン</span><kbd>F11</kbd></div>
         <div class="help-row"><span>背景をクリック</span><kbd>強調解除</kbd></div>
         <div class="help-row"><span>ノードをダブルクリック</span><kbd>近隣のみ表示</kbd></div>
+        <div class="help-row"><span>背景をダブルクリック</span><kbd>エンティティ追加</kbd></div>
         <div class="help-row"><span>右クリック (ノード)</span><kbd>固定/解除</kbd></div>
         <div class="help-row"><span>Alt + 右クリック</span><kbd>非表示</kbd></div>
       </div>
@@ -2084,7 +2124,7 @@ function buildNodeLabel(app){
   const fieldCountText = totalFieldCount > fields.length
     ? fields.length + "/" + totalFieldCount + "項目"
     : fields.length + "項目";
-  const metaParts = ["App " + app.id, fieldCountText, app.relations.length + "関連"];
+  const metaParts = [app.isCustom ? "手動追加" : "App " + app.id, fieldCountText, app.relations.length + "関連"];
   if((app.depth || 0) > 0) metaParts.push("深さ" + app.depth);
   const meta = metaParts.join(" ・ ");
   const isStart = (ER_OPTIONS.startAppIds || []).map(String).includes(String(app.id));
@@ -2139,6 +2179,7 @@ function buildCyStyle(palette){
       "background-color":palette.surface,"border-width":2,"border-color":palette.border,"padding":nodeMetrics.padding,"width":"label","height":"label"
     }},
     {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
+    {selector:"node[?isCustom]",style:{"border-style":"dashed","border-color":palette.accent2}},
     {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":4,"background-color":isDark ? "#11162d" : "#eef2ff"}},
     {selector:"node[?inSpace]",style:{"border-color":"#0ea5a4","border-width":4,"border-style":"double","background-color":isDark ? "#06231f" : "#ecfdf5"}},
     {selector:"node:selected",style:{"border-color":palette.accent,"border-width":4,"overlay-color":"transparent"}},
@@ -2211,13 +2252,16 @@ APPS.forEach(app=>{
     depth:app.depth || 0
   }});
 });
+function edgeDisplayLabel(text){
+  const s=String(text||"");
+  return s.length > 24 ? s.slice(0, 23) + "…" : s;
+}
 let ei=0;
 APPS.forEach(app=>{
   app.relations.forEach(r=>{
     if(appMap.has(r.toApp)){
       const fullLabel = r.fromDisplay || r.fromLabel || (r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連":"アクション"));
-      const label = fullLabel.length > 24 ? fullLabel.slice(0, 23) + "…" : fullLabel;
-      elements.push({data:{id:"e"+(ei++),source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label,fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || ""}});
+      elements.push({data:{id:"e"+(ei++),source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label:edgeDisplayLabel(fullLabel),fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || ""}});
     }
   });
 });
@@ -2565,6 +2609,157 @@ applyRelationFilter();
 applyRelationLabelVisibility();
 updateFocusOptions();
 
+// ─── Manual additions (アプリ / 項目 / 関連線の手動追加) ───
+let customAppSeq=0, customRelSeq=0, customFieldSeq=0;
+let editorMode="";
+let pendingNodePos=null;
+
+function findApp(id){
+  if(appMap.has(id)) return appMap.get(id);
+  const n=Number(id);
+  if(appMap.has(n)) return appMap.get(n);
+  const s=String(id);
+  return appMap.has(s) ? appMap.get(s) : null;
+}
+function appOptionsHtml(selectedId){
+  return APPS.map(a=>'<option value="'+escapeHtml(String(a.id))+'"'+(String(a.id)===String(selectedId)?" selected":"")+'>'+escapeHtml(a.name)+(a.isCustom?"（手動）":" (App "+escapeHtml(String(a.id))+")")+'</option>').join("");
+}
+const MANUAL_FIELD_TYPES=[["SINGLE_LINE_TEXT","文字列(1行)"],["MULTI_LINE_TEXT","文字列(複数行)"],["NUMBER","数値"],["CALC","計算"],["DATE","日付"],["DATETIME","日時"],["DROP_DOWN","ドロップダウン"],["CHECK_BOX","チェックボックス"],["USER_SELECT","ユーザー選択"],["FILE","添付ファイル"],["LINK","リンク"],["RECORD_NUMBER","レコード番号"]];
+function openEditor(mode, title, sub, bodyHtml){
+  editorMode=mode;
+  document.getElementById("editor-title").textContent=title;
+  document.getElementById("editor-sub").textContent=sub;
+  document.getElementById("editor-body").innerHTML=bodyHtml;
+  document.getElementById("editor-overlay").classList.add("open");
+  const first=document.querySelector("#editor-body input,#editor-body select,#editor-body textarea");
+  if(first) setTimeout(()=>{try{first.focus();}catch(_){}},50);
+}
+function closeEditor(){
+  editorMode=""; pendingNodePos=null;
+  document.getElementById("editor-overlay").classList.remove("open");
+}
+function submitEditor(){
+  if(editorMode==="app") addCustomApp();
+  else if(editorMode==="field") addCustomField();
+  else if(editorMode==="rel") addCustomRelation();
+}
+function currentTargetAppId(){
+  if(activeAppId) return activeAppId;
+  if(lastTappedNodeId){
+    const n=cy.getElementById(lastTappedNodeId);
+    if(n.length) return n.data("appId");
+  }
+  return APPS.length ? APPS[0].id : "";
+}
+function openAddApp(pos){
+  pendingNodePos=pos||null;
+  openEditor("app","⬡ アプリ(エンティティ)を追加","図にだけ存在する手動エンティティを追加します（kintone上には作成されません）",
+    '<div class="ed-row"><label>アプリ名 *</label><input id="ed-app-name" placeholder="例: 外部システム / 顧客マスタ(構想)"></div>'
+    +'<div class="ed-row"><label>初期項目（任意・1行に1項目）</label><textarea id="ed-app-fields" placeholder="顧客名&#10;!顧客コード&#10;*金額"></textarea>'
+    +'<div class="ed-hint">行頭の記号で区分を指定できます: <b>!</b> 主キー 🔑 / <b>*</b> 必須 ✱ / 無印 通常項目。項目は後から「項目を追加」でも足せます。</div></div>');
+}
+function openAddField(){
+  if(!APPS.length){toast("追加先のアプリがありません");return;}
+  openEditor("field","📝 アプリに項目を追加","選択したアプリのノード表示・詳細パネル・各エクスポートに項目を追加します",
+    '<div class="ed-row"><label>対象アプリ</label><select id="ed-field-app">'+appOptionsHtml(currentTargetAppId())+'</select></div>'
+    +'<div class="ed-row"><label>項目名 *</label><input id="ed-field-name" placeholder="例: 承認ステータス"></div>'
+    +'<div class="ed-row"><label>フィールドコード（任意）</label><input id="ed-field-code" placeholder="未入力なら自動採番"></div>'
+    +'<div class="ed-row"><label>種類</label><select id="ed-field-type">'+MANUAL_FIELD_TYPES.map(t=>'<option value="'+t[0]+'">'+t[1]+'</option>').join("")+'</select></div>'
+    +'<div class="ed-row"><label>区分</label><select id="ed-field-kind"><option value="">通常</option><option value="pk">主キー 🔑</option><option value="required">必須 ✱</option><option value="lookup">ルックアップ 🔗</option><option value="ref">関連レコード 📋</option></select></div>');
+}
+function openAddRelation(){
+  if(APPS.length<2){toast("関連線を引くにはアプリが2つ以上必要です");return;}
+  openEditor("rel","🔗 関連線を追加","2つのアプリ間に手動で関連線を引きます（リレーション一覧・各エクスポートにも反映）",
+    '<div class="ed-row"><label>起点アプリ</label><select id="ed-rel-from">'+appOptionsHtml(currentTargetAppId())+'</select></div>'
+    +'<div class="ed-row"><label>宛先アプリ</label><select id="ed-rel-to">'+appOptionsHtml("")+'</select></div>'
+    +'<div class="ed-row"><label>種類</label><select id="ed-rel-kind"><option value="LOOKUP">ルックアップ線 🔗</option><option value="REF">関連レコード線 📋</option><option value="ACTION">アクション線 ⚡</option></select></div>'
+    +'<div class="ed-row"><label>ラベル（任意）</label><input id="ed-rel-label" placeholder="例: 顧客参照"></div>');
+}
+function parseManualFieldLines(text){
+  return String(text||"").split(/\\n+/).map(l=>l.trim()).filter(Boolean).slice(0,30).map(line=>{
+    const isPK=line.charAt(0)==="!";
+    const required=line.charAt(0)==="*";
+    const label=line.replace(/^[!*]\\s*/,"").trim();
+    customFieldSeq+=1;
+    return {code:"manual_"+customFieldSeq,label:label||("項目"+customFieldSeq),type:isPK?"RECORD_NUMBER":"SINGLE_LINE_TEXT",required:required||isPK,isPK,unique:isPK,isCustom:true};
+  });
+}
+function addCustomApp(){
+  const name=(document.getElementById("ed-app-name").value||"").trim();
+  if(!name){toast("アプリ名を入力してください");return;}
+  const fields=parseManualFieldLines(document.getElementById("ed-app-fields").value);
+  customAppSeq+=1;
+  const id=-customAppSeq;
+  const app={id,name,fields,allFields:fields.slice(),totalFieldCount:fields.length,relations:[],ok:true,depth:0,isCustom:true,
+    requiredCount:fields.filter(f=>f.required).length,lookupCount:0,refCount:0};
+  APPS.push(app);
+  appMap.set(id,app);
+  const ext=cy.extent();
+  const pos=pendingNodePos||{x:(ext.x1+ext.x2)/2+(Math.random()*60-30),y:(ext.y1+ext.y2)/2+(Math.random()*60-30)};
+  const node=cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,fieldCount:fields.length,relCount:0,depth:0},position:pos});
+  commands.push({label:"アプリ: "+app.name+" (手動追加)",icon:"⬡",action:()=>focusApp(id)});
+  refreshSidebar();
+  closeEditor();
+  node.select();
+  renderAppDetail(app);
+  toast("エンティティを追加: "+name);
+}
+function addCustomField(){
+  const app=findApp(document.getElementById("ed-field-app").value);
+  if(!app){toast("対象アプリが見つかりません");return;}
+  const name=(document.getElementById("ed-field-name").value||"").trim();
+  if(!name){toast("項目名を入力してください");return;}
+  const codeInput=(document.getElementById("ed-field-code").value||"").trim();
+  const type=document.getElementById("ed-field-type").value||"SINGLE_LINE_TEXT";
+  const kind=document.getElementById("ed-field-kind").value;
+  customFieldSeq+=1;
+  const field={code:codeInput||("manual_"+customFieldSeq),label:name,type,
+    required:kind==="required"||kind==="pk",isPK:kind==="pk",unique:kind==="pk",
+    isLookup:kind==="lookup",isRef:kind==="ref",isCustom:true};
+  app.fields.push(field);
+  if(Array.isArray(app.allFields)) app.allFields.push(field);
+  if(typeof app.totalFieldCount==="number") app.totalFieldCount+=1;
+  if(field.required) app.requiredCount=(app.requiredCount||0)+1;
+  const node=cy.getElementById("a"+app.id);
+  if(node.length){
+    node.data("label",buildNodeLabel(app));
+    node.data("fieldCount",visibleFieldsForNode(app).length);
+  }
+  refreshSidebar();
+  if(String(activeAppId)===String(app.id)) renderAppDetail(app);
+  closeEditor();
+  toast("項目を追加: "+name+" → "+app.name);
+}
+function addCustomRelation(){
+  const from=findApp(document.getElementById("ed-rel-from").value);
+  const to=findApp(document.getElementById("ed-rel-to").value);
+  if(!from||!to){toast("アプリを選択してください");return;}
+  if(String(from.id)===String(to.id)){toast("起点と宛先が同じアプリです");return;}
+  const kind=document.getElementById("ed-rel-kind").value||"LOOKUP";
+  const kindLabel=kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連":"アクション");
+  const label=(document.getElementById("ed-rel-label").value||"").trim()||(kindLabel+"(手動)");
+  customRelSeq+=1;
+  const rel={from:"__MANUAL__"+customRelSeq,fromLabel:label,fromDisplay:label,toApp:to.id,toField:"",kind,isCustom:true};
+  from.relations.push(rel);
+  if(kind==="LOOKUP") from.lookupCount=(from.lookupCount||0)+1;
+  if(kind==="REF") from.refCount=(from.refCount||0)+1;
+  cy.add({group:"edges",data:{id:"em"+customRelSeq,source:"a"+from.id,target:"a"+to.id,kind,label:edgeDisplayLabel(label),fromLabel:label,fromDisplay:label,isCustom:true}});
+  const node=cy.getElementById("a"+from.id);
+  if(node.length){
+    node.data("relCount",from.relations.length);
+    node.data("label",buildNodeLabel(from));
+  }
+  applyRelationFilter();
+  applyRelationLabelVisibility();
+  refreshSidebar();
+  if(String(activeAppId)===String(from.id)) renderAppDetail(from);
+  closeEditor();
+  toast("関連線を追加: "+from.name+" → "+to.name);
+}
+document.getElementById("editor").addEventListener("keydown",e=>{
+  if(e.key==="Enter"&&e.target&&e.target.tagName!=="TEXTAREA"){e.preventDefault();submitEditor();}
+});
+
 // ─── Search & Highlight ───
 function searchGraph(q){
   cy.elements().removeClass("highlighted dimmed");
@@ -2597,7 +2792,7 @@ function renderAppDetail(app){
   const fieldPillText = realFieldTotal > visibleFields.length
     ? '項目 ' + visibleFields.length + '/<small>' + realFieldTotal + '</small>'
     : '<b>項目</b> ' + visibleFields.length;
-  document.getElementById("detail-meta").innerHTML = "ID: " + escapeHtml(app.id)
+  document.getElementById("detail-meta").innerHTML = (app.isCustom ? "手動追加エンティティ" : "ID: " + escapeHtml(app.id))
     + (app.createdAt ? " | 作成: " + escapeHtml(new Date(app.createdAt).toLocaleDateString()) : "")
     + (app.modifiedAt ? " | 更新: " + escapeHtml(new Date(app.modifiedAt).toLocaleDateString()) : "")
     + '<div class="detail-chip-row">'
@@ -2728,7 +2923,8 @@ function focusApp(id){
 function toggleSidebar(){document.getElementById("sidebar").classList.toggle("open");}
 
 // Build stats
-(function buildSidebar(){
+function refreshSidebar(){
+  const activeTypes=new Set([...document.querySelectorAll(".filter-chip.active")].map(e=>e.dataset.type));
   const visibleFieldsTotal=APPS.reduce((s,a)=>s+visibleFieldsForNode(a).length,0);
   const totalFieldsAcrossApps=APPS.reduce((s,a)=>s+(typeof a.totalFieldCount==="number"?a.totalFieldCount:visibleFieldsForNode(a).length),0);
   const totalRels=APPS.reduce((s,a)=>s+a.relations.length,0);
@@ -2753,12 +2949,13 @@ function toggleSidebar(){document.getElementById("sidebar").classList.toggle("op
   // type filters
   let fHtml="";
   Object.entries(typeCount).sort((a,b)=>b[1]-a[1]).forEach(([t,c])=>{
-    fHtml+='<span class="filter-chip" onclick="filterByType(this,\\''+t+'\\')" data-type="'+t+'">'+t+' ('+c+')</span>';
+    fHtml+='<span class="filter-chip'+(activeTypes.has(t)?" active":"")+'" onclick="filterByType(this,\\''+t+'\\')" data-type="'+t+'">'+t+' ('+c+')</span>';
   });
   document.getElementById("type-filters").innerHTML=fHtml;
 
   refreshAppList();
-})();
+}
+refreshSidebar();
 
 function refreshAppList(){
   let aHtml="";
@@ -2898,6 +3095,9 @@ const commands=[
   {label:"関連線 ON/OFF",icon:"📋",action:()=>toggleRelationKind("REF")},
   {label:"アクション線 ON/OFF",icon:"⚡",action:()=>toggleRelationKind("ACTION")},
   {label:"線ラベル ON/OFF",icon:"🏷",action:toggleRelationLabels},
+  {label:"アプリ(エンティティ)を追加",icon:"⬡",action:()=>openAddApp()},
+  {label:"アプリに項目を追加",icon:"📝",action:()=>openAddField()},
+  {label:"関連線を追加",icon:"🔗",action:()=>openAddRelation()},
   {label:"選択関連を削除",icon:"🗑",action:removeSelectedRelations},
   {label:"削除関連を復元",icon:"↺",action:restoreRemovedRelations},
   {label:"選択アプリを削除",icon:"🗑📱",action:removeSelectedApps},
@@ -2963,7 +3163,7 @@ document.addEventListener("keydown",e=>{
   if(e.key==="F"&&e.shiftKey){e.preventDefault();toggleFocusMode();}
   if(e.key==="P"&&e.shiftKey){e.preventDefault();togglePinFromSelection();}
   if(e.key==="0"&&(e.ctrlKey||e.metaKey)){e.preventDefault();fit();}
-  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();closeHelp();closeAllMenus();clearFocus(true);document.getElementById("topbar").classList.remove("mobile-open");}
+  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();closeHelp();closeEditor();closeAllMenus();clearFocus(true);document.getElementById("topbar").classList.remove("mobile-open");}
   if(!isTypingTarget(e.target)){
     if(e.key==="?"||(e.key==="/"&&e.shiftKey)){e.preventDefault();openHelp();}
     if(e.key==="+"||e.key==="="){e.preventDefault();zoomIn();}
@@ -3335,6 +3535,11 @@ cy.on("dbltap","node",e=>{
   toast("ダブルクリック: 接続アプリのみ表示（背景クリックで解除）");
 });
 
+// ─── Double-click background to add an entity at that position ───
+cy.on("dbltap",e=>{
+  if(e.target===cy) openAddApp({x:e.position.x,y:e.position.y});
+});
+
 // ─── Hover tooltip ───
 let tipEl;
 cy.on("mouseover","node",e=>{
@@ -3344,7 +3549,7 @@ cy.on("mouseover","node",e=>{
   const _v = visibleFieldsForNode(app).length;
   const _t = typeof app.totalFieldCount === "number" ? app.totalFieldCount : _v;
   const _itemText = _t > _v ? (_v + "/" + _t) : _v;
-  tipEl.innerHTML="<b>"+app.name+"</b> (ID:"+app.id+")<br>項目: "+_itemText+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
+  tipEl.innerHTML="<b>"+app.name+"</b> "+(app.isCustom?"(手動追加)":"(ID:"+app.id+")")+"<br>項目: "+_itemText+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
   tipEl.style.display="block";
 });
 cy.on("mouseout","node",()=>{if(tipEl) tipEl.style.display="none";});
