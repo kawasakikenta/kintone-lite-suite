@@ -690,6 +690,19 @@
 #kintone-unified-suite-v2 .reflect-log-line--blank{height:6px}
 /* === V3+U3 Plan confirm cards === */
 #kintone-unified-suite-v2 .plan-confirm-panel{display:flex;flex-direction:column;gap:10px;padding:10px}
+#kintone-unified-suite-v2 .plan-confirm-target{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;font-size:12px;color:#1e3a8a}
+#kintone-unified-suite-v2 .plan-confirm-target__side{font-weight:700}
+#kintone-unified-suite-v2 .plan-confirm-target__side--target{color:#1d4ed8}
+#kintone-unified-suite-v2 .plan-confirm-target__arrow{font-weight:900;color:#3b82f6}
+#kintone-unified-suite-v2 .plan-confirm-target__badge{margin-left:auto;font-size:10px;font-weight:800;letter-spacing:.04em;background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:2px 10px}
+#kintone-unified-suite-v2 .plan-delete-warning{border:1px solid #fca5a5;border-radius:8px;background:#fef2f2;padding:8px 12px;font-size:12px;color:#7f1d1d}
+#kintone-unified-suite-v2 .plan-delete-warning__title{font-weight:800;margin-bottom:2px}
+#kintone-unified-suite-v2 .plan-delete-warning__body{font-weight:700}
+#kintone-unified-suite-v2 .plan-delete-warning__sub{margin-top:4px;font-size:11px;color:#991b1b}
+#kintone-unified-suite-v2 .plan-delete-warning-slot:empty{display:none}
+#kintone-unified-suite-v2 .plan-confirm-appids{border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:6px 10px;font-size:12px}
+#kintone-unified-suite-v2 .plan-confirm-appids>summary{cursor:pointer;font-weight:700;color:#334155}
+#kintone-unified-suite-v2 .plan-confirm-appids[open]>summary{margin-bottom:6px}
 #kintone-unified-suite-v2 .plan-confirm-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
 #kintone-unified-suite-v2 .plan-confirm-head__title{font-size:14px;font-weight:900;color:#0f172a}
 #kintone-unified-suite-v2 .plan-confirm-head__meta{font-size:11px;color:#64748b}

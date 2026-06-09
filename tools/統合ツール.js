@@ -11990,7 +11990,6 @@ ${body}`;
   // src/ui/components.ts
   var components_exports = {};
   __export(components_exports, {
-    buildReflectAssistHtml: () => buildReflectAssistHtml,
     closeAllReflectModals: () => closeAllReflectModals,
     closeReflectModal: () => closeReflectModal,
     closeScopePicker: () => closeScopePicker,
@@ -12755,228 +12754,6 @@ ${tgt.full}`);
       scopes: scopeInfo.effectiveScopes,
       lookupMap: ui3.lookupMap.value.trim()
     });
-  }
-  function buildReflectAssistHtml() {
-    const c = deps.commonParams();
-    const isNode = isReflectNodeModeEffective();
-    const scopeInfo = getEffectiveReflectScopeInfo();
-    const effectiveScopeSet = new Set(scopeInfo.effectiveScopes);
-    const diffReady = !!state.lastDiffAt && state.lastDiffSignature === deps.currentDiffSignature();
-    const actualDiffRows = getActualDiffRows(state.lastDiffRows || []);
-    const selectedNodeRows = deps.getSelectedReflectRows();
-    const targetRows = isNode ? selectedNodeRows : actualDiffRows.filter((row) => effectiveScopeSet.has(row.sectionKey));
-    const sev = summarizeSeverity(targetRows);
-    const planSignature = getCurrentReflectPlanSignature();
-    const planReady = !!state.lastApplyPlan && !!planSignature && state.lastApplyPlan.signature === planSignature;
-    const planTime = planReady ? new Date(state.lastApplyPlan.createdAt).toLocaleString() : "";
-    const backupReady = !!ui3.autoBackupPreview?.checked;
-    const stopOnError = !!ui3.stopOnError?.checked;
-    const backupState = ui3.backupStatus && ui3.backupStatus.style.display !== "none" ? String(ui3.backupStatus.textContent || "").trim() : "";
-    const checklist = state.reflectApplyChecklist && typeof state.reflectApplyChecklist === "object" ? state.reflectApplyChecklist : {};
-    const checklistKeys = ["diff", "plan", "preview", "target"];
-    const checklistTotal = checklistKeys.length;
-    const checklistDone = checklistKeys.filter((key) => !!checklist[key]).length;
-    const targetCountLabel = isNode ? "選んだ差分" : "選んだセクション";
-    const targetCountValue = isNode ? selectedNodeRows.length : scopeInfo.effectiveScopes.length;
-    const nonFieldScopes = scopeInfo.effectiveScopes.filter((key) => key && key !== "fieldSettings");
-    const firstNonFieldScope = nonFieldScopes[0] || "";
-    const checklistComplete = checklistDone === checklistTotal;
-    const safetyLabel = checklistComplete && backupReady && stopOnError ? "準備OK" : "要見直し";
-    const warnings = [];
-    if (!diffReady) warnings.push("差分比較がまだ最新ではありません。「差分比較」または「差分比較して候補作成」から最新化してください。");
-    if (!scopeInfo.baseScopes.length && !isNode) warnings.push("「反映セクションを選ぶ」から、今回まとめて反映するセクションを選んでください。");
-    if (scopeInfo.warning) warnings.push(scopeInfo.warning);
-    if (isNode && !state.reflectRows.length) warnings.push("差分を選んで反映モードです。まず「差分比較して候補作成」で候補を出してください。");
-    if (!checklistComplete) warnings.push("画面下の反映前チェックを完了してください。");
-    if (!backupReady) warnings.push("バックアップ自動保存がOFFです。反映前に「今の比較先を保存」をおすすめします。");
-    const nodeLoadAction = isNode && !state.reflectRows.length ? `<button class="btn sub" data-act="${diffReady ? "loadReflectNodes" : "runDiffLoadReflectNodes"}">${diffReady ? "差分候補を読込" : "差分比較して候補作成"}</button>` : "";
-    const scopeDiffAction = !isNode && actualDiffRows.length ? '<button class="btn sub" data-act="applyScopeDiffOnly">差分があるセクションだけ選ぶ</button>' : "";
-    const fieldEditorAction = !isNode && scopeInfo.effectiveScopes.includes("fieldSettings") ? '<button class="btn sub" data-act="openReflectPreviewEditor">フィールド確認を開く</button>' : "";
-    const sectionEditorAction = !isNode && firstNonFieldScope ? `<button class="btn sub" data-act="openSectionPreviewEditor" data-section="${esc(firstNonFieldScope)}">他設定を編集</button>` : "";
-    const selectedSrcCount = selectedNodeRows.filter((row) => deps.reflectRowModeById(row._id) === "src").length;
-    const selectedTgtCount = selectedNodeRows.length - selectedSrcCount;
-    const selectedSectionLabels = scopeInfo.effectiveScopes.map((key) => SECTION_DEFS.find((item) => item.key === key)?.label || key).slice(0, 6);
-    const selectionMeta = isNode ? `候補 ${state.reflectRows.length}件 / 選択 ${selectedNodeRows.length}件 / 比較元採用 ${selectedSrcCount}件 / 比較先維持 ${selectedTgtCount}件` : `${selectedSectionLabels.join("、") || "未選択"}${scopeInfo.effectiveScopes.length > 6 ? `、他${scopeInfo.effectiveScopes.length - 6}件` : ""}`;
-    const routeLabel = isNode ? "詳細ルート" : "標準ルート";
-    const routeTitle = isNode ? "個別差分を選んで反映" : "セクション単位で反映";
-    const routeSub = isNode ? "必要な差分だけを選び、採用元を切り替えて反映します。" : "差分があるセクションを選び、プラン確認後にまとめて反映します。";
-    const currentStep = !diffReady ? 1 : !targetCountValue ? 2 : !planReady ? 3 : 4;
-    const stepHtml = [
-      { no: 1, title: "差分を作る", meta: diffReady ? `最新差分 ${actualDiffRows.length}件` : "未実行または条件変更あり", done: diffReady },
-      { no: 2, title: "対象を選ぶ", meta: targetCountValue ? `${targetCountLabel} ${targetCountValue}件` : "反映対象が未選択", done: targetCountValue > 0 },
-      { no: 3, title: "プラン確認", meta: planReady ? `確認済み ${state.lastApplyPlan?.totalReq || 0}req` : "未確認", done: planReady },
-      { no: 4, title: "プレビュー反映", meta: checklistComplete ? "チェック完了" : `チェック ${checklistDone}/${checklistTotal}`, done: checklistComplete && planReady }
-    ].map((step) => `<div class="reflect-flow-step${step.done ? " is-done" : ""}${currentStep === step.no ? " is-current" : ""}">
-      <div class="reflect-flow-step__no">${String(step.no).padStart(2, "0")}</div>
-      <div class="reflect-flow-step__body">
-        <div class="reflect-flow-step__title">${esc(step.title)}</div>
-        <div class="reflect-flow-step__meta">${esc(step.meta)}</div>
-      </div>
-    </div>`).join("");
-    const nextAction = !diffReady ? `<button class="btn btn-primary-emphasis" data-act="${isNode ? "runDiffLoadReflectNodes" : "runDiff"}">${isNode ? "差分比較して候補作成" : "差分比較を実行"}</button>` : !targetCountValue ? isNode ? state.reflectRows.length ? '<button class="btn btn-primary-emphasis" data-act="selectVisibleReflectNodes">表示中を選択</button>' : '<button class="btn btn-primary-emphasis" data-act="loadReflectNodes">差分候補を読込</button>' : '<button class="btn btn-primary-emphasis" data-act="openReflectScopePicker">反映セクションを選ぶ</button>' : !planReady ? '<button class="btn btn-primary-emphasis" data-act="previewApplyPlan">実行前プラン確認</button>' : '<button class="btn ok" data-act="applyPreview">プレビューへ反映</button>';
-    const modeSwitchAction = isNode ? '<button class="btn sub" data-act="reflectModeSection">セクション単位へ戻る</button>' : '<button class="btn sub" data-act="reflectModeNode">差分ごとに選ぶ</button>';
-    const planAction = targetCountValue ? '<button class="btn sub" data-act="previewApplyPlan">プラン確認</button>' : isNode ? state.reflectRows.length ? '<button class="btn sub" data-act="selectVisibleReflectNodes">表示中を選択</button>' : `<button class="btn sub" data-act="${diffReady ? "loadReflectNodes" : "runDiffLoadReflectNodes"}">${diffReady ? "差分候補を読込" : "差分比較して候補作成"}</button>` : '<button class="btn sub" data-act="openReflectScopePicker">対象を選ぶ</button>';
-    const jsonRouteAction = '<button class="btn sub" data-act="reflectModeJson">JSON詳細へ</button>';
-    const targetAdjustActions = [
-      scopeDiffAction,
-      nodeLoadAction,
-      fieldEditorAction,
-      sectionEditorAction
-    ].filter(Boolean).join("");
-    const routeSwitchActions = [
-      modeSwitchAction,
-      jsonRouteAction
-    ].filter(Boolean).join("");
-    const highRiskRows = targetRows.filter((row) => row && row.severity === "high" && row.type !== "same");
-    const highRiskCount = highRiskRows.length;
-    const highBreakdown = (() => {
-      const breakdown = {};
-      highRiskRows.forEach((row) => {
-        const key = String(row.sectionKey || "");
-        breakdown[key] = (breakdown[key] || 0) + 1;
-      });
-      return Object.entries(breakdown).slice(0, 4).map(([key, n]) => {
-        const label = SECTION_DEFS.find((d) => d.key === key)?.label || key;
-        return `${esc(label)} ${n}`;
-      }).join(" / ");
-    })();
-    const dangerBanner = highRiskCount > 0 ? `<div class="reflect-danger-banner" role="alert">
-        <span class="reflect-danger-banner__icon" aria-hidden="true">!</span>
-        <div class="reflect-danger-banner__copy">
-          <div class="reflect-danger-banner__title">高重要度の変更 ${highRiskCount}件 が含まれています</div>
-          <div class="reflect-danger-banner__sub">${highBreakdown || "権限の弱化・フィールド削除・状態削除など、影響の大きな変更です"}</div>
-        </div>
-      </div>` : "";
-    const stepNo = !diffReady ? 1 : !targetCountValue ? 2 : !planReady ? 3 : 4;
-    const stepLabels = ["差分を作る", "対象を選ぶ", "プラン確認", "プレビュー反映"];
-    const stepTitle = stepLabels[stepNo - 1];
-    const progressBar = `<div class="reflect-mini-progress" aria-label="進行ステップ"><div class="reflect-mini-progress__bar" style="width:${(stepNo - 1) * 33.3}%"></div>${[1, 2, 3, 4].map((n) => `<span class="reflect-mini-progress__dot${n < stepNo ? " is-done" : ""}${n === stepNo ? " is-current" : ""}" title="${esc(stepLabels[n - 1])}"></span>`).join("")}</div>`;
-    const statChips = `<div class="stat-chip-row" role="group" aria-label="状況サマリー">
-    <div class="stat-chip ${actualDiffRows.length ? "stat-chip--accent" : ""}" title="${diffReady ? "最新差分件数" : "差分は未作成または再計算が必要です"}">
-      <div class="stat-chip__num">${diffReady ? actualDiffRows.length : "—"}</div>
-      <div class="stat-chip__label">差分</div>
-    </div>
-    <div class="stat-chip ${targetCountValue ? "stat-chip--accent" : ""}" title="反映する対象の件数">
-      <div class="stat-chip__num">${targetCountValue}</div>
-      <div class="stat-chip__label">${esc(targetCountLabel)}</div>
-    </div>
-    <div class="stat-chip ${sev.high > 0 ? "stat-chip--danger" : ""}" title="高重要度の差分">
-      <div class="stat-chip__num">${sev.high}</div>
-      <div class="stat-chip__label">高</div>
-    </div>
-    <div class="stat-chip ${sev.medium > 0 ? "stat-chip--warn" : ""}" title="中重要度の差分">
-      <div class="stat-chip__num">${sev.medium}</div>
-      <div class="stat-chip__label">中</div>
-    </div>
-    <div class="stat-chip" title="低重要度の差分">
-      <div class="stat-chip__num">${sev.low}</div>
-      <div class="stat-chip__label">低</div>
-    </div>
-    <div class="stat-chip ${checklistComplete ? "stat-chip--ok" : "stat-chip--warn"}" title="反映前チェックリスト">
-      <div class="stat-chip__num">${checklistDone}<span style="font-size:11px;color:var(--txt-3)">/${checklistTotal}</span></div>
-      <div class="stat-chip__label">安全</div>
-    </div>
-    <div class="stat-chip ${planReady ? "stat-chip--ok" : ""}" title="${planReady ? "最新条件と一致" : "まだ未確認"}">
-      <div class="stat-chip__num">${planReady ? "✓" : "—"}</div>
-      <div class="stat-chip__label">プラン</div>
-    </div>
-  </div>`;
-    const distHtml = (() => {
-      if (!diffReady || !targetRows.length) return "";
-      const SECTION_PALETTE = {
-        fieldSettings: "#3b82f6",
-        layoutSettings: "#6366f1",
-        formSettings: "#0ea5e9",
-        viewSettings: "#f59e0b",
-        reportSettings: "#ec4899",
-        processSettings: "#06b6d4",
-        actionSettings: "#10b981",
-        pluginSettings: "#a855f7",
-        customizeSettings: "#1e293b",
-        appAcl: "#dc2626",
-        fieldAcl: "#ef4444",
-        recordPermissions: "#f97316",
-        notifications: "#fb923c",
-        perRecordNotifications: "#fb923c",
-        reminderNotifications: "#fdba74",
-        categories: "#94a3b8",
-        appSettings: "#64748b",
-        appInfo: "#94a3b8"
-      };
-      const counts = /* @__PURE__ */ new Map();
-      for (const row of targetRows) {
-        const k = String(row?.sectionKey || "");
-        if (!k) continue;
-        counts.set(k, (counts.get(k) || 0) + 1);
-      }
-      const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-      if (!sorted.length) return "";
-      const total = sorted.reduce((acc, [, n]) => acc + n, 0);
-      const filterSec = ui3.diffFilterSection?.value || state.diffFilterSection || "";
-      const segs = sorted.map(([k, n]) => {
-        const lbl = SECTION_DEFS.find((d) => d.key === k)?.label || k;
-        const color = SECTION_PALETTE[k] || "#475569";
-        const flex = Math.max(1, n);
-        const active = filterSec === k ? " is-active" : "";
-        return `<button type="button" class="sec-dist__seg${active}" data-act="filterDiffBySectionFromDist" data-section="${esc(k)}" style="flex:${flex};background:${color}" title="${esc(lbl)} ${n}件 (クリックで差分一覧をこのセクションで絞り込み)">${n >= 3 ? n : ""}</button>`;
-      }).join("");
-      const legend = sorted.slice(0, 6).map(([k, n]) => {
-        const lbl = SECTION_DEFS.find((d) => d.key === k)?.label || k;
-        const color = SECTION_PALETTE[k] || "#475569";
-        return `<span class="sec-dist__legend-item"><span class="sec-dist__legend-swatch" style="background:${color}"></span>${esc(lbl)} ${n}</span>`;
-      }).join("");
-      return `<section class="sec-dist" aria-label="セクション分布">
-      <div class="sec-dist__head">
-        <span class="sec-dist__title">セクション分布</span>
-        <span class="sec-dist__total">全 ${total} 件</span>
-      </div>
-      <div class="sec-dist__bar">${segs}</div>
-      <div class="sec-dist__legend">${legend}${sorted.length > 6 ? `<span class="sec-dist__legend-item">他 ${sorted.length - 6}</span>` : ""}</div>
-    </section>`;
-    })();
-    const detailButtons = [
-      routeSwitchActions,
-      targetAdjustActions,
-      planAction,
-      '<button class="btn sub" data-act="runDiffAndPlan" title="差分比較とプラン確認をまとめて実行">差分比較してプラン</button>',
-      '<button class="btn sub" data-act="runPreviewProdDiff" title="比較先プレビューと本番の差分を確認">プレビュー⇔本番を比較</button>',
-      '<button class="btn sub" data-act="backupTargetPreview" title="今の比較先プレビューをJSON保存">今の比較先を保存</button>',
-      '<button class="btn sub" data-act="importTargetPreviewBackupFile" title="保存したバックアップJSONを読み込む">保存済みJSONを読込</button>',
-      '<button class="btn sub" data-act="markReflectTargetConfirmed" title="チェックリスト「反映先=プレビュー」を済にする">反映先を確認済みにする</button>'
-    ].filter(Boolean).join("");
-    const headlineMsg = warnings[0] || "次のアクションへ進めます";
-    return `<div class="reflect-assist reflect-assist--compact">
-    ${dangerBanner}
-    <section class="reflect-headline" data-step="${stepNo}">
-      <div class="reflect-headline__top">
-        <div class="reflect-headline__step">STEP ${stepNo}/4</div>
-        <div class="reflect-headline__title">${esc(stepTitle)}</div>
-        <div class="reflect-headline__meta">${esc(routeLabel)} ／ ${esc(selectionMeta || "未選択")}</div>
-      </div>
-      ${progressBar}
-      <div class="reflect-headline__action-row">
-        <div class="reflect-headline__action">${nextAction}</div>
-      </div>
-      ${statChips}
-      <div class="reflect-headline__hint ${warnings.length ? "is-warn" : "is-ok"}">${esc(headlineMsg)}</div>
-    </section>
-    ${distHtml}
-    <details class="reflect-detail-fold" open>
-      <summary>
-        <span>その他の操作・詳細</span>
-        <small>ルート切替 / 対象調整 / 個別確認 / バックアップ / 残り警告</small>
-      </summary>
-      <div class="reflect-detail-fold__body">
-        <div class="reflect-detail-fold__buttons">${detailButtons}</div>
-        ${warnings.length > 1 ? `<ul class="reflect-detail-fold__warns">${warnings.slice(1).map((msg) => `<li>${esc(msg)}</li>`).join("")}</ul>` : ""}
-        ${backupState ? `<div class="reflect-good">${esc(backupState)}${state.lastPreviewBackupPayload ? " / 必要なら「直前保存を戻す」で元に戻せます。" : ""}</div>` : ""}
-        <div class="reflect-detail-fold__small">
-          反映前チェック ${checklistDone}/${checklistTotal} ／ バックアップ ${backupReady ? "ON" : "OFF"} ／ エラー時 ${stopOnError ? "中断" : "継続"}
-          ${planReady ? `／ プラン: ${esc(planTime)}` : ""}
-        </div>
-      </div>
-    </details>
-  </div>`;
   }
   function buildPlannedRequestsListHtml(plannedRequests) {
     const list = Array.isArray(plannedRequests) ? plannedRequests : [];
@@ -14362,11 +14139,19 @@ ${tgt.full}`);
         resolve(false);
         return;
       }
+      const requireKeyword = opts.requireKeyword !== false;
       const overlay = doc.createElement("div");
       overlay.className = `kus-confirm-overlay kus-confirm-overlay--${opts.riskTone || "danger"}`;
       overlay.setAttribute("role", "dialog");
       overlay.setAttribute("aria-modal", "true");
       overlay.setAttribute("aria-labelledby", "kus-confirm-title");
+      const promptHtml = requireKeyword ? `<label class="kus-confirm-prompt">
+          確認のため <code>${esc(opts.keyword)}</code> と入力してください
+          <input type="text" class="kus-confirm-input" autocomplete="off" spellcheck="false" />
+        </label>` : `<label class="kus-confirm-prompt kus-confirm-prompt--ack">
+          <input type="checkbox" class="kus-confirm-ack" />
+          <span>上記の内容を確認しました</span>
+        </label>`;
       overlay.innerHTML = `
       <div class="kus-confirm-card">
         <div class="kus-confirm-header">
@@ -14374,10 +14159,7 @@ ${tgt.full}`);
           <h3 class="kus-confirm-title" id="kus-confirm-title">${esc(opts.title)}</h3>
         </div>
         <div class="kus-confirm-body">${escMultiline(opts.body)}</div>
-        <label class="kus-confirm-prompt">
-          確認のため <code>${esc(opts.keyword)}</code> と入力してください
-          <input type="text" class="kus-confirm-input" autocomplete="off" spellcheck="false" />
-        </label>
+        ${promptHtml}
         <div class="kus-confirm-actions">
           <button type="button" class="kus-confirm-cancel">キャンセル</button>
           <button type="button" class="kus-confirm-ok" disabled>${esc(opts.okLabel || "実行する")}</button>
@@ -14386,6 +14168,7 @@ ${tgt.full}`);
     `;
       root2.appendChild(overlay);
       const input = overlay.querySelector(".kus-confirm-input");
+      const ack = overlay.querySelector(".kus-confirm-ack");
       const ok = overlay.querySelector(".kus-confirm-ok");
       const cancel = overlay.querySelector(".kus-confirm-cancel");
       const close = (result) => {
@@ -14395,15 +14178,24 @@ ${tgt.full}`);
       input?.addEventListener("input", () => {
         if (ok) ok.disabled = (input.value || "").trim() !== opts.keyword;
       });
-      input?.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && ok && !ok.disabled) close(true);
-        if (event.key === "Escape") close(false);
+      ack?.addEventListener("change", () => {
+        if (ok) ok.disabled = !ack.checked;
+      });
+      overlay.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && ok && !ok.disabled) {
+          event.preventDefault();
+          close(true);
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          close(false);
+        }
       });
       ok?.addEventListener("click", () => {
         if (!ok.disabled) close(true);
       });
       cancel?.addEventListener("click", () => close(false));
-      setTimeout(() => input?.focus(), 0);
+      setTimeout(() => (input || ack)?.focus(), 0);
     });
   }
   function escMultiline(text) {
@@ -15986,6 +15778,63 @@ ${warnings.join("\n")}
       init_rowMode();
       BULK_MODE_CONFIRM_THRESHOLD = 5;
       reflectPresetsMemory = [];
+    }
+  });
+
+  // src/reflect/planInsights.ts
+  function countDeleteTargets(body) {
+    if (!body || typeof body !== "object") return 1;
+    for (const [key, value] of Object.entries(body)) {
+      if (key === "app") continue;
+      if (Array.isArray(value)) return value.length;
+    }
+    return 1;
+  }
+  function summarizePlanDeletes(plannedRequests, excludedSectionKeys = []) {
+    const excluded = new Set((excludedSectionKeys || []).map((k) => String(k)));
+    const bySection = /* @__PURE__ */ new Map();
+    for (const req of Array.isArray(plannedRequests) ? plannedRequests : []) {
+      if (String(req?.method || "").toUpperCase() !== "DELETE") continue;
+      const sectionKey = String(req?.sectionKey || "");
+      if (excluded.has(sectionKey)) continue;
+      const sectionLabel2 = String(req?.sectionLabel || sectionKey || "-");
+      const slot = bySection.get(sectionKey) || { sectionKey, sectionLabel: sectionLabel2, count: 0 };
+      slot.count += countDeleteTargets(req?.body);
+      bySection.set(sectionKey, slot);
+    }
+    const sections = [...bySection.values()].sort((a, b) => b.count - a.count);
+    return { total: sections.reduce((sum, s) => sum + s.count, 0), sections };
+  }
+  function assessApplyRisk(input) {
+    const diffSummary = input.diffSummary || { total: 0, high: 0, medium: 0, low: 0 };
+    const requestCount = Number(input.requestCount || 0);
+    const deleteCount = Number(input.deleteCount || 0);
+    const issues = [];
+    if (input.sameConnection) {
+      issues.push("比較元と比較先が同一接続です（同一 appId / guestId）");
+    }
+    if (diffSummary.total >= input.diffThreshold) {
+      issues.push(`差分件数がしきい値以上です（${diffSummary.total}件 / しきい値 ${input.diffThreshold}件）`);
+    }
+    if (diffSummary.high > 0) {
+      issues.push(`高重要度の差分を含みます（高 ${diffSummary.high}件）`);
+    }
+    if (requestCount >= input.requestThreshold) {
+      issues.push(`APIリクエスト予定数が多いです（${requestCount}件 / しきい値 ${input.requestThreshold}件）`);
+    }
+    if (deleteCount > 0) {
+      issues.push(`削除リクエストを含みます（削除対象 ${deleteCount}件）`);
+    }
+    const highRisk = input.sameConnection || diffSummary.high > 0;
+    return {
+      issues,
+      highRisk,
+      requireKeyword: highRisk || issues.length > 0
+    };
+  }
+  var init_planInsights = __esm({
+    "src/reflect/planInsights.ts"() {
+      "use strict";
     }
   });
 
@@ -17873,47 +17722,50 @@ ${lines.join("\n")}
     return out;
   }
   async function confirmApplyRiskGuard(mode, c, options = {}) {
-    const issues = [];
     const labels = [];
     const diffSummary = options.diffSummary || { total: 0, high: 0, medium: 0, low: 0 };
     const requestCount = Number(options.requestCount || 0);
-    if (isSameConnectionPair(c)) {
-      issues.push("比較元と比較先が同一接続です（同一 appId / guestId）");
-    }
-    if (diffSummary.total >= APPLY_GUARD_DIFF_THRESHOLD) {
-      issues.push(`差分件数がしきい値以上です（${diffSummary.total}件 / しきい値 ${APPLY_GUARD_DIFF_THRESHOLD}件）`);
-    }
-    if (diffSummary.high > 0) {
-      issues.push(`高重要度の差分を含みます（高 ${diffSummary.high}件）`);
-    }
-    if (requestCount >= APPLY_GUARD_REQUEST_THRESHOLD) {
-      issues.push(`APIリクエスト予定数が多いです（${requestCount}件 / しきい値 ${APPLY_GUARD_REQUEST_THRESHOLD}件）`);
-    }
+    const plan = state.lastApplyPlan;
+    const deleteSummary = summarizePlanDeletes(
+      Array.isArray(plan?.plannedRequests) ? plan.plannedRequests : [],
+      Array.isArray(plan?.excludedSectionKeys) ? plan.excludedSectionKeys : []
+    );
+    const risk = assessApplyRisk({
+      sameConnection: isSameConnectionPair(c),
+      diffSummary,
+      requestCount,
+      deleteCount: deleteSummary.total,
+      diffThreshold: APPLY_GUARD_DIFF_THRESHOLD,
+      requestThreshold: APPLY_GUARD_REQUEST_THRESHOLD
+    });
     if (Array.isArray(options.scopeLabels) && options.scopeLabels.length) {
       labels.push(`対象セクション: ${options.scopeLabels.join(", ")}`);
     }
     labels.push(`差分件数: ${diffSummary.total}件（高 ${diffSummary.high} / 中 ${diffSummary.medium} / 低 ${diffSummary.low}）`);
     if (requestCount > 0) labels.push(`予定リクエスト: ${requestCount}件`);
-    labels.push(`しきい値: 差分${APPLY_GUARD_DIFF_THRESHOLD}件 / リクエスト${APPLY_GUARD_REQUEST_THRESHOLD}件を超えると警告`);
+    if (deleteSummary.total > 0) {
+      labels.push(`削除対象: ${deleteSummary.total}件（${deleteSummary.sections.map((s) => `${s.sectionLabel} ${s.count}`).join(" / ")}）`);
+    }
     const modeLabel = mode === "nodes" ? "ノード反映" : mode === "patch" ? "JSONパッチ反映" : "プレビュー反映";
     const targetAppId = String(c?.target?.appId || "").trim();
+    const targetAppName = extractAppNameFromBundle(state.importedTargetBundle || state.lastTargetBundle) || "";
     const bodyLines = [
       `【最終確認: ${modeLabel}】`,
-      `比較先アプリ: ${targetAppId || "-"}`,
+      `比較先アプリ: ${targetAppId || "-"}${targetAppName ? `（${targetAppName}）` : ""} のプレビューへ書き込みます`,
       ...labels
     ];
-    if (issues.length) {
-      bodyLines.push("", "注意点:", ...issues.map((line) => ` - ${line}`));
+    if (risk.issues.length) {
+      bodyLines.push("", "注意点:", ...risk.issues.map((line) => ` - ${line}`));
     } else {
       bodyLines.push("", "注意点: なし（しきい値以下）");
     }
-    const highRisk = isSameConnectionPair(c) || diffSummary.high > 0;
     return confirmDestructive({
       title: `${modeLabel} の最終確認`,
       body: bodyLines.join("\n"),
-      keyword: highRisk && targetAppId ? targetAppId : "実行する",
+      keyword: risk.highRisk && targetAppId ? targetAppId : "実行する",
       okLabel: `${modeLabel}を実行`,
-      riskTone: highRisk ? "danger" : "warning"
+      riskTone: risk.highRisk ? "danger" : "warning",
+      requireKeyword: risk.requireKeyword
     });
   }
   async function assertTargetPreviewMatchesPlannedBaseline(prefix, app, sectionKeys) {
@@ -18971,6 +18823,7 @@ ${lines.join("\n")}
       init_plan();
       init_helpers();
       init_rowMode();
+      init_planInsights();
       init_nodeModeUi();
       init_dialog();
       init_oss_integrations();
@@ -19609,7 +19462,7 @@ ${lines.join("\n")}
     else cur.push(key);
     plan.excludedSectionKeys = cur;
     const updated = updatePlanCardExcludeStateInDom(plan, key);
-    if (!updated) {
+    if (!updated && !inlineConfirmActive) {
       try {
         renderPlanIntoModal(plan, Array.isArray(plan.plannedRequests) ? plan.plannedRequests : []);
       } catch (_e) {
@@ -19655,17 +19508,29 @@ ${lines.join("\n")}
       if (applyBtnLabel) {
         applyBtnLabel.textContent = excludedCount > 0 ? `このプランで反映する（${remainingReq}/${totalReqAll}件）` : "このプランで反映する";
       }
+      const execBtn = root2.querySelector("#u_planExecute");
+      if (execBtn) {
+        execBtn.textContent = buildPlanExecuteLabel({
+          cardsHtml: "",
+          totalReqAll,
+          remainingReq,
+          excludedCount,
+          remainingMetaHtml: ""
+        });
+      }
+      const deleteSlot = root2.querySelector("[data-plan-delete-warning]");
+      if (deleteSlot) deleteSlot.innerHTML = renderPlanDeleteWarningHtml(plan);
       return true;
     } catch (_e) {
       return false;
     }
   }
   function showInlineConfirmation(plan, options) {
-    const appIdRefs = options && options.appIdRefs || [];
+    const appIdRefs = options && options.appIdRefs || plan?.appIdRefs || [];
     return new Promise((resolve) => {
       const stamp = new Date(plan.createdAt).toLocaleString();
       const planText = (plan.logs || []).join("\n") || "(プラン詳細なし)";
-      const appIdSection = renderAppIdConfirmSection2(appIdRefs);
+      const appIdSection = appIdRefs.length ? `<details class="plan-confirm-appids"><summary>関連アプリID一覧（${appIdRefs.length}件）— ルックアップ等の参照先を確認</summary>${renderAppIdConfirmSection2(appIdRefs)}</details>` : "";
       const baselineErrors = Array.isArray(plan?.baselineErrors) ? plan.baselineErrors : [];
       const baselineWarning = baselineErrors.length ? `<div class="plan-baseline-warning" style="margin:8px 0;padding:8px 10px;border:1px solid #d97706;background:#fef3c7;color:#92400e;border-radius:6px;font-size:12px">
           <div style="font-weight:700;margin-bottom:4px">⚠ ベースライン取得失敗 ${baselineErrors.length} セクション</div>
@@ -19676,6 +19541,8 @@ ${lines.join("\n")}
       const doc = getToolDocument();
       const modalEl = doc.getElementById("u_reflectPlanModal");
       const modalBody = modalEl?.querySelector(".reflect-modal-body");
+      const modalFoot = modalEl?.querySelector(".reflect-modal-foot");
+      const modalTitle = modalEl?.querySelector(".reflect-modal-title");
       const fallbackHost = modalBody || ui.result;
       if (!fallbackHost) {
         resolve(false);
@@ -19683,18 +19550,31 @@ ${lines.join("\n")}
       }
       const previousHtml = fallbackHost.innerHTML;
       const previousScrollTop = fallbackHost.scrollTop || 0;
+      const previousTitle = modalTitle ? modalTitle.textContent : "";
       if (modalEl) modalEl.hidden = false;
+      if (modalFoot) modalFoot.style.display = "none";
+      if (modalTitle) modalTitle.textContent = "実行前の最終確認";
+      const reqs = Array.isArray(plan.plannedRequests) ? plan.plannedRequests : [];
+      const cardsView = buildPlanSectionCardsHtml(plan, reqs);
+      const execLabel = buildPlanExecuteLabel(cardsView);
       const execDisabled = baselineErrors.length ? "disabled" : "";
-      fallbackHost.innerHTML = `<div class="plan-confirm-panel">
-      <div style="font-weight:700;font-size:13px;margin-bottom:8px">実行前プラン確認</div>
+      inlineConfirmActive = true;
+      fallbackHost.innerHTML = `<div class="plan-confirm-panel" data-inline-confirm="1">
+      <div class="plan-confirm-head">
+        <div class="plan-confirm-head__title">実行前の最終確認</div>
+        <div class="plan-confirm-head__meta">予定リクエスト ${plan.totalReq || 0} 件 ／ ${esc(stamp)}${cardsView.remainingMetaHtml}</div>
+      </div>
+      ${renderPlanTargetLineHtml()}
       ${renderPlanRequestSummary(plan)}
+      <div class="plan-delete-warning-slot" data-plan-delete-warning>${renderPlanDeleteWarningHtml(plan)}</div>
       ${baselineWarning}
       ${appIdSection}
-      <div class="plan-summary">${esc(planText)}</div>
+      <div class="plan-confirm-cards">${cardsView.cardsHtml || '<div class="muted">予定リクエストがありません</div>'}</div>
+      <details class="plan-confirm-rawlogs"><summary>テキストログを表示</summary><div class="plan-summary">${esc(planText)}</div></details>
       <div class="plan-actions">
-        <span class="plan-meta">予定リクエスト: ${plan.totalReq || 0}件 | 作成: ${esc(stamp)}</span>
+        <span class="plan-meta">不要なセクションは各カードの「除外」で外せます。実行後も「直前保存を戻す」で復元できます。</span>
         <button class="btn sub" id="u_planCancel">キャンセル</button>
-        <button class="btn ok" id="u_planExecute" ${execDisabled}>このまま実行</button>
+        <button class="btn ok" id="u_planExecute" ${execDisabled}>${esc(execLabel)}</button>
       </div>
     </div>`;
       if (baselineErrors.length) {
@@ -19705,26 +19585,38 @@ ${lines.join("\n")}
         });
       }
       fallbackHost.scrollTop = 0;
-      const cleanup = () => {
+      let finished = false;
+      let observer = null;
+      const finish = (result) => {
+        if (finished) return;
+        finished = true;
+        inlineConfirmActive = false;
+        if (observer) {
+          observer.disconnect();
+          observer = null;
+        }
         const execBtn = doc.getElementById("u_planExecute");
         const cancelBtn = doc.getElementById("u_planCancel");
         if (execBtn) execBtn.removeEventListener("click", onExec);
         if (cancelBtn) cancelBtn.removeEventListener("click", onCancel);
-      };
-      const onExec = () => {
-        cleanup();
-        if (modalEl) modalEl.hidden = true;
-        resolve(true);
-      };
-      const onCancel = () => {
-        cleanup();
         fallbackHost.innerHTML = previousHtml;
         fallbackHost.scrollTop = previousScrollTop;
+        if (modalFoot) modalFoot.style.display = "";
+        if (modalTitle) modalTitle.textContent = previousTitle;
         if (modalEl) modalEl.hidden = true;
-        resolve(false);
+        resolve(result);
       };
+      const onExec = () => finish(true);
+      const onCancel = () => finish(false);
       doc.getElementById("u_planExecute")?.addEventListener("click", onExec);
       doc.getElementById("u_planCancel")?.addEventListener("click", onCancel);
+      setTimeout(() => doc.getElementById("u_planCancel")?.focus?.(), 0);
+      if (modalEl && typeof MutationObserver !== "undefined") {
+        observer = new MutationObserver(() => {
+          if (!finished && modalEl.hidden) finish(false);
+        });
+        observer.observe(modalEl, { attributes: true, attributeFilter: ["hidden"] });
+      }
     });
   }
   async function ensureApplyPlanApproved(signature, mode, planRunner, options) {
@@ -19735,6 +19627,14 @@ ${lines.join("\n")}
     }
     const currentPlan = state.lastApplyPlan;
     if (!currentPlan) return false;
+    if (valid) {
+      const doc = getToolDocument();
+      const modalEl = doc.getElementById("u_reflectPlanModal");
+      if (modalEl && !modalEl.hidden) {
+        modalEl.hidden = true;
+        return true;
+      }
+    }
     return showInlineConfirmation(currentPlan, options);
   }
   async function runPreviewApplyPlanNodes() {
@@ -19869,7 +19769,8 @@ ${lines.join("\n")}
     }
     lines.push(`合計予定リクエスト数: ${totalReq}`);
     lines.push("※ ノードモードは差分パスをもとに比較先プレビューへ反映します。");
-    markApplyPlan(planSignature, "nodes", totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors });
+    const appIdRefs = state.lastSourceBundle ? extractReferencedAppIds(state.lastSourceBundle, sectionKeys, lookupMap) : [];
+    markApplyPlan(planSignature, "nodes", totalReq, lines, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors, appIdRefs });
     renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
     renderReflectAssistPanel();
     renderReflectMainPanel();
@@ -20027,7 +19928,8 @@ ${lines.join("\n")}
       logs.push("");
     }
     logs.push(`合計予定リクエスト数: ${totalReq}`);
-    markApplyPlan(planSignature, "section", totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors });
+    const appIdRefs = sourceBundle ? extractReferencedAppIds(sourceBundle, scopes, lookupMap) : [];
+    markApplyPlan(planSignature, "section", totalReq, logs, { targetSectionBaselines, sectionPreviews, plannedRequests, baselineErrors, appIdRefs });
     renderPlanIntoModal(state.lastApplyPlan, plannedRequests);
     renderReflectAssistPanel();
     renderReflectMainPanel();
@@ -20043,7 +19945,45 @@ ${lines.join("\n")}
       ui.result.innerHTML = html;
     }
   }
-  function renderPlanConfirmPanelHtml(plan, plannedRequests) {
+  function renderPlanTargetLineHtml() {
+    let src = { appId: "", guestId: "" };
+    let tgt = { appId: "", guestId: "" };
+    try {
+      const c = commonParams();
+      src = { appId: String(c.source?.appId || ""), guestId: String(c.source?.guestId || "") };
+      tgt = { appId: String(c.target?.appId || ""), guestId: String(c.target?.guestId || "") };
+    } catch (_e) {
+      return "";
+    }
+    const srcName = extractAppNameFromBundle(state.importedSourceBundle || state.lastSourceBundle) || "";
+    const tgtName = extractAppNameFromBundle(state.importedTargetBundle || state.lastTargetBundle) || "";
+    const fmt = (appId, name, guestId) => {
+      const guest = guestId ? `（ゲスト ${esc(guestId)}）` : "";
+      return `App ${esc(appId || "-")}${name ? ` ${esc(name)}` : ""}${guest}`;
+    };
+    return `<div class="plan-confirm-target" aria-label="反映の方向">
+    <span class="plan-confirm-target__side">比較元 ${fmt(src.appId, srcName, src.guestId)}</span>
+    <span class="plan-confirm-target__arrow" aria-hidden="true">→</span>
+    <span class="plan-confirm-target__side plan-confirm-target__side--target">比較先 ${fmt(tgt.appId, tgtName, tgt.guestId)}</span>
+    <span class="plan-confirm-target__badge">プレビューへ書き込み</span>
+  </div>`;
+  }
+  function renderPlanDeleteWarningHtml(plan) {
+    const reqs = Array.isArray(plan?.plannedRequests) ? plan.plannedRequests : [];
+    const excludedKeys = Array.isArray(plan?.excludedSectionKeys) ? plan.excludedSectionKeys : [];
+    const del = summarizePlanDeletes(reqs, excludedKeys);
+    if (!del.total) return "";
+    const breakdown = del.sections.map((s) => `${esc(s.sectionLabel)} ${s.count}件`).join(" ／ ");
+    return `<div class="plan-delete-warning" role="alert">
+    <div class="plan-delete-warning__title">⚠ 削除を含むプランです（合計 ${del.total}件）</div>
+    <div class="plan-delete-warning__body">${breakdown}</div>
+    <div class="plan-delete-warning__sub">削除は本番への反映（デプロイ）時に実データへも影響します。バックアップ自動保存をONにしたままの実行を推奨します。</div>
+  </div>`;
+  }
+  function buildPlanExecuteLabel(view) {
+    return view.excludedCount > 0 ? `このまま実行（${view.remainingReq}/${view.totalReqAll}件）` : `このまま実行（リクエスト ${view.totalReqAll}件）`;
+  }
+  function buildPlanSectionCardsHtml(plan, plannedRequests) {
     const reqs = Array.isArray(plannedRequests) ? plannedRequests : [];
     const sectionPreviews = plan?.sectionPreviews || {};
     const excluded = new Set(
@@ -20137,18 +20077,27 @@ ${lines.join("\n")}
       <div class="plan-card__body">${hintHtml}${itemSummaryHtml}${detailRows}${more}</div>
     </details>`;
     }).join("");
+    const remainingMetaHtml = excludedCount > 0 ? ` ／ <span class="plan-confirm-head__remaining">実行対象 ${remainingReq} / ${totalReqAll} 件（除外 ${excludedCount} セクション）</span>` : "";
+    return { cardsHtml: cards, totalReqAll, remainingReq, excludedCount, remainingMetaHtml };
+  }
+  function renderPlanConfirmPanelHtml(plan, plannedRequests) {
+    const cardsView = buildPlanSectionCardsHtml(plan, plannedRequests);
     const stamp = new Date(plan?.createdAt || Date.now()).toLocaleString();
-    const remainingMeta = excludedCount > 0 ? ` ／ <span class="plan-confirm-head__remaining">実行対象 ${remainingReq} / ${totalReqAll} 件（除外 ${excludedCount} セクション）</span>` : "";
+    const appIdRefs = Array.isArray(plan?.appIdRefs) ? plan.appIdRefs : [];
+    const appIdSection = appIdRefs.length ? `<details class="plan-confirm-appids"><summary>関連アプリID一覧（${appIdRefs.length}件）— ルックアップ等の参照先を確認</summary>${renderAppIdConfirmSection2(appIdRefs)}</details>` : "";
     return `<div class="plan-confirm-panel">
     <div class="plan-confirm-head">
       <div class="plan-confirm-head__title">実行前プラン確認</div>
-      <div class="plan-confirm-head__meta">予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}${remainingMeta}</div>
+      <div class="plan-confirm-head__meta">予定リクエスト ${plan?.totalReq || 0} 件 ／ ${esc(stamp)}${cardsView.remainingMetaHtml}</div>
     </div>
+    ${renderPlanTargetLineHtml()}
     ${renderPlanRequestSummary(plan)}
-    <div class="plan-confirm-cards">${cards || '<div class="muted">予定リクエストがありません</div>'}</div>
+    <div class="plan-delete-warning-slot" data-plan-delete-warning>${renderPlanDeleteWarningHtml(plan)}</div>
+    ${appIdSection}
+    <div class="plan-confirm-cards">${cardsView.cardsHtml || '<div class="muted">予定リクエストがありません</div>'}</div>
     <div class="plan-confirm-actions">
       <button type="button" class="btn-stage" data-stage="apply" data-act="applyPreview" title="このプランの内容で比較先プレビューへ反映します（チェックを入れたセクションは除外されます）">
-        <span class="btn-stage__icon">🚀</span><span>このプランで反映する${excludedCount > 0 ? `（${remainingReq}/${totalReqAll}件）` : ""}</span>
+        <span class="btn-stage__icon">🚀</span><span>このプランで反映する${cardsView.excludedCount > 0 ? `（${cardsView.remainingReq}/${cardsView.totalReqAll}件）` : ""}</span>
         <span class="btn-stage__shortcut">Ctrl+Shift+Enter</span>
       </button>
       <button type="button" class="btn sub" data-act="exportDryRunPlan" title="APIを実行せずプランをJSONで保存">ドライランJSONを保存</button>
@@ -20332,7 +20281,7 @@ ${reason}` : "",
     }, 1e3);
     setStatus(`レビュー依頼ZIPを保存しました: ${filename}（APIは送信していません）`);
   }
-  var PREVIEW_MAX_ENTRIES, PREVIEW_SNIPPET_MAX, ENTITY_TYPE_LABEL_MAP, ITEM_PREVIEW_CAP, APPLY_REQUEST_CHUNK_SIZE, CHUNK_SIZE_BY_PATH;
+  var PREVIEW_MAX_ENTRIES, PREVIEW_SNIPPET_MAX, ENTITY_TYPE_LABEL_MAP, ITEM_PREVIEW_CAP, APPLY_REQUEST_CHUNK_SIZE, CHUNK_SIZE_BY_PATH, inlineConfirmActive;
   var init_plan = __esm({
     "src/reflect/plan.ts"() {
       "use strict";
@@ -20344,6 +20293,7 @@ ${reason}` : "",
       init_nodeModeUi();
       init_api();
       init_apply();
+      init_planInsights();
       init_rowMode();
       init_progress_pure();
       init_helpers();
@@ -20370,6 +20320,7 @@ ${reason}` : "",
         "/app/reports.json": 20,
         "/app/actions.json": 20
       };
+      inlineConfirmActive = false;
     }
   });
 
@@ -27303,6 +27254,19 @@ ${detail}`);
 #kintone-unified-suite-v2 .reflect-log-line--blank{height:6px}
 /* === V3+U3 Plan confirm cards === */
 #kintone-unified-suite-v2 .plan-confirm-panel{display:flex;flex-direction:column;gap:10px;padding:10px}
+#kintone-unified-suite-v2 .plan-confirm-target{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;font-size:12px;color:#1e3a8a}
+#kintone-unified-suite-v2 .plan-confirm-target__side{font-weight:700}
+#kintone-unified-suite-v2 .plan-confirm-target__side--target{color:#1d4ed8}
+#kintone-unified-suite-v2 .plan-confirm-target__arrow{font-weight:900;color:#3b82f6}
+#kintone-unified-suite-v2 .plan-confirm-target__badge{margin-left:auto;font-size:10px;font-weight:800;letter-spacing:.04em;background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:2px 10px}
+#kintone-unified-suite-v2 .plan-delete-warning{border:1px solid #fca5a5;border-radius:8px;background:#fef2f2;padding:8px 12px;font-size:12px;color:#7f1d1d}
+#kintone-unified-suite-v2 .plan-delete-warning__title{font-weight:800;margin-bottom:2px}
+#kintone-unified-suite-v2 .plan-delete-warning__body{font-weight:700}
+#kintone-unified-suite-v2 .plan-delete-warning__sub{margin-top:4px;font-size:11px;color:#991b1b}
+#kintone-unified-suite-v2 .plan-delete-warning-slot:empty{display:none}
+#kintone-unified-suite-v2 .plan-confirm-appids{border:1px solid #e2e8f0;border-radius:8px;background:#fff;padding:6px 10px;font-size:12px}
+#kintone-unified-suite-v2 .plan-confirm-appids>summary{cursor:pointer;font-weight:700;color:#334155}
+#kintone-unified-suite-v2 .plan-confirm-appids[open]>summary{margin-bottom:6px}
 #kintone-unified-suite-v2 .plan-confirm-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
 #kintone-unified-suite-v2 .plan-confirm-head__title{font-size:14px;font-weight:900;color:#0f172a}
 #kintone-unified-suite-v2 .plan-confirm-head__meta{font-size:11px;color:#64748b}
@@ -30488,6 +30452,8 @@ ${detail}`);
 #kintone-unified-suite-v2 .kus-confirm-prompt code{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-weight:700;color:#b91c1c}
 #kintone-unified-suite-v2 .kus-confirm-input{width:100%;margin-top:6px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 #kintone-unified-suite-v2 .kus-confirm-input:focus{outline:none;border-color:#dc2626;box-shadow:0 0 0 3px rgba(248,113,113,.25)}
+#kintone-unified-suite-v2 .kus-confirm-prompt--ack{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#0f172a;cursor:pointer;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc}
+#kintone-unified-suite-v2 .kus-confirm-prompt--ack input{width:16px;height:16px;accent-color:#d97706;cursor:pointer}
 #kintone-unified-suite-v2 .kus-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
 #kintone-unified-suite-v2 .kus-confirm-cancel{padding:8px 16px;border-radius:8px;border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;cursor:pointer;font-weight:700;font-size:12px}
 #kintone-unified-suite-v2 .kus-confirm-cancel:hover{background:#e2e8f0}
