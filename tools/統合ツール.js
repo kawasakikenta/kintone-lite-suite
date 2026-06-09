@@ -22456,13 +22456,13 @@ function buildFieldDisplayName(field){
   return field.label || field.code || field.path || "";
 }
 function fieldPrefixForNodeLabel(field){
-  if(field.isPK) return "KEY";
-  if(field.isLookup) return "FK";
-  if(field.isRef) return "REF";
-  if(field.required) return "REQ";
-  if(field.type === "SUBTABLE") return "SUB";
-  if(field.inSubtable) return "COL";
-  return "FLD";
+  if(field.isPK) return "🔑";
+  if(field.isLookup) return "🔗";
+  if(field.isRef) return "📋";
+  if(field.required) return "✱";
+  if(field.type === "SUBTABLE") return "▤";
+  if(field.inSubtable) return "↳";
+  return "・";
 }
 function buildFieldPreviewLine(field){
   const label = buildFieldDisplayName(field).trim();
@@ -22480,6 +22480,11 @@ function buildFieldPreviewLine(field){
   }
   return prefix + " " + label + (code && code !== label ? " [" + code + "]" : "");
 }
+function estimateLabelLineUnits(line){
+  let units = 0;
+  for(const ch of String(line || "")) units += ch.codePointAt(0) > 0xFF ? 1 : 0.55;
+  return units;
+}
 function buildNodeLabel(app){
   const limits = { compact: 6, standard: 10, full: 16 };
   const maxLines = limits[ER_OPTIONS.fieldDensity] || limits.standard;
@@ -22491,18 +22496,21 @@ function buildNodeLabel(app){
     return String(buildFieldDisplayName(a) || a.code || '').localeCompare(String(buildFieldDisplayName(b) || b.code || ''));
   });
   const preview = ordered.slice(0, maxLines).map((f)=>buildFieldPreviewLine(f));
-  if(ordered.length > maxLines) preview.push("+ " + (ordered.length - maxLines) + " 件");
+  if(ordered.length > maxLines) preview.push("… 他 " + (ordered.length - maxLines) + " 項目");
   const totalFieldCount = typeof app.totalFieldCount === "number" ? app.totalFieldCount : fields.length;
   const fieldCountText = totalFieldCount > fields.length
     ? fields.length + "/" + totalFieldCount + "項目"
     : fields.length + "項目";
-  const meta = [
-    "App " + app.id,
-    fieldCountText,
-    app.relations.length + "関連",
-    "深さ " + (app.depth || 0)
-  ].join(" / ");
-  return [(app.depth || 0) === 0 ? "★ " + app.name : app.name, meta, ...preview].join("\\n");
+  const metaParts = ["App " + app.id, fieldCountText, app.relations.length + "関連"];
+  if((app.depth || 0) > 0) metaParts.push("深さ" + app.depth);
+  const meta = metaParts.join(" ・ ");
+  const isStart = (ER_OPTIONS.startAppIds || []).map(String).includes(String(app.id));
+  const title = (app.ok === false ? "⚠ " : (isStart ? "★ " : "")) + app.name;
+  if(!preview.length) return [title, meta].join("\\n");
+  const bodyLines = [title, meta, ...preview];
+  const maxUnits = bodyLines.reduce((max, line)=>Math.max(max, estimateLabelLineUnits(line)), 0);
+  const divider = "─".repeat(Math.min(32, Math.max(10, Math.round(maxUnits * 1.4))));
+  return [title, meta, divider, ...preview].join("\\n");
 }
 function detailFieldGroups(app){
   const groups={pk:[],lookup:[],ref:[],required:[],subtable:[],normal:[]};
@@ -22541,9 +22549,10 @@ function buildCyStyle(palette){
   return [
     {selector:"node",style:{
       "shape":"round-rectangle","label":"data(label)","text-valign":"center","text-halign":"center",
+      "text-justification":"left",
       "text-wrap":"wrap","text-max-width":nodeMetrics.maxWidth,"font-size":nodeMetrics.fontSize,"line-height":nodeMetrics.lineHeight,
       "font-family":"'DM Sans','Hiragino Sans','Yu Gothic UI',sans-serif","font-weight":600,"color":palette.text,
-      "text-outline-color":palette.surface,"text-outline-width":"2px",
+      "text-outline-color":palette.surface,"text-outline-width":"1px",
       "background-color":palette.surface,"border-width":2,"border-color":palette.border,"padding":nodeMetrics.padding,"width":"label","height":"label"
     }},
     {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
@@ -22559,28 +22568,27 @@ function buildCyStyle(palette){
     {selector:"node.focus-dim",style:{"opacity":0.08}},
     {selector:"node.dimmed",style:{"opacity":0.14}},
     {selector:"node.app-manual-hidden",style:{"display":"none"}},
+    {selector:"edge",style:{
+      "curve-style":"bezier","arrow-scale":1.15,
+      "label":"data(label)","font-size":"10px","font-weight":600,
+      "font-family":"'DM Sans','Hiragino Sans','Yu Gothic UI',sans-serif",
+      "text-background-color":palette.surface,"text-background-opacity":0.92,
+      "text-background-padding":"4px","text-background-shape":"roundrectangle",
+      "text-border-color":palette.border,"text-border-width":1,"text-border-opacity":0.6
+    }},
     {selector:'edge[kind="LOOKUP"]',style:{
       "width":2.5,"line-color":palette.lookup,"target-arrow-color":palette.lookup,"target-arrow-shape":"triangle",
-      "source-arrow-shape":"circle","source-arrow-color":palette.lookup,"curve-style":"bezier",
-      "label":"data(label)","font-size":"9px","color":palette.lookup,
-      "text-outline-color":palette.bg,"text-outline-width":"2px",
-      "text-background-color":palette.bg,"text-background-opacity":0.78,"text-background-padding":"3px"
+      "source-arrow-shape":"circle","source-arrow-color":palette.lookup,"color":palette.lookup
     }},
     {selector:'edge[kind="REF"]',style:{
       "width":2,"line-color":palette.ref,"line-style":"dashed","target-arrow-color":palette.ref,
-      "target-arrow-shape":"triangle","source-arrow-shape":"diamond","source-arrow-color":palette.ref,"curve-style":"bezier",
-      "label":"data(label)","font-size":"9px","color":palette.ref,
-      "text-outline-color":palette.bg,"text-outline-width":"2px",
-      "text-background-color":palette.bg,"text-background-opacity":0.78,"text-background-padding":"3px"
+      "target-arrow-shape":"triangle","source-arrow-shape":"diamond","source-arrow-color":palette.ref,"color":palette.ref
     }},
     {selector:'edge[kind="ACTION"]',style:{
       "width":2.2,"line-color":palette.action,"line-style":"dotted","target-arrow-color":palette.action,
-      "target-arrow-shape":"triangle","source-arrow-shape":"none","curve-style":"bezier",
-      "label":"data(label)","font-size":"9px","color":palette.action,
-      "text-outline-color":palette.bg,"text-outline-width":"2px",
-      "text-background-color":palette.bg,"text-background-opacity":0.78,"text-background-padding":"3px"
+      "target-arrow-shape":"triangle","source-arrow-shape":"none","color":palette.action
     }},
-    {selector:"edge.label-hidden",style:{"text-opacity":0,"text-background-opacity":0}},
+    {selector:"edge.label-hidden",style:{"text-opacity":0,"text-background-opacity":0,"text-border-opacity":0}},
     {selector:"edge.path-edge",style:{"width":4,"line-color":"#f472b6","target-arrow-color":"#f472b6","source-arrow-color":"#f472b6","z-index":999}},
     {selector:"edge.focus-edge",style:{"width":4,"line-color":palette.accent,"target-arrow-color":palette.accent,"source-arrow-color":palette.accent,"z-index":998}},
     {selector:"edge.rel-hidden",style:{"display":"none"}},
@@ -22624,7 +22632,9 @@ let ei=0;
 APPS.forEach(app=>{
   app.relations.forEach(r=>{
     if(appMap.has(r.toApp)){
-      elements.push({data:{id:"e"+(ei++),source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label:r.fromDisplay || r.fromLabel || (r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連":"アクション")),fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || ""}});
+      const fullLabel = r.fromDisplay || r.fromLabel || (r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連":"アクション"));
+      const label = fullLabel.length > 24 ? fullLabel.slice(0, 23) + "…" : fullLabel;
+      elements.push({data:{id:"e"+(ei++),source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label,fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || ""}});
     }
   });
 });
@@ -22655,7 +22665,7 @@ function syncDensityControl(){
   const select = document.getElementById("density-select");
   if(select) select.value = ER_OPTIONS.fieldDensity || "standard";
   const pill = document.getElementById("density-pill");
-  if(pill) pill.innerHTML = "<b>表示密度</b> " + formatFieldDensityLabel(ER_OPTIONS.fieldDensity);
+  if(pill) pill.innerHTML = "<b>密度</b> " + formatFieldDensityLabel(ER_OPTIONS.fieldDensity);
 }
 function setDensity(value){
   const next = ["compact","standard","full"].includes(String(value)) ? String(value) : "standard";
@@ -22715,7 +22725,7 @@ function setLayout(name){
   ER_OPTIONS.layoutName = name;
   syncLayoutButtons(name);
   const pill = document.getElementById("layout-pill");
-  if(pill) pill.innerHTML = "<b>レイアウト</b> " + layoutDisplayName(name);
+  if(pill) pill.innerHTML = "<b>配置</b> " + layoutDisplayName(name);
   cy.layout(buildLayoutOptions(name, false)).run();
   toast("レイアウト: " + layoutDisplayName(name));
 }
