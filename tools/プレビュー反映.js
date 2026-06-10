@@ -1115,7 +1115,64 @@ ${contextLine}`);
     return pickSettingsBundle(JSON.parse(text), options);
   }
 
+  // src/reflect/applyOutcome.ts
+  var ERROR_HINT_RULES = [
+    {
+      pattern: /CB_NO02|権限がありません|Forbidden|アクセスが拒否/i,
+      hint: "比較先アプリのアプリ管理権限があるユーザーで実行しているか確認してください。"
+    },
+    {
+      pattern: /GAIA_AP01|アプリ.*(見つかりません|存在しません)|指定したアプリ/,
+      hint: "比較先アプリID・ゲストスペースIDが正しいか確認してください。"
+    },
+    {
+      pattern: /ルックアップ|lookup|relatedApp|関連レコード/i,
+      hint: "参照先アプリが比較先環境に存在しない可能性があります。「Lookup AppID マッピング」で参照先を変換してください。"
+    },
+    {
+      pattern: /フィールド.*(見つかりません|存在しません)|GAIA_IL26/,
+      hint: "比較先に存在しないフィールドを参照しています。先に「フィールド設定」を反映してから、このセクションを再実行してください。"
+    },
+    {
+      pattern: /プロセス管理|GAIA_RE/,
+      hint: "プロセス管理の有効/無効や、作業者に指定したユーザー・組織が比較先環境に存在するか確認してください。"
+    },
+    {
+      pattern: /Failed to fetch|NetworkError|ネットワーク|タイムアウト|timeout/i,
+      hint: "通信エラーの可能性があります。時間をおいて「失敗・未実行だけ選択」から再実行してください。"
+    }
+  ];
+  function buildReflectErrorHint(message) {
+    const text = String(message || "");
+    if (!text) return "";
+    for (const rule of ERROR_HINT_RULES) {
+      if (rule.pattern.test(text)) return rule.hint;
+    }
+    return "";
+  }
+  function collectRetrySectionKeys(sections) {
+    return (sections || []).filter((s) => s.status === "ng" || s.status === "pending").map((s) => s.sectionKey);
+  }
+  function summarizeApplyOutcome(sections) {
+    const out = { ok: 0, ng: 0, pending: 0, skip: 0 };
+    for (const s of sections || []) {
+      if (s.status === "ok") out.ok += 1;
+      else if (s.status === "ng") out.ng += 1;
+      else if (s.status === "pending") out.pending += 1;
+      else out.skip += 1;
+    }
+    return out;
+  }
+
   // src/tabs/reflect-standalone.ts
+  function pushErrorLog(logs, line, errorMessage) {
+    logs.push(line);
+    const hint = buildReflectErrorHint(errorMessage);
+    if (!hint) return;
+    const hintLine = `   ヒント: ${hint}`;
+    if (logs.slice(-3).includes(hintLine)) return;
+    logs.push(hintLine);
+  }
   function filterWritable(props) {
     const out = {};
     for (const [k, def] of Object.entries(props || {})) {
@@ -1154,12 +1211,14 @@ ${contextLine}`);
         adds[code] = converted;
       }
     }
+    let failedSteps = 0;
     if (Object.keys(adds).length) {
       try {
         await apiPost(prefix, "/app/form/fields.json", { app, properties: adds });
         logs.push(`  OK フィールド追加: ${Object.keys(adds).length}件`);
       } catch (e) {
-        logs.push(`  NG フィールド追加: ${e.message}`);
+        failedSteps += 1;
+        pushErrorLog(logs, `  NG フィールド追加: ${e.message}`, e.message);
         if (stopOnError) throw e;
       }
     }
@@ -1168,19 +1227,15 @@ ${contextLine}`);
         await apiPut(prefix, "/app/form/fields.json", { app, properties: updates });
         logs.push(`  OK フィールド更新: ${Object.keys(updates).length}件`);
       } catch (e) {
-        logs.push(`  NG フィールド更新: ${e.message}`);
+        failedSteps += 1;
+        pushErrorLog(logs, `  NG フィールド更新: ${e.message}`, e.message);
         if (stopOnError) throw e;
       }
     }
+    return failedSteps;
   }
-  async function applyViewsSection(prefix, app, sourceViews, logs, stopOnError) {
-    try {
-      await apiPut(prefix, "/app/views.json", { app, views: sourceViews.views || sourceViews });
-      logs.push("  OK ビュー設定");
-    } catch (e) {
-      logs.push(`  NG ビュー設定: ${e.message}`);
-      if (stopOnError) throw e;
-    }
+  async function applyViewsSection(prefix, app, sourceViews) {
+    await apiPut(prefix, "/app/views.json", { app, views: sourceViews.views || sourceViews });
   }
   async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
     const { sourceAppId, sourceGuestId, sourcePreview, targetAppId, targetGuestId } = opts;
@@ -1223,48 +1278,69 @@ ${contextLine}`);
     logs.push(`セクション: ${scopes.length}件`);
     logs.push("");
     let hadError = false;
+    const sections = [];
     for (let i = 0; i < scopes.length; i++) {
       const secKey = scopes[i];
       const def = SECTION_DEFS.find((d) => d.key === secKey);
       if (!def || !def.put) {
         logs.push(`SKIP ${def?.label || secKey}`);
+        sections.push({ sectionKey: secKey, label: def?.label || secKey, status: "skip", message: "反映非対応セクション" });
         continue;
       }
       const sourceSec = deepClone(sourceBundle.sections?.[secKey]);
       if (!sourceSec || sourceSec._fetchError) {
         logs.push(`SKIP ${def.label}: source未取得`);
+        sections.push({ sectionKey: secKey, label: def.label, status: "skip", message: "比較元未取得" });
         onProgress(logs);
         continue;
       }
       setStatus(`反映中 ${i + 1}/${scopes.length}: ${def.label}`);
       try {
         if (secKey === "fieldSettings") {
-          await applyFieldSection(prefix, app, sourceSec.properties || sourceSec, logs, lookupMap, stopOnError);
-          logs.push(`OK ${def.label}`);
+          const failedSteps = await applyFieldSection(prefix, app, sourceSec.properties || sourceSec, logs, lookupMap, stopOnError);
+          if (failedSteps > 0) {
+            hadError = true;
+            logs.push(`NG ${def.label}: 一部の手順が失敗しました（詳細は上の行）`);
+            sections.push({ sectionKey: secKey, label: def.label, status: "ng", message: "一部の手順が失敗" });
+          } else {
+            logs.push(`OK ${def.label}`);
+            sections.push({ sectionKey: secKey, label: def.label, status: "ok" });
+          }
         } else if (secKey === "viewSettings") {
-          await applyViewsSection(prefix, app, sourceSec, logs, stopOnError);
+          await applyViewsSection(prefix, app, sourceSec);
+          logs.push(`OK ${def.label}`);
+          sections.push({ sectionKey: secKey, label: def.label, status: "ok" });
         } else {
           const body = { app, ...def.putBuilder(sourceSec) };
           await apiPut(prefix, def.endpoint, body);
           logs.push(`OK ${def.label}`);
+          sections.push({ sectionKey: secKey, label: def.label, status: "ok" });
         }
       } catch (e) {
         hadError = true;
-        logs.push(`NG ${def.label}: ${e.message || String(e)}`);
+        const msg = e.message || String(e);
+        pushErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
+        sections.push({ sectionKey: secKey, label: def.label, status: "ng", message: msg });
         if (stopOnError) {
-          logs.push("中断");
+          for (let j = i + 1; j < scopes.length; j++) {
+            const restKey = scopes[j];
+            const restDef = SECTION_DEFS.find((d) => d.key === restKey);
+            sections.push({ sectionKey: restKey, label: restDef?.label || restKey, status: "pending", message: "中断のため未実行" });
+          }
+          logs.push(`中断（未実行 ${scopes.length - i - 1} 件）`);
           break;
         }
       }
       onProgress(logs);
     }
-    const ok = logs.filter((l) => l.startsWith("OK ")).length;
-    const ng = logs.filter((l) => l.startsWith("NG ")).length;
+    const ok = sections.filter((s) => s.status === "ok").length;
+    const ng = sections.filter((s) => s.status === "ng").length;
+    const pending = sections.filter((s) => s.status === "pending").length;
     logs.push("");
-    logs.push(`=== 完了: OK ${ok} / NG ${ng} ===`);
+    logs.push(`=== 完了: OK ${ok} / NG ${ng}${pending ? ` / 未実行 ${pending}` : ""} ===`);
     onProgress(logs);
     setStatus(hadError ? "反映完了（一部エラーあり）" : "反映完了");
-    return logs;
+    return { logs, sections };
   }
   async function preflightLookupMapStandalone(lookupMap, opts = {}) {
     const entries = Object.entries(lookupMap || {});
@@ -3010,8 +3086,33 @@ ${contextLine}`);
     const lastResultBody = document.createElement("div");
     lastResultBody.className = "kus-lp__small";
     lastResultCard.body.appendChild(lastResultBody);
+    const lastResultActions = document.createElement("div");
+    lastResultActions.className = "kus-lp__btn-row";
+    lastResultActions.style.marginTop = "8px";
+    const retryFailedBtn = makeButton("失敗・未実行だけ選択", "sub");
+    retryFailedBtn.title = "失敗または中断で未実行のセクションだけを反映対象に選び直します";
+    const openTargetBtn = makeButton("比較先の設定画面を開く", "sub");
+    openTargetBtn.title = "比較先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）";
+    lastResultActions.appendChild(retryFailedBtn);
+    lastResultActions.appendChild(openTargetBtn);
+    lastResultCard.body.appendChild(lastResultActions);
     lastResultCard.card.style.display = "none";
     panel.body.insertBefore(lastResultCard.card, panel.status);
+    retryFailedBtn.addEventListener("click", () => {
+      const retryScopes = memoryState.lastResult?.retryScopes || [];
+      if (!retryScopes.length) return;
+      setSelectedScopes(retryScopes);
+      panel.setStatus(`失敗・未実行の ${retryScopes.length} セクションを選択しました。差分プレビューで確認してから再実行してください。`, "info");
+      cardScope.card.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    openTargetBtn.addEventListener("click", () => {
+      const last = memoryState.lastResult;
+      if (!last?.appId) return;
+      const base = last.guestId ? `/k/guest/${encodeURIComponent(last.guestId)}` : "/k";
+      const url = `${window.location.origin}${base}/admin/app/flow?app=${encodeURIComponent(last.appId)}`;
+      window.open(url, "_blank", "noopener");
+      panel.setStatus(`比較先アプリ #${last.appId} の設定画面を開きました`, "info");
+    });
     function renderLastResult() {
       const last = memoryState.lastResult;
       if (!last) {
@@ -3019,8 +3120,12 @@ ${contextLine}`);
         return;
       }
       const stamp = new Date(last.at).toLocaleString();
-      const tone = last.ng > 0 ? "color:#9a3412" : "color:#065f46";
-      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.ng > 0 ? "⚠ 一部エラー" : "✓ 全成功"}</div><div>比較先 #${escapeHtml(last.appId || "-")} / OK ${last.ok} / NG ${last.ng}</div><div>${stamp}</div>`;
+      const hasIssue = last.ng > 0 || last.pending > 0;
+      const tone = hasIssue ? "color:#9a3412" : "color:#065f46";
+      const failedSummary = last.failedLabels.length ? `<div>失敗: ${escapeHtml(last.failedLabels.slice(0, 5).join(" / "))}${last.failedLabels.length > 5 ? ` ほか ${last.failedLabels.length - 5} 件` : ""}</div>` : "";
+      lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${hasIssue ? "⚠ 一部エラー" : "✓ 全成功"}</div><div>比較先 #${escapeHtml(last.appId || "-")} / OK ${last.ok} / NG ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ""}</div>` + failedSummary + `<div>${stamp}</div>` + (hasIssue ? '<div style="margin-top:4px">「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>' : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は比較先の設定画面から実行してください。</div>');
+      retryFailedBtn.style.display = last.retryScopes.length ? "" : "none";
+      openTargetBtn.style.display = last.appId ? "" : "none";
       lastResultCard.card.style.display = "block";
     }
     renderLastResult();
@@ -3083,7 +3188,7 @@ ${detail}
             if (!cont) throw new Error("Lookup プリフライトで中断しました");
           }
         }
-        const logs = await runApplyPreviewStandalone(
+        const applyOutcome = await runApplyPreviewStandalone(
           {
             sourceAppId: srcApp.value.trim(),
             sourceGuestId: srcGuest.value.trim(),
@@ -3103,23 +3208,30 @@ ${detail}
             logPre.scrollTop = logPre.scrollHeight;
           }
         );
-        const okCount = logs.filter((l) => l.startsWith("OK ")).length;
-        const ngCount = logs.filter((l) => l.startsWith("NG ")).length;
+        const counts = summarizeApplyOutcome(applyOutcome.sections);
         memoryState.lastResult = {
-          ok: okCount,
-          ng: ngCount,
+          ok: counts.ok,
+          ng: counts.ng,
+          pending: counts.pending,
           at: Date.now(),
-          appId: tgtApp.value.trim()
+          appId: tgtApp.value.trim(),
+          guestId: tgtGuest.value.trim(),
+          retryScopes: collectRetrySectionKeys(applyOutcome.sections),
+          failedLabels: applyOutcome.sections.filter((s) => s.status === "ng").map((s) => s.label)
         };
         renderLastResult();
-        return { cancelled: false };
+        return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0 };
       });
       if (!outcome) return;
       if (outcome.cancelled) {
         panel.setStatus("反映実行をキャンセルしました", "info");
         return;
       }
-      panel.setStatus("プレビュー反映が完了しました（kintone管理画面でデプロイ実行してください）", "ok");
+      if (outcome.hadError) {
+        panel.setStatus("プレビュー反映が一部失敗しました。「直近の実行結果」から失敗・未実行だけ選択して再実行できます。", "warn");
+        return;
+      }
+      panel.setStatus("プレビュー反映が完了しました。運用環境への反映は「比較先の設定画面を開く」からデプロイしてください。", "ok");
     });
     refreshSameConnBanner();
     refreshReviewCard();
@@ -3352,7 +3464,14 @@ ${detail}
     const effectiveLabels = ctx.effectiveScopes.map((s) => getSectionLabel(s)).join(", ");
     const changedLabels = ctx.preview ? ctx.preview.entries.filter((entry) => entry.status === "change").map((entry) => entry.label) : [];
     const changedPreview = changedLabels.length ? `${changedLabels.slice(0, 6).join(", ")}${changedLabels.length > 6 ? ` ほか ${changedLabels.length - 6} 件` : ""}` : "なし";
-    const highRisk = sameConn || riskyHit.length > 0 || !ctx.doBackup || !ctx.stopOnError || (ctx.preview?.errorSections || 0) > 0 || ctx.effectiveScopes.length >= 10;
+    const highRiskReasons = [];
+    if (sameConn) highRiskReasons.push("比較元と比較先が同一接続");
+    if (riskyHit.length > 0) highRiskReasons.push(`影響範囲の広いセクションを含む（${riskyHit.map((s) => getSectionLabel(s)).join(", ")}）`);
+    if (!ctx.doBackup) highRiskReasons.push("バックアップ保存が OFF");
+    if (!ctx.stopOnError) highRiskReasons.push("エラー時中断が OFF");
+    if ((ctx.preview?.errorSections || 0) > 0) highRiskReasons.push(`差分プレビューに取得失敗が ${ctx.preview?.errorSections} 件`);
+    if (ctx.effectiveScopes.length >= 10) highRiskReasons.push(`実行予定セクションが ${ctx.effectiveScopes.length} 件と多い`);
+    const highRisk = highRiskReasons.length > 0;
     const lines = [
       "【最終確認: プレビュー反映】",
       ctx.hasSourceBundle ? `比較元: 設定JSON${ctx.sourceAppId ? ` (App ${ctx.sourceAppId})` : ""}` : `比較元: #${ctx.sourceAppId}${ctx.sourceGuestId ? ` (guest:${ctx.sourceGuestId})` : ""}`,
@@ -3368,8 +3487,19 @@ ${detail}
     ].filter(Boolean);
     if (!window.confirm(lines.join("\n") + "\n\n本当に実行しますか？")) return false;
     if (highRisk) {
-      const typed = window.prompt(`高リスク実行です。確認のため比較先アプリID「${ctx.targetAppId}」を入力してください。`, "");
-      if ((typed || "").trim() !== ctx.targetAppId) {
+      const typed = window.prompt(
+        `高リスク実行のため追加確認します。
+理由:
+  - ${highRiskReasons.join("\n  - ")}
+
+確認のため比較先アプリID「${ctx.targetAppId}」を入力してください。`,
+        ""
+      );
+      if (typed === null) {
+        panel.setStatus("反映実行をキャンセルしました", "info");
+        return false;
+      }
+      if (typed.trim() !== ctx.targetAppId) {
         panel.setStatus("確認入力が一致しないため、中断しました", "warn");
         return false;
       }

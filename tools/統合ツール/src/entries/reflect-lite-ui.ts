@@ -22,6 +22,7 @@ import {
 } from './litePanelTheme.js';
 import { createAppSearchControl } from './appSearchControl.js';
 import { readSettingsBundleFile } from '../settingsBundleImport.js';
+import { collectRetrySectionKeys, summarizeApplyOutcome } from '../reflect/applyOutcome.js';
 
 // =============================================================================
 // メモリ状態（リロードで消える。lite はブラウザ永続ストレージを使わない方針）
@@ -47,7 +48,19 @@ interface LiteMemoryState {
   lookupMapText?: string;
   lastPreview?: PreviewSnapshot | null;
   /** 直近の反映結果（成功 / 失敗の最終サマリ） */
-  lastResult?: { ok: number; ng: number; at: number; appId: string } | null;
+  lastResult?: {
+    ok: number;
+    ng: number;
+    /** エラー中断により未実行のまま残ったセクション数 */
+    pending: number;
+    at: number;
+    appId: string;
+    guestId: string;
+    /** 再実行が必要なセクション（失敗 + 未実行）のキー */
+    retryScopes: string[];
+    /** 失敗セクションの表示ラベル */
+    failedLabels: string[];
+  } | null;
   /** ユーザー定義プリセット（接続情報＋スコープ） */
   presets?: ReflectLitePreset[];
 }
@@ -1030,8 +1043,35 @@ export function mountReflectLitePanel() {
   const lastResultBody = document.createElement('div');
   lastResultBody.className = 'kus-lp__small';
   lastResultCard.body.appendChild(lastResultBody);
+  const lastResultActions = document.createElement('div');
+  lastResultActions.className = 'kus-lp__btn-row';
+  lastResultActions.style.marginTop = '8px';
+  const retryFailedBtn = makeButton('失敗・未実行だけ選択', 'sub');
+  retryFailedBtn.title = '失敗または中断で未実行のセクションだけを反映対象に選び直します';
+  const openTargetBtn = makeButton('比較先の設定画面を開く', 'sub');
+  openTargetBtn.title = '比較先アプリの設定画面を新しいタブで開きます（運用環境への反映はそこから実行できます）';
+  lastResultActions.appendChild(retryFailedBtn);
+  lastResultActions.appendChild(openTargetBtn);
+  lastResultCard.body.appendChild(lastResultActions);
   lastResultCard.card.style.display = 'none';
   panel.body.insertBefore(lastResultCard.card, panel.status);
+
+  retryFailedBtn.addEventListener('click', () => {
+    const retryScopes = memoryState.lastResult?.retryScopes || [];
+    if (!retryScopes.length) return;
+    setSelectedScopes(retryScopes);
+    panel.setStatus(`失敗・未実行の ${retryScopes.length} セクションを選択しました。差分プレビューで確認してから再実行してください。`, 'info');
+    cardScope.card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  openTargetBtn.addEventListener('click', () => {
+    const last = memoryState.lastResult;
+    if (!last?.appId) return;
+    const base = last.guestId ? `/k/guest/${encodeURIComponent(last.guestId)}` : '/k';
+    const url = `${window.location.origin}${base}/admin/app/flow?app=${encodeURIComponent(last.appId)}`;
+    window.open(url, '_blank', 'noopener');
+    panel.setStatus(`比較先アプリ #${last.appId} の設定画面を開きました`, 'info');
+  });
 
   function renderLastResult() {
     const last = memoryState.lastResult;
@@ -1040,10 +1080,20 @@ export function mountReflectLitePanel() {
       return;
     }
     const stamp = new Date(last.at).toLocaleString();
-    const tone = last.ng > 0 ? 'color:#9a3412' : 'color:#065f46';
-    lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${last.ng > 0 ? '⚠ 一部エラー' : '✓ 全成功'}</div>`
-      + `<div>比較先 #${escapeHtml(last.appId || '-')} / OK ${last.ok} / NG ${last.ng}</div>`
-      + `<div>${stamp}</div>`;
+    const hasIssue = last.ng > 0 || last.pending > 0;
+    const tone = hasIssue ? 'color:#9a3412' : 'color:#065f46';
+    const failedSummary = last.failedLabels.length
+      ? `<div>失敗: ${escapeHtml(last.failedLabels.slice(0, 5).join(' / '))}${last.failedLabels.length > 5 ? ` ほか ${last.failedLabels.length - 5} 件` : ''}</div>`
+      : '';
+    lastResultBody.innerHTML = `<div style="${tone};font-weight:600">${hasIssue ? '⚠ 一部エラー' : '✓ 全成功'}</div>`
+      + `<div>比較先 #${escapeHtml(last.appId || '-')} / OK ${last.ok} / NG ${last.ng}${last.pending ? ` / 未実行 ${last.pending}` : ''}</div>`
+      + failedSummary
+      + `<div>${stamp}</div>`
+      + (hasIssue
+        ? '<div style="margin-top:4px">「失敗・未実行だけ選択」で対象を絞って再実行できます。</div>'
+        : '<div style="margin-top:4px">反映先はプレビューです。運用環境への反映（デプロイ）は比較先の設定画面から実行してください。</div>');
+    retryFailedBtn.style.display = last.retryScopes.length ? '' : 'none';
+    openTargetBtn.style.display = last.appId ? '' : 'none';
     lastResultCard.card.style.display = 'block';
   }
   renderLastResult();
@@ -1111,7 +1161,7 @@ export function mountReflectLitePanel() {
         }
       }
 
-      const logs = await runApplyPreviewStandalone(
+      const applyOutcome = await runApplyPreviewStandalone(
         {
           sourceAppId: srcApp.value.trim(),
           sourceGuestId: srcGuest.value.trim(),
@@ -1132,16 +1182,19 @@ export function mountReflectLitePanel() {
         }
       );
 
-      const okCount = logs.filter((l) => l.startsWith('OK ')).length;
-      const ngCount = logs.filter((l) => l.startsWith('NG ')).length;
+      const counts = summarizeApplyOutcome(applyOutcome.sections);
       memoryState.lastResult = {
-        ok: okCount,
-        ng: ngCount,
+        ok: counts.ok,
+        ng: counts.ng,
+        pending: counts.pending,
         at: Date.now(),
-        appId: tgtApp.value.trim()
+        appId: tgtApp.value.trim(),
+        guestId: tgtGuest.value.trim(),
+        retryScopes: collectRetrySectionKeys(applyOutcome.sections),
+        failedLabels: applyOutcome.sections.filter((s) => s.status === 'ng').map((s) => s.label)
       };
       renderLastResult();
-      return { cancelled: false };
+      return { cancelled: false, hadError: counts.ng > 0 || counts.pending > 0 };
     });
 
     if (!outcome) return;
@@ -1149,7 +1202,11 @@ export function mountReflectLitePanel() {
       panel.setStatus('反映実行をキャンセルしました', 'info');
       return;
     }
-    panel.setStatus('プレビュー反映が完了しました（kintone管理画面でデプロイ実行してください）', 'ok');
+    if (outcome.hadError) {
+      panel.setStatus('プレビュー反映が一部失敗しました。「直近の実行結果」から失敗・未実行だけ選択して再実行できます。', 'warn');
+      return;
+    }
+    panel.setStatus('プレビュー反映が完了しました。運用環境への反映は「比較先の設定画面を開く」からデプロイしてください。', 'ok');
   });
 
   refreshSameConnBanner();
@@ -1453,12 +1510,15 @@ function confirmReflectRisk(
   const changedPreview = changedLabels.length
     ? `${changedLabels.slice(0, 6).join(', ')}${changedLabels.length > 6 ? ` ほか ${changedLabels.length - 6} 件` : ''}`
     : 'なし';
-  const highRisk = sameConn
-    || riskyHit.length > 0
-    || !ctx.doBackup
-    || !ctx.stopOnError
-    || (ctx.preview?.errorSections || 0) > 0
-    || ctx.effectiveScopes.length >= 10;
+  // 高リスク判定とその理由（追加確認を求めるときに、なぜ必要かを必ず提示する）
+  const highRiskReasons: string[] = [];
+  if (sameConn) highRiskReasons.push('比較元と比較先が同一接続');
+  if (riskyHit.length > 0) highRiskReasons.push(`影響範囲の広いセクションを含む（${riskyHit.map((s) => getSectionLabel(s)).join(', ')}）`);
+  if (!ctx.doBackup) highRiskReasons.push('バックアップ保存が OFF');
+  if (!ctx.stopOnError) highRiskReasons.push('エラー時中断が OFF');
+  if ((ctx.preview?.errorSections || 0) > 0) highRiskReasons.push(`差分プレビューに取得失敗が ${ctx.preview?.errorSections} 件`);
+  if (ctx.effectiveScopes.length >= 10) highRiskReasons.push(`実行予定セクションが ${ctx.effectiveScopes.length} 件と多い`);
+  const highRisk = highRiskReasons.length > 0;
 
   const lines = [
     '【最終確認: プレビュー反映】',
@@ -1478,8 +1538,17 @@ function confirmReflectRisk(
   ].filter(Boolean);
   if (!window.confirm(lines.join('\n') + '\n\n本当に実行しますか？')) return false;
   if (highRisk) {
-    const typed = window.prompt(`高リスク実行です。確認のため比較先アプリID「${ctx.targetAppId}」を入力してください。`, '');
-    if ((typed || '').trim() !== ctx.targetAppId) {
+    const typed = window.prompt(
+      '高リスク実行のため追加確認します。\n'
+      + `理由:\n  - ${highRiskReasons.join('\n  - ')}\n\n`
+      + `確認のため比較先アプリID「${ctx.targetAppId}」を入力してください。`,
+      ''
+    );
+    if (typed === null) {
+      panel.setStatus('反映実行をキャンセルしました', 'info');
+      return false;
+    }
+    if (typed.trim() !== ctx.targetAppId) {
       panel.setStatus('確認入力が一致しないため、中断しました', 'warn');
       return false;
     }

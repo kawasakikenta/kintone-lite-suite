@@ -4,6 +4,17 @@ import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone, stableStringify, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle } from '../api.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
+import { buildReflectErrorHint, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
+
+function pushErrorLog(logs: string[], line: string, errorMessage: string) {
+  logs.push(line);
+  const hint = buildReflectErrorHint(errorMessage);
+  if (!hint) return;
+  const hintLine = `   ヒント: ${hint}`;
+  // 直前に同じヒントを出していたら重複して出さない（fieldSettings のサブ手順と本体など）
+  if (logs.slice(-3).includes(hintLine)) return;
+  logs.push(hintLine);
+}
 
 function filterWritable(props: any) {
   const out: Record<string, any> = {};
@@ -31,7 +42,8 @@ function convertLookup(fieldDef: any, map: Record<string, any>) {
   return def;
 }
 
-async function applyFieldSection(prefix, app, sourceProps, logs, lookupMap, stopOnError) {
+/** @returns 失敗した手順数（0 なら全手順成功） */
+async function applyFieldSection(prefix, app, sourceProps, logs, lookupMap, stopOnError): Promise<number> {
   const current = await apiGet(prefix, '/app/form/fields.json', { app });
   const currentMap = current.properties || ({} as any);
   const srcWritable = filterWritable(sourceProps);
@@ -47,12 +59,14 @@ async function applyFieldSection(prefix, app, sourceProps, logs, lookupMap, stop
     }
   }
 
+  let failedSteps = 0;
   if (Object.keys(adds).length) {
     try {
       await apiPost(prefix, '/app/form/fields.json', { app, properties: adds });
       logs.push(`  OK フィールド追加: ${Object.keys(adds).length}件`);
     } catch (e) {
-      logs.push(`  NG フィールド追加: ${e.message}`);
+      failedSteps += 1;
+      pushErrorLog(logs, `  NG フィールド追加: ${e.message}`, e.message);
       if (stopOnError) throw e;
     }
   }
@@ -61,20 +75,16 @@ async function applyFieldSection(prefix, app, sourceProps, logs, lookupMap, stop
       await apiPut(prefix, '/app/form/fields.json', { app, properties: updates });
       logs.push(`  OK フィールド更新: ${Object.keys(updates).length}件`);
     } catch (e) {
-      logs.push(`  NG フィールド更新: ${e.message}`);
+      failedSteps += 1;
+      pushErrorLog(logs, `  NG フィールド更新: ${e.message}`, e.message);
       if (stopOnError) throw e;
     }
   }
+  return failedSteps;
 }
 
-async function applyViewsSection(prefix, app, sourceViews, logs, stopOnError) {
-  try {
-    await apiPut(prefix, '/app/views.json', { app, views: sourceViews.views || sourceViews });
-    logs.push('  OK ビュー設定');
-  } catch (e) {
-    logs.push(`  NG ビュー設定: ${e.message}`);
-    if (stopOnError) throw e;
-  }
+async function applyViewsSection(prefix, app, sourceViews) {
+  await apiPut(prefix, '/app/views.json', { app, views: sourceViews.views || sourceViews });
 }
 
 /**
@@ -92,8 +102,13 @@ async function applyViewsSection(prefix, app, sourceViews, logs, stopOnError) {
  * }} opts
  * @param {(msg: string, err?: boolean) => void} setStatus
  * @param {(logs: string[]) => void} onProgress
+ * @returns 実行ログと、セクション単位の実行結果（再実行準備に使う）
  */
-export async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
+export async function runApplyPreviewStandalone(
+  opts,
+  setStatus,
+  onProgress
+): Promise<{ logs: string[]; sections: ApplySectionOutcome[] }> {
   const { sourceAppId, sourceGuestId, sourcePreview, targetAppId, targetGuestId } = opts;
   if (!sourceAppId && !opts.sourceBundle) throw new Error('比較元アプリIDまたは設定JSONを指定してください');
   if (!targetAppId) throw new Error('比較先アプリIDを入力してください');
@@ -143,15 +158,21 @@ export async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
   logs.push('');
 
   let hadError = false;
+  const sections: ApplySectionOutcome[] = [];
 
   for (let i = 0; i < scopes.length; i++) {
     const secKey = scopes[i];
     const def = SECTION_DEFS.find((d) => d.key === secKey);
-    if (!def || !def.put) { logs.push(`SKIP ${def?.label || secKey}`); continue; }
+    if (!def || !def.put) {
+      logs.push(`SKIP ${def?.label || secKey}`);
+      sections.push({ sectionKey: secKey, label: def?.label || secKey, status: 'skip', message: '反映非対応セクション' });
+      continue;
+    }
 
     const sourceSec = deepClone(sourceBundle.sections?.[secKey]);
     if (!sourceSec || sourceSec._fetchError) {
       logs.push(`SKIP ${def.label}: source未取得`);
+      sections.push({ sectionKey: secKey, label: def.label, status: 'skip', message: '比較元未取得' });
       onProgress(logs);
       continue;
     }
@@ -159,30 +180,52 @@ export async function runApplyPreviewStandalone(opts, setStatus, onProgress) {
     setStatus(`反映中 ${i + 1}/${scopes.length}: ${def.label}`);
     try {
       if (secKey === 'fieldSettings') {
-        await applyFieldSection(prefix, app, sourceSec.properties || sourceSec, logs, lookupMap, stopOnError);
-        logs.push(`OK ${def.label}`);
+        const failedSteps = await applyFieldSection(prefix, app, sourceSec.properties || sourceSec, logs, lookupMap, stopOnError);
+        if (failedSteps > 0) {
+          hadError = true;
+          logs.push(`NG ${def.label}: 一部の手順が失敗しました（詳細は上の行）`);
+          sections.push({ sectionKey: secKey, label: def.label, status: 'ng', message: '一部の手順が失敗' });
+        } else {
+          logs.push(`OK ${def.label}`);
+          sections.push({ sectionKey: secKey, label: def.label, status: 'ok' });
+        }
       } else if (secKey === 'viewSettings') {
-        await applyViewsSection(prefix, app, sourceSec, logs, stopOnError);
+        await applyViewsSection(prefix, app, sourceSec);
+        logs.push(`OK ${def.label}`);
+        sections.push({ sectionKey: secKey, label: def.label, status: 'ok' });
       } else {
         const body = { app, ...def.putBuilder(sourceSec) };
         await apiPut(prefix, def.endpoint, body);
         logs.push(`OK ${def.label}`);
+        sections.push({ sectionKey: secKey, label: def.label, status: 'ok' });
       }
     } catch (e) {
       hadError = true;
-      logs.push(`NG ${def.label}: ${e.message || String(e)}`);
-      if (stopOnError) { logs.push('中断'); break; }
+      const msg = e.message || String(e);
+      pushErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
+      sections.push({ sectionKey: secKey, label: def.label, status: 'ng', message: msg });
+      if (stopOnError) {
+        // 残りのセクションは未実行として記録し、再実行の対象にできるようにする
+        for (let j = i + 1; j < scopes.length; j++) {
+          const restKey = scopes[j];
+          const restDef = SECTION_DEFS.find((d) => d.key === restKey);
+          sections.push({ sectionKey: restKey, label: restDef?.label || restKey, status: 'pending', message: '中断のため未実行' });
+        }
+        logs.push(`中断（未実行 ${scopes.length - i - 1} 件）`);
+        break;
+      }
     }
     onProgress(logs);
   }
 
-  const ok = logs.filter(l => l.startsWith('OK ')).length;
-  const ng = logs.filter(l => l.startsWith('NG ')).length;
+  const ok = sections.filter((s) => s.status === 'ok').length;
+  const ng = sections.filter((s) => s.status === 'ng').length;
+  const pending = sections.filter((s) => s.status === 'pending').length;
   logs.push('');
-  logs.push(`=== 完了: OK ${ok} / NG ${ng} ===`);
+  logs.push(`=== 完了: OK ${ok} / NG ${ng}${pending ? ` / 未実行 ${pending}` : ''} ===`);
   onProgress(logs);
   setStatus(hadError ? '反映完了（一部エラーあり）' : '反映完了');
-  return logs;
+  return { logs, sections };
 }
 
 // =============================================================================
