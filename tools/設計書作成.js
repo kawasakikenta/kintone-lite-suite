@@ -94,7 +94,6 @@
         },
         {
           key: "jsconfig",
-          hidden: true,
           group: "change",
           groupLabel: "変更・反映",
           icon: ICONS.jsconfig,
@@ -113,7 +112,6 @@
         },
         {
           key: "design",
-          hidden: true,
           group: "vis",
           groupLabel: "可視化・出力",
           icon: ICONS.design,
@@ -131,7 +129,6 @@
         },
         {
           key: "settingsExport",
-          hidden: true,
           group: "vis",
           groupLabel: "可視化・出力",
           icon: ICONS.settingsExport,
@@ -185,7 +182,6 @@
         },
         {
           key: "recordMgr",
-          hidden: true,
           group: "data",
           groupLabel: "データ・保守",
           icon: ICONS.recordMgr,

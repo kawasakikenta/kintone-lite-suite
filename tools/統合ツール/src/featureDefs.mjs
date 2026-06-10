@@ -75,7 +75,6 @@ export const FEATURE_DEFS = [
   },
   {
     key: 'jsconfig',
-    hidden: true,
     group: 'change',
     groupLabel: '変更・反映',
     icon: ICONS.jsconfig,
@@ -94,7 +93,6 @@ export const FEATURE_DEFS = [
   },
   {
     key: 'design',
-    hidden: true,
     group: 'vis',
     groupLabel: '可視化・出力',
     icon: ICONS.design,
@@ -112,7 +110,6 @@ export const FEATURE_DEFS = [
   },
   {
     key: 'settingsExport',
-    hidden: true,
     group: 'vis',
     groupLabel: '可視化・出力',
     icon: ICONS.settingsExport,
@@ -166,7 +163,6 @@ export const FEATURE_DEFS = [
   },
   {
     key: 'recordMgr',
-    hidden: true,
     group: 'data',
     groupLabel: 'データ・保守',
     icon: ICONS.recordMgr,
