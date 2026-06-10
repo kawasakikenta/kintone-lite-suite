@@ -191,7 +191,7 @@ console.log(`[harness] wrote design-doc.md (${(md.length / 1024).toFixed(1)} KB)
 
 // ------------ 5) ER HTML viewer ---------------------------------------------
 const erApps = [
-  { id: '100', name: '営業案件管理', recordCount: 1240,
+  { id: '100', name: '営業案件管理', recordCount: 1240, ok: true, depth: 0,
     fields: [
       { code: 'rec', label: 'レコード番号', type: 'RECORD_NUMBER', isPK: true, required: true },
       { code: '顧客名', label: '顧客名', type: 'SINGLE_LINE_TEXT', required: true },
@@ -201,16 +201,16 @@ const erApps = [
     ],
     relations: [
       { toApp: '101', kind: 'LOOKUP', fromLabel: '顧客マスタ参照' },
-      { toApp: '102', kind: 'REFERENCE_TABLE', fromLabel: '対応履歴' }
+      { toApp: '102', kind: 'REF', fromLabel: '対応履歴' }
     ],
     lookupCount: 1, refCount: 1, requiredCount: 2
   },
-  { id: '101', name: '顧客マスタ', recordCount: 320,
+  { id: '101', name: '顧客マスタ', recordCount: 320, ok: true, depth: 1,
     fields: [
       { code: 'rec', label: 'レコード番号', type: 'RECORD_NUMBER', isPK: true, required: true },
       { code: '会社名', label: '会社名', type: 'SINGLE_LINE_TEXT', required: true }
     ], relations: [], lookupCount: 0, refCount: 0, requiredCount: 1 },
-  { id: '102', name: '対応履歴', recordCount: 5800,
+  { id: '102', name: '対応履歴', recordCount: 5800, ok: true, depth: 1,
     fields: [
       { code: 'rec', label: 'レコード番号', type: 'RECORD_NUMBER', isPK: true, required: true },
       { code: '案件', label: '案件参照', type: 'LOOKUP', isLookup: true }
