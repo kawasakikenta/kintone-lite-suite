@@ -2,7 +2,6 @@
 
 import { GUIDED_TOUR_STEPS, GUIDED_TOUR_COURSES, GUIDED_TOUR_DEFAULT_COURSE } from '../constants.js';
 import { state, ui } from '../state.js';
-import { esc } from '../utils.js';
 import { getRoot, saveCurrentDialogState } from './dialog.js';
 import { setStatus, switchTab } from './components.js';
 
@@ -10,11 +9,6 @@ let guidedTourLayoutRaf = 0;
 let activeTourSteps = GUIDED_TOUR_STEPS;
 let activeTourCourseKey = GUIDED_TOUR_DEFAULT_COURSE;
 
-export function setBusy(isBusy: boolean, message?: string): void {
-  const root = getRoot();
-  if (message && ui.busyText) ui.busyText.textContent = message;
-  root?.classList.toggle('busy', !!isBusy);
-}
 
 export interface SwitchSubTabOptions {
   persist?: boolean;

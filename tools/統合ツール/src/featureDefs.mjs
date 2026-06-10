@@ -220,11 +220,6 @@ export const FEATURE_DEFS = [
   }
 ];
 
-export const TAB_TO_FEATURE = {};
-FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
-  if (!TAB_TO_FEATURE[t]) TAB_TO_FEATURE[t] = f.key;
-}));
-
 /**
  * 単機能ブックマークレット（tools/*.js）1 本につき 1 エントリ。
  * tab は FEATURE_DEFS の tabs に含まれること。

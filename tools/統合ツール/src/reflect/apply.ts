@@ -27,7 +27,6 @@ import {
   appendRequestPlanLogs,
   makeApplyPlanSignature,
   ensureApplyPlanApproved,
-  splitUpsertMap,
   runPreviewApplyPlan,
   runPreviewApplyPlanNodes
 } from './plan.js';
@@ -45,9 +44,7 @@ import {
   renderReflectAssistPanel,
   renderReflectMainPanel,
   renderProgressLog,
-  appendProgressSummary,
-  pushReflectUndo,
-  renderReflectNodeList
+  appendProgressSummary
 } from './helpers.js';
 import { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
 import { summarizePlanDeletes, assessApplyRisk } from './planInsights.js';
@@ -72,9 +69,6 @@ const LOOKUP_CACHE_TTL_NG_MS = 60 * 1000;       // 1 分（typo 修正後すぐ�
 interface LookupCacheEntry { ok: boolean; at: number; }
 const _lookupPreflightCache = new Map<string, LookupCacheEntry>();
 
-export function clearLookupPreflightCache(): void {
-  _lookupPreflightCache.clear();
-}
 
 function getLookupCache(cacheKey: string, now: number): LookupCacheEntry | undefined {
   const hit = _lookupPreflightCache.get(cacheKey);
@@ -121,7 +115,7 @@ async function assertLookupMapPreflight(lookupMap, prefix) {
   const result = await preflightLookupMap(lookupMap, prefix);
   if (result.ok) return;
   const lines = result.missing.map((m) => ` - ${m.from} → ${m.to || '(空)'}: ${m.reason}`);
-  const message = `Lookup 変換ルールに問題があります:\n${lines.join('\n')}\n\n[OK] 続行 / [キャンセル] 中断（キャッシュをクリアして再判定するには clearLookupPreflightCache() を呼んでください）`;
+  const message = `Lookup 変換ルールに問題があります:\n${lines.join('\n')}\n\n[OK] 続行 / [キャンセル] 中断（失敗キャッシュは約1分で自動失効し、再実行時に再判定されます）`;
   if (!kusConfirm(message)) {
     throw new Error('Lookup 変換ルールのプリフライトで中断しました');
   }
@@ -1608,27 +1602,6 @@ export async function runApplyPatchJson() {
   setStatus(hadError ? 'JSONパッチ反映完了（一部エラーあり）' : 'JSONパッチ反映完了');
 }
 
-export function runReflectModeAll(mode) {
-  if (!state.reflectRows.length) {
-    setStatus('反映ノードが読込されていません');
-    return;
-  }
-  const selected = getSelectedReflectRows();
-  if (!selected.length) {
-    setStatus('ノードが選択されていません');
-    return;
-  }
-  pushReflectUndo();
-  let count = 0;
-  for (const r of selected) {
-    if (state.reflectNodeModes[r._id] !== mode) {
-      state.reflectNodeModes[r._id] = mode;
-      count++;
-    }
-  }
-  renderReflectNodeList();
-  setStatus(`選択中ノード(${selected.length}件)のうち、${count}件を ${mode === 'src' ? '比較元' : '比較先'} に一括変更しました`);
-}
 
 export async function runApplyPreviewByNodes() {
   await ensureDiffPreparedForReflect();

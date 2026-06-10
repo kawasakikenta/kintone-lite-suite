@@ -499,6 +499,12 @@ export function renderDiffRowMeta(row) {
   if (row.reasonSummary) {
     tags.push(`<span class="diff-meta-tag reason">${esc(row.reasonSummary)}</span>`);
   }
+  if (row.notationOnly) {
+    tags.push(`<span class="diff-meta-tag notation" title="型・表記だけが異なり、値としては同じです（例: &quot;100&quot; と 100）">表記のみ</span>`);
+  }
+  if (row.emptyOnly) {
+    tags.push(`<span class="diff-meta-tag notation" title="空文字・null・空配列・空オブジェクトなど、空値同士の差です">空値ゆれ</span>`);
+  }
   if (row.renameCandidate) {
     const renameTip = `名称変更候補: ${String(row.renameCandidate.fromCode || '-')} → ${String(row.renameCandidate.toCode || '-')}`
       + (row.renameCandidate.matchedBy ? ` / 判定: ${String(row.renameCandidate.matchedBy)}` : '');
@@ -858,34 +864,6 @@ export function resolveDiffExportContentMode() {
   return ui.diffExportContent?.value || state.diffExportContent || 'diffOnly';
 }
 
-export function resolveDiffExportRows(mode?: string) {
-  const exportMode = mode || resolveDiffExportMode();
-  if (exportMode === 'selected') {
-    const rows = getSelectedDiffRows();
-    if (!rows.length) throw new Error('選択差分がありません');
-    return { mode: exportMode, label: '選択差分', rows };
-  }
-  if (exportMode === 'visible') {
-    const rows = getRenderedDiffRows();
-    if (!rows.length) throw new Error('現在表示中の差分がありません');
-    return { mode: exportMode, label: '現在表示中', rows };
-  }
-  if (exportMode === 'favorites') {
-    const rows = (state.lastDiffRows || []).filter((row: any) => state.diffFavoritePaths.has(String(row.path || '').trim()));
-    if (!rows.length) throw new Error('お気に入り差分がありません');
-    return { mode: exportMode, label: 'お気に入り差分', rows };
-  }
-  return { mode: 'all', label: '全差分', rows: state.lastDiffRows || [] };
-}
-
-export function resolveDiffExportComparedScopes(exportInfo: any, scopes: readonly string[] | null | undefined) {
-  const fallbackScopes: string[] = [...new Set((scopes || []).filter(Boolean) as string[])];
-  if ((exportInfo?.mode || 'all') === 'all') return fallbackScopes;
-  const rowScopes: string[] = [...new Set((exportInfo?.rows || []).map((row: any) => row.sectionKey).filter(Boolean) as string[])];
-  if (rowScopes.length) return rowScopes;
-  const issueScopes: string[] = [...new Set((state.lastFetchIssues || []).map((issue: any) => issue.sectionKey).filter(Boolean) as string[])];
-  return issueScopes.length ? issueScopes : fallbackScopes;
-}
 
 export function buildDiffExportComparedBundles(sourceBundle: any, targetBundle: any, scopes: readonly string[] | null | undefined) {
   const compareScopes: string[] = [...new Set((scopes || []).filter(Boolean) as string[])];

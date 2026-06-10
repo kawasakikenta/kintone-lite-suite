@@ -86,32 +86,6 @@ export async function runSettingsExportSearchStandalone(keyword: any, guestId: a
 }
 
 /**
- * スペース内全アプリIDを既存の対象テキストにマージして返す。
- */
-export async function runSettingsExportAddSpaceStandalone(
-  spaceId: any,
-  guestId: any,
-  currentText: any,
-  setStatus: (msg: string, isError?: boolean) => void
-): Promise<string> {
-  const sid = String(spaceId || '').trim();
-  if (!/^\d+$/.test(sid)) throw new Error('スペースIDを数値で入力してください');
-  setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
-  const apps = await fetchAppsInSpace(sid, guestId);
-  if (!apps.length) {
-    setStatus(`スペース ${sid} に取得対象アプリがありませんでした`, true);
-    return String(currentText || '');
-  }
-  const set = new Set(parseAppIdList(currentText));
-  const before = set.size;
-  apps.forEach((a) => set.add(a.appId));
-  const ordered = [...set].sort((a, b) => Number(a) - Number(b));
-  const added = set.size - before;
-  setStatus(`スペース ${sid} のアプリ ${apps.length}件を読み込みました（新規追加 ${added}件 / 合計 ${set.size}件）`);
-  return ordered.join('\n');
-}
-
-/**
  * スペース内の全アプリIDを配列で返す（表形式 UI に行として追加する用途）。
  */
 export async function runSettingsExportListSpaceAppsStandalone(

@@ -81,15 +81,6 @@ export function getFilteredDiffRowsWithoutSectionFilter(rows?: DiffRow[]): DiffR
   });
 }
 
-export function getFilteredFetchIssues(issues?: DiffFetchIssue[]): DiffFetchIssue[] {
-  const list: DiffFetchIssue[] = issues || state.lastFetchIssues || [];
-  const filters = getCurrentDiffFilterState();
-  return list.filter((issue) => {
-    if (filters.section && issue.sectionKey !== filters.section) return false;
-    if (filters.keyword && !diffIssueMatchesKeyword(issue, filters.keyword)) return false;
-    return true;
-  });
-}
 
 export function getSelectedDiffRows(rows?: DiffRow[]): DiffRow[] {
   const selected = state.diffSelectedIds || new Set<string>();

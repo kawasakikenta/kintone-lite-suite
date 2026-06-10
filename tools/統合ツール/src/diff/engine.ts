@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, META_KEYS, DIFF_NORMALIZATION_PRESETS, DEFAULT_IGNORE_KEYS, DiffNormalizationPreset } from '../constants.js';
 import { state, ui } from '../state.js';
-import { normalize, deepClone, stableStringify } from '../utils.js';
+import { deepClone, stableStringify } from '../utils.js';
 import type { DiffRow, DiffFetchIssue } from './types.js';
 
 const HIGH_IMPACT_SECTIONS = new Set([
@@ -72,6 +72,9 @@ export function detectRowSeverity(row) {
   // 純粋な順序変更（moved）は low
   if (row?.moved && row?.type === 'changed') return 'low';
 
+  // 実質同値（"100"⇄100 等の表記ゆれ / 空文字⇄null 等の空値ゆれ）は low
+  if (row?.notationOnly || row?.emptyOnly) return 'low';
+
   // 装飾・順序・寸法・説明だけの変更は low（HIGH_IMPACT セクションでも降格）
   if (LOW_PRIORITY_LEAF_KEYS.has(leaf) && row?.type === 'changed') return 'low';
 
@@ -133,6 +136,44 @@ export function detectRowSeverity(row) {
 
 export function isPlainObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+// ---------------------------------------------------------------------------
+// 値ゆれ分類（表記のみ / 空値のみ）
+// ---------------------------------------------------------------------------
+// kintone API とエクスポート済み JSON の比較では "100" と 100、"true" と true、
+// 空文字と null のような「値としては同じで型・表記だけが違う」差分が頻出する。
+// 差分行としては残しつつフラグを付け、重要度を low に降格することで
+// レビューすべき本質的な差分と区別できるようにする。
+// ---------------------------------------------------------------------------
+export function isEmptyLikeValue(v) {
+  if (v == null) return true;
+  if (typeof v === 'string') return v.trim() === '';
+  if (Array.isArray(v)) return v.length === 0;
+  if (isPlainObject(v)) return Object.keys(v).length === 0;
+  return false;
+}
+
+export function isNotationOnlyChange(a, b) {
+  const isPrim = (v) => v != null && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean');
+  if (!isPrim(a) || !isPrim(b)) return false;
+  if (a === b) return false;
+  const sa = String(a).trim();
+  const sb = String(b).trim();
+  if (sa === sb) return true;
+  // 数値として等価（"100" ⇄ 100、"1.0" ⇄ 1）
+  if (sa !== '' && sb !== '' && !Number.isNaN(Number(sa)) && !Number.isNaN(Number(sb)) && Number(sa) === Number(sb)) return true;
+  // 真偽値として等価（"true" ⇄ true）
+  const la = sa.toLowerCase();
+  const lb = sb.toLowerCase();
+  if ((la === 'true' || la === 'false') && la === lb) return true;
+  return false;
+}
+
+export function classifyChangedValuePair(a, b) {
+  if (isEmptyLikeValue(a) && isEmptyLikeValue(b)) return { emptyOnly: true };
+  if (isNotationOnlyChange(a, b)) return { notationOnly: true };
+  return null;
 }
 
 export function getPathLeafKey(path) {
@@ -579,7 +620,7 @@ export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
   if (a.length !== b.length || a.length < 2) return false;
   const sigA = a.map((x) => makeArrayItemSignature(x, ignoreRules));
   const sigB = b.map((x) => makeArrayItemSignature(x, ignoreRules));
-  if ([...sigA].sort().join(' ') !== [...sigB].sort().join(' ')) return false;
+  if ([...sigA].sort().join('\u0000') !== [...sigB].sort().join('\u0000')) return false;
 
   const used = new Array(a.length).fill(false);
   for (let j = 0; j < b.length; j++) {
@@ -607,6 +648,61 @@ export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
     }, ignoreRules);
   }
   return true;
+}
+
+function escapeRegExpLiteral(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ---------------------------------------------------------------------------
+// LCS 差分後の moved ペアリング
+// ---------------------------------------------------------------------------
+// 純並び替え検出（多重集合一致）に届かない「移動と追加/削除が混在する配列」
+// では、移動した要素が added + removed の 2 行に割れてしまう。同一シグネチャ
+// の added/removed ペアを moved（low）1 行に統合してノイズを減らす。
+// ---------------------------------------------------------------------------
+export function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
+  const childRe = new RegExp(`^${escapeRegExpLiteral(path)}\\[(\\d+)\\]$`);
+  const removedBySig = new Map<string, number[]>();
+  for (let i = startIdx; i < out.length; i++) {
+    const row = out[i];
+    if (!row || row.type !== 'removed') continue;
+    if (!childRe.test(String(row.path || ''))) continue;
+    const sig = makeArrayItemSignature(row.left, ignoreRules);
+    if (!removedBySig.has(sig)) removedBySig.set(sig, []);
+    removedBySig.get(sig)!.push(i);
+  }
+  if (!removedBySig.size) return;
+  const consumed = new Set<number>();
+  let merged = 0;
+  for (let i = startIdx; i < out.length; i++) {
+    const row = out[i];
+    if (!row || row.type !== 'added') continue;
+    const toMatch = childRe.exec(String(row.path || ''));
+    if (!toMatch) continue;
+    const sig = makeArrayItemSignature(row.right, ignoreRules);
+    const bucket = removedBySig.get(sig);
+    if (!bucket || !bucket.length) continue;
+    const removedIdx = bucket.shift()!;
+    const removedRow = out[removedIdx];
+    const fromMatch = childRe.exec(String(removedRow.path || ''));
+    out[i] = {
+      ...row,
+      type: 'changed',
+      left: removedRow.left,
+      moved: true,
+      movedFrom: fromMatch ? Number(fromMatch[1]) : undefined,
+      movedTo: Number(toMatch[1])
+    };
+    consumed.add(removedIdx);
+    merged += 1;
+  }
+  if (!merged) return;
+  for (let i = out.length - 1; i >= startIdx; i--) {
+    if (consumed.has(i)) out.splice(i, 1);
+  }
+  const diffCount = Number((out as any).__diffCount);
+  if (Number.isFinite(diffCount)) (out as any).__diffCount = Math.max(0, diffCount - merged);
 }
 
 export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
@@ -641,10 +737,11 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
     }
   }
 
+  const mergeStart = out.length;
   let i = 0;
   let j = 0;
   while (i < n || j < m) {
-    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+    if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) break;
     if (i < n && j < m && sigA[i] === sigB[j]) {
       if (canCollectSameRows(out)) {
         pushDiffRow(out, {
@@ -680,6 +777,7 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
       break;
     }
   }
+  mergeAddRemovePairsAsMoved(out, mergeStart, path, ignoreRules);
   return true;
 }
 
@@ -716,12 +814,12 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
   const ta = Object.prototype.toString.call(a);
   const tb = Object.prototype.toString.call(b);
   if (ta !== tb) {
-    pushDiffRow(out, { type: 'changed', path, left: a, right: b }, ignoreRules);
+    pushDiffRow(out, { type: 'changed', path, left: a, right: b, ...(classifyChangedValuePair(a, b) || {}) }, ignoreRules);
     return;
   }
 
   if (a == null || b == null) {
-    pushDiffRow(out, { type: 'changed', path, left: a, right: b }, ignoreRules);
+    pushDiffRow(out, { type: 'changed', path, left: a, right: b, ...(classifyChangedValuePair(a, b) || {}) }, ignoreRules);
     return;
   }
 
@@ -747,15 +845,15 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
     for (const k of keys) {
       if (META_KEYS.has(k) || isIgnoredKey(ignoreRules, k)) continue;
       const p = path ? `${path}.${k}` : k;
-      if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: 'removed', path: p, left: a[k], right: undefined }, ignoreRules);
-      else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[k] }, ignoreRules);
+      if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: 'removed', path: p, left: a[k], right: undefined, ...(isEmptyLikeValue(a[k]) ? { emptyOnly: true } : {}) }, ignoreRules);
+      else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[k], ...(isEmptyLikeValue(b[k]) ? { emptyOnly: true } : {}) }, ignoreRules);
       else collectDeepDiffs(a[k], b[k], p, out, ignoreRules);
       if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
     }
     return;
   }
 
-  pushDiffRow(out, { type: 'changed', path, left: a, right: b }, ignoreRules);
+  pushDiffRow(out, { type: 'changed', path, left: a, right: b, ...(classifyChangedValuePair(a, b) || {}) }, ignoreRules);
 }
 
 // ---------------------------------------------------------------------------
@@ -767,38 +865,6 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
 // 同内容を再アップロードしただけの fileKey 変更は差分に出なくなり、
 // 本文が違う場合は engine の line-diff が自然に効く。
 // ---------------------------------------------------------------------------
-export function preprocessCustomizeForDiff(value) {
-  if (!value || typeof value !== 'object') return value;
-  const cloned = deepClone(value);
-  for (const platform of ['desktop', 'mobile']) {
-    for (const kind of ['js', 'css']) {
-      const arr = cloned?.[platform]?.[kind];
-      if (!Array.isArray(arr)) continue;
-      for (const item of arr) {
-        if (!item || typeof item !== 'object') continue;
-        if (!item.name) {
-          if (item.type === 'FILE') {
-            item.name = String(item?.file?.name || item?.file?.fileKey || '(ファイル未設定)');
-          } else if (item.type === 'URL') {
-            item.name = String(item.url || '(URL未設定)');
-          }
-        }
-        if (item.type === 'FILE' && item.file && typeof item.file === 'object' && item._bodyText != null) {
-          // 比較対象を本文に切り替える
-          const newFile = { ...item.file };
-          newFile._body = String(item._bodyText);
-          delete newFile.fileKey;
-          item.file = newFile;
-        }
-        // 取得時補助フィールドは比較から除外（ハッシュは比較対象でなくキャッシュ用）
-        if ('_bodyText' in item) delete item._bodyText;
-        if ('_bodyHash' in item) delete item._bodyHash;
-      }
-    }
-  }
-  return cloned;
-}
-
 // 左右ペア対応：両側とも本文取得済の場合のみ _body 比較に切り替える。
 // 片側だけ本文取得失敗 → fileKey 比較に揃える（非対称ノイズを防ぐ）。
 export function preprocessCustomizePairForDiff(src, tgt) {

@@ -172,14 +172,6 @@ export const NUMBER_FORMAT_JP: Record<string, string> = {
   HOUR_MINUTE_SECOND: '時:分:秒'
 };
 
-/** 言語コード */
-export const LANGUAGE_JP: Record<string, string> = {
-  default: '既定',
-  ja: '日本語',
-  en: '英語',
-  zh: '中国語',
-  user: 'ユーザー設定言語'
-};
 
 /** 整列方向（CHECK_BOX/RADIO_BUTTON/MULTI_SELECT 等） */
 export const ALIGN_JP: Record<string, string> = {
@@ -207,12 +199,6 @@ export function lookupEnum(map: Record<string, string>, value: any): string {
   return map[key] || String(value);
 }
 
-/** 小文字 / 大文字を保ったままで lookup（言語コードなど） */
-export function lookupEnumCi(map: Record<string, string>, value: any): string {
-  if (value == null || value === '') return '';
-  const raw = String(value).trim();
-  return map[raw] || map[raw.toLowerCase()] || map[raw.toUpperCase()] || raw;
-}
 
 /** すべての ENUM 辞書を 1 つにまとめたフラットマップ。テキスト全文置換用。 */
 const ALL_ENUM_LABELS: Record<string, string> = (() => {

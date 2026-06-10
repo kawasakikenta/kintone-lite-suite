@@ -64,30 +64,6 @@ function resolveDefaultAppId(): string {
 
 export const DEFAULT_APP_ID: string = resolveDefaultAppId();
 export const DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-export const DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
-export const DIFF_IGNORE_PRESETS_KEY = `${TOOL_ID}:diffIgnorePresets`;
-export const DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
-export const REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
-
-export interface DiffUiPreset {
-  id: string;
-  label: string;
-  hint: string;
-}
-
-/** 差分ビュー用クイックプリセット（表示フィルタの一括切替） */
-export const DIFF_UI_PRESETS: readonly DiffUiPreset[] = [
-  { id: 'reset', label: 'フィルタ解除', hint: 'セクション・種別・重要度の絞り込みをクリア' },
-  { id: 'severity_high', label: '高重要度', hint: '重要度「高」だけ表示' },
-  { id: 'type_added', label: '追加のみ', hint: '追加差分だけ' },
-  { id: 'type_removed', label: '削除のみ', hint: '削除差分だけ' },
-  { id: 'type_changed', label: '変更のみ', hint: '変更差分だけ' },
-  { id: 'sec_field', label: 'フィールド', hint: 'フィールド設定セクションに絞る' },
-  { id: 'sec_layout', label: 'レイアウト', hint: 'レイアウト設定に絞る' },
-  { id: 'sec_view', label: 'ビュー', hint: 'ビュー設定に絞る' },
-  { id: 'sec_process', label: 'プロセス', hint: 'プロセス管理に絞る' },
-  { id: 'no_acl', label: '権限系を隠す', hint: 'アプリ/フィールド/レコード権限のセクションを除外して表示' }
-];
 
 export const DIALOG_MARGIN = 16;
 export const DIALOG_MIN_WIDTH = 560;
@@ -161,7 +137,7 @@ export const SECTION_APPLY_HINTS: Record<string, string> = {
   categories: 'カテゴリ定義を比較元で全置換します。比較先のみに存在するカテゴリは消えます。'
 };
 
-export { FEATURE_DEFS, TAB_TO_FEATURE } from './featureDefs.mjs';
+export { FEATURE_DEFS } from './featureDefs.mjs';
 
 export interface TabConnectionNeed {
   appInputs: boolean;
@@ -328,16 +304,6 @@ export const HIGH_IMPACT_SECTIONS: ReadonlySet<string> = new Set([
   'recordPermissions'
 ]);
 
-export const MEDIUM_IMPACT_SECTIONS: ReadonlySet<string> = new Set([
-  'layoutSettings',
-  'viewSettings',
-  'reportSettings',
-  'customizeSettings',
-  'notifications',
-  'perRecordNotifications',
-  'reminderNotifications',
-  'categories'
-]);
 
 export const DIFF_IMPACT_REF_LIMIT = 6;
 
@@ -466,7 +432,6 @@ export const DIFF_NORMALIZATION_PRESETS: Record<string, DiffNormalizationPreset>
   }
 };
 
-export const ARRAY_LCS_MAX_CELLS = 60000;
 export const LINE_DIFF_MAX_CELLS = 90000;
 export const CHAR_DIFF_MAX_CELLS = 20000;
 

@@ -1,7 +1,6 @@
 'use strict';
 
 import {
-  TOOL_ID,
   DIALOG_MARGIN,
   DIALOG_MIN_WIDTH,
   DIALOG_MIN_HEIGHT,
@@ -11,7 +10,6 @@ import {
   DIALOG_LARGE_HEIGHT
 } from '../constants.js';
 import { state, saveDialogState, loadDialogState } from '../state.js';
-import { esc } from '../utils.js';
 
 export interface DialogPosition {
   left: number;
@@ -51,15 +49,6 @@ let dialogDragState: DialogDragState | null = null;
 let dialogDragMoveHandler: ((e: MouseEvent) => void) | null = null;
 let dialogDragEndHandler: (() => void) | null = null;
 
-let scheduleGuidedTourLayoutFn: (() => void) | null = null;
-
-export function setScheduleGuidedTourLayout(fn: () => void): void {
-  scheduleGuidedTourLayoutFn = fn;
-}
-
-function callScheduleGuidedTourLayout(): void {
-  if (typeof scheduleGuidedTourLayoutFn === 'function') scheduleGuidedTourLayoutFn();
-}
 
 export function getRoot(): HTMLElement | null {
   return root;
@@ -75,9 +64,6 @@ export function getToolWindow(): Window {
   return d.defaultView || window;
 }
 
-export function getUi(): Record<string, any> {
-  return ui;
-}
 
 export function setUiRefs(uiRefs: Record<string, any>): void {
   ui = uiRefs;
@@ -162,7 +148,6 @@ export function applyDialogPosition(left: number, top: number, options: DialogPe
   root.style.right = 'auto';
   root.style.bottom = 'auto';
   if (options.persist !== false) scheduleDialogSizeSave();
-  if (state.guidedTourActive) callScheduleGuidedTourLayout();
   return next;
 }
 
@@ -231,7 +216,6 @@ export function initDialogResizeHandling(): void {
   if (!root) return;
   dialogResizeObserver = new ResizeObserver(() => {
     scheduleDialogSizeSave();
-    callScheduleGuidedTourLayout();
   });
   dialogResizeObserver.observe(root);
 }
@@ -297,9 +281,3 @@ export function teardownDialogResizeHandling(): void {
   finishDialogDrag(false);
 }
 
-export { teardownDialogResizeHandling as teardownDialog };
-
-export function initDialog(): void {
-  initDialogResizeHandling();
-  initDialogDragHandling();
-}

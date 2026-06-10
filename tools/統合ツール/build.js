@@ -194,9 +194,6 @@ function describeStandaloneKind(item) {
   if (e === 'diff-lite-entry.js') {
     return '軽量 esbuild 同梱（\`diff-lite-ui.js\` 等・\`統合ツール.js\` 不要）';
   }
-  if (e.startsWith('suite-tab-')) {
-    return `フル UI esbuild 同梱（\`src/entries/${e}\` → \`boot.js\`・ファイルサイズ大・\`統合ツール.js\` 不要）`;
-  }
   return `軽量 esbuild 同梱（\`src/entries/${e}\`・\`統合ツール.js\` 不要）`;
 }
 

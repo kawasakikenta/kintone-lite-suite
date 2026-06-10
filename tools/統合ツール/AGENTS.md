@@ -33,8 +33,10 @@ lite 版は必要な機能のみバンドルするため、各ファイルは機
 ## 修正ワークフロー
 
 1. **ソースを編集**: `tools/統合ツール/src/` 配下のファイルを変更する
-2. **再ビルド**: `cd tools/統合ツール && npm run build`
-3. ソース 1 箇所の変更が **最大 10 本の生成 JS** に波及する
+2. **検証**: `cd tools/統合ツール && npm run check`
+   （ブラウザストレージ検査 → typecheck（通常/strict） → vitest → ビルドを一括実行）
+3. **再ビルドのみ**: `npm run build`
+4. ソース 1 箇所の変更が **最大 10 本の生成 JS** に波及する
 
 ## ディレクトリ構成
 
@@ -56,14 +58,14 @@ tools/統合ツール/
 │   │   ├── *-lite-entry.ts    # 軽量単機能エントリ（kintoneGuard で起動）
 │   │   ├── *-lite-ui.ts       # 軽量単機能の UI パネル
 │   │   ├── litePanelTheme.ts  # lite 版共通パネル UI（createLitePanel/makeRow 等）
-│   │   ├── appSearchControl.ts # アプリ名検索コントロール（lite 共通）
-│   │   └── suite-tab-*-entry.ts # 統合版を指定タブで起動するエントリ
+│   │   └── appSearchControl.ts # アプリ名検索コントロール（lite 共通）
 │   ├── tabs/                  # 各タブの正規実装
 │   │   ├── *.ts               # 統合版で使うタブロジック
 │   │   └── *-standalone.ts    # lite 版用に統合 UI 依存を外した関数群
 │   ├── diff/                  # 差分エンジン
 │   ├── reflect/               # プレビュー反映エンジン
-│   └── ui/                    # UI 層（テンプレート・スタイル・コンポーネント）
+│   ├── handlers/              # handlers.ts から分割したイベント系モジュール
+│   └── ui/                    # UI 層（テンプレート・styles/*.css・コンポーネント）
 └── tools/                     # ← 親ディレクトリ（生成物の出力先）
     ├── 統合ツール.js           # 生成物
     ├── 差分比較.js             # 生成物
@@ -75,5 +77,5 @@ tools/統合ツール/
 - `tabs/design-xlsx.ts` は `tabs/design.ts`（統合版）と `tabs/design-standalone.ts`（lite 版）の**両方**からインポートされる。変更時は両方に影響する。
 - `tabs/er.ts` の `crawl`/`buildHTML` は統合版（`boot.ts`）と `tabs/er-standalone.ts`（lite 版）の両方から使用される。
 - `entries/litePanelTheme.ts` の `createLitePanel`／`makeRow` 等は全 lite 系パネルの共通 UI 基盤。変更時は軽量バンドル全体に影響する。
-- `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全エントリ（lite 9 本・suite-tab 5 本）と `boot.ts` 共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
+- `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全 lite エントリ（9 本）と `boot.ts` 共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
 - `diff/export.ts` の `bundleToMarkdown` は統合版の設計タブ（`tabs/design.ts`）と設計書 lite（`tabs/design-standalone.ts`）から参照される。

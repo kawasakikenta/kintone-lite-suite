@@ -42,9 +42,6 @@ function parseCurrentKeys(): string[] {
     .filter(Boolean);
 }
 
-export function listIgnorePresets(): DiffIgnorePreset[] {
-  return loadRaw();
-}
 
 export function refreshIgnorePresetDropdown(): void {
   const sel = ui.ignorePresetSelect as HTMLSelectElement | undefined;

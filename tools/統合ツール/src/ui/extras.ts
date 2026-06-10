@@ -1306,7 +1306,6 @@ export function initInlineMemo(): void {
     });
   });
 }
-export function getInlineNotes(): Record<string, string> { return { ...inlineNotes }; }
 
 /* ============================================================
  * 63: 失敗箇所のみ再送（差し込み口）
@@ -1443,7 +1442,6 @@ export function initProcessAnnotations(): void {
     pushToast('注釈を更新しました（出力に反映）', { tone: 'ok' });
   });
 }
-export function getProcessAnnotations(): Record<string, string> { return { ...processAnnotations }; }
 
 /* ============================================================
  * 81: 更新前後の件数差分

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { computeDiffRows } from '../../src/diff/engine';
-import { enrichDiffRows, buildStatusImpactIndex, extractEntityContext } from '../../src/diff/enrich';
+import { enrichDiffRows, buildStatusImpactIndex, extractEntityContext, buildDiffReasonSummary } from '../../src/diff/enrich';
 
 function makeBundle(sections: Record<string, any>) {
   return { sections };
@@ -73,6 +73,47 @@ describe('diff/enrich (non-field improvements)', () => {
       const fieldRow = enriched.find((r: any) => r.path === 'fieldSettings.properties.price');
       expect(fieldRow).toBeTruthy();
       expect(fieldRow.impactRefs.some((ref: any) => ref.sectionKey === 'fieldAcl')).toBe(true);
+    });
+  });
+
+  describe('buildDiffReasonSummary: moved rows include positions', () => {
+    it('includes from/to positions when available', () => {
+      const summary = buildDiffReasonSummary({
+        sectionKey: 'layoutSettings',
+        path: 'layoutSettings.layout[2]',
+        type: 'changed',
+        moved: true,
+        movedFrom: 0,
+        movedTo: 2
+      });
+      expect(summary).toBe('レイアウト順序変更（1番目 → 3番目）');
+    });
+
+    it('omits position note when indices are unknown', () => {
+      const summary = buildDiffReasonSummary({
+        sectionKey: 'categories',
+        path: 'categories.categories.A',
+        type: 'changed',
+        moved: true
+      });
+      expect(summary).toBe('カテゴリ順序変更');
+    });
+  });
+
+  describe('enrichDiffRows: notation/empty flags appear in reasonSummary', () => {
+    it('appends a notation-only note for "100" vs 100 changes', () => {
+      const source = makeBundle({
+        fieldSettings: { properties: { num: { type: 'NUMBER', code: 'num', label: '数量', maxValue: '100' } } }
+      });
+      const target = makeBundle({
+        fieldSettings: { properties: { num: { type: 'NUMBER', code: 'num', label: '数量', maxValue: 100 } } }
+      });
+      const { rows } = computeDiffRows(source, target, ['fieldSettings'], '');
+      const enriched = enrichDiffRows(rows, source, target);
+      const row = enriched.find((r: any) => r.path.endsWith('maxValue'));
+      expect(row).toBeTruthy();
+      expect(row.reasonSummary).toContain('表記のみ');
+      expect(row.severity).toBe('low');
     });
   });
 
