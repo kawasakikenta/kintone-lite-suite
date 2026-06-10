@@ -246,6 +246,7 @@
 #kintone-unified-suite-v2 .diff-view .diff-meta-tag.rename{background:#ecfdf5;color:#166534;border-color:#86efac}
 #kintone-unified-suite-v2 .diff-view .diff-meta-tag.impact{background:#eff6ff;color:#1d4ed8;border-color:#93c5fd}
 #kintone-unified-suite-v2 .diff-view .diff-meta-tag.reason{background:#fff7ed;color:#9a3412;border-color:#fdba74}
+#kintone-unified-suite-v2 .diff-view .diff-meta-tag.notation{background:#f5f3ff;color:#5b21b6;border-color:#c4b5fd}
 #kintone-unified-suite-v2 .diff-view .diff-issues{border-bottom:1px solid var(--dv-border);background:var(--dv-card)}
 #kintone-unified-suite-v2 .diff-view .diff-issues-head{padding:8px 10px;font-size:12px;font-weight:700;background:#fff7ed;color:#9a3412;border-bottom:1px solid var(--dv-border)}
 #kintone-unified-suite-v2 .diff-view.dark .diff-issues-head{background:#3b1d0f;color:#fdba74}

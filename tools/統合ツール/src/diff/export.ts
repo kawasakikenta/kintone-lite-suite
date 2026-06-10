@@ -499,6 +499,12 @@ export function renderDiffRowMeta(row) {
   if (row.reasonSummary) {
     tags.push(`<span class="diff-meta-tag reason">${esc(row.reasonSummary)}</span>`);
   }
+  if (row.notationOnly) {
+    tags.push(`<span class="diff-meta-tag notation" title="型・表記だけが異なり、値としては同じです（例: &quot;100&quot; と 100）">表記のみ</span>`);
+  }
+  if (row.emptyOnly) {
+    tags.push(`<span class="diff-meta-tag notation" title="空文字・null・空配列・空オブジェクトなど、空値同士の差です">空値ゆれ</span>`);
+  }
   if (row.renameCandidate) {
     const renameTip = `名称変更候補: ${String(row.renameCandidate.fromCode || '-')} → ${String(row.renameCandidate.toCode || '-')}`
       + (row.renameCandidate.matchedBy ? ` / 判定: ${String(row.renameCandidate.matchedBy)}` : '');

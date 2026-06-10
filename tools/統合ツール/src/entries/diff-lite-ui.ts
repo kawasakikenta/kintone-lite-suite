@@ -83,6 +83,8 @@ const RESULT_CSS = `
 .kus-dl-sev--medium{background:#fef3c7;color:#92400e}
 .kus-dl-sev--low{background:#e0f2fe;color:#0c4a6e}
 .kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:12px;background:#f8fafc;border-radius:8px}
+.kus-dl-reason{display:inline-block;padding:1px 6px;border-radius:999px;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-result mark.diff-char-del{background:#fecaca;color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through}
 .kus-dl-result mark.diff-char-add{background:#bbf7d0;color:#14532d;border-radius:2px;padding:0 1px}
 `;
@@ -105,6 +107,9 @@ interface DiffRow {
   left?: any;
   right?: any;
   moved?: boolean;
+  reasonSummary?: string;
+  notationOnly?: boolean;
+  emptyOnly?: boolean;
 }
 
 interface DiffCache {
@@ -179,10 +184,16 @@ function renderRowsHtml(rows: DiffRow[], useCharDiff: boolean, summary: string):
     parts.push(`<details class="kus-dl-section" open><summary>${esc(label)} <span class="kus-dl-section__count">${list.length}件</span></summary><div class="kus-dl-section__body">`);
     for (const r of list) {
       const cols = rowColumnsHtml(r, useCharDiff);
-      const typeBadge = `<span class="kus-dl-badge kus-dl-badge--${esc(r.type || 'same')}">${esc(TYPE_LABEL[r.type] || r.type || '')}</span>`;
+      const typeKey = r.moved ? 'moved' : (r.type || 'same');
+      const typeBadge = `<span class="kus-dl-badge kus-dl-badge--${esc(typeKey)}">${esc(TYPE_LABEL[typeKey] || typeKey)}</span>`;
       const sevBadge = r.severity ? `<span class="kus-dl-sev kus-dl-sev--${esc(r.severity)}">${esc(SEVERITY_LABEL[r.severity] || r.severity)}</span>` : '';
       const labelHtml = r.label ? `<span style="color:#475569">${esc(r.label)}</span>` : '';
-      parts.push(`<div class="kus-dl-row"><div class="kus-dl-row__head">${typeBadge}${sevBadge}<span class="kus-dl-row__path">${esc(r.path || '')}</span>${labelHtml}</div><div class="kus-dl-row__cols">${cols.left}${cols.right}</div></div>`);
+      const reasonHtml = r.reasonSummary ? `<span class="kus-dl-reason">${esc(r.reasonSummary)}</span>` : '';
+      const flagHtml = [
+        r.notationOnly ? '<span class="kus-dl-flag" title="型・表記だけが異なり、値としては同じです（例: &quot;100&quot; と 100）">表記のみ</span>' : '',
+        r.emptyOnly ? '<span class="kus-dl-flag" title="空文字・null・空配列など、空値同士の差です">空値ゆれ</span>' : ''
+      ].join('');
+      parts.push(`<div class="kus-dl-row"><div class="kus-dl-row__head">${typeBadge}${sevBadge}<span class="kus-dl-row__path">${esc(r.path || '')}</span>${reasonHtml}${flagHtml}${labelHtml}</div><div class="kus-dl-row__cols">${cols.left}${cols.right}</div></div>`);
     }
     parts.push('</div></details>');
   }

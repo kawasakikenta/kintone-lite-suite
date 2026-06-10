@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   detectRowSeverity, isIgnoredKey, parseIgnoreRules,
-  hasUniquePrimitiveKey, computeDiffRows
+  hasUniquePrimitiveKey, computeDiffRows,
+  isNotationOnlyChange, isEmptyLikeValue
 } from '../../src/diff/engine';
 
 function makeBundle(sections: Record<string, any>) {
@@ -175,6 +176,80 @@ describe('diff/engine', () => {
       expect(real[0].path).toMatch(/accessibility$/);
       expect(real[0].arrayKeyValue).toEqual({ type: 'GROUP', code: 'support' });
       expect(rows.some((r: any) => r.type === 'added' || r.type === 'removed')).toBe(false);
+    });
+  });
+
+  describe('notation/empty-value classification', () => {
+    it('isNotationOnlyChange detects string vs number equivalence', () => {
+      expect(isNotationOnlyChange('100', 100)).toBe(true);
+      expect(isNotationOnlyChange('1.0', 1)).toBe(true);
+      expect(isNotationOnlyChange('true', true)).toBe(true);
+      expect(isNotationOnlyChange('100', 200)).toBe(false);
+      expect(isNotationOnlyChange('abc', 'abd')).toBe(false);
+      expect(isNotationOnlyChange('', 0)).toBe(false);
+    });
+
+    it('isEmptyLikeValue treats null/empty string/empty containers as empty', () => {
+      expect(isEmptyLikeValue(null)).toBe(true);
+      expect(isEmptyLikeValue(undefined)).toBe(true);
+      expect(isEmptyLikeValue('')).toBe(true);
+      expect(isEmptyLikeValue([])).toBe(true);
+      expect(isEmptyLikeValue({})).toBe(true);
+      expect(isEmptyLikeValue(0)).toBe(false);
+      expect(isEmptyLikeValue(false)).toBe(false);
+      expect(isEmptyLikeValue('a')).toBe(false);
+    });
+
+    it('marks "100" vs 100 as notation-only and demotes severity to low', () => {
+      const src = { properties: { num: { type: 'NUMBER', code: 'num', maxValue: '100' } } };
+      const tgt = { properties: { num: { type: 'NUMBER', code: 'num', maxValue: 100 } } };
+      const rows = diffRows({ fieldSettings: src }, { fieldSettings: tgt }, ['fieldSettings']);
+      expect(rows.length).toBe(1);
+      expect(rows[0].notationOnly).toBe(true);
+      expect(rows[0].severity).toBe('low');
+    });
+
+    it('marks "" vs null as empty-only and demotes severity to low', () => {
+      const src = { properties: { a: { type: 'SINGLE_LINE_TEXT', code: 'a', defaultValue: '' } } };
+      const tgt = { properties: { a: { type: 'SINGLE_LINE_TEXT', code: 'a', defaultValue: null } } };
+      const rows = diffRows({ fieldSettings: src }, { fieldSettings: tgt }, ['fieldSettings']);
+      expect(rows.length).toBe(1);
+      expect(rows[0].emptyOnly).toBe(true);
+      expect(rows[0].severity).toBe('low');
+    });
+
+    it('keeps real value changes at original severity', () => {
+      const src = { properties: { a: { type: 'SINGLE_LINE_TEXT', code: 'a', defaultValue: 'x' } } };
+      const tgt = { properties: { a: { type: 'SINGLE_LINE_TEXT', code: 'a', defaultValue: 'y' } } };
+      const rows = diffRows({ fieldSettings: src }, { fieldSettings: tgt }, ['fieldSettings']);
+      expect(rows.length).toBe(1);
+      expect(rows[0].notationOnly).toBeUndefined();
+      expect(rows[0].severity).toBe('high');
+    });
+  });
+
+  describe('LCS moved pairing (mixed move + add/remove)', () => {
+    const rowOf = (code: string, type = 'SINGLE_LINE_TEXT') => ({ type: 'ROW', fields: [{ type, code }] });
+
+    it('merges add/remove of the same item at different positions into one moved row', () => {
+      const src = { layout: [rowOf('a'), rowOf('b'), rowOf('c')] };
+      const tgt = { layout: [rowOf('b'), rowOf('c'), rowOf('a'), rowOf('d')] };
+      const rows = diffRows({ layoutSettings: src }, { layoutSettings: tgt }, ['layoutSettings']);
+      const movedRows = rows.filter((r: any) => r.moved);
+      expect(movedRows.length).toBe(1);
+      expect(movedRows[0].type).toBe('changed');
+      expect(movedRows[0].movedFrom).toBe(0);
+      expect(movedRows[0].movedTo).toBe(2);
+      expect(movedRows[0].severity).toBe('low');
+      expect(rows.filter((r: any) => r.type === 'added').length).toBe(1);
+      expect(rows.some((r: any) => r.type === 'removed')).toBe(false);
+    });
+
+    it('keeps genuine add/remove rows untouched when contents differ', () => {
+      const src = { layout: [rowOf('a'), rowOf('b')] };
+      const tgt = { layout: [rowOf('b'), rowOf('x'), rowOf('y')] };
+      const rows = diffRows({ layoutSettings: src }, { layoutSettings: tgt }, ['layoutSettings']);
+      expect(rows.some((r: any) => r.moved)).toBe(false);
     });
   });
 

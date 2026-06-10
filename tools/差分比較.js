@@ -1070,6 +1070,7 @@ ${contextLine}`);
     const leafMatch = rawPath.match(/([^[.\]]+)(?:\[\d+\])?$/);
     const leaf = leafMatch ? leafMatch[1] : "";
     if (row?.moved && row?.type === "changed") return "low";
+    if (row?.notationOnly || row?.emptyOnly) return "low";
     if (LOW_PRIORITY_LEAF_KEYS.has(leaf) && row?.type === "changed") return "low";
     if ((sec === "appAcl" || sec === "recordPermissions") && ACL_GRANT_FLAG_KEYS.has(leaf) && row?.type === "changed") {
       if (row?.left === true && row?.right === false) return "high";
@@ -1114,6 +1115,31 @@ ${contextLine}`);
   }
   function isPlainObject(v) {
     return !!v && typeof v === "object" && !Array.isArray(v);
+  }
+  function isEmptyLikeValue(v) {
+    if (v == null) return true;
+    if (typeof v === "string") return v.trim() === "";
+    if (Array.isArray(v)) return v.length === 0;
+    if (isPlainObject(v)) return Object.keys(v).length === 0;
+    return false;
+  }
+  function isNotationOnlyChange(a, b) {
+    const isPrim = (v) => v != null && (typeof v === "string" || typeof v === "number" || typeof v === "boolean");
+    if (!isPrim(a) || !isPrim(b)) return false;
+    if (a === b) return false;
+    const sa = String(a).trim();
+    const sb = String(b).trim();
+    if (sa === sb) return true;
+    if (sa !== "" && sb !== "" && !Number.isNaN(Number(sa)) && !Number.isNaN(Number(sb)) && Number(sa) === Number(sb)) return true;
+    const la = sa.toLowerCase();
+    const lb = sb.toLowerCase();
+    if ((la === "true" || la === "false") && la === lb) return true;
+    return false;
+  }
+  function classifyChangedValuePair(a, b) {
+    if (isEmptyLikeValue(a) && isEmptyLikeValue(b)) return { emptyOnly: true };
+    if (isNotationOnlyChange(a, b)) return { notationOnly: true };
+    return null;
   }
   function getPathLeafKey(path) {
     const m = String(path || "").match(/([^[.\]]+)(?:\[\d+\])?$/);
@@ -1490,6 +1516,52 @@ ${contextLine}`);
     }
     return true;
   }
+  function escapeRegExpLiteral(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
+    const childRe = new RegExp(`^${escapeRegExpLiteral(path)}\\[(\\d+)\\]$`);
+    const removedBySig = /* @__PURE__ */ new Map();
+    for (let i = startIdx; i < out.length; i++) {
+      const row = out[i];
+      if (!row || row.type !== "removed") continue;
+      if (!childRe.test(String(row.path || ""))) continue;
+      const sig = makeArrayItemSignature(row.left, ignoreRules);
+      if (!removedBySig.has(sig)) removedBySig.set(sig, []);
+      removedBySig.get(sig).push(i);
+    }
+    if (!removedBySig.size) return;
+    const consumed = /* @__PURE__ */ new Set();
+    let merged = 0;
+    for (let i = startIdx; i < out.length; i++) {
+      const row = out[i];
+      if (!row || row.type !== "added") continue;
+      const toMatch = childRe.exec(String(row.path || ""));
+      if (!toMatch) continue;
+      const sig = makeArrayItemSignature(row.right, ignoreRules);
+      const bucket = removedBySig.get(sig);
+      if (!bucket || !bucket.length) continue;
+      const removedIdx = bucket.shift();
+      const removedRow = out[removedIdx];
+      const fromMatch = childRe.exec(String(removedRow.path || ""));
+      out[i] = {
+        ...row,
+        type: "changed",
+        left: removedRow.left,
+        moved: true,
+        movedFrom: fromMatch ? Number(fromMatch[1]) : void 0,
+        movedTo: Number(toMatch[1])
+      };
+      consumed.add(removedIdx);
+      merged += 1;
+    }
+    if (!merged) return;
+    for (let i = out.length - 1; i >= startIdx; i--) {
+      if (consumed.has(i)) out.splice(i, 1);
+    }
+    const diffCount = Number(out.__diffCount);
+    if (Number.isFinite(diffCount)) out.__diffCount = Math.max(0, diffCount - merged);
+  }
   function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
     const n = a.length;
     const m = b.length;
@@ -1517,10 +1589,11 @@ ${contextLine}`);
         dp[i2][j2] = sigA[i2] === sigB[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
       }
     }
+    const mergeStart = out.length;
     let i = 0;
     let j = 0;
     while (i < n || j < m) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) break;
       if (i < n && j < m && sigA[i] === sigB[j]) {
         if (canCollectSameRows(out)) {
           pushDiffRow(out, {
@@ -1556,6 +1629,7 @@ ${contextLine}`);
         break;
       }
     }
+    mergeAddRemovePairsAsMoved(out, mergeStart, path, ignoreRules);
     return true;
   }
   function collectArrayDiffs(a, b, path, out, ignoreRules) {
@@ -1584,11 +1658,11 @@ ${contextLine}`);
     const ta = Object.prototype.toString.call(a);
     const tb = Object.prototype.toString.call(b);
     if (ta !== tb) {
-      pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
+      pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules);
       return;
     }
     if (a == null || b == null) {
-      pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
+      pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules);
       return;
     }
     if (Array.isArray(a)) {
@@ -1612,14 +1686,14 @@ ${contextLine}`);
       for (const k of keys) {
         if (META_KEYS.has(k) || isIgnoredKey(ignoreRules, k)) continue;
         const p = path ? `${path}.${k}` : k;
-        if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: "removed", path: p, left: a[k], right: void 0 }, ignoreRules);
-        else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[k] }, ignoreRules);
+        if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: "removed", path: p, left: a[k], right: void 0, ...isEmptyLikeValue(a[k]) ? { emptyOnly: true } : {} }, ignoreRules);
+        else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[k], ...isEmptyLikeValue(b[k]) ? { emptyOnly: true } : {} }, ignoreRules);
         else collectDeepDiffs(a[k], b[k], p, out, ignoreRules);
         if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
       }
       return;
     }
-    pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
+    pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules);
   }
   function preprocessCustomizePairForDiff(src, tgt) {
     const sClone = src && typeof src === "object" ? deepClone(src) : src;
@@ -3073,9 +3147,12 @@ ${contextLine}`);
     const fieldInfo = extractFieldPathInfo(row.path);
     const leafKey = normalizeIgnoreToken2(getPathLeafKey2(row.path));
     if (row.moved) {
-      if (sectionKey === "layoutSettings") return "レイアウト順序変更";
-      if (sectionKey === "categories") return "カテゴリ順序変更";
-      return "順序変更";
+      const from = Number(row.movedFrom);
+      const to = Number(row.movedTo);
+      const posNote = Number.isFinite(from) && Number.isFinite(to) ? `（${from + 1}番目 → ${to + 1}番目）` : "";
+      if (sectionKey === "layoutSettings") return `レイアウト順序変更${posNote}`;
+      if (sectionKey === "categories") return `カテゴリ順序変更${posNote}`;
+      return `順序変更${posNote}`;
     }
     if (sectionKey === "fieldSettings" && fieldInfo) {
       const noun = fieldInfo.isSubField ? "サブフィールド" : "フィールド";
@@ -3158,8 +3235,11 @@ ${contextLine}`);
       }
       const reason = buildDiffReasonSummary(next);
       if (reason) {
-        const suffix = renameCandidate ? renameCandidate.entityKind ? "改名候補" : "コード変更候補" : "";
-        next.reasonSummary = suffix ? `${reason} / ${suffix}` : reason;
+        const suffixes = [];
+        if (renameCandidate) suffixes.push(renameCandidate.entityKind ? "改名候補" : "コード変更候補");
+        if (next.notationOnly) suffixes.push("表記のみ（実質同値）");
+        if (next.emptyOnly) suffixes.push("空値の差のみ");
+        next.reasonSummary = suffixes.length ? `${reason} / ${suffixes.join(" / ")}` : reason;
       }
       const impactRefs = resolveRowImpactRefs(next, impactIndex, statusImpactIndex);
       if (impactRefs.length) {
@@ -8050,6 +8130,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 .kus-dl-sev--medium{background:#fef3c7;color:#92400e}
 .kus-dl-sev--low{background:#e0f2fe;color:#0c4a6e}
 .kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:12px;background:#f8fafc;border-radius:8px}
+.kus-dl-reason{display:inline-block;padding:1px 6px;border-radius:999px;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-result mark.diff-char-del{background:#fecaca;color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through}
 .kus-dl-result mark.diff-char-add{background:#bbf7d0;color:#14532d;border-radius:2px;padding:0 1px}
 `;
@@ -8122,10 +8204,16 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       parts.push(`<details class="kus-dl-section" open><summary>${esc(label)} <span class="kus-dl-section__count">${list.length}件</span></summary><div class="kus-dl-section__body">`);
       for (const r of list) {
         const cols = rowColumnsHtml(r, useCharDiff);
-        const typeBadge = `<span class="kus-dl-badge kus-dl-badge--${esc(r.type || "same")}">${esc(TYPE_LABEL[r.type] || r.type || "")}</span>`;
+        const typeKey = r.moved ? "moved" : r.type || "same";
+        const typeBadge = `<span class="kus-dl-badge kus-dl-badge--${esc(typeKey)}">${esc(TYPE_LABEL[typeKey] || typeKey)}</span>`;
         const sevBadge = r.severity ? `<span class="kus-dl-sev kus-dl-sev--${esc(r.severity)}">${esc(SEVERITY_LABEL[r.severity] || r.severity)}</span>` : "";
         const labelHtml = r.label ? `<span style="color:#475569">${esc(r.label)}</span>` : "";
-        parts.push(`<div class="kus-dl-row"><div class="kus-dl-row__head">${typeBadge}${sevBadge}<span class="kus-dl-row__path">${esc(r.path || "")}</span>${labelHtml}</div><div class="kus-dl-row__cols">${cols.left}${cols.right}</div></div>`);
+        const reasonHtml = r.reasonSummary ? `<span class="kus-dl-reason">${esc(r.reasonSummary)}</span>` : "";
+        const flagHtml = [
+          r.notationOnly ? '<span class="kus-dl-flag" title="型・表記だけが異なり、値としては同じです（例: &quot;100&quot; と 100）">表記のみ</span>' : "",
+          r.emptyOnly ? '<span class="kus-dl-flag" title="空文字・null・空配列など、空値同士の差です">空値ゆれ</span>' : ""
+        ].join("");
+        parts.push(`<div class="kus-dl-row"><div class="kus-dl-row__head">${typeBadge}${sevBadge}<span class="kus-dl-row__path">${esc(r.path || "")}</span>${reasonHtml}${flagHtml}${labelHtml}</div><div class="kus-dl-row__cols">${cols.left}${cols.right}</div></div>`);
       }
       parts.push("</div></details>");
     }

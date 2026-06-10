@@ -1258,6 +1258,77 @@ function renderAppSettingsCategory(src: any, tgt: any): string {
 // Fields (existing flat row list rendered with category styling)
 // ---------------------------------------------------------------------------
 
+function lookupFieldDef(code: string): any {
+  const pick = (bundle: any) => bundle?.sections?.fieldSettings?.properties?.[code];
+  return pick(state.lastTargetBundle) || pick(state.lastSourceBundle) || null;
+}
+
+/** フィールド本体（定義オブジェクト）を人間が読める要約テキストにする */
+function summarizeFieldPayload(payload: any): string {
+  if (!payload || typeof payload !== 'object') return safeStringify(payload);
+  const parts: string[] = [];
+  if (payload.type) parts.push(`タイプ: ${payload.type}`);
+  const label = payload.label || payload.name;
+  if (label) parts.push(`ラベル: ${label}`);
+  if (payload.required != null) parts.push(payload.required === true || payload.required === 'true' ? '必須' : '任意');
+  if (payload.unique === true || payload.unique === 'true') parts.push('重複禁止');
+  if (payload.expression) parts.push(`計算式: ${payload.expression}`);
+  if (payload.defaultValue != null && payload.defaultValue !== '') parts.push(`初期値: ${safeStringify(payload.defaultValue)}`);
+  if (payload.options && typeof payload.options === 'object' && !Array.isArray(payload.options)) {
+    const opts = Object.keys(payload.options);
+    if (opts.length) parts.push(`選択肢: ${opts.slice(0, 6).join(', ')}${opts.length > 6 ? ` 他${opts.length - 6}件` : ''}`);
+  }
+  if (payload.type === 'SUBTABLE' && payload.fields && typeof payload.fields === 'object') {
+    parts.push(`テーブル内フィールド: ${Object.keys(payload.fields).length}件`);
+  }
+  return parts.length ? parts.join(' / ') : safeStringify(payload);
+}
+
+function renderFieldDiffLine(r: any): string {
+  const rel = String(r.path || '').replace(/^fieldSettings\.properties\.[^.[\]]+\.?/, '');
+  const isRoot = !rel;
+  const leafKey = rel.match(/([^[.\]]+)(?:\[\d+\])?$/)?.[1] || '';
+  const propLabel = leafKey ? labelOfProp(leafKey) : '';
+  const leafDisp = isRoot
+    ? 'フィールド定義'
+    : (propLabel && propLabel !== leafKey ? `${propLabel} (${rel})` : rel);
+  const sev = String(r.severity || 'low');
+  const sevDot = `<span class="diff-cat-sev-dot diff-cat-sev-dot--${esc(sev)}" title="重要度: ${esc(sev)}"></span>`;
+  const leafHtml = `<span class="diff-cat-mono" title="${esc(String(r.path || ''))}">${esc(leafDisp)}</span>`;
+  const valueOf = (v: any) => (isRoot ? summarizeFieldPayload(v) : safeStringify(v));
+  if (r.type === 'added') {
+    return `<li class="diff-cat-field-line">${sevDot}
+      <span class="diff-cat-status diff-cat-status--add">追加</span>
+      ${leafHtml}
+      <span class="diff-cat-new">${esc(valueOf(r.right))}</span>
+    </li>`;
+  }
+  if (r.type === 'removed') {
+    return `<li class="diff-cat-field-line">${sevDot}
+      <span class="diff-cat-status diff-cat-status--rm">削除</span>
+      ${leafHtml}
+      <span class="diff-cat-old">${esc(valueOf(r.left))}</span>
+    </li>`;
+  }
+  if (r.moved) {
+    const from = Number(r.movedFrom);
+    const to = Number(r.movedTo);
+    const pos = Number.isFinite(from) && Number.isFinite(to) ? `（${from + 1}番目 → ${to + 1}番目）` : '';
+    return `<li class="diff-cat-field-line">${sevDot}
+      <span class="diff-cat-status diff-cat-status--chg">移動</span>
+      ${leafHtml}
+      <span class="diff-cat-muted">順序のみ変更${esc(pos)}</span>
+    </li>`;
+  }
+  return `<li class="diff-cat-field-line">${sevDot}
+    <span class="diff-cat-status diff-cat-status--chg">変更</span>
+    ${leafHtml}
+    <span class="diff-cat-old">${esc(valueOf(r.left))}</span>
+    <span class="diff-cat-arrow">→</span>
+    <span class="diff-cat-new">${esc(valueOf(r.right))}</span>
+  </li>`;
+}
+
 function renderFieldsCategory(rows: any[]): string {
   // フィールドはコード単位でグループ化し、各コードの差分行をまとめる。
   const byCode = new Map<string, any[]>();
@@ -1269,20 +1340,34 @@ function renderFieldsCategory(rows: any[]): string {
     byCode.get(code)!.push(r);
   }
   if (!byCode.size) return emptyState('フィールドの差分はありません');
-  const blocks = [...byCode.entries()].map(([code, rs]) => {
+  // 重要度の高いフィールドを先頭へ（高 > 中 > 低、同順位は差分件数の多い順）
+  const sevRank = (rs: any[]) => (rs.some((r) => r.severity === 'high') ? 0 : rs.some((r) => r.severity === 'medium') ? 1 : 2);
+  const sorted = [...byCode.entries()].sort((a, b) => {
+    const ra = sevRank(a[1]);
+    const rb = sevRank(b[1]);
+    if (ra !== rb) return ra - rb;
+    return b[1].length - a[1].length;
+  });
+  const blocks = sorted.map(([code, rs]) => {
     const summary = countRowSummary(rs);
-    const list = rs.map((r) => {
-      const leaf = String(r.path || '').replace(/^fieldSettings\.properties\.[^.[\]]+\.?/, '') || '(本体)';
-      return `<li class="diff-cat-field-line">
-        <span class="diff-cat-mono">${esc(leaf)}</span>
-        <span class="diff-cat-old">${esc(safeStringify(r.left))}</span>
-        <span class="diff-cat-arrow">→</span>
-        <span class="diff-cat-new">${esc(safeStringify(r.right))}</span>
-      </li>`;
-    }).join('');
+    const list = rs.map((r) => renderFieldDiffLine(r)).join('');
+    const def = lookupFieldDef(code)
+      || (rs.find((r) => r.right && typeof r.right === 'object' && (r.right as any).type)?.right)
+      || (rs.find((r) => r.left && typeof r.left === 'object' && (r.left as any).type)?.left);
+    const fieldLabel = String(def?.label || def?.name || '').trim();
+    const fieldType = String(def?.type || '').trim();
+    const labelHtml = fieldLabel && fieldLabel !== code ? `<span class="diff-cat-field-label">${esc(fieldLabel)}</span>` : '';
+    const typeHtml = fieldType ? `<span class="diff-cat-tag diff-cat-tag--type">${esc(fieldType)}</span>` : '';
+    const rootRow = rs.find((r) => /^fieldSettings\.properties\.[^.[\]]+$/.test(String(r.path || '')));
+    const statusChip = rootRow?.type === 'added'
+      ? '<span class="diff-cat-status diff-cat-status--add">追加</span>'
+      : (rootRow?.type === 'removed' ? '<span class="diff-cat-status diff-cat-status--rm">削除</span>' : '');
     return `<details class="diff-cat-field-block" ${rs.length <= 5 ? 'open' : ''}>
       <summary>
+        ${statusChip}
+        ${labelHtml}
         <span class="diff-cat-mono">${esc(code)}</span>
+        ${typeHtml}
         <span class="diff-cat-stats">${diffBadge(summary)}</span>
         <span class="diff-cat-muted">${rs.length}件</span>
       </summary>
@@ -1293,7 +1378,7 @@ function renderFieldsCategory(rows: any[]): string {
     <header class="diff-cat-sec-head">
       <span class="diff-cat-sec-icon">${renderSectionIconHtml('fieldSettings')}</span>
       <span class="diff-cat-sec-title">フィールド</span>
-      <span class="diff-cat-sec-sub">フィールドコード単位で集約</span>
+      <span class="diff-cat-sec-sub">フィールドコード単位で集約（重要度の高い順）</span>
     </header>
     ${blocks}
   </section>`;

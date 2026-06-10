@@ -1009,9 +1009,14 @@ export function buildDiffReasonSummary(row) {
   const fieldInfo = extractFieldPathInfo(row.path);
   const leafKey = normalizeIgnoreToken(getPathLeafKey(row.path));
   if (row.moved) {
-    if (sectionKey === 'layoutSettings') return 'レイアウト順序変更';
-    if (sectionKey === 'categories') return 'カテゴリ順序変更';
-    return '順序変更';
+    const from = Number(row.movedFrom);
+    const to = Number(row.movedTo);
+    const posNote = Number.isFinite(from) && Number.isFinite(to)
+      ? `（${from + 1}番目 → ${to + 1}番目）`
+      : '';
+    if (sectionKey === 'layoutSettings') return `レイアウト順序変更${posNote}`;
+    if (sectionKey === 'categories') return `カテゴリ順序変更${posNote}`;
+    return `順序変更${posNote}`;
   }
   if (sectionKey === 'fieldSettings' && fieldInfo) {
     const noun = fieldInfo.isSubField ? 'サブフィールド' : 'フィールド';
@@ -1109,10 +1114,11 @@ export function enrichDiffRows(rows, sourceBundle, targetBundle) {
     }
     const reason = buildDiffReasonSummary(next);
     if (reason) {
-      const suffix = renameCandidate
-        ? (renameCandidate.entityKind ? '改名候補' : 'コード変更候補')
-        : '';
-      next.reasonSummary = suffix ? `${reason} / ${suffix}` : reason;
+      const suffixes: string[] = [];
+      if (renameCandidate) suffixes.push(renameCandidate.entityKind ? '改名候補' : 'コード変更候補');
+      if (next.notationOnly) suffixes.push('表記のみ（実質同値）');
+      if (next.emptyOnly) suffixes.push('空値の差のみ');
+      next.reasonSummary = suffixes.length ? `${reason} / ${suffixes.join(' / ')}` : reason;
     }
     const impactRefs = resolveRowImpactRefs(next, impactIndex, statusImpactIndex);
     if (impactRefs.length) {

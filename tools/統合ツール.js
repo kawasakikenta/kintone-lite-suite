@@ -1848,6 +1848,7 @@ ${contextLine}`);
     const leafMatch = rawPath.match(/([^[.\]]+)(?:\[\d+\])?$/);
     const leaf = leafMatch ? leafMatch[1] : "";
     if (row?.moved && row?.type === "changed") return "low";
+    if (row?.notationOnly || row?.emptyOnly) return "low";
     if (LOW_PRIORITY_LEAF_KEYS.has(leaf) && row?.type === "changed") return "low";
     if ((sec === "appAcl" || sec === "recordPermissions") && ACL_GRANT_FLAG_KEYS.has(leaf) && row?.type === "changed") {
       if (row?.left === true && row?.right === false) return "high";
@@ -1892,6 +1893,31 @@ ${contextLine}`);
   }
   function isPlainObject(v) {
     return !!v && typeof v === "object" && !Array.isArray(v);
+  }
+  function isEmptyLikeValue(v) {
+    if (v == null) return true;
+    if (typeof v === "string") return v.trim() === "";
+    if (Array.isArray(v)) return v.length === 0;
+    if (isPlainObject(v)) return Object.keys(v).length === 0;
+    return false;
+  }
+  function isNotationOnlyChange(a, b) {
+    const isPrim = (v) => v != null && (typeof v === "string" || typeof v === "number" || typeof v === "boolean");
+    if (!isPrim(a) || !isPrim(b)) return false;
+    if (a === b) return false;
+    const sa = String(a).trim();
+    const sb = String(b).trim();
+    if (sa === sb) return true;
+    if (sa !== "" && sb !== "" && !Number.isNaN(Number(sa)) && !Number.isNaN(Number(sb)) && Number(sa) === Number(sb)) return true;
+    const la = sa.toLowerCase();
+    const lb = sb.toLowerCase();
+    if ((la === "true" || la === "false") && la === lb) return true;
+    return false;
+  }
+  function classifyChangedValuePair(a, b) {
+    if (isEmptyLikeValue(a) && isEmptyLikeValue(b)) return { emptyOnly: true };
+    if (isNotationOnlyChange(a, b)) return { notationOnly: true };
+    return null;
   }
   function getPathLeafKey(path) {
     const m = String(path || "").match(/([^[.\]]+)(?:\[\d+\])?$/);
@@ -2268,6 +2294,52 @@ ${contextLine}`);
     }
     return true;
   }
+  function escapeRegExpLiteral(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
+    const childRe = new RegExp(`^${escapeRegExpLiteral(path)}\\[(\\d+)\\]$`);
+    const removedBySig = /* @__PURE__ */ new Map();
+    for (let i = startIdx; i < out.length; i++) {
+      const row = out[i];
+      if (!row || row.type !== "removed") continue;
+      if (!childRe.test(String(row.path || ""))) continue;
+      const sig = makeArrayItemSignature(row.left, ignoreRules);
+      if (!removedBySig.has(sig)) removedBySig.set(sig, []);
+      removedBySig.get(sig).push(i);
+    }
+    if (!removedBySig.size) return;
+    const consumed = /* @__PURE__ */ new Set();
+    let merged = 0;
+    for (let i = startIdx; i < out.length; i++) {
+      const row = out[i];
+      if (!row || row.type !== "added") continue;
+      const toMatch = childRe.exec(String(row.path || ""));
+      if (!toMatch) continue;
+      const sig = makeArrayItemSignature(row.right, ignoreRules);
+      const bucket = removedBySig.get(sig);
+      if (!bucket || !bucket.length) continue;
+      const removedIdx = bucket.shift();
+      const removedRow = out[removedIdx];
+      const fromMatch = childRe.exec(String(removedRow.path || ""));
+      out[i] = {
+        ...row,
+        type: "changed",
+        left: removedRow.left,
+        moved: true,
+        movedFrom: fromMatch ? Number(fromMatch[1]) : void 0,
+        movedTo: Number(toMatch[1])
+      };
+      consumed.add(removedIdx);
+      merged += 1;
+    }
+    if (!merged) return;
+    for (let i = out.length - 1; i >= startIdx; i--) {
+      if (consumed.has(i)) out.splice(i, 1);
+    }
+    const diffCount = Number(out.__diffCount);
+    if (Number.isFinite(diffCount)) out.__diffCount = Math.max(0, diffCount - merged);
+  }
   function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
     const n = a.length;
     const m = b.length;
@@ -2295,10 +2367,11 @@ ${contextLine}`);
         dp[i2][j2] = sigA[i2] === sigB[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
       }
     }
+    const mergeStart = out.length;
     let i = 0;
     let j = 0;
     while (i < n || j < m) {
-      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return true;
+      if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) break;
       if (i < n && j < m && sigA[i] === sigB[j]) {
         if (canCollectSameRows(out)) {
           pushDiffRow(out, {
@@ -2334,6 +2407,7 @@ ${contextLine}`);
         break;
       }
     }
+    mergeAddRemovePairsAsMoved(out, mergeStart, path, ignoreRules);
     return true;
   }
   function collectArrayDiffs(a, b, path, out, ignoreRules) {
@@ -2362,11 +2436,11 @@ ${contextLine}`);
     const ta = Object.prototype.toString.call(a);
     const tb = Object.prototype.toString.call(b);
     if (ta !== tb) {
-      pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
+      pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules);
       return;
     }
     if (a == null || b == null) {
-      pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
+      pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules);
       return;
     }
     if (Array.isArray(a)) {
@@ -2390,14 +2464,14 @@ ${contextLine}`);
       for (const k of keys) {
         if (META_KEYS.has(k) || isIgnoredKey(ignoreRules, k)) continue;
         const p = path ? `${path}.${k}` : k;
-        if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: "removed", path: p, left: a[k], right: void 0 }, ignoreRules);
-        else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[k] }, ignoreRules);
+        if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: "removed", path: p, left: a[k], right: void 0, ...isEmptyLikeValue(a[k]) ? { emptyOnly: true } : {} }, ignoreRules);
+        else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: "added", path: p, left: void 0, right: b[k], ...isEmptyLikeValue(b[k]) ? { emptyOnly: true } : {} }, ignoreRules);
         else collectDeepDiffs(a[k], b[k], p, out, ignoreRules);
         if (getCollectedDiffCount(out) >= ARRAY_DIFF_LIMIT) return;
       }
       return;
     }
-    pushDiffRow(out, { type: "changed", path, left: a, right: b }, ignoreRules);
+    pushDiffRow(out, { type: "changed", path, left: a, right: b, ...classifyChangedValuePair(a, b) || {} }, ignoreRules);
   }
   function preprocessCustomizePairForDiff(src, tgt) {
     const sClone = src && typeof src === "object" ? deepClone(src) : src;
@@ -3860,9 +3934,12 @@ ${contextLine}`);
     const fieldInfo = extractFieldPathInfo(row.path);
     const leafKey = normalizeIgnoreToken2(getPathLeafKey2(row.path));
     if (row.moved) {
-      if (sectionKey === "layoutSettings") return "レイアウト順序変更";
-      if (sectionKey === "categories") return "カテゴリ順序変更";
-      return "順序変更";
+      const from = Number(row.movedFrom);
+      const to = Number(row.movedTo);
+      const posNote = Number.isFinite(from) && Number.isFinite(to) ? `（${from + 1}番目 → ${to + 1}番目）` : "";
+      if (sectionKey === "layoutSettings") return `レイアウト順序変更${posNote}`;
+      if (sectionKey === "categories") return `カテゴリ順序変更${posNote}`;
+      return `順序変更${posNote}`;
     }
     if (sectionKey === "fieldSettings" && fieldInfo) {
       const noun = fieldInfo.isSubField ? "サブフィールド" : "フィールド";
@@ -3945,8 +4022,11 @@ ${contextLine}`);
       }
       const reason = buildDiffReasonSummary(next);
       if (reason) {
-        const suffix = renameCandidate ? renameCandidate.entityKind ? "改名候補" : "コード変更候補" : "";
-        next.reasonSummary = suffix ? `${reason} / ${suffix}` : reason;
+        const suffixes = [];
+        if (renameCandidate) suffixes.push(renameCandidate.entityKind ? "改名候補" : "コード変更候補");
+        if (next.notationOnly) suffixes.push("表記のみ（実質同値）");
+        if (next.emptyOnly) suffixes.push("空値の差のみ");
+        next.reasonSummary = suffixes.length ? `${reason} / ${suffixes.join(" / ")}` : reason;
       }
       const impactRefs = resolveRowImpactRefs(next, impactIndex, statusImpactIndex);
       if (impactRefs.length) {
@@ -6284,6 +6364,71 @@ ${contextLine}`);
     const html = blocks.filter(Boolean).join("");
     return html || emptyState("アプリ設定の変更はありません");
   }
+  function lookupFieldDef(code) {
+    const pick = (bundle) => bundle?.sections?.fieldSettings?.properties?.[code];
+    return pick(state.lastTargetBundle) || pick(state.lastSourceBundle) || null;
+  }
+  function summarizeFieldPayload(payload) {
+    if (!payload || typeof payload !== "object") return safeStringify2(payload);
+    const parts = [];
+    if (payload.type) parts.push(`タイプ: ${payload.type}`);
+    const label = payload.label || payload.name;
+    if (label) parts.push(`ラベル: ${label}`);
+    if (payload.required != null) parts.push(payload.required === true || payload.required === "true" ? "必須" : "任意");
+    if (payload.unique === true || payload.unique === "true") parts.push("重複禁止");
+    if (payload.expression) parts.push(`計算式: ${payload.expression}`);
+    if (payload.defaultValue != null && payload.defaultValue !== "") parts.push(`初期値: ${safeStringify2(payload.defaultValue)}`);
+    if (payload.options && typeof payload.options === "object" && !Array.isArray(payload.options)) {
+      const opts = Object.keys(payload.options);
+      if (opts.length) parts.push(`選択肢: ${opts.slice(0, 6).join(", ")}${opts.length > 6 ? ` 他${opts.length - 6}件` : ""}`);
+    }
+    if (payload.type === "SUBTABLE" && payload.fields && typeof payload.fields === "object") {
+      parts.push(`テーブル内フィールド: ${Object.keys(payload.fields).length}件`);
+    }
+    return parts.length ? parts.join(" / ") : safeStringify2(payload);
+  }
+  function renderFieldDiffLine(r) {
+    const rel = String(r.path || "").replace(/^fieldSettings\.properties\.[^.[\]]+\.?/, "");
+    const isRoot = !rel;
+    const leafKey = rel.match(/([^[.\]]+)(?:\[\d+\])?$/)?.[1] || "";
+    const propLabel = leafKey ? labelOfProp(leafKey) : "";
+    const leafDisp = isRoot ? "フィールド定義" : propLabel && propLabel !== leafKey ? `${propLabel} (${rel})` : rel;
+    const sev = String(r.severity || "low");
+    const sevDot = `<span class="diff-cat-sev-dot diff-cat-sev-dot--${esc(sev)}" title="重要度: ${esc(sev)}"></span>`;
+    const leafHtml = `<span class="diff-cat-mono" title="${esc(String(r.path || ""))}">${esc(leafDisp)}</span>`;
+    const valueOf = (v) => isRoot ? summarizeFieldPayload(v) : safeStringify2(v);
+    if (r.type === "added") {
+      return `<li class="diff-cat-field-line">${sevDot}
+      <span class="diff-cat-status diff-cat-status--add">追加</span>
+      ${leafHtml}
+      <span class="diff-cat-new">${esc(valueOf(r.right))}</span>
+    </li>`;
+    }
+    if (r.type === "removed") {
+      return `<li class="diff-cat-field-line">${sevDot}
+      <span class="diff-cat-status diff-cat-status--rm">削除</span>
+      ${leafHtml}
+      <span class="diff-cat-old">${esc(valueOf(r.left))}</span>
+    </li>`;
+    }
+    if (r.moved) {
+      const from = Number(r.movedFrom);
+      const to = Number(r.movedTo);
+      const pos = Number.isFinite(from) && Number.isFinite(to) ? `（${from + 1}番目 → ${to + 1}番目）` : "";
+      return `<li class="diff-cat-field-line">${sevDot}
+      <span class="diff-cat-status diff-cat-status--chg">移動</span>
+      ${leafHtml}
+      <span class="diff-cat-muted">順序のみ変更${esc(pos)}</span>
+    </li>`;
+    }
+    return `<li class="diff-cat-field-line">${sevDot}
+    <span class="diff-cat-status diff-cat-status--chg">変更</span>
+    ${leafHtml}
+    <span class="diff-cat-old">${esc(valueOf(r.left))}</span>
+    <span class="diff-cat-arrow">→</span>
+    <span class="diff-cat-new">${esc(valueOf(r.right))}</span>
+  </li>`;
+  }
   function renderFieldsCategory(rows) {
     const byCode = /* @__PURE__ */ new Map();
     for (const r of rows || []) {
@@ -6294,20 +6439,29 @@ ${contextLine}`);
       byCode.get(code).push(r);
     }
     if (!byCode.size) return emptyState("フィールドの差分はありません");
-    const blocks = [...byCode.entries()].map(([code, rs]) => {
+    const sevRank = (rs) => rs.some((r) => r.severity === "high") ? 0 : rs.some((r) => r.severity === "medium") ? 1 : 2;
+    const sorted = [...byCode.entries()].sort((a, b) => {
+      const ra = sevRank(a[1]);
+      const rb = sevRank(b[1]);
+      if (ra !== rb) return ra - rb;
+      return b[1].length - a[1].length;
+    });
+    const blocks = sorted.map(([code, rs]) => {
       const summary = countRowSummary(rs);
-      const list = rs.map((r) => {
-        const leaf = String(r.path || "").replace(/^fieldSettings\.properties\.[^.[\]]+\.?/, "") || "(本体)";
-        return `<li class="diff-cat-field-line">
-        <span class="diff-cat-mono">${esc(leaf)}</span>
-        <span class="diff-cat-old">${esc(safeStringify2(r.left))}</span>
-        <span class="diff-cat-arrow">→</span>
-        <span class="diff-cat-new">${esc(safeStringify2(r.right))}</span>
-      </li>`;
-      }).join("");
+      const list = rs.map((r) => renderFieldDiffLine(r)).join("");
+      const def = lookupFieldDef(code) || rs.find((r) => r.right && typeof r.right === "object" && r.right.type)?.right || rs.find((r) => r.left && typeof r.left === "object" && r.left.type)?.left;
+      const fieldLabel = String(def?.label || def?.name || "").trim();
+      const fieldType = String(def?.type || "").trim();
+      const labelHtml = fieldLabel && fieldLabel !== code ? `<span class="diff-cat-field-label">${esc(fieldLabel)}</span>` : "";
+      const typeHtml = fieldType ? `<span class="diff-cat-tag diff-cat-tag--type">${esc(fieldType)}</span>` : "";
+      const rootRow = rs.find((r) => /^fieldSettings\.properties\.[^.[\]]+$/.test(String(r.path || "")));
+      const statusChip = rootRow?.type === "added" ? '<span class="diff-cat-status diff-cat-status--add">追加</span>' : rootRow?.type === "removed" ? '<span class="diff-cat-status diff-cat-status--rm">削除</span>' : "";
       return `<details class="diff-cat-field-block" ${rs.length <= 5 ? "open" : ""}>
       <summary>
+        ${statusChip}
+        ${labelHtml}
         <span class="diff-cat-mono">${esc(code)}</span>
+        ${typeHtml}
         <span class="diff-cat-stats">${diffBadge(summary)}</span>
         <span class="diff-cat-muted">${rs.length}件</span>
       </summary>
@@ -6318,7 +6472,7 @@ ${contextLine}`);
     <header class="diff-cat-sec-head">
       <span class="diff-cat-sec-icon">${renderSectionIconHtml("fieldSettings")}</span>
       <span class="diff-cat-sec-title">フィールド</span>
-      <span class="diff-cat-sec-sub">フィールドコード単位で集約</span>
+      <span class="diff-cat-sec-sub">フィールドコード単位で集約（重要度の高い順）</span>
     </header>
     ${blocks}
   </section>`;
@@ -7055,6 +7209,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const lines = [];
     if (row.reasonSummary) {
       tags.push(`<span class="diff-meta-tag reason">${esc(row.reasonSummary)}</span>`);
+    }
+    if (row.notationOnly) {
+      tags.push(`<span class="diff-meta-tag notation" title="型・表記だけが異なり、値としては同じです（例: &quot;100&quot; と 100）">表記のみ</span>`);
+    }
+    if (row.emptyOnly) {
+      tags.push(`<span class="diff-meta-tag notation" title="空文字・null・空配列・空オブジェクトなど、空値同士の差です">空値ゆれ</span>`);
     }
     if (row.renameCandidate) {
       const renameTip = `名称変更候補: ${String(row.renameCandidate.fromCode || "-")} → ${String(row.renameCandidate.toCode || "-")}` + (row.renameCandidate.matchedBy ? ` / 判定: ${String(row.renameCandidate.matchedBy)}` : "");
@@ -27515,6 +27675,7 @@ ${detail}`);
 #kintone-unified-suite-v2 .diff-view .diff-meta-tag.rename{background:#ecfdf5;color:#166534;border-color:#86efac}
 #kintone-unified-suite-v2 .diff-view .diff-meta-tag.impact{background:#eff6ff;color:#1d4ed8;border-color:#93c5fd}
 #kintone-unified-suite-v2 .diff-view .diff-meta-tag.reason{background:#fff7ed;color:#9a3412;border-color:#fdba74}
+#kintone-unified-suite-v2 .diff-view .diff-meta-tag.notation{background:#f5f3ff;color:#5b21b6;border-color:#c4b5fd}
 #kintone-unified-suite-v2 .diff-view .diff-issues{border-bottom:1px solid var(--dv-border);background:var(--dv-card)}
 #kintone-unified-suite-v2 .diff-view .diff-issues-head{padding:8px 10px;font-size:12px;font-weight:700;background:#fff7ed;color:#9a3412;border-bottom:1px solid var(--dv-border)}
 #kintone-unified-suite-v2 .diff-view.dark .diff-issues-head{background:#3b1d0f;color:#fdba74}
@@ -33779,6 +33940,11 @@ ${detail}`);
 #kintone-unified-suite-v2 .diff-cat-field-block .diff-cat-stats{margin-left:auto;display:flex;gap:4px}
 #kintone-unified-suite-v2 .diff-cat-field-list{list-style:none;margin:0;padding:6px 10px 8px;border-top:1px dashed var(--dv-border);display:flex;flex-direction:column;gap:3px}
 #kintone-unified-suite-v2 .diff-cat-field-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px}
+#kintone-unified-suite-v2 .diff-cat-field-label{font-weight:700;color:var(--dv-text)}
+#kintone-unified-suite-v2 .diff-cat-sev-dot{display:inline-block;width:8px;height:8px;border-radius:999px;flex:none;background:#94a3b8}
+#kintone-unified-suite-v2 .diff-cat-sev-dot--high{background:#dc2626}
+#kintone-unified-suite-v2 .diff-cat-sev-dot--medium{background:#f59e0b}
+#kintone-unified-suite-v2 .diff-cat-sev-dot--low{background:#94a3b8}
 #kintone-unified-suite-v2 .diff-cat-stat{display:inline-flex;align-items:center;font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;background:var(--dv-pad);color:var(--dv-text)}
 #kintone-unified-suite-v2 .diff-cat-stat--add{background:#d1fae5;color:#065f46}
 #kintone-unified-suite-v2 .diff-cat-stat--rm{background:#fee2e2;color:#991b1b}
