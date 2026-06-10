@@ -26,7 +26,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
     ? 'screen-launcher launcher-tabbed launcher-show-advanced suite-popout-tab tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions'
     : 'screen-launcher launcher-tabbed launcher-show-advanced tab-is-diff-or-reflect tab-needs-app-inputs tab-needs-target tab-needs-connection-actions';
   const getRiskLabel = (riskLevel) => riskLevel === 'warning' ? '要注意' : '比較的安全';
-  const launcherFeatures = [...FEATURE_DEFS].filter((feature) => !feature.hidden).sort((a, b) => {
+  const launcherFeatures = [...FEATURE_DEFS].sort((a, b) => {
     const aOrder = Number.isFinite(a.usageOrder) ? a.usageOrder : 999;
     const bOrder = Number.isFinite(b.usageOrder) ? b.usageOrder : 999;
     if (aOrder !== bOrder) return aOrder - bOrder;
@@ -39,8 +39,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
   );
   const launcherGroupDefs = [
     { key: 'change', label: '変更・反映', desc: '差分確認からプレビュー反映まで' },
-    { key: 'vis', label: '可視化・分析', desc: 'ER図、プロセス図、影響分析' },
-    { key: 'data', label: 'API・検証', desc: 'API調査とレスポンス確認' }
+    { key: 'vis', label: '可視化・分析', desc: '設計書、設定一括取得、ER図、プロセス図、影響分析' },
+    { key: 'data', label: 'データ・保守 / API・検証', desc: 'レコード管理、API調査とレスポンス確認' }
   ];
   const launcherFeaturesByGroup: Record<string, any[]> = launcherGroupDefs.reduce((acc: Record<string, any[]>, group) => {
     acc[group.key] = launcherFeatures.filter((feature) => feature.group === group.key);
@@ -660,7 +660,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <div class="launcher-panel-head">
                   <div>
                     <p class="launcher-section-title">可視化・分析</p>
-                    <p class="launcher-section-desc">ER図、プロセス図、影響分析をまとめています。</p>
+                    <p class="launcher-section-desc">設計書、設定一括取得、ER図、プロセス図、影響分析をまとめています。</p>
                   </div>
                 </div>
                 <div class="feature-grid feature-grid--launcher">
@@ -671,8 +671,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
               <section class="launcher-panel" data-launcher-panel="data" id="u_launcherPanel_data" role="tabpanel" aria-label="データ・保守">
                 <div class="launcher-panel-head">
                   <div>
-                    <p class="launcher-section-title">API・検証</p>
-                    <p class="launcher-section-desc">API調査とレスポンス確認だけを配置します。</p>
+                    <p class="launcher-section-title">データ・保守 / API・検証</p>
+                    <p class="launcher-section-desc">レコード管理、API調査、レスポンス確認をまとめています。</p>
                   </div>
                 </div>
                 <div class="feature-grid feature-grid--launcher">
@@ -721,6 +721,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <button class="tab" data-tab="diff" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">差分比較</button>
                 <button class="tab active" data-tab="reflect" data-state="selected" type="button" role="tab" aria-selected="true" tabindex="0">プレビュー反映</button>
                 <button class="tab" data-tab="field" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">フィールド追加</button>
+                <button class="tab" data-tab="jsconfig" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">JS/CSS設定</button>
               </div>
 
               <details class="kus-tab-more" id="u_kusTabMore">
@@ -728,12 +729,15 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <div class="kus-tab-more__body">
                   <div class="kus-tab-more__group">
                     <div class="kus-tab-more__group-lbl">可視化・分析</div>
+                    <button class="tab" data-tab="design" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">設計書</button>
+                    <button class="tab" data-tab="settingsExport" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">設定一括取得</button>
                     <button class="tab" data-tab="er" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">ER図</button>
                     <button class="tab" data-tab="processFlow" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">プロセス図</button>
                     <button class="tab" data-tab="analyze" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">分析</button>
                   </div>
                   <div class="kus-tab-more__group">
-                    <div class="kus-tab-more__group-lbl">API・検証</div>
+                    <div class="kus-tab-more__group-lbl">データ・保守 / API・検証</div>
+                    <button class="tab" data-tab="recordMgr" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">レコード管理</button>
                     <button class="tab" data-tab="apiTester" data-state="idle" type="button" role="tab" aria-selected="false" tabindex="-1">APIテスター</button>
                   </div>
                 </div>
