@@ -59,8 +59,6 @@ export type KintoneFieldValue = {
 
 export type KintoneRecord = Record<string, KintoneFieldValue>;
 
-export type KintoneAppId = number | string;
-
 export interface KintoneFieldProperty {
   type: string;
   code: string;
@@ -74,9 +72,5 @@ export interface KintoneFieldProperty {
   [key: string]: unknown;
 }
 
-export type KintoneFieldsResponse = {
-  properties: Record<string, KintoneFieldProperty>;
-  revision: string;
-};
 
 export {};

@@ -50,9 +50,6 @@ export function rememberAppId(kind: AppIdKind, value: string): void {
   syncDatalist(kind);
 }
 
-export function getRecentAppIds(kind: AppIdKind): readonly string[] {
-  return recentAppIdsByKind[kind].slice();
-}
 
 function syncDatalist(kind: AppIdKind): void {
   const doc = getToolDocument();
@@ -384,9 +381,6 @@ export function bumpSessionMetric(key: SessionMetricKey, delta = 1): void {
   refreshSessionSummary();
 }
 
-export function getSessionMetricsSnapshot(): Readonly<Record<SessionMetricKey, number>> {
-  return { ...sessionMetrics };
-}
 
 export function renderSessionSummary(): string {
   const items = Object.keys(sessionMetrics)
@@ -481,13 +475,6 @@ export function renderHumanizedError(err: unknown, context: string = ''): string
     ${h.hint ? `<div class="kus-humanized-error__hint">対処: ${escMultiline(h.hint)}</div>` : ''}
   </div>`;
 }
-
-/* =====================================================================
- * 7. 操作ガイドのレベル表記支援
- * =====================================================================
- */
-export const TOUR_LEVEL_HINT =
-  '初めて: 1) 全工程 / 復習: 2) 差分のみ / 反映直前: 3) 反映まで';
 
 /* =====================================================================
  * 起動時インストーラ

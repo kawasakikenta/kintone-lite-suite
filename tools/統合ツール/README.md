@@ -9,10 +9,12 @@ cd tools/統合ツール
 npm install
 ```
 
-## ビルド
+## ビルド・検証
 
 ```bash
-npm run build
+npm run build   # ビルドのみ
+npm run check   # ストレージ検査 → typecheck（通常/strict） → vitest → ビルド
+npm run test:unit  # ユニットテストのみ（vitest）
 ```
 
 `tools/統合ツール.js` に単一 IIFE として出力されます。
@@ -51,9 +53,7 @@ npm run watch
 
 ## UI方針（タイポグラフィ）
 
-### 棚卸し結果（`src/ui/styles.css`）
-- 対象セレクタの確認結果: `.hs`, `.tab-group-lbl`, `.muted`, `label`, `.feature-card-desc`。
-- 旧値では `9px/10px/11px` が混在（例: `.tab-group-lbl` が 9px、`label`/`.muted`/`.hs` が 11px の定義を含む）していたため、ランチャー/タブ画面で読感にばらつきが出やすい状態でした。
+CSS は `src/ui/styles/` 配下に分割管理しています（`tokens.css` / `components.css` / `diff.css` / `reflect.css` / `tabs.css` / `a11y-responsive.css`）。
 
 ### ルール
 - 文字サイズトークンを採用し、`--font-xs: 12px`, `--font-sm: 13px`, `--font-md: 14px` を基準にする。
@@ -68,32 +68,46 @@ npm run watch
 ```
 tools/統合ツール/
 ├── src/
-│   ├── index.ts              # エントリポイント（環境チェック → DOM生成 → 初期化）
+│   ├── index.ts              # 統合版エントリポイント（環境チェック → DOM生成 → 初期化）
+│   ├── boot.ts               # 統合版の起動・UI 構築
+│   ├── featureDefs.mjs       # 機能カード定義と単機能エントリ一覧（STANDALONE_LAUNCH_ENTRIES）
+│   ├── register-api.ts       # window.__KUS__ 公開 API
 │   ├── constants.ts          # 定数定義（TOOL_ID, SECTION_DEFS, META_KEYS 等）
 │   ├── state.ts              # グローバルstate, セッション内メモリ, ui参照
 │   ├── api.ts                # kintone API ラッパー（GET/PUT/POST, fetchBundle）
 │   ├── utils.ts              # 汎用ユーティリティ（escape, clone, normalize, download等）
+│   ├── kintoneGuard.ts       # kintone 画面判定ガード（全エントリ共通）
 │   ├── handlers.ts           # イベント委譲ディスパッチ（data-act, キーボードショートカット）
+│   ├── handlers/             # handlers.ts から分割したモジュール（作業履歴・接続プリセット等）
 │   │
 │   ├── diff/                 # 差分エンジン
-│   │   ├── engine.ts         # コア差分アルゴリズム（deepDiff, LCS, objectKey比較）
+│   │   ├── engine.ts         # コア差分アルゴリズム（deepDiff, LCS, objectKey/複合キー比較）
 │   │   ├── enrich.ts         # 差分行の補強（重要度, リネーム検出, 影響分析）
+│   │   ├── label-dict.ts     # 内部キー → 日本語ラベル辞書
+│   │   ├── path-decoder.ts   # 差分行のセマンティック整形（where/what 分解）
+│   │   ├── category-view.ts  # セクション別ビュー（マトリクス・カード・図）
 │   │   ├── filter.ts         # フィルタリング, エクスポート条件解決
-│   │   └── export.ts         # HTML/Excel/Markdown/パッチ出力, 差分表示レンダリング
+│   │   ├── export.ts         # HTML/Markdown/パッチ出力, 差分表示レンダリング
+│   │   └── xlsx-*.ts         # Excel 出力
 │   │
 │   ├── reflect/              # プレビュー反映
 │   │   ├── plan.ts           # 反映プラン構築, 確認UI, セクション別差分計画
 │   │   ├── apply.ts          # 反映実行, バックアップ, デプロイ
 │   │   └── helpers.ts        # 反映共通ヘルパー（進捗表示, スコープ解決等）
 │   │
+│   ├── entries/              # esbuild エントリポイント（単機能 lite 版）
+│   │   ├── *-lite-entry.ts   # 各単機能スクリプトのエントリ
+│   │   ├── *-lite-ui.ts      # 単機能パネル UI
+│   │   └── litePanelTheme.ts # lite 版共通パネル UI
+│   │
 │   ├── ui/                   # UI層
-│   │   ├── styles.css        # 全CSS（カスタムプロパティでテーマ管理, ライト/ダーク対応）
+│   │   ├── styles/           # 分割CSS（tokens/components/diff/reflect/tabs/a11y-responsive）
 │   │   ├── template.ts       # メインHTML構築（buildRoot）
 │   │   ├── dialog.ts         # ダイアログ制御（ドラッグ, リサイズ, 位置記憶）
 │   │   ├── components.ts     # 共通UIコンポーネント（ステータス, チップ, サイドバー等）
 │   │   └── tour.ts           # ガイドツアー機能
 │   │
-│   └── tabs/                 # タブ別ロジック
+│   └── tabs/                 # タブ別ロジック（*-standalone.ts は lite 版用）
 │       ├── diff.ts           # 差分比較タブ
 │       ├── reflect.ts        # プレビュー反映タブ
 │       ├── field.ts          # フィールド追加タブ
@@ -103,8 +117,11 @@ tools/統合ツール/
 │       ├── process.ts        # プロセス図タブ
 │       ├── settings-export.ts# 設定一括取得タブ
 │       ├── record.ts         # レコード管理タブ
+│       ├── analyze.ts        # 分析タブ
 │       └── api-tester.ts     # APIテスタータブ
 │
+├── tests/                    # vitest ユニットテスト（diff/design/record/reflect）
+├── scripts/                  # 検査スクリプト（check-no-browser-storage）
 ├── build.js                  # esbuild バンドルスクリプト
 ├── package.json
 └── README.md

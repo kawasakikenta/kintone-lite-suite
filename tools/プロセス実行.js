@@ -17,7 +17,7 @@
   };
 
   // src/featureDefs.mjs
-  var ICONS, FEATURE_DEFS, TAB_TO_FEATURE;
+  var ICONS, FEATURE_DEFS;
   var init_featureDefs = __esm({
     "src/featureDefs.mjs"() {
       "use strict";
@@ -235,10 +235,6 @@
           badge: { tone: "safe", label: "安全", icon: "OK" }
         }
       ];
-      TAB_TO_FEATURE = {};
-      FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
-        if (!TAB_TO_FEATURE[t]) TAB_TO_FEATURE[t] = f.key;
-      }));
     }
   });
 
@@ -252,7 +248,7 @@
     }
     return "";
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -299,10 +295,6 @@
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-      DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
-      DIFF_IGNORE_PRESETS_KEY = `${TOOL_ID}:diffIgnorePresets`;
-      DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
-      REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
         { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
@@ -472,6 +464,103 @@ ${contextLine}`);
     }
   });
 
+  // src/api.ts
+  function buildApiPrefix(guestId, preview) {
+    const g = String(guestId || "").trim();
+    if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
+    return `/k/v1${preview ? "/preview" : ""}`;
+  }
+  function normalizeApiGetOptions(optionsOrRetries) {
+    if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
+    if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
+    return optionsOrRetries;
+  }
+  function resolveHttpStatus(error) {
+    const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    const text = String(error?.message || "");
+    const matched = text.match(/\b([45]\d{2})\b/);
+    return matched ? Number(matched[1]) : 0;
+  }
+  function isRetriableApiError(error) {
+    if (!error) return false;
+    const status = resolveHttpStatus(error);
+    if (RETRIABLE_STATUS_CODES.has(status)) return true;
+    const code = String(error?.code || "").toUpperCase();
+    if (code && (code.includes("NETWORK") || code.includes("TIMEOUT") || code === "ECONNRESET")) return true;
+    const message = String(error?.message || "").toLowerCase();
+    return message.includes("network") || message.includes("timeout");
+  }
+  function computeRetryDelayMs(attempt, baseDelayMs, maxDelayMs) {
+    const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
+    const jitter = Math.random() * Math.min(200, baseDelayMs);
+    return Math.round(expDelay + jitter);
+  }
+  function touchApiPathMetric(path, field) {
+    const key = String(path || "");
+    const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
+    row[field] += 1;
+    apiGetMetrics.byPath[key] = row;
+    return row;
+  }
+  async function apiGet(prefix, path, params, optionsOrRetries) {
+    const options = normalizeApiGetOptions(optionsOrRetries);
+    const retries = Number.isFinite(options.retries) ? Math.max(1, Number(options.retries)) : DEFAULT_API_GET_RETRIES;
+    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? Math.max(1, Number(options.baseDelayMs)) : DEFAULT_RETRY_BASE_DELAY_MS;
+    const maxDelayMs = Number.isFinite(options.maxDelayMs) ? Math.max(baseDelayMs, Number(options.maxDelayMs)) : DEFAULT_RETRY_MAX_DELAY_MS;
+    let err;
+    const startAt = Date.now();
+    apiGetMetrics.calls += 1;
+    touchApiPathMetric(path, "calls");
+    for (let i = 0; i < retries; i++) {
+      try {
+        const res = await kintone.api(`${prefix}${path}`, "GET", params);
+        apiGetMetrics.lastLatencyMs = Date.now() - startAt;
+        apiGetMetrics.lastError = "";
+        return res;
+      } catch (e) {
+        err = e;
+        const retriable = isRetriableApiError(e);
+        if (i < retries - 1 && retriable) {
+          apiGetMetrics.retries += 1;
+          touchApiPathMetric(path, "retries");
+          const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
+      }
+    }
+    apiGetMetrics.failures += 1;
+    const pathMetric = touchApiPathMetric(path, "failures");
+    const lastError = err?.message || String(err);
+    pathMetric.lastError = lastError;
+    apiGetMetrics.lastError = lastError;
+    apiGetMetrics.lastLatencyMs = Date.now() - startAt;
+    throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
+  }
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
+  var init_api = __esm({
+    "src/api.ts"() {
+      "use strict";
+      init_constants();
+      init_utils();
+      DEFAULT_API_GET_RETRIES = 3;
+      DEFAULT_RETRY_BASE_DELAY_MS = 500;
+      DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
+      RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+      apiGetMetrics = {
+        calls: 0,
+        retries: 0,
+        failures: 0,
+        lastLatencyMs: 0,
+        lastError: "",
+        byPath: {}
+      };
+      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+    }
+  });
+
   // src/state.ts
   function loadReflectApplyHistory() {
     return [];
@@ -572,104 +661,6 @@ ${contextLine}`);
       state.reflectApplyHistory = loadReflectApplyHistory();
       state.workHistory = loadWorkHistory();
       state.connectionPresets = loadConnectionPresets();
-    }
-  });
-
-  // src/api.ts
-  function buildApiPrefix(guestId, preview) {
-    const g = String(guestId || "").trim();
-    if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
-    return `/k/v1${preview ? "/preview" : ""}`;
-  }
-  function normalizeApiGetOptions(optionsOrRetries) {
-    if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
-    if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
-    return optionsOrRetries;
-  }
-  function resolveHttpStatus(error) {
-    const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
-    if (Number.isFinite(direct) && direct > 0) return direct;
-    const text = String(error?.message || "");
-    const matched = text.match(/\b([45]\d{2})\b/);
-    return matched ? Number(matched[1]) : 0;
-  }
-  function isRetriableApiError(error) {
-    if (!error) return false;
-    const status = resolveHttpStatus(error);
-    if (RETRIABLE_STATUS_CODES.has(status)) return true;
-    const code = String(error?.code || "").toUpperCase();
-    if (code && (code.includes("NETWORK") || code.includes("TIMEOUT") || code === "ECONNRESET")) return true;
-    const message = String(error?.message || "").toLowerCase();
-    return message.includes("network") || message.includes("timeout");
-  }
-  function computeRetryDelayMs(attempt, baseDelayMs, maxDelayMs) {
-    const expDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
-    const jitter = Math.random() * Math.min(200, baseDelayMs);
-    return Math.round(expDelay + jitter);
-  }
-  function touchApiPathMetric(path, field) {
-    const key = String(path || "");
-    const row = apiGetMetrics.byPath[key] || { calls: 0, retries: 0, failures: 0, lastError: "" };
-    row[field] += 1;
-    apiGetMetrics.byPath[key] = row;
-    return row;
-  }
-  async function apiGet(prefix, path, params, optionsOrRetries) {
-    const options = normalizeApiGetOptions(optionsOrRetries);
-    const retries = Number.isFinite(options.retries) ? Math.max(1, Number(options.retries)) : DEFAULT_API_GET_RETRIES;
-    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? Math.max(1, Number(options.baseDelayMs)) : DEFAULT_RETRY_BASE_DELAY_MS;
-    const maxDelayMs = Number.isFinite(options.maxDelayMs) ? Math.max(baseDelayMs, Number(options.maxDelayMs)) : DEFAULT_RETRY_MAX_DELAY_MS;
-    let err;
-    const startAt = Date.now();
-    apiGetMetrics.calls += 1;
-    touchApiPathMetric(path, "calls");
-    for (let i = 0; i < retries; i++) {
-      try {
-        const res = await kintone.api(`${prefix}${path}`, "GET", params);
-        apiGetMetrics.lastLatencyMs = Date.now() - startAt;
-        apiGetMetrics.lastError = "";
-        return res;
-      } catch (e) {
-        err = e;
-        const retriable = isRetriableApiError(e);
-        if (i < retries - 1 && retriable) {
-          apiGetMetrics.retries += 1;
-          touchApiPathMetric(path, "retries");
-          const waitMs = computeRetryDelayMs(i, baseDelayMs, maxDelayMs);
-          await new Promise((r) => setTimeout(r, waitMs));
-          continue;
-        }
-        break;
-      }
-    }
-    apiGetMetrics.failures += 1;
-    const pathMetric = touchApiPathMetric(path, "failures");
-    const lastError = err?.message || String(err);
-    pathMetric.lastError = lastError;
-    apiGetMetrics.lastError = lastError;
-    apiGetMetrics.lastLatencyMs = Date.now() - startAt;
-    throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
-  }
-  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
-  var init_api = __esm({
-    "src/api.ts"() {
-      "use strict";
-      init_constants();
-      init_utils();
-      init_state();
-      DEFAULT_API_GET_RETRIES = 3;
-      DEFAULT_RETRY_BASE_DELAY_MS = 500;
-      DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
-      RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
-      apiGetMetrics = {
-        calls: 0,
-        retries: 0,
-        failures: 0,
-        lastLatencyMs: 0,
-        lastError: "",
-        byPath: {}
-      };
-      CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
     }
   });
 

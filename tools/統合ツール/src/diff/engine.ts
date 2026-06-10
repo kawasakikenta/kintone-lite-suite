@@ -2,7 +2,7 @@
 
 import { SECTION_DEFS, META_KEYS, DIFF_NORMALIZATION_PRESETS, DEFAULT_IGNORE_KEYS, DiffNormalizationPreset } from '../constants.js';
 import { state, ui } from '../state.js';
-import { normalize, deepClone, stableStringify } from '../utils.js';
+import { deepClone, stableStringify } from '../utils.js';
 import type { DiffRow, DiffFetchIssue } from './types.js';
 
 const HIGH_IMPACT_SECTIONS = new Set([
@@ -620,7 +620,7 @@ export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
   if (a.length !== b.length || a.length < 2) return false;
   const sigA = a.map((x) => makeArrayItemSignature(x, ignoreRules));
   const sigB = b.map((x) => makeArrayItemSignature(x, ignoreRules));
-  if ([...sigA].sort().join(' ') !== [...sigB].sort().join(' ')) return false;
+  if ([...sigA].sort().join('\u0000') !== [...sigB].sort().join('\u0000')) return false;
 
   const used = new Array(a.length).fill(false);
   for (let j = 0; j < b.length; j++) {
@@ -865,38 +865,6 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
 // 同内容を再アップロードしただけの fileKey 変更は差分に出なくなり、
 // 本文が違う場合は engine の line-diff が自然に効く。
 // ---------------------------------------------------------------------------
-export function preprocessCustomizeForDiff(value) {
-  if (!value || typeof value !== 'object') return value;
-  const cloned = deepClone(value);
-  for (const platform of ['desktop', 'mobile']) {
-    for (const kind of ['js', 'css']) {
-      const arr = cloned?.[platform]?.[kind];
-      if (!Array.isArray(arr)) continue;
-      for (const item of arr) {
-        if (!item || typeof item !== 'object') continue;
-        if (!item.name) {
-          if (item.type === 'FILE') {
-            item.name = String(item?.file?.name || item?.file?.fileKey || '(ファイル未設定)');
-          } else if (item.type === 'URL') {
-            item.name = String(item.url || '(URL未設定)');
-          }
-        }
-        if (item.type === 'FILE' && item.file && typeof item.file === 'object' && item._bodyText != null) {
-          // 比較対象を本文に切り替える
-          const newFile = { ...item.file };
-          newFile._body = String(item._bodyText);
-          delete newFile.fileKey;
-          item.file = newFile;
-        }
-        // 取得時補助フィールドは比較から除外（ハッシュは比較対象でなくキャッシュ用）
-        if ('_bodyText' in item) delete item._bodyText;
-        if ('_bodyHash' in item) delete item._bodyHash;
-      }
-    }
-  }
-  return cloned;
-}
-
 // 左右ペア対応：両側とも本文取得済の場合のみ _body 比較に切り替える。
 // 片側だけ本文取得失敗 → fileKey 比較に揃える（非対称ノイズを防ぐ）。
 export function preprocessCustomizePairForDiff(src, tgt) {

@@ -2,7 +2,6 @@
 
 import { SECTION_DEFS } from './constants.js';
 import { normalize, deepClone, apiErrorWithContext } from './utils.js';
-import { state } from './state.js';
 
 export function buildApiPrefix(guestId: string | number | null | undefined, preview: boolean): string {
   const g = String(guestId || '').trim();
@@ -486,52 +485,6 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
     }
   } catch { /* ignore: プラグイン設定取得失敗は致命的ではない */ }
   return bundle;
-}
-
-export interface BundleMatchParams {
-  appId?: string | number;
-  guestId?: string | number;
-  preview?: boolean;
-}
-
-export function bundleMatchesParams(bundle: any, params: BundleMatchParams | null | undefined): boolean {
-  if (!bundle || !params) return false;
-  return (
-    String(bundle.appId || '') === String(params.appId || '').trim()
-    && String(bundle.guestId || '') === String(params.guestId || '').trim()
-    && !!bundle.preview === !!params.preview
-  );
-}
-
-export function bundleHasSections(bundle: any, sections: readonly string[] | null | undefined): boolean {
-  if (!bundle || !bundle.sections) return false;
-  return (sections || []).every((sec) => Object.prototype.hasOwnProperty.call(bundle.sections, sec));
-}
-
-export interface ResolveBundleOptions {
-  skipImported?: boolean;
-}
-
-export async function resolveBundle(
-  side: 'source' | 'target',
-  params: BundleMatchParams & { appId: string | number; preview: boolean },
-  sections: readonly string[],
-  onProgress?: (ratio: number, label: string) => void,
-  options: ResolveBundleOptions = {}
-): Promise<Bundle> {
-  const { skipImported = false } = options;
-  if (!skipImported) {
-    if (side === 'source' && state.importedSourceBundle) return pickBundleSections(state.importedSourceBundle, sections);
-    if (side === 'target' && state.importedTargetBundle) return pickBundleSections(state.importedTargetBundle, sections);
-  }
-  const cached = side === 'source' ? state.lastSourceBundle : state.lastTargetBundle;
-  if (skipImported && cached === (side === 'target' ? state.importedTargetBundle : state.importedSourceBundle)) {
-    // skip imported cache
-  } else if (bundleMatchesParams(cached, params) && bundleHasSections(cached, sections)) {
-    if (onProgress) onProgress(1, 'キャッシュ');
-    return pickBundleSections(cached, sections);
-  }
-  return fetchBundle({ ...params, sections, onProgress });
 }
 
 export interface SpaceAppInfo {

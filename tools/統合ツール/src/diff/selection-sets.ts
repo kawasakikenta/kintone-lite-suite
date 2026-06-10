@@ -29,9 +29,6 @@ function saveRaw(list: DiffSelectionSet[]): void {
   selectionSetsMemory = list.slice(0, MAX_SETS);
 }
 
-export function listDiffSelectionSets(): DiffSelectionSet[] {
-  return loadRaw();
-}
 
 export function refreshDiffSelectionSetDropdown(): void {
   const sel = ui.diffSelectionSetSelect as HTMLSelectElement | undefined;

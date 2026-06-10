@@ -23,7 +23,7 @@
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
   // src/featureDefs.mjs
-  var ICONS, FEATURE_DEFS, TAB_TO_FEATURE;
+  var ICONS, FEATURE_DEFS;
   var init_featureDefs = __esm({
     "src/featureDefs.mjs"() {
       "use strict";
@@ -241,10 +241,6 @@
           badge: { tone: "safe", label: "安全", icon: "OK" }
         }
       ];
-      TAB_TO_FEATURE = {};
-      FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
-        if (!TAB_TO_FEATURE[t]) TAB_TO_FEATURE[t] = f.key;
-      }));
     }
   });
 
@@ -258,7 +254,7 @@
     }
     return "";
   }
-  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, SECTION_APPLY_HINTS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_DEFAULT_COURSE, GUIDED_TOUR_STEPS, HIGH_IMPACT_SECTIONS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, TOOL_VERSION, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIALOG_MARGIN, DIALOG_MIN_WIDTH, DIALOG_MIN_HEIGHT, DIALOG_DEFAULT_WIDTH, DIALOG_DEFAULT_HEIGHT, DIALOG_LARGE_WIDTH, DIALOG_LARGE_HEIGHT, SECTION_DEFS, SETTINGS_EXPORT_SCOPE_DEFS, SECTION_APPLY_HINTS, TAB_CONNECTION_NEEDS, META_KEYS, SYSTEM_FIELD_TYPES, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_DEFAULT_COURSE, GUIDED_TOUR_STEPS, HIGH_IMPACT_SECTIONS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, REFLECT_QUICK_PRESETS, IGNORE_PRESET_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -306,10 +302,6 @@
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-      DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
-      DIFF_IGNORE_PRESETS_KEY = `${TOOL_ID}:diffIgnorePresets`;
-      DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
-      REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
       DIALOG_MARGIN = 16;
       DIALOG_MIN_WIDTH = 560;
       DIALOG_MIN_HEIGHT = 360;
@@ -1189,206 +1181,6 @@ ${contextLine}`);
     }
   });
 
-  // src/state.ts
-  function loadDialogState() {
-    return {};
-  }
-  function saveDialogState(dialogState) {
-    void dialogState;
-  }
-  function loadReflectApplyHistory() {
-    return [];
-  }
-  function persistReflectApplyHistory(entries) {
-    state.reflectApplyHistory = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
-  }
-  function pushReflectApplyHistoryEntry(entry) {
-    if (!entry || typeof entry !== "object") return;
-    const list = Array.isArray(state.reflectApplyHistory) ? [...state.reflectApplyHistory] : [];
-    list.unshift(entry);
-    const trimmed = list.slice(0, REFLECT_APPLY_HISTORY_LIMIT);
-    state.reflectApplyHistory = trimmed;
-    persistReflectApplyHistory(trimmed);
-  }
-  function clearReflectApplyHistory() {
-    state.reflectApplyHistory = [];
-    persistReflectApplyHistory([]);
-  }
-  function snapshotReflectApplyHistoryExport() {
-    const entries = Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [];
-    return {
-      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      count: entries.length,
-      entries: entries.map((e) => ({ ...e }))
-    };
-  }
-  function loadWorkHistory() {
-    return [];
-  }
-  function persistWorkHistory(entries) {
-    state.workHistory = Array.isArray(entries) ? entries.slice(0, WORK_HISTORY_LIMIT) : [];
-  }
-  function pushWorkHistoryEntry(entry) {
-    if (!entry || typeof entry !== "object") return;
-    const list = Array.isArray(state.workHistory) ? [...state.workHistory] : [];
-    list.unshift(entry);
-    const trimmed = list.slice(0, WORK_HISTORY_LIMIT);
-    state.workHistory = trimmed;
-    persistWorkHistory(trimmed);
-  }
-  function deleteWorkHistoryEntry(id) {
-    const next = (Array.isArray(state.workHistory) ? state.workHistory : []).filter((entry) => entry?.id !== id);
-    state.workHistory = next;
-    persistWorkHistory(next);
-  }
-  function clearWorkHistory() {
-    state.workHistory = [];
-    persistWorkHistory([]);
-  }
-  function normalizeConnectionPreset(entry) {
-    if (!entry || typeof entry !== "object") return null;
-    const sourceAppId = String(entry.sourceAppId || "").trim();
-    const targetAppId = String(entry.targetAppId || "").trim();
-    if (!sourceAppId && !targetAppId) return null;
-    const id = String(entry.id || "").trim() || `conn-${Date.now()}`;
-    const name = String(entry.name || "").trim() || `${sourceAppId || "-"} -> ${targetAppId || "-"}`;
-    return {
-      id,
-      name,
-      sourceAppId,
-      sourceGuestId: String(entry.sourceGuestId || "").trim(),
-      sourcePreview: !!entry.sourcePreview,
-      targetAppId,
-      targetGuestId: String(entry.targetGuestId || "").trim(),
-      targetPreview: entry.targetPreview == null ? true : !!entry.targetPreview,
-      savedAt: Number(entry.savedAt || Date.now()) || Date.now()
-    };
-  }
-  function loadConnectionPresets() {
-    return [];
-  }
-  function persistConnectionPresets(entries) {
-    state.connectionPresets = Array.isArray(entries) ? entries.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT) : [];
-  }
-  function upsertConnectionPreset(entry) {
-    const normalized = normalizeConnectionPreset({ ...entry, savedAt: Date.now() });
-    if (!normalized) return null;
-    const current = Array.isArray(state.connectionPresets) ? state.connectionPresets : [];
-    const existingIndex = current.findIndex((item) => item.id === normalized.id || item.name === normalized.name);
-    const next = [
-      normalized,
-      ...current.filter((_item, idx) => idx !== existingIndex)
-    ].slice(0, CONNECTION_PRESETS_LIMIT);
-    state.connectionPresets = next;
-    persistConnectionPresets(next);
-    return normalized;
-  }
-  function deleteConnectionPreset(id) {
-    const presetId = String(id || "").trim();
-    if (!presetId) return false;
-    const next = (Array.isArray(state.connectionPresets) ? state.connectionPresets : []).filter((entry) => entry?.id !== presetId);
-    const changed = next.length !== (state.connectionPresets || []).length;
-    state.connectionPresets = next;
-    persistConnectionPresets(next);
-    return changed;
-  }
-  var state, REFLECT_APPLY_HISTORY_KEY, REFLECT_APPLY_HISTORY_LIMIT, WORK_HISTORY_KEY, WORK_HISTORY_LIMIT, CONNECTION_PRESETS_KEY, CONNECTION_PRESETS_LIMIT, ui;
-  var init_state = __esm({
-    "src/state.ts"() {
-      "use strict";
-      init_constants();
-      state = {
-        activeTab: "reflect",
-        activeFeatureKey: "",
-        activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
-        launcherSortMode: "onboarding",
-        lastSourceBundle: null,
-        lastTargetBundle: null,
-        lastDiffRows: [],
-        lastFetchIssues: [],
-        lastDiffAt: null,
-        lastDiffSignature: "",
-        lastApplyPlan: null,
-        lastApplyCompletedAt: null,
-        lastApplyCompletedMode: "",
-        lastApplyCompletedHadError: false,
-        lastApplyCompletedAppId: "",
-        lastApplyReport: null,
-        reflectApplyHistory: [],
-        reflectApplyHistoryOpen: false,
-        workHistory: [],
-        workHistoryOpen: true,
-        connectionPresets: [],
-        reflectPlanPreviewKeyword: "",
-        reflectPlanPreviewChangedOnly: false,
-        reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
-        reflectPreviewOpened: false,
-        reflectPreviewOpenedFor: "",
-        lastPreviewBackupPayload: null,
-        lastPreviewBackupFilename: "",
-        diffViewTheme: "light",
-        diffViewMode: "table",
-        diffCategoryView: "",
-        diffCollapsedSections: /* @__PURE__ */ new Set(),
-        diffSectionVisibleCounts: {},
-        diffSelectedIds: /* @__PURE__ */ new Set(),
-        diffFavoritePaths: /* @__PURE__ */ new Set(),
-        diffFavoritesOnly: false,
-        diffViewedKeys: /* @__PURE__ */ new Set(),
-        diffReviewMeta: {},
-        diffHideViewed: false,
-        diffFocusedRowId: "",
-        diffExcludeSections: null,
-        diffSelectionAnchorId: "",
-        diffIncludeSame: true,
-        diffFilterSection: "",
-        diffFilterType: "",
-        diffFilterSeverity: "",
-        diffFilterTableOnly: false,
-        diffFilterTableKeyword: "",
-        diffSearchFieldName: false,
-        diffExportMode: "all",
-        diffExportContent: "diffOnly",
-        diffIgnoreSuggestions: [],
-        reflectRows: [],
-        reflectSelectedIds: /* @__PURE__ */ new Set(),
-        reflectNodeModes: {},
-        reflectUndoStack: [],
-        reflectRedoStack: [],
-        reflectPropertyFilters: /* @__PURE__ */ new Set(),
-        reflectPropertyPanelOpen: false,
-        reflectActiveSidebarSection: null,
-        reflectActiveNodeId: "",
-        reflectDetailTab: "diff",
-        importedSourceBundle: null,
-        importedTargetBundle: null,
-        importedSourceName: "",
-        importedTargetName: "",
-        lastSettingsExportBundles: [],
-        patchJsonPanelOpen: false,
-        importedPatchPayload: null,
-        reflectPreviewProdDiff: null,
-        guidedTourActive: false,
-        guidedTourIndex: 0,
-        running: false,
-        runningStartedAt: null,
-        runningTaskLabel: "",
-        runningWatchdogId: null,
-        lastResultByTab: {}
-      };
-      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
-      REFLECT_APPLY_HISTORY_LIMIT = 30;
-      WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
-      WORK_HISTORY_LIMIT = 20;
-      CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
-      CONNECTION_PRESETS_LIMIT = 30;
-      state.reflectApplyHistory = loadReflectApplyHistory();
-      state.workHistory = loadWorkHistory();
-      state.connectionPresets = loadConnectionPresets();
-      ui = {};
-    }
-  });
-
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -1772,7 +1564,6 @@ ${contextLine}`);
       "use strict";
       init_constants();
       init_utils();
-      init_state();
       DEPLOY_PATH_SNIPPET = "app/deploy.json";
       ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
       ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
@@ -1833,6 +1624,206 @@ ${contextLine}`);
     "src/settingsBundleImport.ts"() {
       "use strict";
       init_api();
+    }
+  });
+
+  // src/state.ts
+  function loadDialogState() {
+    return {};
+  }
+  function saveDialogState(dialogState) {
+    void dialogState;
+  }
+  function loadReflectApplyHistory() {
+    return [];
+  }
+  function persistReflectApplyHistory(entries) {
+    state.reflectApplyHistory = Array.isArray(entries) ? entries.slice(0, REFLECT_APPLY_HISTORY_LIMIT) : [];
+  }
+  function pushReflectApplyHistoryEntry(entry) {
+    if (!entry || typeof entry !== "object") return;
+    const list = Array.isArray(state.reflectApplyHistory) ? [...state.reflectApplyHistory] : [];
+    list.unshift(entry);
+    const trimmed = list.slice(0, REFLECT_APPLY_HISTORY_LIMIT);
+    state.reflectApplyHistory = trimmed;
+    persistReflectApplyHistory(trimmed);
+  }
+  function clearReflectApplyHistory() {
+    state.reflectApplyHistory = [];
+    persistReflectApplyHistory([]);
+  }
+  function snapshotReflectApplyHistoryExport() {
+    const entries = Array.isArray(state.reflectApplyHistory) ? state.reflectApplyHistory : [];
+    return {
+      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      count: entries.length,
+      entries: entries.map((e) => ({ ...e }))
+    };
+  }
+  function loadWorkHistory() {
+    return [];
+  }
+  function persistWorkHistory(entries) {
+    state.workHistory = Array.isArray(entries) ? entries.slice(0, WORK_HISTORY_LIMIT) : [];
+  }
+  function pushWorkHistoryEntry(entry) {
+    if (!entry || typeof entry !== "object") return;
+    const list = Array.isArray(state.workHistory) ? [...state.workHistory] : [];
+    list.unshift(entry);
+    const trimmed = list.slice(0, WORK_HISTORY_LIMIT);
+    state.workHistory = trimmed;
+    persistWorkHistory(trimmed);
+  }
+  function deleteWorkHistoryEntry(id) {
+    const next = (Array.isArray(state.workHistory) ? state.workHistory : []).filter((entry) => entry?.id !== id);
+    state.workHistory = next;
+    persistWorkHistory(next);
+  }
+  function clearWorkHistory() {
+    state.workHistory = [];
+    persistWorkHistory([]);
+  }
+  function normalizeConnectionPreset(entry) {
+    if (!entry || typeof entry !== "object") return null;
+    const sourceAppId = String(entry.sourceAppId || "").trim();
+    const targetAppId = String(entry.targetAppId || "").trim();
+    if (!sourceAppId && !targetAppId) return null;
+    const id = String(entry.id || "").trim() || `conn-${Date.now()}`;
+    const name = String(entry.name || "").trim() || `${sourceAppId || "-"} -> ${targetAppId || "-"}`;
+    return {
+      id,
+      name,
+      sourceAppId,
+      sourceGuestId: String(entry.sourceGuestId || "").trim(),
+      sourcePreview: !!entry.sourcePreview,
+      targetAppId,
+      targetGuestId: String(entry.targetGuestId || "").trim(),
+      targetPreview: entry.targetPreview == null ? true : !!entry.targetPreview,
+      savedAt: Number(entry.savedAt || Date.now()) || Date.now()
+    };
+  }
+  function loadConnectionPresets() {
+    return [];
+  }
+  function persistConnectionPresets(entries) {
+    state.connectionPresets = Array.isArray(entries) ? entries.map(normalizeConnectionPreset).filter((x) => x !== null).slice(0, CONNECTION_PRESETS_LIMIT) : [];
+  }
+  function upsertConnectionPreset(entry) {
+    const normalized = normalizeConnectionPreset({ ...entry, savedAt: Date.now() });
+    if (!normalized) return null;
+    const current = Array.isArray(state.connectionPresets) ? state.connectionPresets : [];
+    const existingIndex = current.findIndex((item) => item.id === normalized.id || item.name === normalized.name);
+    const next = [
+      normalized,
+      ...current.filter((_item, idx) => idx !== existingIndex)
+    ].slice(0, CONNECTION_PRESETS_LIMIT);
+    state.connectionPresets = next;
+    persistConnectionPresets(next);
+    return normalized;
+  }
+  function deleteConnectionPreset(id) {
+    const presetId = String(id || "").trim();
+    if (!presetId) return false;
+    const next = (Array.isArray(state.connectionPresets) ? state.connectionPresets : []).filter((entry) => entry?.id !== presetId);
+    const changed = next.length !== (state.connectionPresets || []).length;
+    state.connectionPresets = next;
+    persistConnectionPresets(next);
+    return changed;
+  }
+  var state, REFLECT_APPLY_HISTORY_KEY, REFLECT_APPLY_HISTORY_LIMIT, WORK_HISTORY_KEY, WORK_HISTORY_LIMIT, CONNECTION_PRESETS_KEY, CONNECTION_PRESETS_LIMIT, ui;
+  var init_state = __esm({
+    "src/state.ts"() {
+      "use strict";
+      init_constants();
+      state = {
+        activeTab: "reflect",
+        activeFeatureKey: "",
+        activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
+        launcherSortMode: "onboarding",
+        lastSourceBundle: null,
+        lastTargetBundle: null,
+        lastDiffRows: [],
+        lastFetchIssues: [],
+        lastDiffAt: null,
+        lastDiffSignature: "",
+        lastApplyPlan: null,
+        lastApplyCompletedAt: null,
+        lastApplyCompletedMode: "",
+        lastApplyCompletedHadError: false,
+        lastApplyCompletedAppId: "",
+        lastApplyReport: null,
+        reflectApplyHistory: [],
+        reflectApplyHistoryOpen: false,
+        workHistory: [],
+        workHistoryOpen: true,
+        connectionPresets: [],
+        reflectPlanPreviewKeyword: "",
+        reflectPlanPreviewChangedOnly: false,
+        reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
+        reflectPreviewOpened: false,
+        reflectPreviewOpenedFor: "",
+        lastPreviewBackupPayload: null,
+        lastPreviewBackupFilename: "",
+        diffViewTheme: "light",
+        diffViewMode: "table",
+        diffCategoryView: "",
+        diffCollapsedSections: /* @__PURE__ */ new Set(),
+        diffSectionVisibleCounts: {},
+        diffSelectedIds: /* @__PURE__ */ new Set(),
+        diffFavoritePaths: /* @__PURE__ */ new Set(),
+        diffFavoritesOnly: false,
+        diffViewedKeys: /* @__PURE__ */ new Set(),
+        diffReviewMeta: {},
+        diffHideViewed: false,
+        diffFocusedRowId: "",
+        diffExcludeSections: null,
+        diffSelectionAnchorId: "",
+        diffIncludeSame: true,
+        diffFilterSection: "",
+        diffFilterType: "",
+        diffFilterSeverity: "",
+        diffFilterTableOnly: false,
+        diffFilterTableKeyword: "",
+        diffSearchFieldName: false,
+        diffExportMode: "all",
+        diffExportContent: "diffOnly",
+        diffIgnoreSuggestions: [],
+        reflectRows: [],
+        reflectSelectedIds: /* @__PURE__ */ new Set(),
+        reflectNodeModes: {},
+        reflectUndoStack: [],
+        reflectRedoStack: [],
+        reflectPropertyFilters: /* @__PURE__ */ new Set(),
+        reflectPropertyPanelOpen: false,
+        reflectActiveSidebarSection: null,
+        reflectActiveNodeId: "",
+        reflectDetailTab: "diff",
+        importedSourceBundle: null,
+        importedTargetBundle: null,
+        importedSourceName: "",
+        importedTargetName: "",
+        lastSettingsExportBundles: [],
+        patchJsonPanelOpen: false,
+        importedPatchPayload: null,
+        reflectPreviewProdDiff: null,
+        guidedTourActive: false,
+        guidedTourIndex: 0,
+        running: false,
+        runningStartedAt: null,
+        runningTaskLabel: "",
+        runningWatchdogId: null,
+        lastResultByTab: {}
+      };
+      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
+      REFLECT_APPLY_HISTORY_LIMIT = 30;
+      WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
+      WORK_HISTORY_LIMIT = 20;
+      CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
+      CONNECTION_PRESETS_LIMIT = 30;
+      state.reflectApplyHistory = loadReflectApplyHistory();
+      state.workHistory = loadWorkHistory();
+      state.connectionPresets = loadConnectionPresets();
+      ui = {};
     }
   });
 
@@ -4273,9 +4264,6 @@ ${contextLine}`);
   });
 
   // src/ui/dialog.ts
-  function callScheduleGuidedTourLayout() {
-    if (typeof scheduleGuidedTourLayoutFn === "function") scheduleGuidedTourLayoutFn();
-  }
   function getRoot() {
     return root;
   }
@@ -4361,7 +4349,6 @@ ${contextLine}`);
     root.style.right = "auto";
     root.style.bottom = "auto";
     if (options.persist !== false) scheduleDialogSizeSave();
-    if (state.guidedTourActive) callScheduleGuidedTourLayout();
     return next;
   }
   function applyDialogSizePreset(mode) {
@@ -4423,7 +4410,6 @@ ${contextLine}`);
     if (!root) return;
     dialogResizeObserver = new ResizeObserver(() => {
       scheduleDialogSizeSave();
-      callScheduleGuidedTourLayout();
     });
     dialogResizeObserver.observe(root);
   }
@@ -4481,7 +4467,7 @@ ${contextLine}`);
     ui2.dialogHandle?.removeEventListener("mousedown", onDialogDragStart);
     finishDialogDrag(false);
   }
-  var root, ui2, dialogResizeObserver, dialogResizeSaveTimer, dialogDragState, dialogDragMoveHandler, dialogDragEndHandler, scheduleGuidedTourLayoutFn;
+  var root, ui2, dialogResizeObserver, dialogResizeSaveTimer, dialogDragState, dialogDragMoveHandler, dialogDragEndHandler;
   var init_dialog = __esm({
     "src/ui/dialog.ts"() {
       "use strict";
@@ -4494,7 +4480,6 @@ ${contextLine}`);
       dialogDragState = null;
       dialogDragMoveHandler = null;
       dialogDragEndHandler = null;
-      scheduleGuidedTourLayoutFn = null;
     }
   });
 
@@ -14907,9 +14892,9 @@ ${tgt.full}`);
   });
 
   // src/tabs/preview-compare.ts
-  function getPreviewCompareStatusPrefix(ui4) {
-    const sp = !!ui4?.sourcePreview?.checked;
-    const tp = !!ui4?.targetPreview?.checked;
+  function getPreviewCompareStatusPrefix(ui5) {
+    const sp = !!ui5?.sourcePreview?.checked;
+    const tp = !!ui5?.targetPreview?.checked;
     if (!sp && tp) return "〔本番 → プレビュー〕";
     if (sp && tp) return "〔プレビュー同士〕";
     if (!sp && !tp) return "〔本番同士〕";
@@ -17466,7 +17451,7 @@ ${warnings.join("\n")}
     const message = `Lookup 変換ルールに問題があります:
 ${lines.join("\n")}
 
-[OK] 続行 / [キャンセル] 中断（キャッシュをクリアして再判定するには clearLookupPreflightCache() を呼んでください）`;
+[OK] 続行 / [キャンセル] 中断（失敗キャッシュは約1分で自動失効し、再実行時に再判定されます）`;
     if (!kusConfirm(message)) {
       throw new Error("Lookup 変換ルールのプリフライトで中断しました");
     }
@@ -19329,7 +19314,7 @@ ${lines.join("\n")}
     runPreviewApplyPlanNodes: () => runPreviewApplyPlanNodes,
     showInlineConfirmation: () => showInlineConfirmation,
     splitMapSectionDiff: () => splitMapSectionDiff,
-    splitUpsertMap: () => splitUpsertMap3,
+    splitUpsertMap: () => splitUpsertMap2,
     togglePlanSectionExclude: () => togglePlanSectionExclude,
     upsertFields: () => upsertFields2
   });
@@ -19386,7 +19371,7 @@ ${lines.join("\n")}
     </div>
   </div>`;
   }
-  function splitUpsertMap3(currentMap, incomingMap, options) {
+  function splitUpsertMap2(currentMap, incomingMap, options) {
     const overwrite = !!(options && options.overwrite);
     const renameOnConflict = !!(options && options.renameOnConflict);
     const codeField = options && options.codeField || "code";
@@ -19435,7 +19420,7 @@ ${lines.join("\n")}
       convertedIncoming[code] = converted.def;
     }
     const current = await apiGet(prefix, "/app/form/fields.json", { app });
-    const split = splitUpsertMap3(current.properties || {}, convertedIncoming || {}, {
+    const split = splitUpsertMap2(current.properties || {}, convertedIncoming || {}, {
       overwrite: options && options.overwrite,
       renameOnConflict: options && options.renameOnConflict,
       codeField: "code"
@@ -27914,11 +27899,6 @@ ${detail}`);
 #kintone-unified-suite-v2 .settings-layout-static.hr span{display:block;width:100%;border-top:1px solid #d0d7de}
 #kintone-unified-suite-v2 .diff-view.dark .settings-layout-static.hr span{border-top-color:var(--dv-border)}
 #kintone-unified-suite-v2 .settings-layout-static.spacer{color:transparent;min-height:20px}
-#kintone-unified-suite-v2 .json-tree-host{margin-top:10px;border:1px solid var(--dv-border);border-radius:12px;background:#fff;padding:12px;overflow:auto}
-#kintone-unified-suite-v2 .json-tree-placeholder,#kintone-unified-suite-v2 .json-tree-loading{font-size:11px;line-height:1.7;color:var(--dv-sub)}
-#kintone-unified-suite-v2 .json-tree-error{font-size:11px;line-height:1.7;color:#b91c1c;white-space:pre-wrap;word-break:break-word}
-#kintone-unified-suite-v2 .json-tree-host .jsondiffpatch-delta{font-size:11px;color:#0f172a}
-#kintone-unified-suite-v2 .json-tree-host .jsondiffpatch-delta pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 #kintone-unified-suite-v2 .multi-target-card{border:1px solid #dbe3ed;border-radius:8px;background:#fff;padding:10px}
 #kintone-unified-suite-v2 .multi-target-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;color:#475569;margin-bottom:6px}
 #kintone-unified-suite-v2 .multi-target-badges{display:flex;gap:6px;flex-wrap:wrap}
@@ -37040,8 +37020,8 @@ ${detail}`);
     if (!props || typeof props !== "object" || Array.isArray(props)) return null;
     return deepClone(props);
   }
-  function initReflectPreviewPlayground(ui4, setStatus2) {
-    const root2 = ui4.reflectPreviewPlayground;
+  function initReflectPreviewPlayground(ui5, setStatus2) {
+    const root2 = ui5.reflectPreviewPlayground;
     if (!root2) return;
     const st = {
       before: deepClone(SAMPLE_BEFORE),
@@ -37714,8 +37694,8 @@ ${detail}`);
     if (!sec || sec._fetchError) return null;
     return deepClone(sec);
   }
-  function initSectionPreviewEditor(ui4, setStatus2) {
-    const root2 = ui4.sectionPreviewEditor;
+  function initSectionPreviewEditor(ui5, setStatus2) {
+    const root2 = ui5.sectionPreviewEditor;
     if (!root2) return;
     const st = {
       sectionKey: PUT_SECTIONS[0]?.key || "",
@@ -46212,7 +46192,6 @@ ${body}`;
   init_components();
   init_diff();
   init_dialog();
-  init_engine();
   init_export();
   init_psychology();
   init_design_xlsx();
@@ -49536,7 +49515,7 @@ ${field.label}` : code,
     } catch (e) {
     }
     const $ = (id) => root2.querySelector(id);
-    const ui4 = {
+    const ui5 = {
       tabs: [...root2.querySelectorAll(".tab")],
       subTabs: [...root2.querySelectorAll(".subtab")],
       panes: [...root2.querySelectorAll(".pane")],
@@ -49716,9 +49695,9 @@ ${field.label}` : code,
       shortcutHelpModal: $("#u_shortcutHelpModal"),
       copyTextToClipboard
     };
-    Object.assign(ui, ui4);
-    setUiRefs(ui4);
-    setComponentUi(ui4);
+    Object.assign(ui, ui5);
+    setUiRefs(ui5);
+    setComponentUi(ui5);
     resetAppTargetTables();
     try {
       initAppTargetTables(root2, {
@@ -49730,7 +49709,7 @@ ${field.label}` : code,
               return "";
             }
           },
-          defaultGuest: () => ui4.settingsExportGuest?.value?.trim() || "",
+          defaultGuest: () => ui5.settingsExportGuest?.value?.trim() || "",
           onChange: () => {
             try {
               saveCurrentDialogState2();
@@ -49847,24 +49826,24 @@ ${field.label}` : code,
     renderApiTesterHistory();
     initApiTesterEnhancements();
     installPsychology({
-      sourceApp: ui4.sourceApp,
-      targetApp: ui4.targetApp,
+      sourceApp: ui5.sourceApp,
+      targetApp: ui5.targetApp,
       envBadgeHost: root2.querySelector("#u_envBadge"),
       sessionSummaryHost: root2.querySelector("#u_sessionSummary"),
       getEnvContext: () => {
-        const sourceAppId = String(ui4.sourceApp?.value || "").trim();
-        const targetAppId = String(ui4.targetApp?.value || "").trim();
-        const sourceGuestId = String(ui4.sourceGuest?.value || "").trim();
-        const targetGuestId = String(ui4.targetGuest?.value || "").trim();
-        const sourcePreview = !!ui4.sourcePreview?.checked;
-        const targetPreview = !!ui4.targetPreview?.checked;
+        const sourceAppId = String(ui5.sourceApp?.value || "").trim();
+        const targetAppId = String(ui5.targetApp?.value || "").trim();
+        const sourceGuestId = String(ui5.sourceGuest?.value || "").trim();
+        const targetGuestId = String(ui5.targetGuest?.value || "").trim();
+        const sourcePreview = !!ui5.sourcePreview?.checked;
+        const targetPreview = !!ui5.targetPreview?.checked;
         const sameConnection = !!sourceAppId && sourceAppId === targetAppId && sourceGuestId === targetGuestId;
         return { sourceAppId, targetAppId, sourcePreview, targetPreview, sameConnection };
       }
     });
     setStatus("待機中");
     try {
-      const statusEl = ui4.status;
+      const statusEl = ui5.status;
       if (statusEl) {
         statusEl.title = "実行中の処理がハングした場合はダブルクリックで強制解除";
         statusEl.style.cursor = "pointer";

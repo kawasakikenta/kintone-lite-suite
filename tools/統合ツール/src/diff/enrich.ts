@@ -6,8 +6,7 @@ import {
   DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS
 } from '../constants.js';
 import { state } from '../state.js';
-import { normalize, deepClone, stableStringify } from '../utils.js';
-import { getActualDiffRows } from './engine.js';
+import { stableStringify } from '../utils.js';
 
 // utils.js と同一ロジック。IIFE バンドルで utils からの import が欠落した場合でも動作するようローカル定義する。
 function relativePathFromRow(path, secKey) {
@@ -806,9 +805,6 @@ const ENTITY_KIND_LABELS: Record<string, string> = {
   layoutRow: 'レイアウト行'
 };
 
-export function getEntityKindLabel(kind: string): string {
-  return ENTITY_KIND_LABELS[kind] || '';
-}
 
 function getSectionPropLabel(sectionKey: string, leaf: string): string {
   const map = SECTION_PROP_LABELS[sectionKey];

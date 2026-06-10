@@ -72,32 +72,6 @@ export function convertLookupAppIds(fieldDef, map) {
   return { def, changed };
 }
 
-export function renderAppIdConfirmSection(appIdRefs) {
-  if (!appIdRefs || !appIdRefs.length) return '<div style="color:#64748b;font-size:12px;margin-bottom:8px">関連アプリIDなし</div>';
-  const rows = appIdRefs.map((r) =>
-    `<tr><td style="padding:3px 8px;font-size:11px">${esc(r.fieldCode)}</td>` +
-    `<td style="padding:3px 8px;font-size:11px">${esc(r.type)}</td>` +
-    `<td style="padding:3px 8px;font-size:11px;font-weight:700">${esc(r.refAppId)}</td>` +
-    `<td style="padding:3px 8px;font-size:11px;color:${r.convertedAppId ? '#2563eb' : '#94a3b8'}">${r.convertedAppId ? `→ ${esc(r.convertedAppId)}` : '-'}</td>` +
-    `<td style="padding:3px 8px;font-size:11px">${esc(r.section)}</td></tr>`
-  ).join('');
-  return `<div style="margin-bottom:10px">
-    <div style="font-weight:600;font-size:12px;margin-bottom:4px;color:#dc2626">関連アプリID一覧 (${appIdRefs.length}件)</div>
-    <div style="max-height:160px;overflow:auto;border:1px solid #e2e8f0;border-radius:6px">
-      <table style="width:100%;border-collapse:collapse;font-size:11px">
-        <thead><tr style="background:#f1f5f9">
-          <th style="padding:4px 8px;text-align:left">フィールド</th>
-          <th style="padding:4px 8px;text-align:left">種別</th>
-          <th style="padding:4px 8px;text-align:left">参照先アプリID</th>
-          <th style="padding:4px 8px;text-align:left">変換後</th>
-          <th style="padding:4px 8px;text-align:left">セクション</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  </div>`;
-}
-
 export function splitUpsertMap(currentMap, incomingMap, options) {
   const overwrite = !!(options && options.overwrite);
   const renameOnConflict = !!(options && options.renameOnConflict);

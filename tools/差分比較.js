@@ -17,7 +17,7 @@
   };
 
   // src/featureDefs.mjs
-  var ICONS, FEATURE_DEFS, TAB_TO_FEATURE;
+  var ICONS, FEATURE_DEFS;
   var init_featureDefs = __esm({
     "src/featureDefs.mjs"() {
       "use strict";
@@ -235,10 +235,6 @@
           badge: { tone: "safe", label: "安全", icon: "OK" }
         }
       ];
-      TAB_TO_FEATURE = {};
-      FEATURE_DEFS.forEach((f) => f.tabs.forEach((t) => {
-        if (!TAB_TO_FEATURE[t]) TAB_TO_FEATURE[t] = f.key;
-      }));
     }
   });
 
@@ -252,7 +248,7 @@
     }
     return "";
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, DIFF_SELECTION_SETS_KEY, DIFF_IGNORE_PRESETS_KEY, DIFF_ONBOARDING_DISMISSED_KEY, REFLECT_PRESETS_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS, DIFF_IMPACT_REF_LIMIT, FIELD_REF_EXACT_KEYS, FIELD_REF_ARRAY_KEYS, FIELD_REF_TOKEN_KEYS, DIFF_NORMALIZATION_PRESETS, LINE_DIFF_MAX_CELLS, CHAR_DIFF_MAX_CELLS, DEFAULT_IGNORE_KEYS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -299,10 +295,6 @@
       });
       DEFAULT_APP_ID = resolveDefaultAppId();
       DIALOG_STATE_KEY = `${TOOL_ID}:dialogState`;
-      DIFF_SELECTION_SETS_KEY = `${TOOL_ID}:diffSelectionSets`;
-      DIFF_IGNORE_PRESETS_KEY = `${TOOL_ID}:diffIgnorePresets`;
-      DIFF_ONBOARDING_DISMISSED_KEY = `${TOOL_ID}:diffOnboardingDismissed`;
-      REFLECT_PRESETS_KEY = `${TOOL_ID}:reflectPresets`;
       SECTION_DEFS = [
         { key: "appSettings", label: "アプリ設定", endpoint: "/app/settings.json", put: false },
         { key: "appInfo", label: "アプリ情報(ラベル)", endpoint: "/app.json", put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
@@ -656,110 +648,6 @@ ${contextLine}`);
     }
   });
 
-  // src/state.ts
-  function loadReflectApplyHistory() {
-    return [];
-  }
-  function loadWorkHistory() {
-    return [];
-  }
-  function loadConnectionPresets() {
-    return [];
-  }
-  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY, ui;
-  var init_state = __esm({
-    "src/state.ts"() {
-      "use strict";
-      init_constants();
-      state = {
-        activeTab: "reflect",
-        activeFeatureKey: "",
-        activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
-        launcherSortMode: "onboarding",
-        lastSourceBundle: null,
-        lastTargetBundle: null,
-        lastDiffRows: [],
-        lastFetchIssues: [],
-        lastDiffAt: null,
-        lastDiffSignature: "",
-        lastApplyPlan: null,
-        lastApplyCompletedAt: null,
-        lastApplyCompletedMode: "",
-        lastApplyCompletedHadError: false,
-        lastApplyCompletedAppId: "",
-        lastApplyReport: null,
-        reflectApplyHistory: [],
-        reflectApplyHistoryOpen: false,
-        workHistory: [],
-        workHistoryOpen: true,
-        connectionPresets: [],
-        reflectPlanPreviewKeyword: "",
-        reflectPlanPreviewChangedOnly: false,
-        reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
-        reflectPreviewOpened: false,
-        reflectPreviewOpenedFor: "",
-        lastPreviewBackupPayload: null,
-        lastPreviewBackupFilename: "",
-        diffViewTheme: "light",
-        diffViewMode: "table",
-        diffCategoryView: "",
-        diffCollapsedSections: /* @__PURE__ */ new Set(),
-        diffSectionVisibleCounts: {},
-        diffSelectedIds: /* @__PURE__ */ new Set(),
-        diffFavoritePaths: /* @__PURE__ */ new Set(),
-        diffFavoritesOnly: false,
-        diffViewedKeys: /* @__PURE__ */ new Set(),
-        diffReviewMeta: {},
-        diffHideViewed: false,
-        diffFocusedRowId: "",
-        diffExcludeSections: null,
-        diffSelectionAnchorId: "",
-        diffIncludeSame: true,
-        diffFilterSection: "",
-        diffFilterType: "",
-        diffFilterSeverity: "",
-        diffFilterTableOnly: false,
-        diffFilterTableKeyword: "",
-        diffSearchFieldName: false,
-        diffExportMode: "all",
-        diffExportContent: "diffOnly",
-        diffIgnoreSuggestions: [],
-        reflectRows: [],
-        reflectSelectedIds: /* @__PURE__ */ new Set(),
-        reflectNodeModes: {},
-        reflectUndoStack: [],
-        reflectRedoStack: [],
-        reflectPropertyFilters: /* @__PURE__ */ new Set(),
-        reflectPropertyPanelOpen: false,
-        reflectActiveSidebarSection: null,
-        reflectActiveNodeId: "",
-        reflectDetailTab: "diff",
-        importedSourceBundle: null,
-        importedTargetBundle: null,
-        importedSourceName: "",
-        importedTargetName: "",
-        lastSettingsExportBundles: [],
-        patchJsonPanelOpen: false,
-        importedPatchPayload: null,
-        reflectPreviewProdDiff: null,
-        guidedTourActive: false,
-        guidedTourIndex: 0,
-        running: false,
-        runningStartedAt: null,
-        runningTaskLabel: "",
-        runningWatchdogId: null,
-        lastResultByTab: {}
-      };
-      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
-      WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
-      CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
-      state.reflectApplyHistory = loadReflectApplyHistory();
-      state.workHistory = loadWorkHistory();
-      state.connectionPresets = loadConnectionPresets();
-      ui = {};
-    }
-  });
-
   // src/api.ts
   function buildApiPrefix(guestId, preview) {
     const g = String(guestId || "").trim();
@@ -1040,7 +928,6 @@ ${contextLine}`);
       "use strict";
       init_constants();
       init_utils();
-      init_state();
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
@@ -1055,6 +942,110 @@ ${contextLine}`);
       };
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
+    }
+  });
+
+  // src/state.ts
+  function loadReflectApplyHistory() {
+    return [];
+  }
+  function loadWorkHistory() {
+    return [];
+  }
+  function loadConnectionPresets() {
+    return [];
+  }
+  var state, REFLECT_APPLY_HISTORY_KEY, WORK_HISTORY_KEY, CONNECTION_PRESETS_KEY, ui;
+  var init_state = __esm({
+    "src/state.ts"() {
+      "use strict";
+      init_constants();
+      state = {
+        activeTab: "reflect",
+        activeFeatureKey: "",
+        activeSubTabs: { ...DEFAULT_SUBTAB_STATE },
+        launcherSortMode: "onboarding",
+        lastSourceBundle: null,
+        lastTargetBundle: null,
+        lastDiffRows: [],
+        lastFetchIssues: [],
+        lastDiffAt: null,
+        lastDiffSignature: "",
+        lastApplyPlan: null,
+        lastApplyCompletedAt: null,
+        lastApplyCompletedMode: "",
+        lastApplyCompletedHadError: false,
+        lastApplyCompletedAppId: "",
+        lastApplyReport: null,
+        reflectApplyHistory: [],
+        reflectApplyHistoryOpen: false,
+        workHistory: [],
+        workHistoryOpen: true,
+        connectionPresets: [],
+        reflectPlanPreviewKeyword: "",
+        reflectPlanPreviewChangedOnly: false,
+        reflectApplyChecklist: { diff: false, plan: false, preview: false, target: false },
+        reflectPreviewOpened: false,
+        reflectPreviewOpenedFor: "",
+        lastPreviewBackupPayload: null,
+        lastPreviewBackupFilename: "",
+        diffViewTheme: "light",
+        diffViewMode: "table",
+        diffCategoryView: "",
+        diffCollapsedSections: /* @__PURE__ */ new Set(),
+        diffSectionVisibleCounts: {},
+        diffSelectedIds: /* @__PURE__ */ new Set(),
+        diffFavoritePaths: /* @__PURE__ */ new Set(),
+        diffFavoritesOnly: false,
+        diffViewedKeys: /* @__PURE__ */ new Set(),
+        diffReviewMeta: {},
+        diffHideViewed: false,
+        diffFocusedRowId: "",
+        diffExcludeSections: null,
+        diffSelectionAnchorId: "",
+        diffIncludeSame: true,
+        diffFilterSection: "",
+        diffFilterType: "",
+        diffFilterSeverity: "",
+        diffFilterTableOnly: false,
+        diffFilterTableKeyword: "",
+        diffSearchFieldName: false,
+        diffExportMode: "all",
+        diffExportContent: "diffOnly",
+        diffIgnoreSuggestions: [],
+        reflectRows: [],
+        reflectSelectedIds: /* @__PURE__ */ new Set(),
+        reflectNodeModes: {},
+        reflectUndoStack: [],
+        reflectRedoStack: [],
+        reflectPropertyFilters: /* @__PURE__ */ new Set(),
+        reflectPropertyPanelOpen: false,
+        reflectActiveSidebarSection: null,
+        reflectActiveNodeId: "",
+        reflectDetailTab: "diff",
+        importedSourceBundle: null,
+        importedTargetBundle: null,
+        importedSourceName: "",
+        importedTargetName: "",
+        lastSettingsExportBundles: [],
+        patchJsonPanelOpen: false,
+        importedPatchPayload: null,
+        reflectPreviewProdDiff: null,
+        guidedTourActive: false,
+        guidedTourIndex: 0,
+        running: false,
+        runningStartedAt: null,
+        runningTaskLabel: "",
+        runningWatchdogId: null,
+        lastResultByTab: {}
+      };
+      REFLECT_APPLY_HISTORY_KEY = `${TOOL_ID}:reflectApplyHistory`;
+      WORK_HISTORY_KEY = `${TOOL_ID}:workHistory`;
+      CONNECTION_PRESETS_KEY = `${TOOL_ID}:connectionPresets`;
+      state.reflectApplyHistory = loadReflectApplyHistory();
+      state.workHistory = loadWorkHistory();
+      state.connectionPresets = loadConnectionPresets();
+      ui = {};
     }
   });
 
