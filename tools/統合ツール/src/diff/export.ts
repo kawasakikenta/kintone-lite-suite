@@ -1177,12 +1177,10 @@ const MD_PROCESS_ASSIGNEE_TYPE_LABELS = {
   ALL: '全員（全員の処理が必要）'
 };
 
-const MD_NOTIFICATION_TIMING_LABELS = {
-  CREATION: 'レコード作成時',
-  DAYS_OF_WEEK: '曜日指定',
-  TIME: '時刻指定',
-  WEEKLY: '毎週',
-  MONTHLY: '毎月'
+const MD_FIELD_ACCESSIBILITY_LABELS = {
+  WRITE: '閲覧・編集可',
+  READ: '閲覧のみ',
+  NONE: 'アクセス不可'
 };
 
 const MD_REPORT_CHART_MODE_LABELS = {
@@ -1229,7 +1227,11 @@ const MD_THEME_LABELS = {
   BLUE: 'ブルー',
   GREEN: 'グリーン',
   YELLOW: 'イエロー',
-  BLACK: 'ブラック'
+  BLACK: 'ブラック',
+  CLIPBOARD: 'クリップボード',
+  BINDER: 'バインダー',
+  PENCIL: 'ペンシル',
+  CLIPS: 'クリップ'
 };
 
 const MD_VIEW_BUILTIN_LABELS = {
@@ -1549,11 +1551,11 @@ function mdRenderActionSettings(sec) {
   const rows = list.map((a) => [
     a.name || '',
     a.index ?? '',
-    a.app?.code || a.app?.id || '',
-    mdLookupLabel(MD_ENTITY_TYPE_LABELS, a.entity?.type),
+    a.destApp ? (a.destApp.code || a.destApp.app || '') : '',
+    Array.isArray(a.entities) && a.entities.length ? mdEntityList(a.entities) : 'すべてのユーザー',
     String((a.mappings || []).length)
   ]);
-  return mdTable(['アクション名', '表示順', '連携先アプリ', '実行可能対象', 'マッピング数'], rows);
+  return mdTable(['アクション名', '表示順', '連携先アプリ', '利用できるユーザー', 'マッピング数'], rows);
 }
 
 function mdRenderAclRights(rights, columns) {
@@ -1570,6 +1572,7 @@ function mdRenderAclRights(rights, columns) {
 function mdRenderAppAcl(sec) {
   return mdRenderAclRights(sec?.rights, [
     { key: 'appEditable', label: 'アプリ管理' },
+    { key: 'recordViewable', label: '閲覧' },
     { key: 'recordAddable', label: '追加' },
     { key: 'recordEditable', label: '編集' },
     { key: 'recordDeletable', label: '削除' },
@@ -1585,11 +1588,10 @@ function mdRenderFieldAcl(sec) {
     parts.push(`#### \`${r.code || ''}\``);
     parts.push('');
     parts.push(mdTable(
-      ['対象', '閲覧', '編集'],
+      ['対象', 'アクセス権'],
       (r.entities || []).map((e) => [
         mdEntityList([{ entity: e.entity, includeSubs: e.includeSubs }]),
-        mdBoolMark(e.viewable),
-        mdBoolMark(e.editable)
+        mdLookupLabel(MD_FIELD_ACCESSIBILITY_LABELS, e.accessibility)
       ])
     ));
     parts.push('');
@@ -1655,17 +1657,20 @@ function mdRenderReminderNotifications(sec) {
     parts.push('');
   }
   parts.push(mdTable(
-    ['タイトル', '通知タイミング', '絞り込み条件', '通知先'],
+    ['タイトル', '基準フィールド', '通知タイミング', '絞り込み条件', '通知先'],
     list.map((n) => {
       const t = n.timing || ({} as any);
       const timingParts: any[] = [];
-      if (t.code) timingParts.push(mdLookupLabel(MD_NOTIFICATION_TIMING_LABELS, t.code));
-      if (t.daysLater != null) timingParts.push(`${t.daysLater}日後`);
-      if (t.hoursLater != null) timingParts.push(`${t.hoursLater}時間後`);
+      if (t.daysLater != null && t.daysLater !== '') {
+        const d = Number(t.daysLater);
+        timingParts.push(!Number.isFinite(d) ? String(t.daysLater) : (d === 0 ? '当日' : (d > 0 ? `${d}日後` : `${Math.abs(d)}日前`)));
+      }
+      if (t.hoursLater != null && t.hoursLater !== '') {
+        const h = Number(t.hoursLater);
+        timingParts.push(!Number.isFinite(h) ? String(t.hoursLater) : (h === 0 ? '同時刻' : (h > 0 ? `${h}時間後` : `${Math.abs(h)}時間前`)));
+      }
       if (t.time) timingParts.push(`${t.time}`);
-      if (t.weekday) timingParts.push(`曜日: ${t.weekday}`);
-      if (t.day != null) timingParts.push(`日付: ${t.day}日`);
-      return [n.title || '', timingParts.join(' / '), n.filterCond || '', mdEntityList(n.targets)];
+      return [n.title || '', t.code ? `\`${t.code}\`` : '', timingParts.join(' '), n.filterCond || '', mdEntityList(n.targets)];
     })
   ));
   return parts.join('\n');
