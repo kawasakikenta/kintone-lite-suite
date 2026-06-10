@@ -458,8 +458,13 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     '作業者候補': 60, '作業者の選び方': 26,
     // 通知
     '本文/備考': 70, 'タイミング/条件': 60, '宛先': 50, '通知タイミング': 32, '通知先': 50,
+    '通知内容': 70, '基準フィールド': 30,
     // 権限
-    '対象': 40, '範囲': 14, '許可': 24,
+    '対象': 40, '範囲': 14, '許可': 24, 'アクセス権': 16,
+    'アプリ管理': 12, 'レコード閲覧': 12, 'レコード追加': 12, 'レコード編集': 12, 'レコード削除': 12,
+    'ファイル読み込み': 16, 'ファイル書き出し': 16,
+    // アクション・グラフ
+    '利用できるユーザー': 50, 'フィールドマッピング': 50, '実行先アプリ': 40, '集計方法': 60, '定期実行': 18, 'ページャー': 10,
     // JS/CSS
     '名前/URL': 80, 'fileKey': 50, '参照方法': 14,
     // 依存関係
@@ -502,12 +507,20 @@ export async function runAdvancedDesignExporter(params: any = {}) {
   const ASSIGNEE_TYPE_LABEL = {
     ONE: '1人選出（候補から1人）', ANYONE: '候補の誰でも（先着）', ALL: '全員（全員の処理が必要）'
   };
-  const NOTIFICATION_TIMING_LABEL = {
-    CREATION: 'レコード作成時', DAYS_OF_WEEK: '曜日指定', TIME: '時刻指定',
-    WEEKLY: '毎週', MONTHLY: '毎月'
-  };
   const RESOURCE_TYPE_LABEL = { URL: 'URL指定', FILE: 'ファイル指定' };
-  const PAGINATION_LABEL = { ROW: '行ページャ', PAGE: 'ページ番号' };
+  const CUSTOMIZE_SCOPE_LABEL = { ALL: 'すべてのユーザー', ADMIN: 'アプリ管理者のみ', NONE: '適用しない' };
+  const THEME_LABEL = {
+    WHITE: 'ホワイト', RED: 'レッド', BLUE: 'ブルー', GREEN: 'グリーン',
+    YELLOW: 'イエロー', BLACK: 'ブラック', CLIPBOARD: 'クリップボード',
+    BINDER: 'バインダー', PENCIL: 'ペンシル', CLIPS: 'クリップ'
+  };
+  const ICON_TYPE_LABEL = { PRESET: 'プリセット', FILE: 'アップロードファイル' };
+  const VIEW_BUILTIN_LABEL = { ASSIGNEE: '組み込み: 作業者が自分のレコード' };
+  const VIEW_DEVICE_LABEL = { DESKTOP: 'PC版のみ', ANY: 'PC・モバイル両方' };
+  const REPORT_SORT_BY_LABEL = { TOTAL: '集計値', GROUP1: 'グループ化1', GROUP2: 'グループ化2', GROUP3: 'グループ化3' };
+  const PERIODIC_EVERY_LABEL = { YEAR: '毎年', QUARTER: '四半期ごと', MONTH: '毎月', WEEK: '毎週', DAY: '毎日', HOUR: '毎時' };
+  const FIELD_ACCESSIBILITY_LABEL = { WRITE: '閲覧・編集可', READ: '閲覧のみ', NONE: 'アクセス不可' };
+  const LINK_PROTOCOL_LABEL = { WEB: 'WEB', CALL: '電話', MAIL: 'メール' };
   const WEBHOOK_EVENT_LABEL = {
     ADD_RECORD: 'レコード追加', UPDATE_RECORD: 'レコード編集', DELETE_RECORD: 'レコード削除',
     UPDATE_STATUS: 'ステータス変更', ADD_COMMENT: 'コメント追加',
@@ -597,8 +610,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
     stripHtml: (html) => String(html || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'),
     formatBoolean: (val) => (val ? '○' : '-'),
-    formatEntity: (entity) => { if (!entity) return '-'; if (Array.isArray(entity)) return entity.map(e => UtilsX.formatEntity(e)).join('\n'); const e = entity.entity || entity; const t = (e.type || '').toString().toUpperCase(); const typeMap = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド値', CREATOR: '作成者', MODIFIER: '更新者', LOGIN_USER: 'ログインユーザー', ALL: '全員' }; const typeJP = typeMap[t] || e.type || '不明'; if (e.name) return `${typeJP}:${e.name}`; if (e.code) return `${typeJP}:${e.code}`; return typeJP; },
-    formatEntityDetailed: (entity) => { if (!entity) return '-'; if (Array.isArray(entity)) return entity.map(e => UtilsX.formatEntityDetailed(e)).join('\n'); const e = entity.entity || entity; const t = (e.type || '').toString().toUpperCase(); const typeMap = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド値', CREATOR: '作成者', MODIFIER: '更新者', LOGIN_USER: 'ログインユーザー', ALL: '全員' }; const typeJP = typeMap[t] || e.type || '不明'; const parts = [typeJP]; if (e.name) parts.push(e.name); else if (e.code) parts.push(`コード:${e.code}`); if (entity.includeSubs) parts.push('(サブ組織含)'); return parts.join(': '); },
+    formatEntity: (entity) => { if (!entity) return '-'; if (Array.isArray(entity)) return entity.map(e => UtilsX.formatEntity(e)).join('\n'); const e = entity.entity || entity; const t = (e.type || '').toString().toUpperCase(); const typeMap = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド値', CREATOR: '作成者', MODIFIER: '更新者', LOGIN_USER: 'ログインユーザー', ALL: '全員', EVERYONE: '全員' }; const typeJP = typeMap[t] || e.type || '不明'; if (e.name) return `${typeJP}:${e.name}`; if (e.code) return `${typeJP}:${e.code}`; return typeJP; },
+    formatEntityDetailed: (entity) => { if (!entity) return '-'; if (Array.isArray(entity)) return entity.map(e => UtilsX.formatEntityDetailed(e)).join('\n'); const e = entity.entity || entity; const t = (e.type || '').toString().toUpperCase(); const typeMap = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド値', CREATOR: '作成者', MODIFIER: '更新者', LOGIN_USER: 'ログインユーザー', ALL: '全員', EVERYONE: '全員' }; const typeJP = typeMap[t] || e.type || '不明'; const parts = [typeJP]; if (e.name) parts.push(e.name); else if (e.code) parts.push(`コード:${e.code}`); if (entity.includeSubs) parts.push('(サブ組織含)'); return parts.join(': '); },
     formatSort: (sortStr) => { if (!sortStr) return '-'; return String(sortStr).replace(/\basc\b/gi, '昇順').replace(/\bdesc\b/gi, '降順'); },
     formatFilterCond: (condStr) => {
       if (!condStr) return '-';
@@ -638,7 +651,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       const labelMap = {
         NUMBER: '数値', NUMBER_DIGIT: '数値（桁区切り）', PERCENT: 'パーセント',
         CURRENCY: '通貨', DATE: '日付', TIME: '時刻', DATETIME: '日時',
-        HOUR_MINUTE: '時:分', HOUR_MINUTE_SECOND: '時:分:秒'
+        HOUR_MINUTE: '時:分', DAY_HOUR_MINUTE: '日:時:分', HOUR_MINUTE_SECOND: '時:分:秒'
       };
       const parts = [];
       if (f.format && labelMap[f.format]) parts.push(labelMap[f.format]);
@@ -650,7 +663,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       }
       return parts.join('、');
     },
-    formatDefaultValue: (dv) => { if (dv == null) return ''; if (Array.isArray(dv)) { if (dv.length > 0 && typeof dv[0] === 'object') return dv.map(i => i.name || i.code || JSON.stringify(i)).join('、'); return dv.join('、'); } if (typeof dv === 'object') { if (dv.type === 'NUMBER') return String(dv.value || ''); return dv.name || dv.code || JSON.stringify(dv); } return String(dv); },
+    formatDefaultValue: (dv) => { const fnLabel = (code) => ({ 'LOGIN_USER()': 'ログインユーザー', 'PRIORITY_ORGANIZATION()': '優先する組織' })[code] || code; if (dv == null) return ''; if (Array.isArray(dv)) { if (dv.length > 0 && typeof dv[0] === 'object') return dv.map(i => i.name || fnLabel(i.code) || JSON.stringify(i)).join('、'); return dv.join('、'); } if (typeof dv === 'object') { if (dv.type === 'NUMBER') return String(dv.value || ''); return dv.name || fnLabel(dv.code) || JSON.stringify(dv); } return String(dv); },
     safeJSONStringify: (obj) => { try { return JSON.stringify(obj, null, 2); } catch (e) { return String(obj); } }
   };
 
@@ -1263,8 +1276,8 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       sAoa.push(['更新者', appSettings?.modifier?.name || '-']);
       sAoa.push(['更新日時', UtilsX.toJST(appSettings?.modifiedAt)]);
       if (generalSettings) {
-        sAoa.push(['テーマ', generalSettings.theme || '-']);
-        sAoa.push(['アイコン種類', generalSettings.icon?.type || '-']);
+        sAoa.push(['テーマ', ENUM_LOOKUP(THEME_LABEL, generalSettings.theme) || '-']);
+        sAoa.push(['アイコン種類', ENUM_LOOKUP(ICON_TYPE_LABEL, generalSettings.icon?.type) || '-']);
         sAoa.push(['リビジョン', generalSettings.revision || '-']);
       }
       if (appSettings?.spaceId) sAoa.push(['スペースID', appSettings.spaceId]);
@@ -1417,23 +1430,6 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       return parts.join(' / ');
     };
 
-    const buildFieldRow = (f, parentTable) => [
-      parentTable || '',
-      f.label || '',
-      f.code || '',
-      FIELD_TYPE[f.type] || f.type || '',
-      UtilsX.formatBoolean(f.required),
-      UtilsX.formatBoolean(f.unique),
-      UtilsX.formatBoolean(f.noLabel),
-      UtilsX.formatDefaultValue(f.defaultValue),
-      UtilsX.formatFieldFormat(f),
-      describeFieldOptions(f),
-      f.expression || f.formula || '',
-      describeLookup(f),
-      describeReference(f),
-      UtilsX.stripHtml(f.description || '')
-    ];
-
     if (selectedSheets.has('fields')) {
       const fieldHeaders = [
         'No.', '所属グループ', 'フィールド名', 'フィールドコード', 'タイプ',
@@ -1501,7 +1497,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         if (f.minLength) constraints.push(`最小文字数: ${f.minLength}`);
         if (f.maxLength) constraints.push(`最大文字数: ${f.maxLength}`);
         if (f.regex) constraints.push(`正規表現: ${f.regex}`);
-        if (f.protocol) constraints.push(`プロトコル: ${f.protocol}`);
+        if (f.protocol) constraints.push(`リンク種別: ${ENUM_LOOKUP(LINK_PROTOCOL_LABEL, f.protocol)}`);
 
         let lookupStr = '-';
         if (f.lookup) {
@@ -1549,7 +1545,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
           typeJ,
           UtilsX.formatBoolean(f.required),
           UtilsX.formatBoolean(f.unique),
-          UtilsX.formatDefaultValue(f.defaultValue),
+          f.defaultNowValue ? 'レコード登録時の日時' : UtilsX.formatDefaultValue(f.defaultValue),
           UtilsX.safeGet(f, 'minValue', UtilsX.safeGet(f, 'min', '')),
           UtilsX.safeGet(f, 'maxValue', UtilsX.safeGet(f, 'max', '')),
           optionsStr,
@@ -1709,12 +1705,12 @@ export async function runAdvancedDesignExporter(params: any = {}) {
               return;
             }
             if (item.type === 'HR') {
-              lAoa.push([lno++, rowNo, ci + 1, '罫線', depth, `${indent}───`, '-', 'HR', '-', getWidth(item), '-']);
+              lAoa.push([lno++, rowNo, ci + 1, '罫線', depth, `${indent}───`, '-', FIELD_TYPE['HR'] || '罫線', '-', getWidth(item), '-']);
               outlineRows.push({ idx: rowIdx, level: depth });
               return;
             }
             if (item.type === 'SPACER') {
-              lAoa.push([lno++, rowNo, ci + 1, 'スペース', depth, `${indent}(空白)`, item.elementId || '-', 'SPACER', '-', getWidth(item), '-']);
+              lAoa.push([lno++, rowNo, ci + 1, 'スペース', depth, `${indent}(空白)`, item.elementId || '-', FIELD_TYPE['SPACER'] || 'スペース', '-', getWidth(item), '-']);
               outlineRows.push({ idx: rowIdx, level: depth });
               return;
             }
@@ -1749,12 +1745,22 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     if (selectedSheets.has('views') && views?.views) {
       const fieldLabelMap = buildFieldLabelMap(fields);
       const typeMap = { 'LIST': '一覧', 'CALENDAR': 'カレンダー', 'CUSTOM': 'カスタマイズ' };
-      const headers = ['ビュー名', '種別', '表示順', '表示フィールド', '表示フィールド（ラベル）', 'フィルター条件', 'ソート', 'ページング', 'メモ'];
+      const headers = ['ビュー名', '種別', '表示順', '表示フィールド', '表示フィールド（ラベル）', 'フィルター条件', 'ソート', 'ページャー', 'メモ'];
       const rows = (Object.entries(views.views) as Array<[string, any]>)
         .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0))
         .map(([name, v]: [string, any]) => {
           const fieldCodes = UtilsX.ensureArray(v.fields);
           const fieldLabels = fieldCodes.map((c: any) => fieldLabelMap[c] || c);
+          const notes = [];
+          if (v.builtinType) notes.push(ENUM_LOOKUP(VIEW_BUILTIN_LABEL, v.builtinType));
+          if (v.type === 'CALENDAR') {
+            if (v.date) notes.push(`日付フィールド: ${fieldLabelMap[v.date] || v.date}`);
+            if (v.title) notes.push(`タイトルフィールド: ${fieldLabelMap[v.title] || v.title}`);
+          }
+          if (v.type === 'CUSTOM') {
+            if (v.html) notes.push('カスタムHTMLあり');
+            if (v.device) notes.push(`表示デバイス: ${ENUM_LOOKUP(VIEW_DEVICE_LABEL, v.device)}`);
+          }
           return [
             name,
             (typeMap as any)[v.type] || v.type || '',
@@ -1763,25 +1769,31 @@ export async function runAdvancedDesignExporter(params: any = {}) {
             fieldLabels.join('\n') || '-',
             UtilsX.formatFilterCond(v.filterCond),
             UtilsX.formatSort(v.sort),
-            (v.paginationType ? (PAGINATION_LABEL[String(v.paginationType).toUpperCase()] || v.paginationType) : (v.pagination === false ? '無効' : '既定')),
-            UtilsX.stripHtml(v.customView || v.html || v.builtinType || '')
+            (v.pager === false ? '無効' : '有効'),
+            notes.join('\n') || '-'
           ];
         });
       appendSheet('一覧', { ...buildSimpleAOA('一覧(ビュー)', headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: 'ビュー(一覧/カレンダー/カスタム)の設定' });
     }
 
     if (selectedSheets.has('reports') && reports?.reports) {
-      const headers = ['グラフ名', '種別', '集計対象', '集計方法', 'グループ化', 'ソート', 'フィルター'];
+      const headers = ['グラフ名', '種別', 'モード', 'グループ化', '集計方法', 'ソート', 'フィルター条件', '定期実行'];
       const rows = (Object.entries(reports.reports) as Array<[string, any]>)
         .sort(([, a], [, b]) => (Number(a.index) || 0) - (Number(b.index) || 0))
         .map(([name, r]: [string, any]) => [
           name,
-          ENUM_LOOKUP(CHART_TYPE_LABEL, r.chartType || r.type) || r.chartType || r.type || '',
-          Array.isArray(r.aggregations) ? r.aggregations.map((a: any) => `${ENUM_LOOKUP(AGGREGATION_TYPE_LABEL, a.type) || a.type || ''}（${a.code || ''}）`).join('\n') : '',
-          ENUM_LOOKUP(CHART_MODE_LABEL, r.chartMode) || r.chartMode || '',
-          Array.isArray(r.groups) ? r.groups.map((g: any) => `${g.code || ''}${g.per ? `(${ENUM_LOOKUP(GROUP_PER_LABEL, g.per) || g.per})` : ''}`).join('、') : '',
-          UtilsX.formatSort(Array.isArray(r.sorts) ? r.sorts.map((s: any) => `${s.by || ''} ${s.order || ''}`).join(', ') : ''),
-          UtilsX.formatFilterCond(r.filterCond)
+          ENUM_LOOKUP(CHART_TYPE_LABEL, r.chartType || r.type) || '',
+          ENUM_LOOKUP(CHART_MODE_LABEL, r.chartMode) || '',
+          Array.isArray(r.groups) ? r.groups.map((g: any) => `${g.code || ''}${g.per ? `(${ENUM_LOOKUP(GROUP_PER_LABEL, g.per)})` : ''}`).join('、') : '',
+          Array.isArray(r.aggregations) ? r.aggregations.map((a: any) => {
+            const typeLabel = ENUM_LOOKUP(AGGREGATION_TYPE_LABEL, a.type) || '';
+            return a.code ? `${typeLabel}（${a.code}）` : typeLabel;
+          }).join('\n') : '',
+          Array.isArray(r.sorts) ? r.sorts.map((sr: any) => `${ENUM_LOOKUP(REPORT_SORT_BY_LABEL, sr.by)}${sr.order ? ` ${UtilsX.formatSort(sr.order)}` : ''}`.trim()).join('\n') : '',
+          UtilsX.formatFilterCond(r.filterCond),
+          r.periodicReport?.active
+            ? `あり${r.periodicReport?.period?.every ? `（${ENUM_LOOKUP(PERIODIC_EVERY_LABEL, r.periodicReport.period.every)}）` : ''}`
+            : '-'
         ]);
       appendSheet('グラフ', { ...buildSimpleAOA('グラフ', headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: 'グラフ/集計レポートの定義' });
     }
@@ -1877,26 +1889,22 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       }
     }
 
-    const renderAclRights = (title, name, rights) => {
-      const list = Array.isArray(rights) ? rights : [];
-      if (!list.length) return null;
-      const headers = ['対象', '閲覧', '追加', '編集', '削除', 'インポート', 'エクスポート', 'フィルター条件'];
-      const rows = list.map((r) => [
-        UtilsX.formatEntityDetailed(r.entity || r),
-        UtilsX.formatBoolean(r.viewable),
-        UtilsX.formatBoolean(r.addable ?? r.creatable),
-        UtilsX.formatBoolean(r.editable),
-        UtilsX.formatBoolean(r.deletable),
-        UtilsX.formatBoolean(r.importable),
-        UtilsX.formatBoolean(r.exportable),
-        UtilsX.formatFilterCond(r.filterCond)
-      ]);
-      return buildSimpleAOA(title, headers, rows);
-    };
-
     if (selectedSheets.has('appAcl')) {
-      const data = renderAclRights('アプリ権限', '', appAcl?.rights);
-      if (data) appendSheet('アプリ権限', { ...data, pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: 'アプリ全体の閲覧/編集/削除等の権限' });
+      const list = Array.isArray(appAcl?.rights) ? appAcl.rights : [];
+      if (list.length) {
+        const headers = ['対象', 'アプリ管理', 'レコード閲覧', 'レコード追加', 'レコード編集', 'レコード削除', 'ファイル読み込み', 'ファイル書き出し'];
+        const rows = list.map((r) => [
+          UtilsX.formatEntityDetailed(r),
+          UtilsX.formatBoolean(r.appEditable),
+          UtilsX.formatBoolean(r.recordViewable),
+          UtilsX.formatBoolean(r.recordAddable),
+          UtilsX.formatBoolean(r.recordEditable),
+          UtilsX.formatBoolean(r.recordDeletable),
+          UtilsX.formatBoolean(r.recordImportable),
+          UtilsX.formatBoolean(r.recordExportable)
+        ]);
+        appendSheet('アプリ権限', { ...buildSimpleAOA('アプリ権限', headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: 'アプリ全体の管理/閲覧/編集/削除等の権限' });
+      }
     }
     if (selectedSheets.has('recordAcl')) {
       const list = Array.isArray(recordAcl?.rights) ? recordAcl.rights : [];
@@ -1927,14 +1935,13 @@ export async function runAdvancedDesignExporter(params: any = {}) {
           rows.push([
             code,
             fields[code]?.label || '',
-            UtilsX.formatEntityDetailed(ent.entity || ent),
-            UtilsX.formatBoolean(ent.viewable),
-            UtilsX.formatBoolean(ent.editable)
+            UtilsX.formatEntityDetailed(ent),
+            ENUM_LOOKUP(FIELD_ACCESSIBILITY_LABEL, ent.accessibility) || '-'
           ]);
         });
       });
       if (rows.length) {
-        appendSheet('フィールド権限', { ...buildSimpleAOA('フィールド権限', ['フィールドコード', 'フィールド名', '対象', '閲覧', '編集'], rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: 'フィールド単位の閲覧/編集制限' });
+        appendSheet('フィールド権限', { ...buildSimpleAOA('フィールド権限', ['フィールドコード', 'フィールド名', '対象', 'アクセス権'], rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: 'フィールド単位の閲覧/編集制限' });
       }
     }
 
@@ -1954,19 +1961,25 @@ export async function runAdvancedDesignExporter(params: any = {}) {
         ...renderScope('モバイル', customize.mobile)
       ];
       if (rows.length) {
-        appendSheet('JS/CSSカスタマイズ', { ...buildSimpleAOA('JS/CSSカスタマイズ', ['スコープ', '種別', 'No', '参照方法', '名前/URL', 'fileKey'], rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: 'JS/CSSファイル適用設定' });
+        const scopeLabel = ENUM_LOOKUP(CUSTOMIZE_SCOPE_LABEL, customize.scope);
+        const title = `JS/CSSカスタマイズ${scopeLabel ? `（適用範囲: ${scopeLabel}）` : ''}`;
+        appendSheet('JS/CSSカスタマイズ', { ...buildSimpleAOA(title, ['スコープ', '種別', 'No', '参照方法', '名前/URL', 'fileKey'], rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: 'JS/CSSファイル適用設定' });
       }
     }
 
     if (selectedSheets.has('actions') && actions) {
       const entries = Array.isArray(actions) ? actions : Object.values(actions);
-      const headers = ['アクション名', '実行先アプリ', 'フィルター条件', 'ソート', 'フィールドマッピング'];
-      const rows = entries.map((a) => [
+      const headers = ['アクション名', '表示順', '実行先アプリ', '利用できるユーザー', 'フィールドマッピング'];
+      const rows = entries.map((a, i) => [
         a.name || '',
+        a.index != null ? String(a.index) : String(i),
         resolveAppName(a.destApp),
-        UtilsX.formatFilterCond(a.filterCond),
-        UtilsX.formatSort(a.sort),
-        Array.isArray(a.mappings) ? a.mappings.map((m) => `${m.srcField || m.sourceField || '-'}→${m.destField || '-'}`).join('\n') : ''
+        Array.isArray(a.entities) && a.entities.length
+          ? a.entities.map((e) => UtilsX.formatEntityDetailed(e)).join('\n')
+          : 'すべてのユーザー',
+        Array.isArray(a.mappings)
+          ? a.mappings.map((m) => `${m.srcType === 'RECORD_URL' ? 'レコードのURL' : (m.srcField || m.sourceField || '-')}→${m.destField || '-'}`).join('\n')
+          : ''
       ]);
       if (rows.length) appendSheet('アクション', { ...buildSimpleAOA('アクション', headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } }, { description: 'レコード再利用アクションの定義' });
     }
@@ -1981,57 +1994,65 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       const list = Array.isArray(payload?.notifications) ? payload.notifications : [];
       if (!list.length) return;
       const fieldLabelMap = buildFieldLabelMap(fields);
+      const fieldWithCode = (code) => {
+        if (!code) return '-';
+        const label = fieldLabelMap[code];
+        return label && label !== code ? `${label}（${code}）` : code;
+      };
       if (kind === 'reminder') {
-        const headers = ['No.', '対象', 'タイミング', '基準日フィールド', '基準日時フィールド', '曜日', '時刻', '絞込条件', '件名/本文'];
+        const headers = ['No.', '通知先', '基準フィールド', '通知タイミング', '絞り込み条件', '通知内容'];
         const rows = list.map((n, i) => {
-          const base = n.targetField || n.dateField || '';
-          const baseLabel = base ? (fieldLabelMap[base] || base) : '-';
+          const t = n.timing || ({} as any);
+          const timingParts = [];
+          if (t.daysLater != null && t.daysLater !== '') {
+            const d = Number(t.daysLater);
+            timingParts.push(!Number.isFinite(d) ? String(t.daysLater) : (d === 0 ? '当日' : (d > 0 ? `${d}日後` : `${Math.abs(d)}日前`)));
+          }
+          if (t.hoursLater != null && t.hoursLater !== '') {
+            const h = Number(t.hoursLater);
+            timingParts.push(!Number.isFinite(h) ? String(t.hoursLater) : (h === 0 ? '同時刻' : (h > 0 ? `${h}時間後` : `${Math.abs(h)}時間前`)));
+          }
+          if (t.time) timingParts.push(String(t.time));
           return [
             i + 1,
             formatNotificationTargets(n, fieldLabelMap),
-            n.timing ? (typeof n.timing === 'object' ? (ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing.code) || n.timing.code || '-') : (ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing) || n.timing)) : '-',
-            baseLabel,
-            n.daysLater != null || n.daysBefore != null ? `${n.daysLater != null ? `+${n.daysLater}` : ''}${n.daysBefore != null ? `-${n.daysBefore}` : ''}日` : '-',
-            Array.isArray(n.weekdays) ? n.weekdays.join('、') : '-',
-            n.time || '-',
+            fieldWithCode(t.code),
+            timingParts.join(' ') || '-',
             UtilsX.formatFilterCond(n.filterCond || ''),
-            UtilsX.stripHtml(n.title || n.body || n.content || '-')
+            UtilsX.stripHtml(n.title || '-')
           ];
         });
-        appendSheet(title, { ...buildSimpleAOA(title, headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } },
+        const sheetTitle = payload?.timezone ? `${title}（タイムゾーン: ${payload.timezone}）` : title;
+        appendSheet(title, { ...buildSimpleAOA(sheetTitle, headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } },
           { description: 'リマインダー通知の設定一覧' });
         return;
       }
       if (kind === 'perRecord') {
-        const headers = ['No.', '対象', 'フィルター条件', 'レコード作成', '編集', 'コメント', 'ステータス', 'ファイル添付', '本文/備考'];
+        const headers = ['No.', '通知先', '絞り込み条件', '通知内容'];
         const rows = list.map((n, i) => [
           i + 1,
           formatNotificationTargets(n, fieldLabelMap),
           UtilsX.formatFilterCond(n.filterCond || ''),
-          UtilsX.formatBoolean(n.recordAdded ?? n.notifyOnCreate),
-          UtilsX.formatBoolean(n.recordEdited ?? n.notifyOnEdit),
-          UtilsX.formatBoolean(n.commentAdded ?? n.notifyOnComment),
-          UtilsX.formatBoolean(n.statusChanged ?? n.notifyOnStatusChange),
-          UtilsX.formatBoolean(n.fileImported),
-          UtilsX.stripHtml(n.title || n.body || '-')
+          UtilsX.stripHtml(n.title || '-')
         ]);
         appendSheet(title, { ...buildSimpleAOA(title, headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } },
-          { description: 'レコード単位で指定された通知' });
+          { description: 'レコードの条件通知の設定一覧' });
         return;
       }
-      const headers = ['No.', '対象', 'レコード追加', '編集', 'コメント', 'ステータス', 'ファイル添付', 'タイミング/条件', '本文/備考'];
+      const headers = ['No.', '通知先', 'レコード追加', 'レコード編集', 'コメント追加', 'ステータス変更', 'ファイル読み込み'];
       const rows = list.map((n, i) => [
         i + 1,
         formatNotificationTargets(n, fieldLabelMap),
-        UtilsX.formatBoolean(n.recordAdded ?? n.notifyOnCreate),
-        UtilsX.formatBoolean(n.recordEdited ?? n.notifyOnEdit),
-        UtilsX.formatBoolean(n.commentAdded ?? n.notifyOnComment),
-        UtilsX.formatBoolean(n.statusChanged ?? n.notifyOnStatusChange),
-        UtilsX.formatBoolean(n.fileImported),
-        n.filterCond ? UtilsX.formatFilterCond(n.filterCond) : (n.timing ? (typeof n.timing === 'object' ? (ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing.code) || n.timing.code || '-') : (ENUM_LOOKUP(NOTIFICATION_TIMING_LABEL, n.timing) || n.timing)) : '-'),
-        UtilsX.stripHtml(n.title || n.body || '-')
+        UtilsX.formatBoolean(n.recordAdded),
+        UtilsX.formatBoolean(n.recordEdited),
+        UtilsX.formatBoolean(n.commentAdded),
+        UtilsX.formatBoolean(n.statusChanged),
+        UtilsX.formatBoolean(n.fileImported)
       ]);
-      appendSheet(title, { ...buildSimpleAOA(title, headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } },
+      const sheetTitle = payload?.notifyToCommenter != null
+        ? `${title}（コメント投稿者への通知: ${payload.notifyToCommenter ? '有効' : '無効'}）`
+        : title;
+      appendSheet(title, { ...buildSimpleAOA(sheetTitle, headers, rows), pageSetup: { orientation: 'landscape', printTitleRows: 2 } },
         { description: 'アプリ共通の通知設定' });
     };
 
