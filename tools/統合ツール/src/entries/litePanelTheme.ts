@@ -292,11 +292,15 @@ const THEME_CSS = `
 
 /* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
+.kus-lp__apptable-scroll{max-height:220px;overflow:auto}
 .kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
 .kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable-scroll th{position:sticky;top:0;z-index:1}
 .kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
+.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
 .kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
 .kus-lp__apptable-acts-h{width:128px}
 .kus-lp__apptable-acts{white-space:nowrap}
@@ -719,7 +723,8 @@ export function makeDetails(title: string, opts: { open?: boolean } = {}): { det
 
 // ===== App table（複数アプリ × アプリごとのゲストスペース入力） =====
 
-export interface AppTableRow { appId: string; guestId: string }
+export interface AppTableRow { appId: string; guestId: string; appName?: string }
+export interface AppTablePutResult { action: 'added' | 'filled' | 'existing' | 'ignored'; index: number }
 
 export interface AppTableOptions {
   /** 初期行。未指定なら空の 1 行を表示する */
@@ -743,7 +748,9 @@ export interface AppTableHandle {
   /** 先頭行（単一アプリ用途）。空でも空文字で返す */
   first(): AppTableRow;
   /** 末尾に 1 行追加して返す */
-  addRow(appId?: string, guestId?: string, opts?: { focus?: boolean }): void;
+  addRow(appId?: string, guestId?: string, opts?: { focus?: boolean; appName?: string }): void;
+  /** 空行を優先してセットし、同じ appId+guestId が既にあれば行を増やさない */
+  putApp(appId?: string, guestId?: string, opts?: { focus?: boolean; appName?: string }): AppTablePutResult;
   /** 既存行をすべて置き換える（rows が空なら空 1 行） */
   setApps(rows: AppTableRow[]): void;
   /** 全行を空にする（最小行数は残す） */
@@ -756,6 +763,8 @@ interface AppTableRowEntry {
   tr: HTMLTableRowElement;
   app: HTMLInputElement;
   guest: HTMLInputElement;
+  name: HTMLElement;
+  appName: string;
   copyBtn: HTMLButtonElement;
 }
 
@@ -770,6 +779,8 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
   const wrap = document.createElement('div');
   wrap.className = 'kus-lp__apptable';
 
+  const tableScroll = document.createElement('div');
+  tableScroll.className = 'kus-lp__apptable-scroll';
   const table = document.createElement('table');
   const thead = document.createElement('thead');
   thead.innerHTML =
@@ -780,7 +791,8 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
   table.appendChild(tbody);
-  wrap.appendChild(table);
+  tableScroll.appendChild(table);
+  wrap.appendChild(tableScroll);
 
   const foot = document.createElement('div');
   foot.className = 'kus-lp__apptable-foot';
@@ -793,7 +805,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
       const id = String(opts.currentAppId).trim();
       if (rows.some((r) => r.app.value.trim() === id)) return;
       const empty = rows.find((r) => !r.app.value.trim());
-      if (empty) { empty.app.value = id; empty.app.focus(); }
+      if (empty) { empty.app.value = id; setAppName(empty, ''); empty.app.focus(); }
       else insertRow(rows.length, id, '', true);
       emitChange();
     });
@@ -821,12 +833,29 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
       const key = `${appId}::${guestId}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ appId, guestId });
+      const row: AppTableRow = { appId, guestId };
+      if (r.appName) row.appName = r.appName;
+      out.push(row);
     }
     return out;
   }
   function getAllRows(): AppTableRow[] {
-    return rows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim() }));
+    return rows.map((r) => {
+      const row: AppTableRow = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+      if (r.appName) row.appName = r.appName;
+      return row;
+    });
+  }
+  function setAppName(entry: AppTableRowEntry, appName: string) {
+    entry.appName = String(appName || '').trim();
+    entry.name.textContent = entry.appName;
+    entry.name.title = entry.appName ? `アプリ名: ${entry.appName}` : '';
+    entry.name.classList.toggle('kus-lp__apptable-name--empty', !entry.appName);
+  }
+  function setRowValues(entry: AppTableRowEntry, appId: string, guestId: string, appName: string) {
+    entry.app.value = appId;
+    entry.guest.value = guestId;
+    setAppName(entry, appName);
   }
   function refresh() {
     rows.forEach((r, i) => {
@@ -853,10 +882,11 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     if (tokens.length <= 1) {
       // 区切り文字だけ / 末尾カンマなどは正規化（先頭トークンのみ残す）
       const next = tokens[0] || '';
-      if (entry.app.value !== next) { entry.app.value = next; return true; }
+      if (entry.app.value !== next) { entry.app.value = next; setAppName(entry, ''); return true; }
       return false;
     }
     entry.app.value = tokens[0];
+    setAppName(entry, '');
     const guestVal = entry.guest.value.trim();
     const start = rows.indexOf(entry);
     let last = entry;
@@ -870,6 +900,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     if (rows.length <= minRows) {
       entry.app.value = '';
       entry.guest.value = '';
+      setAppName(entry, '');
       emitChange();
       return;
     }
@@ -878,7 +909,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     entry.tr.remove();
     emitChange();
   }
-  function insertRow(index: number, appId = '', guestId = '', focus = false): AppTableRowEntry {
+  function insertRow(index: number, appId = '', guestId = '', focus = false, appName = ''): AppTableRowEntry {
     const tr = document.createElement('tr');
     const tdNo = document.createElement('td');
     tdNo.className = 'kus-lp__apptable-no';
@@ -891,6 +922,8 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     const guest = makeInput({ placeholder: opts.guestPlaceholder || '空欄=通常スペース', ariaLabel: 'ゲストID' });
     app.value = appId;
     guest.value = guestId;
+    const name = document.createElement('div');
+    name.className = 'kus-lp__apptable-name';
 
     const copyBtn = makeButton('↑コピー', 'sub');
     copyBtn.title = '上の行のアプリID・ゲストIDをこの行へコピー';
@@ -900,6 +933,7 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     delBtn.title = 'この行を削除';
 
     tdApp.appendChild(app);
+    tdApp.appendChild(name);
     tdGuest.appendChild(guest);
     tdAct.appendChild(copyBtn);
     tdAct.appendChild(dupBtn);
@@ -909,7 +943,8 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     tr.appendChild(tdGuest);
     tr.appendChild(tdAct);
 
-    const entry: AppTableRowEntry = { tr, app, guest, copyBtn };
+    const entry: AppTableRowEntry = { tr, app, guest, name, appName: '', copyBtn };
+    setAppName(entry, appName);
 
     copyBtn.addEventListener('click', () => {
       const idx = rows.indexOf(entry);
@@ -917,17 +952,18 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
       const prev = rows[idx - 1];
       app.value = prev.app.value;
       guest.value = prev.guest.value;
+      setAppName(entry, prev.appName);
       app.focus();
       emitChange();
     });
     dupBtn.addEventListener('click', () => {
       const idx = rows.indexOf(entry);
-      const ne = insertRow(idx + 1, app.value.trim(), guest.value.trim(), true);
+      const ne = insertRow(idx + 1, app.value.trim(), guest.value.trim(), true, entry.appName);
       ne.app.focus();
       emitChange();
     });
     delBtn.addEventListener('click', () => removeRow(entry));
-    app.addEventListener('input', emitChange);
+    app.addEventListener('input', () => { if (entry.appName) setAppName(entry, ''); emitChange(); });
     guest.addEventListener('input', emitChange);
     // カンマ（,／、）・空白・改行区切りで複数アプリIDをまとめて入力したら自動で行へ分割する。
     // 入力途中の誤分割を避けるため、確定（change/blur）時とペースト時にのみ分割する。
@@ -956,11 +992,44 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     emitChange();
   });
 
+  function putApp(appId = '', guestId = '', o: { focus?: boolean; appName?: string } = {}): AppTablePutResult {
+    const id = String(appId || '').trim();
+    if (!id) return { action: 'ignored', index: -1 };
+    const guest = String(guestId || '').trim();
+    const appName = String(o.appName || '').trim();
+    const empty = rows.find((r) => !r.app.value.trim());
+    const targetGuest = guest || empty?.guest.value.trim() || '';
+    const existing = rows.find((r) => r.app.value.trim() === id && r.guest.value.trim() === targetGuest);
+    if (existing) {
+      if (appName && existing.appName !== appName) {
+        setAppName(existing, appName);
+        emitChange();
+      }
+      if (o.focus) existing.app.focus();
+      return { action: 'existing', index: rows.indexOf(existing) };
+    }
+    if (empty) {
+      setRowValues(empty, id, targetGuest, appName);
+      if (o.focus) empty.app.focus();
+      emitChange();
+      return { action: 'filled', index: rows.indexOf(empty) };
+    }
+    const entry = insertRow(rows.length, id, guest, !!o.focus, appName);
+    emitChange();
+    return { action: 'added', index: rows.indexOf(entry) };
+  }
+
   function setApps(list: AppTableRow[]) {
     rows.splice(0).forEach((r) => r.tr.remove());
     tbody.innerHTML = '';
     const src = Array.isArray(list) && list.length ? list : [{ appId: '', guestId: '' }];
-    src.forEach((r) => insertRow(rows.length, String(r.appId || '').trim(), String(r.guestId || '').trim()));
+    src.forEach((r) => insertRow(
+      rows.length,
+      String(r.appId || '').trim(),
+      String(r.guestId || '').trim(),
+      false,
+      String(r.appName || '').trim()
+    ));
     while (rows.length < minRows) insertRow(rows.length, '', '');
     emitChange();
   }
@@ -974,9 +1043,13 @@ export function makeAppTable(opts: AppTableOptions = {}): AppTableHandle {
     getAllRows,
     first: () => {
       const r = rows[0];
-      return r ? { appId: r.app.value.trim(), guestId: r.guest.value.trim() } : { appId: '', guestId: '' };
+      if (!r) return { appId: '', guestId: '' };
+      const row: AppTableRow = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+      if (r.appName) row.appName = r.appName;
+      return row;
     },
-    addRow: (appId = '', guestId = '', o = {}) => { insertRow(rows.length, appId, guestId, !!o.focus); emitChange(); },
+    addRow: (appId = '', guestId = '', o = {}) => { insertRow(rows.length, appId, guestId, !!o.focus, String(o.appName || '').trim()); emitChange(); },
+    putApp,
     setApps,
     clear: () => setApps([]),
     count: () => getApps().length
@@ -1052,4 +1125,3 @@ export async function liteRun<T>(
     panel.setBusy(false);
   }
 }
-

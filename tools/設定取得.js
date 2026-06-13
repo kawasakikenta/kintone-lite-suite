@@ -1252,6 +1252,40 @@ ${contextLine}`);
   init_constants();
   init_utils();
   init_api();
+
+  // src/handlers/diffFocus.ts
+  init_state();
+  init_dialog();
+  function extractAppIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (/^\d+$/.test(raw)) return raw;
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const queryMatch = decoded.match(/[?&]app=(\d+)(?:[&#]|$)/i);
+    if (queryMatch) return queryMatch[1];
+    const guestPathMatch = decoded.match(/\/k\/guest\/\d+\/(\d+)(?:[/?#]|$)/i);
+    if (guestPathMatch) return guestPathMatch[1];
+    const pathMatch = decoded.match(/\/k\/(\d+)(?:[/?#]|$)/i);
+    if (pathMatch) return pathMatch[1];
+    return "";
+  }
+  function extractGuestIdFromInput(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch (e) {
+    }
+    const guestPathMatch = decoded.match(/\/k\/guest\/(\d+)(?:\/|[?#]|$)/i);
+    return guestPathMatch ? guestPathMatch[1] : "";
+  }
+
+  // src/tabs/settings-export-standalone.ts
   init_record();
   function settingsExportLabel(bundles) {
     if (bundles.length === 1) return appLabelFromBundle(bundles[0]);
@@ -1307,8 +1341,21 @@ ${contextLine}`);
   }
   async function runSettingsExportSearchStandalone(keyword, guestId, setStatus2) {
     const kw = String(keyword || "").trim();
-    const guest = String(guestId || "").trim();
+    const guest = String(guestId || "").trim() || extractGuestIdFromInput(kw);
     const prefix = buildApiPrefix(guest, false);
+    const directAppId = extractAppIdFromInput(kw);
+    if (directAppId) {
+      setStatus2("アプリIDを確認中...");
+      let name = "";
+      try {
+        const info = await apiGet(prefix, "/app.json", { id: directAppId });
+        name = String(info?.name || "").trim();
+      } catch {
+        name = "ID指定（名称未取得）";
+      }
+      setStatus2(`アプリID ${directAppId}${guest ? ` / ゲスト ${guest}` : ""} を候補に表示しました`);
+      return [{ appId: directAppId, name: name || "ID指定" }];
+    }
     const params = { limit: 100 };
     if (kw) params.name = kw;
     setStatus2("アプリ検索中...");
@@ -1327,7 +1374,7 @@ ${contextLine}`);
       return [];
     }
     setStatus2(`スペース ${sid} のアプリ ${apps.length}件を取得しました`);
-    return apps.map((a) => a.appId);
+    return apps.map((a) => ({ appId: a.appId, name: a.name || "" }));
   }
   function resolveExportTargets(opts) {
     const out = [];
@@ -1704,11 +1751,15 @@ ${contextLine}`);
 
 /* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
+.kus-lp__apptable-scroll{max-height:220px;overflow:auto}
 .kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
 .kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable-scroll th{position:sticky;top:0;z-index:1}
 .kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
+.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
 .kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
 .kus-lp__apptable-acts-h{width:128px}
 .kus-lp__apptable-acts{white-space:nowrap}
@@ -1997,13 +2048,16 @@ ${contextLine}`);
     const minRows = Math.max(1, opts.minRows ?? 1);
     const wrap = document.createElement("div");
     wrap.className = "kus-lp__apptable";
+    const tableScroll = document.createElement("div");
+    tableScroll.className = "kus-lp__apptable-scroll";
     const table = document.createElement("table");
     const thead = document.createElement("thead");
     thead.innerHTML = '<tr><th class="kus-lp__apptable-no" scope="col">#</th><th scope="col">アプリID</th><th scope="col">ゲストID</th><th class="kus-lp__apptable-acts-h" scope="col">操作</th></tr>';
     table.appendChild(thead);
     const tbody = document.createElement("tbody");
     table.appendChild(tbody);
-    wrap.appendChild(table);
+    tableScroll.appendChild(table);
+    wrap.appendChild(tableScroll);
     const foot = document.createElement("div");
     foot.className = "kus-lp__apptable-foot";
     const addBtn = makeButton("＋ 行を追加", "sub");
@@ -2017,6 +2071,7 @@ ${contextLine}`);
         const empty = rows.find((r) => !r.app.value.trim());
         if (empty) {
           empty.app.value = id;
+          setAppName(empty, "");
           empty.app.focus();
         } else insertRow(rows.length, id, "", true);
         emitChange();
@@ -2042,12 +2097,29 @@ ${contextLine}`);
         const key = `${appId}::${guestId}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        out.push({ appId, guestId });
+        const row = { appId, guestId };
+        if (r.appName) row.appName = r.appName;
+        out.push(row);
       }
       return out;
     }
     function getAllRows() {
-      return rows.map((r) => ({ appId: r.app.value.trim(), guestId: r.guest.value.trim() }));
+      return rows.map((r) => {
+        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        if (r.appName) row.appName = r.appName;
+        return row;
+      });
+    }
+    function setAppName(entry, appName) {
+      entry.appName = String(appName || "").trim();
+      entry.name.textContent = entry.appName;
+      entry.name.title = entry.appName ? `アプリ名: ${entry.appName}` : "";
+      entry.name.classList.toggle("kus-lp__apptable-name--empty", !entry.appName);
+    }
+    function setRowValues(entry, appId, guestId, appName) {
+      entry.app.value = appId;
+      entry.guest.value = guestId;
+      setAppName(entry, appName);
     }
     function refresh() {
       rows.forEach((r, i) => {
@@ -2070,11 +2142,13 @@ ${contextLine}`);
         const next = tokens[0] || "";
         if (entry.app.value !== next) {
           entry.app.value = next;
+          setAppName(entry, "");
           return true;
         }
         return false;
       }
       entry.app.value = tokens[0];
+      setAppName(entry, "");
       const guestVal = entry.guest.value.trim();
       const start = rows.indexOf(entry);
       let last = entry;
@@ -2091,6 +2165,7 @@ ${contextLine}`);
       if (rows.length <= minRows) {
         entry.app.value = "";
         entry.guest.value = "";
+        setAppName(entry, "");
         emitChange();
         return;
       }
@@ -2099,7 +2174,7 @@ ${contextLine}`);
       entry.tr.remove();
       emitChange();
     }
-    function insertRow(index, appId = "", guestId = "", focus = false) {
+    function insertRow(index, appId = "", guestId = "", focus = false, appName = "") {
       const tr = document.createElement("tr");
       const tdNo = document.createElement("td");
       tdNo.className = "kus-lp__apptable-no";
@@ -2111,6 +2186,8 @@ ${contextLine}`);
       const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストID" });
       app.value = appId;
       guest.value = guestId;
+      const name = document.createElement("div");
+      name.className = "kus-lp__apptable-name";
       const copyBtn = makeButton("↑コピー", "sub");
       copyBtn.title = "上の行のアプリID・ゲストIDをこの行へコピー";
       const dupBtn = makeButton("複製", "sub");
@@ -2118,6 +2195,7 @@ ${contextLine}`);
       const delBtn = makeButton("×", "ghost");
       delBtn.title = "この行を削除";
       tdApp.appendChild(app);
+      tdApp.appendChild(name);
       tdGuest.appendChild(guest);
       tdAct.appendChild(copyBtn);
       tdAct.appendChild(dupBtn);
@@ -2126,24 +2204,29 @@ ${contextLine}`);
       tr.appendChild(tdApp);
       tr.appendChild(tdGuest);
       tr.appendChild(tdAct);
-      const entry = { tr, app, guest, copyBtn };
+      const entry = { tr, app, guest, name, appName: "", copyBtn };
+      setAppName(entry, appName);
       copyBtn.addEventListener("click", () => {
         const idx = rows.indexOf(entry);
         if (idx <= 0) return;
         const prev = rows[idx - 1];
         app.value = prev.app.value;
         guest.value = prev.guest.value;
+        setAppName(entry, prev.appName);
         app.focus();
         emitChange();
       });
       dupBtn.addEventListener("click", () => {
         const idx = rows.indexOf(entry);
-        const ne = insertRow(idx + 1, app.value.trim(), guest.value.trim(), true);
+        const ne = insertRow(idx + 1, app.value.trim(), guest.value.trim(), true, entry.appName);
         ne.app.focus();
         emitChange();
       });
       delBtn.addEventListener("click", () => removeRow(entry));
-      app.addEventListener("input", emitChange);
+      app.addEventListener("input", () => {
+        if (entry.appName) setAppName(entry, "");
+        emitChange();
+      });
       guest.addEventListener("input", emitChange);
       app.addEventListener("change", () => {
         if (distributeAppTokens(entry)) emitChange();
@@ -2169,11 +2252,43 @@ ${contextLine}`);
       e.app.focus();
       emitChange();
     });
+    function putApp(appId = "", guestId = "", o = {}) {
+      const id = String(appId || "").trim();
+      if (!id) return { action: "ignored", index: -1 };
+      const guest = String(guestId || "").trim();
+      const appName = String(o.appName || "").trim();
+      const empty = rows.find((r) => !r.app.value.trim());
+      const targetGuest = guest || empty?.guest.value.trim() || "";
+      const existing = rows.find((r) => r.app.value.trim() === id && r.guest.value.trim() === targetGuest);
+      if (existing) {
+        if (appName && existing.appName !== appName) {
+          setAppName(existing, appName);
+          emitChange();
+        }
+        if (o.focus) existing.app.focus();
+        return { action: "existing", index: rows.indexOf(existing) };
+      }
+      if (empty) {
+        setRowValues(empty, id, targetGuest, appName);
+        if (o.focus) empty.app.focus();
+        emitChange();
+        return { action: "filled", index: rows.indexOf(empty) };
+      }
+      const entry = insertRow(rows.length, id, guest, !!o.focus, appName);
+      emitChange();
+      return { action: "added", index: rows.indexOf(entry) };
+    }
     function setApps(list) {
       rows.splice(0).forEach((r) => r.tr.remove());
       tbody.innerHTML = "";
       const src = Array.isArray(list) && list.length ? list : [{ appId: "", guestId: "" }];
-      src.forEach((r) => insertRow(rows.length, String(r.appId || "").trim(), String(r.guestId || "").trim()));
+      src.forEach((r) => insertRow(
+        rows.length,
+        String(r.appId || "").trim(),
+        String(r.guestId || "").trim(),
+        false,
+        String(r.appName || "").trim()
+      ));
       while (rows.length < minRows) insertRow(rows.length, "", "");
       emitChange();
     }
@@ -2184,12 +2299,16 @@ ${contextLine}`);
       getAllRows,
       first: () => {
         const r = rows[0];
-        return r ? { appId: r.app.value.trim(), guestId: r.guest.value.trim() } : { appId: "", guestId: "" };
+        if (!r) return { appId: "", guestId: "" };
+        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        if (r.appName) row.appName = r.appName;
+        return row;
       },
       addRow: (appId = "", guestId = "", o = {}) => {
-        insertRow(rows.length, appId, guestId, !!o.focus);
+        insertRow(rows.length, appId, guestId, !!o.focus, String(o.appName || "").trim());
         emitChange();
       },
+      putApp,
       setApps,
       clear: () => setApps([]),
       count: () => getApps().length
@@ -2226,9 +2345,7 @@ ${contextLine}`);
       currentAppId: String(DEFAULT_APP_ID || ""),
       initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: "" }] : []
     });
-    cardTarget.body.appendChild(appTable.element);
-    cardTarget.body.appendChild(makeNote("各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。"));
-    const searchKw = makeInput({ placeholder: "アプリ名の一部", width: "wide" });
+    const searchKw = makeInput({ placeholder: "アプリ名 / アプリID / URL", width: "wide" });
     const searchGuest = makeInput({ placeholder: "検索用ゲストID（任意）", width: "guest" });
     const searchBtn = makeButton("検索", "sub");
     cardTarget.body.appendChild(makeRow([searchKw, searchGuest, searchBtn], { label: "アプリ検索" }));
@@ -2236,6 +2353,8 @@ ${contextLine}`);
     searchOut.className = "kus-lp__panel-html kus-lp__panel-html--empty";
     searchOut.style.maxHeight = "180px";
     cardTarget.body.appendChild(searchOut);
+    cardTarget.body.appendChild(appTable.element);
+    cardTarget.body.appendChild(makeNote("各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。"));
     const spaceKw = makeInput({ placeholder: "スペースID", width: "narrow" });
     const spaceBtn = makeButton("スペース内アプリを表に追加", "sub");
     cardTarget.body.appendChild(makeRow([spaceKw, spaceBtn], { label: "スペース" }));
@@ -2281,6 +2400,8 @@ ${contextLine}`);
       };
     }
     searchBtn.addEventListener("click", () => liteRun(panel, "アプリ検索中…", async () => {
+      const urlGuestId = extractGuestIdFromInput(searchKw.value);
+      if (urlGuestId && !searchGuest.value.trim()) searchGuest.value = urlGuestId;
       const apps = await runSettingsExportSearchStandalone(
         searchKw.value,
         searchGuest.value.trim(),
@@ -2296,25 +2417,31 @@ ${contextLine}`);
       if (!btn) return;
       const id = btn.getAttribute("data-app");
       if (!id) return;
-      appTable.addRow(id, searchGuest.value.trim());
-      panel.setStatus(`アプリ #${id} を対象表に追加しました`, "info");
+      const name = btn.getAttribute("data-name") || "";
+      const result = appTable.putApp(id, searchGuest.value.trim(), { appName: name, focus: true });
+      const note = result.action === "existing" ? "（追加済み）" : result.action === "filled" ? "（空行へ設定）" : "";
+      if (btn instanceof HTMLButtonElement) {
+        btn.textContent = result.action === "existing" ? "追加済み" : "設定済み";
+        btn.setAttribute("aria-pressed", "true");
+        btn.style.background = "#ecfdf5";
+        btn.style.borderColor = "#a7f3d0";
+        btn.style.color = "#065f46";
+      }
+      panel.setStatus(`アプリ #${id}${name ? ` (${name})` : ""} を対象表に設定しました${note}`, result.action === "existing" ? "info" : "ok");
     });
     spaceBtn.addEventListener("click", () => liteRun(panel, "スペース内アプリ取得中…", async () => {
       const guest = searchGuest.value.trim();
-      const ids = await runSettingsExportListSpaceAppsStandalone(
+      const apps = await runSettingsExportListSpaceAppsStandalone(
         spaceKw.value.trim(),
         guest,
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
-      const existing = new Set(appTable.getApps().map((a) => a.appId));
       let added = 0;
-      for (const id of ids) {
-        if (existing.has(id)) continue;
-        appTable.addRow(id, guest);
-        existing.add(id);
-        added += 1;
+      for (const app of apps) {
+        const result = appTable.putApp(app.appId, guest, { appName: app.name });
+        if (result.action === "added" || result.action === "filled") added += 1;
       }
-      panel.setStatus(`スペースのアプリ ${ids.length}件を読み込みました（新規追加 ${added}件）`, "ok");
+      panel.setStatus(`スペースのアプリ ${apps.length}件を読み込みました（新規追加 ${added}件）`, "ok");
     }));
     btnJson.addEventListener("click", () => liteRun(panel, "設定一括取得（JSON）中…", async () => {
       const { summaryHtml } = await runSettingsExportStandalone(

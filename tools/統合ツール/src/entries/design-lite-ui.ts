@@ -37,6 +37,19 @@ export function mountDesignLitePanel() {
     currentAppId: String(DEFAULT_APP_ID || ''),
     initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: '' }] : []
   });
+  cardTarget.body.appendChild(createAppSearchControl(panel, {
+    targets: [
+      { label: '表に追加', apply: (id, name, guestId) => {
+        const result = appTable.putApp(id, guestId || '', { appName: name, focus: true });
+        const note = result.action === 'existing' ? '（追加済み）' : result.action === 'filled' ? '（空行へ設定）' : '';
+        return {
+          message: `アプリ #${id}${name ? ` (${name})` : ''} を対象表に設定しました${note}`,
+          tone: result.action === 'existing' ? 'info' : 'ok',
+          pickedLabel: result.action === 'existing' ? '追加済み' : '設定済み'
+        };
+      } }
+    ]
+  }));
   cardTarget.body.appendChild(appTable.element);
   const prev = makeCheck({ label: 'プレビュー環境から取得' });
   cardTarget.body.appendChild(makeRow([prev.label], { label: '取得環境' }));
@@ -123,11 +136,4 @@ export function mountDesignLitePanel() {
       );
     });
   });
-
-  // ---- アプリ名検索（対象アプリ表へ行を追加） ----
-  cardTarget.body.appendChild(createAppSearchControl(panel, {
-    targets: [
-      { label: '表に追加', apply: (id, _name, guestId) => { appTable.addRow(id, guestId || ''); panel.setStatus(`アプリ #${id} を対象表に追加しました`, 'info'); } }
-    ]
-  }));
 }

@@ -19,6 +19,7 @@ import {
   makeNote,
   liteRun
 } from './litePanelTheme.js';
+import { extractGuestIdFromInput } from '../handlers/diffFocus.js';
 
 export function mountSettingsExportLitePanel() {
   const panel = createLitePanel({
@@ -37,11 +38,9 @@ export function mountSettingsExportLitePanel() {
     currentAppId: String(DEFAULT_APP_ID || ''),
     initial: DEFAULT_APP_ID ? [{ appId: String(DEFAULT_APP_ID), guestId: '' }] : []
   });
-  cardTarget.body.appendChild(appTable.element);
-  cardTarget.body.appendChild(makeNote('各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。'));
 
   // ---- アプリ検索 / スペース取込（検索用ゲストIDで照会し、表に行を追加） ----
-  const searchKw = makeInput({ placeholder: 'アプリ名の一部', width: 'wide' });
+  const searchKw = makeInput({ placeholder: 'アプリ名 / アプリID / URL', width: 'wide' });
   const searchGuest = makeInput({ placeholder: '検索用ゲストID（任意）', width: 'guest' });
   const searchBtn = makeButton('検索', 'sub');
   cardTarget.body.appendChild(makeRow([searchKw, searchGuest, searchBtn], { label: 'アプリ検索' }));
@@ -50,6 +49,9 @@ export function mountSettingsExportLitePanel() {
   searchOut.className = 'kus-lp__panel-html kus-lp__panel-html--empty';
   searchOut.style.maxHeight = '180px';
   cardTarget.body.appendChild(searchOut);
+
+  cardTarget.body.appendChild(appTable.element);
+  cardTarget.body.appendChild(makeNote('各行に「↑コピー」で上の行のアプリID・ゲストIDを複製できます。同じゲストスペースの複数アプリを素早く並べられます。'));
 
   const spaceKw = makeInput({ placeholder: 'スペースID', width: 'narrow' });
   const spaceBtn = makeButton('スペース内アプリを表に追加', 'sub');
@@ -105,6 +107,8 @@ export function mountSettingsExportLitePanel() {
   }
 
   searchBtn.addEventListener('click', () => liteRun(panel, 'アプリ検索中…', async () => {
+    const urlGuestId = extractGuestIdFromInput(searchKw.value);
+    if (urlGuestId && !searchGuest.value.trim()) searchGuest.value = urlGuestId;
     const apps = await runSettingsExportSearchStandalone(
       searchKw.value,
       searchGuest.value.trim(),
@@ -121,26 +125,32 @@ export function mountSettingsExportLitePanel() {
     if (!btn) return;
     const id = btn.getAttribute('data-app');
     if (!id) return;
-    appTable.addRow(id, searchGuest.value.trim());
-    panel.setStatus(`アプリ #${id} を対象表に追加しました`, 'info');
+    const name = btn.getAttribute('data-name') || '';
+    const result = appTable.putApp(id, searchGuest.value.trim(), { appName: name, focus: true });
+    const note = result.action === 'existing' ? '（追加済み）' : result.action === 'filled' ? '（空行へ設定）' : '';
+    if (btn instanceof HTMLButtonElement) {
+      btn.textContent = result.action === 'existing' ? '追加済み' : '設定済み';
+      btn.setAttribute('aria-pressed', 'true');
+      btn.style.background = '#ecfdf5';
+      btn.style.borderColor = '#a7f3d0';
+      btn.style.color = '#065f46';
+    }
+    panel.setStatus(`アプリ #${id}${name ? ` (${name})` : ''} を対象表に設定しました${note}`, result.action === 'existing' ? 'info' : 'ok');
   });
 
   spaceBtn.addEventListener('click', () => liteRun(panel, 'スペース内アプリ取得中…', async () => {
     const guest = searchGuest.value.trim();
-    const ids = await runSettingsExportListSpaceAppsStandalone(
+    const apps = await runSettingsExportListSpaceAppsStandalone(
       spaceKw.value.trim(),
       guest,
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
-    const existing = new Set(appTable.getApps().map((a) => a.appId));
     let added = 0;
-    for (const id of ids) {
-      if (existing.has(id)) continue;
-      appTable.addRow(id, guest);
-      existing.add(id);
-      added += 1;
+    for (const app of apps) {
+      const result = appTable.putApp(app.appId, guest, { appName: app.name });
+      if (result.action === 'added' || result.action === 'filled') added += 1;
     }
-    panel.setStatus(`スペースのアプリ ${ids.length}件を読み込みました（新規追加 ${added}件）`, 'ok');
+    panel.setStatus(`スペースのアプリ ${apps.length}件を読み込みました（新規追加 ${added}件）`, 'ok');
   }));
 
   btnJson.addEventListener('click', () => liteRun(panel, '設定一括取得（JSON）中…', async () => {

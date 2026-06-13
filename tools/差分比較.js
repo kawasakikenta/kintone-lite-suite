@@ -7574,11 +7574,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 
 /* ===== App table (複数アプリ × per-app ゲストスペース入力) ===== */
 .kus-lp__apptable{border:1px solid var(--c-border);border-radius:10px;overflow:hidden;background:var(--c-bg)}
+.kus-lp__apptable-scroll{max-height:220px;overflow:auto}
 .kus-lp__apptable table{width:100%;border-collapse:collapse;table-layout:fixed}
 .kus-lp__apptable th{background:var(--c-surface-2);font-size:11px;font-weight:600;color:var(--c-text-2);text-align:left;padding:6px 8px;border-bottom:1px solid var(--c-border)}
+.kus-lp__apptable-scroll th{position:sticky;top:0;z-index:1}
 .kus-lp__apptable td{padding:5px 8px;border-bottom:1px solid var(--c-border);vertical-align:middle}
 .kus-lp__apptable tbody tr:last-child td{border-bottom:none}
 .kus-lp__apptable .kus-lp__input{width:100%;box-sizing:border-box}
+.kus-lp__apptable-name{min-height:1.35em;margin-top:3px;color:var(--c-muted);font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-lp__apptable-name:not(.kus-lp__apptable-name--empty)::before{content:'アプリ名: ';color:var(--c-text-2);font-weight:600}
 .kus-lp__apptable-no{width:30px;text-align:center;color:var(--c-muted);font-size:11px;font-variant-numeric:tabular-nums}
 .kus-lp__apptable-acts-h{width:128px}
 .kus-lp__apptable-acts{white-space:nowrap}
@@ -7960,6 +7964,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 .kus-as__name{color:var(--c-text);word-break:break-all}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:10.5px}
+.kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
   function ensureStyles() {
     if (document.getElementById(RESULT_CSS_ID)) return;
@@ -8010,10 +8015,16 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
           const target = opts.targets[Number(btn.dataset.asTarget)];
           if (!app || !target) return;
           const searchGuest = guest.value.trim();
-          target.apply(app.appId, app.name, searchGuest);
+          const outcome = target.apply(app.appId, app.name, searchGuest) || {};
           if (searchGuest && opts.guestEl && !opts.guestEl.value.trim()) opts.guestEl.value = searchGuest;
           const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : "";
-          panel.setStatus(`App ${app.appId}${app.name ? ` (${app.name})` : ""} を設定しました${where}`, "ok");
+          btn.classList.add("kus-as__picked");
+          btn.setAttribute("aria-pressed", "true");
+          btn.textContent = outcome.pickedLabel || (opts.targets.length > 1 && target.label ? `${target.label}済み` : "設定済み");
+          panel.setStatus(
+            outcome.message || `App ${app.appId}${app.name ? ` (${app.name})` : ""} を設定しました${where}`,
+            outcome.tone || "ok"
+          );
         });
       });
     }
@@ -8121,6 +8132,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
 .kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-result mark.diff-char-del{background:#fecaca;color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through}
 .kus-dl-result mark.diff-char-add{background:#bbf7d0;color:#14532d;border-radius:2px;padding:0 1px}
+.kus-dl-target-field{display:flex;flex:1 1 180px;min-width:180px;flex-direction:column}
+.kus-dl-target-field .kus-lp__input{width:100%;box-sizing:border-box}
+.kus-dl-target-name{min-height:1.35em;margin-top:3px;color:#64748b;font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kus-dl-target-name:not(.kus-dl-target-name--empty)::before{content:'アプリ名: ';color:#334155;font-weight:600}
 `;
   function ensureResultStyles() {
     if (document.getElementById(RESULT_CSS_ID2)) return;
@@ -8225,24 +8240,50 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const tgtPrev = makeCheck({ label: "プレビューで取得" });
     const cardApp = makeCard({ title: "アプリと環境", number: 1 });
     cardApp.body.appendChild(makeRow([srcApp, srcGuest, srcPrev.label], { label: "比較元" }));
-    cardApp.body.appendChild(makeRow([tgtApp, tgtGuest, tgtPrev.label], { label: "比較先 1" }));
+    const makeTargetName = () => {
+      const el = document.createElement("div");
+      el.className = "kus-dl-target-name kus-dl-target-name--empty";
+      return el;
+    };
+    const makeTargetField = (app, name) => {
+      const wrap = document.createElement("div");
+      wrap.className = "kus-dl-target-field";
+      wrap.appendChild(app);
+      wrap.appendChild(name);
+      return wrap;
+    };
+    const setTargetName = (entry, appName) => {
+      entry.appName = String(appName || "").trim();
+      entry.name.textContent = entry.appName;
+      entry.name.title = entry.appName ? `アプリ名: ${entry.appName}` : "";
+      entry.name.classList.toggle("kus-dl-target-name--empty", !entry.appName);
+    };
+    const tgtName = makeTargetName();
+    const firstTargetRow = makeRow([makeTargetField(tgtApp, tgtName), tgtGuest, tgtPrev.label], { label: "比較先 1" });
+    cardApp.body.appendChild(firstTargetRow);
     const targetList = document.createElement("div");
     targetList.style.display = "grid";
     targetList.style.gap = "6px";
     targetList.style.marginTop = "6px";
-    const targetRows = [{ app: tgtApp, guest: tgtGuest, row: tgtApp.closest(".kus-lp__row") }];
+    targetList.style.maxHeight = "180px";
+    targetList.style.overflowY = "auto";
+    targetList.style.paddingRight = "2px";
+    const targetRows = [{ app: tgtApp, guest: tgtGuest, row: firstTargetRow, name: tgtName, appName: "" }];
     const relabelTargetRows = () => targetRows.forEach((r, idx) => {
-      const label = r.row?.querySelector?.(".kus-lp__row-label");
+      const label = r.row?.querySelector?.(".kus-lp__label");
       if (label) label.textContent = `比較先 ${idx + 1}`;
     });
-    const addTargetRow = (appId = "", guestId = "") => {
+    const addTargetRow = (appId = "", guestId = "", appName = "") => {
       const app = makeInput({ placeholder: "アプリID（カンマ区切り可）", width: "medium" });
       const guest = makeInput({ placeholder: "ゲストID", width: "guest" });
+      const name = makeTargetName();
       app.value = appId;
       guest.value = guestId;
       const copy = makeButton("行コピー", "sub");
       const remove = makeButton("削除", "ghost");
-      const row = makeRow([app, guest, copy, remove], { label: `比較先 ${targetRows.length + 1}` });
+      const row = makeRow([makeTargetField(app, name), guest, copy, remove], { label: `比較先 ${targetRows.length + 1}` });
+      const entry = { app, guest, row, name, appName: "" };
+      setTargetName(entry, appName);
       copy.addEventListener("click", async () => {
         const text = [`比較先 ${targetRows.indexOf(entry) + 1}`, app.value.trim(), guest.value.trim()].join("	");
         try {
@@ -8258,58 +8299,66 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         if (idx >= 0) targetRows.splice(idx, 1);
         relabelTargetRows();
       });
-      const entry = { app, guest, row };
+      app.addEventListener("input", () => {
+        if (entry.appName) setTargetName(entry, "");
+      });
       targetRows.push(entry);
       targetList.appendChild(row);
-      attachTargetSplit(app, guest);
+      attachTargetSplit(entry);
       return entry;
     };
-    const attachTargetSplit = (appInput, guestInput) => {
+    const attachTargetSplit = (entry) => {
       const distribute = () => {
-        const raw = appInput.value;
+        const raw = entry.app.value;
         if (!/[,、\s]/.test(raw)) return;
         const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
         if (tokens.length <= 1) {
-          appInput.value = tokens[0] || "";
+          entry.app.value = tokens[0] || "";
+          setTargetName(entry, "");
           return;
         }
-        appInput.value = tokens[0];
-        const guestVal = guestInput.value.trim();
+        entry.app.value = tokens[0];
+        setTargetName(entry, "");
+        const guestVal = entry.guest.value.trim();
         for (let k = 1; k < tokens.length; k += 1) addTargetRow(tokens[k], guestVal);
         panel.setStatus(`比較先を ${tokens.length} 件に分割しました`, "info");
       };
-      appInput.addEventListener("change", distribute);
-      appInput.addEventListener("paste", (ev) => {
+      entry.app.addEventListener("change", distribute);
+      entry.app.addEventListener("paste", (ev) => {
         const text = ev.clipboardData?.getData("text") || "";
         if (!/[,、\s]/.test(text)) return;
         ev.preventDefault();
-        appInput.value = [appInput.value.trim(), text].filter(Boolean).join(",");
+        entry.app.value = [entry.app.value.trim(), text].filter(Boolean).join(",");
         distribute();
       });
     };
-    attachTargetSplit(tgtApp, tgtGuest);
+    tgtApp.addEventListener("input", () => {
+      if (targetRows[0]?.appName) setTargetName(targetRows[0], "");
+    });
+    attachTargetSplit(targetRows[0]);
     const addTargetBtn = makeButton("比較先行を追加", "sub");
     addTargetBtn.addEventListener("click", () => {
       addTargetRow();
       panel.setStatus("比較先行を追加しました", "info");
     });
     const copyFirstBtn = makeButton("比較先1を複製", "sub");
-    copyFirstBtn.addEventListener("click", () => addTargetRow(tgtApp.value.trim(), tgtGuest.value.trim()));
+    copyFirstBtn.addEventListener("click", () => addTargetRow(tgtApp.value.trim(), tgtGuest.value.trim(), targetRows[0]?.appName || ""));
     cardApp.body.appendChild(makeRow([addTargetBtn, copyFirstBtn], { label: "複数比較" }));
-    cardApp.body.appendChild(targetList);
     cardApp.body.appendChild(createAppSearchControl(panel, {
       targets: [
         { label: "比較元", apply: (id, _name, guestId) => {
           srcApp.value = id;
           if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
         } },
-        { label: "比較先", apply: (id, _name, guestId) => {
+        { label: "比較先", apply: (id, name, guestId) => {
           const empty = targetRows.find((r) => !r.app.value.trim()) || addTargetRow();
           empty.app.value = id;
+          setTargetName(empty, name);
           if (guestId && !empty.guest.value.trim()) empty.guest.value = guestId;
         } }
       ]
     }));
+    cardApp.body.appendChild(targetList);
     panel.body.insertBefore(cardApp.card, panel.status);
     const cardScope = makeCard({ title: "比較セクション", number: 2 });
     const chipBox = document.createElement("div");

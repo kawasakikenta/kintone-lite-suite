@@ -21,7 +21,8 @@ import {
   makeButton,
   makeDetails,
   makeNote,
-  type LitePanelHandle
+  type LitePanelHandle,
+  type StatusTone
 } from './litePanelTheme.js';
 
 const RESULT_CSS_ID = 'kus-app-search-styles';
@@ -37,6 +38,7 @@ const RESULT_CSS = `
 .kus-as__name{color:var(--c-text);word-break:break-all}
 .kus-as__assign{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .kus-as__assign .kus-lp__btn{padding:4px 8px;font-size:10.5px}
+.kus-as__assign .kus-as__picked{background:var(--c-ok-bg);border-color:var(--c-ok-bd);color:var(--c-ok-fg)}
 `;
 
 function ensureStyles() {
@@ -47,11 +49,19 @@ function ensureStyles() {
   document.head.appendChild(st);
 }
 
+export interface AppSearchApplyResult {
+  /** apply 後に表示するステータスメッセージ。省略時は共通メッセージ。 */
+  message?: string;
+  tone?: StatusTone;
+  /** 押した検索結果ボタンに残す文言。省略時は「設定済み」。 */
+  pickedLabel?: string;
+}
+
 export interface AppSearchTarget {
   /** 割り当て先の表示名（例: 比較元 / 比較先）。1 件のみのときは省略可。 */
   label?: string;
   /** 候補が選択されたときに ID（と名称・検索に使ったゲストID）を流し込む処理 */
-  apply: (appId: string, appName: string, guestId: string) => void;
+  apply: (appId: string, appName: string, guestId: string) => void | AppSearchApplyResult;
 }
 
 export interface AppSearchOptions {
@@ -119,11 +129,17 @@ export function createAppSearchControl(panel: LitePanelHandle, opts: AppSearchOp
         const target = opts.targets[Number(btn.dataset.asTarget)];
         if (!app || !target) return;
         const searchGuest = guest.value.trim();
-        target.apply(app.appId, app.name, searchGuest);
+        const outcome: AppSearchApplyResult = target.apply(app.appId, app.name, searchGuest) || {};
         // 検索で使ったゲストIDを、対象パネルのゲスト欄が未入力なら補完する
         if (searchGuest && opts.guestEl && !opts.guestEl.value.trim()) opts.guestEl.value = searchGuest;
         const where = opts.targets.length > 1 && target.label ? `（${target.label}）` : '';
-        panel.setStatus(`App ${app.appId}${app.name ? ` (${app.name})` : ''} を設定しました${where}`, 'ok');
+        btn.classList.add('kus-as__picked');
+        btn.setAttribute('aria-pressed', 'true');
+        btn.textContent = outcome.pickedLabel || (opts.targets.length > 1 && target.label ? `${target.label}済み` : '設定済み');
+        panel.setStatus(
+          outcome.message || `App ${app.appId}${app.name ? ` (${app.name})` : ''} を設定しました${where}`,
+          outcome.tone || 'ok'
+        );
       });
     });
   }

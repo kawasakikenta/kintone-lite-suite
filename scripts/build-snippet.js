@@ -9,8 +9,21 @@ if (!inputPath) {
   process.exit(1);
 }
 
-const absPath = path.resolve(process.cwd(), inputPath);
-if (!fs.existsSync(absPath)) {
+function resolveInputPath(input) {
+  const direct = path.resolve(process.cwd(), input);
+  if (fs.existsSync(direct)) return direct;
+
+  const normalized = input.replace(/\\/g, '/');
+  if (normalized.startsWith('tools/') && !normalized.startsWith('tools/standalone/')) {
+    const fallback = path.resolve(process.cwd(), 'tools/standalone', path.posix.basename(normalized));
+    if (fs.existsSync(fallback)) return fallback;
+  }
+
+  return null;
+}
+
+const absPath = resolveInputPath(inputPath);
+if (!absPath) {
   console.error(`File not found: ${inputPath}`);
   process.exit(1);
 }

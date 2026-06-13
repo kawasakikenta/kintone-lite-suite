@@ -3,6 +3,7 @@
 import { SECTION_DEFS } from '../constants.js';
 import { esc, downloadText, downloadBlob, selectedScopeKeys, buildExportFilename, buildAppFilenameLabel, appLabelFromBundle, extractAppNameFromBundle } from '../utils.js';
 import { fetchBundle, buildApiPrefix, apiGet, fetchAppsInSpace } from '../api.js';
+import { extractAppIdFromInput, extractGuestIdFromInput } from '../handlers/diffFocus.js';
 import { loadJSZip } from './record.js';
 
 /** 設定一括取得のファイル名ラベル。1アプリならアプリ名(appID)、複数なら「N件」。 */
@@ -71,8 +72,21 @@ export function renderSettingsExportSearchResultsHtml(apps) {
 
 export async function runSettingsExportSearchStandalone(keyword: any, guestId: any, setStatus: (msg: string, isError?: boolean) => void) {
   const kw = String(keyword || '').trim();
-  const guest = String(guestId || '').trim();
+  const guest = String(guestId || '').trim() || extractGuestIdFromInput(kw);
   const prefix = buildApiPrefix(guest, false);
+  const directAppId = extractAppIdFromInput(kw);
+  if (directAppId) {
+    setStatus('アプリIDを確認中...');
+    let name = '';
+    try {
+      const info = await apiGet(prefix, '/app.json', { id: directAppId });
+      name = String(info?.name || '').trim();
+    } catch {
+      name = 'ID指定（名称未取得）';
+    }
+    setStatus(`アプリID ${directAppId}${guest ? ` / ゲスト ${guest}` : ''} を候補に表示しました`);
+    return [{ appId: directAppId, name: name || 'ID指定' }];
+  }
   const params: Record<string, any> = { limit: 100 };
   if (kw) params.name = kw;
   setStatus('アプリ検索中...');
@@ -86,13 +100,13 @@ export async function runSettingsExportSearchStandalone(keyword: any, guestId: a
 }
 
 /**
- * スペース内の全アプリIDを配列で返す（表形式 UI に行として追加する用途）。
+ * スペース内の全アプリを、表形式 UI に行として追加できる形で返す。
  */
 export async function runSettingsExportListSpaceAppsStandalone(
   spaceId: any,
   guestId: any,
   setStatus: (msg: string, isError?: boolean) => void
-): Promise<string[]> {
+): Promise<Array<{ appId: string; name: string }>> {
   const sid = String(spaceId || '').trim();
   if (!/^\d+$/.test(sid)) throw new Error('スペースIDを数値で入力してください');
   setStatus(`スペース ${sid} のアプリ一覧を取得中...`);
@@ -102,7 +116,7 @@ export async function runSettingsExportListSpaceAppsStandalone(
     return [];
   }
   setStatus(`スペース ${sid} のアプリ ${apps.length}件を取得しました`);
-  return apps.map((a) => a.appId);
+  return apps.map((a) => ({ appId: a.appId, name: a.name || '' }));
 }
 
 /**
