@@ -491,6 +491,33 @@
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
+  function decodeHtmlEntities(value) {
+    let text = String(value ?? "");
+    if (!text.includes("&")) return text;
+    for (let i = 0; i < 3; i += 1) {
+      const next = text.replace(/&(#(\d+)|#x([0-9a-f]+)|[a-z][a-z0-9]+);/gi, (match, token, dec, hex) => {
+        if (dec) {
+          const codePoint = Number(dec);
+          return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 1114111 ? String.fromCodePoint(codePoint) : match;
+        }
+        if (hex) {
+          const codePoint = Number.parseInt(hex, 16);
+          return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 1114111 ? String.fromCodePoint(codePoint) : match;
+        }
+        const named = HTML_ENTITY_NAMES[String(token).toLowerCase()];
+        return named ?? match;
+      });
+      if (next === text) break;
+      text = next;
+    }
+    return text;
+  }
+  function stripHtmlToText(value) {
+    let text = decodeHtmlEntities(value);
+    if (!/[<>]/.test(text)) return text;
+    text = text.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n").replace(/<\s*\/?\s*[a-z][^>]*>/gi, "");
+    return decodeHtmlEntities(text).replace(/\n{3,}/g, "\n\n").trim();
+  }
   function safeJsonForScript(v) {
     return JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   }
@@ -637,10 +664,19 @@ ${contextLine}`);
   function downloadBlob(filename, blob) {
     triggerDownload(filename, blob);
   }
+  var HTML_ENTITY_NAMES;
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
       init_constants();
+      HTML_ENTITY_NAMES = {
+        amp: "&",
+        lt: "<",
+        gt: ">",
+        quot: '"',
+        apos: "'",
+        nbsp: " "
+      };
     }
   });
 
@@ -3588,11 +3624,7 @@ ${formatSubtableChildrenText(value.fields)}`;
     return typeof path === "string" && /^fieldSettings\.properties\.[^.[\]]+$/.test(path);
   }
   function stripLabelHtmlTags(text) {
-    if (typeof text !== "string" || text.indexOf("<") === -1) return text;
-    const lineBreaks = text.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n");
-    const stripped = lineBreaks.replace(/<[^>]*>/g, "");
-    const decoded = stripped.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-    return decoded.replace(/\n{3,}/g, "\n\n").trim();
+    return stripHtmlToText(text);
   }
   function sanitizeHtmlBearingProps(value) {
     if (value == null || typeof value !== "object") return value;

@@ -2,7 +2,7 @@
 
 import { TOOL_ID, EXTERNAL_LIBRARIES } from '../constants.js';
 import { getToolDocument } from '../ui/dialog.js';
-import { showToast } from '../utils.js';
+import { showToast, stripHtmlToText } from '../utils.js';
 
 const SHEETLIB_PRIMARY_URL = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js';
 const SHEETLIB_FALLBACK_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
@@ -608,7 +608,7 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     colToA1: (n) => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - 1) / 26 | 0; } return s; },
     a1: (r, c) => `${UtilsX.colToA1(c)}${r}`,
     escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-    stripHtml: (html) => String(html || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'),
+    stripHtml: (html) => stripHtmlToText(html),
     formatBoolean: (val) => (val ? '○' : '-'),
     formatEntity: (entity) => { if (!entity) return '-'; if (Array.isArray(entity)) return entity.map(e => UtilsX.formatEntity(e)).join('\n'); const e = entity.entity || entity; const t = (e.type || '').toString().toUpperCase(); const typeMap = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド値', CREATOR: '作成者', MODIFIER: '更新者', LOGIN_USER: 'ログインユーザー', ALL: '全員', EVERYONE: '全員' }; const typeJP = typeMap[t] || e.type || '不明'; if (e.name) return `${typeJP}:${e.name}`; if (e.code) return `${typeJP}:${e.code}`; return typeJP; },
     formatEntityDetailed: (entity) => { if (!entity) return '-'; if (Array.isArray(entity)) return entity.map(e => UtilsX.formatEntityDetailed(e)).join('\n'); const e = entity.entity || entity; const t = (e.type || '').toString().toUpperCase(); const typeMap = { USER: 'ユーザー', GROUP: 'グループ', ORGANIZATION: '組織', FIELD_ENTITY: 'フィールド値', CREATOR: '作成者', MODIFIER: '更新者', LOGIN_USER: 'ログインユーザー', ALL: '全員', EVERYONE: '全員' }; const typeJP = typeMap[t] || e.type || '不明'; const parts = [typeJP]; if (e.name) parts.push(e.name); else if (e.code) parts.push(`コード:${e.code}`); if (entity.includeSubs) parts.push('(サブ組織含)'); return parts.join(': '); },

@@ -601,6 +601,7 @@
     buildExportFilename: () => buildExportFilename,
     classifyStage: () => classifyStage,
     compactForLog: () => compactForLog,
+    decodeHtmlEntities: () => decodeHtmlEntities,
     deepClone: () => deepClone,
     deepEqual: () => deepEqual,
     downloadBlob: () => downloadBlob,
@@ -636,6 +637,7 @@
     stableStringify: () => stableStringify,
     stableStringifyMemo: () => stableStringifyMemo,
     stageIconChar: () => stageIconChar,
+    stripHtmlToText: () => stripHtmlToText,
     tokenizePath: () => tokenizePath
   });
   function getToolWindowSafe() {
@@ -684,6 +686,33 @@
   }
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function decodeHtmlEntities(value) {
+    let text = String(value ?? "");
+    if (!text.includes("&")) return text;
+    for (let i = 0; i < 3; i += 1) {
+      const next = text.replace(/&(#(\d+)|#x([0-9a-f]+)|[a-z][a-z0-9]+);/gi, (match, token, dec, hex) => {
+        if (dec) {
+          const codePoint = Number(dec);
+          return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 1114111 ? String.fromCodePoint(codePoint) : match;
+        }
+        if (hex) {
+          const codePoint = Number.parseInt(hex, 16);
+          return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 1114111 ? String.fromCodePoint(codePoint) : match;
+        }
+        const named = HTML_ENTITY_NAMES[String(token).toLowerCase()];
+        return named ?? match;
+      });
+      if (next === text) break;
+      text = next;
+    }
+    return text;
+  }
+  function stripHtmlToText(value) {
+    let text = decodeHtmlEntities(value);
+    if (!/[<>]/.test(text)) return text;
+    text = text.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n").replace(/<\s*\/?\s*[a-z][^>]*>/gi, "");
+    return decodeHtmlEntities(text).replace(/\n{3,}/g, "\n\n").trim();
   }
   function safeJsonForScript(v) {
     return JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
@@ -1144,11 +1173,19 @@ ${contextLine}`);
       console.log(`[Toast ${type}] ${message}`);
     }
   }
-  var _stableStringifyCache, SECTION_ICONS, loadedScripts, loadedStyles, loadingScripts, loadingStyles;
+  var HTML_ENTITY_NAMES, _stableStringifyCache, SECTION_ICONS, loadedScripts, loadedStyles, loadingScripts, loadingStyles;
   var init_utils = __esm({
     "src/utils.ts"() {
       "use strict";
       init_constants();
+      HTML_ENTITY_NAMES = {
+        amp: "&",
+        lt: "<",
+        gt: ">",
+        quot: '"',
+        apos: "'",
+        nbsp: " "
+      };
       _stableStringifyCache = /* @__PURE__ */ new WeakMap();
       SECTION_ICONS = {
         fieldSettings: "▦",
@@ -6865,11 +6902,7 @@ ${formatSubtableChildrenText(value.fields)}`;
     return typeof path === "string" && /^fieldSettings\.properties\.[^.[\]]+$/.test(path);
   }
   function stripLabelHtmlTags(text) {
-    if (typeof text !== "string" || text.indexOf("<") === -1) return text;
-    const lineBreaks = text.replace(/<\s*br\s*\/?\s*>/gi, "\n").replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, "\n");
-    const stripped = lineBreaks.replace(/<[^>]*>/g, "");
-    const decoded = stripped.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-    return decoded.replace(/\n{3,}/g, "\n\n").trim();
+    return stripHtmlToText(text);
   }
   function sanitizeHtmlBearingProps(value) {
     if (value == null || typeof value !== "object") return value;
@@ -7723,7 +7756,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     return map[key] || key;
   }
   function mdEsc(value) {
-    return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+    return decodeHtmlEntities(value).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
   }
   function mdFieldTypeLabel(type) {
     const key = String(type || "").trim();
@@ -7768,10 +7801,10 @@ ${body}`;
   function mdFormatDefaultValue(value) {
     if (value == null) return "";
     if (Array.isArray(value)) {
-      return value.map((v) => v && typeof v === "object" ? JSON.stringify(v) : String(v)).join(" / ");
+      return value.map((v) => v && typeof v === "object" ? JSON.stringify(v) : decodeHtmlEntities(v)).join(" / ");
     }
     if (typeof value === "object") return JSON.stringify(value);
-    return String(value);
+    return decodeHtmlEntities(value);
   }
   function mdFieldOptions(options) {
     if (!options || typeof options !== "object") return "";
@@ -7780,12 +7813,12 @@ ${body}`;
       index: Number(opt?.index ?? 0)
     }));
     entries.sort((a, b) => a.index - b.index);
-    return entries.map((o) => o.label).filter(Boolean).join(" / ");
+    return entries.map((o) => decodeHtmlEntities(o.label)).filter(Boolean).join(" / ");
   }
   function mdRenderAppSettings(sec) {
     const rows = [
       ["アプリ名", sec.name || ""],
-      ["説明", sec.description || ""],
+      ["説明", stripHtmlToText(sec.description || "")],
       ["アイコン", sec.icon?.type ? `${mdLookupLabel(MD_ICON_TYPE_LABELS, sec.icon.type)}${sec.icon.key ? `（${sec.icon.key}）` : ""}` : ""],
       ["テーマ", mdLookupLabel(MD_THEME_LABELS, sec.theme) || ""],
       ["タイトルフィールド", sec.titleField?.selectFieldCode || (sec.titleField?.isDefaultTitleField ? "（既定）" : "")],
@@ -7807,7 +7840,7 @@ ${body}`;
       if (!f) return;
       rows.push([
         f.code || "",
-        f.label || "",
+        stripHtmlToText(f.label || ""),
         mdFieldTypeLabel(f.type),
         f.required ? "○" : "",
         f.unique ? "○" : "",
@@ -7828,11 +7861,11 @@ ${body}`;
     ));
     subtables.forEach((tbl) => {
       parts.push("");
-      parts.push(`#### テーブル: \`${tbl.code}\` — ${tbl.label || ""}`);
+      parts.push(`#### テーブル: \`${tbl.code}\` — ${stripHtmlToText(tbl.label || "")}`);
       parts.push("");
       const subRows = Object.values(tbl.fields || {}).map((f) => [
         f.code || "",
-        f.label || "",
+        stripHtmlToText(f.label || ""),
         mdFieldTypeLabel(f.type),
         f.required ? "○" : "",
         mdFormatDefaultValue(f.defaultValue),
@@ -7849,7 +7882,7 @@ ${body}`;
     if (!item) return out;
     if (item.type === "ROW") {
       const codes = (item.fields || []).map((f) => {
-        if (f.type === "LABEL") return `[ラベル]${f.label || ""}`;
+        if (f.type === "LABEL") return `[ラベル]${stripHtmlToText(f.label || "")}`;
         if (f.type === "SPACER") return `[スペース${f.elementId ? `:${f.elementId}` : ""}]`;
         if (f.type === "HR") return "[罫線]";
         const width = f.size?.width;
@@ -7860,7 +7893,7 @@ ${body}`;
     } else if (item.type === "SUBTABLE") {
       out.push(`${indent}- テーブル: \`${item.code}\``);
     } else if (item.type === "GROUP") {
-      out.push(`${indent}- グループ: \`${item.code}\` — ${item.label || ""}`);
+      out.push(`${indent}- グループ: \`${item.code}\` — ${stripHtmlToText(item.label || "")}`);
       (item.layout || []).forEach((child) => {
         out.push(...mdRenderLayoutItem(child, depth + 1));
       });
@@ -8196,7 +8229,7 @@ ${body}`;
   }
   function bundleToMarkdown(bundle) {
     const sections = bundle?.sections || {};
-    const appName = sections.appSettings?.name || "";
+    const appName = decodeHtmlEntities(sections.appSettings?.name || "");
     const lines = [];
     lines.push("# kintone アプリ設計書");
     lines.push("");
@@ -24989,7 +25022,7 @@ applySavedViewState();
       },
       a1: (r, c) => `${UtilsX.colToA1(c)}${r}`,
       escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-      stripHtml: (html) => String(html || "").replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"),
+      stripHtml: (html) => stripHtmlToText(html),
       formatBoolean: (val) => val ? "○" : "-",
       formatEntity: (entity) => {
         if (!entity) return "-";

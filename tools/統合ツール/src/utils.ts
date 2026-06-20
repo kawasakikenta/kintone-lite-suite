@@ -49,6 +49,52 @@ export function esc(s: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
+const HTML_ENTITY_NAMES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' '
+};
+
+export function decodeHtmlEntities(value: unknown): string {
+  let text = String(value ?? '');
+  if (!text.includes('&')) return text;
+
+  for (let i = 0; i < 3; i += 1) {
+    const next = text.replace(/&(#(\d+)|#x([0-9a-f]+)|[a-z][a-z0-9]+);/gi, (match, token, dec, hex) => {
+      if (dec) {
+        const codePoint = Number(dec);
+        return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+          ? String.fromCodePoint(codePoint)
+          : match;
+      }
+      if (hex) {
+        const codePoint = Number.parseInt(hex, 16);
+        return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+          ? String.fromCodePoint(codePoint)
+          : match;
+      }
+      const named = HTML_ENTITY_NAMES[String(token).toLowerCase()];
+      return named ?? match;
+    });
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
+export function stripHtmlToText(value: unknown): string {
+  let text = decodeHtmlEntities(value);
+  if (!/[<>]/.test(text)) return text;
+  text = text
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, '\n')
+    .replace(/<\s*\/?\s*[a-z][^>]*>/gi, '');
+  return decodeHtmlEntities(text).replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export function safeJsonForScript(v: unknown): string {
   return JSON.stringify(v)
     .replace(/</g, '\\u003c')

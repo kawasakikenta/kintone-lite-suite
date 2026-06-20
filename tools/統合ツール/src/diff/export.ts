@@ -4,7 +4,7 @@ import {
   DEFAULT_IGNORE_KEYS, DIFF_NORMALIZATION_PRESETS
 } from '../constants.js';
 import {
-  esc, deepClone, safeJsonForScript,
+  esc, deepClone, safeJsonForScript, decodeHtmlEntities, stripHtmlToText,
   getDiffTypeDisplayLabel, getSeverityDisplayLabel,
   getIssueSideLabel, getPreviewStateLabel, getThemeDisplayLabel,
   renderSectionIconHtml
@@ -90,21 +90,7 @@ function isSubtableFieldRootPath(path) {
  * タグを剥がして表示用テキストに整形する。
  */
 function stripLabelHtmlTags(text: string): string {
-  if (typeof text !== 'string' || text.indexOf('<') === -1) return text;
-  // <br>/</p>/</div> は改行に置換、その他のタグは除去。
-  const lineBreaks = text
-    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
-    .replace(/<\s*\/\s*(p|div|li|tr|h[1-6])\s*>/gi, '\n');
-  const stripped = lineBreaks.replace(/<[^>]*>/g, '');
-  // HTML エンティティを最小限デコード（`esc()` は出力直前に再エスケープする）。
-  const decoded = stripped
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-  return decoded.replace(/\n{3,}/g, '\n\n').trim();
+  return stripHtmlToText(text);
 }
 
 /**
@@ -1259,7 +1245,7 @@ function mdLookupLabel(map, value) {
 }
 
 function mdEsc(value) {
-  return String(value ?? '')
+  return decodeHtmlEntities(value)
     .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
     .replace(/\r?\n/g, '<br>');
@@ -1311,10 +1297,10 @@ function mdRawJson(sec) {
 function mdFormatDefaultValue(value) {
   if (value == null) return '';
   if (Array.isArray(value)) {
-    return value.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : String(v))).join(' / ');
+    return value.map((v) => (v && typeof v === 'object' ? JSON.stringify(v) : decodeHtmlEntities(v))).join(' / ');
   }
   if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
+  return decodeHtmlEntities(value);
 }
 
 function mdFieldOptions(options: any): string {
@@ -1324,13 +1310,13 @@ function mdFieldOptions(options: any): string {
     index: Number(opt?.index ?? 0)
   }));
   entries.sort((a, b) => a.index - b.index);
-  return entries.map((o) => o.label).filter(Boolean).join(' / ');
+  return entries.map((o) => decodeHtmlEntities(o.label)).filter(Boolean).join(' / ');
 }
 
 function mdRenderAppSettings(sec: any) {
   const rows = [
     ['アプリ名', sec.name || ''],
-    ['説明', sec.description || ''],
+    ['説明', stripHtmlToText(sec.description || '')],
     ['アイコン', sec.icon?.type ? `${mdLookupLabel(MD_ICON_TYPE_LABELS, sec.icon.type)}${sec.icon.key ? `（${sec.icon.key}）` : ''}` : ''],
     ['テーマ', mdLookupLabel(MD_THEME_LABELS, sec.theme) || ''],
     ['タイトルフィールド', sec.titleField?.selectFieldCode || (sec.titleField?.isDefaultTitleField ? '（既定）' : '')],
@@ -1353,7 +1339,7 @@ function mdRenderFieldSettings(sec: any) {
     if (!f) return;
     rows.push([
       f.code || '',
-      f.label || '',
+      stripHtmlToText(f.label || ''),
       mdFieldTypeLabel(f.type),
       f.required ? '○' : '',
       f.unique ? '○' : '',
@@ -1374,11 +1360,11 @@ function mdRenderFieldSettings(sec: any) {
   ));
   subtables.forEach((tbl: any) => {
     parts.push('');
-    parts.push(`#### テーブル: \`${tbl.code}\` — ${tbl.label || ''}`);
+    parts.push(`#### テーブル: \`${tbl.code}\` — ${stripHtmlToText(tbl.label || '')}`);
     parts.push('');
     const subRows = (Object.values(tbl.fields || ({} as any)) as any[]).map((f: any) => [
       f.code || '',
-      f.label || '',
+      stripHtmlToText(f.label || ''),
       mdFieldTypeLabel(f.type),
       f.required ? '○' : '',
       mdFormatDefaultValue(f.defaultValue),
@@ -1396,7 +1382,7 @@ function mdRenderLayoutItem(item, depth = 0) {
   if (!item) return out;
   if (item.type === 'ROW') {
     const codes = (item.fields || []).map((f) => {
-      if (f.type === 'LABEL') return `[ラベル]${f.label || ''}`;
+      if (f.type === 'LABEL') return `[ラベル]${stripHtmlToText(f.label || '')}`;
       if (f.type === 'SPACER') return `[スペース${f.elementId ? `:${f.elementId}` : ''}]`;
       if (f.type === 'HR') return '[罫線]';
       const width = f.size?.width;
@@ -1407,7 +1393,7 @@ function mdRenderLayoutItem(item, depth = 0) {
   } else if (item.type === 'SUBTABLE') {
     out.push(`${indent}- テーブル: \`${item.code}\``);
   } else if (item.type === 'GROUP') {
-    out.push(`${indent}- グループ: \`${item.code}\` — ${item.label || ''}`);
+    out.push(`${indent}- グループ: \`${item.code}\` — ${stripHtmlToText(item.label || '')}`);
     (item.layout || []).forEach((child) => {
       out.push(...mdRenderLayoutItem(child, depth + 1));
     });
@@ -1787,7 +1773,7 @@ function mdDesignSectionRows(bundle: any) {
 
 export function bundleToMarkdown(bundle: any) {
   const sections = bundle?.sections || ({} as any);
-  const appName = sections.appSettings?.name || '';
+  const appName = decodeHtmlEntities(sections.appSettings?.name || '');
   const lines: string[] = [];
   lines.push('# kintone アプリ設計書');
   lines.push('');

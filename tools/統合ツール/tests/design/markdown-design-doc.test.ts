@@ -5,6 +5,10 @@ function makeBundle(sections: Record<string, any>) {
   return { appId: '10', guestId: '', preview: true, fetchedAt: '2026-01-01 00:00:00', sections };
 }
 
+function visibleMarkdown(md: string) {
+  return md.replace(/\n?<details><summary>APIレスポンス（生データ）<\/summary>[\s\S]*?<\/details>/g, '');
+}
+
 describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化)', () => {
   it('アプリ設定のテーマ（CLIPBOARD 等の追加テーマ）を日本語化する', () => {
     const md = bundleToMarkdown(makeBundle({
@@ -88,5 +92,37 @@ describe('design/bundleToMarkdown (REST API レスポンス準拠の日本語化
     expect(md).toContain('グループ');
     expect(md).toContain('`sales`');
     expect(md).toContain('利用できるユーザー');
+  });
+
+  it('HTMLラベル内の数値文字参照を設計書の表示部分では通常文字に戻す', () => {
+    const md = bundleToMarkdown(makeBundle({
+      appSettings: {
+        name: '契約&amp;#65289;',
+        description: '<div>概要&#65289;&nbsp;追記</div>'
+      },
+      fieldSettings: {
+        properties: {
+          customer: { code: 'customer', label: '顧客&#xFF09;', type: 'SINGLE_LINE_TEXT' },
+          noteLabel: { code: 'noteLabel', label: '<div>注意&#65289;&nbsp;テキスト</div>', type: 'LABEL' }
+        }
+      },
+      layoutSettings: {
+        layout: [{
+          type: 'ROW',
+          fields: [{ type: 'LABEL', label: '<span>フォーム&#65289;</span>' }]
+        }]
+      }
+    }));
+    const visible = visibleMarkdown(md);
+
+    expect(visible).toContain('契約）');
+    expect(visible).toContain('概要） 追記');
+    expect(visible).toContain('顧客）');
+    expect(visible).toContain('注意） テキスト');
+    expect(visible).toContain('[ラベル]フォーム）');
+    expect(visible).not.toContain('&#65289;');
+    expect(visible).not.toContain('&#xFF09;');
+    expect(visible).not.toContain('&amp;#65289;');
+    expect(visible).not.toContain('<div>');
   });
 });
