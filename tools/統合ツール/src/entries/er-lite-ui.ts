@@ -31,7 +31,7 @@ export function mountErLitePanel() {
 
   // ---- 起点 ----
   const cardMain = makeCard({ title: '起点アプリ', number: 1 });
-  const appInp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id' });
+  const appInp = makeInput({ placeholder: 'アプリID（複数はカンマ区切り）', value: DEFAULT_APP_ID || '', width: 'wide' });
   const guestInp = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
   cardMain.body.appendChild(makeRow([appInp, guestInp], { label: '起点ID' }));
   cardMain.body.appendChild(createAppSearchControl(panel, {
@@ -106,12 +106,17 @@ export function mountErLitePanel() {
   details.body.appendChild(makeRow(densitySel, { label: '表示密度' }));
   details.body.appendChild(makeRow(depthInp, { label: '探索深さ' }));
   details.body.appendChild(makeRow([subtableCb.label, reverseCb.label]));
-  details.body.appendChild(makeNote('追加起点は最初の起点と統合して同一グラフに描画されます。'));
+  details.body.appendChild(makeNote('起点ID / 追加起点はいずれもカンマ区切りで複数指定できます。追加起点は最初の起点と統合して同一グラフに描画されます。'));
+
+  function parseAppIds(value: string): string[] {
+    return String(value || '').split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
+  }
   panel.body.insertBefore(details.details, panel.status);
 
   function source() {
     return {
       appId: appInp.value.trim(),
+      appIds: parseAppIds(appInp.value),
       guestId: guestInp.value.trim(),
       preview: false,
       layoutName: layoutSel.value,
@@ -119,7 +124,7 @@ export function mountErLitePanel() {
       maxDepth: Number(depthInp.value) || 0,
       includeSubtableFields: subtableCb.checkbox.checked,
       includeReverseLookup: reverseCb.checkbox.checked,
-      extraAppIds: extra.value.split(/[\s,]+/).map((v) => v.trim()).filter(Boolean),
+      extraAppIds: parseAppIds(extra.value),
       spaceId: spaceInp.value.trim()
     };
   }
