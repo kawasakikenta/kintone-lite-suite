@@ -24,6 +24,7 @@ async function applySpaceToErOptions(opts: any, options: any, setStatus: (msg: s
 /**
  * @param {object} opts
  * @param {string} opts.appId
+ * @param {string[]} [opts.appIds]
  * @param {string} [opts.guestId]
  * @param {boolean} [opts.preview]
  * @param {string} [opts.layoutName]
@@ -39,9 +40,10 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
   const spaceId = String(opts.spaceId || '').trim();
   if (!appId && !spaceId) throw new Error('アプリID または スペースID を入力してください');
 
-  const startAppIds = [appId, ...(opts.extraAppIds || [])].filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
+  const primaryAppIds = Array.isArray(opts.appIds) && opts.appIds.length ? opts.appIds : [appId];
+  const startAppIds = [...primaryAppIds, ...(opts.extraAppIds || [])].map((v) => String(v || '').trim()).filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
   const options = {
-    startAppId: appId,
+    startAppId: startAppIds[0] || appId,
     startAppIds,
     layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
     fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
@@ -85,9 +87,10 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
   const spaceId = String(opts.spaceId || '').trim();
   if (!appId && !spaceId) throw new Error('アプリID または スペースID を入力してください');
 
-  const startAppIds = [appId, ...(opts.extraAppIds || [])].filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
+  const primaryAppIds = Array.isArray(opts.appIds) && opts.appIds.length ? opts.appIds : [appId];
+  const startAppIds = [...primaryAppIds, ...(opts.extraAppIds || [])].map((v) => String(v || '').trim()).filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
   const options = {
-    startAppId: appId,
+    startAppId: startAppIds[0] || appId,
     startAppIds,
     layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
     fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
@@ -109,7 +112,7 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
     const apps = await crawl(options.startAppIds, options);
     progressUi.update(94, 'HTML保存データ生成中...');
     const html = buildHTML(apps, options);
-    const baseName = appId || `space${spaceId}`;
+    const baseName = startAppIds[0] || appId || `space${spaceId}`;
     const suffix = `${opts.guestId ? `guest${opts.guestId}_` : ''}${opts.preview ? 'プレビュー' : '本番'}`;
     downloadText(
       buildExportFilename('ER図', 'html', { appLabel: buildAppFilenameLabel(baseName, ''), suffix }),

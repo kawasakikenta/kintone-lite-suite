@@ -96,6 +96,7 @@ const progressUi = (() => {
       <div id="_em" style="font-size:12px;margin-top:8px;color:#aaa;">準備中...</div>`;
       (doc.body || doc.documentElement).appendChild(el);
       bar = el.querySelector("#_eb"); msg = el.querySelector("#_em");
+      if (bar) bar.style.background = "linear-gradient(90deg,#00d4ff,#7b61ff)";
     },
     update(p, t) { if (bar) bar.style.width = p + "%"; if (msg) msg.textContent = t; },
     close() {
@@ -1859,14 +1860,16 @@ function renderAppDetail(app){
       .forEach((rel)=>{
         const targetApp = appMap.get(rel.toApp);
         const targetName = targetApp ? targetApp.name : "アプリ " + rel.toApp;
+        const targetLabel = targetName + " (App " + rel.toApp + ")";
         const relationLabel = rel.fromDisplay || rel.fromLabel || rel.from || group.label;
         const relationMeta = [];
         if(rel.fromPath && rel.fromPath !== rel.from) relationMeta.push("path: " + rel.fromPath);
+        relationMeta.push("接続先: " + targetLabel);
         if(rel.toField) relationMeta.push("to: " + rel.toField);
         relHtml += '<div class="field-row" style="cursor:pointer" onclick="focusApp(' + rel.toApp + ')">'
           + '<span class="field-icon">' + group.icon + '</span>'
           + '<div class="field-main">'
-          + '<div class="field-name" title="' + escapeHtml(relationLabel + ' → ' + targetName) + '">' + escapeHtml(relationLabel) + ' → ' + escapeHtml(targetName) + '</div>'
+          + '<div class="field-name" title="' + escapeHtml(relationLabel + ' → ' + targetLabel) + '">' + escapeHtml(relationLabel) + ' → ' + escapeHtml(targetLabel) + '</div>'
           + '<div class="field-sub">' + escapeHtml(relationMeta.join(' / ') || '接続先をクリックで移動') + '</div>'
           + '</div>'
           + '<span class="field-type">' + escapeHtml(group.key === "ACTION" ? "ACTION" : group.key) + '</span>'

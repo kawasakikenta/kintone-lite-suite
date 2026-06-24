@@ -1099,6 +1099,7 @@ ${contextLine}`);
         (doc.body || doc.documentElement).appendChild(el);
         bar = el.querySelector("#_eb");
         msg = el.querySelector("#_em");
+        if (bar) bar.style.background = "linear-gradient(90deg,#00d4ff,#7b61ff)";
       },
       update(p, t) {
         if (bar) bar.style.width = p + "%";
@@ -2867,14 +2868,16 @@ function renderAppDetail(app){
       .forEach((rel)=>{
         const targetApp = appMap.get(rel.toApp);
         const targetName = targetApp ? targetApp.name : "アプリ " + rel.toApp;
+        const targetLabel = targetName + " (App " + rel.toApp + ")";
         const relationLabel = rel.fromDisplay || rel.fromLabel || rel.from || group.label;
         const relationMeta = [];
         if(rel.fromPath && rel.fromPath !== rel.from) relationMeta.push("path: " + rel.fromPath);
+        relationMeta.push("接続先: " + targetLabel);
         if(rel.toField) relationMeta.push("to: " + rel.toField);
         relHtml += '<div class="field-row" style="cursor:pointer" onclick="focusApp(' + rel.toApp + ')">'
           + '<span class="field-icon">' + group.icon + '</span>'
           + '<div class="field-main">'
-          + '<div class="field-name" title="' + escapeHtml(relationLabel + ' → ' + targetName) + '">' + escapeHtml(relationLabel) + ' → ' + escapeHtml(targetName) + '</div>'
+          + '<div class="field-name" title="' + escapeHtml(relationLabel + ' → ' + targetLabel) + '">' + escapeHtml(relationLabel) + ' → ' + escapeHtml(targetLabel) + '</div>'
           + '<div class="field-sub">' + escapeHtml(relationMeta.join(' / ') || '接続先をクリックで移動') + '</div>'
           + '</div>'
           + '<span class="field-type">' + escapeHtml(group.key === "ACTION" ? "ACTION" : group.key) + '</span>'
@@ -3754,9 +3757,10 @@ applySavedViewState();
     const appId = String(opts.appId || "").trim();
     const spaceId = String(opts.spaceId || "").trim();
     if (!appId && !spaceId) throw new Error("アプリID または スペースID を入力してください");
-    const startAppIds = [appId, ...opts.extraAppIds || []].filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
+    const primaryAppIds = Array.isArray(opts.appIds) && opts.appIds.length ? opts.appIds : [appId];
+    const startAppIds = [...primaryAppIds, ...opts.extraAppIds || []].map((v) => String(v || "").trim()).filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
     const options = {
-      startAppId: appId,
+      startAppId: startAppIds[0] || appId,
       startAppIds,
       layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
       fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
@@ -3798,9 +3802,10 @@ applySavedViewState();
     const appId = String(opts.appId || "").trim();
     const spaceId = String(opts.spaceId || "").trim();
     if (!appId && !spaceId) throw new Error("アプリID または スペースID を入力してください");
-    const startAppIds = [appId, ...opts.extraAppIds || []].filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
+    const primaryAppIds = Array.isArray(opts.appIds) && opts.appIds.length ? opts.appIds : [appId];
+    const startAppIds = [...primaryAppIds, ...opts.extraAppIds || []].map((v) => String(v || "").trim()).filter((v, i, a) => /^\d+$/.test(v) && a.indexOf(v) === i);
     const options = {
-      startAppId: appId,
+      startAppId: startAppIds[0] || appId,
       startAppIds,
       layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
       fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
@@ -3820,7 +3825,7 @@ applySavedViewState();
       const apps = await crawl(options.startAppIds, options);
       progressUi.update(94, "HTML保存データ生成中...");
       const html = buildHTML(apps, options);
-      const baseName = appId || `space${spaceId}`;
+      const baseName = startAppIds[0] || appId || `space${spaceId}`;
       const suffix = `${opts.guestId ? `guest${opts.guestId}_` : ""}${opts.preview ? "プレビュー" : "本番"}`;
       downloadText(
         buildExportFilename("ER図", "html", { appLabel: buildAppFilenameLabel(baseName, ""), suffix }),
@@ -4060,6 +4065,7 @@ applySavedViewState();
 .kus-lp__status--err{background:var(--c-err-bg);color:var(--c-err-fg);border-color:var(--c-err-bd)}
 .kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
 .kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
+.kus-lp__status--busy{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
 .kus-lp__status-icon{font-size:14px;line-height:1.2}
 .kus-lp__status-busy::before{
   content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
@@ -4218,7 +4224,7 @@ applySavedViewState();
     body.appendChild(result);
     function setStatus2(msg, tone = "neutral") {
       status.dataset.tone = tone;
-      status.className = "kus-lp__status" + (tone !== "neutral" && tone !== "busy" ? ` kus-lp__status--${tone}` : "");
+      status.className = "kus-lp__status" + (tone !== "neutral" ? ` kus-lp__status--${tone}` : "");
       const icon = tone === "ok" ? "✓" : tone === "err" ? "⚠" : tone === "warn" ? "!" : tone === "info" ? "i" : tone === "busy" ? "" : "·";
       const iconCls = tone === "busy" ? "kus-lp__status-icon kus-lp__status-busy" : "kus-lp__status-icon";
       status.innerHTML = `<span class="${iconCls}">${icon}</span><span class="kus-lp__status-text"></span>`;
@@ -4605,7 +4611,7 @@ applySavedViewState();
       hint: "Cytoscape を CDN から動的読込します。生成後の HTML 出力でレポートに添付できます。"
     });
     const cardMain = makeCard({ title: "起点アプリ", number: 1 });
-    const appInp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id" });
+    const appInp = makeInput({ placeholder: "アプリID（複数はカンマ区切り）", value: DEFAULT_APP_ID || "", width: "wide" });
     const guestInp = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
     cardMain.body.appendChild(makeRow([appInp, guestInp], { label: "起点ID" }));
     cardMain.body.appendChild(createAppSearchControl(panel, {
@@ -4679,11 +4685,15 @@ applySavedViewState();
     details.body.appendChild(makeRow(densitySel, { label: "表示密度" }));
     details.body.appendChild(makeRow(depthInp, { label: "探索深さ" }));
     details.body.appendChild(makeRow([subtableCb.label, reverseCb.label]));
-    details.body.appendChild(makeNote("追加起点は最初の起点と統合して同一グラフに描画されます。"));
+    details.body.appendChild(makeNote("起点ID / 追加起点はいずれもカンマ区切りで複数指定できます。追加起点は最初の起点と統合して同一グラフに描画されます。"));
+    function parseAppIds(value) {
+      return String(value || "").split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
+    }
     panel.body.insertBefore(details.details, panel.status);
     function source() {
       return {
         appId: appInp.value.trim(),
+        appIds: parseAppIds(appInp.value),
         guestId: guestInp.value.trim(),
         preview: false,
         layoutName: layoutSel.value,
@@ -4691,7 +4701,7 @@ applySavedViewState();
         maxDepth: Number(depthInp.value) || 0,
         includeSubtableFields: subtableCb.checkbox.checked,
         includeReverseLookup: reverseCb.checkbox.checked,
-        extraAppIds: extra.value.split(/[\s,]+/).map((v) => v.trim()).filter(Boolean),
+        extraAppIds: parseAppIds(extra.value),
         spaceId: spaceInp.value.trim()
       };
     }

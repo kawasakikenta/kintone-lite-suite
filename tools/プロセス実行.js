@@ -1268,6 +1268,7 @@ ${contextLine}`);
 .kus-lp__status--err{background:var(--c-err-bg);color:var(--c-err-fg);border-color:var(--c-err-bd)}
 .kus-lp__status--warn{background:var(--c-warn-bg);color:var(--c-warn-fg);border-color:var(--c-warn-bd)}
 .kus-lp__status--info{background:var(--c-info-bg);color:var(--c-info-fg);border-color:var(--c-info-bd)}
+.kus-lp__status--busy{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
 .kus-lp__status-icon{font-size:14px;line-height:1.2}
 .kus-lp__status-busy::before{
   content:'';display:inline-block;width:10px;height:10px;border-radius:50%;
@@ -1426,7 +1427,7 @@ ${contextLine}`);
     body.appendChild(result);
     function setStatus(msg, tone = "neutral") {
       status.dataset.tone = tone;
-      status.className = "kus-lp__status" + (tone !== "neutral" && tone !== "busy" ? ` kus-lp__status--${tone}` : "");
+      status.className = "kus-lp__status" + (tone !== "neutral" ? ` kus-lp__status--${tone}` : "");
       const icon = tone === "ok" ? "✓" : tone === "err" ? "⚠" : tone === "warn" ? "!" : tone === "info" ? "i" : tone === "busy" ? "" : "·";
       const iconCls = tone === "busy" ? "kus-lp__status-icon kus-lp__status-busy" : "kus-lp__status-icon";
       status.innerHTML = `<span class="${iconCls}">${icon}</span><span class="kus-lp__status-text"></span>`;
