@@ -95,6 +95,49 @@ function buildKeysetQuery(query, lastRecordId) {
   return `(${base}) and ${idCond} order by $id asc limit 500`;
 }
 
+function csvEscape(val) {
+  const s = String(val == null ? '' : val);
+  return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function extractRecordCsvValue(rec, code) {
+  const f = rec[code];
+  if (!f) return '';
+  if (['USER_SELECT', 'ORGANIZATION_SELECT', 'GROUP_SELECT'].includes(f.type)) return (f.value || []).map(v => v.code || v.name).join(',');
+  if (['CHECK_BOX', 'MULTI_SELECT'].includes(f.type)) return (f.value || []).join(',');
+  if (f.type === 'FILE') return (f.value || []).map(file => file.name).join(',');
+  if (f.type === 'SUBTABLE') return (f.value || []).length + '行';
+  if (typeof f.value === 'object' && f.value !== null) return JSON.stringify(f.value);
+  return f.value;
+}
+
+function buildRecordsCsvText(records, propKeys) {
+  const lines = [propKeys.map(csvEscape).join(',')];
+  for (const rec of records) lines.push(propKeys.map(k => csvEscape(extractRecordCsvValue(rec, k))).join(','));
+  return '\uFEFF' + lines.join('\n');
+}
+
+async function buildCsvExportForApp(appId, guestId, query, setStatus) {
+  if (!appId) throw new Error('アプリIDを入力してください');
+  const prefix = buildApiPrefix(guestId || '', false);
+
+  setStatus(`App ${appId}: フィールド情報取得中...`);
+  const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId });
+  const propKeys = Object.keys(fields.properties || ({} as any));
+  if (!propKeys.length) throw new Error(`App ${appId}: 出力できるフィールドがありません`);
+
+  const records = await fetchAllRecords(prefix, appId, query || '', (message) => setStatus(`App ${appId}: ${message}`));
+  if (!records.length) throw new Error(`App ${appId}: 出力するレコードがありません`);
+
+  setStatus(`App ${appId}: CSV生成中... (${records.length}件)`);
+  return {
+    appId,
+    guestId: guestId || '',
+    recordCount: records.length,
+    csvText: buildRecordsCsvText(records, propKeys)
+  };
+}
+
 async function fetchAllRecords(prefix, app, query, setStatus) {
   let all = [];
   let offset = 0;
@@ -132,39 +175,56 @@ async function fetchRecordIds(prefix, app, query, setStatus) {
 
 export async function runCsvExportStandalone(opts, setStatus) {
   const { appId, guestId, query, filename } = opts;
-  if (!appId) throw new Error('アプリIDを入力してください');
-  const prefix = buildApiPrefix(guestId || '', false);
-
-  setStatus('フィールド情報取得中...');
-  const fields = await apiGet(prefix, '/app/form/fields.json', { app: appId });
-  const propKeys = Object.keys(fields.properties || ({} as any));
-  if (!propKeys.length) throw new Error('出力できるフィールドがありません');
-
-  const records = await fetchAllRecords(prefix, appId, query || '', setStatus);
-  if (!records.length) throw new Error('出力するレコードがありません');
-
-  setStatus(`CSV生成中... (${records.length}件)`);
-  const esc = (val) => {
-    const s = String(val == null ? '' : val);
-    return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-  const extractValue = (rec, code) => {
-    const f = rec[code];
-    if (!f) return '';
-    if (['USER_SELECT', 'ORGANIZATION_SELECT', 'GROUP_SELECT'].includes(f.type)) return (f.value || []).map(v => v.code || v.name).join(',');
-    if (['CHECK_BOX', 'MULTI_SELECT'].includes(f.type)) return (f.value || []).join(',');
-    if (f.type === 'FILE') return (f.value || []).map(file => file.name).join(',');
-    if (f.type === 'SUBTABLE') return (f.value || []).length + '行';
-    if (typeof f.value === 'object' && f.value !== null) return JSON.stringify(f.value);
-    return f.value;
-  };
-
-  const lines = [propKeys.map(esc).join(',')];
-  for (const rec of records) lines.push(propKeys.map(k => esc(extractValue(rec, k))).join(','));
-  const csvStr = '\uFEFF' + lines.join('\n');
-  const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
+  const result = await buildCsvExportForApp(appId, guestId, query || '', setStatus);
+  const blob = new Blob([result.csvText], { type: 'text/csv;charset=utf-8;' });
   downloadBlob(filename || buildExportFilename('レコード', 'csv', { appLabel: buildAppFilenameLabel(appId, '') }), blob);
-  setStatus(`CSV出力完了 (${records.length}件)`);
+  setStatus(`CSV出力完了 (${result.recordCount}件)`);
+}
+
+export async function runCsvExportBatchStandalone(opts, setStatus) {
+  const apps = (opts?.apps || []).filter((a) => a?.appId);
+  const query = opts?.query || '';
+  const filename = String(opts?.filename || '').trim();
+  if (!apps.length) throw new Error('対象アプリを1件以上入力してください');
+  if (apps.length === 1) {
+    const app = apps[0];
+    await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || '', query, filename }, setStatus);
+    return;
+  }
+
+  const JSZip = await loadJSZipLite();
+  const zip = new JSZip();
+  const used = new Set<string>();
+  let totalRecords = 0;
+
+  for (let i = 0; i < apps.length; i++) {
+    const app = apps[i];
+    setStatus(`CSV出力中... (${i + 1}/${apps.length})`);
+    const result = await buildCsvExportForApp(app.appId, app.guestId || '', query, setStatus);
+    totalRecords += result.recordCount;
+    const label = buildAppFilenameLabel(result.appId, app.appName || '');
+    const baseName = buildExportFilename('レコード', 'csv', { appLabel: label }).replace(/\.csv$/i, '');
+    const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : '';
+    const entryName = uniqueZipName(used, `${baseName}${guestSuffix}.csv`, result.appId, i);
+    zip.file(entryName, result.csvText);
+  }
+
+  const manifest = [
+    'kintone CSV 一括出力マニフェスト',
+    `出力日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`,
+    `対象アプリ数: ${apps.length}`,
+    `総レコード数: ${totalRecords}`,
+    `共通クエリ: ${query || '(なし)'}`,
+    '',
+    ...apps.map((a, i) => `${i + 1}. App ${a.appId}${a.guestId ? ` / Guest ${a.guestId}` : ''}${a.appName ? ` / ${a.appName}` : ''}`)
+  ].join('\n');
+  zip.file('manifest.txt', manifest);
+
+  setStatus(`ZIP生成中... (${apps.length}アプリ / ${totalRecords}件)`);
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const zipName = filename || buildExportFilename('CSV出力', 'zip');
+  downloadBlob(zipName.toLowerCase().endsWith('.zip') ? zipName : `${zipName}.zip`, blob);
+  setStatus(`CSV一括出力完了 (${apps.length}アプリ / ${totalRecords}件)`);
 }
 
 const CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = new Set([

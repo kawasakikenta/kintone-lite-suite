@@ -19,6 +19,7 @@
 | `プレビュー反映.js` | `reflect-lite-entry.ts` | `tabs/reflect.ts`, `tabs/reflect-standalone.ts` |
 | `フィールド追加.js` | `field-lite-entry.ts` | `tabs/field.ts`, `tabs/field-standalone.ts` |
 | `kintoneレコード取得.js` | `record-lite-entry.ts` | `tabs/record.ts`, `tabs/record-standalone.ts` |
+| `CSV出力.js` | `csv-export-lite-entry.ts` | `tabs/record-standalone.ts` |
 | `単機能スクリプト棚卸し.md` | — | — |
 
 ### バンドル種別
