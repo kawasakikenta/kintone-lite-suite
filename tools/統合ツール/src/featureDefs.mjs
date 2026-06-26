@@ -287,5 +287,13 @@ export const STANDALONE_LAUNCH_ENTRIES = [
     file: 'kintoneレコード取得.js',
     label: 'レコード管理',
     bundleEntry: 'record-lite-entry.js'
+  },
+  {
+    tab: 'recordMgr',
+    module: 'tabs/record-standalone.js',
+    file: 'CSV出力.js',
+    label: 'CSV出力',
+    subTab: 'csv',
+    bundleEntry: 'csv-export-lite-entry.js'
   }
 ];
