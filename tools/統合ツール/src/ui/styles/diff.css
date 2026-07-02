@@ -906,6 +906,20 @@
 #kintone-unified-suite-v2 .er-option-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 10px}
 #kintone-unified-suite-v2 .er-support-actions{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 12px}
 
+/* スペース内アプリピッカー */
+#kintone-unified-suite-v2 .er-space-picker-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:0 12px 10px}
+#kintone-unified-suite-v2 .er-space-picker{width:100%}
+#kintone-unified-suite-v2 .er-space-picker:empty{display:none}
+#kintone-unified-suite-v2 .er-space-picker__empty{padding:8px 10px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;font-size:11px;font-weight:600}
+#kintone-unified-suite-v2 .er-space-picker__head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0}
+#kintone-unified-suite-v2 .er-space-picker__lbl{font-size:11px;font-weight:800;color:#334155}
+#kintone-unified-suite-v2 .er-space-picker__btns{display:flex;gap:6px}
+#kintone-unified-suite-v2 .er-space-picker__list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px;max-height:220px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;padding:8px}
+#kintone-unified-suite-v2 .er-space-picker__item{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:6px;font-size:11px;color:#1e293b;cursor:pointer;min-width:0}
+#kintone-unified-suite-v2 .er-space-picker__item:hover{background:#e0f2fe}
+#kintone-unified-suite-v2 .er-space-picker__name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+#kintone-unified-suite-v2 .er-space-picker__id{color:#64748b;font-size:10px;flex-shrink:0}
+
 /* ER プリセット行 */
 #kintone-unified-suite-v2 .er-preset-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;background:linear-gradient(180deg,#f8fafc,#f1f5f9)}
 #kintone-unified-suite-v2 .er-preset-row__lbl{font-size:10px;font-weight:900;color:#475569;text-transform:uppercase;letter-spacing:.06em;padding-right:4px}

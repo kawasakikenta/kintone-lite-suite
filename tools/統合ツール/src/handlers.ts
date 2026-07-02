@@ -3651,6 +3651,12 @@ export function setupEventHandlers(injected: any = {}) {
       }
       return;
     }
+    if (act === 'loadErSpaceApps') {
+      return withGuard(async () => {
+        const m = await import('./tabs/er.js');
+        await m.loadErSpaceApps();
+      });
+    }
     if (act === 'runBatchProcess' && typeof runBatchProcess === 'function') return withGuard(runBatchProcess);
     if (act === 'runBatchFileDownload' && typeof runBatchFileDownload === 'function') return withGuard(runBatchFileDownload);
     if (act === 'runBatchJsConfigDownload' && typeof runBatchJsConfigDownload === 'function') return withGuard(runBatchJsConfigDownload);

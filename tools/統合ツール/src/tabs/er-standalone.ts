@@ -5,18 +5,28 @@ import { fetchAppsInSpace } from '../api.js';
 import { downloadText, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 
 /**
- * スペースID指定時、スペース内全アプリを起点に追加し、
+ * スペースID指定時、スペース内アプリを起点に追加し、
  * options.spaceId / options.spaceAppIds をセットする（ER 描画のスペース表現用）。
+ * - opts.spaceApps: UI 側で読み込み済みのアプリ一覧（渡されると再取得しない = APIリクエスト節約）
+ * - opts.spaceSelectedAppIds: 配列を渡すと選択したアプリだけを起点に追加する（null/未指定なら全アプリ）
  */
 async function applySpaceToErOptions(opts: any, options: any, setStatus: (msg: string, err?: boolean) => void): Promise<void> {
   const spaceId = String(opts.spaceId || '').trim();
   if (!/^\d+$/.test(spaceId)) return;
-  setStatus(`スペース ${spaceId} のアプリ一覧を取得中...`);
-  const apps = await fetchAppsInSpace(spaceId, opts.guestId);
-  const spaceIds = apps.map((a) => String(a.appId));
+  let apps = Array.isArray(opts.spaceApps) ? opts.spaceApps : null;
+  if (!apps) {
+    setStatus(`スペース ${spaceId} のアプリ一覧を取得中...`);
+    apps = await fetchAppsInSpace(spaceId, opts.guestId);
+  }
+  const spaceIds = apps.map((a: any) => String(a.appId));
   options.spaceId = spaceId;
   options.spaceAppIds = spaceIds;
-  options.startAppIds = [...options.startAppIds, ...spaceIds].filter(
+  const spaceIdSet = new Set(spaceIds);
+  const selected = Array.isArray(opts.spaceSelectedAppIds)
+    ? opts.spaceSelectedAppIds.map((v: any) => String(v)).filter((v: string) => spaceIdSet.has(v))
+    : null;
+  const additions = selected ?? spaceIds;
+  options.startAppIds = [...options.startAppIds, ...additions].filter(
     (v: string, i: number, a: string[]) => /^\d+$/.test(String(v)) && a.indexOf(v) === i
   );
 }
