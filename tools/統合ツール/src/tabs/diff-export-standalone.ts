@@ -77,6 +77,7 @@ export function runExportDiffJsonStandalone(ctx) {
     exportContentLabel: getDiffExportContentLabel(exportContentMode),
     normalizationState: ctx.normalizationPresetState || ({} as any),
     warning: warningInfoLite(rows, fetchIssues),
+    truncation: ctx.truncation || null,
     compareScopes: compareInfo?.scopes || [],
     compareSourceBundle: compareInfo?.sourceBundle || null,
     compareTargetBundle: compareInfo?.targetBundle || null
@@ -113,7 +114,8 @@ export function runExportDiffHtmlStandalone(ctx) {
     compareSourceBundle: compareInfo?.sourceBundle || null,
     compareTargetBundle: compareInfo?.targetBundle || null,
     normalizationState: ctx.normalizationPresetState || ({} as any),
-    warning: warningInfoLite(rows, fetchIssues)
+    warning: warningInfoLite(rows, fetchIssues),
+    truncation: ctx.truncation || null
   });
   downloadText(buildExportFilename('差分', 'html', { appLabel: diffPairLabel(ctx.sourceBundle, ctx.targetBundle) }), html, 'text/html');
 }

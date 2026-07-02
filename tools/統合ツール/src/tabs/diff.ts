@@ -343,6 +343,7 @@ export async function exportDiffJson() {
     exportContentLabel: getDiffExportContentLabel(exportContentMode),
     normalizationState: getDiffNormalizationPresetState(),
     warning: buildDiffWarningInfo(exportInfo.rows, state.lastFetchIssues),
+    truncation: state.lastDiffTruncation,
     compareScopes: compareInfo?.scopes || [],
     compareSourceBundle: compareInfo?.sourceBundle || null,
     compareTargetBundle: compareInfo?.targetBundle || null
@@ -361,15 +362,28 @@ export async function exportDiffHtml() {
   if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error('先に差分比較を実行してください');
   const scopes = selectedScopeKeys(ui.diffScopes);
 
-  // Always recompute with includeSame: true so that same items appear in HTML
-  const diffResult = computeDiffRows(state.lastSourceBundle, state.lastTargetBundle, scopes, ui.ignoreKeys.value, {
-    normalizationPresetState: getDiffNormalizationPresetState(),
-    includeSame: true
-  });
-  const rows = enrichDiffRows(diffResult.rows, state.lastSourceBundle, state.lastTargetBundle);
+  // 出力メニューの範囲設定を適用する。
+  // 全件のときのみ includeSame: true で再計算して「同一項目も載った完全なレポート」にし、
+  // 選択行/表示中/お気に入りのときは絞り込んだ行だけをレポートにする。
+  const rangeInfo = resolveDiffExportRows();
+  let rows;
+  let exportInfo;
+  let truncation;
+  if (rangeInfo.mode === 'all') {
+    const diffResult = computeDiffRows(state.lastSourceBundle, state.lastTargetBundle, scopes, ui.ignoreKeys.value, {
+      normalizationPresetState: getDiffNormalizationPresetState(),
+      includeSame: true
+    });
+    rows = enrichDiffRows(diffResult.rows, state.lastSourceBundle, state.lastTargetBundle);
+    truncation = diffResult.truncation?.truncated ? diffResult.truncation : null;
+    exportInfo = { mode: 'all', label: '全差分（同一含む）', rows };
+  } else {
+    rows = rangeInfo.rows;
+    truncation = state.lastDiffTruncation;
+    exportInfo = { mode: rangeInfo.mode, label: rangeInfo.label, rows };
+  }
 
   const exportContentMode = resolveDiffExportContentMode();
-  const exportInfo = { mode: 'all', label: '全差分（同一含む）', rows };
   const compareInfo = shouldIncludeComparedContent(exportContentMode)
     ? buildDiffExportComparedBundles(
       state.lastSourceBundle,
@@ -390,7 +404,8 @@ export async function exportDiffHtml() {
     compareSourceBundle: compareInfo?.sourceBundle || null,
     compareTargetBundle: compareInfo?.targetBundle || null,
     normalizationState: getDiffNormalizationPresetState(),
-    warning: buildDiffWarningInfo(rows, state.lastFetchIssues)
+    warning: buildDiffWarningInfo(rows, state.lastFetchIssues),
+    truncation
   });
   const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
   const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));

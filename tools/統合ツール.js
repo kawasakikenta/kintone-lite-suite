@@ -7788,6 +7788,7 @@ ${tableContext.tableLabel}`.toLowerCase();
     exportContentLabel,
     normalizationState,
     warning,
+    truncation,
     compareScopes,
     compareSourceBundle,
     compareTargetBundle
@@ -7827,7 +7828,9 @@ ${tableContext.tableLabel}`.toLowerCase();
           issueCount: safeIssues.length,
           total: typeSummary.diffCount + safeIssues.length,
           exceeded: false
-        }
+        },
+        // 差分エンジンの上限打ち切り情報。truncated: true のとき、この出力は不完全。
+        truncation: truncation?.truncated ? truncation : null
       },
       sectionSummaries,
       highlights: buildDiffHighlightRows(safeRows),
@@ -8512,6 +8515,7 @@ ${body}`;
     const compareSourceBundle = options.compareSourceBundle || null;
     const compareTargetBundle = options.compareTargetBundle || null;
     const KUC_REPORT_VERSION = "1.24.0";
+    const engineTruncation = options.truncation?.truncated ? options.truncation : null;
     const exportPayload = buildDiffExportPayload({
       sourceBundle,
       targetBundle,
@@ -8524,6 +8528,7 @@ ${body}`;
       exportContentLabel,
       normalizationState: options.normalizationState || {},
       warning,
+      truncation: engineTruncation,
       compareScopes,
       compareSourceBundle,
       compareTargetBundle
@@ -11056,6 +11061,7 @@ ${body}`;
             </div>
             ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? " (超過)" : ""}</div>` : ""}
             ${reportMeta.truncated ? `<div class="warn">※ 出力負荷を抑えるため、先頭 ${reportMeta.renderedRows} 件のみをレポートに含めています（元件数 ${reportMeta.totalRows} 件）。</div>` : ""}
+            ${engineTruncation ? `<div class="warn">⚠ 差分件数が上限（${engineTruncation.diffLimit}件）に達したため、超過分は検出されておらずこのレポートに含まれていません。<b>このレポートは不完全です。</b>無視キーやセクション絞り込みで差分を減らして再比較してください。</div>` : ""}
           </section>
           <section class="panel">
             <h3>レビュー補助</h3>
@@ -21193,6 +21199,7 @@ ${reason}` : "",
       exportContentLabel: getDiffExportContentLabel2(exportContentMode),
       normalizationState: getDiffNormalizationPresetState(),
       warning: buildDiffWarningInfo(exportInfo.rows, state.lastFetchIssues),
+      truncation: state.lastDiffTruncation,
       compareScopes: compareInfo?.scopes || [],
       compareSourceBundle: compareInfo?.sourceBundle || null,
       compareTargetBundle: compareInfo?.targetBundle || null
@@ -21209,13 +21216,24 @@ ${reason}` : "",
   async function exportDiffHtml() {
     if (!state.lastSourceBundle || !state.lastTargetBundle) throw new Error("先に差分比較を実行してください");
     const scopes = selectedScopeKeys(ui.diffScopes);
-    const diffResult = computeDiffRows(state.lastSourceBundle, state.lastTargetBundle, scopes, ui.ignoreKeys.value, {
-      normalizationPresetState: getDiffNormalizationPresetState(),
-      includeSame: true
-    });
-    const rows = enrichDiffRows(diffResult.rows, state.lastSourceBundle, state.lastTargetBundle);
+    const rangeInfo = resolveDiffExportRows();
+    let rows;
+    let exportInfo;
+    let truncation;
+    if (rangeInfo.mode === "all") {
+      const diffResult = computeDiffRows(state.lastSourceBundle, state.lastTargetBundle, scopes, ui.ignoreKeys.value, {
+        normalizationPresetState: getDiffNormalizationPresetState(),
+        includeSame: true
+      });
+      rows = enrichDiffRows(diffResult.rows, state.lastSourceBundle, state.lastTargetBundle);
+      truncation = diffResult.truncation?.truncated ? diffResult.truncation : null;
+      exportInfo = { mode: "all", label: "全差分（同一含む）", rows };
+    } else {
+      rows = rangeInfo.rows;
+      truncation = state.lastDiffTruncation;
+      exportInfo = { mode: rangeInfo.mode, label: rangeInfo.label, rows };
+    }
     const exportContentMode = resolveDiffExportContentMode2();
-    const exportInfo = { mode: "all", label: "全差分（同一含む）", rows };
     const compareInfo = shouldIncludeComparedContent2(exportContentMode) ? buildDiffExportComparedBundles(
       state.lastSourceBundle,
       state.lastTargetBundle,
@@ -21234,7 +21252,8 @@ ${reason}` : "",
       compareSourceBundle: compareInfo?.sourceBundle || null,
       compareTargetBundle: compareInfo?.targetBundle || null,
       normalizationState: getDiffNormalizationPresetState(),
-      warning: buildDiffWarningInfo(rows, state.lastFetchIssues)
+      warning: buildDiffWarningInfo(rows, state.lastFetchIssues),
+      truncation
     });
     const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));
     const targetLabel = buildAppFilenameLabel(state.lastTargetBundle?.appId, extractAppNameFromBundle(state.lastTargetBundle));
@@ -27628,6 +27647,7 @@ ${detail}`);
       fetchIssues,
       sourceBundle,
       targetBundle,
+      truncation: diffResult.truncation?.truncated ? diffResult.truncation : null,
       summary: {
         text: statusLine,
         counts: s,

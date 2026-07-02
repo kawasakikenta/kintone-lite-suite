@@ -98,6 +98,7 @@ export async function runDiffStandalone(opts) {
     fetchIssues,
     sourceBundle,
     targetBundle,
+    truncation: diffResult.truncation?.truncated ? diffResult.truncation : null,
     summary: {
       text: statusLine,
       counts: s,

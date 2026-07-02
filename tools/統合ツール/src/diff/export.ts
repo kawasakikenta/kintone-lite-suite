@@ -1035,6 +1035,7 @@ export function buildDiffExportPayload({
   exportContentLabel,
   normalizationState,
   warning,
+  truncation,
   compareScopes,
   compareSourceBundle,
   compareTargetBundle
@@ -1076,7 +1077,9 @@ export function buildDiffExportPayload({
         issueCount: safeIssues.length,
         total: typeSummary.diffCount + safeIssues.length,
         exceeded: false
-      }
+      },
+      // 差分エンジンの上限打ち切り情報。truncated: true のとき、この出力は不完全。
+      truncation: truncation?.truncated ? truncation : null
     },
     sectionSummaries,
     highlights: buildDiffHighlightRows(safeRows),
@@ -1970,6 +1973,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const compareTargetBundle = options.compareTargetBundle || null;
   /** kintone-ui-component UMD / Kucs グローバルと一致させる */
   const KUC_REPORT_VERSION = '1.24.0';
+  const engineTruncation = options.truncation?.truncated ? options.truncation : null;
   const exportPayload = buildDiffExportPayload({
     sourceBundle,
     targetBundle,
@@ -1982,6 +1986,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     exportContentLabel,
     normalizationState: options.normalizationState || ({} as any),
     warning,
+    truncation: engineTruncation,
     compareScopes,
     compareSourceBundle,
     compareTargetBundle
@@ -4526,6 +4531,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
             </div>
             ${warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? ' (超過)' : ''}</div>` : ''}
             ${reportMeta.truncated ? `<div class="warn">※ 出力負荷を抑えるため、先頭 ${reportMeta.renderedRows} 件のみをレポートに含めています（元件数 ${reportMeta.totalRows} 件）。</div>` : ''}
+            ${engineTruncation ? `<div class="warn">⚠ 差分件数が上限（${engineTruncation.diffLimit}件）に達したため、超過分は検出されておらずこのレポートに含まれていません。<b>このレポートは不完全です。</b>無視キーやセクション絞り込みで差分を減らして再比較してください。</div>` : ''}
           </section>
           <section class="panel">
             <h3>レビュー補助</h3>

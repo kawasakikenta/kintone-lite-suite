@@ -124,6 +124,8 @@ interface DiffCache {
   scopes: string[];
   ignoreKeys: string;
   normalizationPresetState: any;
+  /** 差分エンジンの上限打ち切り情報（打ち切りなしなら null） */
+  truncation: any;
 }
 
 function rowSearchText(row: DiffRow): string {
@@ -634,7 +636,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         targetBundle: out.targetBundle,
         scopes: f.scopes,
         ignoreKeys: f.ignoreKeys,
-        normalizationPresetState: f.normalizationPresetState
+        normalizationPresetState: f.normalizationPresetState,
+        truncation: out.truncation || null
       };
       summaryText = out.summary?.text || '完了';
       refreshFilterSectionOptions();
