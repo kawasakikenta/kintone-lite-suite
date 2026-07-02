@@ -1,9 +1,9 @@
 // ==========================================================================
-// kintoneレコード取得.js  —  自動生成ファイル（手編集禁止）
+// CSV出力.js  —  自動生成ファイル（手編集禁止）
 // ==========================================================================
 // このファイルは tools/統合ツール/ の npm run build (esbuild) で生成されます。
-// ソース: tools/統合ツール/src/entries/record-lite-entry.js
-//         tools/統合ツール/src/tabs/record.js  ← 機能の正規実装
+// ソース: tools/統合ツール/src/entries/csv-export-lite-entry.js
+//         tools/統合ツール/src/tabs/record-standalone.js  ← 機能の正規実装
 //
 // ■ 修正する場合は tools/統合ツール/src/ 配下のソースを編集し、
 //   cd tools/統合ツール && npm run build で再生成してください。
@@ -244,7 +244,7 @@
     }
     return "";
   }
-  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
+  var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
       "use strict";
@@ -318,7 +318,6 @@
         } },
         { key: "categories", label: "カテゴリ設定", endpoint: "/app/categories.json", put: true, putBuilder: (d) => ({ categories: d.categories || d }) }
       ];
-      META_KEYS = /* @__PURE__ */ new Set(["revision", "creator", "createdAt", "modifier", "modifiedAt"]);
       DEFAULT_SUBTAB_STATE = Object.freeze({
         diff: "conditions",
         reflect: "settings",
@@ -436,27 +435,8 @@
       return document;
     }
   }
-  function kusConfirm(message) {
-    try {
-      return getToolWindowSafe().confirm(message);
-    } catch (e) {
-      return window.confirm(message);
-    }
-  }
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-  function normalize(v) {
-    if (Array.isArray(v)) return v.map(normalize);
-    if (v && typeof v === "object") {
-      const o = {};
-      Object.keys(v).sort().forEach((k) => {
-        if (META_KEYS.has(k)) return;
-        o[k] = normalize(v[k]);
-      });
-      return o;
-    }
-    return v;
   }
   function compactForLog(value, max = 220) {
     try {
@@ -555,34 +535,6 @@ ${contextLine}`);
     if (g) return `/k/guest/${g}/v1${preview ? "/preview" : ""}`;
     return `/k/v1${preview ? "/preview" : ""}`;
   }
-  function isPreviewRestPrefix(prefix) {
-    return String(prefix || "").includes("/v1/preview");
-  }
-  function normalizeApiResourcePath(path) {
-    const raw = String(path || "").replace(/\\/g, "/").split("?")[0];
-    const match = raw.match(/\/k(?:\/guest\/[^/]+)?\/v1(?:\/preview)?(\/.*)$/);
-    const resource = match ? match[1] : raw;
-    return resource.startsWith("/") ? resource : `/${resource}`;
-  }
-  function isRecordDataMutationPath(path) {
-    return RECORD_DATA_MUTATION_PATHS.has(normalizeApiResourcePath(path));
-  }
-  function assertAllowsMutatingRestCall(prefix, path, method) {
-    const m = String(method || "").toUpperCase();
-    if (m === "GET" || m === "HEAD" || m === "OPTIONS") return;
-    if (m !== "POST" && m !== "PUT" && m !== "DELETE" && m !== "PATCH") return;
-    const rel = String(path || "").replace(/\\/g, "/");
-    if (rel.includes(DEPLOY_PATH_SNIPPET)) {
-      throw new Error(ERR_NO_DEPLOY_API);
-    }
-    if (isRecordDataMutationPath(rel)) {
-      if (isPreviewRestPrefix(prefix)) throw new Error(ERR_NO_RECORD_PREVIEW_API);
-      return;
-    }
-    if (!isPreviewRestPrefix(prefix)) {
-      throw new Error(ERR_NO_PROD_WRITE);
-    }
-  }
   function normalizeApiGetOptions(optionsOrRetries) {
     if (typeof optionsOrRetries === "number") return { retries: optionsOrRetries };
     if (!optionsOrRetries || typeof optionsOrRetries !== "object") return {};
@@ -652,189 +604,16 @@ ${contextLine}`);
     apiGetMetrics.lastLatencyMs = Date.now() - startAt;
     throw apiErrorWithContext(err, { method: "GET", prefix, path, payload: params });
   }
-  async function apiPut(prefix, path, body) {
-    assertAllowsMutatingRestCall(prefix, path, "PUT");
-    try {
-      return await kintone.api(`${prefix}${path}`, "PUT", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "PUT", prefix, path, payload: body });
-    }
-  }
-  async function apiPost(prefix, path, body) {
-    assertAllowsMutatingRestCall(prefix, path, "POST");
-    try {
-      return await kintone.api(`${prefix}${path}`, "POST", body);
-    } catch (e) {
-      throw apiErrorWithContext(e, { method: "POST", prefix, path, payload: body });
-    }
-  }
-  function extractSectionRevision(res) {
-    if (!res || typeof res !== "object") return "";
-    const candidates = [res.revision, res.appRevision, res.revisionNo, res.app?.revision];
-    for (const value of candidates) {
-      if (value == null || value === "") continue;
-      return String(value);
-    }
-    return "";
-  }
-  function fnv1aHashString(text) {
-    let h = 2166136261;
-    for (let i = 0; i < text.length; i++) {
-      h ^= text.charCodeAt(i);
-      h = h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
-    }
-    return h.toString(16).padStart(8, "0");
-  }
-  async function fetchTextFileBody(prefix, fileKey) {
-    if (!fileKey) return null;
-    const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
-    const headers = { "X-Requested-With": "XMLHttpRequest" };
-    try {
-      const resp = await fetch(url, { method: "GET", headers });
-      if (!resp.ok) return null;
-      const blob = await resp.blob();
-      if (blob.size > CUSTOMIZE_BODY_MAX_BYTES) return null;
-      return await blob.text();
-    } catch {
-      return null;
-    }
-  }
-  async function fetchCustomizeFileBodies(customizeSection, prefix) {
-    const stats = { fetched: 0, skipped: 0, failed: 0 };
-    if (!customizeSection || typeof customizeSection !== "object") return stats;
-    const tasks = [];
-    for (const platform of ["desktop", "mobile"]) {
-      for (const kind of ["js", "css"]) {
-        const arr = customizeSection?.[platform]?.[kind];
-        if (!Array.isArray(arr)) continue;
-        for (const item of arr) {
-          if (!item || typeof item !== "object" || item.type !== "FILE") continue;
-          const fileKey = item?.file?.fileKey;
-          const fileName = String(item?.file?.name || "");
-          if (!fileKey) {
-            stats.skipped += 1;
-            continue;
-          }
-          if (fileName && !TEXT_LIKE_EXT.test(fileName)) {
-            stats.skipped += 1;
-            continue;
-          }
-          tasks.push((async () => {
-            const text = await fetchTextFileBody(prefix, fileKey);
-            if (text == null) {
-              stats.failed += 1;
-              return;
-            }
-            item._bodyText = text;
-            item._bodyHash = fnv1aHashString(text);
-            stats.fetched += 1;
-          })());
-        }
-      }
-    }
-    await Promise.all(tasks);
-    return stats;
-  }
-  async function fetchPluginConfigs(pluginSection, prefix, appId) {
-    const stats = { fetched: 0, skipped: 0, failed: 0 };
-    if (!pluginSection || typeof pluginSection !== "object") return stats;
-    const plugins = Array.isArray(pluginSection.plugins) ? pluginSection.plugins : [];
-    if (!plugins.length) return stats;
-    const tasks = [];
-    for (const plugin of plugins) {
-      if (!plugin || typeof plugin !== "object") continue;
-      const id = String(plugin.id || "").trim();
-      if (!id) {
-        stats.skipped += 1;
-        continue;
-      }
-      tasks.push((async () => {
-        try {
-          const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
-          if (res && typeof res === "object") {
-            plugin._config = res?.config != null ? res.config : res;
-            stats.fetched += 1;
-          } else {
-            stats.skipped += 1;
-          }
-        } catch {
-          stats.failed += 1;
-        }
-      })());
-    }
-    await Promise.all(tasks);
-    return stats;
-  }
-  async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
-    const app = String(appId || "").trim();
-    if (!app) throw new Error("アプリIDが必要です");
-    const bundle = {
-      appId: app,
-      guestId: String(guestId || "").trim(),
-      preview: !!preview,
-      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      meta: { sectionRevisions: {} },
-      sections: {}
-    };
-    for (let i = 0; i < sections.length; i++) {
-      const sec = sections[i];
-      const def = SECTION_DEFS.find((x) => x.key === sec);
-      if (!def) continue;
-      try {
-        const sectionPreview = def.previewEndpoint === false ? false : preview;
-        const prefix = buildApiPrefix(guestId, sectionPreview);
-        const params = typeof def.paramBuilder === "function" ? def.paramBuilder(app) : { app };
-        const res = await apiGet(prefix, def.endpoint, params);
-        const revision = extractSectionRevision(res);
-        if (revision) bundle.meta.sectionRevisions[sec] = revision;
-        bundle.sections[sec] = normalize(res);
-      } catch (e) {
-        bundle.sections[sec] = { _fetchError: e?.message || String(e) };
-      }
-      if (onProgress) onProgress((i + 1) / sections.length, def.label);
-    }
-    try {
-      if (sections.includes("customizeSettings")) {
-        const cust = bundle.sections.customizeSettings;
-        if (cust && !cust._fetchError) {
-          const prefix = buildApiPrefix(guestId, false);
-          cust._bodyFetchStats = await fetchCustomizeFileBodies(cust, prefix);
-        }
-      }
-    } catch {
-    }
-    try {
-      if (sections.includes("pluginSettings")) {
-        const plug = bundle.sections.pluginSettings;
-        if (plug && !plug._fetchError) {
-          const prefix = buildApiPrefix(guestId, false);
-          plug._configFetchStats = await fetchPluginConfigs(plug, prefix, app);
-        }
-      }
-    } catch {
-    }
-    return bundle;
-  }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
+  var DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
       init_constants();
       init_utils();
-      DEPLOY_PATH_SNIPPET = "app/deploy.json";
-      ERR_NO_PROD_WRITE = "本番APIへの追加・更新・削除は無効です。プレビューAPIへの書き込みのみ可能です。本番への反映はkintone管理画面から手動でデプロイしてください。";
-      ERR_NO_DEPLOY_API = "デプロイAPIの実行は無効です。本番への反映はkintone管理画面から手動でデプロイしてください。";
-      ERR_NO_RECORD_PREVIEW_API = "レコードAPIにはプレビュー用の追加・更新・削除エンドポイントがありません。レコード操作は本番REST APIを明示的な確認付きで実行します。";
       DEFAULT_API_GET_RETRIES = 3;
       DEFAULT_RETRY_BASE_DELAY_MS = 500;
       DEFAULT_RETRY_MAX_DELAY_MS = 3e3;
       RETRIABLE_STATUS_CODES = /* @__PURE__ */ new Set([408, 409, 425, 429, 500, 502, 503, 504]);
-      RECORD_DATA_MUTATION_PATHS = /* @__PURE__ */ new Set([
-        "/record.json",
-        "/records.json",
-        "/record/status.json",
-        "/records/status.json"
-      ]);
       apiGetMetrics = {
         calls: 0,
         retries: 0,
@@ -844,7 +623,6 @@ ${contextLine}`);
         byPath: {}
       };
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
-      TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
     }
   });
 
@@ -1071,7 +849,7 @@ ${contextLine}`);
     run();
   }
 
-  // src/entries/record-lite-ui.ts
+  // src/entries/csv-export-lite-ui.ts
   init_constants();
 
   // src/tabs/record-standalone.ts
@@ -1113,21 +891,6 @@ ${contextLine}`);
     }
     used.add(cand);
     return cand;
-  }
-  async function downloadFileBlob(prefix, fileKey) {
-    const url = prefix + "/file.json?fileKey=" + encodeURIComponent(fileKey);
-    const headers = { "X-Requested-With": "XMLHttpRequest" };
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const resp = await fetch(url, { method: "GET", headers });
-        if (resp.status === 403) return null;
-        if (!resp.ok) throw new Error("ダウンロード失敗: " + resp.status);
-        return await resp.blob();
-      } catch (e) {
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
-      }
-    }
-    return null;
   }
   function hasOrderByClause(query) {
     return /\border\s+by\b/i.test(String(query || ""));
@@ -1209,23 +972,6 @@ ${contextLine}`);
     }
     return all;
   }
-  async function fetchRecordIds(prefix, app, query, setStatus) {
-    const ids = [];
-    let offset = 0;
-    let lastRecordId = 0;
-    while (true) {
-      setStatus(`対象レコード取得中... (${ids.length}件)`);
-      const q = buildKeysetQuery(query, lastRecordId) || buildPagedQuery(query, offset);
-      const resp = await apiGet(prefix, "/records.json", { app, query: q, fields: ["$id"] });
-      const batch = resp.records || [];
-      if (!batch.length) break;
-      batch.forEach((r) => ids.push(Number(r.$id.value)));
-      if (batch.length < 500) break;
-      lastRecordId = Number(batch[batch.length - 1]?.$id?.value || lastRecordId);
-      offset += 500;
-    }
-    return ids;
-  }
   async function runCsvExportStandalone(opts, setStatus) {
     const { appId, guestId, query, filename } = opts;
     const result = await buildCsvExportForApp(appId, guestId, query || "", setStatus);
@@ -1233,390 +979,46 @@ ${contextLine}`);
     downloadBlob(filename || buildExportFilename("レコード", "csv", { appLabel: buildAppFilenameLabel(appId, "") }), blob);
     setStatus(`CSV出力完了 (${result.recordCount}件)`);
   }
-  var CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
-    "RECORD_NUMBER",
-    "CREATOR",
-    "CREATED_TIME",
-    "MODIFIER",
-    "UPDATED_TIME",
-    "STATUS",
-    "STATUS_ASSIGNEE",
-    "CALC",
-    "CATEGORY",
-    "__ID__",
-    "__REVISION__",
-    "FILE",
-    "SUBTABLE",
-    "REFERENCE_TABLE",
-    "LABEL",
-    "HR",
-    "SPACER"
-  ]);
-  function splitCsvListValue(value) {
-    const text = String(value == null ? "" : "").trim();
-    if (!text) return [];
-    return text.split(",").map((item) => item.trim()).filter(Boolean);
-  }
-  function coerceCsvImportValue(rawValue, fieldDef) {
-    const type = String(fieldDef?.type || "");
-    if (type === "CHECK_BOX" || type === "MULTI_SELECT") return splitCsvListValue(rawValue);
-    if (type === "USER_SELECT" || type === "ORGANIZATION_SELECT" || type === "GROUP_SELECT") {
-      return splitCsvListValue(rawValue).map((code) => ({ code }));
-    }
-    if (type === "NUMBER") return String(rawValue == null ? "" : rawValue).trim();
-    return rawValue;
-  }
-  function validateCsvImportHeader(header, properties) {
-    if (header.includes("$id")) throw new Error("CSV内にシステムフィールド（$idなど）が含まれています。インポート時は除外してください。");
-    const unknown = [];
-    const unsupported = [];
-    for (const code of header) {
-      if (!code) continue;
-      const def = properties?.[code];
-      if (!def) {
-        unknown.push(code);
-        continue;
-      }
-      if (CSV_IMPORT_UNSUPPORTED_FIELD_TYPES.has(String(def.type || ""))) {
-        unsupported.push(`${code}(${def.type})`);
-      }
-    }
-    if (unknown.length) throw new Error(`CSVヘッダに存在しないフィールドコードがあります: ${unknown.join(", ")}`);
-    if (unsupported.length) throw new Error(`CSVインポート非対応のフィールドが含まれています: ${unsupported.join(", ")}`);
-  }
-  async function runCsvImportStandalone(opts, setStatus) {
-    const { appId, guestId, file } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
-    if (!file) throw new Error("CSVファイルを選択してください");
-    const prefix = buildApiPrefix(guestId || "", false);
-    setStatus("CSVファイルを読み込み中...");
-    const text = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(String(e.target.result || ""));
-      reader.onerror = () => reject(new Error("ファイルの読み取りに失敗"));
-      reader.readAsText(file);
-    });
-    const parseCsv = (csv) => {
-      const rows2 = [];
-      let current = [], cell = "", inQ = false;
-      for (let i = 0; i < csv.length; i++) {
-        const c = csv[i], n = csv[i + 1];
-        if (inQ) {
-          if (c === '"') {
-            if (n === '"') {
-              cell += '"';
-              i++;
-            } else inQ = false;
-          } else cell += c;
-        } else {
-          if (c === '"') inQ = true;
-          else if (c === ",") {
-            current.push(cell);
-            cell = "";
-          } else if (c === "\n" || c === "\r") {
-            if (c === "\r" && n === "\n") i++;
-            current.push(cell);
-            rows2.push(current);
-            current = [];
-            cell = "";
-          } else cell += c;
-        }
-      }
-      if (cell || current.length) {
-        current.push(cell);
-        rows2.push(current);
-      }
-      return rows2;
-    };
-    const rows = parseCsv(text.replace(/^\uFEFF/, ""));
-    if (rows.length < 2) throw new Error("ヘッダ行とデータ行が必要です");
-    const header = rows[0].map((h) => h.trim());
-    setStatus("フィールド情報を確認中...");
-    const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
-    const properties = fields?.properties || {};
-    validateCsvImportHeader(header, properties);
-    const records = [];
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i].length === 1 && rows[i][0] === "") continue;
-      const rec = {};
-      for (let j = 0; j < header.length; j++) {
-        if (!header[j]) continue;
-        const val = rows[i][j] !== void 0 ? rows[i][j] : "";
-        rec[header[j]] = { value: coerceCsvImportValue(val, properties[header[j]]) };
-      }
-      records.push(rec);
-    }
-    if (!records.length) throw new Error("登録するデータがありません");
-    if (!kusConfirm(`CSVから ${records.length}件 のレコードをインポートしますか？`)) return;
-    let ok = 0;
-    for (let i = 0; i < records.length; i += 100) {
-      const batch = records.slice(i, i + 100);
-      setStatus(`インポート中... (${i + 1}～${i + batch.length} / ${records.length}件)`);
-      await apiPost(prefix, "/records.json", { app: appId, records: batch });
-      ok += batch.length;
-    }
-    setStatus(`インポート完了: ${ok}件`);
-  }
-  async function runBatchProcessStandalone(opts, setStatus) {
-    const { appId, guestId, query, action, assignee } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
-    if (!action) throw new Error("アクション名を入力してください");
-    const prefix = buildApiPrefix(guestId || "", false);
-    const ids = await fetchRecordIds(prefix, appId, query || "", setStatus);
-    if (!ids.length) throw new Error("処理対象のレコードが0件です");
-    if (!kusConfirm(`${ids.length}件にアクション「${action}」を実行しますか？`)) return;
-    let ok = 0;
-    for (let i = 0; i < ids.length; i += 100) {
-      const batch = ids.slice(i, i + 100);
-      const body = { app: appId, records: batch.map((id) => {
-        const r = { id, action };
-        if (assignee) r.assignee = assignee;
-        return r;
-      }) };
-      await apiPut(prefix, "/records/status.json", body);
-      ok += batch.length;
-      setStatus(`ステータス更新中... ${ok}/${ids.length}件`);
-    }
-    setStatus(`ステータス一括更新完了 (${ok}件)`);
-  }
-  async function runRecordCopyStandalone(opts, setStatus) {
-    const { sourceAppId, sourceGuestId, targetAppId, targetGuestId, query } = opts;
-    if (!sourceAppId || !targetAppId) throw new Error("比較元と比較先のアプリIDを指定してください");
-    const srcPrefix = buildApiPrefix(sourceGuestId || "", false);
-    const tgtPrefix = buildApiPrefix(targetGuestId || "", false);
-    const records = await fetchAllRecords(srcPrefix, sourceAppId, query || "", setStatus);
-    if (!records.length) {
-      setStatus("コピー対象のレコードがありません");
+  async function runCsvExportBatchStandalone(opts, setStatus) {
+    const apps = (opts?.apps || []).filter((a) => a?.appId);
+    const query = opts?.query || "";
+    const filename = String(opts?.filename || "").trim();
+    if (!apps.length) throw new Error("対象アプリを1件以上入力してください");
+    if (apps.length === 1) {
+      const app = apps[0];
+      await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || "", query, filename }, setStatus);
       return;
     }
-    if (!kusConfirm(`${records.length}件を比較先(${targetAppId})へコピーしますか？`)) return;
-    const systemTypes = /* @__PURE__ */ new Set(["RECORD_NUMBER", "CREATOR", "CREATED_TIME", "MODIFIER", "UPDATED_TIME", "STATUS", "STATUS_ASSIGNEE", "CALC", "CATEGORY", "__ID__", "__REVISION__"]);
-    const systemFields = /* @__PURE__ */ new Set(["$id", "$revision", "作成者", "作成日時", "更新者", "更新日時", "レコード番号", "ステータス", "作業者"]);
-    const clean = records.map((rec) => {
-      const out = {};
-      for (const [k, v] of Object.entries(rec)) {
-        if (systemFields.has(k) || systemTypes.has(v.type)) continue;
-        if (v.type === "SUBTABLE") {
-          const rows = Array.isArray(v.value) ? v.value : [];
-          out[k] = { value: rows.map((sr) => {
-            const c = {};
-            const inner = sr && typeof sr === "object" && sr.value && typeof sr.value === "object" ? sr.value : {};
-            for (const [sk, sv] of Object.entries(inner)) {
-              if (systemFields.has(sk) || systemTypes.has(sv.type) || sv.type === "FILE") continue;
-              c[sk] = { value: sv.value };
-            }
-            return { value: c };
-          }) };
-        } else if (v.type === "FILE") {
-          continue;
-        } else {
-          out[k] = { value: v.value };
-        }
-      }
-      return out;
-    });
-    let ok = 0;
-    for (let i = 0; i < clean.length; i += 100) {
-      const batch = clean.slice(i, i + 100);
-      setStatus(`コピー中... ${i + 1}～${i + batch.length} / ${clean.length}件`);
-      await apiPost(tgtPrefix, "/records.json", { app: targetAppId, records: batch });
-      ok += batch.length;
+    const JSZip = await loadJSZipLite();
+    const zip = new JSZip();
+    const used = /* @__PURE__ */ new Set();
+    let totalRecords = 0;
+    for (let i = 0; i < apps.length; i++) {
+      const app = apps[i];
+      setStatus(`CSV出力中... (${i + 1}/${apps.length})`);
+      const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus);
+      totalRecords += result.recordCount;
+      const label = buildAppFilenameLabel(result.appId, app.appName || "");
+      const baseName = buildExportFilename("レコード", "csv", { appLabel: label }).replace(/\.csv$/i, "");
+      const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : "";
+      const entryName = uniqueZipName(used, `${baseName}${guestSuffix}.csv`, result.appId, i);
+      zip.file(entryName, result.csvText);
     }
-    setStatus(`レコードコピー完了: ${ok}件`);
-  }
-  async function runAttachmentDownloadStandalone(opts, setStatus) {
-    const { appId, guestId, query, fileFieldCode, folderFieldCode, zipName } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
-    if (!fileFieldCode) throw new Error("ファイルフィールドコードを入力してください");
-    const prefix = buildApiPrefix(guestId || "", false);
-    const records = await fetchAllRecords(prefix, appId, query || "", setStatus);
-    if (!records.length) throw new Error("対象レコードが0件です");
-    const JSZipCtor = await loadJSZipLite();
-    const zip = new JSZipCtor();
-    let fileCount = 0;
-    for (let i = 0; i < records.length; i++) {
-      const rec = records[i];
-      setStatus(`添付DL中 (${i + 1}/${records.length})`);
-      const files = rec?.[fileFieldCode]?.value || [];
-      if (!files.length) continue;
-      let folderName = folderFieldCode && rec[folderFieldCode]?.value;
-      if (!folderName) folderName = `Record_${rec.$id?.value || i + 1}`;
-      const folder = zip.folder(sanitizeZipSegment(folderName, `Record_${rec.$id?.value || i + 1}`));
-      const used = /* @__PURE__ */ new Set();
-      for (const f of files) {
-        const blob = await downloadFileBlob(prefix, f.fileKey);
-        if (blob) {
-          folder.file(uniqueZipName(used, f.name || "file.bin", f.fileKey, fileCount), blob);
-          fileCount++;
-        }
-      }
-    }
-    if (!fileCount) {
-      setStatus("ダウンロード対象の添付がありませんでした", true);
-      return;
-    }
-    setStatus(`ZIP生成中 (${fileCount}ファイル)`);
-    const zipBlob = await zip.generateAsync({ type: "blob" });
-    downloadBlob(zipName || buildExportFilename("添付ファイル", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), zipBlob);
-    setStatus(`添付一括DL完了: ${fileCount}ファイル`);
-  }
-  async function runRecordBackupStandalone(opts, setStatus) {
-    const { appId, guestId, query, zipName, includeFiles, includeComments, includeAppSettings, appScopes } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
-    const prefix = buildApiPrefix(guestId || "", false);
-    setStatus("フィールド情報取得中...");
-    const fields = await apiGet(prefix, "/app/form/fields.json", { app: appId });
-    const propKeys = Object.keys(fields.properties || {});
-    if (!propKeys.length) throw new Error("出力できるフィールドがありません");
-    const records = await fetchAllRecords(prefix, appId, query || "", setStatus);
-    if (!records.length) throw new Error("対象レコードが0件です");
-    const JSZipCtor = await loadJSZipLite();
-    const zip = new JSZipCtor();
-    const notes = [];
-    const esc2 = (v) => {
-      const s = String(v == null ? "" : v);
-      return s.includes(",") || s.includes('"') || s.includes("\n") ? '"' + s.replace(/"/g, '""') + '"' : s;
-    };
-    const extract = (rec, code) => {
-      const f = rec[code];
-      if (!f) return "";
-      if (["USER_SELECT", "ORGANIZATION_SELECT", "GROUP_SELECT"].includes(f.type)) return (f.value || []).map((v) => v.code || v.name).join(",");
-      if (["CHECK_BOX", "MULTI_SELECT"].includes(f.type)) return (f.value || []).join(",");
-      if (f.type === "FILE") return (f.value || []).map((file) => file.name).join(",");
-      if (f.type === "SUBTABLE") return (f.value || []).length + "行";
-      if (typeof f.value === "object" && f.value !== null) return JSON.stringify(f.value);
-      return f.value;
-    };
-    const lines = [propKeys.map(esc2).join(",")];
-    for (const rec of records) lines.push(propKeys.map((k) => esc2(extract(rec, k))).join(","));
-    zip.file("records.csv", "\uFEFF" + lines.join("\n"));
-    zip.file("records.json", JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, recordCount: records.length, records }, null, 2));
-    let fileCount = 0;
-    if (includeFiles) {
-      const collected = [];
-      for (const rec of records) {
-        for (const [code, field] of Object.entries(rec)) {
-          if (!field || typeof field !== "object") continue;
-          if (field.type === "FILE") {
-            (field.value || []).forEach((file, idx) => collected.push({ rec, fieldCode: code, fileIndex: idx, file }));
-          } else if (field.type === "SUBTABLE") {
-            (field.value || []).forEach((subRow, rowIdx) => {
-              for (const [childCode, childField] of Object.entries(subRow.value || {})) {
-                if (childField?.type !== "FILE") continue;
-                (childField.value || []).forEach((file, idx) => collected.push({ rec, fieldCode: code, childCode, rowIndex: rowIdx, fileIndex: idx, file }));
-              }
-            });
-          }
-        }
-      }
-      if (!collected.length) notes.push("添付ファイルなし");
-      const blobCache = /* @__PURE__ */ new Map();
-      for (let i = 0; i < collected.length; i++) {
-        const ent = collected[i];
-        setStatus(`添付ファイル取得中 (${i + 1}/${collected.length})`);
-        let blob2 = blobCache.get(ent.file.fileKey);
-        if (blob2 === void 0) {
-          blob2 = await downloadFileBlob(prefix, ent.file.fileKey);
-          blobCache.set(ent.file.fileKey, blob2 || null);
-        }
-        if (!blob2) continue;
-        const recordId = String(ent.rec?.$id?.value || "unknown");
-        const parts = ["attachments", `record_${sanitizeZipSegment(recordId)}`];
-        if (ent.childCode) {
-          parts.push(sanitizeZipSegment(ent.fieldCode || "subtable"));
-          parts.push(`row_${(ent.rowIndex || 0) + 1}`);
-          parts.push(sanitizeZipSegment(ent.childCode));
-        } else {
-          parts.push(sanitizeZipSegment(ent.fieldCode || "files"));
-        }
-        const filePrefix = sanitizeZipSegment(String(ent.file.fileKey || "").slice(0, 12) || String(ent.fileIndex + 1));
-        parts.push(`${filePrefix}_${sanitizeZipSegment(ent.file.name || "file.bin", "file.bin")}`);
-        zip.file(parts.join("/"), blob2);
-        fileCount++;
-      }
-    } else {
-      notes.push("添付ファイル未取得");
-    }
-    let commentCount = 0;
-    if (includeComments) {
-      const out = [];
-      for (let i = 0; i < records.length; i++) {
-        const rec = records[i];
-        const recordId = String(rec?.$id?.value || "").trim();
-        if (!recordId) continue;
-        setStatus(`コメント取得中 (${i + 1}/${records.length})`);
-        try {
-          const comments = [];
-          let offset = 0;
-          const limit = 10;
-          while (true) {
-            const resp = await apiGet(prefix, "/record/comments.json", { app: appId, record: recordId, order: "asc", offset, limit });
-            const batch = resp.comments || [];
-            comments.push(...batch);
-            if (batch.length < limit) break;
-            offset += batch.length;
-          }
-          if (comments.length) {
-            out.push({ recordId, comments });
-            commentCount += comments.length;
-          }
-        } catch (e) {
-          notes.push("コメント取得失敗で中断");
-          break;
-        }
-      }
-      zip.file("comments.json", JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, commentCount, records: out }, null, 2));
-    } else {
-      notes.push("コメント未取得");
-    }
-    let appOk = 0;
-    let appNg = 0;
-    if (includeAppSettings && appScopes && appScopes.length) {
-      setStatus("アプリ設定取得中...");
-      const settings = await fetchBundle({
-        appId,
-        guestId: guestId || "",
-        preview: false,
-        sections: appScopes,
-        onProgress: (p, l) => setStatus(`アプリ設定取得中 ${Math.round(p * 100)}% (${l})`)
-      });
-      for (const key of appScopes) {
-        const sec = settings.sections[key];
-        if (sec && sec._fetchError) appNg++;
-        else appOk++;
-      }
-      zip.file(`app_settings/app_${appId}.json`, JSON.stringify({ generatedAt: (/* @__PURE__ */ new Date()).toISOString(), appId, scopes: appScopes, bundle: settings }, null, 2));
-    } else if (!includeAppSettings) {
-      notes.push("アプリ設定未取得");
-    }
-    zip.file("manifest.json", JSON.stringify({
-      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      appId,
-      recordCount: records.length,
-      fileCount,
-      commentCount,
-      appSettings: { ok: appOk, ng: appNg, scopes: appScopes || [] },
-      notes
-    }, null, 2));
-    setStatus(`ZIP生成中 (${records.length}件 / 添付 ${fileCount} / コメント ${commentCount})`);
+    const manifest = [
+      "kintone CSV 一括出力マニフェスト",
+      `出力日時: ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`,
+      `対象アプリ数: ${apps.length}`,
+      `総レコード数: ${totalRecords}`,
+      `共通クエリ: ${query || "(なし)"}`,
+      "",
+      ...apps.map((a, i) => `${i + 1}. App ${a.appId}${a.guestId ? ` / Guest ${a.guestId}` : ""}${a.appName ? ` / ${a.appName}` : ""}`)
+    ].join("\n");
+    zip.file("manifest.txt", manifest);
+    setStatus(`ZIP生成中... (${apps.length}アプリ / ${totalRecords}件)`);
     const blob = await zip.generateAsync({ type: "blob" });
-    downloadBlob(zipName || buildExportFilename("レコードバックアップ", "zip", { appLabel: buildAppFilenameLabel(appId, "") }), blob);
-    setStatus(`バックアップ完了: ${records.length}件 / 添付 ${fileCount} / コメント ${commentCount}`);
-  }
-  async function runLoadStatusActionsStandalone(opts, setStatus) {
-    const { appId, guestId } = opts;
-    if (!appId) throw new Error("アプリIDを入力してください");
-    const prefix = buildApiPrefix(guestId || "", false);
-    setStatus("プロセス管理情報を取得中...");
-    const res = await apiGet(prefix, "/app/status.json", { app: appId });
-    if (!res.enable) {
-      setStatus("プロセス管理は無効です", true);
-      return { enabled: false, states: [], actions: [] };
-    }
-    const states = Object.keys(res.states || {});
-    const actions = (res.actions || []).map((a) => ({ name: a.name, from: a.from, to: a.to }));
-    setStatus(`プロセス管理: 状態 ${states.length}件 / アクション ${actions.length}件`);
-    return { enabled: true, states, actions };
+    const zipName = filename || buildExportFilename("CSV出力", "zip");
+    downloadBlob(zipName.toLowerCase().endsWith(".zip") ? zipName : `${zipName}.zip`, blob);
+    setStatus(`CSV一括出力完了 (${apps.length}アプリ / ${totalRecords}件)`);
   }
   async function runLoadViewsStandalone(opts, setStatus) {
     const { appId, guestId } = opts;
@@ -2204,30 +1606,6 @@ ${contextLine}`);
     b.appendChild(t);
     return b;
   }
-  function makeCheck(opts) {
-    const lab = document.createElement("label");
-    lab.className = "kus-lp__check";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    if (opts.checked) cb.checked = true;
-    if (opts.value !== void 0) cb.value = opts.value;
-    lab.appendChild(cb);
-    lab.appendChild(document.createTextNode(opts.label));
-    if (opts.help) lab.title = opts.help;
-    return { label: lab, checkbox: cb };
-  }
-  function makeChip(opts) {
-    const lab = document.createElement("label");
-    lab.className = "kus-lp__chip";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    if (opts.checked) cb.checked = true;
-    if (opts.value !== void 0) cb.value = opts.value;
-    lab.appendChild(cb);
-    lab.appendChild(document.createTextNode(opts.label));
-    if (opts.help) lab.title = opts.help;
-    return { label: lab, checkbox: cb };
-  }
   function makeCard(opts = {}) {
     const card = document.createElement("div");
     card.className = "kus-lp__card" + (opts.soft ? " kus-lp__card--soft" : "");
@@ -2278,42 +1656,275 @@ ${contextLine}`);
     d.appendChild(b);
     return { details: d, body: b };
   }
-  function makeTabs(specs, opts = {}) {
-    const bar = document.createElement("div");
-    bar.className = "kus-lp__tabs";
-    bar.setAttribute("role", "tablist");
-    const panels = document.createElement("div");
-    panels.className = "kus-lp__tab-panels";
-    const tabBtns = [];
-    const tabPanels = [];
-    function activate(id) {
-      specs.forEach((spec, i) => {
-        const on = spec.id === id;
-        tabBtns[i].setAttribute("aria-selected", on ? "true" : "false");
-        tabPanels[i].hidden = !on;
+  function makeAppTable(opts = {}) {
+    const minRows = Math.max(1, opts.minRows ?? 1);
+    const wrap = document.createElement("div");
+    wrap.className = "kus-lp__apptable";
+    const tableScroll = document.createElement("div");
+    tableScroll.className = "kus-lp__apptable-scroll";
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    thead.innerHTML = '<tr><th class="kus-lp__apptable-no" scope="col">#</th><th scope="col">アプリID</th><th scope="col">ゲストID</th><th class="kus-lp__apptable-acts-h" scope="col">操作</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    table.appendChild(tbody);
+    tableScroll.appendChild(table);
+    wrap.appendChild(tableScroll);
+    const foot = document.createElement("div");
+    foot.className = "kus-lp__apptable-foot";
+    const addBtn = makeButton("＋ 行を追加", "sub");
+    foot.appendChild(addBtn);
+    if (opts.currentAppId && /^\d+$/.test(String(opts.currentAppId).trim())) {
+      const curBtn = makeButton("現在のアプリ", "sub");
+      curBtn.title = "今開いているアプリのIDを空き行に入れます";
+      curBtn.addEventListener("click", () => {
+        const id = String(opts.currentAppId).trim();
+        if (rows.some((r) => r.app.value.trim() === id)) return;
+        const empty = rows.find((r) => !r.app.value.trim());
+        if (empty) {
+          empty.app.value = id;
+          setAppName(empty, "");
+          empty.app.focus();
+        } else insertRow(rows.length, id, "", true);
+        emitChange();
+      });
+      foot.appendChild(curBtn);
+    }
+    const count = document.createElement("span");
+    count.className = "kus-lp__apptable-count";
+    foot.appendChild(count);
+    wrap.appendChild(foot);
+    const hint = document.createElement("div");
+    hint.className = "kus-lp__apptable-hint";
+    hint.textContent = "アプリIDは「100, 120, 130」のようにカンマ区切りでまとめて入力・貼り付けすると自動で行に分割されます。";
+    wrap.appendChild(hint);
+    const rows = [];
+    function getApps() {
+      const seen = /* @__PURE__ */ new Set();
+      const out = [];
+      for (const r of rows) {
+        const appId = r.app.value.trim();
+        if (!appId) continue;
+        const guestId = r.guest.value.trim();
+        const key = `${appId}::${guestId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const row = { appId, guestId };
+        if (r.appName) row.appName = r.appName;
+        out.push(row);
+      }
+      return out;
+    }
+    function getAllRows() {
+      return rows.map((r) => {
+        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        if (r.appName) row.appName = r.appName;
+        return row;
       });
     }
-    specs.forEach((spec) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "kus-lp__tab";
-      btn.setAttribute("role", "tab");
-      btn.textContent = spec.label;
-      btn.dataset.tab = spec.id;
-      btn.addEventListener("click", () => activate(spec.id));
-      bar.appendChild(btn);
-      tabBtns.push(btn);
-      const panel = document.createElement("div");
-      panel.className = "kus-lp__tab-panel";
-      panel.setAttribute("role", "tabpanel");
-      panel.hidden = true;
-      spec.build(panel);
-      panels.appendChild(panel);
-      tabPanels.push(panel);
+    function setAppName(entry, appName) {
+      entry.appName = String(appName || "").trim();
+      entry.name.textContent = entry.appName;
+      entry.name.title = entry.appName ? `アプリ名: ${entry.appName}` : "";
+      entry.name.classList.toggle("kus-lp__apptable-name--empty", !entry.appName);
+    }
+    function setRowValues(entry, appId, guestId, appName) {
+      entry.app.value = appId;
+      entry.guest.value = guestId;
+      setAppName(entry, appName);
+    }
+    function refresh() {
+      rows.forEach((r, i) => {
+        const no = r.tr.querySelector(".kus-lp__apptable-no");
+        if (no) no.textContent = String(i + 1);
+        r.copyBtn.disabled = i === 0;
+      });
+      const n = getApps().length;
+      count.textContent = n ? `${n} アプリ` : "未入力";
+    }
+    function emitChange() {
+      refresh();
+      opts.onChange?.(getApps());
+    }
+    function distributeAppTokens(entry) {
+      const raw = entry.app.value;
+      if (!/[,、\s]/.test(raw)) return false;
+      const tokens = raw.split(/[,、\s]+/).map((t) => t.trim()).filter(Boolean);
+      if (tokens.length <= 1) {
+        const next = tokens[0] || "";
+        if (entry.app.value !== next) {
+          entry.app.value = next;
+          setAppName(entry, "");
+          return true;
+        }
+        return false;
+      }
+      entry.app.value = tokens[0];
+      setAppName(entry, "");
+      const guestVal = entry.guest.value.trim();
+      const start = rows.indexOf(entry);
+      let last = entry;
+      for (let k = 1; k < tokens.length; k += 1) {
+        last = insertRow(start + k, tokens[k], guestVal, false);
+      }
+      try {
+        last.app.focus();
+      } catch {
+      }
+      return true;
+    }
+    function removeRow(entry) {
+      if (rows.length <= minRows) {
+        entry.app.value = "";
+        entry.guest.value = "";
+        setAppName(entry, "");
+        emitChange();
+        return;
+      }
+      const idx = rows.indexOf(entry);
+      if (idx >= 0) rows.splice(idx, 1);
+      entry.tr.remove();
+      emitChange();
+    }
+    function insertRow(index, appId = "", guestId = "", focus = false, appName = "") {
+      const tr = document.createElement("tr");
+      const tdNo = document.createElement("td");
+      tdNo.className = "kus-lp__apptable-no";
+      const tdApp = document.createElement("td");
+      const tdGuest = document.createElement("td");
+      const tdAct = document.createElement("td");
+      tdAct.className = "kus-lp__apptable-acts";
+      const app = makeInput({ placeholder: opts.appPlaceholder || "アプリID（カンマ区切りで複数可）", ariaLabel: "アプリID" });
+      const guest = makeInput({ placeholder: opts.guestPlaceholder || "空欄=通常スペース", ariaLabel: "ゲストID" });
+      app.value = appId;
+      guest.value = guestId;
+      const name = document.createElement("div");
+      name.className = "kus-lp__apptable-name";
+      const copyBtn = makeButton("↑コピー", "sub");
+      copyBtn.title = "上の行のアプリID・ゲストIDをこの行へコピー";
+      const dupBtn = makeButton("複製", "sub");
+      dupBtn.title = "この行を下に複製";
+      const delBtn = makeButton("×", "ghost");
+      delBtn.title = "この行を削除";
+      tdApp.appendChild(app);
+      tdApp.appendChild(name);
+      tdGuest.appendChild(guest);
+      tdAct.appendChild(copyBtn);
+      tdAct.appendChild(dupBtn);
+      tdAct.appendChild(delBtn);
+      tr.appendChild(tdNo);
+      tr.appendChild(tdApp);
+      tr.appendChild(tdGuest);
+      tr.appendChild(tdAct);
+      const entry = { tr, app, guest, name, appName: "", copyBtn };
+      setAppName(entry, appName);
+      copyBtn.addEventListener("click", () => {
+        const idx = rows.indexOf(entry);
+        if (idx <= 0) return;
+        const prev = rows[idx - 1];
+        app.value = prev.app.value;
+        guest.value = prev.guest.value;
+        setAppName(entry, prev.appName);
+        app.focus();
+        emitChange();
+      });
+      dupBtn.addEventListener("click", () => {
+        const idx = rows.indexOf(entry);
+        const ne = insertRow(idx + 1, app.value.trim(), guest.value.trim(), true, entry.appName);
+        ne.app.focus();
+        emitChange();
+      });
+      delBtn.addEventListener("click", () => removeRow(entry));
+      app.addEventListener("input", () => {
+        if (entry.appName) setAppName(entry, "");
+        emitChange();
+      });
+      guest.addEventListener("input", emitChange);
+      app.addEventListener("change", () => {
+        if (distributeAppTokens(entry)) emitChange();
+      });
+      app.addEventListener("paste", (ev) => {
+        const text = ev.clipboardData?.getData("text") || "";
+        if (!/[,、\s]/.test(text)) return;
+        ev.preventDefault();
+        const combined = [app.value.trim(), text].filter(Boolean).join(",");
+        app.value = combined;
+        if (distributeAppTokens(entry)) emitChange();
+      });
+      const at = Math.min(Math.max(index, 0), rows.length);
+      if (at >= rows.length) tbody.appendChild(tr);
+      else tbody.insertBefore(tr, rows[at].tr);
+      rows.splice(at, 0, entry);
+      refresh();
+      if (focus) app.focus();
+      return entry;
+    }
+    addBtn.addEventListener("click", () => {
+      const e = insertRow(rows.length, "", "", true);
+      e.app.focus();
+      emitChange();
     });
-    const initial = opts.initial || specs[0]?.id;
-    if (initial) activate(initial);
-    return { bar, panels };
+    function putApp(appId = "", guestId = "", o = {}) {
+      const id = String(appId || "").trim();
+      if (!id) return { action: "ignored", index: -1 };
+      const guest = String(guestId || "").trim();
+      const appName = String(o.appName || "").trim();
+      const empty = rows.find((r) => !r.app.value.trim());
+      const targetGuest = guest || empty?.guest.value.trim() || "";
+      const existing = rows.find((r) => r.app.value.trim() === id && r.guest.value.trim() === targetGuest);
+      if (existing) {
+        if (appName && existing.appName !== appName) {
+          setAppName(existing, appName);
+          emitChange();
+        }
+        if (o.focus) existing.app.focus();
+        return { action: "existing", index: rows.indexOf(existing) };
+      }
+      if (empty) {
+        setRowValues(empty, id, targetGuest, appName);
+        if (o.focus) empty.app.focus();
+        emitChange();
+        return { action: "filled", index: rows.indexOf(empty) };
+      }
+      const entry = insertRow(rows.length, id, guest, !!o.focus, appName);
+      emitChange();
+      return { action: "added", index: rows.indexOf(entry) };
+    }
+    function setApps(list) {
+      rows.splice(0).forEach((r) => r.tr.remove());
+      tbody.innerHTML = "";
+      const src = Array.isArray(list) && list.length ? list : [{ appId: "", guestId: "" }];
+      src.forEach((r) => insertRow(
+        rows.length,
+        String(r.appId || "").trim(),
+        String(r.guestId || "").trim(),
+        false,
+        String(r.appName || "").trim()
+      ));
+      while (rows.length < minRows) insertRow(rows.length, "", "");
+      emitChange();
+    }
+    setApps(opts.initial || []);
+    return {
+      element: wrap,
+      getApps,
+      getAllRows,
+      first: () => {
+        const r = rows[0];
+        if (!r) return { appId: "", guestId: "" };
+        const row = { appId: r.app.value.trim(), guestId: r.guest.value.trim() };
+        if (r.appName) row.appName = r.appName;
+        return row;
+      },
+      addRow: (appId = "", guestId = "", o = {}) => {
+        insertRow(rows.length, appId, guestId, !!o.focus, String(o.appName || "").trim());
+        emitChange();
+      },
+      putApp,
+      setApps,
+      clear: () => setApps([]),
+      count: () => getApps().length
+    };
   }
   async function liteRun(panel, busyMsg, fn, okMsg) {
     panel.setStatus(busyMsg, "busy");
@@ -2490,35 +2101,41 @@ ${contextLine}`);
     return details;
   }
 
-  // src/entries/record-lite-ui.ts
-  function mountRecordLitePanel() {
+  // src/entries/csv-export-lite-ui.ts
+  function mountCsvExportLitePanel() {
     const panel = createLitePanel({
-      id: "kus-record-lite",
-      title: "レコード管理",
-      subtitle: "CSV / バッチ更新 / 添付DL / コピー / バックアップを 1 つにまとめた lite 版",
+      id: "kus-csv-export-lite",
+      title: "CSV出力",
+      subtitle: "複数アプリのレコードを CSV / ZIP で一括出力する lite 版",
       accent: "record",
-      badges: [{ label: "Lite" }, { label: "本番データ操作あり" }],
-      hint: "<strong>本番データに直接書き込み・更新・コピーします。</strong>バックアップ取得を強く推奨します。",
+      badges: [{ label: "Lite" }, { label: "複数アプリ対応" }, { label: "読み取り専用" }],
+      hint: "対象アプリ表に 1 行なら CSV を直接保存、複数行ならアプリごとの CSV を 1 つの ZIP にまとめて保存します。",
       wide: true
     });
-    const tgtApp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id", ariaLabel: "対象アプリID" });
-    const tgtGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
-    const cardApp = makeCard({ title: "接続情報", number: 1 });
-    cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "対象アプリ" }));
-    cardApp.body.appendChild(createAppSearchControl(panel, {
-      guestEl: tgtGuest,
-      targets: [{ label: "対象アプリ", apply: (id, _name, guestId) => {
-        tgtApp.value = id;
-        if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId;
-      } }]
+    const cardApps = makeCard({ title: "対象アプリ", number: 1 });
+    const appTable = makeAppTable({ minRows: 3, currentAppId: DEFAULT_APP_ID || "" });
+    cardApps.body.appendChild(appTable.element);
+    cardApps.body.appendChild(createAppSearchControl(panel, {
+      targets: [{ label: "対象アプリへ追加", apply: (id, name, guestId) => appTable.putApp(id, guestId || "", { focus: true, appName: name }) }]
     }));
-    panel.body.insertBefore(cardApp.card, panel.status);
+    panel.body.insertBefore(cardApps.card, panel.status);
+    const cardCond = makeCard({ title: "出力条件", number: 2, soft: true });
+    const query = makeInput({ placeholder: '例: 更新日時 >= "2026-01-01T00:00:00Z"（空欄で全件）', width: "wide" });
+    const viewApp = makeInput({ placeholder: "一覧取得元アプリID", value: DEFAULT_APP_ID || "", width: "id" });
+    const viewGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
     const viewSelect = makeSelect([["", "一覧を選択（任意）"]]);
-    const loadViewsBtn = makeButton("一覧読込", "sub");
-    cardApp.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: "一覧から条件" }));
-    loadViewsBtn.addEventListener("click", () => liteRun(panel, "一覧情報を取得中…", async () => {
+    const loadViews = makeButton("一覧読込", "sub");
+    const useView = makeButton("▼ 条件へ反映", "sub");
+    const filename = makeInput({ placeholder: "空欄で自動命名（単一: レコード_アプリ_日時.csv / 複数: CSV出力_日時.zip）", width: "wide" });
+    cardCond.body.appendChild(makeRow([query, useView], { label: "共通クエリ" }));
+    cardCond.body.appendChild(makeRow([viewApp, viewGuest, loadViews], { label: "一覧取得元" }));
+    cardCond.body.appendChild(makeRow(viewSelect, { label: "一覧" }));
+    cardCond.body.appendChild(makeRow(filename, { label: "ファイル名" }));
+    cardCond.body.appendChild(makeNote("クエリは全対象アプリへ共通適用します。アプリごとにフィールド構成が異なる場合も、各アプリのフィールドコードをヘッダーにして別 CSV を作成します。"));
+    panel.body.insertBefore(cardCond.card, panel.status);
+    loadViews.addEventListener("click", () => liteRun(panel, "一覧情報を取得中…", async () => {
       const views = await runLoadViewsStandalone(
-        { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim() },
+        { appId: viewApp.value.trim(), guestId: viewGuest.value.trim() },
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
       viewSelect.innerHTML = '<option value="">一覧を選択（任意）</option>';
@@ -2528,222 +2145,24 @@ ${contextLine}`);
         opt.textContent = `${v.name} ${v.filter ? `(${v.filter.slice(0, 60)})` : ""}`;
         viewSelect.appendChild(opt);
       }
-    }, "一覧を読み込みました。プルダウンから条件を選択できます"));
-    function applyViewQuery(target) {
-      const q = viewSelect.value;
-      if (q) target.value = q;
-    }
-    const tabHost = document.createElement("div");
-    panel.body.insertBefore(tabHost, panel.status);
-    const tabs = makeTabs([
-      {
-        id: "csv-export",
-        label: "CSV出力",
-        build: (root2) => {
-          const query = makeInput({ placeholder: "absent", width: "wide" });
-          const fname = makeInput({ placeholder: "空欄で自動命名（レコード_アプリ_日時.csv）", width: "wide" });
-          const useView = makeButton("▼ 一覧から", "sub");
-          useView.addEventListener("click", () => applyViewQuery(query));
-          root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
-          root2.appendChild(makeRow(fname, { label: "ファイル名" }));
-          const run = makeButton("CSVを出力", "primary", { icon: "↓" });
-          run.style.width = "100%";
-          run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
-            await runCsvExportStandalone(
-              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), filename: fname.value.trim() },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
-          }));
-          root2.appendChild(makeRow(run));
-        }
-      },
-      {
-        id: "csv-import",
-        label: "CSV取込",
-        build: (root2) => {
-          const fileInput = document.createElement("input");
-          fileInput.type = "file";
-          fileInput.accept = ".csv";
-          fileInput.className = "kus-lp__file";
-          root2.appendChild(makeRow(fileInput, { label: "CSV" }));
-          root2.appendChild(makeNote("UTF-8 / Excel BOM 対応。ファイル・サブテーブル・ステータスは取込対象外です。"));
-          const run = makeButton("レコードを取込", "primary", { icon: "↑" });
-          run.style.width = "100%";
-          run.addEventListener("click", () => liteRun(panel, "CSV取込中…", async () => {
-            await runCsvImportStandalone(
-              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
-          }));
-          root2.appendChild(makeRow(run));
-        }
-      },
-      {
-        id: "status",
-        label: "ステータス",
-        build: (root2) => {
-          const query = makeInput({ placeholder: '条件 (例: status = "新規")', width: "wide" });
-          const action = makeInput({ placeholder: "アクション名", width: "medium" });
-          const assignee = makeInput({ placeholder: "作業者ログイン名 (任意)", width: "medium" });
-          const actionSelect = makeSelect([["", "--"]]);
-          const loadActions = makeButton("読込", "sub");
-          const useView = makeButton("▼ 一覧から", "sub");
-          useView.addEventListener("click", () => applyViewQuery(query));
-          root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
-          root2.appendChild(makeRow([action, actionSelect, loadActions], { label: "アクション" }));
-          actionSelect.addEventListener("change", () => {
-            if (actionSelect.value) action.value = actionSelect.value;
-          });
-          loadActions.addEventListener("click", () => liteRun(panel, "プロセス管理を取得中…", async () => {
-            const info = await runLoadStatusActionsStandalone(
-              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim() },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
-            actionSelect.innerHTML = '<option value="">--</option>';
-            const seen = /* @__PURE__ */ new Set();
-            for (const a of info.actions) {
-              if (seen.has(a.name)) continue;
-              seen.add(a.name);
-              const opt = document.createElement("option");
-              opt.value = a.name;
-              opt.textContent = `${a.name} (${a.from} → ${a.to})`;
-              actionSelect.appendChild(opt);
-            }
-          }));
-          root2.appendChild(makeRow(assignee, { label: "作業者" }));
-          root2.appendChild(makeNote("対象 100 件単位でステータス更新します。元に戻せません。"));
-          const run = makeButton("ステータスを一括更新", "primary");
-          run.style.width = "100%";
-          run.classList.add("kus-lp__btn--danger");
-          run.addEventListener("click", () => liteRun(panel, "ステータス一括更新中…", async () => {
-            await runBatchProcessStandalone(
-              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
-          }));
-          root2.appendChild(makeRow(run));
-        }
-      },
-      {
-        id: "attach",
-        label: "添付DL",
-        build: (root2) => {
-          const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
-          const fileCode = makeInput({ placeholder: "例: attached_file", width: "medium" });
-          const folderCode = makeInput({ placeholder: "任意（フォルダ名にするフィールド）", width: "medium" });
-          const zipName = makeInput({ placeholder: "空欄で自動命名（添付ファイル_アプリ_日時.zip）", width: "wide" });
-          const useView = makeButton("▼ 一覧から", "sub");
-          useView.addEventListener("click", () => applyViewQuery(query));
-          root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
-          root2.appendChild(makeRow(fileCode, { label: "ファイル" }));
-          root2.appendChild(makeRow(folderCode, { label: "フォルダ" }));
-          root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
-          const run = makeButton("添付ファイルをZIPで保存", "primary", { icon: "↓" });
-          run.style.width = "100%";
-          run.addEventListener("click", () => liteRun(panel, "添付ファイル取得中…", async () => {
-            await runAttachmentDownloadStandalone(
-              {
-                appId: tgtApp.value.trim(),
-                guestId: tgtGuest.value.trim(),
-                query: query.value.trim(),
-                fileFieldCode: fileCode.value.trim(),
-                folderFieldCode: folderCode.value.trim(),
-                zipName: zipName.value.trim()
-              },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
-          }));
-          root2.appendChild(makeRow(run));
-        }
-      },
-      {
-        id: "copy",
-        label: "コピー",
-        build: (root2) => {
-          const srcApp = makeInput({ placeholder: "コピー元アプリID", width: "id" });
-          const srcGuest = makeInput({ placeholder: "ゲスト (任意)", width: "guest" });
-          const query = makeInput({ placeholder: "条件 (任意)", width: "wide" });
-          root2.appendChild(makeRow([srcApp, srcGuest], { label: "コピー元" }));
-          root2.appendChild(createAppSearchControl(panel, {
-            guestEl: srcGuest,
-            targets: [{ label: "コピー元", apply: (id, _name, guestId) => {
-              srcApp.value = id;
-              if (guestId && !srcGuest.value.trim()) srcGuest.value = guestId;
-            } }]
-          }));
-          root2.appendChild(makeRow(query, { label: "クエリ" }));
-          root2.appendChild(makeNote("元アプリの絞り込んだレコードを、対象アプリへ POST で追加します。ファイル/システム項目は除外されます。"));
-          const run = makeButton("レコードをコピー実行", "primary");
-          run.style.width = "100%";
-          run.classList.add("kus-lp__btn--danger");
-          run.addEventListener("click", () => liteRun(panel, "レコードコピー中…", async () => {
-            await runRecordCopyStandalone(
-              {
-                sourceAppId: srcApp.value.trim(),
-                sourceGuestId: srcGuest.value.trim(),
-                targetAppId: tgtApp.value.trim(),
-                targetGuestId: tgtGuest.value.trim(),
-                query: query.value.trim()
-              },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
-          }));
-          root2.appendChild(makeRow(run));
-        }
-      },
-      {
-        id: "backup",
-        label: "バックアップ",
-        build: (root2) => {
-          const query = makeInput({ placeholder: "条件 (任意・全件は空)", width: "wide" });
-          const zipName = makeInput({ placeholder: "空欄で自動命名（レコードバックアップ_アプリ_日時.zip）", width: "wide" });
-          const useView = makeButton("▼ 一覧から", "sub");
-          useView.addEventListener("click", () => applyViewQuery(query));
-          root2.appendChild(makeRow([query, useView], { label: "クエリ" }));
-          root2.appendChild(makeRow(zipName, { label: "ZIP名" }));
-          const incFiles = makeCheck({ label: "添付ファイルも保存", checked: true });
-          const incComments = makeCheck({ label: "コメントも保存", checked: true });
-          const incSettings = makeCheck({ label: "アプリ設定も保存", checked: false });
-          const optGrid = document.createElement("div");
-          optGrid.className = "kus-lp__check-grid";
-          optGrid.appendChild(incFiles.label);
-          optGrid.appendChild(incComments.label);
-          optGrid.appendChild(incSettings.label);
-          root2.appendChild(optGrid);
-          const scopeBox = document.createElement("div");
-          scopeBox.className = "kus-lp__chips";
-          scopeBox.style.display = "none";
-          const chips = SECTION_DEFS.map((d) => makeChip({ label: d.label, value: d.key, checked: ["fieldSettings", "layoutSettings", "viewSettings", "processSettings"].includes(d.key) }));
-          chips.forEach((c) => scopeBox.appendChild(c.label));
-          root2.appendChild(scopeBox);
-          incSettings.checkbox.addEventListener("change", () => {
-            scopeBox.style.display = incSettings.checkbox.checked ? "flex" : "none";
-          });
-          const run = makeButton("バックアップ ZIP を保存", "primary", { icon: "↓" });
-          run.style.width = "100%";
-          run.addEventListener("click", () => liteRun(panel, "レコードバックアップ中…", async () => {
-            await runRecordBackupStandalone(
-              {
-                appId: tgtApp.value.trim(),
-                guestId: tgtGuest.value.trim(),
-                query: query.value.trim(),
-                zipName: zipName.value.trim(),
-                includeFiles: incFiles.checkbox.checked,
-                includeComments: incComments.checkbox.checked,
-                includeAppSettings: incSettings.checkbox.checked,
-                appScopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value)
-              },
-              (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
-          }));
-          root2.appendChild(makeRow(run));
-        }
-      }
-    ]);
-    tabHost.appendChild(tabs.bar);
-    tabHost.appendChild(tabs.panels);
+    }, "一覧を読み込みました"));
+    useView.addEventListener("click", () => {
+      if (viewSelect.value) query.value = viewSelect.value;
+    });
+    const cardRun = makeCard({ title: "実行", number: 3 });
+    const run = makeButton("CSVを出力", "primary", { icon: "↓" });
+    run.style.width = "100%";
+    run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
+      await runCsvExportBatchStandalone(
+        { apps: appTable.getApps(), query: query.value.trim(), filename: filename.value.trim() },
+        (m, e) => panel.setStatus(m, e ? "err" : "busy")
+      );
+    }));
+    cardRun.body.appendChild(makeRow(run));
+    panel.body.insertBefore(cardRun.card, panel.status);
+    panel.setStatus("対象アプリを入力して CSV 出力できます", "ok");
   }
 
-  // src/entries/record-lite-entry.ts
-  runOnKintonePage(mountRecordLitePanel);
+  // src/entries/csv-export-lite-entry.ts
+  runOnKintonePage(mountCsvExportLitePanel);
 })();
