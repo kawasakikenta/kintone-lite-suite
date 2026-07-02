@@ -21532,6 +21532,12 @@ ${reason}` : "",
     };
     return map[layoutName] || layoutName || "-";
   }
+  function summarizeErStartIds(ids, maxShown = 5) {
+    const list = (Array.isArray(ids) ? ids : []).map((v) => String(v)).filter(Boolean);
+    if (!list.length) return "-";
+    if (list.length <= maxShown) return list.join(", ");
+    return `${list.slice(0, maxShown).join(", ")} 他${list.length - maxShown}件 (計${list.length})`;
+  }
   async function resolveErStartAppIds(options) {
     if (!options.spaceId) return;
     const cacheKey = erSpaceCacheKey(options.spaceId, options.source?.guestId || "");
@@ -21555,9 +21561,9 @@ ${reason}` : "",
     const popup = getToolWindow().open("", "_blank");
     if (!popup) throw new Error("別タブを開けませんでした。ポップアップブロックを確認してください");
     popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
-    setStatus(`ER図の解析を開始します... 起点 ${options.startAppIds.join(",")} / ${formatErLayoutLabel(options.layoutName)} / ${options.fieldDensity}`);
+    setStatus(`ER図の解析を開始します... 起点 ${summarizeErStartIds(options.startAppIds)} / ${formatErLayoutLabel(options.layoutName)} / ${options.fieldDensity}`);
     progressUi.init();
-    progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
+    progressUi.update(4, `開始: 起点 ${summarizeErStartIds(options.startAppIds)}`);
     try {
       const apps = await crawl(options.startAppIds, options);
       progressUi.update(94, "HTML生成中...");
@@ -21592,9 +21598,9 @@ ${reason}` : "",
     const options = readErDiagramOptions();
     await resolveErStartAppIds(options);
     if (!options.startAppIds?.length) throw new Error("比較元アプリID（または追加起点ID / スペースID）を入力してください");
-    setStatus(`ER図HTMLを生成します... 起点 ${options.startAppIds.join(",")}`);
+    setStatus(`ER図HTMLを生成します... 起点 ${summarizeErStartIds(options.startAppIds)}`);
     progressUi.init();
-    progressUi.update(4, `開始: 起点 ${options.startAppIds.join(",")}`);
+    progressUi.update(4, `開始: 起点 ${summarizeErStartIds(options.startAppIds)}`);
     try {
       const apps = await crawl(options.startAppIds, options);
       progressUi.update(94, "HTML保存データ生成中...");
@@ -22076,7 +22082,9 @@ ${reason}` : "",
           acc.required += Number(app?.requiredCount || 0);
           return acc;
         }, { relations: 0, lookups: 0, refs: 0, actions: 0, required: 0 });
-        const startAppText = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", ");
+        const startAppIdList = (Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).map((v) => String(v)).filter(Boolean);
+        const startAppText = summarizeErStartIds(startAppIdList);
+        const startAppFullText = startAppIdList.join(", ");
         const erSpaceId = String(options.spaceId || "");
         const spaceAppIdSet = new Set((Array.isArray(options.spaceAppIds) ? options.spaceAppIds : []).map((v) => String(v)));
         const spaceAppCount = erSpaceId ? safeApps.filter((app) => spaceAppIdSet.has(String(app?.id)) || String(app?.spaceId || "") === erSpaceId).length : 0;
@@ -22156,8 +22164,9 @@ body{font-family:'DM Sans',sans-serif;background:
 .tb-group .tb:hover{background:var(--surface);border-color:var(--border);color:var(--accent);}
 .tb-group .tb.active{background:var(--accent);color:#000;border-color:var(--accent);}
 .tb-group-label{font-size:10px;color:var(--dim);padding:0 4px;font-weight:600;letter-spacing:0.02em;}
-.meta-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:10px;color:var(--dim);max-width:100%;}
+.meta-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);font-size:10px;color:var(--dim);max-width:100%;overflow:hidden;}
 .meta-pill b{color:var(--text);font-weight:700;}
+.meta-pill .pill-val{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #topbar select.tb-select{padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;outline:none;flex:0 0 auto;min-height:30px;}
 #topbar select.tb-select:focus{border-color:var(--accent);}
 .sep{width:1px;height:20px;background:var(--border);margin:0 4px;}
@@ -22257,6 +22266,8 @@ body{font-family:'DM Sans',sans-serif;background:
 .stat-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);}
 .stat-val{font-weight:600;font-family:'DM Mono',monospace;color:var(--accent2);}
 .app-list-item{padding:6px 8px;cursor:pointer;border-radius:6px;margin:2px 0;transition:.1s;}
+.app-list-group{margin:12px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--dim);letter-spacing:0.04em;}
+.app-list-group:first-child{margin-top:2px;}
 .app-list-item:hover{background:var(--surface2);}
 .app-list-item.highlighted{background:rgba(94,234,212,0.12);border:1px solid var(--accent);}
 .app-list-item.active-app{background:rgba(129,140,248,0.12);border:1px solid var(--accent2);}
@@ -22401,7 +22412,7 @@ body{font-family:'DM Sans',sans-serif;background:
 .ov-kpi{font-size:18px;font-weight:700;line-height:1;color:var(--text);}
 .ov-label{font-size:10px;color:var(--dim);}
 .ov-tip-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
-.ov-tip-row span{padding:5px 8px;border-radius:999px;background:var(--surface2);border:1px solid var(--border);font-size:10px;color:var(--dim);}
+.ov-tip-row span{padding:5px 8px;border-radius:999px;background:var(--surface2);border:1px solid var(--border);font-size:10px;color:var(--dim);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* ── Toast ── */
 #toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%) translateY(20px);z-index:600;padding:8px 20px;background:var(--accent);color:#000;border-radius:8px;font-size:12px;font-weight:600;opacity:0;transition:.3s;pointer-events:none;}
@@ -22427,7 +22438,7 @@ body{font-family:'DM Sans',sans-serif;background:
   <h1>⬡ kintone ER図</h1>
 
   <div class="meta-group" style="display:inline-flex;gap:4px;flex-wrap:wrap;">
-    <span class="meta-pill"><b>開始</b> ${esc((Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""]).filter(Boolean).join(", "))}</span>
+    <span class="meta-pill" title="開始: ${esc(startAppFullText)}"><b>開始</b> <span class="pill-val">${esc(startAppText)}</span></span>
     <span class="meta-pill" id="layout-pill"><b>配置</b> ${esc(formatErLayoutLabel(options.layoutName))}</span>
     <span class="meta-pill" id="density-pill"><b>密度</b> ${esc(densityLabel)}</span>
     <span class="meta-pill"><b>深さ</b> ${esc(String(options.maxDepth || 0))}</span>
@@ -22453,6 +22464,7 @@ body{font-family:'DM Sans',sans-serif;background:
     <button class="tb" data-layout-btn="concentric" onclick="setLayout('concentric')" title="同心円">◎</button>
     <button class="tb" data-layout-btn="grid" onclick="setLayout('grid')" title="グリッド">⊞</button>
     <button class="tb" data-layout-btn="circle" onclick="setLayout('circle')" title="円形">◯</button>
+    <button class="tb active" id="separate-nolink-btn" onclick="toggleSeparateNoLink()" title="紐づき（関連線）のないアプリを下の別枠にまとめて配置">🗂 分離</button>
   </div>
 
   <select id="density-select" class="tb-select" onchange="setDensity(this.value)" title="表示密度">
@@ -22588,7 +22600,7 @@ body{font-family:'DM Sans',sans-serif;background:
     <div class="ov-card"><span class="ov-kpi">${summary.actions}</span><span class="ov-label">アクション</span></div>
   </div>
   <div class="ov-tip-row">
-    <span>開始: ${esc(startAppText || "-")}</span>
+    <span title="開始: ${esc(startAppFullText)}">開始: ${esc(startAppText || "-")}</span>
     <span>必須項目: ${summary.required}</span>
     <span>クリックで詳細</span>
     <span>右クリックで固定</span>
@@ -22596,6 +22608,7 @@ body{font-family:'DM Sans',sans-serif;background:
     <span>Shift + F で関連強調</span>
     <span>背景ダブルクリックで要素追加</span>
     <span>「⬡ シンプル」で結合のみ表示</span>
+    <span>「🗂 分離」で紐づきなしアプリを別枠に</span>
     <span>Delete で選択要素を削除</span>
   </div>
 </div>
@@ -22904,6 +22917,7 @@ function buildCyStyle(palette){
       "text-outline-color":palette.surface,"text-outline-width":"1px",
       "background-color":palette.surface,"border-width":2,"border-color":palette.border,"padding":nodeMetrics.padding,"width":"label","height":"label"
     }},
+    {selector:"node.no-link",style:{"border-style":"dashed","opacity":0.92}},
     {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
     {selector:"node[?isCustom]",style:{"border-style":"dashed","border-color":palette.accent2}},
     {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":4,"background-color":isDark ? "#11162d" : "#eef2ff"}},
@@ -23043,11 +23057,12 @@ APPS.forEach(app=>{
 });
 
 const hasSavedLayout=!!savedPositions;
+// 初期配置は preset で置き、後段の runLayout()（紐づきなし分離対応）で配置する
 const cy=cytoscape({
   container:document.getElementById("cy"),
   elements,
   style: buildCyStyle(currentPalette()),
-  layout: hasSavedLayout ? {name:"preset",fit:false} : buildLayoutOptions(ER_OPTIONS.layoutName || "dagre", true),
+  layout: {name:"preset",fit:false},
   minZoom:0.05,maxZoom:4,wheelSensitivity:0.25,
 });
 
@@ -23121,14 +23136,86 @@ function updateSearchMeta(query, matched){
 }
 
 function fit(){cy.fit(undefined,60);}
+
+// ─── 紐づきなしアプリの分離配置 ───
+// レイアウト適用時、関連線を持たないアプリを本体グラフの下の別枠（グリッド）にまとめる
+let separateNoLink = true;
+
+function nodeHasVisibleLink(n){
+  return n.connectedEdges().some(e=>{
+    if(e.hasClass("rel-hidden") || e.hasClass("rel-manual-hidden")) return false;
+    const other = e.source().id() === n.id() ? e.target() : e.source();
+    return !other.hasClass("app-manual-hidden");
+  });
+}
+function refreshNoLinkClasses(){
+  const nodes = cy.nodes().filter(n=>!n.hasClass("app-manual-hidden"));
+  const linked = nodes.filter(n=>nodeHasVisibleLink(n));
+  const isolated = nodes.not(linked);
+  cy.nodes().removeClass("no-link");
+  isolated.addClass("no-link");
+  return { linked, isolated };
+}
+function appNameForNode(n){
+  const app = appMap.get(n.data("appId"));
+  return app ? String(app.name || "") : String(n.data("label") || "");
+}
+function placeNoLinkGrid(linked, isolated, animate){
+  const bb = linked.boundingBox();
+  let cellW = 0, cellH = 0;
+  isolated.forEach(n=>{
+    cellW = Math.max(cellW, n.outerWidth());
+    cellH = Math.max(cellH, n.outerHeight());
+  });
+  cellW += 46; cellH += 42;
+  const cols = Math.max(1, Math.min(isolated.length, Math.max(Math.floor(bb.w / cellW), Math.ceil(Math.sqrt(isolated.length)))));
+  const startX = bb.x1 + cellW / 2;
+  const startY = bb.y2 + 170 + cellH / 2;
+  const sorted = isolated.sort((a,b)=>appNameForNode(a).localeCompare(appNameForNode(b), "ja"));
+  sorted.forEach((n,i)=>{
+    const pos = { x: startX + (i % cols) * cellW, y: startY + Math.floor(i / cols) * cellH };
+    if(animate) n.animate({position:pos},{duration:380});
+    else n.position(pos);
+  });
+}
+function runLayout(name, initial){
+  const parts = refreshNoLinkClasses();
+  if(!separateNoLink || !parts.isolated.length || !parts.linked.length){
+    const lay = cy.layout(buildLayoutOptions(name, initial));
+    if(initial) lay.one("layoutstop",()=>setTimeout(fit,200));
+    lay.run();
+    return;
+  }
+  const opts = buildLayoutOptions(name, initial);
+  opts.fit = false;
+  const visibleEdges = parts.linked.edgesWith(parts.linked).filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
+  const lay = parts.linked.union(visibleEdges).layout(opts);
+  lay.one("layoutstop",()=>{
+    placeNoLinkGrid(parts.linked, parts.isolated, !initial);
+    setTimeout(fit, initial ? 150 : 450);
+  });
+  lay.run();
+}
+function syncSeparateNoLinkButton(){
+  const btn = document.getElementById("separate-nolink-btn");
+  if(btn) btn.classList.toggle("active", separateNoLink);
+}
+function toggleSeparateNoLink(){
+  separateNoLink = !separateNoLink;
+  syncSeparateNoLinkButton();
+  runLayout(ER_OPTIONS.layoutName || "dagre", false);
+  toast(separateNoLink ? "紐づきなしアプリを別枠にまとめました" : "分離配置を解除しました");
+}
+
 if(hasSavedLayout){
+  refreshNoLinkClasses();
   if(ER_EDIT_STATE.view && typeof ER_EDIT_STATE.view.zoom === "number" && ER_EDIT_STATE.view.pan){
     cy.viewport({zoom:ER_EDIT_STATE.view.zoom, pan:ER_EDIT_STATE.view.pan});
   }else{
     setTimeout(fit,100);
   }
 }else{
-  cy.one("layoutstop",()=>setTimeout(fit,200));
+  runLayout(ER_OPTIONS.layoutName || "dagre", true);
 }
 syncLayoutButtons(ER_OPTIONS.layoutName || "dagre");
 syncDensityControl();
@@ -23140,7 +23227,7 @@ function setLayout(name){
   syncLayoutButtons(name);
   const pill = document.getElementById("layout-pill");
   if(pill) pill.innerHTML = "<b>配置</b> " + layoutDisplayName(name);
-  cy.layout(buildLayoutOptions(name, false)).run();
+  runLayout(name, false);
   toast("レイアウト: " + layoutDisplayName(name));
 }
 
@@ -23256,6 +23343,7 @@ function applyRelationFilter(){
     n.toggleClass("isolated-by-filter", partialFilter && visibleEdgeCount === 0);
   });
   if(simpleMode) collapseParallelEdges(true);
+  refreshNoLinkClasses();
   syncLegendState();
 }
 
@@ -23878,8 +23966,7 @@ function refreshSidebar(){
 refreshSidebar();
 
 function refreshAppList(){
-  let aHtml="";
-  APPS
+  const sorted = APPS
     .slice()
     .sort((a,b)=>{
       const aStart = startAppIdSet.has(String(a.id)) ? 0 : 1;
@@ -23887,8 +23974,8 @@ function refreshAppList(){
       if(aStart !== bStart) return aStart - bStart;
       if((a.depth || 0) !== (b.depth || 0)) return (a.depth || 0) - (b.depth || 0);
       return String(a.name || "").localeCompare(String(b.name || ""));
-    })
-    .forEach(a=>{
+    });
+  const renderItem = (a)=>{
     const visibleCount = visibleFieldsForNode(a).length;
     const node = cy.getElementById('a'+a.id);
     const hidden = node.length && node.hasClass('app-manual-hidden');
@@ -23896,8 +23983,24 @@ function refreshAppList(){
     const hiddenCls = hidden ? ' highlighted' : '';
     const startMeta = startAppIdSet.has(String(a.id)) ? ' / 開始' : '';
     const hiddenMeta = hidden ? ' / 非表示' : '';
-    aHtml+='<div class="app-list-item'+activeCls+hiddenCls+'" onclick="focusApp('+a.id+')">'+escapeHtml(a.name)+' <span style="color:var(--dim);font-size:10px">('+visibleCount+' 項目 / '+a.relations.length+' 関連 / 深さ '+(a.depth || 0)+startMeta+hiddenMeta+')</span></div>';
+    return '<div class="app-list-item'+activeCls+hiddenCls+'" onclick="focusApp('+a.id+')">'+escapeHtml(a.name)+' <span style="color:var(--dim);font-size:10px">('+visibleCount+' 項目 / '+a.relations.length+' 関連 / 深さ '+(a.depth || 0)+startMeta+hiddenMeta+')</span></div>';
+  };
+  // 紐づき（可視の関連線）があるアプリと無いアプリを別グループで表示する
+  const linkedApps=[], noLinkApps=[];
+  sorted.forEach(a=>{
+    const node = cy.getElementById('a'+a.id);
+    const hasLink = node.length ? nodeHasVisibleLink(node) : (a.relations || []).length > 0;
+    (hasLink ? linkedApps : noLinkApps).push(a);
   });
+  let aHtml="";
+  if(noLinkApps.length && linkedApps.length){
+    aHtml += '<div class="app-list-group">🔗 紐づきあり ('+linkedApps.length+')</div>';
+    linkedApps.forEach(a=>{ aHtml += renderItem(a); });
+    aHtml += '<div class="app-list-group">⬜ 紐づきなし ('+noLinkApps.length+')</div>';
+    noLinkApps.forEach(a=>{ aHtml += renderItem(a); });
+  }else{
+    sorted.forEach(a=>{ aHtml += renderItem(a); });
+  }
   document.getElementById("app-list").innerHTML=aHtml;
 }
 
@@ -24002,6 +24105,7 @@ const commands=[
   {label:"グリッド レイアウト",icon:"⊞",action:()=>setLayout("grid")},
   {label:"円形 レイアウト",icon:"◯",action:()=>setLayout("circle")},
   {label:"ツリー レイアウト",icon:"🌳",action:()=>setLayout("breadthfirst")},
+  {label:"紐づきなしアプリの分離 ON/OFF",icon:"🗂",action:toggleSeparateNoLink},
   {label:"同心円 レイアウト",icon:"◎",action:()=>setLayout("concentric")},
   {label:"シンプルモード ON/OFF（結合のみ表示）",icon:"⬡",action:toggleSimpleMode},
   {label:"表示密度: 結合のみ（項目非表示）",icon:"⬡",action:()=>setDensity("none")},
