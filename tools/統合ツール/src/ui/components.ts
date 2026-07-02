@@ -1558,7 +1558,7 @@ export function renderReflectFooterLinkBadges() {
   if (reportBadge) {
     const r = state.lastApplyReport;
     if (r) {
-      const total = (r.okCount || 0) + (r.ngCount || 0) + (r.skipCount || 0);
+      const total = (r.okCount || 0) + (r.ngCount || 0) + (r.pendingCount || 0) + (r.skipCount || 0);
       reportBadge.textContent = total ? String(total) : '';
     } else {
       reportBadge.textContent = '';
@@ -1630,13 +1630,13 @@ export function renderReflectApplyReport() {
     section: 'セクションまとめ反映',
     nodes: '差分選択モード',
     patch: 'JSONパッチ反映',
-    retry: '失敗セクション再反映',
+    retry: '失敗・未実行セクション再反映',
     restore: 'バックアップ復元'
   }[report.mode] || report.mode || '反映';
   const stamp = new Date(report.completedAt).toLocaleString();
   const sectionHtml = report.sections.map((s) => {
-    const statusCls = s.status === 'ok' ? 'ok' : s.status === 'ng' ? 'ng' : 'skipped';
-    const statusLabel = s.status === 'ok' ? '成功' : s.status === 'ng' ? '失敗' : 'スキップ';
+    const statusCls = s.status === 'ok' ? 'ok' : (s.status === 'ng' || s.status === 'pending') ? 'ng' : 'skipped';
+    const statusLabel = s.status === 'ok' ? '成功' : s.status === 'ng' ? '失敗' : s.status === 'pending' ? '未実行' : 'スキップ';
     const msg = s.message ? `<span class="reflect-apply-section__msg" title="${esc(s.message)}">${esc(s.message)}</span>` : '';
     return `<div class="reflect-apply-section">
       <span class="reflect-apply-section__label">${esc(s.label || s.sectionKey)}</span>
@@ -1644,8 +1644,8 @@ export function renderReflectApplyReport() {
       ${msg}
     </div>`;
   }).join('');
-  const retryBtn = report.ngCount > 0
-    ? '<button type="button" class="btn ok" data-act="retryFailedSections" title="直近の反映で失敗したセクションだけを再送信します">失敗セクションだけ再反映</button>'
+  const retryBtn = (report.failedSectionKeys || []).length > 0
+    ? '<button type="button" class="btn ok" data-act="retryFailedSections" title="直近の反映で失敗したセクションと、エラー中断で未実行のまま残ったセクションだけを再送信します">失敗・未実行だけ再反映</button>'
     : '';
   host.className = `reflect-apply-report ${cls}`;
   host.innerHTML = `<div class="reflect-apply-report__head">
@@ -1655,6 +1655,7 @@ export function renderReflectApplyReport() {
     <div class="reflect-apply-report__counters">
       <span class="reflect-apply-counter reflect-apply-counter--ok">成功 ${report.okCount}</span>
       <span class="reflect-apply-counter reflect-apply-counter--ng">失敗 ${report.ngCount}</span>
+      ${report.pendingCount ? `<span class="reflect-apply-counter reflect-apply-counter--ng">未実行 ${report.pendingCount}</span>` : ''}
       <span class="reflect-apply-counter reflect-apply-counter--skip">スキップ ${report.skipCount}</span>
     </div>
     <div class="reflect-apply-report__sections">${sectionHtml}</div>
@@ -1685,7 +1686,7 @@ export function renderReflectApplyHistory() {
     const scopeLabel = (entry.scopes || []).slice(0, 4).join(', ') + ((entry.scopes || []).length > 4 ? ` 他${entry.scopes.length - 4}` : '');
     const failedKeys = Array.isArray(entry.failedSectionKeys) ? entry.failedSectionKeys.filter(Boolean) : [];
     const failedRow = failedKeys.length
-      ? `<div class="reflect-apply-history__fail" title="${esc(failedKeys.map(sectionLabelOf).join(', '))}">⚠ 失敗: ${esc(failedKeys.slice(0, 6).map(sectionLabelOf).join(', '))}${failedKeys.length > 6 ? ` 他${failedKeys.length - 6}` : ''}</div>`
+      ? `<div class="reflect-apply-history__fail" title="${esc(failedKeys.map(sectionLabelOf).join(', '))}">⚠ 失敗・未実行: ${esc(failedKeys.slice(0, 6).map(sectionLabelOf).join(', '))}${failedKeys.length > 6 ? ` 他${failedKeys.length - 6}` : ''}</div>`
       : '';
     const canReplay = Array.isArray(entry.scopes) && entry.scopes.length > 0;
     const replayBtn = canReplay

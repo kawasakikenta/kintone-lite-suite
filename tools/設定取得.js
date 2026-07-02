@@ -854,6 +854,7 @@ ${contextLine}`);
         lastTargetBundle: null,
         lastDiffRows: [],
         lastFetchIssues: [],
+        lastDiffTruncation: null,
         lastDiffAt: null,
         lastDiffSignature: "",
         lastApplyPlan: null,

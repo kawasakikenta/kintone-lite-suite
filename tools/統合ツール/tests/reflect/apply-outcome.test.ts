@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildReflectErrorHint,
+  pushReflectErrorLog,
   collectRetrySectionKeys,
   summarizeApplyOutcome,
   type ApplySectionOutcome
@@ -33,6 +34,29 @@ describe('buildReflectErrorHint', () => {
   it('未知のエラーは空文字（ヒントなし）', () => {
     expect(buildReflectErrorHint('something unexpected happened')).toBe('');
     expect(buildReflectErrorHint('')).toBe('');
+  });
+});
+
+describe('pushReflectErrorLog', () => {
+  it('エラー行に続けて対処ヒントを併記する', () => {
+    const logs: string[] = [];
+    pushReflectErrorLog(logs, 'NG ビュー設定: 権限がありません', '権限がありません');
+    expect(logs[0]).toBe('NG ビュー設定: 権限がありません');
+    expect(logs[1]).toContain('ヒント:');
+    expect(logs[1]).toContain('アプリ管理権限');
+  });
+
+  it('直前に同じヒントを出していたら重複させない', () => {
+    const logs: string[] = [];
+    pushReflectErrorLog(logs, 'NG A: 権限がありません', '権限がありません');
+    pushReflectErrorLog(logs, 'NG B: 権限がありません', '権限がありません');
+    expect(logs.filter((l) => l.includes('ヒント:')).length).toBe(1);
+  });
+
+  it('ヒントが無いエラーはエラー行のみ', () => {
+    const logs: string[] = [];
+    pushReflectErrorLog(logs, 'NG C: unexpected', 'unexpected');
+    expect(logs).toEqual(['NG C: unexpected']);
   });
 });
 

@@ -254,18 +254,35 @@ export function isIgnoredPath(ignoreRules, path) {
   return matchAnyPattern(ignoreRules.keyPatterns, leaf);
 }
 
+function markDroppedDiffRow(out, row, kind: 'diff' | 'same') {
+  if (!out) return;
+  if (kind === 'same') out.__sameDropped = Number(out.__sameDropped || 0) + 1;
+  else out.__diffDropped = Number(out.__diffDropped || 0) + 1;
+  const sectionKey = String(row?.sectionKey || String(row?.path || '').split('.')[0].split('[')[0] || '');
+  if (!sectionKey) return;
+  const bySection = out.__droppedBySection || (out.__droppedBySection = {});
+  const entry = bySection[sectionKey] || (bySection[sectionKey] = { diff: 0, same: 0 });
+  entry[kind] += 1;
+}
+
 export function pushDiffRow(out, row, ignoreRules) {
   if (!row) return false;
   if (isIgnoredPath(ignoreRules, row.path)) return false;
   if (row.type === 'same') {
     const sameCount = Number(out?.__sameCount || 0);
-    if (sameCount >= SAME_ROW_LIMIT) return false;
+    if (sameCount >= SAME_ROW_LIMIT) {
+      markDroppedDiffRow(out, row, 'same');
+      return false;
+    }
     if (out) out.__sameCount = sameCount + 1;
     out.push(row);
     return true;
   }
   const diffCount = Number(out?.__diffCount || 0);
-  if (diffCount >= ARRAY_DIFF_LIMIT) return false;
+  if (diffCount >= ARRAY_DIFF_LIMIT) {
+    markDroppedDiffRow(out, row, 'diff');
+    return false;
+  }
   if (out) out.__diffCount = diffCount + 1;
   out.push(row);
   return true;
@@ -1042,10 +1059,16 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
   const rows: DiffRow[] = [];
   (rows as any).__diffCount = 0;
   (rows as any).__sameCount = 0;
+  (rows as any).__diffDropped = 0;
+  (rows as any).__sameDropped = 0;
   (rows as any).__includeSame = includeSame;
   const fetchIssues: DiffFetchIssue[] = [];
+  // 上限到達後は各コレクタが行の列挙自体を打ち切る（pushDiffRow を経由しない）ため、
+  // セクション処理の前後で上限到達を観測して打ち切り発生セクションを記録する。
+  const limitHitSectionKeys: string[] = [];
   for (const sec of sections) {
     const label = (SECTION_DEFS.find((x) => x.key === sec) || ({} as any)).label || sec;
+    const limitHitBefore = getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT;
     const s = sourceBundle.sections[sec];
     const t = targetBundle.sections[sec];
 
@@ -1136,13 +1159,42 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
         }, ignoreRules);
       });
     }
+    if (getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT || limitHitBefore) {
+      limitHitSectionKeys.push(sec);
+    }
   }
   for (const row of rows) {
     if (!row.severity) row.severity = detectRowSeverity(row);
   }
   return {
     rows: rows.map((row, idx) => ({ ...row, _id: `d${idx}` })),
-    fetchIssues
+    fetchIssues,
+    truncation: buildDiffTruncationInfo(rows, limitHitSectionKeys)
+  };
+}
+
+// 上限打ち切り（ARRAY_DIFF_LIMIT / SAME_ROW_LIMIT）の集計。
+// droppedDiff/droppedSame は pushDiffRow まで到達して棄却された「判明分」のみで、
+// コレクタが列挙自体を打ち切った分は含まれない（＝実際の欠落はこれ以上）。
+// 打ち切りが起きた比較結果は不完全であり、UI で必ず警告表示する。
+export function buildDiffTruncationInfo(rows, limitHitSectionKeys: string[] = []) {
+  const droppedDiff = Number((rows as any)?.__diffDropped || 0);
+  const droppedSame = Number((rows as any)?.__sameDropped || 0);
+  const bySection = (rows as any)?.__droppedBySection || {};
+  const sectionKeys = [...new Set([...Object.keys(bySection), ...limitHitSectionKeys])];
+  const sections = sectionKeys.map((sectionKey) => ({
+    sectionKey,
+    section: (SECTION_DEFS.find((x) => x.key === sectionKey) || ({} as any)).label || sectionKey,
+    droppedDiff: Number(bySection[sectionKey]?.diff || 0),
+    droppedSame: Number(bySection[sectionKey]?.same || 0)
+  }));
+  return {
+    truncated: droppedDiff > 0 || droppedSame > 0 || limitHitSectionKeys.length > 0,
+    diffLimit: ARRAY_DIFF_LIMIT,
+    sameLimit: SAME_ROW_LIMIT,
+    droppedDiff,
+    droppedSame,
+    sections
   };
 }
 

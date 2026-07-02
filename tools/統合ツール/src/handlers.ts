@@ -3418,10 +3418,10 @@ export function setupEventHandlers(injected: any = {}) {
       const lines = [
         `反映レポート (${new Date(report.completedAt).toLocaleString()})`,
         `モード: ${report.mode} / 比較先アプリ: ${report.appId || '-'}`,
-        `成功 ${report.okCount} / 失敗 ${report.ngCount} / スキップ ${report.skipCount}`,
+        `成功 ${report.okCount} / 失敗 ${report.ngCount}${report.pendingCount ? ` / 未実行 ${report.pendingCount}` : ''} / スキップ ${report.skipCount}`,
         '',
         ...(report.sections || []).map((s) => {
-          const st = s.status === 'ok' ? 'OK' : s.status === 'ng' ? 'NG' : 'SKIP';
+          const st = s.status === 'ok' ? 'OK' : s.status === 'ng' ? 'NG' : s.status === 'pending' ? '未実行' : 'SKIP';
           return `[${st}] ${s.label || s.sectionKey}${s.message ? ' : ' + s.message : ''}`;
         })
       ];

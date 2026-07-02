@@ -48,6 +48,7 @@ import {
 } from './helpers.js';
 import { reflectRowModeById, reflectRowDesiredValue } from './rowMode.js';
 import { summarizePlanDeletes, assessApplyRisk } from './planInsights.js';
+import { pushReflectErrorLog } from './applyOutcome.js';
 import { isReflectNodeModeEffective } from './nodeModeUi.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { getJsonEditorInstance, renderRichDiff } from '../oss_integrations.js';
@@ -441,7 +442,8 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError) {
         logs.push(`  - OK ${req.method} ${req.path}${req.note ? ` (${req.note})` : ''}${retrySuffix}`);
       }
     } catch (e) {
-      if (logs) logs.push(`  - NG ${req.method} ${req.path}: ${e.message || String(e)}`);
+      const msg = e.message || String(e);
+      if (logs) pushReflectErrorLog(logs, `  - NG ${req.method} ${req.path}: ${msg}`, msg);
       if (stopOnError) throw e;
     }
   }
@@ -526,10 +528,16 @@ export async function applySectionsLoop(prefix: string, app: string | number, so
     } catch (e) {
       hadError = true;
       const msg = e.message || String(e);
-      logs.push(`NG ${def.label}: ${msg}`);
+      pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
       recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
       if (stopOnError) {
         logs.push('中断: エラーが発生したため処理を停止しました');
+        // 中断で未実行のまま残ったセクションも記録し、「失敗・未実行だけ再反映」の対象にする。
+        for (let j = i + 1; j < scopes.length; j++) {
+          const remainDef = SECTION_DEFS.find((x) => x.key === scopes[j]);
+          if (!remainDef || !remainDef.put) continue;
+          recordSectionResult(sectionResults, scopes[j], remainDef.label, 'pending', '中断により未実行');
+        }
         break;
       }
     }
@@ -786,6 +794,9 @@ function commitApplyReport({ mode, appId, scopes, sectionResults, hadError, sour
   const okSections = sectionResults.filter((r) => r.status === 'ok').map((r) => r.sectionKey);
   const ngSections = sectionResults.filter((r) => r.status === 'ng').map((r) => r.sectionKey);
   const skipSections = sectionResults.filter((r) => r.status === 'skipped').map((r) => r.sectionKey);
+  const pendingSections = sectionResults.filter((r) => r.status === 'pending').map((r) => r.sectionKey);
+  // 失敗に加えて、エラー中断で未実行のまま残ったセクションも再反映対象に含める。
+  const retrySectionKeys = [...ngSections, ...pendingSections];
   const report = {
     completedAt: now,
     mode,
@@ -798,7 +809,8 @@ function commitApplyReport({ mode, appId, scopes, sectionResults, hadError, sour
     okCount: okSections.length,
     ngCount: ngSections.length,
     skipCount: skipSections.length,
-    failedSectionKeys: ngSections,
+    pendingCount: pendingSections.length,
+    failedSectionKeys: retrySectionKeys,
     hadError: !!hadError
   };
   state.lastApplyReport = report;
@@ -816,7 +828,8 @@ function commitApplyReport({ mode, appId, scopes, sectionResults, hadError, sour
     okCount: okSections.length,
     ngCount: ngSections.length,
     skipCount: skipSections.length,
-    failedSectionKeys: ngSections,
+    pendingCount: pendingSections.length,
+    failedSectionKeys: retrySectionKeys,
     hadError: !!hadError
   });
   return report;
@@ -1580,10 +1593,16 @@ export async function runApplyPatchJson() {
     } catch (e) {
       hadError = true;
       const msg = e.message || String(e);
-      logs.push(`NG ${def.label}: ${msg}`);
+      pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
       recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
       if (stopOnError) {
         logs.push('中断: エラーが発生したため処理を停止しました');
+        for (let j = i + 1; j < sectionKeys.length; j++) {
+          const remainDef = SECTION_DEFS.find((item) => item.key === sectionKeys[j]);
+          const remainRows = payload.sections[sectionKeys[j]] || [];
+          if (!remainDef || !remainDef.put || !remainRows.length) continue;
+          recordSectionResult(sectionResults, sectionKeys[j], remainDef.label, 'pending', '中断により未実行');
+        }
         break;
       }
     }
@@ -1736,10 +1755,15 @@ export async function runApplyPreviewByNodes() {
       } catch (e) {
         hadError = true;
         const msg = e.message || String(e);
-        logs.push(`NG ${def.label}: ${msg}`);
+        pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
         recordSectionResult(sectionResults, secKey, def.label, 'ng', msg);
         if (stopOnError) {
           logs.push('中断: エラーが発生したため処理を停止しました');
+          for (let j = i + 1; j < sectionKeys.length; j++) {
+            const remainDef = SECTION_DEFS.find((item) => item.key === sectionKeys[j]);
+            if (!remainDef || !remainDef.put) continue;
+            recordSectionResult(sectionResults, sectionKeys[j], remainDef.label, 'pending', '中断により未実行');
+          }
           break;
         }
       }
@@ -2076,7 +2100,7 @@ export async function runRetryFailedSections() {
   if (!report) throw new Error('直近の反映結果がありません。まず反映を実行してください');
   const failed = (report.failedSectionKeys || []).filter(Boolean);
   if (!failed.length) {
-    setStatus('失敗セクションはありません（再実行不要）');
+    setStatus('失敗・未実行のセクションはありません（再実行不要）');
     return;
   }
   const c = commonParams();
@@ -2085,7 +2109,7 @@ export async function runRetryFailedSections() {
     throw new Error(`現在の比較先アプリIDが直近の反映時と異なります（今: ${c.target.appId} / 前回: ${report.appId}）。同じアプリで再実行してください`);
   }
   const failedLabels = failed.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(', ');
-  if (!kusConfirm(`直前に失敗したセクションだけ再反映します。\n対象: ${failedLabels}\n比較先アプリ: ${c.target.appId}\n\n実行しますか？`)) {
+  if (!kusConfirm(`直前に失敗または未実行のセクションだけ再反映します。\n対象: ${failedLabels}\n比較先アプリ: ${c.target.appId}\n\n実行しますか？`)) {
     setStatus('失敗セクション再実行をキャンセルしました');
     return;
   }
@@ -2107,7 +2131,7 @@ export async function runRetryFailedSections() {
   const progress = startProgress('失敗セクション再反映の準備中...', failed.length);
   try {
     logs.push(`比較先アプリ: ${app}`);
-    logs.push(`再反映セクション（前回NG）: ${failedLabels}`);
+    logs.push(`再反映セクション（前回NG・未実行）: ${failedLabels}`);
     logs.push(`エラー時動作: ${stopOnError ? '中断' : '継続'}`);
     if (ui.autoBackupPreview?.checked) {
       progress.setLabel('バックアップ保存中...');

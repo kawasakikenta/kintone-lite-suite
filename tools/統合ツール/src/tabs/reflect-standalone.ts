@@ -4,17 +4,7 @@ import { SECTION_DEFS, SYSTEM_FIELD_TYPES } from '../constants.js';
 import { deepClone, stableStringify, buildExportFilename, buildAppFilenameLabel } from '../utils.js';
 import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle } from '../api.js';
 import { pickSettingsBundle } from '../settingsBundleImport.js';
-import { buildReflectErrorHint, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
-
-function pushErrorLog(logs: string[], line: string, errorMessage: string) {
-  logs.push(line);
-  const hint = buildReflectErrorHint(errorMessage);
-  if (!hint) return;
-  const hintLine = `   ヒント: ${hint}`;
-  // 直前に同じヒントを出していたら重複して出さない（fieldSettings のサブ手順と本体など）
-  if (logs.slice(-3).includes(hintLine)) return;
-  logs.push(hintLine);
-}
+import { pushReflectErrorLog as pushErrorLog, type ApplySectionOutcome } from '../reflect/applyOutcome.js';
 
 function filterWritable(props: any) {
   const out: Record<string, any> = {};

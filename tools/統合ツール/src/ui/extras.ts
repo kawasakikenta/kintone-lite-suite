@@ -1327,12 +1327,12 @@ export function initRetryFailedSectionsButton(): void {
       pushToast('再送対象が見つかりません（直近の反映結果が必要）', { tone: 'warn' });
       return;
     }
-    const failed = report.sections.filter((s: any) => s.error || s.status === 'error');
+    const failed = report.sections.filter((s: any) => s.error || s.status === 'error' || s.status === 'ng' || s.status === 'pending');
     if (!failed.length) {
-      pushToast('失敗したセクションはありません', { tone: 'info' });
+      pushToast('失敗・未実行のセクションはありません', { tone: 'info' });
       return;
     }
-    state.kusRetryFailedKeys = failed.map((s: any) => s.key);
+    state.kusRetryFailedKeys = failed.map((s: any) => s.key ?? s.sectionKey);
     pushToast(`${failed.length} セクションを再送候補にマークしました。「プレビューへ反映」を再実行してください`, { tone: 'info', ttl: 5000 });
     // Trigger an existing retry handler if available
     const reapply = root.querySelector('[data-act="retryFailedSections"]') as HTMLElement | null;

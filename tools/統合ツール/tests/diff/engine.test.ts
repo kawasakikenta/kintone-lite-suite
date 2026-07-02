@@ -266,4 +266,38 @@ describe('diff/engine', () => {
       expect(rows.every((r: any) => r.severity === 'low')).toBe(true);
     });
   });
+
+  // 差分件数が上限で打ち切られた場合、無言で欠落させず truncation として報告する。
+  // 打ち切りが警告されないと「差分なし」と誤認したまま反映対象から漏れる事故につながる。
+  describe('diff truncation reporting', () => {
+    it('reports dropped rows and affected sections when the diff limit is exceeded', () => {
+      const props: Record<string, any> = {};
+      for (let i = 0; i < 1200; i++) {
+        props[`f${i}`] = { code: `f${i}`, type: 'SINGLE_LINE_TEXT', label: `label${i}` };
+      }
+      const result = computeDiffRows(
+        makeBundle({ fieldSettings: { properties: props } }),
+        makeBundle({ fieldSettings: { properties: {} } }),
+        ['fieldSettings'],
+        ''
+      );
+      expect(result.rows.filter((r: any) => r.type !== 'same').length).toBe(1000);
+      expect(result.truncation.truncated).toBe(true);
+      expect(result.truncation.diffLimit).toBe(1000);
+      const section = result.truncation.sections.find((s: any) => s.sectionKey === 'fieldSettings');
+      expect(section).toBeTruthy();
+    });
+
+    it('reports no truncation for small diffs', () => {
+      const result = computeDiffRows(
+        makeBundle({ fieldSettings: { properties: { a: { code: 'a', type: 'SINGLE_LINE_TEXT' } } } }),
+        makeBundle({ fieldSettings: { properties: {} } }),
+        ['fieldSettings'],
+        ''
+      );
+      expect(result.truncation.truncated).toBe(false);
+      expect(result.truncation.droppedDiff).toBe(0);
+      expect(result.truncation.sections).toEqual([]);
+    });
+  });
 });

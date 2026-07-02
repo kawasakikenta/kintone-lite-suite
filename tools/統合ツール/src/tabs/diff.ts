@@ -194,6 +194,7 @@ export async function importBundleFromFile(side, file) {
   state.lastDiffAt = null;
   state.lastDiffRows = [];
   state.lastFetchIssues = [];
+  state.lastDiffTruncation = null;
   state.lastDiffSignature = '';
   state.lastApplyPlan = null;
   state.diffSelectedIds = new Set();
@@ -250,6 +251,7 @@ export async function runDiff() {
   state.lastTargetBundle = target;
   state.lastDiffRows = rows;
   state.lastFetchIssues = diffResult.fetchIssues || [];
+  state.lastDiffTruncation = diffResult.truncation?.truncated ? diffResult.truncation : null;
   state.lastDiffAt = new Date().toISOString();
   state.lastDiffSignature = currentDiffSignature();
   state.lastApplyPlan = null;
@@ -275,7 +277,10 @@ export async function runDiff() {
   renderBundleState();
   renderReflectSidebar();
   renderReflectMainPanel();
-  setStatus(`差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${state.lastFetchIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`);
+  const truncationNote = state.lastDiffTruncation
+    ? ` / ⚠ 差分上限${state.lastDiffTruncation.diffLimit}件到達（結果は不完全）`
+    : '';
+  setStatus(`差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${state.lastFetchIssues.length}件${truncationNote}${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`);
 }
 
 // ---------------------------------------------------------------------------

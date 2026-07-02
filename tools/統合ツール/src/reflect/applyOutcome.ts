@@ -60,6 +60,19 @@ export function buildReflectErrorHint(message: string): string {
 }
 
 /**
+ * エラー行をログへ追加し、対処ヒントがあれば併記する。
+ * 直前に同じヒントを出していたら重複して出さない（fieldSettings のサブ手順と本体など）。
+ */
+export function pushReflectErrorLog(logs: string[], line: string, errorMessage: string): void {
+  logs.push(line);
+  const hint = buildReflectErrorHint(errorMessage);
+  if (!hint) return;
+  const hintLine = `   ヒント: ${hint}`;
+  if (logs.slice(-3).includes(hintLine)) return;
+  logs.push(hintLine);
+}
+
+/**
  * 再実行が必要なセクション（失敗 + 中断で未実行）のキーを実行順のまま返す。
  */
 export function collectRetrySectionKeys(sections: ApplySectionOutcome[]): string[] {

@@ -31,6 +31,7 @@ export interface AppState {
   lastTargetBundle: any;
   lastDiffRows: any[];
   lastFetchIssues: any[];
+  lastDiffTruncation: any;
   lastDiffAt: string | number | null;
   lastDiffSignature: string;
   lastApplyPlan: any;
@@ -123,6 +124,7 @@ export const state: AppState = {
   lastTargetBundle: null,
   lastDiffRows: [],
   lastFetchIssues: [],
+  lastDiffTruncation: null,
   lastDiffAt: null,
   lastDiffSignature: '',
   lastApplyPlan: null,

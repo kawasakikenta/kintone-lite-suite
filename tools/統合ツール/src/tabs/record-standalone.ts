@@ -234,7 +234,7 @@ const CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = new Set([
 ]);
 
 function splitCsvListValue(value) {
-  const text = String(value == null ? '' : '').trim();
+  const text = String(value == null ? '' : value).trim();
   if (!text) return [];
   return text.split(',').map((item) => item.trim()).filter(Boolean);
 }

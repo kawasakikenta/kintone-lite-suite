@@ -30,7 +30,15 @@ export function mountCsvExportLitePanel() {
   const appTable = makeAppTable({ minRows: 3, currentAppId: DEFAULT_APP_ID || '' });
   cardApps.body.appendChild(appTable.element);
   cardApps.body.appendChild(createAppSearchControl(panel, {
-    targets: [{ label: '対象アプリへ追加', apply: (id, name, guestId) => appTable.putApp(id, guestId || '', { focus: true, appName: name }) }]
+    targets: [{ label: '対象アプリへ追加', apply: (id, name, guestId) => {
+      const result = appTable.putApp(id, guestId || '', { focus: true, appName: name });
+      const note = result.action === 'existing' ? '（追加済み）' : result.action === 'filled' ? '（空行へ設定）' : '';
+      return {
+        message: `アプリ #${id}${name ? ` (${name})` : ''} を対象表に設定しました${note}`,
+        tone: result.action === 'existing' ? 'info' : 'ok',
+        pickedLabel: result.action === 'existing' ? '追加済み' : '設定済み'
+      };
+    } }]
   }));
   panel.body.insertBefore(cardApps.card, panel.status);
 

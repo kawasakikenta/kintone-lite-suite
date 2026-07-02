@@ -5003,8 +5003,21 @@ export function renderResultRows(rows) {
         <button type="button" class="diff-view-mode-btn${viewMode === 'category' ? ' is-active' : ''}" data-act="setDiffViewMode" data-mode="category" title="権限・プロセス・通知などをカテゴリ別の可視化で表示">🗂 セクション別</button>
       </div>`;
 
+  const truncation = state.lastDiffTruncation;
+  const truncationHtml = truncation?.truncated ? `
+      <div class="diff-truncation-warn" role="alert">
+        <span class="diff-truncation-warn__icon" aria-hidden="true">⚠</span>
+        <div class="diff-truncation-warn__body">
+          <strong>差分が上限（${truncation.diffLimit}件）に達したため、超過分は検出されていません${truncation.droppedDiff ? `（判明分だけで ${truncation.droppedDiff}件が欠落）` : ''}。</strong>
+          この比較結果は不完全なため、反映対象の判断には使わないでください。
+          無視キーや正規化プリセットでノイズを減らすか、比較セクションを絞って再実行してください。
+          ${truncation.sections?.length ? `<div class="diff-truncation-warn__sections">打ち切り発生セクション: ${truncation.sections.map((s) => `${esc(s.section)}${s.droppedDiff ? `（${s.droppedDiff}件以上）` : ''}`).join(' / ')}</div>` : ''}
+        </div>
+      </div>` : '';
+
   const summaryHtml = `
       <div class="diff-summary-head" role="region" aria-label="差分サマリー">
+        ${truncationHtml}
         ${buildDiffSummaryBars(summary)}
         ${statChipsHtml}
         <div class="diff-summary diff-summary--meta">

@@ -865,6 +865,7 @@ ${contextLine}`);
         lastTargetBundle: null,
         lastDiffRows: [],
         lastFetchIssues: [],
+        lastDiffTruncation: null,
         lastDiffAt: null,
         lastDiffSignature: "",
         lastApplyPlan: null,
@@ -1146,6 +1147,14 @@ ${contextLine}`);
     }
     return "";
   }
+  function pushReflectErrorLog(logs, line, errorMessage) {
+    logs.push(line);
+    const hint = buildReflectErrorHint(errorMessage);
+    if (!hint) return;
+    const hintLine = `   ヒント: ${hint}`;
+    if (logs.slice(-3).includes(hintLine)) return;
+    logs.push(hintLine);
+  }
   function collectRetrySectionKeys(sections) {
     return (sections || []).filter((s) => s.status === "ng" || s.status === "pending").map((s) => s.sectionKey);
   }
@@ -1161,14 +1170,6 @@ ${contextLine}`);
   }
 
   // src/tabs/reflect-standalone.ts
-  function pushErrorLog(logs, line, errorMessage) {
-    logs.push(line);
-    const hint = buildReflectErrorHint(errorMessage);
-    if (!hint) return;
-    const hintLine = `   ヒント: ${hint}`;
-    if (logs.slice(-3).includes(hintLine)) return;
-    logs.push(hintLine);
-  }
   function filterWritable(props) {
     const out = {};
     for (const [k, def] of Object.entries(props || {})) {
@@ -1214,7 +1215,7 @@ ${contextLine}`);
         logs.push(`  OK フィールド追加: ${Object.keys(adds).length}件`);
       } catch (e) {
         failedSteps += 1;
-        pushErrorLog(logs, `  NG フィールド追加: ${e.message}`, e.message);
+        pushReflectErrorLog(logs, `  NG フィールド追加: ${e.message}`, e.message);
         if (stopOnError) throw e;
       }
     }
@@ -1224,7 +1225,7 @@ ${contextLine}`);
         logs.push(`  OK フィールド更新: ${Object.keys(updates).length}件`);
       } catch (e) {
         failedSteps += 1;
-        pushErrorLog(logs, `  NG フィールド更新: ${e.message}`, e.message);
+        pushReflectErrorLog(logs, `  NG フィールド更新: ${e.message}`, e.message);
         if (stopOnError) throw e;
       }
     }
@@ -1315,7 +1316,7 @@ ${contextLine}`);
       } catch (e) {
         hadError = true;
         const msg = e.message || String(e);
-        pushErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
+        pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
         sections.push({ sectionKey: secKey, label: def.label, status: "ng", message: msg });
         if (stopOnError) {
           for (let j = i + 1; j < scopes.length; j++) {

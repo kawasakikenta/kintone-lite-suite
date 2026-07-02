@@ -255,6 +255,13 @@
 #kintone-unified-suite-v2 .diff-view .diff-issue-table th{background:var(--dv-card)}
 #kintone-unified-suite-v2 .diff-view .diff-issue-msg{white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 #kintone-unified-suite-v2 .diff-view .diff-summary-head{border-bottom:1px solid var(--dv-border);background:var(--dv-card)}
+#kintone-unified-suite-v2 .diff-view .diff-truncation-warn{display:flex;gap:8px;align-items:flex-start;margin:8px 10px 0;padding:8px 10px;border:1px solid #fca5a5;border-left:4px solid #dc2626;border-radius:6px;background:#fef2f2;color:#7f1d1d;font-size:12px;line-height:1.55}
+#kintone-unified-suite-v2 .diff-view .diff-truncation-warn__icon{font-size:14px;line-height:1.3}
+#kintone-unified-suite-v2 .diff-view .diff-truncation-warn__body strong{color:#b91c1c}
+#kintone-unified-suite-v2 .diff-view .diff-truncation-warn__sections{margin-top:4px;font-size:11px;color:#991b1b}
+#kintone-unified-suite-v2 .diff-view.dark .diff-truncation-warn{background:#450a0a;border-color:#b91c1c;color:#fecaca}
+#kintone-unified-suite-v2 .diff-view.dark .diff-truncation-warn__body strong{color:#fca5a5}
+#kintone-unified-suite-v2 .diff-view.dark .diff-truncation-warn__sections{color:#fda4af}
 #kintone-unified-suite-v2 .diff-view .diff-summary-bars{display:flex;height:6px;border-radius:4px;overflow:hidden;margin:0 10px 0;padding-top:8px;gap:2px}
 #kintone-unified-suite-v2 .diff-view .diff-bar{min-width:2px;border-radius:2px}
 #kintone-unified-suite-v2 .diff-view .diff-bar-added{background:#22c55e}

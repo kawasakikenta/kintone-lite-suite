@@ -373,13 +373,13 @@ const CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = new Set([
   'FILE', 'SUBTABLE', 'REFERENCE_TABLE', 'LABEL', 'HR', 'SPACER'
 ]);
 
-function splitCsvListValue(value) {
-  const text = String(value == null ? '' : '').trim();
+export function splitCsvListValue(value) {
+  const text = String(value == null ? '' : value).trim();
   if (!text) return [];
   return text.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
-function coerceCsvImportValue(rawValue, fieldDef) {
+export function coerceCsvImportValue(rawValue, fieldDef) {
   const type = String(fieldDef?.type || '');
   if (type === 'CHECK_BOX' || type === 'MULTI_SELECT') return splitCsvListValue(rawValue);
   if (type === 'USER_SELECT' || type === 'ORGANIZATION_SELECT' || type === 'GROUP_SELECT') {

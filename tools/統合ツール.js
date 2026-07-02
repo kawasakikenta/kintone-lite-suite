@@ -1777,6 +1777,7 @@ ${contextLine}`);
         lastTargetBundle: null,
         lastDiffRows: [],
         lastFetchIssues: [],
+        lastDiffTruncation: null,
         lastDiffAt: null,
         lastDiffSignature: "",
         lastApplyPlan: null,
@@ -2005,18 +2006,34 @@ ${contextLine}`);
     if (ignoreRules.keySet.has(leaf)) return true;
     return matchAnyPattern(ignoreRules.keyPatterns, leaf);
   }
+  function markDroppedDiffRow(out, row, kind) {
+    if (!out) return;
+    if (kind === "same") out.__sameDropped = Number(out.__sameDropped || 0) + 1;
+    else out.__diffDropped = Number(out.__diffDropped || 0) + 1;
+    const sectionKey = String(row?.sectionKey || String(row?.path || "").split(".")[0].split("[")[0] || "");
+    if (!sectionKey) return;
+    const bySection = out.__droppedBySection || (out.__droppedBySection = {});
+    const entry = bySection[sectionKey] || (bySection[sectionKey] = { diff: 0, same: 0 });
+    entry[kind] += 1;
+  }
   function pushDiffRow(out, row, ignoreRules) {
     if (!row) return false;
     if (isIgnoredPath(ignoreRules, row.path)) return false;
     if (row.type === "same") {
       const sameCount = Number(out?.__sameCount || 0);
-      if (sameCount >= SAME_ROW_LIMIT) return false;
+      if (sameCount >= SAME_ROW_LIMIT) {
+        markDroppedDiffRow(out, row, "same");
+        return false;
+      }
       if (out) out.__sameCount = sameCount + 1;
       out.push(row);
       return true;
     }
     const diffCount = Number(out?.__diffCount || 0);
-    if (diffCount >= ARRAY_DIFF_LIMIT) return false;
+    if (diffCount >= ARRAY_DIFF_LIMIT) {
+      markDroppedDiffRow(out, row, "diff");
+      return false;
+    }
     if (out) out.__diffCount = diffCount + 1;
     out.push(row);
     return true;
@@ -2648,10 +2665,14 @@ ${contextLine}`);
     const rows = [];
     rows.__diffCount = 0;
     rows.__sameCount = 0;
+    rows.__diffDropped = 0;
+    rows.__sameDropped = 0;
     rows.__includeSame = includeSame;
     const fetchIssues = [];
+    const limitHitSectionKeys = [];
     for (const sec of sections) {
       const label = (SECTION_DEFS.find((x) => x.key === sec) || {}).label || sec;
+      const limitHitBefore = getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT;
       const s = sourceBundle.sections[sec];
       const t = targetBundle.sections[sec];
       if (s && s._fetchError || t && t._fetchError) {
@@ -2735,13 +2756,37 @@ ${contextLine}`);
           }, ignoreRules);
         });
       }
+      if (getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT || limitHitBefore) {
+        limitHitSectionKeys.push(sec);
+      }
     }
     for (const row of rows) {
       if (!row.severity) row.severity = detectRowSeverity(row);
     }
     return {
       rows: rows.map((row, idx) => ({ ...row, _id: `d${idx}` })),
-      fetchIssues
+      fetchIssues,
+      truncation: buildDiffTruncationInfo(rows, limitHitSectionKeys)
+    };
+  }
+  function buildDiffTruncationInfo(rows, limitHitSectionKeys = []) {
+    const droppedDiff = Number(rows?.__diffDropped || 0);
+    const droppedSame = Number(rows?.__sameDropped || 0);
+    const bySection = rows?.__droppedBySection || {};
+    const sectionKeys = [.../* @__PURE__ */ new Set([...Object.keys(bySection), ...limitHitSectionKeys])];
+    const sections = sectionKeys.map((sectionKey) => ({
+      sectionKey,
+      section: (SECTION_DEFS.find((x) => x.key === sectionKey) || {}).label || sectionKey,
+      droppedDiff: Number(bySection[sectionKey]?.diff || 0),
+      droppedSame: Number(bySection[sectionKey]?.same || 0)
+    }));
+    return {
+      truncated: droppedDiff > 0 || droppedSame > 0 || limitHitSectionKeys.length > 0,
+      diffLimit: ARRAY_DIFF_LIMIT,
+      sameLimit: SAME_ROW_LIMIT,
+      droppedDiff,
+      droppedSame,
+      sections
     };
   }
   function summarizeRows(rows) {
@@ -11368,8 +11413,20 @@ ${body}`;
         <button type="button" class="diff-view-mode-btn${viewMode === "table" ? " is-active" : ""}" data-act="setDiffViewMode" data-mode="table" title="差分行を表形式で一覧表示（既定）">📋 行一覧</button>
         <button type="button" class="diff-view-mode-btn${viewMode === "category" ? " is-active" : ""}" data-act="setDiffViewMode" data-mode="category" title="権限・プロセス・通知などをカテゴリ別の可視化で表示">🗂 セクション別</button>
       </div>`;
+    const truncation = state.lastDiffTruncation;
+    const truncationHtml = truncation?.truncated ? `
+      <div class="diff-truncation-warn" role="alert">
+        <span class="diff-truncation-warn__icon" aria-hidden="true">⚠</span>
+        <div class="diff-truncation-warn__body">
+          <strong>差分が上限（${truncation.diffLimit}件）に達したため、超過分は検出されていません${truncation.droppedDiff ? `（判明分だけで ${truncation.droppedDiff}件が欠落）` : ""}。</strong>
+          この比較結果は不完全なため、反映対象の判断には使わないでください。
+          無視キーや正規化プリセットでノイズを減らすか、比較セクションを絞って再実行してください。
+          ${truncation.sections?.length ? `<div class="diff-truncation-warn__sections">打ち切り発生セクション: ${truncation.sections.map((s) => `${esc(s.section)}${s.droppedDiff ? `（${s.droppedDiff}件以上）` : ""}`).join(" / ")}</div>` : ""}
+        </div>
+      </div>` : "";
     const summaryHtml = `
       <div class="diff-summary-head" role="region" aria-label="差分サマリー">
+        ${truncationHtml}
         ${buildDiffSummaryBars(summary)}
         ${statChipsHtml}
         <div class="diff-summary diff-summary--meta">
@@ -13826,7 +13883,7 @@ ${tgt.full}`);
     if (reportBadge) {
       const r = state.lastApplyReport;
       if (r) {
-        const total = (r.okCount || 0) + (r.ngCount || 0) + (r.skipCount || 0);
+        const total = (r.okCount || 0) + (r.ngCount || 0) + (r.pendingCount || 0) + (r.skipCount || 0);
         reportBadge.textContent = total ? String(total) : "";
       } else {
         reportBadge.textContent = "";
@@ -13888,13 +13945,13 @@ ${tgt.full}`);
       section: "セクションまとめ反映",
       nodes: "差分選択モード",
       patch: "JSONパッチ反映",
-      retry: "失敗セクション再反映",
+      retry: "失敗・未実行セクション再反映",
       restore: "バックアップ復元"
     }[report.mode] || report.mode || "反映";
     const stamp = new Date(report.completedAt).toLocaleString();
     const sectionHtml = report.sections.map((s) => {
-      const statusCls = s.status === "ok" ? "ok" : s.status === "ng" ? "ng" : "skipped";
-      const statusLabel2 = s.status === "ok" ? "成功" : s.status === "ng" ? "失敗" : "スキップ";
+      const statusCls = s.status === "ok" ? "ok" : s.status === "ng" || s.status === "pending" ? "ng" : "skipped";
+      const statusLabel2 = s.status === "ok" ? "成功" : s.status === "ng" ? "失敗" : s.status === "pending" ? "未実行" : "スキップ";
       const msg = s.message ? `<span class="reflect-apply-section__msg" title="${esc(s.message)}">${esc(s.message)}</span>` : "";
       return `<div class="reflect-apply-section">
       <span class="reflect-apply-section__label">${esc(s.label || s.sectionKey)}</span>
@@ -13902,7 +13959,7 @@ ${tgt.full}`);
       ${msg}
     </div>`;
     }).join("");
-    const retryBtn = report.ngCount > 0 ? '<button type="button" class="btn ok" data-act="retryFailedSections" title="直近の反映で失敗したセクションだけを再送信します">失敗セクションだけ再反映</button>' : "";
+    const retryBtn = (report.failedSectionKeys || []).length > 0 ? '<button type="button" class="btn ok" data-act="retryFailedSections" title="直近の反映で失敗したセクションと、エラー中断で未実行のまま残ったセクションだけを再送信します">失敗・未実行だけ再反映</button>' : "";
     host.className = `reflect-apply-report ${cls}`;
     host.innerHTML = `<div class="reflect-apply-report__head">
       <span class="reflect-apply-report__title">直近の反映結果 — ${esc(modeLabel)}</span>
@@ -13911,6 +13968,7 @@ ${tgt.full}`);
     <div class="reflect-apply-report__counters">
       <span class="reflect-apply-counter reflect-apply-counter--ok">成功 ${report.okCount}</span>
       <span class="reflect-apply-counter reflect-apply-counter--ng">失敗 ${report.ngCount}</span>
+      ${report.pendingCount ? `<span class="reflect-apply-counter reflect-apply-counter--ng">未実行 ${report.pendingCount}</span>` : ""}
       <span class="reflect-apply-counter reflect-apply-counter--skip">スキップ ${report.skipCount}</span>
     </div>
     <div class="reflect-apply-report__sections">${sectionHtml}</div>
@@ -13936,7 +13994,7 @@ ${tgt.full}`);
       const time = new Date(entry.at).toLocaleString();
       const scopeLabel = (entry.scopes || []).slice(0, 4).join(", ") + ((entry.scopes || []).length > 4 ? ` 他${entry.scopes.length - 4}` : "");
       const failedKeys = Array.isArray(entry.failedSectionKeys) ? entry.failedSectionKeys.filter(Boolean) : [];
-      const failedRow = failedKeys.length ? `<div class="reflect-apply-history__fail" title="${esc(failedKeys.map(sectionLabelOf2).join(", "))}">⚠ 失敗: ${esc(failedKeys.slice(0, 6).map(sectionLabelOf2).join(", "))}${failedKeys.length > 6 ? ` 他${failedKeys.length - 6}` : ""}</div>` : "";
+      const failedRow = failedKeys.length ? `<div class="reflect-apply-history__fail" title="${esc(failedKeys.map(sectionLabelOf2).join(", "))}">⚠ 失敗・未実行: ${esc(failedKeys.slice(0, 6).map(sectionLabelOf2).join(", "))}${failedKeys.length > 6 ? ` 他${failedKeys.length - 6}` : ""}</div>` : "";
       const canReplay = Array.isArray(entry.scopes) && entry.scopes.length > 0;
       const replayBtn = canReplay ? `<button type="button" class="reflect-apply-history__replay" data-act="replayApplyHistoryScopes" data-history-id="${esc(entry.id || "")}" title="この反映で対象だったセクションを反映スコープに復元します（実行はしません）">再反映を準備</button>` : "<span></span>";
       return `<div class="reflect-apply-history__item${hasErr ? " has-error" : ""}" title="${esc(scopeLabel)}">
@@ -16319,6 +16377,56 @@ ${warnings.join("\n")}
     }
   });
 
+  // src/reflect/applyOutcome.ts
+  function buildReflectErrorHint(message) {
+    const text = String(message || "");
+    if (!text) return "";
+    for (const rule of ERROR_HINT_RULES) {
+      if (rule.pattern.test(text)) return rule.hint;
+    }
+    return "";
+  }
+  function pushReflectErrorLog(logs, line, errorMessage) {
+    logs.push(line);
+    const hint = buildReflectErrorHint(errorMessage);
+    if (!hint) return;
+    const hintLine = `   ヒント: ${hint}`;
+    if (logs.slice(-3).includes(hintLine)) return;
+    logs.push(hintLine);
+  }
+  var ERROR_HINT_RULES;
+  var init_applyOutcome = __esm({
+    "src/reflect/applyOutcome.ts"() {
+      "use strict";
+      ERROR_HINT_RULES = [
+        {
+          pattern: /CB_NO02|権限がありません|Forbidden|アクセスが拒否/i,
+          hint: "比較先アプリのアプリ管理権限があるユーザーで実行しているか確認してください。"
+        },
+        {
+          pattern: /GAIA_AP01|アプリ.*(見つかりません|存在しません)|指定したアプリ/,
+          hint: "比較先アプリID・ゲストスペースIDが正しいか確認してください。"
+        },
+        {
+          pattern: /ルックアップ|lookup|relatedApp|関連レコード/i,
+          hint: "参照先アプリが比較先環境に存在しない可能性があります。「Lookup AppID マッピング」で参照先を変換してください。"
+        },
+        {
+          pattern: /フィールド.*(見つかりません|存在しません)|GAIA_IL26/,
+          hint: "比較先に存在しないフィールドを参照しています。先に「フィールド設定」を反映してから、このセクションを再実行してください。"
+        },
+        {
+          pattern: /プロセス管理|GAIA_RE/,
+          hint: "プロセス管理の有効/無効や、作業者に指定したユーザー・組織が比較先環境に存在するか確認してください。"
+        },
+        {
+          pattern: /Failed to fetch|NetworkError|ネットワーク|タイムアウト|timeout/i,
+          hint: "通信エラーの可能性があります。時間をおいて「失敗・未実行だけ選択」から再実行してください。"
+        }
+      ];
+    }
+  });
+
   // src/tabs/record.ts
   function getSideApiPrefix(isSource, preview) {
     const c = commonParams();
@@ -16640,7 +16748,7 @@ ${warnings.join("\n")}
     return field.value;
   }
   function splitCsvListValue(value) {
-    const text = String(value == null ? "" : "").trim();
+    const text = String(value == null ? "" : value).trim();
     if (!text) return [];
     return text.split(",").map((item) => item.trim()).filter(Boolean);
   }
@@ -17774,7 +17882,8 @@ ${lines.join("\n")}
           logs.push(`  - OK ${req.method} ${req.path}${req.note ? ` (${req.note})` : ""}${retrySuffix}`);
         }
       } catch (e) {
-        if (logs) logs.push(`  - NG ${req.method} ${req.path}: ${e.message || String(e)}`);
+        const msg = e.message || String(e);
+        if (logs) pushReflectErrorLog(logs, `  - NG ${req.method} ${req.path}: ${msg}`, msg);
         if (stopOnError) throw e;
       }
     }
@@ -17846,10 +17955,15 @@ ${lines.join("\n")}
       } catch (e) {
         hadError = true;
         const msg = e.message || String(e);
-        logs.push(`NG ${def.label}: ${msg}`);
+        pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
         recordSectionResult(sectionResults, secKey, def.label, "ng", msg);
         if (stopOnError) {
           logs.push("中断: エラーが発生したため処理を停止しました");
+          for (let j = i + 1; j < scopes.length; j++) {
+            const remainDef = SECTION_DEFS.find((x) => x.key === scopes[j]);
+            if (!remainDef || !remainDef.put) continue;
+            recordSectionResult(sectionResults, scopes[j], remainDef.label, "pending", "中断により未実行");
+          }
           break;
         }
       }
@@ -18041,6 +18155,8 @@ ${lines.join("\n")}
     const okSections = sectionResults.filter((r) => r.status === "ok").map((r) => r.sectionKey);
     const ngSections = sectionResults.filter((r) => r.status === "ng").map((r) => r.sectionKey);
     const skipSections = sectionResults.filter((r) => r.status === "skipped").map((r) => r.sectionKey);
+    const pendingSections = sectionResults.filter((r) => r.status === "pending").map((r) => r.sectionKey);
+    const retrySectionKeys = [...ngSections, ...pendingSections];
     const report = {
       completedAt: now,
       mode,
@@ -18053,7 +18169,8 @@ ${lines.join("\n")}
       okCount: okSections.length,
       ngCount: ngSections.length,
       skipCount: skipSections.length,
-      failedSectionKeys: ngSections,
+      pendingCount: pendingSections.length,
+      failedSectionKeys: retrySectionKeys,
       hadError: !!hadError
     };
     state.lastApplyReport = report;
@@ -18071,7 +18188,8 @@ ${lines.join("\n")}
       okCount: okSections.length,
       ngCount: ngSections.length,
       skipCount: skipSections.length,
-      failedSectionKeys: ngSections,
+      pendingCount: pendingSections.length,
+      failedSectionKeys: retrySectionKeys,
       hadError: !!hadError
     });
     return report;
@@ -18754,10 +18872,16 @@ ${lines.join("\n")}
       } catch (e) {
         hadError = true;
         const msg = e.message || String(e);
-        logs.push(`NG ${def.label}: ${msg}`);
+        pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
         recordSectionResult(sectionResults, secKey, def.label, "ng", msg);
         if (stopOnError) {
           logs.push("中断: エラーが発生したため処理を停止しました");
+          for (let j = i + 1; j < sectionKeys.length; j++) {
+            const remainDef = SECTION_DEFS.find((item) => item.key === sectionKeys[j]);
+            const remainRows = payload.sections[sectionKeys[j]] || [];
+            if (!remainDef || !remainDef.put || !remainRows.length) continue;
+            recordSectionResult(sectionResults, sectionKeys[j], remainDef.label, "pending", "中断により未実行");
+          }
           break;
         }
       }
@@ -18891,10 +19015,15 @@ ${lines.join("\n")}
         } catch (e) {
           hadError = true;
           const msg = e.message || String(e);
-          logs.push(`NG ${def.label}: ${msg}`);
+          pushReflectErrorLog(logs, `NG ${def.label}: ${msg}`, msg);
           recordSectionResult(sectionResults, secKey, def.label, "ng", msg);
           if (stopOnError) {
             logs.push("中断: エラーが発生したため処理を停止しました");
+            for (let j = i + 1; j < sectionKeys.length; j++) {
+              const remainDef = SECTION_DEFS.find((item) => item.key === sectionKeys[j]);
+              if (!remainDef || !remainDef.put) continue;
+              recordSectionResult(sectionResults, sectionKeys[j], remainDef.label, "pending", "中断により未実行");
+            }
             break;
           }
         }
@@ -19201,7 +19330,7 @@ ${lines.join("\n")}
     if (!report) throw new Error("直近の反映結果がありません。まず反映を実行してください");
     const failed = (report.failedSectionKeys || []).filter(Boolean);
     if (!failed.length) {
-      setStatus("失敗セクションはありません（再実行不要）");
+      setStatus("失敗・未実行のセクションはありません（再実行不要）");
       return;
     }
     const c = commonParams();
@@ -19210,7 +19339,7 @@ ${lines.join("\n")}
       throw new Error(`現在の比較先アプリIDが直近の反映時と異なります（今: ${c.target.appId} / 前回: ${report.appId}）。同じアプリで再実行してください`);
     }
     const failedLabels = failed.map((k) => SECTION_DEFS.find((d) => d.key === k)?.label || k).join(", ");
-    if (!kusConfirm(`直前に失敗したセクションだけ再反映します。
+    if (!kusConfirm(`直前に失敗または未実行のセクションだけ再反映します。
 対象: ${failedLabels}
 比較先アプリ: ${c.target.appId}
 
@@ -19235,7 +19364,7 @@ ${lines.join("\n")}
     const progress = startProgress("失敗セクション再反映の準備中...", failed.length);
     try {
       logs.push(`比較先アプリ: ${app}`);
-      logs.push(`再反映セクション（前回NG）: ${failedLabels}`);
+      logs.push(`再反映セクション（前回NG・未実行）: ${failedLabels}`);
       logs.push(`エラー時動作: ${stopOnError ? "中断" : "継続"}`);
       if (ui.autoBackupPreview?.checked) {
         progress.setLabel("バックアップ保存中...");
@@ -19305,6 +19434,7 @@ ${lines.join("\n")}
       init_helpers();
       init_rowMode();
       init_planInsights();
+      init_applyOutcome();
       init_nodeModeUi();
       init_dialog();
       init_oss_integrations();
@@ -20902,6 +21032,7 @@ ${reason}` : "",
     state.lastDiffAt = null;
     state.lastDiffRows = [];
     state.lastFetchIssues = [];
+    state.lastDiffTruncation = null;
     state.lastDiffSignature = "";
     state.lastApplyPlan = null;
     state.diffSelectedIds = /* @__PURE__ */ new Set();
@@ -20945,6 +21076,7 @@ ${reason}` : "",
     state.lastTargetBundle = target;
     state.lastDiffRows = rows;
     state.lastFetchIssues = diffResult.fetchIssues || [];
+    state.lastDiffTruncation = diffResult.truncation?.truncated ? diffResult.truncation : null;
     state.lastDiffAt = (/* @__PURE__ */ new Date()).toISOString();
     state.lastDiffSignature = currentDiffSignature();
     state.lastApplyPlan = null;
@@ -20969,7 +21101,8 @@ ${reason}` : "",
     renderBundleState();
     renderReflectSidebar();
     renderReflectMainPanel();
-    setStatus(`差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${state.lastFetchIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ""} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`);
+    const truncationNote = state.lastDiffTruncation ? ` / ⚠ 差分上限${state.lastDiffTruncation.diffLimit}件到達（結果は不完全）` : "";
+    setStatus(`差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${state.lastFetchIssues.length}件${truncationNote}${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ""} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`);
   }
   async function runDiffAndPreviewPlan() {
     await runDiff();
@@ -28121,6 +28254,13 @@ ${detail}`);
 #kintone-unified-suite-v2 .diff-view .diff-issue-table th{background:var(--dv-card)}
 #kintone-unified-suite-v2 .diff-view .diff-issue-msg{white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
 #kintone-unified-suite-v2 .diff-view .diff-summary-head{border-bottom:1px solid var(--dv-border);background:var(--dv-card)}
+#kintone-unified-suite-v2 .diff-view .diff-truncation-warn{display:flex;gap:8px;align-items:flex-start;margin:8px 10px 0;padding:8px 10px;border:1px solid #fca5a5;border-left:4px solid #dc2626;border-radius:6px;background:#fef2f2;color:#7f1d1d;font-size:12px;line-height:1.55}
+#kintone-unified-suite-v2 .diff-view .diff-truncation-warn__icon{font-size:14px;line-height:1.3}
+#kintone-unified-suite-v2 .diff-view .diff-truncation-warn__body strong{color:#b91c1c}
+#kintone-unified-suite-v2 .diff-view .diff-truncation-warn__sections{margin-top:4px;font-size:11px;color:#991b1b}
+#kintone-unified-suite-v2 .diff-view.dark .diff-truncation-warn{background:#450a0a;border-color:#b91c1c;color:#fecaca}
+#kintone-unified-suite-v2 .diff-view.dark .diff-truncation-warn__body strong{color:#fca5a5}
+#kintone-unified-suite-v2 .diff-view.dark .diff-truncation-warn__sections{color:#fda4af}
 #kintone-unified-suite-v2 .diff-view .diff-summary-bars{display:flex;height:6px;border-radius:4px;overflow:hidden;margin:0 10px 0;padding-top:8px;gap:2px}
 #kintone-unified-suite-v2 .diff-view .diff-bar{min-width:2px;border-radius:2px}
 #kintone-unified-suite-v2 .diff-view .diff-bar-added{background:#22c55e}
@@ -43020,10 +43160,10 @@ ${detail}`);
         const lines = [
           `反映レポート (${new Date(report.completedAt).toLocaleString()})`,
           `モード: ${report.mode} / 比較先アプリ: ${report.appId || "-"}`,
-          `成功 ${report.okCount} / 失敗 ${report.ngCount} / スキップ ${report.skipCount}`,
+          `成功 ${report.okCount} / 失敗 ${report.ngCount}${report.pendingCount ? ` / 未実行 ${report.pendingCount}` : ""} / スキップ ${report.skipCount}`,
           "",
           ...(report.sections || []).map((s) => {
-            const st = s.status === "ok" ? "OK" : s.status === "ng" ? "NG" : "SKIP";
+            const st = s.status === "ok" ? "OK" : s.status === "ng" ? "NG" : s.status === "pending" ? "未実行" : "SKIP";
             return `[${st}] ${s.label || s.sectionKey}${s.message ? " : " + s.message : ""}`;
           })
         ];
@@ -44980,12 +45120,12 @@ ${body}`;
         pushToast("再送対象が見つかりません（直近の反映結果が必要）", { tone: "warn" });
         return;
       }
-      const failed = report.sections.filter((s) => s.error || s.status === "error");
+      const failed = report.sections.filter((s) => s.error || s.status === "error" || s.status === "ng" || s.status === "pending");
       if (!failed.length) {
-        pushToast("失敗したセクションはありません", { tone: "info" });
+        pushToast("失敗・未実行のセクションはありません", { tone: "info" });
         return;
       }
-      state.kusRetryFailedKeys = failed.map((s) => s.key);
+      state.kusRetryFailedKeys = failed.map((s) => s.key ?? s.sectionKey);
       pushToast(`${failed.length} セクションを再送候補にマークしました。「プレビューへ反映」を再実行してください`, { tone: "info", ttl: 5e3 });
       const reapply = root2.querySelector('[data-act="retryFailedSections"]');
       if (reapply) reapply.click();
