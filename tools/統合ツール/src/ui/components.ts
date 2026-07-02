@@ -8,6 +8,7 @@ import {
   DEFAULT_IGNORE_KEYS
 } from '../constants.js';
 import { state } from '../state.js';
+import { buildReflectErrorHint } from '../reflect/applyOutcome.js';
 import {
   esc,
   getPreviewStateLabel,
@@ -1247,49 +1248,64 @@ export function renderReflectMinimapNav() {
 }
 
 // U5: 比較先アプリの常駐バッジ（事故防止）
+// 反映の方向（比較元 → 比較先）を常時表示し、同一接続の場合はこの場で警告する。
 export function renderReflectTargetBadge() {
   const el = getToolDocument().getElementById('u_reflectTargetBadge');
   if (!el) return;
   let appId = '';
   let isPreview = true;
   let guestId = '';
+  let srcAppId = '';
+  let srcGuestId = '';
   try {
     const c = deps.commonParams();
     appId = String(c.target?.appId || '').trim();
     isPreview = !!c.target?.preview;
     guestId = String(c.target?.guestId || '').trim();
+    srcAppId = String(c.source?.appId || '').trim();
+    srcGuestId = String(c.source?.guestId || '').trim();
   } catch { /* ignore */ }
-  const targetBundle = state.importedTargetBundle || state.lastTargetBundle;
-  const appLabel = (() => {
-    const info = targetBundle?.sections?.appInfo;
+  const readAppName = (bundle: any) => {
+    const info = bundle?.sections?.appInfo;
     if (info && typeof info === 'object' && !info._fetchError) {
       return String(info.name || '').trim();
     }
     return '';
-  })();
+  };
+  const targetBundle = state.importedTargetBundle || state.lastTargetBundle;
+  const appLabel = readAppName(targetBundle);
+  const srcLabel = readAppName(state.importedSourceBundle || state.lastSourceBundle);
   const previewLabel = isPreview ? 'プレビュー' : '本番';
   const previewClass = isPreview ? 'is-preview' : 'is-prod';
   const guestSuffix = guestId ? ` / ゲスト${esc(guestId)}` : '';
   const appPath = guestId ? `/k/guest/${encodeURIComponent(guestId)}/${encodeURIComponent(appId)}/` : `/k/${encodeURIComponent(appId)}/`;
+  const srcHtml = `<span class="reflect-target-badge__src" title="比較元（コピー元）の設定を比較先へ書き込みます">
+      ${srcAppId
+        ? `比較元 <b>App ${esc(srcAppId)}</b>${srcLabel ? `<span class="reflect-target-badge__srcname" title="${esc(srcLabel)}">${esc(srcLabel)}</span>` : ''}${srcGuestId ? `<span class="reflect-target-badge__guest"> / ゲスト${esc(srcGuestId)}</span>` : ''}`
+        : '比較元未設定'}
+    </span>
+    <span class="reflect-target-badge__arrow" aria-hidden="true">→</span>`;
   if (!appId) {
-    el.innerHTML = `<div class="reflect-target-badge__inner" data-state="empty">
+    el.innerHTML = `${srcHtml}<div class="reflect-target-badge__inner" data-state="empty">
       <span class="reflect-target-badge__label">反映先未設定</span>
     </div>`;
     return;
   }
+  const sameConnection = !!srcAppId && srcAppId === appId && srcGuestId === guestId;
   // プレビュー画面をまだ開いていない場合は「開く」ボタンを強調して、
   // チェックリスト「プレビュー画面確認済み」を満たすための導線を分かりやすくする。
   const previewKey = `${appId}::${guestId}`;
   const previewOpened = !!state.reflectPreviewOpened && state.reflectPreviewOpenedFor === previewKey;
   const pendingClass = previewOpened ? '' : ' reflect-target-badge__open--pending';
   const pendingLabel = previewOpened ? '開く' : '画面を開く ▸';
-  el.innerHTML = `<div class="reflect-target-badge__inner ${previewClass}">
+  el.innerHTML = `${srcHtml}<div class="reflect-target-badge__inner ${previewClass}">
     <span class="reflect-target-badge__chip">${esc(previewLabel)}</span>
     <span class="reflect-target-badge__app">App ${esc(appId)}</span>
     ${appLabel ? `<span class="reflect-target-badge__name" title="${esc(appLabel)}">${esc(appLabel)}</span>` : ''}
     ${guestSuffix ? `<span class="reflect-target-badge__guest">${guestSuffix}</span>` : ''}
     <button type="button" class="reflect-target-badge__open${pendingClass}" data-act="openTargetPreviewApp" data-preview-url="${esc(appPath)}" title="比較先アプリのプレビュー確認画面を開き、チェックリスト「プレビュー画面確認済み」を満たします">${esc(pendingLabel)}</button>
-  </div>`;
+  </div>
+  ${sameConnection ? '<div class="reflect-target-badge__same-warn" role="alert">⚠ 比較元と比較先が同一接続です。自分自身のプレビューを書き換えることになります。</div>' : ''}`;
 }
 
 // U1: 状態に応じた「次の一手」ボタンをフッターに常駐
@@ -1638,10 +1654,12 @@ export function renderReflectApplyReport() {
     const statusCls = s.status === 'ok' ? 'ok' : (s.status === 'ng' || s.status === 'pending') ? 'ng' : 'skipped';
     const statusLabel = s.status === 'ok' ? '成功' : s.status === 'ng' ? '失敗' : s.status === 'pending' ? '未実行' : 'スキップ';
     const msg = s.message ? `<span class="reflect-apply-section__msg" title="${esc(s.message)}">${esc(s.message)}</span>` : '';
+    const hint = s.status === 'ng' && s.message ? buildReflectErrorHint(s.message) : '';
     return `<div class="reflect-apply-section">
       <span class="reflect-apply-section__label">${esc(s.label || s.sectionKey)}</span>
       <span class="reflect-apply-section__status ${statusCls}">${statusLabel}</span>
       ${msg}
+      ${hint ? `<div class="reflect-apply-section__hint">💡 ${esc(hint)}</div>` : ''}
     </div>`;
   }).join('');
   const retryBtn = (report.failedSectionKeys || []).length > 0

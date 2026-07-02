@@ -913,6 +913,8 @@ export function setupEventHandlers(injected: any = {}) {
       saveCurrentDialogState();
       resetReflectApplyChecks(['diff', 'plan']);
       updateConnectionStepIndicators();
+      // 反映タブの「反映の方向」バッジ（比較元→比較先・同一接続警告）を即時更新する
+      renderReflectAssistPanel();
     });
   });
 

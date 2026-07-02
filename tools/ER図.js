@@ -754,6 +754,13 @@ ${contextLine}`);
     }
   });
 
+  // src/reflect/applyOutcome.ts
+  var init_applyOutcome = __esm({
+    "src/reflect/applyOutcome.ts"() {
+      "use strict";
+    }
+  });
+
   // src/diff/engine.ts
   var init_engine = __esm({
     "src/diff/engine.ts"() {
@@ -921,6 +928,7 @@ ${contextLine}`);
       "use strict";
       init_constants();
       init_state();
+      init_applyOutcome();
       init_utils();
       init_filter();
       init_ignore_presets();

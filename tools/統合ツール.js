@@ -4884,6 +4884,56 @@ ${contextLine}`);
     }
   });
 
+  // src/reflect/applyOutcome.ts
+  function buildReflectErrorHint(message) {
+    const text = String(message || "");
+    if (!text) return "";
+    for (const rule of ERROR_HINT_RULES) {
+      if (rule.pattern.test(text)) return rule.hint;
+    }
+    return "";
+  }
+  function pushReflectErrorLog(logs, line, errorMessage) {
+    logs.push(line);
+    const hint = buildReflectErrorHint(errorMessage);
+    if (!hint) return;
+    const hintLine = `   ヒント: ${hint}`;
+    if (logs.slice(-3).includes(hintLine)) return;
+    logs.push(hintLine);
+  }
+  var ERROR_HINT_RULES;
+  var init_applyOutcome = __esm({
+    "src/reflect/applyOutcome.ts"() {
+      "use strict";
+      ERROR_HINT_RULES = [
+        {
+          pattern: /CB_NO02|権限がありません|Forbidden|アクセスが拒否/i,
+          hint: "比較先アプリのアプリ管理権限があるユーザーで実行しているか確認してください。"
+        },
+        {
+          pattern: /GAIA_AP01|アプリ.*(見つかりません|存在しません)|指定したアプリ/,
+          hint: "比較先アプリID・ゲストスペースIDが正しいか確認してください。"
+        },
+        {
+          pattern: /ルックアップ|lookup|relatedApp|関連レコード/i,
+          hint: "参照先アプリが比較先環境に存在しない可能性があります。「Lookup AppID マッピング」で参照先を変換してください。"
+        },
+        {
+          pattern: /フィールド.*(見つかりません|存在しません)|GAIA_IL26/,
+          hint: "比較先に存在しないフィールドを参照しています。先に「フィールド設定」を反映してから、このセクションを再実行してください。"
+        },
+        {
+          pattern: /プロセス管理|GAIA_RE/,
+          hint: "プロセス管理の有効/無効や、作業者に指定したユーザー・組織が比較先環境に存在するか確認してください。"
+        },
+        {
+          pattern: /Failed to fetch|NetworkError|ネットワーク|タイムアウト|timeout/i,
+          hint: "通信エラーの可能性があります。時間をおいて「失敗・未実行だけ選択」から再実行してください。"
+        }
+      ];
+    }
+  });
+
   // src/diff/label-dict.ts
   function labelOfProp(key) {
     if (!key) return "";
@@ -13665,42 +13715,54 @@ ${tgt.full}`);
     let appId = "";
     let isPreview = true;
     let guestId = "";
+    let srcAppId = "";
+    let srcGuestId = "";
     try {
       const c = deps.commonParams();
       appId = String(c.target?.appId || "").trim();
       isPreview = !!c.target?.preview;
       guestId = String(c.target?.guestId || "").trim();
+      srcAppId = String(c.source?.appId || "").trim();
+      srcGuestId = String(c.source?.guestId || "").trim();
     } catch {
     }
-    const targetBundle = state.importedTargetBundle || state.lastTargetBundle;
-    const appLabel3 = (() => {
-      const info = targetBundle?.sections?.appInfo;
+    const readAppName = (bundle) => {
+      const info = bundle?.sections?.appInfo;
       if (info && typeof info === "object" && !info._fetchError) {
         return String(info.name || "").trim();
       }
       return "";
-    })();
+    };
+    const targetBundle = state.importedTargetBundle || state.lastTargetBundle;
+    const appLabel3 = readAppName(targetBundle);
+    const srcLabel = readAppName(state.importedSourceBundle || state.lastSourceBundle);
     const previewLabel = isPreview ? "プレビュー" : "本番";
     const previewClass = isPreview ? "is-preview" : "is-prod";
     const guestSuffix = guestId ? ` / ゲスト${esc(guestId)}` : "";
     const appPath = guestId ? `/k/guest/${encodeURIComponent(guestId)}/${encodeURIComponent(appId)}/` : `/k/${encodeURIComponent(appId)}/`;
+    const srcHtml = `<span class="reflect-target-badge__src" title="比較元（コピー元）の設定を比較先へ書き込みます">
+      ${srcAppId ? `比較元 <b>App ${esc(srcAppId)}</b>${srcLabel ? `<span class="reflect-target-badge__srcname" title="${esc(srcLabel)}">${esc(srcLabel)}</span>` : ""}${srcGuestId ? `<span class="reflect-target-badge__guest"> / ゲスト${esc(srcGuestId)}</span>` : ""}` : "比較元未設定"}
+    </span>
+    <span class="reflect-target-badge__arrow" aria-hidden="true">→</span>`;
     if (!appId) {
-      el.innerHTML = `<div class="reflect-target-badge__inner" data-state="empty">
+      el.innerHTML = `${srcHtml}<div class="reflect-target-badge__inner" data-state="empty">
       <span class="reflect-target-badge__label">反映先未設定</span>
     </div>`;
       return;
     }
+    const sameConnection = !!srcAppId && srcAppId === appId && srcGuestId === guestId;
     const previewKey = `${appId}::${guestId}`;
     const previewOpened = !!state.reflectPreviewOpened && state.reflectPreviewOpenedFor === previewKey;
     const pendingClass = previewOpened ? "" : " reflect-target-badge__open--pending";
     const pendingLabel = previewOpened ? "開く" : "画面を開く ▸";
-    el.innerHTML = `<div class="reflect-target-badge__inner ${previewClass}">
+    el.innerHTML = `${srcHtml}<div class="reflect-target-badge__inner ${previewClass}">
     <span class="reflect-target-badge__chip">${esc(previewLabel)}</span>
     <span class="reflect-target-badge__app">App ${esc(appId)}</span>
     ${appLabel3 ? `<span class="reflect-target-badge__name" title="${esc(appLabel3)}">${esc(appLabel3)}</span>` : ""}
     ${guestSuffix ? `<span class="reflect-target-badge__guest">${guestSuffix}</span>` : ""}
     <button type="button" class="reflect-target-badge__open${pendingClass}" data-act="openTargetPreviewApp" data-preview-url="${esc(appPath)}" title="比較先アプリのプレビュー確認画面を開き、チェックリスト「プレビュー画面確認済み」を満たします">${esc(pendingLabel)}</button>
-  </div>`;
+  </div>
+  ${sameConnection ? '<div class="reflect-target-badge__same-warn" role="alert">⚠ 比較元と比較先が同一接続です。自分自身のプレビューを書き換えることになります。</div>' : ""}`;
   }
   function getReflectNextAction() {
     const isNode = isReflectNodeModeEffective();
@@ -13979,10 +14041,12 @@ ${tgt.full}`);
       const statusCls = s.status === "ok" ? "ok" : s.status === "ng" || s.status === "pending" ? "ng" : "skipped";
       const statusLabel2 = s.status === "ok" ? "成功" : s.status === "ng" ? "失敗" : s.status === "pending" ? "未実行" : "スキップ";
       const msg = s.message ? `<span class="reflect-apply-section__msg" title="${esc(s.message)}">${esc(s.message)}</span>` : "";
+      const hint = s.status === "ng" && s.message ? buildReflectErrorHint(s.message) : "";
       return `<div class="reflect-apply-section">
       <span class="reflect-apply-section__label">${esc(s.label || s.sectionKey)}</span>
       <span class="reflect-apply-section__status ${statusCls}">${statusLabel2}</span>
       ${msg}
+      ${hint ? `<div class="reflect-apply-section__hint">💡 ${esc(hint)}</div>` : ""}
     </div>`;
     }).join("");
     const retryBtn = (report.failedSectionKeys || []).length > 0 ? '<button type="button" class="btn ok" data-act="retryFailedSections" title="直近の反映で失敗したセクションと、エラー中断で未実行のまま残ったセクションだけを再送信します">失敗・未実行だけ再反映</button>' : "";
@@ -14598,6 +14662,7 @@ ${tgt.full}`);
       "use strict";
       init_constants();
       init_state();
+      init_applyOutcome();
       init_utils();
       init_filter();
       init_ignore_presets();
@@ -16400,56 +16465,6 @@ ${warnings.join("\n")}
   var init_planInsights = __esm({
     "src/reflect/planInsights.ts"() {
       "use strict";
-    }
-  });
-
-  // src/reflect/applyOutcome.ts
-  function buildReflectErrorHint(message) {
-    const text = String(message || "");
-    if (!text) return "";
-    for (const rule of ERROR_HINT_RULES) {
-      if (rule.pattern.test(text)) return rule.hint;
-    }
-    return "";
-  }
-  function pushReflectErrorLog(logs, line, errorMessage) {
-    logs.push(line);
-    const hint = buildReflectErrorHint(errorMessage);
-    if (!hint) return;
-    const hintLine = `   ヒント: ${hint}`;
-    if (logs.slice(-3).includes(hintLine)) return;
-    logs.push(hintLine);
-  }
-  var ERROR_HINT_RULES;
-  var init_applyOutcome = __esm({
-    "src/reflect/applyOutcome.ts"() {
-      "use strict";
-      ERROR_HINT_RULES = [
-        {
-          pattern: /CB_NO02|権限がありません|Forbidden|アクセスが拒否/i,
-          hint: "比較先アプリのアプリ管理権限があるユーザーで実行しているか確認してください。"
-        },
-        {
-          pattern: /GAIA_AP01|アプリ.*(見つかりません|存在しません)|指定したアプリ/,
-          hint: "比較先アプリID・ゲストスペースIDが正しいか確認してください。"
-        },
-        {
-          pattern: /ルックアップ|lookup|relatedApp|関連レコード/i,
-          hint: "参照先アプリが比較先環境に存在しない可能性があります。「Lookup AppID マッピング」で参照先を変換してください。"
-        },
-        {
-          pattern: /フィールド.*(見つかりません|存在しません)|GAIA_IL26/,
-          hint: "比較先に存在しないフィールドを参照しています。先に「フィールド設定」を反映してから、このセクションを再実行してください。"
-        },
-        {
-          pattern: /プロセス管理|GAIA_RE/,
-          hint: "プロセス管理の有効/無効や、作業者に指定したユーザー・組織が比較先環境に存在するか確認してください。"
-        },
-        {
-          pattern: /Failed to fetch|NetworkError|ネットワーク|タイムアウト|timeout/i,
-          hint: "通信エラーの可能性があります。時間をおいて「失敗・未実行だけ選択」から再実行してください。"
-        }
-      ];
     }
   });
 
@@ -28681,6 +28696,12 @@ ${detail}`);
 /* === U5 Target app badge === */
 #kintone-unified-suite-v2 .reflect-main-header{display:flex;align-items:center;gap:12px;justify-content:space-between}
 #kintone-unified-suite-v2 .reflect-target-badge{flex-shrink:0}
+#kintone-unified-suite-v2 .reflect-target-badge{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-target-badge__src{display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:8px;font-size:11px;border:1px dashed #94a3b8;background:#fff;color:#475569}
+#kintone-unified-suite-v2 .reflect-target-badge__src b{font-weight:900}
+#kintone-unified-suite-v2 .reflect-target-badge__srcname{font-weight:700;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .reflect-target-badge__arrow{font-size:13px;font-weight:900;color:#64748b}
+#kintone-unified-suite-v2 .reflect-target-badge__same-warn{flex-basis:100%;font-size:11px;font-weight:700;color:#991b1b;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:4px 8px;line-height:1.5}
 #kintone-unified-suite-v2 .reflect-target-badge__inner{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;font-size:11px;font-weight:700;border:1px solid #cbd5e1;background:#f8fafc;color:#475569}
 #kintone-unified-suite-v2 .reflect-target-badge__inner.is-preview{background:linear-gradient(90deg,#fef3c7,#fde68a);border-color:#f59e0b;color:#7c2d12}
 #kintone-unified-suite-v2 .reflect-target-badge__inner.is-prod{background:linear-gradient(90deg,#fee2e2,#fecaca);border-color:#dc2626;color:#7f1d1d;animation:reflect-prod-flash 1.4s ease-in-out infinite alternate}
@@ -31754,7 +31775,8 @@ ${detail}`);
 #kintone-unified-suite-v2 .reflect-apply-counter--ng{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
 #kintone-unified-suite-v2 .reflect-apply-counter--skip{background:#fef3c7;color:#92400e;border-color:#fcd34d}
 #kintone-unified-suite-v2 .reflect-apply-report__sections{display:flex;flex-direction:column;gap:4px;margin-top:6px}
-#kintone-unified-suite-v2 .reflect-apply-section{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 8px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;font-size:11px}
+#kintone-unified-suite-v2 .reflect-apply-section{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 8px;border-radius:8px;border:1px solid #e2e8f0;background:#f8fafc;font-size:11px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-apply-section__hint{flex-basis:100%;font-size:10px;line-height:1.55;color:#1e40af;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:3px 8px}
 #kintone-unified-suite-v2 .reflect-apply-section__label{font-weight:700;color:#0f172a}
 #kintone-unified-suite-v2 .reflect-apply-section__status{font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700}
 #kintone-unified-suite-v2 .reflect-apply-section__status.ok{background:#dcfce7;color:#166534}
@@ -35523,8 +35545,8 @@ ${detail}`);
                 <!-- ステータスバッジ + 反映先 + 安全設定 -->
                 <section class="reflect-status-grid">
                   <div class="reflect-status-grid__target">
-                    <div class="reflect-status-grid__label">反映先</div>
-                    <div class="reflect-target-badge" id="u_reflectTargetBadge" title="反映先アプリの情報"></div>
+                    <div class="reflect-status-grid__label">反映の方向</div>
+                    <div class="reflect-target-badge" id="u_reflectTargetBadge" title="比較元の設定を比較先プレビューへ書き込みます"></div>
                     <div class="reflect-target-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
                   </div>
                   <div class="reflect-status-grid__badges">
@@ -40764,6 +40786,7 @@ ${detail}`);
         saveCurrentDialogState2();
         resetReflectApplyChecks(["diff", "plan"]);
         updateConnectionStepIndicators();
+        renderReflectAssistPanel();
       });
     });
     if (ui.charDiff) {

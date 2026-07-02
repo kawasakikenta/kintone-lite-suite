@@ -656,6 +656,12 @@
 /* === U5 Target app badge === */
 #kintone-unified-suite-v2 .reflect-main-header{display:flex;align-items:center;gap:12px;justify-content:space-between}
 #kintone-unified-suite-v2 .reflect-target-badge{flex-shrink:0}
+#kintone-unified-suite-v2 .reflect-target-badge{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .reflect-target-badge__src{display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:8px;font-size:11px;border:1px dashed #94a3b8;background:#fff;color:#475569}
+#kintone-unified-suite-v2 .reflect-target-badge__src b{font-weight:900}
+#kintone-unified-suite-v2 .reflect-target-badge__srcname{font-weight:700;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#kintone-unified-suite-v2 .reflect-target-badge__arrow{font-size:13px;font-weight:900;color:#64748b}
+#kintone-unified-suite-v2 .reflect-target-badge__same-warn{flex-basis:100%;font-size:11px;font-weight:700;color:#991b1b;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:4px 8px;line-height:1.5}
 #kintone-unified-suite-v2 .reflect-target-badge__inner{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;font-size:11px;font-weight:700;border:1px solid #cbd5e1;background:#f8fafc;color:#475569}
 #kintone-unified-suite-v2 .reflect-target-badge__inner.is-preview{background:linear-gradient(90deg,#fef3c7,#fde68a);border-color:#f59e0b;color:#7c2d12}
 #kintone-unified-suite-v2 .reflect-target-badge__inner.is-prod{background:linear-gradient(90deg,#fee2e2,#fecaca);border-color:#dc2626;color:#7f1d1d;animation:reflect-prod-flash 1.4s ease-in-out infinite alternate}

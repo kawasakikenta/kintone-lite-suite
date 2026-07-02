@@ -773,8 +773,8 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <!-- ステータスバッジ + 反映先 + 安全設定 -->
                 <section class="reflect-status-grid">
                   <div class="reflect-status-grid__target">
-                    <div class="reflect-status-grid__label">反映先</div>
-                    <div class="reflect-target-badge" id="u_reflectTargetBadge" title="反映先アプリの情報"></div>
+                    <div class="reflect-status-grid__label">反映の方向</div>
+                    <div class="reflect-target-badge" id="u_reflectTargetBadge" title="比較元の設定を比較先プレビューへ書き込みます"></div>
                     <div class="reflect-target-meta" id="u_reflectMode">比較元: API / 比較先: プレビューAPI</div>
                   </div>
                   <div class="reflect-status-grid__badges">
