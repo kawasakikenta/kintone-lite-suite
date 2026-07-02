@@ -19,6 +19,93 @@ const ER_DEFAULTS = {
   includeReverseLookup: false
 };
 const ER_TRAVERSE_RELATION_KINDS = new Set(['LOOKUP', 'REF', 'ACTION']);
+// 'none' は項目を表示せずアプリの結合関係だけを見るモード
+const ER_FIELD_DENSITIES = ['none', 'compact', 'standard', 'full'];
+
+// スペース内アプリ一覧のキャッシュ。ピッカー表示と生成時の二重取得を防ぐ
+let erSpaceAppsCache: { key: string; apps: Array<{ appId: string; name: string }> } | null = null;
+
+function erSpaceCacheKey(spaceId: string, guestId: string): string {
+  return `${String(spaceId || '')}|${String(guestId || '')}`;
+}
+
+async function fetchAppsInSpaceCached(spaceId: string, guestId: string) {
+  const key = erSpaceCacheKey(spaceId, guestId);
+  if (erSpaceAppsCache && erSpaceAppsCache.key === key) return erSpaceAppsCache.apps;
+  const apps = await fetchAppsInSpace(spaceId, guestId);
+  erSpaceAppsCache = { key, apps };
+  return apps;
+}
+
+/**
+ * スペース内アプリピッカーの選択状態を読み取る。
+ * - ピッカー未表示・別スペースの内容 → null（従来通りスペース内全アプリを起点）
+ * - ピッカー表示中 → チェックされたアプリIDの配列（0件なら空配列）
+ */
+function readErSpaceSelectedAppIds(spaceId: string): string[] | null {
+  if (!spaceId) return null;
+  let host: HTMLElement | null;
+  try { host = getToolDocument().getElementById('u_erSpaceAppPicker'); }
+  catch { host = null; }
+  if (!host || host.dataset.spaceId !== spaceId) return null;
+  const boxes = Array.from(host.querySelectorAll<HTMLInputElement>('input[type="checkbox"][data-er-space-app]'));
+  if (!boxes.length) return null;
+  return boxes.filter((b) => b.checked).map((b) => String(b.dataset.erSpaceApp || '')).filter((v) => /^\d+$/.test(v));
+}
+
+/**
+ * 「スペース内アプリを読み込む」: スペースのアプリ一覧を取得してチェックボックス一覧を表示する。
+ * ここで取得した一覧は生成時にも再利用されるため、APIリクエストは 1 回で済む。
+ */
+export async function loadErSpaceApps(): Promise<void> {
+  const doc = getToolDocument();
+  const host = doc.getElementById('u_erSpaceAppPicker');
+  if (!host) return;
+  const spaceId = String(ui.erSpaceId?.value || '').trim();
+  if (!/^\d+$/.test(spaceId)) {
+    host.innerHTML = '<div class="er-space-picker__empty">スペースIDを数値で入力してから読み込んでください。</div>';
+    delete host.dataset.spaceId;
+    renderErPreflight();
+    return;
+  }
+  const guestId = commonParams().source?.guestId || '';
+  setStatus(`スペース ${spaceId} のアプリ一覧を取得中...`);
+  const apps = await fetchAppsInSpaceCached(spaceId, guestId);
+  host.dataset.spaceId = spaceId;
+  if (!apps.length) {
+    host.innerHTML = '<div class="er-space-picker__empty">このスペースにアプリが見つかりませんでした。</div>';
+    renderErPreflight();
+    setStatus(`スペース ${spaceId}: アプリが見つかりませんでした`, true);
+    return;
+  }
+  const items = apps.map((a) => `
+    <label class="er-space-picker__item" title="App ${esc(a.appId)}">
+      <input type="checkbox" data-er-space-app="${esc(a.appId)}" checked>
+      <span class="er-space-picker__name">${esc(a.name || `アプリ ${a.appId}`)}</span>
+      <span class="er-space-picker__id">#${esc(a.appId)}</span>
+    </label>`).join('');
+  host.innerHTML = `
+    <div class="er-space-picker__head">
+      <span class="er-space-picker__lbl">スペース #${esc(spaceId)} のアプリ（${esc(String(apps.length))}件）— 起点にするアプリを選択</span>
+      <span class="er-space-picker__btns">
+        <button type="button" class="btn sub" data-er-space-sel="all">全選択</button>
+        <button type="button" class="btn sub" data-er-space-sel="none">全解除</button>
+      </span>
+    </div>
+    <div class="er-space-picker__list">${items}</div>`;
+  host.querySelectorAll<HTMLButtonElement>('[data-er-space-sel]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const on = btn.dataset.erSpaceSel === 'all';
+      host.querySelectorAll<HTMLInputElement>('input[data-er-space-app]').forEach((b) => { b.checked = on; });
+      renderErPreflight();
+    });
+  });
+  host.querySelectorAll<HTMLInputElement>('input[data-er-space-app]').forEach((b) => {
+    b.addEventListener('change', () => renderErPreflight());
+  });
+  renderErPreflight();
+  setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を読み込みました。起点にするアプリを選択してください`);
+}
 
 function normalizeFieldProperties(response) {
   const props = response?.properties;
@@ -44,12 +131,15 @@ export function readErDiagramOptions() {
     .filter((v) => /^\d+$/.test(v));
   const startAppIds = [startAppId, ...extraAppIds].filter((v, i, arr) => /^\d+$/.test(v) && arr.indexOf(v) === i);
   const spaceId = String(ui.erSpaceId?.value || '').trim();
+  const normalizedSpaceId = /^\d+$/.test(spaceId) ? spaceId : '';
   return {
     startAppId,
     startAppIds,
-    spaceId: /^\d+$/.test(spaceId) ? spaceId : '',
+    spaceId: normalizedSpaceId,
+    // null = ピッカー未使用（スペース内全アプリを起点にする） / 配列 = 選択したアプリのみ起点にする
+    spaceSelectedAppIds: readErSpaceSelectedAppIds(normalizedSpaceId),
     layoutName,
-    fieldDensity: ['compact', 'standard', 'full'].includes(fieldDensity) ? fieldDensity : ER_DEFAULTS.fieldDensity,
+    fieldDensity: ER_FIELD_DENSITIES.includes(fieldDensity) ? fieldDensity : ER_DEFAULTS.fieldDensity,
     maxDepth: Number.isFinite(maxDepthNum) && maxDepthNum >= 0 ? Math.floor(maxDepthNum) : ER_DEFAULTS.maxDepth,
     includeSubtableFields: !!ui.erIncludeSubtable?.checked,
     includeReverseLookup: !!ui.erIncludeReverseLookup?.checked,
@@ -139,7 +229,9 @@ const fetchAllApps = async (options) => {
   return apps;
 };
 
-const getSchema = async (appId, options, cache) => {
+const getSchema = async (rawAppId, options, cache) => {
+  // キャッシュキーを数値へ正規化し、文字列/数値の揺れによる二重取得を防ぐ
+  const appId = Number(rawAppId);
   if (cache.has(appId)) return cache.get(appId);
   try {
     const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
@@ -239,7 +331,10 @@ const getSchema = async (appId, options, cache) => {
     // - compact: PK / unique / リレーション結びの先 だけ
     // - standard: 上記 + 必須項目
     // - full: 全フィールド（SUBTABLE除く / inSubtable はオプション従属）
-    const density = String(options?.fieldDensity || ER_DEFAULTS.fieldDensity);
+    // 'none'（結合のみ）は描画時に項目行を出さないだけなので、
+    // ビューア側で密度を切り替えられるよう standard と同じ集合を保持する
+    const rawDensity = String(options?.fieldDensity || ER_DEFAULTS.fieldDensity);
+    const density = rawDensity === 'none' ? 'standard' : rawDensity;
     const isEssential = (field) => {
       if (field.type === 'SUBTABLE') return false;
       if (field.isPK || field.unique) return true;
@@ -288,7 +383,8 @@ export const crawl = async (startIds, options) => {
     if (visited.has(appId) || queue.some((item) => item.id === appId)) return;
     queue.push({ id: appId, depth });
   };
-  const seeds = (Array.isArray(startIds) ? startIds : [startIds]).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
+  // 数値化した上で Set デデュープ（"010" と "10" のような表記揺れでも二重取得しない）
+  const seeds = [...new Set((Array.isArray(startIds) ? startIds : [startIds]).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0))];
   const q = seeds.map((id) => ({ id, depth: 0 }));
   const apps = [];
   if (options?.includeReverseLookup) {
@@ -356,7 +452,7 @@ export const buildHTML = (apps, options: any = {}) => {
     sourcePreview: !!options.source?.preview
   });
   const safeApps = Array.isArray(apps) ? apps : [];
-  const densityLabelMap = { compact: 'コンパクト', standard: '標準', full: '詳細' };
+  const densityLabelMap = { none: '結合のみ', compact: 'コンパクト', standard: '標準', full: '詳細' };
   const summary = safeApps.reduce((acc, app) => {
     acc.relations += Array.isArray(app?.relations) ? app.relations.length : 0;
     acc.lookups += Number(app?.lookupCount || 0);
@@ -579,6 +675,14 @@ body{font-family:'DM Sans',sans-serif;background:
 .tag-ref{background:rgba(52,211,153,0.15);color:var(--ref);}
 .tag-req{background:rgba(248,113,113,0.12);color:var(--req);}
 .tag-sub{background:rgba(99,110,131,0.15);color:var(--dim);}
+.row-del{flex-shrink:0;align-self:center;width:20px;height:20px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--dim);font-size:11px;line-height:1;cursor:pointer;opacity:0;transition:.12s;}
+.field-row:hover .row-del{opacity:1;}
+.row-del:hover{color:var(--req);border-color:var(--border);background:var(--surface2);}
+.row-del--restore{opacity:1;color:var(--accent);}
+.row-del--restore:hover{color:var(--accent);}
+.field-row--hidden{opacity:0.45;}
+.meta-pill--btn{cursor:pointer;color:var(--accent);border-color:var(--accent);background:transparent;font-family:inherit;}
+.meta-pill--btn:hover{background:var(--surface2);}
 
 /* ── Path Finder ── */
 #pathfinder{
@@ -739,10 +843,13 @@ body{font-family:'DM Sans',sans-serif;background:
   </div>
 
   <select id="density-select" class="tb-select" onchange="setDensity(this.value)" title="表示密度">
+    <option value="none">⬡ 結合のみ</option>
     <option value="compact">🪶 コンパクト</option>
     <option value="standard">📄 標準</option>
     <option value="full">🧾 詳細</option>
   </select>
+
+  <button class="tb" id="simple-mode-btn" onclick="toggleSimpleMode()" title="項目を隠してアプリ同士の結合関係だけを表示（重複する線もまとめます）">⬡ シンプル</button>
 
   <div class="sep"></div>
 
@@ -785,11 +892,13 @@ body{font-family:'DM Sans',sans-serif;background:
   <div class="tb-menu" id="edit-menu" data-mobile="hide">
     <button class="tb tb-menu-btn" onclick="toggleMenu('edit-menu')" title="編集">✏</button>
     <div class="tb-menu-panel">
-      <button class="tb" onclick="removeSelectedRelations();closeAllMenus()">🗑 選択した関連線を削除</button>
+      <button class="tb" onclick="removeSelectedRelations();closeAllMenus()">🗑 選択した関連線を削除 (Delete)</button>
       <button class="tb" onclick="restoreRemovedRelations();closeAllMenus()">↺ 削除した関連線を復元</button>
       <hr>
-      <button class="tb" onclick="removeSelectedApps();closeAllMenus()">🗑 選択したアプリを削除</button>
+      <button class="tb" onclick="removeSelectedApps();closeAllMenus()">🗑 選択したアプリを削除 (Delete)</button>
       <button class="tb" onclick="restoreRemovedApps();closeAllMenus()">↺ 削除したアプリを復元</button>
+      <hr>
+      <button class="tb" onclick="restoreAllHiddenFields();closeAllMenus()">↺ 非表示にした項目をすべて復元</button>
       <hr>
       <button class="tb" onclick="togglePinFromSelection();closeAllMenus()">📌 選択ノードを固定/解除 (Shift+P)</button>
       <button class="tb" onclick="clearPins();closeAllMenus()">📍 固定を全解除</button>
@@ -873,6 +982,8 @@ body{font-family:'DM Sans',sans-serif;background:
     <span>Alt/⌥ + 右クリックで非表示</span>
     <span>Shift + F で関連強調</span>
     <span>背景ダブルクリックで要素追加</span>
+    <span>「⬡ シンプル」で結合のみ表示</span>
+    <span>Delete で選択要素を削除</span>
   </div>
 </div>
 
@@ -966,8 +1077,10 @@ body{font-family:'DM Sans',sans-serif;background:
       </div>
       <div class="help-section">
         <h3>操作・編集</h3>
+        <div class="help-row"><span>選択した要素を削除</span><kbd>Delete</kbd></div>
         <div class="help-row"><span>関連強調 ON/OFF</span><kbd>Shift + F</kbd></div>
         <div class="help-row"><span>固定 / 固定解除</span><kbd>Shift + P</kbd></div>
+        <div class="help-row"><span>項目・関連線の個別削除</span><kbd>詳細パネルの ✕</kbd></div>
         <div class="help-row"><span>フルスクリーン</span><kbd>F11</kbd></div>
         <div class="help-row"><span>背景をクリック</span><kbd>強調解除</kbd></div>
         <div class="help-row"><span>ノードをダブルクリック</span><kbd>近隣のみ表示</kbd></div>
@@ -1028,7 +1141,7 @@ function currentPalette(){
   };
 }
 function formatFieldDensityLabel(density){
-  const map = { compact:"コンパクト", standard:"標準", full:"詳細" };
+  const map = { none:"結合のみ", compact:"コンパクト", standard:"標準", full:"詳細" };
   return map[density] || density || "-";
 }
 function fieldIconForLabel(f){
@@ -1058,8 +1171,19 @@ function fieldTypeJpLabel(type){
   const key = String(type).trim().toUpperCase();
   return FIELD_TYPE_JP_LABEL[key] || type;
 }
+// 手動で非表示にした項目キーの集合（"アプリID::path|code"）
+const hiddenFieldKeys = new Set();
+function fieldHideKey(app, field){
+  return String(app.id) + "::" + String(field.path || field.code || field.label || "");
+}
+function isFieldHidden(app, field){
+  return hiddenFieldKeys.has(fieldHideKey(app, field));
+}
+function hiddenFieldCount(app){
+  return (app.fields || []).filter(f=>isFieldHidden(app, f)).length;
+}
 function visibleFieldsForNode(app){
-  return (app.fields || []).filter(f=>ER_OPTIONS.includeSubtableFields || !f.inSubtable);
+  return (app.fields || []).filter(f=>(ER_OPTIONS.includeSubtableFields || !f.inSubtable) && !isFieldHidden(app, f));
 }
 function buildFieldDisplayName(field){
   if(!field) return "";
@@ -1097,8 +1221,8 @@ function estimateLabelLineUnits(line){
   return units;
 }
 function buildNodeLabel(app){
-  const limits = { compact: 6, standard: 10, full: 16 };
-  const maxLines = limits[ER_OPTIONS.fieldDensity] || limits.standard;
+  const limits = { none: 0, compact: 6, standard: 10, full: 16 };
+  const maxLines = limits[ER_OPTIONS.fieldDensity] !== undefined ? limits[ER_OPTIONS.fieldDensity] : limits.standard;
   const fields = visibleFieldsForNode(app);
   const ordered = fields.slice().sort((a,b)=>{
     const score = (f)=> (f.isPK ? 0 : (f.isLookup ? 1 : (f.isRef ? 2 : (f.required ? 3 : (f.inSubtable ? 5 : 4)))));
@@ -1106,8 +1230,8 @@ function buildNodeLabel(app){
     if(diff !== 0) return diff;
     return String(buildFieldDisplayName(a) || a.code || '').localeCompare(String(buildFieldDisplayName(b) || b.code || ''));
   });
-  const preview = ordered.slice(0, maxLines).map((f)=>buildFieldPreviewLine(f));
-  if(ordered.length > maxLines) preview.push("… 他 " + (ordered.length - maxLines) + " 項目");
+  const preview = maxLines > 0 ? ordered.slice(0, maxLines).map((f)=>buildFieldPreviewLine(f)) : [];
+  if(maxLines > 0 && ordered.length > maxLines) preview.push("… 他 " + (ordered.length - maxLines) + " 項目");
   const totalFieldCount = typeof app.totalFieldCount === "number" ? app.totalFieldCount : fields.length;
   const fieldCountText = totalFieldCount > fields.length
     ? fields.length + "/" + totalFieldCount + "項目"
@@ -1151,6 +1275,7 @@ function buildLayoutOptions(name, initial){
   return Object.assign(base, { name: "cose", nodeRepulsion: 900000, idealEdgeLength: 280, gravity: 0.22, numIter: 1400 });
 }
 function densityNodeMetrics(){
+  if(ER_OPTIONS.fieldDensity === "none") return { maxWidth:"240px", fontSize:"11px", padding:"14px", lineHeight:"1.35" };
   if(ER_OPTIONS.fieldDensity === "compact") return { maxWidth:"230px", fontSize:"9px", padding:"12px", lineHeight:"1.22" };
   if(ER_OPTIONS.fieldDensity === "full") return { maxWidth:"320px", fontSize:"10.5px", padding:"18px", lineHeight:"1.35" };
   return { maxWidth:"280px", fontSize:"10px", padding:"15px", lineHeight:"1.3" };
@@ -1205,6 +1330,7 @@ function buildCyStyle(palette){
     {selector:"edge.focus-edge",style:{"width":4,"line-color":palette.accent,"target-arrow-color":palette.accent,"source-arrow-color":palette.accent,"z-index":998}},
     {selector:"edge.rel-hidden",style:{"display":"none"}},
     {selector:"edge.rel-manual-hidden",style:{"display":"none"}},
+    {selector:"edge.edge-collapsed",style:{"display":"none"}},
     {selector:"edge.focus-dim",style:{"opacity":0.04}},
     {selector:"edge.dimmed",style:{"opacity":0.08}}
   ];
@@ -1333,8 +1459,10 @@ function syncDensityControl(){
   if(pill) pill.innerHTML = "<b>密度</b> " + formatFieldDensityLabel(ER_OPTIONS.fieldDensity);
 }
 function setDensity(value){
-  const next = ["compact","standard","full"].includes(String(value)) ? String(value) : "standard";
+  const next = ["none","compact","standard","full"].includes(String(value)) ? String(value) : "standard";
   ER_OPTIONS.fieldDensity = next;
+  // シンプルモード中に「結合のみ」以外へ変更したら、シンプルモードを解除する
+  if(simpleMode && next !== "none") setSimpleMode(false, true);
   refreshNodeLabels();
   applyCyTheme();
   syncDensityControl();
@@ -1413,6 +1541,69 @@ let lastTappedNodeId = "";
 let activeAppId = 0;
 const pinnedNodeIds = new Set();
 
+// ─── シンプルモード（項目非表示 + 重複線の集約） ───
+let simpleMode = false;
+let simpleModeRestore = null; // { density, labels }
+const collapsedEdgeLabelBackup = new Map(); // 代表エッジの元ラベル退避
+
+function collapseParallelEdges(on){
+  // いったん全解除
+  cy.edges().removeClass("edge-collapsed");
+  collapsedEdgeLabelBackup.forEach((label, id)=>{
+    const e = cy.getElementById(id);
+    if(e.length) e.data("label", label);
+  });
+  collapsedEdgeLabelBackup.clear();
+  if(!on) return;
+  // 同じ「起点→宛先」の可視エッジを1本に集約し、代表に本数を表示
+  const groups = new Map();
+  cy.edges().forEach(e=>{
+    if(e.hasClass("rel-manual-hidden") || e.hasClass("rel-hidden")) return;
+    const key = e.source().id() + "→" + e.target().id();
+    const list = groups.get(key) || [];
+    list.push(e);
+    groups.set(key, list);
+  });
+  groups.forEach(list=>{
+    if(list.length < 2) return;
+    list.slice(1).forEach(e=>e.addClass("edge-collapsed"));
+    const rep = list[0];
+    collapsedEdgeLabelBackup.set(rep.id(), rep.data("label") || "");
+    rep.data("label", list.length + "本の関連");
+  });
+}
+
+function syncSimpleModeButton(){
+  const btn = document.getElementById("simple-mode-btn");
+  if(btn) btn.classList.toggle("active", simpleMode);
+}
+
+function setSimpleMode(on, keepDensity){
+  if(simpleMode === !!on) { syncSimpleModeButton(); return; }
+  simpleMode = !!on;
+  if(simpleMode){
+    simpleModeRestore = { density: ER_OPTIONS.fieldDensity, labels: relationLabelVisible };
+    ER_OPTIONS.fieldDensity = "none";
+    relationLabelVisible = false;
+    collapseParallelEdges(true);
+  }else{
+    if(!keepDensity) ER_OPTIONS.fieldDensity = (simpleModeRestore && simpleModeRestore.density && simpleModeRestore.density !== "none") ? simpleModeRestore.density : "standard";
+    relationLabelVisible = simpleModeRestore ? !!simpleModeRestore.labels : true;
+    simpleModeRestore = null;
+    collapseParallelEdges(false);
+  }
+  refreshNodeLabels();
+  applyCyTheme();
+  syncDensityControl();
+  applyRelationLabelVisibility();
+  syncSimpleModeButton();
+}
+
+function toggleSimpleMode(){
+  setSimpleMode(!simpleMode);
+  toast(simpleMode ? "シンプルモード ON: アプリの結合関係のみ表示" : "シンプルモード OFF");
+}
+
 function syncLegendState(){
   const lookup = document.getElementById("legend-lookup-edge");
   const ref = document.getElementById("legend-ref-edge");
@@ -1451,6 +1642,7 @@ function applyRelationFilter(){
     const visibleEdgeCount = n.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden")).length;
     n.toggleClass("isolated-by-filter", partialFilter && visibleEdgeCount === 0);
   });
+  if(simpleMode) collapseParallelEdges(true);
   syncLegendState();
 }
 
@@ -1801,6 +1993,67 @@ document.getElementById("editor").addEventListener("keydown",e=>{
   if(e.key==="Enter"&&e.target&&e.target.tagName!=="TEXTAREA"){e.preventDefault();submitEditor();}
 });
 
+// ─── 項目・関連線の個別削除/復元（詳細パネルから操作） ───
+function afterFieldVisibilityChange(app){
+  const node = cy.getElementById("a"+app.id);
+  if(node.length){
+    node.data("label", buildNodeLabel(app));
+    node.data("fieldCount", visibleFieldsForNode(app).length);
+  }
+  refreshSidebar();
+  renderAppDetail(app);
+}
+function hideFieldFromRow(btn){
+  const app = findApp(btn.dataset.app);
+  if(!app) return;
+  const key = decodeURIComponent(btn.dataset.key || "");
+  if(!key) return;
+  hiddenFieldKeys.add(key);
+  afterFieldVisibilityChange(app);
+  toast("項目を図から非表示にしました（詳細パネルから復元できます）");
+}
+function restoreHiddenFields(appId){
+  const app = findApp(appId);
+  if(!app) return;
+  const prefix = String(app.id) + "::";
+  let restored = 0;
+  [...hiddenFieldKeys].forEach(key=>{
+    if(key.indexOf(prefix) === 0){ hiddenFieldKeys.delete(key); restored += 1; }
+  });
+  afterFieldVisibilityChange(app);
+  toast(restored ? ("非表示項目を復元: "+restored+"件") : "復元対象がありません");
+}
+function restoreAllHiddenFields(){
+  const count = hiddenFieldKeys.size;
+  hiddenFieldKeys.clear();
+  refreshNodeLabels();
+  refreshSidebar();
+  if(activeAppId){
+    const app = findApp(activeAppId);
+    if(app) renderAppDetail(app);
+  }
+  toast(count ? ("全アプリの非表示項目を復元: "+count+"件") : "復元対象がありません");
+}
+function toggleRelationEdgeFromRow(btn){
+  const edgeId = String(btn.dataset.edge || "");
+  const edge = cy.getElementById(edgeId);
+  if(!edge.length){ toast("対応する関連線が見つかりません"); return; }
+  if(edge.hasClass("rel-manual-hidden")){
+    manuallyRemovedEdgeIds.delete(edgeId);
+    nodeHiddenEdgeIds.delete(edgeId);
+    edge.removeClass("rel-manual-hidden");
+    toast("関連線を復元しました");
+  }else{
+    manuallyRemovedEdgeIds.add(edgeId);
+    edge.addClass("rel-manual-hidden");
+    toast("関連線を削除しました（同じボタンで復元）");
+  }
+  applyRelationFilter();
+  if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+  const app = findApp(btn.dataset.app);
+  if(app) renderAppDetail(app);
+}
+
 // ─── Search & Highlight ───
 function searchGraph(q){
   cy.elements().removeClass("highlighted dimmed");
@@ -1833,6 +2086,7 @@ function renderAppDetail(app){
   const fieldPillText = realFieldTotal > visibleFields.length
     ? '項目 ' + visibleFields.length + '/<small>' + realFieldTotal + '</small>'
     : '<b>項目</b> ' + visibleFields.length;
+  const hiddenCnt = hiddenFieldCount(app);
   document.getElementById("detail-meta").innerHTML = (app.isCustom ? "手動追加エンティティ" : "ID: " + escapeHtml(app.id))
     + (app.createdAt ? " | 作成: " + escapeHtml(new Date(app.createdAt).toLocaleDateString()) : "")
     + (app.modifiedAt ? " | 更新: " + escapeHtml(new Date(app.modifiedAt).toLocaleDateString()) : "")
@@ -1842,6 +2096,7 @@ function renderAppDetail(app){
     + '<span class="meta-pill"><b>関連</b> ' + fieldGroups.ref.length + '</span>'
     + '<span class="meta-pill"><b>必須</b> ' + fieldGroups.required.length + '</span>'
     + '<span class="meta-pill"><b>深さ</b> ' + (app.depth || 0) + '</span>'
+    + (hiddenCnt ? '<button type="button" class="meta-pill meta-pill--btn" title="このアプリで非表示にした項目をすべて戻します" data-app="' + escapeHtml(String(app.id)) + '" onclick="restoreHiddenFields(this.dataset.app)">↺ 非表示項目 ' + hiddenCnt + ' を復元</button>' : '')
     + '</div>';
 
   const relationGroups = [
@@ -1851,13 +2106,14 @@ function renderAppDetail(app){
   ];
   let relHtml = "";
   relationGroups.forEach((group)=>{
-    const items = (app.relations || []).filter((rel)=>rel.kind === group.key);
+    const items = (app.relations || []).map((rel, ri)=>({ rel, ri })).filter((item)=>item.rel.kind === group.key);
     if(!items.length) return;
     relHtml += '<div class="field-group-title">' + group.label + ' (' + items.length + ')</div>';
     items
       .slice()
-      .sort((a,b)=>String(a.fromDisplay || a.fromLabel || a.from || '').localeCompare(String(b.fromDisplay || b.fromLabel || b.from || '')))
-      .forEach((rel)=>{
+      .sort((a,b)=>String(a.rel.fromDisplay || a.rel.fromLabel || a.rel.from || '').localeCompare(String(b.rel.fromDisplay || b.rel.fromLabel || b.rel.from || '')))
+      .forEach((item)=>{
+        const rel = item.rel;
         const targetApp = appMap.get(rel.toApp);
         const targetName = targetApp ? targetApp.name : "アプリ " + rel.toApp;
         const targetLabel = targetName + " (App " + rel.toApp + ")";
@@ -1866,13 +2122,20 @@ function renderAppDetail(app){
         if(rel.fromPath && rel.fromPath !== rel.from) relationMeta.push("path: " + rel.fromPath);
         relationMeta.push("接続先: " + targetLabel);
         if(rel.toField) relationMeta.push("to: " + rel.toField);
-        relHtml += '<div class="field-row" style="cursor:pointer" onclick="focusApp(' + rel.toApp + ')">'
+        const edgeId = "e_" + app.id + "_" + item.ri;
+        const edge = cy.getElementById(edgeId);
+        const edgeHidden = edge.length && edge.hasClass("rel-manual-hidden");
+        const edgeBtn = edge.length
+          ? '<button type="button" class="row-del' + (edgeHidden ? ' row-del--restore' : '') + '" title="' + (edgeHidden ? 'この関連線を復元' : 'この関連線を図から削除') + '" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="toggleRelationEdgeFromRow(this);event.stopPropagation();">' + (edgeHidden ? '↺' : '✕') + '</button>'
+          : '';
+        relHtml += '<div class="field-row' + (edgeHidden ? ' field-row--hidden' : '') + '" style="cursor:pointer" onclick="focusApp(' + rel.toApp + ')">'
           + '<span class="field-icon">' + group.icon + '</span>'
           + '<div class="field-main">'
           + '<div class="field-name" title="' + escapeHtml(relationLabel + ' → ' + targetLabel) + '">' + escapeHtml(relationLabel) + ' → ' + escapeHtml(targetLabel) + '</div>'
           + '<div class="field-sub">' + escapeHtml(relationMeta.join(' / ') || '接続先をクリックで移動') + '</div>'
           + '</div>'
           + '<span class="field-type">' + escapeHtml(group.key === "ACTION" ? "ACTION" : group.key) + '</span>'
+          + edgeBtn
           + '</div>';
       });
   });
@@ -1899,6 +2162,7 @@ function renderAppDetail(app){
         + '<div class="field-sub">' + escapeHtml(meta.join(' / ')) + '</div>'
         + '</div>'
         + '<span class="field-type">' + escapeHtml(fieldTypeJpLabel(field.type)) + '</span>'
+        + '<button type="button" class="row-del" title="この項目を図から非表示" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="hideFieldFromRow(this);event.stopPropagation();">✕</button>'
         + '</div>';
     });
   };
@@ -2126,6 +2390,8 @@ const commands=[
   {label:"円形 レイアウト",icon:"◯",action:()=>setLayout("circle")},
   {label:"ツリー レイアウト",icon:"🌳",action:()=>setLayout("breadthfirst")},
   {label:"同心円 レイアウト",icon:"◎",action:()=>setLayout("concentric")},
+  {label:"シンプルモード ON/OFF（結合のみ表示）",icon:"⬡",action:toggleSimpleMode},
+  {label:"表示密度: 結合のみ（項目非表示）",icon:"⬡",action:()=>setDensity("none")},
   {label:"表示密度: コンパクト",icon:"🪶",action:()=>setDensity("compact")},
   {label:"表示密度: 標準",icon:"📄",action:()=>setDensity("standard")},
   {label:"表示密度: 詳細",icon:"🧾",action:()=>setDensity("full")},
@@ -2141,10 +2407,11 @@ const commands=[
   {label:"アプリ(エンティティ)を追加",icon:"⬡",action:()=>openAddApp()},
   {label:"アプリに項目を追加",icon:"📝",action:()=>openAddField()},
   {label:"関連線を追加",icon:"🔗",action:()=>openAddRelation()},
-  {label:"選択関連を削除",icon:"🗑",action:removeSelectedRelations},
+  {label:"選択関連を削除",icon:"🗑",action:removeSelectedRelations,keys:"Delete"},
   {label:"削除関連を復元",icon:"↺",action:restoreRemovedRelations},
-  {label:"選択アプリを削除",icon:"🗑📱",action:removeSelectedApps},
+  {label:"選択アプリを削除",icon:"🗑📱",action:removeSelectedApps,keys:"Delete"},
   {label:"削除アプリを復元",icon:"↺📱",action:restoreRemovedApps},
+  {label:"非表示にした項目をすべて復元",icon:"↺📝",action:restoreAllHiddenFields},
   {label:"選択ノード 固定/解除",icon:"📌",action:togglePinFromSelection,keys:"Shift+P"},
   {label:"固定を全解除",icon:"📍",action:clearPins},
   {label:"ミニマップ",icon:"🗺",action:toggleMinimap},
@@ -2208,6 +2475,15 @@ document.addEventListener("keydown",e=>{
   if(e.key==="P"&&e.shiftKey){e.preventDefault();togglePinFromSelection();}
   if(e.key==="0"&&(e.ctrlKey||e.metaKey)){e.preventDefault();fit();}
   if(e.key==="Escape"){closeCmd();closeDetail();closeModal();closeHelp();closeEditor();closeAllMenus();clearFocus(true);document.getElementById("topbar").classList.remove("mobile-open");}
+  if((e.key==="Delete"||e.key==="Backspace")&&!isTypingTarget(e.target)){
+    const selEdges=cy.edges(":selected");
+    const selNodes=cy.nodes(":selected").not(".app-manual-hidden");
+    if(selEdges.length||selNodes.length){
+      e.preventDefault();
+      if(selEdges.length) removeSelectedRelations();
+      if(selNodes.length) removeSelectedApps();
+    }
+  }
   if(!isTypingTarget(e.target)){
     if(e.key==="?"||(e.key==="/"&&e.shiftKey)){e.preventDefault();openHelp();}
     if(e.key==="+"||e.key==="="){e.preventDefault();zoomIn();}
@@ -2289,6 +2565,8 @@ function captureEditState(){
       removedNodeIds:[...manuallyRemovedNodeIds],
       nodeHiddenEdgeIds:[...nodeHiddenEdgeIds],
       pinnedNodeIds:[...pinnedNodeIds],
+      hiddenFieldKeys:[...hiddenFieldKeys],
+      simpleMode,
       relationKinds:Object.assign({},relationKindState),
       relationLabels:relationLabelVisible,
       focusMode,focusDepth,focusDirection,
@@ -2356,6 +2634,8 @@ function applySavedViewState(){
       const n=cy.getElementById(id);
       if(n.length) pinNode(n,true);
     });
+    (view.hiddenFieldKeys||[]).forEach(key=>hiddenFieldKeys.add(String(key)));
+    if((view.hiddenFieldKeys||[]).length) refreshNodeLabels();
     if(view.relationKinds){
       ["LOOKUP","REF","ACTION"].forEach(k=>{relationKindState[k]=view.relationKinds[k]!==false;});
     }
@@ -2370,6 +2650,8 @@ function applySavedViewState(){
     applyRelationLabelVisibility();
     if(view.theme==="l"&&isDark){isDark=false;applyTheme();applyCyTheme();}
     if(view.overviewHidden) hideOverview();
+    if(view.simpleMode) setSimpleMode(true);
+    syncSimpleModeButton();
     refreshSidebar();
   }catch(err){console.error("[ER] 表示状態の復元に失敗",err);}
 }
@@ -2731,17 +3013,28 @@ applySavedViewState();
 
 
 /**
- * スペースID指定時は当該スペースの全アプリを起点に追加し、
- * スペース内アプリ集合を options.spaceAppIds に格納する（ER 描画でのスペース表現用）。
+ * スペースID指定時、スペース内アプリを起点に追加する。
+ * - ピッカーで選択済みの場合は選択したアプリだけを起点にする（options.spaceSelectedAppIds）
+ * - 未選択（ピッカー未使用）の場合は従来通り全アプリを起点にする
+ * スペース内アプリ集合は options.spaceAppIds に格納する（ER 描画でのスペース表現用）。
+ * 一覧はピッカー読み込み時のキャッシュを再利用するため、追加のAPIリクエストは発生しない。
  */
 async function resolveErStartAppIds(options: any): Promise<void> {
   if (!options.spaceId) return;
-  setStatus(`スペース ${options.spaceId} のアプリ一覧を取得中...`);
-  progressUi.update(2, `スペース ${options.spaceId} のアプリ一覧を取得中...`);
-  const apps = await fetchAppsInSpace(options.spaceId, options.source?.guestId);
+  const cacheKey = erSpaceCacheKey(options.spaceId, options.source?.guestId || '');
+  if (!(erSpaceAppsCache && erSpaceAppsCache.key === cacheKey)) {
+    setStatus(`スペース ${options.spaceId} のアプリ一覧を取得中...`);
+    progressUi.update(2, `スペース ${options.spaceId} のアプリ一覧を取得中...`);
+  }
+  const apps = await fetchAppsInSpaceCached(options.spaceId, options.source?.guestId || '');
   const spaceIds = apps.map((a) => String(a.appId));
   options.spaceAppIds = spaceIds;
-  const merged = [...(Array.isArray(options.startAppIds) ? options.startAppIds : []), ...spaceIds];
+  const spaceIdSet = new Set(spaceIds);
+  const selected = Array.isArray(options.spaceSelectedAppIds)
+    ? options.spaceSelectedAppIds.map((v: any) => String(v)).filter((v: string) => spaceIdSet.has(v))
+    : null;
+  const additions = selected ?? spaceIds;
+  const merged = [...(Array.isArray(options.startAppIds) ? options.startAppIds : []), ...additions];
   options.startAppIds = merged.filter((v, i, arr) => /^\d+$/.test(String(v)) && arr.indexOf(v) === i);
 }
 
@@ -2870,11 +3163,12 @@ export function renderErPreflight(): void {
 
   const startCount = opts.startAppIds.length;
   const hasSpace = !!opts.spaceId;
+  const spaceSelected = Array.isArray(opts.spaceSelectedAppIds) ? opts.spaceSelectedAppIds : null;
   const reverse = !!opts.includeReverseLookup;
   const depth = opts.maxDepth === 0 ? '無制限' : `${opts.maxDepth} ホップ`;
-  const densityLabel = ({ compact: '簡易', standard: '標準', full: '詳細' } as Record<string, string>)[opts.fieldDensity] || opts.fieldDensity;
+  const densityLabel = ({ none: '結合のみ', compact: '簡易', standard: '標準', full: '詳細' } as Record<string, string>)[opts.fieldDensity] || opts.fieldDensity;
 
-  if (!startCount && !hasSpace) {
+  if (!startCount && (!hasSpace || (spaceSelected && !spaceSelected.length))) {
     host.innerHTML = `<div class="er-preflight__empty">起点アプリIDがありません — 上の接続設定で比較元を指定するか、追加起点 / スペースIDを入力してください。</div>`;
     return;
   }
@@ -2882,7 +3176,10 @@ export function renderErPreflight(): void {
   const warnings: string[] = [];
   if (reverse) warnings.push('逆引き探索ON: 全アプリを走査するため時間がかかります（アプリ数 × 数秒）。');
   if (opts.maxDepth === 0) warnings.push('深さ無制限: アプリ網が大きい場合は実行時間が伸びます。');
-  if (hasSpace) warnings.push(`スペース ${opts.spaceId} 内の全アプリを起点に追加します。`);
+  if (hasSpace) {
+    if (spaceSelected) warnings.push(`スペース ${opts.spaceId} 内の選択した ${spaceSelected.length}アプリを起点に追加します（重複は自動で除外）。`);
+    else warnings.push(`スペース ${opts.spaceId} 内の全アプリを起点に追加します。特定のアプリだけにしたい場合は「スペース内アプリを読み込む」で選択してください。`);
+  }
   if (startCount > 5 && !hasSpace) warnings.push(`起点が ${startCount}アプリと多めです。広範囲を探索します。`);
 
   const seedLabel = startCount
@@ -2918,7 +3215,7 @@ export function renderErRouteMeta(): void {
   try { opts = readErDiagramOptions(); }
   catch { return; }
   const layoutLabel = formatErLayoutLabel(opts.layoutName);
-  const densityLabel = ({ compact: '簡易密度', standard: '標準密度', full: '詳細密度' } as Record<string, string>)[opts.fieldDensity] || opts.fieldDensity;
+  const densityLabel = ({ none: '結合のみ（項目非表示）', compact: '簡易密度', standard: '標準密度', full: '詳細密度' } as Record<string, string>)[opts.fieldDensity] || opts.fieldDensity;
   const subtableLabel = `サブテーブル${opts.includeSubtableFields ? 'ON' : 'OFF'}`;
   const depthLabel = opts.maxDepth === 0 ? '深さ無制限' : `深さ${opts.maxDepth}`;
   const reverseLabel = opts.includeReverseLookup ? '逆引きON' : '';

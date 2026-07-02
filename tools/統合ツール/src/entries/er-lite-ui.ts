@@ -5,6 +5,7 @@ import {
   runGenerateERDiagramStandalone,
   runExportERDiagramHtmlStandalone
 } from '../tabs/er-standalone.js';
+import { fetchAppsInSpace } from '../api.js';
 import {
   createLitePanel,
   makeRow,
@@ -93,20 +94,88 @@ export function mountErLitePanel() {
   const densitySel = makeSelect([
     ['standard', '標準'],
     ['compact', 'コンパクト'],
-    ['full', '詳細']
+    ['full', '詳細'],
+    ['none', '結合のみ（項目非表示）']
   ], 'standard');
   const depthInp = makeInput({ placeholder: '0=無制限', value: '0', type: 'number', width: 'narrow' });
   depthInp.setAttribute('min', '0');
   const subtableCb = makeCheck({ label: 'サブテーブル展開', checked: true });
   const reverseCb = makeCheck({ label: '逆引き探索', checked: false });
 
+  // ---- スペース内アプリピッカー（読み込んだ一覧は生成時に再利用しAPIを節約） ----
+  const spaceLoadBtn = makeButton('スペース内アプリを読込', 'sub');
+  const spacePickerHost = document.createElement('div');
+  Object.assign(spacePickerHost.style, {
+    display: 'none', width: '100%', maxHeight: '200px', overflowY: 'auto',
+    border: '1px solid #e2e8f0', borderRadius: '8px', background: '#f8fafc', padding: '8px', marginTop: '4px'
+  });
+  let spaceAppsCache: { key: string; apps: Array<{ appId: string; name: string }> } | null = null;
+  const spaceCacheKey = () => `${spaceInp.value.trim()}|${guestInp.value.trim()}`;
+
+  function renderSpacePicker(spaceId: string, apps: Array<{ appId: string; name: string }>) {
+    spacePickerHost.innerHTML = '';
+    spacePickerHost.dataset.spaceId = spaceId;
+    spacePickerHost.style.display = 'block';
+    if (!apps.length) {
+      spacePickerHost.textContent = 'このスペースにアプリが見つかりませんでした。';
+      return;
+    }
+    const head = document.createElement('div');
+    Object.assign(head.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' });
+    const lbl = document.createElement('span');
+    lbl.textContent = `スペース #${spaceId} のアプリ（${apps.length}件）— 起点にするアプリを選択`;
+    Object.assign(lbl.style, { fontSize: '11px', fontWeight: '700', color: '#334155' });
+    const btns = document.createElement('span');
+    for (const [text, on] of [['全選択', true], ['全解除', false]] as Array<[string, boolean]>) {
+      const b = makeButton(text, 'sub');
+      b.addEventListener('click', () => {
+        spacePickerHost.querySelectorAll<HTMLInputElement>('input[data-space-app]').forEach((c) => { c.checked = on; });
+      });
+      btns.appendChild(b);
+    }
+    head.appendChild(lbl);
+    head.appendChild(btns);
+    spacePickerHost.appendChild(head);
+    for (const a of apps) {
+      const item = document.createElement('label');
+      Object.assign(item.style, { display: 'flex', alignItems: 'center', gap: '6px', padding: '3px 4px', fontSize: '11px', cursor: 'pointer' });
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.dataset.spaceApp = String(a.appId);
+      const name = document.createElement('span');
+      name.textContent = `${a.name || `アプリ ${a.appId}`} (#${a.appId})`;
+      Object.assign(name.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+      item.appendChild(cb);
+      item.appendChild(name);
+      spacePickerHost.appendChild(item);
+    }
+  }
+
+  async function loadSpaceApps() {
+    const spaceId = spaceInp.value.trim();
+    if (!/^\d+$/.test(spaceId)) throw new Error('スペースIDを数値で入力してください');
+    const key = spaceCacheKey();
+    let apps: Array<{ appId: string; name: string }>;
+    if (spaceAppsCache && spaceAppsCache.key === key) {
+      apps = spaceAppsCache.apps;
+    } else {
+      apps = await fetchAppsInSpace(spaceId, guestInp.value.trim());
+      spaceAppsCache = { key, apps };
+    }
+    renderSpacePicker(spaceId, apps);
+    panel.setStatus(`スペース ${spaceId} のアプリ ${apps.length}件を読み込みました。起点にするアプリを選択してください`, 'info');
+  }
+  spaceLoadBtn.addEventListener('click', () => liteRun(panel, 'スペース内アプリを取得中…', loadSpaceApps));
+
   details.body.appendChild(makeRow(extra, { label: '追加起点' }));
-  details.body.appendChild(makeRow(spaceInp, { label: 'スペースID' }));
+  details.body.appendChild(makeRow([spaceInp, spaceLoadBtn], { label: 'スペースID' }));
+  details.body.appendChild(spacePickerHost);
   details.body.appendChild(makeRow(layoutSel, { label: 'レイアウト' }));
   details.body.appendChild(makeRow(densitySel, { label: '表示密度' }));
   details.body.appendChild(makeRow(depthInp, { label: '探索深さ' }));
   details.body.appendChild(makeRow([subtableCb.label, reverseCb.label]));
-  details.body.appendChild(makeNote('起点ID / 追加起点はいずれもカンマ区切りで複数指定できます。追加起点は最初の起点と統合して同一グラフに描画されます。'));
+  details.body.appendChild(makeNote('起点ID / 追加起点はいずれもカンマ区切りで複数指定できます。追加起点は最初の起点と統合して同一グラフに描画されます。スペースIDを入れて「スペース内アプリを読込」を押すと、任意のアプリだけを選んで起点にできます（重複するアプリは自動で1回だけ取得されます）。'));
 
   function parseAppIds(value: string): string[] {
     return String(value || '').split(/[\s,，]+/).map((v) => v.trim()).filter(Boolean);
@@ -114,6 +183,15 @@ export function mountErLitePanel() {
   panel.body.insertBefore(details.details, panel.status);
 
   function source() {
+    // ピッカーで読み込み済みの一覧・選択状態を引き渡す（生成時の再取得を防ぐ）
+    const spaceId = spaceInp.value.trim();
+    const cacheHit = !!(spaceAppsCache && spaceAppsCache.key === spaceCacheKey());
+    const pickerMatches = cacheHit && spacePickerHost.dataset.spaceId === spaceId && spacePickerHost.style.display !== 'none';
+    const selectedIds = pickerMatches
+      ? Array.from(spacePickerHost.querySelectorAll<HTMLInputElement>('input[data-space-app]'))
+          .filter((c) => c.checked)
+          .map((c) => String(c.dataset.spaceApp || ''))
+      : null;
     return {
       appId: appInp.value.trim(),
       appIds: parseAppIds(appInp.value),
@@ -125,7 +203,9 @@ export function mountErLitePanel() {
       includeSubtableFields: subtableCb.checkbox.checked,
       includeReverseLookup: reverseCb.checkbox.checked,
       extraAppIds: parseAppIds(extra.value),
-      spaceId: spaceInp.value.trim()
+      spaceId,
+      spaceApps: cacheHit ? spaceAppsCache.apps : undefined,
+      spaceSelectedAppIds: selectedIds ?? undefined
     };
   }
 

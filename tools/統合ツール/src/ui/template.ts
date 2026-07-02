@@ -1708,6 +1708,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <div>
                         <label title="フィールド表示の粒度">表示密度</label>
                         <select id="u_erFieldDensity">
+                          <option value="none">結合のみ（項目非表示）</option>
                           <option value="compact">簡易</option>
                           <option value="standard" selected>標準</option>
                           <option value="full">詳細</option>
@@ -1722,9 +1723,14 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                         <input type="text" id="u_erExtraApps" value="" placeholder="例: 123, 456, 789">
                       </div>
                       <div>
-                        <label title="指定スペース内の全アプリを起点に追加し、スペース所属アプリを二重枠で表示します">スペースID（任意）</label>
+                        <label title="指定スペース内のアプリを起点に追加し、スペース所属アプリを二重枠で表示します。下の「スペース内アプリを読み込む」で任意のアプリだけを選択できます">スペースID（任意）</label>
                         <input type="text" id="u_erSpaceId" value="" placeholder="スペース全体をER化">
                       </div>
+                    </div>
+                    <div class="er-space-picker-wrap">
+                      <button type="button" class="btn sub" data-act="loadErSpaceApps" title="スペース内のアプリ一覧を取得し、起点にするアプリをチェックボックスで選択します（取得した一覧は生成時に再利用され、APIリクエストを節約します）">🏢 スペース内アプリを読み込む</button>
+                      <span class="muted" style="font-size:11px;">読み込むと、スペース内の任意のアプリだけを複数選択して起点にできます（未読込時はスペース全体）。</span>
+                      <div id="u_erSpaceAppPicker" class="er-space-picker" aria-live="polite"></div>
                     </div>
                     <div class="er-option-chips">
                       <label class="chip" title="サブテーブル内フィールドもERに含めます"><input type="checkbox" id="u_erIncludeSubtable" checked> サブテーブル項目を含める</label>
