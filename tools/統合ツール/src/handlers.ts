@@ -22,6 +22,7 @@ import {
   syncDiffThemeButton,
   renderDiffWarningBox,
   renderDiffSelectionState,
+  renderDiffExportSummary,
   MAIN_RESULT_IDLE_HTML,
   diffViewedKey,
   isDiffRowViewed
@@ -998,6 +999,14 @@ export function setupEventHandlers(injected: any = {}) {
       state.diffExportContent = ui.diffExportContent.value || 'diffOnly';
       saveCurrentDialogState();
       renderDiffSelectionState();
+    });
+  }
+
+  // 出力メニューを開いた時点の件数を必ず最新化する（toggle はバブリングしないため直接張る）
+  {
+    const exportPop = getToolDocument().getElementById('u_diffExportPop') as HTMLDetailsElement | null;
+    exportPop?.addEventListener('toggle', () => {
+      if (exportPop.open) renderDiffExportSummary();
     });
   }
 
@@ -3082,6 +3091,15 @@ export function setupEventHandlers(injected: any = {}) {
         if (adv.open) adv.scrollIntoView({ behavior: 'smooth', block: 'start' });
         setStatus(adv.open ? '比較条件の調整を開きました' : '比較条件の調整を折り畳みました');
       }
+      return;
+    }
+    if (act === 'openDiffExportMenu') {
+      const pop = getToolDocument().getElementById('u_diffExportPop') as HTMLDetailsElement | null;
+      if (!pop) return;
+      pop.open = true;
+      renderDiffExportSummary();
+      pop.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      (pop.querySelector('select') as HTMLSelectElement | null)?.focus();
       return;
     }
     // S2: セクション分布バーから差分一覧へ絞り込みジャンプ

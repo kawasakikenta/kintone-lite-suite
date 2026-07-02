@@ -19,7 +19,7 @@ import {
   expandEntityRowsForDisplay
 } from './engine.js';
 import { summarizeSeverity, extractFieldPathInfo, getFieldRowPayload } from './enrich.js';
-import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter } from './filter.js';
+import { buildIgnoreKeySuggestions, getFilteredDiffRowsWithoutSectionFilter, getFavoriteDiffRows } from './filter.js';
 import { resolveBundleRevision, pickBundleSections } from '../api.js';
 import { getToolDocument } from '../ui/dialog.js';
 import { buildCategoryViewHtml } from './category-view.js';
@@ -4634,7 +4634,45 @@ export function renderDiffFilterOptions() {
   state.diffFilterSection = ui.diffFilterSection.value;
 }
 
+// 出力メニュー内のライブ件数プレビュー。
+// 現在の範囲（全件/選択/表示中/お気に入り）で実際に何件出力されるかを、
+// 保存ボタンを押す前に確認できるようにする。
+export function renderDiffExportSummary() {
+  const host = getToolDocument().getElementById('u_diffExportSummary');
+  if (!host) return;
+  const total = (state.lastDiffRows || []).length;
+  const issues = (state.lastFetchIssues || []).length;
+  if (!total && !issues && !state.lastDiffAt) {
+    host.className = 'diff-export-panel__summary is-empty';
+    host.textContent = '差分比較を実行すると出力対象の件数が表示されます';
+    return;
+  }
+  const mode = resolveDiffExportMode();
+  const resolved = mode === 'selected'
+    ? { label: '選択行', rows: getSelectedDiffRows() }
+    : mode === 'visible'
+      ? { label: '表示中', rows: getRenderedDiffRows() }
+      : mode === 'favorites'
+        ? { label: 'お気に入り', rows: getFavoriteDiffRows() }
+        : { label: '全件', rows: state.lastDiffRows || [] };
+  const actual = countActualDiffRows(resolved.rows);
+  if (mode !== 'all' && !resolved.rows.length) {
+    host.className = 'diff-export-panel__summary is-warn';
+    host.textContent = `⚠ 「${resolved.label}」に該当する差分がありません。このまま出力するとエラーになります。範囲を変えるか、行を選択してください。`;
+    return;
+  }
+  const s = summarizeRows(resolved.rows);
+  const breakdown = `追加${s.added} / 削除${s.removed} / 変更${s.changed}${s.moved ? ` / 移動${s.moved}` : ''}${s.same ? ` / 同一${s.same}` : ''}`;
+  const issueNote = mode === 'all' && issues ? ` ＋ 取得失敗 ${issues}件` : '';
+  const truncated = !!state.lastDiffTruncation?.truncated;
+  host.className = `diff-export-panel__summary${truncated ? ' is-warn' : ''}`;
+  host.innerHTML = `出力対象: <b>${esc(resolved.label)} ${actual}件</b>（${breakdown}）${issueNote}`
+    + `<span class="diff-export-panel__summary-sub">内容: ${esc(getDiffExportContentLabel(resolveDiffExportContentMode()))}</span>`
+    + (truncated ? '<span class="diff-export-panel__summary-sub">⚠ 差分上限打ち切りが発生しています。出力は不完全です。</span>' : '');
+}
+
 export function renderDiffSelectionState() {
+  renderDiffExportSummary();
   if (!ui.diffSelectionState) return;
   const total = (state.lastDiffRows || []).length;
   const selected = getSelectedDiffRows().length;

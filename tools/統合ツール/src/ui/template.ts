@@ -292,16 +292,33 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                       <button type="button" class="btn sub" data-act="exportBundleJson">💾 設定保存</button>
                     </div>
                   </details>
-                  <details class="diff-hero__pop">
+                  <details class="diff-hero__pop diff-hero__pop--export" id="u_diffExportPop">
                     <summary class="btn sub diff-hero__pop-btn" title="差分結果の出力">📤 出力</summary>
-                    <div class="diff-hero__pop-body">
-                      <div class="diff-hero__pop-group">差分を出力</div>
-                      <button type="button" class="btn sub" data-act="exportDiffJson">JSON</button>
-                      <button type="button" class="btn sub" data-act="exportDiffHtml">HTML</button>
-                      <button type="button" class="btn sub" data-act="exportPatchJson">パッチ</button>
-                      <div class="diff-hero__pop-group">レポート・スナップショット</div>
+                    <div class="diff-hero__pop-body diff-export-panel">
+                      <div class="diff-export-panel__opts">
+                        <label class="diff-export-panel__opt">範囲
+                          <select id="u_diffExportMode" title="保存・コピーに含める行の範囲">
+                            <option value="all">全件</option>
+                            <option value="selected">選択行のみ</option>
+                            <option value="visible">表示中のみ</option>
+                            <option value="favorites">お気に入りのみ</option>
+                          </select>
+                        </label>
+                        <label class="diff-export-panel__opt">内容
+                          <select id="u_diffExportContent" title="出力内容">
+                            <option value="diffOnly">行データのみ</option>
+                            <option value="withCompared">行+比較設定</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div class="diff-export-panel__summary is-empty" id="u_diffExportSummary" aria-live="polite">差分比較を実行すると出力対象の件数が表示されます</div>
+                      <div class="diff-hero__pop-group">データ</div>
+                      <button type="button" class="btn sub" data-act="exportDiffJson" title="差分行を JSON で保存（範囲・内容の設定が反映されます）">💾 差分 JSON</button>
+                      <button type="button" class="btn sub" data-act="exportPatchJson" title="差分をパッチ JSON で保存（プレビュー反映の受け渡し用）">🩹 パッチ JSON</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffJson" title="差分スナップショット（rows / fetchIssues / filters）を JSON で保存">📸 差分スナップショット保存</button>
                       <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
+                      <div class="diff-hero__pop-group">レポート</div>
+                      <button type="button" class="btn sub" data-act="exportDiffHtml" title="差分結果を単体 HTML レポートで保存（同一項目含む）">🌐 差分 HTML</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
                       <button type="button" class="btn sub" data-act="kusCopyDiffMd" title="差分 Markdown 表をクリップボードへコピー（PR・チャット貼付向け）">📋 差分 MD コピー</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffXlsx" title="差分結果を Excel (.xlsx) でセクション別シート構成で保存">📊 差分 Excel</button>
@@ -470,16 +487,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                   <div class="diff-review-actions" role="group" aria-label="出力と選択操作">
                     <div class="diff-review-actions__group">
                       <span class="diff-review-actions__lbl">📤 出力</span>
-                      <select id="u_diffExportMode" title="保存・コピーに含める行の範囲" class="diff-review-actions__sel">
-                        <option value="all">全件</option>
-                        <option value="selected">選択行のみ</option>
-                        <option value="visible">表示中のみ</option>
-                        <option value="favorites">お気に入りのみ</option>
-                      </select>
-                      <select id="u_diffExportContent" title="出力内容" class="diff-review-actions__sel">
-                        <option value="diffOnly">行データのみ</option>
-                        <option value="withCompared">行+比較設定</option>
-                      </select>
+                      <button type="button" class="btn sub" data-act="openDiffExportMenu" title="出力メニューを開きます（範囲・内容・形式をまとめて選択）">出力メニューを開く</button>
                     </div>
                     <div class="diff-review-actions__group">
                       <span class="diff-review-actions__lbl">✓ 選択</span>

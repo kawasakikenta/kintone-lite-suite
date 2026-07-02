@@ -11105,7 +11105,33 @@ ${body}`;
     ui.diffFilterSection.value = sections.includes(current) ? current : "";
     state.diffFilterSection = ui.diffFilterSection.value;
   }
+  function renderDiffExportSummary() {
+    const host = getToolDocument().getElementById("u_diffExportSummary");
+    if (!host) return;
+    const total = (state.lastDiffRows || []).length;
+    const issues = (state.lastFetchIssues || []).length;
+    if (!total && !issues && !state.lastDiffAt) {
+      host.className = "diff-export-panel__summary is-empty";
+      host.textContent = "差分比較を実行すると出力対象の件数が表示されます";
+      return;
+    }
+    const mode = resolveDiffExportMode();
+    const resolved = mode === "selected" ? { label: "選択行", rows: getSelectedDiffRows() } : mode === "visible" ? { label: "表示中", rows: getRenderedDiffRows() } : mode === "favorites" ? { label: "お気に入り", rows: getFavoriteDiffRows() } : { label: "全件", rows: state.lastDiffRows || [] };
+    const actual = countActualDiffRows(resolved.rows);
+    if (mode !== "all" && !resolved.rows.length) {
+      host.className = "diff-export-panel__summary is-warn";
+      host.textContent = `⚠ 「${resolved.label}」に該当する差分がありません。このまま出力するとエラーになります。範囲を変えるか、行を選択してください。`;
+      return;
+    }
+    const s = summarizeRows(resolved.rows);
+    const breakdown = `追加${s.added} / 削除${s.removed} / 変更${s.changed}${s.moved ? ` / 移動${s.moved}` : ""}${s.same ? ` / 同一${s.same}` : ""}`;
+    const issueNote = mode === "all" && issues ? ` ＋ 取得失敗 ${issues}件` : "";
+    const truncated = !!state.lastDiffTruncation?.truncated;
+    host.className = `diff-export-panel__summary${truncated ? " is-warn" : ""}`;
+    host.innerHTML = `出力対象: <b>${esc(resolved.label)} ${actual}件</b>（${breakdown}）${issueNote}<span class="diff-export-panel__summary-sub">内容: ${esc(getDiffExportContentLabel(resolveDiffExportContentMode()))}</span>` + (truncated ? '<span class="diff-export-panel__summary-sub">⚠ 差分上限打ち切りが発生しています。出力は不完全です。</span>' : "");
+  }
   function renderDiffSelectionState() {
+    renderDiffExportSummary();
     if (!ui.diffSelectionState) return;
     const total = (state.lastDiffRows || []).length;
     const selected = getSelectedDiffRows().length;
@@ -28011,6 +28037,18 @@ ${detail}`);
 #kintone-unified-suite-v2 .diff-hero__pop[open] > summary{background:#dbeafe;color:#1e40af;border-color:#93c5fd}
 #kintone-unified-suite-v2 .diff-hero__pop-body{position:absolute;right:0;top:calc(100% + 4px);z-index:10;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 4px 12px rgba(15,23,42,.12);padding:6px;display:flex;flex-direction:column;gap:3px;min-width:140px}
 #kintone-unified-suite-v2 .diff-hero__pop-body .btn{padding:5px 10px;font-size:11px;text-align:left;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-hero__pop-group{font-size:10px;font-weight:700;color:#64748b;letter-spacing:.05em;padding:6px 4px 2px;border-top:1px solid #f1f5f9;margin-top:2px}
+#kintone-unified-suite-v2 .diff-hero__pop-group:first-child{border-top:0;margin-top:0}
+/* 出力メニュー: 範囲・内容セレクト + 件数プレビュー */
+#kintone-unified-suite-v2 .diff-hero__pop--export .diff-hero__pop-body{min-width:250px;max-height:70vh;overflow-y:auto}
+#kintone-unified-suite-v2 .diff-export-panel__opts{display:flex;gap:8px;padding:2px 2px 4px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-export-panel__opt{display:flex;align-items:center;gap:4px;font-size:11px;color:#475569;font-weight:700}
+#kintone-unified-suite-v2 .diff-export-panel__opt select{font-size:11px;padding:3px 4px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;font-weight:400}
+#kintone-unified-suite-v2 .diff-export-panel__summary{font-size:11px;line-height:1.55;color:#334155;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:5px;padding:6px 8px;margin:0 2px 2px;white-space:normal}
+#kintone-unified-suite-v2 .diff-export-panel__summary.is-warn{background:#fef2f2;border-color:#fca5a5;color:#7f1d1d}
+#kintone-unified-suite-v2 .diff-export-panel__summary.is-empty{color:#64748b;background:#f8fafc}
+#kintone-unified-suite-v2 .diff-export-panel__summary-sub{display:block;margin-top:2px;font-size:10px;color:#64748b}
+#kintone-unified-suite-v2 .diff-export-panel__summary.is-warn .diff-export-panel__summary-sub{color:#991b1b}
 #kintone-unified-suite-v2 .diff-hero__advanced{padding:4px 10px;font-size:11px}
 #kintone-unified-suite-v2 .diff-step-label{font-size:11px;color:#64748b;font-weight:700;margin:6px 4px 4px;letter-spacing:.04em}
 /* 比較条件の調整: ⚙ 詳細 popover からのみ開閉（閉じてる間は完全に隠す） */
@@ -35004,16 +35042,33 @@ ${detail}`);
                       <button type="button" class="btn sub" data-act="exportBundleJson">💾 設定保存</button>
                     </div>
                   </details>
-                  <details class="diff-hero__pop">
+                  <details class="diff-hero__pop diff-hero__pop--export" id="u_diffExportPop">
                     <summary class="btn sub diff-hero__pop-btn" title="差分結果の出力">📤 出力</summary>
-                    <div class="diff-hero__pop-body">
-                      <div class="diff-hero__pop-group">差分を出力</div>
-                      <button type="button" class="btn sub" data-act="exportDiffJson">JSON</button>
-                      <button type="button" class="btn sub" data-act="exportDiffHtml">HTML</button>
-                      <button type="button" class="btn sub" data-act="exportPatchJson">パッチ</button>
-                      <div class="diff-hero__pop-group">レポート・スナップショット</div>
+                    <div class="diff-hero__pop-body diff-export-panel">
+                      <div class="diff-export-panel__opts">
+                        <label class="diff-export-panel__opt">範囲
+                          <select id="u_diffExportMode" title="保存・コピーに含める行の範囲">
+                            <option value="all">全件</option>
+                            <option value="selected">選択行のみ</option>
+                            <option value="visible">表示中のみ</option>
+                            <option value="favorites">お気に入りのみ</option>
+                          </select>
+                        </label>
+                        <label class="diff-export-panel__opt">内容
+                          <select id="u_diffExportContent" title="出力内容">
+                            <option value="diffOnly">行データのみ</option>
+                            <option value="withCompared">行+比較設定</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div class="diff-export-panel__summary is-empty" id="u_diffExportSummary" aria-live="polite">差分比較を実行すると出力対象の件数が表示されます</div>
+                      <div class="diff-hero__pop-group">データ</div>
+                      <button type="button" class="btn sub" data-act="exportDiffJson" title="差分行を JSON で保存（範囲・内容の設定が反映されます）">💾 差分 JSON</button>
+                      <button type="button" class="btn sub" data-act="exportPatchJson" title="差分をパッチ JSON で保存（プレビュー反映の受け渡し用）">🩹 パッチ JSON</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffJson" title="差分スナップショット（rows / fetchIssues / filters）を JSON で保存">📸 差分スナップショット保存</button>
                       <button type="button" class="btn sub" data-act="kusImportDiffJson" title="保存した差分スナップショット JSON を読み込み">📂 スナップショット読込</button>
+                      <div class="diff-hero__pop-group">レポート</div>
+                      <button type="button" class="btn sub" data-act="exportDiffHtml" title="差分結果を単体 HTML レポートで保存（同一項目含む）">🌐 差分 HTML</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffMd" title="差分結果を Markdown 表で保存">📝 差分 MD</button>
                       <button type="button" class="btn sub" data-act="kusCopyDiffMd" title="差分 Markdown 表をクリップボードへコピー（PR・チャット貼付向け）">📋 差分 MD コピー</button>
                       <button type="button" class="btn sub" data-act="kusExportDiffXlsx" title="差分結果を Excel (.xlsx) でセクション別シート構成で保存">📊 差分 Excel</button>
@@ -35182,16 +35237,7 @@ ${detail}`);
                   <div class="diff-review-actions" role="group" aria-label="出力と選択操作">
                     <div class="diff-review-actions__group">
                       <span class="diff-review-actions__lbl">📤 出力</span>
-                      <select id="u_diffExportMode" title="保存・コピーに含める行の範囲" class="diff-review-actions__sel">
-                        <option value="all">全件</option>
-                        <option value="selected">選択行のみ</option>
-                        <option value="visible">表示中のみ</option>
-                        <option value="favorites">お気に入りのみ</option>
-                      </select>
-                      <select id="u_diffExportContent" title="出力内容" class="diff-review-actions__sel">
-                        <option value="diffOnly">行データのみ</option>
-                        <option value="withCompared">行+比較設定</option>
-                      </select>
+                      <button type="button" class="btn sub" data-act="openDiffExportMenu" title="出力メニューを開きます（範囲・内容・形式をまとめて選択）">出力メニューを開く</button>
                     </div>
                     <div class="diff-review-actions__group">
                       <span class="diff-review-actions__lbl">✓ 選択</span>
@@ -40797,6 +40843,12 @@ ${detail}`);
         renderDiffSelectionState();
       });
     }
+    {
+      const exportPop = getToolDocument().getElementById("u_diffExportPop");
+      exportPop?.addEventListener("toggle", () => {
+        if (exportPop.open) renderDiffExportSummary();
+      });
+    }
     ui.doDeploy.addEventListener("change", saveCurrentDialogState2);
     if (ui.reflectSimpleMode) {
       ui.reflectSimpleMode.addEventListener("change", () => {
@@ -42811,6 +42863,15 @@ ${detail}`);
           if (adv.open) adv.scrollIntoView({ behavior: "smooth", block: "start" });
           setStatus(adv.open ? "比較条件の調整を開きました" : "比較条件の調整を折り畳みました");
         }
+        return;
+      }
+      if (act === "openDiffExportMenu") {
+        const pop = getToolDocument().getElementById("u_diffExportPop");
+        if (!pop) return;
+        pop.open = true;
+        renderDiffExportSummary();
+        pop.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        pop.querySelector("select")?.focus();
         return;
       }
       if (act === "filterDiffBySectionFromDist") {

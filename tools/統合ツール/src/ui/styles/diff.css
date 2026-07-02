@@ -12,6 +12,18 @@
 #kintone-unified-suite-v2 .diff-hero__pop[open] > summary{background:#dbeafe;color:#1e40af;border-color:#93c5fd}
 #kintone-unified-suite-v2 .diff-hero__pop-body{position:absolute;right:0;top:calc(100% + 4px);z-index:10;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 4px 12px rgba(15,23,42,.12);padding:6px;display:flex;flex-direction:column;gap:3px;min-width:140px}
 #kintone-unified-suite-v2 .diff-hero__pop-body .btn{padding:5px 10px;font-size:11px;text-align:left;white-space:nowrap}
+#kintone-unified-suite-v2 .diff-hero__pop-group{font-size:10px;font-weight:700;color:#64748b;letter-spacing:.05em;padding:6px 4px 2px;border-top:1px solid #f1f5f9;margin-top:2px}
+#kintone-unified-suite-v2 .diff-hero__pop-group:first-child{border-top:0;margin-top:0}
+/* 出力メニュー: 範囲・内容セレクト + 件数プレビュー */
+#kintone-unified-suite-v2 .diff-hero__pop--export .diff-hero__pop-body{min-width:250px;max-height:70vh;overflow-y:auto}
+#kintone-unified-suite-v2 .diff-export-panel__opts{display:flex;gap:8px;padding:2px 2px 4px;flex-wrap:wrap}
+#kintone-unified-suite-v2 .diff-export-panel__opt{display:flex;align-items:center;gap:4px;font-size:11px;color:#475569;font-weight:700}
+#kintone-unified-suite-v2 .diff-export-panel__opt select{font-size:11px;padding:3px 4px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;font-weight:400}
+#kintone-unified-suite-v2 .diff-export-panel__summary{font-size:11px;line-height:1.55;color:#334155;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:5px;padding:6px 8px;margin:0 2px 2px;white-space:normal}
+#kintone-unified-suite-v2 .diff-export-panel__summary.is-warn{background:#fef2f2;border-color:#fca5a5;color:#7f1d1d}
+#kintone-unified-suite-v2 .diff-export-panel__summary.is-empty{color:#64748b;background:#f8fafc}
+#kintone-unified-suite-v2 .diff-export-panel__summary-sub{display:block;margin-top:2px;font-size:10px;color:#64748b}
+#kintone-unified-suite-v2 .diff-export-panel__summary.is-warn .diff-export-panel__summary-sub{color:#991b1b}
 #kintone-unified-suite-v2 .diff-hero__advanced{padding:4px 10px;font-size:11px}
 #kintone-unified-suite-v2 .diff-step-label{font-size:11px;color:#64748b;font-weight:700;margin:6px 4px 4px;letter-spacing:.04em}
 /* 比較条件の調整: ⚙ 詳細 popover からのみ開閉（閉じてる間は完全に隠す） */
