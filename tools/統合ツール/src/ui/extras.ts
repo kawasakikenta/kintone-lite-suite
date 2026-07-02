@@ -37,6 +37,8 @@ import { state, ui } from '../state.js';
 import { setStatus } from './components.js';
 import { getToolDocument } from './dialog.js';
 import { localizeKintoneEnumsInText as kusEnumsLocalize } from '../kintone-enums.js';
+import { resolveDiffExportRows } from '../diff/filter.js';
+import { decodeRow } from '../diff/path-decoder.js';
 import { renderReflectApplyChecklistStatus } from '../handlers/checklist.js';
 import { runExportDiffXlsx } from '../diff/xlsx-export.js';
 import { buildExportFilename } from '../utils.js';
@@ -973,11 +975,9 @@ export function initRowCopyFormat(): void {
   const sel = wrap.querySelector('select') as HTMLSelectElement;
   wrap.querySelector('button')?.addEventListener('click', () => {
     const fmt = sel.value;
-    const rows = state.lastDiffRows || [];
-    if (!rows.length) {
-      pushToast('差分が未取得です', { tone: 'warn' });
-      return;
-    }
+    const info = resolveDiffRowsForReport();
+    if (!info) return;
+    const rows = info.rows;
     let text = '';
     const localizedRows = rows.map((r: any) => ({
       type: DIFF_TYPE_LABEL[r.type] || r.type,
@@ -1795,7 +1795,7 @@ function applyI18n(lang: string): void {
 // 差分行の type / severity を日本語化するための補助マップ。
 // kintone API ENUM 値（CREATOR / BAR / STACKED 等）の置換は ../kintone-enums.ts に集約。
 const DIFF_TYPE_LABEL: Record<string, string> = { added: '追加', removed: '削除', changed: '変更', moved: '移動', same: '同一' };
-const DIFF_SEVERITY_LABEL: Record<string, string> = { high: '高', mid: '中', low: '低', info: '情報' };
+const DIFF_SEVERITY_LABEL: Record<string, string> = { high: '高', medium: '中', low: '低', info: '情報' };
 
 const localizeKintoneEnumsInText = kusEnumsLocalize;
 
@@ -1806,10 +1806,51 @@ function escapeMarkdownTableCell(value: string): string {
     .replace(/\r?\n/g, '<br>');
 }
 
-function buildDiffMarkdownText(): string {
-  const rows = state.lastDiffRows || [];
+// 出力メニューの範囲設定（全件/選択/表示中/お気に入り）を MD/Excel/PDF にも適用する。
+// 範囲に該当する行が無い場合は null を返し、呼び出し側でトーストして中断する。
+function resolveDiffRowsForReport(): { label: string; mode: string; rows: any[] } | null {
+  if (!(state.lastDiffRows || []).length) {
+    pushToast('差分が未取得です', { tone: 'warn' });
+    return null;
+  }
+  try {
+    const info = resolveDiffExportRows();
+    return { label: info.label, mode: info.mode, rows: info.rows || [] };
+  } catch (e: any) {
+    pushToast(`${e?.message || String(e)}（出力メニューの「範囲」を見直してください）`, { tone: 'warn' });
+    return null;
+  }
+}
+
+// 差分行の「対象」を人が読めるラベルにする（画面表示と同じ意味情報を出力にも載せる）。
+// 例: 「ビュー › 一覧A · 絞り込み条件」「テーブル 明細 › 単価」
+function diffRowTargetLabel(r: any): string {
+  try {
+    const d = decodeRow(r);
+    if (d) {
+      const where = (d.whereChips || []).map((c: any) => c?.label).filter(Boolean).join(' › ');
+      return [where, d.propLabel].filter(Boolean).join(' · ');
+    }
+  } catch { /* decode 失敗時はフォールバックへ */ }
+  if (r?.entityLabel) return [String(r.entityLabel), String(r.entityPropLabel || '')].filter(Boolean).join(' · ');
+  const m = String(r?.path || '').match(/^fieldSettings\.properties\.([^.[\]]+)(?:\.fields\.([^.[\]]+))?/);
+  if (m) return m[2] ? `${m[1]} › ${m[2]}` : m[1];
+  return '';
+}
+
+const DIFF_REPORT_VALUE_MAX = 400;
+
+function formatDiffReportValue(value: any): string {
+  const text = localizeKintoneEnumsInText(JSON.stringify(value));
+  if (text == null) return '';
+  if (text.length <= DIFF_REPORT_VALUE_MAX) return text;
+  return `${text.slice(0, DIFF_REPORT_VALUE_MAX)}…（省略・全${text.length}文字）`;
+}
+
+// レポート冒頭の共通コンテキスト行（比較元/比較先・範囲・件数・取得失敗・打ち切り警告）
+function buildDiffReportContextLines(exportLabel: string, rows: any[]): string[] {
   const typeCounts: Record<string, number> = { added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
-  const severityCounts: Record<string, number> = { high: 0, mid: 0, low: 0, info: 0 };
+  const severityCounts: Record<string, number> = { high: 0, medium: 0, low: 0, info: 0 };
   for (const r of rows) {
     const t = String((r as any)?.type || '');
     const s = String((r as any)?.severity || '');
@@ -1819,95 +1860,124 @@ function buildDiffMarkdownText(): string {
   const actualDiffCount = typeCounts.added + typeCounts.removed + typeCounts.changed + typeCounts.moved;
   const sourceBundle = (state as any).lastSourceBundle;
   const targetBundle = (state as any).lastTargetBundle;
-  const contextLines: string[] = [];
+  const lines: string[] = [];
   if (sourceBundle?.appId) {
-    const srcLabel = `App ${sourceBundle.appId}${sourceBundle.guestId ? ` / Guest ${sourceBundle.guestId}` : ''}${sourceBundle.preview ? ' / preview' : ''}`;
-    contextLines.push(`- 比較元: ${srcLabel}`);
+    lines.push(`- 比較元: App ${sourceBundle.appId}${sourceBundle.guestId ? ` / Guest ${sourceBundle.guestId}` : ''}${sourceBundle.preview ? ' / preview' : ''}`);
   }
   if (targetBundle?.appId) {
-    const tgtLabel = `App ${targetBundle.appId}${targetBundle.guestId ? ` / Guest ${targetBundle.guestId}` : ''}${targetBundle.preview ? ' / preview' : ''}`;
-    contextLines.push(`- 比較先: ${tgtLabel}`);
+    lines.push(`- 比較先: App ${targetBundle.appId}${targetBundle.guestId ? ` / Guest ${targetBundle.guestId}` : ''}${targetBundle.preview ? ' / preview' : ''}`);
   }
-  const summaryLines = [
-    ...contextLines,
-    `- 件数: 差分 ${actualDiffCount} 件 / 同一 ${typeCounts.same} 件`,
-    `- 種別: 追加 ${typeCounts.added} / 削除 ${typeCounts.removed} / 変更 ${typeCounts.changed} / 移動 ${typeCounts.moved}`,
-    `- 重要度: 高 ${severityCounts.high} / 中 ${severityCounts.mid} / 低 ${severityCounts.low} / 情報 ${severityCounts.info}`
-  ];
+  lines.push(`- 出力範囲: ${exportLabel}`);
+  lines.push(`- 件数: 差分 ${actualDiffCount} 件 / 同一 ${typeCounts.same} 件`);
+  lines.push(`- 種別: 追加 ${typeCounts.added} / 削除 ${typeCounts.removed} / 変更 ${typeCounts.changed} / 移動 ${typeCounts.moved}`);
+  lines.push(`- 重要度: 高 ${severityCounts.high} / 中 ${severityCounts.medium} / 低 ${severityCounts.low}`);
+  const issues = (state.lastFetchIssues || []).length;
+  if (issues) lines.push(`- ⚠ API取得失敗: ${issues} 件（該当セクションは比較できていません）`);
+  const truncation = (state as any).lastDiffTruncation;
+  if (truncation?.truncated) {
+    lines.push(`- ⚠ 差分上限打ち切り: 上限 ${truncation.diffLimit} 件に達したため超過分は含まれていません（このレポートは不完全です）`);
+  }
+  return lines;
+}
+
+function buildDiffReportRowCells(r: any): { typeLabel: string; severityLabel: string; section: string; target: string; path: string; oldStr: string; newStr: string } {
+  return {
+    typeLabel: DIFF_TYPE_LABEL[r.type] || r.type,
+    severityLabel: DIFF_SEVERITY_LABEL[r.severity] || r.severity,
+    section: diffSectionLabel(r),
+    target: diffRowTargetLabel(r),
+    path: String(r.path ?? ''),
+    oldStr: formatDiffReportValue(diffLeftValue(r)),
+    newStr: formatDiffReportValue(diffRightValue(r))
+  };
+}
+
+function buildDiffMarkdownText(exportLabel: string, rows: any[]): string {
+  const summaryLines = buildDiffReportContextLines(exportLabel, rows);
   return '# 差分レポート\n\n生成: ' + new Date().toISOString() + '\n\n'
     + summaryLines.join('\n') + '\n\n'
-    + '| 種別 | セクション | パス | 旧 | 新 | 重要度 |\n'
-    + '|---|---|---|---|---|---|\n'
+    + '| 種別 | セクション | 対象 | パス | 旧 | 新 | 重要度 |\n'
+    + '|---|---|---|---|---|---|---|\n'
     + rows.map((r: any) => {
-      const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
-      const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-      const oldStr = escapeMarkdownTableCell(localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r))));
-      const newStr = escapeMarkdownTableCell(localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r))));
-      const path = escapeMarkdownTableCell(String(r.path ?? ''));
-      const section = escapeMarkdownTableCell(diffSectionLabel(r));
-      return `| ${typeLabel} | ${section} | \`${path}\` | ${oldStr} | ${newStr} | ${severityLabel} |`;
+      const c = buildDiffReportRowCells(r);
+      return `| ${c.typeLabel} | ${escapeMarkdownTableCell(c.section)} | ${escapeMarkdownTableCell(c.target)} | \`${escapeMarkdownTableCell(c.path)}\` | ${escapeMarkdownTableCell(c.oldStr)} | ${escapeMarkdownTableCell(c.newStr)} | ${c.severityLabel} |`;
     }).join('\n');
 }
 
 export function exportDiffAsMarkdown(): void {
-  const rows = state.lastDiffRows || [];
-  if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
-  const md = buildDiffMarkdownText();
+  const info = resolveDiffRowsForReport();
+  if (!info) return;
+  const md = buildDiffMarkdownText(info.label, info.rows);
   triggerDownload(new Blob([md], { type: 'text/markdown' }), buildExportFilename('差分レポート', 'md'));
-  pushToast('Markdown を保存しました', { tone: 'ok' });
+  pushToast(`Markdown を保存しました（${info.label} ${info.rows.length}行）`, { tone: 'ok' });
 }
 
 export async function copyDiffAsMarkdown(): Promise<void> {
-  const rows = state.lastDiffRows || [];
-  if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
-  const md = buildDiffMarkdownText();
+  const info = resolveDiffRowsForReport();
+  if (!info) return;
+  const md = buildDiffMarkdownText(info.label, info.rows);
   try {
     await navigator.clipboard.writeText(md);
-    pushToast('Markdown をクリップボードへコピーしました', { tone: 'ok' });
+    pushToast(`Markdown をクリップボードへコピーしました（${info.label} ${info.rows.length}行）`, { tone: 'ok' });
   } catch (_e) {
     pushToast('クリップボードへコピーできませんでした', { tone: 'error' });
   }
 }
 export function exportDiffAsXlsx(): void {
-  const rows = state.lastDiffRows || [];
-  if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
+  const info = resolveDiffRowsForReport();
+  if (!info) return;
   try {
     runExportDiffXlsx({
-      rows,
+      rows: info.rows,
       fetchIssues: state.lastFetchIssues || [],
       sourceBundle: state.lastSourceBundle,
       targetBundle: state.lastTargetBundle,
       ignoreKeys: ui.ignoreKeys?.value || '',
       exportContentMode: 'diffOnly',
-      filename: buildExportFilename('差分レポート', 'xlsx')
+      filename: buildExportFilename(info.mode === 'all' ? '差分レポート' : `差分レポート_${info.label}`, 'xlsx')
     });
-    pushToast('差分 Excel (.xlsx) を保存しました', { tone: 'ok' });
+    pushToast(`差分 Excel (.xlsx) を保存しました（${info.label} ${info.rows.length}行）`, { tone: 'ok' });
   } catch (e: any) {
     pushToast(`Excel 出力に失敗しました: ${e?.message || String(e)}`, { tone: 'error' });
   }
 }
+// PDF / 表紙付き PDF 共通の一覧テーブル HTML（対象列・値の省略・重要度日本語化込み）
+function buildDiffReportTableHtml(rows: any[]): string {
+  const tbody = rows.map((r: any) => {
+    const c = buildDiffReportRowCells(r);
+    return `<tr class="${escapeHtml(r.type)}"><td>${escapeHtml(c.typeLabel)}</td><td>${escapeHtml(c.section)}</td><td>${escapeHtml(c.target)}</td><td class="path">${escapeHtml(c.path)}</td><td><pre>${escapeHtml(c.oldStr)}</pre></td><td><pre>${escapeHtml(c.newStr)}</pre></td><td>${escapeHtml(c.severityLabel)}</td></tr>`;
+  }).join('');
+  return `<table><thead><tr><th>種別</th><th>セクション</th><th>対象</th><th>パス</th><th>旧</th><th>新</th><th>重要度</th></tr></thead><tbody>${tbody}</tbody></table>`;
+}
+
+function buildDiffReportMetaHtml(exportLabel: string, rows: any[]): string {
+  return buildDiffReportContextLines(exportLabel, rows)
+    .map((line) => `<div class="${line.includes('⚠') ? 'meta-warn' : ''}">${escapeHtml(line.replace(/^- /, ''))}</div>`)
+    .join('');
+}
+
+const DIFF_REPORT_PRINT_CSS = `
+    table{border-collapse:collapse;width:100%;font-size:10px}
+    th,td{border:1px solid #cbd5e1;padding:4px 6px;vertical-align:top}
+    th{background:#f1f5f9;text-align:left}
+    td pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:9px}
+    td.path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9px;word-break:break-all}
+    .meta-warn{color:#b91c1c;font-weight:700}
+    .added{background:#ecfdf5}.removed{background:#fef2f2}.changed{background:#fff7ed}
+`;
+
 export function exportDiffAsPrintablePdf(): void {
-  const rows = state.lastDiffRows || [];
-  if (!rows.length) { pushToast('差分が未取得です', { tone: 'warn' }); return; }
+  const info = resolveDiffRowsForReport();
+  if (!info) return;
   const win = window.open('', '_blank');
   if (!win) { pushToast('ポップアップがブロックされました', { tone: 'error' }); return; }
   const css = `
     body{font-family:-apple-system,Segoe UI,sans-serif;font-size:10px;color:#0f172a;padding:18px}
     h1{font-size:16px;margin:0 0 8px}
-    .meta{font-size:10px;color:#64748b;margin-bottom:12px}
-    table{border-collapse:collapse;width:100%}
-    th,td{border:1px solid #cbd5e1;padding:4px 6px;vertical-align:top}
-    th{background:#f1f5f9;text-align:left}
-    .added{background:#ecfdf5}.removed{background:#fef2f2}.changed{background:#fff7ed}
+    .meta{font-size:10px;color:#64748b;margin-bottom:12px;line-height:1.6}
+    ${DIFF_REPORT_PRINT_CSS}
   `;
-  const tbody = rows.map((r: any) => {
-    const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
-    const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-    const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
-    const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
-    return `<tr class="${r.type}"><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(diffSectionLabel(r))}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
-  }).join('');
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>kintone 差分レポート</title><style>${css}</style></head><body><h1>kintone 差分レポート</h1><div class="meta">生成: ${new Date().toISOString()} / 件数: ${rows.length}</div><table><thead><tr><th>種別</th><th>セクション</th><th>パス</th><th>旧</th><th>新</th><th>重要度</th></tr></thead><tbody>${tbody}</tbody></table><script>window.onload=()=>{setTimeout(()=>window.print(),200)}</script></body></html>`);
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>kintone 差分レポート</title><style>${css}</style></head><body><h1>kintone 差分レポート</h1><div class="meta">生成: ${new Date().toISOString()}${buildDiffReportMetaHtml(info.label, info.rows)}</div>${buildDiffReportTableHtml(info.rows)}<script>window.onload=()=>{setTimeout(()=>window.print(),200)}</script></body></html>`);
   win.document.close();
   pushToast('印刷ダイアログを開きました（PDF として保存可）', { tone: 'info' });
 }
@@ -2497,7 +2567,8 @@ export function initExcelSheetSplit(): void {
  * 77: PDF 表紙
  * ============================================================ */
 export function exportDiffPdfWithCover(): void {
-  const rows = state.lastDiffRows || [];
+  const info = resolveDiffRowsForReport();
+  if (!info) return;
   const cover = getDesignCover();
   const win = window.open('', '_blank');
   if (!win) { pushToast('ポップアップがブロックされました', { tone: 'error' }); return; }
@@ -2508,17 +2579,10 @@ export function exportDiffPdfWithCover(): void {
     .cover h1{font-size:28px;margin:8px 0}
     .cover .meta{font-size:12px;color:#64748b}
     .body{padding:24px}
-    table{border-collapse:collapse;width:100%;font-size:10px}
-    th,td{border:1px solid #cbd5e1;padding:4px 6px}
+    .report-meta{font-size:10px;color:#64748b;margin-bottom:12px;line-height:1.6}
+    ${DIFF_REPORT_PRINT_CSS}
     @page{size:A4;margin:18mm}
   `;
-  const tbody = rows.map((r: any) => {
-    const typeLabel = DIFF_TYPE_LABEL[r.type] || r.type;
-    const severityLabel = DIFF_SEVERITY_LABEL[r.severity] || r.severity;
-    const oldStr = localizeKintoneEnumsInText(JSON.stringify(diffLeftValue(r)));
-    const newStr = localizeKintoneEnumsInText(JSON.stringify(diffRightValue(r)));
-    return `<tr><td>${escapeHtml(typeLabel)}</td><td>${escapeHtml(diffSectionLabel(r))}</td><td>${escapeHtml(r.path)}</td><td><pre>${escapeHtml(oldStr)}</pre></td><td><pre>${escapeHtml(newStr)}</pre></td><td>${escapeHtml(severityLabel)}</td></tr>`;
-  }).join('');
   win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(cover.title || '差分レポート')}</title><style>${css}</style></head><body>
     <div class="cover">
       ${cover.logo ? `<img src="${cover.logo}" alt="logo">` : ''}
@@ -2526,8 +2590,9 @@ export function exportDiffPdfWithCover(): void {
       <div class="meta">作成: ${escapeHtml(cover.author || '-')} / ${new Date().toISOString().slice(0, 10)}</div>
     </div>
     <div class="body">
-      <h2>差分一覧 (${rows.length} 件)</h2>
-      <table><thead><tr><th>種別</th><th>セクション</th><th>パス</th><th>旧</th><th>新</th><th>重要度</th></tr></thead><tbody>${tbody}</tbody></table>
+      <h2>差分一覧 (${info.rows.length} 件)</h2>
+      <div class="report-meta">${buildDiffReportMetaHtml(info.label, info.rows)}</div>
+      ${buildDiffReportTableHtml(info.rows)}
     </div>
     <script>window.onload=()=>setTimeout(()=>window.print(),300)</script>
     </body></html>`);
