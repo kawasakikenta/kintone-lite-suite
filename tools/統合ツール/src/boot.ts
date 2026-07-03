@@ -248,6 +248,7 @@ export function runKintoneUnifiedSuite(options: any = {}) {
     diffIncludeSame: $('#u_diffIncludeSame'),
     diffThemeBtn: $('#u_diffThemeBtn'),
     bundleState: $('#u_bundleState'),
+    designImportedState: $('#u_designImportedState'),
     sourceBundleFile: $('#u_sourceBundleFile'),
     targetBundleFile: $('#u_targetBundleFile'),
     diffScopes: $('#u_diffScopes'),

@@ -766,6 +766,11 @@ export function renderBundleState() {
   const tgt = describeBundle('比較先', state.importedTargetBundle || state.lastTargetBundle, state.importedTargetName, !!state.importedTargetBundle);
   ui.bundleState.textContent = `${src.short} → ${tgt.short}`;
   ui.bundleState.setAttribute('title', `${src.full}\n${tgt.full}`);
+  if (ui.designImportedState) {
+    ui.designImportedState.textContent = state.importedSourceBundle
+      ? `📥 設定JSON読込中: ${state.importedSourceName || `App ${state.importedSourceBundle.appId || '-'}`}（設計書はこのJSONから生成されます）`
+      : '';
+  }
   const rangeMode = isReflectNodeModeEffective()
     ? `選択ノード(${state.reflectSelectedIds.size})`
     : (ui.applyDiffOnly?.checked ? '前回差分セクションのみ' : '選択セクション');

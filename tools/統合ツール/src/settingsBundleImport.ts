@@ -34,6 +34,20 @@ export function pickSettingsBundle(raw: any, options: SettingsBundlePickOptions 
   return candidates[0];
 }
 
+/**
+ * 設定JSON（設定一括取得の apps 配列、単体バンドル等）に含まれる全アプリのバンドルを返す。
+ * 設計書の複数アプリ一括生成など、1ファイルから複数アプリ分を取り込みたい場合に使う。
+ */
+export function pickAllSettingsBundles(raw: any, side?: 'source' | 'target') {
+  const candidates = unwrapBundleCandidates(raw, side)
+    .map((item) => {
+      try { return ensureBundleShape(item); } catch { return null; }
+    })
+    .filter(Boolean);
+  if (!candidates.length) throw new Error('設定JSON内にアプリ設定バンドルが見つかりません');
+  return candidates;
+}
+
 export async function readSettingsBundleFile(file: File, options: SettingsBundlePickOptions = {}) {
   const text = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();

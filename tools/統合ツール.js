@@ -13271,6 +13271,9 @@ ${body}`;
     ui3.bundleState.textContent = `${src.short} → ${tgt.short}`;
     ui3.bundleState.setAttribute("title", `${src.full}
 ${tgt.full}`);
+    if (ui3.designImportedState) {
+      ui3.designImportedState.textContent = state.importedSourceBundle ? `📥 設定JSON読込中: ${state.importedSourceName || `App ${state.importedSourceBundle.appId || "-"}`}（設計書はこのJSONから生成されます）` : "";
+    }
     const rangeMode = isReflectNodeModeEffective() ? `選択ノード(${state.reflectSelectedIds.size})` : ui3.applyDiffOnly?.checked ? "前回差分セクションのみ" : "選択セクション";
     let readMeta = "";
     try {
@@ -25232,9 +25235,11 @@ applySavedViewState();
     };
   }
   async function runAdvancedDesignExporter(params = {}) {
-    const sourceAppId = Number(params.appId);
-    if (!sourceAppId) throw new Error("有効な比較元アプリIDが指定されませんでした。");
+    const bundle = params.bundle || null;
+    const sourceAppId = Number(params.appId) || Number(bundle?.appId) || 0;
+    if (!sourceAppId) throw new Error("有効な比較元アプリIDまたは設定JSONが指定されませんでした。");
     const sourceGuestId = String(params.guestId || "").trim();
+    const appNameLookup = params.appNameLookup || {};
     const preselectedSheets = params.preselectedSheets instanceof Set ? params.preselectedSheets : null;
     const returnWorkbook = !!params.returnWorkbook;
     const lightweightMode = !!params.lightweightMode;
@@ -25946,7 +25951,12 @@ applySavedViewState();
       }
       throw lastErr;
     }
-    async function fetchJob(name, promiseFn) {
+    async function fetchJob(name, promiseFn, sectionKey) {
+      if (bundle) {
+        if (!sectionKey) return null;
+        const sec = (bundle.sections || {})[sectionKey];
+        return sec && !sec._fetchError ? sec : null;
+      }
       try {
         return await apiSemaphore.run(() => retry(promiseFn));
       } catch (e) {
@@ -25983,38 +25993,39 @@ applySavedViewState();
         }
         return kintone.api.url(p, true);
       };
-      UI.update("基本情報を取得中...");
-      const appSettings = await fetchJob("App", () => api(apiUrl("/k/v1/app.json"), "GET", { id: APP_ID }));
-      const generalSettings = await fetchJob("Settings", () => api(apiUrl("/k/v1/app/settings.json"), "GET", { app: APP_ID }));
-      UI.update("フィールド・レイアウトを取得中...");
-      let fieldResp = await fetchJob("FieldsPrev", () => api(apiUrl("/k/v1/preview/app/form/fields.json"), "GET", { app: APP_ID }));
-      if (!fieldResp) fieldResp = await fetchJob("FieldsProd", () => api(apiUrl("/k/v1/app/form/fields.json"), "GET", { app: APP_ID }));
-      let layout = await fetchJob("LayoutPrev", () => api(apiUrl("/k/v1/preview/app/form/layout.json"), "GET", { app: APP_ID }));
-      if (!layout) layout = await fetchJob("LayoutProd", () => api(apiUrl("/k/v1/app/form/layout.json"), "GET", { app: APP_ID }));
+      UI.update(bundle ? "基本情報を設定JSONから読込中..." : "基本情報を取得中...");
+      const appSettings = await fetchJob("App", () => api(apiUrl("/k/v1/app.json"), "GET", { id: APP_ID }), "appInfo");
+      const generalSettings = await fetchJob("Settings", () => api(apiUrl("/k/v1/app/settings.json"), "GET", { app: APP_ID }), "appSettings");
+      UI.update(bundle ? "フィールド・レイアウトを設定JSONから読込中..." : "フィールド・レイアウトを取得中...");
+      let fieldResp = await fetchJob("FieldsPrev", () => api(apiUrl("/k/v1/preview/app/form/fields.json"), "GET", { app: APP_ID }), "fieldSettings");
+      if (!fieldResp) fieldResp = await fetchJob("FieldsProd", () => api(apiUrl("/k/v1/app/form/fields.json"), "GET", { app: APP_ID }), "fieldSettings");
+      let layout = await fetchJob("LayoutPrev", () => api(apiUrl("/k/v1/preview/app/form/layout.json"), "GET", { app: APP_ID }), "layoutSettings");
+      if (!layout) layout = await fetchJob("LayoutProd", () => api(apiUrl("/k/v1/app/form/layout.json"), "GET", { app: APP_ID }), "layoutSettings");
       const fields = filterUserFields(fieldResp?.properties || {});
-      UI.update("レコード件数を取得中...");
+      UI.update(bundle ? "レコード件数: 設定JSONには含まれないためスキップします" : "レコード件数を取得中...");
       let recordCount = null;
       try {
         const countResp = await fetchJob("RecordCount", () => api(apiUrl("/k/v1/records.json"), "GET", { app: APP_ID, query: "limit 1", totalCount: true }));
         recordCount = countResp?.totalCount ?? null;
       } catch (e) {
       }
-      UI.update("一覧・権限・通知設定を取得中...");
+      UI.update(bundle ? "一覧・権限・通知設定を設定JSONから読込中..." : "一覧・権限・通知設定を取得中...");
       const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif] = await Promise.all([
-        fetchJob("Views", () => api(apiUrl("/k/v1/app/views.json"), "GET", { app: APP_ID })),
-        fetchJob("Reports", () => api(apiUrl("/k/v1/app/reports.json"), "GET", { app: APP_ID })),
-        fetchJob("Status", () => api(apiUrl("/k/v1/app/status.json"), "GET", { app: APP_ID })),
-        fetchJob("アプリ権限", () => api(apiUrl("/k/v1/app/acl.json"), "GET", { app: APP_ID })),
-        fetchJob("レコード権限", () => api(apiUrl("/k/v1/record/acl.json"), "GET", { app: APP_ID })),
-        fetchJob("フィールド権限", () => api(apiUrl("/k/v1/field/acl.json"), "GET", { app: APP_ID })),
-        fetchJob("Customize", () => api(apiUrl("/k/v1/app/customize.json"), "GET", { app: APP_ID })),
-        fetchJob("Actions", () => api(apiUrl("/k/v1/preview/app/actions.json"), "GET", { app: APP_ID })),
-        fetchJob("Plugins", () => api(apiUrl("/k/v1/app/plugins.json"), "GET", { app: APP_ID })),
+        fetchJob("Views", () => api(apiUrl("/k/v1/app/views.json"), "GET", { app: APP_ID }), "viewSettings"),
+        fetchJob("Reports", () => api(apiUrl("/k/v1/app/reports.json"), "GET", { app: APP_ID }), "reportSettings"),
+        fetchJob("Status", () => api(apiUrl("/k/v1/app/status.json"), "GET", { app: APP_ID }), "processSettings"),
+        fetchJob("アプリ権限", () => api(apiUrl("/k/v1/app/acl.json"), "GET", { app: APP_ID }), "appAcl"),
+        fetchJob("レコード権限", () => api(apiUrl("/k/v1/record/acl.json"), "GET", { app: APP_ID }), "recordPermissions"),
+        fetchJob("フィールド権限", () => api(apiUrl("/k/v1/field/acl.json"), "GET", { app: APP_ID }), "fieldAcl"),
+        fetchJob("Customize", () => api(apiUrl("/k/v1/app/customize.json"), "GET", { app: APP_ID }), "customizeSettings"),
+        fetchJob("Actions", () => api(apiUrl("/k/v1/preview/app/actions.json"), "GET", { app: APP_ID }), "actionSettings"),
+        fetchJob("Plugins", () => api(apiUrl("/k/v1/app/plugins.json"), "GET", { app: APP_ID }), "pluginSettings"),
+        // 管理者メモ・Webhookは設定一括取得の対象外のため bundle モードでは常に取得不可
         fetchJob("AdminNotes", () => api(apiUrl("/k/v1/app/adminNotes.json"), "GET", { app: APP_ID })),
         fetchJob("Webhooks", () => api(apiUrl("/k/v1/app/webhook.json"), "GET", { app: APP_ID })),
-        fetchJob("GenNotif", () => api(apiUrl("/k/v1/app/notifications/general.json"), "GET", { app: APP_ID })),
-        fetchJob("RecNotif", () => api(apiUrl("/k/v1/app/notifications/perRecord.json"), "GET", { app: APP_ID })),
-        fetchJob("RemNotif", () => api(apiUrl("/k/v1/app/notifications/reminder.json"), "GET", { app: APP_ID }))
+        fetchJob("GenNotif", () => api(apiUrl("/k/v1/app/notifications/general.json"), "GET", { app: APP_ID }), "notifications"),
+        fetchJob("RecNotif", () => api(apiUrl("/k/v1/app/notifications/perRecord.json"), "GET", { app: APP_ID }), "perRecordNotifications"),
+        fetchJob("RemNotif", () => api(apiUrl("/k/v1/app/notifications/reminder.json"), "GET", { app: APP_ID }), "reminderNotifications")
       ]);
       const actions = UtilsX.safeGet(actionsResp, "actions", {});
       UI.update("関連アプリ名を解決中...");
@@ -26031,11 +26042,16 @@ applySavedViewState();
         if (a.destApp?.app) referencedAppIds.add(a.destApp.app);
       });
       const appNames = {};
-      const refPromises = [...referencedAppIds].map(
-        (id) => fetchJob(`RefApp_${id}`, () => api(apiUrl("/k/v1/app.json"), "GET", { id })).then((info) => {
+      const refPromises = [...referencedAppIds].map((id) => {
+        const known = appNameLookup[String(id)];
+        if (known) {
+          appNames[id] = known;
+          return Promise.resolve();
+        }
+        return fetchJob(`RefApp_${id}`, () => api(apiUrl("/k/v1/app.json"), "GET", { id })).then((info) => {
           appNames[id] = info?.name || `(ID:${id})`;
-        })
-      );
+        });
+      });
       await Promise.all(refPromises);
       UI.update("Excelファイルを生成中...", 10);
       const fieldCount = Object.keys(fields).length;
@@ -27322,10 +27338,17 @@ applySavedViewState();
       const id = String(t?.appId ?? "").trim();
       if (!id || !/^\d+$/.test(id) || seen.has(id)) continue;
       seen.add(id);
-      targets.push({ appId: id, guestId: String(t?.guestId || "").trim() });
+      targets.push({ appId: id, guestId: String(t?.guestId || "").trim(), bundle: t?.bundle || params.bundlesByAppId?.[id] || null });
     }
     if (targets.length === 0) throw new Error("有効なアプリIDが1件もありません。");
     const appIds = targets.map((t) => t.appId);
+    const appNameLookup = {};
+    for (const t of targets) {
+      if (t.bundle) {
+        const name = extractAppNameFromBundle(t.bundle);
+        if (name) appNameLookup[t.appId] = name;
+      }
+    }
     const selectedSheets = await showSheetSelectionDialog(resolveExportSheetDefs(), "📦 一括エクスポート設定");
     if (!selectedSheets) return false;
     const batchFieldTypeExclusion = loadPersistedFieldTypeExclusion() || /* @__PURE__ */ new Set();
@@ -27351,12 +27374,15 @@ applySavedViewState();
       if (cancelled) break;
       const appId = appIds[i];
       const guestId = targets[i].guestId;
-      const label = `(${i + 1}/${appIds.length}) アプリ ${appId}${guestId ? ` (guest:${guestId})` : ""}:`;
+      const bundle = targets[i].bundle;
+      const label = `(${i + 1}/${appIds.length}) アプリ ${appId}${guestId ? ` (guest:${guestId})` : ""}${bundle ? " [設定JSON]" : ""}:`;
       batchUi.update(`${label} 設計書を生成中...`, i + 2);
       try {
         const ret = await runAdvancedDesignExporter({
           appId,
           guestId,
+          bundle,
+          appNameLookup,
           preselectedSheets: selectedSheets,
           fieldTypeExclusion: batchFieldTypeExclusion,
           returnWorkbook: true,
@@ -36144,7 +36170,7 @@ ${detail}`);
 
             <div class="pane" data-pane="design">
               <div class="subpane active" data-subpane-parent="design" data-subpane="export">
-              <div class="subpane-note">比較元アプリの設定を設計書として出力します。</div>
+              <div class="subpane-note">比較元アプリの設定を設計書として出力します。「設定一括取得」で取得済み、または設定JSONを読み込んだアプリはkintoneへ接続せずそのJSONから生成します。</div>
               <details class="diff-fold diff-fold--design-export" open>
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">設計書出力</span>
@@ -36155,6 +36181,11 @@ ${detail}`);
                 <button type="button" class="btn dark" data-act="exportDesignXlsx" title="表形式のExcel設計書を出力します">設計書Excel出力</button>
                 <button type="button" class="btn sub" data-act="exportDesignMd" title="ドキュメント向けMarkdownファイル">設計書Markdown出力</button>
                 <button type="button" class="btn sub" data-act="copyDesignMd" title="Markdownをクリップボードにコピー">Markdownコピー</button>
+              </div>
+              <div class="btns" style="margin-top:8px">
+                <button type="button" class="btn sub" data-act="importSourceBundle" title="設定一括取得の出力JSON（apps配列可）や単体の設定JSONを比較元として読み込みます">📥 設定JSON読込</button>
+                <button type="button" class="btn sub" data-act="clearBundle" title="読み込んだ設定JSONを解除し、通常のAPI取得に戻します">読込解除</button>
+                <span class="muted" id="u_designImportedState" style="font-size:11px;align-self:center"></span>
               </div>
                 </div>
               </details>
@@ -39343,6 +39374,7 @@ ${detail}`);
       const loadCell = canLoad ? `<div class="settings-export-load-actions">
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="source" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較元」としてセットし差分タブへ移動">比較元へ</button>
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="target" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較先」としてセットし差分タブへ移動">比較先へ</button>
+          <button type="button" class="btn sub" data-act="settingsExportLoadToDesign" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを設計書タブへ読み込み、API取得なしで設計書を生成できるようにします">設計書へ</button>
         </div>` : '<span class="muted" style="font-size:10px">取得失敗</span>';
       const rowBg = r.ngCount ? "background:#fff8f1;" : "";
       return `<tr style="${rowBg}">
@@ -42287,6 +42319,22 @@ ${detail}`);
         renderReflectMainPanel();
         const sideLabel = side === "source" ? "比較元" : "比較先";
         setStatus(`App ${appId} の取得済みJSONを${sideLabel}に読込みました（差分タブで「差分比較」を実行してください）`);
+        return;
+      }
+      if (act === "settingsExportLoadToDesign") {
+        const appId = actEl.dataset.appId || "";
+        if (!appId) {
+          setStatus("対象アプリIDが取得できませんでした", true);
+          return;
+        }
+        const ok = loadSettingsExportBundleToDiff(appId, "source");
+        if (!ok) {
+          setStatus(`App ${appId} の取得済みバンドルが見つかりません（先に「JSONで一括取得」を実行してください）`, true);
+          return;
+        }
+        switchTab("design");
+        renderBundleState();
+        setStatus(`App ${appId} の取得済みJSONを設計書タブに読込みました（「設計書Excel/Markdown出力」からAPI取得なしで生成できます）`);
         return;
       }
       if (act === "settingsExportSearchApps") return withGuard(runSettingsExportSearchApps);
@@ -47068,19 +47116,46 @@ ${diffMd}
     );
     setStatus("設計書差分レポートを出力しました");
   }
+  function resolveKnownDesignBundle(appId) {
+    const id = String(appId || "").trim();
+    if (!id) return state.importedSourceBundle || null;
+    const stash = Array.isArray(state.lastSettingsExportBundles) ? state.lastSettingsExportBundles : [];
+    const fromStash = stash.find((b) => String(b?.appId || "") === id);
+    if (fromStash) return fromStash;
+    if (state.importedSourceBundle && String(state.importedSourceBundle.appId || "") === id) return state.importedSourceBundle;
+    return null;
+  }
+  function buildKnownAppNameLookup() {
+    const map = {};
+    const stash = Array.isArray(state.lastSettingsExportBundles) ? state.lastSettingsExportBundles : [];
+    for (const b of stash) {
+      const id = String(b?.appId || "");
+      const name = id ? extractAppNameFromBundle(b) : "";
+      if (id && name) map[id] = name;
+    }
+    if (state.importedSourceBundle) {
+      const id = String(state.importedSourceBundle.appId || "");
+      const name = extractAppNameFromBundle(state.importedSourceBundle);
+      if (id && name) map[id] = name;
+    }
+    return map;
+  }
   async function runDesignExportXlsx() {
     const { runAdvancedDesignExporter: runXlsx } = await Promise.resolve().then(() => (init_design_xlsx(), design_xlsx_exports));
     const c = commonParams();
-    if (!c.source.appId) throw new Error("比較元アプリIDを入力してください");
+    const bundle = resolveKnownDesignBundle(c.source.appId);
+    if (!c.source.appId && !bundle) throw new Error("比較元アプリIDまたは設定JSONを指定してください");
     const done = await runXlsx({
       appId: c.source.appId,
-      guestId: c.source.guestId
+      guestId: c.source.guestId,
+      bundle,
+      appNameLookup: buildKnownAppNameLookup()
     });
     if (done === false) {
       setStatus("設計書Excel出力をキャンセルしました");
       return;
     }
-    setStatus("設計書Excel出力完了");
+    setStatus(bundle ? "設計書Excel出力完了（設定JSONから生成）" : "設計書Excel出力完了");
   }
   async function runDesignExportXlsxBatchZip() {
     const { runBatchDesignExportXlsxZip: runBatchDesignExportXlsxZip2 } = await Promise.resolve().then(() => (init_design_xlsx(), design_xlsx_exports));
@@ -47100,8 +47175,10 @@ ${diffMd}
     if (apps.length === 0) {
       throw new Error("対象アプリIDを1件以上入力してください（数値のみ、改行/カンマ/スペース区切り）");
     }
-    setStatus(`設計書ZIP出力を開始（${apps.length}件）...`);
-    const done = await runBatchDesignExportXlsxZip2({ apps });
+    const appsWithBundles = apps.map((a) => ({ ...a, bundle: resolveKnownDesignBundle(a.appId) }));
+    const knownCount = appsWithBundles.filter((a) => a.bundle).length;
+    setStatus(`設計書ZIP出力を開始（${apps.length}件${knownCount ? ` / うち設定JSON ${knownCount}件` : ""}）...`);
+    const done = await runBatchDesignExportXlsxZip2({ apps: appsWithBundles });
     if (done === false) {
       setStatus("設計書ZIP出力をキャンセルしました");
       return;
@@ -50350,6 +50427,7 @@ ${field.label}` : code,
       diffIncludeSame: $("#u_diffIncludeSame"),
       diffThemeBtn: $("#u_diffThemeBtn"),
       bundleState: $("#u_bundleState"),
+      designImportedState: $("#u_designImportedState"),
       sourceBundleFile: $("#u_sourceBundleFile"),
       targetBundleFile: $("#u_targetBundleFile"),
       diffScopes: $("#u_diffScopes"),

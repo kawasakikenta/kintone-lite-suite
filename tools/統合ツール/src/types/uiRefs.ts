@@ -116,6 +116,7 @@ export interface KusUiRefs {
 
   // バンドルファイル
   bundleState: UiEl;
+  designImportedState: UiEl;
   sourceBundleFile: UiInput;
   targetBundleFile: UiInput;
 

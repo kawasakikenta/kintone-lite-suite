@@ -2,7 +2,7 @@
 
 import { TOOL_ID, EXTERNAL_LIBRARIES } from '../constants.js';
 import { getToolDocument } from '../ui/dialog.js';
-import { showToast, stripHtmlToText } from '../utils.js';
+import { showToast, stripHtmlToText, extractAppNameFromBundle } from '../utils.js';
 
 const SHEETLIB_PRIMARY_URL = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js';
 const SHEETLIB_FALLBACK_URL = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
@@ -387,9 +387,14 @@ function createBatchExporterUI() {
 }
 
 export async function runAdvancedDesignExporter(params: any = {}) {
-  const sourceAppId = Number(params.appId);
-  if (!sourceAppId) throw new Error('有効な比較元アプリIDが指定されませんでした。');
+  // params.bundle: 設定一括取得などで事前取得済みの設定バンドル（{appId, sections:{...}}）。
+  // 指定された場合はライブAPIを一切呼ばず、バンドル内のセクションのみから設計書を生成する（オフライン生成）。
+  const bundle: any = params.bundle || null;
+  const sourceAppId = Number(params.appId) || Number(bundle?.appId) || 0;
+  if (!sourceAppId) throw new Error('有効な比較元アプリIDまたは設定JSONが指定されませんでした。');
   const sourceGuestId = String(params.guestId || '').trim();
+  // 参照先アプリ名の解決用（同じ設定一括取得JSONに含まれる他アプリの名前を、API取得なしで引き当てる）
+  const appNameLookup: Record<string, string> = params.appNameLookup || {};
   const preselectedSheets: Set<string> | null = params.preselectedSheets instanceof Set ? params.preselectedSheets : null;
   const returnWorkbook: boolean = !!params.returnWorkbook;
   const lightweightMode: boolean = !!params.lightweightMode;
@@ -895,7 +900,17 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     throw lastErr;
   }
 
-  async function fetchJob<T = any>(name: string, promiseFn: () => Promise<T>): Promise<T | null> {
+  // sectionKey を渡すと、bundle（オフライン設定JSON）が指定されている場合はライブAPIを呼ばず
+  // bundle.sections[sectionKey] を返す（取得失敗 or セクション欠落なら null）。
+  // sectionKey を渡さない項目（レコード件数・管理者メモ・Webhook・参照アプリ名など）は
+  // bundle 設定JSONに元々含まれないため、bundle モードでは常に null（=取得不可扱い）とし、
+  // 意図せず別環境へライブAPIを叩かないようにする。
+  async function fetchJob<T = any>(name: string, promiseFn: () => Promise<T>, sectionKey?: string): Promise<T | null> {
+    if (bundle) {
+      if (!sectionKey) return null;
+      const sec = (bundle.sections || {})[sectionKey];
+      return (sec && !sec._fetchError) ? (sec as T) : null;
+    }
     try { return await apiSemaphore.run(() => retry(promiseFn)); }
     catch (e) { console.warn(`[${name}] Failed:`, e); UI.logError(name, e); return null; }
   }
@@ -938,41 +953,44 @@ export async function runAdvancedDesignExporter(params: any = {}) {
       return kintone.api.url(p, true);
     };
 
-    UI.update('基本情報を取得中...');
-    const appSettings = await fetchJob('App', () => api(apiUrl('/k/v1/app.json'), 'GET', { id: APP_ID }));
-    const generalSettings = await fetchJob('Settings', () => api(apiUrl('/k/v1/app/settings.json'), 'GET', { app: APP_ID }));
+    UI.update(bundle ? '基本情報を設定JSONから読込中...' : '基本情報を取得中...');
+    const appSettings = await fetchJob('App', () => api(apiUrl('/k/v1/app.json'), 'GET', { id: APP_ID }), 'appInfo');
+    const generalSettings = await fetchJob('Settings', () => api(apiUrl('/k/v1/app/settings.json'), 'GET', { app: APP_ID }), 'appSettings');
 
-    UI.update('フィールド・レイアウトを取得中...');
-    let fieldResp = await fetchJob('FieldsPrev', () => api(apiUrl('/k/v1/preview/app/form/fields.json'), 'GET', { app: APP_ID }));
-    if (!fieldResp) fieldResp = await fetchJob('FieldsProd', () => api(apiUrl('/k/v1/app/form/fields.json'), 'GET', { app: APP_ID }));
-    let layout = await fetchJob('LayoutPrev', () => api(apiUrl('/k/v1/preview/app/form/layout.json'), 'GET', { app: APP_ID }));
-    if (!layout) layout = await fetchJob('LayoutProd', () => api(apiUrl('/k/v1/app/form/layout.json'), 'GET', { app: APP_ID }));
+    UI.update(bundle ? 'フィールド・レイアウトを設定JSONから読込中...' : 'フィールド・レイアウトを取得中...');
+    let fieldResp = await fetchJob('FieldsPrev', () => api(apiUrl('/k/v1/preview/app/form/fields.json'), 'GET', { app: APP_ID }), 'fieldSettings');
+    if (!fieldResp) fieldResp = await fetchJob('FieldsProd', () => api(apiUrl('/k/v1/app/form/fields.json'), 'GET', { app: APP_ID }), 'fieldSettings');
+    let layout = await fetchJob('LayoutPrev', () => api(apiUrl('/k/v1/preview/app/form/layout.json'), 'GET', { app: APP_ID }), 'layoutSettings');
+    if (!layout) layout = await fetchJob('LayoutProd', () => api(apiUrl('/k/v1/app/form/layout.json'), 'GET', { app: APP_ID }), 'layoutSettings');
 
     const fields = filterUserFields(fieldResp?.properties || ({} as any));
 
-    UI.update('レコード件数を取得中...');
+    // レコード件数は設定一括取得の対象外（設定バンドルには含まれない）ため、
+    // bundle 指定時は取得不可としてスキップする（別環境へ誤ってライブAPIを叩かないようにする）。
+    UI.update(bundle ? 'レコード件数: 設定JSONには含まれないためスキップします' : 'レコード件数を取得中...');
     let recordCount = null;
     try {
       const countResp = await fetchJob('RecordCount', () => api(apiUrl('/k/v1/records.json'), 'GET', { app: APP_ID, query: 'limit 1', totalCount: true }));
       recordCount = countResp?.totalCount ?? null;
     } catch (e) { /* ignore */ }
 
-    UI.update('一覧・権限・通知設定を取得中...');
+    UI.update(bundle ? '一覧・権限・通知設定を設定JSONから読込中...' : '一覧・権限・通知設定を取得中...');
     const [views, reports, status, appAcl, recordAcl, fieldAcl, customize, actionsResp, pluginsResp, adminNotes, webhooksResp, genNotif, recNotif, remNotif] = await Promise.all([
-      fetchJob('Views', () => api(apiUrl('/k/v1/app/views.json'), 'GET', { app: APP_ID })),
-      fetchJob('Reports', () => api(apiUrl('/k/v1/app/reports.json'), 'GET', { app: APP_ID })),
-      fetchJob('Status', () => api(apiUrl('/k/v1/app/status.json'), 'GET', { app: APP_ID })),
-      fetchJob('アプリ権限', () => api(apiUrl('/k/v1/app/acl.json'), 'GET', { app: APP_ID })),
-      fetchJob('レコード権限', () => api(apiUrl('/k/v1/record/acl.json'), 'GET', { app: APP_ID })),
-      fetchJob('フィールド権限', () => api(apiUrl('/k/v1/field/acl.json'), 'GET', { app: APP_ID })),
-      fetchJob('Customize', () => api(apiUrl('/k/v1/app/customize.json'), 'GET', { app: APP_ID })),
-      fetchJob('Actions', () => api(apiUrl('/k/v1/preview/app/actions.json'), 'GET', { app: APP_ID })),
-      fetchJob('Plugins', () => api(apiUrl('/k/v1/app/plugins.json'), 'GET', { app: APP_ID })),
+      fetchJob('Views', () => api(apiUrl('/k/v1/app/views.json'), 'GET', { app: APP_ID }), 'viewSettings'),
+      fetchJob('Reports', () => api(apiUrl('/k/v1/app/reports.json'), 'GET', { app: APP_ID }), 'reportSettings'),
+      fetchJob('Status', () => api(apiUrl('/k/v1/app/status.json'), 'GET', { app: APP_ID }), 'processSettings'),
+      fetchJob('アプリ権限', () => api(apiUrl('/k/v1/app/acl.json'), 'GET', { app: APP_ID }), 'appAcl'),
+      fetchJob('レコード権限', () => api(apiUrl('/k/v1/record/acl.json'), 'GET', { app: APP_ID }), 'recordPermissions'),
+      fetchJob('フィールド権限', () => api(apiUrl('/k/v1/field/acl.json'), 'GET', { app: APP_ID }), 'fieldAcl'),
+      fetchJob('Customize', () => api(apiUrl('/k/v1/app/customize.json'), 'GET', { app: APP_ID }), 'customizeSettings'),
+      fetchJob('Actions', () => api(apiUrl('/k/v1/preview/app/actions.json'), 'GET', { app: APP_ID }), 'actionSettings'),
+      fetchJob('Plugins', () => api(apiUrl('/k/v1/app/plugins.json'), 'GET', { app: APP_ID }), 'pluginSettings'),
+      // 管理者メモ・Webhookは設定一括取得の対象外のため bundle モードでは常に取得不可
       fetchJob('AdminNotes', () => api(apiUrl('/k/v1/app/adminNotes.json'), 'GET', { app: APP_ID })),
       fetchJob('Webhooks', () => api(apiUrl('/k/v1/app/webhook.json'), 'GET', { app: APP_ID })),
-      fetchJob('GenNotif', () => api(apiUrl('/k/v1/app/notifications/general.json'), 'GET', { app: APP_ID })),
-      fetchJob('RecNotif', () => api(apiUrl('/k/v1/app/notifications/perRecord.json'), 'GET', { app: APP_ID })),
-      fetchJob('RemNotif', () => api(apiUrl('/k/v1/app/notifications/reminder.json'), 'GET', { app: APP_ID }))
+      fetchJob('GenNotif', () => api(apiUrl('/k/v1/app/notifications/general.json'), 'GET', { app: APP_ID }), 'notifications'),
+      fetchJob('RecNotif', () => api(apiUrl('/k/v1/app/notifications/perRecord.json'), 'GET', { app: APP_ID }), 'perRecordNotifications'),
+      fetchJob('RemNotif', () => api(apiUrl('/k/v1/app/notifications/reminder.json'), 'GET', { app: APP_ID }), 'reminderNotifications')
     ]);
 
     const actions = UtilsX.safeGet(actionsResp, 'actions', {});
@@ -990,9 +1008,12 @@ export async function runAdvancedDesignExporter(params: any = {}) {
     (Object.values(actions) as any[]).forEach((a: any) => { if (a.destApp?.app) referencedAppIds.add(a.destApp.app); });
 
     const appNames: Record<string, string> = {};
-    const refPromises = [...referencedAppIds].map((id: any) =>
-      fetchJob(`RefApp_${id}`, () => api(apiUrl('/k/v1/app.json'), 'GET', { id })).then((info: any) => { appNames[id] = info?.name || `(ID:${id})`; })
-    );
+    const refPromises = [...referencedAppIds].map((id: any) => {
+      // 同じ設定一括取得JSONに参照先アプリの設定も含まれていれば、API取得なしで名前を解決できる
+      const known = appNameLookup[String(id)];
+      if (known) { appNames[id] = known; return Promise.resolve(); }
+      return fetchJob(`RefApp_${id}`, () => api(apiUrl('/k/v1/app.json'), 'GET', { id })).then((info: any) => { appNames[id] = info?.name || `(ID:${id})`; });
+    });
     await Promise.all(refPromises);
 
     UI.update('Excelファイルを生成中...', 10);
@@ -2321,25 +2342,37 @@ function sanitizeFilename(name: string): string {
  * @returns 生成・ダウンロードまで完了したら true、キャンセル時 false。
  */
 export async function runBatchDesignExportXlsxZip(params: {
-  apps?: Array<{ appId: string | number; guestId?: string }>;
+  apps?: Array<{ appId: string | number; guestId?: string; bundle?: any }>;
   appIds?: Array<string | number>;
   guestId?: string;
+  /** appId をキーにした設定バンドルのマップ。指定されたアプリはライブAPIを呼ばずバンドルから生成する。 */
+  bundlesByAppId?: Record<string, any>;
 }): Promise<boolean> {
   // apps（アプリごとに別ゲスト）優先。無ければ appIds + 共通 guestId にフォールバック。
   const sharedGuest = String(params.guestId || '').trim();
-  const rawTargets: Array<{ appId: string | number; guestId?: string }> = Array.isArray(params.apps)
+  const rawTargets: Array<{ appId: string | number; guestId?: string; bundle?: any }> = Array.isArray(params.apps)
     ? params.apps
     : (params.appIds || []).map((id) => ({ appId: id, guestId: sharedGuest }));
   const seen = new Set<string>();
-  const targets: Array<{ appId: string; guestId: string }> = [];
+  const targets: Array<{ appId: string; guestId: string; bundle: any }> = [];
   for (const t of rawTargets) {
     const id = String(t?.appId ?? '').trim();
     if (!id || !/^\d+$/.test(id) || seen.has(id)) continue;
     seen.add(id);
-    targets.push({ appId: id, guestId: String(t?.guestId || '').trim() });
+    targets.push({ appId: id, guestId: String(t?.guestId || '').trim(), bundle: t?.bundle || params.bundlesByAppId?.[id] || null });
   }
   if (targets.length === 0) throw new Error('有効なアプリIDが1件もありません。');
   const appIds = targets.map((t) => t.appId);
+
+  // 参照アプリ名解決用: バンドルが渡された全アプリの名前をあらかじめ引けるようにしておく
+  // （ルックアップ/関連レコードの参照先が同じ一括取得に含まれていれば、API取得なしで名前を解決できる）
+  const appNameLookup: Record<string, string> = {};
+  for (const t of targets) {
+    if (t.bundle) {
+      const name = extractAppNameFromBundle(t.bundle);
+      if (name) appNameLookup[t.appId] = name;
+    }
+  }
 
   // 1. シート選択を最初に1回だけ取得
   const selectedSheets = await showSheetSelectionDialog(resolveExportSheetDefs(), "📦 一括エクスポート設定");
@@ -2374,12 +2407,15 @@ export async function runBatchDesignExportXlsxZip(params: {
     if (cancelled) break;
     const appId = appIds[i];
     const guestId = targets[i].guestId;
-    const label = `(${i + 1}/${appIds.length}) アプリ ${appId}${guestId ? ` (guest:${guestId})` : ''}:`;
+    const bundle = targets[i].bundle;
+    const label = `(${i + 1}/${appIds.length}) アプリ ${appId}${guestId ? ` (guest:${guestId})` : ''}${bundle ? ' [設定JSON]' : ''}:`;
     batchUi.update(`${label} 設計書を生成中...`, i + 2);
     try {
       const ret = await runAdvancedDesignExporter({
         appId,
         guestId,
+        bundle,
+        appNameLookup,
         preselectedSheets: selectedSheets,
         fieldTypeExclusion: batchFieldTypeExclusion,
         returnWorkbook: true,

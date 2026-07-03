@@ -1352,7 +1352,7 @@ export function buildRoot(targetDocument = document, options: any = {}) {
 
             <div class="pane" data-pane="design">
               <div class="subpane active" data-subpane-parent="design" data-subpane="export">
-              <div class="subpane-note">比較元アプリの設定を設計書として出力します。</div>
+              <div class="subpane-note">比較元アプリの設定を設計書として出力します。「設定一括取得」で取得済み、または設定JSONを読み込んだアプリはkintoneへ接続せずそのJSONから生成します。</div>
               <details class="diff-fold diff-fold--design-export" open>
                 <summary class="diff-fold-summary">
                   <span class="diff-fold-title">設計書出力</span>
@@ -1363,6 +1363,11 @@ export function buildRoot(targetDocument = document, options: any = {}) {
                 <button type="button" class="btn dark" data-act="exportDesignXlsx" title="表形式のExcel設計書を出力します">設計書Excel出力</button>
                 <button type="button" class="btn sub" data-act="exportDesignMd" title="ドキュメント向けMarkdownファイル">設計書Markdown出力</button>
                 <button type="button" class="btn sub" data-act="copyDesignMd" title="Markdownをクリップボードにコピー">Markdownコピー</button>
+              </div>
+              <div class="btns" style="margin-top:8px">
+                <button type="button" class="btn sub" data-act="importSourceBundle" title="設定一括取得の出力JSON（apps配列可）や単体の設定JSONを比較元として読み込みます">📥 設定JSON読込</button>
+                <button type="button" class="btn sub" data-act="clearBundle" title="読み込んだ設定JSONを解除し、通常のAPI取得に戻します">読込解除</button>
+                <span class="muted" id="u_designImportedState" style="font-size:11px;align-self:center"></span>
               </div>
                 </div>
               </details>
