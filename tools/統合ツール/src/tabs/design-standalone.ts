@@ -74,15 +74,21 @@ export async function runDesignCopyMdStandalone(source, setStatus) {
 }
 
 /**
- * @param {{ appId: string, guestId: string }} source
+ * @param {{ appId: string, guestId: string, importedBundle?: any, appNameLookup?: Record<string, string> }} source
  * @param {(msg: string, err?: boolean) => void} setStatus
  */
 export async function runDesignExportXlsxStandalone(source, setStatus) {
   const appId = String(source.appId || '').trim();
-  if (!appId) throw new Error('アプリIDを入力してください');
+  const importedBundle = (source as any).importedBundle;
+  if (!appId && !importedBundle) throw new Error('アプリIDまたは設定JSONを指定してください');
   const guestId = String(source.guestId || '').trim();
-  setStatus('設計書Excel出力を開始...');
-  const done = await runAdvancedDesignExporter({ appId, guestId });
+  setStatus(importedBundle ? '設計書Excel出力を開始（設定JSONから生成）...' : '設計書Excel出力を開始...');
+  const done = await runAdvancedDesignExporter({
+    appId,
+    guestId,
+    bundle: importedBundle || null,
+    appNameLookup: (source as any).appNameLookup || {}
+  });
   if (done === false) {
     setStatus('設計書Excel出力をキャンセルしました');
     return;
@@ -92,18 +98,18 @@ export async function runDesignExportXlsxStandalone(source, setStatus) {
 
 /**
  * 複数アプリの設計書を1つの ZIP にまとめて出力する（Lite パネル用）。
- * - source.apps: [{appId, guestId}]（アプリごとに別ゲストスペース対応）を優先
+ * - source.apps: [{appId, guestId, bundle}]（アプリごとに別ゲストスペース・設定JSON対応）を優先
  * - 旧来の source.appIdsText + source.guestId（全アプリ共通ゲスト）も受け付ける
  * @param setStatus 進捗メッセージ
  */
 export async function runBatchDesignExportXlsxZipStandalone(
-  source: { apps?: Array<{ appId: string; guestId?: string }>; appIdsText?: string; guestId?: string },
+  source: { apps?: Array<{ appId: string; guestId?: string; bundle?: any }>; appIdsText?: string; guestId?: string },
   setStatus: (msg: string, err?: boolean) => void
 ) {
-  let apps: Array<{ appId: string; guestId: string }>;
+  let apps: Array<{ appId: string; guestId: string; bundle?: any }>;
   if (Array.isArray(source.apps)) {
     apps = source.apps
-      .map((a) => ({ appId: String(a.appId || '').trim(), guestId: String(a.guestId || '').trim() }))
+      .map((a) => ({ appId: String(a.appId || '').trim(), guestId: String(a.guestId || '').trim(), bundle: a.bundle || null }))
       .filter((a) => /^\d+$/.test(a.appId));
   } else {
     const guestId = String(source.guestId || '').trim();
@@ -111,10 +117,11 @@ export async function runBatchDesignExportXlsxZipStandalone(
       .split(/[\s,]+/)
       .map((s) => s.trim())
       .filter((s) => /^\d+$/.test(s))
-      .map((appId) => ({ appId, guestId }));
+      .map((appId) => ({ appId, guestId, bundle: null }));
   }
   if (apps.length === 0) throw new Error('アプリIDを1件以上入力してください（数値のみ）');
-  setStatus(`設計書ZIP出力を開始（${apps.length}件）...`);
+  const importedCount = apps.filter((a) => a.bundle).length;
+  setStatus(`設計書ZIP出力を開始（${apps.length}件${importedCount ? ` / うち設定JSON ${importedCount}件` : ''}）...`);
   const done = await runBatchDesignExportXlsxZip({ apps });
   if (done === false) {
     setStatus('設計書ZIP出力をキャンセルしました');
@@ -159,8 +166,8 @@ function simpleLineDiffLite(oStr: string, nStr: string): string {
  */
 export async function runDesignDiffMdStandalone(
   opts: {
-    source: { appId: string; guestId?: string; preview?: boolean };
-    target: { appId: string; guestId?: string; preview?: boolean };
+    source: { appId: string; guestId?: string; preview?: boolean; importedBundle?: any };
+    target: { appId: string; guestId?: string; preview?: boolean; importedBundle?: any };
   },
   setStatus: (msg: string, err?: boolean) => void
 ) {

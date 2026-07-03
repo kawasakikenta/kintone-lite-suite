@@ -2462,6 +2462,17 @@ export function setupEventHandlers(injected: any = {}) {
       setStatus(`App ${appId} の取得済みJSONを${sideLabel}に読込みました（差分タブで「差分比較」を実行してください）`);
       return;
     }
+    if (act === 'settingsExportLoadToDesign') {
+      const appId = actEl.dataset.appId || '';
+      if (!appId) { setStatus('対象アプリIDが取得できませんでした', true); return; }
+      const ok = loadSettingsExportBundleToDiff(appId, 'source');
+      if (!ok) { setStatus(`App ${appId} の取得済みバンドルが見つかりません（先に「JSONで一括取得」を実行してください）`, true); return; }
+      // 設計書タブへ移動してAPI取得なしで設計書を出力できるようにする
+      switchTab('design');
+      renderBundleState();
+      setStatus(`App ${appId} の取得済みJSONを設計書タブに読込みました（「設計書Excel/Markdown出力」からAPI取得なしで生成できます）`);
+      return;
+    }
     if (act === 'settingsExportSearchApps') return withGuard(runSettingsExportSearchApps);
     if (act === 'settingsExportAddSpace') return withGuard(addSpaceAppsToSettingsExport);
     if (act === 'connectionSearchApps') return withGuard(runConnectionSearchApps);

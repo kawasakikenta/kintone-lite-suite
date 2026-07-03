@@ -144,6 +144,7 @@ export function renderSettingsExportSummary(rows, scopes) {
       ? `<div class="settings-export-load-actions">
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="source" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較元」としてセットし差分タブへ移動">比較元へ</button>
           <button type="button" class="btn sub" data-act="settingsExportLoadToDiff" data-side="target" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを「比較先」としてセットし差分タブへ移動">比較先へ</button>
+          <button type="button" class="btn sub" data-act="settingsExportLoadToDesign" data-app-id="${esc(idStr)}" title="このアプリの取得済みJSONを設計書タブへ読み込み、API取得なしで設計書を生成できるようにします">設計書へ</button>
         </div>`
       : '<span class="muted" style="font-size:10px">取得失敗</span>';
     const rowBg = r.ngCount ? 'background:#fff8f1;' : '';

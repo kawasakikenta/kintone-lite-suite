@@ -8,6 +8,8 @@ import {
   runDesignExportXlsxStandalone,
   runBatchDesignExportXlsxZipStandalone
 } from '../tabs/design-standalone.js';
+import { pickAllSettingsBundles } from '../settingsBundleImport.js';
+import { extractAppNameFromBundle } from '../utils.js';
 import {
   createLitePanel,
   makeRow,
@@ -56,10 +58,51 @@ export function mountDesignLitePanel() {
   cardTarget.body.appendChild(makeNote('単一出力（Markdown / JSON / Excel / コピー）は1行目のアプリが対象です。ZIP 一括出力は表の全行を対象にします。各行「↑コピー」で上の行を複製できます。'));
   panel.body.insertBefore(cardTarget.card, panel.status);
 
-  // 単一出力用：先頭行を比較元/対象として使う
+  // ---- 設定JSON読込（任意）：設定一括取得の出力（apps 配列）を取り込んで、API取得なしで設計書を作る ----
+  const cardImport = makeCard({ title: '設定JSON読込（任意）', soft: true });
+  cardImport.body.appendChild(makeNote('「設定一括取得」で保存したJSON（複数アプリ対応）や単体の設定JSONを指定すると、そのアプリはkintoneへ接続せずJSONの内容だけから設計書を生成します。読み込んだアプリは対象アプリ表に自動追加されます。'));
+  const importFile = document.createElement('input');
+  importFile.type = 'file';
+  importFile.accept = '.json,application/json';
+  importFile.className = 'kus-lp__file';
+  const clearImportBtn = makeButton('読込解除', 'ghost');
+  cardImport.body.appendChild(makeRow(importFile, { label: '設定JSON' }));
+  cardImport.body.appendChild(makeRow(clearImportBtn));
+  panel.body.insertBefore(cardImport.card, panel.status);
+
+  // appId → 取り込んだ設定バンドル。値があるアプリはAPI取得せずこのバンドルから生成する。
+  const importedBundles = new Map<string, any>();
+  const appNameLookup = (): Record<string, string> => {
+    const map: Record<string, string> = {};
+    importedBundles.forEach((b, id) => { const n = extractAppNameFromBundle(b); if (n) map[id] = n; });
+    return map;
+  };
+
+  importFile.addEventListener('change', () => liteRun(panel, '設定JSONを読み込み中…', async () => {
+    const file = importFile.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const bundles = pickAllSettingsBundles(JSON.parse(text));
+    let added = 0;
+    for (const b of bundles) {
+      const appId = String(b?.appId || '').trim();
+      if (!appId) continue;
+      importedBundles.set(appId, b);
+      const result = appTable.putApp(appId, String((b as any)?.guestId || ''), { appName: extractAppNameFromBundle(b) });
+      if (result.action === 'added' || result.action === 'filled') added += 1;
+    }
+    panel.setStatus(`設定JSONから${bundles.length}件のアプリ設定を読み込みました（対象表に新規追加 ${added}件）。読み込んだアプリはAPI取得を行いません。`, 'ok');
+  }));
+  clearImportBtn.addEventListener('click', () => {
+    importedBundles.clear();
+    importFile.value = '';
+    panel.setStatus('設定JSONの読込を解除しました', 'info');
+  });
+
+  // 単一出力用：先頭行を比較元/対象として使う（対応する設定JSONが読み込まれていればそれを使う）
   const source = () => {
     const r = appTable.first();
-    return { appId: r.appId, guestId: r.guestId, preview: prev.checkbox.checked };
+    return { appId: r.appId, guestId: r.guestId, preview: prev.checkbox.checked, importedBundle: importedBundles.get(r.appId) || null };
   };
   const requireFirstApp = (): boolean => {
     if (!appTable.first().appId) {
@@ -94,17 +137,17 @@ export function mountDesignLitePanel() {
     await runDesignCopyMdStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }); });
   bXlsx.addEventListener('click', () => { if (!requireFirstApp()) return; liteRun(panel, 'Excel 生成中…', async () => {
-    await runDesignExportXlsxStandalone(source(), (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
+    await runDesignExportXlsxStandalone({ ...source(), appNameLookup: appNameLookup() }, (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy'));
   }); });
 
   // ---- 複数アプリ ZIP（表の全行） ----
   const cardBatch = makeCard({ title: '複数アプリ一括 ZIP 出力（Excel）', number: 3, soft: true });
-  cardBatch.body.appendChild(makeNote('シート選択は最初の 1 アプリで 1 回だけ表示し、以降は同じ設定を全アプリに適用します。アプリごとのゲストスペースは表の各行に従います。'));
+  cardBatch.body.appendChild(makeNote('シート選択は最初の 1 アプリで 1 回だけ表示し、以降は同じ設定を全アプリに適用します。アプリごとのゲストスペースは表の各行に従います。設定JSONを読み込んだアプリはAPI取得を行いません。'));
   const bBatchZip = makeButton('対象アプリの設計書 ZIP を保存', 'primary', { icon: '↓' });
   bBatchZip.style.width = '100%';
   cardBatch.body.appendChild(bBatchZip);
   bBatchZip.addEventListener('click', () => {
-    const apps = appTable.getApps();
+    const apps = appTable.getApps().map((r) => ({ appId: r.appId, guestId: r.guestId, bundle: importedBundles.get(r.appId) || null }));
     if (!apps.length) { panel.setStatus('対象アプリ表にアプリIDを1件以上入力してください', 'warn'); return; }
     liteRun(panel, '複数アプリ Excel 生成中…', async () => {
       await runBatchDesignExportXlsxZipStandalone(
@@ -129,8 +172,8 @@ export function mountDesignLitePanel() {
     liteRun(panel, '設計書差分 MD 生成中…', async () => {
       await runDesignDiffMdStandalone(
         {
-          source: { appId: all[0].appId, guestId: all[0].guestId, preview: prev.checkbox.checked },
-          target: { appId: all[1].appId, guestId: all[1].guestId, preview: prev.checkbox.checked }
+          source: { appId: all[0].appId, guestId: all[0].guestId, preview: prev.checkbox.checked, importedBundle: importedBundles.get(all[0].appId) || null },
+          target: { appId: all[1].appId, guestId: all[1].guestId, preview: prev.checkbox.checked, importedBundle: importedBundles.get(all[1].appId) || null }
         },
         (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
       );
