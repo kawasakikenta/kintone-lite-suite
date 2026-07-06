@@ -1,6 +1,6 @@
-# kintone 統合ツール
+# kintone lite ツール
 
-kintone アプリ設定の差分比較・プレビュー反映・設計書出力・レコード運用・可視化・API 試験を 1 つにまとめた統合運用ブックマークレットです。
+kintone アプリ設定の差分比較・プレビュー反映・設計書出力・レコード運用・可視化・API 試験を、機能別の軽量 lite ブックマークレットとして提供します。統合版（`tools/統合ツール.js`）は廃止済みです。
 
 ## セットアップ
 
@@ -17,10 +17,7 @@ npm run check   # ストレージ検査 → typecheck（通常/strict） → vit
 npm run test:unit  # ユニットテストのみ（vitest）
 ```
 
-`tools/統合ツール.js` に単一 IIFE として出力されます。
-
-
-> `npm run build` 実行時に、単機能スタンドアロン実行スクリプト（`tools/*.js`）も esbuild で自動生成されます。各ファイルは kintone 上で**単体実行**でき、`統合ツール.js` を別途読み込む必要はありません。エントリは `src/featureDefs.mjs` の `STANDALONE_LAUNCH_ENTRIES` で管理します。
+`npm run build` 実行時に、単機能スタンドアロン実行スクリプト（`tools/*.js`）だけを esbuild で自動生成します。各ファイルは kintone 上で**単体実行**でき、`統合ツール.js` を別途読み込む必要はありません。エントリは `src/featureDefs.mjs` の `STANDALONE_LAUNCH_ENTRIES` で管理します。
 
 
 開発時はファイル変更を監視して自動ビルドできます。
@@ -33,7 +30,7 @@ npm run watch
 
 1. `npm run build` で出力された JS ファイルの内容をブラウザのブックマークレットとして登録
 2. kintone の画面上でブックマークレットを実行
-3. フローティングダイアログが表示される
+3. 対象機能の lite パネルが表示される
 
 ### 画面の使い方（UI）
 
@@ -68,8 +65,8 @@ CSS は `src/ui/styles/` 配下に分割管理しています（`tokens.css` / `
 ```
 tools/統合ツール/
 ├── src/
-│   ├── index.ts              # 統合版エントリポイント（環境チェック → DOM生成 → 初期化）
-│   ├── boot.ts               # 統合版の起動・UI 構築
+│   ├── index.ts              # 廃止済み統合版の旧エントリ（ビルド対象外）
+│   ├── boot.ts               # 廃止済み統合版の旧起動処理（ビルド対象外）
 │   ├── featureDefs.mjs       # 機能カード定義と単機能エントリ一覧（STANDALONE_LAUNCH_ENTRIES）
 │   ├── register-api.ts       # window.__KUS__ 公開 API
 │   ├── constants.ts          # 定数定義（TOOL_ID, SECTION_DEFS, META_KEYS 等）
@@ -131,7 +128,7 @@ tools/統合ツール/
 
 [esbuild](https://esbuild.github.io/) でモジュールを単一 IIFE にバンドルします。
 
-- エントリポイント: `src/index.ts`（ソース内の `.js` import 指定はビルド時に `.ts` へ解決）
+- エントリポイント: `src/entries/*-lite-entry.ts`（`STANDALONE_LAUNCH_ENTRIES` の `bundleEntry`。ソース内の `.js` import 指定はビルド時に `.ts` へ解決）
 - 出力形式: IIFE（即時実行関数）
 - CSS: カスタム esbuild プラグインで `.css` ファイルを JS 文字列としてインライン化し、実行時に `<style>` タグとして注入
 - ターゲット: ES2020
@@ -192,9 +189,9 @@ tools/統合ツール/
 
 ## 正規実装と単機能スクリプト
 
-統合後の運用では、機能ロジックは `src/tabs/*.ts` を正規実装とし、`tools/*.js` は単機能用の出力として管理します。単機能スクリプトは `src/entries/*-lite-entry.ts` を esbuild した自己完結バンドルで、`統合ツール.js` を別途読み込む必要はありません。
+lite 版を正規とする運用では、機能ロジックは `src/tabs/*.ts` を正規実装とし、`tools/*.js` は単機能用の出力として管理します。単機能スクリプトは `src/entries/*-lite-entry.ts` を esbuild した自己完結バンドルで、`統合ツール.js` を別途読み込む必要はありません。
 
-プログラムから差分 API を使う場合: `統合ツール.js` 実行後に `window.__KUS__.runDiffStandalone`（`register-api.ts`）。差分専用ブックマーク `差分比較.js` を使う場合も同 API が同梱されます。
+差分専用ブックマーク `差分比較.js` には差分 API も同梱されます。
 
 | 機能名 | 正規モジュール | 単機能スクリプト |
 |---|---|---|

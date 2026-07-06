@@ -220,8 +220,8 @@ export const FEATURE_DEFS = [
  * 単機能ブックマークレット（tools/*.js）1 本につき 1 エントリ。
  * tab は FEATURE_DEFS の tabs に含まれること。
  *
- * - bundleEntry あり: esbuild で IIFE 1 ファイルに同梱。`統合ツール.js` を別途読み込まない。
- * - bundleEntry なし: 軽量ラッパーを生成し、`統合ツール.js` を読み込んで該当画面へ遷移する。
+ * 統合版（tools/統合ツール.js）は廃止済み。各エントリは bundleEntry を必ず持ち、
+ * esbuild で IIFE 1 ファイルに同梱した lite 版を正規の公開物とする。
  */
 export const STANDALONE_LAUNCH_ENTRIES = [
   {
