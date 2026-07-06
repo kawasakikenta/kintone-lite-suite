@@ -8322,10 +8322,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
     return { left: `<pre class="kus-dl-pre del">${esc(leftStr)}</pre>`, right: `<pre class="kus-dl-pre add">${esc(rightStr)}</pre>` };
   }
-    return `<div class="kus-dl-view-switch"><span>表示:</span>${btn("simple", "簡易")}${btn("detail", "詳細")}${btn("hidden", "非表示")}<span style="color:#64748b;font-size:11px">カードやセクション行をクリック、または長押しして詳細/簡易を切替できます</span></div>`;
-    const card = (label, value, hint = "クリック/長押しで詳細表示") => `<button type="button" class="kus-dl-summary-card" data-kus-dl-result-mode="detail" title="${esc(hint)}"><div class="kus-dl-summary-card__label">${esc(label)}</div><div class="kus-dl-summary-card__value">${value}</div></button>`;
-      return `<div class="kus-dl-summary-section" data-kus-dl-result-mode="detail" title="クリック/長押しで詳細表示"><strong>${esc(s.label)}</strong><span class="kus-dl-summary-pill">全 ${s.total}</span><span class="kus-dl-summary-pill">追加 ${s.added}</span><span class="kus-dl-summary-pill">削除 ${s.removed}</span><span class="kus-dl-summary-pill">変更 ${s.changed}</span><span class="kus-dl-summary-pill">移動 ${s.moved}</span><span class="kus-dl-summary-pill">同一 ${s.same}</span></div>`;
-      `<div class="kus-dl-summary-cards">${card("表示中", counts.total, "クリック/長押しで詳細表示")}${card("追加", counts.added)}${card("削除", counts.removed)}${card("変更", counts.changed)}${card("移動", counts.moved)}${card("高重要度", counts.high)}</div>`,
+  function renderRowsHtml(rows, useCharDiff, summary) {
+    if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ""}</div>`;
+    const bySection = /* @__PURE__ */ new Map();
+    for (const r of rows) {
       const key = r.sectionKey || "(その他)";
       if (!bySection.has(key)) bySection.set(key, []);
       bySection.get(key).push(r);
@@ -8638,39 +8638,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     let importedTargetBundle = null;
     srcFile.addEventListener("change", () => liteRun(panel, "比較元JSONを読み込み中…", async () => {
       const file = srcFile.files?.[0];
-    const switchResultModeFromElement = (el) => {
-      if (!mode) return false;
-      return true;
-    };
-    let resultLongPressTimer = null;
-    let resultLongPressFired = false;
-    resultBox.addEventListener("click", (ev) => {
-      if (resultLongPressFired) {
-        ev.preventDefault();
-        resultLongPressFired = false;
-        return;
-      }
-      const el = ev.target?.closest?.("[data-kus-dl-result-mode]");
-      switchResultModeFromElement(el);
-    });
-    const clearResultLongPress = () => {
-      if (resultLongPressTimer != null) window.clearTimeout(resultLongPressTimer);
-      resultLongPressTimer = null;
-    };
-    const startResultLongPress = (ev) => {
-      const el = ev.target?.closest?.("[data-kus-dl-result-mode]");
-      if (!el) return;
-      clearResultLongPress();
-      resultLongPressFired = false;
-      resultLongPressTimer = window.setTimeout(() => {
-        resultLongPressFired = switchResultModeFromElement(el);
-        if (resultLongPressFired && "preventDefault" in ev) ev.preventDefault();
-      }, 550);
-    };
-    resultBox.addEventListener("mousedown", startResultLongPress);
-    resultBox.addEventListener("touchstart", startResultLongPress, { passive: false });
-    ["mouseup", "mouseleave", "touchend", "touchcancel"].forEach((eventName) => {
-      resultBox.addEventListener(eventName, clearResultLongPress);
+      if (!file) return;
+      importedSourceBundle = await readSettingsBundleFile(file, { side: "source", appId: srcApp.value.trim() });
+      if (!srcApp.value.trim() && importedSourceBundle?.appId) srcApp.value = String(importedSourceBundle.appId);
       panel.setStatus(`比較元JSONを読み込みました: App ${importedSourceBundle?.appId || "-"}`, "ok");
     }));
     tgtFile.addEventListener("change", () => liteRun(panel, "比較先JSONを読み込み中…", async () => {
