@@ -9,7 +9,6 @@
 
 | 生成ファイル (tools/) | ソースエントリ (src/entries/) | 機能の正規実装 (src/tabs/) |
 |---|---|---|
-| `統合ツール.js` | `src/index.ts` | 全タブ |
 | `差分比較.js` | `diff-lite-entry.ts` | `tabs/diff.ts`, `tabs/diff-standalone.ts` |
 | `設計書作成.js` | `design-lite-entry.ts` | `tabs/design.ts`, `tabs/design-standalone.ts`, `tabs/design-xlsx.ts` |
 | `kintoneJS取得.js` | `jsconfig-lite-entry.ts` | `tabs/jsconfig.ts`, `tabs/jsconfig-standalone.ts` |
@@ -24,12 +23,11 @@
 
 ### バンドル種別
 
-全単機能スクリプトは **軽量 lite バンドル** です。`boot.ts`（統合ツールのフル UI）を含まず、
+全単機能スクリプトは **軽量 lite バンドル** です。`boot.ts`（廃止済み統合版のフル UI）を含まず、
 `*-standalone.ts` + `*-lite-ui.ts` + `litePanelTheme.ts`（共通パネル UI）で自己完結する軽量パネルを提供します。
 各 lite エントリ（`*-lite-entry.ts`）は `kintoneGuard.ts` の `runOnKintonePage()` で kintone 画面判定してから起動します。
 
-統合版（`統合ツール.js`）はフル UI バンドルで全タブ機能を含みます（現在は約 2MB）。
-lite 版は必要な機能のみバンドルするため、各ファイルは機能ごとに数十〜数百KB程度です。
+統合版（`統合ツール.js`）は廃止済みです。ビルドでは生成せず、既存ファイルがあれば削除します。lite 版を正規の公開エントリポイントとします。
 
 ## 修正ワークフロー
 
@@ -45,8 +43,8 @@ lite 版は必要な機能のみバンドルするため、各ファイルは機
 tools/統合ツール/
 ├── build.js                   # ビルドスクリプト（esbuild）
 ├── src/
-│   ├── index.ts               # 統合版エントリ
-│   ├── boot.ts                # 統合版の起動・UI 構築
+│   ├── index.ts               # 廃止済み統合版の旧エントリ（ビルド対象外）
+│   ├── boot.ts                # 廃止済み統合版の旧起動処理（ビルド対象外）
 │   ├── featureDefs.mjs        # エントリ一覧（STANDALONE_LAUNCH_ENTRIES）
 │   ├── register-api.ts        # window.__KUS__ 公開 API
 │   ├── constants.ts           # 定数
@@ -61,22 +59,21 @@ tools/統合ツール/
 │   │   ├── litePanelTheme.ts  # lite 版共通パネル UI（createLitePanel/makeRow 等）
 │   │   └── appSearchControl.ts # アプリ名検索コントロール（lite 共通）
 │   ├── tabs/                  # 各タブの正規実装
-│   │   ├── *.ts               # 統合版で使うタブロジック
+│   │   ├── *.ts               # 共通・旧統合 UI 用タブロジック
 │   │   └── *-standalone.ts    # lite 版用に統合 UI 依存を外した関数群
 │   ├── diff/                  # 差分エンジン
 │   ├── reflect/               # プレビュー反映エンジン
 │   ├── handlers/              # handlers.ts から分割したイベント系モジュール
 │   └── ui/                    # UI 層（テンプレート・styles/*.css・コンポーネント）
 └── tools/                     # ← 親ディレクトリ（生成物の出力先）
-    ├── 統合ツール.js           # 生成物
-    ├── 差分比較.js             # 生成物
+    ├── 差分比較.js             # lite 生成物
     └── ...                    # 他の生成物
 ```
 
 ## 共有モジュールの注意点
 
-- `tabs/design-xlsx.ts` は `tabs/design.ts`（統合版）と `tabs/design-standalone.ts`（lite 版）の**両方**からインポートされる。変更時は両方に影響する。
-- `tabs/er.ts` の `crawl`/`buildHTML` は統合版（`boot.ts`）と `tabs/er-standalone.ts`（lite 版）の両方から使用される。
+- `tabs/design-xlsx.ts` は `tabs/design.ts` と `tabs/design-standalone.ts`（lite 版）の**両方**からインポートされる。変更時は両方に影響する。
+- `tabs/er.ts` の `crawl`/`buildHTML` は `tabs/er-standalone.ts`（lite 版）から使用される。
 - `entries/litePanelTheme.ts` の `createLitePanel`／`makeRow` 等は全 lite 系パネルの共通 UI 基盤。変更時は軽量バンドル全体に影響する。
 - `kintoneGuard.ts` の `isKintonePage`／`runOnKintonePage` は全 lite エントリ（9 本）と `boot.ts` 共通の kintone 画面ガード。文言・判定を変えると全エントリに波及する。
-- `diff/export.ts` の `bundleToMarkdown` は統合版の設計タブ（`tabs/design.ts`）と設計書 lite（`tabs/design-standalone.ts`）から参照される。
+- `diff/export.ts` の `bundleToMarkdown` は設計書 lite（`tabs/design-standalone.ts`）から参照される。
