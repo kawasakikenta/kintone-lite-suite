@@ -453,9 +453,57 @@
         },
         generalArrayOrder: {
           label: "すべて（プロセス等含む）の配列順序",
-          sections: /* @__PURE__ */ new Set(["fieldSettings", "processSettings", "layoutSettings", "actionSettings", "appAcl", "fieldAcl", "recordPermissions", "viewSettings", "reportSettings", "customizeSettings", "notifications", "perRecordNotifications", "reminderNotifications", "categories"]),
+          sections: /* @__PURE__ */ new Set(["fieldSettings", "processSettings", "layoutSettings", "actionSettings", "appAcl", "fieldAcl", "recordPermissions", "viewSettings", "reportSettings", "customizeSettings", "notifications", "perRecordNotifications", "reminderNotifications", "categories", "pluginSettings", "formSettings"]),
           ignoreKeys: /* @__PURE__ */ new Set(["index", "no", "order"]),
           unorderedArrays: true
+        },
+        fieldOrder: {
+          label: "フィールド/レイアウト順序",
+          sections: /* @__PURE__ */ new Set(["fieldSettings", "layoutSettings", "formSettings"]),
+          ignoreKeys: /* @__PURE__ */ new Set(["index", "no", "order", "x", "y"]),
+          unorderedArrays: true
+        },
+        processOrder: {
+          label: "プロセスの並び順",
+          sections: /* @__PURE__ */ new Set(["processSettings"]),
+          ignoreKeys: /* @__PURE__ */ new Set(["index", "no", "order"]),
+          unorderedArrays: true
+        },
+        appReferences: {
+          label: "アプリID/参照先アプリID",
+          sections: /* @__PURE__ */ new Set(["fieldSettings", "viewSettings", "reportSettings", "actionSettings", "customizeSettings", "appSettings", "pluginSettings"]),
+          ignoreKeys: /* @__PURE__ */ new Set(["app", "appid", "appId", "relatedApp", "relatedAppId", "targetApp", "sourceApp"]),
+          unorderedArrays: false
+        },
+        auditMeta: {
+          label: "監査/リビジョン情報",
+          sections: /* @__PURE__ */ new Set(["fieldSettings", "layoutSettings", "viewSettings", "reportSettings", "processSettings", "appSettings", "formSettings", "customizeSettings", "pluginSettings", "actionSettings", "appAcl", "fieldAcl", "recordPermissions", "notifications", "perRecordNotifications", "reminderNotifications", "categories"]),
+          ignoreKeys: /* @__PURE__ */ new Set(["id", "revision", "createdAt", "createdat", "creator", "modifiedAt", "modifiedat", "modifier", "updatedAt", "updatedat", "updatedBy", "updatedby"]),
+          unorderedArrays: false
+        },
+        labelsAndText: {
+          label: "ラベル/説明文/ヘルプ",
+          sections: /* @__PURE__ */ new Set(["fieldSettings", "layoutSettings", "viewSettings", "reportSettings", "processSettings", "appSettings", "formSettings", "actionSettings", "notifications", "perRecordNotifications", "reminderNotifications"]),
+          ignoreKeys: /* @__PURE__ */ new Set(["label", "name", "description", "help", "helpText", "tooltip"]),
+          unorderedArrays: false
+        },
+        appearance: {
+          label: "見た目/幅/座標",
+          sections: /* @__PURE__ */ new Set(["fieldSettings", "layoutSettings", "viewSettings", "formSettings"]),
+          ignoreKeys: /* @__PURE__ */ new Set(["width", "height", "minWidth", "maxWidth", "x", "y", "size", "thumbnailSize", "paginationStyle", "pager"]),
+          unorderedArrays: false
+        },
+        fileKeys: {
+          label: "添付/JS/CSS fileKey",
+          sections: /* @__PURE__ */ new Set(["customizeSettings", "pluginSettings", "appSettings"]),
+          ignoreKeys: /* @__PURE__ */ new Set(["fileKey", "filekey", "contentKey", "contentkey", "blobKey", "blobkey"]),
+          unorderedArrays: false
+        },
+        enabledFlags: {
+          label: "有効/無効フラグ",
+          sections: /* @__PURE__ */ new Set(["processSettings", "pluginSettings", "customizeSettings", "notifications", "perRecordNotifications", "reminderNotifications"]),
+          ignoreKeys: /* @__PURE__ */ new Set(["enable", "enabled", "disabled", "active"]),
+          unorderedArrays: false
         }
       };
       LINE_DIFF_MAX_CELLS = 9e4;
@@ -8483,15 +8531,35 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const ignTa = makeTextarea({ rows: 2, code: true, placeholder: "無視キー（カンマ区切り）" });
     advDetails.body.appendChild(makeRow(ignTa, { label: "無視キー", block: true }));
     const includeSame = makeCheck({ label: "同一行も差分行に含める" });
-    const nView = makeCheck({ label: "ビュー順序を正規化", checked: false });
-    const nPerm = makeCheck({ label: "権限順序を正規化", checked: false });
-    const nAll = makeCheck({ label: "配列順序を無視", checked: false });
+    const showResultList = makeCheck({ label: "画面に比較結果一覧を表示", checked: false, help: "通常は画面に明細を出さず、JSON/HTML/Excel等のファイル出力だけにします" });
+    const nView = makeCheck({ label: "ビュー/グラフ/アクション順序を無視", checked: false });
+    const nPerm = makeCheck({ label: "権限/通知/カテゴリ順序を無視", checked: false });
+    const nAll = makeCheck({ label: "すべての配列順序を無視", checked: false });
+    const nField = makeCheck({ label: "フィールド/レイアウト順序を無視", checked: false });
+    const nProcess = makeCheck({ label: "プロセスの並び順を無視", checked: false });
+    const nAppRefs = makeCheck({ label: "アプリID/参照先アプリIDを無視", checked: false });
+    const nAudit = makeCheck({ label: "監査/リビジョン情報を無視", checked: false });
+    const nText = makeCheck({ label: "ラベル/説明文/ヘルプを無視", checked: false });
+    const nAppearance = makeCheck({ label: "見た目/幅/座標を無視", checked: false });
+    const nFileKeys = makeCheck({ label: "添付/JS/CSS fileKeyを無視", checked: false });
+    const nEnabled = makeCheck({ label: "有効/無効フラグを無視", checked: false });
     const normGrid = document.createElement("div");
     normGrid.className = "kus-lp__check-grid";
-    normGrid.appendChild(includeSame.label);
-    normGrid.appendChild(nView.label);
-    normGrid.appendChild(nPerm.label);
-    normGrid.appendChild(nAll.label);
+    [
+      includeSame.label,
+      showResultList.label,
+      nView.label,
+      nPerm.label,
+      nAll.label,
+      nField.label,
+      nProcess.label,
+      nAppRefs.label,
+      nAudit.label,
+      nText.label,
+      nAppearance.label,
+      nFileKeys.label,
+      nEnabled.label
+    ].forEach((el) => normGrid.appendChild(el));
     advDetails.body.appendChild(normGrid);
     panel.body.insertBefore(advDetails.details, panel.status);
     const runBtn = makeButton("差分比較を実行", "run", { icon: "◎" });
@@ -8531,6 +8599,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     [filterSection, filterType, filterSeverity].forEach((el) => el.addEventListener("change", () => rerender()));
     filterSearch.addEventListener("input", () => rerender());
     charDiffCb.checkbox.addEventListener("change", () => rerender());
+    showResultList.checkbox.addEventListener("change", () => rerender());
     panel.body.insertBefore(cardFilter.card, panel.status);
     const cardResult = makeCard({ title: "結果", soft: true });
     cardResult.card.style.display = "none";
@@ -8607,7 +8676,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         normalizationPresetState: {
           viewOrder: nView.checkbox.checked,
           permissionOrder: nPerm.checkbox.checked,
-          generalArrayOrder: nAll.checkbox.checked
+          generalArrayOrder: nAll.checkbox.checked,
+          fieldOrder: nField.checkbox.checked,
+          processOrder: nProcess.checkbox.checked,
+          appReferences: nAppRefs.checkbox.checked,
+          auditMeta: nAudit.checkbox.checked,
+          labelsAndText: nText.checkbox.checked,
+          appearance: nAppearance.checkbox.checked,
+          fileKeys: nFileKeys.checkbox.checked,
+          enabledFlags: nEnabled.checkbox.checked
         }
       };
     }
@@ -8645,6 +8722,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
     function rerender() {
       if (!cache) {
+        resultBox.innerHTML = "";
+        cardResult.card.style.display = "none";
+        cardFilter.card.style.display = "none";
+        return;
+      }
+      if (!showResultList.checkbox.checked) {
         resultBox.innerHTML = "";
         cardResult.card.style.display = "none";
         cardFilter.card.style.display = "none";
@@ -8689,9 +8772,14 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
           });
           rows.push(`<tr><td>${esc(t.appId)}</td><td>${esc(t.guestId || "通常")}</td><td>${(out.rows || []).filter((r) => r.type !== "same").length}</td><td>${(out.fetchIssues || []).length}</td></tr>`);
         }
-        cardResult.card.style.display = "";
-        resultBox.innerHTML = `<div class="kus-dl-result"><table><thead><tr><th>比較先App</th><th>ゲストID</th><th>差分</th><th>取得失敗</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
-        panel.setStatus(`全比較先の比較が完了しました (${targets.length}件)`, "ok");
+        if (showResultList.checkbox.checked) {
+          cardResult.card.style.display = "";
+          resultBox.innerHTML = `<div class="kus-dl-result"><table><thead><tr><th>比較先App</th><th>ゲストID</th><th>差分</th><th>取得失敗</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+        } else {
+          cardResult.card.style.display = "none";
+          resultBox.innerHTML = "";
+        }
+        panel.setStatus(`全比較先の比較が完了しました (${targets.length}件)${showResultList.checkbox.checked ? "" : "（画面出力なし）"}`, "ok");
       });
     });
     runBtn.addEventListener("click", () => {
@@ -8730,7 +8818,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         summaryText = out.summary?.text || "完了";
         refreshFilterSectionOptions();
         rerender();
-        panel.setStatus(`${summaryText} — フィルタで絞り込み、ファイル出力ボタンから保存できます`, "ok");
+        panel.setStatus(`${summaryText} — ${showResultList.checkbox.checked ? "画面に結果一覧を表示しました。" : "比較結果一覧は画面出力せず、"}ファイル出力ボタンから保存できます`, "ok");
       });
     });
     bJson.addEventListener("click", () => {

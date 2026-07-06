@@ -370,15 +370,35 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   advDetails.body.appendChild(makeRow(ignTa, { label: '無視キー', block: true }));
 
   const includeSame = makeCheck({ label: '同一行も差分行に含める' });
-  const nView = makeCheck({ label: 'ビュー順序を正規化', checked: false });
-  const nPerm = makeCheck({ label: '権限順序を正規化', checked: false });
-  const nAll = makeCheck({ label: '配列順序を無視', checked: false });
+  const showResultList = makeCheck({ label: '画面に比較結果一覧を表示', checked: false, help: '通常は画面に明細を出さず、JSON/HTML/Excel等のファイル出力だけにします' });
+  const nView = makeCheck({ label: 'ビュー/グラフ/アクション順序を無視', checked: false });
+  const nPerm = makeCheck({ label: '権限/通知/カテゴリ順序を無視', checked: false });
+  const nAll = makeCheck({ label: 'すべての配列順序を無視', checked: false });
+  const nField = makeCheck({ label: 'フィールド/レイアウト順序を無視', checked: false });
+  const nProcess = makeCheck({ label: 'プロセスの並び順を無視', checked: false });
+  const nAppRefs = makeCheck({ label: 'アプリID/参照先アプリIDを無視', checked: false });
+  const nAudit = makeCheck({ label: '監査/リビジョン情報を無視', checked: false });
+  const nText = makeCheck({ label: 'ラベル/説明文/ヘルプを無視', checked: false });
+  const nAppearance = makeCheck({ label: '見た目/幅/座標を無視', checked: false });
+  const nFileKeys = makeCheck({ label: '添付/JS/CSS fileKeyを無視', checked: false });
+  const nEnabled = makeCheck({ label: '有効/無効フラグを無視', checked: false });
   const normGrid = document.createElement('div');
   normGrid.className = 'kus-lp__check-grid';
-  normGrid.appendChild(includeSame.label);
-  normGrid.appendChild(nView.label);
-  normGrid.appendChild(nPerm.label);
-  normGrid.appendChild(nAll.label);
+  [
+    includeSame.label,
+    showResultList.label,
+    nView.label,
+    nPerm.label,
+    nAll.label,
+    nField.label,
+    nProcess.label,
+    nAppRefs.label,
+    nAudit.label,
+    nText.label,
+    nAppearance.label,
+    nFileKeys.label,
+    nEnabled.label
+  ].forEach((el) => normGrid.appendChild(el));
   advDetails.body.appendChild(normGrid);
   panel.body.insertBefore(advDetails.details, panel.status);
 
@@ -423,6 +443,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   [filterSection, filterType, filterSeverity].forEach((el) => el.addEventListener('change', () => rerender()));
   filterSearch.addEventListener('input', () => rerender());
   charDiffCb.checkbox.addEventListener('change', () => rerender());
+  showResultList.checkbox.addEventListener('change', () => rerender());
   panel.body.insertBefore(cardFilter.card, panel.status);
 
   // ---- 結果表示エリア（HTMLテーブル） ----
@@ -514,7 +535,15 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       normalizationPresetState: {
         viewOrder: nView.checkbox.checked,
         permissionOrder: nPerm.checkbox.checked,
-        generalArrayOrder: nAll.checkbox.checked
+        generalArrayOrder: nAll.checkbox.checked,
+        fieldOrder: nField.checkbox.checked,
+        processOrder: nProcess.checkbox.checked,
+        appReferences: nAppRefs.checkbox.checked,
+        auditMeta: nAudit.checkbox.checked,
+        labelsAndText: nText.checkbox.checked,
+        appearance: nAppearance.checkbox.checked,
+        fileKeys: nFileKeys.checkbox.checked,
+        enabledFlags: nEnabled.checkbox.checked
       }
     };
   }
@@ -554,6 +583,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   function rerender() {
     if (!cache) {
+      resultBox.innerHTML = '';
+      cardResult.card.style.display = 'none';
+      cardFilter.card.style.display = 'none';
+      return;
+    }
+    if (!showResultList.checkbox.checked) {
       resultBox.innerHTML = '';
       cardResult.card.style.display = 'none';
       cardFilter.card.style.display = 'none';
@@ -600,9 +635,14 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         });
         rows.push(`<tr><td>${esc(t.appId)}</td><td>${esc(t.guestId || '通常')}</td><td>${(out.rows || []).filter((r: any) => r.type !== 'same').length}</td><td>${(out.fetchIssues || []).length}</td></tr>`);
       }
-      cardResult.card.style.display = '';
-      resultBox.innerHTML = `<div class="kus-dl-result"><table><thead><tr><th>比較先App</th><th>ゲストID</th><th>差分</th><th>取得失敗</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
-      panel.setStatus(`全比較先の比較が完了しました (${targets.length}件)`, 'ok');
+      if (showResultList.checkbox.checked) {
+        cardResult.card.style.display = '';
+        resultBox.innerHTML = `<div class="kus-dl-result"><table><thead><tr><th>比較先App</th><th>ゲストID</th><th>差分</th><th>取得失敗</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+      } else {
+        cardResult.card.style.display = 'none';
+        resultBox.innerHTML = '';
+      }
+      panel.setStatus(`全比較先の比較が完了しました (${targets.length}件)${showResultList.checkbox.checked ? '' : '（画面出力なし）'}`, 'ok');
     });
   });
 
@@ -642,7 +682,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       summaryText = out.summary?.text || '完了';
       refreshFilterSectionOptions();
       rerender();
-      panel.setStatus(`${summaryText} — フィルタで絞り込み、ファイル出力ボタンから保存できます`, 'ok');
+      panel.setStatus(`${summaryText} — ${showResultList.checkbox.checked ? '画面に結果一覧を表示しました。' : '比較結果一覧は画面出力せず、'}ファイル出力ボタンから保存できます`, 'ok');
     });
   });
 
