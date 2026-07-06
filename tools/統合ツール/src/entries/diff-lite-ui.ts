@@ -169,10 +169,10 @@ function rowColumnsHtml(row: DiffRow, useCharDiff: boolean): { left: string; rig
   return { left: `<pre class="kus-dl-pre del">${esc(leftStr)}</pre>`, right: `<pre class="kus-dl-pre add">${esc(rightStr)}</pre>` };
 }
 
-function renderRowsHtml(rows: DiffRow[], useCharDiff: boolean, summary: string): string {
-  if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ''}</div>`;
-  const bySection = new Map<string, DiffRow[]>();
-  for (const r of rows) {
+  return `<div class="kus-dl-view-switch"><span>表示:</span>${btn('simple', '簡易')}${btn('detail', '詳細')}${btn('hidden', '非表示')}<span style="color:#64748b;font-size:11px">カードやセクション行をクリック、または長押しして詳細/簡易を切替できます</span></div>`;
+  const card = (label: string, value: number, hint = 'クリック/長押しで詳細表示') => `<button type="button" class="kus-dl-summary-card" data-kus-dl-result-mode="detail" title="${esc(hint)}"><div class="kus-dl-summary-card__label">${esc(label)}</div><div class="kus-dl-summary-card__value">${value}</div></button>`;
+    return `<div class="kus-dl-summary-section" data-kus-dl-result-mode="detail" title="クリック/長押しで詳細表示"><strong>${esc(s.label)}</strong><span class="kus-dl-summary-pill">全 ${s.total}</span><span class="kus-dl-summary-pill">追加 ${s.added}</span><span class="kus-dl-summary-pill">削除 ${s.removed}</span><span class="kus-dl-summary-pill">変更 ${s.changed}</span><span class="kus-dl-summary-pill">移動 ${s.moved}</span><span class="kus-dl-summary-pill">同一 ${s.same}</span></div>`;
+    `<div class="kus-dl-summary-cards">${card('表示中', counts.total, 'クリック/長押しで詳細表示')}${card('追加', counts.added)}${card('削除', counts.removed)}${card('変更', counts.changed)}${card('移動', counts.moved)}${card('高重要度', counts.high)}</div>`,
     const key = r.sectionKey || '(その他)';
     if (!bySection.has(key)) bySection.set(key, []);
     bySection.get(key)!.push(r);
@@ -370,15 +370,35 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   advDetails.body.appendChild(makeRow(ignTa, { label: '無視キー', block: true }));
 
   const includeSame = makeCheck({ label: '同一行も差分行に含める' });
-  const nView = makeCheck({ label: 'ビュー順序を正規化', checked: false });
-  const nPerm = makeCheck({ label: '権限順序を正規化', checked: false });
-  const nAll = makeCheck({ label: '配列順序を無視', checked: false });
+  const showResultList = makeCheck({ label: '画面に比較結果一覧を表示', checked: false, help: '通常は画面に明細を出さず、JSON/HTML/Excel等のファイル出力だけにします' });
+  const nView = makeCheck({ label: 'ビュー/グラフ/アクション順序を無視', checked: false });
+  const nPerm = makeCheck({ label: '権限/通知/カテゴリ順序を無視', checked: false });
+  const nAll = makeCheck({ label: 'すべての配列順序を無視', checked: false });
+  const nField = makeCheck({ label: 'フィールド/レイアウト順序を無視', checked: false });
+  const nProcess = makeCheck({ label: 'プロセスの並び順を無視', checked: false });
+  const nAppRefs = makeCheck({ label: 'アプリID/参照先アプリIDを無視', checked: false });
+  const nAudit = makeCheck({ label: '監査/リビジョン情報を無視', checked: false });
+  const nText = makeCheck({ label: 'ラベル/説明文/ヘルプを無視', checked: false });
+  const nAppearance = makeCheck({ label: '見た目/幅/座標を無視', checked: false });
+  const nFileKeys = makeCheck({ label: '添付/JS/CSS fileKeyを無視', checked: false });
+  const nEnabled = makeCheck({ label: '有効/無効フラグを無視', checked: false });
   const normGrid = document.createElement('div');
   normGrid.className = 'kus-lp__check-grid';
-  normGrid.appendChild(includeSame.label);
-  normGrid.appendChild(nView.label);
-  normGrid.appendChild(nPerm.label);
-  normGrid.appendChild(nAll.label);
+  [
+    includeSame.label,
+    showResultList.label,
+    nView.label,
+    nPerm.label,
+    nAll.label,
+    nField.label,
+    nProcess.label,
+    nAppRefs.label,
+    nAudit.label,
+    nText.label,
+    nAppearance.label,
+    nFileKeys.label,
+    nEnabled.label
+  ].forEach((el) => normGrid.appendChild(el));
   advDetails.body.appendChild(normGrid);
   panel.body.insertBefore(advDetails.details, panel.status);
 
@@ -423,6 +443,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   [filterSection, filterType, filterSeverity].forEach((el) => el.addEventListener('change', () => rerender()));
   filterSearch.addEventListener('input', () => rerender());
   charDiffCb.checkbox.addEventListener('change', () => rerender());
+  showResultList.checkbox.addEventListener('change', () => rerender());
   panel.body.insertBefore(cardFilter.card, panel.status);
 
   // ---- 結果表示エリア（HTMLテーブル） ----
@@ -467,9 +488,39 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   let cache: DiffCache | null = null;
   let summaryText = '';
   let importedSourceBundle: any = null;
-  let importedTargetBundle: any = null;
-
-  srcFile.addEventListener('change', () => liteRun(panel, '比較元JSONを読み込み中…', async () => {
+  const switchResultModeFromElement = (el: HTMLElement | null) => {
+    if (!mode) return false;
+    return true;
+  };
+  let resultLongPressTimer: number | null = null;
+  let resultLongPressFired = false;
+  resultBox.addEventListener('click', (ev) => {
+    if (resultLongPressFired) {
+      ev.preventDefault();
+      resultLongPressFired = false;
+      return;
+    }
+    const el = (ev.target as HTMLElement | null)?.closest?.('[data-kus-dl-result-mode]') as HTMLElement | null;
+    switchResultModeFromElement(el);
+  });
+  const clearResultLongPress = () => {
+    if (resultLongPressTimer != null) window.clearTimeout(resultLongPressTimer);
+    resultLongPressTimer = null;
+  };
+  const startResultLongPress = (ev: MouseEvent | TouchEvent) => {
+    const el = (ev.target as HTMLElement | null)?.closest?.('[data-kus-dl-result-mode]') as HTMLElement | null;
+    if (!el) return;
+    clearResultLongPress();
+    resultLongPressFired = false;
+    resultLongPressTimer = window.setTimeout(() => {
+      resultLongPressFired = switchResultModeFromElement(el);
+      if (resultLongPressFired && 'preventDefault' in ev) ev.preventDefault();
+    }, 550);
+  };
+  resultBox.addEventListener('mousedown', startResultLongPress);
+  resultBox.addEventListener('touchstart', startResultLongPress, { passive: false });
+  ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach((eventName) => {
+    resultBox.addEventListener(eventName, clearResultLongPress);
     const file = srcFile.files?.[0];
     if (!file) return;
     importedSourceBundle = await readSettingsBundleFile(file, { side: 'source', appId: srcApp.value.trim() });
@@ -514,7 +565,15 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       normalizationPresetState: {
         viewOrder: nView.checkbox.checked,
         permissionOrder: nPerm.checkbox.checked,
-        generalArrayOrder: nAll.checkbox.checked
+        generalArrayOrder: nAll.checkbox.checked,
+        fieldOrder: nField.checkbox.checked,
+        processOrder: nProcess.checkbox.checked,
+        appReferences: nAppRefs.checkbox.checked,
+        auditMeta: nAudit.checkbox.checked,
+        labelsAndText: nText.checkbox.checked,
+        appearance: nAppearance.checkbox.checked,
+        fileKeys: nFileKeys.checkbox.checked,
+        enabledFlags: nEnabled.checkbox.checked
       }
     };
   }
@@ -554,6 +613,12 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   function rerender() {
     if (!cache) {
+      resultBox.innerHTML = '';
+      cardResult.card.style.display = 'none';
+      cardFilter.card.style.display = 'none';
+      return;
+    }
+    if (!showResultList.checkbox.checked) {
       resultBox.innerHTML = '';
       cardResult.card.style.display = 'none';
       cardFilter.card.style.display = 'none';
@@ -600,9 +665,14 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         });
         rows.push(`<tr><td>${esc(t.appId)}</td><td>${esc(t.guestId || '通常')}</td><td>${(out.rows || []).filter((r: any) => r.type !== 'same').length}</td><td>${(out.fetchIssues || []).length}</td></tr>`);
       }
-      cardResult.card.style.display = '';
-      resultBox.innerHTML = `<div class="kus-dl-result"><table><thead><tr><th>比較先App</th><th>ゲストID</th><th>差分</th><th>取得失敗</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
-      panel.setStatus(`全比較先の比較が完了しました (${targets.length}件)`, 'ok');
+      if (showResultList.checkbox.checked) {
+        cardResult.card.style.display = '';
+        resultBox.innerHTML = `<div class="kus-dl-result"><table><thead><tr><th>比較先App</th><th>ゲストID</th><th>差分</th><th>取得失敗</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+      } else {
+        cardResult.card.style.display = 'none';
+        resultBox.innerHTML = '';
+      }
+      panel.setStatus(`全比較先の比較が完了しました (${targets.length}件)${showResultList.checkbox.checked ? '' : '（画面出力なし）'}`, 'ok');
     });
   });
 
@@ -642,7 +712,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       summaryText = out.summary?.text || '完了';
       refreshFilterSectionOptions();
       rerender();
-      panel.setStatus(`${summaryText} — フィルタで絞り込み、ファイル出力ボタンから保存できます`, 'ok');
+      panel.setStatus(`${summaryText} — ${showResultList.checkbox.checked ? '画面に結果一覧を表示しました。' : '比較結果一覧は画面出力せず、'}ファイル出力ボタンから保存できます`, 'ok');
     });
   });
 

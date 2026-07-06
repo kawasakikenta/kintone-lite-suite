@@ -426,9 +426,57 @@ export const DIFF_NORMALIZATION_PRESETS: Record<string, DiffNormalizationPreset>
   },
   generalArrayOrder: {
     label: 'すべて（プロセス等含む）の配列順序',
-    sections: new Set(['fieldSettings', 'processSettings', 'layoutSettings', 'actionSettings', 'appAcl', 'fieldAcl', 'recordPermissions', 'viewSettings', 'reportSettings', 'customizeSettings', 'notifications', 'perRecordNotifications', 'reminderNotifications', 'categories']),
+    sections: new Set(['fieldSettings', 'processSettings', 'layoutSettings', 'actionSettings', 'appAcl', 'fieldAcl', 'recordPermissions', 'viewSettings', 'reportSettings', 'customizeSettings', 'notifications', 'perRecordNotifications', 'reminderNotifications', 'categories', 'pluginSettings', 'formSettings']),
     ignoreKeys: new Set(['index', 'no', 'order']),
     unorderedArrays: true
+  },
+  fieldOrder: {
+    label: 'フィールド/レイアウト順序',
+    sections: new Set(['fieldSettings', 'layoutSettings', 'formSettings']),
+    ignoreKeys: new Set(['index', 'no', 'order', 'x', 'y']),
+    unorderedArrays: true
+  },
+  processOrder: {
+    label: 'プロセスの並び順',
+    sections: new Set(['processSettings']),
+    ignoreKeys: new Set(['index', 'no', 'order']),
+    unorderedArrays: true
+  },
+  appReferences: {
+    label: 'アプリID/参照先アプリID',
+    sections: new Set(['fieldSettings', 'viewSettings', 'reportSettings', 'actionSettings', 'customizeSettings', 'appSettings', 'pluginSettings']),
+    ignoreKeys: new Set(['app', 'appid', 'appId', 'relatedApp', 'relatedAppId', 'targetApp', 'sourceApp']),
+    unorderedArrays: false
+  },
+  auditMeta: {
+    label: '監査/リビジョン情報',
+    sections: new Set(['fieldSettings', 'layoutSettings', 'viewSettings', 'reportSettings', 'processSettings', 'appSettings', 'formSettings', 'customizeSettings', 'pluginSettings', 'actionSettings', 'appAcl', 'fieldAcl', 'recordPermissions', 'notifications', 'perRecordNotifications', 'reminderNotifications', 'categories']),
+    ignoreKeys: new Set(['id', 'revision', 'createdAt', 'createdat', 'creator', 'modifiedAt', 'modifiedat', 'modifier', 'updatedAt', 'updatedat', 'updatedBy', 'updatedby']),
+    unorderedArrays: false
+  },
+  labelsAndText: {
+    label: 'ラベル/説明文/ヘルプ',
+    sections: new Set(['fieldSettings', 'layoutSettings', 'viewSettings', 'reportSettings', 'processSettings', 'appSettings', 'formSettings', 'actionSettings', 'notifications', 'perRecordNotifications', 'reminderNotifications']),
+    ignoreKeys: new Set(['label', 'name', 'description', 'help', 'helpText', 'tooltip']),
+    unorderedArrays: false
+  },
+  appearance: {
+    label: '見た目/幅/座標',
+    sections: new Set(['fieldSettings', 'layoutSettings', 'viewSettings', 'formSettings']),
+    ignoreKeys: new Set(['width', 'height', 'minWidth', 'maxWidth', 'x', 'y', 'size', 'thumbnailSize', 'paginationStyle', 'pager']),
+    unorderedArrays: false
+  },
+  fileKeys: {
+    label: '添付/JS/CSS fileKey',
+    sections: new Set(['customizeSettings', 'pluginSettings', 'appSettings']),
+    ignoreKeys: new Set(['fileKey', 'filekey', 'contentKey', 'contentkey', 'blobKey', 'blobkey']),
+    unorderedArrays: false
+  },
+  enabledFlags: {
+    label: '有効/無効フラグ',
+    sections: new Set(['processSettings', 'pluginSettings', 'customizeSettings', 'notifications', 'perRecordNotifications', 'reminderNotifications']),
+    ignoreKeys: new Set(['enable', 'enabled', 'disabled', 'active']),
+    unorderedArrays: false
   }
 };
 
