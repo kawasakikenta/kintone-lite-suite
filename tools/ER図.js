@@ -1695,6 +1695,18 @@ body{font-family:'DM Sans',sans-serif;background:
 #editor .actions{margin-top:14px;display:flex;gap:8px;justify-content:flex-end;}
 #editor .actions button{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;font-size:12px;}
 #editor .actions button.primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600;}
+#editor .actions button.danger{color:var(--req);border-color:var(--req);margin-right:auto;}
+.ed-swatches{display:flex;gap:8px;flex-wrap:wrap;}
+.ed-swatch{width:26px;height:26px;border-radius:8px;border:2px solid var(--border);cursor:pointer;padding:0;transition:.12s;}
+.ed-swatch:hover{transform:scale(1.08);}
+.ed-swatch.selected{border-color:var(--text);box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--accent);}
+.ed-swatch--none{background:linear-gradient(135deg,var(--surface2) 44%,var(--req) 47%,var(--req) 53%,var(--surface2) 56%);}
+.detail-filter{width:100%;margin:10px 0 2px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;outline:none;}
+.detail-filter:focus{border-color:var(--accent);}
+.detail-filter::placeholder{color:var(--dim);}
+.row-edit{flex-shrink:0;align-self:center;width:20px;height:20px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--dim);font-size:11px;line-height:1;cursor:pointer;opacity:0;transition:.12s;}
+.field-row:hover .row-edit{opacity:1;}
+.row-edit:hover{color:var(--accent);border-color:var(--border);background:var(--surface2);}
 
 /* ── Empty / Banner ── */
 #banner{
@@ -1788,7 +1800,7 @@ body{font-family:'DM Sans',sans-serif;background:
 
   <div class="sep"></div>
 
-  <input id="search-box" placeholder="🔎 アプリ・フィールド検索 (Ctrl+F)" oninput="searchGraph(this.value)">
+  <input id="search-box" placeholder="🔎 アプリ・フィールド検索 (Ctrl+F / Enterで移動)" oninput="searchGraph(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();focusNextSearchMatch();}">
   <span class="meta-pill" id="search-meta"><b>検索</b> すべて</span>
 
   <div class="tb-group" data-group="focus">
@@ -1821,12 +1833,25 @@ body{font-family:'DM Sans',sans-serif;background:
       <button class="tb" onclick="openAddApp();closeAllMenus()">⬡ アプリ(エンティティ)を追加</button>
       <button class="tb" onclick="openAddField();closeAllMenus()">📝 アプリに項目を追加</button>
       <button class="tb" onclick="openAddRelation();closeAllMenus()">🔗 関連線を追加</button>
+      <hr>
+      <button class="tb" onclick="openAddNote();closeAllMenus()">🗒 メモ(付箋)を追加</button>
     </div>
   </div>
 
   <div class="tb-menu" id="edit-menu" data-mobile="hide">
     <button class="tb tb-menu-btn" onclick="toggleMenu('edit-menu')" title="編集">✏</button>
     <div class="tb-menu-panel">
+      <button class="tb" onclick="undoLast();closeAllMenus()">↩ 元に戻す (Ctrl+Z)</button>
+      <hr>
+      <button class="tb" onclick="openEditApp();closeAllMenus()">✏ アプリを編集（名前・枠色）</button>
+      <button class="tb" onclick="autoColorByDepth();closeAllMenus()">🎨 深さごとに色分け</button>
+      <button class="tb" onclick="clearNodeColors();closeAllMenus()">🧼 色分けを解除</button>
+      <hr>
+      <button class="tb" onclick="alignSelected('x');closeAllMenus()">⇤ 選択ノードを左揃え</button>
+      <button class="tb" onclick="alignSelected('y');closeAllMenus()">⇞ 選択ノードを上揃え</button>
+      <button class="tb" onclick="distributeSelected('x');closeAllMenus()">⇶ 選択ノードを横に等間隔</button>
+      <button class="tb" onclick="distributeSelected('y');closeAllMenus()">⇩ 選択ノードを縦に等間隔</button>
+      <hr>
       <button class="tb" onclick="removeSelectedRelations();closeAllMenus()">🗑 選択した関連線を削除 (Delete)</button>
       <button class="tb" onclick="restoreRemovedRelations();closeAllMenus()">↺ 削除した関連線を復元</button>
       <hr>
@@ -1920,6 +1945,9 @@ body{font-family:'DM Sans',sans-serif;background:
     <span>「⬡ シンプル」で結合のみ表示</span>
     <span>「🗂 分離」で紐づきなしアプリを別枠に</span>
     <span>Delete で選択要素を削除</span>
+    <span>✎ 詳細パネルから名前・項目・線を編集</span>
+    <span>線にマウスを乗せると詳細表示</span>
+    <span>Ctrl/⌘ + Z で元に戻す</span>
   </div>
 </div>
 
@@ -1989,7 +2017,8 @@ body{font-family:'DM Sans',sans-serif;background:
     <div id="editor-sub"></div>
     <div id="editor-body"></div>
     <div class="actions">
-      <button class="primary" onclick="submitEditor()">追加</button>
+      <button class="danger" id="editor-delete" style="display:none" onclick="deleteFromEditor()">🗑 削除</button>
+      <button class="primary" id="editor-submit" onclick="submitEditor()">追加</button>
       <button onclick="closeEditor()">キャンセル</button>
     </div>
   </div>
@@ -2013,10 +2042,14 @@ body{font-family:'DM Sans',sans-serif;background:
       </div>
       <div class="help-section">
         <h3>操作・編集</h3>
+        <div class="help-row"><span>元に戻す</span><kbd>Ctrl/⌘ + Z</kbd></div>
         <div class="help-row"><span>選択した要素を削除</span><kbd>Delete</kbd></div>
+        <div class="help-row"><span>複数ノードを選択</span><kbd>Shift + ドラッグ / クリック</kbd></div>
         <div class="help-row"><span>関連強調 ON/OFF</span><kbd>Shift + F</kbd></div>
         <div class="help-row"><span>固定 / 固定解除</span><kbd>Shift + P</kbd></div>
+        <div class="help-row"><span>名前・項目・線の編集</span><kbd>詳細パネルの ✎</kbd></div>
         <div class="help-row"><span>項目・関連線の個別削除</span><kbd>詳細パネルの ✕</kbd></div>
+        <div class="help-row"><span>メモ(付箋)の編集</span><kbd>メモをクリック</kbd></div>
         <div class="help-row"><span>フルスクリーン</span><kbd>F11</kbd></div>
         <div class="help-row"><span>背景をクリック</span><kbd>強調解除</kbd></div>
         <div class="help-row"><span>ノードをダブルクリック</span><kbd>近隣のみ表示</kbd></div>
@@ -2232,12 +2265,21 @@ function buildCyStyle(palette){
     {selector:"node[?isCustom]",style:{"border-style":"dashed","border-color":palette.accent2}},
     {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":4,"background-color":isDark ? "#11162d" : "#eef2ff"}},
     {selector:"node[?inSpace]",style:{"border-color":"#0ea5a4","border-width":4,"border-style":"double","background-color":isDark ? "#06231f" : "#ecfdf5"}},
+    {selector:"node[?accent]",style:{"border-color":"data(accent)","border-width":3}},
     {selector:"node:selected",style:{"border-color":palette.accent,"border-width":4,"overlay-color":"transparent"}},
     {selector:"node.highlighted",style:{"border-color":palette.pk,"border-width":3,"background-color":isDark ? "#1a1805" : "#fffbeb"}},
     {selector:"node.path-node",style:{"border-color":"#f472b6","border-width":4,"background-color":isDark ? "#1a0a12" : "#fdf2f8"}},
     {selector:"node.focus-root",style:{"border-color":palette.accent,"border-width":4,"background-color":isDark ? "#042525" : "#ecfeff","z-index":999}},
     {selector:"node.focus-neighbor",style:{"border-color":"#67e8f9","border-width":3,"background-color":isDark ? "#061d2a" : "#ecfeff"}},
     {selector:"node.pinned-node",style:{"border-color":palette.pk,"border-width":4,"background-color":isDark ? "#2a1f05" : "#fff7ed"}},
+    {selector:"node.note-node",style:{
+      "shape":"round-rectangle","background-color":"data(noteColor)","background-opacity":0.96,
+      "border-width":1,"border-color":"#8a8a8a","color":"#1f2430",
+      "text-outline-width":0,"font-size":"11px","font-weight":500,
+      "text-wrap":"wrap","text-max-width":"230px","text-valign":"center","text-halign":"center",
+      "padding":"12px","width":"label","height":"label","line-height":"1.4","z-index":5
+    }},
+    {selector:"node.note-node:selected",style:{"border-color":palette.accent,"border-width":3}},
     {selector:"node.isolated-by-filter",style:{"opacity":0.35}},
     {selector:"node.focus-dim",style:{"opacity":0.08}},
     {selector:"node.dimmed",style:{"opacity":0.14}},
@@ -2263,6 +2305,7 @@ function buildCyStyle(palette){
       "target-arrow-shape":"triangle","source-arrow-shape":"none","color":palette.action
     }},
     {selector:"edge.label-hidden",style:{"text-opacity":0,"text-background-opacity":0,"text-border-opacity":0}},
+    {selector:"edge.edge-hover",style:{"width":4,"z-index":997,"text-opacity":1,"text-background-opacity":0.95,"text-border-opacity":0.9}},
     {selector:"edge.path-edge",style:{"width":4,"line-color":"#f472b6","target-arrow-color":"#f472b6","source-arrow-color":"#f472b6","z-index":999}},
     {selector:"edge.focus-edge",style:{"width":4,"line-color":palette.accent,"target-arrow-color":palette.accent,"source-arrow-color":palette.accent,"z-index":998}},
     {selector:"edge.rel-hidden",style:{"display":"none"}},
@@ -2314,6 +2357,47 @@ function applyManualRelationData(app, rel){
   if(rel.kind === "LOOKUP") app.lookupCount = (app.lookupCount||0)+1;
   if(rel.kind === "REF") app.refCount = (app.refCount||0)+1;
 }
+// ─── 上書き編集のデータ層（アプリ名/枠色・項目・関連線。編集済みHTMLで永続化） ───
+const appOverrides=(ER_EDIT_STATE&&ER_EDIT_STATE.appOverrides)||{};
+const fieldOverrides=(ER_EDIT_STATE&&ER_EDIT_STATE.fieldOverrides)||{};
+const relationOverrides=(ER_EDIT_STATE&&ER_EDIT_STATE.relationOverrides)||{};
+function findFieldByKey(app,key){
+  const prefix=String(app.id)+"::";
+  if(String(key).indexOf(prefix)!==0) return null;
+  const suffix=String(key).slice(prefix.length);
+  const match=(f)=>String(f.path||f.code||f.label||"")===suffix;
+  return (app.allFields||[]).find(match)||(app.fields||[]).find(match)||null;
+}
+function parseEdgeId(edgeId){
+  const m=/^e_(-?\\d+)_(\\d+)$/.exec(String(edgeId||""));
+  if(!m) return null;
+  return {appId:Number(m[1]),ri:Number(m[2])};
+}
+function appAccentColor(app){
+  const o=appOverrides[app.id]||appOverrides[String(app.id)];
+  return (o&&o.color)||"";
+}
+function applyDataOverrides(){
+  Object.keys(appOverrides).forEach(id=>{
+    const o=appOverrides[id];
+    const app=findApp(id);
+    if(app&&o&&o.name) app.name=o.name;
+  });
+  Object.keys(fieldOverrides).forEach(key=>{
+    const app=findApp(String(key).split("::")[0]);
+    if(!app) return;
+    const field=findFieldByKey(app,key);
+    if(field) Object.assign(field,fieldOverrides[key]);
+  });
+  Object.keys(relationOverrides).forEach(edgeId=>{
+    const ref=parseEdgeId(edgeId);
+    if(!ref) return;
+    const app=findApp(ref.appId);
+    const rel=app&&(app.relations||[])[ref.ri];
+    if(rel) Object.assign(rel,relationOverrides[edgeId]);
+  });
+}
+
 // 編集済みHTMLからの復元: 手動追加データを描画前に再適用する
 if(ER_EDIT_STATE){
   try{
@@ -2327,6 +2411,7 @@ if(ER_EDIT_STATE){
     }
   }catch(err){ console.error("[ER] 編集状態の復元に失敗", err); }
 }
+try{ applyDataOverrides(); }catch(err){ console.error("[ER] 上書き編集の復元に失敗", err); }
 
 // ─── Cytoscape Init ───
 const startAppIdSet = new Set((ER_OPTIONS.startAppIds || []).map((id)=>String(id)));
@@ -2344,6 +2429,7 @@ APPS.forEach(app=>{
     isStart:startAppIdSet.has(String(app.id)),
     inSpace:isInSpaceApp(app),
     isCustom:!!app.isCustom,
+    accent:appAccentColor(app),
     fieldCount:visibleFieldsForNode(app).length,
     relCount:app.relations.length,
     depth:app.depth || 0
@@ -2374,6 +2460,7 @@ const cy=cytoscape({
   style: buildCyStyle(currentPalette()),
   layout: {name:"preset",fit:false},
   minZoom:0.05,maxZoom:4,wheelSensitivity:0.25,
+  boxSelectionEnabled:true,
 });
 
 function applyCyTheme(){
@@ -2459,7 +2546,7 @@ function nodeHasVisibleLink(n){
   });
 }
 function refreshNoLinkClasses(){
-  const nodes = cy.nodes().filter(n=>!n.hasClass("app-manual-hidden"));
+  const nodes = cy.nodes().filter(n=>!n.hasClass("app-manual-hidden") && !n.hasClass("note-node"));
   const linked = nodes.filter(n=>nodeHasVisibleLink(n));
   const isolated = nodes.not(linked);
   cy.nodes().removeClass("no-link");
@@ -2491,7 +2578,8 @@ function placeNoLinkGrid(linked, isolated, animate){
 function runLayout(name, initial){
   const parts = refreshNoLinkClasses();
   if(!separateNoLink || !parts.isolated.length || !parts.linked.length){
-    const lay = cy.layout(buildLayoutOptions(name, initial));
+    // メモ(付箋)はレイアウトの対象外にして、手で置いた位置を保つ
+    const lay = cy.elements().not(".note-node").layout(buildLayoutOptions(name, initial));
     if(initial) lay.one("layoutstop",()=>setTimeout(fit,200));
     lay.run();
     return;
@@ -2698,7 +2786,7 @@ function applyFocusToNode(node, silent){
 
   const depth = Math.max(1, Number(focusDepth) || 1);
   const result = collectFocusSet(node, depth, focusDirection);
-  cy.elements().addClass("focus-dim");
+  cy.elements().not(".note-node").addClass("focus-dim");
   result.nodes.removeClass("focus-dim").addClass("focus-neighbor");
   result.edges.removeClass("focus-dim").addClass("focus-edge");
   node.removeClass("focus-neighbor").addClass("focus-root");
@@ -2743,14 +2831,41 @@ function updateFocusOptions(){
 }
 
 
+// ─── 元に戻す (Undo) ───
+const undoStack = [];
+function pushUndo(label, fn){
+  undoStack.push({label, fn});
+  if(undoStack.length > 60) undoStack.shift();
+}
+function undoLast(){
+  const entry = undoStack.pop();
+  if(!entry){toast("元に戻す操作はありません");return;}
+  try{ entry.fn(); }catch(err){ console.error("[ER] undo failed", err); }
+  toast("元に戻す: "+entry.label);
+}
+
 const manuallyRemovedEdgeIds = new Set();
 const manuallyRemovedNodeIds = new Set();
 const nodeHiddenEdgeIds = new Set();
 
+function hideRelationEdges(edges){
+  const ids = edges.map(e=>e.id());
+  edges.forEach((e)=>{ manuallyRemovedEdgeIds.add(e.id()); e.addClass("rel-manual-hidden"); });
+  pushUndo("関連線削除 "+ids.length+"件", ()=>{
+    ids.forEach(id=>{
+      manuallyRemovedEdgeIds.delete(id);
+      const e = cy.getElementById(id);
+      if(e.length) e.removeClass("rel-manual-hidden");
+    });
+    applyRelationFilter();
+    if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+  });
+}
+
 function removeSelectedRelations(){
   const edges = cy.edges(":selected");
   if(!edges.length){toast("削除対象の関連線を選択してください");return;}
-  edges.forEach((e)=>{ manuallyRemovedEdgeIds.add(e.id()); e.addClass("rel-manual-hidden"); });
+  hideRelationEdges(edges);
   if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
   applyRelationFilter();
   toast("関連線を手動削除: "+edges.length+"件");
@@ -2768,23 +2883,46 @@ function restoreRemovedRelations(){
   toast(restored ? ("手動削除した関連線を復元: "+restored+"件") : "復元対象がありません");
 }
 
-function removeSelectedApps(){
-  let nodes = cy.nodes(":selected").not(".app-manual-hidden");
-  if(!nodes.length && lastTappedNodeId){
-    const n = cy.getElementById(lastTappedNodeId);
-    if(n.length && !n.hasClass("app-manual-hidden")) nodes = nodes.union(n);
-  }
-  if(!nodes.length){toast("削除対象のアプリを選択してください");return;}
+function hideAppNodes(nodes){
+  const nodeIds = [], newEdgeIds = [];
   let edgeCount = 0;
   nodes.forEach((node)=>{
     manuallyRemovedNodeIds.add(node.id());
+    nodeIds.push(node.id());
     node.addClass("app-manual-hidden");
     node.connectedEdges().forEach((edge)=>{
+      if(!nodeHiddenEdgeIds.has(edge.id()) && !manuallyRemovedEdgeIds.has(edge.id())) newEdgeIds.push(edge.id());
       nodeHiddenEdgeIds.add(edge.id());
       if(!edge.hasClass("rel-manual-hidden")) edgeCount += 1;
       edge.addClass("rel-manual-hidden");
     });
   });
+  pushUndo("アプリ削除 "+nodeIds.length+"件", ()=>{
+    nodeIds.forEach(id=>{
+      manuallyRemovedNodeIds.delete(id);
+      const n = cy.getElementById(id);
+      if(n.length) n.removeClass("app-manual-hidden");
+    });
+    newEdgeIds.forEach(id=>{
+      nodeHiddenEdgeIds.delete(id);
+      const e = cy.getElementById(id);
+      if(e.length) e.removeClass("rel-manual-hidden");
+    });
+    applyRelationFilter();
+    refreshAppList();
+    if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
+  });
+  return edgeCount;
+}
+
+function removeSelectedApps(){
+  let nodes = cy.nodes(":selected").not(".app-manual-hidden").not(".note-node");
+  if(!nodes.length && lastTappedNodeId){
+    const n = cy.getElementById(lastTappedNodeId);
+    if(n.length && !n.hasClass("app-manual-hidden") && !n.hasClass("note-node")) nodes = nodes.union(n);
+  }
+  if(!nodes.length){toast("削除対象のアプリを選択してください");return;}
+  const edgeCount = hideAppNodes(nodes);
   applyRelationFilter();
   refreshAppList();
   if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
@@ -2874,23 +3012,41 @@ function appOptionsHtml(selectedId){
   return APPS.map(a=>'<option value="'+escapeHtml(String(a.id))+'"'+(String(a.id)===String(selectedId)?" selected":"")+'>'+escapeHtml(a.name)+(a.isCustom?"（手動）":" (App "+escapeHtml(String(a.id))+")")+'</option>').join("");
 }
 const MANUAL_FIELD_TYPES=[["SINGLE_LINE_TEXT","文字列(1行)"],["MULTI_LINE_TEXT","文字列(複数行)"],["NUMBER","数値"],["CALC","計算"],["DATE","日付"],["DATETIME","日時"],["DROP_DOWN","ドロップダウン"],["CHECK_BOX","チェックボックス"],["USER_SELECT","ユーザー選択"],["FILE","添付ファイル"],["LINK","リンク"],["RECORD_NUMBER","レコード番号"]];
-function openEditor(mode, title, sub, bodyHtml){
+function openEditor(mode, title, sub, bodyHtml, opts){
+  const o=opts||{};
   editorMode=mode;
   document.getElementById("editor-title").textContent=title;
   document.getElementById("editor-sub").textContent=sub;
   document.getElementById("editor-body").innerHTML=bodyHtml;
+  const submitBtn=document.getElementById("editor-submit");
+  if(submitBtn) submitBtn.textContent=o.submitLabel||"追加";
+  const delBtn=document.getElementById("editor-delete");
+  if(delBtn) delBtn.style.display=o.showDelete?"":"none";
   document.getElementById("editor-overlay").classList.add("open");
   const first=document.querySelector("#editor-body input,#editor-body select,#editor-body textarea");
   if(first) setTimeout(()=>{try{first.focus();}catch(_){}},50);
 }
 function closeEditor(){
-  editorMode=""; pendingNodePos=null;
+  editorMode=""; pendingNodePos=null; editingNoteId=""; editingAppId=""; editingFieldRef=null; editingRelRef=null;
   document.getElementById("editor-overlay").classList.remove("open");
 }
 function submitEditor(){
   if(editorMode==="app") addCustomApp();
   else if(editorMode==="field") addCustomField();
   else if(editorMode==="rel") addCustomRelation();
+  else if(editorMode==="note-add") submitNoteAdd();
+  else if(editorMode==="note-edit") submitNoteEdit();
+  else if(editorMode==="edit-app") submitEditApp();
+  else if(editorMode==="edit-field") submitEditField();
+  else if(editorMode==="edit-rel") submitEditRelation();
+}
+function deleteFromEditor(){
+  if(editorMode==="note-edit"){
+    const node=cy.getElementById(editingNoteId);
+    if(node.length) deleteNoteNodes(node);
+    closeEditor();
+    toast("メモを削除しました");
+  }
 }
 function currentTargetAppId(){
   if(activeAppId) return activeAppId;
@@ -2944,8 +3100,17 @@ function addCustomApp(){
   registerManualApp(app);
   const ext=cy.extent();
   const pos=pendingNodePos||{x:(ext.x1+ext.x2)/2+(Math.random()*60-30),y:(ext.y1+ext.y2)/2+(Math.random()*60-30)};
-  const node=cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,fieldCount:fields.length,relCount:0,depth:0},position:pos});
-  commands.push({label:"アプリ: "+app.name+" (手動追加)",icon:"⬡",action:()=>focusApp(id)});
+  const node=cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,accent:"",fieldCount:fields.length,relCount:0,depth:0},position:pos});
+  commands.push({label:"アプリ: "+app.name+" (手動追加)",icon:"⬡",appId:id,action:()=>focusApp(id)});
+  pushUndo("エンティティ追加",()=>{
+    const n=cy.getElementById("a"+id);
+    if(n.length) cy.remove(n);
+    const idx=APPS.indexOf(app);
+    if(idx>=0) APPS.splice(idx,1);
+    appMap.delete(app.id);
+    refreshSidebar();
+    if(String(activeAppId)===String(app.id)) closeDetail();
+  });
   refreshSidebar();
   closeEditor();
   node.select();
@@ -2965,6 +3130,13 @@ function addCustomField(){
     required:kind==="required"||kind==="pk",isPK:kind==="pk",unique:kind==="pk",
     isLookup:kind==="lookup",isRef:kind==="ref",isCustom:true};
   applyManualFieldData(app,field);
+  pushUndo("項目追加",()=>{
+    const fi=app.fields.indexOf(field); if(fi>=0) app.fields.splice(fi,1);
+    const ai=(app.allFields||[]).indexOf(field); if(ai>=0) app.allFields.splice(ai,1);
+    if(typeof app.totalFieldCount==="number") app.totalFieldCount=Math.max(0,app.totalFieldCount-1);
+    if(field.required) app.requiredCount=Math.max(0,(app.requiredCount||0)-1);
+    afterFieldVisibilityChange(app);
+  });
   const node=cy.getElementById("a"+app.id);
   if(node.length){
     node.data("label",buildNodeLabel(app));
@@ -2988,6 +3160,18 @@ function addCustomRelation(){
   const relIndex=from.relations.length;
   applyManualRelationData(from,rel);
   cy.add({group:"edges",data:{id:"e_"+from.id+"_"+relIndex,source:"a"+from.id,target:"a"+to.id,kind,label:edgeDisplayLabel(label),fromLabel:label,fromDisplay:label,isCustom:true}});
+  pushUndo("関連線追加",()=>{
+    const ri=from.relations.indexOf(rel); if(ri>=0) from.relations.splice(ri,1);
+    if(kind==="LOOKUP") from.lookupCount=Math.max(0,(from.lookupCount||0)-1);
+    if(kind==="REF") from.refCount=Math.max(0,(from.refCount||0)-1);
+    const e=cy.getElementById("e_"+from.id+"_"+relIndex);
+    if(e.length) cy.remove(e);
+    const n=cy.getElementById("a"+from.id);
+    if(n.length){ n.data("relCount",from.relations.length); n.data("label",buildNodeLabel(from)); }
+    applyRelationFilter();
+    refreshSidebar();
+    if(String(activeAppId)===String(from.id)) renderAppDetail(from);
+  });
   const node=cy.getElementById("a"+from.id);
   if(node.length){
     node.data("relCount",from.relations.length);
@@ -3003,6 +3187,286 @@ function addCustomRelation(){
 document.getElementById("editor").addEventListener("keydown",e=>{
   if(e.key==="Enter"&&e.target&&e.target.tagName!=="TEXTAREA"){e.preventDefault();submitEditor();}
 });
+
+// ─── 色スウォッチ（アプリ枠色・メモ色の選択UI） ───
+const APP_ACCENT_COLORS=[["","なし(既定)"],["#818cf8","藍"],["#60a5fa","青"],["#2dd4bf","青緑"],["#34d399","緑"],["#fbbf24","黄"],["#f87171","赤"],["#f472b6","桃"],["#a78bfa","紫"]];
+const NOTE_COLORS=[["#fef08a","黄"],["#fbcfe8","桃"],["#bae6fd","青"],["#bbf7d0","緑"],["#fed7aa","橙"],["#e9d5ff","紫"]];
+function swatchesHtml(colors,selected){
+  return '<div class="ed-swatches">'+colors.map(c=>{
+    const col=c[0];
+    const cls="ed-swatch"+(col?"":" ed-swatch--none")+(String(selected||"")===String(col)?" selected":"");
+    return '<button type="button" class="'+cls+'" data-color="'+escapeHtml(col)+'" title="'+escapeHtml(c[1])+'"'+(col?' style="background:'+escapeHtml(col)+'"':'')+' onclick="selectSwatch(this)"></button>';
+  }).join("")+'</div>';
+}
+function selectSwatch(btn){
+  btn.parentNode.querySelectorAll(".ed-swatch").forEach(b=>b.classList.remove("selected"));
+  btn.classList.add("selected");
+}
+function selectedSwatchColor(){
+  const sel=document.querySelector("#editor-body .ed-swatch.selected");
+  return sel?String(sel.dataset.color||""):"";
+}
+
+// ─── アプリの編集（表示名・枠色） ───
+let editingAppId="";
+function openEditApp(appId){
+  const app=findApp(appId!==undefined&&appId!==""?appId:currentTargetAppId());
+  if(!app){toast("編集対象のアプリがありません（ノードをクリックして選択）");return;}
+  editingAppId=app.id;
+  openEditor("edit-app","✏ アプリを編集","図上の表示名とノードの枠色を変更します（kintone上のアプリ名は変わりません）",
+    '<div class="ed-row"><label>表示名 *</label><input id="ed-eapp-name"></div>'
+    +'<div class="ed-row"><label>枠色（グループ分けに便利）</label>'+swatchesHtml(APP_ACCENT_COLORS,appAccentColor(app))+'</div>',
+    {submitLabel:"保存"});
+  document.getElementById("ed-eapp-name").value=app.name||"";
+}
+function applyAppOverride(app,name,color){
+  app.name=name;
+  appOverrides[app.id]=Object.assign({},appOverrides[app.id],{name:name,color:color||""});
+  const node=cy.getElementById("a"+app.id);
+  if(node.length){
+    node.data("accent",color||"");
+    node.data("label",buildNodeLabel(app));
+  }
+  commands.forEach(c=>{ if(c.appId!==undefined&&String(c.appId)===String(app.id)) c.label="アプリ: "+name+" (ID:"+app.id+")"; });
+  refreshSidebar();
+  if(String(activeAppId)===String(app.id)) renderAppDetail(app);
+}
+function submitEditApp(){
+  const app=findApp(editingAppId);
+  if(!app){closeEditor();return;}
+  const name=(document.getElementById("ed-eapp-name").value||"").trim();
+  if(!name){toast("表示名を入力してください");return;}
+  const old={name:app.name,color:appAccentColor(app)};
+  applyAppOverride(app,name,selectedSwatchColor());
+  pushUndo("アプリ編集",()=>{applyAppOverride(app,old.name,old.color);});
+  closeEditor();
+  toast("アプリを更新: "+name);
+}
+
+// ─── 項目の編集（表示名・種類・区分） ───
+let editingFieldRef=null;
+function openEditFieldRow(btn){
+  const app=findApp(btn.dataset.app);
+  if(!app) return;
+  const key=decodeURIComponent(btn.dataset.key||"");
+  const field=findFieldByKey(app,key);
+  if(!field){toast("対象の項目が見つかりません");return;}
+  editingFieldRef={appId:app.id,key};
+  const currentKind=field.isPK?"pk":(field.isLookup?"lookup":(field.isRef?"ref":(field.required?"required":"")));
+  const typeOptions=MANUAL_FIELD_TYPES.some(t=>t[0]===field.type)?MANUAL_FIELD_TYPES:[[field.type,fieldTypeJpLabel(field.type)]].concat(MANUAL_FIELD_TYPES);
+  openEditor("edit-field","✎ 項目を編集","図上の表示名・種類・区分を変更します（kintone上の設定は変わりません）",
+    '<div class="ed-row"><label>項目名 *</label><input id="ed-efield-name"></div>'
+    +'<div class="ed-row"><label>種類</label><select id="ed-efield-type">'+typeOptions.map(t=>'<option value="'+escapeHtml(t[0])+'"'+(t[0]===field.type?" selected":"")+'>'+escapeHtml(t[1])+'</option>').join("")+'</select></div>'
+    +'<div class="ed-row"><label>区分</label><select id="ed-efield-kind">'
+      +'<option value=""'+(currentKind===""?" selected":"")+'>通常</option>'
+      +'<option value="pk"'+(currentKind==="pk"?" selected":"")+'>主キー 🔑</option>'
+      +'<option value="required"'+(currentKind==="required"?" selected":"")+'>必須 ✱</option>'
+      +'<option value="lookup"'+(currentKind==="lookup"?" selected":"")+'>ルックアップ 🔗</option>'
+      +'<option value="ref"'+(currentKind==="ref"?" selected":"")+'>関連レコード 📋</option>'
+    +'</select></div>'
+    +'<div class="ed-hint">フィールドコード: <b>'+escapeHtml(field.code||"-")+'</b>（コードは変更できません）</div>',
+    {submitLabel:"保存"});
+  document.getElementById("ed-efield-name").value=field.label||"";
+}
+function fieldPatchFromKind(kind){
+  return {isPK:kind==="pk",unique:kind==="pk",required:kind==="required"||kind==="pk",isLookup:kind==="lookup",isRef:kind==="ref"};
+}
+function applyFieldOverride(app,key,patch){
+  const field=findFieldByKey(app,key);
+  if(!field) return;
+  Object.assign(field,patch);
+  fieldOverrides[key]=Object.assign({},fieldOverrides[key],patch);
+  afterFieldVisibilityChange(app);
+}
+function submitEditField(){
+  if(!editingFieldRef){closeEditor();return;}
+  const appId=editingFieldRef.appId, key=editingFieldRef.key;
+  const app=findApp(appId);
+  const field=app&&findFieldByKey(app,key);
+  if(!field){closeEditor();return;}
+  const name=(document.getElementById("ed-efield-name").value||"").trim();
+  if(!name){toast("項目名を入力してください");return;}
+  const old={label:field.label,type:field.type,isPK:!!field.isPK,unique:!!field.unique,required:!!field.required,isLookup:!!field.isLookup,isRef:!!field.isRef};
+  const patch=Object.assign({label:name,type:document.getElementById("ed-efield-type").value||field.type},fieldPatchFromKind(document.getElementById("ed-efield-kind").value));
+  applyFieldOverride(app,key,patch);
+  pushUndo("項目編集",()=>{const a=findApp(appId);if(a)applyFieldOverride(a,key,old);});
+  closeEditor();
+  toast("項目を更新: "+name);
+}
+
+// ─── 関連線の編集（ラベル・種類） ───
+let editingRelRef=null;
+function openEditRelationRow(btn){
+  const edgeId=String(btn.dataset.edge||"");
+  const ref=parseEdgeId(edgeId);
+  const app=ref&&findApp(ref.appId);
+  const rel=app&&(app.relations||[])[ref.ri];
+  if(!rel){toast("対象の関連線が見つかりません");return;}
+  editingRelRef={appId:app.id,edgeId,ri:ref.ri};
+  openEditor("edit-rel","✎ 関連線を編集","図上のラベルと線の種類を変更します（kintone上の設定は変わりません）",
+    '<div class="ed-row"><label>ラベル</label><input id="ed-erel-label"></div>'
+    +'<div class="ed-row"><label>種類</label><select id="ed-erel-kind">'
+      +'<option value="LOOKUP"'+(rel.kind==="LOOKUP"?" selected":"")+'>ルックアップ線 🔗</option>'
+      +'<option value="REF"'+(rel.kind==="REF"?" selected":"")+'>関連レコード線 📋</option>'
+      +'<option value="ACTION"'+(rel.kind==="ACTION"?" selected":"")+'>アクション線 ⚡</option>'
+    +'</select></div>',
+    {submitLabel:"保存"});
+  document.getElementById("ed-erel-label").value=rel.fromDisplay||rel.fromLabel||"";
+}
+function applyRelationOverride(app,edgeId,ri,patch){
+  const rel=(app.relations||[])[ri];
+  if(!rel) return;
+  Object.assign(rel,patch);
+  relationOverrides[edgeId]=Object.assign({},relationOverrides[edgeId],patch);
+  const edge=cy.getElementById(edgeId);
+  if(edge.length){
+    edge.data("kind",rel.kind);
+    edge.data("label",edgeDisplayLabel(rel.fromDisplay||rel.fromLabel||""));
+    edge.data("fromLabel",rel.fromLabel);
+    edge.data("fromDisplay",rel.fromDisplay||rel.fromLabel||"");
+  }
+  applyRelationFilter();
+  refreshSidebar();
+  if(String(activeAppId)===String(app.id)) renderAppDetail(app);
+}
+function submitEditRelation(){
+  if(!editingRelRef){closeEditor();return;}
+  const appId=editingRelRef.appId, edgeId=editingRelRef.edgeId, ri=editingRelRef.ri;
+  const app=findApp(appId);
+  const rel=app&&(app.relations||[])[ri];
+  if(!rel){closeEditor();return;}
+  const label=(document.getElementById("ed-erel-label").value||"").trim()||rel.fromLabel||"関連";
+  const kind=document.getElementById("ed-erel-kind").value||rel.kind;
+  const old={fromLabel:rel.fromLabel,fromDisplay:rel.fromDisplay,kind:rel.kind};
+  applyRelationOverride(app,edgeId,ri,{fromLabel:label,fromDisplay:label,kind});
+  pushUndo("関連線編集",()=>{const a=findApp(appId);if(a)applyRelationOverride(a,edgeId,ri,old);});
+  closeEditor();
+  toast("関連線を更新しました");
+}
+
+// ─── メモ（付箋）ノード ───
+let noteSeq=(ER_EDIT_STATE&&ER_EDIT_STATE.seq&&Number(ER_EDIT_STATE.seq.note))||0;
+let editingNoteId="";
+function addNoteElement(data){
+  return cy.add({group:"nodes",classes:"note-node",data:{id:data.id,label:data.text,noteColor:data.color||"#fef08a",isNote:true},position:{x:Number(data.x)||0,y:Number(data.y)||0}});
+}
+if(ER_EDIT_STATE&&Array.isArray(ER_EDIT_STATE.notes)){
+  try{ ER_EDIT_STATE.notes.forEach(n=>{ if(n&&n.id&&!cy.getElementById(n.id).length) addNoteElement(n); }); }
+  catch(err){ console.error("[ER] メモの復元に失敗", err); }
+}
+function openAddNote(pos){
+  pendingNodePos=pos||null;
+  openEditor("note-add","🗒 メモ(付箋)を追加","図の好きな位置に補足メモを置けます。エクスポートには含まれず、編集済みHTML保存では復元されます",
+    '<div class="ed-row"><label>メモ内容 *</label><textarea id="ed-note-text" placeholder="例: このアプリ群は受注フロー"></textarea></div>'
+    +'<div class="ed-row"><label>色</label>'+swatchesHtml(NOTE_COLORS,"#fef08a")+'</div>');
+}
+function openEditNote(id){
+  const node=cy.getElementById(id);
+  if(!node.length) return;
+  editingNoteId=id;
+  openEditor("note-edit","🗒 メモを編集","内容と色を変更できます。ドラッグで移動、ここから削除もできます",
+    '<div class="ed-row"><label>メモ内容 *</label><textarea id="ed-note-text"></textarea></div>'
+    +'<div class="ed-row"><label>色</label>'+swatchesHtml(NOTE_COLORS,node.data("noteColor"))+'</div>',
+    {submitLabel:"保存",showDelete:true});
+  document.getElementById("ed-note-text").value=node.data("label")||"";
+}
+function submitNoteAdd(){
+  const text=(document.getElementById("ed-note-text").value||"").trim();
+  if(!text){toast("メモ内容を入力してください");return;}
+  noteSeq+=1;
+  const ext=cy.extent();
+  const pos=pendingNodePos||{x:(ext.x1+ext.x2)/2,y:(ext.y1+ext.y2)/2};
+  const data={id:"note_"+noteSeq,text,color:selectedSwatchColor()||"#fef08a",x:pos.x,y:pos.y};
+  const node=addNoteElement(data);
+  pushUndo("メモ追加",()=>{const n=cy.getElementById(data.id);if(n.length)cy.remove(n);});
+  closeEditor();
+  node.select();
+  toast("メモを追加しました（クリックで編集・ドラッグで移動）");
+}
+function submitNoteEdit(){
+  const node=cy.getElementById(editingNoteId);
+  if(!node.length){closeEditor();return;}
+  const text=(document.getElementById("ed-note-text").value||"").trim();
+  if(!text){toast("メモ内容を入力してください");return;}
+  const noteId=node.id();
+  const old={text:node.data("label"),color:node.data("noteColor")};
+  node.data("label",text);
+  node.data("noteColor",selectedSwatchColor()||old.color);
+  pushUndo("メモ編集",()=>{const n=cy.getElementById(noteId);if(n.length){n.data("label",old.text);n.data("noteColor",old.color);}});
+  closeEditor();
+  toast("メモを更新しました");
+}
+function deleteNoteNodes(nodes){
+  const saved=[];
+  nodes.forEach(n=>{const p=n.position();saved.push({id:n.id(),text:n.data("label"),color:n.data("noteColor"),x:p.x,y:p.y});});
+  cy.remove(nodes);
+  if(saved.length) pushUndo("メモ削除 "+saved.length+"件",()=>{saved.forEach(d=>{if(!cy.getElementById(d.id).length) addNoteElement(d);});});
+}
+
+// ─── 整列ツール（複数選択ノードの位置合わせ） ───
+function selectedMovableNodes(){
+  return cy.nodes(":selected").not(".app-manual-hidden");
+}
+function pushPositionsUndo(nodes,label){
+  const saved=nodes.map(n=>({id:n.id(),x:n.position("x"),y:n.position("y")}));
+  pushUndo(label,()=>{saved.forEach(p=>{const n=cy.getElementById(p.id);if(n.length)n.position({x:p.x,y:p.y});});});
+}
+function alignSelected(axis){
+  const nodes=selectedMovableNodes();
+  if(nodes.length<2){toast("2つ以上のノードを選択してください（Shift+ドラッグ / Shift+クリック）");return;}
+  pushPositionsUndo(nodes,"整列");
+  if(axis==="x"){
+    const v=Math.min.apply(null,nodes.map(n=>n.position("x")));
+    nodes.forEach(n=>n.animate({position:{x:v,y:n.position("y")}},{duration:220}));
+    toast("選択ノードを左揃えしました");
+  }else{
+    const v=Math.min.apply(null,nodes.map(n=>n.position("y")));
+    nodes.forEach(n=>n.animate({position:{x:n.position("x"),y:v}},{duration:220}));
+    toast("選択ノードを上揃えしました");
+  }
+}
+function distributeSelected(axis){
+  const nodes=selectedMovableNodes();
+  if(nodes.length<3){toast("3つ以上のノードを選択してください");return;}
+  pushPositionsUndo(nodes,"等間隔配置");
+  const arr=nodes.sort((a,b)=>a.position(axis)-b.position(axis));
+  const first=arr[0].position(axis), last=arr[arr.length-1].position(axis);
+  const step=(last-first)/(arr.length-1);
+  arr.forEach((n,i)=>{
+    const pos={x:n.position("x"),y:n.position("y")};
+    pos[axis]=first+step*i;
+    n.animate({position:pos},{duration:220});
+  });
+  toast(axis==="x"?"横に等間隔配置しました":"縦に等間隔配置しました");
+}
+
+// ─── 深さごとの色分け ───
+function setAppAccent(app,color){
+  appOverrides[app.id]=Object.assign({},appOverrides[app.id],{name:app.name,color:color||""});
+  const n=cy.getElementById("a"+app.id);
+  if(n.length) n.data("accent",color||"");
+}
+function snapshotAccents(){
+  const map={};
+  APPS.forEach(app=>{map[app.id]=appAccentColor(app);});
+  return map;
+}
+function restoreAccents(map){
+  APPS.forEach(app=>{setAppAccent(app,map[app.id]||"");});
+}
+function autoColorByDepth(){
+  const palette=["#818cf8","#60a5fa","#34d399","#fbbf24","#f87171","#f472b6","#a78bfa","#2dd4bf"];
+  const old=snapshotAccents();
+  APPS.forEach(app=>{setAppAccent(app,palette[(app.depth||0)%palette.length]);});
+  pushUndo("深さで色分け",()=>restoreAccents(old));
+  toast("探索深さごとにノード枠を色分けしました（深さ0=藍）");
+}
+function clearNodeColors(){
+  const old=snapshotAccents();
+  APPS.forEach(app=>{setAppAccent(app,"");});
+  pushUndo("色分け解除",()=>restoreAccents(old));
+  toast("ノードの色分けを解除しました");
+}
 
 // ─── 項目・関連線の個別削除/復元（詳細パネルから操作） ───
 function afterFieldVisibilityChange(app){
@@ -3020,6 +3484,11 @@ function hideFieldFromRow(btn){
   const key = decodeURIComponent(btn.dataset.key || "");
   if(!key) return;
   hiddenFieldKeys.add(key);
+  pushUndo("項目非表示",()=>{
+    hiddenFieldKeys.delete(key);
+    const a=findApp(app.id);
+    if(a) afterFieldVisibilityChange(a);
+  });
   afterFieldVisibilityChange(app);
   toast("項目を図から非表示にしました（詳細パネルから復元できます）");
 }
@@ -3070,6 +3539,7 @@ function searchGraph(q){
   cy.elements().removeClass("highlighted dimmed");
   if(!q.trim()){
     updateSearchMeta("", 0);
+    searchMatchNodes=[];searchMatchIndex=-1;
     return;
   }
   const low=q.toLowerCase();
@@ -3080,11 +3550,21 @@ function searchGraph(q){
     return visibleFieldsForNode(app).some(f=>buildFieldDisplayName(f).toLowerCase().includes(low)||(f.code||"").toLowerCase().includes(low)||String(f.path||"").toLowerCase().includes(low));
   });
   updateSearchMeta(q, matched.length);
+  searchMatchNodes=matched.sort((a,b)=>String(appMap.get(a.data("appId"))?.name||"").localeCompare(String(appMap.get(b.data("appId"))?.name||""))).toArray();
+  searchMatchIndex=-1;
   if(matched.length){
     matched.addClass("highlighted");
     const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
-    cy.elements().not(matched).not(visibleEdges).addClass("dimmed");
+    cy.elements().not(matched).not(visibleEdges).not(".note-node").addClass("dimmed");
   }
+}
+let searchMatchNodes=[],searchMatchIndex=-1;
+function focusNextSearchMatch(){
+  if(!searchMatchNodes.length){toast("検索に一致するアプリがありません");return;}
+  searchMatchIndex=(searchMatchIndex+1)%searchMatchNodes.length;
+  const n=searchMatchNodes[searchMatchIndex];
+  cy.animate({center:{eles:n},zoom:Math.max(cy.zoom(),1.1)},{duration:300});
+  toast("一致 "+(searchMatchIndex+1)+"/"+searchMatchNodes.length+": "+(appMap.get(n.data("appId"))?.name||""));
 }
 
 // ─── Click Detail ───
@@ -3107,6 +3587,7 @@ function renderAppDetail(app){
     + '<span class="meta-pill"><b>関連</b> ' + fieldGroups.ref.length + '</span>'
     + '<span class="meta-pill"><b>必須</b> ' + fieldGroups.required.length + '</span>'
     + '<span class="meta-pill"><b>深さ</b> ' + (app.depth || 0) + '</span>'
+    + '<button type="button" class="meta-pill meta-pill--btn" title="図上の表示名とノード枠色を変更（kintone上は変わりません）" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditApp(this.dataset.app)">✏ 名前・色を編集</button>'
     + (hiddenCnt ? '<button type="button" class="meta-pill meta-pill--btn" title="このアプリで非表示にした項目をすべて戻します" data-app="' + escapeHtml(String(app.id)) + '" onclick="restoreHiddenFields(this.dataset.app)">↺ 非表示項目 ' + hiddenCnt + ' を復元</button>' : '')
     + '</div>';
 
@@ -3136,8 +3617,9 @@ function renderAppDetail(app){
         const edgeId = "e_" + app.id + "_" + item.ri;
         const edge = cy.getElementById(edgeId);
         const edgeHidden = edge.length && edge.hasClass("rel-manual-hidden");
+        const relEditBtn = '<button type="button" class="row-edit" title="この関連線を編集（ラベル・種類）" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditRelationRow(this);event.stopPropagation();">✎</button>';
         const edgeBtn = edge.length
-          ? '<button type="button" class="row-del' + (edgeHidden ? ' row-del--restore' : '') + '" title="' + (edgeHidden ? 'この関連線を復元' : 'この関連線を図から削除') + '" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="toggleRelationEdgeFromRow(this);event.stopPropagation();">' + (edgeHidden ? '↺' : '✕') + '</button>'
+          ? relEditBtn + '<button type="button" class="row-del' + (edgeHidden ? ' row-del--restore' : '') + '" title="' + (edgeHidden ? 'この関連線を復元' : 'この関連線を図から削除') + '" data-edge="' + escapeHtml(edgeId) + '" data-app="' + escapeHtml(String(app.id)) + '" onclick="toggleRelationEdgeFromRow(this);event.stopPropagation();">' + (edgeHidden ? '↺' : '✕') + '</button>'
           : '';
         relHtml += '<div class="field-row' + (edgeHidden ? ' field-row--hidden' : '') + '" style="cursor:pointer" onclick="focusApp(' + rel.toApp + ')">'
           + '<span class="field-icon">' + group.icon + '</span>'
@@ -3173,6 +3655,7 @@ function renderAppDetail(app){
         + '<div class="field-sub">' + escapeHtml(meta.join(' / ')) + '</div>'
         + '</div>'
         + '<span class="field-type">' + escapeHtml(fieldTypeJpLabel(field.type)) + '</span>'
+        + '<button type="button" class="row-edit" title="この項目を編集（名前・種類・区分）" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="openEditFieldRow(this);event.stopPropagation();">✎</button>'
         + '<button type="button" class="row-del" title="この項目を図から非表示" data-app="' + escapeHtml(String(app.id)) + '" data-key="' + escapeHtml(encodeURIComponent(fieldHideKey(app, field))) + '" onclick="hideFieldFromRow(this);event.stopPropagation();">✕</button>'
         + '</div>';
     });
@@ -3183,12 +3666,16 @@ function renderAppDetail(app){
   renderGroup("必須フィールド", fieldGroups.required, "tag-req", "必須");
   renderGroup("サブテーブル", fieldGroups.subtable, "tag-sub", "Table");
   renderGroup("その他フィールド", fieldGroups.normal, "", "");
-  document.getElementById("detail-fields").innerHTML = fieldHtml || '<div class="field-group-title">フィールド</div><div class="field-sub">表示できるフィールドはありません。</div>';
+  const fieldFilterHtml = visibleFields.length > 8
+    ? '<input class="detail-filter" placeholder="🔎 パネル内の項目を絞り込み..." oninput="filterDetailFields(this.value)">'
+    : '';
+  document.getElementById("detail-fields").innerHTML = fieldFilterHtml + (fieldHtml || '<div class="field-group-title">フィールド</div><div class="field-sub">表示できるフィールドはありません。</div>');
 
   panel.classList.add("open");
   setActiveApp(app.id);
 }
 cy.on("tap","node",e=>{
+  if(e.target.hasClass("note-node")){ openEditNote(e.target.id()); return; }
   lastTappedNodeId = e.target.id();
   const app=appMap.get(e.target.data("appId"));
   if(!app) return;
@@ -3197,15 +3684,14 @@ cy.on("tap","node",e=>{
 });
 cy.on("cxttap","node",e=>{
   const n = e.target;
+  if(n.hasClass("note-node")){ deleteNoteNodes(n); toast("メモを削除しました (Ctrl+Zで復元)"); return; }
   const oe = e.originalEvent || ({});
   if(oe.altKey || oe.metaKey){
-    manuallyRemovedNodeIds.add(n.id());
-    n.addClass("app-manual-hidden");
-    n.connectedEdges().forEach((edge)=>{ nodeHiddenEdgeIds.add(edge.id()); edge.addClass("rel-manual-hidden"); });
+    hideAppNodes(n);
     applyRelationFilter();
     refreshAppList();
     if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-    toast("アプリを手動削除");
+    toast("アプリを手動削除 (Ctrl+Zで復元)");
     return;
   }
   if(pinnedNodeIds.has(n.id())) unpinNode(n);
@@ -3213,17 +3699,32 @@ cy.on("cxttap","node",e=>{
 });
 cy.on("cxttap","edge",e=>{
   const edge = e.target;
-  manuallyRemovedEdgeIds.add(edge.id());
-  edge.addClass("rel-manual-hidden");
+  hideRelationEdges(edge);
   applyRelationFilter();
   if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
-  toast("関連線を手動削除");
+  toast("関連線を手動削除 (Ctrl+Zで復元)");
 });
 cy.on("tap",e=>{if(e.target===cy){closeDetail();cy.elements().removeClass("highlighted dimmed path-node path-edge");clearFocus(true);}});
 
 function closeDetail(){
   document.getElementById("detail").classList.remove("open");
   setActiveApp(0);
+}
+
+// 詳細パネル内の項目絞り込み（大きいアプリで目的の項目を探しやすくする）
+function filterDetailFields(q){
+  const low=String(q||"").trim().toLowerCase();
+  document.querySelectorAll("#detail-fields .field-row").forEach(row=>{
+    row.style.display=!low||row.textContent.toLowerCase().includes(low)?"":"none";
+  });
+  document.querySelectorAll("#detail-fields .field-group-title").forEach(title=>{
+    let el=title.nextElementSibling, any=false;
+    while(el&&el.classList&&el.classList.contains("field-row")){
+      if(el.style.display!=="none") any=true;
+      el=el.nextElementSibling;
+    }
+    title.style.display=!low||any?"":"none";
+  });
 }
 
 function focusApp(id){
@@ -3325,7 +3826,7 @@ function filterByType(el,type){
   });
   matched.addClass("highlighted");
   const visibleEdges = matched.connectedEdges().filter(e=>!e.hasClass("rel-hidden") && !e.hasClass("rel-manual-hidden"));
-  cy.elements().not(matched).not(visibleEdges).addClass("dimmed");
+  cy.elements().not(matched).not(visibleEdges).not(".note-node").addClass("dimmed");
 }
 
 // ─── Path Finder ───
@@ -3348,7 +3849,7 @@ function findPath(){
   const path=dijkstra.pathTo(cy.getElementById(to));
   if(!path||path.length===0){document.getElementById("path-result").textContent="経路なし";return;}
   path.addClass("path-node path-edge");
-  cy.elements().not(path).addClass("dimmed");
+  cy.elements().not(path).not(".note-node").addClass("dimmed");
   const names=path.nodes().map(n=>appMap.get(n.data("appId"))?.name||"?").join(" → ");
   document.getElementById("path-result").textContent=names;
   toast("経路: "+path.nodes().length+"アプリ");
@@ -3431,9 +3932,18 @@ const commands=[
   {label:"関連線 ON/OFF",icon:"📋",action:()=>toggleRelationKind("REF")},
   {label:"アクション線 ON/OFF",icon:"⚡",action:()=>toggleRelationKind("ACTION")},
   {label:"線ラベル ON/OFF",icon:"🏷",action:toggleRelationLabels},
+  {label:"元に戻す",icon:"↩",action:undoLast,keys:"Ctrl+Z"},
   {label:"アプリ(エンティティ)を追加",icon:"⬡",action:()=>openAddApp()},
   {label:"アプリに項目を追加",icon:"📝",action:()=>openAddField()},
   {label:"関連線を追加",icon:"🔗",action:()=>openAddRelation()},
+  {label:"メモ(付箋)を追加",icon:"🗒",action:()=>openAddNote()},
+  {label:"アプリを編集（名前・枠色）",icon:"✏",action:()=>openEditApp()},
+  {label:"深さごとに色分け",icon:"🎨",action:autoColorByDepth},
+  {label:"色分けを解除",icon:"🧼",action:clearNodeColors},
+  {label:"選択ノードを左揃え",icon:"⇤",action:()=>alignSelected("x")},
+  {label:"選択ノードを上揃え",icon:"⇞",action:()=>alignSelected("y")},
+  {label:"選択ノードを横に等間隔",icon:"⇶",action:()=>distributeSelected("x")},
+  {label:"選択ノードを縦に等間隔",icon:"⇩",action:()=>distributeSelected("y")},
   {label:"選択関連を削除",icon:"🗑",action:removeSelectedRelations,keys:"Delete"},
   {label:"削除関連を復元",icon:"↺",action:restoreRemovedRelations},
   {label:"選択アプリを削除",icon:"🗑📱",action:removeSelectedApps,keys:"Delete"},
@@ -3467,7 +3977,7 @@ const commands=[
 
 // Add app-focus commands
 APPS.forEach(a=>{
-  commands.push({label:"アプリ: "+a.name+" (ID:"+a.id+")",icon:"📱",action:()=>focusApp(a.id)});
+  commands.push({label:"アプリ: "+a.name+" (ID:"+a.id+")",icon:"📱",appId:a.id,action:()=>focusApp(a.id)});
 });
 
 function openCmd(){
@@ -3501,14 +4011,17 @@ document.addEventListener("keydown",e=>{
   if(e.key==="F"&&e.shiftKey){e.preventDefault();toggleFocusMode();}
   if(e.key==="P"&&e.shiftKey){e.preventDefault();togglePinFromSelection();}
   if(e.key==="0"&&(e.ctrlKey||e.metaKey)){e.preventDefault();fit();}
+  if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)&&!e.shiftKey&&!isTypingTarget(e.target)){e.preventDefault();undoLast();}
   if(e.key==="Escape"){closeCmd();closeDetail();closeModal();closeHelp();closeEditor();closeAllMenus();clearFocus(true);document.getElementById("topbar").classList.remove("mobile-open");}
   if((e.key==="Delete"||e.key==="Backspace")&&!isTypingTarget(e.target)){
     const selEdges=cy.edges(":selected");
-    const selNodes=cy.nodes(":selected").not(".app-manual-hidden");
-    if(selEdges.length||selNodes.length){
+    const selNotes=cy.nodes(".note-node:selected");
+    const selNodes=cy.nodes(":selected").not(".app-manual-hidden").not(".note-node");
+    if(selEdges.length||selNodes.length||selNotes.length){
       e.preventDefault();
       if(selEdges.length) removeSelectedRelations();
       if(selNodes.length) removeSelectedApps();
+      if(selNotes.length){ deleteNoteNodes(selNotes); toast("メモを削除: "+selNotes.length+"件 (Ctrl+Zで復元)"); }
     }
   }
   if(!isTypingTarget(e.target)){
@@ -3576,13 +4089,19 @@ function captureEditState(){
   }));
   const positions={};
   cy.nodes().forEach(n=>{
+    if(n.hasClass("note-node")) return;
     const p=n.position();
     positions[n.id()]={x:Math.round(p.x*100)/100,y:Math.round(p.y*100)/100};
+  });
+  const notes=cy.nodes(".note-node").map(n=>{
+    const p=n.position();
+    return {id:n.id(),text:n.data("label"),color:n.data("noteColor"),x:Math.round(p.x*100)/100,y:Math.round(p.y*100)/100};
   });
   return {
     savedAt:new Date().toISOString(),
     options:{layoutName:ER_OPTIONS.layoutName,fieldDensity:ER_OPTIONS.fieldDensity},
-    seq:{app:customAppSeq,rel:customRelSeq,field:customFieldSeq},
+    seq:{app:customAppSeq,rel:customRelSeq,field:customFieldSeq,note:noteSeq},
+    appOverrides,fieldOverrides,relationOverrides,notes,
     customApps,customFields,customRelations,
     view:{
       positions,
@@ -4005,8 +4524,9 @@ function printDiagram(){
 // ─── Double-click to isolate ───
 cy.on("dbltap","node",e=>{
   const n=e.target;
+  if(n.hasClass("note-node")) return;
   const neighborhood=n.closedNeighborhood();
-  cy.elements().addClass("dimmed");
+  cy.elements().not(".note-node").addClass("dimmed");
   neighborhood.removeClass("dimmed").addClass("highlighted");
   toast("ダブルクリック: 接続アプリのみ表示（背景クリックで解除）");
 });
@@ -4016,19 +4536,48 @@ cy.on("dbltap",e=>{
   if(e.target===cy) openAddApp({x:e.position.x,y:e.position.y});
 });
 
-// ─── Hover tooltip ───
+// ─── Hover tooltip（ノード / 関連線） ───
 let tipEl;
+function ensureTip(){
+  if(tipEl) return tipEl;
+  tipEl=document.createElement("div");
+  tipEl.id="er-tooltip";
+  Object.assign(tipEl.style,{position:"fixed",zIndex:"999",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"8px",padding:"8px 12px",fontSize:"11px",fontFamily:"'DM Mono',monospace",pointerEvents:"none",boxShadow:"0 4px 16px rgba(0,0,0,0.3)",maxWidth:"300px"});
+  document.body.appendChild(tipEl);
+  return tipEl;
+}
+function relationKindJp(kind){
+  return kind==="LOOKUP"?"ルックアップ":(kind==="REF"?"関連レコード":"アクション");
+}
 cy.on("mouseover","node",e=>{
+  if(e.target.hasClass("note-node")) return;
   const app=appMap.get(e.target.data("appId"));
   if(!app) return;
-  if(!tipEl){tipEl=document.createElement("div");tipEl.id="er-tooltip";Object.assign(tipEl.style,{position:"fixed",zIndex:"999",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"8px",padding:"8px 12px",fontSize:"11px",fontFamily:"'DM Mono',monospace",pointerEvents:"none",boxShadow:"0 4px 16px rgba(0,0,0,0.3)",maxWidth:"260px"});document.body.appendChild(tipEl);}
+  ensureTip();
   const _v = visibleFieldsForNode(app).length;
   const _t = typeof app.totalFieldCount === "number" ? app.totalFieldCount : _v;
   const _itemText = _t > _v ? (_v + "/" + _t) : _v;
-  tipEl.innerHTML="<b>"+app.name+"</b> "+(app.isCustom?"(手動追加)":"(ID:"+app.id+")")+"<br>項目: "+_itemText+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
+  tipEl.innerHTML="<b>"+escapeHtml(app.name)+"</b> "+(app.isCustom?"(手動追加)":"(ID:"+escapeHtml(String(app.id))+")")+"<br>項目: "+_itemText+" | 関連: "+app.relations.length+" | 深さ: "+(app.depth || 0);
   tipEl.style.display="block";
 });
 cy.on("mouseout","node",()=>{if(tipEl) tipEl.style.display="none";});
+// 線にマウスを乗せると強調 + ラベル非表示中でも内容をその場で確認できる
+cy.on("mouseover","edge",e=>{
+  const edge=e.target;
+  if(edge.hasClass("rel-hidden")||edge.hasClass("rel-manual-hidden")||edge.hasClass("edge-collapsed")) return;
+  edge.addClass("edge-hover");
+  const src=appMap.get(edge.source().data("appId"));
+  const dst=appMap.get(edge.target().data("appId"));
+  ensureTip();
+  tipEl.innerHTML="<b>"+escapeHtml(edge.data("fromDisplay")||edge.data("fromLabel")||relationKindJp(edge.data("kind")))+"</b><br>"
+    +escapeHtml(src?src.name:"?")+" → "+escapeHtml(dst?dst.name:"?")
+    +"<br>種類: "+relationKindJp(edge.data("kind"))+(edge.data("isCustom")?"（手動追加）":"");
+  tipEl.style.display="block";
+});
+cy.on("mouseout","edge",e=>{
+  e.target.removeClass("edge-hover");
+  if(tipEl) tipEl.style.display="none";
+});
 cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=(e.originalEvent.clientX+14)+"px";tipEl.style.top=(e.originalEvent.clientY+14)+"px";}});
 
 // ─── 編集済みHTMLの表示状態を復元（全初期化の最後に実行） ───
