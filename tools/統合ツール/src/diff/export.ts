@@ -2120,6 +2120,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const LINE_DIFF_MAX_CELLS = ${LINE_DIFF_MAX_CELLS};
   const CHAR_DIFF_MAX_CELLS = ${CHAR_DIFF_MAX_CELLS};
   const collapsed = new Set();
+  let typeFilterValue = 'all';
+  const expandedVals = new Set();
+  const sameOpen = new Set();
   const KUC_SEMVER = '${KUC_REPORT_VERSION}';
   const FIELD_PROPS_SRC = ${safeJsonForScript(srcFieldProps)};
   const FIELD_PROPS_TGT = ${safeJsonForScript(tgtFieldProps)};
@@ -2274,75 +2277,98 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return { left, right };
   }
 
-  function renderChangedCells(row, useCharDiff) {
-    const leftText = safeText(row.left);
-    const rightText = safeText(row.right);
-    const leftLines = leftText.split('\\n');
-    const rightLines = rightText.split('\\n');
-    const ops = buildLineDiffOps(leftLines, rightLines);
-    if (!ops) {
-      return {
-        left: '<pre class="blk del">' + escHtml(leftText) + '</pre>',
-        right: '<pre class="blk add">' + escHtml(rightText) + '</pre>'
-      };
-    }
+  // 値表示の方針:
+  //  - 1行かつ短い値はインラインで「旧 → 新」を1行に表示（カード2ペインを使わない）
+  //  - 追加/削除は片側のみをフル幅で表示（空の「（なし）」ペインを作らない）
+  //  - 複数行の変更のみ左右ペア（行単位LCS + 文字ハイライト）で表示
+  const INLINE_VALUE_MAX = 120;
 
-    let leftHtml = '';
-    let rightHtml = '';
-    let leftNo = 0;
-    let rightNo = 0;
-    for (const op of ops) {
-      if (op.type === 'same') {
-        leftNo += 1;
-        rightNo += 1;
-        leftHtml += '<div class="line"><span class="ln">' + leftNo + '</span>' + escHtml(op.left || '') + '</div>';
-        rightHtml += '<div class="line"><span class="ln">' + rightNo + '</span>' + escHtml(op.right || '') + '</div>';
-      } else if (op.type === 'replace') {
-        leftNo += 1;
-        rightNo += 1;
-        const cd = useCharDiff ? buildCharDiff(op.left, op.right) : null;
-        leftHtml += '<div class="line del"><span class="ln">' + leftNo + '</span>' + (cd ? cd.left : escHtml(op.left || '')) + '</div>';
-        rightHtml += '<div class="line add"><span class="ln">' + rightNo + '</span>' + (cd ? cd.right : escHtml(op.right || '')) + '</div>';
-      } else if (op.type === 'del') {
-        leftNo += 1;
-        leftHtml += '<div class="line del"><span class="ln">' + leftNo + '</span>' + escHtml(op.left || '') + '</div>';
-        rightHtml += '<div class="line pad"><span class="ln"></span></div>';
-      } else {
-        rightNo += 1;
-        leftHtml += '<div class="line pad"><span class="ln"></span></div>';
-        rightHtml += '<div class="line add"><span class="ln">' + rightNo + '</span>' + escHtml(op.right || '') + '</div>';
-      }
-    }
-    return {
-      left: '<div class="scroll">' + leftHtml + '</div>',
-      right: '<div class="scroll">' + rightHtml + '</div>'
-    };
+  function isInlineText(text) {
+    return text.indexOf('\\n') === -1 && text.length <= INLINE_VALUE_MAX;
   }
 
-  function renderRowCells(row, useCharDiff) {
+  function renderChangedDuo(row, useCharDiff) {
+    const leftText = safeText(row.left);
+    const rightText = safeText(row.right);
+    const ops = buildLineDiffOps(leftText.split('\\n'), rightText.split('\\n'));
+    let body = '';
+    if (!ops) {
+      body = '<div class="duo-row">'
+        + '<div class="duo-cell del"><pre class="blk">' + escHtml(leftText) + '</pre></div>'
+        + '<div class="duo-cell add"><pre class="blk">' + escHtml(rightText) + '</pre></div>'
+        + '</div>';
+    } else {
+      let leftNo = 0;
+      let rightNo = 0;
+      body = ops.map((op) => {
+        if (op.type === 'same') {
+          leftNo += 1;
+          rightNo += 1;
+          const l = '<span class="ln">' + leftNo + '</span><span class="lt">' + escHtml(op.left || '') + '</span>';
+          const r = '<span class="ln">' + rightNo + '</span><span class="lt">' + escHtml(op.right || '') + '</span>';
+          return '<div class="duo-row"><div class="duo-cell">' + l + '</div><div class="duo-cell">' + r + '</div></div>';
+        }
+        if (op.type === 'replace') {
+          leftNo += 1;
+          rightNo += 1;
+          const cd = useCharDiff ? buildCharDiff(op.left, op.right) : null;
+          const l = '<span class="ln">' + leftNo + '</span><span class="lt">' + (cd ? cd.left : escHtml(op.left || '')) + '</span>';
+          const r = '<span class="ln">' + rightNo + '</span><span class="lt">' + (cd ? cd.right : escHtml(op.right || '')) + '</span>';
+          return '<div class="duo-row"><div class="duo-cell del">' + l + '</div><div class="duo-cell add">' + r + '</div></div>';
+        }
+        if (op.type === 'del') {
+          leftNo += 1;
+          const l = '<span class="ln">' + leftNo + '</span><span class="lt">' + escHtml(op.left || '') + '</span>';
+          return '<div class="duo-row"><div class="duo-cell del">' + l + '</div><div class="duo-cell pad"></div></div>';
+        }
+        rightNo += 1;
+        const r = '<span class="ln">' + rightNo + '</span><span class="lt">' + escHtml(op.right || '') + '</span>';
+        return '<div class="duo-row"><div class="duo-cell pad"></div><div class="duo-cell add">' + r + '</div></div>';
+      }).join('');
+    }
+    return '<div class="duo-wrap">'
+      + '<div class="duo-head"><span>比較元</span><span>比較先</span></div>'
+      + '<div class="duo scroll">' + body + '</div>'
+      + '</div>';
+  }
+
+  function renderValueArea(row, useCharDiff) {
+    const leftText = safeText(row.left);
+    const rightText = safeText(row.right);
     if (row.type === 'same') {
-      return {
-        left: '<pre class="blk same">' + escHtml(safeText(row.left)) + '</pre>',
-        right: '<pre class="blk same-note">（同一）</pre>'
-      };
+      if (isInlineText(leftText)) {
+        return '<div class="val-inline"><span class="vi-val vi-val--same">' + escHtml(leftText) + '</span></div>';
+      }
+      return '<div class="val-single val-single--same"><div class="scroll"><pre class="blk">' + escHtml(leftText) + '</pre></div></div>';
     }
-    if (row.type === 'added') {
-      return {
-        left: '<pre class="blk empty">（なし）</pre>',
-        right: '<pre class="blk add">' + escHtml(safeText(row.right)) + '</pre>'
-      };
+    if (row.type === 'added' || row.type === 'removed') {
+      const isAdd = row.type === 'added';
+      const text = isAdd ? rightText : leftText;
+      const cls = isAdd ? 'add' : 'del';
+      if (isInlineText(text)) {
+        return '<div class="val-inline"><span class="vi-val vi-val--' + cls + '">' + escHtml(text) + '</span></div>';
+      }
+      return '<div class="val-single val-single--' + cls + '">'
+        + '<div class="val-single-head">' + (isAdd ? '比較先（追加された設定）' : '比較元（削除された設定）') + '</div>'
+        + '<div class="scroll"><pre class="blk">' + escHtml(text) + '</pre></div>'
+        + '</div>';
     }
-    if (row.type === 'removed') {
-      return {
-        left: '<pre class="blk del">' + escHtml(safeText(row.left)) + '</pre>',
-        right: '<pre class="blk empty">（なし）</pre>'
-      };
+    if (isInlineText(leftText) && isInlineText(rightText)) {
+      const cd = useCharDiff ? buildCharDiff(leftText, rightText) : null;
+      return '<div class="val-inline">'
+        + '<span class="vi-val vi-val--del">' + (cd ? cd.left : escHtml(leftText)) + '</span>'
+        + '<span class="vi-arrow" aria-hidden="true">→</span>'
+        + '<span class="vi-val vi-val--add">' + (cd ? cd.right : escHtml(rightText)) + '</span>'
+        + '</div>';
     }
-    return renderChangedCells(row, useCharDiff);
+    return renderChangedDuo(row, useCharDiff);
   }
 
   function renderRowMeta(row) {
     const tags = [];
+    const sev = String(row.severity || '').toLowerCase();
+    if (row.type !== 'same' && sev === 'high') tags.push('<span class="meta-tag sev-high">重要度 高</span>');
+    else if (row.type !== 'same' && sev === 'medium') tags.push('<span class="meta-tag sev-medium">重要度 中</span>');
     if (row.reasonSummary) tags.push('<span class="meta-tag reason">' + escHtml(row.reasonSummary) + '</span>');
     if (row.renameCandidate) {
       const renameTip = '名称変更候補: ' + String(row.renameCandidate.fromCode || '-') + ' → ' + String(row.renameCandidate.toCode || '-')
@@ -2419,13 +2445,19 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       });
       const impactRefs = [...impactRefMap.values()];
       impactCount = Math.max(impactCount, impactRefs.length);
-      const reasonSummary = 'フィールド単位に集約（設定差分 ' + bucket.length + '件）';
+      const diffKidCount = bucket.filter((row) => row.type !== 'same').length;
+      const reasonSummary = diffKidCount
+        ? 'フィールド内の設定差分 ' + diffKidCount + '件'
+        : 'フィールド単位に集約（設定差分 ' + bucket.length + '件）';
       collapsed.push({
         ...rootRow,
+        // ルート行自体は同一でも、配下プロパティに差分があればこの集約行は「変更」として扱う
+        type: diffKidCount && rootRow.type === 'same' ? 'changed' : rootRow.type,
         path: rootPath,
         left: rootRow.left,
         right: rootRow.right,
         reasonSummary,
+        __childRows: bucket,
         renameCandidate: bucket.find((row) => row.renameCandidate)?.renameCandidate || rootRow.renameCandidate || null,
         impactCount,
         impactRefs,
@@ -3768,24 +3800,112 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     if (getActiveReportTab() === 'settingsLike') renderSettingsLikeView();
   }
 
+  function rowStateKey(row) {
+    return String(row._id || ((row.sectionKey || '') + '|' + (row.path || '') + '|' + (row.type || '')));
+  }
+
+  function typeFilterMatches(row) {
+    if (typeFilterValue === 'all') return true;
+    if (typeFilterValue === 'changed') return row.type !== 'same' && row.type !== 'added' && row.type !== 'removed';
+    return row.type === typeFilterValue;
+  }
+
+  function buildToolbarHtml(rows, hideSame) {
+    const s = summarizeGroupRows(rows);
+    const chips = [
+      { key: 'all', label: '全て', count: rows.length },
+      { key: 'added', label: '追加', count: s.added },
+      { key: 'removed', label: '削除', count: s.removed },
+      { key: 'changed', label: '変更', count: s.changed }
+    ];
+    if (!hideSame) chips.push({ key: 'same', label: '同一', count: s.same });
+    if (typeFilterValue !== 'all' && !chips.some((c) => c.key === typeFilterValue)) typeFilterValue = 'all';
+    return '<div class="diff-toolbar" role="toolbar" aria-label="差分の種別で絞り込み">'
+      + '<span class="diff-toolbar-label">種別</span>'
+      + chips.map((c) =>
+        '<button type="button" class="tchip tchip--' + c.key + (typeFilterValue === c.key ? ' is-active' : '') + '" data-type-chip="' + c.key + '" aria-pressed="' + (typeFilterValue === c.key ? 'true' : 'false') + '">'
+        + c.label + '<b>' + c.count + '</b></button>'
+      ).join('')
+      + '</div>';
+  }
+
+  function sectionCountChips(s) {
+    const parts = [];
+    if (s.added) parts.push('<span class="cnt cnt--add" title="追加 ' + s.added + '件">＋' + s.added + '</span>');
+    if (s.removed) parts.push('<span class="cnt cnt--del" title="削除 ' + s.removed + '件">−' + s.removed + '</span>');
+    if (s.changed) parts.push('<span class="cnt cnt--chg" title="変更 ' + s.changed + '件">±' + s.changed + '</span>');
+    if (s.same) parts.push('<span class="cnt cnt--same" title="同一 ' + s.same + '件">＝' + s.same + '</span>');
+    if (!parts.length) parts.push('<span class="cnt cnt--same">0件</span>');
+    return parts.join('');
+  }
+
+  function renderAggChildrenHtml(row, useCharDiff) {
+    const kids = (row.__childRows || []).filter((kid) => kid.type !== 'same');
+    if (!kids.length) return '';
+    return '<div class="agg-list">' + kids.map((kid) => {
+      const info = extractFieldPathInfo(kid.path);
+      const title = fieldChangePropTitle(info, kid);
+      const tc = kid.type === 'added' ? 'added' : kid.type === 'removed' ? 'removed' : 'changed';
+      return '<div class="agg-item">'
+        + '<div class="agg-item-head">'
+        +   '<span class="mini-chip mini-chip--' + tc + '">' + escHtml(diffTypeLabel(kid.type, kid.moved)) + '</span>'
+        +   '<span class="agg-prop" title="' + escHtml(kid.path || '-') + '">' + escHtml(title) + '</span>'
+        + '</div>'
+        + '<div class="agg-val">' + renderValueArea(kid, useCharDiff) + '</div>'
+        + '</div>';
+    }).join('') + '</div>';
+  }
+
+  function renderDiffRowHtml(row, useCharDiff) {
+    const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
+    const key = rowStateKey(row);
+    const hasDiffKids = !!(row.__childRows && row.__childRows.some((kid) => kid.type !== 'same'));
+    let valueHtml = '';
+    if (hasDiffKids) {
+      valueHtml = renderAggChildrenHtml(row, useCharDiff);
+    } else if (row.type === 'same' && !isInlineText(safeText(row.left))) {
+      // 大きな同一値は折りたたみ、要求時のみ展開してノイズを抑える
+      valueHtml = expandedVals.has(key)
+        ? renderValueArea(row, useCharDiff) + '<button type="button" class="val-reveal" data-row-toggle="' + escHtml(key) + '">内容を隠す ▴</button>'
+        : '<button type="button" class="val-reveal" data-row-toggle="' + escHtml(key) + '">同一の内容を表示 ▾</button>';
+    } else {
+      valueHtml = renderValueArea(row, useCharDiff);
+    }
+    return '<article class="drow drow--' + typeClass + '">'
+      + '<div class="drow-head">'
+      +   '<span class="type-chip type-chip--' + typeClass + '">' + escHtml(diffTypeLabel(row.type, row.moved)) + '</span>'
+      +   '<div class="drow-title" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</div>'
+      + '</div>'
+      + (valueHtml ? '<div class="drow-val">' + valueHtml + '</div>' : '')
+      + '</article>';
+  }
+
   function render() {
     const hideSame = !!(document.getElementById('hideSame')).checked;
     const useCharDiff = !!(document.getElementById('charDiff')).checked;
     const keyword = String((document.getElementById('search')).value || '').trim().toLowerCase();
-    const filtered = REPORT_ROWS.filter((row) => {
+    const filteredAll = REPORT_ROWS.filter((row) => {
       if (hideSame && row.type === 'same') return false;
       return rowMatches(row, keyword);
     });
-    updateStats(filtered);
+    updateStats(filteredAll);
     if (getActiveReportTab() !== 'diff') return;
 
     const nav = document.getElementById('nav');
     const main = document.getElementById('main');
     nav.innerHTML = '';
-    main.innerHTML = '';
+
+    if (!filteredAll.length) {
+      main.innerHTML = '<div class="no-diff">表示対象の差分がありません。</div>';
+      return;
+    }
+
+    const filtered = filteredAll.filter(typeFilterMatches);
+    let html = buildToolbarHtml(filteredAll, hideSame);
 
     if (!filtered.length) {
-      main.innerHTML = '<div class="no-diff">表示対象の差分がありません。</div>';
+      html += '<div class="no-diff">この種別に該当する行がありません。</div>';
+      main.innerHTML = html;
       return;
     }
 
@@ -3793,7 +3913,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     groups.forEach((g, idx) => {
       const secId = 'sec_' + idx;
       const collapsedNow = collapsed.has(g.key);
-      const groupSummary = summarizeGroupRows(g.rows);
+      const displayRows = g.key === FIELD_SECTION_KEY ? collapseFieldRowsForDiffTable(g.rows) : g.rows;
+      const groupSummary = summarizeGroupRows(displayRows);
       const navItem = document.createElement('div');
       navItem.className = 'nav-item';
       navItem.innerHTML = '<span>' + escHtml(g.label) + '</span><span class="badge">' + groupSummary.diffCount + '</span>';
@@ -3807,47 +3928,65 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       };
       nav.appendChild(navItem);
 
-      const sec = document.createElement('section');
-      sec.id = secId;
-      sec.className = 'sec';
-      const head = document.createElement('div');
-      head.className = 'sec-head';
-      head.innerHTML = '<span>' + (collapsedNow ? '▶' : '▼') + ' ' + escHtml(g.label) + '</span><span class="sec-meta">' + escHtml(groupSummaryLabel(g.rows)) + '</span>';
-      head.onclick = () => {
-        if (collapsed.has(g.key)) collapsed.delete(g.key);
-        else collapsed.add(g.key);
-        render();
-      };
-      sec.appendChild(head);
-
+      const diffRows = displayRows.filter((row) => row.type !== 'same');
+      const sameRows = displayRows.filter((row) => row.type === 'same');
+      html += '<section class="sec" id="' + secId + '">';
+      html += '<div class="sec-head" data-sec-toggle="' + escHtml(g.key) + '" role="button" tabindex="0" aria-expanded="' + (collapsedNow ? 'false' : 'true') + '">'
+        + '<span class="sec-head-title"><span class="sec-caret">' + (collapsedNow ? '▶' : '▼') + '</span>' + escHtml(g.label) + '</span>'
+        + '<span class="sec-counts">' + sectionCountChips(groupSummary) + '</span>'
+        + '</div>';
       if (!collapsedNow) {
-        const displayRows = g.key === FIELD_SECTION_KEY ? collapseFieldRowsForDiffTable(g.rows) : g.rows;
-        const list = document.createElement('div');
-        list.className = 'diff-card-list';
-        displayRows.forEach((row) => {
-          const typeLabel = diffTypeLabel(row.type, row.moved);
-          const cells = renderRowCells(row, useCharDiff);
-          const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
-          const card = document.createElement('article');
-          const sevToken = String(row.severity || 'low').toLowerCase();
-          const sevCls = sevToken === 'high' ? ' sev-high' : sevToken === 'medium' ? ' sev-medium' : ' sev-low';
-          const reviewedCls = '';
-          card.className = 'diff-card diff-card--' + typeClass + sevCls + reviewedCls;
-          card.innerHTML =
-            '<div class="diff-card-head">' +
-              '<span class="type-chip type-chip--' + typeClass + '">' + escHtml(typeLabel) + '</span>' +
-              '<div class="diff-card-path path" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</div>' +
-            '</div>' +
-            '<div class="diff-pane-grid">' +
-              '<section class="diff-pane"><div class="diff-pane-title">比較元</div><div class="cell">' + cells.left + '</div></section>' +
-              '<section class="diff-pane"><div class="diff-pane-title">比較先</div><div class="cell">' + cells.right + '</div></section>' +
-            '</div>';
-          list.appendChild(card);
-        });
-        sec.appendChild(list);
+        html += '<div class="drow-list">';
+        html += diffRows.map((row) => renderDiffRowHtml(row, useCharDiff)).join('');
+        if (sameRows.length && typeFilterValue !== 'same') {
+          const openNow = sameOpen.has(g.key);
+          html += '<button type="button" class="same-fold" data-same-fold="' + escHtml(g.key) + '" aria-expanded="' + (openNow ? 'true' : 'false') + '">'
+            + '<span class="sec-caret">' + (openNow ? '▼' : '▶') + '</span>同一の設定 ' + sameRows.length + '件を' + (openNow ? '隠す' : '表示') + '</button>';
+          if (openNow) html += sameRows.map((row) => renderDiffRowHtml(row, useCharDiff)).join('');
+        } else if (sameRows.length) {
+          html += sameRows.map((row) => renderDiffRowHtml(row, useCharDiff)).join('');
+        }
+        if (!diffRows.length && !sameRows.length) {
+          html += '<div class="drow-empty">表示対象の行がありません。</div>';
+        }
+        html += '</div>';
       }
-      main.appendChild(sec);
+      html += '</section>';
     });
+    main.innerHTML = html;
+  }
+
+  function handleMainClick(e) {
+    const chip = e.target.closest('[data-type-chip]');
+    if (chip) {
+      const next = chip.getAttribute('data-type-chip') || 'all';
+      typeFilterValue = typeFilterValue === next ? 'all' : next;
+      render();
+      return;
+    }
+    const fold = e.target.closest('[data-same-fold]');
+    if (fold) {
+      const key = fold.getAttribute('data-same-fold') || '';
+      if (sameOpen.has(key)) sameOpen.delete(key);
+      else sameOpen.add(key);
+      render();
+      return;
+    }
+    const reveal = e.target.closest('[data-row-toggle]');
+    if (reveal) {
+      const key = reveal.getAttribute('data-row-toggle') || '';
+      if (expandedVals.has(key)) expandedVals.delete(key);
+      else expandedVals.add(key);
+      render();
+      return;
+    }
+    const head = e.target.closest('[data-sec-toggle]');
+    if (head) {
+      const key = head.getAttribute('data-sec-toggle') || '';
+      if (collapsed.has(key)) collapsed.delete(key);
+      else collapsed.add(key);
+      render();
+    }
   }
 
   function syncThemeButtonLabel() {
@@ -3924,6 +4063,14 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   document.getElementById('collapseBtn').onclick = collapseAll;
   document.getElementById('expandBtn').onclick = expandAll;
   document.getElementById('patchBtn').onclick = exportPatch;
+  document.getElementById('main').addEventListener('click', handleMainClick);
+  document.getElementById('main').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const head = e.target.closest ? e.target.closest('[data-sec-toggle]') : null;
+    if (!head) return;
+    e.preventDefault();
+    handleMainClick({ target: head });
+  });
   document.querySelectorAll('[data-report-tab]').forEach((btn) => {
     btn.onclick = () => setActiveTab(btn.getAttribute('data-report-tab'));
   });
@@ -4045,12 +4192,15 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     }
     .topbar::before{content:"";position:absolute;left:0;top:0;right:0;height:3px;background:linear-gradient(90deg,var(--accent),#06b6d4,var(--accent-strong))}
     .topbar-main{display:flex;flex-direction:column;gap:12px;min-width:0}
-    .topbar-title{font-size:clamp(1.15rem,2.5vw,1.5rem);font-weight:800;line-height:1.35;letter-spacing:-.02em;color:var(--fg)}
-    .topbar-desc{font-size:13px;color:var(--muted);line-height:1.75;max-width:62ch}
+    .topbar-title{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:clamp(1.15rem,2.5vw,1.5rem);font-weight:800;line-height:1.35;letter-spacing:-.02em;color:var(--fg)}
+    .topbar-apps{display:inline-flex;align-items:center;gap:8px;padding:5px 14px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);font-size:13px;font-weight:700;color:var(--fg);letter-spacing:0}
+    .topbar-arrow{color:var(--accent);font-weight:800}
+    .topbar-desc{font-size:13px;color:var(--muted);line-height:1.75;max-width:70ch}
+    .topbar-desc b{color:var(--fg)}
     .header-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
     .header-badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--card-soft);border-radius:999px;padding:7px 12px;font-size:11px;font-weight:600;color:var(--muted)}
-    .settings-shell{margin-top:20px;border:1px solid var(--border);border-radius:20px;overflow:hidden;background:var(--card);box-shadow:var(--shadow)}
-    .settings-tabs{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card-soft) 0%,var(--card) 100%)}
+    .settings-shell{margin-top:20px;border:1px solid var(--border);border-radius:20px;background:var(--card);box-shadow:var(--shadow)}
+    .settings-tabs{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card-soft) 0%,var(--card) 100%);border-radius:20px 20px 0 0}
     .settings-tab{
       padding:10px 18px;border-radius:999px;background:var(--accent-soft);color:var(--accent-strong);font-size:12px;font-weight:800;
       border:1px solid transparent;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .1s
@@ -4131,19 +4281,92 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .issue-box th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
     .issue-box .msg{white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     .content{padding:18px}
-    .sec{border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--card);margin-bottom:16px;box-shadow:var(--shadow)}
-    .sec-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:linear-gradient(180deg,var(--card-soft) 0%,var(--card) 100%);font-size:13px;font-weight:800;cursor:pointer;user-select:none;transition:filter .15s}
+    .diff-toolbar{position:sticky;top:0;z-index:6;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;padding:10px 14px;border:1px solid var(--border);border-radius:14px;background:var(--card);box-shadow:var(--shadow)}
+    .diff-toolbar-label{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-right:2px}
+    .tchip{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--fg);font-size:11px;font-weight:700;cursor:pointer;transition:border-color .15s,background .15s,transform .1s}
+    .tchip b{font-size:11px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--muted)}
+    .tchip:hover{border-color:var(--muted)}
+    .tchip:active{transform:scale(.97)}
+    .tchip:focus-visible{outline:none;box-shadow:var(--focus)}
+    .tchip--added b{color:var(--pill-add)}
+    .tchip--removed b{color:var(--pill-del)}
+    .tchip--changed b{color:var(--pill-chg)}
+    .tchip--same b{color:var(--pill-same)}
+    .tchip.is-active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-strong)}
+    .tchip.is-active b{color:var(--accent-strong)}
+    .sec{border:1px solid var(--border);border-radius:16px;background:var(--card);margin-bottom:16px;box-shadow:var(--shadow)}
+    .sec-head{position:sticky;top:48px;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 16px;border-radius:15px 15px 0 0;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card-soft) 0%,var(--card) 100%);font-size:13px;font-weight:800;cursor:pointer;user-select:none;transition:filter .15s}
     .sec-head:hover{filter:brightness(.985)}
+    .sec-head:focus-visible{outline:none;box-shadow:var(--focus)}
     body.dark .sec-head:hover{filter:brightness(1.08)}
-    .sec-meta{font-size:10px;font-weight:700;color:var(--muted)}
-    .diff-card-list{display:flex;flex-direction:column;gap:12px;padding:14px;background:var(--card-soft)}
-    .diff-card{border:1px solid var(--border);border-left:5px solid var(--border);border-radius:14px;background:var(--card);box-shadow:0 8px 20px -16px rgba(15,23,42,.45);overflow:hidden}
-    .diff-card--added{border-left-color:#16a34a}
-    .diff-card--removed{border-left-color:#dc2626}
-    .diff-card--changed{border-left-color:#ca8a04}
-    .diff-card--same{border-left-color:#0d9488}
-    .diff-card-head{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,var(--card),var(--card-soft))}
-    .type-chip{display:inline-flex;align-items:center;justify-content:center;min-width:62px;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:800;border:1px solid transparent;white-space:nowrap}
+    .sec-head-title{display:inline-flex;align-items:center;gap:8px;min-width:0}
+    .sec-caret{font-size:9px;color:var(--muted);flex-shrink:0}
+    .sec-counts{display:inline-flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+    .cnt{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;font-size:10px;font-weight:800;font-variant-numeric:tabular-nums;border:1px solid transparent;white-space:nowrap}
+    .cnt--add{background:#dcfce7;color:#166534;border-color:#86efac}
+    .cnt--del{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+    .cnt--chg{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+    .cnt--same{background:var(--card-soft);color:var(--muted);border-color:var(--border)}
+    body.dark .cnt--add{background:#14532d;color:#bbf7d0;border-color:#166534}
+    body.dark .cnt--del{background:#450a0a;color:#fecaca;border-color:#991b1b}
+    body.dark .cnt--chg{background:#78350f;color:#fde68a;border-color:#b45309}
+    .drow-list{display:flex;flex-direction:column;border-radius:0 0 15px 15px;overflow:hidden}
+    .drow{padding:10px 14px 12px;border-bottom:1px solid var(--border);border-left:4px solid transparent;background:var(--card)}
+    .drow:last-child{border-bottom:none}
+    .drow--added{border-left-color:#16a34a}
+    .drow--removed{border-left-color:#dc2626}
+    .drow--changed{border-left-color:#ca8a04}
+    .drow--same{border-left-color:transparent;background:var(--card-soft)}
+    .drow--same .path-main{font-weight:600;color:var(--muted)}
+    .drow-head{display:flex;gap:10px;align-items:flex-start}
+    .drow-title{flex:1;min-width:0}
+    .drow-val{margin-top:8px;padding-left:2px}
+    .drow-empty{padding:20px;font-size:12px;color:var(--muted);text-align:center}
+    .val-inline{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:12px;line-height:1.6}
+    .vi-val{display:inline-block;max-width:100%;padding:3px 10px;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;word-break:break-word;border:1px solid transparent}
+    .vi-val--del{background:var(--del);color:var(--del-fg);border-color:rgba(220,38,38,.18)}
+    .vi-val--add{background:var(--add);color:var(--add-fg);border-color:rgba(22,163,74,.18)}
+    .vi-val--same{background:var(--card-soft);color:var(--muted);border-color:var(--border)}
+    .vi-arrow{color:var(--muted);font-weight:800;flex-shrink:0}
+    .val-single{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card)}
+    .val-single-head{padding:6px 11px;border-bottom:1px solid var(--border);background:var(--pad);font-size:10px;font-weight:800;letter-spacing:.04em;color:var(--muted)}
+    .val-single--add .blk{background:var(--add);color:var(--add-fg)}
+    .val-single--del .blk{background:var(--del);color:var(--del-fg)}
+    .val-single--same .blk{color:var(--muted)}
+    .val-reveal{display:inline-flex;align-items:center;gap:6px;margin-top:2px;padding:5px 12px;border-radius:999px;border:1px dashed var(--border);background:transparent;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;transition:border-color .15s,color .15s}
+    .val-reveal:hover{border-color:var(--muted);color:var(--fg)}
+    .val-reveal:focus-visible{outline:none;box-shadow:var(--focus)}
+    .val-single + .val-reveal{margin-top:8px}
+    .duo-wrap{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card)}
+    .duo-head{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:1px solid var(--border);background:var(--pad)}
+    .duo-head span{padding:6px 11px;font-size:10px;font-weight:800;letter-spacing:.04em;color:var(--muted)}
+    .duo-head span + span{border-left:1px solid var(--border)}
+    .duo{max-height:320px}
+    .duo-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+    .duo-cell{display:flex;min-width:0;min-height:1.6em;line-height:1.6;padding:0 8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;word-break:break-word}
+    .duo-cell + .duo-cell{border-left:1px solid var(--border)}
+    .duo-cell.del{background:var(--del);color:var(--del-fg)}
+    .duo-cell.add{background:var(--add);color:var(--add-fg)}
+    .duo-cell.pad{background:var(--pad);opacity:.7}
+    .duo-cell .blk{flex:1}
+    .lt{flex:1;min-width:0}
+    .same-fold{display:flex;align-items:center;gap:8px;width:100%;padding:9px 14px;border:none;border-top:1px dashed var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;text-align:left;transition:color .15s}
+    .same-fold:hover{color:var(--fg)}
+    .same-fold:focus-visible{outline:none;box-shadow:var(--focus)}
+    .agg-list{display:flex;flex-direction:column;gap:8px}
+    .agg-item{border:1px solid var(--border);border-radius:10px;padding:8px 11px 10px;background:var(--card-soft)}
+    .agg-item-head{display:flex;align-items:center;gap:8px;min-width:0}
+    .agg-prop{font-size:12px;font-weight:700;color:var(--fg);min-width:0;word-break:break-word}
+    .agg-val{margin-top:6px}
+    .agg-val .duo-wrap,.agg-val .val-single{background:var(--card)}
+    .mini-chip{display:inline-flex;align-items:center;justify-content:center;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:800;border:1px solid transparent;white-space:nowrap;flex-shrink:0}
+    .mini-chip--added{background:#dcfce7;color:#166534;border-color:#86efac}
+    .mini-chip--removed{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+    .mini-chip--changed{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+    body.dark .mini-chip--added{background:#14532d;color:#bbf7d0;border-color:#166534}
+    body.dark .mini-chip--removed{background:#450a0a;color:#fecaca;border-color:#991b1b}
+    body.dark .mini-chip--changed{background:#78350f;color:#fde68a;border-color:#b45309}
+    .type-chip{display:inline-flex;align-items:center;justify-content:center;min-width:52px;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:800;border:1px solid transparent;white-space:nowrap;flex-shrink:0;margin-top:1px}
     .type-chip--added{background:#dcfce7;color:#166534;border-color:#86efac}
     .type-chip--removed{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
     .type-chip--changed{background:#fef3c7;color:#92400e;border-color:#fcd34d}
@@ -4152,21 +4375,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     body.dark .type-chip--removed{background:#450a0a;color:#fecaca;border-color:#991b1b}
     body.dark .type-chip--changed{background:#78350f;color:#fde68a;border-color:#b45309}
     body.dark .type-chip--same{background:#134e4a;color:#99f6e4;border-color:#0f766e}
-    .diff-card-path{min-width:0}
-    .diff-pane-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:12px 14px 14px}
-    .diff-pane{min-width:0;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden}
-    .diff-pane-title{padding:8px 11px;border-bottom:1px solid var(--border);background:var(--pad);font-size:10px;font-weight:800;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
-    .diff-pane .cell{display:block}
-    .diff-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px}
-    .diff-table th,.diff-table td{border-bottom:1px solid var(--border);padding:10px 12px;vertical-align:top;text-align:left}
-    .diff-table th{position:sticky;top:0;background:var(--card);z-index:1;font-size:10px;font-weight:800;letter-spacing:.05em;color:var(--muted);text-transform:uppercase}
-    .type{font-weight:800}
-    .type.added{color:#15803d}
-    .type.removed{color:#b91c1c}
-    .type.changed{color:#b45309}
-    .type.same{color:#0d9488}
     .path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;color:var(--muted);font-size:11px}
-    .path-main{font-size:11px;font-weight:700;color:var(--fg);margin-bottom:4px;word-break:break-all}
+    .path-main{font-size:12px;font-weight:700;color:var(--fg);margin-bottom:3px;word-break:break-all;line-height:1.5}
     .path-sub{font-size:10px;line-height:1.45;color:var(--muted);word-break:break-all}
     .meta-wrap{margin-top:8px;font-family:"Noto Sans JP","Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
     .meta-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
@@ -4174,23 +4384,20 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .meta-tag.reason{background:#fff7ed;color:#9a3412;border-color:#fdba74}
     .meta-tag.rename{background:#ecfdf5;color:#15803d;border-color:#86efac}
     .meta-tag.impact{background:#eff6ff;color:#1d4ed8;border-color:#93c5fd}
+    .meta-tag.sev-high{background:#fee2e2;color:#b91c1c;border-color:#fca5a5;font-weight:800}
+    .meta-tag.sev-medium{background:#fffbeb;color:#b45309;border-color:#fde68a;font-weight:800}
+    body.dark .meta-tag.reason{background:#431407;color:#fdba74;border-color:#9a3412}
+    body.dark .meta-tag.rename{background:#052e16;color:#86efac;border-color:#166534}
+    body.dark .meta-tag.impact{background:#172554;color:#93c5fd;border-color:#1d4ed8}
+    body.dark .meta-tag.sev-high{background:#450a0a;color:#fca5a5;border-color:#991b1b}
+    body.dark .meta-tag.sev-medium{background:#422006;color:#fde68a;border-color:#92400e}
     .meta-line{font-size:10px;line-height:1.5;color:var(--muted)}
     .meta-line strong{color:var(--fg)}
-    .cell{padding:0;overflow:hidden}
     .scroll{max-height:300px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
     .scroll::-webkit-scrollbar{width:6px;height:6px}
     .scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px}
-    .line{display:flex;min-height:1.6em;line-height:1.6;padding:0 8px;white-space:pre-wrap;word-break:break-word}
-    .line.add{background:var(--add);color:var(--add-fg)}
-    .line.del{background:var(--del);color:var(--del-fg)}
-    .line.pad{background:var(--pad);opacity:.75}
-    .ln{min-width:36px;display:inline-block;text-align:right;margin-right:8px;padding-right:6px;border-right:1px solid var(--border);font-size:10px;color:var(--muted);user-select:none;flex-shrink:0}
-    .blk{margin:0;padding:12px;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.55}
-    .blk.add{background:var(--add);color:var(--add-fg)}
-    .blk.del{background:var(--del);color:var(--del-fg)}
-    .blk.same{color:var(--muted);font-style:italic}
-    .blk.same-note{color:#0d9488;font-style:italic;font-weight:600}
-    .blk.empty{font-style:italic;color:var(--muted)}
+    .ln{min-width:34px;display:inline-block;text-align:right;margin-right:8px;padding-right:6px;border-right:1px solid var(--border);font-size:10px;color:var(--muted);user-select:none;flex-shrink:0}
+    .blk{margin:0;padding:10px 12px;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:3px;padding:0 2px}
     mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:3px;padding:0 2px}
     .compare-box{margin:0 18px 18px;border:1px solid var(--border);border-radius:18px;background:var(--card);overflow:hidden;box-shadow:var(--shadow)}
@@ -4206,7 +4413,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .no-diff{text-align:center;font-size:14px;font-weight:600;padding:36px 24px;color:#0d9488;background:linear-gradient(180deg,var(--card-soft),var(--card));border:1px dashed var(--border);border-radius:16px}
     body.dark .no-diff{color:#5eead4}
     body.has-modal-open{overflow:hidden}
-    .sl-root{padding:16px 18px 28px;background:var(--card-soft);min-height:320px}
+    .sl-root{padding:16px 18px 28px;background:var(--card-soft);min-height:320px;border-radius:0 0 20px 20px}
     .sl-board{display:flex;flex-direction:column;gap:18px;max-width:1280px;margin:0 auto}
     .sl-legend{display:flex;flex-wrap:wrap;gap:12px 18px;margin-bottom:4px;padding:12px 14px;border-radius:12px;background:var(--card);border:1px solid var(--border);font-size:11px;font-weight:600;color:var(--fg);box-shadow:var(--shadow)}
     .sl-legend span{display:inline-flex;align-items:center;gap:8px}
@@ -4304,6 +4511,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       main{padding:18px 16px 28px}
       .app-compare,.info-grid,.compare-grid{grid-template-columns:1fr}
       .header-actions{justify-content:flex-start}
+      .diff-toolbar,.sec-head{position:static}
+      .duo-row{grid-template-columns:1fr}
+      .duo-cell + .duo-cell{border-left:none}
+      .duo-cell.pad{display:none}
+      .duo-head{display:none}
     }
     .nav-item.active{background:var(--card);border-color:var(--accent-soft);box-shadow:var(--shadow)}
     .fc-shell{display:flex;flex-direction:column;gap:16px}
@@ -4413,8 +4625,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       .fd-overlay{padding:12px}
       .fd-overlay-head,.kf-modal-head{flex-direction:column;align-items:flex-start}
       .fd-overlay-actions{width:100%;justify-content:space-between}
-      .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid,.diff-pane-grid{grid-template-columns:1fr}
-      .diff-card-head{grid-template-columns:1fr}
+      .fd-snapshots,.fd-entry-grid,.fd-mini-grid,.kf-extra-grid{grid-template-columns:1fr}
     }
     @media print{
       aside,.header-actions,.sb-panel .btn,.settings-tabs,.search-hint{display:none!important}
@@ -4468,9 +4679,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   <main>
     <div class="topbar">
       <div class="topbar-main">
-        <div class="sb-kicker">Field Diff Review</div>
-        <div class="topbar-title">フィールド単位で、設定差分をまとめてレビュー</div>
-        <div class="topbar-desc">フィールドごとの差分を1項目ずつ整理し、「設定差分を開く」からポップアップで詳細を確認できます。値の差分一覧と合わせて、一覧領域を広く使いながら確認できます。</div>
+        <div class="sb-kicker">Kintone Settings Diff</div>
+        <div class="topbar-title">設定差分レポート<span class="topbar-apps">アプリ ${esc(reportMeta.source.appId || '-')}<span class="topbar-arrow" aria-hidden="true">→</span>アプリ ${esc(reportMeta.target.appId || '-')}</span></div>
+        <div class="topbar-desc">差分 <b>${diffTotal}件</b>（追加 ${summary.added} / 削除 ${summary.removed} / 変更 ${summary.changed}）・同一 ${summary.same}件。タブで「サマリー」「差分一覧」「フィールド単位」を切り替えて確認できます。</div>
       </div>
       <div class="header-actions">
         <span class="header-badge">セクション ${esc(String((scopes || []).length || 0))}</span>
