@@ -2012,7 +2012,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     totalRows: withSameSections.length,
     renderedRows: exportRows.length,
     truncated: withSameSections.length > exportRows.length,
-    compareScopes
+    compareScopes,
+    compareSectionOptions: compareScopes.map((key) => ({ key, label: sectionLabelMap[key] || key }))
   };
   const sectionSummaryRowsHtml = reportMeta.sectionSummaries.map((item) => `<tr>
         <td>
@@ -2073,7 +2074,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       const targetValue = compareTargetBundle?.sections?.[secKey];
       const sourceRevision = compareSourceBundle?.meta?.sectionRevisions?.[secKey] || '-';
       const targetRevision = compareTargetBundle?.meta?.sectionRevisions?.[secKey] || '-';
-      return `<section class="compare-sec">
+      return `<section class="compare-sec" data-compare-sec="${esc(secKey)}">
           <div class="compare-head">
             <span>${esc(label)}</span>
             <span class="compare-head-meta">比較元 rev ${esc(sourceRevision)} / 比較先 rev ${esc(targetRevision)}</span>
@@ -3783,6 +3784,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     if (nextTab !== 'settingsLike') closeFieldDetailModal();
     safeStorageSet(ACTIVE_TAB_KEY, nextTab);
     if (nextTab === 'settingsLike') renderSettingsLikeView();
+    else if (nextTab === 'compare') renderCompareSectionPicker();
     else if (nextTab === 'diff') render();
     else {
       const hideSame = !!(document.getElementById('hideSame')).checked;
@@ -3793,6 +3795,38 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       });
       updateStats(allFiltered);
     }
+  }
+
+
+  function renderCompareSectionPicker() {
+    const host = document.getElementById('compareSectionPicker');
+    if (!host) return;
+    const opts = Array.isArray(REPORT_META.compareSectionOptions) ? REPORT_META.compareSectionOptions : [];
+    if (!opts.length) {
+      host.innerHTML = '<div class="muted-note">比較対象設定の出力はありません。</div>';
+      return;
+    }
+    host.innerHTML = '<div class="compare-picker-title">HTML表示セクション</div>'
+      + '<div class="compare-picker-actions">'
+      + '<button type="button" class="btn" data-compare-pick="all">全選択</button>'
+      + '<button type="button" class="btn" data-compare-pick="none">全解除</button>'
+      + '</div>'
+      + '<div class="compare-picker-list">'
+      + opts.map((opt) => '<label class="chk compare-picker-item"><input type="checkbox" data-compare-section="' + escHtml(opt.key) + '" checked> ' + escHtml(opt.label || opt.key) + '</label>').join('')
+      + '</div>';
+    syncCompareSections();
+  }
+
+  function syncCompareSections() {
+    const checked = new Set(Array.from(document.querySelectorAll('[data-compare-section]'))
+      .filter((el) => el.checked)
+      .map((el) => el.getAttribute('data-compare-section')));
+    document.querySelectorAll('[data-compare-sec]').forEach((el) => {
+      const key = el.getAttribute('data-compare-sec') || '';
+      el.hidden = !checked.has(key);
+    });
+    const empty = document.getElementById('compareEmptyState');
+    if (empty) empty.hidden = checked.size > 0;
   }
 
   function onReportFilterChange() {
@@ -4400,7 +4434,14 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .blk{margin:0;padding:10px 12px;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:3px;padding:0 2px}
     mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:3px;padding:0 2px}
-    .compare-box{margin:0 18px 18px;border:1px solid var(--border);border-radius:18px;background:var(--card);overflow:hidden;box-shadow:var(--shadow)}
+    .compare-layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:14px;padding:18px}
+    .compare-picker{position:sticky;top:18px;align-self:start;background:var(--card);border:1px solid var(--border);border-radius:18px;padding:14px;box-shadow:var(--shadow)}
+    .compare-picker-title{font-size:12px;font-weight:900;margin-bottom:10px}
+    .compare-picker-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+    .compare-picker-list{display:grid;gap:8px;max-height:55vh;overflow:auto}
+    .compare-picker-item{font-size:12px;line-height:1.4}
+    .compare-content{min-width:0}
+    .compare-box{border:1px solid var(--border);border-radius:18px;background:var(--card);overflow:hidden;box-shadow:var(--shadow)}
     .compare-box-head{padding:14px 18px;background:linear-gradient(180deg,var(--accent-soft) 0%,var(--card) 100%);color:var(--accent-strong);font-size:13px;font-weight:800;border-bottom:1px solid var(--border)}
     .compare-sec{border-bottom:1px solid var(--border)}
     .compare-sec:last-child{border-bottom:none}
@@ -4783,7 +4824,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       </section>
 
       <section class="tab-pane" data-report-pane="compare" hidden>
-        ${compareHtml || '<div class="content"><div class="no-diff">比較対象設定の出力はありません。</div></div>'}
+        ${compareHtml ? '<div class="compare-layout"><aside id="compareSectionPicker" class="compare-picker"></aside><div class="compare-content">' + compareHtml + '<div id="compareEmptyState" class="no-diff" hidden>表示対象のセクションが選択されていません。</div></div></div>' : '<div class="content"><div class="no-diff">比較対象設定の出力はありません。</div></div>'}
       </section>
     </div>
 
