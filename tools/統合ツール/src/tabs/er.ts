@@ -8,6 +8,7 @@ import { setStatus, setBusy } from '../ui/components.js';
 import { getToolWindow, getToolDocument } from '../ui/dialog.js';
 import { commonParams } from './diff.js';
 import { FIELD_TYPE_JP, lookupEnum } from '../kintone-enums.js';
+import { analyzeErDependencies } from './er-analysis.js';
 
 const ER_DEFAULTS = {
   maxFields: 220,
@@ -460,6 +461,8 @@ export const buildHTML = (apps, options: any = {}) => {
     sourcePreview: !!options.source?.preview
   });
   const safeApps = Array.isArray(apps) ? apps : [];
+  const dependencyAnalysis = analyzeErDependencies(safeApps);
+  const dependencyAnalysisData = safeJsonForScript(dependencyAnalysis);
   const densityLabelMap = { none: '結合のみ', compact: 'コンパクト', standard: '標準', full: '詳細' };
   const summary = safeApps.reduce((acc, app) => {
     acc.relations += Array.isArray(app?.relations) ? app.relations.length : 0;
@@ -589,6 +592,7 @@ body{font-family:'DM Sans',sans-serif;background:
   #overview{top:calc(var(--topbar-h, 52px) + 58px);width:calc(100vw - 24px);left:12px;}
   .ov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
   #detail{width:min(96vw,420px);top:calc(var(--topbar-h, 52px) + 6px);}
+  #analysis-panel{width:min(380px,94vw);top:calc(var(--topbar-h, 52px) + 6px);}
   #banner{top:calc(var(--topbar-h, 52px) + 6px);}
   #sidebar{top:calc(var(--topbar-h, 52px) + 2px);width:min(300px,92vw);}
   #legend{font-size:9px;padding:6px 10px;gap:8px;flex-wrap:wrap;max-width:calc(100vw - 92px);}
@@ -614,6 +618,7 @@ body{font-family:'DM Sans',sans-serif;background:
   #search-box{flex:1 1 120px;width:100%;}
   #detail{width:100vw;right:0;top:0;max-height:100vh;border-radius:0;}
   #detail.open{top:0;}
+  #analysis-panel{width:100vw;right:0;top:0;max-height:100vh;border-radius:0;}
   #sidebar{width:100vw;top:0;padding-top:22px;}
   #overview{top:calc(var(--topbar-h, 52px) + 40px);}
   .ov-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;}
@@ -662,6 +667,34 @@ body{font-family:'DM Sans',sans-serif;background:
 .app-list-item.active-app{background:rgba(129,140,248,0.12);border:1px solid var(--accent2);}
 .filter-chip{display:inline-block;padding:3px 8px;margin:2px;border:1px solid var(--border);border-radius:20px;font-size:10px;cursor:pointer;transition:.1s;}
 .filter-chip:hover,.filter-chip.active{background:var(--accent);color:#000;border-color:var(--accent);}
+
+/* ── Architecture analysis ── */
+#analysis-panel{
+  position:fixed;top:54px;right:0;width:360px;max-height:calc(100vh - 62px);
+  overflow-y:auto;z-index:96;background:var(--surface);border-left:1px solid var(--border);
+  padding:20px;display:none;box-shadow:-18px 0 36px rgba(0,0,0,0.22);
+}
+#analysis-panel.open{display:block;}
+.analysis-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px;}
+.analysis-head h2{font-size:15px;color:var(--accent);}
+.analysis-head p{font-size:10px;line-height:1.5;color:var(--dim);margin-top:3px;}
+.analysis-score{display:grid;grid-template-columns:84px 1fr;gap:12px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:14px;background:var(--surface2);}
+.analysis-score__value{width:72px;height:72px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;border:5px solid var(--accent);background:var(--surface);font-family:'DM Mono',monospace;}
+.analysis-score__value strong{font-size:22px;line-height:1;}
+.analysis-score__value span{font-size:9px;color:var(--dim);margin-top:3px;}
+.analysis-score__copy strong{display:block;font-size:13px;margin-bottom:4px;}
+.analysis-score__copy span{font-size:10px;line-height:1.5;color:var(--dim);}
+.analysis-section{margin-top:18px;}
+.analysis-section h3{font-size:11px;color:var(--text);margin-bottom:7px;display:flex;justify-content:space-between;gap:8px;}
+.analysis-count{color:var(--dim);font-family:'DM Mono',monospace;}
+.analysis-empty{padding:10px;border:1px dashed var(--border);border-radius:10px;color:var(--dim);font-size:10px;line-height:1.5;}
+.analysis-item{width:100%;text-align:left;padding:9px 10px;margin:4px 0;border:1px solid var(--border);border-radius:10px;background:var(--surface2);color:var(--text);cursor:pointer;font-family:inherit;transition:.12s;}
+.analysis-item:hover{border-color:var(--accent);transform:translateY(-1px);}
+.analysis-item strong{display:block;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.analysis-item span{display:block;font-size:9px;color:var(--dim);margin-top:3px;line-height:1.45;}
+.analysis-item--warn{border-left:3px solid var(--action);}
+.analysis-item--risk{border-left:3px solid var(--req);}
+.analysis-note{margin-top:14px;padding:9px 10px;border-radius:10px;background:rgba(129,140,248,0.1);color:var(--dim);font-size:9px;line-height:1.55;}
 
 /* ── Detail Panel ── */
 #detail{
@@ -808,8 +841,12 @@ body{font-family:'DM Sans',sans-serif;background:
 .ov-close:hover{background:var(--surface2);border-color:var(--border);color:var(--text);}
 .ov-title{font-size:14px;font-weight:700;color:var(--text);}
 .ov-sub{margin-top:4px;font-size:11px;line-height:1.6;color:var(--dim);}
-.ov-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;}
+.ov-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
 .ov-card{padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface2);display:flex;flex-direction:column;gap:4px;min-height:72px;}
+.ov-card--action{cursor:pointer;transition:.15s;text-align:left;color:inherit;font-family:inherit;}
+.ov-card--action:hover{border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow-sm);}
+.ov-card--risk{border-color:rgba(248,113,113,0.55);}
+.ov-card--warn{border-color:rgba(245,158,11,0.55);}
 .ov-kpi{font-size:18px;font-weight:700;line-height:1;color:var(--text);}
 .ov-label{font-size:10px;color:var(--dim);}
 .ov-tip-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
@@ -851,6 +888,7 @@ body{font-family:'DM Sans',sans-serif;background:
   <div class="tb-group" data-group="view">
     <span class="tb-group-label">表示</span>
     <button class="tb" onclick="toggleSidebar()" title="統計パネル (Ctrl+B)">📊</button>
+    <button class="tb" id="analysis-toggle-btn" onclick="toggleAnalysisPanel()" title="構造分析: 循環・孤立・参照集中を確認">🩺 分析</button>
     <button class="tb" id="overview-toggle-btn" onclick="toggleOverview()" title="ガイドパネル">🧭</button>
     <button class="tb" onclick="togglePathFinder()" title="経路探索">🛣</button>
     <button class="tb" onclick="toggleMinimap()" title="ミニマップ">🗺</button>
@@ -1001,34 +1039,42 @@ body{font-family:'DM Sans',sans-serif;background:
 <div id="overview">
   <div class="ov-head">
     <div>
-      <div class="ov-title">見方のガイド</div>
-      <div class="ov-sub">開始アプリの周辺から追って、検索と関連強調で範囲を絞ると読みやすくなります。詳細度は上部の「密度」でその場で切り替えできます。</div>
+      <div class="ov-title">構造サマリー</div>
+      <div class="ov-sub">アプリ間の依存関係を自動分析しました。数値を選ぶと、詳細な構造分析と該当アプリを確認できます。</div>
     </div>
     <button class="ov-close" onclick="hideOverview()" title="ガイドを閉じる（🧭 で再表示）" aria-label="ガイドを閉じる">✕</button>
   </div>
   <div class="ov-grid">
-    <div class="ov-card"><span class="ov-kpi">${safeApps.length}</span><span class="ov-label">アプリ</span></div>
+    <button class="ov-card ov-card--action" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.score}</span><span class="ov-label">構造スコア (${dependencyAnalysis.grade})</span></button>
+    <button class="ov-card ov-card--action${dependencyAnalysis.cycles.length ? ' ov-card--risk' : ''}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.cycles.length}</span><span class="ov-label">循環グループ</span></button>
+    <button class="ov-card ov-card--action${dependencyAnalysis.isolatedAppIds.length ? ' ov-card--warn' : ''}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.isolatedAppIds.length}</span><span class="ov-label">孤立アプリ</span></button>
+    <button class="ov-card ov-card--action" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.hubs.length}</span><span class="ov-label">参照集中アプリ</span></button>
+    <button class="ov-card ov-card--action${dependencyAnalysis.unresolvedTargets.length ? ' ov-card--warn' : ''}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.unresolvedTargets.length}</span><span class="ov-label">未取得の参照先</span></button>
     <div class="ov-card"><span class="ov-kpi">${summary.relations}</span><span class="ov-label">総関連</span></div>
-    <div class="ov-card"><span class="ov-kpi">${summary.lookups}</span><span class="ov-label">Lookup</span></div>
-    <div class="ov-card"><span class="ov-kpi">${summary.refs}</span><span class="ov-label">関連レコード</span></div>
-    <div class="ov-card"><span class="ov-kpi">${summary.actions}</span><span class="ov-label">アクション</span></div>
   </div>
   <div class="ov-tip-row">
     <span title="開始: ${esc(startAppFullText)}">開始: ${esc(startAppText || '-')}</span>
+    <span>Lookup: ${summary.lookups}</span>
+    <span>関連レコード: ${summary.refs}</span>
+    <span>アクション: ${summary.actions}</span>
     <span>必須項目: ${summary.required}</span>
-    <span>クリックで詳細</span>
-    <span>右クリックで固定</span>
-    <span>Alt/⌥ + 右クリックで非表示</span>
-    <span>Shift + F で関連強調</span>
-    <span>背景ダブルクリックで要素追加</span>
-    <span>「⬡ シンプル」で結合のみ表示</span>
-    <span>「🗂 分離」で紐づきなしアプリを別枠に</span>
-    <span>Delete で選択要素を削除</span>
-    <span>✎ 詳細パネルから名前・項目・線を編集</span>
-    <span>線にマウスを乗せると詳細表示</span>
-    <span>Ctrl/⌘ + Z で元に戻す</span>
+    <span>開始アプリの周辺はクリック・検索・関連強調で絞り込めます</span>
   </div>
 </div>
+
+<!-- Architecture Analysis -->
+<aside id="analysis-panel" aria-label="ER図の構造分析">
+  <div class="analysis-head">
+    <div><h2>🩺 構造分析</h2><p>循環、孤立、参照集中、未取得の参照先を確認します。</p></div>
+    <button class="close-btn" onclick="toggleAnalysisPanel(false)" aria-label="構造分析を閉じる">✕</button>
+  </div>
+  <div class="analysis-score">
+    <div class="analysis-score__value"><strong>${dependencyAnalysis.score}</strong><span>GRADE ${dependencyAnalysis.grade}</span></div>
+    <div class="analysis-score__copy"><strong>${dependencyAnalysis.score >= 90 ? '良好な構造です' : dependencyAnalysis.score >= 75 ? '確認候補があります' : dependencyAnalysis.score >= 60 ? '設計レビューを推奨' : '優先的な見直しを推奨'}</strong><span>取得できた ${dependencyAnalysis.appCount} アプリ・${dependencyAnalysis.edgeCount} 関連を分析した参考指標です。</span></div>
+  </div>
+  <div id="analysis-content"></div>
+  <div class="analysis-note">スコアは取得失敗、未取得の参照先、循環グループ、孤立率から算出する設計レビュー用の参考値です。業務上意図した構造は問題とは限りません。</div>
+</aside>
 
 <!-- Sidebar -->
 <div id="sidebar">
@@ -1146,6 +1192,7 @@ body{font-family:'DM Sans',sans-serif;background:
 <script id="er-main">
 const APPS = ${data};
 const ER_OPTIONS = ${diagramOptions};
+const ER_ANALYSIS = ${dependencyAnalysisData};
 const appMap = new Map(APPS.map(a=>[a.id,a]));
 // 「編集済みHTMLを保存」で埋め込まれた編集状態（手動追加・配置・表示設定）
 const ER_EDIT_STATE = window.__ER_EDIT_STATE__ || null;
@@ -1347,6 +1394,8 @@ function buildCyStyle(palette){
     {selector:"node[?accent]",style:{"border-color":"data(accent)","border-width":3}},
     {selector:"node:selected",style:{"border-color":palette.accent,"border-width":4,"overlay-color":"transparent"}},
     {selector:"node.highlighted",style:{"border-color":palette.pk,"border-width":3,"background-color":isDark ? "#1a1805" : "#fffbeb"}},
+    {selector:"node.analysis-hit",style:{"border-color":palette.req,"border-width":5,"background-color":isDark ? "#2a0b16" : "#fff1f2","z-index":1000}},
+    {selector:"node.analysis-dim",style:{"opacity":0.1}},
     {selector:"node.path-node",style:{"border-color":"#f472b6","border-width":4,"background-color":isDark ? "#1a0a12" : "#fdf2f8"}},
     {selector:"node.focus-root",style:{"border-color":palette.accent,"border-width":4,"background-color":isDark ? "#042525" : "#ecfeff","z-index":999}},
     {selector:"node.focus-neighbor",style:{"border-color":"#67e8f9","border-width":3,"background-color":isDark ? "#061d2a" : "#ecfeff"}},
@@ -2783,7 +2832,7 @@ cy.on("cxttap","edge",e=>{
   if(focusMode && currentFocusNodeId) applyFocusToNode(cy.getElementById(currentFocusNodeId), true);
   toast("関連線を手動削除 (Ctrl+Zで復元)");
 });
-cy.on("tap",e=>{if(e.target===cy){closeDetail();cy.elements().removeClass("highlighted dimmed path-node path-edge");clearFocus(true);}});
+cy.on("tap",e=>{if(e.target===cy){closeDetail();cy.elements().removeClass("highlighted dimmed path-node path-edge");clearFocus(true);clearAnalysisHighlight();}});
 
 function closeDetail(){
   document.getElementById("detail").classList.remove("open");
@@ -2811,11 +2860,59 @@ function focusApp(id){
   if(n.length && !n.hasClass("app-manual-hidden")){
     cy.animate({center:{eles:n},zoom:1.5},{ duration:400 });
     n.select();
-    const app = appMap.get(id);
+    const app = appMap.get(Number(id)) || appMap.get(id);
     if(app) renderAppDetail(app);
     if(focusMode) applyFocusToNode(n, true);
   }
 }
+
+// ─── Architecture analysis ───
+function analysisItem(title, meta, ids, tone){
+  const safeIds=(ids||[]).map(id=>String(id).replace(/[^0-9]/g,"")).filter(Boolean).join(",");
+  return '<button type="button" class="analysis-item'+(tone?' analysis-item--'+tone:'')+'" data-analysis-ids="'+safeIds+'" onclick="focusAnalysisApps(this.dataset.analysisIds)"><strong>'+escapeHtml(title)+'</strong><span>'+escapeHtml(meta)+'</span></button>';
+}
+function renderAnalysisPanel(){
+  const host=document.getElementById("analysis-content");
+  if(!host) return;
+  const cycles=ER_ANALYSIS.cycles||[];
+  const isolated=ER_ANALYSIS.isolatedAppIds||[];
+  const hubs=ER_ANALYSIS.hubs||[];
+  const unresolved=ER_ANALYSIS.unresolvedTargets||[];
+  let html='<section class="analysis-section"><h3><span>循環依存</span><span class="analysis-count">'+cycles.length+'</span></h3>';
+  html+=cycles.length?cycles.map((cycle,i)=>analysisItem('循環 '+(i+1)+': '+cycle.appNames.join(' → '),cycle.appIds.length+'アプリを相互参照',cycle.appIds,'risk')).join(''):'<div class="analysis-empty">循環する参照グループは検出されませんでした。</div>';
+  html+='</section><section class="analysis-section"><h3><span>参照集中アプリ</span><span class="analysis-count">'+hubs.length+'</span></h3>';
+  html+=hubs.length?hubs.map(hub=>analysisItem(hub.name+' (App '+hub.appId+')','入 '+hub.incoming+' / 出 '+hub.outgoing+' / 合計 '+hub.total,[hub.appId],'warn')).join(''):'<div class="analysis-empty">参照が特定アプリへ過度に集中している傾向はありません。</div>';
+  html+='</section><section class="analysis-section"><h3><span>孤立アプリ</span><span class="analysis-count">'+isolated.length+'</span></h3>';
+  html+=isolated.length?isolated.map(id=>{const stat=(ER_ANALYSIS.appStats||[]).find(s=>String(s.appId)===String(id));return analysisItem((stat&&stat.name)||('アプリ '+id),'図内に入出力の関連がありません',[id],'warn');}).join(''):'<div class="analysis-empty">孤立アプリはありません。</div>';
+  html+='</section><section class="analysis-section"><h3><span>未取得の参照先</span><span class="analysis-count">'+unresolved.length+'</span></h3>';
+  html+=unresolved.length?unresolved.slice(0,20).map(item=>analysisItem(item.fromAppName+' → App '+item.toAppId,(item.kind||'関連')+(item.field?' / '+item.field:''),[item.fromAppId],'warn')).join(''):'<div class="analysis-empty">参照先はすべて図内に取得されています。</div>';
+  if(unresolved.length>20) html+='<div class="analysis-empty">ほか '+(unresolved.length-20)+' 件</div>';
+  html+='</section>';
+  host.innerHTML=html;
+}
+function clearAnalysisHighlight(){
+  cy.elements().removeClass("analysis-hit analysis-dim");
+}
+function focusAnalysisApps(csv){
+  const ids=String(csv||"").split(",").filter(Boolean);
+  clearAnalysisHighlight();
+  const nodes=ids.map(id=>cy.getElementById("a"+id)).filter(node=>node.length&&!node.hasClass("app-manual-hidden"));
+  if(!nodes.length){toast("対象アプリは現在の図にありません");return;}
+  const collection=nodes.reduce((all,node)=>all.union(node),cy.collection());
+  cy.nodes().not(".note-node").not(collection).addClass("analysis-dim");
+  collection.addClass("analysis-hit");
+  if(collection.length===1) focusApp(ids[0]);
+  else cy.animate({fit:{eles:collection,padding:100}},{duration:450});
+  toast(collection.length+"アプリを強調しました（背景クリックで解除）");
+}
+function toggleAnalysisPanel(force){
+  const panel=document.getElementById("analysis-panel");
+  const open=typeof force==="boolean"?force:!panel.classList.contains("open");
+  panel.classList.toggle("open",open);
+  document.getElementById("analysis-toggle-btn")?.classList.toggle("active",open);
+  if(open){document.getElementById("sidebar")?.classList.remove("open");closeDetail();}
+}
+renderAnalysisPanel();
 
 // ─── Sidebar ───
 function toggleSidebar(){document.getElementById("sidebar").classList.toggle("open");}
@@ -3003,6 +3100,7 @@ const commands=[
   {label:"表示密度: 標準",icon:"📄",action:()=>setDensity("standard")},
   {label:"表示密度: 詳細",icon:"🧾",action:()=>setDensity("full")},
   {label:"統計パネル",icon:"📊",action:toggleSidebar,keys:"Ctrl+B"},
+  {label:"構造分析（循環・孤立・参照集中）",icon:"🩺",action:()=>toggleAnalysisPanel(true)},
   {label:"ガイドパネル 表示/非表示",icon:"🧭",action:toggleOverview},
   {label:"経路探索",icon:"🔍",action:togglePathFinder},
   {label:"関連強調 ON/OFF",icon:"🎯",action:toggleFocusMode,keys:"Shift+F"},
@@ -3091,7 +3189,7 @@ document.addEventListener("keydown",e=>{
   if(e.key==="P"&&e.shiftKey){e.preventDefault();togglePinFromSelection();}
   if(e.key==="0"&&(e.ctrlKey||e.metaKey)){e.preventDefault();fit();}
   if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)&&!e.shiftKey&&!isTypingTarget(e.target)){e.preventDefault();undoLast();}
-  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();closeHelp();closeEditor();closeAllMenus();clearFocus(true);document.getElementById("topbar").classList.remove("mobile-open");}
+  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();closeHelp();closeEditor();closeAllMenus();toggleAnalysisPanel(false);clearFocus(true);clearAnalysisHighlight();document.getElementById("topbar").classList.remove("mobile-open");}
   if((e.key==="Delete"||e.key==="Backspace")&&!isTypingTarget(e.target)){
     const selEdges=cy.edges(":selected");
     const selNotes=cy.nodes(".note-node:selected");
@@ -3456,7 +3554,23 @@ function showMarkdown(){
   lines.push("- 起点アプリ: " + ((ER_OPTIONS.startAppIds||[]).join(", ") || "-"));
   lines.push("- アプリ数: " + APPS.length);
   lines.push("- 総リレーション: " + APPS.reduce((s,a)=>s+a.relations.length,0));
+  lines.push("- 構造スコア: " + ER_ANALYSIS.score + " (Grade " + ER_ANALYSIS.grade + ")");
+  lines.push("- 循環グループ: " + ER_ANALYSIS.cycles.length);
+  lines.push("- 孤立アプリ: " + ER_ANALYSIS.isolatedAppIds.length);
+  lines.push("- 未取得の参照先: " + ER_ANALYSIS.unresolvedTargets.length);
   lines.push("");
+  lines.push("## 構造分析");
+  lines.push("");
+  if(ER_ANALYSIS.cycles.length){
+    lines.push("### 循環依存");
+    ER_ANALYSIS.cycles.forEach((cycle,i)=>lines.push("- 循環 "+(i+1)+": "+cycle.appNames.map(mdEsc).join(" → ")));
+    lines.push("");
+  }
+  if(ER_ANALYSIS.hubs.length){
+    lines.push("### 参照集中アプリ");
+    ER_ANALYSIS.hubs.forEach(hub=>lines.push("- "+mdEsc(hub.name)+" (App "+hub.appId+"): 入 "+hub.incoming+" / 出 "+hub.outgoing+" / 合計 "+hub.total));
+    lines.push("");
+  }
   lines.push("## アプリ一覧");
   lines.push("");
   lines.push("| アプリID | アプリ名 | 項目数 | 関連数 | 深さ | 状態 |");
