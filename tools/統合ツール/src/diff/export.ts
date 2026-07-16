@@ -3423,6 +3423,25 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     });
   }
 
+
+  function renderFieldChangeSummary(entries) {
+    if (!entries.length) return '';
+    const visible = entries.slice(0, 10);
+    const rest = entries.length - visible.length;
+    return '<div class="fd-change-summary" aria-label="設定差分の要約">' +
+      '<div class="fd-change-summary__title">変更項目</div>' +
+      '<div class="fd-change-summary__chips">' +
+        visible.map((entry) => {
+          const tone = entry.row.type === 'added' ? 'added' : entry.row.type === 'removed' ? 'removed' : entry.row.type === 'same' ? 'same' : 'changed';
+          return '<span class="fd-change-chip fd-change-chip--' + tone + '" title="' + escHtml(entry.row.path || '-') + '">' +
+            '<b>' + escHtml(diffTypeLabel(entry.row.type, entry.row.moved)) + '</b>' + escHtml(entry.title || relativePathLabel(entry.row)) +
+          '</span>';
+        }).join('') +
+        (rest > 0 ? '<span class="fd-change-chip fd-change-chip--more">ほか ' + rest + ' 件</span>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
   function renderFieldDetailPanel(code, model, options) {
     const group = model.groupMap.get(code || '');
     if (!group) {
@@ -3439,6 +3458,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' +
       '</div>' +
       '<div class="fc-chip-row">' + renderFieldSummaryChips(group) + '</div>' +
+      renderFieldChangeSummary(entries) +
       '<div class="fd-snapshots">' +
         renderFieldSnapshotCard('比較元', group.sourceField, 'src') +
         renderFieldSnapshotCard('比較先', group.targetField, 'tgt') +
@@ -3458,10 +3478,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
                 '</div>' +
                 '<div class="fd-path">' + escHtml(row.path || '-') + '</div>' +
                 renderRowMeta(row) +
-                '<div class="fd-entry-grid">' +
-                  '<div class="fd-entry-col"><div class="fd-pane-label">比較元</div><div class="fd-entry-body">' + formatFieldValueBrief(row.left, 280) + '</div></div>' +
-                  '<div class="fd-entry-col"><div class="fd-pane-label">比較先</div><div class="fd-entry-body">' + formatFieldValueBrief(row.right, 280) + '</div></div>' +
-                '</div>' +
+                '<div class="fd-entry-diff">' + renderValueArea(row, !!(document.getElementById('charDiff') || {}).checked) + '</div>' +
               '</article>';
             }).join('') +
           '</div>' +
@@ -4671,6 +4688,18 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .fd-mini-cell span{display:block;font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
     .fd-mini-value{font-size:11px;line-height:1.5;color:var(--fg);word-break:break-word}
     .fd-section h3{margin:0 0 12px;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--fg)}
+    .fd-change-summary{margin:14px 0 16px;border:1px solid var(--border);border-radius:14px;background:var(--card-soft);padding:12px 14px}
+    .fd-change-summary__title{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+    .fd-change-summary__chips{display:flex;flex-wrap:wrap;gap:8px}
+    .fd-change-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:5px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card);font-size:10px;font-weight:700;color:var(--fg)}
+    .fd-change-chip b{font-size:9px;letter-spacing:.03em;text-transform:uppercase}
+    .fd-change-chip--added{background:#dcfce7;color:#166534;border-color:#86efac}
+    .fd-change-chip--removed{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+    .fd-change-chip--changed{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+    .fd-change-chip--same,.fd-change-chip--more{background:var(--card);color:var(--muted)}
+    body.dark .fd-change-chip--added{background:#14532d;color:#bbf7d0;border-color:#166534}
+    body.dark .fd-change-chip--removed{background:#450a0a;color:#fecaca;border-color:#991b1b}
+    body.dark .fd-change-chip--changed{background:#78350f;color:#fde68a;border-color:#b45309}
     .fd-entry-list{display:flex;flex-direction:column;gap:12px}
     .fd-entry{border:1px solid var(--border);border-radius:14px;padding:12px 14px;background:var(--card-soft)}
     .fd-entry--added{border-left:5px solid #16a34a}
@@ -4683,6 +4712,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .fd-path{font-size:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);margin-bottom:8px;word-break:break-all}
     .fd-entry-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
     .fd-entry-col{min-width:0}
+    .fd-entry-diff{margin-top:10px}
+    .fd-entry-diff .val-inline{font-size:12px}
+    .fd-entry-diff .duo{max-height:220px}
     .fd-entry-body{padding:10px 11px;border-radius:10px;border:1px solid var(--border);background:var(--card);font-size:11px;line-height:1.55;word-break:break-word}
     .fd-empty{padding:18px;border:1px dashed var(--border);border-radius:12px;background:var(--card-soft);font-size:12px;line-height:1.7;color:var(--muted)}
     .kf-modal{display:flex;flex-direction:column;background:#fff}
