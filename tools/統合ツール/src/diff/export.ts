@@ -2288,6 +2288,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return text.indexOf('\\n') === -1 && text.length <= INLINE_VALUE_MAX;
   }
 
+  function shouldHideUnchangedDiffLines() {
+    const el = document.getElementById('hideUnchangedLines');
+    return !!(el && el.checked);
+  }
+
   function renderChangedDuo(row, useCharDiff) {
     const leftText = safeText(row.left);
     const rightText = safeText(row.right);
@@ -2301,11 +2306,13 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     } else {
       let leftNo = 0;
       let rightNo = 0;
+      const hideSameLines = shouldHideUnchangedDiffLines();
       body = ops.map((op) => {
         if (op.type === 'same') {
           leftNo += 1;
           rightNo += 1;
           const l = '<span class="ln">' + leftNo + '</span><span class="lt">' + escHtml(op.left || '') + '</span>';
+          if (hideSameLines) return '';
           const r = '<span class="ln">' + rightNo + '</span><span class="lt">' + escHtml(op.right || '') + '</span>';
           return '<div class="duo-row"><div class="duo-cell">' + l + '</div><div class="duo-cell">' + r + '</div></div>';
         }
@@ -2326,6 +2333,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         const r = '<span class="ln">' + rightNo + '</span><span class="lt">' + escHtml(op.right || '') + '</span>';
         return '<div class="duo-row"><div class="duo-cell pad"></div><div class="duo-cell add">' + r + '</div></div>';
       }).join('');
+      if (!body && hideSameLines) body = '<div class="duo-empty">変更行はありません</div>';
     }
     return '<div class="duo-wrap">'
       + '<div class="duo-head"><span>比較元</span><span>比較先</span></div>'
@@ -4048,6 +4056,55 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     render();
   }
 
+  function buildReviewSummaryMarkdown() {
+    const summary = REPORT_META.summary || {};
+    const overview = REPORT_META.diffOverview || {};
+    const severity = overview.severity || {};
+    const source = REPORT_META.source || {};
+    const target = REPORT_META.target || {};
+    const sections = (REPORT_META.sectionSummaries || [])
+      .filter((item) => (item.diffCount || item.fetchIssueCount || 0) > 0)
+      .slice(0, 12)
+      .map((item) => '- ' + (item.sectionLabel || item.sectionKey || '-') + ': 差分 ' + (item.diffCount || 0) + ' / 取得失敗 ' + (item.fetchIssueCount || 0))
+      .join('\n') || '- 差分のあるセクションはありません';
+    const highlights = (REPORT_META.highlights || [])
+      .slice(0, 8)
+      .map((item) => '- [' + diffTypeLabel(item.type, item.moved) + '] ' + (item.sectionLabel || '-') + ' / ' + (item.relativePath || item.path || '-') + (item.reasonSummary ? ': ' + item.reasonSummary : ''))
+      .join('\n') || '- 注目差分はありません';
+    return [
+      '# kintone差分レビューサマリー',
+      '',
+      '- 生成日時: ' + (REPORT_META.generatedAt || '-'),
+      '- 比較: App ' + (source.appId || '-') + ' → App ' + (target.appId || '-'),
+      '- 差分: 追加 ' + (summary.added || 0) + ' / 削除 ' + (summary.removed || 0) + ' / 変更 ' + (summary.changed || 0) + ' / 移動 ' + (summary.moved || 0),
+      '- 重要度: 高 ' + (severity.high || 0) + ' / 中 ' + (severity.medium || 0) + ' / 低 ' + (severity.low || 0),
+      '- 取得失敗: ' + ((REPORT_META.fetchIssues || []).length || 0),
+      '- 正規化: ' + ((REPORT_META.normalizationLabels || []).join(', ') || '-'),
+      '',
+      '## セクション別（差分あり上位）',
+      sections,
+      '',
+      '## 注目差分',
+      highlights
+    ].join('\n');
+  }
+
+  function copyReviewSummary() {
+    const text = buildReviewSummaryMarkdown();
+    const done = () => {
+      const btn = document.getElementById('copySummaryBtn');
+      if (!btn) { window.alert('レビューサマリーをコピーしました'); return; }
+      const original = btn.textContent;
+      btn.textContent = 'コピーしました';
+      setTimeout(() => { btn.textContent = original || 'サマリーコピー'; }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => window.prompt('コピーしてください', text));
+      return;
+    }
+    window.prompt('コピーしてください', text);
+  }
+
   function exportPatch() {
     const patchRows = REPORT_ROWS.filter((row) => row.type !== 'same');
     if (!patchRows.length) {
@@ -4088,15 +4145,17 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     URL.revokeObjectURL(a.href);
   }
 
-  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, exportPatch, setActiveTab };
+  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, exportPatch, copyReviewSummary, setActiveTab };
 
   document.getElementById('hideSame').onchange = onReportFilterChange;
   document.getElementById('charDiff').onchange = onReportFilterChange;
+  document.getElementById('hideUnchangedLines').onchange = onReportFilterChange;
   document.getElementById('search').oninput = onReportFilterChange;
   document.getElementById('themeBtn').onclick = toggleTheme;
   document.getElementById('collapseBtn').onclick = collapseAll;
   document.getElementById('expandBtn').onclick = expandAll;
   document.getElementById('patchBtn').onclick = exportPatch;
+  document.getElementById('copySummaryBtn').onclick = copyReviewSummary;
   document.getElementById('main').addEventListener('click', handleMainClick);
   document.getElementById('main').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -4382,6 +4441,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .duo-cell.del{background:var(--del);color:var(--del-fg)}
     .duo-cell.add{background:var(--add);color:var(--add-fg)}
     .duo-cell.pad{background:var(--pad);opacity:.7}
+    .duo-empty{padding:10px 12px;font-size:11px;color:var(--muted);background:var(--card-soft);text-align:center}
     .duo-cell .blk{flex:1}
     .lt{flex:1;min-width:0}
     .same-fold{display:flex;align-items:center;gap:8px;width:100%;padding:9px 14px;border:none;border-top:1px dashed var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;text-align:left;transition:color .15s}
@@ -4702,6 +4762,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     <div class="sb-panel sb-ctrl">
       <label class="chk"><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
       <label class="chk"><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
+      <label class="chk"><input type="checkbox" id="hideUnchangedLines" checked> 複数行差分は変更行だけ表示</label>
       <span class="field-label">検索</span>
       <input type="text" id="search" placeholder="パス・値・理由・フィールド名で絞り込み" aria-label="差分の検索" autocomplete="off">
       <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> でフォーカス · <kbd class="kbd">Esc</kbd> でクリア</p>
@@ -4709,6 +4770,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <button type="button" class="btn" id="collapseBtn">全折畳</button>
         <button type="button" class="btn" id="expandBtn">全展開</button>
         <button type="button" class="btn" id="themeBtn">ダークに切替</button>
+        <button type="button" class="btn" id="copySummaryBtn">サマリーコピー</button>
         <button type="button" class="btn primary" id="patchBtn" style="grid-column:span 2">パッチJSON出力</button>
       </div>
     </div>
