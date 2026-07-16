@@ -4472,6 +4472,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return text.indexOf('\\n') === -1 && text.length <= INLINE_VALUE_MAX;
   }
 
+  function shouldHideUnchangedDiffLines() {
+    const el = document.getElementById('hideUnchangedLines');
+    return !!(el && el.checked);
+  }
+
   function renderChangedDuo(row, useCharDiff) {
     const leftText = safeText(row.left);
     const rightText = safeText(row.right);
@@ -4485,11 +4490,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     } else {
       let leftNo = 0;
       let rightNo = 0;
+      const hideSameLines = shouldHideUnchangedDiffLines();
       body = ops.map((op) => {
         if (op.type === 'same') {
           leftNo += 1;
           rightNo += 1;
           const l = '<span class="ln">' + leftNo + '</span><span class="lt">' + escHtml(op.left || '') + '</span>';
+          if (hideSameLines) return '';
           const r = '<span class="ln">' + rightNo + '</span><span class="lt">' + escHtml(op.right || '') + '</span>';
           return '<div class="duo-row"><div class="duo-cell">' + l + '</div><div class="duo-cell">' + r + '</div></div>';
         }
@@ -4510,6 +4517,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         const r = '<span class="ln">' + rightNo + '</span><span class="lt">' + escHtml(op.right || '') + '</span>';
         return '<div class="duo-row"><div class="duo-cell pad"></div><div class="duo-cell add">' + r + '</div></div>';
       }).join('');
+      if (!body && hideSameLines) body = '<div class="duo-empty">変更行はありません</div>';
     }
     return '<div class="duo-wrap">'
       + '<div class="duo-head"><span>比較元</span><span>比較先</span></div>'
@@ -5599,6 +5607,25 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     });
   }
 
+
+  function renderFieldChangeSummary(entries) {
+    if (!entries.length) return '';
+    const visible = entries.slice(0, 10);
+    const rest = entries.length - visible.length;
+    return '<div class="fd-change-summary" aria-label="設定差分の要約">' +
+      '<div class="fd-change-summary__title">変更項目</div>' +
+      '<div class="fd-change-summary__chips">' +
+        visible.map((entry) => {
+          const tone = entry.row.type === 'added' ? 'added' : entry.row.type === 'removed' ? 'removed' : entry.row.type === 'same' ? 'same' : 'changed';
+          return '<span class="fd-change-chip fd-change-chip--' + tone + '" title="' + escHtml(entry.row.path || '-') + '">' +
+            '<b>' + escHtml(diffTypeLabel(entry.row.type, entry.row.moved)) + '</b>' + escHtml(entry.title || relativePathLabel(entry.row)) +
+          '</span>';
+        }).join('') +
+        (rest > 0 ? '<span class="fd-change-chip fd-change-chip--more">ほか ' + rest + ' 件</span>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
   function renderFieldDetailPanel(code, model, options) {
     const group = model.groupMap.get(code || '');
     if (!group) {
@@ -5615,6 +5642,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' +
       '</div>' +
       '<div class="fc-chip-row">' + renderFieldSummaryChips(group) + '</div>' +
+      renderFieldChangeSummary(entries) +
       '<div class="fd-snapshots">' +
         renderFieldSnapshotCard('比較元', group.sourceField, 'src') +
         renderFieldSnapshotCard('比較先', group.targetField, 'tgt') +
@@ -5634,10 +5662,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
                 '</div>' +
                 '<div class="fd-path">' + escHtml(row.path || '-') + '</div>' +
                 renderRowMeta(row) +
-                '<div class="fd-entry-grid">' +
-                  '<div class="fd-entry-col"><div class="fd-pane-label">比較元</div><div class="fd-entry-body">' + formatFieldValueBrief(row.left, 280) + '</div></div>' +
-                  '<div class="fd-entry-col"><div class="fd-pane-label">比較先</div><div class="fd-entry-body">' + formatFieldValueBrief(row.right, 280) + '</div></div>' +
-                '</div>' +
+                '<div class="fd-entry-diff">' + renderValueArea(row, !!(document.getElementById('charDiff') || {}).checked) + '</div>' +
               '</article>';
             }).join('') +
           '</div>' +
@@ -6232,6 +6257,58 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     render();
   }
 
+  function buildReviewSummaryMarkdown() {
+    const summary = REPORT_META.summary || {};
+    const overview = REPORT_META.diffOverview || {};
+    const severity = overview.severity || {};
+    const source = REPORT_META.source || {};
+    const target = REPORT_META.target || {};
+    const sections = (REPORT_META.sectionSummaries || [])
+      .filter((item) => (item.diffCount || item.fetchIssueCount || 0) > 0)
+      .slice(0, 12)
+      .map((item) => '- ' + (item.sectionLabel || item.sectionKey || '-') + ': 差分 ' + (item.diffCount || 0) + ' / 取得失敗 ' + (item.fetchIssueCount || 0))
+      .join('
+') || '- 差分のあるセクションはありません';
+    const highlights = (REPORT_META.highlights || [])
+      .slice(0, 8)
+      .map((item) => '- [' + diffTypeLabel(item.type, item.moved) + '] ' + (item.sectionLabel || '-') + ' / ' + (item.relativePath || item.path || '-') + (item.reasonSummary ? ': ' + item.reasonSummary : ''))
+      .join('
+') || '- 注目差分はありません';
+    return [
+      '# kintone差分レビューサマリー',
+      '',
+      '- 生成日時: ' + (REPORT_META.generatedAt || '-'),
+      '- 比較: App ' + (source.appId || '-') + ' → App ' + (target.appId || '-'),
+      '- 差分: 追加 ' + (summary.added || 0) + ' / 削除 ' + (summary.removed || 0) + ' / 変更 ' + (summary.changed || 0) + ' / 移動 ' + (summary.moved || 0),
+      '- 重要度: 高 ' + (severity.high || 0) + ' / 中 ' + (severity.medium || 0) + ' / 低 ' + (severity.low || 0),
+      '- 取得失敗: ' + ((REPORT_META.fetchIssues || []).length || 0),
+      '- 正規化: ' + ((REPORT_META.normalizationLabels || []).join(', ') || '-'),
+      '',
+      '## セクション別（差分あり上位）',
+      sections,
+      '',
+      '## 注目差分',
+      highlights
+    ].join('
+');
+  }
+
+  function copyReviewSummary() {
+    const text = buildReviewSummaryMarkdown();
+    const done = () => {
+      const btn = document.getElementById('copySummaryBtn');
+      if (!btn) { window.alert('レビューサマリーをコピーしました'); return; }
+      const original = btn.textContent;
+      btn.textContent = 'コピーしました';
+      setTimeout(() => { btn.textContent = original || 'サマリーコピー'; }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => window.prompt('コピーしてください', text));
+      return;
+    }
+    window.prompt('コピーしてください', text);
+  }
+
   function exportPatch() {
     const patchRows = REPORT_ROWS.filter((row) => row.type !== 'same');
     if (!patchRows.length) {
@@ -6272,15 +6349,17 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     URL.revokeObjectURL(a.href);
   }
 
-  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, exportPatch, setActiveTab };
+  window.__diffReport = { render, toggleTheme, collapseAll, expandAll, exportPatch, copyReviewSummary, setActiveTab };
 
   document.getElementById('hideSame').onchange = onReportFilterChange;
   document.getElementById('charDiff').onchange = onReportFilterChange;
+  document.getElementById('hideUnchangedLines').onchange = onReportFilterChange;
   document.getElementById('search').oninput = onReportFilterChange;
   document.getElementById('themeBtn').onclick = toggleTheme;
   document.getElementById('collapseBtn').onclick = collapseAll;
   document.getElementById('expandBtn').onclick = expandAll;
   document.getElementById('patchBtn').onclick = exportPatch;
+  document.getElementById('copySummaryBtn').onclick = copyReviewSummary;
   document.getElementById('main').addEventListener('click', handleMainClick);
   document.getElementById('main').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -6565,6 +6644,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .duo-cell.del{background:var(--del);color:var(--del-fg)}
     .duo-cell.add{background:var(--add);color:var(--add-fg)}
     .duo-cell.pad{background:var(--pad);opacity:.7}
+    .duo-empty{padding:10px 12px;font-size:11px;color:var(--muted);background:var(--card-soft);text-align:center}
     .duo-cell .blk{flex:1}
     .lt{flex:1;min-width:0}
     .same-fold{display:flex;align-items:center;gap:8px;width:100%;padding:9px 14px;border:none;border-top:1px dashed var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;text-align:left;transition:color .15s}
@@ -6794,6 +6874,18 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .fd-mini-cell span{display:block;font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
     .fd-mini-value{font-size:11px;line-height:1.5;color:var(--fg);word-break:break-word}
     .fd-section h3{margin:0 0 12px;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--fg)}
+    .fd-change-summary{margin:14px 0 16px;border:1px solid var(--border);border-radius:14px;background:var(--card-soft);padding:12px 14px}
+    .fd-change-summary__title{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+    .fd-change-summary__chips{display:flex;flex-wrap:wrap;gap:8px}
+    .fd-change-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:5px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card);font-size:10px;font-weight:700;color:var(--fg)}
+    .fd-change-chip b{font-size:9px;letter-spacing:.03em;text-transform:uppercase}
+    .fd-change-chip--added{background:#dcfce7;color:#166534;border-color:#86efac}
+    .fd-change-chip--removed{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+    .fd-change-chip--changed{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+    .fd-change-chip--same,.fd-change-chip--more{background:var(--card);color:var(--muted)}
+    body.dark .fd-change-chip--added{background:#14532d;color:#bbf7d0;border-color:#166534}
+    body.dark .fd-change-chip--removed{background:#450a0a;color:#fecaca;border-color:#991b1b}
+    body.dark .fd-change-chip--changed{background:#78350f;color:#fde68a;border-color:#b45309}
     .fd-entry-list{display:flex;flex-direction:column;gap:12px}
     .fd-entry{border:1px solid var(--border);border-radius:14px;padding:12px 14px;background:var(--card-soft)}
     .fd-entry--added{border-left:5px solid #16a34a}
@@ -6806,6 +6898,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .fd-path{font-size:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);margin-bottom:8px;word-break:break-all}
     .fd-entry-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
     .fd-entry-col{min-width:0}
+    .fd-entry-diff{margin-top:10px}
+    .fd-entry-diff .val-inline{font-size:12px}
+    .fd-entry-diff .duo{max-height:220px}
     .fd-entry-body{padding:10px 11px;border-radius:10px;border:1px solid var(--border);background:var(--card);font-size:11px;line-height:1.55;word-break:break-word}
     .fd-empty{padding:18px;border:1px dashed var(--border);border-radius:12px;background:var(--card-soft);font-size:12px;line-height:1.7;color:var(--muted)}
     .kf-modal{display:flex;flex-direction:column;background:#fff}
@@ -6885,6 +6980,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     <div class="sb-panel sb-ctrl">
       <label class="chk"><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
       <label class="chk"><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
+      <label class="chk"><input type="checkbox" id="hideUnchangedLines" checked> 複数行差分は変更行だけ表示</label>
       <span class="field-label">検索</span>
       <input type="text" id="search" placeholder="パス・値・理由・フィールド名で絞り込み" aria-label="差分の検索" autocomplete="off">
       <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> でフォーカス · <kbd class="kbd">Esc</kbd> でクリア</p>
@@ -6892,6 +6988,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <button type="button" class="btn" id="collapseBtn">全折畳</button>
         <button type="button" class="btn" id="expandBtn">全展開</button>
         <button type="button" class="btn" id="themeBtn">ダークに切替</button>
+        <button type="button" class="btn" id="copySummaryBtn">サマリーコピー</button>
         <button type="button" class="btn primary" id="patchBtn" style="grid-column:span 2">パッチJSON出力</button>
       </div>
     </div>
