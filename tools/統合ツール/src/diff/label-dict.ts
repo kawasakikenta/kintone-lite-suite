@@ -184,7 +184,19 @@ export const PROP_LABELS: Record<string, PropMeta> = {
 
   // layoutSettings
   layout:           { label: 'レイアウト' },
-  row:              { label: '行' }
+  row:              { label: '行' },
+
+  // fieldSettings: 関連レコード一覧（referenceTable）/ ルックアップ（lookup）
+  referenceTable:    { label: '関連レコード一覧設定' },
+  lookup:            { label: 'ルックアップ設定' },
+  condition:         { label: '表示条件（フィールドの一致）' },
+  displayFields:     { label: '表示するフィールド' },
+  relatedApp:        { label: '参照するアプリ' },
+  relatedField:      { label: '参照するアプリのフィールド' },
+  relatedKeyField:   { label: 'コピー元のフィールド' },
+  fieldMappings:     { label: 'ほかのフィールドのコピー' },
+  lookupPickerFields:{ label: '選択画面に表示するフィールド' },
+  size:              { label: '一度に表示する最大件数' }
 };
 
 // ---------------------------------------------------------------------------

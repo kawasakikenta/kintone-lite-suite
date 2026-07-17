@@ -7,7 +7,7 @@ import {
   esc, deepClone, safeJsonForScript, decodeHtmlEntities, stripHtmlToText,
   getDiffTypeDisplayLabel, getSeverityDisplayLabel,
   getIssueSideLabel, getPreviewStateLabel, getThemeDisplayLabel,
-  renderSectionIconHtml
+  renderSectionIconHtml, extractAppNameFromBundle
 } from '../utils.js';
 import { state, ui } from '../state.js';
 import {
@@ -892,6 +892,7 @@ function compactDiffValuePreview(value, maxLength = 140) {
 function getBundleExportMeta(bundle) {
   return {
     appId: String(bundle?.appId || ''),
+    appName: extractAppNameFromBundle(bundle),
     guestId: String(bundle?.guestId || ''),
     preview: !!bundle?.preview,
     revision: resolveBundleRevision(bundle) || '',
@@ -1989,6 +1990,13 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     truncated: withSameSections.length > exportRows.length
   };
   const diffTotal = summary.added + summary.removed + summary.changed;
+  const formatAppDisplay = (meta: any) => {
+    const id = String(meta?.appId || '-');
+    const name = String(meta?.appName || '').trim();
+    return name ? `${name}（アプリ ${id}）` : `アプリ ${id}`;
+  };
+  const sourceAppDisplay = formatAppDisplay(reportMeta.source);
+  const targetAppDisplay = formatAppDisplay(reportMeta.target);
   // レポート内「詳細オプション」用の正規化プリセット定義。
   // 比較時に適用済み（applied）のものは行が既に除外されているため、レポート側では解除不可として表示する。
   const clientNormalizationPresets = Object.entries(DIFF_NORMALIZATION_PRESETS).map(([key, preset]) => ({
@@ -2041,7 +2049,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const CHAR_DIFF_MAX_CELLS = ${CHAR_DIFF_MAX_CELLS};
   const collapsed = new Set();
   let typeFilterValue = 'all';
-  let severityFilterValue = 'all';
   let diffSortValue = 'standard';
   // レポート内「詳細オプション」の状態（表示のみの絞り込み。比較のやり直しは行わない）
   const activePresetKeys = new Set();
@@ -2058,6 +2065,156 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   let activeFieldCode = '';
   let detailModalOpen = false;
   const reportMemory = new Map();
+  // 確認済みチェック（このレポートを開いている間だけ保持）
+  const reviewedKeys = new Set();
+  // 表示中の行キー → 行データ（コピー・確認チェックの参照用）
+  const rowLookup = new Map();
+  // j/k キーによる差分ジャンプの現在位置
+  let diffFocusIndex = -1;
+
+  function isRawJsonMode() {
+    const el = document.getElementById('rawJson');
+    return !!(el && el.checked);
+  }
+
+  function showToast(message) {
+    let el = document.getElementById('reportToast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'reportToast';
+      el.className = 'report-toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = String(message || '');
+    el.classList.add('is-visible');
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(() => el.classList.remove('is-visible'), 2200);
+  }
+
+  function copyTextToClipboard(text, doneMessage) {
+    const value = String(text == null ? '' : text);
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        showToast(doneMessage || 'コピーしました');
+      } catch (e) {
+        showToast('コピーに失敗しました');
+      }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value)
+        .then(() => showToast(doneMessage || 'コピーしました'))
+        .catch(fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  function syncReviewedStat() {
+    const el = document.getElementById('stat-reviewed');
+    if (el) el.textContent = String(reviewedKeys.size);
+  }
+
+  function moveDiffFocus(delta) {
+    const rows = [...document.querySelectorAll('#main .drow:not(.drow--same)')];
+    if (!rows.length) return;
+    diffFocusIndex = Math.min(rows.length - 1, Math.max(0, diffFocusIndex + delta));
+    rows.forEach((el, i) => el.classList.toggle('drow--focus', i === diffFocusIndex));
+    rows[diffFocusIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function downloadTextFile(filename, text, mime) {
+    const blob = new Blob([text], { type: (mime || 'text/plain') + ';charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // 現在の絞り込み条件（詳細オプション・検索・種別チップ）で表示される差分行を平坦に返す
+  function collectVisibleDiffRowsForExport() {
+    const hideSame = !!(document.getElementById('hideSame')).checked;
+    const keyword = String((document.getElementById('search')).value || '').trim().toLowerCase();
+    return getDetailFilteredRows().filter((row) => {
+      if (hideSame && row.type === 'same') return false;
+      return rowMatches(row, keyword);
+    }).filter(typeFilterMatches);
+  }
+
+  function csvEscape(v) {
+    const s = String(v == null ? '' : v);
+    if (/[",\\n\\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+
+  function exportVisibleRowsAsCsv() {
+    const rows = collectVisibleDiffRowsForExport();
+    if (!rows.length) {
+      showToast('出力対象の行がありません');
+      return;
+    }
+    const header = ['セクション', '種別', 'パス', '比較元', '比較先', '確認済み'];
+    const lines = [header.map(csvEscape).join(',')];
+    rows.forEach((row) => {
+      lines.push([
+        SECTION_LABEL_MAP[row.sectionKey || ''] || row.section || row.sectionKey || '',
+        diffTypeLabel(row.type, row.moved),
+        row.path || '',
+        safeText(row.left),
+        safeText(row.right),
+        reviewedKeys.has(rowStateKey(row)) ? '済' : ''
+      ].map(csvEscape).join(','));
+    });
+    const stamp = String(REPORT_META.generatedAt || '').replace(/[-:TZ.]/g, '').slice(0, 14) || 'report';
+    downloadTextFile('差分一覧_' + stamp + '.csv', '\\ufeff' + lines.join('\\r\\n'), 'text/csv');
+    showToast('CSVを保存しました（' + rows.length + '行）');
+  }
+
+  function mdCell(v, maxLen) {
+    const limit = maxLen || 200;
+    let s = String(v == null ? '' : v);
+    if (s.length > limit) s = s.slice(0, limit) + '…';
+    return s.replace(/\\|/g, '\\\\|').replace(/\\r?\\n/g, '<br>');
+  }
+
+  function copyVisibleRowsAsMarkdown() {
+    const rows = collectVisibleDiffRowsForExport();
+    if (!rows.length) {
+      showToast('出力対象の行がありません');
+      return;
+    }
+    const bySection = new Map();
+    rows.forEach((row) => {
+      const key = row.sectionKey || row.section || '未分類';
+      if (!bySection.has(key)) bySection.set(key, []);
+      bySection.get(key).push(row);
+    });
+    const parts = ['# 設定差分（アプリ ' + (REPORT_META.source.appId || '-') + ' → アプリ ' + (REPORT_META.target.appId || '-') + '）', ''];
+    bySection.forEach((list, key) => {
+      parts.push('## ' + (SECTION_LABEL_MAP[key] || key) + '（' + list.length + '件）', '');
+      parts.push('| 種別 | パス | 比較元 | 比較先 |');
+      parts.push('| --- | --- | --- | --- |');
+      list.forEach((row) => {
+        parts.push('| ' + mdCell(diffTypeLabel(row.type, row.moved), 20)
+          + ' | ' + mdCell(row.path || '', 160)
+          + ' | ' + mdCell(safeText(row.left), 200)
+          + ' | ' + mdCell(safeText(row.right), 200) + ' |');
+      });
+      parts.push('');
+    });
+    copyTextToClipboard(parts.join('\\n'), 'Markdownをコピーしました（' + rows.length + '行）');
+  }
 
   function safeStorageGet(key) {
     return reportMemory.has(key) ? reportMemory.get(key) : null;
@@ -2400,9 +2557,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
   function renderRowMeta(row) {
     const tags = [];
-    const sev = String(row.severity || '').toLowerCase();
-    if (row.type !== 'same' && sev === 'high') tags.push('<span class="meta-tag sev-high">重要度 高</span>');
-    else if (row.type !== 'same' && sev === 'medium') tags.push('<span class="meta-tag sev-medium">重要度 中</span>');
     if (row.reasonSummary) tags.push('<span class="meta-tag reason">' + escHtml(row.reasonSummary) + '</span>');
     if (row.renameCandidate) {
       const renameTip = '名称変更候補: ' + String(row.renameCandidate.fromCode || '-') + ' → ' + String(row.renameCandidate.toCode || '-')
@@ -2631,6 +2785,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return row.right != null ? row.right : row.left;
   }
 
+  function jsonEq(a, b) {
+    if (a === b) return true;
+    try { return JSON.stringify(a) === JSON.stringify(b); } catch (e) { return false; }
+  }
+
   function isSubtableFieldsMap(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const entries = Object.values(value);
@@ -2641,12 +2800,21 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     });
   }
 
-  function renderSubtableFieldsTableHtml(fields) {
+  // counterpart（比較相手側の fields マップ）を渡すと、相手側に無い行・値が異なる行へ差分色を付ける。
+  function renderSubtableFieldsTableHtml(fields, counterpart, side) {
     if (!fields || typeof fields !== 'object') {
       return '<div class="sl-empty">（なし）</div>';
     }
     const entries = Object.values(fields);
     if (!entries.length) return '<div class="sl-empty">（項目なし）</div>';
+    const cp = (counterpart && typeof counterpart === 'object' && !Array.isArray(counterpart)) ? counterpart : null;
+    const cpByCode = {};
+    if (cp) {
+      Object.entries(cp).forEach(([key, child]) => {
+        const code = String((child && child.code) || key);
+        cpByCode[code] = child;
+      });
+    }
     const headerHtml = '<thead><tr>' +
       '<th class="st-col-no">#</th>' +
       '<th class="st-col-label">フィールド名</th>' +
@@ -2660,7 +2828,13 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       const typeLabel = fieldTypeDisplayLabel(typeCode);
       const code = String(child?.code || '-');
       const required = !!child?.required;
-      return '<tr>' +
+      let trCls = '';
+      if (cp) {
+        const other = cpByCode[code];
+        if (!other) trCls = side === 'tgt' ? ' class="kv-add"' : ' class="kv-del"';
+        else if (!jsonEq(child, other)) trCls = ' class="kv-chg"';
+      }
+      return '<tr' + trCls + '>' +
         '<td class="st-col-no">' + String(idx + 1) + '</td>' +
         '<td class="st-col-label">' + escHtml(label) + '</td>' +
         '<td class="st-col-type"><span class="st-type-chip" data-type="' + escHtml(typeCode) + '">' + escHtml(typeLabel) + '</span></td>' +
@@ -2684,7 +2858,112 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return '<div class="st-card">' + head + body + '</div>';
   }
 
-  function formatFieldValueBrief(val, _maxLen) {
+  // ---- 関連レコード一覧設定 / ルックアップ設定の日本語表示ヘルパー ----
+
+  function valueScalarText(v) {
+    if (v === undefined || v === null || v === '') return '（なし）';
+    return String(v);
+  }
+
+  function refConditionText(v) {
+    if (!v || typeof v !== 'object') return valueScalarText(v);
+    return '自アプリ「' + valueScalarText(v.field) + '」 ＝ 参照アプリ「' + valueScalarText(v.relatedField) + '」';
+  }
+
+  function refRelatedAppText(v) {
+    if (!v || typeof v !== 'object') return valueScalarText(v);
+    const parts = ['アプリID: ' + valueScalarText(v.app)];
+    if (v.code) parts.push('アプリコード: ' + v.code);
+    return parts.join(' / ');
+  }
+
+  function sortLabelText(v) {
+    const s = String(v == null ? '' : v);
+    if (!s) return '（なし）';
+    return s.replace(/\\basc\\b/g, '（昇順）').replace(/\\bdesc\\b/g, '（降順）');
+  }
+
+  function listLabelText(v) {
+    if (Array.isArray(v)) return v.length ? v.join(' / ') : '（なし）';
+    return valueScalarText(v);
+  }
+
+  function fieldMappingsText(v) {
+    if (!Array.isArray(v) || !v.length) return '（なし）';
+    return v.map((m, i) => String(i + 1) + '. コピー先「' + valueScalarText(m && m.field) + '」 ← コピー元「' + valueScalarText(m && m.relatedField) + '」').join('\\n');
+  }
+
+  function settingValueText(key, value) {
+    if (value === undefined) return '';
+    if (key === 'condition') return refConditionText(value);
+    if (key === 'relatedApp') return refRelatedAppText(value);
+    if (key === 'sort') return sortLabelText(value);
+    if (key === 'displayFields' || key === 'lookupPickerFields') return listLabelText(value);
+    if (key === 'fieldMappings') return fieldMappingsText(value);
+    if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return valueScalarText(value);
+    }
+    let j;
+    try { j = JSON.stringify(value); } catch (e) { j = String(value); }
+    return localizeJsonEnums(j);
+  }
+
+  function textToCellHtml(text) {
+    return escHtml(text).replace(/\\n/g, '<br>');
+  }
+
+  // 変更されたセルの文字単位ハイライト。複数行はセル全体の色のみで表現する。
+  function charMarkedCellHtml(thisText, otherText, side) {
+    if (thisText.indexOf('\\n') >= 0 || otherText.indexOf('\\n') >= 0) return textToCellHtml(thisText);
+    const cd = side === 'tgt' ? buildCharDiff(otherText, thisText) : buildCharDiff(thisText, otherText);
+    if (!cd) return textToCellHtml(thisText);
+    return side === 'tgt' ? cd.right : cd.left;
+  }
+
+  const REFERENCE_TABLE_KEY_ORDER = ['relatedApp', 'condition', 'displayFields', 'filterCond', 'size', 'sort'];
+  const LOOKUP_KEY_ORDER = ['relatedApp', 'relatedKeyField', 'fieldMappings', 'lookupPickerFields', 'filterCond', 'sort'];
+
+  // referenceTable / lookup の設定オブジェクトを日本語ラベル付きキー値表で描画する。
+  // counterpart（比較相手側の同設定）を渡すと、異なる行へ差分色と文字単位ハイライトを付ける。
+  function renderSettingKvTable(kind, value, counterpart, side) {
+    const orderedKeys = kind === 'referenceTable' ? REFERENCE_TABLE_KEY_ORDER : LOOKUP_KEY_ORDER;
+    const cp = (counterpart && typeof counterpart === 'object' && !Array.isArray(counterpart)) ? counterpart : null;
+    const keys = [];
+    orderedKeys.forEach((k) => {
+      if ((value && k in value) || (cp && k in cp)) keys.push(k);
+    });
+    Object.keys(value || ({})).forEach((k) => { if (keys.indexOf(k) < 0) keys.push(k); });
+    if (cp) Object.keys(cp).forEach((k) => { if (keys.indexOf(k) < 0) keys.push(k); });
+    const rows = keys.map((k) => {
+      const hasHere = !!value && (k in value);
+      const hasThere = !!cp && (k in cp);
+      const thisText = hasHere ? settingValueText(k, value[k]) : '';
+      const otherText = hasThere ? settingValueText(k, cp[k]) : '';
+      let trCls = '';
+      let cellHtml;
+      if (!cp) {
+        cellHtml = textToCellHtml(thisText);
+      } else if (!hasHere) {
+        trCls = ' class="kv-ghost"';
+        cellHtml = '<span class="sl-empty">（設定なし）</span>';
+      } else if (!hasThere) {
+        trCls = side === 'tgt' ? ' class="kv-add"' : ' class="kv-del"';
+        cellHtml = textToCellHtml(thisText);
+      } else if (thisText !== otherText) {
+        trCls = side === 'tgt' ? ' class="kv-add"' : ' class="kv-del"';
+        cellHtml = charMarkedCellHtml(thisText, otherText, side);
+      } else {
+        cellHtml = textToCellHtml(thisText);
+      }
+      return '<tr' + trCls + '><th title="' + escHtml(k) + '">' + escHtml(SETTING_KEY_LABELS[k] || k) + '</th><td>' + cellHtml + '</td></tr>';
+    }).join('');
+    return '<table class="sl-mini-table">' + rows + '</table>';
+  }
+
+  function formatFieldValueBrief(val, opts) {
+    const o = (opts && typeof opts === 'object') ? opts : ({});
+    const cp = (o.counterpart && typeof o.counterpart === 'object' && !Array.isArray(o.counterpart)) ? o.counterpart : null;
+    const side = o.side === 'tgt' ? 'tgt' : 'src';
     if (val === undefined) return '<span class="sl-empty">（なし）</span>';
     if (val === null) return escHtml('null');
     const t = typeof val;
@@ -2700,13 +2979,17 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       return '<span class="sl-val-mono">' + escHtml(localizeJsonEnums(j)) + '</span>';
     }
     if (t === 'object') {
+      // 関連レコード一覧設定 / ルックアップ設定: 日本語キー + 差分色付きのキー値表
+      if (o.kind === 'referenceTable' || o.kind === 'lookup') {
+        return renderSettingKvTable(o.kind, val, cp, side);
+      }
       // SUBTABLE 全体: テーブル情報 + 内部フィールドを表形式でレンダリング
       if (val.type === 'SUBTABLE' && val.fields && typeof val.fields === 'object') {
         return renderSubtableFieldCardHtml(val);
       }
       // テーブルの fields マップ: 直接表形式でレンダリング
       if (isSubtableFieldsMap(val)) {
-        return renderSubtableFieldsTableHtml(val);
+        return renderSubtableFieldsTableHtml(val, cp, side);
       }
       const keys = Object.keys(val);
       if (keys.length && keys.length <= 10) {
@@ -2718,15 +3001,26 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
             const stringified = v === undefined ? '（未定義）' : JSON.stringify(v);
             cell = escHtml(localizeJsonEnums(stringified));
           } else if (k === 'fields' && isSubtableFieldsMap(v)) {
-            cell = renderSubtableFieldsTableHtml(v);
+            cell = renderSubtableFieldsTableHtml(v, cp && isSubtableFieldsMap(cp.fields) ? cp.fields : null, side);
           } else {
             let j;
             try { j = JSON.stringify(v); } catch (e) { j = String(v); }
             cell = escHtml(localizeJsonEnums(j));
           }
-          return '<tr><th>' + escHtml(k) + '</th><td>' + cell + '</td></tr>';
+          let trCls = '';
+          if (cp && !jsonEq(val[k], cp[k])) {
+            trCls = side === 'tgt' ? ' class="kv-add"' : ' class="kv-del"';
+          }
+          return '<tr' + trCls + '><th title="' + escHtml(k) + '">' + escHtml(FIELD_SETTING_LABELS[k] || SETTING_KEY_LABELS[k] || k) + '</th><td>' + cell + '</td></tr>';
         }).join('');
-        return '<table class="sl-mini-table">' + rows + '</table>';
+        let ghostRows = '';
+        if (cp) {
+          Object.keys(cp).forEach((k) => {
+            if (keys.indexOf(k) >= 0) return;
+            ghostRows += '<tr class="kv-ghost"><th title="' + escHtml(k) + '">' + escHtml(FIELD_SETTING_LABELS[k] || SETTING_KEY_LABELS[k] || k) + '</th><td><span class="sl-empty">（設定なし）</span></td></tr>';
+          });
+        }
+        return '<table class="sl-mini-table">' + rows + ghostRows + '</table>';
       }
     }
     let j;
@@ -2815,6 +3109,24 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     fields: 'テーブル内の項目',
     referenceTable: '関連レコード一覧設定',
     lookup: 'ルックアップ設定'
+  };
+
+  // 関連レコード一覧設定 / ルックアップ設定オブジェクト内のキー → 日本語ラベル
+  // （kintone のフィールド設定ダイアログの項目名に揃える）
+  const SETTING_KEY_LABELS = {
+    condition: '表示条件（フィールドの一致）',
+    displayFields: '表示するフィールド',
+    filterCond: '絞り込み条件',
+    relatedApp: '参照するアプリ',
+    size: '一度に表示する最大件数',
+    sort: 'ソート',
+    relatedKeyField: 'コピー元のフィールド',
+    fieldMappings: 'ほかのフィールドのコピー',
+    lookupPickerFields: '選択画面に表示するフィールド',
+    field: '自アプリのフィールド',
+    relatedField: '参照するアプリのフィールド',
+    app: '参照するアプリID',
+    thumbnailSize: 'サムネイルの大きさ'
   };
 
   const FIELD_ALIGN_LABELS = Object.freeze({
@@ -2961,18 +3273,21 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         : String(value);
     }
     if (options.subtableFields) {
-      return renderSubtableFieldsTableHtml(value);
+      return renderSubtableFieldsTableHtml(value, options.counterpart, options.side);
     }
-    if (options.boolLabel) return value ? 'ON' : 'OFF';
-    if (Array.isArray(value) || (value && typeof value === 'object')) return formatFieldValueBrief(value, options.maxLen || 240);
+    if (options.boolLabel) return value ? 'オン' : 'オフ';
+    if (Array.isArray(value) || (value && typeof value === 'object')) {
+      return formatFieldValueBrief(value, { kind: options.kind, counterpart: options.counterpart, side: options.side });
+    }
     if (value === undefined || value === null || value === '') return '（なし）';
     return escHtml(String(value));
   }
 
-  function renderFieldToggleRow(label, checked) {
-    return '<div class="kf-toggle' + (checked ? ' is-on' : '') + '">' +
+  function renderFieldToggleRow(label, checked, changed) {
+    return '<div class="kf-toggle' + (checked ? ' is-on' : '') + (changed ? ' kf-toggle--diff' : '') + '">' +
       '<span class="kf-toggle-box" aria-hidden="true"></span>' +
       '<span class="kf-toggle-label">' + escHtml(label) + '</span>' +
+      (changed ? '<span class="kf-diff-chip">差分</span>' : '') +
     '</div>';
   }
 
@@ -2980,8 +3295,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const valueCls = 'kf-value'
       + (options.textarea ? ' kf-value--textarea' : '')
       + ((options.html || options.subtableFields) ? ' kf-value--rich' : '');
-    return '<section class="kf-row' + (options.full ? ' kf-row--full' : '') + '">' +
-      '<div class="kf-label">' + escHtml(label) + (options.required ? ' <span class="kf-required">*</span>' : '') + '</div>' +
+    return '<section class="kf-row' + (options.full ? ' kf-row--full' : '') + (options.diff ? ' kf-row--diff' : '') + '">' +
+      '<div class="kf-label">' + escHtml(label) + (options.required ? ' <span class="kf-required">*</span>' : '') + (options.diff ? ' <span class="kf-diff-chip">差分</span>' : '') + '</div>' +
       '<div class="' + valueCls + '">' + formatFieldSettingValue(value, options) + '</div>' +
     '</section>';
   }
@@ -2993,136 +3308,147 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     '</div>';
   }
 
-  function renderFieldUnitBlock(field) {
+  function renderFieldUnitBlock(field, other) {
     return renderFieldBlock(
       '単位記号',
       '<div class="kf-extra-grid">' +
-        renderFieldFormRow('記号', field.unit || '') +
-        renderFieldFormRow('位置', fieldUnitPositionDisplayLabel(field.unitPosition)) +
+        renderFieldFormRow('記号', field.unit || '', { diff: !!other && !jsonEq(field.unit, other.unit) }) +
+        renderFieldFormRow('位置', fieldUnitPositionDisplayLabel(field.unitPosition), { diff: !!other && !jsonEq(field.unitPosition, other.unitPosition) }) +
       '</div>'
     );
   }
 
-  function renderFieldLimitsBlock(field) {
+  function renderFieldLimitsBlock(field, other) {
     return renderFieldBlock(
       '値の制限（整数で指定）',
       '<div class="kf-extra-grid">' +
-        renderFieldFormRow('最小', field.minValue) +
-        renderFieldFormRow('最大', field.maxValue) +
+        renderFieldFormRow('最小', field.minValue, { diff: !!other && !jsonEq(field.minValue, other.minValue) }) +
+        renderFieldFormRow('最大', field.maxValue, { diff: !!other && !jsonEq(field.maxValue, other.maxValue) }) +
       '</div>'
     );
   }
 
-  function buildFieldExtraRows(field) {
+  // other（比較相手側の同フィールド定義）が渡された場合、値が異なる行へ差分フラグを立てる。
+  function buildFieldExtraRows(field, other, side) {
     const rows = [];
-    const push = (label, value, options = {}) => {
+    const changedKeys = (keys) => !!other && keys.some((k) => !jsonEq(field[k], other[k]));
+    const push = (label, value, options = {}, diffKeys) => {
       if (!hasMeaningfulFieldValue(value)) return;
+      if (diffKeys && changedKeys(diffKeys)) options = Object.assign({}, options, { diff: true });
       rows.push({ label, value, options });
     };
-    push('タイプ', fieldTypeDisplayLabel(field.type));
-    push('説明', field.description, { textarea: true, maxLen: 600 });
-    push('最小文字数', field.minLength);
-    push('最大文字数', field.maxLength);
-    push('最小値', field.minValue);
-    push('最大値', field.maxValue);
-    push('プロトコル', field.protocol);
-    if (field.digit !== undefined) push('桁区切りを表示する', field.digit, { boolLabel: true });
-    push('小数点以下の表示桁数', field.displayScale);
-    push('単位記号', field.unit);
-    if (field.unitPosition) push('単位記号の位置', fieldUnitPositionDisplayLabel(field.unitPosition));
-    if (field.align) push('並び', fieldAlignDisplayLabel(field.align));
-    if (field.format) push('表示形式', calcFormatDisplayLabel(field.format));
-    if (field.hideExpression !== undefined) push('計算式を表示しない', field.hideExpression, { boolLabel: true });
-    if (field.options) push('項目と順番', formatFieldOptionLines(field.options), { textarea: true, maxLen: 600 });
-    if (field.entities) push('選択候補', Array.isArray(field.entities) ? field.entities.join(' / ') : field.entities, { textarea: true, maxLen: 600 });
-    if (field.expression) push('計算式', field.expression, { textarea: true, maxLen: 600 });
-    if (field.lookup) push('ルックアップ設定', field.lookup, { textarea: true, maxLen: 600 });
-    if (field.referenceTable) push('関連レコード一覧設定', field.referenceTable, { textarea: true, maxLen: 600 });
-    if (field.fields) push('テーブル内の項目', field.fields, { subtableFields: true, full: true });
+    push('タイプ', fieldTypeDisplayLabel(field.type), {}, ['type']);
+    push('説明', field.description, { textarea: true, maxLen: 600 }, ['description']);
+    push('最小文字数', field.minLength, {}, ['minLength']);
+    push('最大文字数', field.maxLength, {}, ['maxLength']);
+    push('最小値', field.minValue, {}, ['minValue']);
+    push('最大値', field.maxValue, {}, ['maxValue']);
+    push('プロトコル', field.protocol, {}, ['protocol']);
+    if (field.digit !== undefined) push('桁区切りを表示する', field.digit, { boolLabel: true }, ['digit']);
+    push('小数点以下の表示桁数', field.displayScale, {}, ['displayScale']);
+    push('単位記号', field.unit, {}, ['unit']);
+    if (field.unitPosition) push('単位記号の位置', fieldUnitPositionDisplayLabel(field.unitPosition), {}, ['unitPosition']);
+    if (field.align) push('並び', fieldAlignDisplayLabel(field.align), {}, ['align']);
+    if (field.format) push('表示形式', calcFormatDisplayLabel(field.format), {}, ['format']);
+    if (field.hideExpression !== undefined) push('計算式を表示しない', field.hideExpression, { boolLabel: true }, ['hideExpression']);
+    if (field.options) push('項目と順番', formatFieldOptionLines(field.options), { textarea: true, maxLen: 600 }, ['options']);
+    if (field.entities) push('選択候補', Array.isArray(field.entities) ? field.entities.join(' / ') : field.entities, { textarea: true, maxLen: 600 }, ['entities']);
+    if (field.expression) push('計算式', field.expression, { textarea: true, maxLen: 600 }, ['expression']);
+    if (field.lookup) push('ルックアップ設定', field.lookup, { textarea: true, maxLen: 600, kind: 'lookup', counterpart: other ? other.lookup : undefined, side }, ['lookup']);
+    if (field.referenceTable) push('関連レコード一覧設定', field.referenceTable, { textarea: true, maxLen: 600, kind: 'referenceTable', counterpart: other ? other.referenceTable : undefined, side }, ['referenceTable']);
+    if (field.fields) push('テーブル内の項目', field.fields, { subtableFields: true, full: true, counterpart: other ? other.fields : undefined, side }, ['fields']);
     if (field.__parentTableCode) push('テーブル', field.__parentTableLabel || field.__parentTableCode);
     return rows;
   }
 
-  function renderGenericFieldSnapshotBody(field) {
-    const extras = buildFieldExtraRows(field);
+  function renderGenericFieldSnapshotBody(field, other, side) {
+    const dif = (keys) => !!other && keys.some((k) => !jsonEq(field[k], other[k]));
+    const extras = buildFieldExtraRows(field, other, side);
     const toggleRows = [
-      renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel),
-      renderFieldToggleRow('必須項目にする', !!field.required)
+      renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel, !!other && !!field.noLabel !== !!other.noLabel),
+      renderFieldToggleRow('必須項目にする', !!field.required, !!other && !!field.required !== !!other.required)
     ];
-    if (field.unique !== undefined) toggleRows.push(renderFieldToggleRow('重複禁止にする', !!field.unique));
-    if (field.defaultNowValue !== undefined) toggleRows.push(renderFieldToggleRow('現在日時を初期値にする', !!field.defaultNowValue));
-    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true }) +
+    if (field.unique !== undefined) toggleRows.push(renderFieldToggleRow('重複禁止にする', !!field.unique, !!other && !!field.unique !== !!other.unique));
+    if (field.defaultNowValue !== undefined) toggleRows.push(renderFieldToggleRow('現在日時を初期値にする', !!field.defaultNowValue, !!other && !!field.defaultNowValue !== !!other.defaultNowValue));
+    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true, diff: dif(['label', 'name']) }) +
       '<div class="kf-toggle-list">' + toggleRows.join('') + '</div>' +
-      renderFieldFormRow('初期値', field.defaultNowValue ? '現在日時を使用' : field.defaultValue, { textarea: true, full: true, maxLen: 600 }) +
-      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true }) +
+      renderFieldFormRow('初期値', field.defaultNowValue ? '現在日時を使用' : field.defaultValue, { textarea: true, full: true, maxLen: 600, diff: dif(['defaultValue', 'defaultNowValue']) }) +
+      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true, diff: dif(['code']) }) +
       (extras.length ? '<div class="kf-extra"><div class="kf-extra-title">その他の設定</div><div class="kf-extra-grid">' + extras.map((item) => renderFieldFormRow(item.label, item.value, item.options)).join('') + '</div></div>' : '');
   }
 
-  function renderRadioFieldSnapshotBody(field) {
-    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true }) +
+  function renderRadioFieldSnapshotBody(field, other, side) {
+    const dif = (keys) => !!other && keys.some((k) => !jsonEq(field[k], other[k]));
+    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true, diff: dif(['label', 'name']) }) +
       '<div class="kf-toggle-list">' +
-        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel) +
+        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel, !!other && !!field.noLabel !== !!other.noLabel) +
       '</div>' +
-      renderFieldFormRow('項目と順番', formatFieldOptionLines(field.options), { textarea: true, full: true, maxLen: 1200 }) +
-      renderFieldFormRow('並び', fieldAlignDisplayLabel(field.align), { full: true }) +
-      renderFieldFormRow('初期値', field.defaultValue, { full: true }) +
-      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true });
+      renderFieldFormRow('項目と順番', formatFieldOptionLines(field.options), { textarea: true, full: true, maxLen: 1200, diff: dif(['options']) }) +
+      renderFieldFormRow('並び', fieldAlignDisplayLabel(field.align), { full: true, diff: dif(['align']) }) +
+      renderFieldFormRow('初期値', field.defaultValue, { full: true, diff: dif(['defaultValue']) }) +
+      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true, diff: dif(['code']) });
   }
 
-  function renderNumberFieldSnapshotBody(field) {
-    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true }) +
+  function renderNumberFieldSnapshotBody(field, other, side) {
+    const dif = (keys) => !!other && keys.some((k) => !jsonEq(field[k], other[k]));
+    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true, diff: dif(['label', 'name']) }) +
       '<div class="kf-toggle-list">' +
-        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel) +
-        renderFieldToggleRow('桁区切りを表示する', !!field.digit) +
-        renderFieldToggleRow('必須項目にする', !!field.required) +
-        renderFieldToggleRow('値の重複を禁止する', !!field.unique) +
+        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel, !!other && !!field.noLabel !== !!other.noLabel) +
+        renderFieldToggleRow('桁区切りを表示する', !!field.digit, !!other && !!field.digit !== !!other.digit) +
+        renderFieldToggleRow('必須項目にする', !!field.required, !!other && !!field.required !== !!other.required) +
+        renderFieldToggleRow('値の重複を禁止する', !!field.unique, !!other && !!field.unique !== !!other.unique) +
       '</div>' +
-      renderFieldLimitsBlock(field) +
-      renderFieldFormRow('初期値', field.defaultValue, { full: true }) +
-      renderFieldFormRow('小数点以下の表示桁数', field.displayScale, { full: true }) +
-      renderFieldUnitBlock(field) +
-      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true });
+      renderFieldLimitsBlock(field, other) +
+      renderFieldFormRow('初期値', field.defaultValue, { full: true, diff: dif(['defaultValue']) }) +
+      renderFieldFormRow('小数点以下の表示桁数', field.displayScale, { full: true, diff: dif(['displayScale']) }) +
+      renderFieldUnitBlock(field, other) +
+      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true, diff: dif(['code']) });
   }
 
-  function renderCalcFieldSnapshotBody(field) {
-    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true }) +
+  function renderCalcFieldSnapshotBody(field, other, side) {
+    const dif = (keys) => !!other && keys.some((k) => !jsonEq(field[k], other[k]));
+    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true, diff: dif(['label', 'name']) }) +
       '<div class="kf-toggle-list">' +
-        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel) +
+        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel, !!other && !!field.noLabel !== !!other.noLabel) +
       '</div>' +
-      renderFieldFormRow('計算式', field.expression, { required: true, textarea: true, full: true, maxLen: 1200 }) +
+      renderFieldFormRow('計算式', field.expression, { required: true, textarea: true, full: true, maxLen: 1200, diff: dif(['expression']) }) +
       '<div class="kf-toggle-list">' +
-        renderFieldToggleRow('計算式を表示しない', !!field.hideExpression) +
+        renderFieldToggleRow('計算式を表示しない', !!field.hideExpression, !!other && !!field.hideExpression !== !!other.hideExpression) +
       '</div>' +
-      renderFieldFormRow('表示形式', calcFormatDisplayLabel(field.format), { full: true }) +
-      renderFieldFormRow('小数点以下の表示桁数', field.displayScale, { full: true }) +
-      renderFieldUnitBlock(field) +
-      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true });
+      renderFieldFormRow('表示形式', calcFormatDisplayLabel(field.format), { full: true, diff: dif(['format']) }) +
+      renderFieldFormRow('小数点以下の表示桁数', field.displayScale, { full: true, diff: dif(['displayScale']) }) +
+      renderFieldUnitBlock(field, other) +
+      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true, diff: dif(['code']) });
   }
 
-  function renderSubtableFieldSnapshotBody(field) {
-    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true }) +
+  function renderSubtableFieldSnapshotBody(field, other, side) {
+    const dif = (keys) => !!other && keys.some((k) => !jsonEq(field[k], other[k]));
+    return renderFieldFormRow('フィールド名', field.label || field.name || '（未設定）', { required: true, diff: dif(['label', 'name']) }) +
       '<div class="kf-toggle-list">' +
-        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel) +
+        renderFieldToggleRow('フィールド名を表示しない', !!field.noLabel, !!other && !!field.noLabel !== !!other.noLabel) +
       '</div>' +
-      renderFieldFormRow('テーブル内の項目', field.fields, { subtableFields: true, full: true }) +
-      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true });
+      renderFieldFormRow('テーブル内の項目', field.fields, { subtableFields: true, full: true, counterpart: other ? other.fields : undefined, side, diff: dif(['fields']) }) +
+      renderFieldFormRow('フィールドコード', field.code || '-', { required: true, full: true, diff: dif(['code']) });
   }
 
-  function renderFieldSnapshotCard(sideLabel, field, tone) {
+  function renderFieldSnapshotCard(sideLabel, field, tone, otherField) {
     if (!field) {
       return '<section class="fd-snapshot fd-snapshot--' + tone + '"><div class="fd-pane-label">' + escHtml(sideLabel) + '</div><div class="fd-empty">この側にはフィールドがありません。</div></section>';
     }
+    // フィールド型が異なる場合は行単位の対応が取れないため、型の差分のみ強調する
+    const other = otherField && String(otherField.type || '') === String(field.type || '') ? otherField : null;
+    const typeChanged = !!otherField && String(otherField.type || '') !== String(field.type || '');
     const typeLabel = fieldTypeDisplayLabel(field.type);
     const bodyHtml =
-      field.type === 'RADIO_BUTTON' ? renderRadioFieldSnapshotBody(field)
-      : field.type === 'NUMBER' ? renderNumberFieldSnapshotBody(field)
-      : field.type === 'CALC' ? renderCalcFieldSnapshotBody(field)
-      : field.type === 'SUBTABLE' ? renderSubtableFieldSnapshotBody(field)
-      : renderGenericFieldSnapshotBody(field);
+      field.type === 'RADIO_BUTTON' ? renderRadioFieldSnapshotBody(field, other, tone)
+      : field.type === 'NUMBER' ? renderNumberFieldSnapshotBody(field, other, tone)
+      : field.type === 'CALC' ? renderCalcFieldSnapshotBody(field, other, tone)
+      : field.type === 'SUBTABLE' ? renderSubtableFieldSnapshotBody(field, other, tone)
+      : renderGenericFieldSnapshotBody(field, other, tone);
     return '<section class="fd-snapshot fd-snapshot--' + tone + '">' +
       '<div class="kf-modal">' +
         '<div class="kf-modal-head">' +
-          '<div class="kf-modal-title"><span class="kf-type-icon" aria-hidden="true"></span><strong>' + escHtml(typeLabel) + ' の設定</strong></div>' +
+          '<div class="kf-modal-title"><span class="kf-type-icon" aria-hidden="true"></span><strong>' + escHtml(typeLabel) + ' の設定</strong>' + (typeChanged ? '<span class="kf-diff-chip" title="比較相手とフィールド型が異なります">型が差分</span>' : '') + '</div>' +
           '<span class="kf-side kf-side--' + tone + '">' + escHtml(sideLabel) + '</span>' +
         '</div>' +
         '<div class="kf-modal-body">' +
@@ -3478,15 +3804,15 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       '<div class="fd-head">' +
         '<div>' +
           '<div class="fd-title">' + escHtml(group.label) + '</div>' +
-          '<div class="fd-sub">code: <code>' + escHtml(group.code) + '</code> / type: ' + escHtml(group.type || '-') + (group.parentTableCode ? ' / テーブル: ' + escHtml(group.parentTableLabel || group.parentTableCode) : '') + '</div>' +
+          '<div class="fd-sub">フィールドコード: <code>' + escHtml(group.code) + '</code> / 型: ' + escHtml(fieldTypeDisplayLabel(group.type)) + (group.parentTableCode ? ' / テーブル: ' + escHtml(group.parentTableLabel || group.parentTableCode) : '') + '</div>' +
         '</div>' +
         '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' +
       '</div>' +
       '<div class="fc-chip-row">' + renderFieldSummaryChips(group) + '</div>' +
       renderFieldChangeSummary(entries) +
       '<div class="fd-snapshots">' +
-        renderFieldSnapshotCard('比較元', group.sourceField, 'src') +
-        renderFieldSnapshotCard('比較先', group.targetField, 'tgt') +
+        renderFieldSnapshotCard('比較元', group.sourceField, 'src', group.targetField) +
+        renderFieldSnapshotCard('比較先', group.targetField, 'tgt', group.sourceField) +
       '</div>' +
       (entries.length ? (
         '<div class="fd-section">' +
@@ -3537,7 +3863,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       return;
     }
     title.textContent = group.label || group.code || 'フィールド詳細';
-    sub.textContent = 'code: ' + (group.code || '-') + ' / type: ' + (group.type || '-') + (group.parentTableCode ? ' / テーブル: ' + (group.parentTableLabel || group.parentTableCode) : '');
+    sub.textContent = 'フィールドコード: ' + (group.code || '-') + ' / 型: ' + fieldTypeDisplayLabel(group.type) + (group.parentTableCode ? ' / テーブル: ' + (group.parentTableLabel || group.parentTableCode) : '');
     body.innerHTML = renderFieldDetailPanel(activeFieldCode, model, options);
     modal.hidden = false;
     document.body.classList.add('has-modal-open');
@@ -3604,7 +3930,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
                 '<span class="fc-code">' + escHtml(group.code) + '</span>' +
               '</div>' +
               '<div class="fc-title">' + escHtml(group.label) + '</div>' +
-              '<div class="fc-sub">' + escHtml(group.type || '-') + (group.parentTableCode ? ' / サブテーブル: ' + escHtml(group.parentTableLabel || group.parentTableCode) : '') + '</div>' +
+              '<div class="fc-sub">' + escHtml(fieldTypeDisplayLabel(group.type)) + (group.parentTableCode ? ' / テーブル: ' + escHtml(group.parentTableLabel || group.parentTableCode) : '') + '</div>' +
               '<div class="fc-chip-row">' + renderFieldSummaryChips(group) + '</div>' +
               '<button type="button" class="btn' + (isActive ? ' primary' : '') + '" data-field-select="' + escHtml(group.code) + '">' + escHtml(group.diffCount ? '設定差分を開く' : '設定を開く') + '</button>' +
             '</article>';
@@ -3774,9 +4100,12 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         html += '</div>';
         html += '<div class="sl-path sl-path--sub" title="' + escHtml(row.path || '-') + '">' + escHtml(row.path || '-') + '</div>';
         html += renderRowMeta(row);
+        // referenceTable / lookup のパスなら日本語キー + 差分色付きのキー値表で比較する
+        const kvKind = /\\.referenceTable(\\.|$)/.test(row.path || '') ? 'referenceTable'
+          : (/\\.lookup(\\.|$)/.test(row.path || '') ? 'lookup' : '');
         html += '<div class="sl-pair">';
-        html += '<div class="sl-pair-col"><div class="sl-pane-h">比較元</div><div class="sl-pane sl-pane--src sl-pane--kv">' + formatFieldValueBrief(row.left) + '</div></div>';
-        html += '<div class="sl-pair-col"><div class="sl-pane-h">比較先</div><div class="sl-pane sl-pane--tgt sl-pane--kv">' + formatFieldValueBrief(row.right) + '</div></div>';
+        html += '<div class="sl-pair-col"><div class="sl-pane-h">比較元</div><div class="sl-pane sl-pane--src sl-pane--kv">' + formatFieldValueBrief(row.left, { kind: kvKind, counterpart: row.right, side: 'src' }) + '</div></div>';
+        html += '<div class="sl-pair-col"><div class="sl-pane-h">比較先</div><div class="sl-pane sl-pane--tgt sl-pane--kv">' + formatFieldValueBrief(row.right, { kind: kvKind, counterpart: row.left, side: 'tgt' }) + '</div></div>';
         html += '</div></article>';
       });
       html += '</div></section>';
@@ -3851,47 +4180,18 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return row.type === typeFilterValue;
   }
 
-  function rowSeverityKey(row) {
-    const sev = String(row.severity || 'low').toLowerCase();
-    return sev === 'high' || sev === 'medium' ? sev : 'low';
-  }
-
-  function severityFilterMatches(row) {
-    if (severityFilterValue === 'all') return true;
-    if (row.type === 'same') return false;
-    return rowSeverityKey(row) === severityFilterValue;
-  }
-
-  function summarizeSeverityCounts(rows) {
-    const out = { high: 0, medium: 0, low: 0 };
-    rows.forEach((row) => {
-      if (row.type === 'same') return;
-      out[rowSeverityKey(row)] += 1;
-    });
-    return out;
-  }
-
   function sortRowsForDisplay(rows) {
     if (diffSortValue === 'standard') return rows;
-    const sevOrder = { high: 0, medium: 1, low: 2 };
     const typeOrder = { removed: 0, added: 1, changed: 2, same: 3 };
     return rows.slice().sort((a, b) => {
-      if (diffSortValue === 'severity') {
-        const d = (sevOrder[rowSeverityKey(a)] - sevOrder[rowSeverityKey(b)])
-          || ((typeOrder[a.type] != null ? typeOrder[a.type] : 9) - (typeOrder[b.type] != null ? typeOrder[b.type] : 9));
-        if (d) return d;
-      } else {
-        const d = ((typeOrder[a.type] != null ? typeOrder[a.type] : 9) - (typeOrder[b.type] != null ? typeOrder[b.type] : 9))
-          || (sevOrder[rowSeverityKey(a)] - sevOrder[rowSeverityKey(b)]);
-        if (d) return d;
-      }
+      const d = ((typeOrder[a.type] != null ? typeOrder[a.type] : 9) - (typeOrder[b.type] != null ? typeOrder[b.type] : 9));
+      if (d) return d;
       return String(a.path || '').localeCompare(String(b.path || ''));
     });
   }
 
   function buildToolbarHtml(rows, hideSame, shownCount) {
     const s = summarizeGroupRows(rows);
-    const sev = summarizeSeverityCounts(rows);
     const chips = [
       { key: 'all', label: '全て', count: rows.length },
       { key: 'added', label: '追加', count: s.added },
@@ -3901,15 +4201,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     if (s.moved) chips.push({ key: 'moved', label: '移動', count: s.moved });
     if (!hideSame) chips.push({ key: 'same', label: '同一', count: s.same });
     if (typeFilterValue !== 'all' && !chips.some((c) => c.key === typeFilterValue)) typeFilterValue = 'all';
-    const sevChips = [
-      { key: 'all', label: '全重要度', count: s.diffCount },
-      { key: 'high', label: '高', count: sev.high },
-      { key: 'medium', label: '中', count: sev.medium },
-      { key: 'low', label: '低', count: sev.low }
-    ];
     const sortOptions = [
       ['standard', '標準（定義順）'],
-      ['severity', '重要度が高い順'],
       ['type', '種別順（削除→追加→変更）']
     ];
     return '<div class="diff-toolbar" role="toolbar" aria-label="差分一覧の絞り込みと並び替え">'
@@ -3919,14 +4212,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         '<button type="button" class="tchip tchip--' + c.key + (typeFilterValue === c.key ? ' is-active' : '') + '" data-type-chip="' + c.key + '" aria-pressed="' + (typeFilterValue === c.key ? 'true' : 'false') + '">'
         + c.label + '<b>' + c.count + '</b></button>'
       ).join('')
-      + '</div>'
-      + '<div class="diff-toolbar-row">'
-      + '<span class="diff-toolbar-label">重要度</span>'
-      + sevChips.map((c) =>
-        '<button type="button" class="tchip tchip--sev-' + c.key + (severityFilterValue === c.key ? ' is-active' : '') + '" data-severity-chip="' + c.key + '" aria-pressed="' + (severityFilterValue === c.key ? 'true' : 'false') + '">'
-        + c.label + '<b>' + c.count + '</b></button>'
-      ).join('')
       + '<span class="diff-toolbar-spacer"></span>'
+      + '<button type="button" class="tchip" data-diff-nav="prev" title="前の差分へ移動（k キー）">前へ</button>'
+      + '<button type="button" class="tchip" data-diff-nav="next" title="次の差分へ移動（j キー）">次へ</button>'
       + '<label class="diff-sort">並び順 <select id="diffSortSel">'
       + sortOptions.map((o) => '<option value="' + o[0] + '"' + (diffSortValue === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('')
       + '</select></label>'
@@ -3965,7 +4253,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   function renderDiffRowHtml(row, useCharDiff) {
     const typeClass = row.type === 'same' ? 'same' : (row.type === 'added' ? 'added' : (row.type === 'removed' ? 'removed' : 'changed'));
     const key = rowStateKey(row);
-    const hasDiffKids = !!(row.__childRows && row.__childRows.some((kid) => kid.type !== 'same'));
+    rowLookup.set(key, row);
+    const hasDiffKids = !isRawJsonMode() && !!(row.__childRows && row.__childRows.some((kid) => kid.type !== 'same'));
     let valueHtml = '';
     if (hasDiffKids) {
       valueHtml = renderAggChildrenHtml(row, useCharDiff);
@@ -3977,10 +4266,21 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     } else {
       valueHtml = renderValueArea(row, useCharDiff);
     }
-    return '<article class="drow drow--' + typeClass + '">'
+    const reviewed = reviewedKeys.has(key);
+    const actionsHtml = '<span class="drow-actions">'
+      + '<button type="button" class="row-act" data-copy-path="' + escHtml(row.path || '') + '" title="設定パスをコピー">パス</button>'
+      + '<button type="button" class="row-act" data-copy-row="' + escHtml(key) + '" title="比較元・比較先の値をJSONでコピー">コピー</button>'
+      + (row.type !== 'same'
+        ? '<label class="row-reviewed' + (reviewed ? ' is-on' : '') + '" title="確認済みにする（サイドバーの「確認済みを隠す」と連動）">'
+          + '<input type="checkbox" data-review-toggle="' + escHtml(key) + '"' + (reviewed ? ' checked' : '') + '> 確認'
+          + '</label>'
+        : '')
+      + '</span>';
+    return '<article class="drow drow--' + typeClass + (reviewed ? ' drow--reviewed' : '') + '">'
       + '<div class="drow-head">'
       +   '<span class="type-chip type-chip--' + typeClass + '">' + escHtml(diffTypeLabel(row.type, row.moved)) + '</span>'
       +   '<div class="drow-title" title="' + escHtml(row.path || '-') + '">' + renderPathCell(row) + '</div>'
+      +   actionsHtml
       + '</div>'
       + (valueHtml ? '<div class="drow-val">' + valueHtml + '</div>' : '')
       + '</article>';
@@ -3989,24 +4289,29 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   function render() {
     const hideSame = !!(document.getElementById('hideSame')).checked;
     const useCharDiff = !!(document.getElementById('charDiff')).checked;
+    const hideReviewed = !!(document.getElementById('hideReviewed') || {}).checked;
     const keyword = String((document.getElementById('search')).value || '').trim().toLowerCase();
     const filteredAll = getDetailFilteredRows().filter((row) => {
       if (hideSame && row.type === 'same') return false;
+      if (hideReviewed && row.type !== 'same' && reviewedKeys.has(rowStateKey(row))) return false;
       return rowMatches(row, keyword);
     });
     updateStats(filteredAll);
+    syncReviewedStat();
     if (getActiveReportTab() !== 'diff') return;
 
     const nav = document.getElementById('nav');
     const main = document.getElementById('main');
     nav.innerHTML = '';
+    rowLookup.clear();
+    diffFocusIndex = -1;
 
     if (!filteredAll.length) {
       main.innerHTML = '<div class="no-diff">表示対象の差分がありません。検索・詳細オプションの絞り込みを見直してください。</div>';
       return;
     }
 
-    const filtered = filteredAll.filter(typeFilterMatches).filter(severityFilterMatches);
+    const filtered = filteredAll.filter(typeFilterMatches);
     let html = buildToolbarHtml(filteredAll, hideSame, filtered.length);
 
     if (!filtered.length) {
@@ -4019,7 +4324,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     groups.forEach((g, idx) => {
       const secId = 'sec_' + idx;
       const collapsedNow = collapsed.has(g.key);
-      const displayRows = sortRowsForDisplay(g.key === FIELD_SECTION_KEY ? collapseFieldRowsForDiffTable(g.rows) : g.rows);
+      const displayRows = sortRowsForDisplay(!isRawJsonMode() && g.key === FIELD_SECTION_KEY ? collapseFieldRowsForDiffTable(g.rows) : g.rows);
       const groupSummary = summarizeGroupRows(displayRows);
       const navItem = document.createElement('div');
       navItem.className = 'nav-item';
@@ -4070,11 +4375,31 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       render();
       return;
     }
-    const sevChip = e.target.closest('[data-severity-chip]');
-    if (sevChip) {
-      const next = sevChip.getAttribute('data-severity-chip') || 'all';
-      severityFilterValue = severityFilterValue === next ? 'all' : next;
-      render();
+    const navBtn = e.target.closest('[data-diff-nav]');
+    if (navBtn) {
+      moveDiffFocus(navBtn.getAttribute('data-diff-nav') === 'prev' ? -1 : 1);
+      return;
+    }
+    const copyPathBtn = e.target.closest('[data-copy-path]');
+    if (copyPathBtn) {
+      copyTextToClipboard(copyPathBtn.getAttribute('data-copy-path') || '', 'パスをコピーしました');
+      return;
+    }
+    const copyValBtn = e.target.closest('[data-copy-row]');
+    if (copyValBtn) {
+      const row = rowLookup.get(copyValBtn.getAttribute('data-copy-row') || '');
+      if (row) {
+        const payload = {
+          セクション: SECTION_LABEL_MAP[row.sectionKey || ''] || row.section || row.sectionKey || '',
+          種別: diffTypeLabel(row.type, row.moved),
+          パス: row.path || '',
+          比較元: row.left === undefined ? null : row.left,
+          比較先: row.right === undefined ? null : row.right
+        };
+        let text;
+        try { text = JSON.stringify(payload, null, 2); } catch (err) { text = String(row.path || ''); }
+        copyTextToClipboard(text, '差分の値をコピーしました');
+      }
       return;
     }
     const fold = e.target.closest('[data-same-fold]');
@@ -4132,10 +4457,14 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   document.getElementById('hideSame').onchange = onReportFilterChange;
   document.getElementById('charDiff').onchange = onReportFilterChange;
   document.getElementById('hideUnchangedLines').onchange = onReportFilterChange;
+  document.getElementById('rawJson').onchange = onReportFilterChange;
+  document.getElementById('hideReviewed').onchange = onReportFilterChange;
   document.getElementById('search').oninput = onReportFilterChange;
   document.getElementById('themeBtn').onclick = toggleTheme;
   document.getElementById('collapseBtn').onclick = collapseAll;
   document.getElementById('expandBtn').onclick = expandAll;
+  document.getElementById('csvBtn').onclick = exportVisibleRowsAsCsv;
+  document.getElementById('mdBtn').onclick = copyVisibleRowsAsMarkdown;
   const extraIgnoreInput = document.getElementById('extraIgnoreKeys');
   if (extraIgnoreInput) {
     extraIgnoreInput.addEventListener('input', () => {
@@ -4155,6 +4484,23 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     if (e.target && e.target.id === 'diffSortSel') {
       diffSortValue = e.target.value || 'standard';
       render();
+      return;
+    }
+    const reviewToggle = e.target && e.target.closest ? e.target.closest('[data-review-toggle]') : null;
+    if (reviewToggle) {
+      const key = reviewToggle.getAttribute('data-review-toggle') || '';
+      if (reviewToggle.checked) reviewedKeys.add(key);
+      else reviewedKeys.delete(key);
+      const hideReviewed = !!(document.getElementById('hideReviewed') || {}).checked;
+      if (hideReviewed) {
+        render();
+      } else {
+        const article = reviewToggle.closest('.drow');
+        if (article) article.classList.toggle('drow--reviewed', reviewToggle.checked);
+        const label = reviewToggle.closest('.row-reviewed');
+        if (label) label.classList.toggle('is-on', reviewToggle.checked);
+        syncReviewedStat();
+      }
     }
   });
   document.getElementById('main').addEventListener('click', handleMainClick);
@@ -4173,6 +4519,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
       document.getElementById('search').focus();
+    }
+    const inFormField = e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName || '');
+    if (!inFormField && !e.ctrlKey && !e.metaKey && !e.altKey && getActiveReportTab() === 'diff') {
+      if (e.key === 'j') { e.preventDefault(); moveDiffFocus(1); return; }
+      if (e.key === 'k') { e.preventDefault(); moveDiffFocus(-1); return; }
     }
     if (e.key === 'Escape') {
       if (detailModalOpen) {
@@ -4334,9 +4685,6 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .tchip--changed b{color:var(--pill-chg)}
     .tchip--moved b{color:var(--pill-move)}
     .tchip--same b{color:var(--pill-same)}
-    .tchip--sev-high b{color:var(--pill-del)}
-    .tchip--sev-medium b{color:var(--pill-chg)}
-    .tchip--sev-low b{color:var(--pill-same)}
     .tchip.is-active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-strong)}
     .tchip.is-active b{color:var(--accent-strong)}
     .sec{border:1px solid var(--border);border-radius:16px;background:var(--card);margin-bottom:16px;box-shadow:var(--shadow)}
@@ -4363,8 +4711,20 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .drow--changed{border-left-color:#ca8a04}
     .drow--same{border-left-color:transparent;background:var(--card-soft)}
     .drow--same .path-main{font-weight:600;color:var(--muted)}
+    .drow--reviewed{opacity:.62}
+    .drow--focus{outline:2px solid var(--accent);outline-offset:-2px;border-radius:4px}
     .drow-head{display:flex;gap:10px;align-items:flex-start}
     .drow-title{flex:1;min-width:0}
+    .drow-actions{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
+    .row-act{border:1px solid var(--border);background:var(--card-soft);color:var(--muted);border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer;transition:color .15s,border-color .15s}
+    .row-act:hover{color:var(--fg);border-color:var(--muted)}
+    .row-act:focus-visible{outline:none;box-shadow:var(--focus)}
+    .row-reviewed{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap}
+    .row-reviewed input{width:12px;height:12px;accent-color:var(--accent);cursor:pointer;margin:0}
+    .row-reviewed.is-on{background:#ecfdf5;color:#15803d;border-color:#86efac}
+    body.dark .row-reviewed.is-on{background:#052e16;color:#86efac;border-color:#166534}
+    .report-toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,12px);z-index:120;padding:10px 18px;border-radius:999px;background:var(--fg);color:var(--bg);font-size:12px;font-weight:700;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}
+    .report-toast.is-visible{opacity:.96;transform:translate(-50%,0)}
     .drow-val{margin-top:8px;padding-left:2px}
     .drow-empty{padding:20px;font-size:12px;color:var(--muted);text-align:center}
     .val-inline{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-size:12px;line-height:1.6}
@@ -4430,13 +4790,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .meta-tag.reason{background:#fff7ed;color:#9a3412;border-color:#fdba74}
     .meta-tag.rename{background:#ecfdf5;color:#15803d;border-color:#86efac}
     .meta-tag.impact{background:#eff6ff;color:#1d4ed8;border-color:#93c5fd}
-    .meta-tag.sev-high{background:#fee2e2;color:#b91c1c;border-color:#fca5a5;font-weight:800}
-    .meta-tag.sev-medium{background:#fffbeb;color:#b45309;border-color:#fde68a;font-weight:800}
     body.dark .meta-tag.reason{background:#431407;color:#fdba74;border-color:#9a3412}
     body.dark .meta-tag.rename{background:#052e16;color:#86efac;border-color:#166534}
     body.dark .meta-tag.impact{background:#172554;color:#93c5fd;border-color:#1d4ed8}
-    body.dark .meta-tag.sev-high{background:#450a0a;color:#fca5a5;border-color:#991b1b}
-    body.dark .meta-tag.sev-medium{background:#422006;color:#fde68a;border-color:#92400e}
     .meta-line{font-size:10px;line-height:1.5;color:var(--muted)}
     .meta-line strong{color:var(--fg)}
     .scroll{max-height:300px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
@@ -4509,6 +4865,20 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .sl-mini-table{width:100%;border-collapse:collapse;font-size:10px;margin:0}
     .sl-mini-table th,.sl-mini-table td{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}
     .sl-mini-table th{width:38%;font-weight:700;color:var(--muted);background:var(--card-soft)}
+    tr.kv-del>td{background:var(--del);color:var(--del-fg)}
+    tr.kv-add>td{background:var(--add);color:var(--add-fg)}
+    tr.kv-chg>td{background:#fef3c7;color:#92400e}
+    body.dark tr.kv-chg>td{background:#78350f;color:#fde68a}
+    tr.kv-del>th,tr.kv-add>th,tr.kv-chg>th{box-shadow:inset 3px 0 0 #ca8a04}
+    tr.kv-ghost>td,tr.kv-ghost>th{background:var(--pad);color:var(--muted);font-style:italic}
+    .sl-mini-table mark.cdel,.st-fields mark.cdel{background:var(--mark-del);color:var(--del-fg);border-radius:2px;padding:0 1px}
+    .sl-mini-table mark.cadd,.st-fields mark.cadd{background:var(--mark-add);color:var(--add-fg);border-radius:2px;padding:0 1px}
+    .kf-row--diff .kf-value{border-color:#f59e0b;box-shadow:inset 3px 0 0 #f59e0b,inset 0 1px 2px rgba(15,23,42,.04);background:#fffbeb}
+    body.dark .kf-row--diff .kf-value{background:#2a2008;border-color:#b45309}
+    .kf-diff-chip{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:9px;font-weight:800;vertical-align:middle;white-space:nowrap}
+    body.dark .kf-diff-chip{background:#78350f;color:#fde68a;border-color:#b45309}
+    .kf-toggle--diff .kf-toggle-label{background:#fef3c7;color:#92400e;border-radius:6px;padding:1px 6px}
+    body.dark .kf-toggle--diff .kf-toggle-label{background:#78350f;color:#fde68a}
     .st-wrap{width:100%;overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card)}
     .st-fields{width:100%;border-collapse:collapse;font-size:11px;margin:0;table-layout:fixed}
     .st-fields thead{background:var(--card-soft)}
@@ -4701,7 +5071,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 <body>
   <aside>
     <div class="sb-head">
-      <div class="sb-kicker">Visual Diff / Settings Review</div>
+      <div class="sb-kicker">kintone アプリ設定の比較</div>
       <div class="sb-title">差分レポート</div>
       <div class="sb-meta">
         生成日時: ${esc(reportMeta.generatedAt)}<br>
@@ -4717,6 +5087,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         <div class="sb-stat"><span>変更</span><b id="stat-changed">${summary.changed}</b></div>
         <div class="sb-stat"><span>移動</span><b id="stat-moved">${summary.moved}</b></div>
         <div class="sb-stat"><span>同一</span><b id="stat-same">${summary.same}</b></div>
+        <div class="sb-stat"><span>確認済み</span><b id="stat-reviewed">0</b></div>
       </div>
       <div style="margin-top:10px;font-size:11px;color:var(--muted)">取得失敗: <b>${fetchIssues.length}</b></div>
     </div>
@@ -4724,12 +5095,16 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       <label class="chk"><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
       <label class="chk"><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
       <label class="chk"><input type="checkbox" id="hideUnchangedLines" checked> 複数行差分は変更行だけ表示</label>
+      <label class="chk" title="整形・フィールド単位の集約を行わず、設定値をそのままのJSONで左右比較します"><input type="checkbox" id="rawJson"> 素のJSONで比較表示</label>
+      <label class="chk" title="「確認」チェックを付けた差分行を一覧から隠します"><input type="checkbox" id="hideReviewed"> 確認済みを隠す</label>
       <span class="field-label">検索</span>
       <input type="text" id="search" placeholder="パス・値・理由・フィールド名で絞り込み" aria-label="差分の検索" autocomplete="off">
-      <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> でフォーカス · <kbd class="kbd">Esc</kbd> でクリア</p>
+      <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> でフォーカス · <kbd class="kbd">Esc</kbd> でクリア · <kbd class="kbd">J</kbd>/<kbd class="kbd">K</kbd> で差分間を移動</p>
       <div class="sb-btns">
         <button type="button" class="btn" id="collapseBtn">全折畳</button>
         <button type="button" class="btn" id="expandBtn">全展開</button>
+        <button type="button" class="btn" id="csvBtn" title="表示中の差分行をCSVファイルとして保存">CSV保存</button>
+        <button type="button" class="btn" id="mdBtn" title="表示中の差分行をMarkdown表としてクリップボードにコピー">MDコピー</button>
         <button type="button" class="btn" id="themeBtn" style="grid-column:span 2">ダークに切替</button>
       </div>
     </div>
@@ -4753,13 +5128,12 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   <main>
     <div class="topbar">
       <div class="topbar-main">
-        <div class="sb-kicker">Kintone Settings Diff</div>
-        <div class="topbar-title">設定差分レポート<span class="topbar-apps">アプリ ${esc(reportMeta.source.appId || '-')}<span class="topbar-arrow" aria-hidden="true">→</span>アプリ ${esc(reportMeta.target.appId || '-')}</span></div>
+        <div class="sb-kicker">kintone 設定差分</div>
+        <div class="topbar-title">設定差分レポート<span class="topbar-apps">${esc(sourceAppDisplay)}<span class="topbar-arrow" aria-hidden="true">→</span>${esc(targetAppDisplay)}</span></div>
         <div class="topbar-desc">差分 <b>${diffTotal}件</b>（追加 ${summary.added} / 削除 ${summary.removed} / 変更 ${summary.changed}）・同一 ${summary.same}件。タブで「差分一覧」「フィールド単位」を切り替えて確認できます。</div>
       </div>
       <div class="header-actions">
         <span class="header-badge">セクション ${esc(String((scopes || []).length || 0))}</span>
-        <span class="header-badge">警告 ${warning.threshold ? esc(String(warning.total)) : 'OFF'}</span>
       </div>
     </div>
 
@@ -4788,9 +5162,9 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       <div class="fd-overlay-dialog" role="dialog" aria-modal="true" aria-labelledby="fieldDetailModalTitle">
         <div class="fd-overlay-head">
           <div>
-            <div class="sb-kicker">Field Detail Popup</div>
+            <div class="sb-kicker">フィールドの設定差分</div>
             <div id="fieldDetailModalTitle" class="fd-overlay-title">フィールド詳細</div>
-            <div id="fieldDetailModalSub" class="fd-overlay-sub">code: - / type: -</div>
+            <div id="fieldDetailModalSub" class="fd-overlay-sub">フィールドコード: - / 型: -</div>
           </div>
           <div class="fd-overlay-actions">
             <span class="fd-overlay-hint">Esc で閉じる</span>
