@@ -3,13 +3,7 @@
 import { SECTION_DEFS } from '../constants.js';
 import { buildCharDiffHtml, stringifyRowValueForDiff } from '../diff/export.js';
 import { esc } from '../utils.js';
-import {
-  runExportBundleJsonStandalone,
-  runExportDiffHtmlStandalone,
-  runExportDiffJsonStandalone,
-  runExportPatchJsonStandalone
-} from '../tabs/diff-export-standalone.js';
-import { runExportDiffXlsx } from '../diff/xlsx-export.js';
+import { runExportDiffHtmlStandalone } from '../tabs/diff-export-standalone.js';
 import {
   createLitePanel,
   makeRow,
@@ -211,7 +205,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const panel: LitePanelHandle = createLitePanel({
     id: 'kus-diff-lite',
     title: '差分比較',
-    subtitle: '2 アプリの設定差分を取得し、JSON / HTML / Excel / バンドル / パッチで保存',
+    subtitle: '2 アプリの設定差分を取得し、HTML レポートで保存',
     accent: 'diff',
     badges: [{ label: 'Lite' }, { label: '出力対応' }],
     hint: 'API 取得・差分計算・出力をこのスクリプトに同梱しています。<strong>統合ツール.js は不要</strong>。',
@@ -456,29 +450,17 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 出力 ----
   const cardOut = makeCard({ title: 'ファイル出力', number: 3, soft: true });
-  cardOut.body.appendChild(makeNote('比較完了後に利用できます。レポートに生設定を含めるか、出力対象を絞るかを選べます。'));
+  cardOut.body.appendChild(makeNote('比較完了後に利用できます。差分 HTML レポートとして保存します。出力対象は絞り込みできます。'));
   const expRange = makeSelect([
     ['all', '全件'],
     ['filtered', '表示中（フィルタ適用後）']
   ], 'all');
-  const expMode = makeSelect([
-    ['diffOnly', '行データのみ'],
-    ['withCompared', '行データ + 比較セクションの設定']
-  ], 'diffOnly');
-  cardOut.body.appendChild(makeRow([expRange, expMode], { label: '範囲 / 内容' }));
+  cardOut.body.appendChild(makeRow(expRange, { label: '範囲' }));
 
   const grid = document.createElement('div');
   grid.className = 'kus-lp__btn-grid';
-  const bJson = makeButton('差分 JSON', 'sub', { icon: '↓' });
   const bHtml = makeButton('差分 HTML', 'sub', { icon: '↓' });
-  const bXlsx = makeButton('差分 Excel', 'sub', { icon: '↓' });
-  const bBundle = makeButton('バンドル JSON', 'sub', { icon: '↓' });
-  const bPatch = makeButton('パッチ JSON', 'sub', { icon: '↓' });
-  grid.appendChild(bJson);
   grid.appendChild(bHtml);
-  grid.appendChild(bXlsx);
-  grid.appendChild(bBundle);
-  grid.appendChild(bPatch);
   cardOut.body.appendChild(grid);
   // 出力カードは結果カードの前に挿入し、差分件数が多くても結果リストの下までスクロールせず
   // 出力ボタンへすぐ届くようにする
@@ -606,8 +588,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const rows = forceAll || expRange.value === 'all' ? cache.rows : filteredRows();
     return {
       ...cache,
-      rows,
-      exportContentMode: expMode.value || 'diffOnly'
+      rows
     };
   }
 
@@ -686,45 +667,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     });
   });
 
-  bJson.addEventListener('click', () => {
-    try {
-      runExportDiffJsonStandalone(exportCtx());
-      panel.setStatus(`差分 JSON をダウンロードしました（${expRange.value === 'all' ? '全件' : '表示中'}）`, 'ok');
-    } catch (e: any) {
-      panel.setStatus(`エラー: ${e?.message || String(e)}`, 'err');
-    }
-  });
   bHtml.addEventListener('click', () => {
     try {
       runExportDiffHtmlStandalone(exportCtx());
       panel.setStatus(`差分 HTML をダウンロードしました（${expRange.value === 'all' ? '全件' : '表示中'}）`, 'ok');
-    } catch (e: any) {
-      panel.setStatus(`エラー: ${e?.message || String(e)}`, 'err');
-    }
-  });
-  bXlsx.addEventListener('click', () => {
-    try {
-      runExportDiffXlsx(exportCtx());
-      panel.setStatus(`差分 Excel をダウンロードしました（${expRange.value === 'all' ? '全件' : '表示中'}）`, 'ok');
-    } catch (e: any) {
-      panel.setStatus(`エラー: ${e?.message || String(e)}`, 'err');
-    }
-  });
-  bBundle.addEventListener('click', () => {
-    try {
-      if (!cache) throw new Error('先に差分比較を実行してください');
-      runExportBundleJsonStandalone(cache.sourceBundle, cache.targetBundle);
-      panel.setStatus('バンドル JSON をダウンロードしました', 'ok');
-    } catch (e: any) {
-      panel.setStatus(`エラー: ${e?.message || String(e)}`, 'err');
-    }
-  });
-  bPatch.addEventListener('click', () => {
-    try {
-      if (!cache) throw new Error('先に差分比較を実行してください');
-      const rows = expRange.value === 'all' ? cache.rows : filteredRows();
-      runExportPatchJsonStandalone(rows, cache.sourceBundle, cache.targetBundle);
-      panel.setStatus(`パッチ JSON をダウンロードしました（${expRange.value === 'all' ? '全件' : '表示中'}）`, 'ok');
     } catch (e: any) {
       panel.setStatus(`エラー: ${e?.message || String(e)}`, 'err');
     }
