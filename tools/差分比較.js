@@ -3903,6 +3903,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       if (s.properties && typeof s.properties === "object" && !Array.isArray(s.properties)) return s.properties;
       return s;
     })();
+    const pickSectionsForReport = (bundle) => {
+      const out = {};
+      (Array.isArray(scopes) ? scopes : []).forEach((key) => {
+        if (bundle?.sections && bundle.sections[key] !== void 0) out[key] = deepClone(bundle.sections[key]);
+      });
+      return out;
+    };
+    const srcSectionsForReport = pickSectionsForReport(sourceBundle);
+    const tgtSectionsForReport = pickSectionsForReport(targetBundle);
     const logicScript = `
 (() => {
   const REPORT_ROWS = ${safeJsonForScript(exportRows)};
@@ -3925,6 +3934,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   const KUC_SEMVER = '${KUC_REPORT_VERSION}';
   const FIELD_PROPS_SRC = ${safeJsonForScript(srcFieldProps)};
   const FIELD_PROPS_TGT = ${safeJsonForScript(tgtFieldProps)};
+  const SOURCE_SECTIONS = ${safeJsonForScript(srcSectionsForReport)};
+  const TARGET_SECTIONS = ${safeJsonForScript(tgtSectionsForReport)};
   const LAYOUT_ROWS_SRC = ${safeJsonForScript(sourceBundle?.sections?.layoutSettings?.layout || [])};
   const LAYOUT_ROWS_TGT = ${safeJsonForScript(targetBundle?.sections?.layoutSettings?.layout || [])};
   const FLAT_FIELD_PROPS_SRC = collectFlatFieldMap(FIELD_PROPS_SRC);
@@ -3934,6 +3945,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   const reportMemory = new Map();
   // 確認済みチェック（このレポートを開いている間だけ保持）
   const reviewedKeys = new Set();
+  // 反映JSON作成用の選択状態（差分行キー → 行 / フィールドコード）
+  const selectedRows = new Map();
+  const selectedFieldCodes = new Set();
+  // フィールド単位ビューの種別絞り込み
+  let fieldStatusFilterValue = 'all';
   // 表示中の行キー → 行データ（コピー・確認チェックの参照用）
   const rowLookup = new Map();
   // j/k キーによる差分ジャンプの現在位置
@@ -3987,6 +4003,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function syncReviewedStat() {
     const el = document.getElementById('stat-reviewed');
     if (el) el.textContent = String(reviewedKeys.size);
+  }
+
+  function syncSelectedStat() {
+    const el = document.getElementById('stat-selected');
+    if (el) el.textContent = String(selectedRows.size + selectedFieldCodes.size);
   }
 
   function moveDiffFocus(delta) {
@@ -4440,6 +4461,250 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return '<div class="meta-wrap">' +
       (tags.length ? '<div class="meta-tags">' + tags.join('') + '</div>' : '') +
       '</div>';
+  }
+
+  // ---- 「JSONで比較」: フィールド単位に区切った WinMerge 風の左右比較 ----
+
+  function stripInternalFieldKeys(def) {
+    if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
+    const out = {};
+    Object.keys(def).forEach((k) => {
+      if (k === '__parentTableCode' || k === '__parentTableLabel') return;
+      out[k] = def[k];
+    });
+    return out;
+  }
+
+  function buildFieldJsonGroups(rows) {
+    const map = new Map();
+    const passthrough = [];
+    (rows || []).forEach((row) => {
+      const info = extractFieldPathInfo(row.path);
+      if (!info || !info.rootCode) {
+        passthrough.push(row);
+        return;
+      }
+      if (!map.has(info.rootCode)) map.set(info.rootCode, []);
+      map.get(info.rootCode).push(row);
+    });
+    const groups = [];
+    map.forEach((bucket, code) => {
+      let src = stripInternalFieldKeys(FIELD_PROPS_SRC[code] || null);
+      let tgt = stripInternalFieldKeys(FIELD_PROPS_TGT[code] || null);
+      if (!src && !tgt) {
+        const rootRow = bucket.find((row) => {
+          const info = extractFieldPathInfo(row.path);
+          return !!info && (info.isFieldRoot || info.isSubFieldRoot);
+        }) || bucket[0];
+        src = rootRow.left && typeof rootRow.left === 'object' ? rootRow.left : null;
+        tgt = rootRow.right && typeof rootRow.right === 'object' ? rootRow.right : null;
+      }
+      const status = src && tgt ? 'changed' : (tgt ? 'added' : 'removed');
+      const ref = tgt || src || ({});
+      groups.push({
+        code,
+        rows: bucket,
+        src,
+        tgt,
+        status,
+        label: String(ref.label || ref.name || code),
+        type: String(ref.type || '-')
+      });
+    });
+    return { groups, passthrough };
+  }
+
+  function renderFieldJsonBlockHtml(group, useCharDiff) {
+    const toneCls = group.status === 'added' ? 'added' : group.status === 'removed' ? 'removed' : 'changed';
+    const checked = selectedFieldCodes.has(group.code);
+    let body;
+    if (group.src && group.tgt) {
+      body = renderChangedDuo({ left: group.src, right: group.tgt, type: 'changed' }, useCharDiff);
+    } else {
+      const isAdd = !!group.tgt;
+      body = '<div class="val-single val-single--' + (isAdd ? 'add' : 'del') + '">'
+        + '<div class="val-single-head">' + (isAdd ? '比較先のみに存在するフィールド' : '比較元のみに存在するフィールド') + '</div>'
+        + '<div class="scroll"><pre class="blk">' + escHtml(safeText(group.tgt || group.src)) + '</pre></div>'
+        + '</div>';
+    }
+    return '<article class="fj-block fj-block--' + toneCls + '">'
+      + '<div class="fj-head">'
+      +   '<span class="type-chip type-chip--' + toneCls + '">' + escHtml(diffTypeLabel(group.status, false)) + '</span>'
+      +   '<span class="fj-title">' + escHtml(group.label) + '</span>'
+      +   '<code class="fj-code">' + escHtml(group.code) + '</code>'
+      +   '<span class="fj-type">' + escHtml(fieldTypeDisplayLabel(group.type)) + '</span>'
+      +   '<span class="fj-spacer"></span>'
+      +   '<label class="row-select' + (checked ? ' is-on' : '') + '" title="このフィールドを反映JSONの対象にする">'
+      +     '<input type="checkbox" data-select-field="' + escHtml(group.code) + '"' + (checked ? ' checked' : '') + '> 選択'
+      +   '</label>'
+      + '</div>'
+      + '<div class="fj-body">' + body + '</div>'
+      + '</article>';
+  }
+
+  // ---- 選択差分 → 反映用APIパラメータJSON ----
+  // 比較元(source)の設定値を比較先(target)アプリへ反映する方向で組み立てる。
+  // form/fields はフィールド単位の部分更新ができるため PUT/POST/DELETE に分解し、
+  // それ以外の「全体置き換え型」APIは比較元セクション全体をそのままpayloadにする。
+
+  const SECTION_REFLECT_APIS = {
+    layoutSettings: { method: 'PUT', api: '/k/v1/preview/app/form/layout.json', build: (sec) => ({ layout: (sec && sec.layout) || sec || [] }) },
+    viewSettings: { method: 'PUT', api: '/k/v1/preview/app/views.json', build: (sec) => ({ views: (sec && sec.views) || sec || ({}) }), note: 'このAPIはビュー全体を置き換えます。payloadに含まれないビューは削除されます' },
+    reportSettings: { method: 'PUT', api: '/k/v1/preview/app/reports.json', build: (sec) => ({ reports: (sec && sec.reports) || sec || ({}) }), note: 'このAPIはグラフ全体を置き換えます' },
+    processSettings: { method: 'PUT', api: '/k/v1/preview/app/status.json', build: (sec) => {
+      const p = { enable: !!(sec && sec.enable) };
+      if (sec && sec.states !== undefined) p.states = sec.states;
+      if (sec && sec.actions !== undefined) p.actions = sec.actions;
+      return p;
+    } },
+    actionSettings: { method: 'PUT', api: '/k/v1/preview/app/actions.json', build: (sec) => ({ actions: (sec && sec.actions) || sec || ({}) }) },
+    appAcl: { method: 'PUT', api: '/k/v1/preview/app/acl.json', build: (sec) => ({ rights: (sec && sec.rights) || sec || [] }) },
+    fieldAcl: { method: 'PUT', api: '/k/v1/preview/field/acl.json', build: (sec) => ({ rights: (sec && sec.rights) || sec || [] }) },
+    recordPermissions: { method: 'PUT', api: '/k/v1/preview/record/acl.json', build: (sec) => ({ rights: (sec && sec.rights) || sec || [] }) },
+    notifications: { method: 'PUT', api: '/k/v1/preview/app/notifications/general.json', build: (sec) => {
+      const p = { notifications: (sec && sec.notifications) || sec || [] };
+      if (sec && sec.notifyToCommenter !== undefined) p.notifyToCommenter = sec.notifyToCommenter;
+      return p;
+    } },
+    perRecordNotifications: { method: 'PUT', api: '/k/v1/preview/app/notifications/perRecord.json', build: (sec) => ({ notifications: (sec && sec.notifications) || sec || [] }) },
+    reminderNotifications: { method: 'PUT', api: '/k/v1/preview/app/notifications/reminder.json', build: (sec) => {
+      const p = { notifications: (sec && sec.notifications) || sec || [] };
+      if (sec && sec.timezone) p.timezone = sec.timezone;
+      return p;
+    } },
+    customizeSettings: { method: 'PUT', api: '/k/v1/preview/app/customize.json', build: (sec) => {
+      const p = {};
+      if (sec && sec.scope) p.scope = sec.scope;
+      if (sec && sec.desktop !== undefined) p.desktop = sec.desktop;
+      if (sec && sec.mobile !== undefined) p.mobile = sec.mobile;
+      return p;
+    }, note: 'FILE指定のJS/CSSは比較先環境で fileKey を再アップロードする必要があります' },
+    pluginSettings: { method: 'POST', api: '/k/v1/preview/app/plugins.json', build: (sec) => {
+      const plugins = (sec && sec.plugins) || sec || [];
+      return { ids: (Array.isArray(plugins) ? plugins : []).map((p) => p && p.id).filter(Boolean) };
+    }, note: 'プラグインの追加のみAPIで行えます（設定値の反映は各プラグイン画面で行ってください）' }
+  };
+
+  function buildAppSettingsReflectPayload(rows, sec) {
+    const payload = {};
+    (rows || []).forEach((row) => {
+      const rel = relativePathFromRow(row.path, 'appSettings');
+      const tokens = tokenizePath(rel == null ? '' : rel);
+      const key = typeof tokens[0] === 'string' ? tokens[0] : '';
+      if (key && sec && sec[key] !== undefined) payload[key] = sec[key];
+    });
+    return payload;
+  }
+
+  function buildFieldReflectRequests(fieldRows, app, requests) {
+    const codes = new Set();
+    (fieldRows || []).forEach((row) => {
+      const info = extractFieldPathInfo(row.path);
+      if (info && info.rootCode) codes.add(info.rootCode);
+    });
+    selectedFieldCodes.forEach((code) => {
+      // フィールド単位ビューで選んだテーブル内フィールドは親テーブルのコードへ丸める
+      const def = FLAT_FIELD_PROPS_SRC[code] || FLAT_FIELD_PROPS_TGT[code];
+      codes.add(def && def.__parentTableCode ? def.__parentTableCode : code);
+    });
+    if (!codes.size) return;
+    const updateProps = {};
+    const addProps = {};
+    const deleteCodes = [];
+    codes.forEach((code) => {
+      const src = FIELD_PROPS_SRC[code];
+      const tgt = FIELD_PROPS_TGT[code];
+      if (src && tgt) updateProps[code] = src;
+      else if (src) addProps[code] = src;
+      else if (tgt) deleteCodes.push(code);
+    });
+    const label = SECTION_LABEL_MAP[FIELD_SECTION_KEY] || 'フィールド設定';
+    if (Object.keys(updateProps).length) {
+      requests.push({ section: FIELD_SECTION_KEY, sectionLabel: label + '（更新）', method: 'PUT', api: '/k/v1/preview/app/form/fields.json', payload: { app: app, properties: updateProps } });
+    }
+    if (Object.keys(addProps).length) {
+      requests.push({ section: FIELD_SECTION_KEY, sectionLabel: label + '（追加）', method: 'POST', api: '/k/v1/preview/app/form/fields.json', payload: { app: app, properties: addProps } });
+    }
+    if (deleteCodes.length) {
+      requests.push({ section: FIELD_SECTION_KEY, sectionLabel: label + '（削除）', method: 'DELETE', api: '/k/v1/preview/app/form/fields.json', payload: { app: app, fields: deleteCodes }, note: '比較元に存在しないフィールドを比較先から削除します' });
+    }
+  }
+
+  function buildReflectJson() {
+    if (!selectedRows.size && !selectedFieldCodes.size) return null;
+    const app = String(REPORT_META.target.appId || '');
+    const bySection = new Map();
+    selectedRows.forEach((row) => {
+      const key = row.sectionKey || '';
+      if (!bySection.has(key)) bySection.set(key, []);
+      bySection.get(key).push(row);
+    });
+    const requests = [];
+    buildFieldReflectRequests(bySection.get(FIELD_SECTION_KEY) || [], app, requests);
+    bySection.forEach((secRows, secKey) => {
+      if (secKey === FIELD_SECTION_KEY) return;
+      const label = SECTION_LABEL_MAP[secKey] || secKey;
+      const selectedPaths = secRows.map((row) => row.path || '').filter(Boolean);
+      const srcSec = SOURCE_SECTIONS[secKey];
+      if (secKey === 'appSettings') {
+        const payload = buildAppSettingsReflectPayload(secRows, srcSec);
+        requests.push({ section: secKey, sectionLabel: label, method: 'PUT', api: '/k/v1/preview/app/settings.json', payload: Object.assign({ app: app }, payload), selectedPaths: selectedPaths });
+        return;
+      }
+      const def = SECTION_REFLECT_APIS[secKey];
+      if (!def) {
+        requests.push({ section: secKey, sectionLabel: label, method: null, api: null, note: 'このセクションを直接更新できる公開APIがないため、sourceValue を参考に手動で反映してください', sourceValue: srcSec === undefined ? null : srcSec, selectedPaths: selectedPaths });
+        return;
+      }
+      const req = { section: secKey, sectionLabel: label, method: def.method, api: def.api, payload: Object.assign({ app: app }, def.build(srcSec)), selectedPaths: selectedPaths };
+      if (def.note) req.note = def.note;
+      requests.push(req);
+    });
+    return {
+      generatedAt: new Date().toISOString(),
+      description: '選択した差分を比較先アプリへ反映するためのAPIパラメータ（比較元の設定値を使用）',
+      source: { appId: REPORT_META.source.appId || '', appName: REPORT_META.source.appName || '' },
+      target: { appId: REPORT_META.target.appId || '', appName: REPORT_META.target.appName || '' },
+      deployNote: 'preview系APIで反映した後、/k/v1/preview/app/deploy.json で運用環境へ反映してください',
+      requests: requests
+    };
+  }
+
+  function exportReflectJson(copyOnly) {
+    const payload = buildReflectJson();
+    if (!payload) {
+      showToast('反映する差分が選択されていません（行やフィールドの「選択」にチェックしてください）');
+      return;
+    }
+    const text = JSON.stringify(payload, null, 2);
+    if (copyOnly) {
+      copyTextToClipboard(text, '反映用JSONをコピーしました（' + payload.requests.length + 'リクエスト）');
+      return;
+    }
+    const stamp = String(REPORT_META.generatedAt || '').replace(/[-:TZ.]/g, '').slice(0, 14) || 'report';
+    downloadTextFile('反映用パラメータ_' + stamp + '.json', text, 'application/json');
+    showToast('反映用JSONを保存しました（' + payload.requests.length + 'リクエスト）');
+  }
+
+  // ---- 作成時に利用した比較元/比較先の設定JSON出力 ----
+
+  function exportComparedBundleJson(side) {
+    const isSource = side === 'source';
+    const meta = isSource ? REPORT_META.source : REPORT_META.target;
+    const payload = {
+      generatedAt: REPORT_META.generatedAt,
+      side: side,
+      sideLabel: isSource ? '比較元' : '比較先',
+      appId: meta.appId || '',
+      appName: meta.appName || '',
+      scopes: REPORT_META.scopes || [],
+      ignoreKeys: REPORT_META.ignoreKeys || '',
+      normalizationLabels: REPORT_META.normalizationLabels || [],
+      sections: isSource ? SOURCE_SECTIONS : TARGET_SECTIONS
+    };
+    const stamp = String(REPORT_META.generatedAt || '').replace(/[-:TZ.]/g, '').slice(0, 14) || 'report';
+    downloadTextFile((isSource ? '比較元設定_' : '比較先設定_') + (meta.appId || '-') + '_' + stamp + '.json', JSON.stringify(payload, null, 2), 'application/json');
+    showToast((isSource ? '比較元' : '比較先') + 'の設定JSONを保存しました');
   }
 
   function groupBySection(rows) {
@@ -5681,27 +5946,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         renderFieldSnapshotCard('比較元', group.sourceField, 'src', group.targetField) +
         renderFieldSnapshotCard('比較先', group.targetField, 'tgt', group.sourceField) +
       '</div>' +
-      (entries.length ? (
-        '<div class="fd-section">' +
-          '<h3>設定差分</h3>' +
-          '<div class="fd-entry-list">' +
-            entries.map((entry) => {
-              const row = entry.row;
-              const rowTone = row.type === 'added' ? 'added' : row.type === 'removed' ? 'removed' : row.type === 'same' ? 'same' : 'changed';
-              return '<article class="fd-entry fd-entry--' + rowTone + '">' +
-                '<div class="fd-entry-top">' +
-                  '<span class="fd-entry-area">' + escHtml(entry.area) + '</span>' +
-                  '<span class="fd-entry-type">' + escHtml(diffTypeLabel(row.type, row.moved)) + '</span>' +
-                  '<strong>' + escHtml(entry.title || relativePathLabel(row)) + '</strong>' +
-                '</div>' +
-                '<div class="fd-path">' + escHtml(row.path || '-') + '</div>' +
-                renderRowMeta(row) +
-                '<div class="fd-entry-diff">' + renderValueArea(row, !!(document.getElementById('charDiff') || {}).checked) + '</div>' +
-              '</article>';
-            }).join('') +
-          '</div>' +
-        '</div>'
-      ) : '<div class="fd-empty">このフィールドに表示対象の差分はありません。</div>') +
     '</section>';
   }
 
@@ -5772,12 +6016,46 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     updateStatsFromFieldGroups(groups);
     if (!groups.length) {
       closeFieldDetailModal();
-      root.innerHTML = '<div class="no-diff">表示対象のフィールドがありません。検索条件か「同一項目を隠す」を見直してください。</div>';
+      root.innerHTML = '<div class="no-diff">表示対象のフィールドがありません。検索条件か「同一項目を隠す」・詳細オプションを見直してください。</div>';
       return;
     }
-    ensureActiveFieldCode(groups, { preserveMissing: detailModalOpen });
-    const modelForView = { groupMap: new Map(groups.map((group) => [group.code, group])) };
+    // 差分一覧と同じ「種別」チップでフィールドカードを絞り込む
+    const statusCounts = { added: 0, removed: 0, changed: 0, same: 0 };
+    groups.forEach((group) => {
+      if (group.status === 'added') statusCounts.added += 1;
+      else if (group.status === 'removed') statusCounts.removed += 1;
+      else if (group.status === 'modified') statusCounts.changed += 1;
+      else statusCounts.same += 1;
+    });
+    const statusChips = [
+      { key: 'all', label: '全て', count: groups.length },
+      { key: 'added', label: '追加', count: statusCounts.added },
+      { key: 'removed', label: '削除', count: statusCounts.removed },
+      { key: 'changed', label: '変更', count: statusCounts.changed }
+    ];
+    if (!hideSame) statusChips.push({ key: 'same', label: '同一', count: statusCounts.same });
+    if (fieldStatusFilterValue !== 'all' && !statusChips.some((c) => c.key === fieldStatusFilterValue)) fieldStatusFilterValue = 'all';
+    const visibleGroups = groups.filter((group) => {
+      if (fieldStatusFilterValue === 'all') return true;
+      if (fieldStatusFilterValue === 'same') return group.status === 'unchanged';
+      if (fieldStatusFilterValue === 'changed') return group.status === 'modified';
+      return group.status === fieldStatusFilterValue;
+    });
+    const toolbarHtml = '<div class="diff-toolbar" role="toolbar" aria-label="フィールド単位ビューの絞り込み">'
+      + '<div class="diff-toolbar-row">'
+      + '<span class="diff-toolbar-label">種別</span>'
+      + statusChips.map((c) =>
+        '<button type="button" class="tchip tchip--' + c.key + (fieldStatusFilterValue === c.key ? ' is-active' : '') + '" data-field-status-chip="' + c.key + '" aria-pressed="' + (fieldStatusFilterValue === c.key ? 'true' : 'false') + '">'
+        + c.label + '<b>' + c.count + '</b></button>'
+      ).join('')
+      + '<span class="diff-toolbar-spacer"></span>'
+      + '<span class="diff-toolbar-count">表示 <b>' + visibleGroups.length + '</b> / ' + groups.length + ' 件</span>'
+      + '</div>'
+      + '</div>';
+    ensureActiveFieldCode(visibleGroups, { preserveMissing: detailModalOpen });
+    const modelForView = { groupMap: new Map(visibleGroups.map((group) => [group.code, group])) };
     root.innerHTML = '<div class="sl-board">' +
+      toolbarHtml +
       '<div class="sl-legend" role="note">' +
         '<span><strong>フィールド単位</strong>で、フィールドごとの設定差分をまとめて確認できます。</span>' +
         '<span><i class="sl-dot sl-dot--src"></i> 比較元のみ</span>' +
@@ -5788,25 +6066,36 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       '</div>' +
       '<div class="fc-shell">' +
         '<div class="fc-list">' +
-          groups.map((group, idx) => {
+          (visibleGroups.length ? visibleGroups.map((group, idx) => {
             const tone = fieldStatusTone(group.status);
             const isActive = group.code === activeFieldCode;
+            const isSelected = selectedFieldCodes.has(group.code);
             return '<article class="fc-card fc-card--' + tone + (isActive ? ' is-active' : '') + '" id="field_card_' + idx + '">' +
               '<div class="fc-card-head">' +
                 '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' +
                 '<span class="fc-code">' + escHtml(group.code) + '</span>' +
+                '<label class="row-select' + (isSelected ? ' is-on' : '') + '" title="このフィールドを反映JSONの対象にする">' +
+                  '<input type="checkbox" data-select-field="' + escHtml(group.code) + '"' + (isSelected ? ' checked' : '') + '> 選択' +
+                '</label>' +
               '</div>' +
               '<div class="fc-title">' + escHtml(group.label) + '</div>' +
               '<div class="fc-sub">' + escHtml(fieldTypeDisplayLabel(group.type)) + (group.parentTableCode ? ' / テーブル: ' + escHtml(group.parentTableLabel || group.parentTableCode) : '') + '</div>' +
               '<div class="fc-chip-row">' + renderFieldSummaryChips(group) + '</div>' +
               '<button type="button" class="btn' + (isActive ? ' primary' : '') + '" data-field-select="' + escHtml(group.code) + '">' + escHtml(group.diffCount ? '設定差分を開く' : '設定を開く') + '</button>' +
             '</article>';
-          }).join('') +
+          }).join('') : '<div class="no-diff">この種別に該当するフィールドがありません。</div>') +
         '</div>' +
       '</div>' +
     '</div>';
+    root.querySelectorAll('[data-field-status-chip]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const next = btn.getAttribute('data-field-status-chip') || 'all';
+        fieldStatusFilterValue = fieldStatusFilterValue === next ? 'all' : next;
+        renderSettingsLikeView();
+      });
+    });
     if (nav) {
-      groups.forEach((group, idx) => {
+      visibleGroups.forEach((group, idx) => {
         const navItem = document.createElement('div');
         navItem.className = 'nav-item' + (group.code === activeFieldCode ? ' active' : '');
         navItem.innerHTML = '<span>' + escHtml(group.code) + '</span><span class="badge">' + String(group.diffCount || 0) + '</span>';
@@ -6134,11 +6423,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       valueHtml = renderValueArea(row, useCharDiff);
     }
     const reviewed = reviewedKeys.has(key);
+    const selected = selectedRows.has(key);
     const actionsHtml = '<span class="drow-actions">'
       + '<button type="button" class="row-act" data-copy-path="' + escHtml(row.path || '') + '" title="設定パスをコピー">パス</button>'
       + '<button type="button" class="row-act" data-copy-row="' + escHtml(key) + '" title="比較元・比較先の値をJSONでコピー">コピー</button>'
       + (row.type !== 'same'
-        ? '<label class="row-reviewed' + (reviewed ? ' is-on' : '') + '" title="確認済みにする（サイドバーの「確認済みを隠す」と連動）">'
+        ? '<label class="row-select' + (selected ? ' is-on' : '') + '" title="この差分を反映JSONの対象にする">'
+          + '<input type="checkbox" data-select-toggle="' + escHtml(key) + '"' + (selected ? ' checked' : '') + '> 選択'
+          + '</label>'
+          + '<label class="row-reviewed' + (reviewed ? ' is-on' : '') + '" title="確認済みにする（サイドバーの「確認済みを隠す」と連動）">'
           + '<input type="checkbox" data-review-toggle="' + escHtml(key) + '"' + (reviewed ? ' checked' : '') + '> 確認'
           + '</label>'
         : '')
@@ -6213,7 +6506,20 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         + '<span class="sec-head-title"><span class="sec-caret">' + (collapsedNow ? '▶' : '▼') + '</span>' + escHtml(g.label) + '</span>'
         + '<span class="sec-counts">' + sectionCountChips(groupSummary) + '</span>'
         + '</div>';
-      if (!collapsedNow) {
+      if (!collapsedNow && isRawJsonMode() && g.key === FIELD_SECTION_KEY) {
+        // JSONで比較: フィールド単位に区切り、設定JSON全体を左右比較する
+        const parts = buildFieldJsonGroups(diffRows);
+        html += '<div class="fj-list">';
+        html += parts.groups.map((grp) => renderFieldJsonBlockHtml(grp, useCharDiff)).join('');
+        html += parts.passthrough.map((row) => renderDiffRowHtml(row, useCharDiff)).join('');
+        if (!parts.groups.length && !parts.passthrough.length) {
+          html += '<div class="drow-empty">表示対象のフィールドがありません。</div>';
+        }
+        if (sameRows.length) {
+          html += '<div class="fj-same-note">差分のない設定 ' + sameRows.length + '件はJSON比較では表示していません。</div>';
+        }
+        html += '</div>';
+      } else if (!collapsedNow) {
         html += '<div class="drow-list">';
         html += diffRows.map((row) => renderDiffRowHtml(row, useCharDiff)).join('');
         if (sameRows.length && typeFilterValue !== 'same') {
@@ -6332,6 +6638,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   document.getElementById('expandBtn').onclick = expandAll;
   document.getElementById('csvBtn').onclick = exportVisibleRowsAsCsv;
   document.getElementById('mdBtn').onclick = copyVisibleRowsAsMarkdown;
+  document.getElementById('reflectJsonBtn').onclick = () => exportReflectJson(false);
+  document.getElementById('reflectJsonCopyBtn').onclick = () => exportReflectJson(true);
+  document.getElementById('srcJsonBtn').onclick = () => exportComparedBundleJson('source');
+  document.getElementById('tgtJsonBtn').onclick = () => exportComparedBundleJson('target');
+  document.getElementById('settingsLikeRoot').addEventListener('change', handleSelectionChange);
   const extraIgnoreInput = document.getElementById('extraIgnoreKeys');
   if (extraIgnoreInput) {
     extraIgnoreInput.addEventListener('input', () => {
@@ -6347,7 +6658,33 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       onReportFilterChange();
     });
   });
+  function handleSelectionChange(e) {
+    const selectToggle = e.target && e.target.closest ? e.target.closest('[data-select-toggle]') : null;
+    if (selectToggle) {
+      const key = selectToggle.getAttribute('data-select-toggle') || '';
+      const row = rowLookup.get(key);
+      if (selectToggle.checked && row) selectedRows.set(key, row);
+      else selectedRows.delete(key);
+      const label = selectToggle.closest('.row-select');
+      if (label) label.classList.toggle('is-on', selectToggle.checked);
+      syncSelectedStat();
+      return true;
+    }
+    const selectField = e.target && e.target.closest ? e.target.closest('[data-select-field]') : null;
+    if (selectField) {
+      const code = selectField.getAttribute('data-select-field') || '';
+      if (selectField.checked) selectedFieldCodes.add(code);
+      else selectedFieldCodes.delete(code);
+      const label = selectField.closest('.row-select');
+      if (label) label.classList.toggle('is-on', selectField.checked);
+      syncSelectedStat();
+      return true;
+    }
+    return false;
+  }
+
   document.getElementById('main').addEventListener('change', (e) => {
+    if (handleSelectionChange(e)) return;
     if (e.target && e.target.id === 'diffSortSel') {
       diffSortValue = e.target.value || 'standard';
       render();
@@ -6589,6 +6926,22 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     .row-reviewed input{width:12px;height:12px;accent-color:var(--accent);cursor:pointer;margin:0}
     .row-reviewed.is-on{background:#ecfdf5;color:#15803d;border-color:#86efac}
     body.dark .row-reviewed.is-on{background:#052e16;color:#86efac;border-color:#166534}
+    .row-select{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--card-soft);color:var(--muted);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap}
+    .row-select input{width:12px;height:12px;accent-color:var(--accent);cursor:pointer;margin:0}
+    .row-select.is-on{background:var(--accent-soft);color:var(--accent-strong);border-color:var(--accent)}
+    .fj-list{display:flex;flex-direction:column;gap:12px}
+    .fj-block{border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden}
+    .fj-block--added{border-left:5px solid #16a34a}
+    .fj-block--removed{border-left:5px solid #dc2626}
+    .fj-block--changed{border-left:5px solid #ca8a04}
+    .fj-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:9px 12px;border-bottom:1px solid var(--border);background:var(--card-soft)}
+    .fj-title{font-size:13px;font-weight:800;color:var(--fg)}
+    .fj-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--muted)}
+    .fj-type{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:700;border:1px solid var(--border);background:var(--card);color:var(--muted)}
+    .fj-spacer{flex:1}
+    .fj-body{padding:10px 12px}
+    .fj-body .duo{max-height:420px}
+    .fj-same-note{padding:8px 12px;font-size:11px;color:var(--muted)}
     .report-toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,12px);z-index:120;padding:10px 18px;border-radius:999px;background:var(--fg);color:var(--bg);font-size:12px;font-weight:700;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}
     .report-toast.is-visible{opacity:.96;transform:translate(-50%,0)}
     .drow-val{margin-top:8px;padding-left:2px}
@@ -6954,6 +7307,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <div class="sb-stat"><span>移動</span><b id="stat-moved">${summary.moved}</b></div>
         <div class="sb-stat"><span>同一</span><b id="stat-same">${summary.same}</b></div>
         <div class="sb-stat"><span>確認済み</span><b id="stat-reviewed">0</b></div>
+        <div class="sb-stat"><span>選択中</span><b id="stat-selected">0</b></div>
       </div>
       <div style="margin-top:10px;font-size:11px;color:var(--muted)">取得失敗: <b>${fetchIssues.length}</b></div>
     </div>
@@ -6961,7 +7315,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       <label class="chk"><input type="checkbox" id="hideSame"> 同一項目を隠す</label>
       <label class="chk"><input type="checkbox" id="charDiff" checked> 文字単位ハイライト</label>
       <label class="chk"><input type="checkbox" id="hideUnchangedLines" checked> 複数行差分は変更行だけ表示</label>
-      <label class="chk" title="整形・フィールド単位の集約を行わず、設定値をそのままのJSONで左右比較します"><input type="checkbox" id="rawJson"> 素のJSONで比較表示</label>
+      <label class="chk" title="フィールドごとに区切って、設定JSON全体を左右に並べて行単位で比較します（WinMerge風）"><input type="checkbox" id="rawJson"> JSONで比較（フィールド単位）</label>
       <label class="chk" title="「確認」チェックを付けた差分行を一覧から隠します"><input type="checkbox" id="hideReviewed"> 確認済みを隠す</label>
       <span class="field-label">検索</span>
       <input type="text" id="search" placeholder="パス・値・理由・フィールド名で絞り込み" aria-label="差分の検索" autocomplete="off">
@@ -6972,6 +7326,19 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         <button type="button" class="btn" id="csvBtn" title="表示中の差分行をCSVファイルとして保存">CSV保存</button>
         <button type="button" class="btn" id="mdBtn" title="表示中の差分行をMarkdown表としてクリップボードにコピー">MDコピー</button>
         <button type="button" class="btn" id="themeBtn" style="grid-column:span 2">ダークに切替</button>
+      </div>
+    </div>
+    <div class="sb-panel sb-ctrl">
+      <span class="field-label">反映JSON（選択差分 → APIパラメータ）</span>
+      <p class="search-hint" style="margin-top:0">行やフィールドの「選択」にチェックした差分から、比較元の設定値を比較先アプリへ反映するためのAPIパラメータJSONを作成します。</p>
+      <div class="sb-btns">
+        <button type="button" class="btn" id="reflectJsonBtn" title="選択した差分を反映するためのAPIパラメータJSONをファイル保存">反映JSON保存</button>
+        <button type="button" class="btn" id="reflectJsonCopyBtn" title="選択した差分を反映するためのAPIパラメータJSONをクリップボードにコピー">反映JSONコピー</button>
+      </div>
+      <span class="field-label" style="margin-top:10px">作成時に利用した設定JSON</span>
+      <div class="sb-btns">
+        <button type="button" class="btn" id="srcJsonBtn" title="このレポートの作成に利用した比較元アプリの設定JSONを保存">比較元JSON</button>
+        <button type="button" class="btn" id="tgtJsonBtn" title="このレポートの作成に利用した比較先アプリの設定JSONを保存">比較先JSON</button>
       </div>
     </div>
     <div class="sb-panel sb-ctrl sb-advanced">

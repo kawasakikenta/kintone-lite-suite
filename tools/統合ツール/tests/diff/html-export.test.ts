@@ -79,6 +79,13 @@ describe('diff/html export', () => {
     expect(html).toContain('id="mdBtn"');
     expect(html).toContain('id="stat-reviewed"');
 
+    // 選択差分→反映JSON・比較元/比較先JSON出力・選択統計
+    expect(html).toContain('id="reflectJsonBtn"');
+    expect(html).toContain('id="reflectJsonCopyBtn"');
+    expect(html).toContain('id="srcJsonBtn"');
+    expect(html).toContain('id="tgtJsonBtn"');
+    expect(html).toContain('id="stat-selected"');
+
     // KV差分色付けと関連レコード一覧設定の日本語キーラベル
     const script = extractInlineScript(html);
     expect(html).toContain('tr.kv-add>td');
@@ -129,5 +136,44 @@ describe('diff/html export', () => {
     // 関連レコード一覧設定のキーは日本語ラベルへ変換される
     expect(script).toContain('参照するアプリ');
     expect(script).toContain('表示条件（フィールドの一致）');
+  });
+
+  it('embeds both compared bundles and the field-unit JSON compare / reflect helpers', () => {
+    const sourceBundle = {
+      appId: '1', guestId: '', preview: false,
+      sections: {
+        fieldSettings: { properties: { field_a: { code: 'field_a', label: '旧', type: 'SINGLE_LINE_TEXT' } } },
+        viewSettings: { views: { 一覧: { name: '一覧', type: 'LIST', index: '0' } } }
+      },
+      meta: { sectionRevisions: { fieldSettings: '1' } }
+    };
+    const targetBundle = {
+      appId: '2', guestId: '', preview: false,
+      sections: {
+        fieldSettings: { properties: { field_a: { code: 'field_a', label: '新', type: 'SINGLE_LINE_TEXT' } } },
+        viewSettings: { views: { 一覧: { name: '一覧', type: 'LIST', index: '1' } } }
+      },
+      meta: { sectionRevisions: { fieldSettings: '2' } }
+    };
+    const rows = [{
+      _id: 'row-1', sectionKey: 'fieldSettings', section: 'フィールド', type: 'changed',
+      path: 'fieldSettings.properties.field_a.label', left: '旧', right: '新', severity: 'low'
+    }];
+    const html = buildDiffHtml(sourceBundle, targetBundle, rows, ['fieldSettings', 'viewSettings'], '', {});
+    const script = extractInlineScript(html);
+
+    expect(() => new Function(script)).not.toThrow();
+    // 作成時に利用した両アプリのセクションデータが埋め込まれている
+    expect(script).toContain('const SOURCE_SECTIONS');
+    expect(script).toContain('const TARGET_SECTIONS');
+    // フィールド単位のWinMerge風JSON比較と反映JSONビルダー
+    expect(script).toContain('buildFieldJsonGroups');
+    expect(script).toContain('renderFieldJsonBlockHtml');
+    expect(script).toContain('buildReflectJson');
+    expect(script).toContain('/k/v1/preview/app/form/fields.json');
+    // フィールド単位ビューにも種別チップの絞り込みがある
+    expect(script).toContain('data-field-status-chip');
+    // フィールド詳細ポップアップの下部にあった「設定差分」リストは撤去済み
+    expect(script).not.toContain('<h3>設定差分</h3>');
   });
 });
