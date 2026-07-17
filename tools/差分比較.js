@@ -6267,13 +6267,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       .filter((item) => (item.diffCount || item.fetchIssueCount || 0) > 0)
       .slice(0, 12)
       .map((item) => '- ' + (item.sectionLabel || item.sectionKey || '-') + ': 差分 ' + (item.diffCount || 0) + ' / 取得失敗 ' + (item.fetchIssueCount || 0))
-      .join('
-') || '- 差分のあるセクションはありません';
+      .join('\\n') || '- 差分のあるセクションはありません';
     const highlights = (REPORT_META.highlights || [])
       .slice(0, 8)
       .map((item) => '- [' + diffTypeLabel(item.type, item.moved) + '] ' + (item.sectionLabel || '-') + ' / ' + (item.relativePath || item.path || '-') + (item.reasonSummary ? ': ' + item.reasonSummary : ''))
-      .join('
-') || '- 注目差分はありません';
+      .join('\\n') || '- 注目差分はありません';
     return [
       '# kintone差分レビューサマリー',
       '',
@@ -6289,8 +6287,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       '',
       '## 注目差分',
       highlights
-    ].join('
-');
+    ].join('\\n');
   }
 
   function copyReviewSummary() {
