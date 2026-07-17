@@ -43,7 +43,6 @@ const SCOPE_OPTS: Array<[string, string, boolean]> = [
 ];
 
 const TYPE_LABEL: Record<string, string> = { added: '追加', removed: '削除', changed: '変更', moved: '移動', same: '同一' };
-const SEVERITY_LABEL: Record<string, string> = { high: '高', medium: '中', low: '低' };
 
 const RESULT_CSS_ID = 'kus-diff-lite-result-styles';
 const RESULT_CSS = `
@@ -72,10 +71,6 @@ const RESULT_CSS = `
 .kus-dl-badge--changed{background:#dbeafe;color:#1d4ed8}
 .kus-dl-badge--moved{background:#fef3c7;color:#92400e}
 .kus-dl-badge--same{background:#e2e8f0;color:#475569}
-.kus-dl-sev{display:inline-block;padding:0 5px;border-radius:3px;font:600 10px/1.4 -apple-system,Segoe UI,sans-serif}
-.kus-dl-sev--high{background:#fee2e2;color:#991b1b}
-.kus-dl-sev--medium{background:#fef3c7;color:#92400e}
-.kus-dl-sev--low{background:#e0f2fe;color:#0c4a6e}
 .kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:12px;background:#f8fafc;border-radius:8px}
 .kus-dl-reason{display:inline-block;padding:1px 6px;border-radius:999px;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
@@ -124,10 +119,10 @@ interface DiffCache {
 
 function rowSearchText(row: DiffRow): string {
   const safe = (v: any) => { try { return v === undefined ? '' : JSON.stringify(v); } catch { return String(v); } };
-  return [row.section || '', row.sectionKey || '', row.severity || '', row.path || '', row.label || '', safe(row.left), safe(row.right)].join('\n').toLowerCase();
+  return [row.section || '', row.sectionKey || '', row.path || '', row.label || '', safe(row.left), safe(row.right)].join('\n').toLowerCase();
 }
 
-function rowMatchesFilters(row: DiffRow, filters: { section: string; type: string; severity: string; keyword: string }): boolean {
+function rowMatchesFilters(row: DiffRow, filters: { section: string; type: string; keyword: string }): boolean {
   if (filters.section && row.sectionKey !== filters.section) return false;
   if (filters.type) {
     if (filters.type === 'moved') {
@@ -136,7 +131,6 @@ function rowMatchesFilters(row: DiffRow, filters: { section: string; type: strin
       return false;
     }
   }
-  if (filters.severity && String(row.severity || 'low') !== filters.severity) return false;
   if (filters.keyword && !rowSearchText(row).includes(filters.keyword)) return false;
   return true;
 }
@@ -186,14 +180,13 @@ function renderRowsHtml(rows: DiffRow[], useCharDiff: boolean, summary: string):
       const cols = rowColumnsHtml(r, useCharDiff);
       const typeKey = r.moved ? 'moved' : (r.type || 'same');
       const typeBadge = `<span class="kus-dl-badge kus-dl-badge--${esc(typeKey)}">${esc(TYPE_LABEL[typeKey] || typeKey)}</span>`;
-      const sevBadge = r.severity ? `<span class="kus-dl-sev kus-dl-sev--${esc(r.severity)}">${esc(SEVERITY_LABEL[r.severity] || r.severity)}</span>` : '';
       const labelHtml = r.label ? `<span style="color:#475569">${esc(r.label)}</span>` : '';
       const reasonHtml = r.reasonSummary ? `<span class="kus-dl-reason">${esc(r.reasonSummary)}</span>` : '';
       const flagHtml = [
         r.notationOnly ? '<span class="kus-dl-flag" title="型・表記だけが異なり、値としては同じです（例: &quot;100&quot; と 100）">表記のみ</span>' : '',
         r.emptyOnly ? '<span class="kus-dl-flag" title="空文字・null・空配列など、空値同士の差です">空値ゆれ</span>' : ''
       ].join('');
-      parts.push(`<div class="kus-dl-row"><div class="kus-dl-row__head">${typeBadge}${sevBadge}<span class="kus-dl-row__path">${esc(r.path || '')}</span>${reasonHtml}${flagHtml}${labelHtml}</div><div class="kus-dl-row__cols">${cols.left}${cols.right}</div></div>`);
+      parts.push(`<div class="kus-dl-row"><div class="kus-dl-row__head">${typeBadge}<span class="kus-dl-row__path">${esc(r.path || '')}</span>${reasonHtml}${flagHtml}${labelHtml}</div><div class="kus-dl-row__cols">${cols.left}${cols.right}</div></div>`);
     }
     parts.push('</div></details>');
   }
@@ -205,10 +198,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const panel: LitePanelHandle = createLitePanel({
     id: 'kus-diff-lite',
     title: '差分比較',
-    subtitle: '2 アプリの設定差分を取得し、HTML レポートで保存',
+    subtitle: '2 アプリの設定差分を比較し、HTML レポートを自動保存',
     accent: 'diff',
     badges: [{ label: 'Lite' }, { label: '出力対応' }],
-    hint: 'API 取得・差分計算・出力をこのスクリプトに同梱しています。<strong>統合ツール.js は不要</strong>。',
+    hint: '「差分比較を実行」を押すと、比較完了と同時に HTML レポートをダウンロードします。<strong>統合ツール.js は不要</strong>。',
     wide: true
   });
 
@@ -415,26 +408,19 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     ['moved', '移動'],
     ['same', '同一']
   ]);
-  const filterSeverity = makeSelect([
-    ['', '全重要度'],
-    ['high', '高'],
-    ['medium', '中'],
-    ['low', '低']
-  ]);
   const filterSearch = makeInput({ placeholder: 'パス・値・ラベルで検索', width: 'wide', noSubmit: true });
   const filterClear = makeButton('クリア', 'ghost');
-  cardFilter.body.appendChild(makeRow([filterSection, filterType, filterSeverity, filterClear], { label: 'フィルタ' }));
+  cardFilter.body.appendChild(makeRow([filterSection, filterType, filterClear], { label: 'フィルタ' }));
   cardFilter.body.appendChild(makeRow(filterSearch, { label: '検索' }));
   const charDiffCb = makeCheck({ label: '文字単位ハイライト', checked: true, help: '変更行で「どこが変わったか」を文字単位で強調表示します' });
   cardFilter.body.appendChild(makeRow(charDiffCb.label));
   filterClear.addEventListener('click', () => {
     filterSection.value = '';
     filterType.value = '';
-    filterSeverity.value = '';
     filterSearch.value = '';
     rerender();
   });
-  [filterSection, filterType, filterSeverity].forEach((el) => el.addEventListener('change', () => rerender()));
+  [filterSection, filterType].forEach((el) => el.addEventListener('change', () => rerender()));
   filterSearch.addEventListener('input', () => rerender());
   charDiffCb.checkbox.addEventListener('change', () => rerender());
   showResultList.checkbox.addEventListener('change', () => rerender());
@@ -448,9 +434,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   cardResult.body.appendChild(resultBox);
   panel.body.insertBefore(cardResult.card, panel.status);
 
-  // ---- 出力 ----
-  const cardOut = makeCard({ title: 'ファイル出力', number: 3, soft: true });
-  cardOut.body.appendChild(makeNote('比較完了後に利用できます。差分 HTML レポートとして保存します。出力対象は絞り込みできます。'));
+  // ---- 出力（再出力用。初回は比較実行時に自動保存される） ----
+  const cardOut = makeCard({ title: 'ファイル出力（再出力）', number: 3, soft: true });
+  cardOut.body.appendChild(makeNote('HTML レポートは比較実行時に自動保存されます。絞り込んだ範囲だけを出力し直したいときはこちらを使ってください。'));
   const expRange = makeSelect([
     ['all', '全件'],
     ['filtered', '表示中（フィルタ適用後）']
@@ -459,7 +445,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   const grid = document.createElement('div');
   grid.className = 'kus-lp__btn-grid';
-  const bHtml = makeButton('差分 HTML', 'sub', { icon: '↓' });
+  const bHtml = makeButton('差分 HTML を再出力', 'sub', { icon: '↓' });
   grid.appendChild(bHtml);
   cardOut.body.appendChild(grid);
   // 出力カードは結果カードの前に挿入し、差分件数が多くても結果リストの下までスクロールせず
@@ -534,7 +520,6 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     return {
       section: filterSection.value,
       type: filterType.value,
-      severity: filterSeverity.value,
       keyword: filterSearch.value.trim().toLowerCase()
     };
   }
@@ -601,6 +586,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     liteRun(panel, '全比較先を比較中…', async () => {
       const base = readForm();
       const rows: string[] = [];
+      let exported = 0;
       for (let i = 0; i < targets.length; i += 1) {
         const t = targets[i];
         panel.setStatus(`比較中 (${i + 1}/${targets.length}) App:${t.appId}${t.guestId ? ` / Guest:${t.guestId}` : ''}`, 'busy');
@@ -614,7 +600,24 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
           importedSourceBundle,
           onStatus: (m: string) => panel.setStatus(m, 'busy')
         });
-        rows.push(`<tr><td>${esc(t.appId)}</td><td>${esc(t.guestId || '通常')}</td><td>${(out.rows || []).filter((r: any) => r.type !== 'same').length}</td><td>${(out.fetchIssues || []).length}</td></tr>`);
+        // 比較先ごとに HTML レポートを即保存する
+        let exportNote = '';
+        try {
+          runExportDiffHtmlStandalone({
+            rows: out.rows,
+            fetchIssues: out.fetchIssues || [],
+            sourceBundle: out.sourceBundle,
+            targetBundle: out.targetBundle,
+            scopes: base.scopes,
+            ignoreKeys: base.ignoreKeys,
+            normalizationPresetState: base.normalizationPresetState,
+            truncation: out.truncation || null
+          });
+          exported += 1;
+        } catch (e: any) {
+          exportNote = `（HTML出力失敗: ${esc(e?.message || String(e))}）`;
+        }
+        rows.push(`<tr><td>${esc(t.appId)}</td><td>${esc(t.guestId || '通常')}</td><td>${(out.rows || []).filter((r: any) => r.type !== 'same').length}</td><td>${(out.fetchIssues || []).length}${exportNote}</td></tr>`);
       }
       if (showResultList.checkbox.checked) {
         cardResult.card.style.display = '';
@@ -623,7 +626,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         cardResult.card.style.display = 'none';
         resultBox.innerHTML = '';
       }
-      panel.setStatus(`全比較先の比較が完了しました (${targets.length}件)${showResultList.checkbox.checked ? '' : '（画面出力なし）'}`, 'ok');
+      panel.setStatus(`全比較先の比較が完了し、HTML レポートを ${exported}/${targets.length} 件保存しました`, 'ok');
     });
   });
 
@@ -663,7 +666,13 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       summaryText = out.summary?.text || '完了';
       refreshFilterSectionOptions();
       rerender();
-      panel.setStatus(`${summaryText} — ${showResultList.checkbox.checked ? '画面に結果一覧を表示しました。' : '比較結果一覧は画面出力せず、'}ファイル出力ボタンから保存できます`, 'ok');
+      // 比較が終わったらそのまま HTML レポートを保存する（出力ボタンを押す手間を省く）
+      try {
+        runExportDiffHtmlStandalone(exportCtx(true));
+        panel.setStatus(`${summaryText} — 差分 HTML レポートを保存しました`, 'ok');
+      } catch (e: any) {
+        panel.setStatus(`${summaryText} — HTML出力に失敗: ${e?.message || String(e)}`, 'warn');
+      }
     });
   });
 

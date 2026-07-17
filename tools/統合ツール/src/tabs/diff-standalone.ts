@@ -7,7 +7,7 @@ import {
   countActualDiffRows,
   summarizeRows
 } from '../diff/engine.js';
-import { enrichDiffRows, summarizeSeverity } from '../diff/enrich.js';
+import { enrichDiffRows } from '../diff/enrich.js';
 import { deepClone } from '../utils.js';
 
 function warningInfoForStandalone(rows, fetchIssues) {
@@ -88,9 +88,8 @@ export async function runDiffStandalone(opts) {
   const fetchIssues = diffResult.fetchIssues || [];
 
   const s = summarizeRows(rows);
-  const sev = summarizeSeverity(rows);
   const warning = warningInfoForStandalone(rows, fetchIssues);
-  const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`;
+  const statusLine = `差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${fetchIssues.length}件${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved})`;
   onStatus(statusLine);
 
   return {
@@ -102,7 +101,6 @@ export async function runDiffStandalone(opts) {
     summary: {
       text: statusLine,
       counts: s,
-      severity: sev,
       warning
     }
   };
