@@ -4048,6 +4048,17 @@
 #kintone-unified-suite-v2 .diff-cat-field-block .diff-cat-stats{margin-left:auto;display:flex;gap:4px}
 #kintone-unified-suite-v2 .diff-cat-field-list{list-style:none;margin:0;padding:6px 10px 8px;border-top:1px dashed var(--dv-border);display:flex;flex-direction:column;gap:3px}
 #kintone-unified-suite-v2 .diff-cat-field-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px}
+#kintone-unified-suite-v2 .diff-cat-json-diff{flex:1 0 100%;margin:4px 0 2px 20px;border:1px solid var(--dv-border);border-radius:6px;background:var(--dv-card);overflow:hidden}
+#kintone-unified-suite-v2 .diff-cat-json-diff > summary{cursor:pointer;list-style:none;padding:5px 8px;font-size:10px;font-weight:800;color:var(--dv-sub);background:var(--dv-pad)}
+#kintone-unified-suite-v2 .diff-cat-json-diff > summary::-webkit-details-marker{display:none}
+#kintone-unified-suite-v2 .diff-cat-json-diff > summary::before{content:"▸";display:inline-block;margin-right:5px;color:var(--dv-sub);transition:transform .15s ease}
+#kintone-unified-suite-v2 .diff-cat-json-diff[open] > summary::before{transform:rotate(90deg)}
+#kintone-unified-suite-v2 .diff-cat-json-diff__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:8px;border-top:1px dashed var(--dv-border)}
+#kintone-unified-suite-v2 .diff-cat-json-diff__pane{min-width:0;border:1px solid var(--dv-border);border-radius:5px;overflow:hidden;background:var(--dv-bg)}
+#kintone-unified-suite-v2 .diff-cat-json-diff__pane--old{border-color:color-mix(in srgb,var(--dv-del-txt) 28%,var(--dv-border))}
+#kintone-unified-suite-v2 .diff-cat-json-diff__pane--new{border-color:color-mix(in srgb,var(--dv-add-txt) 28%,var(--dv-border))}
+#kintone-unified-suite-v2 .diff-cat-json-diff__label{padding:4px 7px;font-size:10px;font-weight:800;color:var(--dv-sub);background:var(--dv-pad);border-bottom:1px solid var(--dv-border)}
+#kintone-unified-suite-v2 .diff-cat-json-diff__pane pre{margin:0;max-height:180px;overflow:auto;padding:7px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;line-height:1.45;white-space:pre-wrap;word-break:break-word;color:var(--dv-text)}
 #kintone-unified-suite-v2 .diff-cat-field-label{font-weight:700;color:var(--dv-text)}
 #kintone-unified-suite-v2 .diff-cat-sev-dot{display:inline-block;width:8px;height:8px;border-radius:999px;flex:none;background:#94a3b8}
 #kintone-unified-suite-v2 .diff-cat-sev-dot--high{background:#dc2626}
