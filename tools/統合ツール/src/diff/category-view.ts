@@ -132,6 +132,13 @@ function safeStringify(v: any): string {
   try { return JSON.stringify(v); } catch { return String(v); }
 }
 
+function prettyJsonStringify(v: any): string {
+  if (v === undefined) return '（未定義）';
+  if (v == null) return '-';
+  if (typeof v === 'string') return v;
+  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+}
+
 function diffWrap(left: any, right: any): { html: string; same: boolean } {
   const same = !valueChanged(left, right);
   if (same) {
@@ -1284,6 +1291,22 @@ function summarizeFieldPayload(payload: any): string {
   return parts.length ? parts.join(' / ') : safeStringify(payload);
 }
 
+function renderFieldJsonDiffDetails(r: any): string {
+  return `<details class="diff-cat-json-diff">
+    <summary>JSON差分を見る</summary>
+    <div class="diff-cat-json-diff__grid">
+      <section class="diff-cat-json-diff__pane diff-cat-json-diff__pane--old">
+        <div class="diff-cat-json-diff__label">変更前</div>
+        <pre>${esc(prettyJsonStringify(r.left))}</pre>
+      </section>
+      <section class="diff-cat-json-diff__pane diff-cat-json-diff__pane--new">
+        <div class="diff-cat-json-diff__label">変更後</div>
+        <pre>${esc(prettyJsonStringify(r.right))}</pre>
+      </section>
+    </div>
+  </details>`;
+}
+
 function renderFieldDiffLine(r: any): string {
   const rel = String(r.path || '').replace(/^fieldSettings\.properties\.[^.[\]]+\.?/, '');
   const isRoot = !rel;
@@ -1323,9 +1346,8 @@ function renderFieldDiffLine(r: any): string {
   return `<li class="diff-cat-field-line">${sevDot}
     <span class="diff-cat-status diff-cat-status--chg">変更</span>
     ${leafHtml}
-    <span class="diff-cat-old">${esc(valueOf(r.left))}</span>
-    <span class="diff-cat-arrow">→</span>
-    <span class="diff-cat-new">${esc(valueOf(r.right))}</span>
+    <span class="diff-cat-muted">値は折りたたんで表示</span>
+    ${renderFieldJsonDiffDetails(r)}
   </li>`;
 }
 
