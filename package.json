@@ -6,6 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "snippet": "node scripts/build-snippet.js",
+    "build:excel-kaiseki": "node tools/standalone/build-excel-kaiseki.js",
     "build:kintone-calendar": "vite build --config plugins/KintoneCalendar/vite.config.mjs",
     "check:kintone-calendar": "tsc --noEmit --project plugins/KintoneCalendar/tsconfig.json",
     "test:kintone-calendar": "node --test plugins/KintoneCalendar/tests/*.test.mjs",
