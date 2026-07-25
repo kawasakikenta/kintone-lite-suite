@@ -5,6 +5,42 @@ import { apiGet, apiPost, apiPut, buildApiPrefix, fetchBundle } from '../api.js'
 
 const JSZIP_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
 
+/**
+ * Paste-friendly parser used by every record-management operation.
+ * Commas (including Japanese commas), spaces and newlines are accepted and
+ * duplicate IDs are removed without changing the user's order.
+ */
+export function parseRecordAppIds(value: unknown): string[] {
+  const tokens = String(value ?? '').split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
+  const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
+  if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(', ')}`);
+  return [...new Set(tokens)];
+}
+
+/** Run the same operation for all pasted app IDs, even when one app fails. */
+export async function runRecordAppBatchStandalone(
+  appIdsValue: unknown,
+  operation: (appId: string, index: number, total: number) => Promise<void>,
+  setStatus: (message: string, error?: boolean) => void
+): Promise<void> {
+  const appIds = parseRecordAppIds(appIdsValue);
+  if (!appIds.length) throw new Error('対象アプリIDを1件以上入力してください');
+  const failures: string[] = [];
+  for (let i = 0; i < appIds.length; i++) {
+    const appId = appIds[i];
+    setStatus(`App ${appId}: 実行中 (${i + 1}/${appIds.length})`);
+    try {
+      await operation(appId, i, appIds.length);
+    } catch (error: any) {
+      failures.push(`App ${appId}: ${error?.message || String(error)}`);
+    }
+  }
+  if (failures.length) {
+    throw new Error(`${appIds.length}件中${failures.length}件が失敗しました\n${failures.join('\n')}`);
+  }
+  setStatus(`${appIds.length}アプリの操作が完了しました`);
+}
+
 function loadJSZipLite(): Promise<any> {
   const w = window as any;
   if (w.JSZip) return Promise.resolve(w.JSZip);

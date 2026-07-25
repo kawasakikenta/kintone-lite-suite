@@ -1079,6 +1079,31 @@ ${contextLine}`);
   init_utils();
   init_api();
   var JSZIP_CDN = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+  function parseRecordAppIds(value) {
+    const tokens = String(value ?? "").split(/[\s,\u3001\uFF0C]+/).filter(Boolean);
+    const invalid = tokens.filter((id) => !/^\d+$/.test(id) || Number(id) <= 0);
+    if (invalid.length) throw new Error(`アプリIDは正の数値で入力してください: ${invalid.join(", ")}`);
+    return [...new Set(tokens)];
+  }
+  async function runRecordAppBatchStandalone(appIdsValue, operation, setStatus) {
+    const appIds = parseRecordAppIds(appIdsValue);
+    if (!appIds.length) throw new Error("対象アプリIDを1件以上入力してください");
+    const failures = [];
+    for (let i = 0; i < appIds.length; i++) {
+      const appId = appIds[i];
+      setStatus(`App ${appId}: 実行中 (${i + 1}/${appIds.length})`);
+      try {
+        await operation(appId, i, appIds.length);
+      } catch (error) {
+        failures.push(`App ${appId}: ${error?.message || String(error)}`);
+      }
+    }
+    if (failures.length) {
+      throw new Error(`${appIds.length}件中${failures.length}件が失敗しました
+${failures.join("\n")}`);
+    }
+    setStatus(`${appIds.length}アプリの操作が完了しました`);
+  }
   function loadJSZipLite() {
     const w = window;
     if (w.JSZip) return Promise.resolve(w.JSZip);
@@ -1233,6 +1258,47 @@ ${contextLine}`);
     const blob = new Blob([result.csvText], { type: "text/csv;charset=utf-8;" });
     downloadBlob(filename || buildExportFilename("レコード", "csv", { appLabel: buildAppFilenameLabel(appId, "") }), blob);
     setStatus(`CSV出力完了 (${result.recordCount}件)`);
+  }
+  async function runCsvExportBatchStandalone(opts, setStatus) {
+    const apps = (opts?.apps || []).filter((a) => a?.appId);
+    const query = opts?.query || "";
+    const filename = String(opts?.filename || "").trim();
+    if (!apps.length) throw new Error("対象アプリを1件以上入力してください");
+    if (apps.length === 1) {
+      const app = apps[0];
+      await runCsvExportStandalone({ appId: app.appId, guestId: app.guestId || "", query, filename }, setStatus);
+      return;
+    }
+    const JSZip = await loadJSZipLite();
+    const zip = new JSZip();
+    const used = /* @__PURE__ */ new Set();
+    let totalRecords = 0;
+    for (let i = 0; i < apps.length; i++) {
+      const app = apps[i];
+      setStatus(`CSV出力中... (${i + 1}/${apps.length})`);
+      const result = await buildCsvExportForApp(app.appId, app.guestId || "", query, setStatus);
+      totalRecords += result.recordCount;
+      const label = buildAppFilenameLabel(result.appId, app.appName || "");
+      const baseName = buildExportFilename("レコード", "csv", { appLabel: label }).replace(/\.csv$/i, "");
+      const guestSuffix = result.guestId ? `_guest${sanitizeZipSegment(result.guestId)}` : "";
+      const entryName = uniqueZipName(used, `${baseName}${guestSuffix}.csv`, result.appId, i);
+      zip.file(entryName, result.csvText);
+    }
+    const manifest = [
+      "kintone CSV 一括出力マニフェスト",
+      `出力日時: ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`,
+      `対象アプリ数: ${apps.length}`,
+      `総レコード数: ${totalRecords}`,
+      `共通クエリ: ${query || "(なし)"}`,
+      "",
+      ...apps.map((a, i) => `${i + 1}. App ${a.appId}${a.guestId ? ` / Guest ${a.guestId}` : ""}${a.appName ? ` / ${a.appName}` : ""}`)
+    ].join("\n");
+    zip.file("manifest.txt", manifest);
+    setStatus(`ZIP生成中... (${apps.length}アプリ / ${totalRecords}件)`);
+    const blob = await zip.generateAsync({ type: "blob" });
+    const zipName = filename || buildExportFilename("CSV出力", "zip");
+    downloadBlob(zipName.toLowerCase().endsWith(".zip") ? zipName : `${zipName}.zip`, blob);
+    setStatus(`CSV一括出力完了 (${apps.length}アプリ / ${totalRecords}件)`);
   }
   var CSV_IMPORT_UNSUPPORTED_FIELD_TYPES = /* @__PURE__ */ new Set([
     "RECORD_NUMBER",
@@ -2502,10 +2568,11 @@ ${contextLine}`);
       hint: "<strong>本番データに直接書き込み・更新・コピーします。</strong>バックアップ取得を強く推奨します。",
       wide: true
     });
-    const tgtApp = makeInput({ placeholder: "アプリID", value: DEFAULT_APP_ID || "", width: "id", ariaLabel: "対象アプリID" });
+    const tgtApp = makeInput({ placeholder: "アプリID（カンマ区切りで複数指定）", value: DEFAULT_APP_ID || "", width: "wide", ariaLabel: "対象アプリID" });
     const tgtGuest = makeInput({ placeholder: "ゲストID（任意）", width: "guest" });
     const cardApp = makeCard({ title: "接続情報", number: 1 });
     cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: "対象アプリ" }));
+    cardApp.body.appendChild(makeNote("複数アプリは「463,464,469」のようにカンマ、改行、または空白で区切って指定できます。選択した操作を上から順にすべてのアプリへ実行します。"));
     cardApp.body.appendChild(createAppSearchControl(panel, {
       guestEl: tgtGuest,
       targets: [{ label: "対象アプリ", apply: (id, _name, guestId) => {
@@ -2518,8 +2585,9 @@ ${contextLine}`);
     const loadViewsBtn = makeButton("一覧読込", "sub");
     cardApp.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: "一覧から条件" }));
     loadViewsBtn.addEventListener("click", () => liteRun(panel, "一覧情報を取得中…", async () => {
+      const [appId] = parseRecordAppIds(tgtApp.value);
       const views = await runLoadViewsStandalone(
-        { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim() },
+        { appId, guestId: tgtGuest.value.trim() },
         (m, e) => panel.setStatus(m, e ? "err" : "busy")
       );
       viewSelect.innerHTML = '<option value="">一覧を選択（任意）</option>';
@@ -2550,8 +2618,9 @@ ${contextLine}`);
           const run = makeButton("CSVを出力", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV出力中…", async () => {
-            await runCsvExportStandalone(
-              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), filename: fname.value.trim() },
+            const appIds = parseRecordAppIds(tgtApp.value);
+            await runCsvExportBatchStandalone(
+              { apps: appIds.map((appId) => ({ appId, guestId: tgtGuest.value.trim() })), query: query.value.trim(), filename: fname.value.trim() },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             );
           }));
@@ -2571,10 +2640,10 @@ ${contextLine}`);
           const run = makeButton("レコードを取込", "primary", { icon: "↑" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "CSV取込中…", async () => {
-            await runCsvImportStandalone(
-              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
+            await runRecordAppBatchStandalone(tgtApp.value, (appId) => runCsvImportStandalone(
+              { appId, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
+            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
           root2.appendChild(makeRow(run));
         }
@@ -2596,8 +2665,9 @@ ${contextLine}`);
             if (actionSelect.value) action.value = actionSelect.value;
           });
           loadActions.addEventListener("click", () => liteRun(panel, "プロセス管理を取得中…", async () => {
+            const [appId] = parseRecordAppIds(tgtApp.value);
             const info = await runLoadStatusActionsStandalone(
-              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim() },
+              { appId, guestId: tgtGuest.value.trim() },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
             );
             actionSelect.innerHTML = '<option value="">--</option>';
@@ -2617,10 +2687,10 @@ ${contextLine}`);
           run.style.width = "100%";
           run.classList.add("kus-lp__btn--danger");
           run.addEventListener("click", () => liteRun(panel, "ステータス一括更新中…", async () => {
-            await runBatchProcessStandalone(
-              { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
+            await runRecordAppBatchStandalone(tgtApp.value, (appId) => runBatchProcessStandalone(
+              { appId, guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
+            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
           root2.appendChild(makeRow(run));
         }
@@ -2642,9 +2712,9 @@ ${contextLine}`);
           const run = makeButton("添付ファイルをZIPで保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "添付ファイル取得中…", async () => {
-            await runAttachmentDownloadStandalone(
+            await runRecordAppBatchStandalone(tgtApp.value, (appId) => runAttachmentDownloadStandalone(
               {
-                appId: tgtApp.value.trim(),
+                appId,
                 guestId: tgtGuest.value.trim(),
                 query: query.value.trim(),
                 fileFieldCode: fileCode.value.trim(),
@@ -2652,7 +2722,7 @@ ${contextLine}`);
                 zipName: zipName.value.trim()
               },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
+            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
           root2.appendChild(makeRow(run));
         }
@@ -2678,16 +2748,16 @@ ${contextLine}`);
           run.style.width = "100%";
           run.classList.add("kus-lp__btn--danger");
           run.addEventListener("click", () => liteRun(panel, "レコードコピー中…", async () => {
-            await runRecordCopyStandalone(
+            await runRecordAppBatchStandalone(tgtApp.value, (targetAppId) => runRecordCopyStandalone(
               {
                 sourceAppId: srcApp.value.trim(),
                 sourceGuestId: srcGuest.value.trim(),
-                targetAppId: tgtApp.value.trim(),
+                targetAppId,
                 targetGuestId: tgtGuest.value.trim(),
                 query: query.value.trim()
               },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
+            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
           root2.appendChild(makeRow(run));
         }
@@ -2723,9 +2793,9 @@ ${contextLine}`);
           const run = makeButton("バックアップ ZIP を保存", "primary", { icon: "↓" });
           run.style.width = "100%";
           run.addEventListener("click", () => liteRun(panel, "レコードバックアップ中…", async () => {
-            await runRecordBackupStandalone(
+            await runRecordAppBatchStandalone(tgtApp.value, (appId) => runRecordBackupStandalone(
               {
-                appId: tgtApp.value.trim(),
+                appId,
                 guestId: tgtGuest.value.trim(),
                 query: query.value.trim(),
                 zipName: zipName.value.trim(),
@@ -2735,7 +2805,7 @@ ${contextLine}`);
                 appScopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value)
               },
               (m, e) => panel.setStatus(m, e ? "err" : "busy")
-            );
+            ), (m, e) => panel.setStatus(m, e ? "err" : "busy"));
           }));
           root2.appendChild(makeRow(run));
         }
