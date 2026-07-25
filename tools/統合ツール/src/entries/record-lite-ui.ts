@@ -2,14 +2,16 @@
 
 import { DEFAULT_APP_ID, SECTION_DEFS } from '../constants.js';
 import {
-  runCsvExportStandalone,
+  runCsvExportBatchStandalone,
   runCsvImportStandalone,
   runBatchProcessStandalone,
   runRecordCopyStandalone,
   runAttachmentDownloadStandalone,
   runRecordBackupStandalone,
   runLoadStatusActionsStandalone,
-  runLoadViewsStandalone
+  runLoadViewsStandalone,
+  parseRecordAppIds,
+  runRecordAppBatchStandalone
 } from '../tabs/record-standalone.js';
 import {
   createLitePanel,
@@ -38,10 +40,11 @@ export function mountRecordLitePanel() {
   });
 
   // ---- 接続情報（共通） ----
-  const tgtApp = makeInput({ placeholder: 'アプリID', value: DEFAULT_APP_ID || '', width: 'id', ariaLabel: '対象アプリID' });
+  const tgtApp = makeInput({ placeholder: 'アプリID（カンマ区切りで複数指定）', value: DEFAULT_APP_ID || '', width: 'wide', ariaLabel: '対象アプリID' });
   const tgtGuest = makeInput({ placeholder: 'ゲストID（任意）', width: 'guest' });
   const cardApp = makeCard({ title: '接続情報', number: 1 });
   cardApp.body.appendChild(makeRow([tgtApp, tgtGuest], { label: '対象アプリ' }));
+  cardApp.body.appendChild(makeNote('複数アプリは「463,464,469」のようにカンマ、改行、または空白で区切って指定できます。選択した操作を上から順にすべてのアプリへ実行します。'));
   cardApp.body.appendChild(createAppSearchControl(panel, {
     guestEl: tgtGuest,
     targets: [{ label: '対象アプリ', apply: (id, _name, guestId) => { tgtApp.value = id; if (guestId && !tgtGuest.value.trim()) tgtGuest.value = guestId; } }]
@@ -54,8 +57,9 @@ export function mountRecordLitePanel() {
   cardApp.body.appendChild(makeRow([loadViewsBtn, viewSelect], { label: '一覧から条件' }));
 
   loadViewsBtn.addEventListener('click', () => liteRun(panel, '一覧情報を取得中…', async () => {
+    const [appId] = parseRecordAppIds(tgtApp.value);
     const views = await runLoadViewsStandalone(
-      { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim() },
+      { appId, guestId: tgtGuest.value.trim() },
       (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
     );
     viewSelect.innerHTML = '<option value="">一覧を選択（任意）</option>';
@@ -88,8 +92,9 @@ export function mountRecordLitePanel() {
         const run = makeButton('CSVを出力', 'primary', { icon: '↓' });
         run.style.width = '100%';
         run.addEventListener('click', () => liteRun(panel, 'CSV出力中…', async () => {
-          await runCsvExportStandalone(
-            { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), filename: fname.value.trim() },
+          const appIds = parseRecordAppIds(tgtApp.value);
+          await runCsvExportBatchStandalone(
+            { apps: appIds.map((appId) => ({ appId, guestId: tgtGuest.value.trim() })), query: query.value.trim(), filename: fname.value.trim() },
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           );
         }));
@@ -107,10 +112,10 @@ export function mountRecordLitePanel() {
         const run = makeButton('レコードを取込', 'primary', { icon: '↑' });
         run.style.width = '100%';
         run.addEventListener('click', () => liteRun(panel, 'CSV取込中…', async () => {
-          await runCsvImportStandalone(
-            { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
+          await runRecordAppBatchStandalone(tgtApp.value, (appId) => runCsvImportStandalone(
+            { appId, guestId: tgtGuest.value.trim(), file: fileInput.files?.[0] },
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-          );
+          ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
         root.appendChild(makeRow(run));
       }
@@ -129,8 +134,9 @@ export function mountRecordLitePanel() {
         root.appendChild(makeRow([action, actionSelect, loadActions], { label: 'アクション' }));
         actionSelect.addEventListener('change', () => { if (actionSelect.value) action.value = actionSelect.value; });
         loadActions.addEventListener('click', () => liteRun(panel, 'プロセス管理を取得中…', async () => {
+          const [appId] = parseRecordAppIds(tgtApp.value);
           const info = await runLoadStatusActionsStandalone(
-            { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim() },
+            { appId, guestId: tgtGuest.value.trim() },
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
           );
           actionSelect.innerHTML = '<option value="">--</option>';
@@ -150,10 +156,10 @@ export function mountRecordLitePanel() {
         run.style.width = '100%';
         run.classList.add('kus-lp__btn--danger');
         run.addEventListener('click', () => liteRun(panel, 'ステータス一括更新中…', async () => {
-          await runBatchProcessStandalone(
-            { appId: tgtApp.value.trim(), guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
+          await runRecordAppBatchStandalone(tgtApp.value, (appId) => runBatchProcessStandalone(
+            { appId, guestId: tgtGuest.value.trim(), query: query.value.trim(), action: action.value.trim(), assignee: assignee.value.trim() || null },
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-          );
+          ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
         root.appendChild(makeRow(run));
       }
@@ -173,9 +179,9 @@ export function mountRecordLitePanel() {
         const run = makeButton('添付ファイルをZIPで保存', 'primary', { icon: '↓' });
         run.style.width = '100%';
         run.addEventListener('click', () => liteRun(panel, '添付ファイル取得中…', async () => {
-          await runAttachmentDownloadStandalone(
+          await runRecordAppBatchStandalone(tgtApp.value, (appId) => runAttachmentDownloadStandalone(
             {
-              appId: tgtApp.value.trim(),
+              appId,
               guestId: tgtGuest.value.trim(),
               query: query.value.trim(),
               fileFieldCode: fileCode.value.trim(),
@@ -183,7 +189,7 @@ export function mountRecordLitePanel() {
               zipName: zipName.value.trim()
             },
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-          );
+          ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
         root.appendChild(makeRow(run));
       }
@@ -204,16 +210,16 @@ export function mountRecordLitePanel() {
         run.style.width = '100%';
         run.classList.add('kus-lp__btn--danger');
         run.addEventListener('click', () => liteRun(panel, 'レコードコピー中…', async () => {
-          await runRecordCopyStandalone(
+          await runRecordAppBatchStandalone(tgtApp.value, (targetAppId) => runRecordCopyStandalone(
             {
               sourceAppId: srcApp.value.trim(),
               sourceGuestId: srcGuest.value.trim(),
-              targetAppId: tgtApp.value.trim(),
+              targetAppId,
               targetGuestId: tgtGuest.value.trim(),
               query: query.value.trim()
             },
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-          );
+          ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
         root.appendChild(makeRow(run));
       }
@@ -250,9 +256,9 @@ export function mountRecordLitePanel() {
         const run = makeButton('バックアップ ZIP を保存', 'primary', { icon: '↓' });
         run.style.width = '100%';
         run.addEventListener('click', () => liteRun(panel, 'レコードバックアップ中…', async () => {
-          await runRecordBackupStandalone(
+          await runRecordAppBatchStandalone(tgtApp.value, (appId) => runRecordBackupStandalone(
             {
-              appId: tgtApp.value.trim(),
+              appId,
               guestId: tgtGuest.value.trim(),
               query: query.value.trim(),
               zipName: zipName.value.trim(),
@@ -262,7 +268,7 @@ export function mountRecordLitePanel() {
               appScopes: chips.filter((c) => c.checkbox.checked).map((c) => c.checkbox.value)
             },
             (m: string, e?: boolean) => panel.setStatus(m, e ? 'err' : 'busy')
-          );
+          ), (m, e) => panel.setStatus(m, e ? 'err' : 'busy'));
         }));
         root.appendChild(makeRow(run));
       }
