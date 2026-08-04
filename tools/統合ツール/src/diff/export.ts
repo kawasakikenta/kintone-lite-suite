@@ -2063,6 +2063,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const collapsed = new Set();
   let typeFilterValue = 'all';
   let diffSortValue = 'standard';
+  // 表示視点（both=左右比較 / source=比較元のみ / target=比較先のみ）
+  let viewSideValue = 'both';
   // レポート内「詳細オプション」の状態（表示のみの絞り込み。比較のやり直しは行わない）
   const activePresetKeys = new Set();
   let extraIgnoreRules = null;
@@ -2500,7 +2502,13 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     return !!(el && el.checked);
   }
 
+  function activeViewSide() {
+    return viewSideValue === 'source' || viewSideValue === 'target' ? viewSideValue : '';
+  }
+
   function renderChangedDuo(row, useCharDiff) {
+    const side = activeViewSide();
+    if (side) return renderChangedSolo(row, useCharDiff, side);
     const leftText = safeText(row.left);
     const rightText = safeText(row.right);
     const ops = buildLineDiffOps(leftText.split('\\n'), rightText.split('\\n'));
@@ -2548,7 +2556,90 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       + '</div>';
   }
 
+  // 片側視点: 選択したアプリの内容だけを1カラムで表示し、変更箇所のみ色付けする
+  function renderChangedSolo(row, useCharDiff, side) {
+    const isSrc = side === 'source';
+    const ownText = safeText(isSrc ? row.left : row.right);
+    const ops = buildLineDiffOps(safeText(row.left).split('\\n'), safeText(row.right).split('\\n'));
+    const tone = isSrc ? 'del' : 'add';
+    let body = '';
+    if (!ops) {
+      body = '<div class="duo-row duo-row--solo"><div class="duo-cell ' + tone + '"><pre class="blk">' + escHtml(ownText) + '</pre></div></div>';
+    } else {
+      const hideSameLines = shouldHideUnchangedDiffLines();
+      let no = 0;
+      body = ops.map((op) => {
+        if (op.type === 'same') {
+          no += 1;
+          if (hideSameLines) return '';
+          return '<div class="duo-row duo-row--solo"><div class="duo-cell"><span class="ln">' + no + '</span><span class="lt">' + escHtml((isSrc ? op.left : op.right) || '') + '</span></div></div>';
+        }
+        if (op.type === 'replace') {
+          no += 1;
+          const cd = useCharDiff ? buildCharDiff(op.left, op.right) : null;
+          const marked = cd ? (isSrc ? cd.left : cd.right) : escHtml((isSrc ? op.left : op.right) || '');
+          return '<div class="duo-row duo-row--solo"><div class="duo-cell ' + tone + '"><span class="ln">' + no + '</span><span class="lt">' + marked + '</span></div></div>';
+        }
+        if (op.type === 'del') {
+          if (!isSrc) return '';
+          no += 1;
+          return '<div class="duo-row duo-row--solo"><div class="duo-cell del"><span class="ln">' + no + '</span><span class="lt">' + escHtml(op.left || '') + '</span></div></div>';
+        }
+        if (isSrc) return '';
+        no += 1;
+        return '<div class="duo-row duo-row--solo"><div class="duo-cell add"><span class="ln">' + no + '</span><span class="lt">' + escHtml(op.right || '') + '</span></div></div>';
+      }).join('');
+      if (!body) body = '<div class="duo-empty">' + escHtml(issueSideLabel(side) + '側に表示できる変更行はありません') + '</div>';
+    }
+    return '<div class="duo-wrap">'
+      + '<div class="duo-head duo-head--solo"><span>' + escHtml(issueSideLabel(side) + 'から見た内容（変更箇所を強調）') + '</span></div>'
+      + '<div class="duo scroll">' + body + '</div>'
+      + '</div>';
+  }
+
+  // 片側視点でのシンプル値表示（同一・追加・削除・インライン変更）
+  function renderValueAreaOneSide(row, useCharDiff, side) {
+    const isSrc = side === 'source';
+    const sideName = issueSideLabel(side);
+    const ownText = safeText(isSrc ? row.left : row.right);
+    if (row.type === 'same') {
+      if (isInlineText(ownText)) {
+        return '<div class="val-inline"><span class="vi-val vi-val--same">' + escHtml(ownText) + '</span></div>';
+      }
+      return '<div class="val-single val-single--same"><div class="scroll"><pre class="blk">' + escHtml(ownText) + '</pre></div></div>';
+    }
+    if (row.type === 'added' || row.type === 'removed') {
+      const isAdd = row.type === 'added';
+      const existsHere = isAdd ? !isSrc : isSrc;
+      if (!existsHere) {
+        const reason = isAdd ? '比較先で追加された設定' : '比較元にのみ存在する設定';
+        return '<div class="val-inline"><span class="vi-val vi-val--absent">' + escHtml(sideName + 'には存在しません（' + reason + '）') + '</span></div>';
+      }
+      const text = safeText(isAdd ? row.right : row.left);
+      const cls = isAdd ? 'add' : 'del';
+      if (isInlineText(text)) {
+        return '<div class="val-inline"><span class="vi-val vi-val--' + cls + '">' + escHtml(text) + '</span></div>';
+      }
+      return '<div class="val-single val-single--' + cls + '">'
+        + '<div class="val-single-head">' + escHtml(sideName + (isAdd ? '（追加された設定）' : '（削除された設定）')) + '</div>'
+        + '<div class="scroll"><pre class="blk">' + escHtml(text) + '</pre></div>'
+        + '</div>';
+    }
+    const leftText = safeText(row.left);
+    const rightText = safeText(row.right);
+    if (isInlineText(leftText) && isInlineText(rightText)) {
+      const cd = useCharDiff ? buildCharDiff(leftText, rightText) : null;
+      const marked = cd ? (isSrc ? cd.left : cd.right) : escHtml(ownText);
+      return '<div class="val-inline">'
+        + '<span class="vi-val vi-val--' + (isSrc ? 'del' : 'add') + '">' + marked + '</span>'
+        + '</div>';
+    }
+    return renderChangedSolo(row, useCharDiff, side);
+  }
+
   function renderValueArea(row, useCharDiff) {
+    const viewSide = activeViewSide();
+    if (viewSide) return renderValueAreaOneSide(row, useCharDiff, viewSide);
     const leftText = safeText(row.left);
     const rightText = safeText(row.right);
     if (row.type === 'same') {
@@ -2659,10 +2750,15 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       body = renderChangedDuo({ left: group.src, right: group.tgt, type: 'changed' }, useCharDiff);
     } else {
       const isAdd = !!group.tgt;
-      body = '<div class="val-single val-single--' + (isAdd ? 'add' : 'del') + '">'
-        + '<div class="val-single-head">' + (isAdd ? '比較先のみに存在するフィールド' : '比較元のみに存在するフィールド') + '</div>'
-        + '<div class="scroll"><pre class="blk">' + escHtml(safeText(group.tgt || group.src)) + '</pre></div>'
-        + '</div>';
+      const viewSide = activeViewSide();
+      if (viewSide && ((viewSide === 'source' && !group.src) || (viewSide === 'target' && !group.tgt))) {
+        body = '<div class="val-inline"><span class="vi-val vi-val--absent">' + escHtml(issueSideLabel(viewSide) + 'にはこのフィールドは存在しません（' + (isAdd ? '比較先のみに存在' : '比較元のみに存在') + '）') + '</span></div>';
+      } else {
+        body = '<div class="val-single val-single--' + (isAdd ? 'add' : 'del') + '">'
+          + '<div class="val-single-head">' + (isAdd ? '比較先のみに存在するフィールド' : '比較元のみに存在するフィールド') + '</div>'
+          + '<div class="scroll"><pre class="blk">' + escHtml(safeText(group.tgt || group.src)) + '</pre></div>'
+          + '</div>';
+      }
     }
     return '<article class="fj-block fj-block--' + toneCls + '">'
       + '<div class="fj-head">'
@@ -4330,21 +4426,26 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
           metaHost.innerHTML = renderRowMeta(row);
           wrap.appendChild(metaHost);
           const pair = document.createElement('div');
-          pair.className = 'sl-kuc-pair';
-          const leftTa = new Kuc.TextArea({
-            label: '比較元',
-            value: formatFieldValuePlain(row.left),
-            disabled: true,
-            requiredIcon: false
-          });
-          const rightTa = new Kuc.TextArea({
-            label: '比較先',
-            value: formatFieldValuePlain(row.right),
-            disabled: true,
-            requiredIcon: false
-          });
-          pair.appendChild(leftTa);
-          pair.appendChild(rightTa);
+          const pairSide = activeViewSide();
+          pair.className = 'sl-kuc-pair' + (pairSide ? ' sl-kuc-pair--solo' : '');
+          if (pairSide !== 'target') {
+            const leftTa = new Kuc.TextArea({
+              label: '比較元',
+              value: formatFieldValuePlain(row.left),
+              disabled: true,
+              requiredIcon: false
+            });
+            pair.appendChild(leftTa);
+          }
+          if (pairSide !== 'source') {
+            const rightTa = new Kuc.TextArea({
+              label: '比較先',
+              value: formatFieldValuePlain(row.right),
+              disabled: true,
+              requiredIcon: false
+            });
+            pair.appendChild(rightTa);
+          }
           wrap.appendChild(pair);
           inner.appendChild(wrap);
         });
@@ -4396,9 +4497,14 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         // referenceTable / lookup のパスなら日本語キー + 差分色付きのキー値表で比較する
         const kvKind = /\\.referenceTable(\\.|$)/.test(row.path || '') ? 'referenceTable'
           : (/\\.lookup(\\.|$)/.test(row.path || '') ? 'lookup' : '');
-        html += '<div class="sl-pair">';
-        html += '<div class="sl-pair-col"><div class="sl-pane-h">比較元</div><div class="sl-pane sl-pane--src sl-pane--kv">' + formatFieldValueBrief(row.left, { kind: kvKind, counterpart: row.right, side: 'src' }) + '</div></div>';
-        html += '<div class="sl-pair-col"><div class="sl-pane-h">比較先</div><div class="sl-pane sl-pane--tgt sl-pane--kv">' + formatFieldValueBrief(row.right, { kind: kvKind, counterpart: row.left, side: 'tgt' }) + '</div></div>';
+        const slSide = activeViewSide();
+        html += '<div class="sl-pair' + (slSide ? ' sl-pair--solo' : '') + '">';
+        if (slSide !== 'target') {
+          html += '<div class="sl-pair-col"><div class="sl-pane-h">比較元</div><div class="sl-pane sl-pane--src sl-pane--kv">' + formatFieldValueBrief(row.left, { kind: kvKind, counterpart: row.right, side: 'src' }) + '</div></div>';
+        }
+        if (slSide !== 'source') {
+          html += '<div class="sl-pair-col"><div class="sl-pane-h">比較先</div><div class="sl-pane sl-pane--tgt sl-pane--kv">' + formatFieldValueBrief(row.right, { kind: kvKind, counterpart: row.left, side: 'tgt' }) + '</div></div>';
+        }
         html += '</div></article>';
       });
       html += '</div></section>';
@@ -4769,6 +4875,13 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   document.getElementById('hideUnchangedLines').onchange = onReportFilterChange;
   document.getElementById('rawJson').onchange = onReportFilterChange;
   document.getElementById('hideReviewed').onchange = onReportFilterChange;
+  document.querySelectorAll('input[name="viewSide"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      if (!radio.checked) return;
+      viewSideValue = radio.value === 'source' || radio.value === 'target' ? radio.value : 'both';
+      onReportFilterChange();
+    });
+  });
   document.getElementById('search').oninput = onReportFilterChange;
   document.getElementById('themeBtn').onclick = toggleTheme;
   document.getElementById('collapseBtn').onclick = collapseAll;
@@ -5089,6 +5202,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .vi-val--del{background:var(--del);color:var(--del-fg);border-color:rgba(220,38,38,.18)}
     .vi-val--add{background:var(--add);color:var(--add-fg);border-color:rgba(22,163,74,.18)}
     .vi-val--same{background:var(--card-soft);color:var(--muted);border-color:var(--border)}
+    .vi-val--absent{background:var(--card-soft);color:var(--muted);border:1px dashed var(--border)}
     .vi-arrow{color:var(--muted);font-weight:800;flex-shrink:0}
     .val-single{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card)}
     .val-single-head{padding:6px 11px;border-bottom:1px solid var(--border);background:var(--pad);font-size:10px;font-weight:800;letter-spacing:.04em;color:var(--muted)}
@@ -5111,6 +5225,12 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .duo-cell.add{background:var(--add);color:var(--add-fg)}
     .duo-cell.pad{background:var(--pad);opacity:.7}
     .duo-empty{padding:10px 12px;font-size:11px;color:var(--muted);background:var(--card-soft);text-align:center}
+    .duo-head--solo{grid-template-columns:1fr}
+    .duo-row--solo{grid-template-columns:1fr}
+    .view-side{display:flex;gap:6px;margin:2px 0 10px}
+    .view-side .vs-opt{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--fg);cursor:pointer;border:1px solid var(--border);border-radius:8px;padding:4px 9px;background:var(--card)}
+    .view-side .vs-opt input{margin:0}
+    .view-side .vs-opt:has(input:checked){border-color:var(--accent);color:var(--accent-strong);background:var(--accent-soft);font-weight:700}
     .duo-cell .blk{flex:1}
     .lt{flex:1;min-width:0}
     .same-fold{display:flex;align-items:center;gap:8px;width:100%;padding:9px 14px;border:none;border-top:1px dashed var(--border);background:var(--card-soft);color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;text-align:left;transition:color .15s}
@@ -5210,6 +5330,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     body.dark .sl-item--same .sl-badge{background:#334155;color:#cbd5e1}
     .sl-path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all;color:var(--muted);flex:1;min-width:0}
     .sl-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px}
+    .sl-pair--solo{grid-template-columns:1fr}
     .sl-pair-col{min-width:0}
     @media (max-width:900px){.sl-pair{grid-template-columns:1fr}}
     .sl-pane-h{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
@@ -5275,6 +5396,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     .sl-kuc-row-head{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:6px}
     .sl-kuc-meta{margin-bottom:8px}
     .sl-kuc-pair{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;min-width:0}
+    .sl-kuc-pair--solo{grid-template-columns:1fr}
     @media (max-width:900px){.sl-kuc-pair{grid-template-columns:1fr}}
     .sl-kuc-pair kuc-textarea-1-24-0{display:block;min-width:0;width:100%}
     .sl-pane--src{background:rgba(37,99,235,.06);border:1px solid rgba(37,99,235,.22)}
@@ -5455,6 +5577,12 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       <label class="chk"><input type="checkbox" id="hideUnchangedLines" checked> 複数行差分は変更行だけ表示</label>
       <label class="chk" title="フィールドごとに区切って、設定JSON全体を左右に並べて行単位で比較します（WinMerge風）"><input type="checkbox" id="rawJson"> JSONで比較（フィールド単位）</label>
       <label class="chk" title="「確認」チェックを付けた差分行を一覧から隠します"><input type="checkbox" id="hideReviewed"> 確認済みを隠す</label>
+      <span class="field-label">表示視点</span>
+      <div class="view-side" role="radiogroup" aria-label="差分の表示視点" title="どちらか一方のアプリから見た内容だけを表示します（追加・削除の判定は変わりません）">
+        <label class="vs-opt"><input type="radio" name="viewSide" value="both" checked> 両側</label>
+        <label class="vs-opt"><input type="radio" name="viewSide" value="source"> 比較元</label>
+        <label class="vs-opt"><input type="radio" name="viewSide" value="target"> 比較先</label>
+      </div>
       <span class="field-label">検索</span>
       <input type="text" id="search" placeholder="パス・値・理由・フィールド名で絞り込み" aria-label="差分の検索" autocomplete="off">
       <p class="search-hint"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">F</kbd> / <kbd class="kbd">⌘</kbd>+<kbd class="kbd">F</kbd> でフォーカス · <kbd class="kbd">Esc</kbd> でクリア · <kbd class="kbd">J</kbd>/<kbd class="kbd">K</kbd> で差分間を移動</p>
