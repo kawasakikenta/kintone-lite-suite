@@ -84,6 +84,47 @@ export interface SectionDef {
   putBuilder?: (d: any) => Record<string, unknown>;
 }
 
+type CustomizePutResource =
+  | { type: 'FILE'; file: { fileKey: string } }
+  | { type: 'URL'; url: string };
+
+function sanitizeCustomizeResourceList(value: any): CustomizePutResource[] {
+  if (!Array.isArray(value)) return [];
+  const resources: CustomizePutResource[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const type = String(item.type || '').toUpperCase();
+    if (type === 'FILE') {
+      const fileKey = item?.file?.fileKey;
+      if (fileKey == null || String(fileKey) === '') continue;
+      resources.push({ type: 'FILE', file: { fileKey: String(fileKey) } });
+      continue;
+    }
+    if (type === 'URL') {
+      const url = item.url;
+      if (url == null || String(url) === '') continue;
+      resources.push({ type: 'URL', url: String(url) });
+    }
+  }
+  return resources;
+}
+
+/**
+ * GET結果や差分比較用の補助値を、app/customize PUT の許可形へ変換する。
+ * 元入力は変更せず、FILE/URL 以外や不足した項目は送信対象から除外する。
+ */
+export function buildCustomizeSettingsPutPayload(value: any): Record<string, unknown> {
+  const source = value && typeof value === 'object' ? value : {};
+  const buildPlatform = (platform: 'desktop' | 'mobile') => ({
+    js: sanitizeCustomizeResourceList(source?.[platform]?.js),
+    css: sanitizeCustomizeResourceList(source?.[platform]?.css)
+  });
+  return {
+    desktop: buildPlatform('desktop'),
+    mobile: buildPlatform('mobile')
+  };
+}
+
 export const SECTION_DEFS: readonly SectionDef[] = [
   { key: 'appSettings', label: 'アプリ設定', endpoint: '/app/settings.json', put: false },
   { key: 'appInfo', label: 'アプリ情報(ラベル)', endpoint: '/app.json', put: false, previewEndpoint: false, paramBuilder: (app) => ({ id: app }) },
@@ -94,7 +135,7 @@ export const SECTION_DEFS: readonly SectionDef[] = [
   { key: 'reportSettings', label: 'グラフ設定', endpoint: '/app/reports.json', put: true, putBuilder: (d) => ({ reports: d.reports || d }) },
   { key: 'processSettings', label: 'プロセス管理', endpoint: '/app/status.json', put: true, putBuilder: (d) => ({ enable: !!d.enable, states: d.states || {}, actions: d.actions || [] }) },
   { key: 'pluginSettings', label: 'プラグイン(※)', endpoint: '/app/plugins.json', put: true, putBuilder: (d) => ({ pluginIds: (d.plugins || []).map((p: any) => p.id) }) },
-  { key: 'customizeSettings', label: 'JS/CSS設定', endpoint: '/app/customize.json', put: true, putBuilder: (d) => ({ desktop: d.desktop || {}, mobile: d.mobile || {} }) },
+  { key: 'customizeSettings', label: 'JS/CSS設定', endpoint: '/app/customize.json', put: true, putBuilder: buildCustomizeSettingsPutPayload },
   { key: 'actionSettings', label: 'アクション設定', endpoint: '/app/actions.json', put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
   { key: 'appAcl', label: 'アプリ権限', endpoint: '/app/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
   { key: 'fieldAcl', label: 'フィールド権限', endpoint: '/field/acl.json', put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
@@ -498,8 +539,6 @@ export const ARRAY_KEY_CANDIDATES: readonly string[] = [
 ];
 
 export const DEFAULT_IGNORE_KEYS: ReadonlySet<string> = new Set([
-  'id',
-  'appid',
   'revision',
   'createdat',
   'creator',

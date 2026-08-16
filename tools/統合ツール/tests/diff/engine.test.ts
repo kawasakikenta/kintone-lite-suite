@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   detectRowSeverity, isIgnoredKey, parseIgnoreRules,
   hasUniquePrimitiveKey, computeDiffRows,
-  isNotationOnlyChange, isEmptyLikeValue
+  isNotationOnlyChange, isEmptyLikeValue,
+  countActualDiffRows, detectProcessStateRenames, summarizeRows
 } from '../../src/diff/engine';
 
 function makeBundle(sections: Record<string, any>) {
@@ -38,6 +39,13 @@ describe('diff/engine', () => {
   });
 
   describe('parseIgnoreRules & isIgnoredKey', () => {
+    it('does not hide identifiers unless the user or a normalization preset asks for it', () => {
+      const rules = parseIgnoreRules('');
+      expect(isIgnoredKey(rules, 'id')).toBe(false);
+      expect(isIgnoredKey(rules, 'appId')).toBe(false);
+      expect(isIgnoredKey(rules, 'revision')).toBe(true);
+    });
+
     it('parses comma separated ignore keys', () => {
       const rules = parseIgnoreRules('id, name, revision');
       expect(isIgnoredKey(rules, 'id')).toBe(true);
@@ -51,6 +59,121 @@ describe('diff/engine', () => {
       expect(isIgnoredKey(rules, 'test_abc')).toBe(true);
       expect(isIgnoredKey(rules, 'test_123')).toBe(true);
       expect(isIgnoredKey(rules, 'other_test')).toBe(false);
+    });
+  });
+
+  describe('entity identifier container ignore collisions', () => {
+    const cases = [
+      {
+        label: 'top-level field',
+        section: 'fieldSettings',
+        source: { properties: { revision: { type: 'SINGLE_LINE_TEXT', code: 'revision' } } },
+        target: { properties: {} },
+        expectedPath: 'fieldSettings.properties.revision'
+      },
+      {
+        label: 'subtable field',
+        section: 'fieldSettings',
+        source: {
+          properties: {
+            table: {
+              type: 'SUBTABLE',
+              code: 'table',
+              fields: { revision: { type: 'SINGLE_LINE_TEXT', code: 'revision' } }
+            }
+          }
+        },
+        target: {
+          properties: {
+            table: { type: 'SUBTABLE', code: 'table', fields: {} }
+          }
+        },
+        expectedPath: 'fieldSettings.properties.table.fields.revision'
+      },
+      {
+        label: 'view',
+        section: 'viewSettings',
+        source: { views: { revision: { type: 'LIST', name: 'revision' } } },
+        target: { views: {} },
+        expectedPath: 'viewSettings.views.revision'
+      },
+      {
+        label: 'report',
+        section: 'reportSettings',
+        source: { reports: { revision: { name: 'revision' } } },
+        target: { reports: {} },
+        expectedPath: 'reportSettings.reports.revision'
+      },
+      {
+        label: 'process state',
+        section: 'processSettings',
+        source: { enable: true, states: { revision: { name: 'revision', index: '0' } }, actions: [] },
+        target: { enable: true, states: {}, actions: [] },
+        expectedPath: 'processSettings.states.revision'
+      },
+      {
+        label: 'category',
+        section: 'categories',
+        source: { categories: { revision: { name: 'revision' } } },
+        target: { categories: {} },
+        expectedPath: 'categories.categories.revision'
+      }
+    ];
+
+    it.each(cases)('does not hide a $label named like a default ignored key', ({ section, source, target, expectedPath }) => {
+      const rows = diffRows({ [section]: source }, { [section]: target }, [section]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ type: 'removed', path: expectedPath });
+    });
+
+    it('does not let a user leaf-only ignore hide an entity with that identifier', () => {
+      const result = computeDiffRows(
+        makeBundle({ viewSettings: { views: { name: { type: 'LIST' } } } }),
+        makeBundle({ viewSettings: { views: {} } }),
+        ['viewSettings'],
+        'name'
+      );
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]).toMatchObject({ type: 'removed', path: 'viewSettings.views.name' });
+    });
+
+    it('still allows an entity to be ignored by its explicit full path', () => {
+      const result = computeDiffRows(
+        makeBundle({ fieldSettings: { properties: { revision: { type: 'SINGLE_LINE_TEXT', code: 'revision' } } } }),
+        makeBundle({ fieldSettings: { properties: {} } }),
+        ['fieldSettings'],
+        'fieldSettings.properties.revision'
+      );
+      expect(countActualDiffRows(result.rows)).toBe(0);
+    });
+
+    it('still ignores a real revision property inside a field entity', () => {
+      const source = { properties: { customer: { type: 'SINGLE_LINE_TEXT', code: 'customer', revision: '1' } } };
+      const target = { properties: { customer: { type: 'SINGLE_LINE_TEXT', code: 'customer', revision: '2' } } };
+      const rows = diffRows({ fieldSettings: source }, { fieldSettings: target }, ['fieldSettings']);
+      expect(rows).toHaveLength(0);
+    });
+  });
+
+  describe('customize fetch metadata', () => {
+    it('does not report root partial-fetch metadata as a settings difference', () => {
+      const source = { scope: 'ALL', _partial: { reason: 'oversize' } };
+      const target = { scope: 'ALL' };
+      expect(diffRows({ customizeSettings: source }, { customizeSettings: target }, ['customizeSettings'])).toHaveLength(0);
+    });
+
+    it('does not report file body availability metadata as a settings difference', () => {
+      const source = {
+        scope: 'ALL',
+        desktop: { js: [{ type: 'FILE', name: 'app.js', file: { fileKey: 'same' }, _bodyUnavailable: 'oversize' }], css: [] },
+        mobile: { js: [], css: [] }
+      };
+      const target = {
+        scope: 'ALL',
+        desktop: { js: [{ type: 'FILE', name: 'app.js', file: { fileKey: 'same' } }], css: [] },
+        mobile: { js: [], css: [] }
+      };
+      expect(diffRows({ customizeSettings: source }, { customizeSettings: target }, ['customizeSettings'])).toHaveLength(0);
     });
   });
 
@@ -83,6 +206,30 @@ describe('diff/engine', () => {
     it('returns high for JS/CSS item removal', () => {
       const row = { sectionKey: 'customizeSettings', path: 'customizeSettings.desktop.js[1]', type: 'removed' };
       expect(detectRowSeverity(row)).toBe('high');
+    });
+  });
+
+  describe('identifier differences', () => {
+    it('keeps different plugin IDs as an addition and removal by default', () => {
+      const rows = diffRows(
+        { pluginSettings: { plugins: [{ id: 'plugin-a', name: '同名プラグイン', version: '1.0.0', enabled: true }] } },
+        { pluginSettings: { plugins: [{ id: 'plugin-b', name: '同名プラグイン', version: '1.0.0', enabled: true }] } },
+        ['pluginSettings']
+      );
+
+      expect(rows).toHaveLength(2);
+      expect(rows.map((row: any) => row.type).sort()).toEqual(['added', 'removed']);
+      expect(rows.every((row: any) => row.arrayKey === 'id')).toBe(true);
+    });
+
+    it('still allows ID differences to be explicitly ignored', () => {
+      const result = computeDiffRows(
+        makeBundle({ pluginSettings: { plugins: [{ id: 'plugin-a', name: '同名プラグイン', version: '1.0.0' }] } }),
+        makeBundle({ pluginSettings: { plugins: [{ id: 'plugin-b', name: '同名プラグイン', version: '1.0.0' }] } }),
+        ['pluginSettings'],
+        'id'
+      );
+      expect(countActualDiffRows(result.rows)).toBe(0);
     });
   });
 
@@ -153,6 +300,111 @@ describe('diff/engine', () => {
       expect(rows[0].path).toMatch(/filterCond$/);
       expect(rows[0].arrayKey).toBe('name');
       expect(rows[0].arrayKeyValue).toBe('承認');
+    });
+  });
+
+  describe('process state rename detection', () => {
+    const processPair = () => {
+      const source = {
+        enable: true,
+        states: {
+          未処理: { name: '未処理', index: '0', assignee: { type: 'ONE', entities: [] } },
+          完了: { name: '完了', index: '1', assignee: { type: 'ONE', entities: [] } }
+        },
+        actions: [{ name: '完了へ', from: '未処理', to: '完了', filterCond: '' }]
+      };
+      const target = {
+        enable: true,
+        states: {
+          受付: { name: '受付', index: '0', assignee: { type: 'ONE', entities: [] } },
+          完了: { name: '完了', index: '1', assignee: { type: 'ONE', entities: [] } }
+        },
+        actions: [{ name: '完了へ', from: '受付', to: '完了', filterCond: '' }]
+      };
+      return { source, target };
+    };
+
+    it('keeps a display-only notice for a pure state rename without counting it as an actual difference', () => {
+      const { source, target } = processPair();
+      const result = computeDiffRows(
+        makeBundle({ processSettings: source }),
+        makeBundle({ processSettings: target }),
+        ['processSettings'],
+        ''
+      );
+
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]).toMatchObject({
+        type: 'changed',
+        _displayOnly: true,
+        _stateRenameNotice: true,
+        left: { name: '未処理' },
+        right: { name: '受付' }
+      });
+      expect(countActualDiffRows(result.rows)).toBe(0);
+      expect(summarizeRows(result.rows)).toMatchObject({ total: 0, added: 0, removed: 0, changed: 0, moved: 0 });
+    });
+
+    it('keeps the rename notice alongside another process change without inflating the breakdown', () => {
+      const { source, target } = processPair();
+      target.enable = false;
+      const result = computeDiffRows(
+        makeBundle({ processSettings: source }),
+        makeBundle({ processSettings: target }),
+        ['processSettings'],
+        ''
+      );
+
+      expect(result.rows.filter((row: any) => row._stateRenameNotice)).toHaveLength(1);
+      expect(result.rows.some((row: any) => row.path === 'processSettings.enable')).toBe(true);
+      expect(result.rows.some((row: any) => row.type === 'added' || row.type === 'removed')).toBe(false);
+      expect(countActualDiffRows(result.rows)).toBe(1);
+      expect(summarizeRows(result.rows)).toMatchObject({ total: 1, added: 0, removed: 0, changed: 1, moved: 0 });
+    });
+
+    it('does not infer renames when multiple unmatched states have identical bodies', () => {
+      const makeState = (name: string, index: string) => ({ name, index, assignee: { type: 'ONE', entities: [] } });
+      const source = {
+        enable: true,
+        states: { 旧A: makeState('旧A', '0'), 旧B: makeState('旧B', '1') },
+        actions: []
+      };
+      const target = {
+        enable: true,
+        states: { 新A: makeState('新A', '0'), 新B: makeState('新B', '1') },
+        actions: []
+      };
+
+      expect(detectProcessStateRenames(source, target).size).toBe(0);
+      const rows = diffRows({ processSettings: source }, { processSettings: target }, ['processSettings']);
+      expect(rows.some((row: any) => row._stateRenameNotice)).toBe(false);
+      expect(rows.filter((row: any) => row.type === 'removed')).toHaveLength(2);
+      expect(rows.filter((row: any) => row.type === 'added')).toHaveLength(2);
+    });
+  });
+
+  describe('summarizeRows', () => {
+    it('excludes display-only rows from every actual-difference breakdown', () => {
+      const rows = [
+        { type: 'added' },
+        { type: 'removed' },
+        { type: 'changed', moved: true },
+        { type: 'same' },
+        { type: 'added', _displayOnly: true },
+        { type: 'removed', _displayOnly: true },
+        { type: 'changed', _displayOnly: true },
+        { type: 'changed', moved: true, _displayOnly: true }
+      ];
+
+      expect(summarizeRows(rows)).toEqual({
+        total: 4,
+        added: 1,
+        removed: 1,
+        changed: 1,
+        moved: 1,
+        same: 1
+      });
+      expect(countActualDiffRows(rows)).toBe(3);
     });
   });
 

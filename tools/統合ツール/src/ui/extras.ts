@@ -37,11 +37,16 @@ import { state, ui } from '../state.js';
 import { setStatus } from './components.js';
 import { getToolDocument } from './dialog.js';
 import { localizeKintoneEnumsInText as kusEnumsLocalize } from '../kintone-enums.js';
-import { resolveDiffExportRows } from '../diff/filter.js';
+import { resolveDiffExportComparedScopes, resolveDiffExportRows } from '../diff/filter.js';
 import { decodeRow } from '../diff/path-decoder.js';
+import {
+  buildDiffSnapshotPayload,
+  createDiffSnapshotImportState,
+  diffSnapshotAppToBundle
+} from '../diff/snapshot.js';
 import { renderReflectApplyChecklistStatus } from '../handlers/checklist.js';
 import { runExportDiffXlsx } from '../diff/xlsx-export.js';
-import { buildExportFilename } from '../utils.js';
+import { buildExportFilename, selectedScopeKeys } from '../utils.js';
 
 interface ExtrasGlobal {
   toastStack?: HTMLDivElement;
@@ -313,7 +318,7 @@ export function renderDiffFixedSummary(): void {
     else if (t === 'changed') changed++;
     else if (t === 'same') same++;
   });
-  if (!rows.length) {
+  if (!rows.length && !state.lastDiffAt) {
     bar.innerHTML = '<span class="muted">差分未取得</span>';
     return;
   }
@@ -531,18 +536,47 @@ export function initUrlSync(): void {
  * 53: 差分結果 JSON エクスポート / インポート
  * ============================================================ */
 export function exportDiffStateToJson(): void {
-  const payload = {
-    tool: 'kintone-unified-suite',
-    type: 'diff-snapshot',
+  const rows = state.lastDiffRows || [];
+  if (!state.lastDiffAt && !rows.length && !(state.lastFetchIssues || []).length && !(state.lastPartialIssues || []).length) {
+    pushToast('差分が未取得です', { tone: 'warn' });
+    return;
+  }
+  let signatureContext: any = {};
+  try { signatureContext = JSON.parse(String(state.lastDiffSignature || '{}')); } catch { /* 旧状態はUI値へフォールバック */ }
+  const importedContext = !state.lastSourceBundle && !state.lastTargetBundle
+    ? state.lastDiffSnapshotContext
+    : null;
+  const bundleScopes = [...new Set([
+    ...Object.keys(state.lastSourceBundle?.sections || {}),
+    ...Object.keys(state.lastTargetBundle?.sections || {})
+  ])];
+  const selectedScopes = ui.diffScopes ? selectedScopeKeys(ui.diffScopes) : [];
+  const payload = buildDiffSnapshotPayload({
     savedAt: new Date().toISOString(),
+    comparedAt: importedContext?.comparedAt || state.lastDiffAt,
     rows: state.lastDiffRows || [],
     fetchIssues: state.lastFetchIssues || [],
+    partialIssues: state.lastPartialIssues || [],
+    truncation: state.lastDiffTruncation,
+    sourceBundle: state.lastSourceBundle,
+    targetBundle: state.lastTargetBundle,
+    source: importedContext?.source,
+    target: importedContext?.target,
+    scopes: importedContext
+      ? importedContext.scopes
+      : (bundleScopes.length ? bundleScopes : (signatureContext.scopes || selectedScopes)),
+    ignoreKeys: importedContext
+      ? importedContext.ignoreKeys
+      : (typeof signatureContext.ignoreKeys === 'string' ? signatureContext.ignoreKeys : (ui.ignoreKeys?.value || '')),
+    normalization: importedContext
+      ? importedContext.normalization
+      : signatureContext.normalization,
     filters: {
       section: state.diffFilterSection,
       type: state.diffFilterType,
       severity: state.diffFilterSeverity
     }
-  };
+  });
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -558,15 +592,21 @@ export function importDiffStateFromJson(file: File): Promise<void> {
     reader.onload = () => {
       try {
         const data = JSON.parse(String(reader.result || '{}'));
-        if (Array.isArray(data?.rows)) {
-          state.lastDiffRows = data.rows;
-          state.lastFetchIssues = Array.isArray(data.fetchIssues) ? data.fetchIssues : [];
-          renderDiffFixedSummary();
-          pushToast(`差分スナップショットを読み込みました (${data.rows.length} 件)`, { tone: 'ok' });
-          resolve();
-        } else {
-          reject(new Error('rows 配列が見つかりません'));
-        }
+        const imported = createDiffSnapshotImportState(data);
+        Object.assign(state, imported.statePatch, {
+          diffFilterSection: imported.snapshot.filters.section,
+          diffFilterType: imported.snapshot.filters.type,
+          diffFilterSeverity: imported.snapshot.filters.severity,
+          diffFavoritesOnly: false
+        });
+        if (ui.diffFilterSection) ui.diffFilterSection.value = imported.snapshot.filters.section;
+        if (ui.diffFilterType) ui.diffFilterType.value = imported.snapshot.filters.type;
+        if (ui.diffFilterSeverity) ui.diffFilterSeverity.value = imported.snapshot.filters.severity;
+        if (ui.diffExportMode) ui.diffExportMode.value = 'all';
+        if (ui.diffSearch) ui.diffSearch.value = '';
+        renderDiffFixedSummary();
+        pushToast(`差分スナップショットを読み込みました (${imported.snapshot.rows.length} 件)`, { tone: 'ok' });
+        resolve();
       } catch (e) {
         reject(e);
       }
@@ -1809,7 +1849,7 @@ function escapeMarkdownTableCell(value: string): string {
 // 出力メニューの範囲設定（全件/選択/表示中/お気に入り）を MD/Excel/PDF にも適用する。
 // 範囲に該当する行が無い場合は null を返し、呼び出し側でトーストして中断する。
 function resolveDiffRowsForReport(): { label: string; mode: string; rows: any[] } | null {
-  if (!(state.lastDiffRows || []).length) {
+  if (!(state.lastDiffRows || []).length && !state.lastDiffAt) {
     pushToast('差分が未取得です', { tone: 'warn' });
     return null;
   }
@@ -1923,22 +1963,58 @@ export async function copyDiffAsMarkdown(): Promise<void> {
     pushToast('クリップボードへコピーできませんでした', { tone: 'error' });
   }
 }
+let diffXlsxExportActive = false;
+let lastDiffXlsxExportAt = 0;
+
 export function exportDiffAsXlsx(): void {
+  const now = Date.now();
+  if (diffXlsxExportActive || now - lastDiffXlsxExportAt < 500) return;
   const info = resolveDiffRowsForReport();
   if (!info) return;
+  diffXlsxExportActive = true;
   try {
+    let signatureContext: any = {};
+    try { signatureContext = JSON.parse(String(state.lastDiffSignature || '{}')); } catch { /* 旧状態はUI値へフォールバック */ }
+    const importedContext = !state.lastSourceBundle && !state.lastTargetBundle
+      ? state.lastDiffSnapshotContext
+      : null;
+    const selectedScopes = ui.diffScopes ? selectedScopeKeys(ui.diffScopes) : [];
+    const comparedBundleScopes = [...new Set([
+      ...Object.keys(state.lastSourceBundle?.sections || {}),
+      ...Object.keys(state.lastTargetBundle?.sections || {})
+    ])];
+    const sourceBundle = state.lastSourceBundle || diffSnapshotAppToBundle(importedContext?.source);
+    const targetBundle = state.lastTargetBundle || diffSnapshotAppToBundle(importedContext?.target);
+    const comparedScopes = importedContext
+      ? importedContext.scopes
+      : (comparedBundleScopes.length ? comparedBundleScopes : selectedScopes);
     runExportDiffXlsx({
       rows: info.rows,
       fetchIssues: state.lastFetchIssues || [],
-      sourceBundle: state.lastSourceBundle,
-      targetBundle: state.lastTargetBundle,
-      ignoreKeys: ui.ignoreKeys?.value || '',
-      exportContentMode: 'diffOnly',
-      filename: buildExportFilename(info.mode === 'all' ? '差分レポート' : `差分レポート_${info.label}`, 'xlsx')
+      partialIssues: state.lastPartialIssues || [],
+      truncation: state.lastDiffTruncation,
+      sourceBundle,
+      targetBundle,
+      scopes: resolveDiffExportComparedScopes(info, comparedScopes),
+      ignoreKeys: importedContext
+        ? importedContext.ignoreKeys
+        : (typeof signatureContext.ignoreKeys === 'string' ? signatureContext.ignoreKeys : (ui.ignoreKeys?.value || '')),
+      normalizationPresetState: importedContext
+        ? importedContext.normalization
+        : (signatureContext.normalization && typeof signatureContext.normalization === 'object'
+          ? signatureContext.normalization
+          : undefined),
+      comparedAt: importedContext?.comparedAt || state.lastDiffAt || undefined,
+      exportMode: info.mode,
+      exportLabel: info.label,
+      exportContentMode: 'diffOnly'
     });
     pushToast(`差分 Excel (.xlsx) を保存しました（${info.label} ${info.rows.length}行）`, { tone: 'ok' });
   } catch (e: any) {
     pushToast(`Excel 出力に失敗しました: ${e?.message || String(e)}`, { tone: 'error' });
+  } finally {
+    lastDiffXlsxExportAt = Date.now();
+    diffXlsxExportActive = false;
   }
 }
 // PDF / 表紙付き PDF 共通の一覧テーブル HTML（対象列・値の省略・重要度日本語化込み）

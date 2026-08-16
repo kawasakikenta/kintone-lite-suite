@@ -13,7 +13,12 @@ import {
   extractFieldCodeFromRowPath,
   filterWritableFieldProps,
   convertLookupAppIds,
-  extractReferencedAppIds
+  extractReferencedAppIds,
+  parsePatchJsonPayload,
+  assertRetryApplyModeAllowed,
+  summarizePatchPayloadForApplyGuard,
+  resolveApplyGuardDeleteSummary,
+  resolveVerificationExpectedSectionKeys
 } from '../../src/reflect/apply';
 import { tokenizePath } from '../../src/utils';
 
@@ -97,10 +102,127 @@ describe('reflect/apply mutation primitives', () => {
   });
 });
 
+describe('reflect/apply patch JSON normalization', () => {
+  it('is idempotent across external and already-normalized row schemas', () => {
+    const external = {
+      generatedAt: '2026-08-16T00:00:00.000Z',
+      source: { appId: '1' },
+      target: { appId: '2' },
+      sections: {
+        fieldSettings: [
+          {
+            type: 'changed',
+            path: 'fieldSettings.properties.name.label',
+            sourceValue: '比較元ラベル',
+            targetValue: '比較先ラベル',
+            severity: 'high'
+          },
+          {
+            type: 'added',
+            path: 'fieldSettings.properties.target_only',
+            sourceValue: undefined,
+            targetValue: { type: 'SINGLE_LINE_TEXT', label: '比較先のみ' }
+          }
+        ]
+      }
+    };
+
+    const once = parsePatchJsonPayload(external);
+    const twice = parsePatchJsonPayload(once);
+
+    expect(twice.sections.fieldSettings[0]).toMatchObject({
+      left: '比較元ラベル',
+      right: '比較先ラベル',
+      severity: 'high'
+    });
+    expect(twice.sections.fieldSettings[1].left).toBeUndefined();
+    expect(twice.sections.fieldSettings[1].right).toEqual({ type: 'SINGLE_LINE_TEXT', label: '比較先のみ' });
+  });
+});
+
+describe('reflect/apply retry and patch safety guards', () => {
+  it.each(['section', 'retry'])('allows section-wide retry after %s mode', (mode) => {
+    expect(() => assertRetryApplyModeAllowed(mode)).not.toThrow();
+  });
+
+  it.each(['nodes', 'patch', 'restore', '', 'unknown'])('rejects section-wide retry after %s mode', (mode) => {
+    expect(() => assertRetryApplyModeAllowed(mode)).toThrow(/セクション全体の再反映には切り替えられません/);
+  });
+
+  it('derives patch request and delete warnings only from the current payload rows', () => {
+    const payload = parsePatchJsonPayload({
+      sections: {
+        fieldSettings: [{
+          type: 'added',
+          path: 'fieldSettings.properties.target_only',
+          targetValue: { type: 'SINGLE_LINE_TEXT', label: '比較先のみ' },
+          severity: 'high'
+        }, {
+          type: 'changed',
+          path: 'fieldSettings.properties.name.label',
+          sourceValue: '比較元ラベル',
+          targetValue: '比較先ラベル',
+          severity: 'medium'
+        }],
+        viewSettings: [{
+          type: 'added',
+          path: 'viewSettings.views.target_only',
+          targetValue: { name: '比較先のみ' },
+          severity: 'low'
+        }]
+      }
+    });
+
+    const summary = summarizePatchPayloadForApplyGuard(payload);
+    expect(summary.diffSummary).toEqual({ total: 3, high: 1, medium: 1, low: 1 });
+    expect(summary.requestCount).toBe(3);
+    expect(summary.deleteSummary).toEqual({
+      total: 2,
+      sections: [{ sectionKey: 'fieldSettings', sectionLabel: 'フィールド設定', count: 1 }, {
+        sectionKey: 'viewSettings', sectionLabel: 'ビュー設定', count: 1
+      }]
+    });
+  });
+
+  it('uses an explicit patch delete summary instead of a stale apply plan', () => {
+    const stalePlan = {
+      plannedRequests: [{
+        method: 'DELETE',
+        sectionKey: 'reportSettings',
+        sectionLabel: 'グラフ',
+        body: { reports: ['old_a', 'old_b'] }
+      }]
+    };
+
+    expect(resolveApplyGuardDeleteSummary(undefined, stalePlan).total).toBe(2);
+    expect(resolveApplyGuardDeleteSummary({ total: 0, sections: [] }, stalePlan)).toEqual({
+      total: 0,
+      sections: []
+    });
+  });
+
+  it('lets an explicit verification scope override stale planned requests, including an empty scope', () => {
+    const stalePlan = {
+      plannedRequests: [{ sectionKey: 'reportSettings' }, { sectionKey: 'fieldSettings' }]
+    };
+
+    expect([...resolveVerificationExpectedSectionKeys(undefined, stalePlan)])
+      .toEqual(['reportSettings', 'fieldSettings']);
+    expect([...resolveVerificationExpectedSectionKeys(['viewSettings'], stalePlan)])
+      .toEqual(['viewSettings']);
+    expect([...resolveVerificationExpectedSectionKeys([], stalePlan)]).toEqual([]);
+  });
+});
+
 describe('reflect/apply array key matching', () => {
   it('itemKeySignature distinguishes type from string form', () => {
     expect(itemKeySignature(1)).not.toBe(itemKeySignature('1'));
     expect(itemKeySignature('1')).toBe('string:1');
+  });
+
+  it('itemKeySignature distinguishes composite object keys', () => {
+    expect(itemKeySignature({ type: 'USER', code: 'alice' }))
+      .not.toBe(itemKeySignature({ type: 'GROUP', code: 'sales' }));
   });
 
   it('findArrayIndexByKey matches by signature first, then string fallback', () => {
@@ -114,6 +236,14 @@ describe('reflect/apply array key matching', () => {
   it('findArrayIndexByKey returns -1 for non-array or empty key', () => {
     expect(findArrayIndexByKey(null as any, 'code', 'A')).toBe(-1);
     expect(findArrayIndexByKey([{ code: 'A' }], '', 'A')).toBe(-1);
+  });
+
+  it('findArrayIndexByKey matches composite ACL entities without object string collisions', () => {
+    const arr = [
+      { entity: { type: 'USER', code: 'alice' } },
+      { entity: { type: 'GROUP', code: 'sales' } }
+    ];
+    expect(findArrayIndexByKey(arr, 'entity', { type: 'GROUP', code: 'sales' })).toBe(1);
   });
 
   it('resolveArrayKeyValue reads explicit arrayKey/arrayKeyValue', () => {
@@ -162,6 +292,41 @@ describe('reflect/apply array key matching', () => {
     const res = applyArrayRowByKey(section, row, tokens, undefined);
     expect(res?.applied).toBe(false);
     expect(section.items).toEqual([{ id: 'a' }]);
+  });
+
+  it('applyArrayRowByKey deletes the intended composite-key ACL entry', () => {
+    const section: any = {
+      rights: [
+        { entity: { type: 'USER', code: 'alice' }, includeSubs: false },
+        { entity: { type: 'GROUP', code: 'sales' }, includeSubs: true }
+      ]
+    };
+    const row: any = {
+      _id: 'r1',
+      arrayKey: 'entity',
+      arrayKeyValue: { type: 'GROUP', code: 'sales' }
+    };
+    const res = applyArrayRowByKey(section, row, tokenizePath('rights[1]'), undefined);
+    expect(res?.applied).toBe(true);
+    expect(section.rights).toEqual([
+      { entity: { type: 'USER', code: 'alice' }, includeSubs: false }
+    ]);
+  });
+
+  it('applyArrayRowByKey resolves a keyed item again before changing its leaf property', () => {
+    const section: any = {
+      items: [
+        { id: 'A', value: 'a' },
+        { id: 'B', value: 'old' },
+        { id: 'C', value: 'c' }
+      ]
+    };
+    // 比較時は B が index 2 だったが、先行する削除後は index 1 に移動している想定。
+    const row: any = { _id: 'r1', path: 'items[2].value', arrayKey: 'id', arrayKeyValue: 'B', left: 'new' };
+    const res = applyArrayRowByKey(section, row, tokenizePath('items[2].value'), 'new');
+    expect(res?.applied).toBe(true);
+    expect(section.items.find((item: any) => item.id === 'B').value).toBe('new');
+    expect(section.items.find((item: any) => item.id === 'C').value).toBe('c');
   });
 });
 

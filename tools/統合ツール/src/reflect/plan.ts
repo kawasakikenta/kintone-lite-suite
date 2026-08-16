@@ -1660,13 +1660,16 @@ export async function runExportReviewZip(): Promise<void> {
     excludedSectionKeys,
     excludedSectionLabels: excludedLabels,
     totalPlannedRequests: includedRequests.length,
-    diffRowCount: (state.lastDiffRows || []).filter((row: any) => row && !row._displayOnly).length
+    diffRowCount: (state.lastDiffRows || []).filter((row: any) => row && !row._displayOnly).length,
+    partialIssueCount: (state.lastPartialIssues || []).length,
+    partialIssues: state.lastPartialIssues || []
   };
 
   const exportRows = state.lastDiffRows;
   const scopes = [...new Set((exportRows || []).map((r: any) => r?.sectionKey).filter(Boolean))];
   const diffHtml = buildDiffHtml(state.lastSourceBundle, state.lastTargetBundle, exportRows, scopes, ui.ignoreKeys?.value || '', {
     fetchIssues: state.lastFetchIssues || [],
+    partialIssues: state.lastPartialIssues || [],
     exportMode: 'all',
     exportLabel: 'レビュー依頼一括（全件）',
     exportContentMode: 'diffOnly',
@@ -1690,6 +1693,7 @@ export async function runExportReviewZip(): Promise<void> {
     `比較先アプリ: ${meta.target.appId || '-'}${meta.target.guestId ? ` (guest ${meta.target.guestId})` : ''} (preview)`,
     `予定リクエスト数: ${meta.totalPlannedRequests}`,
     `差分行数: ${meta.diffRowCount}`,
+    meta.partialIssueCount ? `⚠ 本文未検証: ${meta.partialIssueCount}件（JS/CSS等は fileKey 等で比較）` : '',
     excludedLabels.length ? `プラン画面で除外されたセクション: ${excludedLabels.join(', ')}` : '除外セクション: なし',
     '',
     '## 同梱ファイル',

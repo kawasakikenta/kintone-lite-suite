@@ -651,7 +651,11 @@ export function renderIgnoreImpactPreview() {
 
 export function renderDiffFilterOptions() {
   if (!ui.diffFilterSection) return;
-  const sections = [...new Set([...(state.lastDiffRows || []).map((r) => r.sectionKey), ...(state.lastFetchIssues || []).map((r) => r.sectionKey)].filter(Boolean))];
+  const sections = [...new Set([
+    ...(state.lastDiffRows || []).map((r) => r.sectionKey),
+    ...(state.lastFetchIssues || []).map((r) => r.sectionKey),
+    ...(state.lastPartialIssues || []).map((r) => r.sectionKey)
+  ].filter(Boolean))];
   const current = state.diffFilterSection || ui.diffFilterSection.value || '';
   ui.diffFilterSection.innerHTML = '<option value="">全セクション</option>' +
     sections.map((secKey) => {
@@ -668,20 +672,21 @@ export function renderDiffSelectionState() {
   const selected = getSelectedDiffRows().length;
   const rendered = getRenderedDiffRows().length;
   const issues = (state.lastFetchIssues || []).length;
+  const partialIssues = (state.lastPartialIssues || []).length;
   const normalization = getActiveDiffNormalizationLabels();
-  if (!total && !issues && !state.lastDiffAt) {
+  if (!total && !issues && !partialIssues && !state.lastDiffAt) {
     ui.diffSelectionState.textContent = '⏳ まだ差分を実行していません';
     ui.diffSelectionState.classList.add('is-empty-state');
     return;
   }
   ui.diffSelectionState.classList.remove('is-empty-state');
   ui.diffSelectionState.textContent =
-    `選択 ${selected}/${total}件 ・ 表示 ${rendered}件 ・ API失敗 ${issues}件 ・ 出力 ${resolveDiffExportMode() === 'all' ? '全差分' : resolveDiffExportMode() === 'selected' ? '選択差分' : resolveDiffExportMode() === 'visible' ? '現在表示中' : '全差分'} ・ 内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} ・ 正規化 ${normalization.join(', ') || '-'}`;
+    `選択 ${selected}/${total}件 ・ 表示 ${rendered}件 ・ API失敗 ${issues}件 ・ 本文未検証 ${partialIssues}件 ・ 出力 ${resolveDiffExportMode() === 'all' ? '全差分' : resolveDiffExportMode() === 'selected' ? '選択差分' : resolveDiffExportMode() === 'visible' ? '現在表示中' : '全差分'} ・ 内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} ・ 正規化 ${normalization.join(', ') || '-'}`;
 }
 
 export function renderDiffWarningBox() {
   if (!ui.diffWarnBox) return;
-  const warning = deps.buildDiffWarningInfo(state.lastDiffRows, state.lastFetchIssues);
+  const warning = deps.buildDiffWarningInfo(state.lastDiffRows, state.lastFetchIssues, state.lastPartialIssues);
   if (!warning.threshold) {
     ui.diffWarnBox.style.display = 'none';
     ui.diffWarnBox.textContent = '';
@@ -693,7 +698,7 @@ export function renderDiffWarningBox() {
     return;
   }
   ui.diffWarnBox.style.display = 'block';
-  ui.diffWarnBox.textContent = `差分 ${warning.diffCount}件 + API取得失敗 ${warning.issueCount}件 = ${warning.total}件 が警告しきい値 ${warning.threshold}件以上です。`;
+  ui.diffWarnBox.textContent = `差分 ${warning.diffCount}件 + API取得失敗 ${warning.issueCount}件 + 本文未検証 ${warning.partialIssueCount}件 = ${warning.total}件 が警告しきい値 ${warning.threshold}件以上です。`;
 }
 
 export function renderLookupMapRows() {
@@ -785,7 +790,7 @@ export function renderBundleState() {
   if (ui.commonDataState) {
     const diffSummary = summarizeRows(state.lastDiffRows || []);
     const diffInfo = state.lastDiffAt
-      ? `差分: ${fmtFetchTime(state.lastDiffAt)} (差分 ${countActualDiffRows(state.lastDiffRows)}件 / 同一 ${diffSummary.same}件 / 取得失敗 ${state.lastFetchIssues.length}件)`
+      ? `差分: ${fmtFetchTime(state.lastDiffAt)} (差分 ${countActualDiffRows(state.lastDiffRows)}件 / 同一 ${diffSummary.same}件 / 取得失敗 ${state.lastFetchIssues.length}件 / 本文未検証 ${state.lastPartialIssues.length}件)`
       : '差分: 未実行';
     ui.commonDataState.textContent = `${src.short} / ${tgt.short} / ${diffInfo}`;
   }
@@ -1396,6 +1401,7 @@ export function renderReflectFooterBadges() {
   const isNode = isReflectNodeModeEffective();
   const scopeCount = (deps.selectedScopeKeys?.(ui.applyScopes) || []).length;
   const selectedNodeCount = deps.getSelectedReflectRows ? deps.getSelectedReflectRows().length : 0;
+  const partialIssueCount = (state.lastPartialIssues || []).length;
   const blockReasons: string[] = [];
   if (!diffReady) blockReasons.push('差分比較を最新化してください');
   else if (diffRowCount === 0) blockReasons.push('差分が 0 件のため反映は不要です');
@@ -1412,6 +1418,7 @@ export function renderReflectFooterBadges() {
   el.innerHTML = `
     <span class="reflect-footer-badge${diffReady ? ' reflect-footer-badge--ok' : ' reflect-footer-badge--warn'}">差分 ${diffReady ? `最新 (${diffRowCount}件)` : '要再実行'}</span>
     <span class="reflect-footer-badge${planReady ? ' reflect-footer-badge--ok' : ' reflect-footer-badge--warn'}">プラン ${planReady ? '確認済み' : '未確認'}</span>
+    ${partialIssueCount ? `<span class="reflect-footer-badge reflect-footer-badge--warn" title="JS/CSS等は本文ではなく fileKey 等で比較されています">本文未検証 ${partialIssueCount}件</span>` : ''}
     ${blockHtml}`;
   const doc = getToolDocument();
   const applyBtn = doc.getElementById('u_footerApply') as HTMLButtonElement | null;
@@ -1874,11 +1881,15 @@ export function renderReflectMainPanel() {
   const activeSec = state.reflectActiveSidebarSection;
   const diffCounts = getDiffCountsBySection();
   const selectedScopes = new Set(deps.selectedScopeKeys(ui.applyScopes));
+  const partialIssues = (state.lastPartialIssues || []).filter((issue) => isNode || !activeSec || issue?.sectionKey === activeSec);
+  const partialWarningHtml = partialIssues.length
+    ? `<div class="reflect-inline-note" role="alert" style="border-color:#f59e0b;background:#fffbeb;color:#92400e">⚠ 本文未検証 ${partialIssues.length}件 — JS/CSS等は本文ではなく fileKey 等で比較されています。反映前に該当ファイルの内容を確認してください。</div>`
+    : '';
 
   if (isNode) {
     const rows = deps.getSelectedReflectRows();
     const sev = summarizeSeverity(rows);
-    overview.innerHTML = `
+    overview.innerHTML = `${partialWarningHtml}
       <div class="sec-preview" style="border-color:#bfdbfe;background:#f8fbff">
         <div class="sec-preview-title" style="color:#1d4ed8">差分選択の状況</div>
         <div class="sec-diff-summary">
@@ -1908,7 +1919,7 @@ export function renderReflectMainPanel() {
     }).join('');
     const moreCount = rows.length > 12 ? rows.length - 12 : 0;
 
-    overview.innerHTML = `
+    overview.innerHTML = `${partialWarningHtml}
       <div class="sec-preview">
         <div class="sec-preview-title">${esc(def.label)}</div>
         <div class="sec-diff-summary">
@@ -1946,7 +1957,7 @@ export function renderReflectMainPanel() {
     const totalDiff = Object.values(diffCounts).reduce((s: number, c: any) => s + (c?.total || 0), 0);
     const fieldSelected = selectedScopes.has('fieldSettings');
     const hasNonFieldSelected = [...selectedScopes].some((key) => key && key !== 'fieldSettings');
-    overview.innerHTML = `
+    overview.innerHTML = `${partialWarningHtml}
       <div class="sec-preview" style="border-color:#c7d2fe;background:#eef2ff">
         <div class="sec-preview-title" style="color:#4338ca">まとめて反映の全体像</div>
         <div class="sec-diff-summary">

@@ -129,7 +129,10 @@ export function resolveHttpStatus(error: any): number {
   const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
   if (Number.isFinite(direct) && direct > 0) return direct;
   const text = String(error?.message || '');
-  const matched = text.match(/\b([45]\d{2})\b/);
+  // Error messages often contain unrelated numeric values (field codes, limits,
+  // record counts, etc.). Only accept a fallback status when the number is
+  // explicitly labelled as an HTTP/status value.
+  const matched = text.match(/\b(?:HTTP(?:\/\d+(?:\.\d+)?)?(?:\s+status(?:\s+code)?)?|status(?:\s+code)?)\s*(?::|=|-)?\s*([45]\d{2})\b/i);
   return matched ? Number(matched[1]) : 0;
 }
 
@@ -331,6 +334,7 @@ export interface FetchBundleParams {
 // FILE 要素のみ本文取得する。サイズ上限を超えるものはスキップ。
 // ---------------------------------------------------------------------------
 const CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024; // 1 MB
+export const CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
 const TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
 
 function fnv1aHashString(text: string): string {
@@ -342,34 +346,97 @@ function fnv1aHashString(text: string): string {
   return h.toString(16).padStart(8, '0');
 }
 
-export async function fetchTextFileBody(prefix: string, fileKey: string): Promise<string | null> {
-  if (!fileKey) return null;
+export type TextFileBodyFetchResult =
+  | { ok: true; text: string; byteSize: number }
+  | { ok: false; reason: 'oversize' | 'http' | 'error'; detail: string; byteSize?: number; status?: number };
+
+export async function fetchTextFileBody(prefix: string, fileKey: string): Promise<TextFileBodyFetchResult> {
+  if (!fileKey) return { ok: false, reason: 'error', detail: 'fileKey がありません' };
   const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
   const headers = { 'X-Requested-With': 'XMLHttpRequest' } as Record<string, string>;
   try {
     const resp = await fetch(url, { method: 'GET', headers });
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      return {
+        ok: false,
+        reason: 'http',
+        status: Number(resp.status || 0),
+        detail: `HTTP ${resp.status || 'error'}`
+      };
+    }
+    const contentLengthText = resp.headers?.get?.('content-length') || '';
+    const contentLength = Number(contentLengthText);
+    if (Number.isFinite(contentLength) && contentLength > CUSTOMIZE_BODY_MAX_BYTES) {
+      return {
+        ok: false,
+        reason: 'oversize',
+        byteSize: contentLength,
+        detail: `本文サイズが上限 ${CUSTOMIZE_BODY_MAX_BYTES} bytes を超えています`
+      };
+    }
     const blob = await resp.blob();
-    if (blob.size > CUSTOMIZE_BODY_MAX_BYTES) return null;
-    return await blob.text();
-  } catch {
-    return null;
+    if (blob.size > CUSTOMIZE_BODY_MAX_BYTES) {
+      return {
+        ok: false,
+        reason: 'oversize',
+        byteSize: blob.size,
+        detail: `本文サイズが上限 ${CUSTOMIZE_BODY_MAX_BYTES} bytes を超えています`
+      };
+    }
+    return { ok: true, text: await blob.text(), byteSize: blob.size };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'error',
+      detail: error instanceof Error ? error.message : String(error)
+    };
   }
+}
+
+async function fetchTextFileBodyWithRetry(prefix: string, fileKey: string): Promise<TextFileBodyFetchResult> {
+  let result = await fetchTextFileBody(prefix, fileKey);
+  if (result.ok === true) return result;
+  if (result.reason === 'oversize') return result;
+  // 補助取得は読み取り専用なので、一過性のHTTP/通信失敗だけを1回再試行する。
+  result = await fetchTextFileBody(prefix, fileKey);
+  return result;
+}
+
+async function runTaskFactoriesWithConcurrency(tasks: Array<() => Promise<void>>, concurrency: number): Promise<void> {
+  if (!tasks.length) return;
+  const limit = Math.max(1, Math.min(tasks.length, Math.floor(concurrency) || 1));
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: limit }, async () => {
+    while (nextIndex < tasks.length) {
+      const index = nextIndex++;
+      await tasks[index]();
+    }
+  }));
+}
+
+interface CustomizeFetchFileIssue {
+  fileName: string;
+  fileKey: string;
+  reason: 'missing-key' | 'unsupported' | 'oversize' | 'http' | 'error';
+  detail: string;
+  byteSize?: number;
 }
 
 interface CustomizeFetchStats {
   fetched: number;
   skipped: number;
   failed: number;
+  skippedFiles: CustomizeFetchFileIssue[];
+  failedFiles: CustomizeFetchFileIssue[];
 }
 
 export async function fetchCustomizeFileBodies(
   customizeSection: any,
   prefix: string
 ): Promise<CustomizeFetchStats> {
-  const stats: CustomizeFetchStats = { fetched: 0, skipped: 0, failed: 0 };
+  const stats: CustomizeFetchStats = { fetched: 0, skipped: 0, failed: 0, skippedFiles: [], failedFiles: [] };
   if (!customizeSection || typeof customizeSection !== 'object') return stats;
-  const tasks: Array<Promise<void>> = [];
+  const tasks: Array<() => Promise<void>> = [];
   for (const platform of ['desktop', 'mobile']) {
     for (const kind of ['js', 'css']) {
       const arr = customizeSection?.[platform]?.[kind];
@@ -378,22 +445,46 @@ export async function fetchCustomizeFileBodies(
         if (!item || typeof item !== 'object' || item.type !== 'FILE') continue;
         const fileKey = item?.file?.fileKey;
         const fileName = String(item?.file?.name || '');
-        if (!fileKey) { stats.skipped += 1; continue; }
-        if (fileName && !TEXT_LIKE_EXT.test(fileName)) { stats.skipped += 1; continue; }
-        tasks.push((async () => {
-          const text = await fetchTextFileBody(prefix, fileKey);
-          if (text == null) {
-            stats.failed += 1;
+        if (!fileKey) {
+          item._bodyUnavailable = 'missing-key';
+          stats.skipped += 1;
+          stats.skippedFiles.push({ fileName, fileKey: '', reason: 'missing-key', detail: 'fileKey がありません' });
+          continue;
+        }
+        if (fileName && !TEXT_LIKE_EXT.test(fileName)) {
+          item._bodyUnavailable = 'unsupported';
+          stats.skipped += 1;
+          stats.skippedFiles.push({ fileName, fileKey, reason: 'unsupported', detail: 'テキスト形式ではないため本文比較を省略しました' });
+          continue;
+        }
+        tasks.push(async () => {
+          const result = await fetchTextFileBodyWithRetry(prefix, fileKey);
+          if (result.ok === false) {
+            item._bodyUnavailable = result.reason;
+            const issue: CustomizeFetchFileIssue = {
+              fileName,
+              fileKey,
+              reason: result.reason,
+              detail: result.detail,
+              ...(result.byteSize === undefined ? {} : { byteSize: result.byteSize })
+            };
+            if (result.reason === 'oversize') {
+              stats.skipped += 1;
+              stats.skippedFiles.push(issue);
+            } else {
+              stats.failed += 1;
+              stats.failedFiles.push(issue);
+            }
             return;
           }
-          item._bodyText = text;
-          item._bodyHash = fnv1aHashString(text);
+          item._bodyText = result.text;
+          item._bodyHash = fnv1aHashString(result.text);
           stats.fetched += 1;
-        })());
+        });
       }
     }
   }
-  await Promise.all(tasks);
+  await runTaskFactoriesWithConcurrency(tasks, CUSTOMIZE_BODY_FETCH_CONCURRENCY);
   return stats;
 }
 
@@ -401,6 +492,24 @@ export interface PluginConfigFetchStats {
   fetched: number;
   skipped: number;
   failed: number;
+}
+
+function setAuxiliaryFetchError(
+  section: any,
+  label: string,
+  failed: number,
+  error?: unknown,
+  files: CustomizeFetchFileIssue[] = []
+): void {
+  if (!section || typeof section !== 'object') return;
+  const countText = failed > 0 ? `（${failed}件）` : '';
+  const detail = error instanceof Error
+    ? error.message
+    : (error == null ? '' : String(error));
+  const fileText = files.length
+    ? ` [${files.slice(0, 3).map((item) => item.fileName || item.fileKey || '(名称不明)').join(', ')}${files.length > 3 ? ', …' : ''}]`
+    : '';
+  section._fetchError = `${label}の取得に失敗したため、このセクションは比較できません${countText}${fileText}${detail ? `: ${detail}` : ''}`;
 }
 
 export async function fetchPluginConfigs(
@@ -412,12 +521,12 @@ export async function fetchPluginConfigs(
   if (!pluginSection || typeof pluginSection !== 'object') return stats;
   const plugins = Array.isArray(pluginSection.plugins) ? pluginSection.plugins : [];
   if (!plugins.length) return stats;
-  const tasks: Array<Promise<void>> = [];
+  const tasks: Array<() => Promise<void>> = [];
   for (const plugin of plugins) {
     if (!plugin || typeof plugin !== 'object') continue;
     const id = String(plugin.id || '').trim();
     if (!id) { stats.skipped += 1; continue; }
-    tasks.push((async () => {
+    tasks.push(async () => {
       try {
         const res = await apiGet(prefix, '/app/plugin/config.json', { app: appId, id }, 1);
         if (res && typeof res === 'object') {
@@ -429,9 +538,9 @@ export async function fetchPluginConfigs(
       } catch {
         stats.failed += 1;
       }
-    })());
+    });
   }
-  await Promise.all(tasks);
+  await runTaskFactoriesWithConcurrency(tasks, CUSTOMIZE_BODY_FETCH_CONCURRENCY);
   return stats;
 }
 
@@ -465,25 +574,45 @@ export async function fetchBundle({ appId, guestId, preview, sections, onProgres
     }
     if (onProgress) onProgress((i + 1) / sections.length, def.label);
   }
-  // 差分比較精度向上のための補助取得（失敗しても本体取得は成功扱い）
-  try {
-    if (sections.includes('customizeSettings')) {
-      const cust = bundle.sections.customizeSettings;
-      if (cust && !cust._fetchError) {
+  // 差分比較精度向上のための補助取得。
+  // 一部だけ取得できた値を通常差分として扱うと「設定追加/削除」の偽差分になるため、
+  // 1 件でも失敗したセクションは既存の _fetchError 契約で比較不能として扱う。
+  // 取得件数の内部統計はセクション本体へ混ぜず、設定差分のノイズにしない。
+  if (sections.includes('customizeSettings')) {
+    const cust = bundle.sections.customizeSettings;
+    if (cust && !cust._fetchError) {
+      try {
+        // ファイル本体 API には preview endpoint がないため、設定の取得元に関わらず通常 prefix を使う。
         const prefix = buildApiPrefix(guestId, false);
-        cust._bodyFetchStats = await fetchCustomizeFileBodies(cust, prefix);
+        const stats = await fetchCustomizeFileBodies(cust, prefix);
+        if (stats.skippedFiles.length) {
+          cust._partial = {
+            kind: 'customizeBody',
+            message: '一部ファイルは本文比較を省略し、fileKey で比較します',
+            files: stats.skippedFiles
+          };
+        }
+        if (stats.failed > 0) {
+          setAuxiliaryFetchError(cust, 'JS/CSSファイル本文', stats.failed, undefined, stats.failedFiles);
+        }
+      } catch (e) {
+        setAuxiliaryFetchError(cust, 'JS/CSSファイル本文', 0, e);
       }
     }
-  } catch { /* ignore: 本文取得失敗は致命的ではない */ }
-  try {
-    if (sections.includes('pluginSettings')) {
-      const plug = bundle.sections.pluginSettings;
-      if (plug && !plug._fetchError) {
-        const prefix = buildApiPrefix(guestId, false);
-        plug._configFetchStats = await fetchPluginConfigs(plug, prefix, app);
+  }
+  if (sections.includes('pluginSettings')) {
+    const plug = bundle.sections.pluginSettings;
+    if (plug && !plug._fetchError) {
+      try {
+        // プラグイン設定 API は本番/preview の両方を持つため、選択環境と揃える。
+        const prefix = buildApiPrefix(guestId, preview);
+        const stats = await fetchPluginConfigs(plug, prefix, app);
+        if (stats.failed > 0) setAuxiliaryFetchError(plug, 'プラグイン設定', stats.failed);
+      } catch (e) {
+        setAuxiliaryFetchError(plug, 'プラグイン設定', 0, e);
       }
     }
-  } catch { /* ignore: プラグイン設定取得失敗は致命的ではない */ }
+  }
   return bundle;
 }
 

@@ -4,7 +4,7 @@ import {
   DEFAULT_IGNORE_KEYS, DIFF_NORMALIZATION_PRESETS
 } from '../constants.js';
 import {
-  esc, deepClone, safeJsonForScript, decodeHtmlEntities, stripHtmlToText,
+  esc, deepClone, safeJsonForScript, stableStringify, decodeHtmlEntities, stripHtmlToText,
   getDiffTypeDisplayLabel, getSeverityDisplayLabel,
   getIssueSideLabel, getPreviewStateLabel, getThemeDisplayLabel,
   renderSectionIconHtml, extractAppNameFromBundle
@@ -113,6 +113,55 @@ function sanitizeHtmlBearingProps<T>(value: T): T {
     }
   }
   return out as T;
+}
+
+// API 取得・比較前処理だけで使う補助値は、HTML に元セクションの一部として
+// 重複収録しない。キー名だけで全階層から落とすと、`_body` という正規の
+// フィールドコード等まで消えるため、予約済みのセクション形状に限定する。
+const REPORT_SECTION_ROOT_SCRATCH_KEYS = new Set([
+  '_partial',
+  '_fetchError',
+  '_bodyFetchStats',
+  '_configFetchStats'
+]);
+
+const REPORT_CUSTOMIZE_ITEM_SCRATCH_KEYS = new Set([
+  '_bodyText',
+  '_bodyHash',
+  '_bodyUnavailable'
+]);
+
+function stripCustomizeItemScratch(value: any): void {
+  if (Array.isArray(value)) {
+    value.forEach((item) => stripCustomizeItemScratch(item));
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const key of REPORT_CUSTOMIZE_ITEM_SCRATCH_KEYS) delete value[key];
+  Object.values(value).forEach((child) => stripCustomizeItemScratch(child));
+}
+
+function stripPluginItemScratch(value: any): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  if (Array.isArray(value.plugins)) {
+    value.plugins.forEach((plugin) => {
+      if (plugin && typeof plugin === 'object' && !Array.isArray(plugin)) delete plugin._config;
+    });
+    return;
+  }
+  // セクション全体ではなく、展開済みのプラグイン1件が行値になっている場合。
+  if (Object.prototype.hasOwnProperty.call(value, 'id')) delete value._config;
+}
+
+function sanitizeReportSectionValue<T>(sectionKey: string, value: T): T {
+  const cloned = deepClone(value);
+  if (cloned == null || typeof cloned !== 'object') return cloned;
+  if (!Array.isArray(cloned)) {
+    for (const key of REPORT_SECTION_ROOT_SCRATCH_KEYS) delete (cloned as Record<string, any>)[key];
+  }
+  if (sectionKey === 'customizeSettings') stripCustomizeItemScratch(cloned);
+  if (sectionKey === 'pluginSettings') stripPluginItemScratch(cloned);
+  return cloned;
 }
 
 export function stringifyRowValueForDiff(value, path) {
@@ -771,6 +820,16 @@ export function getFilteredFetchIssues(issues) {
   });
 }
 
+export function getFilteredPartialIssues(issues) {
+  const list = issues || state.lastPartialIssues || [];
+  const filters = getCurrentDiffFilterState();
+  return list.filter((issue) => {
+    if (filters.section && issue.sectionKey !== filters.section) return false;
+    if (filters.keyword && !diffIssueMatchesKeyword(issue, filters.keyword)) return false;
+    return true;
+  });
+}
+
 export function getSelectedDiffRows(rows?: any[]): any[] {
   const selected = state.diffSelectedIds || new Set<string>();
   return (rows || state.lastDiffRows || []).filter((row: any) => selected.has(row._id));
@@ -829,13 +888,14 @@ export function parseDiffWarnThreshold() {
   return Math.floor(num);
 }
 
-export function buildDiffWarningInfo(rows, issues) {
+export function buildDiffWarningInfo(rows, issues, partialIssues?) {
   const threshold = parseDiffWarnThreshold();
   const diffCount = countActualDiffRows(rows || state.lastDiffRows || []);
   const issueCount = (issues || state.lastFetchIssues || []).length;
-  const total = diffCount + issueCount;
+  const partialIssueCount = (partialIssues || state.lastPartialIssues || []).length;
+  const total = diffCount + issueCount + partialIssueCount;
   const exceeded = threshold > 0 && total >= threshold;
-  return { threshold, diffCount, issueCount, total, exceeded };
+  return { threshold, diffCount, issueCount, partialIssueCount, total, exceeded };
 }
 
 // ---------------------------------------------------------------------------
@@ -945,9 +1005,10 @@ function buildCompactDiffRow(row) {
   };
 }
 
-export function buildDiffSectionSummaries(rows, fetchIssues: any[] = []) {
+export function buildDiffSectionSummaries(rows, fetchIssues: any[] = [], partialIssues: any[] = []) {
   const groupedRows = new Map();
   const issueKeys = new Set();
+  const partialIssueKeys = new Set();
   (rows || []).forEach((row) => {
     const key = String(row?.sectionKey || row?.section || '').trim() || '未分類';
     if (!groupedRows.has(key)) groupedRows.set(key, []);
@@ -957,7 +1018,11 @@ export function buildDiffSectionSummaries(rows, fetchIssues: any[] = []) {
     const key = String(issue?.sectionKey || issue?.section || '').trim();
     if (key) issueKeys.add(key);
   });
-  const keys = [...new Set([...groupedRows.keys(), ...issueKeys])];
+  (partialIssues || []).forEach((issue) => {
+    const key = String(issue?.sectionKey || issue?.section || '').trim();
+    if (key) partialIssueKeys.add(key);
+  });
+  const keys = [...new Set([...groupedRows.keys(), ...issueKeys, ...partialIssueKeys])];
   keys.sort((a, b) => {
     const ao = getSectionOrder(a);
     const bo = getSectionOrder(b);
@@ -970,6 +1035,7 @@ export function buildDiffSectionSummaries(rows, fetchIssues: any[] = []) {
     const typeSummary = buildDiffTypeSummary(sectionRows);
     const severity = summarizeSeverity(sectionRows);
     const issueCount = (fetchIssues || []).filter((issue) => String(issue?.sectionKey || issue?.section || '').trim() === sectionKey).length;
+    const partialIssueCount = (partialIssues || []).filter((issue) => String(issue?.sectionKey || issue?.section || '').trim() === sectionKey).length;
     const reasonCounts = new Map();
     diffRows.forEach((row) => {
       const reason = String(row?.reasonSummary || '').trim();
@@ -986,6 +1052,7 @@ export function buildDiffSectionSummaries(rows, fetchIssues: any[] = []) {
       sectionLabel: getSectionLabel(sectionKey),
       ...typeSummary,
       fetchIssueCount: issueCount,
+      partialIssueCount,
       severity,
       topReasons,
       samplePaths
@@ -1029,6 +1096,7 @@ export function buildDiffExportPayload({
   targetBundle,
   rows,
   fetchIssues,
+  partialIssues,
   ignoreKeys,
   exportMode,
   exportLabel,
@@ -1043,8 +1111,9 @@ export function buildDiffExportPayload({
 }: any = {}) {
   const safeRows = Array.isArray(rows) ? rows : [];
   const safeIssues = Array.isArray(fetchIssues) ? fetchIssues : [];
+  const safePartialIssues = Array.isArray(partialIssues) ? partialIssues : [];
   const stateMap = normalizationState || ({} as any);
-  const sectionSummaries = buildDiffSectionSummaries(safeRows, safeIssues);
+  const sectionSummaries = buildDiffSectionSummaries(safeRows, safeIssues, safePartialIssues);
   const typeSummary = buildDiffTypeSummary(safeRows);
   const compared = shouldIncludeComparedContent(exportContentMode) && Array.isArray(compareScopes) && compareScopes.length
     ? {
@@ -1069,6 +1138,8 @@ export function buildDiffExportPayload({
     summary: {
       ...typeSummary,
       fetchIssueCount: safeIssues.length,
+      partialIssueCount: safePartialIssues.length,
+      incompleteComparison: safeIssues.length > 0 || safePartialIssues.length > 0 || !!truncation?.truncated,
       sectionCount: sectionSummaries.length,
       sectionsWithDiff: sectionSummaries.filter((item) => item.diffCount > 0).length,
       severity: summarizeSeverity(safeRows),
@@ -1076,7 +1147,8 @@ export function buildDiffExportPayload({
         threshold: 0,
         diffCount: typeSummary.diffCount,
         issueCount: safeIssues.length,
-        total: typeSummary.diffCount + safeIssues.length,
+        partialIssueCount: safePartialIssues.length,
+        total: typeSummary.diffCount + safeIssues.length + safePartialIssues.length,
         exceeded: false
       },
       // 差分エンジンの上限打ち切り情報。truncated: true のとき、この出力は不完全。
@@ -1085,6 +1157,7 @@ export function buildDiffExportPayload({
     sectionSummaries,
     highlights: buildDiffHighlightRows(safeRows),
     fetchIssues: safeIssues.map(buildCompactFetchIssue),
+    partialIssues: deepClone(safePartialIssues),
     details: {
       rows: safeRows,
       rowsCompact: safeRows.map(buildCompactDiffRow),
@@ -1869,6 +1942,7 @@ export function buildPatchPayload(rows, sourceBundle, targetBundle) {
       arrayKey: r.arrayKey,
       arrayKeyValue: r.arrayKeyValue,
       reasonSummary: r.reasonSummary || '',
+      severity: r.severity || 'low',
       renameCandidate: r.renameCandidate || null,
       impactCount: r.impactCount || 0,
       impactRefs: r.impactRefs || []
@@ -1916,24 +1990,130 @@ export function buildPatchPayload(rows, sourceBundle, targetBundle) {
 // HTML report export
 // ---------------------------------------------------------------------------
 
+export const DIFF_HTML_MAX_EXPORT_ROWS = 2000;
+
+type DiffHtmlExportRowCategory = 'actualDiff' | 'displayOnly' | 'same';
+
+type DiffHtmlExportCategoryCount = {
+  total: number;
+  rendered: number;
+  omitted: number;
+};
+
+export type DiffHtmlExportRowSelectionSummary = {
+  policy: 'actualDiff > displayOnly > same';
+  limit: number;
+  expandedRows: number;
+  renderedRows: number;
+  omittedRows: number;
+  truncated: boolean;
+  categories: Record<DiffHtmlExportRowCategory, DiffHtmlExportCategoryCount>;
+};
+
+/**
+ * HTML レポートに収録する行を、実差分 → 表示専用の補助行 → 同一行の順に選ぶ。
+ * 選択後は元の表示順へ戻すため、親子関係やセクション順は維持される。
+ */
+export function selectDiffHtmlRowsForExport(
+  displayRows: any[],
+  maxRows = DIFF_HTML_MAX_EXPORT_ROWS
+): { rows: any[]; summary: DiffHtmlExportRowSelectionSummary } {
+  const sourceRows = Array.isArray(displayRows) ? displayRows : [];
+  const limit = Number.isFinite(maxRows)
+    ? Math.max(0, Math.floor(maxRows))
+    : DIFF_HTML_MAX_EXPORT_ROWS;
+  const priority: DiffHtmlExportRowCategory[] = ['actualDiff', 'displayOnly', 'same'];
+  const buckets: Record<DiffHtmlExportRowCategory, Array<{ row: any; index: number }>> = {
+    actualDiff: [],
+    displayOnly: [],
+    same: []
+  };
+
+  sourceRows.forEach((row, index) => {
+    const category: DiffHtmlExportRowCategory = row?._displayOnly
+      ? 'displayOnly'
+      : row?.type === 'same'
+        ? 'same'
+        : 'actualDiff';
+    buckets[category].push({ row, index });
+  });
+
+  const selected: Array<{ row: any; index: number }> = [];
+  const renderedCounts: Record<DiffHtmlExportRowCategory, number> = {
+    actualDiff: 0,
+    displayOnly: 0,
+    same: 0
+  };
+  priority.forEach((category) => {
+    const remaining = limit - selected.length;
+    if (remaining <= 0) return;
+    const picked = buckets[category].slice(0, remaining);
+    selected.push(...picked);
+    renderedCounts[category] = picked.length;
+  });
+  selected.sort((a, b) => a.index - b.index);
+
+  const categorySummary = (category: DiffHtmlExportRowCategory): DiffHtmlExportCategoryCount => ({
+    total: buckets[category].length,
+    rendered: renderedCounts[category],
+    omitted: buckets[category].length - renderedCounts[category]
+  });
+  const renderedRows = selected.length;
+  const omittedRows = sourceRows.length - renderedRows;
+
+  return {
+    rows: selected.map((entry) => entry.row),
+    summary: {
+      policy: 'actualDiff > displayOnly > same',
+      limit,
+      expandedRows: sourceRows.length,
+      renderedRows,
+      omittedRows,
+      truncated: omittedRows > 0,
+      categories: {
+        actualDiff: categorySummary('actualDiff'),
+        displayOnly: categorySummary('displayOnly'),
+        same: categorySummary('same')
+      }
+    }
+  };
+}
+
 export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKeys, options: any = {}) {
   const withSameSections = (() => {
-    const baseRows = Array.isArray(rows) ? [...rows] : [];
+    const baseRows = Array.isArray(rows)
+      ? rows.map((row) => row && typeof row === 'object'
+        ? {
+            ...row,
+            left: sanitizeReportSectionValue(String(row.sectionKey || ''), row.left),
+            right: sanitizeReportSectionValue(String(row.sectionKey || ''), row.right)
+          }
+        : row)
+      : [];
     const scopeList = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
     if (!scopeList.length || !sourceBundle?.sections || !targetBundle?.sections) return baseRows;
     const issueSectionSet = new Set((Array.isArray(options.fetchIssues) ? options.fetchIssues : [])
       .map((issue) => issue?.sectionKey)
       .filter(Boolean));
+    const hasEngineCompletionInfo = Object.prototype.hasOwnProperty.call(options, 'truncation');
+    const isCompleteExportRange = String(options.exportMode || 'all') === 'all';
+    const truncatedSectionSet = new Set((Array.isArray(options.truncation?.sections) ? options.truncation.sections : [])
+      .map((item) => item?.sectionKey)
+      .filter(Boolean));
     const rowSectionSet = new Set(baseRows.map((row) => row?.sectionKey).filter(Boolean));
     const presetState = options.normalizationState || ({} as any);
     for (const sec of scopeList) {
-      if (rowSectionSet.has(sec) || issueSectionSet.has(sec)) continue;
+      if (rowSectionSet.has(sec) || issueSectionSet.has(sec) || truncatedSectionSet.has(sec)) continue;
+      // 選択行・表示中などの部分出力では、行が無いことを「同一」の根拠にできない。
+      if (hasEngineCompletionInfo && !isCompleteExportRange) continue;
       const sourceSec = sourceBundle.sections?.[sec];
       const targetSec = targetBundle.sections?.[sec];
       if (!sourceSec || !targetSec) continue;
       const normalizedSource = normalizeSectionForCompare(sec, sourceSec, presetState);
       const normalizedTarget = normalizeSectionForCompare(sec, targetSec, presetState);
-      if (JSON.stringify(normalizedSource) !== JSON.stringify(normalizedTarget)) continue;
+      // エンジン結果に行が無く、取得失敗・打ち切りにも該当しない scope は、
+      // ignore/preprocess 適用後に同一と確定済み。判定情報のない直接呼出しだけ意味比較へフォールバックする。
+      if (!hasEngineCompletionInfo && stableStringify(normalizedSource) !== stableStringify(normalizedTarget)) continue;
       const sectionLabel = (SECTION_DEFS.find((def) => def.key === sec) || ({} as any)).label || sec;
       baseRows.push({
         _id: `same:${sec}`,
@@ -1941,8 +2121,8 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         section: sectionLabel,
         type: 'same',
         path: sec,
-        left: normalizedSource,
-        right: normalizedTarget,
+        left: sanitizeReportSectionValue(sec, normalizedSource),
+        right: sanitizeReportSectionValue(sec, normalizedTarget),
         severity: 'low'
       });
       rowSectionSet.add(sec);
@@ -1960,16 +2140,34 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     perRecordNotification: 'レコード条件通知', reminderNotification: 'リマインダー通知',
     category: 'カテゴリ', plugin: 'プラグイン', jsCss: 'JS/CSS', layoutRow: 'レイアウト行'
   };
-  const MAX_EXPORT_ROWS = 2000;
   // 差分一覧の見通しを良くするため、SUBTABLE 追加/削除行をテーブル内フィールド単位に、
   // 非フィールドのセクション全体追加/削除をエンティティ単位に、それぞれ事前展開する。
   const displayRows = expandSubtableRowsForDisplay(expandEntityRowsForDisplay(withSameSections));
-  const exportRows = displayRows.slice(0, MAX_EXPORT_ROWS);
+  const exportSelection = selectDiffHtmlRowsForExport(displayRows);
+  const exportRows = exportSelection.rows;
+  const sensitiveDiffSections = [...new Set(exportRows
+    .filter((row) => !row?._displayOnly && row?.type !== 'same' && ['customizeSettings', 'pluginSettings'].includes(String(row?.sectionKey || '')))
+    .map((row) => String(row.sectionKey)))] as string[];
   const fetchIssues = Array.isArray(options.fetchIssues) ? options.fetchIssues : [];
+  const partialIssues = Array.isArray(options.partialIssues) ? options.partialIssues : [];
   const warning = options.warning || { threshold: 0, exceeded: false, total: withSameSections.length + fetchIssues.length };
   /** kintone-ui-component UMD / Kucs グローバルと一致させる */
   const KUC_REPORT_VERSION = '1.24.0';
   const engineTruncation = options.truncation?.truncated ? options.truncation : null;
+  const incompleteComparisonWarnings = [
+    engineTruncation
+      ? `差分検出が上限 ${Number(engineTruncation.diffLimit || 0)} 件で打ち切られています。未検出の差分が存在します。`
+      : '',
+    fetchIssues.length
+      ? `設定取得に ${fetchIssues.length} 件失敗しています。取得失敗セクションは比較できていません。`
+      : '',
+    partialIssues.length
+      ? `JS/CSS等の本文取得に ${partialIssues.length} 件の未検証があります。該当項目は本文ではなく fileKey 等で比較されています。`
+      : '',
+    exportSelection.summary.truncated
+      ? `HTML収録上限により表示用展開後の行が ${exportSelection.summary.omittedRows} 件省略されています。`
+      : ''
+  ].filter(Boolean);
   const normalizationState = options.normalizationState || ({} as any);
   const reportMeta = {
     generatedAt: new Date().toISOString(),
@@ -1985,11 +2183,26 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     target: getBundleExportMeta(targetBundle),
     summary,
     fetchIssues,
-    totalRows: withSameSections.length,
-    renderedRows: exportRows.length,
-    truncated: withSameSections.length > exportRows.length
+    partialIssueCount: partialIssues.length,
+    partialIssues,
+    sensitiveDiffSections,
+    truncation: engineTruncation,
+    incompleteComparison: incompleteComparisonWarnings.length > 0,
+    comparisonWarnings: incompleteComparisonWarnings,
+    totalRows: exportSelection.summary.expandedRows,
+    renderedRows: exportSelection.summary.renderedRows,
+    truncated: exportSelection.summary.truncated,
+    rowSelection: {
+      ...exportSelection.summary,
+      baseRows: withSameSections.length
+    }
   };
+  const targetGuestId = String(reportMeta.target.guestId || '').trim();
+  const targetPreviewApiPrefix = targetGuestId
+    ? `/k/guest/${encodeURIComponent(targetGuestId)}/v1/preview`
+    : '/k/v1/preview';
   const diffTotal = summary.added + summary.removed + summary.changed;
+  const stateRenameNoticeCount = withSameSections.filter((row: any) => row?._stateRenameNotice).length;
   const formatAppDisplay = (meta: any) => {
     const id = String(meta?.appId || '-');
     const name = String(meta?.appName || '').trim();
@@ -2012,8 +2225,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   ).join('');
   const noticesHtml = [
     warning.threshold ? `<div class="warn">警告しきい値: ${warning.threshold} / 合計 ${warning.total}${warning.exceeded ? ' (超過)' : ''}</div>` : '',
-    reportMeta.truncated ? `<div class="warn">※ 出力負荷を抑えるため、先頭 ${reportMeta.renderedRows} 件のみをレポートに含めています（元件数 ${reportMeta.totalRows} 件）。</div>` : '',
+    sensitiveDiffSections.length ? `<div class="warn">🔒 このHTMLには ${sensitiveDiffSections.map((key) => esc(sectionLabelMap[key] || key)).join('・')} の差分値（JS/CSS本文やプラグイン設定値を含む場合があります）が収録されています。共有先と保管場所を確認してください。取得時の内部キャッシュは重複収録していません。</div>` : '',
+    stateRenameNoticeCount ? `<div class="warn">ℹ プロセスの状態名変更候補が ${stateRenameNoticeCount} 件あります。参照先の連動変更をまとめた表示用通知のため、上の追加・削除・変更件数には含めていません。内容を確認してください。</div>` : '',
+    reportMeta.truncated ? `<div class="warn">${reportMeta.rowSelection.categories.actualDiff.omitted ? '⚠ <b>収録上限により実差分も省略されているため、このレポートは不完全です。</b> ' : '※ 実差分を優先して収録しました。'}表示用展開後 ${reportMeta.rowSelection.expandedRows} 件のうち ${reportMeta.rowSelection.renderedRows} 件を収録し、${reportMeta.rowSelection.omittedRows} 件を省略しました（省略: 実差分 ${reportMeta.rowSelection.categories.actualDiff.omitted} 件 / 表示専用の補助行 ${reportMeta.rowSelection.categories.displayOnly.omitted} 件 / 同一行 ${reportMeta.rowSelection.categories.same.omitted} 件）。</div>` : '',
     engineTruncation ? `<div class="warn">⚠ 差分件数が上限（${engineTruncation.diffLimit}件）に達したため、超過分は検出されておらずこのレポートに含まれていません。<b>このレポートは不完全です。</b>無視キーやセクション絞り込みで差分を減らして再比較してください。</div>` : '',
+    partialIssues.length ? `<div class="warn">⚠ <b>本文未検証 ${partialIssues.length}件</b> — JS/CSS等の本文を取得できなかったため、該当項目は本文ではなく fileKey 等で比較しています。${partialIssues.map((issue) => `<div class="msg">${esc(issue.section || issue.sectionKey || '-')} / ${esc(getIssueSideLabel(issue.side))}: ${esc(issue.message || issue.reason || '本文を取得できませんでした')}</div>`).join('')}</div>` : '',
     fetchIssues.length ? `<details class="issue-box">
           <summary>API取得失敗 ${fetchIssues.length}件</summary>
           <table>
@@ -2023,31 +2239,32 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
         </details>` : ''
   ].filter(Boolean).join('');
 
-  const srcFieldProps = (() => {
-    const s = sourceBundle?.sections?.fieldSettings;
-    if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
-    if (s.properties && typeof s.properties === 'object' && !Array.isArray(s.properties)) return s.properties;
-    return s;
-  })();
-  const tgtFieldProps = (() => {
-    const s = targetBundle?.sections?.fieldSettings;
-    if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
-    if (s.properties && typeof s.properties === 'object' && !Array.isArray(s.properties)) return s.properties;
-    return s;
-  })();
-
   // レポート単体で「作成時に利用した情報」(比較に使った両アプリの設定JSON)を
   // 出力したり、選択差分から反映用APIパラメータを組み立てたりできるよう、
   // 比較スコープ分のセクションデータを両側とも埋め込む。
   const pickSectionsForReport = (bundle: any) => {
     const out: any = {};
     (Array.isArray(scopes) ? scopes : []).forEach((key) => {
-      if (bundle?.sections && bundle.sections[key] !== undefined) out[key] = deepClone(bundle.sections[key]);
+      if (bundle?.sections && bundle.sections[key] !== undefined) {
+        out[key] = sanitizeReportSectionValue(key, bundle.sections[key]);
+      }
     });
     return out;
   };
   const srcSectionsForReport = pickSectionsForReport(sourceBundle);
   const tgtSectionsForReport = pickSectionsForReport(targetBundle);
+  const srcFieldProps = (() => {
+    const s = srcSectionsForReport.fieldSettings;
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
+    if (s.properties && typeof s.properties === 'object' && !Array.isArray(s.properties)) return s.properties;
+    return s;
+  })();
+  const tgtFieldProps = (() => {
+    const s = tgtSectionsForReport.fieldSettings;
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
+    if (s.properties && typeof s.properties === 'object' && !Array.isArray(s.properties)) return s.properties;
+    return s;
+  })();
 
   const logicScript = `
 (() => {
@@ -2055,6 +2272,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const SECTION_LABEL_MAP = ${safeJsonForScript(sectionLabelMap)};
   const ENTITY_KIND_LABEL_MAP = ${safeJsonForScript(entityKindLabelMap)};
   const REPORT_META = ${safeJsonForScript(reportMeta)};
+  const TARGET_PREVIEW_API_PREFIX = ${safeJsonForScript(targetPreviewApiPrefix)};
   const NORMALIZATION_PRESETS = ${safeJsonForScript(clientNormalizationPresets)};
   const THEME_KEY = '${TOOL_ID}:diffReportTheme';
   const ACTIVE_TAB_KEY = '${TOOL_ID}:diffReportActiveTab';
@@ -2081,6 +2299,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   const FLAT_FIELD_PROPS_TGT = collectFlatFieldMap(FIELD_PROPS_TGT);
   let activeFieldCode = '';
   let detailModalOpen = false;
+  let fieldDetailReturnFocus = null;
   const reportMemory = new Map();
   // 確認済みチェック（このレポートを開いている間だけ保持）
   const reviewedKeys = new Set();
@@ -2180,7 +2399,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   }
 
   function csvEscape(v) {
-    const s = String(v == null ? '' : v);
+    const raw = String(v == null ? '' : v);
+    // Excel 等で CSV を開いた際、先頭空白の後に = + - @ が続く値も式として
+    // 評価され得るため、文字列として扱われるよう先頭に apostrophe を付ける。
+    const s = /^[\\t\\r\\n ]*[=+\\-@]/.test(raw) ? "'" + raw : raw;
     if (/[",\\n\\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
     return s;
   }
@@ -2745,6 +2967,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   function renderFieldJsonBlockHtml(group, useCharDiff) {
     const toneCls = group.status === 'added' ? 'added' : group.status === 'removed' ? 'removed' : 'changed';
     const checked = selectedFieldCodes.has(group.code);
+    const selectable = (group.rows || []).some((row) => row && row.type !== 'same' && !row._displayOnly);
     let body;
     if (group.src && group.tgt) {
       body = renderChangedDuo({ left: group.src, right: group.tgt, type: 'changed' }, useCharDiff);
@@ -2767,9 +2990,10 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       +   '<code class="fj-code">' + escHtml(group.code) + '</code>'
       +   '<span class="fj-type">' + escHtml(fieldTypeDisplayLabel(group.type)) + '</span>'
       +   '<span class="fj-spacer"></span>'
-      +   '<label class="row-select' + (checked ? ' is-on' : '') + '" title="このフィールドを反映JSONの対象にする">'
-      +     '<input type="checkbox" data-select-field="' + escHtml(group.code) + '"' + (checked ? ' checked' : '') + '> 選択'
-      +   '</label>'
+      +   (selectable
+        ? '<label class="row-select' + (checked ? ' is-on' : '') + '" title="このフィールドを反映JSONの対象にする">'
+          + '<input type="checkbox" data-select-field="' + escHtml(group.code) + '"' + (checked ? ' checked' : '') + '> 選択</label>'
+        : '<span class="muted" title="表示専用または同一のため反映対象にできません">反映対象外</span>')
       + '</div>'
       + '<div class="fj-body">' + body + '</div>'
       + '</article>';
@@ -2780,42 +3004,62 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   // form/fields はフィールド単位の部分更新ができるため PUT/POST/DELETE に分解し、
   // それ以外の「全体置き換え型」APIは比較元セクション全体をそのままpayloadにする。
 
+  const INCOMPLETE_COMPARISON_WARNINGS = Array.isArray(REPORT_META.comparisonWarnings)
+    ? REPORT_META.comparisonWarnings.map((item) => String(item || '')).filter(Boolean)
+    : [];
+
+  function withReflectRequestSafety(request, safety) {
+    const opts = safety || ({});
+    const warnings = [
+      ...INCOMPLETE_COMPARISON_WARNINGS,
+      ...(Array.isArray(opts.warnings) ? opts.warnings : [])
+    ].filter(Boolean);
+    return Object.assign(request, {
+      replacesEntireSection: !!opts.replacesEntireSection,
+      destructive: !!opts.destructive,
+      incompleteComparison: !!REPORT_META.incompleteComparison,
+      warnings: warnings
+    });
+  }
+
+  function wholeSectionReplaceWarning(label, selectedCount) {
+    return String(label || 'このセクション') + 'は全体置き換えAPIです。選択した '
+      + String(selectedCount || 0) + ' 行だけでなく、選択していない設定も比較元セクション全体の内容で上書きされます。';
+  }
+
   const SECTION_REFLECT_APIS = {
-    layoutSettings: { method: 'PUT', api: '/k/v1/preview/app/form/layout.json', build: (sec) => ({ layout: (sec && sec.layout) || sec || [] }) },
-    viewSettings: { method: 'PUT', api: '/k/v1/preview/app/views.json', build: (sec) => ({ views: (sec && sec.views) || sec || ({}) }), note: 'このAPIはビュー全体を置き換えます。payloadに含まれないビューは削除されます' },
-    reportSettings: { method: 'PUT', api: '/k/v1/preview/app/reports.json', build: (sec) => ({ reports: (sec && sec.reports) || sec || ({}) }), note: 'このAPIはグラフ全体を置き換えます' },
-    processSettings: { method: 'PUT', api: '/k/v1/preview/app/status.json', build: (sec) => {
-      const p = { enable: !!(sec && sec.enable) };
+    layoutSettings: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/form/layout.json', build: (sec) => ({ layout: (sec && sec.layout) || sec || [] }) },
+    viewSettings: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/views.json', build: (sec) => ({ views: (sec && sec.views) || sec || ({}) }), note: 'このAPIはビュー全体を置き換えます。payloadに含まれないビューは削除されます' },
+    reportSettings: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/reports.json', build: (sec) => ({ reports: (sec && sec.reports) || sec || ({}) }), note: 'このAPIはグラフ全体を置き換えます' },
+    processSettings: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/status.json', build: (sec) => {
+      const p = {};
+      if (sec && sec.enable !== undefined) p.enable = sec.enable;
       if (sec && sec.states !== undefined) p.states = sec.states;
       if (sec && sec.actions !== undefined) p.actions = sec.actions;
       return p;
     } },
-    actionSettings: { method: 'PUT', api: '/k/v1/preview/app/actions.json', build: (sec) => ({ actions: (sec && sec.actions) || sec || ({}) }) },
-    appAcl: { method: 'PUT', api: '/k/v1/preview/app/acl.json', build: (sec) => ({ rights: (sec && sec.rights) || sec || [] }) },
-    fieldAcl: { method: 'PUT', api: '/k/v1/preview/field/acl.json', build: (sec) => ({ rights: (sec && sec.rights) || sec || [] }) },
-    recordPermissions: { method: 'PUT', api: '/k/v1/preview/record/acl.json', build: (sec) => ({ rights: (sec && sec.rights) || sec || [] }) },
-    notifications: { method: 'PUT', api: '/k/v1/preview/app/notifications/general.json', build: (sec) => {
+    actionSettings: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/actions.json', build: (sec) => ({ actions: (sec && sec.actions) || sec || ({}) }) },
+    appAcl: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/acl.json', build: (sec) => ({ rights: (sec && sec.rights) || sec || [] }) },
+    fieldAcl: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/field/acl.json', build: (sec) => ({ rights: (sec && sec.rights) || sec || [] }) },
+    recordPermissions: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/record/acl.json', build: (sec) => ({ rights: (sec && sec.rights) || sec || [] }) },
+    notifications: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/notifications/general.json', build: (sec) => {
       const p = { notifications: (sec && sec.notifications) || sec || [] };
       if (sec && sec.notifyToCommenter !== undefined) p.notifyToCommenter = sec.notifyToCommenter;
       return p;
     } },
-    perRecordNotifications: { method: 'PUT', api: '/k/v1/preview/app/notifications/perRecord.json', build: (sec) => ({ notifications: (sec && sec.notifications) || sec || [] }) },
-    reminderNotifications: { method: 'PUT', api: '/k/v1/preview/app/notifications/reminder.json', build: (sec) => {
+    perRecordNotifications: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/notifications/perRecord.json', build: (sec) => ({ notifications: (sec && sec.notifications) || sec || [] }) },
+    reminderNotifications: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/notifications/reminder.json', build: (sec) => {
       const p = { notifications: (sec && sec.notifications) || sec || [] };
       if (sec && sec.timezone) p.timezone = sec.timezone;
       return p;
     } },
-    customizeSettings: { method: 'PUT', api: '/k/v1/preview/app/customize.json', build: (sec) => {
+    customizeSettings: { method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/customize.json', build: (sec) => {
       const p = {};
       if (sec && sec.scope) p.scope = sec.scope;
       if (sec && sec.desktop !== undefined) p.desktop = sec.desktop;
       if (sec && sec.mobile !== undefined) p.mobile = sec.mobile;
       return p;
-    }, note: 'FILE指定のJS/CSSは比較先環境で fileKey を再アップロードする必要があります' },
-    pluginSettings: { method: 'POST', api: '/k/v1/preview/app/plugins.json', build: (sec) => {
-      const plugins = (sec && sec.plugins) || sec || [];
-      return { ids: (Array.isArray(plugins) ? plugins : []).map((p) => p && p.id).filter(Boolean) };
-    }, note: 'プラグインの追加のみAPIで行えます（設定値の反映は各プラグイン画面で行ってください）' }
+    }, note: 'FILE指定のJS/CSSは比較先環境で fileKey を再アップロードする必要があります' }
   };
 
   function buildAppSettingsReflectPayload(rows, sec) {
@@ -2830,12 +3074,14 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   }
 
   function buildFieldReflectRequests(fieldRows, app, requests) {
+    const FIELD_REFLECT_BATCH_LIMIT = 100;
     const codes = new Set();
     (fieldRows || []).forEach((row) => {
       const info = extractFieldPathInfo(row.path);
       if (info && info.rootCode) codes.add(info.rootCode);
     });
     selectedFieldCodes.forEach((code) => {
+      if (!fieldCodeHasActualDiff(code)) return;
       // フィールド単位ビューで選んだテーブル内フィールドは親テーブルのコードへ丸める
       const def = FLAT_FIELD_PROPS_SRC[code] || FLAT_FIELD_PROPS_TGT[code];
       codes.add(def && def.__parentTableCode ? def.__parentTableCode : code);
@@ -2852,15 +3098,121 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       else if (tgt) deleteCodes.push(code);
     });
     const label = SECTION_LABEL_MAP[FIELD_SECTION_KEY] || 'フィールド設定';
-    if (Object.keys(updateProps).length) {
-      requests.push({ section: FIELD_SECTION_KEY, sectionLabel: label + '（更新）', method: 'PUT', api: '/k/v1/preview/app/form/fields.json', payload: { app: app, properties: updateProps } });
-    }
-    if (Object.keys(addProps).length) {
-      requests.push({ section: FIELD_SECTION_KEY, sectionLabel: label + '（追加）', method: 'POST', api: '/k/v1/preview/app/form/fields.json', payload: { app: app, properties: addProps } });
-    }
+    const pushPropertyBatches = (properties, method, actionLabel) => {
+      const entries = Object.entries(properties || {});
+      const totalBatches = Math.ceil(entries.length / FIELD_REFLECT_BATCH_LIMIT);
+      for (let offset = 0; offset < entries.length; offset += FIELD_REFLECT_BATCH_LIMIT) {
+        const batchEntries = entries.slice(offset, offset + FIELD_REFLECT_BATCH_LIMIT);
+        const batchIndex = Math.floor(offset / FIELD_REFLECT_BATCH_LIMIT) + 1;
+        requests.push(withReflectRequestSafety(
+          {
+            section: FIELD_SECTION_KEY,
+            sectionLabel: label + '（' + actionLabel + (totalBatches > 1 ? ' ' + batchIndex + '/' + totalBatches : '') + '）',
+            method: method,
+            api: TARGET_PREVIEW_API_PREFIX + '/app/form/fields.json',
+            payload: { app: app, properties: Object.fromEntries(batchEntries) },
+            batch: { index: batchIndex, total: totalBatches, limit: FIELD_REFLECT_BATCH_LIMIT }
+          },
+          { replacesEntireSection: false, destructive: false }
+        ));
+      }
+    };
+    pushPropertyBatches(updateProps, 'PUT', '更新');
+    pushPropertyBatches(addProps, 'POST', '追加');
     if (deleteCodes.length) {
-      requests.push({ section: FIELD_SECTION_KEY, sectionLabel: label + '（削除）', method: 'DELETE', api: '/k/v1/preview/app/form/fields.json', payload: { app: app, fields: deleteCodes }, note: '比較元に存在しないフィールドを比較先から削除します' });
+      const totalBatches = Math.ceil(deleteCodes.length / FIELD_REFLECT_BATCH_LIMIT);
+      for (let offset = 0; offset < deleteCodes.length; offset += FIELD_REFLECT_BATCH_LIMIT) {
+        const batchIndex = Math.floor(offset / FIELD_REFLECT_BATCH_LIMIT) + 1;
+        requests.push(withReflectRequestSafety({
+          section: FIELD_SECTION_KEY,
+          sectionLabel: label + '（削除候補・手動確認' + (totalBatches > 1 ? ' ' + batchIndex + '/' + totalBatches : '') + '）',
+          method: null,
+          api: null,
+          candidateApi: TARGET_PREVIEW_API_PREFIX + '/app/form/fields.json',
+          candidateMethod: 'DELETE',
+          payload: { app: app, fields: deleteCodes.slice(offset, offset + FIELD_REFLECT_BATCH_LIMIT) },
+          batch: { index: batchIndex, total: totalBatches, limit: FIELD_REFLECT_BATCH_LIMIT },
+          requiresExplicitDeleteOptIn: true,
+          note: '比較先のみに存在するフィールドです。自動DELETEリクエストは生成していません'
+        }, {
+          replacesEntireSection: false,
+          destructive: true,
+          warnings: [
+            '比較先のみに存在するフィールドの自動削除は安全のため無効です。内容を確認し、必要な場合だけ管理画面等で手動削除してください。',
+            'フィールドを削除すると、そのフィールドに保存されているレコードデータも失われる可能性があります。'
+          ]
+        }));
+      }
     }
+  }
+
+  function buildPluginReflectRequests(secRows, srcSec, app, label, selectedPaths, requests) {
+    const sourcePlugins = Array.isArray(srcSec && srcSec.plugins)
+      ? srcSec.plugins
+      : (Array.isArray(srcSec) ? srcSec : []);
+    const ids = new Set();
+    const manualPaths = [];
+    (secRows || []).forEach((row) => {
+      if (!row || row.type !== 'removed') {
+        manualPaths.push(row && row.path ? row.path : 'pluginSettings');
+        return;
+      }
+      if (String(row.path || '') === 'pluginSettings') {
+        sourcePlugins.forEach((plugin) => {
+          if (plugin && plugin.id) ids.add(String(plugin.id));
+        });
+        return;
+      }
+      const sourcePluginId = row.left && typeof row.left === 'object' && row.left.id
+        ? row.left.id
+        : (row.arrayKey === 'id' && row.arrayKeyValue != null ? row.arrayKeyValue : '');
+      if (sourcePluginId && typeof sourcePluginId !== 'object') ids.add(String(sourcePluginId));
+      else manualPaths.push(row.path || 'pluginSettings');
+    });
+    if (ids.size) {
+      requests.push(withReflectRequestSafety(
+        {
+          section: 'pluginSettings',
+          sectionLabel: label + '（比較元のみを追加）',
+          method: 'POST',
+          api: TARGET_PREVIEW_API_PREFIX + '/app/plugins.json',
+          payload: { app: app, ids: [...ids] },
+          selectedPaths: selectedPaths
+        },
+        {
+          replacesEntireSection: false,
+          destructive: false,
+          warnings: ['選択した比較元のみのプラグインだけを追加します。設定値は各プラグイン画面で手動反映してください。']
+        }
+      ));
+    }
+    if (manualPaths.length) {
+      requests.push(withReflectRequestSafety(
+        {
+          section: 'pluginSettings',
+          sectionLabel: label + '（手動確認）',
+          method: null,
+          api: null,
+          selectedPaths: manualPaths,
+          note: '比較先のみのプラグイン削除やプラグイン設定値の変更は自動反映しません'
+        },
+        {
+          replacesEntireSection: false,
+          destructive: false,
+          warnings: ['プラグインの削除・設定変更は影響を確認し、管理画面で手動反映してください。']
+        }
+      ));
+    }
+  }
+
+  function fieldCodeHasActualDiff(code) {
+    const expected = String(code || '');
+    if (!expected) return false;
+    return REPORT_ROWS.some((row) => {
+      if (!row || row.sectionKey !== FIELD_SECTION_KEY || row.type === 'same' || row._displayOnly) return false;
+      const info = extractFieldPathInfo(row.path);
+      return !!info && (info.activeCode === expected || info.rootCode === expected);
+    });
   }
 
   function buildReflectJson() {
@@ -2868,6 +3220,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const app = String(REPORT_META.target.appId || '');
     const bySection = new Map();
     selectedRows.forEach((row) => {
+      if (!row || row._displayOnly || row.type === 'same') return;
       const key = row.sectionKey || '';
       if (!bySection.has(key)) bySection.set(key, []);
       bySection.get(key).push(row);
@@ -2881,24 +3234,54 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       const srcSec = SOURCE_SECTIONS[secKey];
       if (secKey === 'appSettings') {
         const payload = buildAppSettingsReflectPayload(secRows, srcSec);
-        requests.push({ section: secKey, sectionLabel: label, method: 'PUT', api: '/k/v1/preview/app/settings.json', payload: Object.assign({ app: app }, payload), selectedPaths: selectedPaths });
+        requests.push(withReflectRequestSafety(
+          { section: secKey, sectionLabel: label, method: 'PUT', api: TARGET_PREVIEW_API_PREFIX + '/app/settings.json', payload: Object.assign({ app: app }, payload), selectedPaths: selectedPaths },
+          { replacesEntireSection: false, destructive: false }
+        ));
+        return;
+      }
+      if (secKey === 'pluginSettings') {
+        buildPluginReflectRequests(secRows, srcSec, app, label, selectedPaths, requests);
         return;
       }
       const def = SECTION_REFLECT_APIS[secKey];
       if (!def) {
-        requests.push({ section: secKey, sectionLabel: label, method: null, api: null, note: 'このセクションを直接更新できる公開APIがないため、sourceValue を参考に手動で反映してください', sourceValue: srcSec === undefined ? null : srcSec, selectedPaths: selectedPaths });
+        requests.push(withReflectRequestSafety(
+          { section: secKey, sectionLabel: label, method: null, api: null, note: 'このセクションを直接更新できる公開APIがないため、sourceValue を参考に手動で反映してください', sourceValue: srcSec === undefined ? null : srcSec, selectedPaths: selectedPaths },
+          { replacesEntireSection: false, destructive: false, warnings: ['公開APIで自動反映できないため、手動確認が必要です。'] }
+        ));
         return;
       }
-      const req = { section: secKey, sectionLabel: label, method: def.method, api: def.api, payload: Object.assign({ app: app }, def.build(srcSec)), selectedPaths: selectedPaths };
+      const replacesEntireSection = def.replacesEntireSection !== false;
+      const requestWarnings = [];
+      if (replacesEntireSection) requestWarnings.push(wholeSectionReplaceWarning(label, secRows.length));
+      if (def.note) requestWarnings.push(def.note);
+      const req = withReflectRequestSafety(
+        { section: secKey, sectionLabel: label, method: def.method, api: def.api, payload: Object.assign({ app: app }, def.build(srcSec)), selectedPaths: selectedPaths },
+        {
+          replacesEntireSection: replacesEntireSection,
+          destructive: replacesEntireSection || !!def.destructive,
+          warnings: requestWarnings
+        }
+      );
       if (def.note) req.note = def.note;
       requests.push(req);
     });
+    if (!requests.length) return null;
     return {
       generatedAt: new Date().toISOString(),
       description: '選択した差分を比較先アプリへ反映するためのAPIパラメータ（比較元の設定値を使用）',
       source: { appId: REPORT_META.source.appId || '', appName: REPORT_META.source.appName || '' },
-      target: { appId: REPORT_META.target.appId || '', appName: REPORT_META.target.appName || '' },
-      deployNote: 'preview系APIで反映した後、/k/v1/preview/app/deploy.json で運用環境へ反映してください',
+      target: { appId: REPORT_META.target.appId || '', appName: REPORT_META.target.appName || '', guestId: REPORT_META.target.guestId || '' },
+      incompleteComparison: !!REPORT_META.incompleteComparison,
+      warnings: [...INCOMPLETE_COMPARISON_WARNINGS],
+      comparisonContext: {
+        fetchIssues: REPORT_META.fetchIssues || [],
+        partialIssues: REPORT_META.partialIssues || [],
+        truncation: REPORT_META.truncation || null,
+        rowSelection: REPORT_META.rowSelection || null
+      },
+      deployNote: 'preview系APIで反映した後、' + TARGET_PREVIEW_API_PREFIX + '/app/deploy.json で運用環境へ反映してください',
       requests: requests
     };
   }
@@ -4183,12 +4566,17 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   }
 
   function closeFieldDetailModal() {
+    const returnFocus = fieldDetailReturnFocus;
     detailModalOpen = false;
+    fieldDetailReturnFocus = null;
     const modal = document.getElementById('fieldDetailModal');
     const body = document.getElementById('fieldDetailModalBody');
     if (modal) modal.hidden = true;
     if (body) body.innerHTML = '';
     document.body.classList.remove('has-modal-open');
+    if (returnFocus && returnFocus.isConnected && typeof returnFocus.focus === 'function') {
+      returnFocus.focus();
+    }
   }
 
   function syncFieldDetailModal(model, options) {
@@ -4211,11 +4599,17 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     body.innerHTML = renderFieldDetailPanel(activeFieldCode, model, options);
     modal.hidden = false;
     document.body.classList.add('has-modal-open');
+    const dialog = modal.querySelector('[role="dialog"]');
+    if (dialog && !dialog.contains(document.activeElement)) {
+      const firstFocus = dialog.querySelector('[data-modal-close]') || dialog;
+      if (typeof firstFocus.focus === 'function') firstFocus.focus();
+    }
   }
 
-  function openFieldDetail(code, rerender) {
+  function openFieldDetail(code, rerender, trigger) {
     const safeCode = String(code || '').trim();
     if (!safeCode) return;
+    fieldDetailReturnFocus = trigger || document.activeElement;
     activeFieldCode = safeCode;
     detailModalOpen = true;
     if (typeof rerender === 'function') rerender();
@@ -4227,7 +4621,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       btn.addEventListener('click', () => {
         const code = String(btn.getAttribute('data-field-select') || '').trim();
         if (!code) return;
-        openFieldDetail(code, rerender);
+        openFieldDetail(code, rerender, btn);
       });
     });
   }
@@ -4303,13 +4697,15 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
             const tone = fieldStatusTone(group.status);
             const isActive = group.code === activeFieldCode;
             const isSelected = selectedFieldCodes.has(group.code);
+            const isReflectSelectable = (group.fieldRows || []).some((row) => row && row.type !== 'same' && !row._displayOnly);
             return '<article class="fc-card fc-card--' + tone + (isActive ? ' is-active' : '') + '" id="field_card_' + idx + '">' +
               '<div class="fc-card-head">' +
                 '<span class="fd-status fd-status--' + tone + '">' + escHtml(fieldStatusLabel(group.status)) + '</span>' +
                 '<span class="fc-code">' + escHtml(group.code) + '</span>' +
-                '<label class="row-select' + (isSelected ? ' is-on' : '') + '" title="このフィールドを反映JSONの対象にする">' +
-                  '<input type="checkbox" data-select-field="' + escHtml(group.code) + '"' + (isSelected ? ' checked' : '') + '> 選択' +
-                '</label>' +
+                (isReflectSelectable
+                  ? '<label class="row-select' + (isSelected ? ' is-on' : '') + '" title="このフィールドを反映JSONの対象にする">' +
+                      '<input type="checkbox" data-select-field="' + escHtml(group.code) + '"' + (isSelected ? ' checked' : '') + '> 選択</label>'
+                  : '<span class="muted" title="表示専用・同一・レイアウト参照のみのため反映対象にできません">反映対象外</span>') +
               '</div>' +
               '<div class="fc-title">' + escHtml(group.label) + '</div>' +
               '<div class="fc-sub">' + escHtml(fieldTypeDisplayLabel(group.type)) + (group.parentTableCode ? ' / テーブル: ' + escHtml(group.parentTableLabel || group.parentTableCode) : '') + '</div>' +
@@ -4553,6 +4949,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       const active = btn.getAttribute('data-report-tab') === nextTab;
       btn.classList.toggle('passive', !active);
       btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      btn.setAttribute('tabindex', active ? '0' : '-1');
     });
     document.querySelectorAll('[data-report-pane]').forEach((pane) => {
       pane.hidden = pane.getAttribute('data-report-pane') !== nextTab;
@@ -4671,9 +5068,11 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
       + '<button type="button" class="row-act" data-copy-path="' + escHtml(row.path || '') + '" title="設定パスをコピー">パス</button>'
       + '<button type="button" class="row-act" data-copy-row="' + escHtml(key) + '" title="比較元・比較先の値をJSONでコピー">コピー</button>'
       + (row.type !== 'same'
-        ? '<label class="row-select' + (selected ? ' is-on' : '') + '" title="この差分を反映JSONの対象にする">'
-          + '<input type="checkbox" data-select-toggle="' + escHtml(key) + '"' + (selected ? ' checked' : '') + '> 選択'
-          + '</label>'
+        ? (row.type !== 'same' && !row._displayOnly
+          ? '<label class="row-select' + (selected ? ' is-on' : '') + '" title="この差分を反映JSONの対象にする">'
+            + '<input type="checkbox" data-select-toggle="' + escHtml(key) + '"' + (selected ? ' checked' : '') + '> 選択'
+            + '</label>'
+          : '')
           + '<label class="row-reviewed' + (reviewed ? ' is-on' : '') + '" title="確認済みにする（サイドバーの「確認済みを隠す」と連動）">'
           + '<input type="checkbox" data-review-toggle="' + escHtml(key) + '"' + (reviewed ? ' checked' : '') + '> 確認'
           + '</label>'
@@ -4923,7 +5322,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     const selectField = e.target && e.target.closest ? e.target.closest('[data-select-field]') : null;
     if (selectField) {
       const code = selectField.getAttribute('data-select-field') || '';
-      if (selectField.checked) selectedFieldCodes.add(code);
+      if (selectField.checked && fieldCodeHasActualDiff(code)) selectedFieldCodes.add(code);
       else selectedFieldCodes.delete(code);
       const label = selectField.closest('.row-select');
       if (label) label.classList.toggle('is-on', selectField.checked);
@@ -4967,9 +5366,44 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
   });
   document.querySelectorAll('[data-report-tab]').forEach((btn) => {
     btn.onclick = () => setActiveTab(btn.getAttribute('data-report-tab'));
+    btn.onkeydown = (e) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+      e.preventDefault();
+      const tabs = Array.from(document.querySelectorAll('[data-report-tab]'));
+      const current = tabs.indexOf(btn);
+      const nextIndex = e.key === 'Home'
+        ? 0
+        : e.key === 'End'
+          ? tabs.length - 1
+          : (current + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      const next = tabs[nextIndex];
+      if (!next) return;
+      setActiveTab(next.getAttribute('data-report-tab'));
+      next.focus();
+    };
   });
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' && detailModalOpen) {
+      const modal = document.getElementById('fieldDetailModal');
+      const dialog = modal && modal.querySelector('[role="dialog"]');
+      const focusable = dialog ? Array.from(dialog.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')) : [];
+      if (focusable.length) {
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        } else if (!dialog.contains(document.activeElement)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
       document.getElementById('search').focus();
@@ -5638,18 +6072,18 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
 
     <div class="settings-shell">
       <div class="settings-tabs" role="tablist" aria-label="レポート表示切替">
-        <button type="button" role="tab" class="settings-tab" data-report-tab="diff" aria-selected="true">差分一覧</button>
-        <button type="button" role="tab" class="settings-tab passive" data-report-tab="settingsLike" aria-selected="false">フィールド単位</button>
+        <button id="reportTabDiff" type="button" role="tab" class="settings-tab" data-report-tab="diff" aria-selected="true" aria-controls="reportPaneDiff" tabindex="0">差分一覧</button>
+        <button id="reportTabSettingsLike" type="button" role="tab" class="settings-tab passive" data-report-tab="settingsLike" aria-selected="false" aria-controls="reportPaneSettingsLike" tabindex="-1">フィールド単位</button>
       </div>
 
-      <section class="tab-pane" data-report-pane="diff">
+      <section id="reportPaneDiff" class="tab-pane" data-report-pane="diff" role="tabpanel" aria-labelledby="reportTabDiff">
         <div class="content">
           ${noticesHtml ? `<div class="report-notices">${noticesHtml}</div>` : ''}
           <div id="main"></div>
         </div>
       </section>
 
-      <section class="tab-pane" data-report-pane="settingsLike" hidden>
+      <section id="reportPaneSettingsLike" class="tab-pane" data-report-pane="settingsLike" role="tabpanel" aria-labelledby="reportTabSettingsLike" hidden>
         <div class="content" style="padding:0">
           <p class="muted" style="margin:0;padding:12px 18px 0;font-size:11px;line-height:1.6"><strong>フィールド単位</strong>で、フィールドごとの設定差分と影響範囲を1つの項目にまとめて確認します。左の検索と「同一項目を隠す」が連動し、カードのボタンから詳細をポップアップ表示できます。</p>
           <div id="settingsLikeRoot" class="sl-root"></div>
@@ -5658,7 +6092,7 @@ export function buildDiffHtml(sourceBundle, targetBundle, rows, scopes, ignoreKe
     </div>
 
     <div id="fieldDetailModal" class="fd-overlay" hidden>
-      <div class="fd-overlay-dialog" role="dialog" aria-modal="true" aria-labelledby="fieldDetailModalTitle">
+      <div class="fd-overlay-dialog" role="dialog" aria-modal="true" aria-labelledby="fieldDetailModalTitle" aria-describedby="fieldDetailModalSub" tabindex="-1">
         <div class="fd-overlay-head">
           <div>
             <div class="sb-kicker">フィールドの設定差分</div>
@@ -5707,7 +6141,11 @@ export function renderDiffSuggestionChips() {
 export function renderDiffFilterOptions() {
   if (!ui.diffFilterSection) return;
   const ex = state.diffExcludeSections;
-  let sections = [...new Set([...(state.lastDiffRows || []).map((r) => r.sectionKey), ...(state.lastFetchIssues || []).map((r) => r.sectionKey)].filter(Boolean))];
+  let sections = [...new Set([
+    ...(state.lastDiffRows || []).map((r) => r.sectionKey),
+    ...(state.lastFetchIssues || []).map((r) => r.sectionKey),
+    ...(state.lastPartialIssues || []).map((r) => r.sectionKey)
+  ].filter(Boolean))];
   if (Array.isArray(ex) && ex.length) {
     sections = sections.filter((k) => !ex.includes(k));
   }
@@ -5729,7 +6167,8 @@ export function renderDiffExportSummary() {
   if (!host) return;
   const total = (state.lastDiffRows || []).length;
   const issues = (state.lastFetchIssues || []).length;
-  if (!total && !issues && !state.lastDiffAt) {
+  const partialIssues = (state.lastPartialIssues || []).length;
+  if (!total && !issues && !partialIssues && !state.lastDiffAt) {
     host.className = 'diff-export-panel__summary is-empty';
     host.textContent = '差分比較を実行すると出力対象の件数が表示されます';
     return;
@@ -5751,11 +6190,14 @@ export function renderDiffExportSummary() {
   const s = summarizeRows(resolved.rows);
   const breakdown = `追加${s.added} / 削除${s.removed} / 変更${s.changed}${s.moved ? ` / 移動${s.moved}` : ''}${s.same ? ` / 同一${s.same}` : ''}`;
   const issueNote = mode === 'all' && issues ? ` ＋ 取得失敗 ${issues}件` : '';
+  const partialIssueNote = mode === 'all' && partialIssues ? ` ＋ 本文未検証 ${partialIssues}件` : '';
   const truncated = !!state.lastDiffTruncation?.truncated;
-  host.className = `diff-export-panel__summary${truncated ? ' is-warn' : ''}`;
-  host.innerHTML = `出力対象: <b>${esc(resolved.label)} ${actual}件</b>（${breakdown}）${issueNote}`
+  const incomplete = truncated || partialIssues > 0;
+  host.className = `diff-export-panel__summary${incomplete ? ' is-warn' : ''}`;
+  host.innerHTML = `出力対象: <b>${esc(resolved.label)} ${actual}件</b>（${breakdown}）${issueNote}${partialIssueNote}`
     + `<span class="diff-export-panel__summary-sub">内容: ${esc(getDiffExportContentLabel(resolveDiffExportContentMode()))}</span>`
-    + (truncated ? '<span class="diff-export-panel__summary-sub">⚠ 差分上限打ち切りが発生しています。出力は不完全です。</span>' : '');
+    + (truncated ? '<span class="diff-export-panel__summary-sub">⚠ 差分上限打ち切りが発生しています。出力は不完全です。</span>' : '')
+    + (partialIssues ? '<span class="diff-export-panel__summary-sub">⚠ JS/CSS等に本文未検証があります。fileKey 等による比較結果です。</span>' : '');
 }
 
 export function renderDiffSelectionState() {
@@ -5765,6 +6207,7 @@ export function renderDiffSelectionState() {
   const selected = getSelectedDiffRows().length;
   const rendered = getRenderedDiffRows().length;
   const issues = (state.lastFetchIssues || []).length;
+  const partialIssues = (state.lastPartialIssues || []).length;
   const normalization = getActiveDiffNormalizationLabels();
   let reviewTodo = 0;
   let reviewIgnored = 0;
@@ -5783,19 +6226,19 @@ export function renderDiffSelectionState() {
     visible: '現在表示中のみ',
     favorites: 'お気に入り行のみ'
   };
-  if (!total && !issues && !state.lastDiffAt) {
+  if (!total && !issues && !partialIssues && !state.lastDiffAt) {
     ui.diffSelectionState.textContent = '⏳ まだ差分を実行していません';
     ui.diffSelectionState.classList.add('is-empty-state');
     return;
   }
   ui.diffSelectionState.classList.remove('is-empty-state');
   ui.diffSelectionState.textContent =
-    `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / ${reviewSummary} / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || '全件（比較結果）'} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(', ') || '-'}`;
+    `選択 ${selected}/${total}件 / 表示中 ${rendered}件 / API取得失敗 ${issues}件 / 本文未検証 ${partialIssues}件 / ${reviewSummary} / 出力対象 ${exportModeLabelMap[resolveDiffExportMode()] || '全件（比較結果）'} / 出力内容 ${getDiffExportContentLabel(resolveDiffExportContentMode())} / 正規化 ${normalization.join(', ') || '-'}`;
 }
 
 export function renderDiffWarningBox() {
   if (!ui.diffWarnBox) return;
-  const warning = buildDiffWarningInfo(state.lastDiffRows, state.lastFetchIssues);
+  const warning = buildDiffWarningInfo(state.lastDiffRows, state.lastFetchIssues, state.lastPartialIssues);
   if (!warning.threshold) {
     ui.diffWarnBox.style.display = 'none';
     ui.diffWarnBox.textContent = '';
@@ -5807,7 +6250,7 @@ export function renderDiffWarningBox() {
     return;
   }
   ui.diffWarnBox.style.display = 'block';
-  ui.diffWarnBox.textContent = `差分 ${warning.diffCount}件 + API取得失敗 ${warning.issueCount}件 = ${warning.total}件 が警告しきい値 ${warning.threshold}件以上です。`;
+  ui.diffWarnBox.textContent = `差分 ${warning.diffCount}件 + API取得失敗 ${warning.issueCount}件 + 本文未検証 ${warning.partialIssueCount}件 = ${warning.total}件 が警告しきい値 ${warning.threshold}件以上です。`;
 }
 
 // ---------------------------------------------------------------------------
@@ -6016,11 +6459,13 @@ function paintDiffOffViewPlaceholder(rows) {
   const list = rows || state.lastDiffRows || [];
   const n = list.length;
   const m = (state.lastFetchIssues || []).length;
-  if (!n && !m) {
+  const p = (state.lastPartialIssues || []).length;
+  if (!n && !m && !p) {
     ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">結果エリア（ヘッダー差分）</p><p class="main-result-placeholder-body">差分比較後は、比較条件の下にある<strong>差分結果の整理・出力</strong>から一覧・絞り込み・出力を確認できます。</p></div>`;
     return;
   }
-  ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${m ? `（取得失敗 ${m} 件）` : ''}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>差分結果の整理・出力</strong>で行ってください。</p></div>`;
+  const notes = [m ? `取得失敗 ${m} 件` : '', p ? `本文未検証 ${p} 件` : ''].filter(Boolean).join(' / ');
+  ui.result.innerHTML = `<div class="main-result-placeholder"><p class="main-result-placeholder-title">差分 ${n} 行を保持中${notes ? `（${notes}）` : ''}</p><p class="main-result-placeholder-body">一覧・チェック・出力は<strong>差分結果の整理・出力</strong>で行ってください。</p></div>`;
 }
 
 /** 差分以外のタブへ移したときに、差分テーブルが残り続けないようにする */
@@ -6054,6 +6499,7 @@ export function renderResultRows(rows) {
   const grouped = groupDiffRowsBySection(filteredRows);
   const filteredSeverity = summarizeSeverity(filteredRows);
   const filteredIssues = getFilteredFetchIssues(state.lastFetchIssues);
+  const filteredPartialIssues = getFilteredPartialIssues(state.lastPartialIssues);
   const renderedRows = getRenderedDiffRows(rows);
   const selectedRows = getSelectedDiffRows(rows);
   const rawKeyword = String(ui.diffSearch?.value || '').trim();
@@ -6115,6 +6561,7 @@ export function renderResultRows(rows) {
         </div>
         ${summary.same ? `<div class="diff-stat-chip" title="同一"><div class="diff-stat-chip__num">${summary.same}</div><div class="diff-stat-chip__label">同一</div></div>` : ''}
         ${fetchSummary.total ? `<div class="diff-stat-chip diff-stat-chip--err" title="API取得失敗"><div class="diff-stat-chip__num">${fetchSummary.total}</div><div class="diff-stat-chip__label">取得失敗</div></div>` : ''}
+        ${state.lastPartialIssues?.length ? `<div class="diff-stat-chip diff-stat-chip--err" title="JS/CSS等の本文未検証"><div class="diff-stat-chip__num">${state.lastPartialIssues.length}</div><div class="diff-stat-chip__label">本文未検証</div></div>` : ''}
         ${selectedRows.length ? `<div class="diff-stat-chip diff-stat-chip--accent" title="選択中"><div class="diff-stat-chip__num">${selectedRows.length}</div><div class="diff-stat-chip__label">選択</div></div>` : ''}
         ${viewedCount ? `<div class="diff-stat-chip diff-stat-chip--ok" title="レビュー済"><div class="diff-stat-chip__num">${viewedCount}</div><div class="diff-stat-chip__label">レビュー済</div></div>` : ''}
         ${renameCount ? `<div class="diff-stat-chip" title="名称変更候補"><div class="diff-stat-chip__num">${renameCount}</div><div class="diff-stat-chip__label">改名候補</div></div>` : ''}
@@ -6169,7 +6616,19 @@ export function renderResultRows(rows) {
       </table>
     </section>` : '';
 
-  if (!rows.length && !state.lastFetchIssues.length) {
+  const partialIssueHtml = filteredPartialIssues.length ? `<section class="diff-issues" role="alert">
+      <div class="diff-issues-head">⚠ 本文未検証 ${filteredPartialIssues.length}件</div>
+      <table class="diff-issue-table">
+        <thead><tr><th style="width:200px">セクション</th><th style="width:100px">対象</th><th>内容</th></tr></thead>
+        <tbody>${filteredPartialIssues.map((issue) => `<tr>
+          <td>${esc(issue.section || issue.sectionKey || '-')}</td>
+          <td>${esc(getIssueSideLabel(issue.side))}</td>
+          <td><div class="diff-issue-msg">${esc(issue.message || '本文を取得できなかったため、fileKey 等で比較しました')}</div></td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </section>` : '';
+
+  if (!rows.length && !state.lastFetchIssues.length && !state.lastPartialIssues.length) {
     ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''}">
         ${summaryHtml}
         <div class="diff-empty">差分はありません。</div>
@@ -6183,6 +6642,7 @@ export function renderResultRows(rows) {
     // カテゴリ別タブの可視化（マトリクス・カード・図）でレンダリングする。
     ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''} diff-view--category">
         ${summaryHtml}
+        ${partialIssueHtml}
         ${issueHtml}
         ${buildCategoryViewHtml(rows)}
       </div>`;
@@ -6193,7 +6653,7 @@ export function renderResultRows(rows) {
     return;
   }
 
-  if (!filteredRows.length && !filteredIssues.length) {
+  if (!filteredRows.length && !filteredIssues.length && !filteredPartialIssues.length) {
     ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''}">
         ${summaryHtml}
         <div class="diff-empty">検索条件に一致する差分はありません。</div>
@@ -6320,8 +6780,9 @@ export function renderResultRows(rows) {
 
   ui.result.innerHTML = `<div class="diff-view ${state.diffViewTheme === 'dark' ? 'dark' : ''}">
       ${summaryHtml}
+      ${partialIssueHtml}
       ${issueHtml}
-      ${!rows.length ? '<div class="diff-empty">比較差分はありません。API取得失敗のみ検出されています。</div>' : ''}
+      ${!rows.length ? '<div class="diff-empty">比較差分はありません。取得失敗または本文未検証のみ検出されています。</div>' : ''}
       ${sectionHtml}
     </div>`;
   scheduleDiffPopoutSync();

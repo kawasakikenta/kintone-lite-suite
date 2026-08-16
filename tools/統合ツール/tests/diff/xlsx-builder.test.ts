@@ -66,6 +66,9 @@ describe('diff/xlsx-builder', () => {
       'xl/worksheets/sheet1.xml',
       'xl/worksheets/sheet2.xml'
     ]);
+    const rels = extractEntry(buf, 'xl/_rels/workbook.xml.rels');
+    expect(rels).toContain('relationships/styles');
+    expect(rels).toContain('Target="styles.xml"');
   });
 
   it('sanitizes sheet names (forbidden chars, length, duplicates)', async () => {
@@ -85,6 +88,18 @@ describe('diff/xlsx-builder', () => {
     expect(workbook).toMatch(/name="a{29}_2"/);
   });
 
+  it('sanitizes edge apostrophes and de-duplicates names case-insensitively', async () => {
+    const sheets: XlsxSheet[] = [
+      { name: "'Edge'", rows: [['x']] },
+      { name: 'Case', rows: [['x']] },
+      { name: 'case', rows: [['x']] }
+    ];
+    const workbook = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/workbook.xml');
+    expect(workbook).toContain('name="_Edge_"');
+    expect(workbook).toContain('name="Case"');
+    expect(workbook).toContain('name="case_2"');
+  });
+
   it('escapes XML special characters in cell values', async () => {
     const sheets: XlsxSheet[] = [
       { name: 'Sheet1', rows: [['<tag>'], ['a & b'], ['"quoted"']] }
@@ -94,6 +109,23 @@ describe('diff/xlsx-builder', () => {
     expect(sheet1).toContain('&lt;tag&gt;');
     expect(sheet1).toContain('a &amp; b');
     expect(sheet1).toContain('&quot;quoted&quot;');
+  });
+
+  it('removes XML 1.0 noncharacters that make Excel reject the workbook', async () => {
+    const sheets: XlsxSheet[] = [{ name: 'Sheet1', rows: [['value'], ['before\uFFFEafter\uFFFF']] }];
+    const sheet1 = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    expect(sheet1).toContain('beforeafter');
+    expect(sheet1).not.toContain('\uFFFE');
+    expect(sheet1).not.toContain('\uFFFF');
+  });
+
+  it('preserves text that looks like an Excel _xHHHH_ escape sequence', async () => {
+    const sheets: XlsxSheet[] = [{ name: 'Sheet1', rows: [['value'], ['abc_x0041_def'], ['_x000A_'], ['_x005F_x0041_']] }];
+    const sheet1 = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    expect(sheet1).toContain('abc_x005F_x0041_def');
+    expect(sheet1).toContain('_x005F_x000A_');
+    expect(sheet1).toContain('_x005F_x005F_x005F_x0041_');
+    expect(sheet1).not.toContain('>abc_x0041_def<');
   });
 
   it('writes numbers as <v> and strings as inline strings', async () => {
@@ -124,5 +156,43 @@ describe('diff/xlsx-builder', () => {
     const xml = extractEntry(buf, 'xl/worksheets/sheet1.xml');
     expect(xml).not.toContain('<pane ');
     expect(xml).not.toContain('<autoFilter ');
+  });
+
+  it('applies semantic row styles without changing the header style', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['type'], ['added'], ['removed'], ['changed'], ['same'], ['reference'], ['warning']],
+      rowStyles: ['warning', 'added', 'removed', 'changed', 'same', 'reference', 'warning']
+    }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    expect(xml).toMatch(/<c r="A1" s="1"/);
+    expect(xml).toMatch(/<c r="A2" s="3"/);
+    expect(xml).toMatch(/<c r="A3" s="4"/);
+    expect(xml).toMatch(/<c r="A4" s="5"/);
+    expect(xml).toMatch(/<c r="A5" s="6"/);
+    expect(xml).toMatch(/<c r="A6" s="7"/);
+    expect(xml).toMatch(/<c r="A7" s="8"/);
+  });
+
+  it('truncates oversized text to the Excel cell limit without splitting a surrogate pair', async () => {
+    const oversized = '😀'.repeat(20000);
+    const sheets: XlsxSheet[] = [{ name: 'S', rows: [['value'], [oversized]] }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    const match = xml.match(/<c r="A2"[^>]*><is><t[^>]*>([\s\S]*?)<\/t><\/is><\/c>/);
+    expect(match).not.toBeNull();
+    const text = match![1];
+    expect(text.length).toBeLessThanOrEqual(32767);
+    expect(text).toContain('Excelセル上限32,767文字のため省略');
+    expect(text).toMatch(/元40000文字・識別:[0-9a-f]{8}/);
+    expect(/[\uD800-\uDBFF]$/.test(text)).toBe(false);
+  });
+
+  it('adds a distinct hash when long values differ only after the visible prefix', async () => {
+    const common = 'x'.repeat(39999);
+    const sheets: XlsxSheet[] = [{ name: 'S', rows: [['value'], [`${common}A`], [`${common}B`]] }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    const hashes = [...xml.matchAll(/識別:([0-9a-f]{8})/g)].map((match) => match[1]);
+    expect(hashes).toHaveLength(2);
+    expect(hashes[0]).not.toBe(hashes[1]);
   });
 });

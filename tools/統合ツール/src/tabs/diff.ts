@@ -25,6 +25,7 @@ import {
   getDiffNormalizationPresetState
 } from '../diff/engine.js';
 import { enrichDiffRows, summarizeSeverity } from '../diff/enrich.js';
+import { collectPartialComparisonIssues } from './diff-standalone.js';
 import {
   buildIgnoreKeySuggestions,
   resolveDiffExportRows,
@@ -194,8 +195,10 @@ export async function importBundleFromFile(side, file) {
   state.lastDiffAt = null;
   state.lastDiffRows = [];
   state.lastFetchIssues = [];
+  state.lastPartialIssues = [];
   state.lastDiffTruncation = null;
   state.lastDiffSignature = '';
+  state.lastDiffSnapshotContext = null;
   state.lastApplyPlan = null;
   state.diffSelectedIds = new Set();
 
@@ -251,9 +254,11 @@ export async function runDiff() {
   state.lastTargetBundle = target;
   state.lastDiffRows = rows;
   state.lastFetchIssues = diffResult.fetchIssues || [];
+  state.lastPartialIssues = collectPartialComparisonIssues(source, target);
   state.lastDiffTruncation = diffResult.truncation?.truncated ? diffResult.truncation : null;
   state.lastDiffAt = new Date().toISOString();
   state.lastDiffSignature = currentDiffSignature();
+  state.lastDiffSnapshotContext = null;
   state.lastApplyPlan = null;
   state.diffSectionVisibleCounts = {};
   state.diffSelectedIds = new Set();
@@ -273,14 +278,17 @@ export async function runDiff() {
   }
   const s = summarizeRows(rows);
   const sev = summarizeSeverity(rows);
-  const warning = buildDiffWarningInfo(rows, state.lastFetchIssues);
+  const warning = buildDiffWarningInfo(rows, state.lastFetchIssues, state.lastPartialIssues);
   renderBundleState();
   renderReflectSidebar();
   renderReflectMainPanel();
   const truncationNote = state.lastDiffTruncation
     ? ` / ⚠ 差分上限${state.lastDiffTruncation.diffLimit}件到達（結果は不完全）`
     : '';
-  setStatus(`差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${state.lastFetchIssues.length}件${truncationNote}${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`);
+  const partialNote = state.lastPartialIssues.length
+    ? ' / ⚠ 結果は不完全（本文未検証あり）'
+    : '';
+  setStatus(`差分比較完了: 差分 ${countActualDiffRows(rows)}件 / 同一 ${s.same}件 / 取得失敗 ${state.lastFetchIssues.length}件 / 本文未検証 ${state.lastPartialIssues.length}件${truncationNote}${partialNote}${warning.exceeded ? ` / 警告 ${warning.total}>=${warning.threshold}` : ''} (追加:${s.added} / 削除:${s.removed} / 変更:${s.changed} / 移動:${s.moved} / 高:${sev.high} / 中:${sev.medium} / 低:${sev.low})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +336,7 @@ export async function exportDiffJson() {
       resolveDiffExportComparedScopes(exportInfo, selectedScopeKeys(ui.diffScopes))
     )
     : null;
-  if (!exportInfo.rows.length && !state.lastFetchIssues.length && !compareInfo?.scopes?.length) {
+  if (!exportInfo.rows.length && !state.lastFetchIssues.length && !state.lastPartialIssues.length && !compareInfo?.scopes?.length) {
     throw new Error('出力できる比較結果がありません');
   }
   const payload = buildDiffExportPayload({
@@ -336,13 +344,14 @@ export async function exportDiffJson() {
     targetBundle: state.lastTargetBundle,
     rows: exportInfo.rows,
     fetchIssues: state.lastFetchIssues,
+    partialIssues: state.lastPartialIssues,
     ignoreKeys: ui.ignoreKeys.value,
     exportMode: exportInfo.mode,
     exportLabel: exportInfo.label,
     exportContentMode,
     exportContentLabel: getDiffExportContentLabel(exportContentMode),
     normalizationState: getDiffNormalizationPresetState(),
-    warning: buildDiffWarningInfo(exportInfo.rows, state.lastFetchIssues),
+    warning: buildDiffWarningInfo(exportInfo.rows, state.lastFetchIssues, state.lastPartialIssues),
     truncation: state.lastDiffTruncation,
     compareScopes: compareInfo?.scopes || [],
     compareSourceBundle: compareInfo?.sourceBundle || null,
@@ -391,11 +400,12 @@ export async function exportDiffHtml() {
       resolveDiffExportComparedScopes(exportInfo, scopes)
     )
     : null;
-  if (!rows.length && !state.lastFetchIssues.length && !compareInfo?.scopes?.length) {
+  if (!rows.length && !state.lastFetchIssues.length && !state.lastPartialIssues.length && !compareInfo?.scopes?.length) {
     throw new Error('出力できる比較結果がありません');
   }
   const html = buildDiffHtml(state.lastSourceBundle, state.lastTargetBundle, rows, scopes, ui.ignoreKeys.value, {
     fetchIssues: state.lastFetchIssues,
+    partialIssues: state.lastPartialIssues,
     exportMode: exportInfo.mode,
     exportLabel: exportInfo.label,
     exportContentMode,
@@ -404,7 +414,7 @@ export async function exportDiffHtml() {
     compareSourceBundle: compareInfo?.sourceBundle || null,
     compareTargetBundle: compareInfo?.targetBundle || null,
     normalizationState: getDiffNormalizationPresetState(),
-    warning: buildDiffWarningInfo(rows, state.lastFetchIssues),
+    warning: buildDiffWarningInfo(rows, state.lastFetchIssues, state.lastPartialIssues),
     truncation
   });
   const sourceLabel = buildAppFilenameLabel(state.lastSourceBundle?.appId, extractAppNameFromBundle(state.lastSourceBundle));

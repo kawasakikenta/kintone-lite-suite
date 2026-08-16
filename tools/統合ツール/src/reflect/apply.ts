@@ -211,6 +211,7 @@ export function getByTokens(root, tokens) {
 }
 
 export function itemKeySignature(v) {
+  if (v && typeof v === 'object') return `object:${stableStringify(v)}`;
   return `${typeof v}:${String(v)}`;
 }
 
@@ -246,39 +247,85 @@ export function findArrayIndexByKey(arr, key, value) {
   if (!Array.isArray(arr) || !key) return -1;
   const sig = itemKeySignature(value);
   const asText = String(value);
+  const allowTextFallback = value == null || typeof value !== 'object';
   for (let i = 0; i < arr.length; i++) {
     const obj = arr[i];
     if (!obj || typeof obj !== 'object') continue;
     if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
     if (itemKeySignature(obj[key]) === sig) return i;
-    if (String(obj[key]) === asText) return i;
+    if (allowTextFallback && (obj[key] == null || typeof obj[key] !== 'object') && String(obj[key]) === asText) return i;
   }
   return -1;
 }
 
 export function applyArrayRowByKey(sectionObj, row, tokens, desired) {
   if (!tokens.length) return null;
-  const last = tokens[tokens.length - 1];
-  if (typeof last !== 'number') return null;
-  const arr = getByTokens(sectionObj, tokens.slice(0, -1));
-  if (!Array.isArray(arr)) return null;
-
   const mode = reflectRowModeById(row._id);
   const { key, value } = resolveArrayKeyValue(row, desired);
   if (!key || value === undefined) return null;
-  const curIndex = findArrayIndexByKey(arr, key, value);
+  const numericPositions = tokens
+    .map((token, index) => typeof token === 'number' ? index : -1)
+    .filter((index) => index >= 0)
+    .reverse();
+  if (!numericPositions.length) return null;
+
+  let arrayTokenIndex = -1;
+  let arr: any[] | null = null;
+  let curIndex = -1;
+  // 葉プロパティの差分でも、比較時の配列indexではなく安定キーで現在位置を再解決する。
+  // ネスト配列では、指定キーが実際に一致する最も深い配列祖先を採用する。
+  for (const position of numericPositions) {
+    const candidate = getByTokens(sectionObj, tokens.slice(0, position));
+    if (!Array.isArray(candidate)) continue;
+    const matchedIndex = findArrayIndexByKey(candidate, key, value);
+    if (matchedIndex < 0) continue;
+    arrayTokenIndex = position;
+    arr = candidate;
+    curIndex = matchedIndex;
+    break;
+  }
+
+  // 配列要素そのものの追加では一致対象がまだ無いため、元のindex位置を使って挿入する。
+  if (!arr && typeof tokens[tokens.length - 1] === 'number') {
+    arrayTokenIndex = tokens.length - 1;
+    const candidate = getByTokens(sectionObj, tokens.slice(0, -1));
+    if (Array.isArray(candidate)) arr = candidate;
+  }
+  if (!arr || arrayTokenIndex < 0) {
+    return { section: sectionObj, applied: false, op: 'skip', reason: 'keyed array item not found' };
+  }
+
+  const itemPath = tokens.slice(arrayTokenIndex + 1);
 
   if (desired === undefined) {
     if (curIndex < 0) return { section: sectionObj, applied: false, op: 'delete', reason: 'array item not found' };
-    arr.splice(curIndex, 1);
-    return { section: sectionObj, applied: true, op: 'delete' };
+    if (!itemPath.length) {
+      arr.splice(curIndex, 1);
+      return { section: sectionObj, applied: true, op: 'delete' };
+    }
+    const deleted = deleteByTokens(arr[curIndex], itemPath);
+    if (deleted.root !== arr[curIndex]) arr[curIndex] = deleted.root;
+    return { section: sectionObj, applied: deleted.deleted, op: 'delete', reason: deleted.deleted ? '' : 'target path not found' };
   }
 
+  if (itemPath.length) {
+    if (curIndex < 0) return { section: sectionObj, applied: false, op: 'skip', reason: 'array item not found' };
+    const updated = trySetByTokens(arr[curIndex], itemPath, desired);
+    arr[curIndex] = updated.root;
+    return {
+      section: sectionObj,
+      applied: updated.set,
+      op: 'set',
+      reason: updated.set ? '' : 'target path type mismatch'
+    };
+  }
+
+  const originalIndex = tokens[arrayTokenIndex];
   const preferredIndex = row.moved
     ? (mode === 'src' && Number.isInteger(row.movedFrom)
       ? row.movedFrom
-      : (Number.isInteger(row.movedTo) ? row.movedTo : last))
-    : last;
+      : (Number.isInteger(row.movedTo) ? row.movedTo : originalIndex))
+    : originalIndex;
   const bounded = (n, max) => Math.max(0, Math.min(max, Number.isInteger(n) ? n : max));
   const insertItem = deepClone(desired);
 
@@ -293,15 +340,15 @@ export function applyArrayRowByKey(sectionObj, row, tokens, desired) {
   return { section: sectionObj, applied: true, op: row.moved ? 'move' : 'set' };
 }
 
-export function setByTokens(root, tokens, value) {
-  if (!tokens.length) return deepClone(value);
+export function trySetByTokens(root, tokens, value): { root: any; set: boolean } {
+  if (!tokens.length) return { root: deepClone(value), set: true };
   if (root == null || typeof root !== 'object') root = {};
   let cur = root;
   for (let i = 0; i < tokens.length - 1; i++) {
     const tk = tokens[i];
     const next = tokens[i + 1];
     if (typeof tk === 'number') {
-      if (!Array.isArray(cur)) return root;
+      if (!Array.isArray(cur)) return { root, set: false };
       if (cur[tk] == null || typeof cur[tk] !== 'object') cur[tk] = typeof next === 'number' ? [] : {};
       cur = cur[tk];
     } else {
@@ -311,12 +358,16 @@ export function setByTokens(root, tokens, value) {
   }
   const last = tokens[tokens.length - 1];
   if (typeof last === 'number') {
-    if (!Array.isArray(cur)) return root;
+    if (!Array.isArray(cur)) return { root, set: false };
     cur[last] = deepClone(value);
   } else {
     cur[last] = deepClone(value);
   }
-  return root;
+  return { root, set: true };
+}
+
+export function setByTokens(root, tokens, value) {
+  return trySetByTokens(root, tokens, value).root;
 }
 
 export function deleteByTokens(root, tokens) {
@@ -361,7 +412,13 @@ export function applyDiffRowToSection(sectionObj, row, secKey) {
   const tokens = tokenizePath(rel);
   const keySet = applyArrayRowByKey(sectionObj, row, tokens, desired);
   if (keySet) return keySet;
-  return { section: setByTokens(sectionObj, tokens, desired), applied: true, op: 'set' };
+  const updated = trySetByTokens(sectionObj, tokens, desired);
+  return {
+    section: updated.root,
+    applied: updated.set,
+    op: 'set',
+    reason: updated.set ? '' : 'target path type mismatch'
+  };
 }
 
 export function compareTokensForDelete(aTokens, bTokens) {
@@ -409,8 +466,73 @@ const APPLY_RETRY_MAX_ATTEMPTS = 3;
 const APPLY_RETRY_BASE_DELAY_MS = 600;
 const APPLY_RETRY_MAX_DELAY_MS = 4000;
 
-export async function executeRequestPlan(prefix, requests, logs, stopOnError) {
+export interface RequestPlanFailure {
+  index: number;
+  method: string;
+  path: string;
+  message: string;
+}
+
+export interface RequestPlanExecutionResult {
+  requestCount: number;
+  successCount: number;
+  failureCount: number;
+  failures: RequestPlanFailure[];
+}
+
+export interface SectionDiffExecutionResult extends RequestPlanExecutionResult {
+  deleteSkipCount: number;
+}
+
+export interface SectionDeleteSkipDetail {
+  sectionKey: string;
+  sectionLabel: string;
+  count: number;
+}
+
+export interface ApplySectionsLoopResult {
+  hadError: boolean;
+  deleteSkips: SectionDeleteSkipDetail[];
+}
+
+function withDeleteSkipCount(result: RequestPlanExecutionResult, deleteSkipCount = 0): SectionDiffExecutionResult {
+  return {
+    ...result,
+    deleteSkipCount: Math.max(0, Math.floor(Number(deleteSkipCount) || 0))
+  };
+}
+
+/** API失敗と互換モードによる削除未反映を、呼び出し元が同じ基準で判定する。 */
+export function summarizeSectionExecutionProblem(result: SectionDiffExecutionResult | null | undefined): string {
+  if (!result) return '';
+  const parts: string[] = [];
+  if (result.failureCount > 0) {
+    const first = result.failures[0];
+    const detail = first ? ` (${first.method} ${first.path}: ${first.message})` : '';
+    parts.push(`APIリクエスト失敗 ${result.failureCount}/${result.requestCount}件${detail}`);
+  }
+  if (result.deleteSkipCount > 0) {
+    parts.push(`互換モードによる削除未反映 ${result.deleteSkipCount}件`);
+  }
+  return parts.join(' / ');
+}
+
+/** 復元結果などに表示する削除未反映の対象・件数を安定した文言へ整形する。 */
+export function formatDeleteSkipDetails(details: SectionDeleteSkipDetail[] | null | undefined): string {
+  return (Array.isArray(details) ? details : [])
+    .filter((item) => Number(item?.count) > 0)
+    .map((item) => `${item.sectionLabel || item.sectionKey}: ${Math.floor(Number(item.count))}件`)
+    .join(' / ');
+}
+
+export async function executeRequestPlan(prefix, requests, logs, stopOnError): Promise<RequestPlanExecutionResult> {
   const list = Array.isArray(requests) ? requests : [];
+  const result: RequestPlanExecutionResult = {
+    requestCount: list.length,
+    successCount: 0,
+    failureCount: 0,
+    failures: []
+  };
   for (let i = 0; i < list.length; i++) {
     const req = list[i];
     try {
@@ -441,39 +563,52 @@ export async function executeRequestPlan(prefix, requests, logs, stopOnError) {
         const retrySuffix = _attempts > 1 ? ` (retried ${_attempts - 1}回)` : '';
         logs.push(`  - OK ${req.method} ${req.path}${req.note ? ` (${req.note})` : ''}${retrySuffix}`);
       }
+      result.successCount += 1;
     } catch (e) {
       const msg = e.message || String(e);
+      result.failureCount += 1;
+      result.failures.push({
+        index: i,
+        method: String(req?.method || ''),
+        path: String(req?.path || ''),
+        message: msg
+      });
       if (logs) pushReflectErrorLog(logs, `  - NG ${req.method} ${req.path}: ${msg}`, msg);
       if (stopOnError) throw e;
     }
   }
+  return result;
 }
 
 export async function applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError) {
   const plan = planFieldSectionDiffRequests(app, beforeProps, afterProps, lookupMap, sourceModeCodes);
   appendRequestPlanLogs(logs, plan);
-  await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
+  const execution = await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
   if (plan.lookupChanged) logs.push(`  - lookup appId 変換: ${plan.lookupChanged}`);
+  return withDeleteSkipCount(execution);
 }
 
 export async function applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError) {
   const plan = planViewsSectionDiffRequests(app, beforeViews, afterViews);
   appendRequestPlanLogs(logs, plan);
-  await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
+  const execution = await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
   if (plan.deleteSkipCount) logs.push(`  - views delete(skip): ${plan.deleteSkipCount} (互換モード: 削除は行いません)`);
+  return withDeleteSkipCount(execution, plan.deleteSkipCount);
 }
 
 export async function applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError) {
   const plan = planReportsSectionDiffRequests(app, beforeReports, afterReports);
   appendRequestPlanLogs(logs, plan);
-  await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
+  const execution = await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
+  return withDeleteSkipCount(execution);
 }
 
 export async function applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError) {
   const plan = planActionsSectionDiffRequests(app, beforeActions, afterActions);
   appendRequestPlanLogs(logs, plan);
-  await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
+  const execution = await executeRequestPlan(prefix, plan.requests, logs, stopOnError);
   if (plan.deleteSkipCount) logs.push(`  - actions delete(skip): ${plan.deleteSkipCount} (互換モード: 削除は行いません)`);
+  return withDeleteSkipCount(execution, plan.deleteSkipCount);
 }
 
 export interface ApplySectionsLoopOptions {
@@ -482,8 +617,9 @@ export interface ApplySectionsLoopOptions {
   sectionResults?: any[];
 }
 
-export async function applySectionsLoop(prefix: string, app: string | number, sourceBundle: any, scopes: string[], logs: string[], lookupMap: any, stopOnError: boolean, { phaseLabel = '反映', onProgress, sectionResults }: ApplySectionsLoopOptions = {}) {
+export async function applySectionsLoop(prefix: string, app: string | number, sourceBundle: any, scopes: string[], logs: string[], lookupMap: any, stopOnError: boolean, { phaseLabel = '反映', onProgress, sectionResults }: ApplySectionsLoopOptions = {}): Promise<ApplySectionsLoopResult> {
   let hadError = false;
+  const deleteSkips: SectionDeleteSkipDetail[] = [];
   for (let i = 0; i < scopes.length; i++) {
     const secKey = scopes[i];
     const def = SECTION_DEFS.find((x) => x.key === secKey);
@@ -522,7 +658,12 @@ export async function applySectionsLoop(prefix: string, app: string | number, so
         before = null;
         patched = sourceSec;
       }
-      await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes: null, stopOnError });
+      const execution = await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes: null, stopOnError });
+      const executionProblem = summarizeSectionExecutionProblem(execution);
+      if (execution.deleteSkipCount > 0) {
+        deleteSkips.push({ sectionKey: secKey, sectionLabel: def.label, count: execution.deleteSkipCount });
+      }
+      if (executionProblem) throw new Error(executionProblem);
       logs.push(`OK ${def.label}`);
       recordSectionResult(sectionResults, secKey, def.label, 'ok', '');
     } catch (e) {
@@ -542,7 +683,7 @@ export async function applySectionsLoop(prefix: string, app: string | number, so
       }
     }
   }
-  return hadError;
+  return { hadError, deleteSkips };
 }
 
 function recordSectionResult(results, sectionKey, label, status, message) {
@@ -562,11 +703,27 @@ function recordSectionResult(results, sectionKey, label, status, message) {
   });
 }
 
+/**
+ * 明示された対象セクションがあればそれを採用し、未指定時だけ承認済みプランを参照する。
+ * 空配列も明示値として扱い、古いプランへフォールバックしない。
+ */
+export function resolveVerificationExpectedSectionKeys(
+  explicitSectionKeys: Iterable<string> | null | undefined,
+  plan: any
+): Set<string> {
+  const values = explicitSectionKeys !== undefined
+    ? Array.from(explicitSectionKeys || [])
+    : (Array.isArray(plan?.plannedRequests)
+        ? plan.plannedRequests.map((request: any) => request?.sectionKey)
+        : []);
+  return new Set(values.map((key) => String(key || '')).filter(Boolean));
+}
+
 // 反映完了直後に「反映前バックアップ」と「反映後の比較先プレビュー」を比較し、
 // バックアップ時点から変化したセクションをログに追記する。
 // プラン (state.lastApplyPlan.plannedRequests) と突き合わせて、想定通りの変化と
 // 想定外の変化（=他者による同時編集や副作用の疑い）を分離して報告する。
-async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, logs }: { targetGuestId: string; targetAppId: string; scopes: string[]; logs: string[] }) {
+async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, logs, expectedSectionKeys }: { targetGuestId: string; targetAppId: string; scopes: string[]; logs: string[]; expectedSectionKeys?: Iterable<string> | null }) {
   const backup = state.lastPreviewBackupPayload;
   if (!backup?.bundle?.sections) return null;
   if (String(backup?.target?.appId || '') !== String(targetAppId || '')) return null;
@@ -576,13 +733,7 @@ async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, 
   const checkable = targetScopes.filter((key) => backupScopes.includes(key));
   if (!checkable.length) return null;
 
-  const expectedSectionKeys = new Set<string>(
-    Array.isArray(state.lastApplyPlan?.plannedRequests)
-      ? state.lastApplyPlan.plannedRequests
-        .map((r: any) => String(r?.sectionKey || ''))
-        .filter(Boolean)
-      : []
-  );
+  const resolvedExpectedSectionKeys = resolveVerificationExpectedSectionKeys(expectedSectionKeys, state.lastApplyPlan);
 
   const prefix = buildApiPrefix(targetGuestId, true);
   const findings: any[] = [];
@@ -593,13 +744,13 @@ async function verifyAppliedAgainstBackup({ targetGuestId, targetAppId, scopes, 
       const after = normalize(await apiGet(prefix, def.endpoint, { app: targetAppId }));
       const before = backup.bundle.sections[secKey];
       if (!before) continue;
-      const beforeText = stableStringify(before);
-      const afterText = stableStringify(after);
+      const beforeText = stableStringify(sanitizeFetchedSectionForPersistence(secKey, before));
+      const afterText = stableStringify(sanitizeFetchedSectionForPersistence(secKey, after));
       if (beforeText !== afterText) {
         findings.push({
           sectionKey: secKey,
           label: def.label || secKey,
-          expected: expectedSectionKeys.has(secKey)
+          expected: resolvedExpectedSectionKeys.has(secKey)
         });
       }
     } catch (e) {
@@ -664,31 +815,27 @@ async function applySectionDiffByKey(opts: {
   lookupMap: any;
   sourceModeCodes: Set<string> | null;
   stopOnError: boolean;
-}): Promise<void> {
+}): Promise<SectionDiffExecutionResult> {
   const { secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError } = opts;
   if (secKey === 'fieldSettings') {
     const beforeProps = before?.properties || before || ({} as any);
     const afterProps = patched?.properties || patched || ({} as any);
-    await applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
-    return;
+    return applyFieldSectionDiff(prefix, app, beforeProps, afterProps, logs, lookupMap, sourceModeCodes, stopOnError);
   }
   if (secKey === 'viewSettings') {
     const beforeViews = before?.views || before || ({} as any);
     const afterViews = patched?.views || patched || ({} as any);
-    await applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError);
-    return;
+    return applyViewsSectionDiff(prefix, app, beforeViews, afterViews, logs, stopOnError);
   }
   if (secKey === 'reportSettings') {
     const beforeReports = before?.reports || before || ({} as any);
     const afterReports = patched?.reports || patched || ({} as any);
-    await applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError);
-    return;
+    return applyReportsSectionDiff(prefix, app, beforeReports, afterReports, logs, stopOnError);
   }
   if (secKey === 'actionSettings') {
     const beforeActions = before?.actions || before || ({} as any);
     const afterActions = patched?.actions || patched || ({} as any);
-    await applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError);
-    return;
+    return applyActionsSectionDiff(prefix, app, beforeActions, afterActions, logs, stopOnError);
   }
   const reqs = [{
     method: 'PUT',
@@ -697,7 +844,8 @@ async function applySectionDiffByKey(opts: {
     note: `${def.label} put`
   }];
   appendRequestPlanLogs(logs, { requests: reqs });
-  await executeRequestPlan(prefix, reqs, logs, stopOnError);
+  const execution = await executeRequestPlan(prefix, reqs, logs, stopOnError);
+  return withDeleteSkipCount(execution);
 }
 
 /**
@@ -716,12 +864,13 @@ async function finalizeApplyResult(opts: {
   backupFilename?: string;
   phaseLabel?: string;
   finishMetrics?: Array<{ label: string; value: string; tone?: string }>;
+  expectedSectionKeys?: Iterable<string> | null;
 }): Promise<void> {
-  const { mode, c, app, scopes, sectionResults, hadError, logs, progress, backupFilename, phaseLabel, finishMetrics } = opts;
+  const { mode, c, app, scopes, sectionResults, hadError, logs, progress, backupFilename, phaseLabel, finishMetrics, expectedSectionKeys } = opts;
   // verifyAppliedAgainstBackup の失敗で commitApplyReport がスキップされないように保護する。
   // 反映自体は完了している可能性があるため、検証失敗はログに残すだけで処理は継続する。
   try {
-    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app as any, scopes, logs });
+    await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app as any, scopes, logs, expectedSectionKeys });
   } catch (verifyErr: any) {
     if (Array.isArray(logs)) {
       logs.push(`反映後検証: ⚠ 検証中にエラーが発生しました: ${verifyErr?.message || String(verifyErr)}`);
@@ -891,6 +1040,49 @@ function renderBackupStatus(filename, scopes, health) {
   ui.backupStatus.style.color = ok ? '#065f46' : '#9a3412';
 }
 
+/**
+ * 取得時だけ付与する本文・プラグイン設定キャッシュを、バックアップ保存・復元・
+ * 反映後検証の対象から除外する。正規設定の `_body` / `_config` という名前は
+ * 他セクションでは触らず、既知の customize/plugin 形状だけを処理する。
+ */
+export function sanitizeFetchedSectionForPersistence(sectionKey: string, value: any): any {
+  const section = deepClone(value);
+  if (!section || typeof section !== 'object') return section;
+
+  if (sectionKey === 'customizeSettings') {
+    delete section._partial;
+    for (const platform of ['desktop', 'mobile']) {
+      for (const kind of ['js', 'css']) {
+        const resources = section?.[platform]?.[kind];
+        if (!Array.isArray(resources)) continue;
+        for (const resource of resources) {
+          if (!resource || typeof resource !== 'object') continue;
+          delete resource._bodyText;
+          delete resource._bodyHash;
+          delete resource._bodyUnavailable;
+          delete resource._body;
+          if (resource.file && typeof resource.file === 'object') delete resource.file._body;
+        }
+      }
+    }
+  } else if (sectionKey === 'pluginSettings') {
+    const plugins = Array.isArray(section.plugins) ? section.plugins : [];
+    for (const plugin of plugins) {
+      if (plugin && typeof plugin === 'object') delete plugin._config;
+    }
+  }
+  return section;
+}
+
+export function sanitizeFetchedBundleForPersistence(bundle: any): any {
+  const sanitized = deepClone(bundle);
+  if (!sanitized?.sections || typeof sanitized.sections !== 'object') return sanitized;
+  for (const sectionKey of Object.keys(sanitized.sections)) {
+    sanitized.sections[sectionKey] = sanitizeFetchedSectionForPersistence(sectionKey, sanitized.sections[sectionKey]);
+  }
+  return sanitized;
+}
+
 function assertBackupHealthOk(backupResult, actionLabel) {
   const health = backupResult?.health || backupResult?.payload?.health;
   if (!health?.ngCount) return;
@@ -906,12 +1098,13 @@ export async function backupTargetPreviewSettings(c: any, scopes: string[], opti
   const scopeSummary = formatSectionList(actualScopes);
   const target = { ...c.target, preview: true };
   setStatus(`バックアップ取得中... (${actualScopes.length}セクション)`);
-  const bundle = await fetchBundle({
+  const fetchedBundle = await fetchBundle({
     ...target,
     sections: actualScopes,
     onProgress: (p, l) => setStatus(`バックアップ取得中 ${Math.round(p * 100)}% (${l})`)
   });
-  const health = buildBackupHealth(bundle, actualScopes);
+  const health = buildBackupHealth(fetchedBundle, actualScopes);
+  const bundle = sanitizeFetchedBundleForPersistence(fetchedBundle);
   const payload = {
     generatedAt: new Date().toISOString(),
     mode: 'target-preview-backup',
@@ -941,6 +1134,7 @@ export async function backupTargetPreviewSettings(c: any, scopes: string[], opti
     `scopes: ${actualScopes.join(', ')}`,
     `health: ${formatBackupHealthSummary(health)}`,
     '',
+    '比較専用のJS/CSS本文キャッシュとプラグイン個別設定は、このバックアップに収録していません。',
     'このZIPはブラウザストレージに保存せず、取得直後に明示ダウンロードしています。'
   ].join('\n'));
   const blob = await zip.generateAsync({ type: 'blob' });
@@ -979,10 +1173,42 @@ function summarizeRowsBySeverity(rows) {
   return out;
 }
 
+export interface ApplyDeleteSummary {
+  total: number;
+  sections: Array<{ sectionKey: string; sectionLabel: string; count: number }>;
+}
+
+function normalizeApplyDeleteSummary(summary: any): ApplyDeleteSummary {
+  const sections = (Array.isArray(summary?.sections) ? summary.sections : [])
+    .map((item: any) => ({
+      sectionKey: String(item?.sectionKey || ''),
+      sectionLabel: String(item?.sectionLabel || item?.sectionKey || '-'),
+      count: Math.max(0, Math.floor(Number(item?.count) || 0))
+    }))
+    .filter((item) => item.count > 0);
+  return {
+    total: Math.max(0, Math.floor(Number(summary?.total) || 0)),
+    sections
+  };
+}
+
+/**
+ * 明示された削除集計を優先し、未指定時だけ現在の反映プランへフォールバックする。
+ * patch のように承認済みプランを持たない経路が古い lastApplyPlan を参照しないための境界。
+ */
+export function resolveApplyGuardDeleteSummary(explicitSummary: ApplyDeleteSummary | null | undefined, plan: any): ApplyDeleteSummary {
+  if (explicitSummary !== undefined) return normalizeApplyDeleteSummary(explicitSummary);
+  return normalizeApplyDeleteSummary(summarizePlanDeletes(
+    Array.isArray(plan?.plannedRequests) ? plan.plannedRequests : [],
+    Array.isArray(plan?.excludedSectionKeys) ? plan.excludedSectionKeys : []
+  ));
+}
+
 interface ApplyRiskGuardOptions {
   diffSummary?: { total: number; high: number; medium: number; low: number };
   requestCount?: number;
   scopeLabels?: string[];
+  deleteSummary?: ApplyDeleteSummary | null;
 }
 
 async function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGuardOptions = {}): Promise<boolean> {
@@ -990,11 +1216,8 @@ async function confirmApplyRiskGuard(mode: string, c: any, options: ApplyRiskGua
   const diffSummary = options.diffSummary || { total: 0, high: 0, medium: 0, low: 0 };
   const requestCount = Number(options.requestCount || 0);
   // プランに含まれる削除対象数（除外済みセクションは除く）。削除は注意点として明示する。
-  const plan = state.lastApplyPlan;
-  const deleteSummary = summarizePlanDeletes(
-    Array.isArray(plan?.plannedRequests) ? plan.plannedRequests : [],
-    Array.isArray(plan?.excludedSectionKeys) ? plan.excludedSectionKeys : []
-  );
+  // deleteSummary が明示された経路（patch）は、古い lastApplyPlan へフォールバックしない。
+  const deleteSummary = resolveApplyGuardDeleteSummary(options.deleteSummary, state.lastApplyPlan);
   const risk = assessApplyRisk({
     sameConnection: isSameConnectionPair(c),
     diffSummary,
@@ -1131,16 +1354,27 @@ function isPatchEditorEffectivelyEmpty(text) {
   return !raw || raw === '{}' || raw === 'null';
 }
 
+export function resolvePatchPayloadSource(editorText: string, importedPayload: any): 'editor' | 'imported' | 'missing' {
+  if (!isPatchEditorEffectivelyEmpty(editorText)) return 'editor';
+  if (importedPayload?.sections && Object.keys(importedPayload.sections).length) return 'imported';
+  return 'missing';
+}
+
 function normalizePatchRows(sectionKey, rows) {
   const def = SECTION_DEFS.find((item) => item.key === sectionKey);
+  const hasOwn = (value, key) => !!value && Object.prototype.hasOwnProperty.call(value, key);
   return (Array.isArray(rows) ? rows : []).map((row, index) => ({
     _id: `patch:${sectionKey}:${index}`,
     sectionKey,
     section: def?.label || sectionKey,
     type: String(row?.type || 'changed'),
     path: String(row?.path || sectionKey),
-    left: row?.sourceValue,
-    right: row?.targetValue,
+    // 外部エクスポート形式（sourceValue / targetValue）と、一度パース済みの
+    // 内部形式（left / right）の両方を受け付ける。画面表示後の再パースでも
+    // 値を失わないよう、nullish 合成ではなくプロパティの有無で判定する。
+    left: hasOwn(row, 'sourceValue') ? row.sourceValue : row?.left,
+    right: hasOwn(row, 'targetValue') ? row.targetValue : row?.right,
+    severity: row?.severity || 'low',
     moved: !!row?.moved,
     movedFrom: row?.movedFrom,
     movedTo: row?.movedTo,
@@ -1495,24 +1729,168 @@ export async function copyPatchJsonToClipboard() {
 
 function getPatchPayloadForApply() {
   const text = getPatchEditorText();
-  if (!isPatchEditorEffectivelyEmpty(text)) {
+  const source = resolvePatchPayloadSource(text, state.importedPatchPayload);
+  if (source === 'editor') {
     const payload = parsePatchJsonPayload(text);
     state.importedPatchPayload = payload;
     renderPatchJsonSummary(payload);
     return payload;
   }
-  if (state.importedPatchPayload?.sections && Object.keys(state.importedPatchPayload.sections).length) {
+  if (source === 'imported') {
     const payload = parsePatchJsonPayload(state.importedPatchPayload);
     renderPatchJsonSummary(payload);
     return payload;
   }
-  return populatePatchJsonFromCurrentDiff({ force: true, silent: true });
+  throw new Error('反映するパッチJSONが空です。先に「全差分を反映JSONへ」または「選択差分を反映JSONへ」を実行し、内容を確認してください');
+}
+
+export interface RowApplyPreflightIssue {
+  sectionKey: string;
+  sectionLabel: string;
+  code: 'unsupported-section' | 'customize-section-unsupported';
+  message: string;
+}
+
+/**
+ * 行単位反映を始める前に、全セクションが安全に書き込めるかをまとめて検査する。
+ * customizeSettings の比較行は取得時に作った仮想 _body 差分なので、生のPUT bodyへ
+ * 部分適用できない。別セクションだけ先に反映されることを防ぐため全件先読みする。
+ */
+export function inspectRowApplyPreflight(sections: any): RowApplyPreflightIssue[] {
+  const source = sections && typeof sections === 'object' && !Array.isArray(sections) ? sections : {};
+  const issues: RowApplyPreflightIssue[] = [];
+  for (const [sectionKey, sectionRows] of Object.entries(source) as Array<[string, any]>) {
+    if (!Array.isArray(sectionRows) || sectionRows.length === 0) continue;
+    const def = SECTION_DEFS.find((item) => item.key === sectionKey);
+    const sectionLabel = def?.label || sectionKey;
+    if (!def || !def.put) {
+      issues.push({
+        sectionKey,
+        sectionLabel,
+        code: 'unsupported-section',
+        message: 'PUT非対応のため行単位では反映できません'
+      });
+      continue;
+    }
+    if (sectionKey === 'customizeSettings') {
+      issues.push({
+        sectionKey,
+        sectionLabel,
+        code: 'customize-section-unsupported',
+        message: 'JS/CSS設定は比較用の仮想 _body 形を含むため、行単位反映には対応していません'
+      });
+    }
+  }
+  return issues;
+}
+
+export function formatRowApplyPreflightIssues(issues: RowApplyPreflightIssue[] | null | undefined): string {
+  return (Array.isArray(issues) ? issues : [])
+    .map((issue) => `${issue.sectionLabel} (${issue.sectionKey}): ${issue.message}`)
+    .join(' / ');
+}
+
+export function assertRowApplyPreflight(sections: any): void {
+  const issues = inspectRowApplyPreflight(sections);
+  if (!issues.length) return;
+  throw new Error(
+    `行単位反映のプリフライトに失敗しました: ${formatRowApplyPreflightIssues(issues)}`
+    + '。他セクションを含め、反映は開始していません'
+  );
+}
+
+export interface RowApplySkipDetail {
+  rowId: string;
+  path: string;
+  op: string;
+  reason: string;
+}
+
+export interface RowApplyAttemptSummary {
+  totalCount: number;
+  appliedCount: number;
+  skippedCount: number;
+  skipped: RowApplySkipDetail[];
+}
+
+/** applyDiffRowToSection の結果を、理由を失わず件数集計する純粋ヘルパー。 */
+export function summarizeRowApplyAttempts(attempts: Array<{ row: any; result: any }> | null | undefined): RowApplyAttemptSummary {
+  const list = Array.isArray(attempts) ? attempts : [];
+  const skipped: RowApplySkipDetail[] = [];
+  let appliedCount = 0;
+  list.forEach((attempt, index) => {
+    if (attempt?.result?.applied) {
+      appliedCount += 1;
+      return;
+    }
+    skipped.push({
+      rowId: String(attempt?.row?._id || `row:${index}`),
+      path: String(attempt?.row?.path || '(path不明)'),
+      op: String(attempt?.result?.op || 'skip'),
+      reason: String(attempt?.result?.reason || '適用できませんでした')
+    });
+  });
+  return {
+    totalCount: list.length,
+    appliedCount,
+    skippedCount: skipped.length,
+    skipped
+  };
+}
+
+function assertAllRowAttemptsApplied(sectionLabel: string, summary: RowApplyAttemptSummary, logs: string[]): void {
+  if (!summary.skippedCount) return;
+  for (const item of summary.skipped) {
+    logs.push(`SKIP ${sectionLabel}: ${item.path} (${item.op}: ${item.reason})`);
+  }
+  const first = summary.skipped[0];
+  throw new Error(
+    `差分行 ${summary.skippedCount}/${summary.totalCount}件を適用できないため、このセクションのPUTを中止しました`
+    + (first ? ` (${first.path}: ${first.reason})` : '')
+  );
+}
+
+/**
+ * patch 経路には承認済みリクエストプランがないため、確認画面の件数は
+ * 今回の payload 行だけから保守的に算出する。source 値が存在しない行は、
+ * 比較先の値を削除する操作として集計する。
+ */
+export function summarizePatchPayloadForApplyGuard(payload: any) {
+  const sections = payload?.sections && typeof payload.sections === 'object' && !Array.isArray(payload.sections)
+    ? payload.sections
+    : {};
+  const rows: any[] = [];
+  const deleteSections: ApplyDeleteSummary['sections'] = [];
+  for (const [sectionKey, sectionRows] of Object.entries(sections) as Array<[string, any]>) {
+    const list = Array.isArray(sectionRows) ? sectionRows.filter(Boolean) : [];
+    rows.push(...list);
+    const deleteCount = list.filter((row: any) => {
+      if (Object.prototype.hasOwnProperty.call(row || {}, 'sourceValue')) return row.sourceValue === undefined;
+      return row?.left === undefined;
+    }).length;
+    if (deleteCount > 0) {
+      deleteSections.push({
+        sectionKey,
+        sectionLabel: SECTION_DEFS.find((item) => item.key === sectionKey)?.label || sectionKey,
+        count: deleteCount
+      });
+    }
+  }
+  return {
+    diffSummary: summarizeRowsBySeverity(rows),
+    // 実リクエストプラン未作成の段階では、payload 1行を1予定操作として安全側に数える。
+    requestCount: rows.length,
+    deleteSummary: {
+      total: deleteSections.reduce((sum, item) => sum + item.count, 0),
+      sections: deleteSections
+    } as ApplyDeleteSummary
+  };
 }
 
 function applyPatchRowsToSection(sectionObj, rows, secKey) {
   const previousModes = {};
   let patched = deepClone(sectionObj);
-  let appliedCount = 0;
+  const attempts: Array<{ row: any; result: any }> = [];
   // 1) Force 'src' mode on every row first so that reflectRowDesiredValue
   //    inside sortRowsForPatch sees the patched mode (delete vs set classification).
   rows.forEach((row) => {
@@ -1525,9 +1903,9 @@ function applyPatchRowsToSection(sectionObj, rows, secKey) {
     normalizedRows.forEach((row) => {
       const result = applyDiffRowToSection(patched, row, secKey);
       patched = result.section;
-      if (result.applied) appliedCount += 1;
+      attempts.push({ row, result });
     });
-    return { patched, appliedCount, rows: normalizedRows };
+    return { patched, rows: normalizedRows, ...summarizeRowApplyAttempts(attempts) };
   } finally {
     rows.forEach((row) => {
       if (previousModes[row._id] == null) delete state.reflectNodeModes[row._id];
@@ -1540,15 +1918,20 @@ export async function runApplyPatchJson() {
   const c = commonParams();
   if (!c.target.appId) throw new Error('比較先アプリIDを入力してください');
   const payload = getPatchPayloadForApply();
-  const sectionKeys = Object.keys(payload.sections).filter((key) => SECTION_DEFS.find((item) => item.key === key)?.put);
+  assertRowApplyPreflight(payload.sections);
+  const sectionKeys = Object.keys(payload.sections)
+    .filter((key) => Array.isArray(payload.sections[key]) && payload.sections[key].length > 0);
   if (!sectionKeys.length) throw new Error('適用可能なパッチセクションがありません');
   renderPatchJsonSummary(payload);
   // confirmApplyRiskGuard 側で最終確認モーダルを必ず出すため、ここでの kusConfirm は廃止。
-  const patchRows = Object.values(payload.sections || ({} as any)).flat().filter(Boolean);
-  const patchSummary = summarizeRowsBySeverity(patchRows);
-  const planReqCount = Number(state.lastApplyPlan?.totalReq || 0);
+  const patchRisk = summarizePatchPayloadForApplyGuard(payload);
   const scopeLabels = sectionKeys.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
-  if (!(await confirmApplyRiskGuard('patch', c, { diffSummary: patchSummary, requestCount: planReqCount, scopeLabels }))) {
+  if (!(await confirmApplyRiskGuard('patch', c, {
+    diffSummary: patchRisk.diffSummary,
+    requestCount: patchRisk.requestCount,
+    scopeLabels,
+    deleteSummary: patchRisk.deleteSummary
+  }))) {
     setStatus('JSONパッチ反映をキャンセルしました（安全確認）');
     return;
   }
@@ -1583,11 +1966,15 @@ export async function runApplyPatchJson() {
     try {
       const current = normalize(await apiGet(prefix, def.endpoint, { app }));
       const before = deepClone(current);
-      const { patched, appliedCount, rows: sortedRows } = applyPatchRowsToSection(current, rows, secKey);
+      const mutation = applyPatchRowsToSection(current, rows, secKey);
+      const { patched, appliedCount, rows: sortedRows } = mutation;
+      assertAllRowAttemptsApplied(def.label, mutation, logs);
       const sourceModeCodes = secKey === 'fieldSettings'
         ? new Set<string>(sortedRows.map(extractFieldCodeFromRowPath).filter((code: any): code is string => !!code))
         : null;
-      await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError });
+      const execution = await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError });
+      const executionProblem = summarizeSectionExecutionProblem(execution);
+      if (executionProblem) throw new Error(executionProblem);
       logs.push(`OK ${def.label}: patch ${appliedCount}/${sortedRows.length}`);
       recordSectionResult(sectionResults, secKey, def.label, 'ok', `${appliedCount}/${sortedRows.length}`);
     } catch (e) {
@@ -1616,7 +2003,8 @@ export async function runApplyPatchJson() {
     sectionResults,
     hadError,
     logs,
-    phaseLabel: 'JSONパッチ反映完了'
+    phaseLabel: 'JSONパッチ反映完了',
+    expectedSectionKeys: sectionKeys
   });
   setStatus(hadError ? 'JSONパッチ反映完了（一部エラーあり）' : 'JSONパッチ反映完了');
 }
@@ -1664,6 +2052,14 @@ export async function runApplyPreviewByNodes() {
     return;
   }
   const effectiveNodeScopes = [...new Set(effectiveRows.map((r) => r.sectionKey).filter(Boolean))];
+  const bySection: Record<string, any[]> = {};
+  for (const row of effectiveRows) {
+    if (!row.sectionKey) continue;
+    if (!bySection[row.sectionKey]) bySection[row.sectionKey] = [];
+    bySection[row.sectionKey].push(row);
+  }
+  assertRowApplyPreflight(bySection);
+  const sectionKeys = Object.keys(bySection);
   const nodeSummary = summarizeRowsBySeverity(effectiveRows);
   const plannedReq = Number(state.lastApplyPlan?.signature === planSignature ? state.lastApplyPlan.totalReq : 0);
   const nodeScopeLabels = effectiveNodeScopes.map((key) => SECTION_DEFS.find((d) => d.key === key)?.label || key);
@@ -1678,13 +2074,6 @@ export async function runApplyPreviewByNodes() {
   const logs: string[] = [];
   let hadError = false;
   let backupFilename = '';
-  const bySection: Record<string, any[]> = {};
-  for (const row of effectiveRows) {
-    if (!row.sectionKey) continue;
-    if (!bySection[row.sectionKey]) bySection[row.sectionKey] = [];
-    bySection[row.sectionKey].push(row);
-  }
-  const sectionKeys = Object.keys(bySection);
   const progress = startProgress('反映前チェック中...', sectionKeys.length);
   setStatus('反映前チェック中...');
   // 部分反映レポート確定用に try の外で宣言する
@@ -1733,13 +2122,15 @@ export async function runApplyPreviewByNodes() {
         const before = deepClone(current);
         let patched = deepClone(current);
         const rowsInSection = sortRowsForPatch(bySection[secKey], secKey);
-        let appliedCount = 0;
+        const attempts: Array<{ row: any; result: any }> = [];
 
         for (const row of rowsInSection) {
           const r = applyDiffRowToSection(patched, row, secKey);
           patched = r.section;
-          if (r.applied) appliedCount += 1;
+          attempts.push({ row, result: r });
         }
+        const mutation = summarizeRowApplyAttempts(attempts);
+        assertAllRowAttemptsApplied(def.label, mutation, logs);
 
         const sourceModeCodes = secKey === 'fieldSettings'
           ? new Set<string>(
@@ -1749,9 +2140,11 @@ export async function runApplyPreviewByNodes() {
                 .filter((code): code is string => !!code)
             )
           : null;
-        await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError });
-        logs.push(`OK ${def.label}: node ${appliedCount}/${rowsInSection.length}`);
-        recordSectionResult(sectionResults, secKey, def.label, 'ok', `${appliedCount}/${rowsInSection.length}`);
+        const execution = await applySectionDiffByKey({ secKey, def, prefix, app, before, patched, logs, lookupMap, sourceModeCodes, stopOnError });
+        const executionProblem = summarizeSectionExecutionProblem(execution);
+        if (executionProblem) throw new Error(executionProblem);
+        logs.push(`OK ${def.label}: node ${mutation.appliedCount}/${rowsInSection.length}`);
+        recordSectionResult(sectionResults, secKey, def.label, 'ok', `${mutation.appliedCount}/${rowsInSection.length}`);
       } catch (e) {
         hadError = true;
         const msg = e.message || String(e);
@@ -1881,7 +2274,7 @@ export async function runApplyPreview() {
     logs.push('');
 
     progress.setLabel('プレビュー反映を実行中...');
-    hadError = await applySectionsLoop(prefix, app, sourceBundle, effectiveScopes, logs, lookupMap, stopOnError, {
+    const sectionLoopResult = await applySectionsLoop(prefix, app, sourceBundle, effectiveScopes, logs, lookupMap, stopOnError, {
       phaseLabel: '反映',
       onProgress: (i, total) => {
         renderProgressLog(logs, { phase: 'プレビュー反映実行中', current: i, total, scopes: effectiveScopes });
@@ -1889,6 +2282,7 @@ export async function runApplyPreview() {
       },
       sectionResults
     });
+    hadError = sectionLoopResult.hadError;
 
     setStatus('プレビュー反映処理完了');
     await finalizeApplyResult({
@@ -1938,7 +2332,7 @@ export async function importTargetPreviewBackupFromFile(file) {
     throw new Error('バックアップJSONの読み込みに失敗しました（JSON形式が不正です）');
   }
   const rawBundle = parsed?.bundle || parsed;
-  const bundle = ensureBundleShape(rawBundle);
+  const bundle = sanitizeFetchedBundleForPersistence(ensureBundleShape(rawBundle));
   const target = {
     appId: String(parsed?.target?.appId || bundle.appId || '').trim(),
     guestId: String(parsed?.target?.guestId || bundle.guestId || '').trim(),
@@ -2016,6 +2410,7 @@ export async function runRestoreTargetPreviewBackup() {
   const logs: string[] = [];
   let beforeRestoreFilename = '';
   let hadError = false;
+  let deleteSkips: SectionDeleteSkipDetail[] = [];
   const progress = startProgress('バックアップ復元の準備中...', scopes.length);
   try {
     logs.push(`比較先アプリ: ${app}`);
@@ -2033,7 +2428,7 @@ export async function runRestoreTargetPreviewBackup() {
 
     progress.setLabel('バックアップから復元中...');
     const sectionResults: any[] = [];
-    hadError = await applySectionsLoop(prefix, app, backupBundle, scopes, logs, {}, stopOnError, {
+    const restoreLoopResult = await applySectionsLoop(prefix, app, backupBundle, scopes, logs, {}, stopOnError, {
       phaseLabel: 'バックアップ復元',
       onProgress: (i, total) => {
         renderProgressLog(logs, { phase: 'バックアップ復元中', current: i, total });
@@ -2041,6 +2436,12 @@ export async function runRestoreTargetPreviewBackup() {
       },
       sectionResults
     });
+    hadError = restoreLoopResult.hadError;
+    deleteSkips = restoreLoopResult.deleteSkips;
+    const deleteSkipText = formatDeleteSkipDetails(deleteSkips);
+    if (deleteSkipText) {
+      logs.push(`復元未完了: 互換モードで削除を見送りました (${deleteSkipText})`);
+    }
 
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: 'バックアップ復元完了' });
@@ -2056,7 +2457,9 @@ export async function runRestoreTargetPreviewBackup() {
     });
     renderReflectAssistPanel();
     renderReflectMainPanel();
-    setStatus(hadError ? 'バックアップ復元で一部エラーが発生しました' : '直前バックアップから復元しました');
+    setStatus(deleteSkipText
+      ? `バックアップ復元は一部未完了です（削除未反映: ${deleteSkipText}）`
+      : (hadError ? 'バックアップ復元で一部エラーが発生しました' : '直前バックアップから復元しました'));
     progress.finish({
       title: hadError ? 'バックアップ復元 完了（一部エラー）' : 'バックアップ復元 完了',
       hasError: hadError,
@@ -2064,11 +2467,13 @@ export async function runRestoreTargetPreviewBackup() {
         { label: '比較先アプリ', value: `#${app}` },
         { label: '復元元', value: restoreFilename },
         { label: '復元セクション', value: `${scopes.length}件` },
+        ...(deleteSkipText ? [{ label: '削除未反映', value: deleteSkipText, tone: 'warn' as const }] : []),
         { label: '結果', value: hadError ? '一部失敗' : '全成功', tone: hadError ? 'warn' : 'ok' }
       ],
-      hint: beforeRestoreFilename
-        ? `復元前のバックアップ: ${beforeRestoreFilename}`
-        : ''
+      hint: [
+        deleteSkipText ? `互換モードで削除されなかった対象: ${deleteSkipText}` : '',
+        beforeRestoreFilename ? `復元前のバックアップ: ${beforeRestoreFilename}` : ''
+      ].filter(Boolean).join('\n')
     });
   } catch (err) {
     progress.cancel();
@@ -2091,6 +2496,25 @@ export async function runDeployOnly() {
 }
 
 /**
+ * セクション全体を再送信して安全な反映結果だけを retry 対象にする。
+ * ノード／patch／復元の失敗は元の選択内容を保持していないため、ここでは昇格させない。
+ */
+export function assertRetryApplyModeAllowed(mode: unknown): void {
+  const normalized = String(mode || '').trim();
+  if (normalized === 'section' || normalized === 'retry') return;
+  const modeLabels: Record<string, string> = {
+    nodes: 'ノード反映',
+    patch: 'JSONパッチ反映',
+    restore: 'バックアップ復元'
+  };
+  const modeLabel = modeLabels[normalized] || normalized || '不明なモード';
+  throw new Error(
+    `直近の反映は「${modeLabel}」のため、セクション全体の再反映には切り替えられません。`
+    + '元のノード選択・パッチJSON・バックアップから再実行してください'
+  );
+}
+
+/**
  * 直前の反映結果で失敗したセクションだけを再反映します。
  * セクション単位モードで実行した直近の結果に失敗があった場合に、
  * 対応する `fieldSettings` / `viewSettings` 等だけを再取得・再送信します。
@@ -2098,6 +2522,7 @@ export async function runDeployOnly() {
 export async function runRetryFailedSections() {
   const report = state.lastApplyReport;
   if (!report) throw new Error('直近の反映結果がありません。まず反映を実行してください');
+  assertRetryApplyModeAllowed(report.mode);
   const failed = (report.failedSectionKeys || []).filter(Boolean);
   if (!failed.length) {
     setStatus('失敗・未実行のセクションはありません（再実行不要）');
@@ -2144,7 +2569,7 @@ export async function runRetryFailedSections() {
 
     progress.setLabel('失敗セクションを再反映中...');
     const sectionResults: any[] = [];
-    hadError = await applySectionsLoop(prefix, app, sourceBundle, failed, logs, lookupMap, stopOnError, {
+    const retryLoopResult = await applySectionsLoop(prefix, app, sourceBundle, failed, logs, lookupMap, stopOnError, {
       phaseLabel: '再反映',
       onProgress: (i, total) => {
         renderProgressLog(logs, { phase: '失敗セクション再反映中', current: i, total });
@@ -2152,6 +2577,7 @@ export async function runRetryFailedSections() {
       },
       sectionResults
     });
+    hadError = retryLoopResult.hadError;
     await verifyAppliedAgainstBackup({ targetGuestId: c.target.guestId, targetAppId: app, scopes: failed, logs });
     appendProgressSummary(logs);
     renderProgressLog(logs, { phase: '失敗セクション再反映完了' });

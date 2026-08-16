@@ -243,15 +243,30 @@ export function isIgnoredKey(ignoreRules, key) {
   return matchAnyPattern(ignoreRules.keyPatterns, normalized);
 }
 
+function isEntityIdentifierChildPath(path) {
+  const normalizedPath = normalizeIgnoreToken(path).replace(/\s+/g, '');
+  if (!normalizedPath) return false;
+  return /^(?:fieldsettings\.properties|viewsettings\.views|reportsettings\.reports|processsettings\.states|categories\.categories)\.[^.[\]]+$/.test(normalizedPath)
+    || /^fieldsettings\.properties\.[^.[\]]+\.fields\.[^.[\]]+$/.test(normalizedPath);
+}
+
 export function isIgnoredPath(ignoreRules, path) {
   const normalizedPath = normalizeIgnoreToken(path).replace(/\s+/g, '');
   if (!normalizedPath) return false;
   if (ignoreRules.pathSet.has(normalizedPath)) return true;
   if (matchAnyPattern(ignoreRules.pathPatterns, normalizedPath)) return true;
+  // Keys directly below named-entity maps are identifiers, not setting property names.
+  // A leaf-only ignore such as `revision` must not erase an entity with that name.
+  if (isEntityIdentifierChildPath(normalizedPath)) return false;
   const leaf = getPathLeafKey(normalizedPath);
   if (!leaf) return false;
   if (ignoreRules.keySet.has(leaf)) return true;
   return matchAnyPattern(ignoreRules.keyPatterns, leaf);
+}
+
+function isIgnoredObjectProperty(ignoreRules, key, path) {
+  if (!isEntityIdentifierChildPath(path) && META_KEYS.has(key)) return true;
+  return isIgnoredPath(ignoreRules, path);
 }
 
 function markDroppedDiffRow(out, row, kind: 'diff' | 'same') {
@@ -268,6 +283,12 @@ function markDroppedDiffRow(out, row, kind: 'diff' | 'same') {
 export function pushDiffRow(out, row, ignoreRules) {
   if (!row) return false;
   if (isIgnoredPath(ignoreRules, row.path)) return false;
+  // 表示専用行は反映可能な実差分ではなく、件数上限にも含めない。
+  // 実差分が上限に達していても、改名通知などの診断情報は残す。
+  if (row._displayOnly) {
+    out.push(row);
+    return true;
+  }
   if (row.type === 'same') {
     const sameCount = Number(out?.__sameCount || 0);
     if (sameCount >= SAME_ROW_LIMIT) {
@@ -292,7 +313,7 @@ export function getCollectedDiffCount(rows) {
   if (!Array.isArray(rows)) return 0;
   const count = Number((rows as any).__diffCount);
   if (Number.isFinite(count)) return count;
-  return rows.filter((row) => row?.type !== 'same').length;
+  return rows.filter((row) => row?.type !== 'same' && !row?._displayOnly).length;
 }
 
 export function canCollectSameRows(rows) {
@@ -303,21 +324,22 @@ export function canCollectSameRows(rows) {
   return rows.filter((row) => row?.type === 'same').length < SAME_ROW_LIMIT;
 }
 
-export function normalizeForCompare(v, ignoreRules) {
-  if (Array.isArray(v)) return v.map((x) => normalizeForCompare(x, ignoreRules));
+export function normalizeForCompare(v, ignoreRules, path = '') {
+  if (Array.isArray(v)) return v.map((x, index) => normalizeForCompare(x, ignoreRules, `${path}[${index}]`));
   if (v && typeof v === 'object') {
     const o = {};
     Object.keys(v).sort().forEach((k) => {
-      if (META_KEYS.has(k) || isIgnoredKey(ignoreRules, k)) return;
-      o[k] = normalizeForCompare(v[k], ignoreRules);
+      const childPath = path ? `${path}.${k}` : k;
+      if (isIgnoredObjectProperty(ignoreRules, k, childPath)) return;
+      o[k] = normalizeForCompare(v[k], ignoreRules, childPath);
     });
     return o;
   }
   return v;
 }
 
-export function makeArrayItemSignature(v, ignoreRules) {
-  return JSON.stringify(normalizeForCompare(v, ignoreRules));
+export function makeArrayItemSignature(v, ignoreRules, path = '') {
+  return JSON.stringify(normalizeForCompare(v, ignoreRules, path));
 }
 
 export function hasUniquePrimitiveKey(arr, key) {
@@ -409,8 +431,9 @@ export function collectArrayDiffsByObjectKey(a, b, path, out, ignoreRules) {
     }
     if (!left || !right) continue;
 
-    const leftSig = makeArrayItemSignature(left.item, ignoreRules);
-    const rightSig = makeArrayItemSignature(right.item, ignoreRules);
+    const itemPath = `${path}[${right.idx}]`;
+    const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
+    const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
     if (leftSig === rightSig) {
       if (left.idx !== right.idx) {
         pushDiffRow(out, {
@@ -586,8 +609,9 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
     }
     if (!left || !right) continue;
 
-    const leftSig = makeArrayItemSignature(left.item, ignoreRules);
-    const rightSig = makeArrayItemSignature(right.item, ignoreRules);
+    const itemPath = `${path}[${right.idx}]`;
+    const leftSig = makeArrayItemSignature(left.item, ignoreRules, itemPath);
+    const rightSig = makeArrayItemSignature(right.item, ignoreRules, itemPath);
     if (leftSig === rightSig) {
       if (left.idx !== right.idx) {
         pushDiffRow(out, {
@@ -635,8 +659,8 @@ export function collectArrayDiffsByCompositeKey(a, b, path, out, ignoreRules) {
 // ---------------------------------------------------------------------------
 export function collectArrayDiffsByPureReorder(a, b, path, out, ignoreRules) {
   if (a.length !== b.length || a.length < 2) return false;
-  const sigA = a.map((x) => makeArrayItemSignature(x, ignoreRules));
-  const sigB = b.map((x) => makeArrayItemSignature(x, ignoreRules));
+  const sigA = a.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
+  const sigB = b.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
   if ([...sigA].sort().join('\u0000') !== [...sigB].sort().join('\u0000')) return false;
 
   const used = new Array(a.length).fill(false);
@@ -685,7 +709,7 @@ export function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
     const row = out[i];
     if (!row || row.type !== 'removed') continue;
     if (!childRe.test(String(row.path || ''))) continue;
-    const sig = makeArrayItemSignature(row.left, ignoreRules);
+    const sig = makeArrayItemSignature(row.left, ignoreRules, row.path);
     if (!removedBySig.has(sig)) removedBySig.set(sig, []);
     removedBySig.get(sig)!.push(i);
   }
@@ -697,7 +721,7 @@ export function mergeAddRemovePairsAsMoved(out, startIdx, path, ignoreRules) {
     if (!row || row.type !== 'added') continue;
     const toMatch = childRe.exec(String(row.path || ''));
     if (!toMatch) continue;
-    const sig = makeArrayItemSignature(row.right, ignoreRules);
+    const sig = makeArrayItemSignature(row.right, ignoreRules, row.path);
     const bucket = removedBySig.get(sig);
     if (!bucket || !bucket.length) continue;
     const removedIdx = bucket.shift()!;
@@ -742,8 +766,8 @@ export function collectArrayDiffsByLcs(a, b, path, out, ignoreRules) {
   }
 
   if (n * m > ARRAY_LCS_MAX_CELLS) return false;
-  const sigA = a.map((x) => makeArrayItemSignature(x, ignoreRules));
-  const sigB = b.map((x) => makeArrayItemSignature(x, ignoreRules));
+  const sigA = a.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
+  const sigB = b.map((x, index) => makeArrayItemSignature(x, ignoreRules, `${path}[${index}]`));
 
   const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
   for (let i = n - 1; i >= 0; i--) {
@@ -841,7 +865,7 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
   }
 
   if (Array.isArray(a)) {
-    if (makeArrayItemSignature(a, ignoreRules) === makeArrayItemSignature(b, ignoreRules)) {
+    if (makeArrayItemSignature(a, ignoreRules, path) === makeArrayItemSignature(b, ignoreRules, path)) {
       if (canCollectSameRows(out)) {
         pushDiffRow(out, { type: 'same', path, left: a, right: b, severity: 'low' }, ignoreRules);
       }
@@ -852,7 +876,7 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
   }
 
   if (typeof a === 'object') {
-    if (makeArrayItemSignature(a, ignoreRules) === makeArrayItemSignature(b, ignoreRules)) {
+    if (makeArrayItemSignature(a, ignoreRules, path) === makeArrayItemSignature(b, ignoreRules, path)) {
       if (canCollectSameRows(out)) {
         pushDiffRow(out, { type: 'same', path, left: a, right: b, severity: 'low' }, ignoreRules);
       }
@@ -860,8 +884,8 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
     }
     const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
     for (const k of keys) {
-      if (META_KEYS.has(k) || isIgnoredKey(ignoreRules, k)) continue;
       const p = path ? `${path}.${k}` : k;
+      if (isIgnoredObjectProperty(ignoreRules, k, p)) continue;
       if (!Object.prototype.hasOwnProperty.call(b, k)) pushDiffRow(out, { type: 'removed', path: p, left: a[k], right: undefined, ...(isEmptyLikeValue(a[k]) ? { emptyOnly: true } : {}) }, ignoreRules);
       else if (!Object.prototype.hasOwnProperty.call(a, k)) pushDiffRow(out, { type: 'added', path: p, left: undefined, right: b[k], ...(isEmptyLikeValue(b[k]) ? { emptyOnly: true } : {}) }, ignoreRules);
       else collectDeepDiffs(a[k], b[k], p, out, ignoreRules);
@@ -887,6 +911,12 @@ export function collectDeepDiffs(a, b, path, out, ignoreRules) {
 export function preprocessCustomizePairForDiff(src, tgt) {
   const sClone = src && typeof src === 'object' ? deepClone(src) : src;
   const tClone = tgt && typeof tgt === 'object' ? deepClone(tgt) : tgt;
+
+  const cleanupRootMetadata = (bundle) => {
+    if (bundle && typeof bundle === 'object' && '_partial' in bundle) delete bundle._partial;
+  };
+  cleanupRootMetadata(sClone);
+  cleanupRootMetadata(tClone);
 
   const injectName = (bundle) => {
     if (!bundle || typeof bundle !== 'object') return;
@@ -920,6 +950,7 @@ export function preprocessCustomizePairForDiff(src, tgt) {
     }
     if ('_bodyText' in item) delete item._bodyText;
     if ('_bodyHash' in item) delete item._bodyHash;
+    if ('_bodyUnavailable' in item) delete item._bodyUnavailable;
   };
 
   for (const platform of ['desktop', 'mobile']) {
@@ -990,39 +1021,31 @@ function stripStateBodyForRenameMatch(value) {
 export function detectProcessStateRenames(sourceProcess, targetProcess): Map<string, string> {
   const out = new Map<string, string>();
   if (!sourceProcess || !targetProcess) return out;
-  const srcStates = (sourceProcess.states && typeof sourceProcess.states === 'object') ? sourceProcess.states : {};
-  const tgtStates = (targetProcess.states && typeof targetProcess.states === 'object') ? targetProcess.states : {};
+  const srcStates = (sourceProcess.states && typeof sourceProcess.states === 'object' && !Array.isArray(sourceProcess.states)) ? sourceProcess.states : {};
+  const tgtStates = (targetProcess.states && typeof targetProcess.states === 'object' && !Array.isArray(targetProcess.states)) ? targetProcess.states : {};
   const onlyInSrc = Object.keys(srcStates).filter((k) => !Object.prototype.hasOwnProperty.call(tgtStates, k));
   const onlyInTgt = Object.keys(tgtStates).filter((k) => !Object.prototype.hasOwnProperty.call(srcStates, k));
   if (!onlyInSrc.length || !onlyInTgt.length) return out;
 
-  type Cand = { from: string; to: string; score: number };
-  const candidates: Cand[] = [];
-  onlyInSrc.forEach((from) => {
-    onlyInTgt.forEach((to) => {
-      const lhs = srcStates[from];
-      const rhs = tgtStates[to];
-      const sigL = stableStringify(stripStateBodyForRenameMatch(lhs));
-      const sigR = stableStringify(stripStateBodyForRenameMatch(rhs));
-      let score = 0;
-      if (sigL === sigR) score += 5;
-      const aL = lhs?.assignee;
-      const aR = rhs?.assignee;
-      if (aL && aR && aL.type === aR.type) score += 1;
-      if (Array.isArray(aL?.entities) && Array.isArray(aR?.entities)
-        && stableStringify(aL.entities) === stableStringify(aR.entities)) score += 1;
-      if (score < 5) return;
-      candidates.push({ from, to, score });
+  const groupByBodySignature = (names: string[], states: Record<string, any>) => {
+    const grouped = new Map<string, string[]>();
+    names.forEach((name) => {
+      const signature = stableStringify(stripStateBodyForRenameMatch(states[name]));
+      const bucket = grouped.get(signature) || [];
+      bucket.push(name);
+      grouped.set(signature, bucket);
     });
-  });
-  candidates.sort((a, b) => b.score - a.score);
-  const usedFrom = new Set<string>();
-  const usedTo = new Set<string>();
-  candidates.forEach((c) => {
-    if (usedFrom.has(c.from) || usedTo.has(c.to)) return;
-    usedFrom.add(c.from);
-    usedTo.add(c.to);
-    out.set(c.from, c.to);
+    return grouped;
+  };
+  const sourceBySignature = groupByBodySignature(onlyInSrc, srcStates);
+  const targetBySignature = groupByBodySignature(onlyInTgt, tgtStates);
+
+  // 本文が同じ候補が複数ある場合、どの削除と追加が対応するか確定できない。
+  // 誤った仮想改名で本来の追加/削除を隠さないよう、両側で一意な組だけ採用する。
+  sourceBySignature.forEach((fromNames, signature) => {
+    const toNames = targetBySignature.get(signature) || [];
+    if (fromNames.length !== 1 || toNames.length !== 1) return;
+    out.set(fromNames[0], toNames[0]);
   });
   return out;
 }
@@ -1050,6 +1073,33 @@ export function applyProcessStateRenamesToSource(sourceProcess, renameMap: Map<s
     });
   }
   return cloned;
+}
+
+function pushProcessStateRenameNotices(rows, sectionKey, sectionLabel, stateRenames, ignoreRules) {
+  if (!stateRenames || !stateRenames.size) return;
+  stateRenames.forEach((to, from) => {
+    pushDiffRow(rows, {
+      sectionKey,
+      section: sectionLabel,
+      type: 'changed',
+      path: `${sectionKey}.states.__rename__`,
+      left: { name: from },
+      right: { name: to },
+      severity: 'low',
+      _displayOnly: true,
+      _stateRenameNotice: true,
+      renameCandidate: {
+        id: `state-rename:${from}:${to}`,
+        fromCode: from,
+        toCode: to,
+        entityKind: 'state',
+        sectionKey,
+        score: 99,
+        matchedBy: 'process-state-cascade-suppressed'
+      },
+      reasonSummary: `ステータス改名：${from} → ${to}（参照を自動補正）`
+    }, ignoreRules);
+  });
 }
 
 export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeysText, options: any = {}) {
@@ -1120,9 +1170,13 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
     }
     const sourceForDiff = normalizeSectionForCompare(sec, sourceForSection, presetState);
     const targetForDiff = normalizeSectionForCompare(sec, targetForSection, presetState);
-    if (stableStringify(sourceForDiff) === stableStringify(targetForDiff)) {
+    if (makeArrayItemSignature(sourceForDiff, ignoreRules, sec) === makeArrayItemSignature(targetForDiff, ignoreRules, sec)) {
       if (includeSame) {
         pushDiffRow(rows, { sectionKey: sec, section: label, type: 'same', path: sec, left: sourceForDiff, right: targetForDiff, severity: 'low' }, ignoreRules);
+      }
+      // 仮想改名で両側が一致した場合も、改名そのものの通知は必ず残す。
+      if (sec === 'processSettings') {
+        pushProcessStateRenameNotices(rows, sec, label, stateRenames, ignoreRules);
       }
       continue;
     }
@@ -1134,30 +1188,8 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
       if (!rows[i].severity) rows[i].severity = detectRowSeverity(rows[i]);
     }
     // ステータス改名の通知行（_displayOnly：反映系ロジックからは除外）
-    if (sec === 'processSettings' && stateRenames && stateRenames.size) {
-      stateRenames.forEach((to, from) => {
-        pushDiffRow(rows, {
-          sectionKey: sec,
-          section: label,
-          type: 'changed',
-          path: `${sec}.states.__rename__`,
-          left: { name: from },
-          right: { name: to },
-          severity: 'low',
-          _displayOnly: true,
-          _stateRenameNotice: true,
-          renameCandidate: {
-            id: `state-rename:${from}:${to}`,
-            fromCode: from,
-            toCode: to,
-            entityKind: 'state',
-            sectionKey: sec,
-            score: 99,
-            matchedBy: 'process-state-cascade-suppressed'
-          },
-          reasonSummary: `ステータス改名：${from} → ${to}（参照を自動補正）`
-        }, ignoreRules);
-      });
+    if (sec === 'processSettings') {
+      pushProcessStateRenameNotices(rows, sec, label, stateRenames, ignoreRules);
     }
     if (getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT || limitHitBefore) {
       limitHitSectionKeys.push(sec);
@@ -1199,8 +1231,10 @@ export function buildDiffTruncationInfo(rows, limitHitSectionKeys: string[] = []
 }
 
 export function summarizeRows(rows) {
-  const s = { total: rows.length, added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
+  const s = { total: 0, added: 0, removed: 0, changed: 0, moved: 0, same: 0 };
   for (const r of rows) {
+    if (!r || r._displayOnly) continue;
+    s.total += 1;
     if (r.type === 'same') s.same += 1;
     else if (r.type === 'added') s.added += 1;
     else if (r.type === 'removed') s.removed += 1;

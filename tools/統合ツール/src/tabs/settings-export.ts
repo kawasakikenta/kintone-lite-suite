@@ -194,6 +194,8 @@ export function loadSettingsExportBundleToDiff(appId: string | number, side: 'so
   state.lastDiffAt = null;
   state.lastDiffRows = [];
   state.lastFetchIssues = [];
+  state.lastPartialIssues = [];
+  state.lastDiffSnapshotContext = null;
   state.lastDiffSignature = '';
   state.lastApplyPlan = null;
   state.diffSelectedIds = new Set();

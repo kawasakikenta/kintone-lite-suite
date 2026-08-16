@@ -244,6 +244,37 @@
     }
     return "";
   }
+  function sanitizeCustomizeResourceList(value) {
+    if (!Array.isArray(value)) return [];
+    const resources = [];
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const type = String(item.type || "").toUpperCase();
+      if (type === "FILE") {
+        const fileKey = item?.file?.fileKey;
+        if (fileKey == null || String(fileKey) === "") continue;
+        resources.push({ type: "FILE", file: { fileKey: String(fileKey) } });
+        continue;
+      }
+      if (type === "URL") {
+        const url = item.url;
+        if (url == null || String(url) === "") continue;
+        resources.push({ type: "URL", url: String(url) });
+      }
+    }
+    return resources;
+  }
+  function buildCustomizeSettingsPutPayload(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const buildPlatform = (platform) => ({
+      js: sanitizeCustomizeResourceList(source?.[platform]?.js),
+      css: sanitizeCustomizeResourceList(source?.[platform]?.css)
+    });
+    return {
+      desktop: buildPlatform("desktop"),
+      mobile: buildPlatform("mobile")
+    };
+  }
   var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, META_KEYS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
@@ -301,7 +332,7 @@
         { key: "reportSettings", label: "グラフ設定", endpoint: "/app/reports.json", put: true, putBuilder: (d) => ({ reports: d.reports || d }) },
         { key: "processSettings", label: "プロセス管理", endpoint: "/app/status.json", put: true, putBuilder: (d) => ({ enable: !!d.enable, states: d.states || {}, actions: d.actions || [] }) },
         { key: "pluginSettings", label: "プラグイン(※)", endpoint: "/app/plugins.json", put: true, putBuilder: (d) => ({ pluginIds: (d.plugins || []).map((p) => p.id) }) },
-        { key: "customizeSettings", label: "JS/CSS設定", endpoint: "/app/customize.json", put: true, putBuilder: (d) => ({ desktop: d.desktop || {}, mobile: d.mobile || {} }) },
+        { key: "customizeSettings", label: "JS/CSS設定", endpoint: "/app/customize.json", put: true, putBuilder: buildCustomizeSettingsPutPayload },
         { key: "actionSettings", label: "アクション設定", endpoint: "/app/actions.json", put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
         { key: "appAcl", label: "アプリ権限", endpoint: "/app/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
         { key: "fieldAcl", label: "フィールド権限", endpoint: "/field/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
@@ -592,7 +623,7 @@ ${contextLine}`);
     const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
     if (Number.isFinite(direct) && direct > 0) return direct;
     const text = String(error?.message || "");
-    const matched = text.match(/\b([45]\d{2})\b/);
+    const matched = text.match(/\b(?:HTTP(?:\/\d+(?:\.\d+)?)?(?:\s+status(?:\s+code)?)?|status(?:\s+code)?)\s*(?::|=|-)?\s*([45]\d{2})\b/i);
     return matched ? Number(matched[1]) : 0;
   }
   function isRetriableApiError(error) {
@@ -686,21 +717,67 @@ ${contextLine}`);
     return h.toString(16).padStart(8, "0");
   }
   async function fetchTextFileBody(prefix, fileKey) {
-    if (!fileKey) return null;
+    if (!fileKey) return { ok: false, reason: "error", detail: "fileKey がありません" };
     const url = `${prefix}/file.json?fileKey=${encodeURIComponent(fileKey)}`;
     const headers = { "X-Requested-With": "XMLHttpRequest" };
     try {
       const resp = await fetch(url, { method: "GET", headers });
-      if (!resp.ok) return null;
+      if (!resp.ok) {
+        return {
+          ok: false,
+          reason: "http",
+          status: Number(resp.status || 0),
+          detail: `HTTP ${resp.status || "error"}`
+        };
+      }
+      const contentLengthText = resp.headers?.get?.("content-length") || "";
+      const contentLength = Number(contentLengthText);
+      if (Number.isFinite(contentLength) && contentLength > CUSTOMIZE_BODY_MAX_BYTES) {
+        return {
+          ok: false,
+          reason: "oversize",
+          byteSize: contentLength,
+          detail: `本文サイズが上限 ${CUSTOMIZE_BODY_MAX_BYTES} bytes を超えています`
+        };
+      }
       const blob = await resp.blob();
-      if (blob.size > CUSTOMIZE_BODY_MAX_BYTES) return null;
-      return await blob.text();
-    } catch {
-      return null;
+      if (blob.size > CUSTOMIZE_BODY_MAX_BYTES) {
+        return {
+          ok: false,
+          reason: "oversize",
+          byteSize: blob.size,
+          detail: `本文サイズが上限 ${CUSTOMIZE_BODY_MAX_BYTES} bytes を超えています`
+        };
+      }
+      return { ok: true, text: await blob.text(), byteSize: blob.size };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "error",
+        detail: error instanceof Error ? error.message : String(error)
+      };
     }
   }
+  async function fetchTextFileBodyWithRetry(prefix, fileKey) {
+    let result = await fetchTextFileBody(prefix, fileKey);
+    if (result.ok === true) return result;
+    if (result.reason === "oversize") return result;
+    result = await fetchTextFileBody(prefix, fileKey);
+    return result;
+  }
+  async function runTaskFactoriesWithConcurrency(tasks, concurrency) {
+    if (!tasks.length) return;
+    const limit = Math.max(1, Math.min(tasks.length, Math.floor(concurrency) || 1));
+    let nextIndex = 0;
+    await Promise.all(Array.from({ length: limit }, async () => {
+      while (nextIndex < tasks.length) {
+        const index = nextIndex++;
+        await tasks[index]();
+      }
+    }));
+  }
   async function fetchCustomizeFileBodies(customizeSection, prefix) {
-    const stats = { fetched: 0, skipped: 0, failed: 0 };
+    const stats = { fetched: 0, skipped: 0, failed: 0, skippedFiles: [], failedFiles: [] };
     if (!customizeSection || typeof customizeSection !== "object") return stats;
     const tasks = [];
     for (const platform of ["desktop", "mobile"]) {
@@ -712,28 +789,53 @@ ${contextLine}`);
           const fileKey = item?.file?.fileKey;
           const fileName = String(item?.file?.name || "");
           if (!fileKey) {
+            item._bodyUnavailable = "missing-key";
             stats.skipped += 1;
+            stats.skippedFiles.push({ fileName, fileKey: "", reason: "missing-key", detail: "fileKey がありません" });
             continue;
           }
           if (fileName && !TEXT_LIKE_EXT.test(fileName)) {
+            item._bodyUnavailable = "unsupported";
             stats.skipped += 1;
+            stats.skippedFiles.push({ fileName, fileKey, reason: "unsupported", detail: "テキスト形式ではないため本文比較を省略しました" });
             continue;
           }
-          tasks.push((async () => {
-            const text = await fetchTextFileBody(prefix, fileKey);
-            if (text == null) {
-              stats.failed += 1;
+          tasks.push(async () => {
+            const result = await fetchTextFileBodyWithRetry(prefix, fileKey);
+            if (result.ok === false) {
+              item._bodyUnavailable = result.reason;
+              const issue = {
+                fileName,
+                fileKey,
+                reason: result.reason,
+                detail: result.detail,
+                ...result.byteSize === void 0 ? {} : { byteSize: result.byteSize }
+              };
+              if (result.reason === "oversize") {
+                stats.skipped += 1;
+                stats.skippedFiles.push(issue);
+              } else {
+                stats.failed += 1;
+                stats.failedFiles.push(issue);
+              }
               return;
             }
-            item._bodyText = text;
-            item._bodyHash = fnv1aHashString(text);
+            item._bodyText = result.text;
+            item._bodyHash = fnv1aHashString(result.text);
             stats.fetched += 1;
-          })());
+          });
         }
       }
     }
-    await Promise.all(tasks);
+    await runTaskFactoriesWithConcurrency(tasks, CUSTOMIZE_BODY_FETCH_CONCURRENCY);
     return stats;
+  }
+  function setAuxiliaryFetchError(section, label, failed, error, files = []) {
+    if (!section || typeof section !== "object") return;
+    const countText = failed > 0 ? `（${failed}件）` : "";
+    const detail = error instanceof Error ? error.message : error == null ? "" : String(error);
+    const fileText = files.length ? ` [${files.slice(0, 3).map((item) => item.fileName || item.fileKey || "(名称不明)").join(", ")}${files.length > 3 ? ", …" : ""}]` : "";
+    section._fetchError = `${label}の取得に失敗したため、このセクションは比較できません${countText}${fileText}${detail ? `: ${detail}` : ""}`;
   }
   async function fetchPluginConfigs(pluginSection, prefix, appId) {
     const stats = { fetched: 0, skipped: 0, failed: 0 };
@@ -748,7 +850,7 @@ ${contextLine}`);
         stats.skipped += 1;
         continue;
       }
-      tasks.push((async () => {
+      tasks.push(async () => {
         try {
           const res = await apiGet(prefix, "/app/plugin/config.json", { app: appId, id }, 1);
           if (res && typeof res === "object") {
@@ -760,9 +862,9 @@ ${contextLine}`);
         } catch {
           stats.failed += 1;
         }
-      })());
+      });
     }
-    await Promise.all(tasks);
+    await runTaskFactoriesWithConcurrency(tasks, CUSTOMIZE_BODY_FETCH_CONCURRENCY);
     return stats;
   }
   async function fetchBundle({ appId, guestId, preview, sections, onProgress }) {
@@ -793,29 +895,42 @@ ${contextLine}`);
       }
       if (onProgress) onProgress((i + 1) / sections.length, def.label);
     }
-    try {
-      if (sections.includes("customizeSettings")) {
-        const cust = bundle.sections.customizeSettings;
-        if (cust && !cust._fetchError) {
+    if (sections.includes("customizeSettings")) {
+      const cust = bundle.sections.customizeSettings;
+      if (cust && !cust._fetchError) {
+        try {
           const prefix = buildApiPrefix(guestId, false);
-          cust._bodyFetchStats = await fetchCustomizeFileBodies(cust, prefix);
+          const stats = await fetchCustomizeFileBodies(cust, prefix);
+          if (stats.skippedFiles.length) {
+            cust._partial = {
+              kind: "customizeBody",
+              message: "一部ファイルは本文比較を省略し、fileKey で比較します",
+              files: stats.skippedFiles
+            };
+          }
+          if (stats.failed > 0) {
+            setAuxiliaryFetchError(cust, "JS/CSSファイル本文", stats.failed, void 0, stats.failedFiles);
+          }
+        } catch (e) {
+          setAuxiliaryFetchError(cust, "JS/CSSファイル本文", 0, e);
         }
       }
-    } catch {
     }
-    try {
-      if (sections.includes("pluginSettings")) {
-        const plug = bundle.sections.pluginSettings;
-        if (plug && !plug._fetchError) {
-          const prefix = buildApiPrefix(guestId, false);
-          plug._configFetchStats = await fetchPluginConfigs(plug, prefix, app);
+    if (sections.includes("pluginSettings")) {
+      const plug = bundle.sections.pluginSettings;
+      if (plug && !plug._fetchError) {
+        try {
+          const prefix = buildApiPrefix(guestId, preview);
+          const stats = await fetchPluginConfigs(plug, prefix, app);
+          if (stats.failed > 0) setAuxiliaryFetchError(plug, "プラグイン設定", stats.failed);
+        } catch (e) {
+          setAuxiliaryFetchError(plug, "プラグイン設定", 0, e);
         }
       }
-    } catch {
     }
     return bundle;
   }
-  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, TEXT_LIKE_EXT;
+  var DEPLOY_PATH_SNIPPET, ERR_NO_PROD_WRITE, ERR_NO_DEPLOY_API, ERR_NO_RECORD_PREVIEW_API, DEFAULT_API_GET_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_MAX_DELAY_MS, RETRIABLE_STATUS_CODES, RECORD_DATA_MUTATION_PATHS, apiGetMetrics, CUSTOMIZE_BODY_MAX_BYTES, CUSTOMIZE_BODY_FETCH_CONCURRENCY, TEXT_LIKE_EXT;
   var init_api = __esm({
     "src/api.ts"() {
       "use strict";
@@ -844,6 +959,7 @@ ${contextLine}`);
         byPath: {}
       };
       CUSTOMIZE_BODY_MAX_BYTES = 1 * 1024 * 1024;
+      CUSTOMIZE_BODY_FETCH_CONCURRENCY = 6;
       TEXT_LIKE_EXT = /\.(js|css|mjs|ts|jsx|tsx|json|txt|html|md)$/i;
     }
   });
@@ -872,9 +988,11 @@ ${contextLine}`);
         lastTargetBundle: null,
         lastDiffRows: [],
         lastFetchIssues: [],
+        lastPartialIssues: [],
         lastDiffTruncation: null,
         lastDiffAt: null,
         lastDiffSignature: "",
+        lastDiffSnapshotContext: null,
         lastApplyPlan: null,
         lastApplyCompletedAt: null,
         lastApplyCompletedMode: "",

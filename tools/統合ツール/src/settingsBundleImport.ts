@@ -1,10 +1,24 @@
 'use strict';
 
-import { ensureBundleShape } from './api.js';
+import { ensureBundleShape, pickBundleSections } from './api.js';
 
 export interface SettingsBundlePickOptions {
   side?: 'source' | 'target';
   appId?: string;
+  sections?: readonly string[];
+}
+
+function limitImportedBundleToSections(bundle: any, sections?: readonly string[]) {
+  if (!Array.isArray(sections) || !sections.length) return bundle;
+  const sourceSections = bundle?.sections || {};
+  const picked = pickBundleSections(bundle, sections);
+  sections.forEach((sectionKey) => {
+    if (Object.prototype.hasOwnProperty.call(sourceSections, sectionKey)) return;
+    picked.sections[sectionKey] = {
+      _fetchError: '読み込んだ設定JSONに比較対象セクションが含まれていません'
+    };
+  });
+  return picked;
 }
 
 function unwrapBundleCandidates(raw: any, side?: 'source' | 'target'): any[] {
@@ -28,10 +42,10 @@ export function pickSettingsBundle(raw: any, options: SettingsBundlePickOptions 
   if (!candidates.length) throw new Error('設定JSON内にアプリ設定バンドルが見つかりません');
   if (appId) {
     const matched = candidates.find((b: any) => String(b?.appId || '') === appId);
-    if (matched) return matched;
+    if (matched) return limitImportedBundleToSections(matched, options.sections);
     if (candidates.length > 1) throw new Error(`設定JSON内に App ${appId} のバンドルが見つかりません`);
   }
-  return candidates[0];
+  return limitImportedBundleToSections(candidates[0], options.sections);
 }
 
 /**

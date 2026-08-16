@@ -244,6 +244,37 @@
     }
     return "";
   }
+  function sanitizeCustomizeResourceList(value) {
+    if (!Array.isArray(value)) return [];
+    const resources = [];
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const type = String(item.type || "").toUpperCase();
+      if (type === "FILE") {
+        const fileKey = item?.file?.fileKey;
+        if (fileKey == null || String(fileKey) === "") continue;
+        resources.push({ type: "FILE", file: { fileKey: String(fileKey) } });
+        continue;
+      }
+      if (type === "URL") {
+        const url = item.url;
+        if (url == null || String(url) === "") continue;
+        resources.push({ type: "URL", url: String(url) });
+      }
+    }
+    return resources;
+  }
+  function buildCustomizeSettingsPutPayload(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const buildPlatform = (platform) => ({
+      js: sanitizeCustomizeResourceList(source?.[platform]?.js),
+      css: sanitizeCustomizeResourceList(source?.[platform]?.css)
+    });
+    return {
+      desktop: buildPlatform("desktop"),
+      mobile: buildPlatform("mobile")
+    };
+  }
   var TOOL_ID, EXTERNAL_LIBRARIES, DEFAULT_APP_ID, DIALOG_STATE_KEY, SECTION_DEFS, DEFAULT_SUBTAB_STATE, TOUR_STEP_CONNECTION, TOUR_STEP_SCOPE, TOUR_STEP_NOISE, TOUR_STEP_RUN_DIFF, TOUR_STEP_REVIEW, TOUR_STEP_CATEGORY_VIEW, TOUR_STEP_PLAN, TOUR_STEP_APPLY, TOUR_STEP_RECORD, GUIDED_TOUR_COURSES, GUIDED_TOUR_STEPS;
   var init_constants = __esm({
     "src/constants.ts"() {
@@ -301,7 +332,7 @@
         { key: "reportSettings", label: "グラフ設定", endpoint: "/app/reports.json", put: true, putBuilder: (d) => ({ reports: d.reports || d }) },
         { key: "processSettings", label: "プロセス管理", endpoint: "/app/status.json", put: true, putBuilder: (d) => ({ enable: !!d.enable, states: d.states || {}, actions: d.actions || [] }) },
         { key: "pluginSettings", label: "プラグイン(※)", endpoint: "/app/plugins.json", put: true, putBuilder: (d) => ({ pluginIds: (d.plugins || []).map((p) => p.id) }) },
-        { key: "customizeSettings", label: "JS/CSS設定", endpoint: "/app/customize.json", put: true, putBuilder: (d) => ({ desktop: d.desktop || {}, mobile: d.mobile || {} }) },
+        { key: "customizeSettings", label: "JS/CSS設定", endpoint: "/app/customize.json", put: true, putBuilder: buildCustomizeSettingsPutPayload },
         { key: "actionSettings", label: "アクション設定", endpoint: "/app/actions.json", put: true, putBuilder: (d) => ({ actions: d.actions || d }) },
         { key: "appAcl", label: "アプリ権限", endpoint: "/app/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
         { key: "fieldAcl", label: "フィールド権限", endpoint: "/field/acl.json", put: true, putBuilder: (d) => ({ rights: d.rights || d }) },
@@ -475,7 +506,7 @@ ${contextLine}`);
     const direct = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
     if (Number.isFinite(direct) && direct > 0) return direct;
     const text = String(error?.message || "");
-    const matched = text.match(/\b([45]\d{2})\b/);
+    const matched = text.match(/\b(?:HTTP(?:\/\d+(?:\.\d+)?)?(?:\s+status(?:\s+code)?)?|status(?:\s+code)?)\s*(?::|=|-)?\s*([45]\d{2})\b/i);
     return matched ? Number(matched[1]) : 0;
   }
   function isRetriableApiError(error) {
@@ -581,9 +612,11 @@ ${contextLine}`);
         lastTargetBundle: null,
         lastDiffRows: [],
         lastFetchIssues: [],
+        lastPartialIssues: [],
         lastDiffTruncation: null,
         lastDiffAt: null,
         lastDiffSignature: "",
+        lastDiffSnapshotContext: null,
         lastApplyPlan: null,
         lastApplyCompletedAt: null,
         lastApplyCompletedMode: "",

@@ -4,11 +4,12 @@ import { downloadText, buildExportFilename, appLabelFromBundle } from '../utils.
 import { countActualDiffRows } from '../diff/engine.js';
 import { buildDiffHtml } from '../diff/export.js';
 
-function warningInfoLite(rows: any[], fetchIssues: any[]) {
+function warningInfoLite(rows: any[], fetchIssues: any[], partialIssues: any[] = []) {
   const diffCount = countActualDiffRows(rows || []);
   const issueCount = (fetchIssues || []).length;
-  const total = diffCount + issueCount;
-  return { threshold: 0, diffCount, issueCount, total, exceeded: false };
+  const partialIssueCount = partialIssues.length;
+  const total = diffCount + issueCount + partialIssueCount;
+  return { threshold: 0, diffCount, issueCount, partialIssueCount, total, exceeded: false };
 }
 
 /** 比較元・比較先バンドルから「比較元_vs_比較先」のファイル名ラベルを作る。 */
@@ -30,20 +31,28 @@ function diffPairLabel(sourceBundle: any, targetBundle: any): string {
  *   normalizationPresetState: object
  * }} ctx
  */
-export function runExportDiffHtmlStandalone(ctx) {
+export function buildDiffHtmlStandaloneExport(ctx) {
   const rows = ctx.rows || [];
   const fetchIssues = ctx.fetchIssues || [];
+  const partialIssues = ctx.partialIssues || [];
   const scopes = ctx.scopes || [];
-  if (!rows.length && !fetchIssues.length) {
-    throw new Error('出力できる比較結果がありません');
-  }
+  const exportMode = ctx.exportMode || 'all';
+  const exportLabel = ctx.exportLabel || (exportMode === 'all' ? '全差分' : '表示中（フィルタ適用後）');
   const html = buildDiffHtml(ctx.sourceBundle, ctx.targetBundle, rows, scopes, ctx.ignoreKeys || '', {
     fetchIssues,
-    exportMode: 'all',
-    exportLabel: '全差分',
+    partialIssues,
+    exportMode,
+    exportLabel,
     normalizationState: ctx.normalizationPresetState || ({} as any),
-    warning: warningInfoLite(rows, fetchIssues),
+    warning: warningInfoLite(rows, fetchIssues, partialIssues),
     truncation: ctx.truncation || null
   });
-  downloadText(buildExportFilename('差分', 'html', { appLabel: diffPairLabel(ctx.sourceBundle, ctx.targetBundle) }), html, 'text/html');
+  const filename = buildExportFilename('差分', 'html', { appLabel: diffPairLabel(ctx.sourceBundle, ctx.targetBundle) });
+  return { filename, html };
+}
+
+export function runExportDiffHtmlStandalone(ctx) {
+  const output = buildDiffHtmlStandaloneExport(ctx);
+  downloadText(output.filename, output.html, 'text/html');
+  return output;
 }

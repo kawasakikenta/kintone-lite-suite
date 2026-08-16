@@ -368,6 +368,8 @@ export async function runPrefetchCommonData() {
   state.lastDiffAt = null;
   state.lastDiffRows = [];
   state.lastFetchIssues = [];
+  state.lastPartialIssues = [];
+  state.lastDiffSnapshotContext = null;
   state.lastDiffSignature = '';
   state.lastApplyPlan = null;
   state.diffSelectedIds = new Set();

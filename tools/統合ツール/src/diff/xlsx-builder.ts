@@ -108,7 +108,9 @@ function buildStoredZip(entries: ZipEntry[]): Blob {
 
 function escapeXml(s: unknown): string {
   return String(s ?? '')
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/g, '')
+    // Excel は _xHHHH_ を特殊エスケープとして解釈するため、リテラルの先頭 _ を逃がす。
+    .replace(/_(?=[xX][0-9A-Fa-f]{4}_)/g, '_x005F_')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -125,15 +127,16 @@ function colRef(n: number): string {
 
 function sanitizeSheetName(name: string, index: number, used: Set<string>): string {
   let n = String(name || `Sheet${index + 1}`).replace(/[\\\/\?\*\[\]:]/g, '_');
+  n = n.replace(/^'+|'+$/g, '_');
   if (n.length > 31) n = n.slice(0, 31);
   if (!n) n = `Sheet${index + 1}`;
   let candidate = n;
   let i = 2;
-  while (used.has(candidate)) {
+  while (used.has(candidate.toLocaleLowerCase('en-US'))) {
     const suffix = `_${i++}`;
     candidate = (n.length + suffix.length > 31 ? n.slice(0, 31 - suffix.length) : n) + suffix;
   }
-  used.add(candidate);
+  used.add(candidate.toLocaleLowerCase('en-US'));
   return candidate;
 }
 
@@ -142,6 +145,7 @@ function sanitizeSheetName(name: string, index: number, used: Set<string>): stri
 // ---------------------------------------------------------------------------
 
 export type XlsxCellValue = string | number | boolean | null | undefined;
+export type XlsxRowStyle = 'normal' | 'added' | 'removed' | 'changed' | 'same' | 'reference' | 'warning';
 export interface XlsxSheet {
   name: string;
   /**
@@ -155,10 +159,42 @@ export interface XlsxSheet {
   autoFilter?: boolean;
   /** 各列の幅 (文字数換算)。未指定なら内容から自動推定。 */
   colWidths?: number[];
+  /** 行ごとの表示用途。先頭ヘッダ行は常にヘッダースタイルを優先する。 */
+  rowStyles?: XlsxRowStyle[];
 }
 
 const MIN_COL_W = 10;
 const MAX_COL_W = 60;
+const EXCEL_CELL_TEXT_LIMIT = 32767;
+
+function shortTextHash(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function normalizeExcelCellText(value: unknown): string {
+  const text = String(value ?? '');
+  if (text.length <= EXCEL_CELL_TEXT_LIMIT) return text;
+  const suffix = `\n…（Excelセル上限32,767文字のため省略・元${text.length}文字・識別:${shortTextHash(text)}）`;
+  let keep = EXCEL_CELL_TEXT_LIMIT - suffix.length;
+  // UTF-16 サロゲートペアの途中で切らない。
+  if (keep > 0 && /[\uD800-\uDBFF]/.test(text.charAt(keep - 1))) keep -= 1;
+  return text.slice(0, Math.max(0, keep)) + suffix;
+}
+
+const ROW_STYLE_INDEX: Record<XlsxRowStyle, number> = {
+  normal: 2,
+  added: 3,
+  removed: 4,
+  changed: 5,
+  same: 6,
+  reference: 7,
+  warning: 8
+};
 
 function estimateColWidth(rows: XlsxCellValue[][], col: number): number {
   let max = MIN_COL_W;
@@ -223,13 +259,14 @@ function buildSheetXml(sheet: XlsxSheet): string {
       const v = row[c];
       if (v === null || v === undefined || v === '') continue;
       const ref = `${colRef(c + 1)}${r + 1}`;
-      const styleAttr = r === 0 ? ' s="1"' : ' s="2"';
+      const styleIndex = r === 0 ? 1 : ROW_STYLE_INDEX[sheet.rowStyles?.[r] || 'normal'];
+      const styleAttr = ` s="${styleIndex}"`;
       if (typeof v === 'number' && Number.isFinite(v)) {
         cells.push(`<c r="${ref}"${styleAttr}><v>${v}</v></c>`);
       } else if (typeof v === 'boolean') {
         cells.push(`<c r="${ref}"${styleAttr} t="b"><v>${v ? 1 : 0}</v></c>`);
       } else {
-        cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${escapeXml(v)}</t></is></c>`);
+        cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${escapeXml(normalizeExcelCellText(v))}</t></is></c>`);
       }
     }
     out.push(`<row r="${r + 1}">${cells.join('')}</row>`);
@@ -256,7 +293,8 @@ function buildWorkbookRels(sheets: { name: string }[]): string {
   const items = sheets
     .map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`)
     .join('');
-  return `${XML_HEADER}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${items}</Relationships>`;
+  const styles = `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`;
+  return `${XML_HEADER}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${items}${styles}</Relationships>`;
 }
 
 function buildContentTypes(sheets: { name: string }[]): string {
@@ -279,23 +317,35 @@ function buildRootRels(): string {
 }
 
 function buildStylesXml(): string {
-  // xfId 0: 既定 / 1: ヘッダ (太字 + 塗り + 折返し + 中央寄せ) / 2: データ (top + wrap)
+  // xfId 0: 既定 / 1: ヘッダ / 2: データ / 3..8: 差分種別・警告の淡色行
   return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
     + '<fonts count="2">'
     +   '<font><sz val="11"/><name val="Meiryo"/></font>'
     +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font>'
     + '</fonts>'
-    + '<fills count="3">'
+    + '<fills count="9">'
     +   '<fill><patternFill patternType="none"/></fill>'
     +   '<fill><patternFill patternType="gray125"/></fill>'
     +   '<fill><patternFill patternType="solid"><fgColor rgb="FFE0F2FE"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF7ED"/><bgColor indexed="64"/></patternFill></fill>'
     + '</fills>'
     + '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
     + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    + '<cellXfs count="3">'
+    + '<cellXfs count="9">'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="4" borderId="0" xfId="0" applyFill="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="5" borderId="0" xfId="0" applyFill="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="6" borderId="0" xfId="0" applyFill="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="7" borderId="0" xfId="0" applyFill="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="8" borderId="0" xfId="0" applyFill="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
     + '</cellXfs>'
     + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
     + '</styleSheet>';

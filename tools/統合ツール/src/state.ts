@@ -2,6 +2,7 @@
 
 import { DIALOG_STATE_KEY, DEFAULT_SUBTAB_STATE, TOOL_ID } from './constants.js';
 import type { KusUiRegistry } from './types/uiRefs.js';
+import type { DiffSnapshotComparisonContext } from './diff/snapshot.js';
 
 export interface ConnectionPreset {
   id: string;
@@ -31,9 +32,11 @@ export interface AppState {
   lastTargetBundle: any;
   lastDiffRows: any[];
   lastFetchIssues: any[];
+  lastPartialIssues: any[];
   lastDiffTruncation: any;
   lastDiffAt: string | number | null;
   lastDiffSignature: string;
+  lastDiffSnapshotContext: DiffSnapshotComparisonContext | null;
   lastApplyPlan: any;
   lastApplyCompletedAt: string | number | null;
   lastApplyCompletedMode: string;
@@ -124,9 +127,11 @@ export const state: AppState = {
   lastTargetBundle: null,
   lastDiffRows: [],
   lastFetchIssues: [],
+  lastPartialIssues: [],
   lastDiffTruncation: null,
   lastDiffAt: null,
   lastDiffSignature: '',
+  lastDiffSnapshotContext: null,
   lastApplyPlan: null,
   lastApplyCompletedAt: null,
   lastApplyCompletedMode: '',
