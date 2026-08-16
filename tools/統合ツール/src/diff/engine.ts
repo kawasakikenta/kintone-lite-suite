@@ -188,8 +188,36 @@ export function normalizeIgnoreToken(token) {
     .toLowerCase();
 }
 
+const EXACT_IGNORE_PATH_PREFIX = 'path:';
+
+function trimIgnoreToken(token) {
+  return String(token || '')
+    .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
+    .replace(/^[\s\u3000]+|[\s\u3000]+$/g, '');
+}
+
+/**
+ * UIから追加する「完全パス」専用形式。
+ * 区切り文字や `*`、大小文字をリテラルのまま保持し、通常のワイルドカード規則と区別する。
+ */
+export function encodeExactIgnorePathRule(path) {
+  const exactPath = trimIgnoreToken(path);
+  return exactPath ? `${EXACT_IGNORE_PATH_PREFIX}${encodeURIComponent(exactPath)}` : '';
+}
+
+export function decodeExactIgnorePathRule(rule) {
+  const token = trimIgnoreToken(rule);
+  if (!token.toLowerCase().startsWith(EXACT_IGNORE_PATH_PREFIX)) return null;
+  try {
+    const decoded = trimIgnoreToken(decodeURIComponent(token.slice(EXACT_IGNORE_PATH_PREFIX.length)));
+    return decoded || null;
+  } catch {
+    return null;
+  }
+}
+
 function tokenLooksLikePath(token) {
-  return token.includes('.') || token.includes('[');
+  return token.includes('.') || token.includes('[') || SECTION_DEFS.some((section) => normalizeIgnoreToken(section.key) === normalizeIgnoreToken(token));
 }
 
 function tokenHasWildcard(token) {
@@ -205,15 +233,24 @@ function compileWildcardRegex(token) {
 export function parseIgnoreRules(text) {
   const keySet = new Set(DEFAULT_IGNORE_KEYS);
   const pathSet = new Set<string>();
+  const exactPathSet = new Set<string>();
   const keyPatterns: RegExp[] = [];
   const pathPatterns: RegExp[] = [];
   String(text || '')
-    .split(/[\n\r,、，;；\s\u3000]+/)
-    .map(normalizeIgnoreToken)
+    // 空白はビュー名・カテゴリ名など正規のパス構成要素になり得る。
+    // 区切りはUIで案内している改行・カンマ・セミコロンに限定する。
+    .split(/[\n\r,、，;；]+/)
+    .map(trimIgnoreToken)
     .filter(Boolean)
-    .forEach((token) => {
+    .forEach((rawToken) => {
+      const exactPath = decodeExactIgnorePathRule(rawToken);
+      if (exactPath) {
+        exactPathSet.add(exactPath);
+        return;
+      }
+      const token = normalizeIgnoreToken(rawToken);
       const isPath = tokenLooksLikePath(token);
-      const cleaned = isPath ? token.replace(/\s+/g, '') : token;
+      const cleaned = token;
       if (tokenHasWildcard(cleaned)) {
         try {
           const re = compileWildcardRegex(cleaned);
@@ -225,7 +262,7 @@ export function parseIgnoreRules(text) {
       if (isPath) pathSet.add(cleaned);
       else keySet.add(cleaned);
     });
-  return { keySet, pathSet, keyPatterns, pathPatterns };
+  return { keySet, pathSet, exactPathSet, keyPatterns, pathPatterns };
 }
 
 function matchAnyPattern(patterns, value) {
@@ -244,14 +281,16 @@ export function isIgnoredKey(ignoreRules, key) {
 }
 
 function isEntityIdentifierChildPath(path) {
-  const normalizedPath = normalizeIgnoreToken(path).replace(/\s+/g, '');
+  const normalizedPath = normalizeIgnoreToken(path);
   if (!normalizedPath) return false;
   return /^(?:fieldsettings\.properties|viewsettings\.views|reportsettings\.reports|processsettings\.states|categories\.categories)\.[^.[\]]+$/.test(normalizedPath)
     || /^fieldsettings\.properties\.[^.[\]]+\.fields\.[^.[\]]+$/.test(normalizedPath);
 }
 
 export function isIgnoredPath(ignoreRules, path) {
-  const normalizedPath = normalizeIgnoreToken(path).replace(/\s+/g, '');
+  const exactPath = trimIgnoreToken(path);
+  if (exactPath && ignoreRules.exactPathSet?.has(exactPath)) return true;
+  const normalizedPath = normalizeIgnoreToken(path);
   if (!normalizedPath) return false;
   if (ignoreRules.pathSet.has(normalizedPath)) return true;
   if (matchAnyPattern(ignoreRules.pathPatterns, normalizedPath)) return true;
@@ -1116,6 +1155,9 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
   // 上限到達後は各コレクタが行の列挙自体を打ち切る（pushDiffRow を経由しない）ため、
   // セクション処理の前後で上限到達を観測して打ち切り発生セクションを記録する。
   const limitHitSectionKeys: string[] = [];
+  // 両側に値がある後続セクションは、上限到達後に正規化や署名計算まで進めない。
+  // 「走査した結果、追加省略 0 件」ではなく「未走査で件数不明」と区別して報告する。
+  const unscannedSectionKeys: string[] = [];
   for (const sec of sections) {
     const label = (SECTION_DEFS.find((x) => x.key === sec) || ({} as any)).label || sec;
     const limitHitBefore = getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT;
@@ -1147,6 +1189,14 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
       continue;
     }
     if (!s && !t) continue;
+
+    // 片側だけ存在するセクションは、ルート 1 行の追加/削除として全体を把握できるため
+    // 上の pushDiffRow まで進める。一方、両側に値があるセクションは深い走査が必要なので、
+    // グローバル上限到達後は未走査として明示し、値全体をたどらない。
+    if (limitHitBefore) {
+      unscannedSectionKeys.push(sec);
+      continue;
+    }
 
     // セクション固有の前処理
     let sourceForSection = s;
@@ -1191,7 +1241,7 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
     if (sec === 'processSettings') {
       pushProcessStateRenameNotices(rows, sec, label, stateRenames, ignoreRules);
     }
-    if (getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT || limitHitBefore) {
+    if (getCollectedDiffCount(rows) >= ARRAY_DIFF_LIMIT) {
       limitHitSectionKeys.push(sec);
     }
   }
@@ -1201,7 +1251,7 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
   return {
     rows: rows.map((row, idx) => ({ ...row, _id: `d${idx}` })),
     fetchIssues,
-    truncation: buildDiffTruncationInfo(rows, limitHitSectionKeys)
+    truncation: buildDiffTruncationInfo(rows, limitHitSectionKeys, unscannedSectionKeys)
   };
 }
 
@@ -1209,19 +1259,33 @@ export function computeDiffRows(sourceBundle, targetBundle, sections, ignoreKeys
 // droppedDiff/droppedSame は pushDiffRow まで到達して棄却された「判明分」のみで、
 // コレクタが列挙自体を打ち切った分は含まれない（＝実際の欠落はこれ以上）。
 // 打ち切りが起きた比較結果は不完全であり、UI で必ず警告表示する。
-export function buildDiffTruncationInfo(rows, limitHitSectionKeys: string[] = []) {
+export function buildDiffTruncationInfo(rows, limitHitSectionKeys: string[] = [], unscannedSectionKeys: string[] = []) {
   const droppedDiff = Number((rows as any)?.__diffDropped || 0);
   const droppedSame = Number((rows as any)?.__sameDropped || 0);
   const bySection = (rows as any)?.__droppedBySection || {};
-  const sectionKeys = [...new Set([...Object.keys(bySection), ...limitHitSectionKeys])];
-  const sections = sectionKeys.map((sectionKey) => ({
-    sectionKey,
-    section: (SECTION_DEFS.find((x) => x.key === sectionKey) || ({} as any)).label || sectionKey,
-    droppedDiff: Number(bySection[sectionKey]?.diff || 0),
-    droppedSame: Number(bySection[sectionKey]?.same || 0)
-  }));
+  const unscanned = new Set(unscannedSectionKeys);
+  const partial = new Set(limitHitSectionKeys);
+  const sectionKeys = [...new Set([...Object.keys(bySection), ...limitHitSectionKeys, ...unscannedSectionKeys])];
+  const sections = sectionKeys.map((sectionKey) => {
+    const scanned = !unscanned.has(sectionKey);
+    const partiallyScanned = scanned && partial.has(sectionKey);
+    const droppedSectionDiff = Number(bySection[sectionKey]?.diff || 0);
+    return {
+      sectionKey,
+      section: (SECTION_DEFS.find((x) => x.key === sectionKey) || ({} as any)).label || sectionKey,
+      // 既存フィールドは後方互換のため維持する。未走査時の 0 は「省略なし」を意味しない。
+      droppedDiff: droppedSectionDiff,
+      droppedSame: Number(bySection[sectionKey]?.same || 0),
+      scanned,
+      partiallyScanned,
+      scanStatus: !scanned ? 'unscanned' : (partiallyScanned ? 'partial' : 'complete'),
+      // コレクタは上限到達時点で列挙を止めるため、部分走査セクションの総欠落数も不明。
+      // droppedDiff は列挙済みの判明下限として後方互換のため残す。
+      omittedDiffCount: scanned && !partiallyScanned ? droppedSectionDiff : null
+    };
+  });
   return {
-    truncated: droppedDiff > 0 || droppedSame > 0 || limitHitSectionKeys.length > 0,
+    truncated: droppedDiff > 0 || droppedSame > 0 || limitHitSectionKeys.length > 0 || unscannedSectionKeys.length > 0,
     diffLimit: ARRAY_DIFF_LIMIT,
     sameLimit: SAME_ROW_LIMIT,
     droppedDiff,

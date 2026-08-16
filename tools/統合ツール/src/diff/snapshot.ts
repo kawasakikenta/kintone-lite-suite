@@ -1,6 +1,7 @@
 'use strict';
 
 import { extractAppNameFromBundle } from '../utils.js';
+import { redactSensitiveSameDiffRows } from './export-safety.js';
 
 export interface DiffSnapshotAppContext {
   appId: string | number;
@@ -162,6 +163,17 @@ function normalizePartialIssues(value: unknown): any[] {
   });
 }
 
+type DiffTruncationScanStatus = 'complete' | 'partial' | 'unscanned';
+
+function normalizeTruncationScanStatus(section: Record<string, any>): DiffTruncationScanStatus {
+  if (section.scanStatus === 'complete' || section.scanStatus === 'partial' || section.scanStatus === 'unscanned') {
+    return section.scanStatus;
+  }
+  if (section.scanned === false) return 'unscanned';
+  if (section.partiallyScanned === true || section.omittedDiffCount === null) return 'partial';
+  return 'complete';
+}
+
 function normalizeTruncation(value: unknown): any | null {
   const truncation = asRecord(value);
   if (!truncation.truncated) return null;
@@ -174,11 +186,23 @@ function normalizeTruncation(value: unknown): any | null {
     droppedSame: finiteNumber(truncation.droppedSame) || 0,
     sections: sections.map((raw: unknown) => {
       const section = asRecord(raw);
+      const droppedDiff = finiteNumber(section.droppedDiff) || 0;
+      const scanStatus = normalizeTruncationScanStatus(section);
+      const scanned = scanStatus !== 'unscanned';
+      const partiallyScanned = scanStatus === 'partial';
+      const rawOmittedDiffCount = section.omittedDiffCount;
+      const omittedDiffCount = scanStatus === 'complete'
+        ? (finiteNumber(rawOmittedDiffCount) ?? droppedDiff)
+        : null;
       return {
         sectionKey: text(section.sectionKey),
         section: text(section.section),
-        droppedDiff: finiteNumber(section.droppedDiff) || 0,
-        droppedSame: finiteNumber(section.droppedSame) || 0
+        droppedDiff,
+        droppedSame: finiteNumber(section.droppedSame) || 0,
+        scanned,
+        partiallyScanned,
+        scanStatus,
+        omittedDiffCount
       };
     })
   };
@@ -219,7 +243,7 @@ export function diffSnapshotAppToBundle(app: DiffSnapshotAppContext | null | und
 
 export function buildDiffSnapshotPayload(input: BuildDiffSnapshotInput): DiffSnapshotPayload {
   const savedAt = normalizeTimestamp(input.savedAt, new Date().toISOString());
-  const rows = Array.isArray(input.rows) ? input.rows : [];
+  const rows = redactSensitiveSameDiffRows(Array.isArray(input.rows) ? input.rows : []);
   return {
     tool: 'kintone-unified-suite',
     type: 'diff-snapshot',

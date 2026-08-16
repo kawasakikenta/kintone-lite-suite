@@ -53,6 +53,10 @@ describe('diff/xlsx-export', () => {
     expect(workbook).toContain('name="フィールド設定"');
     expect(workbook).toContain('name="ビュー設定"');
     expect(workbook).toContain('name="取得・未検証"');
+    expect(workbook).toContain('<definedNames>');
+    expect(workbook).toContain('&apos;概要&apos;!$1:$2');
+    expect(workbook).toContain('&apos;差分一覧&apos;!$1:$2');
+    expect(workbook).toContain('&apos;取得・未検証&apos;!$1:$1');
   });
 
   it('records normalization switches in the evidence summary', async () => {
@@ -73,32 +77,93 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('フィールド設定、ビュー設定');
     expect(summary).toContain('追加（比較先のみ）');
     expect(summary).toContain('削除（比較元のみ）');
-    expect(summary).toMatch(/<c r="B17" s="2"><v>3<\/v>/);
+    expect(summary).toContain('kintone 設定差分比較レポート');
+    expect(summary).toContain('完全性');
+    expect(summary).toContain('不完全（取得失敗 1件）');
+    expect(summary).toContain('重要度 高 / 中 / 低');
+    expect(summary).toContain('1 / 1 / 1');
+    expect(summary).toMatch(/<c r="B6"[^>]*><v>3<\/v>/);
+    expect(summary).toContain('<mergeCell ref="A1:D1"/>');
+    expect(summary).toContain('<mergeCell ref="A2:D2"/>');
+    expect(summary).toContain('アプリA (App 1)  →  アプリB (App 2)');
+    expect(summary).toContain('showGridLines="0"');
+    expect(summary).toContain('orientation="portrait" fitToWidth="1" fitToHeight="0"');
   });
 
   it('writes one row per result to the consolidated list with directional values', async () => {
     const list = await readEntry(buildDiffXlsxBlob(sampleCtx), 'xl/worksheets/sheet2.xml');
-    expect((list.match(/<row r="/g) || []).length).toBe(4);
+    expect((list.match(/<row r="/g) || []).length).toBe(5);
+    expect(list).toContain('差分の識別');
+    expect(list).toContain('レビュー入力（黄色）');
+    expect(list).toContain('値の比較（比較元 → 比較先）');
+    expect(list).toContain('<mergeCell ref="A1:E1"/>');
+    expect(list).toContain('<mergeCell ref="F1:H1"/>');
+    expect(list).toContain('<mergeCell ref="J1:K1"/>');
     expect(list).toContain('比較元の値');
     expect(list).toContain('比較先の値');
+    expect(list).toContain('アプリA (App 1)');
+    expect(list).toContain('アプリB (App 2)');
     expect(list).toContain('確認ポイント');
+    expect(list).toContain('差分ID');
+    expect(list).toContain('確認状態');
+    expect(list).toContain('担当者');
+    expect(list).toContain('レビューコメント');
     expect(list).toContain('表示名が変更されています');
     expect(list).toContain('追加（比較先のみ）');
     expect(list).toContain('削除（比較元のみ）');
-    // 追加行は比較元(F列)が空、比較先(G列)だけに値がある。
-    expect(list).not.toMatch(/<c r="F2"/);
-    expect(list).toMatch(/<c r="G2"/);
-    // 削除行は比較元(F列)だけに値がある。
-    expect(list).toMatch(/<c r="F4"/);
-    expect(list).not.toMatch(/<c r="G4"/);
+    // 追加行は比較元(J列)が空、比較先(K列)だけに値がある。
+    expect(list).not.toMatch(/<c r="J3"/);
+    expect(list).toMatch(/<c r="K3"/);
+    // 削除行は比較元(J列)だけに値がある。
+    expect(list).toMatch(/<c r="J5"/);
+    expect(list).not.toMatch(/<c r="K5"/);
+    // ID～項目を固定し、レビュー状態にはドロップダウンを付ける。
+    expect(list).toContain('<pane xSplit="5" ySplit="2" topLeftCell="F3" activePane="bottomRight" state="frozen"/>');
+    expect(list).toContain('<autoFilter ref="A2:L5"/>');
+    expect(list).toContain('sqref="F3:F5"');
+    expect(list).toContain('&quot;未確認,確認中,対応要,対応不要,確認済み&quot;');
+    // 状態（初期値: 未確認）と空の担当・コメントを黄色の編集欄として保持する。
+    expect(list).toMatch(/<c r="F3" s="17"/);
+    expect(list).toMatch(/<c r="F3" s="17"[^>]*>[\s\S]*?未確認/);
+    expect(list).toMatch(/<c r="G3" s="17"/);
+    expect(list).toMatch(/<c r="H3" s="17"/);
+    // 高・低・中の重要度をそれぞれ視認できる色にする。
+    expect(list).toMatch(/<c r="B3" s="14"/);
+    expect(list).toMatch(/<c r="B4" s="16"/);
+    expect(list).toMatch(/<c r="B5" s="15"/);
+    const dataRowHeights = [...list.matchAll(/<row r="[3-5]" ht="([0-9.]+)" customHeight="1">/g)]
+      .map((match) => Number(match[1]));
+    expect(dataRowHeights).toHaveLength(3);
+    expect(dataRowHeights.every((height) => height >= 22 && height <= 70)).toBe(true);
+    expect(list).toContain('orientation="landscape" fitToWidth="1" fitToHeight="0"');
   });
 
   it('keeps section-specific drill-down sheets', async () => {
     const fieldSheet = await readEntry(buildDiffXlsxBlob(sampleCtx), 'xl/worksheets/sheet3.xml');
-    expect((fieldSheet.match(/<row r="/g) || []).length).toBe(3);
+    expect((fieldSheet.match(/<row r="/g) || []).length).toBe(4);
+    expect(fieldSheet).toContain('差分の識別');
+    expect(fieldSheet).toContain('値の比較（比較元 → 比較先）');
     expect(fieldSheet).toContain('フィールド「foo」');
     expect(fieldSheet).toContain('旧ラベル');
     expect(fieldSheet).toContain('新ラベル');
+    // レビュー記入欄はマスターの差分一覧だけに置き、シート間で状態が分裂しないようにする。
+    expect(fieldSheet).toContain('差分ID');
+    expect(fieldSheet).not.toContain('確認状態');
+    expect(fieldSheet).not.toContain('レビューコメント');
+    expect(fieldSheet).toMatch(/<row r="3" ht="([0-9.]+)" customHeight="1">/);
+  });
+
+  it('keeps stable difference IDs when rows are re-ordered', async () => {
+    const rows = [
+      { sectionKey: 'appSettings', type: 'changed', path: 'appSettings.name', left: 'A', right: 'B' },
+      { sectionKey: 'fieldSettings', type: 'added', path: 'fieldSettings.properties.code', right: { code: 'code' } }
+    ];
+    const first = await readEntry(buildDiffXlsxBlob({ rows }), 'xl/worksheets/sheet2.xml');
+    const second = await readEntry(buildDiffXlsxBlob({ rows: [...rows].reverse() }), 'xl/worksheets/sheet2.xml');
+    const firstIds = [...first.matchAll(/D-[0-9A-F]{8}/g)].map((match) => match[0]).sort();
+    const secondIds = [...second.matchAll(/D-[0-9A-F]{8}/g)].map((match) => match[0]).sort();
+    expect(firstIds).toEqual(secondIds);
+    expect(new Set(firstIds).size).toBe(2);
   });
 
   it('exports a zero-difference evidence workbook instead of throwing', async () => {
@@ -115,7 +180,8 @@ describe('diff/xlsx-export', () => {
     const list = await readEntry(blob, 'xl/worksheets/sheet2.xml');
     expect(summary).toContain('差分なし');
     expect(summary).not.toContain('差分なしとは判断できません');
-    expect((list.match(/<row r="/g) || []).length).toBe(1);
+    expect((list.match(/<row r="/g) || []).length).toBe(2);
+    expect(list).toContain('<autoFilter ref="A2:L2"/>');
   });
 
   it('records fetch failures, partial comparison, and truncation as incomplete', async () => {
@@ -145,6 +211,81 @@ describe('diff/xlsx-export', () => {
     expect(issues).toContain('件数上限');
   });
 
+  it('distinguishes partial, unscanned, and complete truncation counts', async () => {
+    const blob = buildDiffXlsxBlob({
+      rows: [],
+      truncation: {
+        truncated: true,
+        diffLimit: 1000,
+        sections: [
+          {
+            sectionKey: 'fieldSettings',
+            section: 'フィールド設定',
+            scanned: true,
+            partiallyScanned: true,
+            scanStatus: 'partial',
+            omittedDiffCount: null,
+            droppedDiff: 0,
+            droppedSame: 0
+          },
+          {
+            sectionKey: 'viewSettings',
+            section: 'ビュー',
+            scanned: false,
+            partiallyScanned: false,
+            scanStatus: 'unscanned',
+            omittedDiffCount: null,
+            droppedDiff: 0,
+            droppedSame: 0
+          },
+          {
+            sectionKey: 'reportSettings',
+            section: 'グラフ',
+            scanned: true,
+            partiallyScanned: false,
+            scanStatus: 'complete',
+            omittedDiffCount: 1,
+            droppedDiff: 1,
+            droppedSame: 0
+          }
+        ]
+      }
+    });
+    const summary = await readEntry(blob, 'xl/worksheets/sheet1.xml');
+    const issues = await readEntry(blob, 'xl/worksheets/sheet3.xml');
+
+    expect(summary).toContain('部分走査・総件数不明（表示件数は下限）');
+    expect(summary).toContain('未走査・件数不明');
+    expect(issues).toContain('このセクションは部分走査です。表示件数は総件数の下限です');
+    expect(issues).toContain('差分 部分走査・総件数不明（表示件数は下限）');
+    expect(issues).toContain('このセクションは未走査です');
+    expect(issues).toContain('差分 未走査・件数不明');
+    expect(issues).toContain('この片側セクションは全体を確認済みです');
+    expect(issues).toContain('差分 1件（既知）');
+    expect(issues).not.toContain('差分 0件以上');
+    expect(issues).not.toContain('同一 0件以上');
+  });
+
+  it('redacts identical plugin settings and customize bodies', async () => {
+    const blob = buildDiffXlsxBlob({
+      rows: [{
+        sectionKey: 'pluginSettings', type: 'same', path: 'pluginSettings',
+        left: { plugins: [{ id: 'plugin-1', config: { token: 'PLUGIN_SAME_SECRET' } }] },
+        right: { plugins: [{ id: 'plugin-1', config: { token: 'PLUGIN_SAME_SECRET' } }] }
+      }, {
+        sectionKey: 'customizeSettings', type: 'same', path: 'customizeSettings.desktop.js[0].file._body',
+        left: 'CUSTOM_SAME_SECRET', right: 'CUSTOM_SAME_SECRET'
+      }]
+    });
+    const summary = await readEntry(blob, 'xl/worksheets/sheet1.xml');
+    const list = await readEntry(blob, 'xl/worksheets/sheet2.xml');
+
+    expect(summary).toContain('機密値省略');
+    expect(list).toContain('同一の機密値は安全のため省略しました');
+    expect(list).not.toContain('PLUGIN_SAME_SECRET');
+    expect(list).not.toContain('CUSTOM_SAME_SECRET');
+  });
+
   it('counts moved changes and excludes display-only rows from diff totals', async () => {
     const summary = await readEntry(buildDiffXlsxBlob({
       rows: [
@@ -153,9 +294,9 @@ describe('diff/xlsx-export', () => {
         { sectionKey: 'appSettings', type: 'same', path: 'appSettings' }
       ]
     }), 'xl/worksheets/sheet1.xml');
-    expect(summary).toMatch(/<c r="B17" s="2"><v>1<\/v>/);
-    expect(summary).toMatch(/<c r="B21" s="2"><v>1<\/v>/);
-    expect(summary).toMatch(/<c r="B23" s="2"><v>1<\/v>/);
+    expect(summary).toMatch(/<c r="B6"[^>]*><v>1<\/v>/);
+    expect(summary).toMatch(/<c r="B9"[^>]*><v>1<\/v>/);
+    expect(summary).toContain('1 / 1');
   });
 
   it('keeps formula-looking values as inline text without formulas or links', async () => {
@@ -171,6 +312,26 @@ describe('diff/xlsx-export', () => {
     expect(list).not.toContain('externalLink');
     expect(list).toContain('=1+1');
     expect(list).toContain('@SUM(A1:A2)');
+  });
+
+  it('uses readable long-value previews with original UTF-16 length and distinct hashes', async () => {
+    const common = 'x'.repeat(5000);
+    const list = await readEntry(buildDiffXlsxBlob({
+      rows: [{
+        sectionKey: 'appSettings',
+        type: 'changed',
+        path: 'appSettings.description',
+        left: `${common}LEFT_ONLY_TAIL`,
+        right: `${common}RIGHT_ONLY_TAIL`
+      }]
+    }), 'xl/worksheets/sheet2.xml');
+    const hashes = [...list.matchAll(/識別:([0-9A-F]{8})/g)].map((match) => match[1]);
+    expect(hashes).toHaveLength(2);
+    expect(hashes[0]).not.toBe(hashes[1]);
+    expect(list).toContain('元UTF-16長 5014');
+    expect(list).toContain('元UTF-16長 5015');
+    expect(list).not.toContain('LEFT_ONLY_TAIL');
+    expect(list).not.toContain('RIGHT_ONLY_TAIL');
   });
 
   it('uses app names from appSettings when building the filename', () => {

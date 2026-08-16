@@ -1275,6 +1275,13 @@ ${contextLine}`);
     }
   });
 
+  // src/diff/export-safety.ts
+  var init_export_safety = __esm({
+    "src/diff/export-safety.ts"() {
+      "use strict";
+    }
+  });
+
   // src/diff/export.ts
   function mdProcessAssigneeTypeLabel(value) {
     const key = String(value || "").trim();
@@ -1829,7 +1836,7 @@ ${body}`;
     }
     return lines.join("\n");
   }
-  var MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_PROCESS_ASSIGNEE_TYPE_LABELS, MD_FIELD_ACCESSIBILITY_LABELS, MD_REPORT_CHART_MODE_LABELS, MD_AGGREGATION_TYPE_LABELS, MD_CUSTOMIZE_SCOPE_LABELS, MD_RESOURCE_TYPE_LABELS, MD_ICON_TYPE_LABELS, MD_THEME_LABELS, MD_VIEW_BUILTIN_LABELS, MD_PAGINATION_LABELS, MD_SECTION_RENDERERS;
+  var MD_FIELD_TYPE_LABELS, MD_VIEW_TYPE_LABELS, MD_REPORT_CHART_LABELS, MD_ENTITY_TYPE_LABELS, MD_PROCESS_ASSIGNEE_TYPE_LABELS, MD_FIELD_ACCESSIBILITY_LABELS, MD_REPORT_CHART_MODE_LABELS, MD_AGGREGATION_TYPE_LABELS, MD_CUSTOMIZE_SCOPE_LABELS, MD_RESOURCE_TYPE_LABELS, MD_ICON_TYPE_LABELS, MD_THEME_LABELS, MD_VIEW_BUILTIN_LABELS, MD_PAGINATION_LABELS, MD_SECTION_RENDERERS, DIFF_HTML_REVIEW_STATE_MAX_BYTES;
   var init_export = __esm({
     "src/diff/export.ts"() {
       init_constants();
@@ -1842,6 +1849,7 @@ ${body}`;
       init_dialog();
       init_category_view();
       init_path_decoder();
+      init_export_safety();
       MD_FIELD_TYPE_LABELS = {
         SINGLE_LINE_TEXT: "文字列（1行）",
         MULTI_LINE_TEXT: "文字列（複数行）",
@@ -1976,6 +1984,7 @@ ${body}`;
         reminderNotifications: mdRenderReminderNotifications,
         categories: mdRenderCategories
       };
+      DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
     }
   });
 

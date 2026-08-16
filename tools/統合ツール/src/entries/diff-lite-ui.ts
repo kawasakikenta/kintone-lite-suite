@@ -1,10 +1,16 @@
 'use strict';
 
 import { SECTION_DEFS } from '../constants.js';
+import {
+  buildDiffComparisonProfile,
+  parseDiffComparisonProfile,
+  serializeDiffComparisonProfile
+} from '../diff/comparison-profile.js';
 import { buildCharDiffHtml, stringifyRowValueForDiff } from '../diff/export.js';
+import { decodeExactIgnorePathRule, encodeExactIgnorePathRule } from '../diff/engine.js';
 import { runExportDiffXlsx, type DiffXlsxContext } from '../diff/xlsx-export.js';
 import { decodeRow, type DecodedRow } from '../diff/path-decoder.js';
-import { esc, extractAppNameFromBundle } from '../utils.js';
+import { downloadText, esc, extractAppNameFromBundle, nowStamp, readTextFile, stableStringify } from '../utils.js';
 import { runExportDiffHtmlStandalone } from '../tabs/diff-export-standalone.js';
 import {
   createLitePanel,
@@ -45,8 +51,11 @@ const SCOPE_OPTS: Array<[string, string, boolean]> = [
 ];
 
 const TYPE_LABEL: Record<string, string> = { added: '追加', removed: '削除', changed: '変更', moved: '移動', same: '同一' };
+const SEVERITY_LABEL: Record<string, string> = { high: '高影響', medium: '中影響', low: '低影響' };
 const RESULT_PAGE_SIZE = 200;
 const XLSX_EXPORT_COOLDOWN_MS = 400;
+const VALUE_PREVIEW_MAX_LINES = 8;
+const VALUE_PREVIEW_MAX_CHARS = 280;
 
 const RESULT_CSS_ID = 'kus-diff-lite-result-styles';
 const RESULT_CSS = `
@@ -77,29 +86,62 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-section-jump:hover{border-color:#60a5fa;background:#eff6ff;color:#1d4ed8}
 .kus-dl-alert{margin:0 12px 10px;padding:8px 10px;border:1px solid #fdba74;border-radius:7px;background:#fff7ed;color:#9a3412;font:600 11px/1.55 -apple-system,Segoe UI,sans-serif}
 .kus-dl-legend{padding:0 12px 10px;color:#64748b;font:10.5px/1.5 -apple-system,Segoe UI,sans-serif}
-.kus-dl-result__summary{margin:0 0 6px;font-family:-apple-system,Segoe UI,sans-serif;font-size:11.5px;color:#475569;display:flex;flex-wrap:wrap;gap:6px 12px}
-.kus-dl-colheads{position:sticky;top:0;z-index:2;display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;padding:6px;background:#e2e8f0;border:1px solid #cbd5e1;border-radius:8px;font:700 11px/1.4 -apple-system,Segoe UI,sans-serif;color:#334155}
-.kus-dl-colheads>span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.kus-dl-colheads>span:last-child{text-align:right}
+.kus-dl-result__summary{margin:0 2px 7px;font-family:-apple-system,Segoe UI,sans-serif;font-size:11px;color:#64748b;display:flex;flex-wrap:wrap;gap:6px 12px}
+.kus-dl-sticky{position:sticky;top:0;z-index:4;margin:0 0 10px;padding:0 0 4px;background:linear-gradient(180deg,rgba(248,250,252,.995) 86%,rgba(248,250,252,0));backdrop-filter:blur(7px)}
+.kus-dl-contextbar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:stretch;gap:7px;padding:6px;border:1px solid #cbd5e1;border-radius:10px;background:#e2e8f0;box-shadow:0 2px 10px rgba(15,23,42,.08);font-family:-apple-system,Segoe UI,sans-serif}
+.kus-dl-contextlane{min-width:0;padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#fff;box-shadow:inset 3px 0 0 #64748b}
+.kus-dl-contextlane--after{box-shadow:inset 3px 0 0 #2563eb}
+.kus-dl-contextlane__role{display:block;margin-bottom:1px;color:#64748b;font-size:8.5px;font-weight:900;letter-spacing:.12em}
+.kus-dl-contextlane--after .kus-dl-contextlane__role{color:#1d4ed8}
+.kus-dl-contextlane__name{display:block;overflow:hidden;color:#0f172a;font-size:11px;font-weight:800;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
+.kus-dl-progress{align-self:center;min-width:72px;padding:4px 7px;text-align:center;color:#1e3a8a;font-variant-numeric:tabular-nums}
+.kus-dl-progress__numbers{display:flex;align-items:baseline;justify-content:center;gap:3px;line-height:1}
+.kus-dl-progress__current{color:#1d4ed8;font-size:18px;font-weight:900}
+.kus-dl-progress__total{color:#475569;font-size:11px;font-weight:800}
+.kus-dl-progress__label{display:block;margin-top:3px;color:#64748b;font-size:8.5px;font-weight:800;letter-spacing:.04em}
 .kus-dl-result__summary strong{color:#0f172a}
-.kus-dl-section{border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;overflow:hidden;background:#fff}
-.kus-dl-section>summary{padding:6px 10px;background:#f8fafc;font:600 12px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:8px}
+.kus-dl-section{border:1px solid #dbe3ee;border-radius:10px;margin-bottom:10px;overflow:hidden;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+.kus-dl-section>summary{padding:8px 10px;background:#f8fafc;font:600 12px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px}
 .kus-dl-section>summary::-webkit-details-marker{display:none}
 .kus-dl-section>summary::before{content:"▸";display:inline-block;margin-right:6px;color:#64748b;transition:transform .15s}
 .kus-dl-section[open]>summary::before{transform:rotate(90deg)}
-.kus-dl-section__count{color:#64748b;font-weight:400}
-.kus-dl-section__breakdown{margin-left:auto;color:#475569;font-size:10px;font-weight:500;white-space:nowrap}
-.kus-dl-section__body{padding:6px}
-.kus-dl-row{border-bottom:1px solid #f1f5f9;padding:6px 8px;font-family:-apple-system,Segoe UI,sans-serif;font-size:11.5px}
-.kus-dl-row:last-child{border-bottom:none}
-.kus-dl-row__head{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:4px}
-.kus-dl-row__path{font-family:ui-monospace,Menlo,monospace;color:#334155;word-break:break-all;flex:1;min-width:120px}
-.kus-dl-row__title{color:#0f172a;font-weight:700;flex:1;min-width:160px}
-.kus-dl-row__context{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:0 0 5px 30px;color:#64748b}
+.kus-dl-section__heading{display:flex;align-items:baseline;gap:7px;min-width:100px}
+.kus-dl-section__label{color:#0f172a;font-weight:800}
+.kus-dl-section__count{color:#64748b;font-size:10.5px;font-weight:500}
+.kus-dl-section__breakdown{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;margin-left:auto}
+.kus-dl-section__stat{padding:1px 6px;border:1px solid #dbe3ee;border-radius:999px;background:#fff;color:#475569;font-size:9px;font-weight:700;white-space:nowrap}
+.kus-dl-section__stat--added{border-color:#bbf7d0;color:#166534}
+.kus-dl-section__stat--removed{border-color:#fecaca;color:#991b1b}
+.kus-dl-section__stat--changed{border-color:#bfdbfe;color:#1d4ed8}
+.kus-dl-section__stat--moved{border-color:#fde68a;color:#92400e}
+.kus-dl-section__body{display:grid;gap:7px;padding:8px;background:#f8fafc}
+.kus-dl-row{border:1px solid #dbe3ee;border-left:4px solid transparent;border-radius:8px;padding:9px 10px;background:#fff;font-family:-apple-system,Segoe UI,sans-serif;font-size:11.5px;transition:background-color .12s,border-color .12s,box-shadow .12s}
+.kus-dl-row--added{border-left-color:#22c55e}
+.kus-dl-row--removed{border-left-color:#ef4444}
+.kus-dl-row--changed{border-left-color:#3b82f6}
+.kus-dl-row--moved{border-left-color:#f59e0b}
+.kus-dl-row--same{border-left-color:#cbd5e1}
+.kus-dl-row:focus,.kus-dl-row.is-current{outline:2px solid #2563eb;outline-offset:1px;background:#f8fbff;box-shadow:0 4px 14px rgba(37,99,235,.13)}
+.kus-dl-row__head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:start;margin-bottom:7px}
+.kus-dl-row__identity{min-width:0}
+.kus-dl-row__headline{display:flex;flex-wrap:wrap;align-items:center;gap:5px 6px}
+.kus-dl-row__title{min-width:150px;flex:1;color:#0f172a;font-size:12.5px;font-weight:800;line-height:1.4}
+.kus-dl-row__subtitle{margin:3px 0 0;color:#64748b;font-size:10.5px;line-height:1.45}
+.kus-dl-row__context{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:0 0 6px;color:#64748b}
 .kus-dl-row__chip{display:inline-flex;align-items:center;border-radius:999px;background:#e2e8f0;color:#334155;padding:1px 6px;font-size:10px}
-.kus-dl-row__raw{font:9.5px/1.4 ui-monospace,Menlo,monospace;color:#64748b;word-break:break-all}
+.kus-dl-row__technical{margin:0 0 7px;color:#64748b;font:9.5px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-row__technical>summary{display:inline-flex;align-items:center;gap:4px;padding:1px 4px;border-radius:4px;cursor:pointer;list-style:none;color:#64748b;font-weight:700}
+.kus-dl-row__technical>summary::-webkit-details-marker{display:none}
+.kus-dl-row__technical>summary::before{content:'›';font-size:12px;transition:transform .12s}
+.kus-dl-row__technical[open]>summary::before{transform:rotate(90deg)}
+.kus-dl-row__raw{display:block;margin-top:3px;padding:5px 7px;border:1px dashed #cbd5e1;border-radius:5px;background:#f8fafc;color:#475569;font:9.5px/1.45 ui-monospace,Menlo,monospace;word-break:break-all}
 .kus-dl-row__cols{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-family:ui-monospace,Menlo,monospace;font-size:11px}
-.kus-dl-pre{margin:0;padding:6px 8px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow:auto}
+.kus-dl-value{position:relative;min-width:0}
+.kus-dl-pre{box-sizing:border-box;width:100%;margin:0;padding:7px 8px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;white-space:pre-wrap;word-break:break-word;overflow:auto}
+.kus-dl-value.is-collapsed .kus-dl-pre{max-height:126px;overflow:hidden}
+.kus-dl-value__footer{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;padding:3px 2px 0;color:#64748b;font:9px/1.3 -apple-system,Segoe UI,sans-serif}
+.kus-dl-value__toggle{margin-left:auto;padding:2px 6px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#1d4ed8;font:700 9.5px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer}
+.kus-dl-value__toggle:hover{border-color:#60a5fa;background:#eff6ff}
 .kus-dl-pre.del{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}
 .kus-dl-pre.add{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}
 .kus-dl-pre.empty{color:#64748b;font-style:italic}
@@ -109,9 +151,34 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-badge--changed{background:#dbeafe;color:#1d4ed8}
 .kus-dl-badge--moved{background:#fef3c7;color:#92400e}
 .kus-dl-badge--same{background:#e2e8f0;color:#475569}
+.kus-dl-severity{display:inline-block;padding:1px 6px;border:1px solid;border-radius:999px;font:700 9.5px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-severity--high{background:#fff1f2;border-color:#fda4af;color:#9f1239}
+.kus-dl-severity--medium{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+.kus-dl-severity--low{background:#f8fafc;border-color:#cbd5e1;color:#475569}
 .kus-dl-empty{padding:14px;text-align:center;color:#64748b;font-size:12px;background:#f8fafc;border-radius:8px}
-.kus-dl-reason{display:inline-block;padding:1px 6px;border-radius:999px;background:#fff7ed;color:#9a3412;border:1px solid #fdba74;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
 .kus-dl-flag{display:inline-block;padding:1px 6px;border-radius:999px;background:#f5f3ff;color:#5b21b6;border:1px solid #c4b5fd;font:500 10px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-row__action{border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;padding:3px 7px;font:600 9.5px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
+.kus-dl-row__action:hover{border-color:#f59e0b;background:#fffbeb;color:#92400e}
+.kus-dl-reviewbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:5px 0 0;padding:5px 6px;border:1px solid #bfdbfe;border-radius:8px;background:rgba(239,246,255,.98);font:600 10px/1.4 -apple-system,Segoe UI,sans-serif}
+.kus-dl-reviewbar__nav,.kus-dl-reviewbar__tools,.kus-dl-reviewbar__filters{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.kus-dl-reviewbar__filters{min-width:120px;flex:1}
+.kus-dl-filter-empty{padding:2px 5px;color:#64748b;font-weight:600}
+.kus-dl-filterchip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border:1px solid #93c5fd;border-radius:999px;background:#fff;color:#1e3a8a;font:700 9.5px/1.35 -apple-system,Segoe UI,sans-serif;cursor:pointer;max-width:180px}
+.kus-dl-filterchip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kus-dl-filterchip::after{content:'×';color:#64748b;font-size:11px}
+.kus-dl-filterchip:hover{border-color:#2563eb;background:#dbeafe}
+.kus-dl-filterchip--all{border-style:dashed;color:#475569}
+.kus-dl-navbtn{border:1px solid #93c5fd;border-radius:6px;background:#fff;color:#1d4ed8;padding:3px 7px;font:700 9.5px/1.4 -apple-system,Segoe UI,sans-serif;cursor:pointer;white-space:nowrap}
+.kus-dl-navbtn:disabled{opacity:.45;cursor:not-allowed}
+.kus-dl-result--compact .kus-dl-row{padding:6px 7px;font-size:10.5px}
+.kus-dl-result--compact .kus-dl-row__context{display:none}
+.kus-dl-result--compact .kus-dl-pre{padding:4px 6px;font-size:10px}
+.kus-dl-result--compact .kus-dl-value.is-collapsed .kus-dl-pre{max-height:92px}
+.kus-dl-result--compact .kus-dl-section__body{padding:3px}
+.kus-dl-result--comfortable .kus-dl-row{padding:9px 10px}
+.kus-dl-result--comfortable .kus-dl-value.is-collapsed .kus-dl-pre{max-height:164px}
+.kus-dl-result--stacked .kus-dl-row__cols{grid-template-columns:1fr}
+.kus-dl-result--stacked .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 5px;color:#64748b;font:700 9px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.04em}
 .kus-dl-result mark.diff-char-del{background:#fecaca;color:#7f1d1d;border-radius:2px;padding:0 1px;text-decoration:line-through}
 .kus-dl-result mark.diff-char-add{background:#bbf7d0;color:#14532d;border-radius:2px;padding:0 1px}
 .kus-dl-target-field{display:flex;flex:1 1 180px;min-width:180px;flex-direction:column}
@@ -128,9 +195,30 @@ button.kus-dl-metric:hover{border-color:#93c5fd;background:#eff6ff}
 .kus-dl-multi__ok{color:#166534;font-weight:700}
 @media(max-width:640px){
   .kus-dl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .kus-dl-row__cols,.kus-dl-colheads{grid-template-columns:1fr}
-  .kus-dl-colheads>span:last-child{text-align:left}
-  .kus-dl-section__breakdown{width:100%;margin-left:20px}
+  .kus-dl-row__cols{grid-template-columns:1fr}
+  .kus-dl-contextbar{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .kus-dl-contextlane--before{grid-column:1;grid-row:1}
+  .kus-dl-contextlane--after{grid-column:2;grid-row:1}
+  .kus-dl-progress{grid-column:1 / -1;grid-row:2;display:flex;align-items:center;justify-content:center;gap:7px;padding:2px}
+  .kus-dl-progress__label{margin-top:0}
+  .kus-dl-reviewbar__filters{order:3;width:100%;flex-basis:100%}
+  .kus-dl-section>summary{align-items:flex-start;flex-wrap:wrap}
+  .kus-dl-section__breakdown{width:100%;justify-content:flex-start;margin-left:20px}
+  .kus-dl-row__head{grid-template-columns:1fr}
+  .kus-dl-row__action{justify-self:start}
+  .kus-dl-pre::before{content:attr(data-side-label);display:block;margin:0 0 4px;color:#64748b;font:700 9px/1.3 -apple-system,Segoe UI,sans-serif;letter-spacing:.03em}
+  .kus-dl-multi{display:block;overflow-x:auto;white-space:nowrap}
+}
+@media(prefers-reduced-motion:reduce){
+  .kus-dl-section>summary::before{transition:none}
+}
+@media(prefers-contrast:more){
+  .kus-dl-row,.kus-dl-section,.kus-dl-pre,.kus-dl-reviewbar,.kus-dl-contextbar,.kus-dl-contextlane{border-color:#334155}
+  .kus-dl-row__raw,.kus-dl-filter-empty,.kus-dl-pre.empty{color:#1e293b}
+}
+@media(forced-colors:active){
+  .kus-dl-row,.kus-dl-contextlane{forced-color-adjust:auto;border-left-width:5px}
+  .kus-dl-filterchip,.kus-dl-value__toggle,.kus-dl-navbtn{border:1px solid ButtonText}
 }
 `;
 
@@ -156,6 +244,8 @@ export interface DiffRow {
   notationOnly?: boolean;
   emptyOnly?: boolean;
   _displayOnly?: boolean;
+  arrayKey?: string;
+  arrayKeyValue?: any;
 }
 
 export interface DiffCache {
@@ -170,6 +260,36 @@ export interface DiffCache {
   comparedAt?: string | number;
   /** 差分エンジンの上限打ち切り情報（打ち切りなしなら null） */
   truncation: any;
+}
+
+export type LiteHtmlExportContentMode = 'diffOnly' | 'withCompared';
+
+export function normalizeLiteHtmlExportContentMode(mode: unknown): LiteHtmlExportContentMode {
+  return mode === 'withCompared' ? 'withCompared' : 'diffOnly';
+}
+
+export function getLiteHtmlExportContentLabel(mode: unknown): string {
+  return normalizeLiteHtmlExportContentMode(mode) === 'withCompared'
+    ? '比較設定込み（フィールド詳細・反映JSON）'
+    : '差分行のみ（安全共有向け）';
+}
+
+export function buildLiteDiffHtmlContext(
+  cache: DiffCache,
+  rows: DiffRow[],
+  exportMode: string,
+  exportLabel: string,
+  exportContentMode: unknown = 'diffOnly'
+) {
+  const safeContentMode = normalizeLiteHtmlExportContentMode(exportContentMode);
+  return {
+    ...cache,
+    rows,
+    exportMode,
+    exportLabel,
+    exportContentMode: safeContentMode,
+    exportContentLabel: getLiteHtmlExportContentLabel(safeContentMode)
+  };
 }
 
 export function buildLiteDiffXlsxContext(
@@ -270,7 +390,24 @@ function rowSearchText(row: DiffRow): string {
   return text;
 }
 
-function rowMatchesFilters(row: DiffRow, filters: { section: string; type: string; keyword: string }): boolean {
+export function buildLiteDiffRowKey(row: Partial<DiffRow>): string {
+  const seed = [
+    row.sectionKey || '',
+    row.type || '',
+    row.moved ? 'moved' : '',
+    row.path || '',
+    row.arrayKey || '',
+    stableStringify(row.arrayKeyValue)
+  ].join('\u001f');
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `diff-${(hash >>> 0).toString(36)}`;
+}
+
+export function rowMatchesFilters(row: DiffRow, filters: { section: string; type: string; severity?: string; keyword: string }): boolean {
   if (filters.section && row.sectionKey !== filters.section) return false;
   if (filters.type) {
     if (filters.type === 'moved') {
@@ -279,32 +416,95 @@ function rowMatchesFilters(row: DiffRow, filters: { section: string; type: strin
       return false;
     }
   }
+  if (filters.severity && String(row.severity || 'low') !== filters.severity) return false;
   if (filters.keyword && !rowSearchText(row).includes(filters.keyword)) return false;
   return true;
 }
 
-function rowColumnsHtml(row: DiffRow, useCharDiff: boolean, decoded: DecodedRow | null = null): { left: string; right: string } {
+export function summarizeLiteIgnoreRules(text: string): { total: number; pathRules: number; wildcardRules: number; positionalRules: number; contextualRules: number } {
+  const tokens = String(text || '').split(/[\n\r,、，;；]+/).map((token) => token.trim()).filter(Boolean);
+  const unique = [...new Map(tokens.map((token) => {
+    const exactPath = decodeExactIgnorePathRule(token);
+    return [exactPath == null ? token.toLowerCase() : `path:${exactPath}`, token] as const;
+  })).values()];
+  const representedPath = (token: string) => decodeExactIgnorePathRule(token) ?? token;
+  const isPathRule = (token: string) => {
+    if (decodeExactIgnorePathRule(token) != null) return true;
+    const normalized = token.toLowerCase();
+    return normalized.includes('.') || normalized.includes('[') || SCOPE_OPTS.some(([scope]) => scope.toLowerCase() === normalized);
+  };
+  return {
+    total: unique.length,
+    pathRules: unique.filter(isPathRule).length,
+    wildcardRules: unique.filter((token) => decodeExactIgnorePathRule(token) == null && token.includes('*')).length,
+    positionalRules: unique.filter((token) => /\[\d+\]/.test(representedPath(token))).length,
+    contextualRules: unique.filter((token) => isPathRule(token) || (decodeExactIgnorePathRule(token) == null && token.includes('*'))).length
+  };
+}
+
+function rowDisplayIdentity(row: DiffRow, decoded: DecodedRow | null): { title: string; subtitle: string } {
+  const path = String(row.path || '').trim();
+  const semanticTitle = String(decoded?.oneLineSummary || decoded?.propLabel || '').trim();
+  const reason = String(row.reasonSummary || '').trim();
+  const label = String(row.label || '').trim();
+  const leaf = path.split('.').filter(Boolean).pop()?.replace(/\[\d+\]$/g, '') || '';
+  const leafLabels: Record<string, string> = {
+    label: '表示名', name: '名称', code: 'フィールドコード', type: '種類', required: '必須設定',
+    width: '横幅', height: '高さ', index: '並び順', filterCond: '絞り込み条件', assignee: '作業者',
+    enabled: '有効／無効', entities: '対象ユーザー・組織', rights: '権限', fields: '配置フィールド'
+  };
+  const sectionLabel = SECTION_DEFS.find((definition) => definition.key === row.sectionKey)?.label || row.section || '設定';
+  const fallbackTitle = label && label !== path
+    ? label
+    : `${sectionLabel}の${leafLabels[leaf] || (leaf ? `「${leaf}」` : '設定項目')}`;
+  const title = semanticTitle || reason || fallbackTitle;
+  const subtitleCandidates = [
+    semanticTitle && reason !== semanticTitle ? reason : '',
+    label && label !== path && label !== title ? label : ''
+  ].filter(Boolean);
+  return { title, subtitle: [...new Set(subtitleCandidates)].join(' · ') };
+}
+
+function rowColumnsHtml(
+  row: DiffRow,
+  useCharDiff: boolean,
+  decoded: DecodedRow | null,
+  rowKey: string,
+  expandedValueKeys: ReadonlySet<string>
+): { left: string; right: string } {
   const leftStr = decoded?.beforeText ?? stringifyRowValueForDiff(row.left, row.path);
   const rightStr = decoded?.afterText ?? stringifyRowValueForDiff(row.right, row.path);
-  const pre = (value: string, className: string, label: string, rawHtml = false) =>
-    `<pre class="kus-dl-pre ${className}" aria-label="${esc(label)}">${rawHtml ? value : esc(value)}</pre>`;
+  const pre = (value: string, className: string, label: string, side: 'before' | 'after', rawHtml = false, measuredValue = value) => {
+    const valueKey = `${rowKey}:${side}`;
+    const lineCount = Math.max(1, measuredValue.split(/\r?\n/).length);
+    const isLong = lineCount > VALUE_PREVIEW_MAX_LINES || measuredValue.length > VALUE_PREVIEW_MAX_CHARS;
+    const expanded = isLong && expandedValueKeys.has(valueKey);
+    const id = `kus-dl-value-${rowKey}-${side}`;
+    const preHtml = `<pre id="${esc(id)}" class="kus-dl-pre ${className}" aria-label="${esc(label)}" data-side-label="${esc(label)}">${rawHtml ? value : esc(value)}</pre>`;
+    if (!isLong) return `<div class="kus-dl-value">${preHtml}</div>`;
+    const stateClass = expanded ? 'is-expanded' : 'is-collapsed';
+    const actionLabel = expanded ? 'プレビューに戻す' : '全文を展開';
+    return `<div class="kus-dl-value ${stateClass}" data-kus-dl-value-key="${esc(valueKey)}">${preHtml}` +
+      `<div class="kus-dl-value__footer"><span>${lineCount}行 · ${measuredValue.length}文字</span>` +
+      `<button type="button" class="kus-dl-value__toggle" data-kus-dl-value-toggle="${esc(valueKey)}" aria-expanded="${expanded ? 'true' : 'false'}" aria-controls="${esc(id)}">${actionLabel}</button></div></div>`;
+  };
   if (row.type === 'added') {
-    return { left: pre('（比較元にはなし）', 'empty', '比較元の値'), right: pre(rightStr, 'add', '比較先の値') };
+    return { left: pre('（比較元にはなし）', 'empty', '比較元の値', 'before'), right: pre(rightStr, 'add', '比較先の値', 'after') };
   }
   if (row.type === 'removed') {
-    return { left: pre(leftStr, 'del', '比較元の値'), right: pre('（比較先にはなし）', 'empty', '比較先の値') };
+    return { left: pre(leftStr, 'del', '比較元の値', 'before'), right: pre('（比較先にはなし）', 'empty', '比較先の値', 'after') };
   }
   if (row.type === 'same') {
-    return { left: pre(leftStr, 'empty', '比較元の値'), right: pre('（同一）', 'empty', '比較先の値') };
+    return { left: pre(leftStr, 'empty', '比較元の値', 'before'), right: pre('（同一）', 'empty', '比較先の値', 'after') };
   }
   // changed (or moved with both sides)
   if (useCharDiff) {
     const charDiff = buildCharDiffHtml(leftStr, rightStr);
     if (charDiff) {
-      return { left: pre(charDiff.left, 'del', '比較元の値', true), right: pre(charDiff.right, 'add', '比較先の値', true) };
+      return { left: pre(charDiff.left, 'del', '比較元の値', 'before', true, leftStr), right: pre(charDiff.right, 'add', '比較先の値', 'after', true, rightStr) };
     }
   }
-  return { left: pre(leftStr, 'del', '比較元の値'), right: pre(rightStr, 'add', '比較先の値') };
+  return { left: pre(leftStr, 'del', '比較元の値', 'before'), right: pre(rightStr, 'add', '比較先の値', 'after') };
 }
 
 function displayBundleSide(bundle: any, fallbackRole: string): { name: string; environment: string } {
@@ -316,12 +516,13 @@ function displayBundleSide(bundle: any, fallbackRole: string): { name: string; e
   return { name, environment };
 }
 
-export function renderLiteDiffOverviewHtml(cache: DiffCache): string {
+export function renderLiteDiffOverviewHtml(cache: DiffCache, options: { announce?: boolean } = {}): string {
   const counts = summarizeLiteDiffRows(cache.rows || []);
   const source = displayBundleSide(cache.sourceBundle, '比較元');
   const target = displayBundleSide(cache.targetBundle, '比較先');
   const fetchIssues = cache.fetchIssues || [];
   const partialIssues = cache.partialIssues || [];
+  const ignoreRuleSummary = summarizeLiteIgnoreRules(cache.ignoreKeys || '');
   const truncated = !!cache.truncation?.truncated;
   const incomplete = isIncompleteLiteDiff(cache);
   const hasNoticeOnlyChanges = counts.actual === 0 && counts.displayOnly > 0;
@@ -362,9 +563,16 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache): string {
 
   const alerts: string[] = [];
   if (truncated) {
-    const sections = (cache.truncation?.sections || []).map((item: any) => item?.section || item?.sectionKey).filter(Boolean);
+    const truncationSections = cache.truncation?.sections || [];
+    const sections = truncationSections.map((item: any) => item?.section || item?.sectionKey).filter(Boolean);
+    const unscanned = truncationSections.filter((item: any) => item?.scanned === false)
+      .map((item: any) => item?.section || item?.sectionKey).filter(Boolean);
+    const partial = truncationSections.filter((item: any) => item?.scanStatus === 'partial' || item?.partiallyScanned === true)
+      .map((item: any) => item?.section || item?.sectionKey).filter(Boolean);
     const sectionText = sections.length ? ` 対象: ${sections.join('、')}` : '';
-    alerts.push(`差分上限 ${Number(cache.truncation?.diffLimit || 0).toLocaleString()} 件に到達したため、結果の一部が表示されていません。${sectionText}`);
+    const unscannedText = unscanned.length ? ` 後続の ${unscanned.join('、')} は未走査で、未検出件数も不明です。` : '';
+    const partialText = partial.length ? ` ${partial.join('、')} は部分走査で、表示件数より多い差分がある可能性があります。` : '';
+    alerts.push(`差分上限 ${Number(cache.truncation?.diffLimit || 0).toLocaleString()} 件に到達したため、結果の一部が表示されていません。${partialText}${unscannedText}${sectionText}`);
   }
   if (fetchIssues.length) {
     const sections = [...new Set(fetchIssues.map((item: any) => item?.section || item?.sectionKey).filter(Boolean))];
@@ -390,20 +598,35 @@ export function renderLiteDiffOverviewHtml(cache: DiffCache): string {
     alerts.push(`本文サイズまたは形式の制約により ${partialIssues.length} 件を fileKey で比較しました。本文内容は未検証です。${details.join(' / ')}${remainder}`);
   }
 
+  const announceAttrs = options.announce === false ? '' : ' role="status"';
+  const alertAttrs = options.announce === false ? '' : ' role="alert"';
   return `<section class="kus-dl-overview" aria-label="比較結果サマリー">` +
     `<div class="kus-dl-overview__direction"><div class="kus-dl-side"><span class="kus-dl-side__role">比較元</span><span class="kus-dl-side__name" title="${esc(source.name)}">${esc(source.name)}</span><span class="kus-dl-side__env">${esc(source.environment)}</span></div>` +
     `<span class="kus-dl-overview__arrow" aria-label="から">→</span>` +
     `<div class="kus-dl-side kus-dl-side--target"><span class="kus-dl-side__role">比較先</span><span class="kus-dl-side__name" title="${esc(target.name)}">${esc(target.name)}</span><span class="kus-dl-side__env">${esc(target.environment)}</span></div></div>` +
-    `<div class="kus-dl-verdict ${verdictClass}" role="status"><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` +
+    `<div class="kus-dl-verdict ${verdictClass}"${announceAttrs}><strong>${esc(verdictTitle)}</strong><span>${esc(verdictText)}</span></div>` +
     `<div class="kus-dl-metrics"><div class="kus-dl-metric"><span class="kus-dl-metric__num">${counts.actual}</span><span class="kus-dl-metric__label">差分</span><span class="kus-dl-metric__hint">同一を除く</span></div>` +
       metric('added', '追加', '比較先のみ', counts.added) + metric('removed', '削除', '比較元のみ', counts.removed) +
       metric('changed', '変更', '値が異なる', counts.changed) + metric('moved', '移動', '並び順', counts.moved) + '</div>' +
     (sectionButtons ? `<div class="kus-dl-section-nav"><span class="kus-dl-section-nav__label">セクションを開く</span>${sectionButtons}</div>` : '') +
-    alerts.map((message) => `<div class="kus-dl-alert" role="alert">⚠ ${esc(message)}</div>`).join('') +
+    alerts.map((message) => `<div class="kus-dl-alert"${alertAttrs}>⚠ ${esc(message)}</div>`).join('') +
+    (ignoreRuleSummary.total ? `<div class="kus-dl-alert" role="note">無視ルール ${ignoreRuleSummary.total}件を適用した後の結果です。ルールに一致した設定差分は一覧に含まれません${ignoreRuleSummary.contextualRules ? `（完全パス/パターン ${ignoreRuleSummary.contextualRules}件）` : ''}。</div>` : '') +
     '<div class="kus-dl-legend">追加 = 比較先にのみ存在 / 削除 = 比較元にのみ存在。比較方向は上の矢印で確認できます。</div></section>';
 }
 
-export function renderRowsHtml(rows: DiffRow[], useCharDiff: boolean, summary: string, allFilteredRows: DiffRow[] = rows): string {
+export interface LiteRowsRenderOptions {
+  collapsedSections?: ReadonlySet<string>;
+  currentRowKey?: string;
+  expandedValueKeys?: ReadonlySet<string>;
+}
+
+export function renderRowsHtml(
+  rows: DiffRow[],
+  useCharDiff: boolean,
+  summary: string,
+  allFilteredRows: DiffRow[] = rows,
+  options: LiteRowsRenderOptions = {}
+): string {
   if (!rows.length) return `<div class="kus-dl-empty">該当する差分はありません${summary ? ` — ${summary}` : ''}</div>`;
   const bySection = new Map<string, DiffRow[]>();
   const allBySection = new Map<string, DiffRow[]>();
@@ -421,6 +644,7 @@ export function renderRowsHtml(rows: DiffRow[], useCharDiff: boolean, summary: s
   const orderedKeys: string[] = [];
   for (const def of SECTION_DEFS) if (bySection.has(def.key)) orderedKeys.push(def.key);
   for (const k of bySection.keys()) if (!orderedKeys.includes(k)) orderedKeys.push(k);
+  const expandedValueKeys = options.expandedValueKeys || new Set<string>();
 
   const parts: string[] = [];
   parts.push(`<div class="kus-dl-result__summary">${summary}</div>`);
@@ -430,28 +654,46 @@ export function renderRowsHtml(rows: DiffRow[], useCharDiff: boolean, summary: s
     const label = SECTION_DEFS.find((d) => d.key === k)?.label || k;
     const sectionCounts = summarizeLiteDiffRows(allInSection);
     const breakdown = sectionCounts.actual
-      ? [`+${sectionCounts.added}`, `−${sectionCounts.removed}`, `~${sectionCounts.changed}`, sectionCounts.moved ? `↕${sectionCounts.moved}` : ''].filter(Boolean).join(' / ')
-      : (sectionCounts.same ? `一致 ${sectionCounts.same}` : `変更候補 ${sectionCounts.displayOnly}`);
+      ? [
+        ['added', '追加', sectionCounts.added],
+        ['removed', '削除', sectionCounts.removed],
+        ['changed', '変更', sectionCounts.changed],
+        ['moved', '移動', sectionCounts.moved]
+      ].filter((entry) => Number(entry[2]) > 0)
+        .map(([tone, statLabel, value]) => `<span class="kus-dl-section__stat kus-dl-section__stat--${tone}">${statLabel} ${value}</span>`).join('')
+      : `<span class="kus-dl-section__stat">${sectionCounts.same ? `一致 ${sectionCounts.same}` : `変更候補 ${sectionCounts.displayOnly}`}</span>`;
     const countLabel = list.length === allInSection.length ? `${list.length}件` : `${list.length} / ${allInSection.length}件表示`;
-    parts.push(`<details class="kus-dl-section" open><summary>${esc(label)} <span class="kus-dl-section__count">${countLabel}</span><span class="kus-dl-section__breakdown">${esc(breakdown)}</span></summary><div class="kus-dl-section__body">`);
+    const collapsed = !!options.collapsedSections?.has(k);
+    parts.push(`<details class="kus-dl-section" data-kus-dl-section-key="${esc(k)}"${collapsed ? '' : ' open'}><summary><span class="kus-dl-section__heading"><span class="kus-dl-section__label">${esc(label)}</span><span class="kus-dl-section__count">${countLabel}</span></span><span class="kus-dl-section__breakdown" aria-label="差分内訳">${breakdown}</span></summary><div class="kus-dl-section__body">`);
     for (const r of list) {
       const decoded = safeDecodeRow(r);
-      const cols = rowColumnsHtml(r, useCharDiff, decoded);
+      const rowKey = buildLiteDiffRowKey(r);
+      const cols = rowColumnsHtml(r, useCharDiff, decoded, rowKey, expandedValueKeys);
+      const identity = rowDisplayIdentity(r, decoded);
+      const current = rowKey === options.currentRowKey;
       const typeKey = r.moved ? 'moved' : (r.type || 'same');
+      const severityKey = String(r.severity || 'low');
       const typeBadge = `<span class="kus-dl-badge kus-dl-badge--${esc(typeKey)}">${esc(TYPE_LABEL[typeKey] || typeKey)}</span>`;
-      const primaryHtml = decoded
-        ? `<span class="kus-dl-row__title">${esc(decoded.oneLineSummary || decoded.propLabel)}</span>`
-        : `<span class="kus-dl-row__path">${esc(r.path || '')}</span>`;
-      const labelHtml = !decoded && r.label ? `<span style="color:#475569">${esc(r.label)}</span>` : '';
-      const reasonHtml = r.reasonSummary ? `<span class="kus-dl-reason">${esc(r.reasonSummary)}</span>` : '';
+      const severityBadge = r.type === 'same'
+        ? ''
+        : `<span class="kus-dl-severity kus-dl-severity--${esc(severityKey)}">${esc(SEVERITY_LABEL[severityKey] || severityKey)}</span>`;
       const flagHtml = [
         r.notationOnly ? '<span class="kus-dl-flag" title="型・表記だけが異なり、値としては同じです（例: &quot;100&quot; と 100）">表記のみ</span>' : '',
         r.emptyOnly ? '<span class="kus-dl-flag" title="空文字・null・空配列など、空値同士の差です">空値ゆれ</span>' : ''
       ].join('');
       const contextHtml = decoded
-        ? `<div class="kus-dl-row__context">${decoded.whereChips.map((chip) => `<span class="kus-dl-row__chip">${esc(`${chip.icon || ''}${chip.icon ? ' ' : ''}${chip.label}`)}</span>`).join('')}<span class="kus-dl-row__raw" title="内部パス">${esc(r.path || '')}</span></div>`
+        ? `<div class="kus-dl-row__context">${decoded.whereChips.map((chip) => `<span class="kus-dl-row__chip">${esc(`${chip.icon || ''}${chip.icon ? ' ' : ''}${chip.label}`)}</span>`).join('')}</div>`
         : '';
-      parts.push(`<div class="kus-dl-row"><div class="kus-dl-row__head">${typeBadge}${primaryHtml}${reasonHtml}${flagHtml}${labelHtml}</div>${contextHtml}<div class="kus-dl-row__cols">${cols.left}${cols.right}</div></div>`);
+      const technicalHtml = r.path
+        ? `<details class="kus-dl-row__technical"><summary>内部パスを表示</summary><code class="kus-dl-row__raw">${esc(r.path)}</code></details>`
+        : '';
+      const positionalPath = /\[\d+\]/.test(String(r.path || ''));
+      const ignoreAction = r.type !== 'same' && r.path
+        ? (positionalPath
+          ? '<span class="kus-dl-flag" title="配列の番号は並び替えで別の対象を指すため、自動で無視ルールには追加できません">位置依存パス（自動無視不可）</span>'
+          : `<button type="button" class="kus-dl-row__action" data-kus-dl-ignore-path="${esc(r.path)}" title="この完全パスだけを次回比較の無視ルールへ追加">パスを無視</button>`)
+        : '';
+      parts.push(`<article class="kus-dl-row kus-dl-row--${esc(typeKey)}${current ? ' is-current' : ''}" data-kus-dl-row-key="${esc(rowKey)}" data-severity="${esc(severityKey)}" tabindex="-1"${current ? ' aria-current="true"' : ''} aria-label="${esc(`${TYPE_LABEL[typeKey] || typeKey}・${SEVERITY_LABEL[severityKey] || severityKey}: ${identity.title}`)}"><div class="kus-dl-row__head"><div class="kus-dl-row__identity"><div class="kus-dl-row__headline">${typeBadge}${severityBadge}<span class="kus-dl-row__title">${esc(identity.title)}</span>${flagHtml}</div>${identity.subtitle ? `<div class="kus-dl-row__subtitle">${esc(identity.subtitle)}</div>` : ''}</div>${ignoreAction}</div>${contextHtml}${technicalHtml}<div class="kus-dl-row__cols">${cols.left}${cols.right}</div></article>`);
     }
     parts.push('</div></details>');
   }
@@ -633,8 +875,10 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 詳細オプション ----
   const advDetails = makeDetails('詳細オプション');
-  const ignTa = makeTextarea({ rows: 2, code: true, placeholder: '無視キー（カンマ区切り）' });
+  const ignTa = makeTextarea({ rows: 2, code: true, placeholder: 'キー / 完全パス / * ワイルドカード（改行・カンマ区切り）' });
   advDetails.body.appendChild(makeRow(ignTa, { label: '無視キー', block: true }));
+  advDetails.body.appendChild(makeNote('キー名だけの指定、fieldSettings.properties.code.label のようなパス、* を使ったパターンに対応します。結果行の「パスを無視」は、記号や大小文字を含めてもその1パスだけに一致する path: 形式で追加します。'));
+  advDetails.body.appendChild(makeNote('⚠ 完全パスとワイルドカードは別アプリにもそのまま適用され、該当差分は結果から除外されます。プロファイル読込後と再比較前に内容を確認してください。'));
 
   const includeSame = makeCheck({ label: '同一行も差分行に含める' });
   const showResultList = makeCheck({ label: '画面に差分明細を表示（200件ずつ）', checked: true, help: '大量差分でも固まりにくいよう、明細は200件ずつ段階表示します' });
@@ -649,6 +893,19 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   const nAppearance = makeCheck({ label: '見た目/幅/座標を無視', checked: false });
   const nFileKeys = makeCheck({ label: '添付/JS/CSS fileKeyを無視', checked: false });
   const nEnabled = makeCheck({ label: '有効/無効フラグを無視', checked: false });
+  const normalizationControls: Record<string, HTMLInputElement> = {
+    viewOrder: nView.checkbox,
+    permissionOrder: nPerm.checkbox,
+    generalArrayOrder: nAll.checkbox,
+    fieldOrder: nField.checkbox,
+    processOrder: nProcess.checkbox,
+    appReferences: nAppRefs.checkbox,
+    auditMeta: nAudit.checkbox,
+    labelsAndText: nText.checkbox,
+    appearance: nAppearance.checkbox,
+    fileKeys: nFileKeys.checkbox,
+    enabledFlags: nEnabled.checkbox
+  };
   const normGrid = document.createElement('div');
   normGrid.className = 'kus-lp__check-grid';
   [
@@ -667,6 +924,18 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     nEnabled.label
   ].forEach((el) => normGrid.appendChild(el));
   advDetails.body.appendChild(normGrid);
+
+  const profileName = makeInput({ placeholder: '例: 権限を除く標準比較', width: 'medium', noSubmit: true, ariaLabel: '比較条件プロファイル名' });
+  const profileSaveBtn = makeButton('比較条件を保存', 'sub', { icon: '↓' });
+  const profileLoadBtn = makeButton('比較条件を読込', 'sub', { icon: '↑' });
+  const profileFile = document.createElement('input');
+  profileFile.type = 'file';
+  profileFile.accept = '.json,application/json';
+  profileFile.hidden = true;
+  advDetails.body.appendChild(makeRow(profileName, { label: '比較条件名' }));
+  advDetails.body.appendChild(makeRow([profileSaveBtn, profileLoadBtn]));
+  advDetails.body.appendChild(makeNote('比較セクション・無視ルール・正規化・表示設定だけをJSONで保存します。アプリID、設定値、認証情報は含みません。'));
+  advDetails.body.appendChild(profileFile);
   panel.body.insertBefore(advDetails.details, panel.status);
 
   // ---- 実行 ----
@@ -690,32 +959,54 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     ['same', '同一']
   ]);
   filterType.setAttribute('aria-label', '結果の種別絞り込み');
+  const filterSeverity = makeSelect([
+    ['', '全影響度'],
+    ['high', '高影響'],
+    ['medium', '中影響'],
+    ['low', '低影響']
+  ]);
+  filterSeverity.setAttribute('aria-label', '結果の影響度絞り込み（目安）');
   const filterSearch = makeInput({ placeholder: '日本語ラベル・パス・値で検索', width: 'wide', noSubmit: true, ariaLabel: '差分結果を検索' });
   const filterClear = makeButton('クリア', 'ghost');
-  cardFilter.body.appendChild(makeRow([filterSection, filterType, filterClear], { label: 'フィルタ' }));
+  cardFilter.body.appendChild(makeRow([filterSection, filterType, filterSeverity, filterClear], { label: 'フィルタ' }));
   cardFilter.body.appendChild(makeRow(filterSearch, { label: '検索' }));
   const charDiffCb = makeCheck({ label: '文字単位ハイライト', checked: true, help: '変更行で「どこが変わったか」を文字単位で強調表示します' });
-  cardFilter.body.appendChild(makeRow(charDiffCb.label));
+  const densitySelect = makeSelect([
+    ['compact', 'コンパクト'],
+    ['standard', '標準'],
+    ['comfortable', 'ゆったり']
+  ], 'standard');
+  densitySelect.setAttribute('aria-label', '差分一覧の表示密度');
+  const layoutSelect = makeSelect([
+    ['split', '左右に比較'],
+    ['stacked', '上下に比較（長文向け）']
+  ], 'split');
+  layoutSelect.setAttribute('aria-label', '差分一覧の比較レイアウト');
+  cardFilter.body.appendChild(makeRow([charDiffCb.label, densitySelect, layoutSelect], { label: '表示' }));
   let filterRenderTimer: number | undefined;
   const resetResultPage = () => { resultLimit = RESULT_PAGE_SIZE; };
   const rerenderFromFilter = () => {
     if (!cache) return;
     resetResultPage();
+    currentRowKey = '';
     rerender();
   };
   filterClear.addEventListener('click', () => {
     filterSection.value = '';
     filterType.value = '';
+    filterSeverity.value = '';
     filterSearch.value = '';
     rerenderFromFilter();
   });
-  [filterSection, filterType].forEach((el) => el.addEventListener('change', rerenderFromFilter));
+  [filterSection, filterType, filterSeverity].forEach((el) => el.addEventListener('change', rerenderFromFilter));
   filterSearch.addEventListener('input', () => {
     if (filterRenderTimer !== undefined) window.clearTimeout(filterRenderTimer);
     filterRenderTimer = window.setTimeout(rerenderFromFilter, 160);
   });
   // 複数比較の結果表は cache を使わず描画するため、単一比較の結果がある時だけ再描画する。
   charDiffCb.checkbox.addEventListener('change', () => { if (cache) rerender(); });
+  densitySelect.addEventListener('change', () => { if (cache) rerender(); });
+  layoutSelect.addEventListener('change', () => { if (cache) rerender(); });
   showResultList.checkbox.addEventListener('change', () => { if (cache) rerender(); });
   panel.body.insertBefore(cardFilter.card, panel.status);
 
@@ -729,8 +1020,13 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
 
   // ---- 出力（再出力用。初回は比較実行時に自動保存される） ----
   const cardOut = makeCard({ title: 'ファイル出力', number: 3, soft: true });
-  cardOut.body.appendChild(makeNote('HTML レポートは比較実行時に自動保存されます。Excel は比較後に、全件または画面で絞り込んだ範囲を一覧として保存できます。'));
-  cardOut.body.appendChild(makeNote('HTMLには選択した設定値が埋め込まれます。プラグイン設定やJS/CSS本文を含めた場合は、共有先と保管場所に注意してください。'));
+  cardOut.body.appendChild(makeNote('HTML レポートは比較実行時に、下の「HTML内容」で選んだ形式により自動保存されます。Excel は比較後に、全件または画面で絞り込んだ範囲を一覧として保存できます。'));
+  cardOut.body.appendChild(makeNote('既定の「差分行のみ」は比較元・比較先の設定本文を埋め込まないため共有向けです。「比較設定込み」にはフィールド詳細や反映JSON作成に必要な設定値が入るため、共有先と保管場所に注意してください。'));
+  const htmlContentMode = makeSelect([
+    ['diffOnly', '差分行のみ（安全共有向け）'],
+    ['withCompared', '比較設定込み（フィールド詳細・反映JSON）']
+  ], 'diffOnly');
+  cardOut.body.appendChild(makeRow(htmlContentMode, { label: 'HTML内容' }));
   const expRange = makeSelect([
     ['all', '全件'],
     ['filtered', '表示中（フィルタ適用後）']
@@ -759,8 +1055,14 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
   let cache: DiffCache | null = null;
   let multiXlsxExports: MultiXlsxExportItem[] = [];
   let multiXlsxExportActive = false;
+  let diffRunActive = false;
+  let profileIoActive = false;
   let summaryText = '';
   let resultLimit = RESULT_PAGE_SIZE;
+  let currentRowKey = '';
+  let announceResultOverview = false;
+  const collapsedSections = new Set<string>();
+  const expandedValueKeys = new Set<string>();
   let importedSourceBundle: any = null;
   let importedTargetBundle: any = null;
 
@@ -824,10 +1126,102 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     };
   }
 
+  profileSaveBtn.addEventListener('click', () => {
+    if (diffRunActive || profileIoActive) {
+      panel.setStatus('比較または比較条件の読込が完了してから保存してください', 'warn');
+      return;
+    }
+    try {
+      const form = readForm();
+      const profile = buildDiffComparisonProfile({
+        name: profileName.value.trim() || '比較条件',
+        savedAt: new Date().toISOString(),
+        scopes: form.scopes,
+        ignoreKeys: form.ignoreKeys,
+        includeSame: form.includeSame,
+        normalizationPresetState: form.normalizationPresetState,
+        display: {
+          charDiff: charDiffCb.checkbox.checked,
+          showResultList: showResultList.checkbox.checked,
+          density: densitySelect.value,
+          layout: layoutSelect.value
+        }
+      });
+      downloadText(`差分比較条件_${nowStamp()}.json`, serializeDiffComparisonProfile(profile), 'application/json;charset=utf-8');
+      panel.setStatus(`比較条件「${profile.name}」を保存しました（アプリID・設定値は含みません）`, 'ok');
+    } catch (error: any) {
+      panel.setStatus(`比較条件の保存に失敗しました: ${error?.message || String(error)}`, 'err');
+    }
+  });
+  profileLoadBtn.addEventListener('click', () => {
+    if (diffRunActive || profileIoActive) {
+      panel.setStatus('比較が完了してから比較条件を読み込んでください', 'warn');
+      return;
+    }
+    profileFile.click();
+  });
+  profileFile.addEventListener('change', async () => {
+    const file = profileFile.files?.[0];
+    if (!file) return;
+    if (diffRunActive || profileIoActive) {
+      profileFile.value = '';
+      panel.setStatus('比較が完了してから比較条件を読み込んでください', 'warn');
+      return;
+    }
+    profileIoActive = true;
+    profileSaveBtn.disabled = true;
+    profileLoadBtn.disabled = true;
+    runBtn.disabled = true;
+    runAllBtn.disabled = true;
+    try {
+      await liteRun(panel, '比較条件を読み込み中…', async () => {
+        const profile = parseDiffComparisonProfile(await readTextFile(file));
+        const selectedScopes = new Set(profile.scopes);
+        chips.forEach((chip) => { chip.checkbox.checked = selectedScopes.has(chip.checkbox.value); });
+        ignTa.value = profile.ignoreKeys;
+        includeSame.checkbox.checked = profile.includeSame;
+        for (const [key, checkbox] of Object.entries(normalizationControls)) {
+          checkbox.checked = profile.normalizationPresetState[key] === true;
+        }
+        profileName.value = profile.name;
+        charDiffCb.checkbox.checked = profile.display.charDiff;
+        showResultList.checkbox.checked = profile.display.showResultList;
+        densitySelect.value = profile.display.density;
+        layoutSelect.value = profile.display.layout;
+        cache = null;
+        multiXlsxExports = [];
+        currentRowKey = '';
+        collapsedSections.clear();
+        expandedValueKeys.clear();
+        summaryText = '';
+        resetResultPage();
+        setExportControlsEnabled(false);
+        resultBox.innerHTML = '';
+        cardResult.card.style.display = 'none';
+        cardFilter.card.style.display = 'none';
+        const ruleSummary = summarizeLiteIgnoreRules(profile.ignoreKeys);
+        const pathWarning = ruleSummary.positionalRules
+          ? ` 配列番号を含む位置依存ルール ${ruleSummary.positionalRules}件は、並び替え後に別の対象を隠す可能性があります。削除または見直してから再比較してください。`
+          : (ruleSummary.contextualRules
+            ? ` 完全パス/パターン ${ruleSummary.contextualRules}件を含むため、再比較前に無視ルールを確認してください。`
+            : '');
+        panel.setStatus(`比較条件「${profile.name}」を読み込みました（対象 ${profile.scopes.length}セクション / 無視 ${ruleSummary.total}件）。アプリと環境は変更していません。結果を更新するため再比較してください。${pathWarning}`, 'warn');
+      });
+    } finally {
+      profileFile.value = '';
+      profileIoActive = false;
+      profileSaveBtn.disabled = false;
+      profileLoadBtn.disabled = false;
+      runBtn.disabled = diffRunActive;
+      runAllBtn.disabled = diffRunActive;
+    }
+  });
+
   function currentFilters() {
     return {
       section: filterSection.value,
       type: filterType.value,
+      severity: filterSeverity.value,
       keyword: filterSearch.value.trim().toLowerCase()
     };
   }
@@ -863,6 +1257,90 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     if ([...filterSection.options].some((o) => o.value === prev)) filterSection.value = prev;
   }
 
+  function navigableRows(rows: DiffRow[] = filteredRows()): DiffRow[] {
+    return rows.filter((row) => row.type !== 'same' && !row._displayOnly);
+  }
+
+  function activeFilters(): Array<{ key: 'section' | 'type' | 'severity' | 'keyword'; label: string }> {
+    const filters: Array<{ key: 'section' | 'type' | 'severity' | 'keyword'; label: string }> = [];
+    if (filterSection.value) filters.push({ key: 'section', label: filterSection.selectedOptions[0]?.textContent || filterSection.value });
+    if (filterType.value) filters.push({ key: 'type', label: filterType.selectedOptions[0]?.textContent || filterType.value });
+    if (filterSeverity.value) filters.push({ key: 'severity', label: filterSeverity.selectedOptions[0]?.textContent || filterSeverity.value });
+    const keyword = filterSearch.value.trim();
+    if (keyword) filters.push({ key: 'keyword', label: `検索: ${keyword.length > 28 ? `${keyword.slice(0, 28)}…` : keyword}` });
+    return filters;
+  }
+
+  function renderActiveFilterChipsHtml(): string {
+    const filters = activeFilters();
+    if (!filters.length) return '<span class="kus-dl-filter-empty">フィルタなし · 全差分</span>';
+    const chipsHtml = filters.map((filter) =>
+      `<button type="button" class="kus-dl-filterchip" data-kus-dl-clear-filter="${filter.key}" aria-label="フィルタ「${esc(filter.label)}」を解除"><span>${esc(filter.label)}</span></button>`
+    ).join('');
+    const clearAll = filters.length > 1
+      ? '<button type="button" class="kus-dl-filterchip kus-dl-filterchip--all" data-kus-dl-clear-filter="all" aria-label="すべてのフィルタを解除"><span>すべて解除</span></button>'
+      : '';
+    return chipsHtml + clearAll;
+  }
+
+  function renderReviewBarHtml(
+    rows: DiffRow[],
+    source: { name: string; environment: string },
+    target: { name: string; environment: string }
+  ): string {
+    const queue = navigableRows(rows);
+    const currentIndex = currentRowKey ? queue.findIndex((row) => buildLiteDiffRowKey(row) === currentRowKey) : -1;
+    const position = currentIndex >= 0 ? currentIndex + 1 : 0;
+    const prevDisabled = !queue.length || currentIndex === 0;
+    const nextDisabled = !queue.length || currentIndex === queue.length - 1;
+    const incomplete = isIncompleteLiteDiff(cache);
+    const progressLabel = position ? `${position} / 全${queue.length}件目` : `未選択 / 全${queue.length}件`;
+    return `<div class="kus-dl-contextbar" role="group" aria-label="比較方向と確認位置">` +
+      `<div class="kus-dl-contextlane kus-dl-contextlane--before" title="${esc(`${source.name} · ${source.environment}`)}"><span class="kus-dl-contextlane__role">BEFORE · 比較元</span><strong class="kus-dl-contextlane__name">${esc(source.name)}</strong></div>` +
+      `<div class="kus-dl-progress kus-dl-reviewbar__count" role="status" aria-live="polite" aria-atomic="true" aria-label="${esc(progressLabel + (incomplete ? '・比較不完全' : ''))}"><span class="kus-dl-progress__numbers"><strong class="kus-dl-progress__current">${position || '—'}</strong><span class="kus-dl-progress__total">/ ${queue.length}</span></span><span class="kus-dl-progress__label">${incomplete ? '比較不完全' : (position ? '確認位置' : '未選択')}</span></div>` +
+      `<div class="kus-dl-contextlane kus-dl-contextlane--after" title="${esc(`${target.name} · ${target.environment}`)}"><span class="kus-dl-contextlane__role">AFTER · 比較先</span><strong class="kus-dl-contextlane__name">${esc(target.name)}</strong></div></div>` +
+      `<nav class="kus-dl-reviewbar" aria-label="差分レビュー操作">` +
+      `<span class="kus-dl-reviewbar__nav"><button type="button" class="kus-dl-navbtn" data-kus-dl-nav="prev" aria-keyshortcuts="K"${prevDisabled ? ' disabled' : ''}>↑ 前の差分 (K)</button>` +
+      `<button type="button" class="kus-dl-navbtn" data-kus-dl-nav="next" aria-keyshortcuts="J"${nextDisabled ? ' disabled' : ''}>次の差分 (J) ↓</button></span>` +
+      `<span class="kus-dl-reviewbar__tools"><button type="button" class="kus-dl-navbtn" data-kus-dl-sections="collapse">すべて折りたたむ</button>` +
+      `<button type="button" class="kus-dl-navbtn" data-kus-dl-sections="expand">すべて展開</button></span>` +
+      `<span class="kus-dl-reviewbar__filters" aria-label="有効なフィルタ">${renderActiveFilterChipsHtml()}</span></nav>`;
+  }
+
+  function focusRenderedRow(rowKey: string) {
+    window.requestAnimationFrame(() => {
+      const row = resultBox.querySelector<HTMLElement>(`[data-kus-dl-row-key="${rowKey}"]`);
+      if (!row) return;
+      row.focus({ preventScroll: true });
+      row.scrollIntoView({ block: 'center', behavior: 'auto' });
+    });
+  }
+
+  function moveResultFocus(delta: number) {
+    if (!cache) return;
+    const rows = filteredRows();
+    const queue = navigableRows(rows);
+    if (!queue.length) {
+      panel.setStatus('現在のフィルタに移動できる差分がありません', 'info');
+      return;
+    }
+    const currentIndex = currentRowKey ? queue.findIndex((row) => buildLiteDiffRowKey(row) === currentRowKey) : -1;
+    const nextIndex = currentIndex < 0 ? (delta < 0 ? queue.length - 1 : 0) : currentIndex + delta;
+    if (nextIndex < 0 || nextIndex >= queue.length) {
+      panel.setStatus(nextIndex < 0 ? '最初の差分です' : '最後の差分です', 'info');
+      return;
+    }
+    const nextRow = queue[nextIndex];
+    currentRowKey = buildLiteDiffRowKey(nextRow);
+    collapsedSections.delete(nextRow.sectionKey || '(その他)');
+    const filteredIndex = rows.indexOf(nextRow);
+    if (filteredIndex >= resultLimit) {
+      resultLimit = Math.ceil((filteredIndex + 1) / RESULT_PAGE_SIZE) * RESULT_PAGE_SIZE;
+    }
+    rerender();
+    focusRenderedRow(currentRowKey);
+  }
+
   function rerender() {
     if (!cache) {
       resultBox.innerHTML = '';
@@ -870,7 +1348,8 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       cardFilter.card.style.display = 'none';
       return;
     }
-    const overview = renderLiteDiffOverviewHtml(cache);
+    const overview = renderLiteDiffOverviewHtml(cache, { announce: announceResultOverview });
+    announceResultOverview = false;
     cardResult.card.style.display = 'block';
     if (!showResultList.checkbox.checked) {
       resultBox.innerHTML = overview;
@@ -878,20 +1357,90 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       return;
     }
     const rows = filteredRows();
+    if (currentRowKey && !navigableRows(rows).some((row) => buildLiteDiffRowKey(row) === currentRowKey)) currentRowKey = '';
     const visibleRows = rows.slice(0, resultLimit);
     const summary = `<strong>${visibleRows.length}</strong> / ${rows.length}件を表示${rows.length !== cache.rows.length ? `（比較結果全体 ${cache.rows.length}件）` : ''}`;
     const source = displayBundleSide(cache.sourceBundle, '比較元');
     const target = displayBundleSide(cache.targetBundle, '比較先');
-    const headings = `<div class="kus-dl-colheads" aria-label="比較列"><span>比較元: ${esc(source.name)}</span><span>比較先: ${esc(target.name)}</span></div>`;
     const more = rows.length > visibleRows.length
       ? `<div class="kus-dl-more"><button type="button" class="kus-lp__btn kus-lp__btn--sub" data-kus-dl-more>さらに ${Math.min(RESULT_PAGE_SIZE, rows.length - visibleRows.length)} 件表示（残り ${rows.length - visibleRows.length} 件）</button></div>`
       : '';
-    resultBox.innerHTML = overview + headings + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows) + more;
+    resultBox.className = `kus-dl-result kus-dl-result--${densitySelect.value} kus-dl-result--${layoutSelect.value}`;
+    resultBox.innerHTML = overview + `<div class="kus-dl-sticky">${renderReviewBarHtml(rows, source, target)}</div>` + renderRowsHtml(visibleRows, charDiffCb.checkbox.checked, summary, rows, { collapsedSections, currentRowKey, expandedValueKeys }) + more;
     cardFilter.card.style.display = 'block';
   }
 
   resultBox.addEventListener('click', async (event) => {
     const target = event.target as HTMLElement | null;
+    const clearFilterButton = target?.closest<HTMLButtonElement>('[data-kus-dl-clear-filter]');
+    if (clearFilterButton) {
+      const key = clearFilterButton.dataset.kusDlClearFilter || '';
+      if (key === 'all' || key === 'section') filterSection.value = '';
+      if (key === 'all' || key === 'type') filterType.value = '';
+      if (key === 'all' || key === 'severity') filterSeverity.value = '';
+      if (key === 'all' || key === 'keyword') filterSearch.value = '';
+      if (filterRenderTimer !== undefined) {
+        window.clearTimeout(filterRenderTimer);
+        filterRenderTimer = undefined;
+      }
+      rerenderFromFilter();
+      window.requestAnimationFrame(() => {
+        (resultBox.querySelector<HTMLButtonElement>('[data-kus-dl-clear-filter]') ||
+          resultBox.querySelector<HTMLButtonElement>('[data-kus-dl-nav="next"]'))?.focus();
+      });
+      return;
+    }
+    const valueToggle = target?.closest<HTMLButtonElement>('[data-kus-dl-value-toggle]');
+    if (valueToggle) {
+      const valueKey = valueToggle.dataset.kusDlValueToggle || '';
+      const wrapper = valueToggle.closest<HTMLElement>('.kus-dl-value');
+      if (!valueKey || !wrapper) return;
+      const expanded = valueToggle.getAttribute('aria-expanded') !== 'true';
+      wrapper.classList.toggle('is-expanded', expanded);
+      wrapper.classList.toggle('is-collapsed', !expanded);
+      valueToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      valueToggle.textContent = expanded ? 'プレビューに戻す' : '全文を展開';
+      if (expanded) expandedValueKeys.add(valueKey);
+      else expandedValueKeys.delete(valueKey);
+      return;
+    }
+    const navButton = target?.closest<HTMLButtonElement>('[data-kus-dl-nav]');
+    if (navButton) {
+      moveResultFocus(navButton.dataset.kusDlNav === 'prev' ? -1 : 1);
+      return;
+    }
+    const sectionControl = target?.closest<HTMLButtonElement>('[data-kus-dl-sections]');
+    if (sectionControl) {
+      const action = sectionControl.dataset.kusDlSections || '';
+      if (sectionControl.dataset.kusDlSections === 'collapse') {
+        for (const row of filteredRows()) collapsedSections.add(row.sectionKey || '(その他)');
+      } else {
+        collapsedSections.clear();
+      }
+      rerender();
+      window.requestAnimationFrame(() => {
+        resultBox.querySelector<HTMLButtonElement>(`[data-kus-dl-sections="${action}"]`)?.focus();
+      });
+      return;
+    }
+    const ignorePathButton = target?.closest<HTMLButtonElement>('[data-kus-dl-ignore-path]');
+    if (ignorePathButton) {
+      const path = String(ignorePathButton.dataset.kusDlIgnorePath || '').trim();
+      if (!path) return;
+      if (/\[\d+\]/.test(path)) {
+        panel.setStatus('配列番号を含むパスは並び替えで別の対象を指すため、自動では無視できません', 'warn');
+        return;
+      }
+      const exactRule = encodeExactIgnorePathRule(path);
+      if (!exactRule) return;
+      const existing = ignTa.value.split(/[\n\r,、，;；]+/).map((token) => token.trim()).filter(Boolean);
+      if (!existing.some((token) => decodeExactIgnorePathRule(token) === path || token === path)) {
+        ignTa.value = `${ignTa.value.trim()}${ignTa.value.trim() ? '\n' : ''}${exactRule}`;
+      }
+      advDetails.details.open = true;
+      panel.setStatus(`「${path}」だけを無視ルールへ追加しました。現在の結果は変えず、次回比較から適用します`, 'warn');
+      return;
+    }
     const multiXlsxButton = target?.closest<HTMLButtonElement>('[data-kus-dl-multi-xlsx]');
     if (multiXlsxButton) {
       const index = Number(multiXlsxButton.dataset.kusDlMultiXlsx);
@@ -936,34 +1485,78 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     }
   });
 
+  resultBox.addEventListener('toggle', (event) => {
+    const details = event.target as HTMLDetailsElement | null;
+    if (!details?.matches?.('[data-kus-dl-section-key]')) return;
+    const key = details.dataset.kusDlSectionKey || '';
+    if (!key) return;
+    if (details.open) collapsedSections.delete(key);
+    else collapsedSections.add(key);
+  }, true);
+
+  panel.body.addEventListener('keydown', (event) => {
+    if (!cache || !showResultList.checkbox.checked || event.altKey || event.ctrlKey || event.metaKey) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+    const key = event.key.toLowerCase();
+    if (key !== 'j' && key !== 'k') return;
+    event.preventDefault();
+    moveResultFocus(key === 'j' ? 1 : -1);
+  });
+
   function exportCtx(forceAll = false) {
     if (!cache) throw new Error('先に差分比較を実行してください');
     const isAll = forceAll || expRange.value === 'all';
     const rows = isAll ? cache.rows : filteredRows();
-    return {
-      ...cache,
+    return buildLiteDiffHtmlContext(
+      cache,
       rows,
-      exportMode: isAll ? 'all' : 'filtered',
-      exportLabel: isAll ? '全差分' : '表示中（フィルタ適用後）'
-    };
+      isAll ? 'all' : 'filtered',
+      isAll ? '全差分' : '表示中（フィルタ適用後）',
+      htmlContentMode.value
+    );
   }
 
-  let diffRunActive = false;
+  let runControlSnapshot: Array<[HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, boolean]> = [];
+  function lockComparisonControls() {
+    runControlSnapshot = [...panel.body.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('button, input, textarea, select')]
+      .map((control) => [control, control.disabled]);
+    runControlSnapshot.forEach(([control]) => { control.disabled = true; });
+  }
+  function unlockComparisonControls() {
+    runControlSnapshot.forEach(([control, wasDisabled]) => {
+      if (control.isConnected) control.disabled = wasDisabled;
+    });
+    runControlSnapshot = [];
+  }
+
   async function runDiffTask(busyMessage: string, task: () => Promise<void>) {
+    if (profileIoActive) {
+      panel.setStatus('比較条件の読込が完了してから比較してください', 'warn');
+      return;
+    }
     if (diffRunActive) {
       panel.setStatus('比較を実行中です。完了までお待ちください', 'warn');
       return;
     }
     diffRunActive = true;
+    lockComparisonControls();
     runBtn.disabled = true;
     runAllBtn.disabled = true;
+    htmlContentMode.disabled = true;
+    profileSaveBtn.disabled = true;
+    profileLoadBtn.disabled = true;
     setExportControlsEnabled(false);
     try {
       await liteRun(panel, busyMessage, task);
     } finally {
       diffRunActive = false;
+      unlockComparisonControls();
       runBtn.disabled = false;
       runAllBtn.disabled = false;
+      htmlContentMode.disabled = false;
+      profileSaveBtn.disabled = profileIoActive;
+      profileLoadBtn.disabled = profileIoActive;
       setExportControlsEnabled(!!cache);
     }
   }
@@ -983,8 +1576,16 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       panel.setStatus('比較セクションを 1 つ以上選択してください', 'warn');
       return;
     }
+    const positionalRuleCount = summarizeLiteIgnoreRules(base.ignoreKeys).positionalRules;
+    if (positionalRuleCount) {
+      panel.setStatus(`配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`, 'warn');
+      return;
+    }
     cache = null;
     multiXlsxExports = [];
+    currentRowKey = '';
+    collapsedSections.clear();
+    expandedValueKeys.clear();
     setExportControlsEnabled(false);
     summaryText = '';
     resetResultPage();
@@ -1037,7 +1638,9 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
               scopes: base.scopes,
               ignoreKeys: base.ignoreKeys,
               normalizationPresetState: base.normalizationPresetState,
-              truncation: out.truncation || null
+              truncation: out.truncation || null,
+              exportContentMode: normalizeLiteHtmlExportContentMode(htmlContentMode.value),
+              exportContentLabel: getLiteHtmlExportContentLabel(htmlContentMode.value)
             });
             exported += 1;
           } catch (e: any) {
@@ -1074,13 +1677,16 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       resultBox.innerHTML = `<div class="kus-dl-result"><table class="kus-dl-multi"><caption>複数比較の結果（比較元は最初の取得結果を再利用）</caption><thead><tr><th>比較先</th><th>差分</th><th>追加<br><small>比較先のみ</small></th><th>削除<br><small>比較元のみ</small></th><th>変更</th><th>移動</th><th>取得失敗<br><small>一部未検証</small></th><th>状態</th><th>Excel</th></tr></thead><tbody>${resultRows.join('')}</tbody></table></div>`;
       const tone = failed || exportFailed || incomplete || exported !== targets.length ? 'warn' : 'ok';
       const note = [failed ? `比較失敗 ${failed}件` : '', exportFailed ? `HTML出力失敗 ${exportFailed}件` : '', incomplete ? `要確認 ${incomplete}件` : ''].filter(Boolean).join(' / ');
-      panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始${note ? ` / ${note}` : ''}`, tone);
+      panel.setStatus(`全比較先の比較が完了: HTMLダウンロード ${exported}/${targets.length}件開始（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${note ? ` / ${note}` : ''}`, tone);
     });
   });
 
   runBtn.addEventListener('click', () => {
     cache = null;
     multiXlsxExports = [];
+    currentRowKey = '';
+    collapsedSections.clear();
+    expandedValueKeys.clear();
     setExportControlsEnabled(false);
     summaryText = '';
     resetResultPage();
@@ -1090,6 +1696,11 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
     const f = readForm();
     if (!f.scopes.length) {
       panel.setStatus('比較セクションを 1 つ以上選択してください', 'warn');
+      return;
+    }
+    const positionalRuleCount = summarizeLiteIgnoreRules(f.ignoreKeys).positionalRules;
+    if (positionalRuleCount) {
+      panel.setStatus(`配列番号を含む位置依存の無視ルールが ${positionalRuleCount}件あります。並び替えで別の対象を隠すため、削除または安定したパスへ変更してください`, 'warn');
       return;
     }
     runDiffTask('差分比較を実行中…', async () => {
@@ -1118,6 +1729,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
         comparedAt: new Date().toISOString(),
         truncation: out.truncation || null
       };
+      announceResultOverview = true;
       summaryText = out.summary?.text || '完了';
       refreshFilterSectionOptions();
       rerender();
@@ -1125,7 +1737,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       try {
         runExportDiffHtmlStandalone(exportCtx(true));
         const incomplete = isIncompleteLiteDiff(out);
-        panel.setStatus(`${summaryText} — 差分 HTML レポートのダウンロードを開始しました`, incomplete ? 'warn' : 'ok');
+        panel.setStatus(`${summaryText} — 差分 HTML レポートのダウンロードを開始しました（${getLiteHtmlExportContentLabel(htmlContentMode.value)}）`, incomplete ? 'warn' : 'ok');
       } catch (e: any) {
         panel.setStatus(`${summaryText} — HTML出力に失敗: ${e?.message || String(e)}`, 'warn');
       }
@@ -1141,7 +1753,7 @@ export function mountDiffLitePanel(runDiffStandalone: (opts: any) => Promise<any
       }
       runExportDiffHtmlStandalone(ctx);
       const incomplete = isIncompleteLiteDiff(cache);
-      panel.setStatus(`差分 HTML のダウンロードを開始しました（${expRange.value === 'all' ? '全件' : '表示中'}）${incomplete ? ' — 元の比較結果は不完全です' : ''}`, incomplete ? 'warn' : 'ok');
+      panel.setStatus(`差分 HTML のダウンロードを開始しました（${expRange.value === 'all' ? '全件' : '表示中'} / ${getLiteHtmlExportContentLabel(htmlContentMode.value)}）${incomplete ? ' — 元の比較結果は不完全です' : ''}`, incomplete ? 'warn' : 'ok');
     } catch (e: any) {
       panel.setStatus(`エラー: ${e?.message || String(e)}`, 'err');
     }

@@ -158,6 +158,69 @@ describe('diff/xlsx-builder', () => {
     expect(xml).not.toContain('<autoFilter ');
   });
 
+  it('supports frozen rows and columns, hidden gridlines, merged titles, and valid OOXML order', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['title', '', ''], ['h1', 'h2', 'h3'], ['a', 'b', 'c']],
+      headerRow: 2,
+      freezeRows: 2,
+      freezeColumns: 2,
+      showGridLines: false,
+      merges: ['A1:C1']
+    }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    expect(xml).toContain('showGridLines="0"');
+    expect(xml).toContain('<pane xSplit="2" ySplit="2" topLeftCell="C3" activePane="bottomRight" state="frozen"/>');
+    expect(xml).toContain('<mergeCell ref="A1:C1"/>');
+    expect(xml).toContain('<autoFilter ref="A2:C3"/>');
+    expect(xml).toMatch(/<c r="A2" s="1"/);
+    expect(xml.indexOf('<autoFilter ')).toBeLessThan(xml.indexOf('<mergeCells '));
+  });
+
+  it('adds A4 print setup and repeating header rows without deriving formulas from cell values', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: "一覧'確認",
+      rows: [['group'], ['header'], ['=USER_TEXT()']],
+      print: {
+        orientation: 'landscape',
+        fitToWidth: 1,
+        fitToHeight: 0,
+        repeatRows: { from: 1, to: 2 }
+      }
+    }];
+    const buf = await blobToBuffer(buildXlsxBlob(sheets));
+    const sheet = extractEntry(buf, 'xl/worksheets/sheet1.xml');
+    const workbook = extractEntry(buf, 'xl/workbook.xml');
+    expect(sheet).toContain('<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+    expect(sheet).toContain('<pageMargins left="0.3" right="0.3" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>');
+    expect(sheet).toContain('<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>');
+    expect(workbook).toContain('name="_xlnm.Print_Titles" localSheetId="0"');
+    expect(workbook).toContain('&apos;一覧&apos;&apos;確認&apos;!$1:$2');
+    expect(sheet).toContain('=USER_TEXT()');
+    expect(sheet).not.toContain('<f>');
+  });
+
+  it('writes styled empty review cells and a safe list validation', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['status', 'memo'], ['', '']],
+      cellStyles: [[], ['review', 'review']],
+      dataValidations: [{
+        sqref: 'A2:A2',
+        values: ['未確認', '確認済み'],
+        promptTitle: '確認状態',
+        prompt: '進捗を選択'
+      }]
+    }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    expect(xml).toMatch(/<c r="A2" s="17" t="inlineStr"><is><t[^>]*><\/t><\/is><\/c>/);
+    expect(xml).toMatch(/<c r="B2" s="17" t="inlineStr"><is><t[^>]*><\/t><\/is><\/c>/);
+    expect(xml).toContain('<dataValidations count="1">');
+    expect(xml).toContain('sqref="A2:A2"');
+    expect(xml).toContain('&quot;未確認,確認済み&quot;');
+    expect(xml).not.toContain('<f>');
+  });
+
   it('applies semantic row styles without changing the header style', async () => {
     const sheets: XlsxSheet[] = [{
       name: 'S',
@@ -172,6 +235,26 @@ describe('diff/xlsx-builder', () => {
     expect(xml).toMatch(/<c r="A5" s="6"/);
     expect(xml).toMatch(/<c r="A6" s="7"/);
     expect(xml).toMatch(/<c r="A7" s="8"/);
+  });
+
+  it('applies title, KPI, severity, and per-cell styles', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['title'], ['ok', 'warn', 'danger'], ['high', 'medium', 'low']],
+      cellStyles: [
+        ['title'],
+        ['kpiGood', 'kpiWarning', 'kpiDanger'],
+        ['severityHigh', 'severityMedium', 'severityLow']
+      ]
+    }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+    expect(xml).toMatch(/<c r="A1" s="9"/);
+    expect(xml).toMatch(/<c r="A2" s="11"/);
+    expect(xml).toMatch(/<c r="B2" s="12"/);
+    expect(xml).toMatch(/<c r="C2" s="13"/);
+    expect(xml).toMatch(/<c r="A3" s="14"/);
+    expect(xml).toMatch(/<c r="B3" s="15"/);
+    expect(xml).toMatch(/<c r="C3" s="16"/);
   });
 
   it('truncates oversized text to the Excel cell limit without splitting a surrogate pair', async () => {
