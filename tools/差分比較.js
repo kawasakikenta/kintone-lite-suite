@@ -697,12 +697,6 @@ ${contextLine}`);
     if (side === "both") return "両方";
     return String(side || "-");
   }
-  function getSeverityDisplayLabel(severity) {
-    if (severity === "high") return "高";
-    if (severity === "medium") return "中";
-    if (severity === "low") return "低";
-    return String(severity || "-");
-  }
   function triggerDownload(filename, blob) {
     const doc = getToolDocumentSafe();
     const win = getToolWindowSafe();
@@ -11122,15 +11116,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     STATUS_ASSIGNEE: "作業者",
     CATEGORY: "カテゴリー"
   };
-  function normalizeSeverity(severity) {
-    const value = String(severity || "").toLowerCase();
-    if (value === "high" || value === "medium") return value;
-    return "low";
-  }
-  function severityRank(severity) {
-    const value = normalizeSeverity(severity);
-    return value === "high" ? 2 : value === "medium" ? 1 : 0;
-  }
   function fieldSettingsProperties(bundle) {
     const section = bundle?.sections?.fieldSettings;
     if (!section || typeof section !== "object" || Array.isArray(section)) return {};
@@ -11244,7 +11229,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         rowIndex,
         ...identity,
         ...setting,
-        severity: normalizeSeverity(row.severity),
         row
       });
     }
@@ -11262,7 +11246,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
           added: 0,
           removed: 0,
           changed: 0,
-          severity: detail.severity,
           settingLabels: [],
           summary: ""
         };
@@ -11272,7 +11255,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       if (detail.row.type === "added") summary.added += 1;
       else if (detail.row.type === "removed") summary.removed += 1;
       else summary.changed += 1;
-      if (severityRank(detail.severity) > severityRank(summary.severity)) summary.severity = detail.severity;
       if (!summary.settingLabels.includes(detail.settingLabel)) summary.settingLabels.push(detail.settingLabel);
       if (detail.fieldName && detail.fieldName !== detail.fieldCode) summary.fieldName = detail.fieldName;
       if (detail.fieldType && detail.fieldType !== "不明") summary.fieldType = detail.fieldType;
@@ -11282,7 +11264,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       summary.settingLabels.sort((a, b) => a.localeCompare(b, "ja"));
       summary.summary = fieldSummaryText(summary.added, summary.removed, summary.changed, summary.settingLabels);
     }
-    summaries.sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || a.fieldCode.localeCompare(b.fieldCode, "ja"));
+    summaries.sort((a, b) => a.fieldCode.localeCompare(b.fieldCode, "ja"));
     return { details, summaries };
   }
   function appLabel(bundle) {
@@ -11302,27 +11284,42 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (row.type === "same") return "same";
     return "changed";
   }
-  function severityStyleOf(severity) {
-    const normalized = String(severity || "").toLowerCase();
-    if (normalized === "high") return "severityHigh";
-    if (normalized === "medium") return "severityMedium";
-    return "severityLow";
-  }
-  function sideAppLabel(bundle, fallback) {
-    return appLabel(bundle) || fallback;
-  }
-  function rowTypeLabel(row, sourceBundle, targetBundle) {
-    if (row._displayOnly) return "参考（件数外）";
-    if (row.moved || row.type === "moved") return "移動";
+  function fieldSettingKind(row) {
     const fieldInfo = extractFieldPathInfo(String(row.path || ""));
-    const isFieldSetting = !!fieldInfo && fieldSettingIdentity(fieldInfo).settingKey !== "(field)";
-    if (isFieldSetting && row.type === "added") return "設定追加";
-    if (isFieldSetting && row.type === "removed") return "設定削除";
-    if (row.type === "added") return `追加（${sideAppLabel(targetBundle, "比較先")}にのみ存在）`;
-    if (row.type === "removed") return `削除（${sideAppLabel(sourceBundle, "比較元")}にのみ存在）`;
+    if (!fieldInfo) return null;
+    return fieldSettingIdentity(fieldInfo).settingKey === "(field)" ? "field" : "setting";
+  }
+  function rowTypeLabel(row) {
+    if (row._displayOnly) return "参考";
+    if (row.moved || row.type === "moved") return "移動";
+    const fieldKind = fieldSettingKind(row);
+    if (fieldKind === "setting" && row.type === "added") return "設定追加";
+    if (fieldKind === "setting" && row.type === "removed") return "設定削除";
+    if (fieldKind === "field" && row.type === "added") return "フィールド追加";
+    if (fieldKind === "field" && row.type === "removed") return "フィールド削除";
+    if (row.type === "added") return "追加";
+    if (row.type === "removed") return "削除";
     if (row.type === "changed") return "変更";
     if (row.type === "same") return "同一";
     return String(row.type || "-");
+  }
+  function existenceLabelWithApp(label, bundle) {
+    const app = appLabel(bundle);
+    return app ? `${label}
+${app}` : label;
+  }
+  function rowExistenceLabel(row, sourceBundle, targetBundle) {
+    if (row._displayOnly) return "参考情報";
+    const fieldKind = fieldSettingKind(row);
+    if (fieldKind === "setting" && row.type === "added") {
+      return existenceLabelWithApp("比較先にのみ設定あり", targetBundle);
+    }
+    if (fieldKind === "setting" && row.type === "removed") {
+      return existenceLabelWithApp("比較元にのみ設定あり", sourceBundle);
+    }
+    if (row.type === "added") return existenceLabelWithApp("比較先にのみ存在", targetBundle);
+    if (row.type === "removed") return existenceLabelWithApp("比較元にのみ存在", sourceBundle);
+    return "両方に存在";
   }
   function layoutEntityCaption(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return "";
@@ -11385,7 +11382,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       }
     } catch {
     }
-    return String(row.label || row.path || "");
+    const explicitLabel = String(row.label || "").trim();
+    const technicalPath = String(row.path || "").trim();
+    if (explicitLabel && explicitLabel !== technicalPath) return explicitLabel;
+    return "項目名を判別できません（技術明細を確認）";
   }
   function rowNote(row) {
     const reasonSummary = row.sectionKey === "layoutSettings" ? String(row.reasonSummary || "").replace(/(行|フィールド) #(\d+)/g, (_match, label, index) => `${label} #${Number(index) + 1}`).replace(/\binnerheight\b/gi, "入力欄の高さ") : String(row.reasonSummary || "");
@@ -11444,10 +11444,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     ].filter(Boolean);
     return parts.join("\n");
   }
-  function fieldValueOnlyExistsLabel(side, sourceBundle, targetBundle) {
-    const existingBundle = side === "source" ? targetBundle : sourceBundle;
-    const fallback = side === "source" ? "比較先" : "比較元";
-    return `—（${sideAppLabel(existingBundle, fallback)}にのみ存在）`;
+  function fieldValueOnlyExistsLabel(_side, _sourceBundle, _targetBundle) {
+    return "（存在しません）";
   }
   function humanizeFieldSettingValue(value, settingKey) {
     const leafKey = settingKey.split(".").filter(Boolean).at(-1) || "";
@@ -11489,6 +11487,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (typeof value === "string") return value === "" ? "（空欄）" : value;
     return String(value);
   }
+  function humanizeDecodedListText(value) {
+    return value.replace(/(種別:\s*)([A-Z][A-Z0-9_]*)\b/g, (_match, prefix, type) => `${prefix}${FIELD_TYPE_LABELS[type] || type}`);
+  }
   function technicalSheetNameForRow(row) {
     const key = String(row.sectionKey || row.section || "");
     return key === "fieldSettings" ? "フィールド技術明細" : sectionLabelOf(key);
@@ -11497,7 +11498,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     try {
       const decoded = decodeRow(row);
       if (!decoded) return "";
-      const candidate = String(side === "source" ? decoded.beforeText : decoded.afterText).trim();
+      const candidate = humanizeDecodedListText(
+        String(side === "source" ? decoded.beforeText : decoded.afterText).trim()
+      );
       if (!candidate || candidate === "-" || candidate === "（なし）" || /[{}\[\]]/.test(candidate)) return "";
       return candidate;
     } catch {
@@ -11526,7 +11529,10 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         enabled: "有効",
         enable: "有効"
       };
-      const facts = Object.entries(value).filter(([key, item]) => labels[key] && (item == null || typeof item !== "object")).slice(0, 4).map(([key, item]) => `${labels[key]}: ${humanizeListScalar(item)}`);
+      const facts = Object.entries(value).filter(([key, item]) => labels[key] && (item == null || typeof item !== "object")).slice(0, 4).map(([key, item]) => {
+        const displayValue = key === "type" && typeof item === "string" ? FIELD_TYPE_LABELS[item] || item : humanizeListScalar(item);
+        return `${labels[key]}: ${displayValue}`;
+      });
       summary = facts.length ? facts.join(" / ") : `${Object.keys(value).length}項目の設定`;
     }
     const text = `${summary}
@@ -11549,7 +11555,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const missing = side === "source" ? row.left === void 0 || row.type === "added" : row.right === void 0 || row.type === "removed";
     if (missing) {
       if (detail.settingKey !== "(field)") {
-        return side === "source" ? "—（比較元では未設定）" : "—（比較先では未設定）";
+        return "（未設定）";
       }
       return fieldValueOnlyExistsLabel(side, sourceBundle, targetBundle);
     }
@@ -11585,12 +11591,22 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const notes = [rowNote(detail.row), fieldSettingReviewGuidance(detail)].map((note) => note.trim()).filter(Boolean);
     return notes.filter((note, index) => !notes.some((other, otherIndex) => otherIndex < index && other.includes(note))).join(" / ");
   }
-  function readableDiffRowHeight(...values) {
-    const maxLines = values.reduce((max, value) => {
-      const lines = String(value || "").split(/\r?\n/).length;
-      return Math.max(max, lines);
-    }, 1);
-    return Math.min(70, 22 + Math.min(4, maxLines - 1) * 12);
+  function visualTextWidth(value) {
+    let width = 0;
+    for (const char of value) {
+      if (char === "	") width += 4;
+      else width += char.codePointAt(0) <= 255 ? 1 : 2;
+    }
+    return width;
+  }
+  function estimatedWrappedLines(value, columnWidth) {
+    const capacity = Math.max(8, Math.floor(columnWidth - 2));
+    return String(value || "").split(/\r?\n/).reduce((total, line) => total + Math.max(1, Math.ceil(visualTextWidth(line) / capacity)), 0);
+  }
+  function readableDiffRowHeight(cells, maxHeight = 94) {
+    const maxLines = cells.reduce((max, cell) => Math.max(max, estimatedWrappedLines(cell.value, cell.width)), 1);
+    const maxExtraLines = Math.max(0, Math.floor((maxHeight - 22) / 12));
+    return Math.min(maxHeight, 22 + Math.min(maxExtraLines, maxLines - 1) * 12);
   }
   function summarizeRows2(rows) {
     const counts = {
@@ -11600,10 +11616,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       changed: 0,
       moved: 0,
       same: 0,
-      reference: 0,
-      high: 0,
-      medium: 0,
-      low: 0
+      reference: 0
     };
     for (const row of rows) {
       if (row._displayOnly) {
@@ -11615,10 +11628,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         continue;
       }
       counts.actual += 1;
-      const severity = String(row.severity || "low").toLowerCase();
-      if (severity === "high") counts.high += 1;
-      else if (severity === "medium") counts.medium += 1;
-      else counts.low += 1;
       if (row.type === "added") counts.added += 1;
       else if (row.type === "removed") counts.removed += 1;
       else counts.changed += 1;
@@ -11680,6 +11689,63 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (fieldCount) return `${fieldCount}フィールド / ${settingDiffCount}設定差分`;
     return ctx.exportMode === "filtered" ? "0件（この出力範囲内）" : "0件（走査済み）";
   }
+  function sectionSheetName(key) {
+    return key === "fieldSettings" ? "フィールド技術明細" : sectionLabelOf(key);
+  }
+  function buildSheetGuides(ctx, grouped, fieldCount) {
+    const hasIssues = !!((ctx.fetchIssues || []).length || (ctx.partialIssues || []).length || ctx.truncation?.truncated);
+    const guides = [{
+      name: "概要",
+      purpose: "比較結果の判定、件数、比較条件、完全性を確認できます。",
+      useWhen: hasIssues ? "最初に確認します。不完全な範囲は「取得・未検証」も確認します。" : fieldCount ? "最初に確認し、フィールドは「フィールド差分要約」、収録された差分は「差分一覧」へ進みます。" : "最初に確認し、収録された差分は「差分一覧」へ進みます。",
+      targetCell: "A1"
+    }];
+    if (fieldCount) {
+      guides.push(
+        {
+          name: "フィールド差分要約",
+          purpose: "差分があるフィールドと主な変更を、フィールド単位で確認できます。",
+          useWhen: "確認するフィールドを絞り込み、詳細またはレビュー入力へ進むときに使います。",
+          targetCell: "C4"
+        },
+        {
+          name: "フィールド差分詳細",
+          purpose: "フィールド設定ごとの変更前後と確認ポイントを確認できます。",
+          useWhen: "設定単位の内容を確認し、差分IDからレビュー入力へ進むときに使います。",
+          targetCell: "B4"
+        }
+      );
+    }
+    guides.push({
+      name: "差分一覧",
+      purpose: "このブックに収録された差分と変更前後の値を一覧で確認できます。",
+      useWhen: "黄色の列に確認状態、担当者、レビューコメントを記録するときに使います。",
+      targetCell: (ctx.rows || []).length ? "F4" : "A3"
+    });
+    for (const key of grouped.keys()) {
+      const name = sectionSheetName(key);
+      const isFieldTechnical = key === "fieldSettings";
+      guides.push({
+        name,
+        purpose: isFieldTechnical ? "フィールド設定の技術パスと原データを確認できます。" : `${sectionLabelOf(key)}の技術パスと原データを確認できます。`,
+        useWhen: isFieldTechnical ? "人向けの要約だけでは判断できない場合に、技術的な根拠を確認します。" : "差分一覧だけでは判断できない場合に、技術的な根拠を確認します。",
+        targetCell: "A4"
+      });
+    }
+    if (hasIssues) {
+      guides.push({
+        name: "取得・未検証",
+        purpose: "取得失敗、一部未検証、件数上限の対象と理由を確認できます。",
+        useWhen: "概要の完全性が「不完全」または判定が「要確認」のときに確認します。",
+        targetCell: "A3"
+      });
+    }
+    return guides;
+  }
+  function sheetGuideBand(purpose, next) {
+    return `このシートで分かること：${purpose}
+使い方・次に見る場所：${next}`;
+  }
   function buildSummarySheet(ctx, grouped, fieldCount, settingDiffCount, unstructuredFieldDiffCount) {
     const rows = ctx.rows || [];
     const fetchIssues = ctx.fetchIssues || [];
@@ -11694,18 +11760,28 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const redactedSensitiveSections = [...new Set(rows.filter((row) => isSensitiveSameDiffRow(row)).map((row) => sectionLabelOf(String(row.sectionKey || ""))))];
     const fieldStatus = fieldComparisonSummary(ctx, fieldCount, settingDiffCount, unstructuredFieldDiffCount);
     const fieldStatusIncomplete = fieldStatus.startsWith("未判定");
-    const fieldLinkTarget = fieldCount ? { sheet: "フィールド差分要約", cell: "C3", label: "フィールド差分を見る" } : unstructuredFieldDiffCount ? { sheet: "フィールド技術明細", cell: "A3", label: "技術明細を見る" } : null;
+    const sheetGuides = buildSheetGuides(ctx, grouped, fieldCount);
+    const fieldLinkTarget = fieldCount ? { sheet: "フィールド差分要約", cell: "C4", label: "フィールド差分を見る" } : unstructuredFieldDiffCount ? { sheet: "フィールド技術明細", cell: "A4", label: "技術明細を見る" } : null;
+    const overviewNextPlaces = [
+      "最初に確認します。",
+      fieldCount ? "フィールドは「フィールド差分要約」へ進みます。" : "",
+      rows.length ? "収録された差分とレビュー入力は「差分一覧」へ進みます。" : "差分一覧には見出しのみ出力されています。",
+      incomplete ? "不完全な範囲は「取得・未検証」で確認します。" : ""
+    ].filter(Boolean).join(" ");
     const sheetRows = [
       ["kintone 設定差分比較レポート", "", "", ""],
       [comparisonBanner, "", "", ""],
       ["生成日時", ctx.generatedAt || (/* @__PURE__ */ new Date()).toISOString(), "比較日時", ctx.comparedAt == null || ctx.comparedAt === "" ? "未記録" : String(ctx.comparedAt)],
-      ["", "", "", ""],
+      [sheetGuideBand(
+        "全体の判定、完全性、差分件数、比較条件を確認できます。",
+        overviewNextPlaces
+      ), "", "", ""],
       ["判定", verdict, "完全性", completeness],
       ["差分件数", counts.actual, "取得失敗", fetchIssues.length],
       ["追加（比較先のみ）", counts.added, "削除（比較元のみ）", counts.removed],
       ["変更", counts.changed, "一部未検証", partialIssues.length],
       ["移動（変更の内数）", counts.moved, "件数上限", truncation ? "省略あり" : "省略なし"],
-      ["重要度 高 / 中 / 低", `${counts.high} / ${counts.medium} / ${counts.low}`, "同一 / 参考行", `${counts.same} / ${counts.reference}`],
+      ["同一", counts.same, "参考行", counts.reference],
       ["", "", "", ""],
       ["比較の向き・条件", "", "", ""],
       ["比較元", appLabel(ctx.sourceBundle), "比較先", appLabel(ctx.targetBundle)],
@@ -11714,11 +11790,23 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       ["比較対象", scopeLabel(ctx.scopes), "出力内容", getDiffExportContentLabel(ctx.exportContentMode || "diffOnly")],
       ["正規化設定", normalizationLabel(ctx.normalizationPresetState), "無視キー", String(ctx.ignoreKeys || "")],
       ["フィールド差分", fieldStatus, "", fieldLinkTarget?.label || ""],
-      ["使い方", fieldCount ? "①「フィールド差分要約」で対象を確認　②「フィールド差分詳細」で変更前後を確認　③「差分一覧」で確認状態・担当者・コメントを入力" : "①概要で判定と完全性を確認　②「差分一覧」で変更前後を確認　③黄色い3列に確認状態・担当者・コメントを入力", "", rows.length ? "③ レビュー入力へ" : ""],
-      ["", "", "", ""],
-      ["セクション別集計", "", "", ""],
-      ["セクション", "一覧行数", "差分件数", "走査・取得状態"]
+      ["使い方", fieldCount ? "①「フィールド差分要約」で対象を確認　②「フィールド差分詳細」で変更前後を確認　③「差分一覧」でレビューを入力　※パスは技術明細シートにのみ掲載" : "①概要で判定と完全性を確認　②「差分一覧」で変更前後を確認　③黄色い3列にレビューを入力　※パスは技術明細シートにのみ掲載", "", rows.length ? "③ レビュー入力へ" : ""],
+      ["", "", "", ""]
     ];
+    const guideTitleRow = sheetRows.length;
+    sheetRows.push(["シート案内", "", "", ""]);
+    const guideHeaderRow = sheetRows.length;
+    sheetRows.push(["シート名", "目的", "利用場面", ""]);
+    const guideStartRow = sheetRows.length;
+    for (const guide of sheetGuides) {
+      sheetRows.push([guide.name, guide.purpose, guide.useWhen, ""]);
+    }
+    const guideEndRow = sheetRows.length;
+    sheetRows.push(["", "", "", ""]);
+    const sectionTitleRow = sheetRows.length;
+    sheetRows.push(["セクション別集計", "", "", ""]);
+    const sectionHeaderRow = sheetRows.length;
+    sheetRows.push(["セクション", "一覧行数", "差分件数", "走査・取得状態"]);
     for (const [key, list] of grouped) {
       sheetRows.push([
         sectionLabelOf(key),
@@ -11755,10 +11843,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       pushWarning("🔒 機密値省略", `${redactedSensitiveSections.join("・")} の同一行は、機密値を重複収録しないため値を省略しています。`);
     }
     const rowStyles = sheetRows.map(() => "normal");
+    const rowHeights = [32, 24, 0, 44];
+    for (let rowIndex = guideStartRow; rowIndex < guideEndRow; rowIndex += 1) rowHeights[rowIndex] = 40;
     for (const index of warningRows) rowStyles[index] = "warning";
     const cellStyles = sheetRows.map(() => []);
     cellStyles[0][0] = "title";
     cellStyles[1][0] = "sectionHeader";
+    cellStyles[3][0] = "info";
     cellStyles[4] = [
       "sectionHeader",
       incomplete ? "kpiDanger" : counts.actual > 0 ? "kpiWarning" : "kpiGood",
@@ -11772,12 +11863,29 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     cellStyles[5][3] = fetchIssues.length > 0 ? "kpiDanger" : "kpiGood";
     cellStyles[7][3] = partialIssues.length > 0 ? "kpiDanger" : "kpiGood";
     cellStyles[8][3] = truncation ? "kpiDanger" : "kpiGood";
-    for (const rowIndex of [11, 20]) cellStyles[rowIndex][0] = "sectionHeader";
-    cellStyles[21] = ["sectionHeader", "sectionHeader", "sectionHeader", "sectionHeader"];
+    cellStyles[11][0] = "sectionHeader";
+    cellStyles[guideTitleRow][0] = "sectionHeader";
+    cellStyles[guideHeaderRow] = ["sectionHeader", "sectionHeader", "sectionHeader", "sectionHeader"];
+    for (let rowIndex = guideStartRow; rowIndex < guideEndRow; rowIndex += 1) {
+      cellStyles[rowIndex][0] = "hyperlink";
+    }
+    cellStyles[sectionTitleRow][0] = "sectionHeader";
+    cellStyles[sectionHeaderRow] = ["sectionHeader", "sectionHeader", "sectionHeader", "sectionHeader"];
     cellStyles[17] = ["info", fieldStatusIncomplete ? "kpiDanger" : fieldCount || unstructuredFieldDiffCount ? "kpiWarning" : "kpiGood"];
     if (fieldLinkTarget) cellStyles[17][3] = "hyperlink";
     if (rows.length) cellStyles[18][3] = "hyperlink";
-    const merges = ["A1:D1", "A2:D2", "A12:D12", "A21:D21"];
+    const merges = [
+      "A1:D1",
+      "A2:D2",
+      "A4:D4",
+      "A12:D12",
+      `A${guideTitleRow + 1}:D${guideTitleRow + 1}`,
+      `C${guideHeaderRow + 1}:D${guideHeaderRow + 1}`,
+      `A${sectionTitleRow + 1}:D${sectionTitleRow + 1}`
+    ];
+    for (let rowIndex = guideStartRow; rowIndex < guideEndRow; rowIndex += 1) {
+      merges.push(`C${rowIndex + 1}:D${rowIndex + 1}`);
+    }
     for (const index of warningRows) merges.push(`B${index + 1}:D${index + 1}`);
     return {
       name: "概要",
@@ -11787,7 +11895,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       rows: sheetRows,
       rowStyles,
       cellStyles,
-      rowHeights: [32, 24],
+      rowHeights,
       merges,
       internalHyperlinks: [
         ...fieldLinkTarget ? [{
@@ -11799,9 +11907,15 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         ...rows.length ? [{
           ref: "D19",
           targetSheet: "差分一覧",
-          targetCell: "F3",
+          targetCell: "F4",
           tooltip: "確認状態・担当者・コメントの入力欄へ移動"
-        }] : []
+        }] : [],
+        ...sheetGuides.map((guide, index) => ({
+          ref: `A${guideStartRow + index + 1}`,
+          targetSheet: guide.name,
+          targetCell: guide.targetCell,
+          tooltip: `${guide.name}へ移動`
+        }))
       ],
       showGridLines: false,
       print: {
@@ -11836,7 +11950,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const seenIds = /* @__PURE__ */ new Map();
     rows.forEach((row, index) => refs.push({
       id: stableDifferenceId(row, seenIds),
-      rowNumber: index + 3
+      rowNumber: index + 4
     }));
     return refs;
   }
@@ -11849,14 +11963,13 @@ ${label}` : `${direction}の値`;
   function buildListSheet(rows, name = "差分一覧", sourceBundle, targetBundle, differenceRefs, fieldModel) {
     const headers = [
       "差分ID",
-      "重要度",
-      "種別",
+      "変更種別",
+      "存在状況",
       "セクション",
       "項目",
       "確認状態",
       "担当者",
       "レビューコメント",
-      "パス",
       directionalValueHeader("source", sourceBundle),
       directionalValueHeader("target", targetBundle),
       "確認ポイント"
@@ -11870,54 +11983,63 @@ ${label}` : `${direction}の値`;
       "レビュー入力（黄色）",
       "",
       "",
-      "技術パス",
       "値の比較（比較元 → 比較先）",
       "",
       "確認ポイント"
     ];
-    const out = [groupHeader, headers];
-    const rowStyles = ["normal", "normal"];
+    const guide = sheetGuideBand(
+      "このブックに収録された差分、変更前後の値、確認ポイントを一覧で確認できます。",
+      "黄色の列に確認状態・担当者・コメントを入力します。技術的な根拠は各明細シートで確認します。"
+    );
+    const out = [[guide, "", "", "", "", "", "", "", "", "", ""], groupHeader, headers];
+    const rowStyles = ["normal", "normal", "normal"];
     const groupCellStyles = [];
     groupCellStyles[0] = "sectionHeader";
     groupCellStyles[5] = "kpiWarning";
-    groupCellStyles[8] = "info";
-    groupCellStyles[9] = "sectionHeader";
-    groupCellStyles[11] = "info";
-    const cellStyles = [groupCellStyles, []];
-    const rowHeights = [24, 42];
+    groupCellStyles[8] = "sectionHeader";
+    groupCellStyles[10] = "info";
+    const cellStyles = [["info"], groupCellStyles, []];
+    const rowHeights = [44, 24, 42];
     const seenIds = /* @__PURE__ */ new Map();
     const fieldDetailByRowIndex = new Map((fieldModel?.details || []).map((detail) => [detail.rowIndex, detail]));
     for (const [rowIndex, row] of rows.entries()) {
       const fieldDetail = fieldDetailByRowIndex.get(rowIndex);
       const isFieldSettings = (row.sectionKey || row.section) === "fieldSettings";
+      const existence = rowExistenceLabel(row, sourceBundle, targetBundle);
+      const item = rowItemLabel(row, sourceBundle, targetBundle);
       const sourceValue = fieldDetail ? fieldSettingHumanValue(fieldDetail, "source", sourceBundle, targetBundle) : isFieldSettings ? row.type === "added" ? fieldValueOnlyExistsLabel("source", sourceBundle, targetBundle) : humanizeFieldSettingValue(row.left, "") : humanizeListRowValue(row, "source", sourceBundle, targetBundle);
       const targetValue = fieldDetail ? fieldSettingHumanValue(fieldDetail, "target", sourceBundle, targetBundle) : isFieldSettings ? row.type === "removed" ? fieldValueOnlyExistsLabel("target", sourceBundle, targetBundle) : humanizeFieldSettingValue(row.right, "") : humanizeListRowValue(row, "target", sourceBundle, targetBundle);
       const note = fieldDetail ? fieldDetailReviewNote(fieldDetail) : rowNote(row);
       out.push([
         differenceRefs?.[rowIndex]?.id || stableDifferenceId(row, seenIds),
-        getSeverityDisplayLabel(row.severity || "low"),
-        rowTypeLabel(row, sourceBundle, targetBundle),
+        rowTypeLabel(row),
+        existence,
         sectionLabelOf(row.sectionKey || row.section || ""),
-        rowItemLabel(row, sourceBundle, targetBundle),
+        item,
         "未確認",
         "",
         "",
-        row.path || "",
         sourceValue,
         targetValue,
         note
       ]);
       const rowStyle = rowStyleOf(row);
       rowStyles.push(rowStyle);
-      const styles = ["info", severityStyleOf(row.severity)];
+      const styles = ["info"];
       styles[5] = "review";
       styles[6] = "review";
       styles[7] = "review";
       cellStyles.push(styles);
-      rowHeights.push(readableDiffRowHeight(sourceValue, targetValue, note));
+      rowHeights.push(readableDiffRowHeight([
+        { value: existence, width: 28 },
+        { value: item, width: 30 },
+        { value: sourceValue, width: 42 },
+        { value: targetValue, width: 42 },
+        { value: note, width: 32 }
+      ]));
     }
     const dataValidations = rows.length ? [{
-      sqref: `F3:F${rows.length + 2}`,
+      sqref: `F4:F${rows.length + 3}`,
       values: REVIEW_STATUS_VALUES,
       promptTitle: "確認状態",
       prompt: "レビューの進捗を選択してください"
@@ -11925,29 +12047,29 @@ ${label}` : `${direction}の値`;
     return {
       name,
       rows: out,
-      colWidths: [15, 9, 16, 18, 30, 14, 16, 28, 34, 42, 42, 32],
+      colWidths: [15, 16, 28, 18, 30, 14, 16, 28, 42, 42, 32],
       rowStyles,
       cellStyles,
-      headerRow: 2,
-      freezeRows: 2,
+      headerRow: 3,
+      freezeRows: 3,
       freezeColumns: 5,
       rowHeights,
-      merges: ["A1:E1", "F1:H1", "J1:K1"],
+      merges: ["A1:K1", "A2:E2", "F2:H2", "I2:J2"],
       dataValidations,
       showGridLines: false,
       print: {
         orientation: "landscape",
         fitToWidth: 1,
         fitToHeight: 0,
-        repeatRows: { from: 1, to: 2 }
+        repeatRows: { from: 2, to: 3 }
       }
     };
   }
   function buildSectionSheet(label, list, sourceBundle, targetBundle) {
     const headers = [
       "差分ID",
-      "重要度",
-      "種別",
+      "変更種別",
+      "存在状況",
       "項目",
       "パス",
       directionalValueHeader("source", sourceBundle),
@@ -11964,51 +12086,64 @@ ${label}` : `${direction}の値`;
       "",
       "確認ポイント"
     ];
-    const rows = [groupHeader, headers];
-    const rowStyles = ["normal", "normal"];
+    const guide = sheetGuideBand(
+      `${label}の技術パスと原データを確認できます。`,
+      label === "フィールド技術明細" ? "通常の確認は「フィールド差分詳細」、レビュー記録は同じ差分IDの「差分一覧」で行います。" : "通常の確認は「差分一覧」で行い、要約だけでは判断できない場合にこのシートで根拠を確認します。"
+    );
+    const rows = [[guide, "", "", "", "", "", "", ""], groupHeader, headers];
+    const rowStyles = ["normal", "normal", "normal"];
     const groupCellStyles = [];
     groupCellStyles[0] = "sectionHeader";
     groupCellStyles[4] = "info";
     groupCellStyles[5] = "sectionHeader";
     groupCellStyles[7] = "info";
-    const cellStyles = [groupCellStyles, []];
-    const rowHeights = [24, 42];
+    const cellStyles = [["info"], groupCellStyles, []];
+    const rowHeights = [44, 24, 42];
     const seenIds = /* @__PURE__ */ new Map();
     for (const row of list) {
+      const existence = rowExistenceLabel(row, sourceBundle, targetBundle);
+      const item = rowItemLabel(row, sourceBundle, targetBundle);
       const sourceValue = rowValue(row, "source");
       const targetValue = rowValue(row, "target");
       const note = rowNote(row);
       rows.push([
         stableDifferenceId(row, seenIds),
-        getSeverityDisplayLabel(row.severity || "low"),
-        rowTypeLabel(row, sourceBundle, targetBundle),
-        rowItemLabel(row, sourceBundle, targetBundle),
+        rowTypeLabel(row),
+        existence,
+        item,
         row.path || "",
         sourceValue,
         targetValue,
         note
       ]);
       rowStyles.push(rowStyleOf(row));
-      cellStyles.push(["info", severityStyleOf(row.severity)]);
-      rowHeights.push(readableDiffRowHeight(sourceValue, targetValue, note));
+      cellStyles.push(["info"]);
+      rowHeights.push(readableDiffRowHeight([
+        { value: existence, width: 28 },
+        { value: item, width: 30 },
+        { value: row.path || "", width: 34 },
+        { value: sourceValue, width: 42 },
+        { value: targetValue, width: 42 },
+        { value: note, width: 32 }
+      ], 118));
     }
     return {
       name: label,
       rows,
-      colWidths: [15, 9, 16, 30, 34, 42, 42, 32],
+      colWidths: [15, 16, 28, 30, 34, 42, 42, 32],
       rowStyles,
       cellStyles,
-      headerRow: 2,
-      freezeRows: 2,
+      headerRow: 3,
+      freezeRows: 3,
       freezeColumns: 4,
       rowHeights,
-      merges: ["A1:D1", "F1:G1"],
+      merges: ["A1:H1", "A2:D2", "F2:G2"],
       showGridLines: false,
       print: {
         orientation: "landscape",
         fitToWidth: 1,
         fitToHeight: 0,
-        repeatRows: { from: 1, to: 2 }
+        repeatRows: { from: 2, to: 3 }
       }
     };
   }
@@ -12022,11 +12157,17 @@ ${label}` : `${direction}の値`;
     if (rootType === "removed") return "removed";
     return "changed";
   }
-  function fieldSummaryStateLabel(summary, model, sourceBundle, targetBundle) {
+  function fieldSummaryChangeTypeLabel(summary, model) {
     const rootType = fieldSummaryRootChangeType(summary, model);
-    if (rootType === "added") return `${sideAppLabel(targetBundle, "比較先")}にのみ存在`;
-    if (rootType === "removed") return `${sideAppLabel(sourceBundle, "比較元")}にのみ存在`;
+    if (rootType === "added") return "フィールド追加";
+    if (rootType === "removed") return "フィールド削除";
     return "設定変更";
+  }
+  function fieldSummaryExistenceLabel(summary, model, sourceBundle, targetBundle) {
+    const rootType = fieldSummaryRootChangeType(summary, model);
+    if (rootType === "added") return existenceLabelWithApp("比較先にのみ存在", targetBundle);
+    if (rootType === "removed") return existenceLabelWithApp("比較元にのみ存在", sourceBundle);
+    return "両方に存在";
   }
   function compactFieldSummaryValue(value) {
     const compact = value.replace(/\r?\n/g, " / ");
@@ -12036,13 +12177,13 @@ ${label}` : `${direction}の値`;
     return `${compact.slice(0, keep)}…`;
   }
   function fieldSummaryMainChanges(summary, model, sourceBundle, targetBundle) {
-    const details = model.details.filter((detail) => detail.fieldKey === summary.fieldKey).sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || a.settingKey.localeCompare(b.settingKey, "ja"));
+    const details = model.details.filter((detail) => detail.fieldKey === summary.fieldKey).sort((a, b) => a.settingKey.localeCompare(b.settingKey, "ja") || String(a.row.type || "").localeCompare(String(b.row.type || ""), "ja") || String(a.row.path || "").localeCompare(String(b.row.path || ""), "ja"));
     const visible = details.slice(0, 3).map((detail) => {
       if (detail.settingKey === "(field)" && detail.row.type === "added") {
-        return `${detail.settingLabel}: （存在しない） → ${sideAppLabel(targetBundle, "比較先")}にのみ存在`;
+        return `${detail.settingLabel}: フィールドを追加`;
       }
       if (detail.settingKey === "(field)" && detail.row.type === "removed") {
-        return `${detail.settingLabel}: ${sideAppLabel(sourceBundle, "比較元")}にのみ存在 → （存在しない）`;
+        return `${detail.settingLabel}: フィールドを削除`;
       }
       const sourceValue = compactFieldSummaryValue(fieldSettingHumanValue(detail, "source", sourceBundle, targetBundle));
       const targetValue = compactFieldSummaryValue(fieldSettingHumanValue(detail, "target", sourceBundle, targetBundle));
@@ -12053,7 +12194,7 @@ ${label}` : `${direction}の値`;
     return `${visible.join("\n")}${more}`;
   }
   function fieldSummaryReviewGuidance(summary, model) {
-    const details = model.details.filter((detail) => detail.fieldKey === summary.fieldKey).sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || a.settingKey.localeCompare(b.settingKey, "ja"));
+    const details = model.details.filter((detail) => detail.fieldKey === summary.fieldKey).sort((a, b) => a.settingKey.localeCompare(b.settingKey, "ja") || String(a.row.type || "").localeCompare(String(b.row.type || ""), "ja") || String(a.row.path || "").localeCompare(String(b.row.path || ""), "ja"));
     const unique = [...new Set(details.map(fieldSettingReviewGuidance))];
     const visible = unique.slice(0, 2);
     const more = unique.length > visible.length ? `
@@ -12064,13 +12205,13 @@ ${label}` : `${direction}の値`;
     const firstDetailRowByField = /* @__PURE__ */ new Map();
     const firstReviewRowByField = /* @__PURE__ */ new Map();
     model.details.forEach((detail, index) => {
-      if (!firstDetailRowByField.has(detail.fieldKey)) firstDetailRowByField.set(detail.fieldKey, index + 3);
+      if (!firstDetailRowByField.has(detail.fieldKey)) firstDetailRowByField.set(detail.fieldKey, index + 4);
       if (!firstReviewRowByField.has(detail.fieldKey)) {
-        firstReviewRowByField.set(detail.fieldKey, differenceRefs?.[detail.rowIndex]?.rowNumber || 3);
+        firstReviewRowByField.set(detail.fieldKey, differenceRefs?.[detail.rowIndex]?.rowNumber || 4);
       }
     });
     const groupHeader = [
-      "判断",
+      "変更の状態",
       "",
       "差分フィールド",
       "",
@@ -12082,33 +12223,39 @@ ${label}` : `${direction}の値`;
       ""
     ];
     const headers = [
-      "状態",
-      "影響度",
+      "変更種別",
+      "存在状況",
       "フィールド名",
       "フィールドコード",
       "フィールド種別",
       "設定差分数",
       "主な変更",
-      "最優先の確認",
+      "確認ポイント",
       "詳細",
       "レビュー"
     ];
-    const rows = [groupHeader, headers];
-    const rowStyles = ["normal", "normal"];
+    const guide = sheetGuideBand(
+      "差分があるフィールドと主な変更を、フィールド単位で確認できます。",
+      "「詳細」で設定単位の変更を確認し、「レビュー」から差分一覧の入力欄へ進みます。"
+    );
+    const rows = [[guide, "", "", "", "", "", "", "", "", ""], groupHeader, headers];
+    const rowStyles = ["normal", "normal", "normal"];
     const groupCellStyles = [];
-    groupCellStyles[0] = "kpiWarning";
+    groupCellStyles[0] = "sectionHeader";
     groupCellStyles[2] = "sectionHeader";
     groupCellStyles[5] = "info";
-    groupCellStyles[7] = "kpiWarning";
+    groupCellStyles[7] = "info";
     groupCellStyles[8] = "info";
-    const cellStyles = [groupCellStyles, []];
-    const rowHeights = [24, 32];
+    const cellStyles = [["info"], groupCellStyles, []];
+    const rowHeights = [44, 24, 32];
     for (const summary of model.summaries) {
+      const changeType = fieldSummaryChangeTypeLabel(summary, model);
+      const existence = fieldSummaryExistenceLabel(summary, model, sourceBundle, targetBundle);
       const mainChanges = fieldSummaryMainChanges(summary, model, sourceBundle, targetBundle);
       const reviewGuidance = fieldSummaryReviewGuidance(summary, model);
       rows.push([
-        fieldSummaryStateLabel(summary, model, sourceBundle, targetBundle),
-        getSeverityDisplayLabel(summary.severity),
+        changeType,
+        existence,
         summary.fieldName,
         summary.fieldCode,
         summary.fieldType,
@@ -12119,38 +12266,46 @@ ${label}` : `${direction}の値`;
         "レビュー入力へ"
       ]);
       rowStyles.push(fieldSummaryRowStyle(summary, model));
-      const styles = [void 0, severityStyleOf(summary.severity)];
+      const styles = [];
       styles[3] = "info";
       styles[4] = "info";
-      styles[5] = summary.severity === "high" ? "kpiDanger" : "kpiWarning";
+      styles[5] = "info";
       styles[7] = "info";
       styles[8] = "hyperlink";
       styles[9] = "hyperlink";
       cellStyles.push(styles);
-      rowHeights.push(readableDiffRowHeight(mainChanges, reviewGuidance));
+      rowHeights.push(readableDiffRowHeight([
+        { value: changeType, width: 18 },
+        { value: existence, width: 28 },
+        { value: summary.fieldName, width: 28 },
+        { value: summary.fieldCode, width: 28 },
+        { value: summary.fieldType, width: 18 },
+        { value: mainChanges, width: 56 },
+        { value: reviewGuidance, width: 42 }
+      ]));
     }
     return {
       name: "フィールド差分要約",
       rows,
-      colWidths: [24, 10, 28, 28, 18, 12, 56, 42, 20, 18],
+      colWidths: [18, 28, 28, 28, 18, 12, 56, 42, 20, 18],
       rowStyles,
       cellStyles,
-      headerRow: 2,
-      freezeRows: 2,
+      headerRow: 3,
+      freezeRows: 3,
       freezeColumns: 5,
       rowHeights,
-      merges: ["A1:B1", "C1:E1", "F1:G1", "I1:J1"],
+      merges: ["A1:J1", "A2:B2", "C2:E2", "F2:G2", "I2:J2"],
       internalHyperlinks: [
         ...model.summaries.map((summary, index) => ({
-          ref: `I${index + 3}`,
+          ref: `I${index + 4}`,
           targetSheet: "フィールド差分詳細",
-          targetCell: `C${firstDetailRowByField.get(summary.fieldKey) || 3}`,
+          targetCell: `B${firstDetailRowByField.get(summary.fieldKey) || 4}`,
           tooltip: `${summary.fieldName}の詳細差分へ移動`
         })),
         ...model.summaries.map((summary, index) => ({
-          ref: `J${index + 3}`,
+          ref: `J${index + 4}`,
           targetSheet: "差分一覧",
-          targetCell: `F${firstReviewRowByField.get(summary.fieldKey) || 3}`,
+          targetCell: `F${firstReviewRowByField.get(summary.fieldKey) || 4}`,
           tooltip: `${summary.fieldName}のレビュー入力欄へ移動`
         }))
       ],
@@ -12159,18 +12314,18 @@ ${label}` : `${direction}の値`;
         orientation: "landscape",
         fitToWidth: 1,
         fitToHeight: 0,
-        repeatRows: { from: 1, to: 2 }
+        repeatRows: { from: 2, to: 3 }
       }
     };
   }
   function buildFieldDetailSheet(model, sourceBundle, targetBundle, differenceRefs) {
-    const summaryRowByField = new Map(model.summaries.map((summary, index) => [summary.fieldKey, index + 3]));
+    const summaryRowByField = new Map(model.summaries.map((summary, index) => [summary.fieldKey, index + 4]));
     const groupHeader = [
       "差分の識別",
       "差分フィールド",
       "",
-      "",
       "設定差分",
+      "",
       "",
       "値の比較（比較元 → 比較先）",
       "",
@@ -12179,47 +12334,53 @@ ${label}` : `${direction}の値`;
     ];
     const headers = [
       "差分ID",
-      "影響度",
       "フィールド名",
       "フィールドコード",
       "設定項目",
-      "種別",
+      "変更種別",
+      "存在状況",
       directionalValueHeader("source", sourceBundle),
       directionalValueHeader("target", targetBundle),
       "確認ポイント",
       "要約へ"
     ];
-    const rows = [groupHeader, headers];
-    const rowStyles = ["normal", "normal"];
+    const guide = sheetGuideBand(
+      "各フィールドの設定項目ごとに、変更種別・存在状況・変更前後の値を確認できます。",
+      "差分IDから「差分一覧」のレビュー入力へ進み、「要約へ」でフィールド単位の一覧へ戻ります。"
+    );
+    const rows = [[guide, "", "", "", "", "", "", "", "", ""], groupHeader, headers];
+    const rowStyles = ["normal", "normal", "normal"];
     const groupCellStyles = [];
     groupCellStyles[0] = "info";
     groupCellStyles[1] = "sectionHeader";
-    groupCellStyles[4] = "info";
+    groupCellStyles[3] = "info";
     groupCellStyles[6] = "sectionHeader";
     groupCellStyles[8] = "info";
     groupCellStyles[9] = "info";
-    const cellStyles = [groupCellStyles, []];
-    const rowHeights = [24, 42];
+    const cellStyles = [["info"], groupCellStyles, []];
+    const rowHeights = [44, 24, 42];
     for (const detail of model.details) {
+      const changeType = rowTypeLabel(detail.row);
+      const existence = rowExistenceLabel(detail.row, sourceBundle, targetBundle);
       const sourceValue = fieldSettingHumanValue(detail, "source", sourceBundle, targetBundle);
       const targetValue = fieldSettingHumanValue(detail, "target", sourceBundle, targetBundle);
       const note = fieldDetailReviewNote(detail);
       const diffRef = differenceRefs?.[detail.rowIndex];
       rows.push([
         diffRef?.id || "",
-        getSeverityDisplayLabel(detail.severity),
         detail.fieldName,
         detail.fieldCode,
         detail.settingLabel,
-        rowTypeLabel(detail.row, sourceBundle, targetBundle),
+        changeType,
+        existence,
         sourceValue,
         targetValue,
         note,
         "要約へ戻る"
       ]);
       rowStyles.push(rowStyleOf(detail.row));
-      const styles = ["hyperlink", severityStyleOf(detail.severity)];
-      styles[3] = "info";
+      const styles = ["hyperlink"];
+      styles[2] = "info";
       styles[8] = "info";
       styles[9] = "hyperlink";
       if (detail.row.type === "added") {
@@ -12233,30 +12394,39 @@ ${label}` : `${direction}の値`;
         styles[7] = "added";
       }
       cellStyles.push(styles);
-      rowHeights.push(readableDiffRowHeight(sourceValue, targetValue, note));
+      rowHeights.push(readableDiffRowHeight([
+        { value: detail.fieldName, width: 30 },
+        { value: detail.fieldCode, width: 32 },
+        { value: detail.settingLabel, width: 34 },
+        { value: changeType, width: 18 },
+        { value: existence, width: 28 },
+        { value: sourceValue, width: 44 },
+        { value: targetValue, width: 44 },
+        { value: note, width: 40 }
+      ], 118));
     }
     return {
       name: "フィールド差分詳細",
       rows,
-      colWidths: [15, 10, 30, 32, 34, 22, 44, 44, 40, 16],
+      colWidths: [15, 30, 32, 34, 18, 28, 44, 44, 40, 16],
       rowStyles,
       cellStyles,
-      headerRow: 2,
-      freezeRows: 2,
-      freezeColumns: 5,
+      headerRow: 3,
+      freezeRows: 3,
+      freezeColumns: 6,
       rowHeights,
-      merges: ["B1:D1", "E1:F1", "G1:H1"],
+      merges: ["A1:J1", "B2:C2", "D2:F2", "G2:H2"],
       internalHyperlinks: [
         ...model.details.map((detail, index) => ({
-          ref: `A${index + 3}`,
+          ref: `A${index + 4}`,
           targetSheet: "差分一覧",
-          targetCell: `F${differenceRefs?.[detail.rowIndex]?.rowNumber || 3}`,
+          targetCell: `F${differenceRefs?.[detail.rowIndex]?.rowNumber || 4}`,
           tooltip: `${detail.fieldName}のレビュー入力欄へ移動`
         })),
         ...model.details.map((detail, index) => ({
-          ref: `J${index + 3}`,
+          ref: `J${index + 4}`,
           targetSheet: "フィールド差分要約",
-          targetCell: `C${summaryRowByField.get(detail.fieldKey) || 3}`,
+          targetCell: `C${summaryRowByField.get(detail.fieldKey) || 4}`,
           tooltip: `${detail.fieldName}の要約へ戻る`
         }))
       ],
@@ -12265,7 +12435,7 @@ ${label}` : `${direction}の値`;
         orientation: "landscape",
         fitToWidth: 1,
         fitToHeight: 0,
-        repeatRows: { from: 1, to: 2 }
+        repeatRows: { from: 2, to: 3 }
       }
     };
   }
@@ -12274,7 +12444,14 @@ ${label}` : `${direction}の値`;
     const partialIssues = ctx.partialIssues || [];
     const truncation = ctx.truncation?.truncated ? ctx.truncation : null;
     if (!fetchIssues.length && !partialIssues.length && !truncation) return null;
-    const rows = [["区分", "セクション", "対象", "内容", "対象ファイル・補足"]];
+    const guide = sheetGuideBand(
+      "取得失敗、一部未検証、件数上限の対象と理由を確認できます。",
+      "概要の完全性と照らし合わせ、比較できていない範囲を確認してから判断します。"
+    );
+    const rows = [
+      [guide, "", "", "", ""],
+      ["区分", "セクション", "対象", "内容", "対象ファイル・補足"]
+    ];
     for (const issue of fetchIssues) {
       rows.push(["取得失敗", sectionLabelOf(issue.sectionKey || issue.section || ""), getIssueSideLabel(issue.side || ""), issueMessage(issue), ""]);
     }
@@ -12297,15 +12474,19 @@ ${label}` : `${direction}の値`;
       name: "取得・未検証",
       rows,
       colWidths: [14, 22, 12, 72, 60],
-      rowStyles: rows.map((_, index) => index === 0 ? "normal" : "warning"),
+      rowStyles: rows.map((_, index) => index <= 1 ? "normal" : "warning"),
+      cellStyles: [["info"], []],
+      headerRow: 2,
+      freezeRows: 2,
       freezeColumns: 2,
-      rowHeights: [30],
+      rowHeights: [44, 30],
+      merges: ["A1:E1"],
       showGridLines: false,
       print: {
         orientation: "landscape",
         fitToWidth: 1,
         fitToHeight: 0,
-        repeatRows: { from: 1, to: 1 }
+        repeatRows: { from: 2, to: 2 }
       }
     };
   }
@@ -12332,7 +12513,7 @@ ${label}` : `${direction}の値`;
     sheets.push(buildListSheet(rows, "差分一覧", ctx.sourceBundle, ctx.targetBundle, differenceRefs, fieldModel));
     for (const [key, list] of grouped) {
       sheets.push(buildSectionSheet(
-        key === "fieldSettings" ? "フィールド技術明細" : sectionLabelOf(key),
+        sectionSheetName(key),
         list,
         ctx.sourceBundle,
         ctx.targetBundle
