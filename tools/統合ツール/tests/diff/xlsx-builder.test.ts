@@ -177,6 +177,94 @@ describe('diff/xlsx-builder', () => {
     expect(xml.indexOf('<autoFilter ')).toBeLessThan(xml.indexOf('<mergeCells '));
   });
 
+  it('adds relationship-free internal hyperlinks to sanitized sheet names in valid OOXML order', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: '概要',
+      rows: [['section'], ['フィールド設定へ']],
+      merges: ['A1:B1'],
+      dataValidations: [{ sqref: 'A2:A2', values: ['フィールド設定へ'] }],
+      internalHyperlinks: [{
+        ref: 'a2',
+        targetSheet: "フィールド/設定'詳細",
+        targetCell: 'b3',
+        tooltip: '詳細差分へ "移動"'
+      }],
+      print: { orientation: 'landscape' }
+    }, {
+      name: "フィールド/設定'詳細",
+      rows: [['header'], ['x'], ['target']]
+    }];
+    const buf = await blobToBuffer(buildXlsxBlob(sheets));
+    const xml = extractEntry(buf, 'xl/worksheets/sheet1.xml');
+    const styles = extractEntry(buf, 'xl/styles.xml');
+
+    expect(xml).toContain('<hyperlinks><hyperlink ref="A2"');
+    expect(xml).toContain('location="&apos;フィールド_設定&apos;&apos;詳細&apos;!B3"');
+    expect(xml).toContain('tooltip="詳細差分へ &quot;移動&quot;"');
+    expect(xml).not.toContain('r:id=');
+    expect(xml).toMatch(/<c r="A2" s="19"/);
+    expect(styles).toContain('<fonts count="6">');
+    expect(styles).toContain('<cellXfs count="20">');
+    expect(xml.indexOf('<mergeCells ')).toBeLessThan(xml.indexOf('<dataValidations '));
+    expect(xml.indexOf('<dataValidations ')).toBeLessThan(xml.indexOf('<hyperlinks>'));
+    expect(xml.indexOf('<hyperlinks>')).toBeLessThan(xml.indexOf('<printOptions '));
+    expect(findCentralDirEntries(buf)).not.toContain('xl/worksheets/_rels/sheet1.xml.rels');
+  });
+
+  it('rejects unsafe internal hyperlink references and resolves duplicate sheets by index without formulas', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: '概要',
+      rows: [['header'], ['safe'], ['unsafe'], ['unresolved']],
+      internalHyperlinks: [
+        { ref: 'A2', targetSheetIndex: 2, targetCell: 'A1' },
+        { ref: 'A3', targetSheet: 'Detail', targetCell: 'A1" external="1' },
+        { ref: 'XFE1048577', targetSheet: 'Detail', targetCell: 'A1' },
+        { ref: 'A4', targetSheet: '=HYPERLINK("https://example.invalid")', targetCell: 'A1' }
+      ]
+    }, {
+      name: 'Detail',
+      rows: [['first']]
+    }, {
+      name: 'Detail',
+      rows: [['second']]
+    }];
+    const buf = await blobToBuffer(buildXlsxBlob(sheets));
+    const xml = extractEntry(buf, 'xl/worksheets/sheet1.xml');
+
+    expect(xml).toContain('<hyperlink ref="A2" location="&apos;Detail_2&apos;!A1"/>');
+    expect(xml).not.toContain('<hyperlink ref="A3"');
+    expect(xml).not.toContain('<hyperlink ref="A4"');
+    expect(xml).not.toContain('XFE1048577');
+    expect(xml).not.toContain('<f>');
+    expect(xml).not.toContain('https://example.invalid');
+  });
+
+  it('writes row outlines with bounded levels and combines outline and print properties safely', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['parent'], ['detail 1'], ['detail 2'], ['next parent']],
+      rowOutlines: [
+        { collapsed: true },
+        { level: 1, hidden: true },
+        { level: 99, hidden: true },
+        { level: -1, hidden: true }
+      ],
+      outlineSummaryBelow: false,
+      print: { orientation: 'portrait' }
+    }];
+    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
+
+    expect(xml).toContain('<sheetPr><outlinePr summaryBelow="0" summaryRight="1"/><pageSetUpPr fitToPage="1"/></sheetPr>');
+    expect(xml).toContain('<sheetFormatPr defaultRowHeight="16" outlineLevelRow="7"/>');
+    expect(xml).toMatch(/<row r="1" collapsed="1">/);
+    expect(xml).toMatch(/<row r="2" outlineLevel="1" hidden="1">/);
+    expect(xml).toMatch(/<row r="3" outlineLevel="7" hidden="1">/);
+    expect(xml).toMatch(/<row r="4">/);
+    expect(xml.indexOf('<sheetPr>')).toBeLessThan(xml.indexOf('<sheetViews>'));
+    expect(xml.indexOf('<sheetData>')).toBeLessThan(xml.indexOf('<autoFilter '));
+    expect(xml.indexOf('<autoFilter ')).toBeLessThan(xml.indexOf('<printOptions '));
+  });
+
   it('adds A4 print setup and repeating header rows without deriving formulas from cell values', async () => {
     const sheets: XlsxSheet[] = [{
       name: "一覧'確認",

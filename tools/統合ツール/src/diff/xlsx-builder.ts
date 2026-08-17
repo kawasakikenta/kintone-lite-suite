@@ -162,7 +162,8 @@ export type XlsxCellStyle =
   | 'severityMedium'
   | 'severityLow'
   | 'review'
-  | 'info';
+  | 'info'
+  | 'hyperlink';
 export type XlsxRowStyle = XlsxCellStyle;
 export interface XlsxDataValidation {
   /** 適用範囲。例: A2:A100 */
@@ -180,6 +181,26 @@ export interface XlsxPrintSettings {
   fitToHeight?: number;
   /** 各印刷ページで繰り返す行（1始まり・両端を含む）。 */
   repeatRows?: { from: number; to: number };
+}
+export interface XlsxInternalHyperlink {
+  /** リンクを設定するセル。例: A2 */
+  ref: string;
+  /** 遷移先シート名。元の名前とサニタイズ後の名前のどちらでも指定可能。 */
+  targetSheet?: string;
+  /** 遷移先シート（0始まり）。同名シートを確実に指定したい場合に使用。 */
+  targetSheetIndex?: number;
+  /** 遷移先セル。既定: A1 */
+  targetCell?: string;
+  /** Excel でリンクにマウスを置いたときの説明。 */
+  tooltip?: string;
+}
+export interface XlsxRowOutline {
+  /** Excel のアウトラインレベル（1～7）。範囲外は安全な範囲へ丸める。 */
+  level?: number;
+  /** level > 0 の詳細行を初期状態で隠す。 */
+  hidden?: boolean;
+  /** グループの要約行に折りたたみマークを表示する。 */
+  collapsed?: boolean;
 }
 export interface XlsxSheet {
   name: string;
@@ -210,6 +231,12 @@ export interface XlsxSheet {
   merges?: string[];
   /** 入力候補のドロップダウン。 */
   dataValidations?: XlsxDataValidation[];
+  /** 同じブック内だけを遷移先にできる安全な内部ハイパーリンク。 */
+  internalHyperlinks?: XlsxInternalHyperlink[];
+  /** 行ごとのアウトライン指定。rows と同じ0始まりの添字を使う。 */
+  rowOutlines?: Array<XlsxRowOutline | undefined>;
+  /** アウトラインの要約行を詳細行の下に置く場合は true。既定: true。 */
+  outlineSummaryBelow?: boolean;
   /** グリッド線を非表示にする場合は false。既定: true。 */
   showGridLines?: boolean;
   /** 印刷方向、横幅へのフィット、見出しの繰り返し。 */
@@ -256,8 +283,16 @@ const CELL_STYLE_INDEX: Record<XlsxCellStyle, number> = {
   severityMedium: 15,
   severityLow: 16,
   review: 17,
-  info: 18
+  info: 18,
+  hyperlink: 19
 };
+
+interface ResolvedInternalHyperlink {
+  ref: string;
+  targetSheet: string;
+  targetCell: string;
+  tooltip?: string;
+}
 
 function normalizedPaneCount(value: unknown, max: number): number {
   const n = Math.floor(Number(value));
@@ -289,6 +324,59 @@ function isSafeCellRange(value: string): boolean {
   return /^[A-Z]{1,3}[1-9][0-9]*:[A-Z]{1,3}[1-9][0-9]*$/.test(value);
 }
 
+function isSafeCellRef(value: string): boolean {
+  const match = /^([A-Z]{1,3})([1-9][0-9]*)$/.exec(value);
+  if (!match) return false;
+  let column = 0;
+  for (const char of match[1]) column = column * 26 + char.charCodeAt(0) - 64;
+  const row = Number(match[2]);
+  return column >= 1 && column <= 16384 && Number.isSafeInteger(row) && row <= 1048576;
+}
+
+function normalizedOutline(value: XlsxRowOutline | undefined): Required<XlsxRowOutline> {
+  const rawLevel = Math.floor(Number(value?.level));
+  const level = Number.isFinite(rawLevel) ? Math.max(0, Math.min(7, rawLevel)) : 0;
+  return {
+    level,
+    hidden: level > 0 && value?.hidden === true,
+    collapsed: value?.collapsed === true
+  };
+}
+
+function resolveInternalHyperlinks(
+  sheets: XlsxSheet[],
+  safeSheetNames: string[],
+  links: XlsxInternalHyperlink[] | undefined
+): ResolvedInternalHyperlink[] {
+  const resolved: ResolvedInternalHyperlink[] = [];
+  const seenRefs = new Set<string>();
+  for (const link of links || []) {
+    const ref = String(link?.ref || '').toUpperCase();
+    const targetCell = String(link?.targetCell || 'A1').toUpperCase();
+    if (!isSafeCellRef(ref) || !isSafeCellRef(targetCell) || seenRefs.has(ref)) continue;
+
+    let targetIndex = Number.isInteger(link.targetSheetIndex) ? Number(link.targetSheetIndex) : -1;
+    if (targetIndex < 0 || targetIndex >= safeSheetNames.length) {
+      const requested = String(link.targetSheet || '');
+      targetIndex = sheets.findIndex((sheet) => String(sheet.name || '') === requested);
+      if (targetIndex < 0) {
+        const folded = requested.toLocaleLowerCase('en-US');
+        targetIndex = safeSheetNames.findIndex((name) => name.toLocaleLowerCase('en-US') === folded);
+      }
+    }
+    if (targetIndex < 0 || targetIndex >= safeSheetNames.length) continue;
+
+    seenRefs.add(ref);
+    resolved.push({
+      ref,
+      targetSheet: safeSheetNames[targetIndex],
+      targetCell,
+      tooltip: link.tooltip == null ? undefined : String(link.tooltip).slice(0, 255)
+    });
+  }
+  return resolved;
+}
+
 function estimateColWidth(rows: XlsxCellValue[][], col: number): number {
   let max = MIN_COL_W;
   const limit = Math.min(rows.length, 500); // ざっくり上位 500 行で推定
@@ -312,20 +400,27 @@ function estimateColWidth(rows: XlsxCellValue[][], col: number): number {
   return Math.min(MAX_COL_W, max + 2);
 }
 
-function buildSheetXml(sheet: XlsxSheet): string {
+function buildSheetXml(sheet: XlsxSheet, internalHyperlinks: ResolvedInternalHyperlink[]): string {
   const rows = sheet.rows || [];
   const maxCols = rows.reduce((n, r) => Math.max(n, r ? r.length : 0), 0);
   const headerRow = normalizedPositiveInt(sheet.headerRow, 1, Math.max(1, rows.length));
   const widths = sheet.colWidths && sheet.colWidths.length
     ? sheet.colWidths
     : Array.from({ length: maxCols }, (_, i) => estimateColWidth(rows, i));
+  const hyperlinkRefs = new Set(internalHyperlinks.map((link) => link.ref));
+  const outlines = rows.map((_, index) => normalizedOutline(sheet.rowOutlines?.[index]));
+  const maxOutlineLevel = outlines.reduce((max, outline) => Math.max(max, outline.level), 0);
+  const hasOutline = maxOutlineLevel > 0 || outlines.some((outline) => outline.collapsed);
 
   const out: string[] = [];
   out.push(XML_HEADER);
   out.push('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">');
 
-  if (sheet.print) {
-    out.push('<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+  if (sheet.print || hasOutline) {
+    out.push('<sheetPr>');
+    if (hasOutline) out.push(`<outlinePr summaryBelow="${sheet.outlineSummaryBelow === false ? 0 : 1}" summaryRight="1"/>`);
+    if (sheet.print) out.push('<pageSetUpPr fitToPage="1"/>');
+    out.push('</sheetPr>');
   }
 
   // Freeze panes. freezeRows が未指定なら従来どおりヘッダ1行を固定する。
@@ -343,7 +438,7 @@ function buildSheetXml(sheet: XlsxSheet): string {
   }
 
   // Default row height a bit larger to fit wrap
-  out.push('<sheetFormatPr defaultRowHeight="16"/>');
+  out.push(`<sheetFormatPr defaultRowHeight="16"${maxOutlineLevel ? ` outlineLevelRow="${maxOutlineLevel}"` : ''}/>`);
 
   // Column widths
   if (widths.length) {
@@ -365,9 +460,14 @@ function buildSheetXml(sheet: XlsxSheet): string {
       // レビュー入力欄など、空でも塗りを表示したいセルは書き出す。
       if ((v === null || v === undefined || v === '') && !explicitCellStyle) continue;
       const ref = `${colRef(c + 1)}${r + 1}`;
-      const styleIndex = r + 1 === headerRow && !explicitCellStyle
-        ? 1
-        : CELL_STYLE_INDEX[explicitCellStyle || sheet.rowStyles?.[r] || 'normal'];
+      const rowStyle = sheet.rowStyles?.[r] || 'normal';
+      const styleIndex = explicitCellStyle
+        ? CELL_STYLE_INDEX[explicitCellStyle]
+        : r + 1 === headerRow
+          ? 1
+          : hyperlinkRefs.has(ref) && rowStyle === 'normal'
+            ? CELL_STYLE_INDEX.hyperlink
+            : CELL_STYLE_INDEX[rowStyle];
       const styleAttr = ` s="${styleIndex}"`;
       if (typeof v === 'number' && Number.isFinite(v)) {
         cells.push(`<c r="${ref}"${styleAttr}><v>${v}</v></c>`);
@@ -381,7 +481,13 @@ function buildSheetXml(sheet: XlsxSheet): string {
     const heightAttr = Number.isFinite(rowHeight) && rowHeight > 0
       ? ` ht="${Math.min(409, rowHeight)}" customHeight="1"`
       : '';
-    out.push(`<row r="${r + 1}"${heightAttr}>${cells.join('')}</row>`);
+    const outline = outlines[r];
+    const outlineAttrs = [
+      outline.level ? ` outlineLevel="${outline.level}"` : '',
+      outline.hidden ? ' hidden="1"' : '',
+      outline.collapsed ? ' collapsed="1"' : ''
+    ].join('');
+    out.push(`<row r="${r + 1}"${heightAttr}${outlineAttrs}>${cells.join('')}</row>`);
   }
   out.push('</sheetData>');
 
@@ -413,6 +519,18 @@ function buildSheetXml(sheet: XlsxSheet): string {
       out.push(`<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${validation.sqref}"${promptTitle}${prompt}><formula1>${formula}</formula1></dataValidation>`);
     }
     out.push('</dataValidations>');
+  }
+
+  // 内部リンクは relationship を作らず location のみを使う。外部URLや数式は受け付けない。
+  if (internalHyperlinks.length) {
+    out.push('<hyperlinks>');
+    for (const hyperlink of internalHyperlinks) {
+      const formulaSheetName = hyperlink.targetSheet.replace(/'/g, "''");
+      const location = `'${formulaSheetName}'!${hyperlink.targetCell}`;
+      const tooltip = hyperlink.tooltip ? ` tooltip="${escapeXml(hyperlink.tooltip)}"` : '';
+      out.push(`<hyperlink ref="${hyperlink.ref}" location="${escapeXml(location)}"${tooltip}/>`);
+    }
+    out.push('</hyperlinks>');
   }
 
   if (sheet.print) {
@@ -473,14 +591,15 @@ function buildRootRels(): string {
 }
 
 function buildStylesXml(): string {
-  // 0: 既定 / 1: ヘッダ / 2: データ / 3..8: 差分種別・警告 / 9..18: レポート用UI
+  // 0: 既定 / 1: ヘッダ / 2: データ / 3..8: 差分種別・警告 / 9..19: レポート用UI
   return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
-    + '<fonts count="5">'
+    + '<fonts count="6">'
     +   '<font><sz val="11"/><name val="Meiryo"/></font>'
     +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font>'
     +   '<font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font>'
     +   '<font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font>'
     +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font>'
+    +   '<font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font>'
     + '</fonts>'
     + '<fills count="19">'
     +   '<fill><patternFill patternType="none"/></fill>'
@@ -508,7 +627,7 @@ function buildStylesXml(): string {
     +   '<border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="thin"><color rgb="FFCBD5E1"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="thin"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>'
     + '</borders>'
     + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    + '<cellXfs count="19">'
+    + '<cellXfs count="20">'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
@@ -528,6 +647,7 @@ function buildStylesXml(): string {
     +   '<xf numFmtId="0" fontId="4" fillId="16" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="17" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="18" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
     + '</cellXfs>'
     + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
     + '</styleSheet>';
@@ -541,6 +661,8 @@ export function buildXlsxBlob(sheets: XlsxSheet[]): Blob {
   const enc = new TextEncoder();
   const used = new Set<string>();
   const safe = sheets.map((s, i) => ({ ...s, name: sanitizeSheetName(s.name, i, used) }));
+  const safeSheetNames = safe.map((sheet) => sheet.name);
+  const hyperlinksBySheet = safe.map((sheet) => resolveInternalHyperlinks(sheets, safeSheetNames, sheet.internalHyperlinks));
 
   const entries: ZipEntry[] = [
     { name: '[Content_Types].xml', data: enc.encode(buildContentTypes(safe)) },
@@ -550,7 +672,7 @@ export function buildXlsxBlob(sheets: XlsxSheet[]): Blob {
     { name: 'xl/styles.xml', data: enc.encode(buildStylesXml()) }
   ];
   safe.forEach((s, i) => {
-    entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s)) });
+    entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s, hyperlinksBySheet[i])) });
   });
   return buildStoredZip(entries);
 }

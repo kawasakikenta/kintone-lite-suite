@@ -10592,6 +10592,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   init_utils();
   init_export();
   init_export_safety();
+  init_enrich();
   init_path_decoder();
 
   // src/diff/xlsx-builder.ts
@@ -10744,7 +10745,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     severityMedium: 15,
     severityLow: 16,
     review: 17,
-    info: 18
+    info: 18,
+    hyperlink: 19
   };
   function normalizedPaneCount(value, max) {
     const n = Math.floor(Number(value));
@@ -10771,6 +10773,50 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   function isSafeCellRange(value) {
     return /^[A-Z]{1,3}[1-9][0-9]*:[A-Z]{1,3}[1-9][0-9]*$/.test(value);
   }
+  function isSafeCellRef(value) {
+    const match = /^([A-Z]{1,3})([1-9][0-9]*)$/.exec(value);
+    if (!match) return false;
+    let column = 0;
+    for (const char of match[1]) column = column * 26 + char.charCodeAt(0) - 64;
+    const row = Number(match[2]);
+    return column >= 1 && column <= 16384 && Number.isSafeInteger(row) && row <= 1048576;
+  }
+  function normalizedOutline(value) {
+    const rawLevel = Math.floor(Number(value?.level));
+    const level = Number.isFinite(rawLevel) ? Math.max(0, Math.min(7, rawLevel)) : 0;
+    return {
+      level,
+      hidden: level > 0 && value?.hidden === true,
+      collapsed: value?.collapsed === true
+    };
+  }
+  function resolveInternalHyperlinks(sheets, safeSheetNames, links) {
+    const resolved = [];
+    const seenRefs = /* @__PURE__ */ new Set();
+    for (const link of links || []) {
+      const ref = String(link?.ref || "").toUpperCase();
+      const targetCell = String(link?.targetCell || "A1").toUpperCase();
+      if (!isSafeCellRef(ref) || !isSafeCellRef(targetCell) || seenRefs.has(ref)) continue;
+      let targetIndex = Number.isInteger(link.targetSheetIndex) ? Number(link.targetSheetIndex) : -1;
+      if (targetIndex < 0 || targetIndex >= safeSheetNames.length) {
+        const requested = String(link.targetSheet || "");
+        targetIndex = sheets.findIndex((sheet) => String(sheet.name || "") === requested);
+        if (targetIndex < 0) {
+          const folded = requested.toLocaleLowerCase("en-US");
+          targetIndex = safeSheetNames.findIndex((name) => name.toLocaleLowerCase("en-US") === folded);
+        }
+      }
+      if (targetIndex < 0 || targetIndex >= safeSheetNames.length) continue;
+      seenRefs.add(ref);
+      resolved.push({
+        ref,
+        targetSheet: safeSheetNames[targetIndex],
+        targetCell,
+        tooltip: link.tooltip == null ? void 0 : String(link.tooltip).slice(0, 255)
+      });
+    }
+    return resolved;
+  }
   function estimateColWidth(rows, col) {
     let max = MIN_COL_W;
     const limit = Math.min(rows.length, 500);
@@ -10791,16 +10837,23 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     }
     return Math.min(MAX_COL_W, max + 2);
   }
-  function buildSheetXml(sheet) {
+  function buildSheetXml(sheet, internalHyperlinks) {
     const rows = sheet.rows || [];
     const maxCols = rows.reduce((n, r) => Math.max(n, r ? r.length : 0), 0);
     const headerRow = normalizedPositiveInt(sheet.headerRow, 1, Math.max(1, rows.length));
     const widths = sheet.colWidths && sheet.colWidths.length ? sheet.colWidths : Array.from({ length: maxCols }, (_, i) => estimateColWidth(rows, i));
+    const hyperlinkRefs = new Set(internalHyperlinks.map((link) => link.ref));
+    const outlines = rows.map((_, index) => normalizedOutline(sheet.rowOutlines?.[index]));
+    const maxOutlineLevel = outlines.reduce((max, outline) => Math.max(max, outline.level), 0);
+    const hasOutline = maxOutlineLevel > 0 || outlines.some((outline) => outline.collapsed);
     const out = [];
     out.push(XML_HEADER);
     out.push('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">');
-    if (sheet.print) {
-      out.push('<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+    if (sheet.print || hasOutline) {
+      out.push("<sheetPr>");
+      if (hasOutline) out.push(`<outlinePr summaryBelow="${sheet.outlineSummaryBelow === false ? 0 : 1}" summaryRight="1"/>`);
+      if (sheet.print) out.push('<pageSetUpPr fitToPage="1"/>');
+      out.push("</sheetPr>");
     }
     const freezeRows = normalizedPaneCount(sheet.freezeRows == null ? sheet.freezeHeader !== false && rows.length > 0 ? 1 : 0 : sheet.freezeRows, 1048575);
     const freezeColumns = normalizedPaneCount(sheet.freezeColumns, 16383);
@@ -10811,7 +10864,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       if (paneXml) out.push(paneXml);
       out.push("</sheetView></sheetViews>");
     }
-    out.push('<sheetFormatPr defaultRowHeight="16"/>');
+    out.push(`<sheetFormatPr defaultRowHeight="16"${maxOutlineLevel ? ` outlineLevelRow="${maxOutlineLevel}"` : ""}/>`);
     if (widths.length) {
       out.push("<cols>");
       widths.forEach((w, i) => {
@@ -10829,7 +10882,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         const explicitCellStyle = sheet.cellStyles?.[r]?.[c];
         if ((v === null || v === void 0 || v === "") && !explicitCellStyle) continue;
         const ref = `${colRef(c + 1)}${r + 1}`;
-        const styleIndex = r + 1 === headerRow && !explicitCellStyle ? 1 : CELL_STYLE_INDEX[explicitCellStyle || sheet.rowStyles?.[r] || "normal"];
+        const rowStyle = sheet.rowStyles?.[r] || "normal";
+        const styleIndex = explicitCellStyle ? CELL_STYLE_INDEX[explicitCellStyle] : r + 1 === headerRow ? 1 : hyperlinkRefs.has(ref) && rowStyle === "normal" ? CELL_STYLE_INDEX.hyperlink : CELL_STYLE_INDEX[rowStyle];
         const styleAttr = ` s="${styleIndex}"`;
         if (typeof v === "number" && Number.isFinite(v)) {
           cells.push(`<c r="${ref}"${styleAttr}><v>${v}</v></c>`);
@@ -10841,7 +10895,13 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       }
       const rowHeight = Number(sheet.rowHeights?.[r]);
       const heightAttr = Number.isFinite(rowHeight) && rowHeight > 0 ? ` ht="${Math.min(409, rowHeight)}" customHeight="1"` : "";
-      out.push(`<row r="${r + 1}"${heightAttr}>${cells.join("")}</row>`);
+      const outline = outlines[r];
+      const outlineAttrs = [
+        outline.level ? ` outlineLevel="${outline.level}"` : "",
+        outline.hidden ? ' hidden="1"' : "",
+        outline.collapsed ? ' collapsed="1"' : ""
+      ].join("");
+      out.push(`<row r="${r + 1}"${heightAttr}${outlineAttrs}>${cells.join("")}</row>`);
     }
     out.push("</sheetData>");
     if (sheet.autoFilter !== false && rows.length >= headerRow && maxCols > 0) {
@@ -10863,6 +10923,16 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
         out.push(`<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${validation.sqref}"${promptTitle}${prompt}><formula1>${formula}</formula1></dataValidation>`);
       }
       out.push("</dataValidations>");
+    }
+    if (internalHyperlinks.length) {
+      out.push("<hyperlinks>");
+      for (const hyperlink of internalHyperlinks) {
+        const formulaSheetName = hyperlink.targetSheet.replace(/'/g, "''");
+        const location = `'${formulaSheetName}'!${hyperlink.targetCell}`;
+        const tooltip = hyperlink.tooltip ? ` tooltip="${escapeXml(hyperlink.tooltip)}"` : "";
+        out.push(`<hyperlink ref="${hyperlink.ref}" location="${escapeXml(location)}"${tooltip}/>`);
+      }
+      out.push("</hyperlinks>");
     }
     if (sheet.print) {
       const orientation = sheet.print.orientation === "landscape" ? "landscape" : "portrait";
@@ -10901,12 +10971,14 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return `${XML_HEADER}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
   }
   function buildStylesXml() {
-    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="5"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font></fonts><fills count="19"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF7ED"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0F172A"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDBEAFE"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCFCE7"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEE2E2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFECACA"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFDE68A"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="thin"><color rgb="FFCBD5E1"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="thin"><color rgb="FFCBD5E1"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="19"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="8" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="9" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="10" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="11" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="12" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="13" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="14" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="4" fillId="15" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="4" fillId="16" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="0" fillId="17" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="18" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="6"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font></fonts><fills count="19"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF7ED"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0F172A"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDBEAFE"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCFCE7"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEE2E2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFECACA"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFDE68A"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="thin"><color rgb="FFCBD5E1"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="thin"><color rgb="FFCBD5E1"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="20"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="8" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="9" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="10" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="11" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="12" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="13" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="14" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="4" fillId="15" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="4" fillId="16" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="0" fillId="17" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="18" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
   }
   function buildXlsxBlob(sheets) {
     const enc = new TextEncoder();
     const used = /* @__PURE__ */ new Set();
     const safe = sheets.map((s, i) => ({ ...s, name: sanitizeSheetName(s.name, i, used) }));
+    const safeSheetNames = safe.map((sheet) => sheet.name);
+    const hyperlinksBySheet = safe.map((sheet) => resolveInternalHyperlinks(sheets, safeSheetNames, sheet.internalHyperlinks));
     const entries = [
       { name: "[Content_Types].xml", data: enc.encode(buildContentTypes(safe)) },
       { name: "_rels/.rels", data: enc.encode(buildRootRels()) },
@@ -10915,7 +10987,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       { name: "xl/styles.xml", data: enc.encode(buildStylesXml()) }
     ];
     safe.forEach((s, i) => {
-      entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s)) });
+      entries.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: enc.encode(buildSheetXml(s, hyperlinksBySheet[i])) });
     });
     return buildStoredZip(entries);
   }
@@ -10974,6 +11046,245 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     for (const k of [...known, ...unknown]) ordered.set(k, map.get(k));
     return ordered;
   }
+  var FIELD_SETTING_LABELS = {
+    label: "フィールド名",
+    name: "フィールド名",
+    code: "フィールドコード",
+    type: "フィールドタイプ",
+    noLabel: "フィールド名を表示しない",
+    required: "必須項目にする",
+    unique: "重複禁止にする",
+    defaultValue: "初期値",
+    defaultNowValue: "現在日時を初期値にする",
+    description: "説明",
+    minLength: "最小文字数",
+    maxLength: "最大文字数",
+    minValue: "最小値",
+    maxValue: "最大値",
+    expression: "計算式",
+    hideExpression: "計算式を表示しない",
+    options: "選択肢",
+    protocol: "プロトコル",
+    displayScale: "小数点以下の表示桁数",
+    digit: "桁区切りを表示する",
+    unit: "単位記号",
+    unitPosition: "単位記号の位置",
+    align: "並び",
+    format: "表示形式",
+    entities: "選択候補",
+    fields: "テーブル内の項目",
+    referenceTable: "関連レコード一覧設定",
+    lookup: "ルックアップ設定",
+    condition: "表示条件（フィールドの一致）",
+    displayFields: "表示するフィールド",
+    filterCond: "絞り込み条件",
+    relatedApp: "参照するアプリ",
+    size: "一度に表示する最大件数",
+    sort: "ソート",
+    relatedKeyField: "コピー元のフィールド",
+    fieldMappings: "ほかのフィールドのコピー",
+    lookupPickerFields: "選択画面に表示するフィールド",
+    field: "自アプリのフィールド",
+    relatedField: "参照するアプリのフィールド",
+    app: "参照するアプリID",
+    thumbnailSize: "サムネイルの大きさ",
+    index: "並び順"
+  };
+  var FIELD_TYPE_LABELS = {
+    SINGLE_LINE_TEXT: "文字列（1行）",
+    MULTI_LINE_TEXT: "文字列（複数行）",
+    RICH_TEXT: "リッチエディター",
+    NUMBER: "数値",
+    CALC: "計算",
+    RADIO_BUTTON: "ラジオボタン",
+    CHECK_BOX: "チェックボックス",
+    MULTI_SELECT: "複数選択",
+    DROP_DOWN: "ドロップダウン",
+    DATE: "日付",
+    TIME: "時刻",
+    DATETIME: "日時",
+    LINK: "リンク",
+    FILE: "添付ファイル",
+    USER_SELECT: "ユーザー選択",
+    ORGANIZATION_SELECT: "組織選択",
+    GROUP_SELECT: "グループ選択",
+    REFERENCE_TABLE: "関連レコード一覧",
+    SUBTABLE: "テーブル",
+    GROUP: "グループ",
+    LABEL: "ラベル",
+    SPACER: "スペース",
+    RECORD_NUMBER: "レコード番号",
+    CREATOR: "作成者",
+    CREATED_TIME: "作成日時",
+    MODIFIER: "更新者",
+    UPDATED_TIME: "更新日時",
+    STATUS: "ステータス",
+    STATUS_ASSIGNEE: "作業者",
+    CATEGORY: "カテゴリー"
+  };
+  function normalizeSeverity(severity) {
+    const value = String(severity || "").toLowerCase();
+    if (value === "high" || value === "medium") return value;
+    return "low";
+  }
+  function severityRank(severity) {
+    const value = normalizeSeverity(severity);
+    return value === "high" ? 2 : value === "medium" ? 1 : 0;
+  }
+  function fieldSettingsProperties(bundle) {
+    const section = bundle?.sections?.fieldSettings;
+    if (!section || typeof section !== "object" || Array.isArray(section)) return {};
+    const properties = section.properties;
+    if (properties && typeof properties === "object" && !Array.isArray(properties)) return properties;
+    return section;
+  }
+  function fieldDefinitionAt(bundle, info) {
+    const root2 = fieldSettingsProperties(bundle)[info.rootCode];
+    if (!root2 || typeof root2 !== "object" || Array.isArray(root2)) return null;
+    if (!info.isSubField) return root2;
+    const child = root2.fields?.[info.subFieldCode];
+    return child && typeof child === "object" && !Array.isArray(child) ? child : null;
+  }
+  function fieldDefinitionLabel(definition) {
+    if (!definition || typeof definition !== "object") return "";
+    return String(definition.label || definition.name || "").trim();
+  }
+  function fieldLabelFromRow(row, info) {
+    const preferredPayload = row.type === "removed" ? row.left : row.right;
+    const fallbackPayload = row.type === "removed" ? row.right : row.left;
+    for (const payload of [preferredPayload, fallbackPayload]) {
+      const label = fieldDefinitionLabel(payload);
+      if (label) return label;
+    }
+    if (String(info.leafKey || "") === "label" || String(info.leafKey || "") === "name") {
+      for (const value of [preferredPayload, fallbackPayload]) {
+        if (typeof value === "string" && value.trim()) return value.trim();
+      }
+    }
+    const match = String(row.label || "").match(/(?:フィールド|項目)[「\"]([^」\"]+)[」\"]/);
+    return match ? match[1].trim() : "";
+  }
+  function fieldDisplayIdentity(row, info, ctx) {
+    const sourceDef = fieldDefinitionAt(ctx.sourceBundle, info);
+    const targetDef = fieldDefinitionAt(ctx.targetBundle, info);
+    const preferredDef = row.type === "removed" ? sourceDef : targetDef;
+    const fallbackDef = row.type === "removed" ? targetDef : sourceDef;
+    const activeLabel = fieldDefinitionLabel(preferredDef) || fieldDefinitionLabel(fallbackDef) || fieldLabelFromRow(row, info) || info.activeCode;
+    const preferredPayload = row.type === "removed" ? row.left : row.right;
+    const fallbackPayload = row.type === "removed" ? row.right : row.left;
+    const payloadType = (payload) => payload && typeof payload === "object" && !Array.isArray(payload) ? String(payload.type || "") : "";
+    const typeCode = String(preferredDef?.type || fallbackDef?.type || payloadType(preferredPayload) || payloadType(fallbackPayload) || "");
+    const fieldType = FIELD_TYPE_LABELS[typeCode] || typeCode || "不明";
+    if (!info.isSubField) {
+      return {
+        fieldKey: String(info.rootCode),
+        fieldCode: String(info.rootCode),
+        fieldName: activeLabel,
+        fieldType
+      };
+    }
+    const sourceRoot = fieldSettingsProperties(ctx.sourceBundle)[info.rootCode];
+    const targetRoot = fieldSettingsProperties(ctx.targetBundle)[info.rootCode];
+    const preferredRoot = row.type === "removed" ? sourceRoot : targetRoot;
+    const fallbackRoot = row.type === "removed" ? targetRoot : sourceRoot;
+    const rootLabel = fieldDefinitionLabel(preferredRoot) || fieldDefinitionLabel(fallbackRoot) || String(info.rootCode);
+    return {
+      fieldKey: `${info.rootCode}${info.subFieldCode}`,
+      fieldCode: `${info.rootCode} > ${info.subFieldCode}`,
+      fieldName: `${rootLabel} > ${activeLabel}`,
+      fieldType
+    };
+  }
+  function fieldSettingTokenLabel(token) {
+    if (typeof token === "number") return `${token + 1}件目`;
+    return FIELD_SETTING_LABELS[token] || token;
+  }
+  function fieldSettingIdentity(info) {
+    const tokens = Array.isArray(info.tailTokens) ? info.tailTokens : [];
+    if (!tokens.length) return { settingKey: "(field)", settingLabel: "フィールド全体" };
+    const settingKey = tokens.map((token) => String(token)).join(".");
+    if (tokens[0] === "options") {
+      const option = tokens.length > 1 ? String(tokens[1]) : "";
+      const suffix = tokens.length > 2 ? fieldSettingTokenLabel(tokens[2]) : "";
+      return {
+        settingKey,
+        settingLabel: option ? `選択肢「${option}」${suffix ? ` / ${suffix}` : ""}` : "選択肢と並び順"
+      };
+    }
+    if (tokens[0] === "lookup" || tokens[0] === "referenceTable") {
+      return {
+        settingKey,
+        settingLabel: tokens.map(fieldSettingTokenLabel).join(" / ")
+      };
+    }
+    return {
+      settingKey,
+      settingLabel: tokens.map(fieldSettingTokenLabel).join(" / ")
+    };
+  }
+  function fieldSummaryText(added, removed, changed, settingLabels) {
+    const counts = [
+      added ? `追加 ${added}件` : "",
+      removed ? `削除 ${removed}件` : "",
+      changed ? `変更 ${changed}件` : ""
+    ].filter(Boolean).join(" / ");
+    const visibleSettings = settingLabels.slice(0, 6);
+    const more = settingLabels.length > visibleSettings.length ? `、ほか${settingLabels.length - visibleSettings.length}項目` : "";
+    return `${counts || "差分なし"}。変更設定: ${visibleSettings.join("、") || "なし"}${more}`;
+  }
+  function buildDiffXlsxFieldModel(ctx) {
+    const details = [];
+    for (const [rowIndex, row] of (ctx.rows || []).entries()) {
+      if (!row || row._displayOnly || row.type === "same") continue;
+      const info = extractFieldPathInfo(String(row.path || ""));
+      if (!info) continue;
+      const identity = fieldDisplayIdentity(row, info, ctx);
+      const setting = fieldSettingIdentity(info);
+      details.push({
+        rowIndex,
+        ...identity,
+        ...setting,
+        severity: normalizeSeverity(row.severity),
+        row
+      });
+    }
+    details.sort((a, b) => a.fieldCode.localeCompare(b.fieldCode, "ja") || a.settingKey.localeCompare(b.settingKey, "ja") || String(a.row.type || "").localeCompare(String(b.row.type || ""), "ja") || String(a.row.path || "").localeCompare(String(b.row.path || ""), "ja"));
+    const byField = /* @__PURE__ */ new Map();
+    for (const detail of details) {
+      let summary = byField.get(detail.fieldKey);
+      if (!summary) {
+        summary = {
+          fieldKey: detail.fieldKey,
+          fieldCode: detail.fieldCode,
+          fieldName: detail.fieldName,
+          fieldType: detail.fieldType,
+          diffCount: 0,
+          added: 0,
+          removed: 0,
+          changed: 0,
+          severity: detail.severity,
+          settingLabels: [],
+          summary: ""
+        };
+        byField.set(detail.fieldKey, summary);
+      }
+      summary.diffCount += 1;
+      if (detail.row.type === "added") summary.added += 1;
+      else if (detail.row.type === "removed") summary.removed += 1;
+      else summary.changed += 1;
+      if (severityRank(detail.severity) > severityRank(summary.severity)) summary.severity = detail.severity;
+      if (!summary.settingLabels.includes(detail.settingLabel)) summary.settingLabels.push(detail.settingLabel);
+      if (detail.fieldName && detail.fieldName !== detail.fieldCode) summary.fieldName = detail.fieldName;
+      if (detail.fieldType && detail.fieldType !== "不明") summary.fieldType = detail.fieldType;
+    }
+    const summaries = [...byField.values()];
+    for (const summary of summaries) {
+      summary.settingLabels.sort((a, b) => a.localeCompare(b, "ja"));
+      summary.summary = fieldSummaryText(summary.added, summary.removed, summary.changed, summary.settingLabels);
+    }
+    summaries.sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || a.fieldCode.localeCompare(b.fieldCode, "ja"));
+    return { details, summaries };
+  }
   function appLabel(bundle) {
     if (!bundle) return "";
     const name = extractAppNameFromBundle(bundle) || "";
@@ -11006,7 +11317,14 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if (row.type === "same") return "同一";
     return String(row.type || "-");
   }
-  function rowItemLabel(row) {
+  function rowItemLabel(row, sourceBundle, targetBundle) {
+    const fieldInfo = extractFieldPathInfo(String(row.path || ""));
+    if (fieldInfo) {
+      const identity = fieldDisplayIdentity(row, fieldInfo, { rows: [], sourceBundle, targetBundle });
+      const setting = fieldSettingIdentity(fieldInfo);
+      const field = identity.fieldName && identity.fieldName !== identity.fieldCode ? `${identity.fieldName}（${identity.fieldCode}）` : identity.fieldCode;
+      return `${field} / ${setting.settingLabel}`;
+    }
     if (row.label) return String(row.label);
     try {
       const decoded = decodeRow(row);
@@ -11050,6 +11368,37 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const text = stringifyRowValueForDiff(rawValue, row.path);
     const originalUtf16Length = typeof rawValue === "string" ? rawValue.length : text.length;
     return xlsxDiffValuePreview(text, originalUtf16Length);
+  }
+  function conciseFieldDefinition(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const definition = value;
+    const type = String(definition.type || "").trim();
+    const label = String(definition.label || definition.name || "").trim();
+    const code = String(definition.code || "").trim();
+    if (!type && !label && !code) return null;
+    const parts = [
+      type ? `種類: ${FIELD_TYPE_LABELS[type] || type}` : "",
+      label ? `表示名: ${label}` : "",
+      code ? `コード: ${code}` : "",
+      typeof definition.required === "boolean" ? `必須: ${definition.required ? "はい" : "いいえ"}` : "",
+      typeof definition.unique === "boolean" ? `重複禁止: ${definition.unique ? "はい" : "いいえ"}` : "",
+      definition.options && typeof definition.options === "object" ? `選択肢: ${Object.keys(definition.options).length}件` : "",
+      definition.fields && typeof definition.fields === "object" ? `テーブル内フィールド: ${Object.keys(definition.fields).length}件` : "",
+      definition.lookup && typeof definition.lookup === "object" ? "ルックアップ: あり" : "",
+      definition.referenceTable && typeof definition.referenceTable === "object" ? "関連レコード設定: あり" : "",
+      String(definition.expression || "").trim() ? "計算式: あり" : ""
+    ].filter(Boolean);
+    return parts.join("\n");
+  }
+  function fieldDetailValue(detail, side) {
+    const row = detail.row;
+    const missing = side === "source" ? row.left === void 0 || row.type === "added" : row.right === void 0 || row.type === "removed";
+    if (missing) return side === "source" ? "—（比較元には存在しません）" : "—（比較先には存在しません）";
+    if (detail.settingKey === "(field)") {
+      const summary = conciseFieldDefinition(side === "source" ? row.left : row.right);
+      return summary || "要約できない形式です。差分IDから「差分一覧」、または「フィールド技術明細」を確認してください。";
+    }
+    return rowValue(row, side);
   }
   function readableDiffRowHeight(...values) {
     const maxLines = values.reduce((max, value) => {
@@ -11133,7 +11482,20 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     if ((ctx.partialIssues || []).some((issue) => (issue.sectionKey || issue.section) === key)) return "一部未検証";
     return "走査済み";
   }
-  function buildSummarySheet(ctx, grouped) {
+  function fieldComparisonSummary(ctx, fieldCount, settingDiffCount, unstructuredFieldDiffCount) {
+    const fieldSelected = (ctx.scopes || []).includes("fieldSettings") || (ctx.rows || []).some((row) => (row.sectionKey || row.section) === "fieldSettings");
+    if (!fieldSelected) return "比較対象外";
+    const fieldIncomplete = (ctx.fetchIssues || []).some((issue) => (issue.sectionKey || issue.section) === "fieldSettings") || (ctx.partialIssues || []).some((issue) => (issue.sectionKey || issue.section) === "fieldSettings") || (ctx.truncation?.sections || []).some((section) => (section.sectionKey || section.section) === "fieldSettings");
+    const known = [
+      fieldCount ? `${fieldCount}フィールド / ${settingDiffCount}設定差分` : "",
+      unstructuredFieldDiffCount ? `構造化できない差分 ${unstructuredFieldDiffCount}件` : ""
+    ].filter(Boolean).join("、");
+    if (fieldIncomplete) return `未判定${known ? `（確認できた範囲: ${known}）` : "（取得・走査が不完全）"}`;
+    if (unstructuredFieldDiffCount) return `${known}。技術明細を確認してください`;
+    if (fieldCount) return `${fieldCount}フィールド / ${settingDiffCount}設定差分`;
+    return ctx.exportMode === "filtered" ? "0件（この出力範囲内）" : "0件（走査済み）";
+  }
+  function buildSummarySheet(ctx, grouped, fieldCount, settingDiffCount, unstructuredFieldDiffCount) {
     const rows = ctx.rows || [];
     const fetchIssues = ctx.fetchIssues || [];
     const partialIssues = ctx.partialIssues || [];
@@ -11145,6 +11507,9 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     const comparisonBanner = `${appLabel(ctx.sourceBundle) || "比較元"}  →  ${appLabel(ctx.targetBundle) || "比較先"}`;
     const sensitiveSections = [...new Set(rows.filter((row) => !row._displayOnly && row.type !== "same" && SENSITIVE_DIFF_SECTION_KEYS.has(String(row.sectionKey || ""))).map((row) => sectionLabelOf(String(row.sectionKey || ""))))];
     const redactedSensitiveSections = [...new Set(rows.filter((row) => isSensitiveSameDiffRow(row)).map((row) => sectionLabelOf(String(row.sectionKey || ""))))];
+    const fieldStatus = fieldComparisonSummary(ctx, fieldCount, settingDiffCount, unstructuredFieldDiffCount);
+    const fieldStatusIncomplete = fieldStatus.startsWith("未判定");
+    const fieldLinkTarget = fieldCount ? { sheet: "フィールド差分要約", cell: "C3", label: "フィールド差分を見る" } : unstructuredFieldDiffCount ? { sheet: "フィールド技術明細", cell: "A3", label: "技術明細を見る" } : null;
     const sheetRows = [
       ["kintone 設定差分比較レポート", "", "", ""],
       [comparisonBanner, "", "", ""],
@@ -11163,7 +11528,8 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       ["比較方向", "比較元 → 比較先", "出力範囲", ctx.exportLabel || (ctx.exportMode === "filtered" ? "表示中（フィルタ適用後）" : "全件")],
       ["比較対象", scopeLabel(ctx.scopes), "出力内容", getDiffExportContentLabel(ctx.exportContentMode || "diffOnly")],
       ["正規化設定", normalizationLabel(ctx.normalizationPresetState), "無視キー", String(ctx.ignoreKeys || "")],
-      ["使い方", "「差分一覧」の黄色い3列に確認状態・担当者・コメントを記入し、フィルタで絞り込めます。確認状態の初期値は「未確認」です。", "", ""],
+      ["フィールド差分", fieldStatus, "", fieldLinkTarget?.label || ""],
+      ["使い方", `「差分一覧」の黄色い3列に確認状態・担当者・コメントを記入し、フィルタで絞り込めます。確認状態の初期値は「未確認」です。${fieldCount ? " フィールド差分は「フィールド差分要約」で対象を特定し、「フィールド差分詳細」で設定項目ごとの比較値を確認できます。" : ""}`, "", ""],
       ["", "", "", ""],
       ["セクション別集計", "", "", ""],
       ["セクション", "一覧行数", "差分件数", "走査・取得状態"]
@@ -11221,9 +11587,11 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     cellStyles[5][3] = fetchIssues.length > 0 ? "kpiDanger" : "kpiGood";
     cellStyles[7][3] = partialIssues.length > 0 ? "kpiDanger" : "kpiGood";
     cellStyles[8][3] = truncation ? "kpiDanger" : "kpiGood";
-    for (const rowIndex of [11, 19]) cellStyles[rowIndex][0] = "sectionHeader";
-    cellStyles[20] = ["sectionHeader", "sectionHeader", "sectionHeader", "sectionHeader"];
-    const merges = ["A1:D1", "A2:D2", "A12:D12", "A20:D20"];
+    for (const rowIndex of [11, 20]) cellStyles[rowIndex][0] = "sectionHeader";
+    cellStyles[21] = ["sectionHeader", "sectionHeader", "sectionHeader", "sectionHeader"];
+    cellStyles[17] = ["info", fieldStatusIncomplete ? "kpiDanger" : fieldCount || unstructuredFieldDiffCount ? "kpiWarning" : "kpiGood"];
+    if (fieldLinkTarget) cellStyles[17][3] = "hyperlink";
+    const merges = ["A1:D1", "A2:D2", "A12:D12", "A21:D21"];
     for (const index of warningRows) merges.push(`B${index + 1}:D${index + 1}`);
     return {
       name: "概要",
@@ -11235,6 +11603,12 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
       cellStyles,
       rowHeights: [32, 24],
       merges,
+      internalHyperlinks: fieldLinkTarget ? [{
+        ref: "D18",
+        targetSheet: fieldLinkTarget.sheet,
+        targetCell: fieldLinkTarget.cell,
+        tooltip: "差分があるフィールドの一覧へ移動"
+      }] : [],
       showGridLines: false,
       print: {
         orientation: "portrait",
@@ -11246,17 +11620,30 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
   var REVIEW_STATUS_VALUES = ["未確認", "確認中", "対応要", "対応不要", "確認済み"];
   function stableDifferenceId(row, seen) {
+    const leftDigest = shortStableHash(stableStringify(row.left) ?? "undefined");
+    const rightDigest = shortStableHash(stableStringify(row.right) ?? "undefined");
     const identity = [
       row.sectionKey || row.section || "",
       row.type || "",
       row.path || "",
       row.label || "",
-      row.moved ? "moved" : ""
+      row.moved ? "moved" : "",
+      leftDigest,
+      rightDigest
     ].join("");
     const base = `D-${shortStableHash(identity)}`;
     const occurrence = (seen.get(base) || 0) + 1;
     seen.set(base, occurrence);
     return occurrence === 1 ? base : `${base}-${occurrence}`;
+  }
+  function buildDifferenceRefs(rows) {
+    const refs = [];
+    const seenIds = /* @__PURE__ */ new Map();
+    rows.forEach((row, index) => refs.push({
+      id: stableDifferenceId(row, seenIds),
+      rowNumber: index + 3
+    }));
+    return refs;
   }
   function directionalValueHeader(side, bundle) {
     const direction = side === "source" ? "比較元" : "比較先";
@@ -11264,7 +11651,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return label ? `${direction}の値
 ${label}` : `${direction}の値`;
   }
-  function buildListSheet(rows, name = "差分一覧", sourceBundle, targetBundle) {
+  function buildListSheet(rows, name = "差分一覧", sourceBundle, targetBundle, differenceRefs) {
     const headers = [
       "差分ID",
       "重要度",
@@ -11304,16 +11691,16 @@ ${label}` : `${direction}の値`;
     const cellStyles = [groupCellStyles, []];
     const rowHeights = [24, 42];
     const seenIds = /* @__PURE__ */ new Map();
-    for (const row of rows) {
+    for (const [rowIndex, row] of rows.entries()) {
       const sourceValue = rowValue(row, "source");
       const targetValue = rowValue(row, "target");
       const note = rowNote(row);
       out.push([
-        stableDifferenceId(row, seenIds),
+        differenceRefs?.[rowIndex]?.id || stableDifferenceId(row, seenIds),
         getSeverityDisplayLabel(row.severity || "low"),
         rowTypeLabel(row),
         sectionLabelOf(row.sectionKey || row.section || ""),
-        rowItemLabel(row),
+        rowItemLabel(row, sourceBundle, targetBundle),
         "未確認",
         "",
         "",
@@ -11397,7 +11784,7 @@ ${label}` : `${direction}の値`;
         stableDifferenceId(row, seenIds),
         getSeverityDisplayLabel(row.severity || "low"),
         rowTypeLabel(row),
-        rowItemLabel(row),
+        rowItemLabel(row, sourceBundle, targetBundle),
         row.path || "",
         sourceValue,
         targetValue,
@@ -11418,6 +11805,212 @@ ${label}` : `${direction}の値`;
       freezeColumns: 4,
       rowHeights,
       merges: ["A1:D1", "F1:G1"],
+      showGridLines: false,
+      print: {
+        orientation: "landscape",
+        fitToWidth: 1,
+        fitToHeight: 0,
+        repeatRows: { from: 1, to: 2 }
+      }
+    };
+  }
+  function fieldSummaryRootChangeType(summary, model) {
+    const root2 = model.details.find((detail) => detail.fieldKey === summary.fieldKey && detail.settingKey === "(field)");
+    return root2?.row.type === "added" || root2?.row.type === "removed" ? root2.row.type : null;
+  }
+  function fieldSummaryRowStyle(summary, model) {
+    const rootType = fieldSummaryRootChangeType(summary, model);
+    if (rootType === "added") return "added";
+    if (rootType === "removed") return "removed";
+    return "changed";
+  }
+  function fieldSummaryStateLabel(summary, model) {
+    const rootType = fieldSummaryRootChangeType(summary, model);
+    if (rootType === "added") return "追加（比較先のみ）";
+    if (rootType === "removed") return "削除（比較元のみ）";
+    return "設定変更";
+  }
+  function buildFieldSummarySheet(model) {
+    const firstDetailRowByField = /* @__PURE__ */ new Map();
+    model.details.forEach((detail, index) => {
+      if (!firstDetailRowByField.has(detail.fieldKey)) firstDetailRowByField.set(detail.fieldKey, index + 3);
+    });
+    const groupHeader = [
+      "判断",
+      "",
+      "差分フィールド",
+      "",
+      "",
+      "変更内容",
+      "",
+      "ナビゲーション"
+    ];
+    const headers = [
+      "状態",
+      "影響度",
+      "フィールド名",
+      "フィールドコード",
+      "フィールド種別",
+      "設定差分数",
+      "主な変更",
+      "詳細"
+    ];
+    const rows = [groupHeader, headers];
+    const rowStyles = ["normal", "normal"];
+    const groupCellStyles = [];
+    groupCellStyles[0] = "kpiWarning";
+    groupCellStyles[2] = "sectionHeader";
+    groupCellStyles[5] = "info";
+    groupCellStyles[7] = "info";
+    const cellStyles = [groupCellStyles, []];
+    const rowHeights = [24, 32];
+    for (const summary of model.summaries) {
+      const settings = summary.settingLabels.join("、");
+      rows.push([
+        fieldSummaryStateLabel(summary, model),
+        getSeverityDisplayLabel(summary.severity),
+        summary.fieldName,
+        summary.fieldCode,
+        summary.fieldType,
+        summary.diffCount,
+        settings,
+        `詳細を見る（${summary.diffCount}件）`
+      ]);
+      rowStyles.push(fieldSummaryRowStyle(summary, model));
+      const styles = [void 0, severityStyleOf(summary.severity)];
+      styles[3] = "info";
+      styles[4] = "info";
+      styles[5] = summary.severity === "high" ? "kpiDanger" : "kpiWarning";
+      styles[7] = "hyperlink";
+      cellStyles.push(styles);
+      rowHeights.push(readableDiffRowHeight(settings));
+    }
+    return {
+      name: "フィールド差分要約",
+      rows,
+      colWidths: [20, 10, 30, 32, 20, 12, 48, 22],
+      rowStyles,
+      cellStyles,
+      headerRow: 2,
+      freezeRows: 2,
+      freezeColumns: 5,
+      rowHeights,
+      merges: ["A1:B1", "C1:E1", "F1:G1"],
+      internalHyperlinks: model.summaries.map((summary, index) => ({
+        ref: `H${index + 3}`,
+        targetSheet: "フィールド差分詳細",
+        targetCell: `C${firstDetailRowByField.get(summary.fieldKey) || 3}`,
+        tooltip: `${summary.fieldName}の詳細差分へ移動`
+      })),
+      showGridLines: false,
+      print: {
+        orientation: "landscape",
+        fitToWidth: 1,
+        fitToHeight: 0,
+        repeatRows: { from: 1, to: 2 }
+      }
+    };
+  }
+  function buildFieldDetailSheet(model, sourceBundle, targetBundle, differenceRefs) {
+    const summaryRowByField = new Map(model.summaries.map((summary, index) => [summary.fieldKey, index + 3]));
+    const groupHeader = [
+      "差分の識別",
+      "差分フィールド",
+      "",
+      "",
+      "設定差分",
+      "",
+      "値の比較（比較元 → 比較先）",
+      "",
+      "技術情報",
+      "",
+      "ナビゲーション"
+    ];
+    const headers = [
+      "差分ID",
+      "影響度",
+      "フィールド名",
+      "フィールドコード",
+      "設定項目",
+      "種別",
+      directionalValueHeader("source", sourceBundle),
+      directionalValueHeader("target", targetBundle),
+      "パス",
+      "確認ポイント",
+      "要約へ"
+    ];
+    const rows = [groupHeader, headers];
+    const rowStyles = ["normal", "normal"];
+    const groupCellStyles = [];
+    groupCellStyles[0] = "info";
+    groupCellStyles[1] = "sectionHeader";
+    groupCellStyles[4] = "info";
+    groupCellStyles[6] = "sectionHeader";
+    groupCellStyles[8] = "info";
+    groupCellStyles[10] = "info";
+    const cellStyles = [groupCellStyles, []];
+    const rowHeights = [24, 42];
+    for (const detail of model.details) {
+      const sourceValue = fieldDetailValue(detail, "source");
+      const targetValue = fieldDetailValue(detail, "target");
+      const note = rowNote(detail.row);
+      const diffRef = differenceRefs?.[detail.rowIndex];
+      rows.push([
+        diffRef?.id || "",
+        getSeverityDisplayLabel(detail.severity),
+        detail.fieldName,
+        detail.fieldCode,
+        detail.settingLabel,
+        rowTypeLabel(detail.row),
+        sourceValue,
+        targetValue,
+        detail.row.path || "",
+        note,
+        "要約へ戻る"
+      ]);
+      rowStyles.push(rowStyleOf(detail.row));
+      const styles = ["hyperlink", severityStyleOf(detail.severity)];
+      styles[3] = "info";
+      styles[8] = "info";
+      styles[10] = "hyperlink";
+      if (detail.row.type === "added") {
+        styles[6] = "reference";
+        styles[7] = "added";
+      } else if (detail.row.type === "removed") {
+        styles[6] = "removed";
+        styles[7] = "reference";
+      } else {
+        styles[6] = "removed";
+        styles[7] = "added";
+      }
+      cellStyles.push(styles);
+      rowHeights.push(readableDiffRowHeight(sourceValue, targetValue, note));
+    }
+    return {
+      name: "フィールド差分詳細",
+      rows,
+      colWidths: [15, 10, 30, 32, 34, 18, 46, 46, 46, 34, 16],
+      rowStyles,
+      cellStyles,
+      headerRow: 2,
+      freezeRows: 2,
+      freezeColumns: 5,
+      rowHeights,
+      merges: ["B1:D1", "E1:F1", "G1:H1", "I1:J1"],
+      internalHyperlinks: [
+        ...model.details.map((detail, index) => ({
+          ref: `A${index + 3}`,
+          targetSheet: "差分一覧",
+          targetCell: `A${differenceRefs?.[detail.rowIndex]?.rowNumber || 3}`,
+          tooltip: `${detail.fieldName}の全差分行へ移動`
+        })),
+        ...model.details.map((detail, index) => ({
+          ref: `K${index + 3}`,
+          targetSheet: "フィールド差分要約",
+          targetCell: `C${summaryRowByField.get(detail.fieldKey) || 3}`,
+          tooltip: `${detail.fieldName}の要約へ戻る`
+        }))
+      ],
       showGridLines: false,
       print: {
         orientation: "landscape",
@@ -11470,12 +12063,31 @@ ${label}` : `${direction}の値`;
   function buildDiffXlsxSheets(ctx) {
     const rows = ctx.rows || [];
     const grouped = groupRowsBySection(rows);
-    const sheets = [
-      buildSummarySheet(ctx, grouped),
-      buildListSheet(rows, "差分一覧", ctx.sourceBundle, ctx.targetBundle)
-    ];
+    const fieldModel = buildDiffXlsxFieldModel(ctx);
+    const actionableFieldRows = rows.filter((row) => (row.sectionKey || row.section) === "fieldSettings" && !row._displayOnly && row.type !== "same");
+    const unstructuredFieldDiffCount = Math.max(0, actionableFieldRows.length - fieldModel.details.length);
+    const differenceRefs = buildDifferenceRefs(rows);
+    const sheets = [buildSummarySheet(
+      ctx,
+      grouped,
+      fieldModel.summaries.length,
+      fieldModel.details.length,
+      unstructuredFieldDiffCount
+    )];
+    if (fieldModel.details.length) {
+      sheets.push(
+        buildFieldSummarySheet(fieldModel),
+        buildFieldDetailSheet(fieldModel, ctx.sourceBundle, ctx.targetBundle, differenceRefs)
+      );
+    }
+    sheets.push(buildListSheet(rows, "差分一覧", ctx.sourceBundle, ctx.targetBundle, differenceRefs));
     for (const [key, list] of grouped) {
-      sheets.push(buildSectionSheet(sectionLabelOf(key), list, ctx.sourceBundle, ctx.targetBundle));
+      sheets.push(buildSectionSheet(
+        key === "fieldSettings" ? "フィールド技術明細" : sectionLabelOf(key),
+        list,
+        ctx.sourceBundle,
+        ctx.targetBundle
+      ));
     }
     const issuesSheet = buildIssuesSheet(ctx);
     if (issuesSheet) sheets.push(issuesSheet);
