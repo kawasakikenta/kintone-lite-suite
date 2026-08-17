@@ -50,6 +50,123 @@ describe('diff/snapshot', () => {
     expect(json).not.toContain('rawRows');
   });
 
+  it('redacts identical plugin settings and customize bodies without mutating source rows', () => {
+    const rows = [{
+      sectionKey: 'pluginSettings', type: 'same', path: 'pluginSettings',
+      left: { plugins: [{ config: { token: 'PLUGIN_SAME_SECRET' } }] },
+      right: { plugins: [{ config: { token: 'PLUGIN_SAME_SECRET' } }] }
+    }, {
+      sectionKey: 'customizeSettings', type: 'same', path: 'customizeSettings.desktop.js[0].file._body',
+      left: 'CUSTOM_SAME_SECRET', right: 'CUSTOM_SAME_SECRET'
+    }];
+
+    const payload = buildDiffSnapshotPayload({ rows, scopes: ['pluginSettings', 'customizeSettings'] });
+    const json = JSON.stringify(payload);
+
+    expect(json).not.toContain('PLUGIN_SAME_SECRET');
+    expect(json).not.toContain('CUSTOM_SAME_SECRET');
+    expect(json).toContain('同一の機密値は安全のため省略しました');
+    expect(payload.rows.every((row) => row.sensitiveValueRedacted === true)).toBe(true);
+    expect(JSON.stringify(rows)).toContain('PLUGIN_SAME_SECRET');
+    expect(JSON.stringify(rows)).toContain('CUSTOM_SAME_SECRET');
+  });
+
+  it('round-trips partial, unscanned, and complete truncation section semantics', () => {
+    const payload = buildDiffSnapshotPayload({
+      savedAt: '2026-08-16T01:00:00.000Z',
+      rows: [],
+      truncation: {
+        truncated: true,
+        diffLimit: 1000,
+        droppedDiff: 1,
+        sections: [
+          {
+            sectionKey: 'fieldSettings',
+            section: 'フィールド設定',
+            droppedDiff: 0,
+            droppedSame: 0,
+            scanned: true,
+            partiallyScanned: true,
+            scanStatus: 'partial',
+            omittedDiffCount: null
+          },
+          {
+            sectionKey: 'viewSettings',
+            section: 'ビュー',
+            droppedDiff: 0,
+            droppedSame: 0,
+            scanned: false,
+            partiallyScanned: false,
+            scanStatus: 'unscanned',
+            omittedDiffCount: null
+          },
+          {
+            sectionKey: 'reportSettings',
+            section: 'グラフ',
+            droppedDiff: 1,
+            droppedSame: 0,
+            scanned: true,
+            partiallyScanned: false,
+            scanStatus: 'complete',
+            omittedDiffCount: 1
+          }
+        ]
+      }
+    });
+    const imported = createDiffSnapshotImportState(JSON.parse(JSON.stringify(payload)));
+
+    expect(imported.snapshot.truncation.sections[0]).toEqual({
+      sectionKey: 'fieldSettings',
+      section: 'フィールド設定',
+      droppedDiff: 0,
+      droppedSame: 0,
+      scanned: true,
+      partiallyScanned: true,
+      scanStatus: 'partial',
+      omittedDiffCount: null
+    });
+    expect(imported.snapshot.truncation.sections[1]).toEqual({
+      sectionKey: 'viewSettings',
+      section: 'ビュー',
+      droppedDiff: 0,
+      droppedSame: 0,
+      scanned: false,
+      partiallyScanned: false,
+      scanStatus: 'unscanned',
+      omittedDiffCount: null
+    });
+    expect(imported.snapshot.truncation.sections[2]).toEqual({
+      sectionKey: 'reportSettings',
+      section: 'グラフ',
+      droppedDiff: 1,
+      droppedSame: 0,
+      scanned: true,
+      partiallyScanned: false,
+      scanStatus: 'complete',
+      omittedDiffCount: 1
+    });
+    expect(imported.statePatch.lastDiffTruncation.sections[0].omittedDiffCount).toBeNull();
+  });
+
+  it('imports a legacy truncation section as a complete scan with a known omitted count', () => {
+    const imported = createDiffSnapshotImportState({
+      savedAt: '2025-01-02T03:04:05.000Z',
+      rows: [],
+      truncation: {
+        truncated: true,
+        diffLimit: 1000,
+        sections: [{ sectionKey: 'reportSettings', section: 'グラフ', droppedDiff: 2 }]
+      }
+    });
+
+    expect(imported.snapshot.truncation.sections[0]).toMatchObject({
+      scanned: true,
+      partiallyScanned: false,
+      scanStatus: 'complete',
+      omittedDiffCount: 2
+    });
+  });
+
   it('clears prior comparison state and keeps a zero-row snapshot exportable', () => {
     const imported = createDiffSnapshotImportState({
       tool: 'kintone-unified-suite',

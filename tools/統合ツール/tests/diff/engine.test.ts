@@ -3,7 +3,8 @@ import {
   detectRowSeverity, isIgnoredKey, parseIgnoreRules,
   hasUniquePrimitiveKey, computeDiffRows,
   isNotationOnlyChange, isEmptyLikeValue,
-  countActualDiffRows, detectProcessStateRenames, summarizeRows
+  countActualDiffRows, detectProcessStateRenames, summarizeRows,
+  encodeExactIgnorePathRule, decodeExactIgnorePathRule
 } from '../../src/diff/engine';
 
 function makeBundle(sections: Record<string, any>) {
@@ -59,6 +60,48 @@ describe('diff/engine', () => {
       expect(isIgnoredKey(rules, 'test_abc')).toBe(true);
       expect(isIgnoredKey(rules, 'test_123')).toBe(true);
       expect(isIgnoredKey(rules, 'other_test')).toBe(false);
+    });
+
+    it('keeps spaces inside an exact path rule instead of splitting the entity name', () => {
+      const source = makeBundle({ viewSettings: { views: {
+        '営業 一覧': { name: '営業 一覧', filterCond: 'a = 1' },
+        '営業一覧': { name: '営業一覧', filterCond: 'b = 1' }
+      } } });
+      const target = makeBundle({ viewSettings: { views: {
+        '営業 一覧': { name: '営業 一覧', filterCond: 'a = 2' },
+        '営業一覧': { name: '営業一覧', filterCond: 'b = 2' }
+      } } });
+      const result = computeDiffRows(source, target, ['viewSettings'], 'viewSettings.views.営業 一覧.filterCond');
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0].path).toBe('viewSettings.views.営業一覧.filterCond');
+    });
+
+    it('treats a root section name as an exact path instead of a global leaf key', () => {
+      const rules = parseIgnoreRules('pluginSettings');
+      expect(rules.pathSet.has('pluginsettings')).toBe(true);
+      expect(isIgnoredKey(rules, 'pluginSettings')).toBe(false);
+    });
+
+    it('encodes UI-selected paths as case-sensitive literals instead of wildcard patterns', () => {
+      const selectedPath = 'viewSettings.views.Sales*View, East.filterCond';
+      const rule = encodeExactIgnorePathRule(selectedPath);
+      expect(decodeExactIgnorePathRule(rule)).toBe(selectedPath);
+
+      const source = makeBundle({ viewSettings: { views: {
+        'Sales*View, East': { name: 'Sales*View, East', filterCond: 'a = 1' },
+        'SalesWestView, East': { name: 'SalesWestView, East', filterCond: 'b = 1' },
+        'sales*view, East': { name: 'sales*view, East', filterCond: 'c = 1' }
+      } } });
+      const target = makeBundle({ viewSettings: { views: {
+        'Sales*View, East': { name: 'Sales*View, East', filterCond: 'a = 2' },
+        'SalesWestView, East': { name: 'SalesWestView, East', filterCond: 'b = 2' },
+        'sales*view, East': { name: 'sales*view, East', filterCond: 'c = 2' }
+      } } });
+      const result = computeDiffRows(source, target, ['viewSettings'], rule);
+      expect(result.rows.map((row: any) => row.path)).toEqual([
+        'viewSettings.views.SalesWestView, East.filterCond',
+        'viewSettings.views.sales*view, East.filterCond'
+      ]);
     });
   });
 
@@ -537,7 +580,94 @@ describe('diff/engine', () => {
       expect(result.truncation.truncated).toBe(true);
       expect(result.truncation.diffLimit).toBe(1000);
       const section = result.truncation.sections.find((s: any) => s.sectionKey === 'fieldSettings');
-      expect(section).toBeTruthy();
+      expect(section).toMatchObject({
+        scanned: true,
+        partiallyScanned: true,
+        scanStatus: 'partial',
+        droppedDiff: 0,
+        droppedSame: 0,
+        omittedDiffCount: null
+      });
+    });
+
+    it('marks later deep-comparison sections as unscanned after the global limit', () => {
+      const props: Record<string, any> = {};
+      for (let i = 0; i < 1200; i++) {
+        props[`f${i}`] = { code: `f${i}`, type: 'SINGLE_LINE_TEXT', label: `label${i}` };
+      }
+      let deepReadCount = 0;
+      const laterSection = (type: string) => {
+        const section: Record<string, any> = {};
+        Object.defineProperty(section, 'views', {
+          enumerable: true,
+          get() {
+            deepReadCount += 1;
+            return { main: { type } };
+          }
+        });
+        return section;
+      };
+      const result = computeDiffRows(
+        makeBundle({
+          fieldSettings: { properties: props },
+          viewSettings: laterSection('LIST')
+        }),
+        makeBundle({
+          fieldSettings: { properties: {} },
+          viewSettings: laterSection('CALENDAR')
+        }),
+        ['fieldSettings', 'viewSettings'],
+        ''
+      );
+
+      expect(result.rows.filter((r: any) => r.type !== 'same')).toHaveLength(1000);
+      expect(result.rows.some((r: any) => r.sectionKey === 'viewSettings')).toBe(false);
+      expect(deepReadCount).toBe(0);
+      expect(result.truncation.sections.find((s: any) => s.sectionKey === 'viewSettings')).toMatchObject({
+        scanned: false,
+        partiallyScanned: false,
+        scanStatus: 'unscanned',
+        droppedDiff: 0,
+        droppedSame: 0,
+        omittedDiffCount: null
+      });
+    });
+
+    it('keeps whole-section additions and removals as scanned dropped rows after the limit', () => {
+      const props: Record<string, any> = {};
+      for (let i = 0; i < 1200; i++) {
+        props[`f${i}`] = { code: `f${i}`, type: 'SINGLE_LINE_TEXT', label: `label${i}` };
+      }
+      const result = computeDiffRows(
+        makeBundle({
+          fieldSettings: { properties: props },
+          reportSettings: { reports: { oldReport: { chartType: 'BAR' } } }
+        }),
+        makeBundle({
+          fieldSettings: { properties: {} },
+          viewSettings: { views: { newView: { type: 'LIST' } } }
+        }),
+        ['fieldSettings', 'viewSettings', 'reportSettings'],
+        ''
+      );
+
+      expect(result.truncation.droppedDiff).toBe(2);
+      expect(result.truncation.sections.find((s: any) => s.sectionKey === 'viewSettings')).toMatchObject({
+        scanned: true,
+        partiallyScanned: false,
+        scanStatus: 'complete',
+        droppedDiff: 1,
+        droppedSame: 0,
+        omittedDiffCount: 1
+      });
+      expect(result.truncation.sections.find((s: any) => s.sectionKey === 'reportSettings')).toMatchObject({
+        scanned: true,
+        partiallyScanned: false,
+        scanStatus: 'complete',
+        droppedDiff: 1,
+        droppedSame: 0,
+        omittedDiffCount: 1
+      });
     });
 
     it('reports no truncation for small diffs', () => {

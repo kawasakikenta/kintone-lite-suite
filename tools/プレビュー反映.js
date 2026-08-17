@@ -1158,7 +1158,15 @@ ${contextLine}`);
     }
   });
 
+  // src/diff/export-safety.ts
+  var init_export_safety = __esm({
+    "src/diff/export-safety.ts"() {
+      "use strict";
+    }
+  });
+
   // src/diff/export.ts
+  var DIFF_HTML_REVIEW_STATE_MAX_BYTES;
   var init_export = __esm({
     "src/diff/export.ts"() {
       init_constants();
@@ -1171,6 +1179,8 @@ ${contextLine}`);
       init_dialog();
       init_category_view();
       init_path_decoder();
+      init_export_safety();
+      DIFF_HTML_REVIEW_STATE_MAX_BYTES = 2 * 1024 * 1024;
     }
   });
 

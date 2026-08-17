@@ -28,7 +28,9 @@ function diffPairLabel(sourceBundle: any, targetBundle: any): string {
  *   targetBundle: object,
  *   scopes: string[],
  *   ignoreKeys: string,
- *   normalizationPresetState: object
+ *   normalizationPresetState: object,
+ *   exportContentMode?: 'diffOnly'|'withCompared',
+ *   exportContentLabel?: string
  * }} ctx
  */
 export function buildDiffHtmlStandaloneExport(ctx) {
@@ -38,11 +40,17 @@ export function buildDiffHtmlStandaloneExport(ctx) {
   const scopes = ctx.scopes || [];
   const exportMode = ctx.exportMode || 'all';
   const exportLabel = ctx.exportLabel || (exportMode === 'all' ? '全差分' : '表示中（フィルタ適用後）');
+  const exportContentMode = ctx.exportContentMode === 'withCompared' ? 'withCompared' : 'diffOnly';
+  const exportContentLabel = ctx.exportContentLabel || (exportContentMode === 'withCompared'
+    ? '比較設定込み（フィールド詳細・反映JSON）'
+    : '差分行のみ（安全共有向け）');
   const html = buildDiffHtml(ctx.sourceBundle, ctx.targetBundle, rows, scopes, ctx.ignoreKeys || '', {
     fetchIssues,
     partialIssues,
     exportMode,
     exportLabel,
+    exportContentMode,
+    exportContentLabel,
     normalizationState: ctx.normalizationPresetState || ({} as any),
     warning: warningInfoLite(rows, fetchIssues, partialIssues),
     truncation: ctx.truncation || null

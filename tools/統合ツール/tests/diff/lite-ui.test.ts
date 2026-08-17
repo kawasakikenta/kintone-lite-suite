@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildLiteDiffHtmlContext,
+  buildLiteDiffRowKey,
   buildLiteDiffXlsxContext,
+  getLiteHtmlExportContentLabel,
   isIncompleteLiteDiff,
   renderLiteDiffOverviewHtml,
   renderRowsHtml,
+  rowMatchesFilters,
+  summarizeLiteIgnoreRules,
   summarizeLiteDiffRows
 } from '../../src/entries/diff-lite-ui';
 
@@ -52,6 +57,18 @@ describe('diff lite result presentation', () => {
     expect(ctx.exportMode).toBe('filtered');
     expect(ctx.exportLabel).toBe('表示中（フィルタ適用後）');
     expect(ctx.exportContentMode).toBe('diffOnly');
+  });
+
+  it('defaults standalone HTML context to safe diff-only and preserves an explicit compared-content choice', () => {
+    const current = cache([{ sectionKey: 'appAcl', type: 'changed', path: 'appAcl.rights[0]' }]);
+    const safe = buildLiteDiffHtmlContext(current, current.rows, 'all', '全差分');
+    const detailed = buildLiteDiffHtmlContext(current, current.rows, 'filtered', '表示中', 'withCompared');
+
+    expect(safe.exportContentMode).toBe('diffOnly');
+    expect(safe.exportContentLabel).toBe('差分行のみ（安全共有向け）');
+    expect(detailed.exportContentMode).toBe('withCompared');
+    expect(detailed.exportContentLabel).toBe('比較設定込み（フィールド詳細・反映JSON）');
+    expect(getLiteHtmlExportContentLabel('unexpected')).toBe('差分行のみ（安全共有向け）');
   });
 
   it('keeps fetch failures and truncation in a warning state after export', () => {
@@ -111,6 +128,19 @@ describe('diff lite result presentation', () => {
     expect(html.match(/role="alert"/g)).toHaveLength(2);
   });
 
+  it('does not recreate live-region alerts during keyboard navigation rerenders', () => {
+    const result = cache([], {
+      fetchIssues: [{ sectionKey: 'pluginSettings', section: 'プラグイン' }]
+    });
+    const initialHtml = renderLiteDiffOverviewHtml(result);
+    const navigationHtml = renderLiteDiffOverviewHtml(result, { announce: false });
+    expect(initialHtml).toContain('role="status"');
+    expect(initialHtml).toContain('role="alert"');
+    expect(navigationHtml).not.toContain('role="status"');
+    expect(navigationHtml).not.toContain('role="alert"');
+    expect(navigationHtml).toContain('比較結果は不完全です');
+  });
+
   it('does not call a state-rename notice "no differences"', () => {
     const html = renderLiteDiffOverviewHtml(cache([{
       sectionKey: 'processSettings',
@@ -126,6 +156,13 @@ describe('diff lite result presentation', () => {
     expect(html).toContain('状態名の変更候補が 1 件');
     expect(html).not.toContain('差分はありません');
     expect(html).toContain('削除・追加としては数えていません');
+  });
+
+  it('states that visible results are after ignore rules were applied', () => {
+    const html = renderLiteDiffOverviewHtml(cache([], { ignoreKeys: 'revision, viewSettings.views.営業 一覧.filterCond' }));
+    expect(html).toContain('無視ルール 2件を適用した後の結果');
+    expect(html).toContain('ルールに一致した設定差分は一覧に含まれません');
+    expect(html).toContain('完全パス/パターン 1件');
   });
 
   it('renders semantic Japanese labels and clearly labeled before/after values', () => {
@@ -170,6 +207,151 @@ describe('diff lite result presentation', () => {
 
     const html = renderRowsHtml(allRows.slice(0, 200) as any, false, '200 / 250件を表示', allRows as any);
     expect(html).toContain('200 / 250件表示');
-    expect(html).toContain('~250');
+    expect(html).toContain('変更 250');
+  });
+
+  it('prioritizes a human-readable item name and keeps the raw path in collapsed technical details', () => {
+    const html = renderRowsHtml([{
+      sectionKey: 'customSettings', section: 'カスタム設定', path: 'customSettings.deep.internal.value',
+      type: 'changed', reasonSummary: '配色テーマの変更', left: 'light', right: 'dark'
+    }] as any, false, '1件');
+
+    expect(html).toContain('<span class="kus-dl-row__title">配色テーマの変更</span>');
+    expect(html).toContain('<details class="kus-dl-row__technical"><summary>内部パスを表示</summary>');
+    expect(html).toContain('<code class="kus-dl-row__raw">customSettings.deep.internal.value</code>');
+    expect(html.indexOf('配色テーマの変更')).toBeLessThan(html.indexOf('customSettings.deep.internal.value'));
+  });
+
+  it('clips long values with an explicit accessible expansion control and preserves expanded state', () => {
+    const longJson = JSON.stringify({
+      fields: Array.from({ length: 12 }, (_, index) => ({ code: `field_${index}`, required: index % 2 === 0 }))
+    }, null, 2);
+    const row = {
+      sectionKey: 'pluginSettings', section: 'プラグイン', path: 'pluginSettings.plugins.sample.config',
+      type: 'changed', left: longJson, right: `${longJson}\nchanged`
+    } as any;
+    const rowKey = buildLiteDiffRowKey(row);
+    const collapsed = renderRowsHtml([row], false, '', [row]);
+    const expanded = renderRowsHtml([row], false, '', [row], { expandedValueKeys: new Set([`${rowKey}:before`]) });
+
+    expect(collapsed).toContain(`data-kus-dl-value-toggle="${rowKey}:before"`);
+    expect(collapsed).toContain('aria-expanded="false"');
+    expect(collapsed).toContain('全文を展開');
+    expect(collapsed).toMatch(/\d+行 · \d+文字/);
+    expect(expanded).toContain(`data-kus-dl-value-key="${rowKey}:before"`);
+    expect(expanded).toContain('class="kus-dl-value is-expanded"');
+    expect(expanded).toContain('aria-expanded="true"');
+    expect(expanded).toContain('プレビューに戻す');
+  });
+
+  it('does not add an expansion control to short values', () => {
+    const html = renderRowsHtml([{
+      sectionKey: 'appSettings', section: 'アプリ設定', path: 'appSettings.name',
+      type: 'changed', left: '旧名称', right: '新名称'
+    }] as any, false, '');
+    expect(html).not.toContain('data-kus-dl-value-toggle');
+  });
+
+  it('builds stable navigation keys from semantic row identity', () => {
+    const row = {
+      sectionKey: 'fieldSettings', type: 'changed', path: 'fieldSettings.properties.code.label',
+      arrayKey: 'code', arrayKeyValue: { code: 'customer' }
+    };
+    expect(buildLiteDiffRowKey(row)).toBe(buildLiteDiffRowKey({ ...row }));
+    expect(buildLiteDiffRowKey(row)).not.toBe(buildLiteDiffRowKey({ ...row, path: `${row.path}.other` }));
+    expect(buildLiteDiffRowKey(row)).not.toBe(buildLiteDiffRowKey({ ...row, type: 'removed' }));
+  });
+
+  it('filters rows by impact level as well as section, type, and keyword', () => {
+    const row = {
+      sectionKey: 'appAcl', section: 'アプリ権限', path: 'appAcl.rights[0].recordViewable',
+      type: 'changed', severity: 'high', left: true, right: false
+    } as any;
+    expect(rowMatchesFilters(row, { section: 'appAcl', type: 'changed', severity: 'high', keyword: 'recordviewable' })).toBe(true);
+    expect(rowMatchesFilters(row, { section: 'appAcl', type: 'changed', severity: 'low', keyword: '' })).toBe(false);
+  });
+
+  it('distinguishes broad ignore keys from contextual path and wildcard rules', () => {
+    expect(summarizeLiteIgnoreRules('revision, fieldSettings.properties.code.label\n*.description, pluginSettings, appAcl.rights[3].appEditable, REVISION')).toEqual({
+      total: 5,
+      pathRules: 4,
+      wildcardRules: 1,
+      positionalRules: 1,
+      contextualRules: 4
+    });
+  });
+
+  it('counts encoded literal paths without treating literal stars as wildcards', () => {
+    expect(summarizeLiteIgnoreRules('path:viewSettings.views.Sales*View%2C%20East.filterCond')).toEqual({
+      total: 1,
+      pathRules: 1,
+      wildcardRules: 0,
+      positionalRules: 0,
+      contextualRules: 1
+    });
+  });
+
+  it('renders focusable stable rows, mobile side labels, collapse state, and an exact-path ignore action', () => {
+    const row = {
+      sectionKey: 'fieldSettings', section: 'フィールド', path: 'fieldSettings.properties.customer.label',
+      type: 'changed', left: '顧客名', right: '取引先名'
+    } as any;
+    const rowKey = buildLiteDiffRowKey(row);
+    const openHtml = renderRowsHtml([row], false, '', [row], { currentRowKey: rowKey });
+    const closedHtml = renderRowsHtml([row], false, '', [row], { collapsedSections: new Set(['fieldSettings']) });
+
+    expect(openHtml).toContain(`data-kus-dl-row-key="${rowKey}"`);
+    expect(openHtml).toContain('data-severity="low"');
+    expect(openHtml).toContain('低影響');
+    expect(openHtml).toContain('tabindex="-1"');
+    expect(openHtml).toContain('aria-current="true"');
+    expect(openHtml).toContain('data-kus-dl-ignore-path="fieldSettings.properties.customer.label"');
+    expect(openHtml).toContain('data-side-label="比較元の値"');
+    expect(openHtml).toContain('data-side-label="比較先の値"');
+    expect(openHtml).toContain('data-kus-dl-section-key="fieldSettings" open');
+    expect(closedHtml).not.toContain('data-kus-dl-section-key="fieldSettings" open');
+  });
+
+  it('offers literal exact-path ignore for wildcard and delimiter characters', () => {
+    const html = renderRowsHtml([{
+      sectionKey: 'viewSettings', section: 'ビュー', path: 'viewSettings.views.Sales*View, East.filterCond',
+      type: 'changed', left: 'a = 1', right: 'a = 2'
+    }] as any, false, '');
+    expect(html).toContain('data-kus-dl-ignore-path="viewSettings.views.Sales*View, East.filterCond"');
+    expect(html).not.toContain('区切り記号を含むパス（自動無視不可）');
+  });
+
+  it('does not offer automatic ignore for an array-index-dependent path', () => {
+    const html = renderRowsHtml([{
+      sectionKey: 'appAcl', section: 'アプリ権限', path: 'appAcl.rights[3].appEditable',
+      type: 'changed', left: true, right: false
+    }] as any, false, '');
+    expect(html).toContain('位置依存パス（自動無視不可）');
+    expect(html).not.toContain('data-kus-dl-ignore-path');
+  });
+
+  it('offers a literal automatic ignore when an entity path contains a rule delimiter', () => {
+    const html = renderRowsHtml([{
+      sectionKey: 'viewSettings', section: 'ビュー', path: 'viewSettings.views.営業,管理.filterCond',
+      type: 'changed', left: 'a = 1', right: 'a = 2'
+    }] as any, false, '');
+    expect(html).not.toContain('区切り記号を含むパス（自動無視不可）');
+    expect(html).toContain('data-kus-dl-ignore-path="viewSettings.views.営業,管理.filterCond"');
+  });
+
+  it('marks unscanned truncation sections as count unknown', () => {
+    const html = renderLiteDiffOverviewHtml(cache([], {
+      truncation: {
+        truncated: true,
+        diffLimit: 1000,
+        sections: [
+          { sectionKey: 'fieldSettings', section: 'フィールド', scanned: true, partiallyScanned: true, scanStatus: 'partial', omittedDiffCount: null },
+          { sectionKey: 'pluginSettings', section: 'プラグイン', scanned: false, partiallyScanned: false, scanStatus: 'unscanned', omittedDiffCount: null }
+        ]
+      }
+    }));
+    expect(html).toContain('フィールド は部分走査');
+    expect(html).toContain('プラグイン は未走査');
+    expect(html).toContain('未検出件数も不明');
   });
 });
