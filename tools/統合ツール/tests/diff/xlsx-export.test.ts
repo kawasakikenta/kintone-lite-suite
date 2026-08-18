@@ -82,24 +82,26 @@ describe('diff/xlsx-export', () => {
     expect(worksheets[0]).toContain('このシートで分かること：全体の判定');
     expect(worksheets[0]).toContain('使い方・次に見る場所：最初に確認します。');
     expect(worksheets[0]).toMatch(/<row r="4" ht="44" customHeight="1">/);
-    expect(worksheets[0]).toMatch(/<c r="A4" s="18"/);
+    expect(worksheets[0]).toMatch(/<c r="A4" s="12"/);
     expect(worksheets[0]).toContain('<mergeCell ref="A4:D4"/>');
     expect(worksheets[0]).toMatch(/<row r="2[3-9]" ht="40" customHeight="1">/);
-    expect(worksheets[0]).toMatch(/<c r="A35" s="8"/);
+    expect(worksheets[0]).toMatch(/<c r="A35" s="5"/);
     expect(worksheets[0]).toContain('<mergeCell ref="B35:D35"/>');
 
     for (const worksheet of worksheets.slice(1)) {
       expect(worksheet).toContain('このシートで分かること：');
       expect(worksheet).toContain('使い方・次に見る場所：');
       expect(worksheet).toMatch(/<row r="1" ht="44" customHeight="1">/);
-      expect(worksheet).toMatch(/<c r="A1" s="18"/);
-      expect(worksheet).not.toMatch(/<c r="A1" s="17"/);
+      expect(worksheet).toMatch(/<c r="A1" s="12"/);
+      expect(worksheet).not.toMatch(/<c r="A1" s="11"/);
     }
 
     const issues = worksheets[6];
     expect(issues).toContain('<pane xSplit="2" ySplit="2" topLeftCell="C3" activePane="bottomRight" state="frozen"/>');
     expect(issues).toContain('<autoFilter ref="A2:E3"/>');
     expect(issues).toContain('<mergeCell ref="A1:E1"/>');
+    expect(issues).toMatch(/<c r="A3" s="5"/);
+    expect(issues).toMatch(/<c r="B3" s="2"/);
   });
 
   it('records normalization switches in the evidence summary', async () => {
@@ -148,6 +150,8 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('<mergeCell ref="A1:D1"/>');
     expect(summary).toContain('<mergeCell ref="A2:D2"/>');
     expect(summary).toContain('アプリA (App 1)  →  アプリB (App 2)');
+    expect(summary).toMatch(/<c r="B13" s="3"/);
+    expect(summary).toMatch(/<c r="D13" s="4"/);
     expect(summary).toContain('showGridLines="0"');
     expect(summary).toContain('orientation="portrait" fitToWidth="1" fitToHeight="0"');
   });
@@ -157,7 +161,7 @@ describe('diff/xlsx-export', () => {
     expect((list.match(/<row r="/g) || []).length).toBe(6);
     expect(list).toContain('このシートで分かること：このブックに収録された差分');
     expect(list).toContain('使い方・次に見る場所：黄色の列');
-    expect(list).toMatch(/<c r="A1" s="18"/);
+    expect(list).toMatch(/<c r="A1" s="12"/);
     expect(list).toContain('差分の識別');
     expect(list).toContain('レビュー入力（黄色）');
     expect(list).toContain('値の比較（比較元 → 比較先）');
@@ -199,10 +203,14 @@ describe('diff/xlsx-export', () => {
     expect(list).toContain('sqref="F4:F6"');
     expect(list).toContain('&quot;未確認,確認中,対応要,対応不要,確認済み&quot;');
     // 状態（初期値: 未確認）と空の担当・コメントを黄色の編集欄として保持する。
-    expect(list).toMatch(/<c r="F4" s="17"/);
-    expect(list).toMatch(/<c r="F4" s="17"[^>]*>[\s\S]*?未確認/);
-    expect(list).toMatch(/<c r="G4" s="17"/);
-    expect(list).toMatch(/<c r="H4" s="17"/);
+    expect(list).toMatch(/<c r="F4" s="11"/);
+    expect(list).toMatch(/<c r="F4" s="11"[^>]*>[\s\S]*?未確認/);
+    expect(list).toMatch(/<c r="G4" s="11"/);
+    expect(list).toMatch(/<c r="H4" s="11"/);
+    // 状態別の行色は使わず、比較元・比較先の列だけを役割色で固定する。
+    expect(list).toMatch(/<c r="B4" s="2"/);
+    expect(list).toMatch(/<c r="I4" s="3"/);
+    expect(list).toMatch(/<c r="J4" s="4"/);
     const dataRowHeights = [...list.matchAll(/<row r="[4-6]" ht="([0-9.]+)" customHeight="1">/g)]
       .map((match) => Number(match[1]));
     expect(dataRowHeights).toHaveLength(3);
@@ -275,14 +283,18 @@ describe('diff/xlsx-export', () => {
   });
 
   it('omits tool-inferred severity labels and styles from every worksheet', async () => {
-    const worksheets = await readWorksheetEntries(buildDiffXlsxBlob(sampleCtx));
+    const blob = buildDiffXlsxBlob(sampleCtx);
+    const worksheets = await readWorksheetEntries(blob);
     expect(worksheets.length).toBeGreaterThan(0);
     for (const xml of worksheets) {
       expect(xml).not.toContain('重要度');
       expect(xml).not.toContain('影響度');
       expect(xml).not.toContain('最優先');
-      expect(xml).not.toMatch(/<c r="[A-Z]+\d+" s="(?:14|15|16)"/);
     }
+    const styles = await readEntry(blob, 'xl/styles.xml');
+    expect(styles).toContain('<cellXfs count="14">');
+    expect(styles).not.toContain('rgb="FFDCFCE7"');
+    expect(styles).not.toContain('rgb="FFFDE68A"');
   });
 
   it('produces identical worksheet XML when only severity values differ', async () => {
@@ -388,7 +400,7 @@ describe('diff/xlsx-export', () => {
     expect(summary).toContain('<hyperlink ref="I5" location="&apos;フィールド差分詳細&apos;!B5"');
     expect(summary).toContain('<hyperlink ref="J4" location="&apos;差分一覧&apos;!F5"');
     expect(summary).toContain('<hyperlink ref="J5" location="&apos;差分一覧&apos;!F4"');
-    expect(summary).toMatch(/<c r="I4" s="19"/);
+    expect(summary).toMatch(/<c r="I4" s="13"/);
 
     expect(detail).toContain('設定項目');
     expect(detail).toContain('変更種別');
@@ -411,13 +423,13 @@ describe('diff/xlsx-export', () => {
     expect(detail).toContain('<hyperlink ref="A5" location="&apos;差分一覧&apos;!F4"');
     expect(detail).toContain('<hyperlink ref="J4" location="&apos;フィールド差分要約&apos;!C4"');
     expect(detail).toContain('<hyperlink ref="J5" location="&apos;フィールド差分要約&apos;!C5"');
-    expect(detail).toMatch(/<c r="A4" s="19"/);
-    expect(detail).toMatch(/<c r="J4" s="19"/);
-    // 変更は比較元を赤、比較先を緑、追加時の欠落側は参考色にする。
-    expect(detail).toMatch(/<c r="G4" s="4"/);
-    expect(detail).toMatch(/<c r="H4" s="3"/);
-    expect(detail).toMatch(/<c r="G5" s="7"/);
-    expect(detail).toMatch(/<c r="H5" s="3"/);
+    expect(detail).toMatch(/<c r="A4" s="13"/);
+    expect(detail).toMatch(/<c r="J4" s="13"/);
+    // 差分種別にかかわらず、比較元は淡いスレート、比較先は淡い青で列の役割を固定する。
+    expect(detail).toMatch(/<c r="G4" s="3"/);
+    expect(detail).toMatch(/<c r="H4" s="4"/);
+    expect(detail).toMatch(/<c r="G5" s="3"/);
+    expect(detail).toMatch(/<c r="H5" s="4"/);
     expect(detail).not.toContain('確認状態');
     expect(detail).not.toContain('レビューコメント');
     expect(detail).not.toContain('fieldSettings.properties');
@@ -688,7 +700,7 @@ describe('diff/xlsx-export', () => {
     const list = await readEntry(blob, 'xl/worksheets/sheet4.xml');
     expect(summary).toContain('設定変更');
     expect(summary).not.toContain('追加（比較先のみ）');
-    expect(summary).toMatch(/<c r="A4" s="5"/);
+    expect(summary).toMatch(/<c r="A4" s="2"/);
     for (const xml of [detail, list]) {
       expect(xml).toContain('設定追加');
       expect(xml).toContain('比較先にのみ設定あり');
