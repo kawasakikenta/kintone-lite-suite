@@ -464,14 +464,6 @@ function scopeLabel(scopes: string[] | undefined): string {
   return (scopes || []).map((key) => sectionLabelOf(key)).join('、');
 }
 
-function rowStyleOf(row: DiffXlsxRow): XlsxRowStyle {
-  if (row._displayOnly) return 'reference';
-  if (row.type === 'added') return 'added';
-  if (row.type === 'removed') return 'removed';
-  if (row.type === 'same') return 'same';
-  return 'changed';
-}
-
 function fieldSettingKind(row: DiffXlsxRow): 'field' | 'setting' | null {
   const fieldInfo = extractFieldPathInfo(String(row.path || ''));
   if (!fieldInfo) return null;
@@ -1188,24 +1180,26 @@ function buildSummarySheet(
   const rowStyles: XlsxRowStyle[] = sheetRows.map(() => 'normal');
   const rowHeights: number[] = [32, 24, 0, 44];
   for (let rowIndex = guideStartRow; rowIndex < guideEndRow; rowIndex += 1) rowHeights[rowIndex] = 40;
-  for (const index of warningRows) rowStyles[index] = 'warning';
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = sheetRows.map(() => []);
   cellStyles[0][0] = 'title';
   cellStyles[1][0] = 'sectionHeader';
   cellStyles[3][0] = 'info';
   cellStyles[4] = [
     'sectionHeader',
-    incomplete ? 'kpiDanger' : counts.actual > 0 ? 'kpiWarning' : 'kpiGood',
+    incomplete ? 'kpiDanger' : 'kpiGood',
     'sectionHeader',
     incomplete ? 'kpiDanger' : 'kpiGood'
   ];
   for (const rowIndex of [5, 6, 7, 8, 9]) {
-    cellStyles[rowIndex] = ['info', 'kpiWarning', 'info', 'kpiWarning'];
+    cellStyles[rowIndex] = ['info', 'kpiGood', 'info', 'kpiGood'];
   }
-  cellStyles[5][1] = counts.actual > 0 ? 'kpiWarning' : 'kpiGood';
   cellStyles[5][3] = fetchIssues.length > 0 ? 'kpiDanger' : 'kpiGood';
   cellStyles[7][3] = partialIssues.length > 0 ? 'kpiDanger' : 'kpiGood';
   cellStyles[8][3] = truncation ? 'kpiDanger' : 'kpiGood';
+  cellStyles[12][1] = 'source';
+  cellStyles[12][3] = 'target';
+  cellStyles[13][1] = 'source';
+  cellStyles[13][3] = 'target';
   cellStyles[11][0] = 'sectionHeader';
   cellStyles[guideTitleRow][0] = 'sectionHeader';
   cellStyles[guideHeaderRow] = ['sectionHeader', 'sectionHeader', 'sectionHeader', 'sectionHeader'];
@@ -1214,9 +1208,10 @@ function buildSummarySheet(
   }
   cellStyles[sectionTitleRow][0] = 'sectionHeader';
   cellStyles[sectionHeaderRow] = ['sectionHeader', 'sectionHeader', 'sectionHeader', 'sectionHeader'];
-  cellStyles[17] = ['info', fieldStatusIncomplete ? 'kpiDanger' : fieldCount || unstructuredFieldDiffCount ? 'kpiWarning' : 'kpiGood'];
+  cellStyles[17] = ['info', fieldStatusIncomplete ? 'kpiDanger' : 'kpiGood'];
   if (fieldLinkTarget) cellStyles[17][3] = 'hyperlink';
   if (rows.length) cellStyles[18][3] = 'hyperlink';
+  for (const index of warningRows) cellStyles[index][0] = 'warning';
   const merges = [
     'A1:D1', 'A2:D2', 'A4:D4', 'A12:D12',
     `A${guideTitleRow + 1}:D${guideTitleRow + 1}`,
@@ -1335,7 +1330,7 @@ function buildListSheet(
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal', 'normal'];
   const groupCellStyles: Array<XlsxCellStyle | undefined> = [];
   groupCellStyles[0] = 'sectionHeader';
-  groupCellStyles[5] = 'kpiWarning';
+  groupCellStyles[5] = 'sectionHeader';
   groupCellStyles[8] = 'sectionHeader';
   groupCellStyles[10] = 'info';
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], groupCellStyles, []];
@@ -1375,12 +1370,13 @@ function buildListSheet(
       targetValue,
       note
     ]);
-    const rowStyle = rowStyleOf(row);
-    rowStyles.push(rowStyle);
+    rowStyles.push('normal');
     const styles: Array<XlsxCellStyle | undefined> = ['info'];
     styles[5] = 'review';
     styles[6] = 'review';
     styles[7] = 'review';
+    styles[8] = 'source';
+    styles[9] = 'target';
     cellStyles.push(styles);
     rowHeights.push(readableDiffRowHeight([
       { value: existence, width: 28 },
@@ -1468,8 +1464,11 @@ function buildSectionSheet(
       targetValue,
       note
     ]);
-    rowStyles.push(rowStyleOf(row));
-    cellStyles.push(['info']);
+    rowStyles.push('normal');
+    const styles: Array<XlsxCellStyle | undefined> = ['info'];
+    styles[5] = 'source';
+    styles[6] = 'target';
+    cellStyles.push(styles);
     rowHeights.push(readableDiffRowHeight([
       { value: existence, width: 28 },
       { value: item, width: 30 },
@@ -1506,13 +1505,6 @@ function fieldSummaryRootChangeType(
 ): 'added' | 'removed' | null {
   const root = model.details.find((detail) => detail.fieldKey === summary.fieldKey && detail.settingKey === '(field)');
   return root?.row.type === 'added' || root?.row.type === 'removed' ? root.row.type : null;
-}
-
-function fieldSummaryRowStyle(summary: DiffXlsxFieldSummary, model: DiffXlsxFieldModel): XlsxRowStyle {
-  const rootType = fieldSummaryRootChangeType(summary, model);
-  if (rootType === 'added') return 'added';
-  if (rootType === 'removed') return 'removed';
-  return 'changed';
 }
 
 function fieldSummaryChangeTypeLabel(
@@ -1640,7 +1632,7 @@ function buildFieldSummarySheet(
       `詳細を見る（${summary.diffCount}件）`,
       'レビュー入力へ'
     ]);
-    rowStyles.push(fieldSummaryRowStyle(summary, model));
+    rowStyles.push('normal');
     const styles: Array<XlsxCellStyle | undefined> = [];
     styles[3] = 'info';
     styles[4] = 'info';
@@ -1749,22 +1741,13 @@ function buildFieldDetailSheet(
       note,
       '要約へ戻る'
     ]);
-    rowStyles.push(rowStyleOf(detail.row));
+    rowStyles.push('normal');
     const styles: Array<XlsxCellStyle | undefined> = ['hyperlink'];
     styles[2] = 'info';
     styles[8] = 'info';
     styles[9] = 'hyperlink';
-    if (detail.row.type === 'added') {
-      styles[6] = 'reference';
-      styles[7] = 'added';
-    } else if (detail.row.type === 'removed') {
-      styles[6] = 'removed';
-      styles[7] = 'reference';
-    }
-    else {
-      styles[6] = 'removed';
-      styles[7] = 'added';
-    }
+    styles[6] = 'source';
+    styles[7] = 'target';
     cellStyles.push(styles);
     rowHeights.push(readableDiffRowHeight([
       { value: detail.fieldName, width: 30 },
@@ -1862,8 +1845,8 @@ function buildIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
     name: '取得・未検証',
     rows,
     colWidths: [14, 22, 12, 72, 60],
-    rowStyles: rows.map((_, index) => index <= 1 ? 'normal' : 'warning'),
-    cellStyles: [['info'], []],
+    rowStyles: rows.map(() => 'normal'),
+    cellStyles: rows.map((_, index) => index === 0 ? ['info'] : index === 1 ? [] : ['warning']),
     headerRow: 2,
     freezeRows: 2,
     freezeColumns: 2,

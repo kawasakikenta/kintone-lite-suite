@@ -10724,23 +10724,17 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
   var CELL_STYLE_INDEX = {
     normal: 2,
-    added: 3,
-    removed: 4,
-    changed: 5,
-    same: 6,
-    reference: 7,
-    warning: 8,
-    title: 9,
-    sectionHeader: 10,
-    kpiGood: 11,
-    kpiWarning: 12,
-    kpiDanger: 13,
-    severityHigh: 14,
-    severityMedium: 15,
-    severityLow: 16,
-    review: 17,
-    info: 18,
-    hyperlink: 19
+    source: 3,
+    target: 4,
+    warning: 5,
+    title: 6,
+    sectionHeader: 7,
+    kpiGood: 8,
+    kpiWarning: 9,
+    kpiDanger: 10,
+    review: 11,
+    info: 12,
+    hyperlink: 13
   };
   function normalizedPaneCount(value, max) {
     const n = Math.floor(Number(value));
@@ -10965,7 +10959,7 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
     return `${XML_HEADER}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
   }
   function buildStylesXml() {
-    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="6"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font></fonts><fills count="19"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF7ED"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0F172A"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDBEAFE"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCFCE7"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEE2E2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFECACA"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFDE68A"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="thin"><color rgb="FFCBD5E1"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="thin"><color rgb="FFCBD5E1"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="20"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="8" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="9" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="10" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="11" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="12" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="13" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="14" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="4" fillId="15" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="4" fillId="16" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf><xf numFmtId="0" fontId="0" fillId="17" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="18" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+    return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="6"><font><sz val="11"/><name val="Meiryo"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="18"/><name val="Meiryo"/><color rgb="FFFFFFFF"/></font><font><b/><sz val="12"/><name val="Meiryo"/><color rgb="FF1E3A5F"/></font><font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font><font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font></fonts><fills count="7"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF8D6"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border><border><left/><right/><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="14"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf><xf numFmtId="0" fontId="3" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
   }
   function buildXlsxBlob(sheets) {
     const enc = new TextEncoder();
@@ -11276,13 +11270,6 @@ ${formatSubtableChildrenText(sanitizeHtmlBearingProps(value))}`;
   }
   function scopeLabel(scopes) {
     return (scopes || []).map((key) => sectionLabelOf(key)).join("、");
-  }
-  function rowStyleOf(row) {
-    if (row._displayOnly) return "reference";
-    if (row.type === "added") return "added";
-    if (row.type === "removed") return "removed";
-    if (row.type === "same") return "same";
-    return "changed";
   }
   function fieldSettingKind(row) {
     const fieldInfo = extractFieldPathInfo(String(row.path || ""));
@@ -11845,24 +11832,26 @@ ${app}` : label;
     const rowStyles = sheetRows.map(() => "normal");
     const rowHeights = [32, 24, 0, 44];
     for (let rowIndex = guideStartRow; rowIndex < guideEndRow; rowIndex += 1) rowHeights[rowIndex] = 40;
-    for (const index of warningRows) rowStyles[index] = "warning";
     const cellStyles = sheetRows.map(() => []);
     cellStyles[0][0] = "title";
     cellStyles[1][0] = "sectionHeader";
     cellStyles[3][0] = "info";
     cellStyles[4] = [
       "sectionHeader",
-      incomplete ? "kpiDanger" : counts.actual > 0 ? "kpiWarning" : "kpiGood",
+      incomplete ? "kpiDanger" : "kpiGood",
       "sectionHeader",
       incomplete ? "kpiDanger" : "kpiGood"
     ];
     for (const rowIndex of [5, 6, 7, 8, 9]) {
-      cellStyles[rowIndex] = ["info", "kpiWarning", "info", "kpiWarning"];
+      cellStyles[rowIndex] = ["info", "kpiGood", "info", "kpiGood"];
     }
-    cellStyles[5][1] = counts.actual > 0 ? "kpiWarning" : "kpiGood";
     cellStyles[5][3] = fetchIssues.length > 0 ? "kpiDanger" : "kpiGood";
     cellStyles[7][3] = partialIssues.length > 0 ? "kpiDanger" : "kpiGood";
     cellStyles[8][3] = truncation ? "kpiDanger" : "kpiGood";
+    cellStyles[12][1] = "source";
+    cellStyles[12][3] = "target";
+    cellStyles[13][1] = "source";
+    cellStyles[13][3] = "target";
     cellStyles[11][0] = "sectionHeader";
     cellStyles[guideTitleRow][0] = "sectionHeader";
     cellStyles[guideHeaderRow] = ["sectionHeader", "sectionHeader", "sectionHeader", "sectionHeader"];
@@ -11871,9 +11860,10 @@ ${app}` : label;
     }
     cellStyles[sectionTitleRow][0] = "sectionHeader";
     cellStyles[sectionHeaderRow] = ["sectionHeader", "sectionHeader", "sectionHeader", "sectionHeader"];
-    cellStyles[17] = ["info", fieldStatusIncomplete ? "kpiDanger" : fieldCount || unstructuredFieldDiffCount ? "kpiWarning" : "kpiGood"];
+    cellStyles[17] = ["info", fieldStatusIncomplete ? "kpiDanger" : "kpiGood"];
     if (fieldLinkTarget) cellStyles[17][3] = "hyperlink";
     if (rows.length) cellStyles[18][3] = "hyperlink";
+    for (const index of warningRows) cellStyles[index][0] = "warning";
     const merges = [
       "A1:D1",
       "A2:D2",
@@ -11995,7 +11985,7 @@ ${label}` : `${direction}の値`;
     const rowStyles = ["normal", "normal", "normal"];
     const groupCellStyles = [];
     groupCellStyles[0] = "sectionHeader";
-    groupCellStyles[5] = "kpiWarning";
+    groupCellStyles[5] = "sectionHeader";
     groupCellStyles[8] = "sectionHeader";
     groupCellStyles[10] = "info";
     const cellStyles = [["info"], groupCellStyles, []];
@@ -12023,12 +12013,13 @@ ${label}` : `${direction}の値`;
         targetValue,
         note
       ]);
-      const rowStyle = rowStyleOf(row);
-      rowStyles.push(rowStyle);
+      rowStyles.push("normal");
       const styles = ["info"];
       styles[5] = "review";
       styles[6] = "review";
       styles[7] = "review";
+      styles[8] = "source";
+      styles[9] = "target";
       cellStyles.push(styles);
       rowHeights.push(readableDiffRowHeight([
         { value: existence, width: 28 },
@@ -12116,8 +12107,11 @@ ${label}` : `${direction}の値`;
         targetValue,
         note
       ]);
-      rowStyles.push(rowStyleOf(row));
-      cellStyles.push(["info"]);
+      rowStyles.push("normal");
+      const styles = ["info"];
+      styles[5] = "source";
+      styles[6] = "target";
+      cellStyles.push(styles);
       rowHeights.push(readableDiffRowHeight([
         { value: existence, width: 28 },
         { value: item, width: 30 },
@@ -12150,12 +12144,6 @@ ${label}` : `${direction}の値`;
   function fieldSummaryRootChangeType(summary, model) {
     const root2 = model.details.find((detail) => detail.fieldKey === summary.fieldKey && detail.settingKey === "(field)");
     return root2?.row.type === "added" || root2?.row.type === "removed" ? root2.row.type : null;
-  }
-  function fieldSummaryRowStyle(summary, model) {
-    const rootType = fieldSummaryRootChangeType(summary, model);
-    if (rootType === "added") return "added";
-    if (rootType === "removed") return "removed";
-    return "changed";
   }
   function fieldSummaryChangeTypeLabel(summary, model) {
     const rootType = fieldSummaryRootChangeType(summary, model);
@@ -12265,7 +12253,7 @@ ${label}` : `${direction}の値`;
         `詳細を見る（${summary.diffCount}件）`,
         "レビュー入力へ"
       ]);
-      rowStyles.push(fieldSummaryRowStyle(summary, model));
+      rowStyles.push("normal");
       const styles = [];
       styles[3] = "info";
       styles[4] = "info";
@@ -12378,21 +12366,13 @@ ${label}` : `${direction}の値`;
         note,
         "要約へ戻る"
       ]);
-      rowStyles.push(rowStyleOf(detail.row));
+      rowStyles.push("normal");
       const styles = ["hyperlink"];
       styles[2] = "info";
       styles[8] = "info";
       styles[9] = "hyperlink";
-      if (detail.row.type === "added") {
-        styles[6] = "reference";
-        styles[7] = "added";
-      } else if (detail.row.type === "removed") {
-        styles[6] = "removed";
-        styles[7] = "reference";
-      } else {
-        styles[6] = "removed";
-        styles[7] = "added";
-      }
+      styles[6] = "source";
+      styles[7] = "target";
       cellStyles.push(styles);
       rowHeights.push(readableDiffRowHeight([
         { value: detail.fieldName, width: 30 },
@@ -12474,8 +12454,8 @@ ${label}` : `${direction}の値`;
       name: "取得・未検証",
       rows,
       colWidths: [14, 22, 12, 72, 60],
-      rowStyles: rows.map((_, index) => index <= 1 ? "normal" : "warning"),
-      cellStyles: [["info"], []],
+      rowStyles: rows.map(() => "normal"),
+      cellStyles: rows.map((_, index) => index === 0 ? ["info"] : index === 1 ? [] : ["warning"]),
       headerRow: 2,
       freezeRows: 2,
       freezeColumns: 2,
