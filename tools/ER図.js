@@ -11,10 +11,13 @@
 // ==========================================================================
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
   var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __esm = (fn, res) => function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
   };
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
   // src/featureDefs.mjs
   var ICONS, FEATURE_DEFS;
@@ -1095,7 +1098,18 @@ ${contextLine}`);
   init_diff();
 
   // src/tabs/er-analysis.ts
+  var ER_HIGH_CONNECTION_THRESHOLD = 3;
   var idOf = (value) => String(value ?? "").trim();
+  var appNameOf = (app, appId) => String(app?.name || `アプリ ${appId}`);
+  var retrievalStatusOf = (app) => {
+    const declared = idOf(app?.status).toLowerCase();
+    if (app?.ok === false || declared === "failed") return "failed";
+    if (declared === "partial" || Array.isArray(app?.issues) && app.issues.length > 0 || app?._fetchError) {
+      return "partial";
+    }
+    return "complete";
+  };
+  var compareIds = (a, b) => a.localeCompare(b, "ja", { numeric: true });
   function analyzeErDependencies(rawApps) {
     const apps = (Array.isArray(rawApps) ? rawApps : []).filter((app) => idOf(app?.id));
     const appById = new Map(apps.map((app) => [idOf(app.id), app]));
@@ -1104,26 +1118,41 @@ ${contextLine}`);
     const outgoing = /* @__PURE__ */ new Map();
     const seenEdges = /* @__PURE__ */ new Set();
     const unresolvedTargets = [];
+    const selfReferences = [];
+    let resolvedRelationCount = 0;
     for (const id of appById.keys()) adjacency.set(id, /* @__PURE__ */ new Set());
     for (const app of apps) {
       const fromId = idOf(app.id);
       for (const relation of Array.isArray(app?.relations) ? app.relations : []) {
-        const toId = idOf(relation?.toApp);
-        if (!toId) continue;
-        const kind = idOf(relation?.kind) || "UNKNOWN";
-        const field = idOf(relation?.fromPath || relation?.from || relation?.fromLabel);
+        if (!relation || typeof relation !== "object") continue;
+        const toId = idOf(relation.toApp);
+        const kind = idOf(relation.kind) || "UNKNOWN";
+        const field = idOf(
+          relation.fromPath || relation.from || relation.fromLabel || relation.controlField || relation.sourceJoinField
+        );
+        if (!toId && kind === "UNKNOWN" && !field) continue;
         const edgeKey = `${fromId}\0${toId}\0${kind}\0${field}`;
         if (seenEdges.has(edgeKey)) continue;
         seenEdges.add(edgeKey);
         outgoing.set(fromId, (outgoing.get(fromId) || 0) + 1);
-        if (appById.has(toId)) {
-          incoming.set(toId, (incoming.get(toId) || 0) + 1);
-          adjacency.get(fromId)?.add(toId);
-        } else {
+        if (!toId || !appById.has(toId)) {
           unresolvedTargets.push({
             fromAppId: fromId,
-            fromAppName: String(app?.name || `アプリ ${fromId}`),
+            fromAppName: appNameOf(app, fromId),
             toAppId: toId,
+            kind,
+            field,
+            reason: toId ? "outside-diagram" : "missing-target"
+          });
+          continue;
+        }
+        resolvedRelationCount += 1;
+        incoming.set(toId, (incoming.get(toId) || 0) + 1);
+        adjacency.get(fromId)?.add(toId);
+        if (fromId === toId) {
+          selfReferences.push({
+            appId: fromId,
+            appName: appNameOf(app, fromId),
             kind,
             field
           });
@@ -1161,44 +1190,398 @@ ${contextLine}`);
       components.push(component);
     };
     for (const id of appById.keys()) if (!indexes.has(id)) visit(id);
-    const cycles = components.filter((ids) => ids.length > 1 || adjacency.get(ids[0])?.has(ids[0])).map((ids) => ({
-      appIds: ids.slice().sort((a, b) => Number(a) - Number(b)),
-      appNames: ids.map((id) => String(appById.get(id)?.name || `アプリ ${id}`)).sort()
-    })).sort((a, b) => b.appIds.length - a.appIds.length);
+    const cycles = components.filter((ids) => ids.length > 1).map((ids) => {
+      const appIds = ids.slice().sort(compareIds);
+      return {
+        appIds,
+        appNames: appIds.map((id) => appNameOf(appById.get(id), id))
+      };
+    }).sort((a, b) => b.appIds.length - a.appIds.length || compareIds(a.appIds[0], b.appIds[0]));
     const cycleIds = new Set(cycles.flatMap((cycle) => cycle.appIds));
+    const selfReferenceIds = new Set(selfReferences.map((relation) => relation.appId));
     const appStats = apps.map((app) => {
       const appId = idOf(app.id);
       const inCount = incoming.get(appId) || 0;
       const outCount = outgoing.get(appId) || 0;
       return {
         appId,
-        name: String(app?.name || `アプリ ${appId}`),
+        name: appNameOf(app, appId),
         incoming: inCount,
         outgoing: outCount,
         total: inCount + outCount,
         isolated: inCount === 0 && outCount === 0,
-        inCycle: cycleIds.has(appId)
+        inCycle: cycleIds.has(appId),
+        hasSelfReference: selfReferenceIds.has(appId),
+        retrievalStatus: retrievalStatusOf(app)
       };
     }).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, "ja"));
     const isolatedAppIds = appStats.filter((stat) => stat.isolated).map((stat) => stat.appId);
-    const averageDegree = apps.length ? seenEdges.size / apps.length : 0;
-    const hubThreshold = Math.max(3, Math.ceil(averageDegree * 2));
-    const hubs = appStats.filter((stat) => stat.total >= hubThreshold).slice(0, 8);
-    const failedAppIds = apps.filter((app) => app?.ok === false).map((app) => idOf(app.id));
-    const isolatedPenalty = apps.length ? Math.min(20, Math.round(isolatedAppIds.length / apps.length * 20)) : 0;
-    const score = Math.max(0, 100 - Math.min(30, failedAppIds.length * 15) - Math.min(20, unresolvedTargets.length * 4) - Math.min(24, cycles.length * 8) - isolatedPenalty);
-    const grade = score >= 90 ? "A" : score >= 75 ? "B" : score >= 60 ? "C" : "D";
+    const hubs = appStats.filter((stat) => stat.total >= ER_HIGH_CONNECTION_THRESHOLD).map(({ appId, name, incoming: inCount, outgoing: outCount, total }) => ({
+      appId,
+      name,
+      incoming: inCount,
+      outgoing: outCount,
+      total
+    }));
+    const completeAppIds = appStats.filter((stat) => stat.retrievalStatus === "complete").map((stat) => stat.appId);
+    const partialAppIds = appStats.filter((stat) => stat.retrievalStatus === "partial").map((stat) => stat.appId);
+    const failedAppIds = appStats.filter((stat) => stat.retrievalStatus === "failed").map((stat) => stat.appId);
     return {
-      score,
-      grade,
       appCount: apps.length,
       edgeCount: seenEdges.size,
       isolatedAppIds,
       unresolvedTargets,
       cycles,
+      selfReferences,
       hubs,
+      highConnectionThreshold: ER_HIGH_CONNECTION_THRESHOLD,
       appStats,
-      failedAppIds
+      completeAppIds,
+      partialAppIds,
+      failedAppIds,
+      counts: {
+        apps: apps.length,
+        relations: seenEdges.size,
+        resolvedRelations: resolvedRelationCount,
+        unresolvedRelations: unresolvedTargets.length,
+        cycleCandidates: cycles.length,
+        selfReferences: selfReferences.length,
+        appsWithNoRelations: isolatedAppIds.length,
+        highConnectionApps: hubs.length,
+        retrievalComplete: completeAppIds.length,
+        retrievalPartial: partialAppIds.length,
+        retrievalFailed: failedAppIds.length
+      }
+    };
+  }
+
+  // src/tabs/er-model.ts
+  var SKIPPED_FIELD_TYPES = /* @__PURE__ */ new Set(["GROUP", "SPACER", "HR", "LABEL"]);
+  function isRecord(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value);
+  }
+  function normalizeAppId(rawAppId) {
+    const appId = Number(rawAppId);
+    if (!Number.isFinite(appId) || appId <= 0) {
+      throw new TypeError(`Invalid kintone app id: ${String(rawAppId)}`);
+    }
+    return appId;
+  }
+  function errorMessage(error, fallback) {
+    if (error instanceof Error && error.message) return error.message;
+    if (isRecord(error) && typeof error.message === "string" && error.message) return error.message;
+    if (typeof error === "string" && error) return error;
+    return fallback;
+  }
+  function fallbackAppName(appId) {
+    return `アプリ ${appId}`;
+  }
+  function readAppName(response, appId) {
+    return isRecord(response) && typeof response.name === "string" && response.name.trim() ? response.name : fallbackAppName(appId);
+  }
+  function hasOwn(record, key) {
+    return Object.prototype.hasOwnProperty.call(record, key);
+  }
+  function positiveAppId(value) {
+    const id = Number(value);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  }
+  var ErFieldsUnavailableError = class extends Error {
+    constructor(appId, error) {
+      super(errorMessage(error, `アプリ ${appId} のフィールド設定を取得できません`));
+      __publicField(this, "appId");
+      __publicField(this, "originalError");
+      this.name = "ErFieldsUnavailableError";
+      this.appId = appId;
+      this.originalError = error;
+    }
+  };
+  function fieldIssue(scope, code, message, fieldCode, fieldPath) {
+    return { scope, code, message, fieldCode, fieldPath };
+  }
+  function buildErAppModel(input) {
+    const appId = normalizeAppId(input.appId);
+    const fieldResponse = input.fieldsResponse;
+    if (!isRecord(fieldResponse) || !isRecord(fieldResponse.properties)) {
+      throw new ErFieldsUnavailableError(appId, isRecord(fieldResponse) ? fieldResponse._fetchError : fieldResponse);
+    }
+    const issues = [];
+    const appInfo = isRecord(input.appInfoResponse) ? input.appInfoResponse : null;
+    const appInfoFetchError = input.appInfoError ?? appInfo?._fetchError;
+    if (appInfoFetchError !== void 0 && appInfoFetchError !== null) {
+      issues.push({
+        scope: "metadata",
+        code: "metadata_fetch_failed",
+        message: errorMessage(appInfoFetchError, `アプリ ${appId} のメタデータを取得できません`)
+      });
+    } else if (!appInfo || typeof appInfo.name !== "string" || !appInfo.name.trim()) {
+      issues.push({
+        scope: "metadata",
+        code: "metadata_response_invalid",
+        message: `アプリ ${appId} のメタデータ応答が不完全です`
+      });
+    }
+    const fields = [];
+    const relations = [];
+    const walk = (properties, parentTable = "", parentTableLabel = "") => {
+      for (const [propertyKey, rawField] of Object.entries(properties)) {
+        if (!isRecord(rawField)) continue;
+        const type = typeof rawField.type === "string" ? rawField.type : "";
+        if (SKIPPED_FIELD_TYPES.has(type)) continue;
+        const code = typeof rawField.code === "string" && rawField.code ? rawField.code : propertyKey;
+        const label = typeof rawField.label === "string" && rawField.label ? rawField.label : code;
+        const path = parentTable ? `${parentTable}.${code}` : code;
+        const displayPath = parentTableLabel ? `${parentTableLabel} > ${label}` : label;
+        if (type === "SUBTABLE") {
+          fields.push({
+            code,
+            label,
+            type,
+            required: false,
+            unique: false,
+            isPK: false,
+            isLookup: false,
+            isRef: false,
+            sub: true,
+            inSubtable: !!parentTable,
+            tableCode: parentTable,
+            tableLabel: parentTableLabel,
+            path,
+            displayPath
+          });
+          if (isRecord(rawField.fields)) {
+            walk(rawField.fields, code, label);
+          } else {
+            issues.push({
+              scope: "fields",
+              code: "subtable_fields_invalid",
+              message: `サブテーブル「${label}」の内部フィールドを読み取れません`,
+              fieldCode: code,
+              fieldPath: path
+            });
+          }
+          continue;
+        }
+        const lookupWasNull = hasOwn(rawField, "lookup") && rawField.lookup === null;
+        const hasLookup = isRecord(rawField.lookup);
+        const isReferenceTable = type === "REFERENCE_TABLE";
+        fields.push({
+          code,
+          label,
+          type,
+          required: !!rawField.required,
+          unique: !!rawField.unique,
+          // コード名は利用者が変更・再利用できるため、標準のレコード番号型だけを主キー扱いする。
+          isPK: type === "RECORD_NUMBER",
+          isLookup: hasLookup,
+          isRef: isReferenceTable,
+          inSubtable: !!parentTable,
+          tableCode: parentTable,
+          tableLabel: parentTableLabel,
+          path,
+          displayPath
+        });
+        if (lookupWasNull) {
+          issues.push(fieldIssue(
+            "lookup",
+            "lookup_null",
+            `フィールド「${label}」のルックアップ設定が null です`,
+            code,
+            path
+          ));
+        }
+        if (hasLookup) {
+          const targetAppId = positiveAppId(rawField.lookup.relatedApp?.app);
+          const toField = typeof rawField.lookup.relatedKeyField === "string" ? rawField.lookup.relatedKeyField : "";
+          if (targetAppId) {
+            relations.push({
+              from: code,
+              fromPath: path,
+              fromLabel: label,
+              fromDisplay: displayPath,
+              fromTableCode: parentTable,
+              fromTableLabel: parentTableLabel,
+              toApp: targetAppId,
+              toField,
+              kind: "LOOKUP"
+            });
+            if (!toField) {
+              issues.push(fieldIssue(
+                "lookup",
+                "lookup_related_key_missing",
+                `フィールド「${label}」のルックアップ先キーが不明です`,
+                code,
+                path
+              ));
+            }
+          } else {
+            issues.push(fieldIssue(
+              "lookup",
+              "lookup_related_app_missing",
+              `フィールド「${label}」のルックアップ先アプリが不明です`,
+              code,
+              path
+            ));
+          }
+        }
+        if (isReferenceTable) {
+          if (rawField.referenceTable === null || !isRecord(rawField.referenceTable)) {
+            issues.push(fieldIssue(
+              "referenceTable",
+              "reference_table_null",
+              `関連レコード一覧「${label}」の設定が null または不正です`,
+              code,
+              path
+            ));
+            continue;
+          }
+          const referenceTable = rawField.referenceTable;
+          const targetAppId = positiveAppId(referenceTable.relatedApp?.app);
+          const condition = isRecord(referenceTable.condition) ? referenceTable.condition : null;
+          const sourceJoinField = condition && typeof condition.field === "string" ? condition.field : "";
+          const toField = condition && typeof condition.relatedField === "string" ? condition.relatedField : "";
+          if (targetAppId && sourceJoinField) {
+            relations.push({
+              // kintone 公式仕様: condition.field が元アプリの結合フィールド。
+              from: sourceJoinField,
+              fromPath: sourceJoinField,
+              fromLabel: sourceJoinField,
+              fromDisplay: sourceJoinField,
+              fromTableCode: "",
+              fromTableLabel: "",
+              toApp: targetAppId,
+              toField,
+              kind: "REF",
+              // 表示部品の code は結合元と混同しないよう別で保持する。
+              controlField: code,
+              controlFieldPath: path,
+              controlFieldLabel: label,
+              sourceJoinField
+            });
+            if (!toField) {
+              issues.push(fieldIssue(
+                "referenceTable",
+                "reference_table_related_field_missing",
+                `関連レコード一覧「${label}」の参照先結合フィールドが不明です`,
+                code,
+                path
+              ));
+            }
+          } else {
+            issues.push(fieldIssue(
+              "referenceTable",
+              "reference_table_condition_invalid",
+              `関連レコード一覧「${label}」の参照先アプリまたは結合条件が不明です`,
+              code,
+              path
+            ));
+          }
+        }
+      }
+    };
+    walk(fieldResponse.properties);
+    const fieldsByCode = /* @__PURE__ */ new Map();
+    for (const field of fields) {
+      if (!fieldsByCode.has(field.code)) fieldsByCode.set(field.code, field);
+      fieldsByCode.set(field.path, field);
+    }
+    for (const relation of relations) {
+      if (relation.kind !== "REF" || !relation.sourceJoinField) continue;
+      const source = fieldsByCode.get(relation.sourceJoinField);
+      if (!source) continue;
+      relation.fromPath = source.path;
+      relation.fromLabel = source.label;
+      relation.fromDisplay = source.displayPath;
+      relation.fromTableCode = source.tableCode;
+      relation.fromTableLabel = source.tableLabel;
+    }
+    const actionResponse = isRecord(input.actionsResponse) ? input.actionsResponse : null;
+    const actionFetchError = input.actionsError ?? actionResponse?._fetchError;
+    if (actionFetchError !== void 0 && actionFetchError !== null) {
+      issues.push({
+        scope: "actions",
+        code: "actions_fetch_failed",
+        message: errorMessage(actionFetchError, `アプリ ${appId} のアプリアクションを取得できません`)
+      });
+    } else if (!actionResponse || !isRecord(actionResponse.actions)) {
+      issues.push({
+        scope: "actions",
+        code: "actions_response_invalid",
+        message: `アプリ ${appId} のアプリアクション応答が不完全です`
+      });
+    } else {
+      Object.entries(actionResponse.actions).forEach(([actionName, rawAction], index) => {
+        if (!isRecord(rawAction)) return;
+        const targetAppId = positiveAppId(rawAction.destApp?.app ?? rawAction.app?.app);
+        if (!targetAppId) {
+          issues.push({
+            scope: "actions",
+            code: "action_destination_invalid",
+            message: `アプリアクション「${actionName}」の移動先アプリが不明です`
+          });
+          return;
+        }
+        const name = typeof rawAction.name === "string" && rawAction.name ? rawAction.name : actionName;
+        relations.push({
+          from: `__ACTION__${index}`,
+          fromLabel: name || `アクション${index + 1}`,
+          toApp: targetAppId,
+          toField: "",
+          kind: "ACTION"
+        });
+      });
+    }
+    const lookupCount = relations.filter((relation) => relation.kind === "LOOKUP").length;
+    const refCount = relations.filter((relation) => relation.kind === "REF").length;
+    const actionCount = relations.filter((relation) => relation.kind === "ACTION").length;
+    const appName = readAppName(appInfo, appId);
+    const allFields = fields.slice();
+    return {
+      id: appId,
+      name: appName,
+      spaceId: appInfo?.spaceId ?? null,
+      threadId: appInfo?.threadId ?? null,
+      fields: allFields.slice(),
+      allFields,
+      totalFieldCount: allFields.filter((field) => field.type !== "SUBTABLE").length,
+      relations,
+      status: issues.length ? "partial" : "complete",
+      issues,
+      ok: true,
+      createdAt: typeof appInfo?.createdAt === "string" ? appInfo.createdAt : void 0,
+      modifiedAt: typeof appInfo?.modifiedAt === "string" ? appInfo.modifiedAt : void 0,
+      requiredCount: allFields.filter((field) => field.type !== "SUBTABLE" && field.required).length,
+      lookupCount,
+      refCount,
+      actionCount,
+      relationCount: relations.length,
+      sourceGuestId: input.sourceGuestId == null ? "" : String(input.sourceGuestId)
+    };
+  }
+  function buildFailedErAppModel(rawAppId, error, context = {}) {
+    const appId = normalizeAppId(rawAppId);
+    const appInfo = isRecord(context.appInfoResponse) ? context.appInfoResponse : null;
+    const message = errorMessage(error, `アプリ ${appId} のフィールド設定を取得できません`);
+    return {
+      id: appId,
+      name: readAppName(appInfo, appId),
+      spaceId: appInfo?.spaceId ?? null,
+      threadId: appInfo?.threadId ?? null,
+      fields: [],
+      allFields: [],
+      totalFieldCount: 0,
+      relations: [],
+      status: "failed",
+      issues: [{ scope: "fields", code: "fields_fetch_failed", message }],
+      ok: false,
+      createdAt: typeof appInfo?.createdAt === "string" ? appInfo.createdAt : void 0,
+      modifiedAt: typeof appInfo?.modifiedAt === "string" ? appInfo.modifiedAt : void 0,
+      requiredCount: 0,
+      lookupCount: 0,
+      refCount: 0,
+      actionCount: 0,
+      relationCount: 0,
+      sourceGuestId: context.sourceGuestId == null ? "" : String(context.sourceGuestId)
     };
   }
 
@@ -1213,15 +1596,14 @@ ${contextLine}`);
     includeReverseLookup: false
   };
   var ER_TRAVERSE_RELATION_KINDS = /* @__PURE__ */ new Set(["LOOKUP", "REF", "ACTION"]);
-  function normalizeFieldProperties(response) {
-    const props = response?.properties;
-    return props && typeof props === "object" && !Array.isArray(props) ? props : {};
-  }
-  function buildScriptTag(src, fallbackSrc = "") {
+  function buildScriptTag(src, fallbackSrc = "", integrity = "", fallbackIntegrity = "") {
     const safeSrc = esc(src || "");
     const safeFallback = esc(fallbackSrc || "");
-    const fallback = safeFallback ? ` onerror="this.onerror=null;this.src='${safeFallback}'"` : "";
-    return `<script src="${safeSrc}"${fallback}><\/script>`;
+    const safeIntegrity = esc(integrity || "");
+    const safeFallbackIntegrity = esc(fallbackIntegrity || "");
+    const integrityAttr = safeIntegrity ? ` integrity="${safeIntegrity}" crossorigin="anonymous"` : "";
+    const fallback = safeFallback ? ` onerror="this.onerror=null;this.integrity='${safeFallbackIntegrity}';this.crossOrigin='anonymous';this.src='${safeFallback}'"` : "";
+    return `<script src="${safeSrc}"${integrityAttr}${fallback}><\/script>`;
   }
   function formatErLayoutLabel(layoutName) {
     const map = {
@@ -1338,141 +1720,34 @@ ${contextLine}`);
   var getSchema = async (rawAppId, options, cache) => {
     const appId = Number(rawAppId);
     if (cache.has(appId)) return cache.get(appId);
-    try {
-      const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
-      const appInfoPrefix = buildApiPrefix(options?.source?.guestId, false);
-      const [fR, aR, actionResp] = await Promise.all([
-        apiGet(prefix, "/app/form/fields.json", { app: appId }),
-        apiGet(appInfoPrefix, "/app.json", { id: appId }).catch((error) => ({
-          name: `アプリ ${appId}`,
-          _fetchError: error?.message || String(error)
-        })),
-        apiGet(prefix, "/app/actions.json", { app: appId }).catch(() => ({ actions: {} }))
-      ]);
-      const fields = [], relations = [];
-      const walk = (props, parentTable = "", parentTableLabel = "") => {
-        for (const [c, f] of Object.entries(props)) {
-          if (!f || typeof f !== "object") continue;
-          if (["GROUP", "SPACER", "HR", "LABEL"].includes(f.type)) continue;
-          if (f.type === "SUBTABLE") {
-            fields.push({
-              code: c,
-              label: f.label,
-              type: "SUBTABLE",
-              sub: true,
-              inSubtable: !!parentTable,
-              tableCode: parentTable || "",
-              tableLabel: parentTableLabel || "",
-              path: c,
-              displayPath: f.label ? `${f.label} [${c}]` : c
-            });
-            if (options?.includeSubtableFields) walk(f.fields || {}, c, f.label || c);
-            continue;
-          }
-          const hasLookupSetting = !!(f.lookup && typeof f.lookup === "object");
-          const isL = hasLookupSetting;
-          const isR = f.type === "REFERENCE_TABLE";
-          const isPK = /^(\$id|record_number|レコード番号)$/i.test(c);
-          const fieldPath = parentTable ? `${parentTable}.${c}` : c;
-          const displayPath = parentTableLabel ? `${parentTableLabel} > ${f.label || c}` : f.label || c;
-          fields.push({
-            code: c,
-            label: f.label || c,
-            type: f.type,
-            required: !!f.required,
-            unique: !!f.unique,
-            isPK,
-            isLookup: isL,
-            isRef: isR,
-            inSubtable: !!parentTable,
-            tableCode: parentTable || "",
-            tableLabel: parentTableLabel || "",
-            path: fieldPath,
-            displayPath
-          });
-          if (isL && f.lookup?.relatedApp?.app) relations.push({
-            from: c,
-            fromPath: fieldPath,
-            fromLabel: f.label || c,
-            fromDisplay: displayPath,
-            fromTableCode: parentTable || "",
-            fromTableLabel: parentTableLabel || "",
-            toApp: Number(f.lookup.relatedApp.app),
-            toField: f.lookup.relatedKeyField,
-            kind: "LOOKUP"
-          });
-          if (isR && f.referenceTable?.relatedApp?.app) relations.push({
-            from: c,
-            fromPath: fieldPath,
-            fromLabel: f.label || c,
-            fromDisplay: displayPath,
-            fromTableCode: parentTable || "",
-            fromTableLabel: parentTableLabel || "",
-            toApp: Number(f.referenceTable.relatedApp.app),
-            toField: f.referenceTable.condition?.field,
-            kind: "REF"
-          });
-        }
-      };
-      walk(normalizeFieldProperties(fR));
-      Object.entries(actionResp?.actions || {}).forEach(([actionName, action], index) => {
-        const toApp = Number(action?.destApp?.app || action?.app?.app || 0);
-        if (!toApp) return;
-        relations.push({
-          from: `__ACTION__${index}`,
-          fromLabel: action?.name || actionName || `アクション${index + 1}`,
-          toApp,
-          toField: "",
-          kind: "ACTION"
-        });
-      });
-      const linkedFieldPaths = new Set(
-        relations.filter((rel) => rel.kind === "LOOKUP" || rel.kind === "REF").map((rel) => String(rel.fromPath || rel.from || "").trim()).filter(Boolean)
-      );
-      const rawDensity = String(options?.fieldDensity || ER_DEFAULTS.fieldDensity);
-      const density = rawDensity === "none" ? "standard" : rawDensity;
-      const isEssential = (field) => {
-        if (field.type === "SUBTABLE") return false;
-        if (field.isPK || field.unique) return true;
-        return linkedFieldPaths.has(String(field.path || field.code || "").trim());
-      };
-      let visibleFieldsSource;
-      if (density === "full") {
-        visibleFieldsSource = fields.filter((f) => f.type !== "SUBTABLE");
-      } else if (density === "standard") {
-        visibleFieldsSource = fields.filter((f) => f.type !== "SUBTABLE" && (isEssential(f) || !!f.required));
-        if (!visibleFieldsSource.length) visibleFieldsSource = fields.filter((f) => f.type !== "SUBTABLE").slice(0, 6);
-      } else {
-        const essential = fields.filter(isEssential);
-        visibleFieldsSource = essential.length ? essential : fields.filter((f) => f.type !== "SUBTABLE").slice(0, 6);
-      }
-      const visibleFields = visibleFieldsSource.slice(0, options?.maxFields || ER_DEFAULTS.maxFields);
-      const totalFieldCount = fields.filter((f) => f.type !== "SUBTABLE").length;
-      const r = {
-        id: appId,
-        name: aR.name || `アプリ ${appId}`,
-        spaceId: aR.spaceId || null,
-        threadId: aR.threadId || null,
-        fields: visibleFields,
-        allFields: fields,
-        totalFieldCount,
-        relations,
-        ok: true,
-        createdAt: aR.createdAt,
-        modifiedAt: aR.modifiedAt,
-        requiredCount: fields.filter((field) => !!field.required && field.type !== "SUBTABLE").length,
-        lookupCount: relations.filter((rel) => rel.kind === "LOOKUP").length,
-        refCount: relations.filter((rel) => rel.kind === "REF").length,
+    const prefix = buildApiPrefix(options?.source?.guestId, !!options?.source?.preview);
+    const appInfoPrefix = buildApiPrefix(options?.source?.guestId, false);
+    const [fieldsResult, appInfoResult, actionsResult] = await Promise.allSettled([
+      apiGet(prefix, "/app/form/fields.json", { app: appId }),
+      apiGet(appInfoPrefix, "/app.json", { id: appId }),
+      apiGet(prefix, "/app/actions.json", { app: appId })
+    ]);
+    const appInfoResponse = appInfoResult.status === "fulfilled" ? appInfoResult.value : void 0;
+    let model;
+    if (fieldsResult.status === "rejected") {
+      console.error(`App ${appId}:`, fieldsResult.reason);
+      model = buildFailedErAppModel(appId, fieldsResult.reason, {
+        appInfoResponse,
         sourceGuestId: options?.source?.guestId || ""
-      };
-      cache.set(appId, r);
-      return r;
-    } catch (e) {
-      console.error(`App ${appId}:`, e);
-      const r = { id: appId, name: `アプリ ${appId} (取得失敗)`, fields: [], allFields: [], totalFieldCount: 0, relations: [], ok: false };
-      cache.set(appId, r);
-      return r;
+      });
+    } else {
+      model = buildErAppModel({
+        appId,
+        fieldsResponse: fieldsResult.value,
+        appInfoResponse,
+        actionsResponse: actionsResult.status === "fulfilled" ? actionsResult.value : void 0,
+        appInfoError: appInfoResult.status === "rejected" ? appInfoResult.reason : void 0,
+        actionsError: actionsResult.status === "rejected" ? actionsResult.reason : void 0,
+        sourceGuestId: options?.source?.guestId || ""
+      });
     }
+    cache.set(appId, model);
+    return model;
   };
   var crawl = async (startIds, options) => {
     const cache = /* @__PURE__ */ new Map();
@@ -1535,12 +1810,19 @@ ${contextLine}`);
     return apps;
   };
   var buildHTML = (apps, options = {}) => {
-    const data = safeJsonForScript(apps);
+    const safeApps = Array.isArray(apps) ? apps : [];
+    const serializedApps = safeApps.map((app) => {
+      if (!app || !Array.isArray(app.allFields)) return app;
+      const { fields: _legacyDensityFields, ...rest } = app;
+      return rest;
+    });
+    const data = safeJsonForScript(serializedApps);
     const diagramOptions = safeJsonForScript({
       startAppId: options.startAppId || "",
       startAppIds: Array.isArray(options.startAppIds) ? options.startAppIds : [options.startAppId || ""],
       layoutName: options.layoutName || ER_DEFAULTS.layoutName,
       fieldDensity: options.fieldDensity || ER_DEFAULTS.fieldDensity,
+      maxFields: Number(options.maxFields) || ER_DEFAULTS.maxFields,
       maxDepth: options.maxDepth || 0,
       includeSubtableFields: !!options.includeSubtableFields,
       includeReverseLookup: !!options.includeReverseLookup,
@@ -1549,7 +1831,6 @@ ${contextLine}`);
       sourceGuestId: options.source?.guestId || "",
       sourcePreview: !!options.source?.preview
     });
-    const safeApps = Array.isArray(apps) ? apps : [];
     const dependencyAnalysis = analyzeErDependencies(safeApps);
     const dependencyAnalysisData = safeJsonForScript(dependencyAnalysis);
     const densityLabelMap = { none: "結合のみ", compact: "コンパクト", standard: "標準", full: "詳細" };
@@ -1569,15 +1850,31 @@ ${contextLine}`);
     const spaceAppCount = erSpaceId ? safeApps.filter((app) => spaceAppIdSet.has(String(app?.id)) || String(app?.spaceId || "") === erSpaceId).length : 0;
     const spacePill = erSpaceId ? `<span class="meta-pill" title="このスペースに属するアプリは二重枠で表示されます"><b>スペース</b> #${esc(erSpaceId)} (${esc(String(spaceAppCount))}アプリ)</span>` : "";
     const densityLabel = densityLabelMap[options.fieldDensity || ER_DEFAULTS.fieldDensity] || String(options.fieldDensity || ER_DEFAULTS.fieldDensity || "-");
-    const cytoscapeScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscape.cdnUrl, EXTERNAL_LIBRARIES.cytoscape.altCdnUrl);
-    const dagreScript = buildScriptTag(EXTERNAL_LIBRARIES.dagre.cdnUrl);
-    const cytoscapeDagreScript = buildScriptTag(EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl, EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl);
+    const cytoscapeScript = buildScriptTag(
+      EXTERNAL_LIBRARIES.cytoscape.cdnUrl,
+      EXTERNAL_LIBRARIES.cytoscape.altCdnUrl,
+      "sha384-J7Q85oZE4GJ/e7+n2aOQsLXfDwwfnA8S2nZAL5BpFsfpCF84zQD7LroZ/dMnLgex",
+      "sha384-+4PsOx8pfCvP2QccNj+4PHhCkQFmbi69UlEi43BHbHopL1unxFMpqiPXNscfoiM5"
+    );
+    const dagreScript = buildScriptTag(
+      EXTERNAL_LIBRARIES.dagre.cdnUrl,
+      "",
+      "sha384-2IH3T69EIKYC4c+RXZifZRvaH5SRUdacJW7j6HtE5rQbvLhKKdawxq6vpIzJ7j9M"
+    );
+    const cytoscapeDagreScript = buildScriptTag(
+      EXTERNAL_LIBRARIES.cytoscapeDagre.cdnUrl,
+      EXTERNAL_LIBRARIES.cytoscapeDagre.altCdnUrl,
+      "sha384-EHCdyFVbhtbpgI+4x7ETlZUvJwOkxJublmhTpH114NSk3fqfiUgcLl6pQm8JQwg9",
+      "sha384-u69h9ebXeSjlg6q/rb1zKTRAGu/h8deCl0409xpS/QJctMKnc4M9Fzkm01VOQdeF"
+    );
+    const runtimeFallbackRows = safeApps.map((app) => `<tr><td>${esc(String(app?.id || "-"))}</td><td>${esc(String(app?.name || `アプリ ${app?.id || "-"}`))}</td><td>${esc(String(app?.totalFieldCount ?? app?.allFields?.length ?? app?.fields?.length ?? 0))}</td><td>${esc(String(app?.relations?.length || 0))}</td><td>${esc(app?.status === "partial" ? "一部取得" : app?.ok === false ? "取得失敗" : "取得完了")}</td></tr>`).join("");
     return (
       /*html*/
       `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
 <title>kintone ER図 v3</title>
 ${cytoscapeScript}
 ${dagreScript}
@@ -1593,6 +1890,9 @@ ${cytoscapeDagreScript}
   --lookup:#60a5fa;--ref:#34d399;--pk:#fbbf24;--req:#f87171;--action:#f59e0b;
   --radius:10px;
   --topbar-h:52px;
+  --bottom-safe:16px;
+  --pathfinder-lift:0px;
+  --legend-stack-height:50px;
   --shadow-sm:0 2px 6px rgba(0,0,0,0.18);
   --shadow-md:0 10px 28px rgba(0,0,0,0.28);
 }
@@ -1617,7 +1917,7 @@ body{font-family:'DM Sans',sans-serif;background:
 #cmd-input{width:100%;padding:16px 20px;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;outline:none;border-bottom:1px solid var(--border);}
 #cmd-input::placeholder{color:var(--dim);}
 #cmd-results{max-height:min(340px,60vh);overflow-y:auto;}
-.cmd-item{padding:10px 20px;cursor:pointer;display:flex;align-items:center;gap:10px;font-size:13px;border-bottom:1px solid var(--border);}
+.cmd-item{width:100%;padding:10px 20px;cursor:pointer;display:flex;align-items:center;gap:10px;font-size:13px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);font:inherit;text-align:left;}
 .cmd-item:hover,.cmd-item.active{background:var(--surface2);}
 .cmd-item .kbd{margin-left:auto;font-size:10px;padding:2px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;font-family:'DM Mono',monospace;color:var(--dim);}
 
@@ -1629,7 +1929,7 @@ body{font-family:'DM Sans',sans-serif;background:
   background:linear-gradient(180deg,var(--bg) 82%,rgba(8,9,13,0.92));
   backdrop-filter:blur(12px);
   border-bottom:1px solid var(--border);
-  flex-wrap:wrap;overflow-x:hidden;white-space:normal;
+  flex-wrap:wrap;overflow:visible;white-space:normal;
 }
 #topbar::-webkit-scrollbar{display:none;}
 #topbar h1{font-size:14px;font-weight:700;margin-right:6px;white-space:nowrap;
@@ -1658,7 +1958,7 @@ body{font-family:'DM Sans',sans-serif;background:
 /* ── Dropdown menu ── */
 .tb-menu{position:relative;}
 .tb-menu > .tb-menu-btn::after{content:"▾";margin-left:4px;font-size:9px;opacity:0.7;}
-.tb-menu-panel{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:200px;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);padding:6px;z-index:120;}
+.tb-menu-panel{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:200px;max-height:min(70vh,480px);overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);padding:6px;z-index:120;}
 .tb-menu.open .tb-menu-panel{display:flex;flex-direction:column;gap:2px;}
 .tb-menu-panel .tb{background:transparent;border:1px solid transparent;justify-content:flex-start;width:100%;padding:7px 10px;font-size:12px;}
 .tb-menu-panel .tb:hover{background:var(--surface2);border-color:var(--border);}
@@ -1675,16 +1975,6 @@ body{font-family:'DM Sans',sans-serif;background:
   .tb-group-label{display:none;}
 }
 @media (max-width: 900px){
-  :root{--topbar-h:auto;}
-  #overview{top:calc(var(--topbar-h, 52px) + 58px);width:calc(100vw - 24px);left:12px;}
-  .ov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
-  #detail{width:min(96vw,420px);top:calc(var(--topbar-h, 52px) + 6px);}
-  #analysis-panel{width:min(380px,94vw);top:calc(var(--topbar-h, 52px) + 6px);}
-  #banner{top:calc(var(--topbar-h, 52px) + 6px);}
-  #sidebar{top:calc(var(--topbar-h, 52px) + 2px);width:min(300px,92vw);}
-  #legend{font-size:9px;padding:6px 10px;gap:8px;flex-wrap:wrap;max-width:calc(100vw - 92px);}
-}
-@media (max-width: 640px){
   #topbar{padding:6px 8px;gap:4px;}
   #topbar h1{font-size:12px;margin-right:2px;}
   #mobile-menu-btn{display:inline-flex;}
@@ -1695,14 +1985,27 @@ body{font-family:'DM Sans',sans-serif;background:
   #topbar > .tb-group[data-group="edit"],
   #topbar > #density-select,
   #topbar > #overview-toggle-btn,
-  #topbar > .tb[data-mobile="hide"]{display:none;}
+  #topbar > .tb[data-mobile="hide"],
+  #topbar > .tb-menu[data-mobile="hide"]{display:none;}
   #topbar.mobile-open > .meta-group,
   #topbar.mobile-open > .tb-group,
   #topbar.mobile-open > #density-select,
   #topbar.mobile-open > #overview-toggle-btn,
-  #topbar.mobile-open > .tb[data-mobile="hide"]{display:inline-flex;}
+  #topbar.mobile-open > .tb[data-mobile="hide"],
+  #topbar.mobile-open > .tb-menu[data-mobile="hide"]{display:inline-flex;}
   #topbar.mobile-open{padding-bottom:10px;}
   #search-box{flex:1 1 120px;width:100%;}
+  #overview{top:calc(var(--topbar-h, 52px) + 58px);width:calc(100vw - 24px);left:12px;}
+  .ov-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+  #detail{width:min(96vw,420px);top:calc(var(--topbar-h, 52px) + 6px);}
+  #analysis-panel{width:min(380px,94vw);top:calc(var(--topbar-h, 52px) + 6px);}
+  #banner{top:calc(var(--topbar-h, 52px) + 6px);}
+  #sidebar{top:calc(var(--topbar-h, 52px) + 2px);width:min(300px,92vw);}
+  #legend{font-size:9px;padding:6px 10px;gap:8px;flex-wrap:wrap;max-width:calc(100vw - 92px);}
+  .tb-menu-panel{position:fixed;left:8px;right:8px;top:var(--topbar-h,52px);max-height:calc(100vh - var(--topbar-h,52px) - 16px);}
+}
+@media (max-width: 640px){
+  :root{--bottom-safe:8px;}
   #detail{width:100vw;right:0;top:0;max-height:100vh;border-radius:0;}
   #detail.open{top:0;}
   #analysis-panel{width:100vw;right:0;top:0;max-height:100vh;border-radius:0;}
@@ -1718,7 +2021,7 @@ body{font-family:'DM Sans',sans-serif;background:
   #toast{bottom:80px;font-size:11px;padding:7px 14px;}
   #banner{top:calc(var(--topbar-h, 52px) + 4px);left:8px;max-width:calc(100vw - 16px);}
   .meta-pill{font-size:9px;padding:3px 7px;}
-  #zoom-ctrl{bottom:56px;right:8px;}
+  #zoom-ctrl{bottom:calc(var(--bottom-safe) + var(--pathfinder-lift) + var(--legend-stack-height));right:8px;}
   #fab-mobile{display:flex;}
 }
 
@@ -1728,11 +2031,19 @@ body{font-family:'DM Sans',sans-serif;background:
 #fab-mobile button:hover{color:var(--accent);border-color:var(--accent);}
 
 /* ── Zoom controls ── */
-#zoom-ctrl{position:fixed;bottom:52px;right:210px;z-index:100;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow-sm);}
-#zoom-ctrl button{width:34px;height:30px;border:none;background:transparent;color:var(--text);cursor:pointer;font-size:13px;font-family:inherit;border-bottom:1px solid var(--border);transition:.12s;}
-#zoom-ctrl button:last-child{border-bottom:none;}
+#zoom-ctrl{position:fixed;bottom:calc(var(--bottom-safe) + var(--pathfinder-lift) + var(--legend-stack-height));right:16px;z-index:105;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:visible;box-shadow:var(--shadow-sm);}
+#zoom-ctrl > button{width:38px;min-height:32px;border:none;background:transparent;color:var(--text);cursor:pointer;font-size:13px;font-family:inherit;border-bottom:1px solid var(--border);transition:.12s;}
+#zoom-ctrl > button:first-child{border-radius:var(--radius) var(--radius) 0 0;}
+#zoom-ctrl > button:last-of-type{border-bottom:none;border-radius:0 0 var(--radius) var(--radius);}
 #zoom-ctrl button:hover{background:var(--surface2);color:var(--accent);}
-#zoom-level{font-size:9px;color:var(--dim);text-align:center;padding:3px 0;border-bottom:1px solid var(--border);font-family:'DM Mono',monospace;}
+#zoom-level{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:9px;color:var(--dim);text-align:center;padding:4px 1px;font-family:'DM Mono',monospace;line-height:1.15;}
+#zoom-level[aria-expanded="true"]{background:var(--surface2);color:var(--accent);}
+#zoom-mode{font-family:'DM Sans',sans-serif;font-size:8px;font-weight:700;color:var(--action);}
+#zoom-mode:empty{display:none;}
+#zoom-presets{display:none;position:absolute;right:calc(100% + 8px);bottom:0;width:170px;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-md);}
+#zoom-presets.open{display:grid;}
+#zoom-presets button{min-width:0;height:32px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text);font:600 10px 'DM Mono',monospace;cursor:pointer;}
+#zoom-presets button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#000;}
 
 /* ── Sidebar ── */
 #sidebar{
@@ -1742,11 +2053,15 @@ body{font-family:'DM Sans',sans-serif;background:
   padding:14px;font-size:12px;
 }
 #sidebar.open{transform:translateX(0);}
+#sidebar .sidebar-head{position:sticky;top:-14px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-14px -14px 8px;padding:14px;background:var(--surface);border-bottom:1px solid var(--border);}
+#sidebar .sidebar-head h3{margin:0;}
+#sidebar-close{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font:inherit;cursor:pointer;}
+#sidebar-close:hover{color:var(--accent);border-color:var(--accent);}
 #sidebar h3{font-size:13px;margin:14px 0 8px;color:var(--accent);font-weight:600;}
 #sidebar h3:first-child{margin-top:0;}
 .stat-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);}
 .stat-val{font-weight:600;font-family:'DM Mono',monospace;color:var(--accent2);}
-.app-list-item{padding:6px 8px;cursor:pointer;border-radius:6px;margin:2px 0;transition:.1s;}
+.app-list-item{display:block;width:100%;padding:6px 8px;cursor:pointer;border:1px solid transparent;border-radius:6px;margin:2px 0;transition:.1s;background:transparent;color:var(--text);text-align:left;font:inherit;}
 .app-list-group{margin:12px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--dim);letter-spacing:0.04em;}
 .app-list-group:first-child{margin-top:2px;}
 .app-list-item:hover{background:var(--surface2);}
@@ -1771,6 +2086,10 @@ body{font-family:'DM Sans',sans-serif;background:
 .analysis-score__value span{font-size:9px;color:var(--dim);margin-top:3px;}
 .analysis-score__copy strong{display:block;font-size:13px;margin-bottom:4px;}
 .analysis-score__copy span{font-size:10px;line-height:1.5;color:var(--dim);}
+.analysis-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px;border:1px solid var(--border);border-radius:14px;background:var(--surface2);}
+.analysis-fact{padding:8px;border-radius:10px;background:var(--surface);text-align:center;}
+.analysis-fact strong{display:block;font:700 20px/1.1 'DM Mono',monospace;color:var(--accent);}
+.analysis-fact span{display:block;margin-top:5px;font-size:9px;color:var(--dim);}
 .analysis-section{margin-top:18px;}
 .analysis-section h3{font-size:11px;color:var(--text);margin-bottom:7px;display:flex;justify-content:space-between;gap:8px;}
 .analysis-count{color:var(--dim);font-family:'DM Mono',monospace;}
@@ -1797,6 +2116,7 @@ body{font-family:'DM Sans',sans-serif;background:
 .field-group-title{font-size:11px;font-weight:600;color:var(--dim);margin:12px 0 6px;text-transform:uppercase;letter-spacing:.05em;}
 .field-row{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:8px;font-size:11px;border-bottom:1px solid var(--border);}
 .field-row:hover{background:var(--surface2);}
+.detail-relation-button{width:100%;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer;}
 .field-icon{width:18px;text-align:center;flex-shrink:0;}
 .field-main{flex:1;min-width:0;}
 .field-name{display:flex;align-items:center;gap:4px;flex-wrap:wrap;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;}
@@ -1819,7 +2139,7 @@ body{font-family:'DM Sans',sans-serif;background:
 
 /* ── Path Finder ── */
 #pathfinder{
-  position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:100;
+  position:fixed;bottom:var(--bottom-safe);left:50%;transform:translateX(-50%);z-index:100;
   background:var(--surface);border:1px solid var(--border);border-radius:12px;
   padding:10px 16px;display:none;align-items:center;gap:8px;font-size:12px;
   box-shadow:0 8px 30px rgba(0,0,0,0.4);
@@ -1831,12 +2151,13 @@ body{font-family:'DM Sans',sans-serif;background:
 
 /* ── Legend ── */
 #legend{
-  position:fixed;bottom:16px;right:16px;z-index:100;
+  position:fixed;bottom:calc(var(--bottom-safe) + var(--pathfinder-lift));right:16px;z-index:100;
   display:flex;gap:14px;padding:8px 14px;
   background:var(--surface);border:1px solid var(--border);
   border-radius:var(--radius);font-size:10px;box-shadow:var(--shadow-sm);
 }
-#legend span{display:flex;align-items:center;gap:4px;}
+#legend span,#legend button{display:flex;align-items:center;gap:4px;}
+#legend button{appearance:none;background:transparent;color:inherit;font:inherit;line-height:inherit;}
 #legend i{display:inline-block;width:9px;height:9px;border-radius:2px;}
 #legend .legend-toggle{cursor:pointer;padding:2px 6px;border:1px solid transparent;border-radius:8px;transition:.12s;}
 #legend .legend-toggle:hover{background:var(--surface2);border-color:var(--border);}
@@ -1872,7 +2193,7 @@ body{font-family:'DM Sans',sans-serif;background:
 /* ── Modal ── */
 #modal-overlay{display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);justify-content:center;align-items:center;}
 #modal-overlay.open{display:flex;}
-#modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;width:600px;max-height:80vh;overflow-y:auto;}
+#modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;width:min(600px,calc(100vw - 24px));max-height:80vh;overflow-y:auto;}
 #modal h2{margin-bottom:10px;font-size:15px;}
 #modal pre{background:var(--bg);padding:12px;border-radius:8px;font-size:11px;overflow-x:auto;white-space:pre-wrap;font-family:'DM Mono',monospace;color:var(--dim);max-height:400px;overflow-y:auto;border:1px solid var(--border);}
 #modal .actions{margin-top:12px;display:flex;gap:8px;}
@@ -1943,6 +2264,34 @@ body{font-family:'DM Sans',sans-serif;background:
 #toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%) translateY(20px);z-index:600;padding:8px 20px;background:var(--accent);color:#000;border-radius:8px;font-size:12px;font-weight:600;opacity:0;transition:.3s;pointer-events:none;}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
+button:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--accent);outline-offset:2px;}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important;}}
+#banner{top:calc(var(--topbar-h,52px) + 6px);}
+#overview{top:calc(var(--topbar-h,52px) + 48px);}
+#sidebar{top:var(--topbar-h,52px);}
+#detail,#analysis-panel{top:calc(var(--topbar-h,52px) + 6px);max-height:calc(100vh - var(--topbar-h,52px) - 14px);}
+.field-row:focus-within .row-edit,.field-row:focus-within .row-del{opacity:1;}
+@media (max-width:640px){
+  #detail,#analysis-panel,#sidebar{top:0;max-height:100vh;width:100vw;border-radius:0;z-index:180;}
+  #overview{top:calc(var(--topbar-h,52px) + 42px);}
+  #legend{bottom:calc(var(--bottom-safe) + var(--pathfinder-lift));flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;white-space:nowrap;}
+  #zoom-ctrl{right:8px;}
+  #fab-mobile{display:flex;bottom:calc(var(--bottom-safe) + var(--pathfinder-lift) + 50px);}
+  .row-edit,.row-del{opacity:1;width:30px;height:30px;}
+  .tb-menu-panel{position:fixed;left:8px;right:8px;top:var(--topbar-h,52px);max-height:calc(100vh - var(--topbar-h,52px) - 16px);}
+  #sidebar .sidebar-head{top:0;margin:-14px -14px 8px;}
+}
+@media (max-width:420px){
+  #modal,#editor,#help-box{padding:16px;}
+  #modal .actions,#editor .actions{flex-wrap:wrap;}
+  #modal .actions button,#editor .actions button{flex:1 1 112px;min-height:44px;}
+  #editor .actions button.danger{margin-right:0;}
+  .help-grid{grid-template-columns:minmax(0,1fr);}
+  .help-row{align-items:flex-start;flex-wrap:wrap;}
+  #zoom-ctrl > button,#zoom-level{width:42px;min-height:40px;}
+  #sidebar-close{width:44px;height:44px;}
+}
+
 /* scrollbar */
 ::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
 </style>
@@ -1951,7 +2300,7 @@ body{font-family:'DM Sans',sans-serif;background:
 
 <!-- Command Palette -->
 <div id="cmd-overlay" onclick="if(event.target===this)closeCmd()">
-  <div id="cmd-box">
+  <div id="cmd-box" role="dialog" aria-modal="true" aria-label="コマンドパレット">
     <input id="cmd-input" placeholder="コマンドを入力... (アプリ検索、エクスポート、レイアウト変更...)" oninput="filterCmd(this.value)">
     <div id="cmd-results"></div>
   </div>
@@ -1959,7 +2308,7 @@ body{font-family:'DM Sans',sans-serif;background:
 
 <!-- Top Bar -->
 <div id="topbar">
-  <button class="tb tb-icon" id="mobile-menu-btn" onclick="toggleMobileMenu()" title="メニュー" aria-label="メニュー">☰</button>
+  <button class="tb tb-icon" id="mobile-menu-btn" onclick="toggleMobileMenu()" title="メニュー" aria-label="メニュー" aria-expanded="false">☰</button>
   <h1>⬡ kintone ER図</h1>
 
   <div class="meta-group" style="display:inline-flex;gap:4px;flex-wrap:wrap;">
@@ -1974,8 +2323,8 @@ body{font-family:'DM Sans',sans-serif;background:
 
   <div class="tb-group" data-group="view">
     <span class="tb-group-label">表示</span>
-    <button class="tb" onclick="toggleSidebar()" title="統計パネル (Ctrl+B)">📊</button>
-    <button class="tb" id="analysis-toggle-btn" onclick="toggleAnalysisPanel()" title="構造分析: 循環・孤立・参照集中を確認">🩺 分析</button>
+    <button class="tb" id="sidebar-toggle-btn" onclick="toggleSidebar(undefined,this)" title="統計パネル (Ctrl+B)" aria-controls="sidebar" aria-expanded="false">📊</button>
+    <button class="tb" id="analysis-toggle-btn" onclick="toggleAnalysisPanel()" title="構造チェック: 取得状態・循環候補・接続数を確認">🩺 チェック</button>
     <button class="tb" id="overview-toggle-btn" onclick="toggleOverview()" title="ガイドパネル">🧭</button>
     <button class="tb" onclick="togglePathFinder()" title="経路探索">🛣</button>
     <button class="tb" onclick="toggleMinimap()" title="ミニマップ">🗺</button>
@@ -2071,7 +2420,7 @@ body{font-family:'DM Sans',sans-serif;background:
 
   <div class="spacer"></div>
 
-  <button class="tb" onclick="fit()" title="全体表示 (Ctrl+0)">📐</button>
+  <button class="tb" onclick="fit()" title="全体表示 (Ctrl+0)" aria-label="図全体を表示">📐</button>
 
   <div class="tb-menu" id="export-menu">
     <button class="tb tb-menu-btn" onclick="toggleMenu('export-menu')">💾 出力</button>
@@ -2079,14 +2428,13 @@ body{font-family:'DM Sans',sans-serif;background:
       <button class="tb" onclick="exportEditedHtml();closeAllMenus()">💾 編集済みHTMLを保存</button>
       <hr>
       <button class="tb" onclick="exportPNG();closeAllMenus()">🖼 PNG 画像</button>
-      <button class="tb" onclick="exportSVG();closeAllMenus()">📄 SVG 画像</button>
       <hr>
       <button class="tb" onclick="showMermaid();closeAllMenus()">🧜 Mermaid</button>
       <button class="tb" onclick="showDrawio();closeAllMenus()">📊 draw.io XML</button>
       <button class="tb" onclick="showPlantUML();closeAllMenus()">🌱 PlantUML</button>
       <button class="tb" onclick="showSQL();closeAllMenus()">🗄 SQL DDL</button>
       <hr>
-      <button class="tb" onclick="showJSON();closeAllMenus()">{} JSON スキーマ</button>
+      <button class="tb" onclick="showJSON();closeAllMenus()">{} ERモデル JSON</button>
       <button class="tb" onclick="showMarkdown();closeAllMenus()">📝 Markdown 仕様書</button>
       <button class="tb" onclick="showCSVApps();closeAllMenus()">📑 CSV (アプリ一覧)</button>
       <button class="tb" onclick="showCSVFields();closeAllMenus()">📑 CSV (フィールド)</button>
@@ -2097,23 +2445,31 @@ body{font-family:'DM Sans',sans-serif;background:
     </div>
   </div>
 
-  <button class="tb tb-icon" id="theme-btn" onclick="toggleTheme()" title="テーマ切替">🌙</button>
-  <button class="tb tb-icon" onclick="openHelp()" title="ヘルプ (?)">❓</button>
-  <button class="tb tb-icon" onclick="openCmd()" title="コマンド (Ctrl+K)">⌘K</button>
+  <button class="tb tb-icon" id="theme-btn" onclick="toggleTheme()" title="テーマ切替" aria-label="テーマを切り替え">🌙</button>
+  <button class="tb tb-icon" onclick="openHelp()" title="ヘルプ (?)" aria-label="ヘルプを開く">❓</button>
+  <button class="tb tb-icon" onclick="openCmd()" title="コマンド (Ctrl+K)" aria-label="コマンドパレットを開く">⌘K</button>
 </div>
 
 <!-- Floating action buttons for mobile -->
 <div id="fab-mobile">
-  <button onclick="fit()" title="全体表示">📐</button>
-  <button onclick="toggleSidebar()" title="統計">📊</button>
+  <button onclick="fit()" title="全体表示" aria-label="図全体を表示">📐</button>
+  <button id="sidebar-fab-btn" onclick="toggleSidebar(undefined,this)" title="統計" aria-label="統計パネルを開閉" aria-controls="sidebar" aria-expanded="false">📊</button>
 </div>
 
 <!-- Zoom controls -->
-<div id="zoom-ctrl">
-  <button onclick="zoomIn()" title="拡大 (+)">＋</button>
-  <div id="zoom-level">100%</div>
-  <button onclick="zoomReset()" title="リセット (0)">◎</button>
-  <button onclick="zoomOut()" title="縮小 (-)">－</button>
+<div id="zoom-ctrl" role="group" aria-label="表示倍率">
+  <button type="button" onclick="zoomIn()" title="拡大 (+)" aria-label="拡大">＋</button>
+  <button type="button" id="zoom-level" onclick="toggleZoomPresets()" title="倍率を選択" aria-label="現在の表示倍率。倍率プリセットを開く" aria-haspopup="true" aria-expanded="false"><span id="zoom-value" aria-live="polite">100%</span><span id="zoom-mode"></span></button>
+  <button type="button" onclick="zoomReset()" title="100%にリセット (0)" aria-label="表示倍率を100%にリセット">◎</button>
+  <button type="button" onclick="zoomOut()" title="縮小 (-)" aria-label="縮小">－</button>
+  <div id="zoom-presets" role="group" aria-label="倍率プリセット">
+    <button type="button" class="zoom-preset" data-zoom="50" aria-pressed="false" onclick="setZoomPercent(50)">50%</button>
+    <button type="button" class="zoom-preset" data-zoom="75" aria-pressed="false" onclick="setZoomPercent(75)">75%</button>
+    <button type="button" class="zoom-preset" data-zoom="100" aria-pressed="true" onclick="setZoomPercent(100)">100%</button>
+    <button type="button" class="zoom-preset" data-zoom="125" aria-pressed="false" onclick="setZoomPercent(125)">125%</button>
+    <button type="button" class="zoom-preset" data-zoom="150" aria-pressed="false" onclick="setZoomPercent(150)">150%</button>
+    <button type="button" class="zoom-preset" data-zoom="200" aria-pressed="false" onclick="setZoomPercent(200)">200%</button>
+  </div>
 </div>
 
 <div id="banner">
@@ -2123,19 +2479,19 @@ body{font-family:'DM Sans',sans-serif;background:
   <span class="meta-pill"><b>サブテーブル</b> ${options.includeSubtableFields ? "ON" : "OFF"}</span>
 </div>
 
-<div id="overview">
+<div id="overview" class="collapsed">
   <div class="ov-head">
     <div>
-      <div class="ov-title">構造サマリー</div>
-      <div class="ov-sub">アプリ間の依存関係を自動分析しました。数値を選ぶと、詳細な構造分析と該当アプリを確認できます。</div>
+      <div class="ov-title">取得・関連サマリー</div>
+      <div class="ov-sub">取得できた設定と関連の事実を表示します。良否は判定せず、数値を選ぶと該当箇所を確認できます。</div>
     </div>
     <button class="ov-close" onclick="hideOverview()" title="ガイドを閉じる（🧭 で再表示）" aria-label="ガイドを閉じる">✕</button>
   </div>
   <div class="ov-grid">
-    <button class="ov-card ov-card--action" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.score}</span><span class="ov-label">構造スコア (${dependencyAnalysis.grade})</span></button>
+    <button class="ov-card ov-card--action${dependencyAnalysis.counts.retrievalPartial + dependencyAnalysis.counts.retrievalFailed ? " ov-card--warn" : ""}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.counts.retrievalPartial + dependencyAnalysis.counts.retrievalFailed}</span><span class="ov-label">取得に注意が必要</span></button>
     <button class="ov-card ov-card--action${dependencyAnalysis.cycles.length ? " ov-card--risk" : ""}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.cycles.length}</span><span class="ov-label">循環グループ</span></button>
     <button class="ov-card ov-card--action${dependencyAnalysis.isolatedAppIds.length ? " ov-card--warn" : ""}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.isolatedAppIds.length}</span><span class="ov-label">孤立アプリ</span></button>
-    <button class="ov-card ov-card--action" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.hubs.length}</span><span class="ov-label">参照集中アプリ</span></button>
+    <button class="ov-card ov-card--action" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.selfReferences.length}</span><span class="ov-label">自己参照</span></button>
     <button class="ov-card ov-card--action${dependencyAnalysis.unresolvedTargets.length ? " ov-card--warn" : ""}" onclick="toggleAnalysisPanel(true)"><span class="ov-kpi">${dependencyAnalysis.unresolvedTargets.length}</span><span class="ov-label">未取得の参照先</span></button>
     <div class="ov-card"><span class="ov-kpi">${summary.relations}</span><span class="ov-label">総関連</span></div>
   </div>
@@ -2152,20 +2508,21 @@ body{font-family:'DM Sans',sans-serif;background:
 <!-- Architecture Analysis -->
 <aside id="analysis-panel" aria-label="ER図の構造分析">
   <div class="analysis-head">
-    <div><h2>🩺 構造分析</h2><p>循環、孤立、参照集中、未取得の参照先を確認します。</p></div>
+    <div><h2>🩺 構造チェック</h2><p>取得状態、循環候補、自己参照、関連のないアプリなどの事実を確認します。</p></div>
     <button class="close-btn" onclick="toggleAnalysisPanel(false)" aria-label="構造分析を閉じる">✕</button>
   </div>
-  <div class="analysis-score">
-    <div class="analysis-score__value"><strong>${dependencyAnalysis.score}</strong><span>GRADE ${dependencyAnalysis.grade}</span></div>
-    <div class="analysis-score__copy"><strong>${dependencyAnalysis.score >= 90 ? "良好な構造です" : dependencyAnalysis.score >= 75 ? "確認候補があります" : dependencyAnalysis.score >= 60 ? "設計レビューを推奨" : "優先的な見直しを推奨"}</strong><span>取得できた ${dependencyAnalysis.appCount} アプリ・${dependencyAnalysis.edgeCount} 関連を分析した参考指標です。</span></div>
+  <div class="analysis-facts" aria-label="取得状態の件数">
+    <div class="analysis-fact"><strong>${dependencyAnalysis.counts.retrievalComplete}</strong><span>取得完了</span></div>
+    <div class="analysis-fact"><strong>${dependencyAnalysis.counts.retrievalPartial}</strong><span>一部取得</span></div>
+    <div class="analysis-fact"><strong>${dependencyAnalysis.counts.retrievalFailed}</strong><span>取得失敗</span></div>
   </div>
   <div id="analysis-content"></div>
-  <div class="analysis-note">スコアは取得失敗、未取得の参照先、循環グループ、孤立率から算出する設計レビュー用の参考値です。業務上意図した構造は問題とは限りません。</div>
+  <div class="analysis-note">ここでは良否を判定しません。「接続数が多い」は入出力の関連が ${dependencyAnalysis.highConnectionThreshold} 件以上のアプリを機械的に列挙しています。</div>
 </aside>
 
 <!-- Sidebar -->
-<div id="sidebar">
-  <h3>📊 統計サマリー</h3>
+<div id="sidebar" role="region" aria-label="統計・フィルター" aria-hidden="true" inert>
+  <div class="sidebar-head"><h3>📊 統計サマリー</h3><button type="button" id="sidebar-close" onclick="closeSidebar()" aria-label="統計パネルを閉じる">✕</button></div>
   <div id="stats-summary"></div>
   <h3>🏷 フィールドタイプフィルター</h3>
   <div id="type-filters"></div>
@@ -2177,7 +2534,7 @@ body{font-family:'DM Sans',sans-serif;background:
 <div id="cy"></div>
 
 <!-- Detail Panel -->
-<div id="detail">
+<div id="detail" role="complementary" aria-label="選択したアプリの詳細">
   <button class="close-btn" onclick="closeDetail()">✕</button>
   <h2 id="detail-title"></h2>
   <div class="app-meta" id="detail-meta"></div>
@@ -2188,9 +2545,9 @@ body{font-family:'DM Sans',sans-serif;background:
 <!-- Path Finder -->
 <div id="pathfinder">
   <span>経路:</span>
-  <select id="pf-from"></select>
+  <select id="pf-from" aria-label="経路の起点アプリ"></select>
   <span>→</span>
-  <select id="pf-to"></select>
+  <select id="pf-to" aria-label="経路の終点アプリ"></select>
   <button class="tb active" onclick="findPath()">検索</button>
   <button class="tb" onclick="clearPath()">クリア</button>
   <span id="path-result"></span>
@@ -2203,9 +2560,12 @@ body{font-family:'DM Sans',sans-serif;background:
   <span><i style="background:var(--ref)"></i>関連</span>
   <span><i style="background:var(--req)"></i>必須</span>
   <span><i style="background:#f59e0b"></i>アクション</span>
-  <span class="legend-toggle" id="legend-lookup-edge" onclick="toggleRelationKind('LOOKUP')"><i style="border:2px solid var(--lookup)"></i>ルックアップ線</span>
-  <span class="legend-toggle" id="legend-ref-edge" onclick="toggleRelationKind('REF')"><i style="border:2px dashed var(--ref)"></i>関連線</span>
-  <span class="legend-toggle" id="legend-action-edge" onclick="toggleRelationKind('ACTION')"><i style="border:2px dotted #f59e0b"></i>アクション線</span>
+  <span><i style="background:transparent;border:2px dashed var(--action)"></i>一部取得</span>
+  <span><i style="background:transparent;border:2px solid var(--req)"></i>取得失敗</span>
+  <span><i style="background:transparent;border:2px dashed var(--dim)"></i>未取得の参照先</span>
+  <button type="button" class="legend-toggle" id="legend-lookup-edge" aria-pressed="true" onclick="toggleRelationKind('LOOKUP')"><i style="border:2px solid var(--lookup)"></i>ルックアップ線</button>
+  <button type="button" class="legend-toggle" id="legend-ref-edge" aria-pressed="true" onclick="toggleRelationKind('REF')"><i style="border:2px dashed var(--ref)"></i>関連線</button>
+  <button type="button" class="legend-toggle" id="legend-action-edge" aria-pressed="true" onclick="toggleRelationKind('ACTION')"><i style="border:2px dotted #f59e0b"></i>アクション線</button>
 </div>
 
 <!-- Minimap -->
@@ -2213,7 +2573,7 @@ body{font-family:'DM Sans',sans-serif;background:
 
 <!-- Modal -->
 <div id="modal-overlay" onclick="if(event.target===this)closeModal()">
-  <div id="modal"><h2 id="modal-title"></h2><pre id="modal-content"></pre>
+  <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><h2 id="modal-title"></h2><pre id="modal-content"></pre>
     <div class="actions">
       <button class="primary" onclick="copyModal()">📋 コピー</button>
       <button onclick="downloadModal()">💾 ダウンロード</button>
@@ -2224,7 +2584,7 @@ body{font-family:'DM Sans',sans-serif;background:
 
 <!-- Manual add editor -->
 <div id="editor-overlay" onclick="if(event.target===this)closeEditor()">
-  <div id="editor">
+  <div id="editor" role="dialog" aria-modal="true" aria-labelledby="editor-title">
     <h2 id="editor-title"></h2>
     <div id="editor-sub"></div>
     <div id="editor-body"></div>
@@ -2238,8 +2598,8 @@ body{font-family:'DM Sans',sans-serif;background:
 
 <!-- Help / Shortcut modal -->
 <div id="help-overlay" onclick="if(event.target===this)closeHelp()">
-  <div id="help-box">
-    <h2>❓ キーボードショートカット ＆ 使い方</h2>
+  <div id="help-box" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <h2 id="help-title">❓ キーボードショートカット ＆ 使い方</h2>
     <div class="help-sub">クリック: 詳細表示 / 右クリック: 固定 / Alt+右クリック: 非表示 / ドラッグ: 移動</div>
     <div class="help-grid">
       <div class="help-section">
@@ -2274,20 +2634,34 @@ body{font-family:'DM Sans',sans-serif;background:
   </div>
 </div>
 
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-<script id="er-main">
+<script id="er-main" type="text/plain">
 const APPS = ${data};
 const ER_OPTIONS = ${diagramOptions};
 const ER_ANALYSIS = ${dependencyAnalysisData};
 const appMap = new Map(APPS.map(a=>[a.id,a]));
+const ER_LAYOUT_NAMES = new Set(["dagre","breadthfirst","cose","concentric","grid","circle"]);
+const ER_DENSITY_NAMES = new Set(["none","compact","standard","full"]);
+const ER_DAGRE_READY = typeof window.cytoscapeDagre === "function" && !!(window.dagre && window.dagre.graphlib && window.dagre.graphlib.Graph);
+function normalizeLayoutName(name){
+  const normalized=String(name||"").trim();
+  const selected=ER_LAYOUT_NAMES.has(normalized)?normalized:"dagre";
+  return selected==="dagre"&&!ER_DAGRE_READY?"cose":selected;
+}
+function normalizeDensityName(name){
+  const normalized=String(name||"").trim();
+  return ER_DENSITY_NAMES.has(normalized)?normalized:"standard";
+}
 // 「編集済みHTMLを保存」で埋め込まれた編集状態（手動追加・配置・表示設定）
 const ER_EDIT_STATE = window.__ER_EDIT_STATE__ || null;
 if(ER_EDIT_STATE && ER_EDIT_STATE.options){
-  if(ER_EDIT_STATE.options.layoutName) ER_OPTIONS.layoutName = ER_EDIT_STATE.options.layoutName;
-  if(ER_EDIT_STATE.options.fieldDensity) ER_OPTIONS.fieldDensity = ER_EDIT_STATE.options.fieldDensity;
+  if(ER_EDIT_STATE.options.layoutName) ER_OPTIONS.layoutName = normalizeLayoutName(ER_EDIT_STATE.options.layoutName);
+  if(ER_EDIT_STATE.options.fieldDensity) ER_OPTIONS.fieldDensity = normalizeDensityName(ER_EDIT_STATE.options.fieldDensity);
 }
-if (window.cytoscapeDagre) cytoscape.use(window.cytoscapeDagre);
+ER_OPTIONS.layoutName=normalizeLayoutName(ER_OPTIONS.layoutName);
+ER_OPTIONS.fieldDensity=normalizeDensityName(ER_OPTIONS.fieldDensity);
+if (ER_DAGRE_READY) cytoscape.use(window.cytoscapeDagre);
 
 // ─── Toast ───
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2000);}
@@ -2362,10 +2736,35 @@ function isFieldHidden(app, field){
   return hiddenFieldKeys.has(fieldHideKey(app, field));
 }
 function hiddenFieldCount(app){
-  return (app.fields || []).filter(f=>isFieldHidden(app, f)).length;
+  return allFieldsForApp(app).filter(f=>isFieldHidden(app, f)).length;
+}
+function allFieldsForApp(app){
+  const fields = Array.isArray(app&&app.allFields) ? app.allFields : (Array.isArray(app&&app.fields) ? app.fields : []);
+  return fields.filter(f=>f&&f.type!=="SUBTABLE"&&(ER_OPTIONS.includeSubtableFields||!f.inSubtable));
+}
+function fieldsForDensity(app){
+  if(ER_OPTIONS.fieldDensity==="none") return [];
+  const candidates=allFieldsForApp(app);
+  const linked=new Set();
+  (app.relations||[]).forEach(r=>{
+    if(r.kind!=="LOOKUP"&&r.kind!=="REF") return;
+    [r.fromPath,r.from,r.controlFieldPath,r.controlField].forEach(v=>{const key=String(v||"").trim();if(key) linked.add(key);});
+  });
+  const essential=f=>f.isPK||f.unique||f.isLookup||f.isRef||linked.has(String(f.path||""))||linked.has(String(f.code||""));
+  let selected;
+  if(ER_OPTIONS.fieldDensity==="full") selected=candidates;
+  else if(ER_OPTIONS.fieldDensity==="standard"){
+    selected=candidates.filter(f=>essential(f)||f.required);
+    if(!selected.length) selected=candidates.slice(0,6);
+  }else{
+    selected=candidates.filter(essential);
+    if(!selected.length) selected=candidates.slice(0,6);
+  }
+  const limit=Math.max(0,Number(ER_OPTIONS.maxFields)||220);
+  return selected.slice(0,limit);
 }
 function visibleFieldsForNode(app){
-  return (app.fields || []).filter(f=>(ER_OPTIONS.includeSubtableFields || !f.inSubtable) && !isFieldHidden(app, f));
+  return fieldsForDensity(app).filter(f=>!isFieldHidden(app, f));
 }
 function buildFieldDisplayName(field){
   if(!field) return "";
@@ -2392,7 +2791,7 @@ function buildFieldPreviewLine(field){
   if(ER_OPTIONS.fieldDensity === "full"){
     const extras = [];
     if(code && code !== label) extras.push("[" + code + "]");
-    if(type) extras.push(lookupEnum(FIELD_TYPE_JP, type) || type);
+    if(type) extras.push(fieldTypeJpLabel(type));
     return prefix + " " + label + (extras.length ? " • " + extras.join(" • ") : "");
   }
   return prefix + " " + label + (code && code !== label ? " [" + code + "]" : "");
@@ -2422,12 +2821,25 @@ function buildNodeLabel(app){
   if((app.depth || 0) > 0) metaParts.push("深さ" + app.depth);
   const meta = metaParts.join(" ・ ");
   const isStart = (ER_OPTIONS.startAppIds || []).map(String).includes(String(app.id));
-  const title = (app.ok === false ? "⚠ " : (isStart ? "★ " : "")) + app.name;
+  const statusPrefix = app.ok === false || app.status === "failed"
+    ? "⚠ 取得失敗 "
+    : (app.status === "partial" ? "△ 一部取得 " : "");
+  const title = statusPrefix + (isStart ? "★ " : "") + app.name;
   if(!preview.length) return [title, meta].join("\\n");
   const bodyLines = [title, meta, ...preview];
   const maxUnits = bodyLines.reduce((max, line)=>Math.max(max, estimateLabelLineUnits(line)), 0);
   const divider = "─".repeat(Math.min(32, Math.max(10, Math.round(maxUnits * 1.4))));
   return [title, meta, divider, ...preview].join("\\n");
+}
+function buildSemanticNodeLabel(app){
+  const fields = allFieldsForApp(app).filter(f=>!isFieldHidden(app, f));
+  const totalFieldCount = typeof app.totalFieldCount === "number" ? app.totalFieldCount : fields.length;
+  const isStart = (ER_OPTIONS.startAppIds || []).map(String).includes(String(app.id));
+  const statusPrefix = app.ok === false || app.status === "failed"
+    ? "⚠ 取得失敗 "
+    : (app.status === "partial" ? "△ 一部取得 " : "");
+  const title = statusPrefix + (isStart ? "★ " : "") + app.name;
+  return [title, "App " + app.id + " ・ " + totalFieldCount + "項目 ・ " + app.relations.length + "関連"].join("\\n");
 }
 function detailFieldGroups(app){
   const groups={pk:[],lookup:[],ref:[],required:[],subtable:[],normal:[]};
@@ -2447,7 +2859,7 @@ function layoutDisplayName(name){
 }
 function buildLayoutOptions(name, initial){
   const base = { padding: 80, animate: !initial, animationDuration: initial ? 0 : 550, fit: true };
-  if(name === "dagre" && window.cytoscapeDagre){
+  if(name === "dagre" && ER_DAGRE_READY){
     return Object.assign(base, { name: "dagre", rankDir: "LR", rankSep: 170, nodeSep: 48, edgeSep: 24, spacingFactor: 1.1 });
   }
   if(name === "grid") return Object.assign(base, { name: "grid", rows: Math.ceil(Math.sqrt(APPS.length || 1)) });
@@ -2468,13 +2880,16 @@ function buildCyStyle(palette){
     {selector:"node",style:{
       "shape":"round-rectangle","label":"data(label)","text-valign":"center","text-halign":"center",
       "text-justification":"left",
-      "text-wrap":"wrap","text-max-width":nodeMetrics.maxWidth,"font-size":nodeMetrics.fontSize,"line-height":nodeMetrics.lineHeight,
+      "text-wrap":"wrap","text-max-width":nodeMetrics.maxWidth,"font-size":nodeMetrics.fontSize,"line-height":nodeMetrics.lineHeight,"min-zoomed-font-size":6.5,
       "font-family":"'DM Sans','Hiragino Sans','Yu Gothic UI',sans-serif","font-weight":600,"color":palette.text,
       "text-outline-color":palette.surface,"text-outline-width":"1px",
       "background-color":palette.surface,"border-width":2,"border-color":palette.border,"padding":nodeMetrics.padding,"width":"label","height":"label"
     }},
     {selector:"node.no-link",style:{"border-style":"dashed","opacity":0.92}},
     {selector:"node[?isError]",style:{"border-color":palette.req,"background-color":isDark ? "#220b12" : "#fff1f2"}},
+    {selector:"node[?isPartial]",style:{"border-color":palette.action,"border-style":"dashed","background-color":isDark ? "#211708" : "#fffbeb"}},
+    {selector:"node[?isGhost]",style:{"border-color":palette.dim,"border-style":"dashed","background-color":palette.surface2,"color":palette.dim,"font-style":"italic"}},
+    {selector:"node.semantic-low",style:{"font-size":"18px","font-weight":700,"line-height":"1.35","text-max-width":"300px","min-zoomed-font-size":6,"padding":"16px","width":"label","height":"label"}},
     {selector:"node[?isCustom]",style:{"border-style":"dashed","border-color":palette.accent2}},
     {selector:"node[?isStart]",style:{"border-color":palette.accent2,"border-width":4,"background-color":isDark ? "#11162d" : "#eef2ff"}},
     {selector:"node[?inSpace]",style:{"border-color":"#0ea5a4","border-width":4,"border-style":"double","background-color":isDark ? "#06231f" : "#ecfdf5"}},
@@ -2501,7 +2916,7 @@ function buildCyStyle(palette){
     {selector:"node.app-manual-hidden",style:{"display":"none"}},
     {selector:"edge",style:{
       "curve-style":"bezier","arrow-scale":1.15,
-      "label":"data(label)","font-size":"10px","font-weight":600,
+      "label":"data(label)","font-size":"10px","font-weight":600,"min-zoomed-font-size":7,
       "font-family":"'DM Sans','Hiragino Sans','Yu Gothic UI',sans-serif",
       "text-background-color":palette.surface,"text-background-opacity":0.92,
       "text-background-padding":"4px","text-background-shape":"roundrectangle",
@@ -2519,10 +2934,12 @@ function buildCyStyle(palette){
       "width":2.2,"line-color":palette.action,"line-style":"dotted","target-arrow-color":palette.action,
       "target-arrow-shape":"triangle","source-arrow-shape":"none","color":palette.action
     }},
+    {selector:"edge[?isUnresolved]",style:{"line-style":"dashed","opacity":0.75}},
     {selector:"edge.label-hidden",style:{"text-opacity":0,"text-background-opacity":0,"text-border-opacity":0}},
     {selector:"edge.edge-hover",style:{"width":4,"z-index":997,"text-opacity":1,"text-background-opacity":0.95,"text-border-opacity":0.9}},
     {selector:"edge.path-edge",style:{"width":4,"line-color":"#f472b6","target-arrow-color":"#f472b6","source-arrow-color":"#f472b6","z-index":999}},
     {selector:"edge.focus-edge",style:{"width":4,"line-color":palette.accent,"target-arrow-color":palette.accent,"source-arrow-color":palette.accent,"z-index":998}},
+    {selector:"edge.semantic-low",style:{"text-opacity":0,"text-background-opacity":0,"text-border-opacity":0}},
     {selector:"edge.rel-hidden",style:{"display":"none"}},
     {selector:"edge.rel-manual-hidden",style:{"display":"none"}},
     {selector:"edge.edge-collapsed",style:{"display":"none"}},
@@ -2641,6 +3058,7 @@ APPS.forEach(app=>{
     label:buildNodeLabel(app),
     appId:app.id,
     isError:!app.ok,
+    isPartial:app.status==="partial",
     isStart:startAppIdSet.has(String(app.id)),
     inSpace:isInSpaceApp(app),
     isCustom:!!app.isCustom,
@@ -2658,11 +3076,18 @@ function edgeDisplayLabel(text){
   return s.length > 24 ? s.slice(0, 23) + "…" : s;
 }
 // エッジIDは「e_アプリID_リレーション順」で安定化（編集済みHTML復元時に削除状態を引き継ぐため）
+const ghostNodeIds=new Set();
 APPS.forEach(app=>{
   app.relations.forEach((r,ri)=>{
-    if(appMap.has(r.toApp)){
+    const hasTarget=appMap.has(r.toApp);
+    const targetId=hasTarget?"a"+r.toApp:"g"+String(r.toApp||"unknown").replace(/[^0-9A-Za-z_-]/g,"_");
+    if(!hasTarget&&r.toApp&&!ghostNodeIds.has(targetId)){
+      ghostNodeIds.add(targetId);
+      elements.push({data:{id:targetId,label:"未取得の参照先\\nApp "+r.toApp,appId:null,targetAppId:r.toApp,isGhost:true,fieldCount:0,relCount:0,depth:(app.depth||0)+1}});
+    }
+    if(hasTarget||r.toApp){
       const fullLabel = r.fromDisplay || r.fromLabel || (r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連":"アクション"));
-      elements.push({data:{id:"e_"+app.id+"_"+ri,source:"a"+app.id,target:"a"+r.toApp,kind:r.kind,label:edgeDisplayLabel(fullLabel),fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || "",isCustom:!!r.isCustom}});
+      elements.push({data:{id:"e_"+app.id+"_"+ri,source:"a"+app.id,target:targetId,kind:r.kind,label:edgeDisplayLabel(fullLabel),fromLabel:r.fromLabel,fromDisplay:r.fromDisplay || r.fromLabel || "",isCustom:!!r.isCustom,isUnresolved:!hasTarget}});
     }
   });
 });
@@ -2681,6 +3106,29 @@ const cy=cytoscape({
 function applyCyTheme(){
   cy.style().fromJson(buildCyStyle(currentPalette())).update();
 }
+const semanticZoomLabelBackup=new Map();
+let semanticZoomActive=false;
+function applySemanticZoom(zoom, force){
+  const low=Number(zoom)<0.7;
+  if(low===semanticZoomActive&&!force) return;
+  semanticZoomActive=low;
+  if(low){
+    cy.nodes().not(".note-node").forEach(node=>{
+      if(!node.hasClass("semantic-low")) semanticZoomLabelBackup.set(node.id(),String(node.data("label")||""));
+      const app=appMap.get(node.data("appId"));
+      if(app) node.data("label",buildSemanticNodeLabel(app));
+      node.addClass("semantic-low");
+    });
+    cy.edges().addClass("semantic-low");
+    return;
+  }
+  cy.nodes(".semantic-low").forEach(node=>{
+    if(semanticZoomLabelBackup.has(node.id())) node.data("label",semanticZoomLabelBackup.get(node.id()));
+    node.removeClass("semantic-low");
+  });
+  cy.edges().removeClass("semantic-low");
+  semanticZoomLabelBackup.clear();
+}
 function syncLayoutButtons(name){
   document.querySelectorAll("[data-layout-btn]").forEach((btn)=>{
     btn.classList.toggle("active", btn.dataset.layoutBtn === name);
@@ -2689,7 +3137,15 @@ function syncLayoutButtons(name){
 function refreshNodeLabels(){
   APPS.forEach((app)=>{
     const node = cy.getElementById("a"+app.id);
-    if(node.length) node.data("label", buildNodeLabel(app));
+    if(!node.length) return;
+    const fullLabel=buildNodeLabel(app);
+    if(semanticZoomActive){
+      semanticZoomLabelBackup.set(node.id(),fullLabel);
+      node.data("label",buildSemanticNodeLabel(app));
+      node.addClass("semantic-low");
+    }else{
+      node.data("label",fullLabel);
+    }
   });
 }
 function syncDensityControl(){
@@ -2747,7 +3203,7 @@ function updateSearchMeta(query, matched){
   pill.title = normalized;
 }
 
-function fit(){cy.fit(undefined,60);}
+function fit(){closeZoomPresets();cy.fit(undefined,60);updateZoomLabel();}
 
 // ─── 紐づきなしアプリの分離配置 ───
 // レイアウト適用時、関連線を持たないアプリを本体グラフの下の別枠（グリッド）にまとめる
@@ -2836,10 +3292,11 @@ updateSearchMeta("", 0);
 
 // ─── Layout Switching ───
 function setLayout(name){
+  name=normalizeLayoutName(name);
   ER_OPTIONS.layoutName = name;
   syncLayoutButtons(name);
   const pill = document.getElementById("layout-pill");
-  if(pill) pill.innerHTML = "<b>配置</b> " + layoutDisplayName(name);
+  if(pill){pill.replaceChildren();const label=document.createElement("b");label.textContent="配置";pill.append(label," "+layoutDisplayName(name));}
   runLayout(name, false);
   toast("レイアウト: " + layoutDisplayName(name));
 }
@@ -2868,11 +3325,11 @@ function collapseParallelEdges(on){
   });
   collapsedEdgeLabelBackup.clear();
   if(!on) return;
-  // 同じ「起点→宛先」の可視エッジを1本に集約し、代表に本数を表示
+  // 同じ「起点→宛先→種類」の可視エッジを1本に集約し、線種の意味を保つ
   const groups = new Map();
   cy.edges().forEach(e=>{
     if(e.hasClass("rel-manual-hidden") || e.hasClass("rel-hidden")) return;
-    const key = e.source().id() + "→" + e.target().id();
+    const key = e.source().id() + "→" + e.target().id() + "→" + e.data("kind");
     const list = groups.get(key) || [];
     list.push(e);
     groups.set(key, list);
@@ -2882,7 +3339,7 @@ function collapseParallelEdges(on){
     list.slice(1).forEach(e=>e.addClass("edge-collapsed"));
     const rep = list[0];
     collapsedEdgeLabelBackup.set(rep.id(), rep.data("label") || "");
-    rep.data("label", list.length + "本の関連");
+    rep.data("label", list.length + "本の" + relationKindJp(rep.data("kind")));
   });
 }
 
@@ -2921,9 +3378,9 @@ function syncLegendState(){
   const lookup = document.getElementById("legend-lookup-edge");
   const ref = document.getElementById("legend-ref-edge");
   const action = document.getElementById("legend-action-edge");
-  if(lookup) lookup.classList.toggle("off", !relationKindState.LOOKUP);
-  if(ref) ref.classList.toggle("off", !relationKindState.REF);
-  if(action) action.classList.toggle("off", !relationKindState.ACTION);
+  if(lookup){ lookup.classList.toggle("off", !relationKindState.LOOKUP); lookup.setAttribute("aria-pressed", String(!!relationKindState.LOOKUP)); }
+  if(ref){ ref.classList.toggle("off", !relationKindState.REF); ref.setAttribute("aria-pressed", String(!!relationKindState.REF)); }
+  if(action){ action.classList.toggle("off", !relationKindState.ACTION); action.setAttribute("aria-pressed", String(!!relationKindState.ACTION)); }
 }
 function syncRelationLabelButton(){
   const btn = document.getElementById("rel-label-btn");
@@ -3316,6 +3773,7 @@ function addCustomApp(){
   const ext=cy.extent();
   const pos=pendingNodePos||{x:(ext.x1+ext.x2)/2+(Math.random()*60-30),y:(ext.y1+ext.y2)/2+(Math.random()*60-30)};
   const node=cy.add({group:"nodes",data:{id:"a"+id,label:buildNodeLabel(app),appId:id,isError:false,isStart:false,inSpace:false,isCustom:true,accent:"",fieldCount:fields.length,relCount:0,depth:0},position:pos});
+  if(semanticZoomActive) applySemanticZoom(cy.zoom(),true);
   commands.push({label:"アプリ: "+app.name+" (手動追加)",icon:"⬡",appId:id,action:()=>focusApp(id)});
   pushUndo("エンティティ追加",()=>{
     const n=cy.getElementById("a"+id);
@@ -3375,6 +3833,7 @@ function addCustomRelation(){
   const relIndex=from.relations.length;
   applyManualRelationData(from,rel);
   cy.add({group:"edges",data:{id:"e_"+from.id+"_"+relIndex,source:"a"+from.id,target:"a"+to.id,kind,label:edgeDisplayLabel(label),fromLabel:label,fromDisplay:label,isCustom:true}});
+  if(semanticZoomActive) applySemanticZoom(cy.zoom(),true);
   pushUndo("関連線追加",()=>{
     const ri=from.relations.indexOf(rel); if(ri>=0) from.relations.splice(ri,1);
     if(kind==="LOOKUP") from.lookupCount=Math.max(0,(from.lookupCount||0)-1);
@@ -3804,7 +4263,8 @@ function renderAppDetail(app){
     + '<span class="meta-pill"><b>深さ</b> ' + (app.depth || 0) + '</span>'
     + '<button type="button" class="meta-pill meta-pill--btn" title="図上の表示名とノード枠色を変更（kintone上は変わりません）" data-app="' + escapeHtml(String(app.id)) + '" onclick="openEditApp(this.dataset.app)">✏ 名前・色を編集</button>'
     + (hiddenCnt ? '<button type="button" class="meta-pill meta-pill--btn" title="このアプリで非表示にした項目をすべて戻します" data-app="' + escapeHtml(String(app.id)) + '" onclick="restoreHiddenFields(this.dataset.app)">↺ 非表示項目 ' + hiddenCnt + ' を復元</button>' : '')
-    + '</div>';
+    + '</div>'
+    + ((app.issues||[]).length?'<div class="analysis-note" role="status"><strong>'+(app.status==="failed"?'取得失敗':'一部取得')+'</strong><br>'+(app.issues||[]).map(issue=>escapeHtml(issue.message||issue.code||"取得上の注意")).join('<br>')+'</div>':'');
 
   const relationGroups = [
     { key:"LOOKUP", label:"ルックアップ", icon:"🔗" },
@@ -3812,6 +4272,31 @@ function renderAppDetail(app){
     { key:"ACTION", label:"アクション", icon:"⚡" }
   ];
   let relHtml = "";
+  const inboundRelations = [];
+  APPS.forEach((sourceApp)=>{
+    (sourceApp.relations || []).forEach((rel)=>{
+      if(String(rel.toApp) === String(app.id)) inboundRelations.push({ sourceApp, rel });
+    });
+  });
+  if(inboundRelations.length){
+    relHtml += '<div class="field-group-title">このアプリを参照している関連 (' + inboundRelations.length + ')</div>';
+    inboundRelations
+      .slice()
+      .sort((a,b)=>String(a.sourceApp.name || a.sourceApp.id).localeCompare(String(b.sourceApp.name || b.sourceApp.id)))
+      .forEach((item)=>{
+        const rel=item.rel;
+        const kindLabel=rel.kind==="LOOKUP"?"ルックアップ":(rel.kind==="REF"?"関連レコード":"アクション");
+        const sourceLabel=(item.sourceApp.name || ("アプリ "+item.sourceApp.id)) + " (App " + item.sourceApp.id + ")";
+        const relationName=rel.fromDisplay || rel.fromLabel || rel.from || kindLabel;
+        const meta=[];
+        meta.push(kindLabel + ": " + relationName);
+        if(rel.toField) meta.push((rel.kind==="REF"?"結合先: ":"接続先項目: ") + rel.toField);
+        relHtml += '<button type="button" class="field-row detail-relation-button" data-app="' + escapeHtml(String(item.sourceApp.id)) + '" onclick="focusApp(this.dataset.app)">'
+          + '<span class="field-icon">↙</span>'
+          + '<div class="field-main"><div class="field-name">' + escapeHtml(sourceLabel) + '</div><div class="field-sub">' + escapeHtml(meta.join(" / ")) + '</div></div>'
+          + '<span class="field-type">被参照</span></button>';
+      });
+  }
   relationGroups.forEach((group)=>{
     const items = (app.relations || []).map((rel, ri)=>({ rel, ri })).filter((item)=>item.rel.kind === group.key);
     if(!items.length) return;
@@ -3826,9 +4311,10 @@ function renderAppDetail(app){
         const targetLabel = targetName + " (App " + rel.toApp + ")";
         const relationLabel = rel.fromDisplay || rel.fromLabel || rel.from || group.label;
         const relationMeta = [];
+        if(rel.kind==="REF"&&rel.controlFieldLabel) relationMeta.push("関連レコード一覧: "+rel.controlFieldLabel);
         if(rel.fromPath && rel.fromPath !== rel.from) relationMeta.push("path: " + rel.fromPath);
         relationMeta.push("接続先: " + targetLabel);
-        if(rel.toField) relationMeta.push("to: " + rel.toField);
+        if(rel.toField) relationMeta.push((rel.kind==="REF"?"結合: "+(rel.sourceJoinField||rel.from||"?")+" → ":"to: ") + rel.toField);
         const edgeId = "e_" + app.id + "_" + item.ri;
         const edge = cy.getElementById(edgeId);
         const edgeHidden = edge.length && edge.hasClass("rel-manual-hidden");
@@ -3889,11 +4375,34 @@ function renderAppDetail(app){
   panel.classList.add("open");
   setActiveApp(app.id);
 }
+function renderGhostDetail(node){
+  const targetAppId=node.data("targetAppId")||"不明";
+  const inbound=[];
+  APPS.forEach((sourceApp)=>{
+    (sourceApp.relations||[]).forEach((rel)=>{
+      if(String(rel.toApp)===String(targetAppId)) inbound.push({sourceApp,rel});
+    });
+  });
+  const panel=document.getElementById("detail");
+  document.getElementById("detail-title").textContent="未取得の参照先";
+  document.getElementById("detail-meta").innerHTML='App '+escapeHtml(String(targetAppId))
+    +'<div class="analysis-note" role="status"><strong>図の外にある参照先です</strong><br>探索深さ・取得権限・削除済みアプリなどにより設定本体を取得できません。下記は取得済みアプリ側に残っている参照情報です。</div>';
+  let relationHtml='<div class="field-group-title">この参照先へ向かう関連 ('+inbound.length+')</div>';
+  inbound.forEach((item)=>{
+    relationHtml+='<button type="button" class="field-row detail-relation-button" data-app="'+escapeHtml(String(item.sourceApp.id))+'" onclick="focusApp(this.dataset.app)">'
+      +'<span class="field-icon">↖</span><div class="field-main"><div class="field-name">'+escapeHtml(item.sourceApp.name+' (App '+item.sourceApp.id+')')+'</div>'
+      +'<div class="field-sub">'+escapeHtml(exportRelationLabel(item.rel))+'</div></div><span class="field-type">'+escapeHtml(item.rel.kind||"関連")+'</span></button>';
+  });
+  document.getElementById("detail-relations").innerHTML=relationHtml;
+  document.getElementById("detail-fields").innerHTML='<div class="field-group-title">項目</div><div class="field-sub">参照先アプリを取得できていないため、項目情報は表示できません。</div>';
+  panel.classList.add("open");
+  setActiveApp(0);
+}
 cy.on("tap","node",e=>{
   if(e.target.hasClass("note-node")){ openEditNote(e.target.id()); return; }
   lastTappedNodeId = e.target.id();
   const app=appMap.get(e.target.data("appId"));
-  if(!app) return;
+  if(!app){ if(e.target.data("isGhost")) renderGhostDetail(e.target); return; }
   renderAppDetail(app);
   if(focusMode) applyFocusToNode(e.target);
 });
@@ -3962,15 +4471,22 @@ function renderAnalysisPanel(){
   const host=document.getElementById("analysis-content");
   if(!host) return;
   const cycles=ER_ANALYSIS.cycles||[];
+  const selfReferences=ER_ANALYSIS.selfReferences||[];
   const isolated=ER_ANALYSIS.isolatedAppIds||[];
   const hubs=ER_ANALYSIS.hubs||[];
   const unresolved=ER_ANALYSIS.unresolvedTargets||[];
-  let html='<section class="analysis-section"><h3><span>循環依存</span><span class="analysis-count">'+cycles.length+'</span></h3>';
-  html+=cycles.length?cycles.map((cycle,i)=>analysisItem('循環 '+(i+1)+': '+cycle.appNames.join(' → '),cycle.appIds.length+'アプリを相互参照',cycle.appIds,'risk')).join(''):'<div class="analysis-empty">循環する参照グループは検出されませんでした。</div>';
-  html+='</section><section class="analysis-section"><h3><span>参照集中アプリ</span><span class="analysis-count">'+hubs.length+'</span></h3>';
-  html+=hubs.length?hubs.map(hub=>analysisItem(hub.name+' (App '+hub.appId+')','入 '+hub.incoming+' / 出 '+hub.outgoing+' / 合計 '+hub.total,[hub.appId],'warn')).join(''):'<div class="analysis-empty">参照が特定アプリへ過度に集中している傾向はありません。</div>';
-  html+='</section><section class="analysis-section"><h3><span>孤立アプリ</span><span class="analysis-count">'+isolated.length+'</span></h3>';
-  html+=isolated.length?isolated.map(id=>{const stat=(ER_ANALYSIS.appStats||[]).find(s=>String(s.appId)===String(id));return analysisItem((stat&&stat.name)||('アプリ '+id),'図内に入出力の関連がありません',[id],'warn');}).join(''):'<div class="analysis-empty">孤立アプリはありません。</div>';
+  const partialIds=ER_ANALYSIS.partialAppIds||[];
+  const failedIds=ER_ANALYSIS.failedAppIds||[];
+  let html='<section class="analysis-section"><h3><span>取得に注意が必要</span><span class="analysis-count">'+(partialIds.length+failedIds.length)+'</span></h3>';
+  html+=partialIds.concat(failedIds).length?partialIds.concat(failedIds).map(id=>{const app=appMap.get(Number(id))||appMap.get(id);const status=failedIds.includes(id)?'取得失敗':'一部取得';const messages=(app&&app.issues||[]).map(issue=>issue.message).filter(Boolean);return analysisItem((app&&app.name)||('アプリ '+id),status+(messages.length?' / '+messages.slice(0,2).join(' / '):''),[id],failedIds.includes(id)?'risk':'warn');}).join(''):'<div class="analysis-empty">取得上の注意は記録されていません。</div>';
+  html+='</section><section class="analysis-section"><h3><span>複数アプリの循環候補</span><span class="analysis-count">'+cycles.length+'</span></h3>';
+  html+=cycles.length?cycles.map((cycle,i)=>analysisItem('候補 '+(i+1)+': '+cycle.appNames.join(' → '),cycle.appIds.length+'アプリ間で相互に到達できます',cycle.appIds,'risk')).join(''):'<div class="analysis-empty">複数アプリの循環候補は検出されませんでした。</div>';
+  html+='</section><section class="analysis-section"><h3><span>自己参照</span><span class="analysis-count">'+selfReferences.length+'</span></h3>';
+  html+=selfReferences.length?selfReferences.map(item=>analysisItem(item.appName+' (App '+item.appId+')',(item.kind||'関連')+(item.field?' / '+item.field:''),[item.appId],'')).join(''):'<div class="analysis-empty">自己参照はありません。</div>';
+  html+='</section><section class="analysis-section"><h3><span>接続数が多いアプリ（'+(ER_ANALYSIS.highConnectionThreshold||3)+'件以上）</span><span class="analysis-count">'+hubs.length+'</span></h3>';
+  html+=hubs.length?hubs.map(hub=>analysisItem(hub.name+' (App '+hub.appId+')','入 '+hub.incoming+' / 出 '+hub.outgoing+' / 合計 '+hub.total,[hub.appId],'')).join(''):'<div class="analysis-empty">該当するアプリはありません。</div>';
+  html+='</section><section class="analysis-section"><h3><span>図内で関連のないアプリ</span><span class="analysis-count">'+isolated.length+'</span></h3>';
+  html+=isolated.length?isolated.map(id=>{const stat=(ER_ANALYSIS.appStats||[]).find(s=>String(s.appId)===String(id));return analysisItem((stat&&stat.name)||('アプリ '+id),'図内に入出力の関連がありません',[id],'');}).join(''):'<div class="analysis-empty">該当するアプリはありません。</div>';
   html+='</section><section class="analysis-section"><h3><span>未取得の参照先</span><span class="analysis-count">'+unresolved.length+'</span></h3>';
   html+=unresolved.length?unresolved.slice(0,20).map(item=>analysisItem(item.fromAppName+' → App '+item.toAppId,(item.kind||'関連')+(item.field?' / '+item.field:''),[item.fromAppId],'warn')).join(''):'<div class="analysis-empty">参照先はすべて図内に取得されています。</div>';
   if(unresolved.length>20) html+='<div class="analysis-empty">ほか '+(unresolved.length-20)+' 件</div>';
@@ -3997,12 +4513,42 @@ function toggleAnalysisPanel(force){
   const open=typeof force==="boolean"?force:!panel.classList.contains("open");
   panel.classList.toggle("open",open);
   document.getElementById("analysis-toggle-btn")?.classList.toggle("active",open);
-  if(open){document.getElementById("sidebar")?.classList.remove("open");closeDetail();}
+  if(open){closeSidebar();closeDetail();}
 }
 renderAnalysisPanel();
 
 // ─── Sidebar ───
-function toggleSidebar(){document.getElementById("sidebar").classList.toggle("open");}
+let sidebarReturnFocus=null;
+function syncSidebarTriggerState(open){
+  ["sidebar-toggle-btn","sidebar-fab-btn"].forEach(id=>{
+    document.getElementById(id)?.setAttribute("aria-expanded",String(open));
+  });
+}
+function toggleSidebar(force, trigger){
+  const sidebar=document.getElementById("sidebar");
+  const wasOpen=sidebar.classList.contains("open");
+  const open=typeof force==="boolean"?force:!sidebar.classList.contains("open");
+  if(open&&!wasOpen){
+    const active=document.activeElement;
+    sidebarReturnFocus=trigger&&typeof trigger.focus==="function"
+      ? trigger
+      : (active&&active.matches?.("#sidebar-toggle-btn,#sidebar-fab-btn") ? active : document.getElementById("sidebar-toggle-btn"));
+  }
+  sidebar.classList.toggle("open",open);
+  sidebar.setAttribute("aria-hidden",String(!open));
+  sidebar.inert=!open;
+  syncSidebarTriggerState(open);
+  if(open){
+    toggleAnalysisPanel(false);
+    closeDetail();
+    document.getElementById("sidebar-close")?.focus();
+  }else if(wasOpen){
+    const restore=sidebarReturnFocus;
+    sidebarReturnFocus=null;
+    if(restore&&document.contains(restore)) restore.focus();
+  }
+}
+function closeSidebar(){toggleSidebar(false);}
 
 // Build stats
 function refreshSidebar(){
@@ -4025,15 +4571,24 @@ function refreshSidebar(){
   html+='<div class="stat-row"><span>関連レコード数</span><span class="stat-val">'+refs+'</span></div>';
   html+='<div class="stat-row"><span>アクション線数</span><span class="stat-val">'+actions+'</span></div>';
   html+='<div class="stat-row"><span>総リレーション</span><span class="stat-val">'+totalRels+'</span></div>';
-  html+='<div class="stat-row"><span>エラーアプリ</span><span class="stat-val">'+APPS.filter(a=>!a.ok).length+'</span></div>';
+  html+='<div class="stat-row"><span>取得完了</span><span class="stat-val">'+APPS.filter(a=>(a.status||"complete")==="complete"&&a.ok!==false).length+'</span></div>';
+  html+='<div class="stat-row"><span>一部取得</span><span class="stat-val">'+APPS.filter(a=>a.status==="partial").length+'</span></div>';
+  html+='<div class="stat-row"><span>取得失敗</span><span class="stat-val">'+APPS.filter(a=>a.status==="failed"||a.ok===false).length+'</span></div>';
   document.getElementById("stats-summary").innerHTML=html;
 
   // type filters
-  let fHtml="";
+  const filterHost=document.getElementById("type-filters");
+  filterHost.replaceChildren();
   Object.entries(typeCount).sort((a,b)=>b[1]-a[1]).forEach(([t,c])=>{
-    fHtml+='<span class="filter-chip'+(activeTypes.has(t)?" active":"")+'" onclick="filterByType(this,\\''+t+'\\')" data-type="'+t+'">'+t+' ('+c+')</span>';
+    const button=document.createElement("button");
+    button.type="button";
+    button.className="filter-chip"+(activeTypes.has(t)?" active":"");
+    button.dataset.type=t;
+    button.textContent=t+" ("+c+")";
+    button.setAttribute("aria-pressed",activeTypes.has(t)?"true":"false");
+    button.addEventListener("click",()=>filterByType(button,t));
+    filterHost.appendChild(button);
   });
-  document.getElementById("type-filters").innerHTML=fHtml;
 
   refreshAppList();
 }
@@ -4057,7 +4612,7 @@ function refreshAppList(){
     const hiddenCls = hidden ? ' highlighted' : '';
     const startMeta = startAppIdSet.has(String(a.id)) ? ' / 開始' : '';
     const hiddenMeta = hidden ? ' / 非表示' : '';
-    return '<div class="app-list-item'+activeCls+hiddenCls+'" onclick="focusApp('+a.id+')">'+escapeHtml(a.name)+' <span style="color:var(--dim);font-size:10px">('+visibleCount+' 項目 / '+a.relations.length+' 関連 / 深さ '+(a.depth || 0)+startMeta+hiddenMeta+')</span></div>';
+    return '<button type="button" class="app-list-item'+activeCls+hiddenCls+'" onclick="focusApp('+a.id+')">'+escapeHtml(a.name)+' <span style="color:var(--dim);font-size:10px">('+visibleCount+' 項目 / '+a.relations.length+' 関連 / 深さ '+(a.depth || 0)+startMeta+hiddenMeta+')</span></button>';
   };
   // 紐づき（可視の関連線）があるアプリと無いアプリを別グループで表示する
   const linkedApps=[], noLinkApps=[];
@@ -4080,6 +4635,7 @@ function refreshAppList(){
 
 function filterByType(el,type){
   el.classList.toggle("active");
+  el.setAttribute("aria-pressed",el.classList.contains("active")?"true":"false");
   const active=[...document.querySelectorAll(".filter-chip.active")].map(e=>e.dataset.type);
   cy.elements().removeClass("highlighted dimmed");
   if(!active.length) return;
@@ -4097,10 +4653,14 @@ function togglePathFinder(){
   const pf=document.getElementById("pathfinder");
   pf.classList.toggle("open");
   if(pf.classList.contains("open")){
-    const opts=APPS.filter(a=>{ const n = cy.getElementById("a"+a.id); return n.length && !n.hasClass("app-manual-hidden"); }).map(a=>'<option value="a'+a.id+'">'+a.name+"</option>").join("");
-    document.getElementById("pf-from").innerHTML=opts;
-    document.getElementById("pf-to").innerHTML=opts;
+    const apps=APPS.filter(a=>{ const n = cy.getElementById("a"+a.id); return n.length && !n.hasClass("app-manual-hidden"); });
+    ["pf-from","pf-to"].forEach(id=>{
+      const select=document.getElementById(id);
+      select.replaceChildren();
+      apps.forEach(app=>{const option=document.createElement("option");option.value="a"+app.id;option.textContent=String(app.name||("アプリ "+app.id));select.appendChild(option);});
+    });
   }
+  requestAnimationFrame(syncBottomUiOffsets);
 }
 
 function findPath(){
@@ -4187,7 +4747,7 @@ const commands=[
   {label:"表示密度: 標準",icon:"📄",action:()=>setDensity("standard")},
   {label:"表示密度: 詳細",icon:"🧾",action:()=>setDensity("full")},
   {label:"統計パネル",icon:"📊",action:toggleSidebar,keys:"Ctrl+B"},
-  {label:"構造分析（循環・孤立・参照集中）",icon:"🩺",action:()=>toggleAnalysisPanel(true)},
+  {label:"構造チェック（取得状態・循環候補・接続数）",icon:"🩺",action:()=>toggleAnalysisPanel(true)},
   {label:"ガイドパネル 表示/非表示",icon:"🧭",action:toggleOverview},
   {label:"経路探索",icon:"🔍",action:togglePathFinder},
   {label:"関連強調 ON/OFF",icon:"🎯",action:toggleFocusMode,keys:"Shift+F"},
@@ -4219,12 +4779,11 @@ const commands=[
   {label:"テーマ切替",icon:"🌓",action:toggleTheme},
   {label:"編集済みHTMLを保存",icon:"💾",action:exportEditedHtml},
   {label:"PNG エクスポート",icon:"🖼",action:exportPNG},
-  {label:"SVG エクスポート",icon:"📄",action:exportSVG},
   {label:"Mermaid エクスポート",icon:"🧜",action:showMermaid},
   {label:"draw.io エクスポート",icon:"📊",action:showDrawio},
   {label:"SQL DDL エクスポート",icon:"🗄",action:showSQL},
   {label:"PlantUML エクスポート",icon:"🌱",action:showPlantUML},
-  {label:"JSON スキーマ エクスポート",icon:"{}",action:showJSON},
+  {label:"ERモデル JSON エクスポート",icon:"{}",action:showJSON},
   {label:"Markdown 仕様書エクスポート",icon:"📝",action:showMarkdown},
   {label:"CSV (アプリ一覧) エクスポート",icon:"📑",action:showCSVApps},
   {label:"CSV (フィールド) エクスポート",icon:"📑",action:showCSVFields},
@@ -4255,9 +4814,18 @@ function filterCmd(q){
   const low=q.toLowerCase();
   const filtered=q?commands.filter(c=>c.label.toLowerCase().includes(low)):commands.slice(0,12);
   const box=document.getElementById("cmd-results");
-  box.innerHTML=filtered.map((c,i)=>
-    '<div class="cmd-item'+(i===0?" active":"")+'" onclick="runCmd('+commands.indexOf(c)+')"><span>'+c.icon+'</span><span>'+c.label+'</span>'+(c.keys?'<span class="kbd">'+c.keys+'</span>':'')+'</div>'
-  ).join("");
+  box.replaceChildren();
+  filtered.forEach((command,index)=>{
+    const item=document.createElement("button");
+    item.type="button";
+    item.className="cmd-item"+(index===0?" active":"");
+    const icon=document.createElement("span");icon.textContent=String(command.icon||"");
+    const label=document.createElement("span");label.textContent=String(command.label||"");
+    item.append(icon,label);
+    if(command.keys){const keys=document.createElement("span");keys.className="kbd";keys.textContent=String(command.keys);item.appendChild(keys);}
+    item.addEventListener("click",()=>runCmd(commands.indexOf(command)));
+    box.appendChild(item);
+  });
 }
 
 function runCmd(idx){commands[idx].action();closeCmd();}
@@ -4268,15 +4836,19 @@ function isTypingTarget(el){
   const tag=(el.tagName||"").toUpperCase();
   return tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT"||el.isContentEditable;
 }
+function isInteractiveShortcutTarget(el){
+  if(isTypingTarget(el)) return true;
+  return !!(el && typeof el.closest === "function" && el.closest("button,a,summary,[role='button']"));
+}
 document.addEventListener("keydown",e=>{
   if(e.key==="k"&&(e.ctrlKey||e.metaKey)){e.preventDefault();openCmd();}
   if(e.key==="b"&&(e.ctrlKey||e.metaKey)){e.preventDefault();toggleSidebar();}
   if(e.key==="f"&&(e.ctrlKey||e.metaKey)){e.preventDefault();document.getElementById("search-box").focus();}
-  if(e.key==="F"&&e.shiftKey){e.preventDefault();toggleFocusMode();}
-  if(e.key==="P"&&e.shiftKey){e.preventDefault();togglePinFromSelection();}
+  if(e.key==="F"&&e.shiftKey&&!e.isComposing&&!e.repeat&&!isInteractiveShortcutTarget(e.target)){e.preventDefault();toggleFocusMode();}
+  if(e.key==="P"&&e.shiftKey&&!e.isComposing&&!e.repeat&&!isInteractiveShortcutTarget(e.target)){e.preventDefault();togglePinFromSelection();}
   if(e.key==="0"&&(e.ctrlKey||e.metaKey)){e.preventDefault();fit();}
   if((e.key==="z"||e.key==="Z")&&(e.ctrlKey||e.metaKey)&&!e.shiftKey&&!isTypingTarget(e.target)){e.preventDefault();undoLast();}
-  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();closeHelp();closeEditor();closeAllMenus();toggleAnalysisPanel(false);clearFocus(true);clearAnalysisHighlight();document.getElementById("topbar").classList.remove("mobile-open");}
+  if(e.key==="Escape"){closeCmd();closeDetail();closeModal();closeHelp();closeEditor();closeAllMenus();closeZoomPresets();closeSidebar();toggleAnalysisPanel(false);clearFocus(true);clearAnalysisHighlight();closeMobileMenu();}
   if((e.key==="Delete"||e.key==="Backspace")&&!isTypingTarget(e.target)){
     const selEdges=cy.edges(":selected");
     const selNotes=cy.nodes(".note-node:selected");
@@ -4335,7 +4907,7 @@ function exportSVG(){
 function captureEditState(){
   const customApps=APPS.filter(a=>a.isCustom).map(a=>({
     id:a.id,name:a.name,
-    fields:(a.fields||[]).map(f=>Object.assign({},f)),
+    fields:exportFieldsForApp(a).map(f=>Object.assign({},f)),
     totalFieldCount:a.totalFieldCount,
     requiredCount:a.requiredCount||0,
     lookupCount:a.lookupCount||0,
@@ -4344,7 +4916,7 @@ function captureEditState(){
     ok:true,isCustom:true
   }));
   const customFields=[];
-  APPS.filter(a=>!a.isCustom).forEach(a=>(a.fields||[]).forEach(f=>{
+  APPS.filter(a=>!a.isCustom).forEach(a=>exportFieldsForApp(a).forEach(f=>{
     if(f.isCustom) customFields.push({appId:a.id,field:Object.assign({},f)});
   }));
   const customRelations=[];
@@ -4402,11 +4974,19 @@ function exportEditedHtml(){
     clone.querySelectorAll(".tb-menu.open").forEach(el=>el.classList.remove("open"));
     const oldState=clone.querySelector("#er-edit-state");
     if(oldState && oldState.parentNode) oldState.parentNode.removeChild(oldState);
+    const liveRuntime=clone.querySelector("#er-runtime");
+    if(liveRuntime && liveRuntime.parentNode) liveRuntime.parentNode.removeChild(liveRuntime);
     const main=clone.querySelector("#er-main");
     if(!main){toast("保存に失敗: 本体スクリプトが見つかりません");return;}
     const stateScript=document.createElement("script");
     stateScript.id="er-edit-state";
-    stateScript.textContent="window.__ER_EDIT_STATE__="+JSON.stringify(payload).replace(/<\\//g,"<\\\\/")+";";
+    const stateJson=JSON.stringify(payload)
+      .replace(/</g,"\\\\u003c")
+      .replace(/>/g,"\\\\u003e")
+      .replace(/&/g,"\\\\u0026")
+      .replace(/\\u2028/g,"\\\\u2028")
+      .replace(/\\u2029/g,"\\\\u2029");
+    stateScript.textContent="window.__ER_EDIT_STATE__="+stateJson+";";
     main.parentNode.insertBefore(stateScript,main);
     const html="<!DOCTYPE html>\\n"+clone.outerHTML;
     const blob=new Blob([html],{type:"text/html"});
@@ -4473,53 +5053,118 @@ function copyModal(){navigator.clipboard.writeText(_md.text).then(()=>toast("コ
 function downloadModal(){const b=new Blob([_md.text],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=_md.filename;a.click();toast("ダウンロード: "+_md.filename);}
 
 // safe name helper
-const sn=s=>s.replace(/[^a-zA-Z0-9_\\u3000-\\u9FFF\\uF900-\\uFAFF]/g,"_").replace(/^_+|_+$/g,"")||"unnamed";
+const sn=s=>String(s==null?"":s).replace(/[^a-zA-Z0-9_\\u3000-\\u9FFF\\uF900-\\uFAFF]/g,"_").replace(/^_+|_+$/g,"")||"unnamed";
+const entityAlias=app=>"app_"+String(app&&app.id||"unknown").replace(/[^0-9A-Za-z_]/g,"_");
+const exportFieldsForApp=app=>allFieldsForApp(app);
+const oneLineLabel=value=>String(value==null?"":value).replace(/[\\r\\n]+/g," ").replace(/"/g,"'");
+const sqlIdentifier=value=>String.fromCharCode(96)+String(value==null?"":value).replace(/\`/g,"\`\`")+String.fromCharCode(96);
+const exportStatusLabel=app=>app.status==="partial"?"一部取得":((app.status==="failed"||app.ok===false)?"取得失敗":"取得完了");
+const exportIssueText=app=>(app.issues||[]).map(issue=>oneLineLabel(issue.message||issue.code||"取得上の注意")).filter(Boolean).join(" / ");
+const exportRelationLabel=rel=>{
+  const base=oneLineLabel(rel.fromDisplay||rel.fromLabel||rel.from||rel.kind);
+  if(rel.kind==="REF"&&(rel.sourceJoinField||rel.from||rel.toField)) return base+" [結合: "+oneLineLabel(rel.sourceJoinField||rel.from||"?")+" → "+oneLineLabel(rel.toField||"?")+"]";
+  return base;
+};
+function exportProvenanceEntries(){
+  return [
+    ["生成日時",new Date().toLocaleString("ja-JP")],
+    ["起点アプリ",(ER_OPTIONS.startAppIds||[]).join(", ")||"-"],
+    ["探索深さ",ER_OPTIONS.maxDepth?String(ER_OPTIONS.maxDepth):"無制限"],
+    ["逆引き探索",ER_OPTIONS.includeReverseLookup?"ON":"OFF"],
+    ["サブテーブル",ER_OPTIONS.includeSubtableFields!==false?"ON":"OFF"],
+    ["項目範囲","取得済み全項目（図の表示密度とは独立）"],
+    ["接続",(ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間")+"/"+(ER_OPTIONS.sourcePreview?"プレビュー":"本番")],
+    ["取得状態","完了 "+ER_ANALYSIS.counts.retrievalComplete+" / 一部 "+ER_ANALYSIS.counts.retrievalPartial+" / 失敗 "+ER_ANALYSIS.counts.retrievalFailed],
+    ["未取得の参照先",String((ER_ANALYSIS.unresolvedTargets||[]).length)],
+    ["手動編集",(hiddenFieldKeys.size||manuallyRemovedEdgeIds.size||manuallyRemovedNodeIds.size||APPS.some(a=>a.isCustom))?"あり":"なし"]
+  ];
+}
+const exportProvenanceLines=prefix=>exportProvenanceEntries().map(([key,value])=>(prefix?prefix+" ":"")+key+": "+oneLineLabel(value));
 
 function showMermaid(){
-  let m="erDiagram\\n";
+  let m=exportProvenanceLines("%%").join("\\n")+"\\nerDiagram\\n";
   APPS.forEach(a=>{
-    const n=sn(a.name);
-    m+="  "+n+" {\\n";
-    a.fields.forEach(f=>{
-      if(f.type==="SUBTABLE") return;
+    const n=entityAlias(a);
+    m+="  %% "+n+": "+oneLineLabel(a.name)+" (App "+a.id+")\\n";
+    m+="  %% 取得状態: "+exportStatusLabel(a)+(exportIssueText(a)?" / "+exportIssueText(a):"")+"\\n";
+    const subtableFieldCount=exportFieldsForApp(a).filter(f=>f.inSubtable).length;
+    if(subtableFieldCount) m+="  %% サブテーブル内 "+subtableFieldCount+"項目は親エンティティへ平坦化せず省略（ERモデルJSONに所属表を収録）\\n";
+    const visibleName=(exportStatusLabel(a)==="取得完了"?"":("["+exportStatusLabel(a)+"] "))+oneLineLabel(a.name)+" (App "+a.id+")";
+    m+="  "+n+'["'+visibleName+'"] {\\n';
+    exportFieldsForApp(a).forEach(f=>{
+      if(f.type==="SUBTABLE"||f.inSubtable) return;
       let com=""; if(f.isPK) com=" PK"; else if(f.isLookup) com=" FK";
       m+="    "+f.type.replace(/[^a-zA-Z0-9_]/g,"")+" "+sn(f.code)+com+"\\n";
     });
     m+="  }\\n";
   });
+  const mermaidExternalIds=new Set();
+  APPS.forEach(a=>(a.relations||[]).forEach(r=>{
+    if(appMap.has(r.toApp)||mermaidExternalIds.has(String(r.toApp))) return;
+    mermaidExternalIds.add(String(r.toApp));
+    const alias=entityAlias({id:r.toApp});
+    m+="  %% "+alias+": 未取得の参照先 (App "+oneLineLabel(r.toApp)+")\\n";
+    m+="  "+alias+'["未取得の参照先 (App '+oneLineLabel(r.toApp)+')"] {\\n    string __unresolved\\n  }\\n';
+  }));
   APPS.forEach(a=>{
     a.relations.forEach(r=>{
-      const t=appMap.get(r.toApp); if(!t) return;
-      m+="  "+sn(a.name)+(r.kind==="LOOKUP"?" }o--|| ":" ||--o{ ")+sn(t.name)+' : "'+r.fromLabel+'"\\n';
+      const t=appMap.get(r.toApp)||{id:r.toApp};
+      const label=exportRelationLabel(r);
+      if(r.kind==="ACTION") m+="  %% ACTION "+entityAlias(a)+" -> "+entityAlias(t)+": "+label+"\\n";
+      else m+="  "+entityAlias(a)+(r.kind==="LOOKUP"?" }o--o| ":" }o--o{ ")+entityAlias(t)+' : "'+label+'"\\n';
     });
   });
   openModal("Mermaid ER図",m,"ER図.mmd");
 }
 
 function showDrawio(){
-  const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-  let x='<mxfile host="app.diagrams.net"><diagram name="ER"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>';
-  APPS.forEach((a,i)=>{
-    const nid="A"+a.id,col=4,px=i%col*600,py=Math.floor(i/col)*400,h=30+a.fields.length*26;
-    x+='<mxCell id="'+nid+'" value="'+esc(a.name)+'" style="shape=table;startSize=30;container=1;childLayout=tableLayout;fillColor=#DDA0DD;rounded=1;" vertex="1" parent="1"><mxGeometry x="'+px+'" y="'+py+'" width="280" height="'+h+'" as="geometry"/></mxCell>';
-    a.fields.forEach((f,fi)=>{
-      let c="#FFF";if(f.isPK)c="#FFD700";else if(f.isLookup)c="#87CEFA";else if(f.isRef)c="#98FB98";else if(f.inSubtable)c="#F5F5F5";else if(f.required)c="#FFF0F5";
-      let l=(f.isPK?"🔑 ":f.isLookup?"🔗 ":f.isRef?"📋 ":"")+(f.label||f.code)+" ["+f.code+"]";
-      x+='<mxCell id="'+nid+"_F"+fi+'" value="'+esc(l)+'" style="shape=partialRectangle;fillColor='+c+';align=left;spacingLeft=6;strokeColor=#d0d0d0;" vertex="1" parent="'+nid+'"><mxGeometry width="280" height="26" as="geometry"/></mxCell>';
+  const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const nodeId=id=>"A"+String(id==null?"unknown":id).replace(/[^0-9A-Za-z_]/g,"_");
+  const drawioProvenance=exportProvenanceLines("").join(" | ").replace(/--/g,"—");
+  let x='<!-- '+esc(drawioProvenance)+' --><mxfile host="app.diagrams.net"><diagram name="ER"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>';
+  const externalIds=[];
+  APPS.forEach(a=>(a.relations||[]).forEach(r=>{
+    if(!appMap.has(r.toApp)&&!externalIds.some(id=>String(id)===String(r.toApp))) externalIds.push(r.toApp);
+  }));
+  const drawioApps=APPS.map(a=>({app:a,external:false})).concat(externalIds.map(id=>({app:{id,name:"未取得の参照先 (App "+id+")",relations:[],allFields:[],fields:[],status:"failed",ok:false,issues:[{message:"図の探索範囲外または取得権限外"}]},external:true})));
+  const colCount=3,boxWidth=330,rowGap=96,colGap=100;
+  let rowY=0;
+  for(let rowStart=0;rowStart<drawioApps.length;rowStart+=colCount){
+    const row=drawioApps.slice(rowStart,rowStart+colCount);
+    const heights=row.map(item=>Math.max(58,34+exportFieldsForApp(item.app).filter(f=>f.type!=="SUBTABLE").length*28));
+    const rowHeight=Math.max(...heights,58);
+    row.forEach((item,colIndex)=>{
+      const a=item.app;
+      const exportFields=exportFieldsForApp(a).filter(f=>f.type!=="SUBTABLE");
+      const nid=nodeId(a.id),px=colIndex*(boxWidth+colGap),h=heights[colIndex];
+      const status=exportStatusLabel(a);
+      const issue=exportIssueText(a);
+      const header=(status==="取得完了"?"":("["+status+"] "))+(a.name||("App "+a.id))+(issue?("&#xa;"+issue):"");
+      const fill=item.external?"#F3F4F6":(status==="取得失敗"?"#FEE2E2":(status==="一部取得"?"#FEF3C7":"#EDE9FE"));
+      x+='<mxCell id="'+nid+'" value="'+esc(header).replace(/&amp;#xa;/g,"&#xa;")+'" style="shape=table;startSize=34;container=1;childLayout=tableLayout;fillColor='+fill+';rounded=1;'+(item.external?'dashed=1;':'')+'" vertex="1" parent="1"><mxGeometry x="'+px+'" y="'+rowY+'" width="'+boxWidth+'" height="'+h+'" as="geometry"/></mxCell>';
+      exportFields.forEach((f,fi)=>{
+        let c="#FFF";if(f.isPK)c="#FFD700";else if(f.isLookup)c="#DBEAFE";else if(f.isRef)c="#D1FAE5";else if(f.inSubtable)c="#F3F4F6";else if(f.required)c="#FFE4E6";
+        const tablePrefix=f.inSubtable?("["+String(f.tableLabel||f.tableCode||"サブテーブル")+"] "):"";
+        const label=(f.isPK?"🔑 ":f.isLookup?"🔗 ":f.isRef?"📋 ":"")+tablePrefix+(f.label||f.code)+" ["+f.code+"]";
+        const rid=nid+"_R"+fi;
+        x+='<mxCell id="'+rid+'" value="" style="shape=tableRow;horizontal=0;startSize=0;swimlaneHead=0;" vertex="1" parent="'+nid+'"><mxGeometry y="'+(34+fi*28)+'" width="'+boxWidth+'" height="28" as="geometry"/></mxCell>';
+        x+='<mxCell id="'+nid+"_F"+fi+'" value="'+esc(label)+'" style="shape=partialRectangle;fillColor='+c+';align=left;spacingLeft=6;strokeColor=#d0d0d0;" vertex="1" parent="'+rid+'"><mxGeometry width="'+boxWidth+'" height="28" as="geometry"/></mxCell>';
+      });
     });
-  });
+    rowY+=rowHeight+rowGap;
+  }
   let ec=0;
   APPS.forEach(a=>a.relations.forEach(r=>{
-    if(!appMap.has(r.toApp)) return;
-    const st=r.kind==="LOOKUP"?"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;startArrow=oval;strokeColor=#0066CC;strokeWidth=2;":"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;startArrow=diamond;dashed=1;strokeColor=#2E8B57;strokeWidth=2;";
-    x+='<mxCell id="E'+(ec++)+'" value="'+(r.kind==="LOOKUP"?"ルックアップ":"関連")+'" style="'+st+'" edge="1" parent="1" source="A'+a.id+'" target="A'+r.toApp+'"><mxGeometry relative="1" as="geometry"/></mxCell>';
+    const st=r.kind==="LOOKUP"?"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;startArrow=oval;strokeColor=#0066CC;strokeWidth=2;":(r.kind==="REF"?"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;startArrow=diamond;dashed=1;strokeColor=#2E8B57;strokeWidth=2;":"edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=classic;dashed=1;strokeColor=#D97706;strokeWidth=2;");
+    const label=(r.kind==="LOOKUP"?"ルックアップ":(r.kind==="REF"?"関連レコード":"アクション"))+": "+exportRelationLabel(r);
+    x+='<mxCell id="E'+(ec++)+'" value="'+esc(label)+'" style="'+st+'" edge="1" parent="1" source="'+nodeId(a.id)+'" target="'+nodeId(r.toApp)+'"><mxGeometry relative="1" as="geometry"/></mxCell>';
   }));
   x+="</root></mxGraphModel></diagram></mxfile>";
   openModal("draw.io 用XML",x,"ER図.drawio");
 }
 
 function showSQL(){
-  let sql="-- kintone ER図 → SQL DDL\\n-- 生成日時: "+new Date().toISOString()+"\\n\\n";
+  let sql="-- kintone ER図 → SQL DDL\\n"+exportProvenanceLines("--").join("\\n")+"\\n\\n";
   const typeMap={SINGLE_LINE_TEXT:"VARCHAR(256)",MULTI_LINE_TEXT:"TEXT",NUMBER:"DECIMAL(18,4)",CALC:"DECIMAL(18,4)",
     RICH_TEXT:"TEXT",CHECK_BOX:"TEXT",RADIO_BUTTON:"VARCHAR(128)",DROP_DOWN:"VARCHAR(128)",MULTI_SELECT:"TEXT",
     DATE:"DATE",TIME:"TIME",DATETIME:"DATETIME",LINK:"VARCHAR(512)",FILE:"TEXT",
@@ -4528,40 +5173,81 @@ function showSQL(){
     CREATED_TIME:"DATETIME",UPDATED_TIME:"DATETIME",STATUS:"VARCHAR(64)",
     STATUS_ASSIGNEE:"TEXT",CATEGORY:"TEXT",LOOKUP:"VARCHAR(256)",REFERENCE_TABLE:"-- ref"};
 
+  const sqlTableInfo=new Map();
   APPS.forEach(a=>{
-    const tbl=sn(a.name);
-    sql+="CREATE TABLE "+tbl+" (\\n";
+    const tbl=entityAlias(a);
+    sql+="-- "+oneLineLabel(a.name)+" (App "+a.id+")\\n";
+    sql+="-- 取得状態: "+exportStatusLabel(a)+(exportIssueText(a)?" / "+exportIssueText(a):"")+"\\n";
     const cols=[];
-    a.fields.forEach(f=>{
+    const columnByCode=new Map();
+    const usedColumnNames=new Set();
+    let omittedSubtableFields=0;
+    exportFieldsForApp(a).forEach(f=>{
+      if(f.inSubtable){omittedSubtableFields++;return;}
       if(f.type==="SUBTABLE"||f.type==="REFERENCE_TABLE") return;
-      const col=sn(f.code);
+      const baseCol=sn(f.code);
+      let col=baseCol;
+      let suffix=2;
+      while(usedColumnNames.has(col)) col=baseCol+"_"+(suffix++);
+      usedColumnNames.add(col);
+      columnByCode.set(String(f.code||""),col);
       const dt=typeMap[f.type]||"TEXT";
       if(dt.startsWith("--")) return;
-      let line="  "+col+" "+dt;
+      let line="  "+sqlIdentifier(col)+" "+dt;
       if(f.isPK) line+=" PRIMARY KEY";
-      else if(f.required) line+=" NOT NULL";
+      else{
+        if(f.required) line+=" NOT NULL";
+        if(f.unique) line+=" UNIQUE";
+      }
       cols.push(line);
     });
-    sql+=cols.join(",\\n")+"\\n);\\n\\n";
+    sqlTableInfo.set(String(a.id),{table:tbl,columnByCode,emitted:cols.length>0});
+    if(omittedSubtableFields) sql+="-- サブテーブル内の項目 "+omittedSubtableFields+"件は親テーブルへ平坦化せず省略しました。ERモデルJSONで所属表を確認してください。\\n";
+    if(!cols.length){
+      sql+="-- SQLへ変換できる取得済みフィールドがないため CREATE TABLE を省略しました。\\n\\n";
+      return;
+    }
+    sql+="CREATE TABLE "+sqlIdentifier(tbl)+" (\\n"+cols.join(",\\n")+"\\n);\\n\\n";
   });
 
   // Foreign keys
   APPS.forEach(a=>{
     a.relations.filter(r=>r.kind==="LOOKUP"&&appMap.has(r.toApp)).forEach(r=>{
       const t=appMap.get(r.toApp);
-      sql+="ALTER TABLE "+sn(a.name)+" ADD CONSTRAINT fk_"+sn(a.name)+"_"+sn(r.from)+" FOREIGN KEY ("+sn(r.from)+") REFERENCES "+sn(t.name)+"("+sn(r.toField)+");\\n";
+      const sourceInfo=sqlTableInfo.get(String(a.id));
+      const targetInfo=sqlTableInfo.get(String(t.id));
+      const sourceColumn=sourceInfo&&sourceInfo.columnByCode.get(String(r.from||""));
+      const targetColumn=targetInfo&&targetInfo.columnByCode.get(String(r.toField||""));
+      if(!sourceInfo?.emitted||!targetInfo?.emitted||!sourceColumn||!targetColumn){
+        sql+="-- Lookupの結合フィールドをSQLへ変換できません: "+oneLineLabel(a.name)+" → "+oneLineLabel(t.name)+"\\n";
+        return;
+      }
+      sql+="ALTER TABLE "+sqlIdentifier(sourceInfo.table)+" ADD CONSTRAINT "+sqlIdentifier("fk_"+entityAlias(a)+"_"+sourceColumn)+" FOREIGN KEY ("+sqlIdentifier(sourceColumn)+") REFERENCES "+sqlIdentifier(targetInfo.table)+"("+sqlIdentifier(targetColumn)+");\\n";
     });
   });
+  APPS.forEach(a=>(a.relations||[]).filter(r=>r.kind==="REF").forEach(r=>{
+    sql+="-- 関連レコード（参照表示）: "+oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" / App "+oneLineLabel(r.toApp)+"\\n";
+  }));
+  APPS.forEach(a=>(a.relations||[]).filter(r=>r.kind==="ACTION").forEach(r=>{
+    sql+="-- アプリアクション（画面遷移）: "+oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" / App "+oneLineLabel(r.toApp)+"\\n";
+  }));
+  APPS.forEach(a=>(a.relations||[]).filter(r=>!appMap.has(r.toApp)).forEach(r=>{
+    sql+="-- 未取得の参照先: "+oneLineLabel(a.name)+" / "+exportRelationLabel(r)+" / App "+oneLineLabel(r.toApp)+"\\n";
+  }));
   openModal("SQL DDL",sql,"ER図.sql");
 }
 
 function showPlantUML(){
-  let p="@startuml\\n!theme cerulean\\nskinparam linetype ortho\\n\\n";
+  let p="@startuml\\n"+exportProvenanceLines("'").join("\\n")+"\\n!theme cerulean\\nskinparam linetype ortho\\n\\n";
   APPS.forEach(a=>{
-    const n=sn(a.name);
-    p+="entity "+n+" {\\n";
-    a.fields.forEach(f=>{
-      if(f.type==="SUBTABLE"||f.type==="REFERENCE_TABLE") return;
+    const n=entityAlias(a);
+    p+="' 取得状態: "+exportStatusLabel(a)+(exportIssueText(a)?" / "+exportIssueText(a):"")+"\\n";
+    const visibleName=(exportStatusLabel(a)==="取得完了"?"":("["+exportStatusLabel(a)+"] "))+oneLineLabel(a.name);
+    p+='entity "'+visibleName+' (App '+a.id+')" as '+n+' {\\n';
+    const subtableFieldCount=exportFieldsForApp(a).filter(f=>f.inSubtable).length;
+    if(subtableFieldCount) p+="' サブテーブル内 "+subtableFieldCount+"項目は親エンティティへ平坦化せず省略（ERモデルJSONに所属表を収録）\\n";
+    exportFieldsForApp(a).forEach(f=>{
+      if(f.type==="SUBTABLE"||f.type==="REFERENCE_TABLE"||f.inSubtable) return;
       let prefix="  ";
       if(f.isPK) prefix="  * ";
       else if(f.isLookup) prefix="  # ";
@@ -4570,11 +5256,19 @@ function showPlantUML(){
     });
     p+="}\\n\\n";
   });
+  const plantExternalIds=new Set();
+  APPS.forEach(a=>(a.relations||[]).forEach(r=>{
+    if(appMap.has(r.toApp)||plantExternalIds.has(String(r.toApp))) return;
+    plantExternalIds.add(String(r.toApp));
+    p+='entity "未取得の参照先 (App '+oneLineLabel(r.toApp)+')" as '+entityAlias({id:r.toApp})+' <<external>>\\n';
+  }));
   APPS.forEach(a=>{
     a.relations.forEach(r=>{
-      const t=appMap.get(r.toApp); if(!t) return;
-      if(r.kind==="LOOKUP") p+=sn(a.name)+' }o--|| '+sn(t.name)+' : "'+r.fromLabel+'"\\n';
-      else p+=sn(a.name)+' ||--o{ '+sn(t.name)+' : "'+r.fromLabel+'"\\n';
+      const t=appMap.get(r.toApp)||{id:r.toApp};
+      const label=exportRelationLabel(r);
+      if(r.kind==="LOOKUP") p+=entityAlias(a)+' }o--o| '+entityAlias(t)+' : "'+label+'"\\n';
+      else if(r.kind==="REF") p+=entityAlias(a)+' }o--o{ '+entityAlias(t)+' : "'+label+'"\\n';
+      else p+=entityAlias(a)+' ..> '+entityAlias(t)+' : "ACTION: '+label+'"\\n';
     });
   });
   p+="@enduml";
@@ -4583,49 +5277,55 @@ function showPlantUML(){
 
 function showJSON(){
   const schema={
-    $schema:"https://json-schema.org/draft/2020-12/schema",
-    title:"kintone ERスキーマ",
+    kind:"kintone-er-model",
+    schemaVersion:1,
+    title:"kintone ERモデル",
     generated:new Date().toISOString(),
+    options:{startAppIds:ER_OPTIONS.startAppIds||[],maxDepth:ER_OPTIONS.maxDepth||0,includeSubtableFields:ER_OPTIONS.includeSubtableFields!==false},
+    completeness:{complete:ER_ANALYSIS.counts.retrievalComplete,partial:ER_ANALYSIS.counts.retrievalPartial,failed:ER_ANALYSIS.counts.retrievalFailed,unresolvedTargets:ER_ANALYSIS.unresolvedTargets||[]},
     apps:APPS.map(a=>({
       id:a.id,name:a.name,
-      fields:a.fields.map(f=>({code:f.code,label:f.label,type:f.type,required:f.required||false,isPrimaryKey:f.isPK||false,isLookup:f.isLookup||false,isRelatedRecord:f.isRef||false,inSubtable:f.inSubtable||false})),
-      relations:a.relations.map(r=>({fromField:r.from,toApp:r.toApp,toField:r.toField,type:r.kind})),
+      status:a.status|| (a.ok===false?"failed":"complete"),issues:a.issues||[],
+      fields:exportFieldsForApp(a).map(f=>({code:f.code,label:f.label,type:f.type,path:f.path||f.code||"",required:f.required||false,unique:f.unique||false,isPrimaryKey:f.isPK||false,isLookup:f.isLookup||false,isRelatedRecord:f.isRef||false,inSubtable:f.inSubtable||false,tableCode:f.tableCode||"",tableLabel:f.tableLabel||""})),
+      relations:a.relations.map(r=>({label:r.fromDisplay||r.fromLabel||r.from||r.kind,fromField:r.from,sourceJoinField:r.sourceJoinField||r.from||"",controlField:r.controlField||"",controlFieldLabel:r.controlFieldLabel||"",toApp:r.toApp,toField:r.toField,type:r.kind})),
     })),
   };
-  openModal("JSON スキーマ",JSON.stringify(schema,null,2),"ER図スキーマ.json");
+  openModal("ERモデル JSON",JSON.stringify(schema,null,2),"ERモデル.json");
 }
 
 // ─── CSV exports ───
 function csvCell(v){
-  const s=String(v==null?"":v);
+  const raw=String(v==null?"":v);
+  const s=/^[\\t\\r\\n ]*[=+\\-@]/.test(raw)?"'"+raw:raw;
   return /[",\\n\\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
 }
 function csvLine(arr){return arr.map(csvCell).join(",");}
 function showCSVApps(){
-  const rows=[["アプリID","アプリ名","項目数","リレーション数","Lookup数","関連レコード数","アクション数","必須項目数","深さ","開始点","取得状態"]];
+  const rows=[["アプリID","アプリ名","項目数","項目範囲","リレーション数","Lookup数","関連レコード数","アクション数","必須項目数","深さ","開始点","取得状態","取得上の注意"]];
   APPS.forEach(a=>{
     const lookups=(a.relations||[]).filter(r=>r.kind==="LOOKUP").length;
     const refs=(a.relations||[]).filter(r=>r.kind==="REF").length;
     const acts=(a.relations||[]).filter(r=>r.kind==="ACTION").length;
-    rows.push([a.id,a.name,visibleFieldsForNode(a).length,a.relations.length,lookups,refs,acts,a.requiredCount||0,a.depth||0,startAppIdSet.has(String(a.id))?"1":"0",a.ok?"OK":"ERROR"]);
+    rows.push([a.id,a.name,exportFieldsForApp(a).length,"取得済み全項目",a.relations.length,lookups,refs,acts,a.requiredCount||0,a.depth||0,startAppIdSet.has(String(a.id))?"1":"0",exportStatusLabel(a),exportIssueText(a)]);
   });
   openModal("CSV (アプリ一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_アプリ一覧.csv");
 }
 function showCSVFields(){
-  const rows=[["アプリID","アプリ名","フィールドコード","フィールド名","種類","必須","重複禁止","主キー","ルックアップ","関連","サブテーブル内","テーブル名"]];
+  const rows=[["アプリID","アプリ名","取得状態","取得上の注意","項目範囲","現在の図に表示","フィールドコード","フィールド名","種類","必須","重複禁止","主キー","ルックアップ","関連","サブテーブル内","テーブルコード","テーブル名","技術パス"]];
   APPS.forEach(a=>{
-    visibleFieldsForNode(a).forEach(f=>{
-      rows.push([a.id,a.name,f.code||"",buildFieldDisplayName(f),f.type||"",f.required?"1":"0",f.unique?"1":"0",f.isPK?"1":"0",f.isLookup?"1":"0",f.isRef?"1":"0",f.inSubtable?"1":"0",f.tableLabel||""]);
+    const visibleFieldSet=new Set(visibleFieldsForNode(a));
+    exportFieldsForApp(a).forEach(f=>{
+      rows.push([a.id,a.name,exportStatusLabel(a),exportIssueText(a),"取得済み全項目",visibleFieldSet.has(f)?"1":"0",f.code||"",buildFieldDisplayName(f),f.type||"",f.required?"1":"0",f.unique?"1":"0",f.isPK?"1":"0",f.isLookup?"1":"0",f.isRef?"1":"0",f.inSubtable?"1":"0",f.tableCode||"",f.tableLabel||"",f.path||f.code||""]);
     });
   });
   openModal("CSV (フィールド一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_フィールド一覧.csv");
 }
 function showCSVRelations(){
-  const rows=[["種類","起点アプリID","起点アプリ名","起点フィールド","宛先アプリID","宛先アプリ名","宛先フィールド"]];
+  const rows=[["種類","関連名","起点アプリID","起点アプリ名","起点の取得状態","起点の取得上の注意","表示部品","結合元フィールド","宛先アプリID","宛先アプリ名","宛先の取得状態","宛先フィールド"]];
   APPS.forEach(a=>{
     a.relations.forEach(r=>{
       const t=appMap.get(r.toApp);
-      rows.push([r.kind,a.id,a.name,r.fromDisplay||r.fromLabel||r.from||"",r.toApp,t?t.name:"(不明)",r.toField||""]);
+      rows.push([r.kind,r.fromDisplay||r.fromLabel||r.from||r.kind,a.id,a.name,exportStatusLabel(a),exportIssueText(a),r.controlFieldLabel||r.controlField||"",r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""),r.toApp,t?t.name:"未取得の参照先",t?exportStatusLabel(t):"未取得",r.toField||""]);
     });
   });
   openModal("CSV (リレーション一覧)","\\ufeff"+rows.map(csvLine).join("\\n"),"ER図_リレーション一覧.csv");
@@ -4639,22 +5339,30 @@ function showMarkdown(){
   lines.push("");
   lines.push("- 生成日時: " + new Date().toLocaleString("ja-JP"));
   lines.push("- 起点アプリ: " + ((ER_OPTIONS.startAppIds||[]).join(", ") || "-"));
+  lines.push("- 探索深さ: " + (ER_OPTIONS.maxDepth||"無制限"));
+  lines.push("- 逆引き探索: " + (ER_OPTIONS.includeReverseLookup?"ON":"OFF"));
+  lines.push("- サブテーブル: " + (ER_OPTIONS.includeSubtableFields!==false?"ON":"OFF"));
+  lines.push("- 項目範囲: 取得済み全項目（図の表示密度とは独立）");
+  lines.push("- 接続: " + (ER_OPTIONS.sourceGuestId?("ゲスト "+ER_OPTIONS.sourceGuestId):"通常空間") + " / " + (ER_OPTIONS.sourcePreview?"プレビュー":"本番"));
   lines.push("- アプリ数: " + APPS.length);
   lines.push("- 総リレーション: " + APPS.reduce((s,a)=>s+a.relations.length,0));
-  lines.push("- 構造スコア: " + ER_ANALYSIS.score + " (Grade " + ER_ANALYSIS.grade + ")");
-  lines.push("- 循環グループ: " + ER_ANALYSIS.cycles.length);
-  lines.push("- 孤立アプリ: " + ER_ANALYSIS.isolatedAppIds.length);
+  lines.push("- 取得完了: " + ER_ANALYSIS.counts.retrievalComplete);
+  lines.push("- 一部取得: " + ER_ANALYSIS.counts.retrievalPartial);
+  lines.push("- 取得失敗: " + ER_ANALYSIS.counts.retrievalFailed);
+  lines.push("- 複数アプリの循環候補: " + ER_ANALYSIS.cycles.length);
+  lines.push("- 自己参照: " + ER_ANALYSIS.selfReferences.length);
+  lines.push("- 図内で関連のないアプリ: " + ER_ANALYSIS.isolatedAppIds.length);
   lines.push("- 未取得の参照先: " + ER_ANALYSIS.unresolvedTargets.length);
   lines.push("");
-  lines.push("## 構造分析");
+  lines.push("## 構造チェック（事実ベース）");
   lines.push("");
   if(ER_ANALYSIS.cycles.length){
-    lines.push("### 循環依存");
-    ER_ANALYSIS.cycles.forEach((cycle,i)=>lines.push("- 循環 "+(i+1)+": "+cycle.appNames.map(mdEsc).join(" → ")));
+    lines.push("### 複数アプリの循環候補");
+    ER_ANALYSIS.cycles.forEach((cycle,i)=>lines.push("- 候補 "+(i+1)+": "+cycle.appNames.map(mdEsc).join(" → ")));
     lines.push("");
   }
   if(ER_ANALYSIS.hubs.length){
-    lines.push("### 参照集中アプリ");
+    lines.push("### 接続数が多いアプリ（"+ER_ANALYSIS.highConnectionThreshold+"件以上）");
     ER_ANALYSIS.hubs.forEach(hub=>lines.push("- "+mdEsc(hub.name)+" (App "+hub.appId+"): 入 "+hub.incoming+" / 出 "+hub.outgoing+" / 合計 "+hub.total));
     lines.push("");
   }
@@ -4663,13 +5371,16 @@ function showMarkdown(){
   lines.push("| アプリID | アプリ名 | 項目数 | 関連数 | 深さ | 状態 |");
   lines.push("|---:|---|---:|---:|---:|---|");
   APPS.forEach(a=>{
-    lines.push("| "+a.id+" | "+mdEsc(a.name)+" | "+visibleFieldsForNode(a).length+" | "+a.relations.length+" | "+(a.depth||0)+" | "+(a.ok?"OK":"取得失敗")+" |");
+    lines.push("| "+a.id+" | "+mdEsc(a.name)+" | "+exportFieldsForApp(a).length+" | "+a.relations.length+" | "+(a.depth||0)+" | "+(a.status==="partial"?"一部取得":(a.ok?"取得完了":"取得失敗"))+" |");
   });
   lines.push("");
   APPS.forEach(a=>{
     lines.push("## "+mdEsc(a.name)+" (App "+a.id+")");
     lines.push("");
-    const vf=visibleFieldsForNode(a);
+    lines.push("- 取得状態: "+exportStatusLabel(a));
+    if(exportIssueText(a)) lines.push("- 取得上の注意: "+mdEsc(exportIssueText(a)));
+    lines.push("");
+    const vf=exportFieldsForApp(a);
     if(vf.length){
       lines.push("### フィールド");
       lines.push("");
@@ -4683,11 +5394,11 @@ function showMarkdown(){
     if(a.relations && a.relations.length){
       lines.push("### リレーション");
       lines.push("");
-      lines.push("| 種類 | 起点フィールド | 宛先アプリ | 宛先フィールド |");
-      lines.push("|---|---|---|---|");
+      lines.push("| 種類 | 関連名 | 表示部品 | 結合元フィールド | 宛先アプリ | 宛先フィールド |");
+      lines.push("|---|---|---|---|---|---|");
       a.relations.forEach(r=>{
         const t=appMap.get(r.toApp);
-        lines.push("| "+r.kind+" | "+mdEsc(r.fromDisplay||r.fromLabel||r.from||"")+" | "+mdEsc(t?t.name+" (App "+r.toApp+")":"App "+r.toApp)+" | "+mdEsc(r.toField||"")+" |");
+        lines.push("| "+r.kind+" | "+mdEsc(r.fromDisplay||r.fromLabel||r.from||r.kind)+" | "+mdEsc(r.controlFieldLabel||r.controlField||"")+" | "+mdEsc(r.kind==="ACTION"?"":(r.sourceJoinField||r.from||""))+" | "+mdEsc(t?t.name+" (App "+r.toApp+")":"未取得 (App "+r.toApp+")")+" | "+mdEsc(r.toField||"")+" |");
       });
       lines.push("");
     }
@@ -4696,13 +5407,54 @@ function showMarkdown(){
 }
 
 // ─── Zoom controls ───
-function updateZoomLabel(){
-  const lab=document.getElementById("zoom-level");
-  if(lab) lab.textContent = Math.round(cy.zoom()*100)+"%";
+function closeZoomPresets(){
+  const presets=document.getElementById("zoom-presets");
+  const trigger=document.getElementById("zoom-level");
+  const restoreFocus=!!(presets&&presets.contains(document.activeElement));
+  presets?.classList.remove("open");
+  trigger?.setAttribute("aria-expanded","false");
+  if(restoreFocus) trigger?.focus();
 }
-function zoomIn(){ cy.zoom({level: Math.min(cy.zoom()*1.25, cy.maxZoom()), renderedPosition:{x:cy.width()/2,y:cy.height()/2}}); updateZoomLabel(); }
-function zoomOut(){ cy.zoom({level: Math.max(cy.zoom()/1.25, cy.minZoom()), renderedPosition:{x:cy.width()/2,y:cy.height()/2}}); updateZoomLabel(); }
-function zoomReset(){ cy.zoom(1); cy.center(); updateZoomLabel(); }
+function toggleZoomPresets(){
+  const presets=document.getElementById("zoom-presets");
+  const trigger=document.getElementById("zoom-level");
+  if(!presets||!trigger) return;
+  const open=!presets.classList.contains("open");
+  presets.classList.toggle("open",open);
+  trigger.setAttribute("aria-expanded",String(open));
+  if(open){
+    const current=presets.querySelector('[aria-pressed="true"]')||presets.querySelector("button");
+    current?.focus();
+  }
+}
+function updateZoomLabel(){
+  const percent=Math.round(cy.zoom()*100);
+  applySemanticZoom(cy.zoom());
+  const value=document.getElementById("zoom-value");
+  const mode=document.getElementById("zoom-mode");
+  const trigger=document.getElementById("zoom-level");
+  if(value) value.textContent=percent+"%";
+  if(mode) mode.textContent=cy.zoom()<0.35?"構造":(cy.zoom()<0.7?"概要":"");
+  if(trigger){
+    trigger.setAttribute("aria-label","現在の表示倍率 "+percent+"%。倍率プリセットを開く");
+    trigger.title=cy.zoom()<0.35
+      ? "低倍率のため文字を隠した構造表示です。クリックして倍率を選択"
+      : cy.zoom()<0.7
+      ? "アプリ名と件数に絞った概要表示です。クリックして倍率を選択"
+      : "倍率を選択";
+  }
+  document.querySelectorAll(".zoom-preset").forEach(button=>{
+    button.setAttribute("aria-pressed",String(Number(button.dataset.zoom)===percent));
+  });
+}
+function setZoomLevel(level){
+  cy.zoom({level:Math.max(cy.minZoom(),Math.min(level,cy.maxZoom())),renderedPosition:{x:cy.width()/2,y:cy.height()/2}});
+  updateZoomLabel();
+}
+function setZoomPercent(percent){setZoomLevel(Number(percent)/100);closeZoomPresets();document.getElementById("zoom-level")?.focus();}
+function zoomIn(){closeZoomPresets();setZoomLevel(cy.zoom()*1.25);}
+function zoomOut(){closeZoomPresets();setZoomLevel(cy.zoom()/1.25);}
+function zoomReset(){closeZoomPresets();cy.zoom(1);cy.center();updateZoomLabel();}
 cy.on("zoom", updateZoomLabel);
 setTimeout(updateZoomLabel, 300);
 
@@ -4735,11 +5487,48 @@ function closeAllMenus(){ document.querySelectorAll(".tb-menu.open").forEach(x=>
 document.addEventListener("click",(e)=>{
   const inside=e.target.closest(".tb-menu");
   if(!inside) closeAllMenus();
+  if(!e.target.closest("#zoom-ctrl")) closeZoomPresets();
 });
 
 // ─── Mobile menu toggle ───
 function toggleMobileMenu(){
-  document.getElementById("topbar").classList.toggle("mobile-open");
+  const topbar=document.getElementById("topbar");
+  const open=!topbar.classList.contains("mobile-open");
+  topbar.classList.toggle("mobile-open",open);
+  document.getElementById("mobile-menu-btn")?.setAttribute("aria-expanded",String(open));
+  requestAnimationFrame(syncTopbarHeight);
+}
+function closeMobileMenu(){
+  document.getElementById("topbar")?.classList.remove("mobile-open");
+  document.getElementById("mobile-menu-btn")?.setAttribute("aria-expanded","false");
+  requestAnimationFrame(syncTopbarHeight);
+}
+function syncTopbarHeight(){
+  const topbar=document.getElementById("topbar");
+  if(!topbar) return;
+  const height=Math.max(52,Math.ceil(topbar.getBoundingClientRect().height));
+  document.documentElement.style.setProperty("--topbar-h",height+"px");
+}
+function syncBottomUiOffsets(){
+  const root=document.documentElement;
+  const legend=document.getElementById("legend");
+  const pathfinder=document.getElementById("pathfinder");
+  const legendHeight=legend?Math.ceil(legend.getBoundingClientRect().height)+8:50;
+  const shouldStackPath=!!pathfinder?.classList.contains("open");
+  const pathfinderLift=shouldStackPath?Math.ceil(pathfinder.getBoundingClientRect().height)+12:0;
+  root.style.setProperty("--legend-stack-height",legendHeight+"px");
+  root.style.setProperty("--pathfinder-lift",pathfinderLift+"px");
+}
+const erTopbar=document.getElementById("topbar");
+if(erTopbar&&typeof ResizeObserver==="function") new ResizeObserver(syncTopbarHeight).observe(erTopbar);
+const erBottomResizeObserver=typeof ResizeObserver==="function"?new ResizeObserver(syncBottomUiOffsets):null;
+erBottomResizeObserver?.observe(document.getElementById("legend"));
+erBottomResizeObserver?.observe(document.getElementById("pathfinder"));
+window.addEventListener("resize",()=>{syncTopbarHeight();syncBottomUiOffsets();},{passive:true});
+syncTopbarHeight();
+syncBottomUiOffsets();
+if(window.matchMedia&&window.matchMedia("(max-width:640px)").matches){
+  document.getElementById("overview")?.classList.add("collapsed");
 }
 
 // ─── Help modal ───
@@ -4765,8 +5554,8 @@ function applyStateFromHash(){
     const h=location.hash.replace(/^#/,"");
     if(!h) return;
     const state=JSON.parse(decodeURIComponent(escape(atob(h))));
-    if(state.l) setLayout(state.l);
-    if(state.d) setDensity(state.d);
+    if(state.l) setLayout(normalizeLayoutName(state.l));
+    if(state.d) setDensity(normalizeDensityName(state.d));
     if(typeof state.f === "number"){ if(!!state.f !== focusMode) toggleFocusMode(); }
     if(state.fd){ const sel=document.getElementById("focus-depth"); if(sel) sel.value=String(state.fd); }
     if(state.fdir){ const sel=document.getElementById("focus-direction"); if(sel) sel.value=state.fdir; }
@@ -4796,6 +5585,7 @@ function printDiagram(){
   const data=cy.png({ full:true, scale:2, bg: currentPalette().bg });
   const w=window.open("","_blank");
   if(!w){ toast("別タブを開けませんでした"); return; }
+  try{w.opener=null;}catch(_){}
   w.document.write('<title>kintone ER図 印刷</title><body style="margin:0;padding:0;text-align:center;"><img src="'+data+'" style="max-width:100%;height:auto"/></body>');
   w.document.close();
   setTimeout(()=>{ try{ w.focus(); w.print(); }catch(_){} }, 500);
@@ -4863,6 +5653,24 @@ cy.on("mousemove",e=>{if(tipEl&&tipEl.style.display==="block"){tipEl.style.left=
 // ─── 編集済みHTMLの表示状態を復元（全初期化の最後に実行） ───
 applySavedViewState();
 <\/script>
+<script>
+(function(){
+  const source=document.getElementById("er-main");
+  if(typeof window.cytoscape==="function"){
+    const runtime=document.createElement("script");
+    runtime.id="er-runtime";
+    runtime.textContent=source.textContent||"";
+    source.after(runtime);
+    return;
+  }
+  document.getElementById("topbar")?.setAttribute("hidden","");
+  document.getElementById("overview")?.setAttribute("hidden","");
+  document.getElementById("legend")?.setAttribute("hidden","");
+  const host=document.getElementById("cy");
+  host.style.cssText="position:fixed;inset:0;overflow:auto;padding:32px;background:#f8fafc;color:#0f172a;font:14px/1.65 sans-serif";
+  host.innerHTML='<main style="max-width:960px;margin:auto"><h1 style="font-size:22px;margin-bottom:8px">ER図ライブラリを読み込めませんでした</h1><p>ネットワークまたはCDNの制限により図を描画できません。接続を確認して再読み込みしてください。取得済みのアプリ一覧は下表で確認できます。</p><table style="width:100%;margin-top:20px;border-collapse:collapse"><thead><tr><th>アプリID</th><th>アプリ名</th><th>項目数</th><th>関連数</th><th>取得状態</th></tr></thead><tbody>${runtimeFallbackRows}</tbody></table></main>';
+})();
+<\/script>
 </body>
 </html>`
     );
@@ -4900,7 +5708,7 @@ applySavedViewState();
       startAppIds,
       layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
       fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
-      maxDepth: Number(opts.maxDepth) || 0,
+      maxDepth: Number.isFinite(Number(opts.maxDepth)) && Number(opts.maxDepth) >= 0 ? Math.floor(Number(opts.maxDepth)) : 0,
       includeSubtableFields: opts.includeSubtableFields !== false,
       includeReverseLookup: !!opts.includeReverseLookup,
       maxFields: ER_DEFAULTS.maxFields,
@@ -4911,6 +5719,10 @@ applySavedViewState();
     if (!options.startAppIds.length) throw new Error("対象アプリが見つかりませんでした");
     const popup = window.open("", "_blank");
     if (!popup) throw new Error("別タブを開けませんでした。ポップアップブロックを確認してください");
+    try {
+      popup.opener = null;
+    } catch (_) {
+    }
     popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
     setStatus2(`ER図を生成中... 起点 ${options.startAppIds.join(",")}`);
     progressUi.init();
@@ -4923,7 +5735,9 @@ applySavedViewState();
       const url = URL.createObjectURL(blob);
       popup.location.href = url;
       progressUi.close();
-      setStatus2(`ER図の生成完了: ${apps.length}アプリを別タブ表示しました`);
+      const partialCount = apps.filter((app) => app?.status === "partial").length;
+      const failedCount = apps.filter((app) => app?.status === "failed" || app?.ok === false).length;
+      setStatus2(partialCount || failedCount ? `ER図を生成しました: ${apps.length}アプリ（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, !!failedCount);
       setTimeout(() => URL.revokeObjectURL(url), 60 * 1e3);
     } catch (e) {
       try {
@@ -4945,7 +5759,7 @@ applySavedViewState();
       startAppIds,
       layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
       fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
-      maxDepth: Number(opts.maxDepth) || 0,
+      maxDepth: Number.isFinite(Number(opts.maxDepth)) && Number(opts.maxDepth) >= 0 ? Math.floor(Number(opts.maxDepth)) : 0,
       includeSubtableFields: opts.includeSubtableFields !== false,
       includeReverseLookup: !!opts.includeReverseLookup,
       maxFields: ER_DEFAULTS.maxFields,
@@ -4969,7 +5783,9 @@ applySavedViewState();
         "text/html"
       );
       progressUi.close();
-      setStatus2(`ER図HTMLを保存しました (${apps.length}アプリ)`);
+      const partialCount = apps.filter((app) => app?.status === "partial").length;
+      const failedCount = apps.filter((app) => app?.status === "failed" || app?.ok === false).length;
+      setStatus2(partialCount || failedCount ? `ER図HTMLを保存しました: ${apps.length}アプリ（一部取得 ${partialCount} / 取得失敗 ${failedCount}）` : `ER図HTMLを保存しました (${apps.length}アプリ)`, !!failedCount);
     } catch (e) {
       progressUi.error(e.message || String(e));
       throw e;

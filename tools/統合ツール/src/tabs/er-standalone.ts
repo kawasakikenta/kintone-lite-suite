@@ -57,7 +57,7 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
     startAppIds,
     layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
     fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
-    maxDepth: Number(opts.maxDepth) || 0,
+    maxDepth: Number.isFinite(Number(opts.maxDepth)) && Number(opts.maxDepth) >= 0 ? Math.floor(Number(opts.maxDepth)) : 0,
     includeSubtableFields: opts.includeSubtableFields !== false,
     includeReverseLookup: !!opts.includeReverseLookup,
     maxFields: ER_DEFAULTS.maxFields,
@@ -69,6 +69,7 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
 
   const popup = window.open('', '_blank');
   if (!popup) throw new Error('別タブを開けませんでした。ポップアップブロックを確認してください');
+  try { popup.opener = null; } catch (_) { /* noop */ }
   popup.document.write('<title>ER図</title><body style="font-family:sans-serif;padding:24px">ER図を生成中...</body>');
 
   setStatus(`ER図を生成中... 起点 ${options.startAppIds.join(',')}`);
@@ -83,7 +84,11 @@ export async function runGenerateERDiagramStandalone(opts, setStatus) {
     const url = URL.createObjectURL(blob);
     popup.location.href = url;
     progressUi.close();
-    setStatus(`ER図の生成完了: ${apps.length}アプリを別タブ表示しました`);
+    const partialCount = apps.filter((app: any) => app?.status === 'partial').length;
+    const failedCount = apps.filter((app: any) => app?.status === 'failed' || app?.ok === false).length;
+    setStatus(partialCount || failedCount
+      ? `ER図を生成しました: ${apps.length}アプリ（一部取得 ${partialCount} / 取得失敗 ${failedCount}）`
+      : `ER図の生成完了: ${apps.length}アプリを別タブ表示しました`, !!failedCount);
     setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
   } catch (e) {
     try { popup.close(); } catch (_) { /* noop */ }
@@ -104,7 +109,7 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
     startAppIds,
     layoutName: opts.layoutName || ER_DEFAULTS.layoutName,
     fieldDensity: opts.fieldDensity || ER_DEFAULTS.fieldDensity,
-    maxDepth: Number(opts.maxDepth) || 0,
+    maxDepth: Number.isFinite(Number(opts.maxDepth)) && Number(opts.maxDepth) >= 0 ? Math.floor(Number(opts.maxDepth)) : 0,
     includeSubtableFields: opts.includeSubtableFields !== false,
     includeReverseLookup: !!opts.includeReverseLookup,
     maxFields: ER_DEFAULTS.maxFields,
@@ -130,7 +135,11 @@ export async function runExportERDiagramHtmlStandalone(opts, setStatus) {
       'text/html'
     );
     progressUi.close();
-    setStatus(`ER図HTMLを保存しました (${apps.length}アプリ)`);
+    const partialCount = apps.filter((app: any) => app?.status === 'partial').length;
+    const failedCount = apps.filter((app: any) => app?.status === 'failed' || app?.ok === false).length;
+    setStatus(partialCount || failedCount
+      ? `ER図HTMLを保存しました: ${apps.length}アプリ（一部取得 ${partialCount} / 取得失敗 ${failedCount}）`
+      : `ER図HTMLを保存しました (${apps.length}アプリ)`, !!failedCount);
   } catch (e) {
     progressUi.error(e.message || String(e));
     throw e;
