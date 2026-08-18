@@ -148,7 +148,10 @@ export type XlsxCellValue = string | number | boolean | null | undefined;
 export type XlsxCellStyle =
   | 'normal'
   | 'source'
+  | 'sourceDivider'
+  | 'sourceGroup'
   | 'target'
+  | 'targetGroup'
   | 'warning'
   | 'title'
   | 'sectionHeader'
@@ -157,6 +160,7 @@ export type XlsxCellStyle =
   | 'kpiDanger'
   | 'review'
   | 'info'
+  | 'headerDivider'
   | 'hyperlink';
 export type XlsxRowStyle = XlsxCellStyle;
 export interface XlsxDataValidation {
@@ -263,7 +267,10 @@ function normalizeExcelCellText(value: unknown): string {
 const CELL_STYLE_INDEX: Record<XlsxCellStyle, number> = {
   normal: 2,
   source: 3,
+  sourceDivider: 14,
+  sourceGroup: 16,
   target: 4,
+  targetGroup: 17,
   warning: 5,
   title: 6,
   sectionHeader: 7,
@@ -272,6 +279,7 @@ const CELL_STYLE_INDEX: Record<XlsxCellStyle, number> = {
   kpiDanger: 10,
   review: 11,
   info: 12,
+  headerDivider: 15,
   hyperlink: 13
 };
 
@@ -580,7 +588,7 @@ function buildRootRels(): string {
 
 function buildStylesXml(): string {
   // 色はセルの役割に限定する。状態（追加・削除・変更）は文字ラベルで表現する。
-  // 0: 既定 / 1: 表見出し / 2: データ / 3..13: レポート用UI
+  // 0: 既定 / 1: 表見出し / 2: データ / 3..17: レポート用UI
   return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
     + '<fonts count="6">'
     +   '<font><sz val="11"/><name val="Meiryo"/></font>'
@@ -599,13 +607,15 @@ function buildStylesXml(): string {
     +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill>'
     +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF8D6"/><bgColor indexed="64"/></patternFill></fill>'
     + '</fills>'
-    + '<borders count="3">'
+    + '<borders count="5">'
     +   '<border><left/><right/><top/><bottom/><diagonal/></border>'
     +   '<border><left/><right/><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
     +   '<border><left/><right/><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>'
+    +   '<border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
+    +   '<border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>'
     + '</borders>'
     + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    + '<cellXfs count="14">'
+    + '<cellXfs count="18">'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
@@ -620,6 +630,10 @@ function buildStylesXml(): string {
     +   '<xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="3" borderId="3" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="4" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="4" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     + '</cellXfs>'
     + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
     + '</styleSheet>';

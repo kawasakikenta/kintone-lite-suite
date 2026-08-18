@@ -204,7 +204,7 @@ describe('diff/xlsx-builder', () => {
     expect(xml).not.toContain('r:id=');
     expect(xml).toMatch(/<c r="A2" s="13"/);
     expect(styles).toContain('<fonts count="6">');
-    expect(styles).toContain('<cellXfs count="14">');
+    expect(styles).toContain('<cellXfs count="18">');
     expect(xml.indexOf('<mergeCells ')).toBeLessThan(xml.indexOf('<dataValidations '));
     expect(xml.indexOf('<dataValidations ')).toBeLessThan(xml.indexOf('<hyperlinks>'));
     expect(xml.indexOf('<hyperlinks>')).toBeLessThan(xml.indexOf('<printOptions '));
@@ -309,17 +309,27 @@ describe('diff/xlsx-builder', () => {
     expect(xml).not.toContain('<f>');
   });
 
-  it('applies source, target, and warning roles without changing the header style', async () => {
+  it('applies source, target, comparison-divider, and warning roles without changing the header style', async () => {
     const sheets: XlsxSheet[] = [{
       name: 'S',
-      rows: [['role'], ['source'], ['target'], ['warning']],
-      rowStyles: ['warning', 'source', 'target', 'warning']
+      rows: [['role', 'header divider'], ['source', 'source divider'], ['target', 'source group'], ['warning', 'target group']],
+      rowStyles: ['warning', 'source', 'target', 'warning'],
+      cellStyles: [
+        [undefined, 'headerDivider'],
+        [undefined, 'sourceDivider'],
+        [undefined, 'sourceGroup'],
+        [undefined, 'targetGroup']
+      ]
     }];
     const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
     expect(xml).toMatch(/<c r="A1" s="1"/);
+    expect(xml).toMatch(/<c r="B1" s="15"/);
     expect(xml).toMatch(/<c r="A2" s="3"/);
+    expect(xml).toMatch(/<c r="B2" s="14"/);
     expect(xml).toMatch(/<c r="A3" s="4"/);
+    expect(xml).toMatch(/<c r="B3" s="16"/);
     expect(xml).toMatch(/<c r="A4" s="5"/);
+    expect(xml).toMatch(/<c r="B4" s="17"/);
   });
 
   it('uses a restrained role palette with neutral KPI styles and no severity colors', async () => {
@@ -343,6 +353,9 @@ describe('diff/xlsx-builder', () => {
     expect(xml).toMatch(/<c r="B3" s="12"/);
     expect(xml).toMatch(/<c r="C3" s="13"/);
     expect(styles).toContain('<fills count="7">');
+    expect(styles).toContain('<borders count="5">');
+    expect(styles).toContain('<cellXfs count="18">');
+    expect(styles).toContain('<right style="medium"><color rgb="FF64748B"/></right>');
     expect(styles).toContain('rgb="FF1E3A5F"');
     expect(styles).toContain('rgb="FFF1F5F9"');
     expect(styles).toContain('rgb="FFEFF6FF"');
