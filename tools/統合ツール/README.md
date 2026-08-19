@@ -6,8 +6,10 @@ kintone アプリ設定の差分比較・プレビュー反映・設計書出力
 
 ```bash
 cd tools/統合ツール
-npm install
+npm ci
 ```
+
+リポジトリ直下からは `npm ci && npm run setup` で、ルートと統合ツールの依存をまとめて導入できます。
 
 ## ビルド・検証
 

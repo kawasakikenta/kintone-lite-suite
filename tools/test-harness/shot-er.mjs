@@ -4,16 +4,16 @@
 // 前提:
 //   - tools/統合ツール に cytoscape / dagre / cytoscape-dagre をインストール済み
 //     (npm i --no-save cytoscape@3.28.1 dagre@0.8.5 cytoscape-dagre@2.5.0)
-//   - playwright と chromium のパスは環境に合わせて下記2か所を変更すること
+//   - リポジトリ直下で npm ci を実行済み
 // 使い方:
 //   node shot-er.mjs outputs/er-diagram.html outputs/er.png [plain|manual-add]
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { chromium } from 'playwright';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const toolsRoot = resolve(__dirname, '../統合ツール');
-const { chromium } = await import('/opt/node22/lib/node_modules/playwright/index.mjs');
 
 const input = process.argv[2] || resolve(__dirname, 'outputs/er-diagram.html');
 const output = process.argv[3] || resolve(__dirname, 'outputs/er-diagram.png');
@@ -28,7 +28,14 @@ html = html.replace(/@import url\([^)]*\);/g, '');
 const tmp = resolve(__dirname, 'outputs/_er-local.html');
 writeFileSync(tmp, html, 'utf8');
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const executablePath = process.env.KUS_PLAYWRIGHT_EXECUTABLE;
+const browserName = process.env.KUS_PLAYWRIGHT_BROWSER || 'chrome';
+const launchOptions = executablePath
+  ? { executablePath, headless: true }
+  : (browserName === 'chromium'
+    ? { headless: true }
+    : { channel: browserName, headless: true });
+const browser = await chromium.launch(launchOptions);
 const page = await browser.newPage({ viewport: { width: 1480, height: 940 } });
 page.on('pageerror', (e) => console.error('[pageerror]', e.message));
 await page.goto('file://' + tmp);

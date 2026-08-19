@@ -1,66 +1,40 @@
 {
-  "name": "kintone",
+  "name": "kintone-tools",
   "version": "1.0.0",
-  "description": "- 画像一括ダウンロード: `image_bulk_download.js`   - 登録情報: `snippets_registry.json`",
-  "main": "index.js",
-  "scripts": {
-    "build:excel-kaiseki": "node tools/standalone/build-excel-kaiseki.js",
-    "build:excel-pivot-ng": "npm --prefix plugins/KintoneExcelPivotViewer-ng run build && npm --prefix plugins/KintoneExcelPivotViewer-ng run build:config",
-    "build:field-focus-input": "npm --prefix plugins/FieldFocusInput run build",
-    "build:field-transfer": "npm --prefix plugins/FieldTransfer run build",
-    "build:kintone-calendar": "vite build --config plugins/KintoneCalendar/vite.config.mjs",
-    "build:kintone-lookup-filter": "npm --prefix plugins/KintoneLookupFilter run build",
-    "build:simple-task-board": "node plugins/SimpleTaskBoard/build-desktop.js",
-    "check:simple-task-board": "node --check simple-kanban-person-board-updated.js && node --check plugins/SimpleTaskBoard/src/core.js && node --check plugins/SimpleTaskBoard/js/config.js && node --check plugins/SimpleTaskBoard/build-desktop.js && node --check plugins/SimpleTaskBoard/js/desktop.js",
-    "check:all": "npm run check:attachment-name-guard && npm run check:comment-reply-label && npm run check:manual-plugin && npm run check:kintone-data-flow && npm run check:kintone-calendar",
-    "check:attachment-name-guard": "node --check plugins/AttachmentNameGuard/js/config.js && node --check plugins/AttachmentNameGuard/js/desktop.js",
-    "check:comment-reply-label": "node --check plugins/CommentReplyLabel/js/config.js && node --check plugins/CommentReplyLabel/js/desktop.js",
-    "check:field-focus-input": "npm --prefix plugins/FieldFocusInput run typecheck",
-    "check:kintone-calendar": "tsc --noEmit --project plugins/KintoneCalendar/tsconfig.json",
-    "check:kintone-data-flow": "node --check plugins/KintoneDataFlow/js/config.js && node --check plugins/KintoneDataFlow/js/desktop.js",
-    "check:manual-plugin": "node --check plugins/ManualPlugin/js/utils.js && node --check plugins/ManualPlugin/js/desktop.js && node --check plugins/ManualPlugin/js/viewer.js && node --check plugins/ManualPlugin/js/editor.js && node --check plugins/ManualPlugin/js/manager.js && node --check plugins/ManualPlugin/js/template.js && node --check plugins/ManualPlugin/js/config.js",
-    "mcp:playwright": "node node_modules/@playwright/mcp/cli.js --browser=chrome --output-dir=.playwright-mcp --save-session",
-    "package:attachment-name-guard": "npm run check:attachment-name-guard && kintone-plugin-packer --ppk plugins/AttachmentNameGuard.ppk plugins/AttachmentNameGuard --out plugins/AttachmentNameGuard.zip",
-    "package:comment-reply-label": "npm run check:comment-reply-label && kintone-plugin-packer --ppk plugins/CommentReplyLabel.ppk plugins/CommentReplyLabel --out plugins/CommentReplyLabel.zip",
-    "package:excel-pivot-ng": "npm --prefix plugins/KintoneExcelPivotViewer-ng run package",
-    "package:field-focus-input": "npm run build:field-focus-input && kintone-plugin-packer --ppk plugins/FieldFocusInput.ppk plugins/FieldFocusInput --out plugins/FieldFocusInput.zip",
-    "package:field-transfer": "npm run build:field-transfer && kintone-plugin-packer --ppk plugins/FieldTransfer.ppk plugins/FieldTransfer --out plugins/FieldTransfer.zip",
-    "package:kintone-calendar": "kintone-plugin-packer --ppk plugins/KintoneCalendar.ppk plugins/KintoneCalendar --out plugins/KintoneCalendar.zip",
-    "package:kintone-data-flow": "npm run check:kintone-data-flow && kintone-plugin-packer --ppk plugins/KintoneDataFlow.ppk plugins/KintoneDataFlow --out plugins/KintoneDataFlow.zip",
-    "package:kintone-lookup-filter": "npm run build:kintone-lookup-filter && kintone-plugin-packer --ppk plugins/KintoneLookupFilter.ppk plugins/KintoneLookupFilter --out plugins/KintoneLookupFilter.zip",
-    "package:manual-plugin": "npm run check:manual-plugin && kintone-plugin-packer --ppk plugins/ManualPlugin.ppk plugins/ManualPlugin --out plugins/ManualPlugin.zip",
-    "package:simple-task-board": "npm run build:simple-task-board && kintone-plugin-packer --ppk plugins/SimpleTaskBoard.ppk plugins/SimpleTaskBoard --out plugins/SimpleTaskBoard.zip",
-    "snippet": "node scripts/build-snippet.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "test:excel-pivot-ng": "npm --prefix plugins/KintoneExcelPivotViewer-ng test",
-    "test:field-focus-input": "npm --prefix plugins/FieldFocusInput test",
-    "test:field-transfer": "npm --prefix plugins/FieldTransfer test",
-    "test:kintone-calendar": "node --test plugins/KintoneCalendar/tests/*.test.mjs",
-    "test:kintone-lookup-filter": "npm --prefix plugins/KintoneLookupFilter test",
-    "test:simple-task-board": "node --test plugins/SimpleTaskBoard/tests/*.test.cjs",
-    "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs"
-  },
+  "private": true,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kawasakikenta/kintone.git"
+    "url": "git+https://github.com/kawasakikenta/kintone-tools.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/kawasakikenta/kintone/issues"
+    "url": "https://github.com/kawasakikenta/kintone-tools/issues"
   },
-  "homepage": "https://github.com/kawasakikenta/kintone#readme",
+  "homepage": "https://github.com/kawasakikenta/kintone-tools#readme",
+  "description": "kintone の設定比較・設計・データ運用を支援するブラウザツール集",
+  "type": "commonjs",
+  "scripts": {
+    "setup": "npm --prefix tools/統合ツール ci",
+    "build": "npm run build:unified",
+    "build:unified": "npm --prefix tools/統合ツール run build",
+    "build:excel-kaiseki": "node tools/standalone/build-excel-kaiseki.js",
+    "check": "npm --prefix tools/統合ツール run check",
+    "typecheck": "npm --prefix tools/統合ツール run typecheck",
+    "typecheck:strict": "npm --prefix tools/統合ツール run typecheck:strict",
+    "test": "npm run test:unit",
+    "test:unit": "npm --prefix tools/統合ツール run test:unit",
+    "test:output-layouts": "node tools/test-harness/run-output-layouts.mjs",
+    "test:diff-multi-dom": "node tools/test-harness/run-diff-lite-multi-dom.cjs",
+    "test:diff-compare": "node tools/test-harness/run-diff-lite-compare.cjs",
+    "test:er-compare": "node tools/test-harness/run-er-diagram-compare.cjs",
+    "snippet": "node scripts/build-snippet.js",
+    "mcp:playwright": "node node_modules/@playwright/mcp/cli.js --browser=chrome --output-dir=.playwright-mcp --save-session",
+    "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs"
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  },
   "devDependencies": {
-    "@kintone/plugin-packer": "^9.1.1",
-    "@playwright/mcp": "^0.0.70",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.10"
-  },
-  "optionalDependencies": {
-    "@rolldown/binding-darwin-arm64": "*",
-    "@rolldown/binding-linux-x64-gnu": "*",
-    "@rolldown/binding-win32-x64-msvc": "*"
+    "@playwright/mcp": "0.0.70"
   }
 }

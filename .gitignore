@@ -1,13 +1,42 @@
+# Node.js
 node_modules/
-.tools/
-.claude/
-.playwright-mcp/
-*.ppk
-*.zip
-plugins/KintoneCalendar/tests/preview.html
+coverage/
+*.log
 
-# AI 作業の一時成果物（再発防止）
+# Browser automation and local profiles
+.playwright-mcp/
 .iter-browser/
 .iter-shots/
+.iter-shots-*/
+.iter-playwright/
+.iter-*/
+
+# Test and generated inspection output
+/outputs/
+/tools/test-harness/outputs/
+/tools/test-harness/chunk-*.txt
+/tools/test-harness/bundle.b64.txt
+/tools/test-harness/full.dataurl.txt
+/tools/test-harness/full.html
+/tools/_kus_chunks/
+.tools/
 .kus-chunks-tmp/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Local AI/editor state
+.claude/
 .agents/
+
+# Secrets and distributable packages
+*.ppk
+*.zip
+.env
+.env.*
+!.env.example
+
+# OS metadata
+.DS_Store
+Thumbs.db
