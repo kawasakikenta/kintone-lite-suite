@@ -4,7 +4,7 @@
  * 追加ライブラリ無しで .xlsx (OOXML / SpreadsheetML) を組み立てる最小実装。
  * - 圧縮なし (STORE) の ZIP コンテナを自前で構築。
  * - 文字列はインライン文字列 (<is><t>) で書き出し、共有文字列表は持たない。
- * - タイトル・KPI・差分種別・重要度・レビュー入力欄を表現する最小限のスタイルを内蔵。
+ * - 見出し・比較元/先・警告・レビュー入力欄という役割別の最小限のスタイルを内蔵。
  *
  * 差分比較タブの XLSX 出力で利用。SheetJS など外部 CDN に依存しないため、
  * オフライン環境やゲストスペースでも安定して動作する。
@@ -147,22 +147,20 @@ function sanitizeSheetName(name: string, index: number, used: Set<string>): stri
 export type XlsxCellValue = string | number | boolean | null | undefined;
 export type XlsxCellStyle =
   | 'normal'
-  | 'added'
-  | 'removed'
-  | 'changed'
-  | 'same'
-  | 'reference'
+  | 'source'
+  | 'sourceDivider'
+  | 'sourceGroup'
+  | 'target'
+  | 'targetGroup'
   | 'warning'
   | 'title'
   | 'sectionHeader'
   | 'kpiGood'
   | 'kpiWarning'
   | 'kpiDanger'
-  | 'severityHigh'
-  | 'severityMedium'
-  | 'severityLow'
   | 'review'
   | 'info'
+  | 'headerDivider'
   | 'hyperlink';
 export type XlsxRowStyle = XlsxCellStyle;
 export interface XlsxDataValidation {
@@ -268,23 +266,21 @@ function normalizeExcelCellText(value: unknown): string {
 
 const CELL_STYLE_INDEX: Record<XlsxCellStyle, number> = {
   normal: 2,
-  added: 3,
-  removed: 4,
-  changed: 5,
-  same: 6,
-  reference: 7,
-  warning: 8,
-  title: 9,
-  sectionHeader: 10,
-  kpiGood: 11,
-  kpiWarning: 12,
-  kpiDanger: 13,
-  severityHigh: 14,
-  severityMedium: 15,
-  severityLow: 16,
-  review: 17,
-  info: 18,
-  hyperlink: 19
+  source: 3,
+  sourceDivider: 14,
+  sourceGroup: 16,
+  target: 4,
+  targetGroup: 17,
+  warning: 5,
+  title: 6,
+  sectionHeader: 7,
+  kpiGood: 8,
+  kpiWarning: 9,
+  kpiDanger: 10,
+  review: 11,
+  info: 12,
+  headerDivider: 15,
+  hyperlink: 13
 };
 
 interface ResolvedInternalHyperlink {
@@ -591,7 +587,8 @@ function buildRootRels(): string {
 }
 
 function buildStylesXml(): string {
-  // 0: 既定 / 1: ヘッダ / 2: データ / 3..8: 差分種別・警告 / 9..19: レポート用UI
+  // 色はセルの役割に限定する。状態（追加・削除・変更）は文字ラベルで表現する。
+  // 0: 既定 / 1: 表見出し / 2: データ / 3..17: レポート用UI
   return `${XML_HEADER}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
     + '<fonts count="6">'
     +   '<font><sz val="11"/><name val="Meiryo"/></font>'
@@ -601,53 +598,42 @@ function buildStylesXml(): string {
     +   '<font><b/><sz val="11"/><name val="Meiryo"/><color rgb="FF0F172A"/></font>'
     +   '<font><u/><sz val="11"/><name val="Meiryo"/><color rgb="FF0563C1"/></font>'
     + '</fonts>'
-    + '<fills count="19">'
+    + '<fills count="7">'
     +   '<fill><patternFill patternType="none"/></fill>'
     +   '<fill><patternFill patternType="gray125"/></fill>'
     +   '<fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFF1F5F9"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill>'
     +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFEF2F2"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFF5F3FF"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF7ED"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FF0F172A"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFDBEAFE"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFDCFCE7"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFEE2E2"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFECACA"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFDE68A"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill>'
-    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/><bgColor indexed="64"/></patternFill></fill>'
+    +   '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF8D6"/><bgColor indexed="64"/></patternFill></fill>'
     + '</fills>'
-    + '<borders count="2">'
+    + '<borders count="5">'
     +   '<border><left/><right/><top/><bottom/><diagonal/></border>'
-    +   '<border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="thin"><color rgb="FFCBD5E1"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="thin"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>'
+    +   '<border><left/><right/><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
+    +   '<border><left/><right/><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>'
+    +   '<border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>'
+    +   '<border><left/><right style="medium"><color rgb="FF64748B"/></right><top/><bottom style="medium"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>'
     + '</borders>'
     + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    + '<cellXfs count="20">'
+    + '<cellXfs count="18">'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
-    +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf>'
+    +   '<xf numFmtId="0" fontId="3" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
-    +   '<xf numFmtId="0" fontId="0" fillId="7" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
-    +   '<xf numFmtId="0" fontId="0" fillId="8" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
-    +   '<xf numFmtId="0" fontId="2" fillId="9" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf>'
-    +   '<xf numFmtId="0" fontId="3" fillId="10" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>'
-    +   '<xf numFmtId="0" fontId="4" fillId="11" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
-    +   '<xf numFmtId="0" fontId="4" fillId="12" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
-    +   '<xf numFmtId="0" fontId="4" fillId="13" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
-    +   '<xf numFmtId="0" fontId="4" fillId="14" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf>'
-    +   '<xf numFmtId="0" fontId="4" fillId="15" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf>'
-    +   '<xf numFmtId="0" fontId="4" fillId="16" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center"/></xf>'
-    +   '<xf numFmtId="0" fontId="0" fillId="17" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
-    +   '<xf numFmtId="0" fontId="0" fillId="18" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
     +   '<xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="0" fillId="3" borderId="3" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="1" fillId="2" borderId="4" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="4" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
+    +   '<xf numFmtId="0" fontId="4" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="center" wrapText="1"/></xf>'
     + '</cellXfs>'
     + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
     + '</styleSheet>';

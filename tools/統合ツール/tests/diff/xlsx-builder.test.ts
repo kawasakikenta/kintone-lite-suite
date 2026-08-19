@@ -202,9 +202,9 @@ describe('diff/xlsx-builder', () => {
     expect(xml).toContain('location="&apos;フィールド_設定&apos;&apos;詳細&apos;!B3"');
     expect(xml).toContain('tooltip="詳細差分へ &quot;移動&quot;"');
     expect(xml).not.toContain('r:id=');
-    expect(xml).toMatch(/<c r="A2" s="19"/);
+    expect(xml).toMatch(/<c r="A2" s="13"/);
     expect(styles).toContain('<fonts count="6">');
-    expect(styles).toContain('<cellXfs count="20">');
+    expect(styles).toContain('<cellXfs count="18">');
     expect(xml.indexOf('<mergeCells ')).toBeLessThan(xml.indexOf('<dataValidations '));
     expect(xml.indexOf('<dataValidations ')).toBeLessThan(xml.indexOf('<hyperlinks>'));
     expect(xml.indexOf('<hyperlinks>')).toBeLessThan(xml.indexOf('<printOptions '));
@@ -301,48 +301,71 @@ describe('diff/xlsx-builder', () => {
       }]
     }];
     const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
-    expect(xml).toMatch(/<c r="A2" s="17" t="inlineStr"><is><t[^>]*><\/t><\/is><\/c>/);
-    expect(xml).toMatch(/<c r="B2" s="17" t="inlineStr"><is><t[^>]*><\/t><\/is><\/c>/);
+    expect(xml).toMatch(/<c r="A2" s="11" t="inlineStr"><is><t[^>]*><\/t><\/is><\/c>/);
+    expect(xml).toMatch(/<c r="B2" s="11" t="inlineStr"><is><t[^>]*><\/t><\/is><\/c>/);
     expect(xml).toContain('<dataValidations count="1">');
     expect(xml).toContain('sqref="A2:A2"');
     expect(xml).toContain('&quot;未確認,確認済み&quot;');
     expect(xml).not.toContain('<f>');
   });
 
-  it('applies semantic row styles without changing the header style', async () => {
+  it('applies source, target, comparison-divider, and warning roles without changing the header style', async () => {
     const sheets: XlsxSheet[] = [{
       name: 'S',
-      rows: [['type'], ['added'], ['removed'], ['changed'], ['same'], ['reference'], ['warning']],
-      rowStyles: ['warning', 'added', 'removed', 'changed', 'same', 'reference', 'warning']
-    }];
-    const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
-    expect(xml).toMatch(/<c r="A1" s="1"/);
-    expect(xml).toMatch(/<c r="A2" s="3"/);
-    expect(xml).toMatch(/<c r="A3" s="4"/);
-    expect(xml).toMatch(/<c r="A4" s="5"/);
-    expect(xml).toMatch(/<c r="A5" s="6"/);
-    expect(xml).toMatch(/<c r="A6" s="7"/);
-    expect(xml).toMatch(/<c r="A7" s="8"/);
-  });
-
-  it('applies title, KPI, severity, and per-cell styles', async () => {
-    const sheets: XlsxSheet[] = [{
-      name: 'S',
-      rows: [['title'], ['ok', 'warn', 'danger'], ['high', 'medium', 'low']],
+      rows: [['role', 'header divider'], ['source', 'source divider'], ['target', 'source group'], ['warning', 'target group']],
+      rowStyles: ['warning', 'source', 'target', 'warning'],
       cellStyles: [
-        ['title'],
-        ['kpiGood', 'kpiWarning', 'kpiDanger'],
-        ['severityHigh', 'severityMedium', 'severityLow']
+        [undefined, 'headerDivider'],
+        [undefined, 'sourceDivider'],
+        [undefined, 'sourceGroup'],
+        [undefined, 'targetGroup']
       ]
     }];
     const xml = extractEntry(await blobToBuffer(buildXlsxBlob(sheets)), 'xl/worksheets/sheet1.xml');
-    expect(xml).toMatch(/<c r="A1" s="9"/);
-    expect(xml).toMatch(/<c r="A2" s="11"/);
-    expect(xml).toMatch(/<c r="B2" s="12"/);
-    expect(xml).toMatch(/<c r="C2" s="13"/);
-    expect(xml).toMatch(/<c r="A3" s="14"/);
-    expect(xml).toMatch(/<c r="B3" s="15"/);
-    expect(xml).toMatch(/<c r="C3" s="16"/);
+    expect(xml).toMatch(/<c r="A1" s="1"/);
+    expect(xml).toMatch(/<c r="B1" s="15"/);
+    expect(xml).toMatch(/<c r="A2" s="3"/);
+    expect(xml).toMatch(/<c r="B2" s="14"/);
+    expect(xml).toMatch(/<c r="A3" s="4"/);
+    expect(xml).toMatch(/<c r="B3" s="16"/);
+    expect(xml).toMatch(/<c r="A4" s="5"/);
+    expect(xml).toMatch(/<c r="B4" s="17"/);
+  });
+
+  it('uses a restrained role palette with neutral KPI styles and no severity colors', async () => {
+    const sheets: XlsxSheet[] = [{
+      name: 'S',
+      rows: [['title'], ['ok', 'neutral', 'danger'], ['review', 'info', 'link']],
+      cellStyles: [
+        ['title'],
+        ['kpiGood', 'kpiWarning', 'kpiDanger'],
+        ['review', 'info', 'hyperlink']
+      ]
+    }];
+    const buf = await blobToBuffer(buildXlsxBlob(sheets));
+    const xml = extractEntry(buf, 'xl/worksheets/sheet1.xml');
+    const styles = extractEntry(buf, 'xl/styles.xml');
+    expect(xml).toMatch(/<c r="A1" s="6"/);
+    expect(xml).toMatch(/<c r="A2" s="8"/);
+    expect(xml).toMatch(/<c r="B2" s="9"/);
+    expect(xml).toMatch(/<c r="C2" s="10"/);
+    expect(xml).toMatch(/<c r="A3" s="11"/);
+    expect(xml).toMatch(/<c r="B3" s="12"/);
+    expect(xml).toMatch(/<c r="C3" s="13"/);
+    expect(styles).toContain('<fills count="7">');
+    expect(styles).toContain('<borders count="5">');
+    expect(styles).toContain('<cellXfs count="18">');
+    expect(styles).toContain('<right style="medium"><color rgb="FF64748B"/></right>');
+    expect(styles).toContain('rgb="FF1E3A5F"');
+    expect(styles).toContain('rgb="FFF1F5F9"');
+    expect(styles).toContain('rgb="FFEFF6FF"');
+    expect(styles).toContain('rgb="FFFEF2F2"');
+    expect(styles).toContain('rgb="FFFFF8D6"');
+    expect(styles).not.toContain('rgb="FFDCFCE7"');
+    expect(styles).not.toContain('rgb="FFF5F3FF"');
+    expect(styles).not.toContain('rgb="FFFFF7ED"');
+    expect(styles).not.toContain('<left style="thin"');
+    expect(styles).not.toContain('<right style="thin"');
   });
 
   it('truncates oversized text to the Excel cell limit without splitting a surrogate pair', async () => {

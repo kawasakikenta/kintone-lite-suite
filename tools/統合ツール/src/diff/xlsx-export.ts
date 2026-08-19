@@ -464,14 +464,6 @@ function scopeLabel(scopes: string[] | undefined): string {
   return (scopes || []).map((key) => sectionLabelOf(key)).join('、');
 }
 
-function rowStyleOf(row: DiffXlsxRow): XlsxRowStyle {
-  if (row._displayOnly) return 'reference';
-  if (row.type === 'added') return 'added';
-  if (row.type === 'removed') return 'removed';
-  if (row.type === 'same') return 'same';
-  return 'changed';
-}
-
 function fieldSettingKind(row: DiffXlsxRow): 'field' | 'setting' | null {
   const fieldInfo = extractFieldPathInfo(String(row.path || ''));
   if (!fieldInfo) return null;
@@ -495,30 +487,11 @@ function rowTypeLabel(
   return String(row.type || '-');
 }
 
-function existenceLabelWithApp(
-  label: string,
-  bundle: DiffXlsxBundle | undefined
-): string {
-  const app = appLabel(bundle);
-  return app ? `${label}\n${app}` : label;
-}
-
-function rowExistenceLabel(
-  row: DiffXlsxRow,
-  sourceBundle?: DiffXlsxBundle,
-  targetBundle?: DiffXlsxBundle
-): string {
-  if (row._displayOnly) return '参考情報';
-  const fieldKind = fieldSettingKind(row);
-  if (fieldKind === 'setting' && row.type === 'added') {
-    return existenceLabelWithApp('比較先にのみ設定あり', targetBundle);
-  }
-  if (fieldKind === 'setting' && row.type === 'removed') {
-    return existenceLabelWithApp('比較元にのみ設定あり', sourceBundle);
-  }
-  if (row.type === 'added') return existenceLabelWithApp('比較先にのみ存在', targetBundle);
-  if (row.type === 'removed') return existenceLabelWithApp('比較元にのみ存在', sourceBundle);
-  return '両方に存在';
+function rowExistenceLabel(row: DiffXlsxRow): string {
+  if (row._displayOnly) return '—';
+  if (row.type === 'added') return '比較先のみ';
+  if (row.type === 'removed') return '比較元のみ';
+  return '両方';
 }
 
 function layoutEntityCaption(value: unknown): string {
@@ -880,12 +853,12 @@ function estimatedWrappedLines(value: unknown, columnWidth: number): number {
   ), 0);
 }
 
-function readableDiffRowHeight(cells: DiffRowHeightCell[], maxHeight = 94): number {
+function readableDiffRowHeight(cells: DiffRowHeightCell[], maxHeight = 110): number {
   const maxLines = cells.reduce((max, cell) => (
     Math.max(max, estimatedWrappedLines(cell.value, cell.width))
   ), 1);
-  const maxExtraLines = Math.max(0, Math.floor((maxHeight - 22) / 12));
-  return Math.min(maxHeight, 22 + Math.min(maxExtraLines, maxLines - 1) * 12);
+  // Meiryo 11pt の本文に上下の余白を残し、折り返し1行ごとに十分な行間を確保する。
+  return Math.min(maxHeight, 26 + Math.max(0, maxLines - 1) * 14);
 }
 
 function summarizeRows(rows: DiffXlsxRow[]) {
@@ -1005,7 +978,7 @@ function buildSheetGuides(
     || ctx.truncation?.truncated);
   const guides: DiffXlsxSheetGuide[] = [{
     name: '概要',
-    purpose: '比較結果の判定、件数、比較条件、完全性を確認できます。',
+    purpose: '比較結果の判定、件数、比較条件、取得状態を確認できます。',
     useWhen: hasIssues
       ? '最初に確認します。不完全な範囲は「取得・未検証」も確認します。'
       : fieldCount
@@ -1033,7 +1006,7 @@ function buildSheetGuides(
     name: '差分一覧',
     purpose: 'このブックに収録された差分と変更前後の値を一覧で確認できます。',
     useWhen: '黄色の列に確認状態、担当者、レビューコメントを記録するときに使います。',
-    targetCell: (ctx.rows || []).length ? 'F4' : 'A3'
+    targetCell: (ctx.rows || []).length ? 'I4' : 'A3'
   });
   for (const key of grouped.keys()) {
     const name = sectionSheetName(key);
@@ -1053,7 +1026,7 @@ function buildSheetGuides(
     guides.push({
       name: '取得・未検証',
       purpose: '取得失敗、一部未検証、件数上限の対象と理由を確認できます。',
-      useWhen: '概要の完全性が「不完全」または判定が「要確認」のときに確認します。',
+      useWhen: '概要の取得状態が「不完全」または判定が「要確認」のときに確認します。',
       targetCell: 'A3'
     });
   }
@@ -1102,22 +1075,36 @@ function buildSummarySheet(
     rows.length ? '収録された差分とレビュー入力は「差分一覧」へ進みます。' : '差分一覧には見出しのみ出力されています。',
     incomplete ? '不完全な範囲は「取得・未検証」で確認します。' : ''
   ].filter(Boolean).join(' ');
+  const overviewRow = {
+    verdict: 4,
+    total: 5,
+    added: 6,
+    removed: 7,
+    changed: 8,
+    moved: 9,
+    same: 10,
+    comparisonTitle: 11,
+    comparisonApps: 12,
+    comparisonEnvironment: 13,
+    fieldStatus: 17,
+    usage: 18
+  } as const;
 
   const sheetRows: (string | number | null)[][] = [
     ['kintone 設定差分比較レポート', '', '', ''],
     [comparisonBanner, '', '', ''],
     ['生成日時', ctx.generatedAt || new Date().toISOString(), '比較日時', ctx.comparedAt == null || ctx.comparedAt === '' ? '未記録' : String(ctx.comparedAt)],
     [sheetGuideBand(
-      '全体の判定、完全性、差分件数、比較条件を確認できます。',
+      '全体の判定、取得状態、差分件数、比較条件を確認できます。',
       overviewNextPlaces
     ), '', '', ''],
-    ['判定', verdict, '完全性', completeness],
+    ['判定', verdict, '取得状態', completeness],
     ['差分件数', counts.actual, '取得失敗', fetchIssues.length],
-    ['追加（比較先のみ）', counts.added, '削除（比較元のみ）', counts.removed],
-    ['変更', counts.changed, '一部未検証', partialIssues.length],
-    ['移動（変更の内数）', counts.moved, '件数上限', truncation ? '省略あり' : '省略なし'],
-    ['同一', counts.same, '参考行', counts.reference],
-    ['', '', '', ''],
+    ['追加（比較先のみ）', counts.added, '一部未検証', partialIssues.length],
+    ['削除（比較元のみ）', counts.removed, '件数上限', truncation ? '省略あり' : '省略なし'],
+    ['変更', counts.changed, '', ''],
+    ['移動（変更の内数）', counts.moved, '', ''],
+    ['同一', counts.same, '', ''],
     ['比較の向き・条件', '', '', ''],
     ['比較元', appLabel(ctx.sourceBundle), '比較先', appLabel(ctx.targetBundle)],
     ['環境', bundleEnvironmentLabel(ctx.sourceBundle), '環境', bundleEnvironmentLabel(ctx.targetBundle)],
@@ -1127,7 +1114,7 @@ function buildSummarySheet(
     ['フィールド差分', fieldStatus, '', fieldLinkTarget?.label || ''],
     ['使い方', fieldCount
       ? '①「フィールド差分要約」で対象を確認　②「フィールド差分詳細」で変更前後を確認　③「差分一覧」でレビューを入力　※パスは技術明細シートにのみ掲載'
-      : '①概要で判定と完全性を確認　②「差分一覧」で変更前後を確認　③黄色い3列にレビューを入力　※パスは技術明細シートにのみ掲載', '', rows.length ? '③ レビュー入力へ' : ''],
+      : '①概要で判定と取得状態を確認　②「差分一覧」で変更前後を確認　③黄色い3列にレビューを入力　※パスは技術明細シートにのみ掲載', '', rows.length ? '③ レビュー入力へ' : ''],
     ['', '', '', '']
   ];
   const guideTitleRow = sheetRows.length;
@@ -1188,25 +1175,37 @@ function buildSummarySheet(
   const rowStyles: XlsxRowStyle[] = sheetRows.map(() => 'normal');
   const rowHeights: number[] = [32, 24, 0, 44];
   for (let rowIndex = guideStartRow; rowIndex < guideEndRow; rowIndex += 1) rowHeights[rowIndex] = 40;
-  for (const index of warningRows) rowStyles[index] = 'warning';
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = sheetRows.map(() => []);
   cellStyles[0][0] = 'title';
   cellStyles[1][0] = 'sectionHeader';
   cellStyles[3][0] = 'info';
-  cellStyles[4] = [
+  cellStyles[overviewRow.verdict] = [
     'sectionHeader',
-    incomplete ? 'kpiDanger' : counts.actual > 0 ? 'kpiWarning' : 'kpiGood',
+    incomplete ? 'kpiDanger' : 'kpiGood',
     'sectionHeader',
     incomplete ? 'kpiDanger' : 'kpiGood'
   ];
-  for (const rowIndex of [5, 6, 7, 8, 9]) {
-    cellStyles[rowIndex] = ['info', 'kpiWarning', 'info', 'kpiWarning'];
+  for (const rowIndex of [
+    overviewRow.total,
+    overviewRow.added,
+    overviewRow.removed,
+    overviewRow.changed,
+    overviewRow.moved,
+    overviewRow.same
+  ]) {
+    cellStyles[rowIndex] = ['info', 'kpiGood'];
   }
-  cellStyles[5][1] = counts.actual > 0 ? 'kpiWarning' : 'kpiGood';
-  cellStyles[5][3] = fetchIssues.length > 0 ? 'kpiDanger' : 'kpiGood';
-  cellStyles[7][3] = partialIssues.length > 0 ? 'kpiDanger' : 'kpiGood';
-  cellStyles[8][3] = truncation ? 'kpiDanger' : 'kpiGood';
-  cellStyles[11][0] = 'sectionHeader';
+  cellStyles[overviewRow.total][2] = 'info';
+  cellStyles[overviewRow.total][3] = fetchIssues.length > 0 ? 'kpiDanger' : 'kpiGood';
+  cellStyles[overviewRow.added][2] = 'info';
+  cellStyles[overviewRow.added][3] = partialIssues.length > 0 ? 'kpiDanger' : 'kpiGood';
+  cellStyles[overviewRow.removed][2] = 'info';
+  cellStyles[overviewRow.removed][3] = truncation ? 'kpiDanger' : 'kpiGood';
+  cellStyles[overviewRow.comparisonApps][1] = 'source';
+  cellStyles[overviewRow.comparisonApps][3] = 'target';
+  cellStyles[overviewRow.comparisonEnvironment][1] = 'source';
+  cellStyles[overviewRow.comparisonEnvironment][3] = 'target';
+  cellStyles[overviewRow.comparisonTitle][0] = 'sectionHeader';
   cellStyles[guideTitleRow][0] = 'sectionHeader';
   cellStyles[guideHeaderRow] = ['sectionHeader', 'sectionHeader', 'sectionHeader', 'sectionHeader'];
   for (let rowIndex = guideStartRow; rowIndex < guideEndRow; rowIndex += 1) {
@@ -1214,11 +1213,12 @@ function buildSummarySheet(
   }
   cellStyles[sectionTitleRow][0] = 'sectionHeader';
   cellStyles[sectionHeaderRow] = ['sectionHeader', 'sectionHeader', 'sectionHeader', 'sectionHeader'];
-  cellStyles[17] = ['info', fieldStatusIncomplete ? 'kpiDanger' : fieldCount || unstructuredFieldDiffCount ? 'kpiWarning' : 'kpiGood'];
-  if (fieldLinkTarget) cellStyles[17][3] = 'hyperlink';
-  if (rows.length) cellStyles[18][3] = 'hyperlink';
+  cellStyles[overviewRow.fieldStatus] = ['info', fieldStatusIncomplete ? 'kpiDanger' : 'kpiGood'];
+  if (fieldLinkTarget) cellStyles[overviewRow.fieldStatus][3] = 'hyperlink';
+  if (rows.length) cellStyles[overviewRow.usage][3] = 'hyperlink';
+  for (const index of warningRows) cellStyles[index][0] = 'warning';
   const merges = [
-    'A1:D1', 'A2:D2', 'A4:D4', 'A12:D12',
+    'A1:D1', 'A2:D2', 'A4:D4', `A${overviewRow.comparisonTitle + 1}:D${overviewRow.comparisonTitle + 1}`,
     `A${guideTitleRow + 1}:D${guideTitleRow + 1}`,
     `C${guideHeaderRow + 1}:D${guideHeaderRow + 1}`,
     `A${sectionTitleRow + 1}:D${sectionTitleRow + 1}`
@@ -1239,15 +1239,15 @@ function buildSummarySheet(
     merges,
     internalHyperlinks: [
       ...(fieldLinkTarget ? [{
-        ref: 'D18',
+        ref: `D${overviewRow.fieldStatus + 1}`,
         targetSheet: fieldLinkTarget.sheet,
         targetCell: fieldLinkTarget.cell,
         tooltip: '差分があるフィールドの一覧へ移動'
       }] : []),
       ...(rows.length ? [{
-        ref: 'D19',
+        ref: `D${overviewRow.usage + 1}`,
         targetSheet: '差分一覧',
-        targetCell: 'F4',
+        targetCell: 'I4',
         tooltip: '確認状態・担当者・コメントの入力欄へ移動'
       }] : []),
       ...sheetGuides.map((guide, index) => ({
@@ -1319,13 +1319,13 @@ function buildListSheet(
 ): XlsxSheet {
   const headers = [
     '差分ID', '変更種別', '存在状況', 'セクション', '項目',
-    '確認状態', '担当者', 'レビューコメント',
-    directionalValueHeader('source', sourceBundle), directionalValueHeader('target', targetBundle), '確認ポイント'
+    directionalValueHeader('source', sourceBundle), directionalValueHeader('target', targetBundle), '確認ポイント',
+    '確認状態', '担当者', 'レビューコメント'
   ];
   const groupHeader = [
     '差分の識別', '', '', '', '',
-    'レビュー入力（黄色）', '', '',
-    '値の比較（比較元 → 比較先）', '', '確認ポイント'
+    '比較元（変更前）', '比較先（変更後）', '確認ポイント',
+    'レビュー入力（黄色）', '', ''
   ];
   const guide = sheetGuideBand(
     'このブックに収録された差分、変更前後の値、確認ポイントを一覧で確認できます。',
@@ -1335,17 +1335,19 @@ function buildListSheet(
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal', 'normal'];
   const groupCellStyles: Array<XlsxCellStyle | undefined> = [];
   groupCellStyles[0] = 'sectionHeader';
-  groupCellStyles[5] = 'kpiWarning';
+  groupCellStyles[5] = 'sourceGroup';
+  groupCellStyles[6] = 'targetGroup';
+  groupCellStyles[7] = 'info';
   groupCellStyles[8] = 'sectionHeader';
-  groupCellStyles[10] = 'info';
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], groupCellStyles, []];
+  cellStyles[2][5] = 'headerDivider';
   const rowHeights: number[] = [44, 24, 42];
   const seenIds = new Map<string, number>();
   const fieldDetailByRowIndex = new Map((fieldModel?.details || []).map((detail) => [detail.rowIndex, detail]));
   for (const [rowIndex, row] of rows.entries()) {
     const fieldDetail = fieldDetailByRowIndex.get(rowIndex);
     const isFieldSettings = (row.sectionKey || row.section) === 'fieldSettings';
-    const existence = rowExistenceLabel(row, sourceBundle, targetBundle);
+    const existence = rowExistenceLabel(row);
     const item = rowItemLabel(row, sourceBundle, targetBundle);
     const sourceValue = fieldDetail
       ? fieldSettingHumanValue(fieldDetail, 'source', sourceBundle, targetBundle)
@@ -1368,22 +1370,23 @@ function buildListSheet(
       existence,
       sectionLabelOf(row.sectionKey || row.section || ''),
       item,
-      '未確認',
-      '',
-      '',
       sourceValue,
       targetValue,
-      note
+      note,
+      '未確認',
+      '',
+      ''
     ]);
-    const rowStyle = rowStyleOf(row);
-    rowStyles.push(rowStyle);
+    rowStyles.push('normal');
     const styles: Array<XlsxCellStyle | undefined> = ['info'];
-    styles[5] = 'review';
-    styles[6] = 'review';
-    styles[7] = 'review';
+    styles[5] = 'sourceDivider';
+    styles[6] = 'target';
+    styles[8] = 'review';
+    styles[9] = 'review';
+    styles[10] = 'review';
     cellStyles.push(styles);
     rowHeights.push(readableDiffRowHeight([
-      { value: existence, width: 28 },
+      { value: existence, width: 18 },
       { value: item, width: 30 },
       { value: sourceValue, width: 42 },
       { value: targetValue, width: 42 },
@@ -1392,7 +1395,7 @@ function buildListSheet(
   }
   const dataValidations = rows.length
     ? [{
-        sqref: `F4:F${rows.length + 3}`,
+        sqref: `I4:I${rows.length + 3}`,
         values: REVIEW_STATUS_VALUES,
         promptTitle: '確認状態',
         prompt: 'レビューの進捗を選択してください'
@@ -1401,14 +1404,14 @@ function buildListSheet(
   return {
     name,
     rows: out,
-    colWidths: [15, 16, 28, 18, 30, 14, 16, 28, 42, 42, 32],
+    colWidths: [15, 16, 18, 18, 30, 42, 42, 32, 14, 16, 28],
     rowStyles,
     cellStyles,
     headerRow: 3,
     freezeRows: 3,
     freezeColumns: 5,
     rowHeights,
-    merges: ['A1:K1', 'A2:E2', 'F2:H2', 'I2:J2'],
+    merges: ['A1:K1', 'A2:E2', 'I2:K2'],
     dataValidations,
     showGridLines: false,
     print: {
@@ -1434,26 +1437,28 @@ function buildSectionSheet(
   ];
   const groupHeader = [
     '差分の識別', '', '', '', '技術パス',
-    '値の比較（比較元 → 比較先）', '', '確認ポイント'
+    '比較元（変更前）', '比較先（変更後）', '確認ポイント'
   ];
   const guide = sheetGuideBand(
     `${label}の技術パスと原データを確認できます。`,
     label === 'フィールド技術明細'
-      ? '通常の確認は「フィールド差分詳細」、レビュー記録は同じ差分IDの「差分一覧」で行います。'
-      : '通常の確認は「差分一覧」で行い、要約だけでは判断できない場合にこのシートで根拠を確認します。'
+      ? '通常の確認は「フィールド差分詳細」、レビュー記録は同じ差分IDの「差分一覧」で行います。長文はセルを選択して数式バーでも確認し、「…省略」の表示がある場合は元データを確認します。'
+      : '通常の確認は「差分一覧」で行い、要約だけでは判断できない場合にこのシートで根拠を確認します。長文はセルを選択して数式バーでも確認し、「…省略」の表示がある場合は元データを確認します。'
   );
   const rows: (string | number | null)[][] = [[guide, '', '', '', '', '', '', ''], groupHeader, headers];
   const rowStyles: XlsxRowStyle[] = ['normal', 'normal', 'normal'];
   const groupCellStyles: Array<XlsxCellStyle | undefined> = [];
   groupCellStyles[0] = 'sectionHeader';
   groupCellStyles[4] = 'info';
-  groupCellStyles[5] = 'sectionHeader';
+  groupCellStyles[5] = 'sourceGroup';
+  groupCellStyles[6] = 'targetGroup';
   groupCellStyles[7] = 'info';
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], groupCellStyles, []];
+  cellStyles[2][5] = 'headerDivider';
   const rowHeights: number[] = [44, 24, 42];
   const seenIds = new Map<string, number>();
   for (const row of list) {
-    const existence = rowExistenceLabel(row, sourceBundle, targetBundle);
+    const existence = rowExistenceLabel(row);
     const item = rowItemLabel(row, sourceBundle, targetBundle);
     const sourceValue = rowValue(row, 'source');
     const targetValue = rowValue(row, 'target');
@@ -1468,28 +1473,31 @@ function buildSectionSheet(
       targetValue,
       note
     ]);
-    rowStyles.push(rowStyleOf(row));
-    cellStyles.push(['info']);
+    rowStyles.push('normal');
+    const styles: Array<XlsxCellStyle | undefined> = ['info'];
+    styles[5] = 'sourceDivider';
+    styles[6] = 'target';
+    cellStyles.push(styles);
     rowHeights.push(readableDiffRowHeight([
-      { value: existence, width: 28 },
+      { value: existence, width: 18 },
       { value: item, width: 30 },
       { value: row.path || '', width: 34 },
       { value: sourceValue, width: 42 },
       { value: targetValue, width: 42 },
       { value: note, width: 32 }
-    ], 118));
+    ], 264));
   }
   return {
     name: label,
     rows,
-    colWidths: [15, 16, 28, 30, 34, 42, 42, 32],
+    colWidths: [15, 16, 18, 30, 34, 42, 42, 32],
     rowStyles,
     cellStyles,
     headerRow: 3,
     freezeRows: 3,
     freezeColumns: 4,
     rowHeights,
-    merges: ['A1:H1', 'A2:D2', 'F2:G2'],
+    merges: ['A1:H1', 'A2:D2'],
     showGridLines: false,
     print: {
       orientation: 'landscape',
@@ -1508,13 +1516,6 @@ function fieldSummaryRootChangeType(
   return root?.row.type === 'added' || root?.row.type === 'removed' ? root.row.type : null;
 }
 
-function fieldSummaryRowStyle(summary: DiffXlsxFieldSummary, model: DiffXlsxFieldModel): XlsxRowStyle {
-  const rootType = fieldSummaryRootChangeType(summary, model);
-  if (rootType === 'added') return 'added';
-  if (rootType === 'removed') return 'removed';
-  return 'changed';
-}
-
 function fieldSummaryChangeTypeLabel(
   summary: DiffXlsxFieldSummary,
   model: DiffXlsxFieldModel
@@ -1527,14 +1528,12 @@ function fieldSummaryChangeTypeLabel(
 
 function fieldSummaryExistenceLabel(
   summary: DiffXlsxFieldSummary,
-  model: DiffXlsxFieldModel,
-  sourceBundle?: DiffXlsxBundle,
-  targetBundle?: DiffXlsxBundle
+  model: DiffXlsxFieldModel
 ): string {
   const rootType = fieldSummaryRootChangeType(summary, model);
-  if (rootType === 'added') return existenceLabelWithApp('比較先にのみ存在', targetBundle);
-  if (rootType === 'removed') return existenceLabelWithApp('比較元にのみ存在', sourceBundle);
-  return '両方に存在';
+  if (rootType === 'added') return '比較先のみ';
+  if (rootType === 'removed') return '比較元のみ';
+  return '両方';
 }
 
 function compactFieldSummaryValue(value: string): string {
@@ -1625,7 +1624,7 @@ function buildFieldSummarySheet(
   const rowHeights: number[] = [44, 24, 32];
   for (const summary of model.summaries) {
     const changeType = fieldSummaryChangeTypeLabel(summary, model);
-    const existence = fieldSummaryExistenceLabel(summary, model, sourceBundle, targetBundle);
+    const existence = fieldSummaryExistenceLabel(summary, model);
     const mainChanges = fieldSummaryMainChanges(summary, model, sourceBundle, targetBundle);
     const reviewGuidance = fieldSummaryReviewGuidance(summary, model);
     rows.push([
@@ -1640,7 +1639,7 @@ function buildFieldSummarySheet(
       `詳細を見る（${summary.diffCount}件）`,
       'レビュー入力へ'
     ]);
-    rowStyles.push(fieldSummaryRowStyle(summary, model));
+    rowStyles.push('normal');
     const styles: Array<XlsxCellStyle | undefined> = [];
     styles[3] = 'info';
     styles[4] = 'info';
@@ -1651,7 +1650,7 @@ function buildFieldSummarySheet(
     cellStyles.push(styles);
     rowHeights.push(readableDiffRowHeight([
       { value: changeType, width: 18 },
-      { value: existence, width: 28 },
+      { value: existence, width: 18 },
       { value: summary.fieldName, width: 28 },
       { value: summary.fieldCode, width: 28 },
       { value: summary.fieldType, width: 18 },
@@ -1662,7 +1661,7 @@ function buildFieldSummarySheet(
   return {
     name: 'フィールド差分要約',
     rows,
-    colWidths: [18, 28, 28, 28, 18, 12, 56, 42, 20, 18],
+    colWidths: [18, 18, 28, 28, 18, 12, 56, 42, 20, 18],
     rowStyles,
     cellStyles,
     headerRow: 3,
@@ -1680,7 +1679,7 @@ function buildFieldSummarySheet(
       ...model.summaries.map((summary, index) => ({
         ref: `J${index + 4}`,
         targetSheet: '差分一覧',
-        targetCell: `F${firstReviewRowByField.get(summary.fieldKey) || 4}`,
+        targetCell: `I${firstReviewRowByField.get(summary.fieldKey) || 4}`,
         tooltip: `${summary.fieldName}のレビュー入力欄へ移動`
       }))
     ],
@@ -1704,7 +1703,7 @@ function buildFieldDetailSheet(
   const groupHeader = [
     '差分の識別', '差分フィールド', '',
     '設定差分', '', '',
-    '値の比較（比較元 → 比較先）', '',
+    '比較元（変更前）', '比較先（変更後）',
     '確認事項',
     'ナビゲーション'
   ];
@@ -1725,14 +1724,16 @@ function buildFieldDetailSheet(
   groupCellStyles[0] = 'info';
   groupCellStyles[1] = 'sectionHeader';
   groupCellStyles[3] = 'info';
-  groupCellStyles[6] = 'sectionHeader';
+  groupCellStyles[6] = 'sourceGroup';
+  groupCellStyles[7] = 'targetGroup';
   groupCellStyles[8] = 'info';
   groupCellStyles[9] = 'info';
   const cellStyles: Array<Array<XlsxCellStyle | undefined>> = [['info'], groupCellStyles, []];
+  cellStyles[2][6] = 'headerDivider';
   const rowHeights: number[] = [44, 24, 42];
   for (const detail of model.details) {
     const changeType = rowTypeLabel(detail.row);
-    const existence = rowExistenceLabel(detail.row, sourceBundle, targetBundle);
+    const existence = rowExistenceLabel(detail.row);
     const sourceValue = fieldSettingHumanValue(detail, 'source', sourceBundle, targetBundle);
     const targetValue = fieldSettingHumanValue(detail, 'target', sourceBundle, targetBundle);
     const note = fieldDetailReviewNote(detail);
@@ -1749,50 +1750,41 @@ function buildFieldDetailSheet(
       note,
       '要約へ戻る'
     ]);
-    rowStyles.push(rowStyleOf(detail.row));
+    rowStyles.push('normal');
     const styles: Array<XlsxCellStyle | undefined> = ['hyperlink'];
     styles[2] = 'info';
     styles[8] = 'info';
     styles[9] = 'hyperlink';
-    if (detail.row.type === 'added') {
-      styles[6] = 'reference';
-      styles[7] = 'added';
-    } else if (detail.row.type === 'removed') {
-      styles[6] = 'removed';
-      styles[7] = 'reference';
-    }
-    else {
-      styles[6] = 'removed';
-      styles[7] = 'added';
-    }
+    styles[6] = 'sourceDivider';
+    styles[7] = 'target';
     cellStyles.push(styles);
     rowHeights.push(readableDiffRowHeight([
       { value: detail.fieldName, width: 30 },
       { value: detail.fieldCode, width: 32 },
       { value: detail.settingLabel, width: 34 },
       { value: changeType, width: 18 },
-      { value: existence, width: 28 },
+      { value: existence, width: 18 },
       { value: sourceValue, width: 44 },
       { value: targetValue, width: 44 },
       { value: note, width: 40 }
-    ], 118));
+    ], 160));
   }
   return {
     name: 'フィールド差分詳細',
     rows,
-    colWidths: [15, 30, 32, 34, 18, 28, 44, 44, 40, 16],
+    colWidths: [15, 30, 32, 34, 18, 18, 44, 44, 40, 16],
     rowStyles,
     cellStyles,
     headerRow: 3,
     freezeRows: 3,
     freezeColumns: 6,
     rowHeights,
-    merges: ['A1:J1', 'B2:C2', 'D2:F2', 'G2:H2'],
+    merges: ['A1:J1', 'B2:C2', 'D2:F2'],
     internalHyperlinks: [
       ...model.details.map((detail, index) => ({
         ref: `A${index + 4}`,
         targetSheet: '差分一覧',
-        targetCell: `F${differenceRefs?.[detail.rowIndex]?.rowNumber || 4}`,
+        targetCell: `I${differenceRefs?.[detail.rowIndex]?.rowNumber || 4}`,
         tooltip: `${detail.fieldName}のレビュー入力欄へ移動`
       })),
       ...model.details.map((detail, index) => ({
@@ -1820,7 +1812,7 @@ function buildIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
 
   const guide = sheetGuideBand(
     '取得失敗、一部未検証、件数上限の対象と理由を確認できます。',
-    '概要の完全性と照らし合わせ、比較できていない範囲を確認してから判断します。'
+    '概要の取得状態と照らし合わせ、比較できていない範囲を確認してから判断します。'
   );
   const rows: (string | number | null)[][] = [
     [guide, '', '', '', ''],
@@ -1862,8 +1854,8 @@ function buildIssuesSheet(ctx: DiffXlsxContext): XlsxSheet | null {
     name: '取得・未検証',
     rows,
     colWidths: [14, 22, 12, 72, 60],
-    rowStyles: rows.map((_, index) => index <= 1 ? 'normal' : 'warning'),
-    cellStyles: [['info'], []],
+    rowStyles: rows.map(() => 'normal'),
+    cellStyles: rows.map((_, index) => index === 0 ? ['info'] : index === 1 ? [] : ['warning']),
     headerRow: 2,
     freezeRows: 2,
     freezeColumns: 2,
