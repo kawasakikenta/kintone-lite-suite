@@ -11,6 +11,7 @@
     "build:kintone-calendar": "vite build --config plugins/KintoneCalendar/vite.config.mjs",
     "build:kintone-lookup-filter": "npm --prefix plugins/KintoneLookupFilter run build",
     "build:simple-task-board": "node plugins/SimpleTaskBoard/build-desktop.js",
+    "check:simple-task-board": "node --check simple-kanban-person-board-updated.js && node --check plugins/SimpleTaskBoard/src/core.js && node --check plugins/SimpleTaskBoard/js/config.js && node --check plugins/SimpleTaskBoard/build-desktop.js && node --check plugins/SimpleTaskBoard/js/desktop.js",
     "check:all": "npm run check:attachment-name-guard && npm run check:comment-reply-label && npm run check:manual-plugin && npm run check:kintone-data-flow && npm run check:kintone-calendar",
     "check:attachment-name-guard": "node --check plugins/AttachmentNameGuard/js/config.js && node --check plugins/AttachmentNameGuard/js/desktop.js",
     "check:comment-reply-label": "node --check plugins/CommentReplyLabel/js/config.js && node --check plugins/CommentReplyLabel/js/desktop.js",
@@ -36,6 +37,7 @@
     "test:field-transfer": "npm --prefix plugins/FieldTransfer test",
     "test:kintone-calendar": "node --test plugins/KintoneCalendar/tests/*.test.mjs",
     "test:kintone-lookup-filter": "npm --prefix plugins/KintoneLookupFilter test",
+    "test:simple-task-board": "node --test plugins/SimpleTaskBoard/tests/*.test.cjs",
     "verify:playwright-mcp": "node scripts/verify-playwright-mcp.cjs"
   },
   "repository": {
