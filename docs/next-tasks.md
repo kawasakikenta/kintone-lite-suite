@@ -1,34 +1,17 @@
-# 次にやる作業（kintone-tools）
+# 次にやる作業（kintone-lite-suite）
 
-更新: 2026-08-20。前提と検証方法は `CLAUDE.md` を先に確認してください。プラグイン側のタスクは分割後の `kintone-plugins` で管理します。
+更新: 2026-08-20。前提と検証方法は `CLAUDE.md` を先に確認してください。
 
-## T1. GitHub Actionsの追加
+## T1. Playwright 比較ハーネスの CI 分離
 
-新しいGitHubリポジトリ作成後、Node.jsのサポート対象バージョンで次を実行するCIを追加します。
+- `test:diff-multi-dom` は通常 PR で実行する。
+- 重い `test:diff-compare` と `test:er-compare` は UI 変更時または手動実行に分ける。
+- 比較 HTML、JSON、PNG は短期 Actions artifact とし、Git へ追加しない。
 
-1. ルートで `npm ci`
-2. `npm run setup`
-3. `npm run check`
-4. ビルド後に `git diff --exit-code -- tools/*.js tools/単機能スクリプト棚卸し.md`
+## T2. ER 図の外部依存固定
 
-生成物の更新漏れをCIで検出し、lockfileを使わない導入は禁止します。
+生成 HTML が実行時 CDN 応答へ依存しないよう、Cytoscape、Dagre などを固定版で同梱する。難しい場合は SRI と厳格な CSP を適用し、供給網リスクを明示する。
 
-## T2. Playwright比較ハーネスのCI分離
+## T3. Excel 差分出力の安全共有
 
-差分比較とER図のbefore/afterハーネスは実行時間とブラウザ依存が大きいため、通常の型検査・ユニットテストとは別ジョブにします。
-
-- `npm run test:diff-multi-dom` は通常PRで実行
-- `npm run test:diff-compare` と `npm run test:er-compare` はUI変更時または手動実行
-- `.iter-shots/` の比較HTML・JSON・PNGはCI artifactとして保存し、Gitには追加しない
-- ChromeがないrunnerではPlaywright Chromiumを明示的に導入する
-
-## T3. standalone資産の自動検査
-
-`tools/standalone/` は手書き資産と生成資産が混在しています。各ファイルの正規ソース、生成コマンド、最低限の構文検査を一覧化し、生成済みファイルの更新漏れを検出できるようにします。
-
-完了条件:
-
-- `tools/standalone/README.md` から全資産の正規ソースを追跡できる
-- 個人PCの絶対パスを含まない
-- 生成スクリプトをクリーンcloneから実行できる
-- 構文検査またはスモークテストをルートコマンドから実行できる
+共有用マスキング、暗号学的な内容識別子、出力サイズ上限、レビュー結果の再取込を段階的に追加する。人向けレビュー表と技術明細の役割分離は維持する。

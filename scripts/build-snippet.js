@@ -13,12 +13,6 @@ function resolveInputPath(input) {
   const direct = path.resolve(process.cwd(), input);
   if (fs.existsSync(direct)) return direct;
 
-  const normalized = input.replace(/\\/g, '/');
-  if (normalized.startsWith('tools/') && !normalized.startsWith('tools/standalone/')) {
-    const fallback = path.resolve(process.cwd(), 'tools/standalone', path.posix.basename(normalized));
-    if (fs.existsSync(fallback)) return fallback;
-  }
-
   return null;
 }
 

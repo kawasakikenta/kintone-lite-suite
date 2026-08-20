@@ -170,7 +170,7 @@ tools/統合ツール/
 | レコード管理 | 実データのメンテナンス | ステータス更新、添付DL、CSV、バックアップ、アプリ間コピー |
 | APIテスター | APIレベルでの挙動確認 | GET/POST/PUT/DELETE の直接実行 |
 
-> SQL ライクなデータ参照は本ツールから除外し、`tools/standalone/kintoneSQL.js` の単独ブックマークレットへ分離しました（手書き運用、ビルド対象外）。
+> SQL ライクなデータ参照は本ツールから除外し、別リポジトリ `kintone-data-utilities` の `kintoneSQL.js` へ分離しました。
 
 #### ER図の構造分析
 
@@ -220,7 +220,7 @@ lite 版を正規とする運用では、機能ロジックは `src/tabs/*.ts` �
 | プロセス図 | `src/tabs/process.ts` | `../プロセス実行.js`（同上） |
 | レコード管理 | `src/tabs/record.ts` | `../kintoneレコード取得.js`（同上） |
 
-`SQL実行` は統合ツールから除外し、`tools/standalone/kintoneSQL.js` として独立運用します（ビルド対象外、手書き）。
+`SQL実行` は統合ツールから除外し、別リポジトリ `kintone-data-utilities` で独立運用します。
 
 詳細な棚卸し・削除対象分類は `../単機能スクリプト棚卸し.md` を参照してください。
 

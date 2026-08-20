@@ -1,22 +1,21 @@
 {
-  "name": "kintone-tools",
+  "name": "kintone-lite-suite",
   "version": "1.0.0",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kawasakikenta/kintone-tools.git"
+    "url": "git+https://github.com/kawasakikenta/kintone-lite-suite.git"
   },
   "bugs": {
-    "url": "https://github.com/kawasakikenta/kintone-tools/issues"
+    "url": "https://github.com/kawasakikenta/kintone-lite-suite/issues"
   },
-  "homepage": "https://github.com/kawasakikenta/kintone-tools#readme",
-  "description": "kintone の設定比較・設計・データ運用を支援するブラウザツール集",
+  "homepage": "https://github.com/kawasakikenta/kintone-lite-suite#readme",
+  "description": "kintone の設定比較・設計・データ運用を支援する単機能 lite ツール群",
   "type": "commonjs",
   "scripts": {
     "setup": "npm --prefix tools/統合ツール ci",
     "build": "npm run build:unified",
     "build:unified": "npm --prefix tools/統合ツール run build",
-    "build:excel-kaiseki": "node tools/standalone/build-excel-kaiseki.js",
     "check": "npm --prefix tools/統合ツール run check",
     "typecheck": "npm --prefix tools/統合ツール run typecheck",
     "typecheck:strict": "npm --prefix tools/統合ツール run typecheck:strict",

@@ -4,12 +4,12 @@
   "private": true,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kawasakikenta/kintone-tools.git"
+    "url": "git+https://github.com/kawasakikenta/kintone-lite-suite.git"
   },
   "bugs": {
-    "url": "https://github.com/kawasakikenta/kintone-tools/issues"
+    "url": "https://github.com/kawasakikenta/kintone-lite-suite/issues"
   },
-  "homepage": "https://github.com/kawasakikenta/kintone-tools#readme",
+  "homepage": "https://github.com/kawasakikenta/kintone-lite-suite#readme",
   "scripts": {
     "build": "node build.js",
     "watch": "node build.js --watch",
